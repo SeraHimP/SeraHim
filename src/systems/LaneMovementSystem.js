@@ -404,6 +404,36 @@ export class LaneMovementSystem {
       }
     }
 
+    // ===== B1：己方防御塔 + 任意损毁塔废墟 = 硬障碍，绕行（转向行为，非碰撞推挤）=====
+    // 主循环按 type==='tower' 跳过了所有塔（保持既有兵-兵行为逐位不变）；这里单独把
+    // 【己方活塔】与【任意塔废墟】按与锚定硬障碍完全相同的口径并入 fx/sep/blocker/contacts，
+    // 于是复用下方 v37 切向绕行 + 硬圆投影：小兵沿塔面滑绕、不再穿模。敌方【活】塔不含
+    // （那是索敌/攻击目标，纳入会绕着塔转圈）。塔半径取 bSize；废墟 alive=false，故放开 aliveOnly。
+    for (const o of this.entities.findInRadius(minion.pos.x, minion.pos.y, rSelf + 80, ['tower'], false)) {
+      if (!o.pos || o.id === minion.targetId) continue;
+      const isRuin = !o.alive && !!o._ruin;
+      const sameFac = (o._mapFaction || o.faction) === minion._mapFaction;
+      if (!(isRuin || (o.alive && sameFac))) continue;
+      const ox = minion.pos.x - o.pos.x, oy = minion.pos.y - o.pos.y;
+      const od = Math.hypot(ox, oy) || 0.001;
+      const rSum = rSelf + (o._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[o._mapTier]) || 28);
+      if (od > rSum + 26) continue;
+      const ux = ox / od, uy = oy / od;
+      const closeness = Math.max(0, 1 - (od - rSum) / 26);
+      const into = fx * (-ux) + fy * (-uy);
+      if (od < rSum + 8) contacts.push({ x: o.pos.x, y: o.pos.y, rSum });
+      if (into > 0 && od < rSum + 8) {
+        fx += ux * into; fy += uy * into;
+        if (od < blockerD) {
+          blockerD = od; blockerX = -ux; blockerY = -uy; blocked = true;
+          blockerRSum = rSum; blockerSepX = ux * closeness * 1.8; blockerSepY = uy * closeness * 1.8;
+        }
+      }
+      const sepK = od < rSum + 8 ? 1.8 : 0.35;
+      sepX += ux * closeness * sepK;
+      sepY += uy * closeness * sepK;
+    }
+
     // ===== v37（Q2 根治"A挡B原地振荡"）：正对障碍时注入带黏性的切向绕行力 =====
     // 机理：法向截断在【正对】障碍时把期望力削到≈0，分离力把兵弹开一点、期望力又推回来
     // ——原地小幅振荡永远不绕（v36 实测）。判据：截断后的剩余期望力太小且确有正面障碍。
