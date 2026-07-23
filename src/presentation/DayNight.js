@@ -11,13 +11,13 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 
-//               相位   太阳色     天空色(半球上)  地面反照色     太阳仰角  曝光   环境占比
+//               相位   太阳色     天空色(半球上)  地面反照色     太阳仰角  曝光   环境占比   天穹/边界底色
 const KEYS = [
-  { p: 0.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42 }, // 黎明：暖橙、低日、微压暗
-  { p: 0.25, sun: '#fff6e8', sky: '#8fbce6', gnd: '#6b7a5a', elev: 82, exp: 1.00, amb: 0.30 }, // 正午：近白、高日、满曝光
-  { p: 0.50, sun: '#ff8a4d', sky: '#e88a5a', gnd: '#4e3f34', elev: 10, exp: 0.70, amb: 0.44 }, // 黄昏：橙红、低日
-  { p: 0.75, sun: '#6f86c9', sky: '#1b2440', gnd: '#182034', elev:  8, exp: 0.34, amb: 0.62 }, // 午夜：冷蓝月光、大幅压暗、以环境为主
-  { p: 1.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42 }, // 回到黎明（闭合）
+  { p: 0.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42, bg: '#241f2e' }, // 黎明
+  { p: 0.25, sun: '#fff6e8', sky: '#8fbce6', gnd: '#6b7a5a', elev: 82, exp: 1.00, amb: 0.30, bg: '#1a2740' }, // 正午
+  { p: 0.50, sun: '#ff8a4d', sky: '#e88a5a', gnd: '#4e3f34', elev: 10, exp: 0.70, amb: 0.44, bg: '#2a181c' }, // 黄昏
+  { p: 0.75, sun: '#6f86c9', sky: '#1b2440', gnd: '#182034', elev:  8, exp: 0.34, amb: 0.62, bg: '#070912' }, // 午夜
+  { p: 1.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42, bg: '#241f2e' }, // 回到黎明（闭合）
 ];
 
 export const DAY_PERIOD = 180;   // 一整天 = 180s 游戏时间（可由 CTX.__dayPeriod 改）
@@ -39,6 +39,7 @@ export function dayNightAt(gameTime, period = DAY_PERIOD) {
     sunElevation: a.elev + (b.elev - a.elev) * t,
     exposure: a.exp + (b.exp - a.exp) * t,
     ambientShare: a.amb + (b.amb - a.amb) * t,
+    background: _lerpHex(a.bg, b.bg, t),
     normalize: true,
   };
 }

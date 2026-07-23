@@ -167,7 +167,8 @@ export class ThreeRenderer {
    * fog 传数值即启用线性雾（世界单位），传 null 关闭。
    */
   setLighting(opt = {}) {
-    const { sunColor, ambientSky, ambientGround, sunElevation, ambientShare, exposure, fog, normalize = true } = opt;
+    const { sunColor, ambientSky, ambientGround, sunElevation, ambientShare, exposure, fog, background, normalize = true } = opt;
+    if (background !== undefined && this.scene.background) this.scene.background.set(background); // C 组·天空：昼夜给天穹/边界底色染色
     if (sunColor !== undefined) this.sun.color.set(sunColor);
     if (ambientSky !== undefined) this.hemi.color.set(ambientSky);
     if (ambientGround !== undefined) this.hemi.groundColor.set(ambientGround);
