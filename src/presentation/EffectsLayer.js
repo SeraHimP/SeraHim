@@ -71,6 +71,9 @@ function rgbOf(hex) {
   return c;
 }
 
+// #10：穿透塔弹"升温"的热色目标（橙白）。子弹按 heat（0..1）向它偏移。
+const HEAT_HOT = new THREE.Color('#ffcf6a');
+
 const GROUND_LIFT = 0.6;   // 贴地特效离地高度（世界单位）
 
 class Batch {
@@ -462,22 +465,32 @@ export class EffectsLayer {
         }
         // 塔弹与兵弹的分野：CombatSystem 按攻击者类型给 size（塔 20 / 兵 12），这里据此
         // 分档。塔弹加拖尾 + 白亮核，兵弹保持两层——同屏兵弹上百，给它们加拖尾只会糊成一片。
+        // #10 升温可视化：塔弹随 heat（0..1，穿透弹的升温层数）变"热"——尺寸增大、颜色向
+        // 橙白偏、拖尾更亮、外加一层热晕、白芯更粗（参照闪电杖 charge 的做法）。heat=0 与原塔弹一致。
         const isTower = gsz >= 16;
+        const heat = isTower ? Math.max(0, Math.min(1, p.heat || 0)) : 0;
+        const hsz = gsz * (1 + heat * 0.55);
+        let dcol = col;
+        if (heat > 0.01) {
+          this._heatCol = this._heatCol || new THREE.Color();
+          dcol = this._heatCol.copy(col).lerp(HEAT_HOT, heat * 0.75);
+        }
         if (isTower) {
           const dx = x - p.startX, dy2 = y - p.startY;
           const d = Math.hypot(dx, dy2);
           if (d > 1) {
             const ux = dx / d, uy2 = dy2 / d;
-            for (let k = 1; k <= 4; k++) {          // 沿来向铺 4 片递减的残影
-              const back = k * gsz * 0.42;
+            for (let k = 1; k <= 4; k++) {          // 沿来向铺 4 片递减的残影（升温更亮）
+              const back = k * hsz * 0.42;
               Q.sprite3(x - ux * back, by, y - uy2 * back,
-                        gsz * (1 - k * 0.17), col, 0.5 - k * 0.1, V.ux, V.uy, V.uz);
+                        hsz * (1 - k * 0.17), dcol, (0.5 - k * 0.1) * (1 + heat * 0.6), V.ux, V.uy, V.uz);
             }
           }
+          if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.7 + heat * 0.8), dcol, 0.10 + heat * 0.16, V.ux, V.uy, V.uz); // 热晕
         }
-        Q.sprite3(x, by, y, gsz, col, 1, V.ux, V.uy, V.uz);          // 光晕
-        Q.sprite3(x, by, y, gsz * 0.4, col, 1, V.ux, V.uy, V.uz);    // 核心
-        if (isTower) Q.sprite3(x, by, y, gsz * 0.18, rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz);  // 白亮弹芯
+        Q.sprite3(x, by, y, hsz, dcol, 1, V.ux, V.uy, V.uz);          // 光晕
+        Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz);    // 核心
+        if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.14), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz);  // 白亮弹芯（升温更粗）
       }
     }
 

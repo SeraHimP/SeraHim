@@ -348,6 +348,7 @@ export class CombatSystem {
     // ---- 武器 onBeforeAttack 钩子：可返回 { preDamageMult, skipProjectile } ----
     // 用于狙击型（按距离调整伤害）、无弹道武器等特殊逻辑。
     let preDamageMult = 1;
+    let pierceHeat = 0;   // #10：穿透弹升温强度（0..1），仅作渲染提示挂到子弹上，不进伤害
 
     // v36（Q1）：穿透型升温倍率——【开火时刻】按"塔→当前目标"的已积层数结算。
     // 第1下打某目标 = 100%（0层），第2下 = 130%（1层）… 每层 +30%。切目标/目标变化时重置。
@@ -361,6 +362,7 @@ export class CombatSystem {
       }
       const per = weaponDef.HEAT_PER_STACK ?? 0.30;
       preDamageMult *= 1 + (st.heatStacks || 0) * per;
+      pierceHeat = Math.min(1, (st.heatStacks || 0) / (weaponDef.HEAT_MAX_STACKS || 4));
     }
 
     if (weaponDef && weaponDef.onBeforeAttack) {
@@ -415,6 +417,7 @@ export class CombatSystem {
         speed: atkStats.bulletSpeed || DEFAULT_BULLET_SPEED,
         color: bulletColor,
         size: attacker.type === 'tower' ? 20 : 12, // 渲染尺寸：小兵/巨龙弹丸比塔弹小一号
+        heat: pierceHeat,                           // #10：升温可视化（0..1），渲染层据此变热
         pendingHit: hitInfo,
       });
     } else {
