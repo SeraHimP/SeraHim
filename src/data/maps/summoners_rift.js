@@ -1,0 +1,183 @@
+import { FACTIONS } from '../../systems/FactionSystem.js';
+
+/**
+ * summoners_rift.js
+ * 召唤师峡谷复刻（上/中/下三路，野区暂缺）。
+ *
+ * ==================== 坐标来源与定标 ====================
+ * 不再用几何规则凭空生成——直接采用真实 LoL 地图（14800×14800 游戏内坐标系）的
+ * 防御塔/水晶/枢纽坐标，按 SCALE = 180/750 = 0.24 缩放（塔射程 180 : 真实塔射程 750
+ * 严格等比），y 轴翻转适配画布坐标系（LoL 原点在左下、画布 y 向下）。
+ * 世界尺寸 WORLD = 14800 × 0.24 = 3552。
+ *
+ * 红方全部坐标 = 蓝方坐标绕地图中心 180° 旋转（真实峡谷即中心对称，非镜像对称），
+ * 旋转后上下路互换（蓝方下路旋转过去就是红方上路）。
+ *
+ * ==================== 兵线路径设计（直线版）====================
+ * 索敌重构（仇恨半径 200、允许脱轨追击）后路径只是行军参考线，不再需要
+ * 逐建筑压线。因此改为简洁直线：中路 = 纯对角线（4 点）；上/下路 = 直线主体 +
+ * 左上/右下角 520 半径圆弧倒角（13 点）。竖直/水平段位置按己方四塔坐标拟合
+ * （x≈290 / y≈300）。脚本验证：全部建筑到所属路径 ≤117px（索敌半径 200 内，
+ * 塔射程 180 也覆盖路过兵线），枢纽双塔仍在上/下路径上。
+ * 例外：枢纽双塔只在上/下路的末段路径上（各守一座），中路从两塔正中间穿过。
+ * （历史注：曾因索敌半径=攻击射程导致中路近战兵打不到枢纽塔；LaneMovementSystem
+ * 重构后索敌半径固定 200、允许脱轨追击，该限制已不存在，建筑也不再必须严格压线。）
+ *
+ * 路点数量与性能无关：LaneMovementSystem 每帧每个小兵只检查当前一个路点，O(1)。
+ *
+ * ==================== 验证记录（脚本自动核对）====================
+ * - 全部路点在 [0, 3552] 界内；相邻路点最小间距 134px（远大于 4px 的到达判定阈值）。
+ * - 全部 24 座分路建筑到所属路径的偏差 < 1px。
+ * - 4 座枢纽塔到最近路径距离 = 0px（在射程 180 内）。
+ * - 下路 = rot(上路) 逐点核对通过（中心对称）。
+ */
+
+export const WORLD_SIZE = 3552;
+
+export const summoners_rift = {
+  id: 'summoners_rift_v1',
+  label: '召唤师峡谷',
+  world: { w: WORLD_SIZE, h: WORLD_SIZE },
+
+  // === Building tier stats (classic defaults, self-contained) ===
+  tierStats: {
+    outer:      { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 40, magicResist: 40, attackDamage: 152, baseAttackSpeed: 0.833 },
+    inner:      { maxHP: 3500, shieldFixedMax: 0, healthRegen: 0, armor: 55, magicResist: 55, attackDamage: 170, baseAttackSpeed: 0.833 },
+    base:       { maxHP: 3300, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 3.08 },
+    nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
+    hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 150, baseAttackSpeed: 4.00 },
+    nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
+  },
+
+  // === Wave timing (classic defaults) ===
+  waveInterval: 30,
+  firstWaveDelay: 30,
+  spawnGap: 0.55,
+
+  // === System rules ===
+  nexusRespawnTime: 300,
+
+  // v34/v35（Q4）：地图墙壁（走廊模型，参照 LoL 小地图）。
+  // 可行走区域 = 三路走廊（兵线折线 ± corridorHalfWidth）∪ 双方基地高地区（基地圈）。
+  // 半宽 95 → 130（v35 用户定稿）：LoL 路面约占图宽 6.4%，旧 190/3552=5.3% 偏窄且硬墙缘
+  // 无草地过渡视觉更细；260/3552≈7.3% 对齐。塔射程 180 仍 > 半宽 → 高地口卡位保留。
+  walls: { corridorHalfWidth: 130 },
+
+  // v34（Q1）：基地圈半径改为显式声明的固定值（原为"由高地建筑位置反推"——
+  // 但高地塔现在要按"距入口180px"摆放，位置依赖圈、圈又依赖位置，形成循环。
+  // 定死半径后：入口位置固定，高地塔=入口沿走廊内推180，射程外沿恰好卡在入口）。
+  // 数值取切换前的计算值（1274.7 取整），视觉零变化。
+  baseCircleRadius: 1185, // v39（Q1）：基地光环圈半径改为与高地地形半径(baseOpenRadius)一致——所见即所得（视觉+光环效果同步）
+  // v36（Q6）：入口收束段（entrance funnel）——旧实现里 baseCircleRadius 圆内一律
+  // 全开放（无墙），导致高地塔（距入口180，仍在圆内 1100+ 处）周围完全没有可见墙壁，
+  // 射程圈只能在入口那一个切点"擦"到走廊墙，看不出"贴墙"的封锁感（用户画图指出的问题）。
+  // 现在圆内再分两层：baseOpenRadius 以内才是完全开放的老家（水晶/枢纽正常自由走动），
+  // baseOpenRadius ~ baseCircleRadius 这一圈保持【走廊宽度】（可行走区仍是 hw 内），
+  // 视觉上画出真实的两侧墙壁——高地塔（距入口180，落在此收束段内）射程圈因此会
+  // 实际穿过两侧墙壁，形成入口被封锁的观感。半径按"塔在收束段内、水晶在开放区内"
+  // 各留约 50px 余量选取（塔径向距角 1102，水晶 997 → 取 1050）。
+  // v38（用户第三次修正，方向定稿）：960→1230。
+  // v37 做反了：把 openRadius 缩到 960 等于用墙夹着高地塔、把塔关进走廊里。
+  // 正确语义（对齐 LoL 召唤师峡谷 + 用户原话"高地塔应该在高地范围里"）：
+  //   高地 = 一整片开放区，三路走廊在高地边缘开口，高地塔站在开口【内侧】的高地上，
+  //   射程覆盖整个开口 → "封锁入口"。
+  // 取值依据：用户认可的"光环圈"= baseCircleRadius = 1275（渲染层半透明扇形填充与
+  //   基地光环共用同一半径），墙以它为准"略微往里缩"→ 1275-45 = 1230。
+  // 自洽：塔距角 1103 < 1230（塔在高地内 ✔）；1230 < 1103+180=1283（墙开口落在塔射程圈内，
+  //   射程盖住入口约 53px ✔）。红蓝共用同一参数，四路天然对称。
+  // v38.1（用户第四次修正）：1230→1185。用户圈出上/下路"外侧墙角"仍在塔射程圈外。
+  // 定量根因：上/下路走廊【不是径向】的（走廊方向与"角点→塔"方向有夹角），高地圆斜切走廊，
+  // 两侧墙角到塔的距离差很大：R=1230 时 上路 159/206、中路 183/181、下路 207/157——
+  // 六个墙角有四个超出射程 180 → 入口两侧留缺口。R=1185 时六角为 137/173/155/154/175/137，
+  // 全部落进射程并留几 px 交叠 → 三路入口两侧墙角都被射程"咬住"。塔位置未动。
+  baseOpenRadius: 1185,
+
+  // 兵线路点（Q1 拉直）：枢纽端原有贴着枢纽塔的中转点导致参考线/行军在枢纽处折一下，
+  // 已删除，枢纽 → 主线为纯直线（中路即枢纽对枢纽两点直线）。
+  lanes: [
+    {
+      id: 'top',
+      waypoints: [
+        { x: 305, y: 3226 },
+        { x: 290, y: 1120 },
+        { x: 290, y: 820 },
+        { x: 308, y: 685 },
+        { x: 360, y: 560 },
+        { x: 442, y: 452 },
+        { x: 550, y: 370 },
+        { x: 675, y: 318 },
+        { x: 810, y: 300 },
+        { x: 1110, y: 300 },
+        { x: 3226, y: 305 },
+      ],
+    },
+    {
+      id: 'mid',
+      waypoints: [
+        { x: 305, y: 3226 },
+        { x: 3226, y: 305 },
+      ],
+    },
+    {
+      id: 'bot',
+      waypoints: [
+        { x: 305, y: 3226 },
+        { x: 2442, y: 3252 },
+        { x: 2742, y: 3252 },
+        { x: 2877, y: 3234 },
+        { x: 3002, y: 3182 },
+        { x: 3110, y: 3100 },
+        { x: 3192, y: 2992 },
+        { x: 3244, y: 2867 },
+        { x: 3262, y: 2732 },
+        { x: 3262, y: 2432 },
+        { x: 3226, y: 305 },
+      ],
+    },
+  ],
+
+  buildings: [
+    // ========== 蓝方（左下基地） ==========
+    { faction: FACTIONS.BLUE, tier: 'outer',      laneId: 'top', pos: { x: 235, y: 1046 }, weapon: 'piercing' },
+    { faction: FACTIONS.BLUE, tier: 'inner',      laneId: 'top', pos: { x: 363, y: 1944 }, weapon: 'piercing' },
+    { faction: FACTIONS.BLUE, tier: 'base',       laneId: 'top', pos: { x: 300, y: 2492 }, weapon: 'lightning' },  // v34 Q1：距高地入口精确180（射程外沿=入口）
+    { faction: FACTIONS.BLUE, tier: 'nexus_lane', laneId: 'top', pos: { x: 301, y: 2602 }, weapon: null },  // 距水晶塔 110（贴其后方）
+
+    { faction: FACTIONS.BLUE, tier: 'outer',      laneId: 'mid', pos: { x: 1403, y: 2017 }, weapon: 'piercing' },
+    { faction: FACTIONS.BLUE, tier: 'inner',      laneId: 'mid', pos: { x: 1212, y: 2397 }, weapon: 'piercing' },
+    { faction: FACTIONS.BLUE, tier: 'base',       laneId: 'mid', pos: { x: 764, y: 2767 }, weapon: 'lightning' },  // v34 Q1：距高地入口精确180
+    { faction: FACTIONS.BLUE, tier: 'nexus_lane', laneId: 'mid', pos: { x: 686, y: 2845 }, weapon: null },  // 距水晶塔 110
+
+    { faction: FACTIONS.BLUE, tier: 'outer',      laneId: 'bot', pos: { x: 2521, y: 3305 }, weapon: 'piercing' },
+    { faction: FACTIONS.BLUE, tier: 'inner',      laneId: 'bot', pos: { x: 1661, y: 3196 }, weapon: 'piercing' },
+    { faction: FACTIONS.BLUE, tier: 'base',       laneId: 'bot', pos: { x: 1056, y: 3235 }, weapon: 'lightning' },  // v34 Q1：距高地入口精确180
+    { faction: FACTIONS.BLUE, tier: 'nexus_lane', laneId: 'bot', pos: { x: 946, y: 3234 }, weapon: null },  // 距水晶塔 110
+
+    // 枢纽双塔 + 水晶枢纽
+    { faction: FACTIONS.BLUE, tier: 'hq_tower',   laneId: null,  pos: { x: 349, y: 3107 }, weapon: 'lightning' },  // v34 Q1：×0.82收角（用户：往里调一些）
+    { faction: FACTIONS.BLUE, tier: 'hq_tower',   laneId: null,  pos: { x: 427, y: 3191 }, weapon: 'lightning' },  // 双塔间距≈115 < 射程180（贴打一塔另一塔够得着）
+    { faction: FACTIONS.BLUE, tier: 'nexus_main', laneId: null,  pos: { x: 305, y: 3226 }, weapon: null },  // v34 Q1：收角
+
+    // ========== 红方（右上基地，蓝方坐标 180° 旋转） ==========
+    { faction: FACTIONS.RED, tier: 'outer',      laneId: 'top', pos: { x: 1031, y: 247 }, weapon: 'piercing' },
+    { faction: FACTIONS.RED, tier: 'inner',      laneId: 'top', pos: { x: 1891, y: 356 }, weapon: 'piercing' },
+    { faction: FACTIONS.RED, tier: 'base',       laneId: 'top', pos: { x: 2492, y: 300 }, weapon: 'lightning' },  // v34 Q1：蓝方转置
+    { faction: FACTIONS.RED, tier: 'nexus_lane', laneId: 'top', pos: { x: 2602, y: 301 }, weapon: null },  // 距水晶塔 110（贴其后方）
+
+    { faction: FACTIONS.RED, tier: 'outer',      laneId: 'mid', pos: { x: 2149, y: 1535 }, weapon: 'piercing' },
+    { faction: FACTIONS.RED, tier: 'inner',      laneId: 'mid', pos: { x: 2340, y: 1155 }, weapon: 'piercing' },
+    { faction: FACTIONS.RED, tier: 'base',       laneId: 'mid', pos: { x: 2767, y: 764 }, weapon: 'lightning' },
+    { faction: FACTIONS.RED, tier: 'nexus_lane', laneId: 'mid', pos: { x: 2845, y: 686 }, weapon: null },  // 距水晶塔 110
+
+    { faction: FACTIONS.RED, tier: 'outer',      laneId: 'bot', pos: { x: 3317, y: 2506 }, weapon: 'piercing' },
+    { faction: FACTIONS.RED, tier: 'inner',      laneId: 'bot', pos: { x: 3189, y: 1608 }, weapon: 'piercing' },
+    { faction: FACTIONS.RED, tier: 'base',       laneId: 'bot', pos: { x: 3235, y: 1056 }, weapon: 'lightning' },
+    { faction: FACTIONS.RED, tier: 'nexus_lane', laneId: 'bot', pos: { x: 3234, y: 946 }, weapon: null },  // 距水晶塔 110
+
+    // 枢纽双塔 + 水晶枢纽
+    { faction: FACTIONS.RED, tier: 'hq_tower',   laneId: null,  pos: { x: 3107, y: 349 }, weapon: 'lightning' },  // v34 Q1：×0.82收角
+    { faction: FACTIONS.RED, tier: 'hq_tower',   laneId: null,  pos: { x: 3191, y: 427 }, weapon: 'lightning' },
+    { faction: FACTIONS.RED, tier: 'nexus_main', laneId: null,  pos: { x: 3226, y: 305 }, weapon: null },  // v34 Q1：收角
+
+  ],
+};

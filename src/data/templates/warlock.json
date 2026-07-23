@@ -1,0 +1,21 @@
+{
+  "type": "warlock",
+  "label": "Warlock Minion",
+  "isLargeMinion": true,
+  "isMonster": false,
+  "maxHP": 520,
+  "healthRegen": 1,
+  "moveSpeed": 78,
+  "attackRange": 170,
+  "attackDamage": 14,
+  "baseAttackSpeed": 0.7,
+  "bonusAttackSpeedPct": 0,
+  "attackSpeedRatio": 0.667,
+  "magicPenFlat": 20,
+  "armor": 25,
+  "magicResist": 25,
+  "shieldFixedMax": 0,
+  "shieldRegenRate": 5,
+  "attackType": "magic",
+  "bulletSpeed": 320
+}

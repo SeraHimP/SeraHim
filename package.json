@@ -1,0 +1,9 @@
+{
+  "name": "rift-td",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "浏览器塔防（召唤师峡谷复刻）。npm test 跑全部仿真验收——任何数值/系统改动后必须全绿再交付。",
+  "scripts": {
+    "test": "node tests/run_all.mjs"
+  }
+}

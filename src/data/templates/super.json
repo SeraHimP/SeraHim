@@ -1,0 +1,20 @@
+{
+  "type": "super",
+  "label": "Super Minion",
+  "isLargeMinion": true,
+  "isMonster": false,
+  "maxHP": 980,
+  "healthRegen": 1,
+  "moveSpeed": 40,
+  "attackRange": 20,
+  "attackDamage": 32,
+  "baseAttackSpeed": 0.9,
+  "bonusAttackSpeedPct": 0,
+  "attackSpeedRatio": 0.667,
+  "armor": 60,
+  "magicResist": -30,
+  "shieldFixedMax": 0,
+  "shieldRegenRate": 5,
+  "attackType": "physical",
+  "bulletSpeed": 0
+}

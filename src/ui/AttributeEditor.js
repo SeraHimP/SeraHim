@@ -1,0 +1,1404 @@
+﻿import { CONFIG } from '../data/Config.js';
+import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
+
+// 属性字段元数据：中文标签 + 滑块范围 + 步长（供动态滑块条使用）
+const FIELD_META = {
+  maxHP:              { label: '最大生命', min: 0, max: 20000, step: 50 },
+  currentHP:          { label: '当前生命', min: 0, max: 20000, step: 50 },
+  healthRegen:        { label: '生命回复/秒', min: 0, max: 200, step: 1 },
+  baseHealthRegenMod: { label: '生命回复系数', min: 0, max: 5, step: 0.1 },
+  attackDamage:       { label: '攻击力', min: 0, max: 2000, step: 5 },
+  baseAttackSpeed:    { label: '基础攻速', min: 0.1, max: 5, step: 0.05 },
+  bonusAttackSpeedPct:{ label: '攻速加成%', min: -100, max: 500, step: 5 },
+  attackSpeedRatio:   { label: '攻速系数', min: 0, max: 2, step: 0.05 },
+  attackRange:        { label: '攻击距离', min: 0, max: 800, step: 10 },
+  bulletSpeed:        { label: '子弹速度', min: 0, max: 1200, step: 20 },
+  armor:              { label: '护甲', min: -100, max: 500, step: 5 },
+  magicResist:        { label: '魔抗', min: -100, max: 500, step: 5 },
+  damageReduction:    { label: '伤害减免%', min: 0, max: 100, step: 1 },
+  damageBlock:        { label: '格挡值', min: 0, max: 500, step: 5 },
+  shieldFixedMax:     { label: '固定护盾上限', min: 0, max: 5000, step: 50 },
+  shieldRegenRate:    { label: '护盾回复速率', min: 0, max: 100, step: 1 },
+  tempShieldDecayPct: { label: '临时护盾衰减%', min: 0, max: 100, step: 1 },
+  armorPenFlat:       { label: '固定护甲穿透', min: 0, max: 500, step: 5 },
+  armorPenPercent:    { label: '百分比护甲穿透%', min: 0, max: 100, step: 1 },
+  magicPenFlat:       { label: '固定法术穿透', min: 0, max: 500, step: 5 },
+  magicPenPercent:    { label: '百分比法术穿透%', min: 0, max: 100, step: 1 },
+  onHitDamage:        { label: '攻击特效固定伤害', min: 0, max: 1000, step: 5 },
+  onHitPercentDamage: { label: '攻击特效%当前生命', min: 0, max: 50, step: 0.5 },
+  damageConvertPct:   { label: '伤害转化%', min: 0, max: 100, step: 1 },
+  lifeStealPct:       { label: '生命偷取%', min: 0, max: 100, step: 1 },
+  healShieldPowerPct: { label: '治疗护盾强度%', min: -100, max: 200, step: 5 },
+  allStatsPct:        { label: '全属性加成%', min: -100, max: 300, step: 5 },
+  damageAmpPct:       { label: '伤害增幅%', min: -100, max: 300, step: 5 },
+  moveSpeed:          { label: '移动速度', min: 0, max: 300, step: 5 },
+};
+const fieldLabel = (k) => FIELD_META[k]?.label || k;
+
+export const AttributeEditor = {
+  // ==================== 实体编辑器 ====================
+  openEntityEditor(entityId, entityContainer, effectRegistry, attrCalc, logFn) {
+    const entity = entityContainer.get(entityId);
+    if (!entity) { logFn('❌ 实体不存在', 'death'); return; }
+    const isTower = entity.type === 'tower';
+    const title = isTower ? `塔 #${entity.id}` : `${CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = `
+      <div class="modal-box" style="max-width:640px;">
+        <div class="editor-container">
+          <h4>✏️ 编辑 ${title}</h4>
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;border-bottom:1px solid #2d3540;padding-bottom:8px;">
+            <button class="editor-tab active" data-tab="attr">属性</button>
+            ${isTower ? `<button class="editor-tab" data-tab="weapon">武器</button>` : ''}
+            <button class="editor-tab" data-tab="skill">被动技能</button>
+            <button class="editor-tab" data-tab="effect">状态</button>
+            ${isTower ? `<button class="editor-tab" data-tab="soul">🐉 龙魂</button>` : ''}
+          </div>
+          <div id="editorContent">
+            ${this._renderAttrContent(entity)}
+          </div>
+          <div class="editor-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #2d3540;padding-top:12px;">
+            <button id="editorApplyBtn" class="primary">应用</button>
+            <button id="editorResetBtn" class="danger">重置为模板默认</button>
+            <button id="editorCloseBtn">关闭</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay._entity = entity;
+    overlay._logFn = logFn;
+    overlay._entityContainer = entityContainer;
+    overlay._effectRegistry = effectRegistry;
+    overlay._attrCalc = attrCalc;
+
+  // ============================================================
+  //  SECTION 4: Event bindings + apply helpers (shared)
+  // ============================================================
+
+    this._bindEditorEvents(overlay);
+  },
+
+  // ==================== 模板编辑器 ====================
+  // ==================== 模板编辑器（顶部横排按钮 tab，风格与实体编辑器统一） ====================
+  // 布局：一级 tab（防御塔/小兵/巨龙）+ 二级 tab（仅小兵展开7个具体类型）+ 三级 tab（属性/武器/被动/状态/龙魂/生成规则），
+  // 全部以顶部横排按钮堆叠显示，不使用卡片网格跳转。
+  openTemplateEditorRoot(logFn, returnCallback) {
+    this._tplState = { category: this._TPL_CATEGORIES[0].key, type: 'tower' };
+  // ============================================================
+  //  SECTION 2: Template Editor ? defaults for new units
+  // ============================================================
+
+    this._renderTemplateEditor(logFn, returnCallback);
+  },
+
+  openTemplateEditor(type, logFn, returnCallback) {
+    // 兼容旧调用（直接指定具体类型，如 'tower' 或某个小兵类型）
+    const category = this._categoryOfType(type);
+    this._tplState = { category, type: category === 'minion' ? type : type };
+    this._renderTemplateEditor(logFn, returnCallback);
+  },
+
+  _categoryOfType(type) {
+    if (type === 'tower') return 'tower';
+    if (type === 'dragon') return 'dragon';
+    return 'minion';
+  },
+
+  _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', dragon: '巨龙' },
+ _TPL_ICONS: { melee: '🗡️', ranged: '🏹', siege: '💣', super: '🦾', totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️' },
+  _TPL_MINION_TYPES: ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram'],
+  _TPL_CATEGORIES: [
+    { key: 'tower', label: '🏰 防御塔' },
+    { key: 'minion', label: '⚔️ 小兵' },
+    { key: 'dragon', label: '🐉 巨龙' },
+  ],
+
+  // ==================== 阵营作用域（对战模式：改一方不影响另一方） ====================
+  // 数据模型：CONFIG.templates[type] 为共享基础；CONFIG.factionOverrides[faction][type]
+  // 只存"与基础不同的字段"。作用域=共享时读写基础（旧行为）；作用域=蓝/红时读合并值、
+  // 保存时把与基础不同的字段写入覆写层、与基础相同的字段自动从覆写层清除。
+  // 仅"属性"tab 参与阵营覆写（技能/武器/状态等 tab 保持双方共享）。
+  _factionScope: 'shared',
+
+  _scopedTpl(type) {
+    const base = CONFIG.templates[type];
+    if (this._factionScope === 'shared' || !base) return base;
+    const ovr = CONFIG.factionOverrides?.[this._factionScope]?.[type] || {};
+    return { ...base, ...ovr };
+  },
+
+  _scopeHint() {
+    if (this._factionScope === 'shared') return '修改将影响所有新生成的该类型单位（双方共享基础值）';
+    const label = this._factionScope === 'blue' ? '🔵蓝方' : '🔴红方';
+    return `当前编辑【仅${label}】：保存时与共享基础不同的字段写入该阵营覆写层，另一方完全不受影响`;
+  },
+
+  _renderFactionScopeBar() {
+    const f = this._factionScope;
+    const btn = (k, txt) => `<button class="editor-tab ${f === k ? 'active' : ''}" data-tplscope="${k}">${txt}</button>`;
+    return `<div class="editor-tabs" style="margin-top:6px;">
+      ${btn('shared', '⚖️ 共享（双方）')}${btn('blue', '🔵 仅蓝方')}${btn('red', '🔴 仅红方')}
+      ${f !== 'shared' ? `<button class="editor-tab" data-tplscope-clear="1">🧹 清除该阵营覆写</button>` : ''}
+    </div>`;
+  },
+
+  _renderTemplateEditor(logFn, returnCallback) {
+    let overlay = document.getElementById('templateEditorOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'templateEditorOverlay';
+    overlay.className = 'modal-overlay open';
+    const st = this._tplState;
+    const category = st.category;
+    const type = category === 'minion' ? (st.type || 'melee') : category; // tower/dragon 类别本身就是类型
+
+    const tpl = CONFIG.templates[type];
+    const isTower = type === 'tower';
+    const isDragon = type === 'dragon';
+    const isMinion = !isTower && !isDragon;
+
+    let detailHtml = '';
+    if (tpl) {
+      detailHtml = `
+        <div class="editor-tabs">
+          <button class="editor-tab active" data-tpltab="attr">属性</button>
+          ${isTower ? `<button class="editor-tab" data-tpltab="weapon">武器</button>` : ''}
+          <button class="editor-tab" data-tpltab="skill">被动技能</button>
+          <button class="editor-tab" data-tpltab="effect">状态</button>
+          ${isTower ? `<button class="editor-tab" data-tpltab="soul">🐉 龙魂</button>` : ''}
+          ${isTower ? `<button class="editor-tab" data-tpltab="bsize">建筑体积</button>` : ''}
+          ${isMinion ? `<button class="editor-tab" data-tpltab="spawnrule">生成规则</button>` : ''}
+        </div>
+        ${isMinion ? this._renderFactionScopeBar() : ''}
+        <p style="color:#8b949e;font-size:11px;margin:8px 0;" id="tplScopeHint">${this._scopeHint()}</p>
+        <div id="templateContent">${this._renderAttrContent(this._scopedTpl(type), true)}</div>
+      `;
+    } else {
+      detailHtml = `<div style="color:#8b949e;font-size:12px;padding:12px;">巨龙暂无可编辑的固定模板（属性由波次/元素动态计算）。</div>`;
+    }
+
+    overlay.innerHTML = `
+      <div class="modal-box" style="max-width:640px;">
+        <div class="editor-container">
+          <h4>📐 模板编辑器</h4>
+          <div class="editor-tabs">
+            ${this._TPL_CATEGORIES.map(c => `<button class="editor-tab ${c.key === category ? 'active' : ''}" data-tplcat="${c.key}">${c.label}</button>`).join('')}
+          </div>
+          ${category === 'minion' ? `
+            <div class="editor-tabs" style="margin-top:8px;">
+              ${this._TPL_MINION_TYPES.map(t => `<button class="editor-tab ${t === type ? 'active' : ''}" data-tpltype="${t}">${this._TPL_ICONS[t]} ${this._TPL_LABELS[t]}</button>`).join('')}
+            </div>
+          ` : ''}
+          <div style="margin-top:12px;">${detailHtml}</div>
+          <div class="editor-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #2d3540;padding-top:12px;">
+            ${tpl ? `<button id="templateApplyBtn" class="primary">应用</button>` : ''}
+            <button id="templateCloseBtn">关闭</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // 一级：大类切换
+    overlay.querySelectorAll('[data-tplcat]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.tplcat;
+        this._tplState = { category: key, type: key === 'minion' ? 'melee' : key };
+        this._renderTemplateEditor(logFn, returnCallback);
+      });
+    });
+    // 二级：小兵具体类型切换
+    overlay.querySelectorAll('[data-tpltype]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this._tplState = { category: 'minion', type: btn.dataset.tpltype };
+        this._renderTemplateEditor(logFn, returnCallback);
+      });
+    });
+
+    if (tpl) this._bindTemplateDetailTabs(overlay, type, logFn, returnCallback);
+
+    const closeAndReturn = () => {
+      overlay.remove();
+      if (returnCallback) returnCallback();
+    };
+    document.getElementById('templateCloseBtn').addEventListener('click', closeAndReturn);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndReturn(); });
+  },
+
+  // ==================== 建筑体积（对战模式各档建筑的渲染半径）====================
+  // LoL 中水晶枢纽/防御塔/召唤水晶体积不同，这里按 tier 提供可调半径。
+  // 写入 CONFIG.buildingSizes；渲染器的塔精灵缓存 key 含尺寸，改动后新尺寸精灵
+  // 会惰性重新烘焙，无需手动清缓存，画面即时生效。
+  _BSIZE_TIERS: [
+    ['outer', '外塔'], ['inner', '内塔'], ['base', '高地塔'],
+    ['hq_tower', '枢纽塔'], ['nexus_lane', '召唤水晶'], ['nexus_main', '水晶枢纽'],
+    ['default', '沙盒塔（默认）'],
+  ],
+
+  _renderBuildingSizeContent() {
+    const sizes = CONFIG.buildingSizes || {};
+    return `
+      <p style="color:#8b949e;font-size:11px;margin:4px 0 10px;">对战模式各档建筑在画布上的渲染半径（px）。仅影响显示与血条位置，不影响攻击范围/碰撞。</p>
+      ${this._BSIZE_TIERS.map(([k, label]) => `
+        <div class="editor-field" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <label style="width:130px;">${label}</label>
+          <input type="number" min="8" max="80" step="1" data-bsize="${k}" value="${sizes[k] ?? 28}" style="width:80px;">
+        </div>
+      `).join('')}
+    `;
+  },
+
+  _applyBuildingSizeChanges(overlay, logFn) {
+    CONFIG.buildingSizes = CONFIG.buildingSizes || {};
+    let changed = 0;
+    overlay.querySelectorAll('[data-bsize]').forEach(input => {
+      const k = input.dataset.bsize;
+      const v = Math.max(8, Math.min(80, parseFloat(input.value) || 28));
+      if (CONFIG.buildingSizes[k] !== v) { CONFIG.buildingSizes[k] = v; changed++; }
+    });
+    if (logFn) logFn(`📐 建筑体积已更新（${changed} 项修改）`, 'spawn');
+  },
+
+  _bindTemplateDetailTabs(overlay, type, logFn, returnCallback) {
+    const tpl = CONFIG.templates[type];
+    this._bindAttrEvents(overlay, tpl, logFn, true);
+
+    overlay.querySelectorAll('.editor-tab[data-tpltab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        overlay.querySelectorAll('.editor-tab[data-tpltab]').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const tabName = tab.dataset.tpltab;
+        const content = overlay.querySelector('#templateContent');
+        if (tabName === 'weapon') {
+          content.innerHTML = this._renderTemplateWeaponContent(type);
+          this._bindTemplateWeaponEvents(overlay, type, logFn);
+        } else if (tabName === 'skill') {
+          content.innerHTML = this._renderTemplateSkillContent(type);
+          this._bindTemplateSkillEvents(overlay, type, logFn);
+        } else if (tabName === 'effect') {
+          content.innerHTML = this._renderTemplateEffectContent(type);
+          this._bindTemplateEffectEvents(overlay, type, logFn);
+        } else if (tabName === 'soul') {
+          content.innerHTML = this._renderTemplateSoulContent(type);
+          this._bindTemplateSoulEvents(overlay, type, logFn);
+        } else if (tabName === 'spawnrule') {
+          content.innerHTML = this._renderSpawnRuleContent(type);
+          this._bindSpawnRuleEvents(overlay, type, logFn);
+        } else if (tabName === 'bsize') {
+          content.innerHTML = this._renderBuildingSizeContent();
+        } else {
+          content.innerHTML = this._renderAttrContent(this._scopedTpl(type), true);
+          this._bindAttrEvents(overlay, this._scopedTpl(type), logFn, true);
+        }
+      });
+    });
+
+    overlay.querySelectorAll('[data-tplscope]').forEach(b => b.addEventListener('click', () => {
+      this._factionScope = b.dataset.tplscope;
+      this._renderTemplateEditor(logFn, returnCallback);
+    }));
+    const clearBtn = overlay.querySelector('[data-tplscope-clear]');
+    if (clearBtn) clearBtn.addEventListener('click', () => {
+      const t = category === 'minion' ? (st.type || 'melee') : category;
+      if (CONFIG.factionOverrides?.[this._factionScope]) delete CONFIG.factionOverrides[this._factionScope][t];
+      logFn(`🧹 已清除 ${this._factionScope === 'blue' ? '蓝方' : '红方'} 对 ${t} 的覆写`, 'spawn');
+      this._renderTemplateEditor(logFn, returnCallback);
+    });
+
+    const applyBtn = overlay.querySelector('#templateApplyBtn');
+    if (applyBtn) applyBtn.addEventListener('click', () => {
+      const activeTab = overlay.querySelector('.editor-tab[data-tpltab].active');
+      const tabName = activeTab ? activeTab.dataset.tpltab : 'attr';
+      if (tabName === 'weapon') this._applyTemplateWeaponChanges(overlay, type, logFn);
+      else if (tabName === 'skill') this._applyTemplateSkillChanges(overlay, type, logFn);
+      else if (tabName === 'effect') this._applyTemplateEffectChanges(overlay, type, logFn);
+      else if (tabName === 'soul') logFn('🐉 龙魂默认配置点击即时生效，无需点应用', 'spawn');
+      else if (tabName === 'spawnrule') this._applySpawnRuleChanges(overlay, type, logFn);
+      else if (tabName === 'bsize') this._applyBuildingSizeChanges(overlay, logFn);
+      else this._applyTemplateAttrChanges(overlay, type, logFn);
+      overlay.remove();
+      if (returnCallback) returnCallback();
+    });
+  },
+
+  // 模板"武器"tab：设置该模板新建单位默认装备的武器
+  _renderTemplateWeaponContent(type) {
+    const tpl = CONFIG.templates[type];
+    const current = tpl._templateWeapon || 'piercing'; // v33：默认穿透型
+    const weaponMeta = {
+      none: { label: '无武器', icon: '🚫' }, piercing: { label: '穿透型', icon: '🔷' },
+      lightning: { label: '闪电杖', icon: '⚡' }, explosive: { label: '爆炸型', icon: '💥' },
+      sniper: { label: '狙击型', icon: '🎯' }, corrosion: { label: '腐蚀型', icon: '🌿' },
+    };
+    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的防御塔默认装备该武器</p><div class="pick-grid">`;
+    for (const [key, meta] of Object.entries(weaponMeta)) {
+      const active = key === current;
+      html += `<div class="pick-card ${active ? 'selected' : ''}" data-tplweapon="${key}">
+        <div class="pick-icon">${meta.icon}</div>
+        <div class="pick-label">${meta.label}</div>
+      </div>`;
+    }
+    html += `</div>`;
+    const currentDef = SkillLibrary['weapon_' + current];
+    html += `<div class="pick-desc-box" id="tplWeaponDescBox">${current === 'none' ? '无武器：塔不会攻击。' : (currentDef?.description || currentDef?.descTemplate || '')}</div>`;
+    return html;
+  },
+
+  _bindTemplateWeaponEvents(overlay, type, logFn) {
+    overlay.querySelectorAll('[data-tplweapon]').forEach(el => {
+      el.addEventListener('click', () => {
+        overlay.querySelectorAll('[data-tplweapon]').forEach(e => e.classList.remove('selected'));
+        el.classList.add('selected');
+        const key = el.dataset.tplweapon;
+        const descBox = overlay.querySelector('#tplWeaponDescBox');
+        if (descBox) {
+          const def = SkillLibrary['weapon_' + key];
+          descBox.textContent = key === 'none' ? '无武器：塔不会攻击。' : (def?.description || def?.descTemplate || '');
+        }
+      });
+    });
+  },
+
+  _applyTemplateWeaponChanges(overlay, type, logFn) {
+    const selected = overlay.querySelector('[data-tplweapon].selected');
+    const tpl = CONFIG.templates[type];
+    tpl._templateWeapon = selected ? selected.dataset.tplweapon : 'piercing';
+    logFn(`✅ ${this._TPL_LABELS[type]}默认武器已设为 ${selected?.dataset.tplweapon || 'piercing'}`, 'spawn');
+  },
+
+  // 模板"龙魂"tab：设置该模板（塔）新建单位默认装备的龙魂
+  _renderTemplateSoulContent(type) {
+    const tpl = CONFIG.templates[type];
+    const DRAGON_ELEMENTS = window.__app?.DRAGON_ELEMENTS || {};
+    // 迁移旧的单一 _templateSoul 字段为数组 _templateSouls（支持多选叠加，与实体编辑器一致）
+    if (!Array.isArray(tpl._templateSouls)) {
+      tpl._templateSouls = tpl._templateSoul ? [tpl._templateSoul] : [];
+    }
+    const equipped = new Set(tpl._templateSouls);
+
+    const activeChips = Object.entries(DRAGON_ELEMENTS)
+      .filter(([, el]) => equipped.has(el.soul))
+      .map(([key, el]) => {
+        const def = SkillLibrary[el.soul];
+        return { key, icon: def?.icon || el.icon, label: def?.name || el.label };
+      });
+    const activeHtml = activeChips.length
+      ? activeChips.map(c => `<div class="transfer-chip" data-tplsoul-remove="${c.key}">
+          <span class="chip-icon">${c.icon}</span><span>${c.label}</span><span class="chip-remove">✕</span>
+        </div>`).join('')
+      : `<div class="transfer-active-empty">新生成的${this._TPL_LABELS[type]}默认不装备任何龙魂。点击下方池中的按钮即可默认装备。</div>`;
+
+    const poolHtml = Object.entries(DRAGON_ELEMENTS).map(([key, el]) => {
+      const def = SkillLibrary[el.soul];
+      const active = equipped.has(el.soul);
+      return `<div class="pick-card ${active ? 'selected' : ''}" data-tplsoul="${el.soul}">
+        <div class="pick-icon">${def?.icon || el.icon}</div>
+        <div class="pick-label">${def?.name || el.label}</div>
+      </div>`;
+    }).join('');
+
+    return `
+      <div class="transfer-box">
+        <p style="color:var(--text-dim);font-size:11px;">新生成的${this._TPL_LABELS[type]}将默认装备下方"已生效"框内的龙魂（可多选，不受击杀解锁限制，用于快速配置）</p>
+        <div class="transfer-active-zone">
+          <div class="transfer-active-title">✨ 默认装备（点击移除）</div>
+          <div class="transfer-active-list">${activeHtml}</div>
+        </div>
+        <div class="transfer-pool-section">
+          <div class="transfer-pool-title">🐉 龙魂池（点击设为默认装备，可多选）</div>
+          <div class="pick-grid">${poolHtml}</div>
+        </div>
+        <div class="pick-desc-box" id="tplSoulDescBox">点击某项查看说明。</div>
+      </div>
+    `;
+  },
+
+  _bindTemplateSoulEvents(overlay, type, logFn) {
+    const tpl = CONFIG.templates[type];
+    const rerender = () => {
+      overlay.querySelector('#templateContent').innerHTML = this._renderTemplateSoulContent(type);
+      this._bindTemplateSoulEvents(overlay, type, logFn);
+    };
+    const toggle = (soulId) => {
+      const idx = tpl._templateSouls.indexOf(soulId);
+      if (idx >= 0) {
+        tpl._templateSouls.splice(idx, 1);
+        logFn(`🚫 ${this._TPL_LABELS[type]}默认龙魂已移除：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
+      } else {
+        tpl._templateSouls.push(soulId);
+        logFn(`✅ ${this._TPL_LABELS[type]}默认龙魂已添加：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
+      }
+      rerender();
+    };
+    overlay.querySelectorAll('[data-tplsoul]').forEach(card => {
+      card.addEventListener('click', () => toggle(card.dataset.tplsoul));
+      card.addEventListener('mouseenter', () => {
+        const def = SkillLibrary[card.dataset.tplsoul];
+        const descBox = overlay.querySelector('#tplSoulDescBox');
+        if (descBox) descBox.textContent = renderSkillDescription(def, entity, ctx) || def?.description || '';
+      });
+    });
+    overlay.querySelectorAll('[data-tplsoul-remove]').forEach(chip => {
+      chip.addEventListener('click', () => toggle(chip.dataset.tplsoulRemove));
+    });
+  },
+
+  // ==================== 小兵生成规则 ====================
+  // ============================================================
+  //  SECTION 3: Spawn Rules + Building Size
+  // ============================================================
+
+  _spawnRuleMeta(type) {
+    // 每种小兵对应 CONFIG.gameRules 里控制其生成节奏的字段
+    const map = {
+      melee:   { countKey: 'waveMeleeCount', countLabel: '每波生成数量', countDefault: 3 },
+      ranged:  { countKey: 'waveRangedCount', countLabel: '每波生成数量', countDefault: 3 },
+      siege:   { intervalKey: 'waveSiegeSuperInterval', intervalLabel: '每几波生成一次', intervalDefault: 2,
+                 extraKey: 'waveSuperFromWave', extraLabel: '第几波起改为超级兵', extraDefault: 20 },
+      totem:   { intervalKey: 'waveTotemInterval', intervalLabel: '每几波生成一次（沙盒）', intervalDefault: 5,
+                 battleFromKey: 'battleTotemFromWave', battleFromLabel: '对战模式：第几波起生成', battleFromDefault: 10,
+                 battleIntvKey: 'battleTotemInterval', battleIntvLabel: '对战模式：每几波生成一次', battleIntvDefault: 3 },
+      warlock: { intervalKey: 'waveWarlockInterval', intervalLabel: '每几波生成一次', intervalDefault: 6,
+                 minWaveKey: 'warlockMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 12 },
+      corrupt: { intervalKey: 'waveCorruptInterval', intervalLabel: '每几波生成一次', intervalDefault: 7,
+                minWaveKey: 'corruptMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 15 },
+      ram:     { intervalKey: 'waveRamInterval', intervalLabel: '每几波生成一次', intervalDefault: 15,
+                 minWaveKey: 'ramMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 5 },
+      super:   { intervalKey: 'waveSiegeSuperInterval', intervalLabel: '每几波生成一次（与炮兵共用节奏）', intervalDefault: 2 },
+    };
+    return map[type] || {};
+  },
+
+  _renderSpawnRuleContent(type) {
+    const meta = this._spawnRuleMeta(type);
+    const gr = CONFIG.gameRules;
+    let html = `<div style="padding:4px 0;">`;
+    html += `<div class="pick-desc-box" style="margin-bottom:10px;">ℹ️ 数量/间隔类字段影响【沙盒模式】波次；标注"对战模式"的字段影响对战出兵（v33：图腾兵已接入对战）。兵种开关对两种模式都生效。</div>`;
+    // v33（Q4）：是否生成该兵种（沙盒+对战通用总开关）
+    const enabled = (gr.spawnEnabled || {})[type] !== false;
+    html += `<div class="slider-row"><label>是否生成该兵种</label>
+      <button class="editor-tab ${enabled ? 'active' : ''}" data-spawn-toggle="${type}" style="flex:1;font-size:12px;">
+        ${enabled ? '✅ 生成中（点击停用）' : '⛔ 已停用（点击启用）'}
+      </button>
+    </div>`;
+    if (meta.countKey) {
+      const v = gr[meta.countKey] ?? meta.countDefault;
+      html += `<div class="slider-row"><label>${meta.countLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.countKey}" min="0" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    if (meta.intervalKey) {
+      const v = gr[meta.intervalKey] ?? meta.intervalDefault;
+      html += `<div class="slider-row"><label>${meta.intervalLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.intervalKey}" min="1" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    if (meta.minWaveKey) {
+      const v = gr[meta.minWaveKey] ?? meta.minWaveDefault;
+      html += `<div class="slider-row"><label>${meta.minWaveLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.minWaveKey}" min="0" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    if (meta.extraKey) {
+      const v = gr[meta.extraKey] ?? meta.extraDefault;
+      html += `<div class="slider-row"><label>${meta.extraLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.extraKey}" min="0" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    // v33（Q4）：对战模式专属字段（当前仅图腾兵）
+    if (meta.battleFromKey) {
+      html += `<div class="slider-row"><label>${meta.battleFromLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.battleFromKey}" min="1" step="1" value="${gr[meta.battleFromKey] ?? meta.battleFromDefault}" style="width:90px;">
+      </div>`;
+      html += `<div class="slider-row"><label>${meta.battleIntvLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.battleIntvKey}" min="1" step="1" value="${gr[meta.battleIntvKey] ?? meta.battleIntvDefault}" style="width:90px;">
+      </div>`;
+    }
+    if (!meta.countKey && !meta.intervalKey) {
+      html += `<div style="color:#8b949e;font-size:12px;">该类型暂无可编辑的生成规则。</div>`;
+    }
+    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">修改后立即影响后续波次的生成节奏。</div>`;
+    html += `</div>`;
+    return html;
+  },
+
+  _bindSpawnRuleEvents(overlay, type, logFn) {
+    // v33（Q4）：兵种总开关即点即生效
+    overlay.querySelectorAll('[data-spawn-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.spawnToggle;
+        CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
+        const now = CONFIG.gameRules.spawnEnabled[t] !== false;
+        CONFIG.gameRules.spawnEnabled[t] = !now;
+        btn.classList.toggle('active', !now);
+        btn.textContent = !now ? '✅ 生成中（点击停用）' : '⛔ 已停用（点击启用）';
+        logFn(`⚙️ 「${t}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
+      });
+    });
+  },
+
+  _applySpawnRuleChanges(overlay, type, logFn) {
+    const inputs = overlay.querySelectorAll('.spawnrule-input');
+    let changed = 0;
+    inputs.forEach(inp => {
+      const key = inp.dataset.key;
+      const val = parseFloat(inp.value);
+      if (!isNaN(val) && key) {
+        CONFIG.gameRules[key] = val;
+        changed++;
+      }
+    });
+    logFn(`✅ 「${type}」生成规则已更新（${changed}项）`, 'spawn');
+  },
+
+  // ==================== 渲染方法 ====================
+  // ============================================================
+  //  SECTION 1: Live Entity Editor ? attributes, weapons, passives, effects
+  // ============================================================
+
+  _renderAttrContent(target, isTemplate = false) {
+    // 实体编辑：currentHP 存在 entity 上而非 baseStats，需合并进显示数据源，
+    // 否则"当前生命"会显示 0（此前的 bug）。
+    const data = isTemplate ? { ...target } : { ...target.baseStats, currentHP: target.currentHP };
+    // v33（Q13）：塔实体可编辑【模型大小】（渲染半径，仅显示与血条位置，不影响攻击范围/碰撞）。
+    // 留空 = 沿用该档建筑的全局尺寸（CONFIG.buildingSizes）。
+    const modelSizeRow = (!isTemplate && target.type === 'tower') ? `
+      <div class="editor-field" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;">
+        <label style="width:130px;">📐 模型大小(px)</label>
+        <input type="number" id="editorModelSize" min="8" max="80" step="1"
+          value="${target._modelSize ?? ''}" placeholder="${(CONFIG.buildingSizes || {})[target._mapTier] ?? (CONFIG.buildingSizes || {}).default ?? 28}（默认）"
+          style="width:110px;">
+        <span style="font-size:10px;color:#8b949e;">留空=用该档建筑的全局尺寸</span>
+      </div>` : '';
+    const allKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
+
+    const coreKeys = ['maxHP', 'currentHP', 'healthRegen', 'baseHealthRegenMod'];
+    const attackKeys = ['attackDamage', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio', 'attackRange', 'attackType', 'bulletSpeed'];
+    const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax', 'shieldRegenRate', 'tempShieldDecayPct'];
+    const penKeys = ['armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent'];
+    const effectKeys = ['onHitDamage', 'onHitPercentDamage', 'damageConvertPct', 'lifeStealPct', 'healShieldPowerPct', 'allStatsPct'];
+    const allDefinedKeys = [...coreKeys, ...attackKeys, ...defenseKeys, ...penKeys, ...effectKeys];
+
+    const groups = {
+      '核心': coreKeys,
+      '攻击': attackKeys,
+      '防御': defenseKeys,
+      '穿透': penKeys,
+      '特效': effectKeys,
+      '其他': allKeys.filter(k => !allDefinedKeys.includes(k))
+    };
+
+    let html = `<div class="editor-tabs">`;
+    let firstGroup = true;
+    for (const g of Object.keys(groups)) {
+      if (groups[g].length) {
+        html += `<div class="editor-tab${firstGroup ? ' active' : ''}" data-group="${g}">${g}</div>`;
+        firstGroup = false;
+      }
+    }
+    html += `</div><div class="editor-body">`;
+    for (const [g, keys] of Object.entries(groups)) {
+      if (!keys.length) continue;
+      html += `<div class="editor-group" data-group="${g}" style="display:${g === '核心' ? '' : 'none'};">`;
+      for (const key of keys) {
+        const value = data[key] ?? 0;
+        const label = fieldLabel(key);
+        if (key === 'attackType') {
+          html += `<div class="slider-row"><label title="${key}">${label}</label><select data-key="${key}" data-orig="${value}" class="editor-select">`;
+          for (const opt of [['physical','物理'],['magic','魔法'],['true','真实']]) {
+            html += `<option value="${opt[0]}" ${value === opt[0] ? 'selected' : ''}>${opt[1]}</option>`;
+          }
+          html += `</select></div>`;
+        } else {
+          const meta = FIELD_META[key] || { min: 0, max: Math.max(100, value * 2), step: (key === 'currentHP' ? 1 : 0.1) };
+          html += `<div class="slider-row">
+            <label title="${key}">${label}</label>
+            <div class="slider-wrap">
+              <input type="range" class="editor-slider" data-key="${key}" min="${meta.min}" max="${meta.max}" step="${meta.step}" value="${Math.min(meta.max, Math.max(meta.min, value))}">
+              <input type="number" class="editor-number" data-key="${key}" data-orig="${value}" step="${meta.step}" value="${value}">
+            </div>
+          </div>`;
+        }
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+    return modelSizeRow + html;
+  },
+
+  _renderWeaponContent(entity) {
+    const current = entity._skillInstances?.find(s => s.skillId.startsWith('weapon_'))?.skillId || 'weapon_piercing'; // v33
+    const weaponMeta = {
+      weapon_piercing: { label: '穿透型', icon: '🔷' },
+      weapon_lightning: { label: '闪电杖', icon: '⚡' },
+      weapon_explosive: { label: '爆炸型', icon: '💥' },
+      weapon_sniper: { label: '狙击型', icon: '🎯' },
+      weapon_corrosion: { label: '腐蚀型', icon: '🌿' },
+    };
+    const weaponIds = this._SKILLS_BY_TYPE.tower.weapons;
+    const weapons = [{ id: 'none', label: '无武器', icon: '🚫' }, ...weaponIds.map(id => ({ id, ...weaponMeta[id] }))];
+    let html = `<div class="pick-grid">`;
+    for (const w of weapons) {
+      const isSelected = (w.id === 'none' && (!current || current === 'none')) || w.id === current;
+      html += `<div class="pick-card ${isSelected ? 'selected' : ''}" data-weapon="${w.id}">
+        <div class="pick-icon">${w.icon}</div>
+        <div class="pick-label">${w.label}</div>
+      </div>`;
+    }
+    html += `</div>`;
+    const currentDef = SkillLibrary[current];
+    html += `<div class="pick-desc-box" id="weaponDescBox">${current === 'none' ? '无武器：塔不会攻击。' : (currentDef?.description || currentDef?.descTemplate || '')}</div>`;
+    return html;
+  },
+
+  // 统一的"每类型可用技能"清单——实体编辑器与模板编辑器共用同一份，
+  // 避免此前两处列表各写一份、又漏掉新增类型/新增技能的问题（Q3）。
+  _SKILLS_BY_TYPE: {
+    tower: {
+      weapons: ['weapon_piercing', 'weapon_lightning', 'weapon_explosive', 'weapon_sniper', 'weapon_corrosion'],
+      passives: ['passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating', 'passive_overheat', 'passive_vampire', 'passive_phase'],
+    },
+    melee: { weapons: [], passives: [] },
+    ranged: { weapons: [], passives: [] },
+    siege: { weapons: [], passives: ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'] },
+    super: { weapons: [], passives: ['passive_super_commander'] },
+    totem: { weapons: [], passives: ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura', 'passive_totem_sacrifice'] },
+    warlock: { weapons: [], passives: ['passive_warlock_aura'] },
+    corrupt: { weapons: [], passives: ['passive_corrupt_strike'] },
+    ram:     { weapons: [], passives: ['passive_siege_weapon'] },
+  },
+
+  _renderSkillContent(entity) {
+    // 按单位类型区分被动列表：不同类型有各自专属的被动技能。
+    const allPassives = this._SKILLS_BY_TYPE[entity.type]?.passives || [];
+    const equipped = new Set(entity._skillInstances?.filter(s => allPassives.includes(s.skillId)).map(s => s.skillId) || []);
+
+    if (allPassives.length === 0) {
+      return `<div class="pick-desc-box">该单位类型没有可装备的被动技能。</div>`;
+    }
+
+    let html = `<div class="pick-grid">`;
+    for (const key of allPassives) {
+      const def = SkillLibrary[key];
+      if (!def) continue;
+      const isEquipped = equipped.has(key);
+      html += `<div class="pick-card ${isEquipped ? 'selected' : ''}" data-skill="${key}">
+        <div class="pick-icon">${def.icon || '🔹'}</div>
+        <div class="pick-label">${def.name || key}</div>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<div class="pick-desc-box" id="skillDescBox">点击某个被动查看说明；再次点击可切换装备/卸载。</div>`;
+    return html;
+  },
+
+  _renderEffectContent(entity) {
+    const effs = window.__app?.effectRegistry?.getEffects(entity.id) || [];
+    let html = `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
+    if (effs.length === 0) {
+      html += `<div style="color:#8b949e;font-size:12px;padding:8px;">暂无状态效果</div>`;
+    } else {
+      for (const e of effs) {
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:#0d1013;border-radius:4px;margin-bottom:4px;">
+          <span style="font-size:18px;">${e.blueprint.icon || '🔹'}</span>
+          <span style="flex:1;font-size:12px;">${e.blueprint.name}</span>
+          <span style="font-size:10px;color:#8b949e;">${e.stacks > 1 ? `x${e.stacks}` : ''}</span>
+          <span style="font-size:10px;color:#8b949e;">${e.remainingTime === Infinity ? '永久' : e.remainingTime.toFixed(1) + 's'}</span>
+          <button class="remove-effect-btn" data-effect-id="${e.id}" style="background:#b33a3a;border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:10px;">移除</button>
+        </div>`;
+      }
+    }
+    html += `</div>`;
+    html += `<div style="margin-top:8px;">
+      <button id="addEffectBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加状态</button>
+      <div id="effectPickerBox" style="display:none;margin-top:8px;padding:12px;background:#0d1013;border-radius:4px;"></div>
+    </div>`;
+    return html;
+  },
+
+  // ==================== 龙魂（每塔独立） ====================
+  _renderSoulContent(tower) {
+    const app = window.__app;
+    const DRAGON_ELEMENTS = app?.DRAGON_ELEMENTS || {};
+    const SkillLibrary = app?.SkillLibrary || {};
+    const effReg = app?.effectRegistry;
+
+    // 已装备的龙魂（多个，来自 _skillInstances，不再是单一 _currentSoul）
+    const equippedSouls = new Set((tower._skillInstances || []).filter(s => s.skillId.startsWith('dragonsoul_')).map(s => s.skillId));
+
+    // ---- 已生效效果（穿梭框上方）：元素增益（有层数>0的）+ 已装备的所有龙魂 ----
+    const activeChips = [];
+    for (const [key, el] of Object.entries(DRAGON_ELEMENTS)) {
+      const sampleEff = effReg ? effReg.getEffects(tower.id).find(e => e.sourceId === `dragon_buff_${key}_0`) : null;
+      if (sampleEff && sampleEff.stacks > 0) {
+        activeChips.push({ kind: 'buff', key, icon: el.icon, label: `${el.label}之力（${sampleEff.stacks}层）` });
+      }
+    }
+    for (const [key, el] of Object.entries(DRAGON_ELEMENTS)) {
+      if (equippedSouls.has(el.soul)) {
+        const def = SkillLibrary[el.soul];
+        activeChips.push({ kind: 'soul', key, icon: def?.icon || '🐉', label: def?.name || el.soul });
+      }
+    }
+
+    const activeHtml = activeChips.length
+      ? activeChips.map(c => `<div class="transfer-chip" data-remove-kind="${c.kind}" data-remove-key="${c.key}">
+          <span class="chip-icon">${c.icon}</span><span>${c.label}</span><span class="chip-remove">✕</span>
+        </div>`).join('')
+      : `<div class="transfer-active-empty">尚未生效任何巨龙增益或龙魂。点击下方池中的按钮即可生效。</div>`;
+
+    // ---- 巨龙增益池（下方，全部8种，每次点击 +1 层，可无限叠加，非开关） ----
+    const buffPoolHtml = Object.entries(DRAGON_ELEMENTS).map(([key, el]) => {
+      const sampleEff = effReg ? effReg.getEffects(tower.id).find(e => e.sourceId === `dragon_buff_${key}_0`) : null;
+      const stacks = sampleEff ? sampleEff.stacks : 0;
+      return `<div class="pick-card ${stacks > 0 ? 'has-stacks' : ''}" data-pool-kind="buff" data-pool-key="${key}">
+        <div class="pick-icon">${el.icon}</div>
+        <div class="pick-label">${el.label}之力${stacks > 0 ? `（${stacks}）` : ''}</div>
+      </div>`;
+    }).join('');
+
+    // ---- 龙魂池（下方，全部8种，唯一开关：装备/卸下） ----
+    const soulPoolHtml = Object.entries(DRAGON_ELEMENTS).map(([key, el]) => {
+      const def = SkillLibrary[el.soul];
+      const active = equippedSouls.has(el.soul);
+      return `<div class="pick-card ${active ? 'selected' : ''}" data-pool-kind="soul" data-pool-key="${key}">
+        <div class="pick-icon">${def?.icon || el.icon}</div>
+        <div class="pick-label">${def?.name || el.label}</div>
+      </div>`;
+    }).join('');
+
+    return `
+      <div class="transfer-box">
+        <div class="transfer-active-zone">
+          <div class="transfer-active-title">✨ 已生效效果（点击 -1 层 / 卸下）</div>
+          <div class="transfer-active-list">${activeHtml}</div>
+        </div>
+        <div class="transfer-pool-section">
+          <div class="transfer-pool-title">🔥 巨龙增益池（点击 +1 层，可无限叠加）</div>
+          <div class="pick-grid">${buffPoolHtml}</div>
+        </div>
+        <div class="transfer-pool-section">
+          <div class="transfer-pool-title">🐉 龙魂池（唯一开关，可同时装备多个不同龙魂）</div>
+          <div class="pick-grid">${soulPoolHtml}</div>
+        </div>
+        <div class="pick-desc-box" id="soulDescBox">点击某项查看说明。</div>
+      </div>
+    `;
+  },
+
+  _bindSoulEvents(overlay, tower, logFn) {
+    const app = window.__app;
+    const DRAGON_ELEMENTS = app?.DRAGON_ELEMENTS || {};
+    const SkillLibrary = app?.SkillLibrary || {};
+    const rerender = () => {
+      overlay.querySelector('#editorContent').innerHTML = this._renderSoulContent(tower);
+      this._bindSoulEvents(overlay, tower, logFn);
+    };
+
+    // 减少某元素增益 1 层（层数减到 0 时彻底移除该效果）
+    const decrementBuff = (key, el) => {
+      let stillHasLayers = false;
+      for (let i = 0; i < el.buff.length; i++) {
+        const eff = app.effectRegistry.getEffects(tower.id).find(e => e.sourceId === `dragon_buff_${key}_${i}`);
+        if (!eff) continue;
+        if (eff.stacks > 1) { eff.stacks -= 1; app.effectRegistry._recalcEffectValues(eff); app.effectRegistry._updateDescription(eff); stillHasLayers = true; }
+        else app.effectRegistry.remove(eff.id);
+      }
+      return stillHasLayers;
+    };
+
+    // 点击池中"巨龙增益"按钮：每次点击 +1 层（可无限叠加，不是开关）
+    overlay.querySelectorAll('[data-pool-kind="buff"]').forEach(card => {
+      card.addEventListener('click', () => {
+        const key = card.dataset.poolKey;
+        const el = DRAGON_ELEMENTS[key];
+        if (!el) return;
+        app.dragonSystem._applyElementBuffToTower(tower, key);
+        logFn(`✨ 塔 #${tower.id} ${el.label}之力 +1 层`, 'spawn');
+        rerender();
+      });
+      card.addEventListener('mouseenter', () => {
+        const el = DRAGON_ELEMENTS[card.dataset.poolKey];
+        const descBox = overlay.querySelector('#soulDescBox');
+        if (descBox && el) descBox.textContent = `${el.label}之力：击杀获得的永久元素增益，点击可叠加层数（每层独立生效）。`;
+      });
+    });
+
+    // 点击池中"龙魂"按钮：单层开关（装备/卸下），与增益池不同
+    overlay.querySelectorAll('[data-pool-kind="soul"]').forEach(card => {
+      card.addEventListener('click', () => {
+        const key = card.dataset.poolKey;
+        const el = DRAGON_ELEMENTS[key];
+        if (!el) return;
+        const equipped = app.dragonSystem._toggleSoul(tower, el.soul);
+        logFn(`${equipped ? '✨' : '🚫'} 塔 #${tower.id} ${equipped ? '已装备' : '已卸下'}龙魂：${SkillLibrary[el.soul]?.name || el.soul}`, 'spawn');
+        rerender();
+      });
+      card.addEventListener('mouseenter', () => {
+        const el = DRAGON_ELEMENTS[card.dataset.poolKey];
+        const def = el ? SkillLibrary[el.soul] : null;
+        const descBox = overlay.querySelector('#soulDescBox');
+        if (descBox) descBox.textContent = renderSkillDescription(def, entity, ctx) || def?.description || '';
+      });
+    });
+
+    // 点击上方已生效 chip：增益 -1 层；龙魂直接卸下
+    overlay.querySelectorAll('[data-remove-kind]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const kind = chip.dataset.removeKind;
+        const key = chip.dataset.removeKey;
+        const el = DRAGON_ELEMENTS[key];
+        if (!el) return;
+        if (kind === 'buff') {
+          decrementBuff(key, el);
+          logFn(`🔻 塔 #${tower.id} ${el.label}之力 -1 层`, 'spawn');
+        } else if (kind === 'soul') {
+          app.dragonSystem._toggleSoul(tower, el.soul);
+          logFn(`🚫 塔 #${tower.id} 已卸下龙魂：${SkillLibrary[el.soul]?.name || el.soul}`, 'spawn');
+        }
+        rerender();
+      });
+    });
+  },
+
+  // ==================== 模板技能/状态渲染 ====================
+  // 各类型的"硬编码默认被动"——与 main.js 里的 defaultPassiveMap 保持一致。
+  // 模板技能面板首次打开时（tpl._templateSkills 尚未被显式设置过），
+  // 需要用这份默认值回填勾选状态，否则界面显示"全部未装备"，
+  // 点击应用后会把空配置写回 _templateSkills，导致以后生成的单位真的丢失默认被动（Q2 bug）。
+  _DEFAULT_PASSIVE_MAP: {
+    siege: ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'],
+    super: ['passive_super_commander'],
+    totem: ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura'],
+    warlock: ['passive_warlock_aura'],
+    corrupt: ['passive_corrupt_strike'],
+    ram:     ['passive_siege_weapon'],
+  },
+
+  _renderTemplateSkillContent(type) {
+    const tpl = CONFIG.templates[type];
+    // 首次打开（从未被模板编辑器改过）：用代码里的硬编码默认值回填，
+    // 而不是显示成"全部未装备"（这正是 Q2 的根因）。
+    if (tpl._templateSkills === undefined) {
+      tpl._templateSkills = [...(this._DEFAULT_PASSIVE_MAP[type] || [])];
+    }
+    const allPassives = this._SKILLS_BY_TYPE[type]?.passives || [];
+
+    const equipped = new Set(tpl._templateSkills || []);
+
+    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${CONFIG.templates[type]?.label || type} 将自动装备选中的被动技能</p>`;
+    if (allPassives.length === 0) {
+      html += `<div class="pick-desc-box">该类型没有可配置的被动技能。</div>`;
+      return html;
+    }
+    html += `<div class="pick-grid">`;
+    for (const key of allPassives) {
+      const def = SkillLibrary[key];
+      if (!def) continue;
+      const isEquipped = equipped.has(key);
+      html += `<div class="pick-card ${isEquipped ? 'selected' : ''}" data-skill="${key}">
+        <div class="pick-icon">${def.icon || '🔹'}</div>
+        <div class="pick-label">${def.name || key}</div>
+      </div>`;
+    }
+    html += `</div>`;
+    html += `<div class="pick-desc-box" id="tplSkillDescBox">点击某个被动查看说明；再次点击可切换是否默认装备。</div>`;
+    return html;
+  },
+
+  _renderTemplateEffectContent(type) {
+    const tpl = CONFIG.templates[type];
+    tpl._templateEffects = tpl._templateEffects || [];
+
+    let html = `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
+    if (tpl._templateEffects.length === 0) {
+      html += `<div style="color:#8b949e;font-size:12px;padding:8px;">暂无默认状态效果</div>`;
+    } else {
+      for (let i = 0; i < tpl._templateEffects.length; i++) {
+        const e = tpl._templateEffects[i];
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:#0d1013;border-radius:4px;margin-bottom:4px;">
+          <span style="font-size:18px;">${e.icon || '🔹'}</span>
+          <span style="flex:1;font-size:12px;">${e.name || '未命名'}</span>
+          <span style="font-size:10px;color:#8b949e;">${e.duration === Infinity ? '永久' : e.duration + 's'}</span>
+          <button class="template-remove-effect" data-index="${i}" style="background:#b33a3a;border:none;color:#fff;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:10px;">移除</button>
+        </div>`;
+      }
+    }
+    html += `</div>`;
+    html += `<div style="margin-top:8px;">
+      <button id="templateAddEffectBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加默认状态</button>
+      <div id="templateEffectPickerBox" style="display:none;margin-top:8px;padding:12px;background:#0d1013;border-radius:4px;"></div>
+    </div>`;
+    return html;
+  },
+
+  // ==================== 模板技能/状态事件绑定 ====================
+  _bindTemplateSkillEvents(overlay, type, logFn) {
+    overlay.querySelectorAll('.pick-card[data-skill]').forEach(el => {
+      el.addEventListener('click', () => {
+        el.classList.toggle('selected');
+        const isEquipped = el.classList.contains('selected');
+        const key = el.dataset.skill;
+        const def = SkillLibrary[key];
+        const descBox = overlay.querySelector('#tplSkillDescBox');
+        if (descBox) descBox.textContent = `${isEquipped ? '✅ 默认装备' : '⭕ 不默认装备'} — ${def?.description || def?.descTemplate || ''}`;
+      });
+    });
+  },
+
+  _bindTemplateEffectEvents(overlay, type, logFn) {
+    const tpl = CONFIG.templates[type];
+    tpl._templateEffects = tpl._templateEffects || [];
+
+    overlay.querySelectorAll('.template-remove-effect').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.index);
+        tpl._templateEffects.splice(idx, 1);
+        const content = overlay.querySelector('#templateContent');
+        content.innerHTML = this._renderTemplateEffectContent(type);
+        this._bindTemplateEffectEvents(overlay, type, logFn);
+      });
+    });
+
+    overlay.querySelector('#templateAddEffectBtn').addEventListener('click', () => {
+      const box = overlay.querySelector('#templateEffectPickerBox');
+      if (box.style.display === 'block') {
+        box.style.display = 'none';
+        return;
+      }
+      box.style.display = 'block';
+      box.innerHTML = this._renderEffectPicker();
+      box.querySelector('.effect-type-select')?.addEventListener('change', (e) => {
+        const type2 = e.target.value;
+        box.querySelector('.effect-params').innerHTML = this._renderEffectParams(type2);
+      });
+      box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
+        const effect = this._buildEffectBlueprintFromPicker(box);
+        tpl._templateEffects.push(effect);
+        logFn(`✅ 已添加默认状态到 ${type} 模板`, 'spawn');
+        const content = overlay.querySelector('#templateContent');
+        content.innerHTML = this._renderTemplateEffectContent(type);
+        this._bindTemplateEffectEvents(overlay, type, logFn);
+        box.style.display = 'none';
+      });
+    });
+  },
+
+  // 根据"添加状态"面板的选中类型，构建对应的效果 blueprint（stat/stun/dot 共用）
+  _buildEffectBlueprintFromPicker(box) {
+    const type2 = box.querySelector('.effect-type-select').value;
+    const rawDur = box.querySelector('.effect-duration')?.value;
+    const parsedDur = parseFloat(rawDur);
+
+    if (type2 === 'stun') {
+      const duration = isNaN(parsedDur) ? 1 : parsedDur;
+      return {
+        name: '眩晕', icon: '💫', kind: 'stun', color: '#f1c40f',
+        duration: Math.max(0.1, duration), stackPolicy: 'refresh',
+        description: '被眩晕，无法行动',
+      };
+    }
+    if (type2 === 'dot') {
+      const damageType = box.querySelector('.effect-dot-type')?.value || 'magic';
+      const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 10;
+      const duration = isNaN(parsedDur) ? 5 : parsedDur;
+      return {
+        name: '持续伤害', icon: '🩸', kind: 'dot', damageType,
+        flatValue, tickInterval: 1, duration: Math.max(1, duration),
+        stackable: false, stackPolicy: 'refresh',
+        description: `每秒${flatValue}点${damageType === 'magic' ? '魔法' : damageType === 'physical' ? '物理' : '真实'}伤害`,
+      };
+    }
+    // stat（默认）
+    const statKey = box.querySelector('.effect-stat-key')?.value || 'attackDamage';
+    const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 0;
+    const percentValue = parseFloat(box.querySelector('.effect-percent-value')?.value) || 0;
+    const isPermanent = !isNaN(parsedDur) && parsedDur <= 0;
+    const duration = isNaN(parsedDur) ? 5 : (isPermanent ? Infinity : parsedDur);
+    return {
+      name: '默认状态', icon: '📌', kind: 'stat', statKey, flatValue, percentValue,
+      duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
+      description: `${statKey} ${flatValue !== 0 ? (flatValue > 0 ? '+' : '') + flatValue : ''}${percentValue !== 0 ? (percentValue > 0 ? '+' : '') + percentValue + '%' : ''}${isPermanent ? ' (永久)' : ''}`,
+    };
+  },
+
+  _renderEffectPicker() {
+    return `
+      <div style="display:grid;gap:8px;">
+        <div class="slider-row"><label>类型</label>
+          <select class="effect-type-select" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+            <option value="stat">属性修正</option>
+            <option value="stun">眩晕（控制）</option>
+            <option value="dot">持续伤害（DOT）</option>
+          </select>
+        </div>
+        <div class="effect-params">${this._renderEffectParams('stat')}</div>
+        <button id="effectConfirmBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;">确认添加</button>
+      </div>
+    `;
+  },
+
+  _renderEffectParams(type) {
+    const statKeys = [
+      'attackDamage', 'maxHP', 'healthRegen', 'armor', 'magicResist',
+      'moveSpeed', 'attackRange', 'bonusAttackSpeedPct', 'attackSpeedRatio',
+      'damageAmpPct', 'damageReduction', 'damageBlock', 'lifeStealPct',
+      'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
+      'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
+      'onHitDamage', 'onHitPercentDamage', 'shieldFixedMax',
+    ];
+    if (type === 'stun') {
+      return `
+        <div class="slider-row"><label>持续时间(秒)</label>
+          <input type="number" step="0.1" class="effect-duration" value="1" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        </div>
+        <div style="font-size:11px;color:#8b949e;">眩晕期间目标停止一切行动（攻击/移动/技能）。</div>
+      `;
+    }
+    if (type === 'dot') {
+      return `
+        <div class="slider-row"><label>伤害类型</label>
+          <select class="effect-dot-type" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+            <option value="magic">魔法</option>
+            <option value="physical">物理</option>
+            <option value="true">真实</option>
+          </select>
+        </div>
+        <div class="slider-row"><label>每次伤害</label>
+          <input type="number" step="1" class="effect-flat-value" value="10" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        </div>
+        <div class="slider-row"><label>持续时间(秒)</label>
+          <input type="number" step="0.5" class="effect-duration" value="5" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        </div>
+      `;
+    }
+    if (type === 'stat') {
+      return `
+        <div class="slider-row"><label>属性</label>
+          <select class="effect-stat-key" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+            ${statKeys.map(k => `<option value="${k}">${k}</option>`).join('')}
+          </select>
+        </div>
+        <div class="slider-row"><label>数值修正</label>
+          <input type="number" step="0.5" class="effect-flat-value" value="0" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        </div>
+        <div class="slider-row"><label>百分比修正</label>
+          <input type="number" step="0.5" class="effect-percent-value" value="0" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        </div>
+        <div class="slider-row"><label>持续时间(秒，≤0永久)</label>
+          <input type="number" step="0.5" class="effect-duration" value="5" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        </div>
+      `;
+    }
+    return '';
+  },
+
+  // ==================== 事件绑定 ====================
+  _bindEditorEvents(overlay) {
+    const entity = overlay._entity;
+    const logFn = overlay._logFn;
+
+    overlay.querySelectorAll('.editor-tab[data-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const tabName = tab.dataset.tab;
+        overlay.querySelectorAll('.editor-tab[data-tab]').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const content = overlay.querySelector('#editorContent');
+        if (tabName === 'attr') {
+          content.innerHTML = this._renderAttrContent(entity);
+          this._bindAttrEvents(overlay, entity, logFn);
+        } else if (tabName === 'weapon') {
+          content.innerHTML = this._renderWeaponContent(entity);
+          this._bindWeaponEvents(overlay, entity, logFn);
+        } else if (tabName === 'skill') {
+          content.innerHTML = this._renderSkillContent(entity);
+          this._bindSkillEvents(overlay, entity, logFn);
+        } else if (tabName === 'effect') {
+          content.innerHTML = this._renderEffectContent(entity);
+          this._bindEffectEvents(overlay, entity, logFn);
+        } else if (tabName === 'soul') {
+          content.innerHTML = this._renderSoulContent(entity);
+          this._bindSoulEvents(overlay, entity, logFn);
+        }
+      });
+    });
+
+    this._bindAttrEvents(overlay, entity, logFn);
+
+    overlay.querySelector('#editorApplyBtn').addEventListener('click', () => {
+      const activeTab = overlay.querySelector('.editor-tab[data-tab].active');
+      if (!activeTab) return;
+      const tabName = activeTab.dataset.tab;
+      if (tabName === 'attr') this._applyAttrChanges(overlay, entity, logFn);
+      else if (tabName === 'weapon') this._applyWeaponChanges(overlay, entity, logFn);
+      else if (tabName === 'skill') this._applySkillChanges(overlay, entity, logFn);
+      else if (tabName === 'effect') this._applyEffectChanges(overlay, entity, logFn);
+      else if (tabName === 'soul') logFn('🐉 龙魂点击即时生效，无需点应用', 'spawn');
+    });
+
+    overlay.querySelector('#editorResetBtn').addEventListener('click', () => {
+      const title = entity.type === 'tower' ? `塔 #${entity.id}` : `${CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
+      if (confirm(`重置 ${title} 为模板默认值？`)) {
+        const tpl = CONFIG.templates[entity.type];
+        if (tpl) {
+          entity.baseStats = { ...tpl };
+          entity.currentHP = tpl.maxHP;
+          entity.shieldFixedCurrent = tpl.shieldFixedMax || 0;
+          entity.tempShield = 0;
+          logFn(`🔄 ${title} 已重置为模板默认值`, 'spawn');
+          overlay.remove();
+        }
+      }
+    });
+
+    overlay.querySelector('#editorCloseBtn').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  },
+
+  _bindAttrEvents(overlay, target, logFn, isTemplate = false) {
+    overlay.querySelectorAll('.editor-tab[data-group]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const group = tab.dataset.group;
+        overlay.querySelectorAll('.editor-tab[data-group]').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        overlay.querySelectorAll('.editor-group').forEach(g => g.style.display = g.dataset.group === group ? '' : 'none');
+      });
+    });
+    const firstTab = overlay.querySelector('.editor-tab[data-group]');
+    if (firstTab) firstTab.classList.add('active');
+
+    overlay.querySelectorAll('.editor-number').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const slider = overlay.querySelector(`.editor-slider[data-key="${inp.dataset.key}"]`);
+        if (slider) slider.value = inp.value;
+      });
+    });
+    // 滑块 → 数字框 反向同步
+    overlay.querySelectorAll('.editor-slider').forEach(slider => {
+      slider.addEventListener('input', () => {
+        const inp = overlay.querySelector(`.editor-number[data-key="${slider.dataset.key}"]`);
+        if (inp) inp.value = slider.value;
+      });
+    });
+  },
+
+  _bindWeaponEvents(overlay, entity, logFn) {
+    overlay.querySelectorAll('.pick-card[data-weapon]').forEach(el => {
+      el.addEventListener('click', () => {
+        overlay.querySelectorAll('.pick-card[data-weapon]').forEach(e => e.classList.remove('selected'));
+        el.classList.add('selected');
+        const key = el.dataset.weapon;
+        const descBox = overlay.querySelector('#weaponDescBox');
+        if (descBox) {
+          const def = SkillLibrary['weapon_' + key];
+          descBox.textContent = key === 'none' ? '无武器：塔不会攻击。' : (def?.description || def?.descTemplate || '');
+        }
+      });
+    });
+  },
+
+  _bindSkillEvents(overlay, entity, logFn) {
+    overlay.querySelectorAll('.pick-card[data-skill]').forEach(el => {
+      el.addEventListener('click', () => {
+        el.classList.toggle('selected');
+        const key = el.dataset.skill;
+        const def = SkillLibrary[key];
+        const descBox = overlay.querySelector('#skillDescBox');
+        if (descBox) {
+          const isEquipped = el.classList.contains('selected');
+          descBox.textContent = `${isEquipped ? '✅ 已装备' : '⭕ 未装备'} — ${def?.description || def?.descTemplate || ''}`;
+        }
+      });
+    });
+  },
+
+  _bindEffectEvents(overlay, entity, logFn) {
+    overlay.querySelectorAll('.remove-effect-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.dataset.effectId);
+        if (!isNaN(id) && window.__app?.effectRegistry) {
+          window.__app.effectRegistry.remove(id);
+          const content = overlay.querySelector('#editorContent');
+          if (content) content.innerHTML = this._renderEffectContent(entity);
+          this._bindEffectEvents(overlay, entity, logFn);
+        }
+      });
+    });
+
+    overlay.querySelector('#addEffectBtn').addEventListener('click', () => {
+      const box = overlay.querySelector('#effectPickerBox');
+      if (box.style.display === 'block') {
+        box.style.display = 'none';
+        return;
+      }
+      box.style.display = 'block';
+      box.innerHTML = this._renderEffectPicker();
+      box.querySelector('.effect-type-select')?.addEventListener('change', (e) => {
+        const type = e.target.value;
+        box.querySelector('.effect-params').innerHTML = this._renderEffectParams(type);
+      });
+      box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
+        const effect = this._buildEffectBlueprintFromPicker(box);
+        window.__app?.effectRegistry.apply(entity.id, effect, 'custom_' + Date.now());
+        logFn(`✅ 已添加自定义状态到 #${entity.id}`, 'spawn');
+        const content = overlay.querySelector('#editorContent');
+        if (content) content.innerHTML = this._renderEffectContent(entity);
+        this._bindEffectEvents(overlay, entity, logFn);
+        box.style.display = 'none';
+      });
+    });
+  },
+
+  // ==================== 应用修改 ====================
+  _applyAttrChanges(overlay, entity, logFn) {
+    let changed = 0;
+    const numbers = overlay.querySelectorAll('.editor-number');
+    for (const inp of numbers) {
+      const key = inp.dataset.key;
+      const val = parseFloat(inp.value);
+      const orig = parseFloat(inp.dataset.orig);
+      if (isNaN(val)) continue;
+      // 只写回真正改动过的字段
+      if (!isNaN(orig) && val === orig) continue;
+      if (key === 'currentHP') entity[key] = Math.min(val, entity.baseStats.maxHP || 1);
+      else entity.baseStats[key] = val;
+      changed++;
+    }
+    const selects = overlay.querySelectorAll('.editor-select');
+    for (const sel of selects) {
+      if (sel.dataset.orig !== undefined && sel.value === sel.dataset.orig) continue;
+      entity.baseStats[sel.dataset.key] = sel.value;
+      changed++;
+    }
+    if (entity.currentHP > entity.baseStats.maxHP) entity.currentHP = entity.baseStats.maxHP;
+    // v33（Q13）：塔模型大小——留空恢复该档全局尺寸，填数字则本塔独享
+    const msInput = overlay.querySelector('#editorModelSize');
+    if (msInput) {
+      const raw = msInput.value.trim();
+      if (raw === '') {
+        if (entity._modelSize !== undefined) { delete entity._modelSize; changed++; }
+      } else {
+        const v = Math.max(8, Math.min(80, parseFloat(raw) || 28));
+        if (entity._modelSize !== v) { entity._modelSize = v; changed++; }
+      }
+    }
+    logFn(`✅ 属性已更新（修改 ${changed} 项）`, 'spawn');
+    overlay.remove();
+  },
+
+  _applyWeaponChanges(overlay, entity, logFn) {
+    const selected = overlay.querySelector('.pick-card.selected[data-weapon]');
+    if (!selected) return;
+    const weaponId = selected.dataset.weapon;
+    const oldInst = entity._skillInstances?.find(s => s.skillId.startsWith('weapon_'));
+    if (oldInst) {
+      const oldDef = SkillLibrary[oldInst.skillId];
+      if (oldDef?.onUnequip) oldDef.onUnequip(entity.id, oldInst, {
+        entityContainer: window.__app?.entityContainer,
+        effectRegistry: window.__app?.effectRegistry,
+      });
+      entity._skillInstances = entity._skillInstances.filter(s => s !== oldInst);
+    }
+    if (weaponId !== 'none') {
+      const newInst = { id: ++window._uid, skillId: weaponId, state: {} };
+      entity._skillInstances.push(newInst);
+      const newDef = SkillLibrary[weaponId];
+      if (newDef?.onEquip) newDef.onEquip(entity.id, newInst, {
+        entityContainer: window.__app?.entityContainer,
+        effectRegistry: window.__app?.effectRegistry,
+        eventBus: window.__app?.eventBus,
+        waveNumber: window.waveNumber || 0,
+        attrCalc: window.__app?.attrCalc,
+      });
+      entity.weaponType = weaponId.replace('weapon_', '');
+    } else {
+      entity.weaponType = 'none';
+      entity.weaponIcon = '❌';
+    }
+    logFn(`🔧 塔 #${entity.id} 换武器为 ${weaponId}`, 'spawn');
+    overlay.remove();
+  },
+
+  _applySkillChanges(overlay, entity, logFn) {
+    const selected = overlay.querySelectorAll('.pick-card.selected[data-skill]');
+    const selectedSkills = new Set();
+    selected.forEach(el => selectedSkills.add(el.dataset.skill));
+
+    // 之前这里是硬编码的4个被动（缺 passive_overheat/vampire/phase），
+    // 导致"移除旧技能"环节漏掉不在这个过时列表里的技能，永远无法被正确替换，
+    // 造成技能栏重复累积同名技能实例（这正是"技能栏重复显示"bug的根因）。
+    // 改用 _SKILLS_BY_TYPE 这个唯一、完整的数据源，且按实体实际类型取，不再对所有类型都套塔的列表。
+    const allPassives = this._SKILLS_BY_TYPE[entity.type]?.passives || [];
+    const toRemove = entity._skillInstances?.filter(s => allPassives.includes(s.skillId)) || [];
+    for (const inst of toRemove) {
+      const def = SkillLibrary[inst.skillId];
+      if (def?.onUnequip) def.onUnequip(entity.id, inst, {
+        entityContainer: window.__app?.entityContainer,
+        effectRegistry: window.__app?.effectRegistry,
+      });
+      entity._skillInstances = entity._skillInstances.filter(s => s !== inst);
+    }
+    for (const key of selectedSkills) {
+      const inst = { id: ++window._uid, skillId: key, state: {} };
+      entity._skillInstances.push(inst);
+      const def = SkillLibrary[key];
+      if (def?.onEquip) def.onEquip(entity.id, inst, {
+        entityContainer: window.__app?.entityContainer,
+        effectRegistry: window.__app?.effectRegistry,
+        eventBus: window.__app?.eventBus,
+        waveNumber: window.waveNumber || 0,
+        attrCalc: window.__app?.attrCalc,
+      });
+    }
+    logFn(`🛡️ 塔 #${entity.id} 被动技能已更新`, 'spawn');
+    overlay.remove();
+  },
+
+  _applyEffectChanges(overlay, entity, logFn) {
+    overlay.remove();
+  },
+
+  _applyTemplateAttrChanges(overlay, type, logFn) {
+    const base = CONFIG.templates[type];
+    const scope = this._factionScope;
+    const isMinionType = this._categoryOfType(type) === 'minion';
+    const readPairs = [];
+    for (const inp of overlay.querySelectorAll('.editor-number')) {
+      const val = parseFloat(inp.value);
+      if (!isNaN(val)) readPairs.push([inp.dataset.key, val]);
+    }
+    for (const sel of overlay.querySelectorAll('.editor-select')) readPairs.push([sel.dataset.key, sel.value]);
+
+    if (scope !== 'shared' && isMinionType) {
+      // 阵营覆写：只存与共享基础不同的字段；改回等于基础的字段自动从覆写层剔除
+      CONFIG.factionOverrides[scope] = CONFIG.factionOverrides[scope] || {};
+      const ovr = CONFIG.factionOverrides[scope][type] = CONFIG.factionOverrides[scope][type] || {};
+      for (const [key, val] of readPairs) {
+        if (val === base[key]) delete ovr[key]; else ovr[key] = val;
+      }
+      if (Object.keys(ovr).length === 0) delete CONFIG.factionOverrides[scope][type];
+      logFn(`✅ ${scope === 'blue' ? '🔵蓝方' : '🔴红方'}覆写已更新（${type}，${Object.keys(CONFIG.factionOverrides[scope]?.[type] || {}).length} 个差异字段），另一方不受影响`, 'spawn');
+    } else {
+      for (const [key, val] of readPairs) base[key] = val;
+      logFn(`✅ 模板 ${type} 属性已更新（双方共享基础）`, 'spawn');
+    }
+  },
+
+  _applyTemplateSkillChanges(overlay, type, logFn) {
+    const tpl = CONFIG.templates[type];
+    const selected = overlay.querySelectorAll('.pick-card.selected[data-skill]');
+    const selectedSkills = new Set();
+    selected.forEach(el => selectedSkills.add(el.dataset.skill));
+    tpl._templateSkills = Array.from(selectedSkills);
+    logFn(`✅ 模板 ${type} 默认技能已更新`, 'spawn');
+  },
+
+  _applyTemplateEffectChanges(overlay, type, logFn) {
+    // 效果已在绑定中直接修改 tpl._templateEffects
+    logFn(`✅ 模板 ${type} 默认状态已更新`, 'spawn');
+  }
+};

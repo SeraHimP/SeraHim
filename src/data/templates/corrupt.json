@@ -1,0 +1,20 @@
+{
+  "type": "corrupt",
+  "label": "Corrupt Minion",
+  "isLargeMinion": true,
+  "isMonster": false,
+  "maxHP": 620,
+  "healthRegen": 1,
+  "moveSpeed": 78,
+  "attackRange": 20,
+  "attackDamage": 13,
+  "baseAttackSpeed": 1.0,
+  "bonusAttackSpeedPct": 0,
+  "attackSpeedRatio": 0.667,
+  "armor": 25,
+  "magicResist": 25,
+  "shieldFixedMax": 0,
+  "shieldRegenRate": 5,
+  "attackType": "physical",
+  "bulletSpeed": 0
+}
