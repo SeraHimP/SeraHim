@@ -132,9 +132,9 @@ CTX.__setElevation = (deg) => renderer3d ? renderer3d.setElevation(deg) : null;
   }
 }
 // 第 6.1 步：阴影档位。'all' 全投影 / 'static' 仅塔与墙 / 'off' 关闭。
-// 默认 'static'——小兵是同屏数量最大的一类，排除它们能省下绝大部分阴影开销，
+// 默认 'all'——用户定稿：启动即全部投影（含小兵）。性能有余量；想省开销可在设置面板切 'static'，
 // 而"建筑有影子"的观感基本全留。当前无任何投影体，三档在画面上还看不出区别。
-renderer3d?.setShadowLevel('static');
+renderer3d?.setShadowLevel('all');
 CTX.__setShadows = (lv) => renderer3d ? renderer3d.setShadowLevel(lv) : null;
 // 第 6.5 步排查开关：CTX.__textures(false) 关掉材质贴图重建地形，用于二分画面问题。
 // 注意单位侧【没有】对应开关——纸片人路径已在第 6.3 步移除，要回退只能换 zip。
