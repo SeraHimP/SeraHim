@@ -143,7 +143,7 @@ export class EntityContainer {
   purgeDead() {
     const toRemove = [];
     for (const [id, e] of this._entities) {
-      if (!e.alive && !e._respawnAt) toRemove.push(id);
+      if (!e.alive && !e._respawnAt && !e._ruin) toRemove.push(id);
     }
     for (const id of toRemove) this.remove(id);
     return toRemove.length;

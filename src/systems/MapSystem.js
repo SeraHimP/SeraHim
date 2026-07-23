@@ -208,6 +208,12 @@ export class MapSystem {
     const e = this.entities.get(entityId);
     if (!e || !e._mapFaction) return;
 
+    // 结构（塔/水晶）被摧毁后保留为"损毁"幽灵实体：alive=false 已使其不可攻击/索敌、
+    // 不计入存活塔数与 isStructureProtected（两者都走 aliveOnly）。这里打 _ruin 标记，
+    // purgeDead 特意豁免它（不删实体），渲染层据此切换为损毁模型。分路水晶会重生，
+    // 复活时清除该标记（见 update() 的原地复活分支）。
+    if (e._mapTier) e._ruin = true;
+
     if (e._mapTier === 'nexus_lane') {
       // 分路水晶摧毁：该路（e._laneId）追加生成超级兵，其余兵种不受影响（LoL 真实机制，版本B）。
       // 用 laneId 维度记录，而不是整个阵营——因为一个阵营三路的水晶是分别摧毁的。
@@ -274,6 +280,7 @@ export class MapSystem {
         delete corpse._respawnAt;
         delete corpse._respawnProgress;
         delete corpse._respawnRemain;
+        delete corpse._ruin;   // 复活后不再是损毁幽灵
         this.entities.markDirty?.();
       } else if (this.createBuildingFn) {
         const entity = this.createBuildingFn({
