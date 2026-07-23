@@ -92,15 +92,27 @@ function bakeBase(gltf) {
   }
   if (!merged.length) return null;
 
-  // ④ 居中 x/z、底面对齐 y=0；再归一化到高度 1
-  const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2, minY = box.min.y;
-  const height = Math.max(1e-6, box.max.y - box.min.y);
-  const inv = 1 / height;
+  // ④ 关键：模型自带 y=0 就是【地平线】——结构在上、"插座光柱"在下（本该埋进地里）。
+  //   之前误把 min.y 对齐到 0，等于把整根地下光柱顶到地面之上、还拿含地下的总高做缩放，
+  //   于是可见结构又小又坐在大柱子上。现改为：
+  //     · y 不平移，保留模型地线（y<0 的部分留在地平面以下，被不透明地面遮住 → 隐藏）；
+  //     · 只按【地上高度 box.max.y】归一化（可见结构 = 目标高度）；
+  //     · x/z 只按【地上结构】居中，让可见塔身对齐格心（地下光柱可能更宽/偏，不参与居中）。
+  const aboveBox = new THREE.Box3();
+  const tmp = new THREE.Vector3();
+  for (const m of merged) {
+    const p = m.geo.getAttribute('position');
+    for (let i = 0; i < p.count; i++) { tmp.fromBufferAttribute(p, i); if (tmp.y >= 0) aboveBox.expandByPoint(tmp); }
+  }
+  const aboveH = Math.max(1e-6, box.max.y);
+  const cx = aboveBox.isEmpty() ? (box.min.x + box.max.x) / 2 : (aboveBox.min.x + aboveBox.max.x) / 2;
+  const cz = aboveBox.isEmpty() ? (box.min.z + box.max.z) / 2 : (aboveBox.min.z + aboveBox.max.z) / 2;
+  const inv = 1 / aboveH;                 // 归一化：地上高度 → 1（buildScaled 再乘目标高度）
   const parts = [];
   for (const m of merged) {
-    m.geo.translate(-cx, -minY, -cz);
+    m.geo.translate(-cx, 0, -cz);         // 只居中 x/z；y 保持地线不动
     m.geo.scale(inv, inv, inv);
-    m.geo.computeVertexNormals();   // ① 受光：unlit 源无有效法线响应，非索引烘焙后重算 = 平面着色
+    m.geo.computeVertexNormals();         // ① 受光：unlit 源无有效法线响应，非索引烘焙后重算 = 平面着色
     m.geo.computeBoundingBox();
     if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
     const material = new THREE.MeshLambertMaterial({
@@ -109,7 +121,7 @@ function bakeBase(gltf) {
     });
     parts.push({ geo: m.geo, material });
   }
-  const muzzleYNorm = muzzle ? (muzzle.y - minY) * inv : null;
+  const muzzleYNorm = muzzle ? muzzle.y * inv : null;   // y 未平移，直接归一化
   return { parts, muzzleYNorm };
 }
 

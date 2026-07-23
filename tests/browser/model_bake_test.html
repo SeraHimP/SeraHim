@@ -82,7 +82,7 @@ async function run() {
       label, ok: true, meshes, tris: Math.round(tris),
       litMat, basic, hasMap, hasNormal,
       topY: +mdl.topY.toFixed(2), muzzleY: +mdl.muzzleY.toFixed(2),
-      minY: +box.min.y.toFixed(3),
+      minY: +box.min.y.toFixed(2), maxY: +box.max.y.toFixed(2),
       litResponse: +diff.toFixed(2), visiblePixels: nz,
     });
   }
@@ -92,7 +92,9 @@ async function run() {
   const checks = {
     allLit: report.every(r => r.ok && r.litMat && !r.basic),
     allNormals: report.every(r => r.ok && r.hasNormal),
-    baseAligned: report.every(r => r.ok && Math.abs(r.minY) < 0.05),
+    // 结构顶端对齐目标高度（可见塔身 = topY）；y=0 是地线，地下光柱 minY<0 保留在地下。
+    topAligned: report.every(r => r.ok && Math.abs(r.maxY - r.topY) < 0.6),
+    undergroundBelowGround: report.every(r => r.ok && r.minY < 0.01),
     rendered: report.every(r => r.ok && r.visiblePixels > 400),
     litResponds: report.every(r => r.ok && r.litResponse > 4),
     towerMuzzle: !!muzzleOK && muzzleOK.muzzleY > 0 && muzzleOK.muzzleY <= muzzleOK.topY * 1.2,

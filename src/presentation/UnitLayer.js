@@ -41,6 +41,9 @@ const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮
 const _EMPTY_GEO = new THREE.BufferGeometry();  // Mesh 首帧占位，随即被 _visualOf 的共享几何替换
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
+// GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
+// 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
+const MODEL_FORWARD_OFFSET = -Math.PI / 2;
 
 // 血条画布分辨率：宽 64 = 量化粒度（1/64 条宽 ≈ 2D 的 80px 条上 1.25px，人眼阈值之下）
 const BAR_W = 64, BAR_H = 8;
@@ -56,6 +59,7 @@ export class UnitLayer {
     this._frame = 0;
     this.shadowLevel = 'off';      // 第 6.1 步：由 ThreeRenderer.setShadowLevel 注入
     this.models = null;            // A：GLB 模型库（浏览器注入）；null = 回退程序化几何（headless）
+    this.mapSystem = null;         // A：塔按兵线朝敌方定向用（读车道 waypoints + 敌方基地中心）
     this.infoObjs = 0;             // E 组场景对象计数（sceneStats 用：children = 2×tracked + infoObjs + fx）
   }
 
@@ -204,7 +208,7 @@ export class UnitLayer {
     bar.renderOrder = ORDER_BAR;
 
     this.scene.add(unit); this.scene.add(bar);
-    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceA: 0, lastX: null, lastZ: null, facing: false,
+    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -260,6 +264,31 @@ export class UnitLayer {
     this.shadowLevel = level;
     // 已在场的单位立即生效：visKey 未变不会重走装配分支，故这里直接刷一遍
     for (const en of this.map.values()) this._applyUnitShadow(en);
+  }
+
+  // A：防御塔朝向 = 沿本路兵线【朝敌方来兵方向】。取最近车道段的切向，按"指向敌方基地中心"
+  // 定号；无车道（如中央枢纽）退化为直指敌方基地。返回世界 yaw（模型 +Z 为定向基准）。
+  _towerYaw(e) {
+    const ms = this.mapSystem;
+    if (!ms || !e._mapFaction || !e.pos) return 0;
+    const enemy = e._mapFaction === 'red' ? 'blue' : 'red';
+    const eb = ms.getBaseCircleCenter ? ms.getBaseCircleCenter(enemy) : null;
+    const lane = (e._laneId && ms.getLane) ? ms.getLane(e._laneId) : null;
+    const wps = lane && lane.waypoints;
+    if (wps && wps.length >= 2) {
+      let best = Infinity, tx = 0, ty = 0;
+      for (let i = 0; i < wps.length - 1; i++) {
+        const ax = wps[i].x, ay = wps[i].y, dx = wps[i + 1].x - ax, dy = wps[i + 1].y - ay;
+        const L2 = dx * dx + dy * dy || 1;
+        let t = ((e.pos.x - ax) * dx + (e.pos.y - ay) * dy) / L2; t = Math.max(0, Math.min(1, t));
+        const px = ax + t * dx, py = ay + t * dy, d = (e.pos.x - px) ** 2 + (e.pos.y - py) ** 2;
+        if (d < best) { best = d; tx = dx; ty = dy; }
+      }
+      if (eb && (tx * (eb.x - e.pos.x) + ty * (eb.y - e.pos.y)) < 0) { tx = -tx; ty = -ty; }
+      return Math.atan2(tx, ty);
+    }
+    if (eb) return Math.atan2(eb.x - e.pos.x, eb.y - e.pos.y);
+    return 0;
   }
 
   _clearSel(en) {
@@ -453,6 +482,12 @@ export class UnitLayer {
     const s = vis.pulse ? (1 + 0.12 * Math.sin(tNow * 3)) : 1;
     en.unit.scale.set(s, s, s);
     en.unit.position.set(e.pos.x, 0, e.pos.y);
+
+    // A：GLB 塔按兵线朝敌方定向（固定 yaw，只算一次——塔不移动；损毁塔沿用）。
+    if (vis.isModel && e.type === 'tower') {
+      if (en.faceFixed === null) en.faceFixed = this._towerYaw(e) + MODEL_FORWARD_OFFSET;
+      en.unit.rotation.y = en.faceFixed;
+    }
 
     // 朝向：由【位置增量】自己算，逻辑层不需要提供 facing 字段。
     // 模拟跑 30Hz、渲染跑 60Hz，因此有一半的帧位移为 0——那时保持上一次朝向，不要清零。

@@ -102,6 +102,8 @@ export class ThreeRenderer {
     // UnitLayer.forTower 返回 null → 回退程序化几何；完成后 visKey 自然改变 → 下一帧自动换模型。
     this.models = new ModelLibrary();
     this.units.models = this.models;
+    this.units.mapSystem = mapSystem;   // A：塔按兵线朝敌方定向要读车道/基地几何
+
     this.models.load().catch(e => console.warn('[ThreeRenderer] 模型库加载失败：', e?.message || e));
     this.fx = new EffectsLayer(this.scene);
     this._target = new THREE.Vector3();
