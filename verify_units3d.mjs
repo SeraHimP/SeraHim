@@ -37,9 +37,9 @@ const T = (n, c, x = '') => { c ? pass++ : fail++; console.log((c ? '✓' : '✗
   const c = MF.towerMesh('k2', '#e0473f', 28, 'weapon_sniper', 'tower', false);
   T('不同 key 产出不同几何', c.geo !== a.geo);
 
-  // 武器标记确实改变几何
+  // 武器标记已移除（用户拍板）：塔身高度不再随武器变化，炮口改由 GLB 挂点提供
   const noW = MF.towerMesh('k3', '#5b9bd5', 28, '', 'tower', false);
-  T('武器标记为几何体（有武器的塔更高）', a.topY > noW.topY, `${a.topY.toFixed(1)} vs ${noW.topY.toFixed(1)}`);
+  T('武器标记已移除（有无武器塔身等高）', Math.abs(a.topY - noW.topY) < 1e-9, `${a.topY.toFixed(1)} vs ${noW.topY.toFixed(1)}`);
 
   // 水晶造型
   const gem = MF.towerMesh('k4', '#5b9bd5', 40, '', 'gem', false);

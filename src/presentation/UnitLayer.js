@@ -55,6 +55,7 @@ export class UnitLayer {
     this._shieldTex = null;        // 🛡️ 共享纹理（懒建）
     this._frame = 0;
     this.shadowLevel = 'off';      // 第 6.1 步：由 ThreeRenderer.setShadowLevel 注入
+    this.models = null;            // A：GLB 模型库（浏览器注入）；null = 回退程序化几何（headless）
     this.infoObjs = 0;             // E 组场景对象计数（sceneStats 用：children = 2×tracked + infoObjs + fx）
   }
 
@@ -62,11 +63,21 @@ export class UnitLayer {
   // ============ 单位外观（key + 贴图）：与 CanvasRenderer 渲染循环同口径 ============
   // 返回 { key, sp, size, barW, barH, barD, alpha, pulse }
   //   key 变（换武器/换阵营/改模型大小/水晶转幽灵）→ 换贴图；size = 精灵世界边长。
-  _visualOf(e, ghost) {
+  _visualOf(e, ghost, ruin) {
     if (e.type === 'tower') {
       const bSizes = CONFIG.buildingSizes || {};
       const bSize = e._modelSize || bSizes[e._mapTier] || bSizes.default || 28;
       const isNexus = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
+      // A：GLB 模型优先（活体塔 + 损毁塔）。重生中的半透明幽灵仍走程序化（保留透明观感）。
+      // 未加载完成时 forTower 返回 null → 自动回退程序化几何，故 headless 与首帧都安全。
+      if (!ghost && this.models) {
+        const mdl = this.models.forTower(e._mapTier, e._mapFaction, !!ruin, bSize);
+        if (mdl) {
+          return { key: mdl.key, isModel: true, template: mdl.template, topY: mdl.topY,
+                   muzzleY: mdl.muzzleY, size: bSize, barW: 80, barH: 6, barD: 10,
+                   alpha: 1, pulse: false, ringR: bSize + 8 };
+        }
+      }
       const color = ghost
         ? (e._mapFaction === 'blue' ? '#5b9bd5' : '#e0473f')
         : (e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0');
@@ -75,9 +86,9 @@ export class UnitLayer {
       // 只是 key 现在索引的是几何而不是贴图，共享策略与缓存生命周期完全照旧。
       const kind = e._mapTier === 'nexus_lane' ? 'orb' : (isNexus ? 'gem' : 'tower');
       const wid = wInst ? wInst.skillId : '';
-      const key = `t|${color}|${wid}|${kind}|${bSize}|${ghost ? 'g' : ''}`;
+      const key = `t|${color}|${wid}|${kind}|${bSize}|${ghost ? 'g' : ''}${ruin ? 'r' : ''}`;
       const m = towerMesh(key, color, bSize, wid, kind, ghost);
-      return { key, geo: m.geo, mat: m.mat, topY: m.topY, size: bSize,
+      return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.topY, size: bSize,
                barW: 80, barH: 6, barD: 10, alpha: ghost ? 0.35 : 1, pulse: false,
                ringR: bSize + 8 };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
     }
@@ -142,6 +153,22 @@ export class UnitLayer {
     return null;
   }
 
+  // A：切换单位本体对象（程序化 Mesh ↔ GLB 模型 Group）。旧对象摘出场景；
+  // 几何/材质均为共享资源（程序化按 key 缓存、模型按模板 clone 共享），此处一律不 dispose。
+  _installUnit(en, obj) {
+    if (en.unit) this.scene.remove(en.unit);
+    obj.renderOrder = ORDER_UNIT;
+    this.scene.add(obj);
+    en.unit = obj;
+  }
+
+  // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
+  _applyUnitShadow(en) {
+    const cast = this.shadowLevel === 'all' || (this.shadowLevel === 'static' && en.isTower);
+    const recv = this.shadowLevel !== 'off';
+    en.unit.traverse(o => { if (o.isMesh) { o.castShadow = cast; o.receiveShadow = recv; } });
+  }
+
   _shieldTexture() {
     if (this._shieldTex) return this._shieldTex;
     const c = document.createElement('canvas');
@@ -177,7 +204,7 @@ export class UnitLayer {
     bar.renderOrder = ORDER_BAR;
 
     this.scene.add(unit); this.scene.add(bar);
-    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, isTower: false, faceA: 0, lastX: null, lastZ: null, facing: false,
+    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceA: 0, lastX: null, lastZ: null, facing: false,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -223,7 +250,8 @@ export class UnitLayer {
     for (const [id, en] of this.map) {
       const dx = en.unit.position.x - x, dz = en.unit.position.z - z;
       const d = dx * dx + dz * dz;
-      if (d < bestD) { bestD = d; best = en.topY || 0; }
+      // A：塔的炮口取模型挂点高度（Buffbone_Glb_Weapon_1，≈水晶处）；程序化回退取塔冠顶端。
+      if (d < bestD) { bestD = d; best = en.muzzleY || en.topY || 0; }
     }
     return best;
   }
@@ -231,10 +259,7 @@ export class UnitLayer {
   setShadowLevel(level) {
     this.shadowLevel = level;
     // 已在场的单位立即生效：visKey 未变不会重走装配分支，故这里直接刷一遍
-    for (const en of this.map.values()) {
-      en.unit.castShadow = level === 'all' || (level === 'static' && en.isTower);
-      en.unit.receiveShadow = level !== 'off';
-    }
+    for (const en of this.map.values()) this._applyUnitShadow(en);
   }
 
   _clearSel(en) {
@@ -395,23 +420,30 @@ export class UnitLayer {
     }
   }
 
-  _syncOne(e, ghost, ctxDeps, lodHideBar, tNow) {
+  _syncOne(e, ghost, ctxDeps, lodHideBar, tNow, ruin) {
     const { attrCalc, effects } = ctxDeps;
     let en = this.map.get(e.id);
     if (!en) en = this._makeEntry(e.id);
     en.seen = this._frame;
 
-    const vis = this._visualOf(e, ghost);
+    const vis = this._visualOf(e, ghost, ruin);
     if (en.visKey !== vis.key) {
       en.visKey = vis.key;
-      en.unit.geometry = vis.geo;      // 共享几何，直接换引用（旧的属于缓存，不释放）
-      en.unit.material = vis.mat;
-      en.topY = vis.topY;
       en.isTower = e.type === 'tower';   // 阴影档位判据：读实体类型，不靠模型高度猜
       en.facing = !!vis.facing;
-      en.unit.castShadow = this.shadowLevel === 'all'
-        || (this.shadowLevel === 'static' && en.isTower);
-      en.unit.receiveShadow = this.shadowLevel !== 'off';
+      en.topY = vis.topY;
+      en.muzzleY = vis.muzzleY != null ? vis.muzzleY : vis.topY;
+      if (vis.isModel) {
+        // GLB 模型：装配 Group 实例（clone 共享几何/材质）。
+        this._installUnit(en, vis.template.clone());
+        en.unitIsModel = true;
+      } else {
+        // 程序化 Mesh：从模型态切回时重建一个 Mesh 壳，否则直接换共享几何/材质引用。
+        if (en.unitIsModel) { this._installUnit(en, new THREE.Mesh(_EMPTY_GEO, vis.mat)); en.unitIsModel = false; }
+        en.unit.geometry = vis.geo;      // 共享几何，直接换引用（旧的属于缓存，不释放）
+        en.unit.material = vis.mat;
+      }
+      this._applyUnitShadow(en);
       en.bar.scale.set(vis.barW, vis.barH, 1);
       // 血条现在浮在【模型顶端】的世界高度上，再用 center 做一点屏幕空间余量。
       // 纸片人时代 barD 要补出整个贴图高度，立体化后模型自己有高度，余量因此小得多。
@@ -462,8 +494,8 @@ export class UnitLayer {
       }
     }
 
-    // E 组（第 3.7 步）：活体塔挂附属信息；塔转幽灵（水晶陷落）同一 entry 复用，必须清干净
-    if (e.type === 'tower' && !ghost) this._syncTowerInfo(e, en, ctxDeps, lodHideBar);
+    // E 组（第 3.7 步）：仅活体塔挂附属信息；幽灵（重生中）与损毁塔一律清干净（同 entry 复用）
+    if (e.type === 'tower' && !ghost && !ruin) this._syncTowerInfo(e, en, ctxDeps, lodHideBar);
     else if (en.rangeFill || en.own || en.soul || en.shield) this._clearInfo(en);
 
     // F1 选中光圈（第4步）：所有类型都可选中，含幽灵水晶
@@ -480,10 +512,13 @@ export class UnitLayer {
 
     for (const t of entities.getAllTowers(true)) this._syncOne(t, false, deps, lodHideBar, tNow);
     for (const m of entities.getAllMinions(true)) this._syncOne(m, false, deps, lodHideBar, tNow);
-    // 幽灵水晶（alive=false + _respawnAt）：与 2D 同款半透明 + 灰色重生条。
-    // 必须全量扫描——空间网格只索引活体（见 CanvasController 同处注释）。
+    // 死亡结构全量扫描（空间网格只索引活体，见 CanvasController 同处注释）：
+    //   ① 重生中的分路水晶（_respawnAt）→ 半透明幽灵 + 灰色重生条（原样）；
+    //   ② A1 损毁塔/水晶（_ruin）→ 不透明损毁模型，不再半透明、不挂附属信息。
     for (const c of entities.getAllTowers(false)) {
-      if (!c.alive && c._respawnAt) this._syncOne(c, true, deps, lodHideBar, tNow);
+      if (c.alive) continue;
+      if (c._respawnAt) this._syncOne(c, true, deps, lodHideBar, tNow, false);
+      else if (c._ruin) this._syncOne(c, false, deps, lodHideBar, tNow, true);
     }
 
     // 兜底扫描：本帧没被遍历到的一律删（死亡事件漏发/purgeDead/切图/测试直改容器全覆盖）

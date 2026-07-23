@@ -25,6 +25,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { buildTerrainLayer } from './TerrainLayer.js';
 import { UnitLayer } from './UnitLayer.js';
+import { ModelLibrary } from './ModelLibrary.js';
 import { WallLayer } from './WallLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
@@ -97,6 +98,11 @@ export class ThreeRenderer {
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
     this.units = new UnitLayer(this.scene);
+    // A：GLB 模型库。异步加载并烘焙（unlit→受光、烘骨架成静态、取挂点作炮口）。未完成时
+    // UnitLayer.forTower 返回 null → 回退程序化几何；完成后 visKey 自然改变 → 下一帧自动换模型。
+    this.models = new ModelLibrary();
+    this.units.models = this.models;
+    this.models.load().catch(e => console.warn('[ThreeRenderer] 模型库加载失败：', e?.message || e));
     this.fx = new EffectsLayer(this.scene);
     this._target = new THREE.Vector3();
     this._terrainMesh = null;

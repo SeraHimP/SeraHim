@@ -14,9 +14,8 @@
  * ③ 原点在【底面中心】。UnitLayer 把单位摆在 (pos.x, 0, pos.y)，原点在底才能贴地站稳；
  *    另外 topY 一并返回，血条/盾牌要浮在单位顶上而不是插在腰里。
  *
- * 武器图标由 emoji 改为几何标记（用户拍板）：形状区分武器类型，颜色统一走高亮色，
- * 好处是与整体造型语言一致、任意角度都能读；代价是不认识形状的人分不出武器，
- * 这一点用户已知悉并接受。
+ * 武器几何标记已移除（用户拍板）：塔身不再冒标记；接入 GLB 塔模型后，炮口由挂点
+ * 骨骼（Buffbone_Glb_Weapon_1）提供，程序化塔仅作为模型未加载时的回退，炮口取塔冠顶端。
  */
 import * as THREE from '../../vendor/three.module.js';
 
@@ -72,15 +71,6 @@ function pack(parts) {
 const T = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
 const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
 
-// ---------- 武器 → 几何标记 ----------
-const WEAPON_MARKS = {
-  weapon_piercing:  () => new THREE.OctahedronGeometry(0.30),                 // 尖锐八面体 = 穿刺
-  weapon_lightning: () => new THREE.CylinderGeometry(0.05, 0.22, 0.75, 4),    // 细高四棱锥 = 闪电
-  weapon_explosive: () => new THREE.DodecahedronGeometry(0.32),               // 多面团块 = 爆炸
-  weapon_sniper:    () => new THREE.CylinderGeometry(0.07, 0.07, 0.9, 8),     // 细长炮管 = 狙击
-  weapon_corrosion: () => new THREE.ConeGeometry(0.28, 0.6, 6),               // 锥体 = 腐蚀喷口
-};
-
 /**
  * 防御塔：基座 → 塔身 → 雉堞冠 → 武器标记。
  * 水晶（isNexus）走宝石造型，分路水晶走球体，与 2D 的 💎/🔮 语义对应。
@@ -119,13 +109,9 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost) {
                      color: shade(color, 0.7) });
       }
       topY = mY + mS;
-      const mk = WEAPON_MARKS[weaponId];
-      if (mk && !ghost) {
-        const mkY = topY + R * 0.42;
-        parts.push({ geo: mk(), matrix: new THREE.Matrix4()
-                       .makeScale(R, R, R).premultiply(T(0, mkY, 0)), color: '#ffd98a' });
-        topY = mkY + R * 0.45;
-      }
+      // 武器标记已移除（用户拍板）：塔身不再冒几何标记，炮口高度取塔冠顶端。
+      // weaponId 形参保留（调用方仍传），只是不再影响几何——真实炮口由 GLB 挂点提供。
+      void weaponId;
     }
     hit = pack(parts);
     _geoCache.set(key, hit);
