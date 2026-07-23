@@ -208,7 +208,7 @@ export class UnitLayer {
     bar.renderOrder = ORDER_BAR;
 
     this.scene.add(unit); this.scene.add(bar);
-    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false,
+    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, dispFrac: -1, trailing: false, _lastT: 0,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -407,8 +407,9 @@ export class UnitLayer {
     }
   }
 
-  // ============ 血条重绘（复刻 drawHealthBar 的配色与布局，去拖尾） ============
-  _redrawBar(g, e, ghost, maxHP) {
+  // ============ 血条重绘（复刻 drawHealthBar 的配色与布局 + 掉血拖尾） ============
+  // trailFrac = 显示血量（>真实血量时画一段淡红拖尾）；0 表示无拖尾。
+  _redrawBar(g, e, ghost, maxHP, trailFrac = 0) {
     g.clearRect(0, 0, BAR_W, BAR_H);
     if (ghost) {
       const prog = Math.max(0, Math.min(1, e._respawnProgress || 0));
@@ -434,6 +435,12 @@ export class UnitLayer {
 
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, BAR_H);
     g.fillStyle = hpColor; g.fillRect(0, 0, BAR_W * hpDraw, BAR_H);
+    // 掉血拖尾：真实血量→显示血量之间的淡红残段（有界动画，追平即消失）。护盾在其后绘制会覆盖。
+    if (trailFrac > hpFrac) {
+      const tEnd = Math.min(1, trailFrac) * scale;
+      g.fillStyle = 'rgba(255,150,150,0.6)';
+      g.fillRect(BAR_W * hpDraw, 0, BAR_W * (tEnd - hpDraw), BAR_H);
+    }
     if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * sfW, BAR_H); }
     if (stW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(BAR_W * (hpDraw + sfW), 0, BAR_W * stW, BAR_H); }
     g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
@@ -517,14 +524,26 @@ export class UnitLayer {
         barKey = 'g|' + Math.round((e._respawnProgress || 0) * BAR_W);
       } else {
         maxHP = attrCalc.calc(e, effects.getEffects(e.id)).maxHP || 1;
+        const realFrac = Math.max(0, Math.min(1, e.currentHP / maxHP));
+        // 掉血拖尾：显示血量 dispFrac 向真实血量插值。仅掉血启动；回血/首帧直接贴齐。
+        // 动画期内 dispFrac 量化值入 barKey → 每帧重绘；追平后去掉该项 → 停重绘（有界，非每帧）。
+        const dt = Math.max(0, Math.min(0.05, tNow - (en._lastT || tNow))); en._lastT = tNow;
+        if (en.dispFrac < 0 || realFrac >= en.dispFrac) {
+          en.dispFrac = realFrac; en.trailing = false;
+        } else {
+          en.dispFrac += (realFrac - en.dispFrac) * Math.min(1, dt * 7);   // 时间常数 ~0.14s
+          if (en.dispFrac - realFrac < 1 / BAR_W) { en.dispFrac = realFrac; en.trailing = false; }
+          else en.trailing = true;
+        }
         const q = (v) => Math.round(Math.max(0, Math.min(1, v)) * BAR_W);
-        barKey = q(e.currentHP / maxHP) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
+        barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
                + q((e.tempShield || 0) / maxHP) + '|' + (e._mapFaction || e.faction || '')
-               + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '');  // E1：节点值入脏 key，破节点才重绘
+               + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
+               + (en.trailing ? '|t' + q(en.dispFrac) : '');
       }
       if (en.barKey !== barKey) {
         en.barKey = barKey;
-        this._redrawBar(en.barCanvas.getContext('2d'), e, ghost, maxHP);
+        this._redrawBar(en.barCanvas.getContext('2d'), e, ghost, maxHP, (!ghost && en.trailing) ? en.dispFrac : 0);
         en.barTex.needsUpdate = true;   // 脏标记：只有走到这里才触发纹理上传
       }
     }
