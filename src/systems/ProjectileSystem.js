@@ -52,9 +52,18 @@ export class ProjectileSystem {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       const target = this.entities.get(p.targetId);
-      if (!target || !target.alive) { this.projectiles.splice(i, 1); continue; }
-      const dx = target.pos.x - p.startX;
-      const dy = target.pos.y - p.startY;
+      // B2：目标存活 → 追踪其位置（记录最后落点）；目标中途死亡 → 不再删除子弹，
+      // 冻结到【最后已知落点】继续飞，命中时不造成直接伤害、但溅射仍在落点生效。
+      let tx, ty;
+      if (target && target.alive) {
+        tx = target.pos.x; ty = target.pos.y;
+        p.lastTx = tx; p.lastTy = ty; p.dead = false;
+      } else {
+        if (p.lastTx == null) { this.projectiles.splice(i, 1); continue; } // 从未见到目标位置（异常）→ 丢弃
+        tx = p.lastTx; ty = p.lastTy; p.dead = true;
+      }
+      const dx = tx - p.startX;
+      const dy = ty - p.startY;
       const totalDist = Math.hypot(dx, dy);
       if (totalDist < 1) { this._hit(p); this.projectiles.splice(i, 1); continue; }
       const speed = p.speed || 400;
@@ -86,9 +95,14 @@ export class ProjectileSystem {
   }
 
   _hit(p) {
+    if (!p.pendingHit) return;
     const target = this.entities.get(p.targetId);
-    if (!target || !target.alive) return;
-    if (p.pendingHit) this.combat._resolveHit(p.pendingHit);
+    if (target && target.alive) {
+      this.combat._resolveHit(p.pendingHit);            // 正常命中：直伤 + 溅射
+    } else {
+      // B2：目标已死 → 无直接伤害，但溅射仍在原落点坐标生效（_applyExplosion 已依赖坐标）
+      this.combat._resolveHitSplashOnly(p.pendingHit, p.lastTx, p.lastTy);
+    }
   }
 
   getProjectiles() { return this.projectiles; }

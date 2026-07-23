@@ -659,17 +659,39 @@ export class CombatSystem {
   }
 
   _applyExplosion(attacker, target, baseDamage, attackType, radiusOverride) {
+    // 兼容旧调用：中心取目标坐标、排除主目标（主目标已单独结算直伤）。
+    this._applyExplosionAt(attacker, target.pos.x, target.pos.y, baseDamage, attackType, radiusOverride, target.id);
+  }
+
+  // B2：溅射【依赖坐标】而非目标对象——目标中途死亡后子弹仍飞到原落点，在此结算溅射。
+  _applyExplosionAt(attacker, centerX, centerY, baseDamage, attackType, radiusOverride, excludeId) {
     const radius = radiusOverride || 75;
-    const centerX = target.pos.x;
-    const centerY = target.pos.y;
     const targets = this.entities.findInRadius(centerX, centerY, radius, null, true);
     for (const t of targets) {
-      if (t.id === target.id) continue;
+      if (excludeId != null && t.id === excludeId) continue;
       const dist = Math.hypot(t.pos.x - centerX, t.pos.y - centerY);
       if (dist > radius) continue;
       const splashFactor = 0.6 * Math.exp(-0.033 * dist);
       const splashDmg = baseDamage * splashFactor * 0.8;
       this.performAttackDirect(attacker.id, t.id, splashDmg, attackType);
+    }
+  }
+
+  // B2：主目标在子弹在途中死亡——直接伤害作废，但溅射仍在【原落点坐标】生效。
+  // 溅射基数取攻击方原始伤害（不含随目标而定的 onHitPct 与双抗/建筑增幅），以免读已消失的目标。
+  _resolveHitSplashOnly(hitInfo, x, y) {
+    if (x == null || y == null) return;
+    const attacker = this.entities.get(hitInfo.attackerId);
+    if (!attacker || !attacker.alive) return;
+    const preMult = hitInfo.preDamageMult ?? 1;
+    const raw = (hitInfo.baseDamage + (hitInfo.onHitFixed || 0)) * (1 + (hitInfo.dmgAmp || 0) / 100) * preMult;
+    const weaponDef = hitInfo.weaponId ? this.skills[hitInfo.weaponId] : null;
+    if (weaponDef && weaponDef.id === 'weapon_explosive') {
+      this._applyExplosionAt(attacker, x, y, raw, hitInfo.attackType, null, null);
+    }
+    const ramSplashR = attacker.baseStats?.splashRadius || 0;
+    if (getSiegeWeaponDef(attacker, this.skills) && ramSplashR > 0) {
+      this._applyExplosionAt(attacker, x, y, raw, hitInfo.attackType, ramSplashR, null);
     }
   }
 
