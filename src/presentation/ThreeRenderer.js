@@ -138,8 +138,10 @@ export class ThreeRenderer {
     this._texTheme = theme;
     // 先找主题目录，缺哪张就回落到 assets/textures/ 根目录的通用图。
     // 这样新增一张地图时，没画材质也不会白屏，只是沿用通用质感。
+    // 'default'（地图加载前的初始主题）没有专属目录，直接取根图——省掉启动时 3 次
+    //  assets/textures/default/*.png 的必然 404（纯控制台噪声，会掩盖真正的报错）。
     const pick = async (name) =>
-      (await loadTexture(`assets/textures/${theme}/${name}.png`, true))
+      (theme !== 'default' && await loadTexture(`assets/textures/${theme}/${name}.png`, true))
       || (await loadTexture(`assets/textures/${name}.png`));
     const [ground, plateau, cliff] = await Promise.all([pick('ground'), pick('plateau'), pick('cliff')]);
     if (this._texTheme !== theme) return;   // 期间又切了图，丢弃这批结果
