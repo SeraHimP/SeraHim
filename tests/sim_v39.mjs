@@ -228,7 +228,7 @@ function battle() {
   const mn = mkUnit(ents2, 'melee', 'red', 30, 0);
   attr.tick(); h0 = mn.currentHP; combat.performAttack(R, mn);
   const dmgMinion = h0 - mn.currentHP;
-  T(`② 打小兵 -33%（${Math.round(dmgMinion)} ≈ 60×0.67×100/105 = 38）`, Math.abs(dmgMinion - 38) < 3);
+  T(`② 打小兵 -33%（${Math.round(dmgMinion)} ≈ 60×0.67×100/115 = 35）`, Math.abs(dmgMinion - 35) < 3);
   const mel = mkUnit(ents2, 'melee', 'red', 20, 0);
   attr.tick(); h0 = R.currentHP; combat.performAttack(mel, R);
   T(`③ 近战单位打它 +100%（${Math.round(h0 - R.currentHP)} = 9×2 = 18）`, Math.abs((h0 - R.currentHP) - 18) < 1);
