@@ -427,8 +427,19 @@ export class MapSystem {
       const c = this.getBaseCircleCenter(f), r = this.getBaseOpenRadius(f);
       if (c && r && Math.hypot(x - c.x, y - c.y) <= r) return true;
     }
+    // C 组·河道玩法化（默认关闭 → 对失败集合零影响；setRiverWalkable(true) 开启）：
+    // 主对角线河带（与 heightAt 的河床同一带）变为可行走，横穿并连通三路——LoL 式河道。
+    // 已知并接受的后果（用户定稿）：跨河视线打通、小兵可能临时滞留河中、sim_avoid 基准会变。
+    if (this._riverWalkable) {
+      const cfg = this.currentMap.heightZones || {};
+      const rh = cfg.riverHalfWidth ?? 200;
+      if (Math.abs(x - y) * 0.70710678 < rh) return true;
+    }
     return false;
   }
+
+  /** C 组·河道玩法化开关（默认关闭，保持既有玩法与失败集合基线）。 */
+  setRiverWalkable(on) { this._riverWalkable = !!on; return this._riverWalkable; }
 
   /**
    * C 组·台阶地形：某点的【地面高度】（世界单位）。纯渲染/摆位查询——仿真层不读它，

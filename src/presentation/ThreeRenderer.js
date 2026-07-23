@@ -299,6 +299,10 @@ export class ThreeRenderer {
     return this.azimuthDeg;
   }
 
+  // 强制重建地形（含墙体重采样 isWalkable）。用于河道可行走开关切换后刷新开挖的河道。
+  // 必须把 _terrainMapId 置空——否则 _rebuildTerrain 开头的"同一张图就跳过"守卫会挡回（陷阱#6）。
+  invalidateTerrain() { this._terrainMapId = null; this._terrainDirty = true; }
+
   /**
    * 摄像机映射桥（第2步的临时件，第4步 ThreeCameraController 会取代它）。
    *

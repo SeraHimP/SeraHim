@@ -118,6 +118,8 @@ if (renderer3d && glCanvas) {
 // 仰角可调（默认 45°）。这不是脚手架，是画面手感参数，保留。
 CTX.__setElevation = (deg) => renderer3d ? renderer3d.setElevation(deg) : null;
 CTX.__setAzimuth = (deg) => renderer3d ? renderer3d.setAzimuth(deg) : null; // C 组·方位角：绕地图中心偏航
+// C 组·河道玩法化（默认关闭）：开启后主对角线河带变可行走，重建地形开挖出下沉河道。
+CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); renderer3d?.invalidateTerrain?.(); return v; };
 // 视角俯仰角工具条。放画布控件栏而不是设置面板：它是持续微调的手感参数，
 // 和缩放同类，藏进二级面板反而不好用。
 {
