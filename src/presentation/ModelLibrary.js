@@ -27,6 +27,8 @@ const MUZZLE_BONE = 'Buffbone_Glb_Weapon_1';
 // 归一化模板（高度=1）→ 目标 topY 的系数，按 tier 角色。
 // Q1（用户定稿）：整体放大——塔 ×3（2.4→7.2）、水晶/枢纽 ×2.5（2.0→5.0 / 2.3→5.75）、损毁塔同塔 ×3。
 const TOPY_FACTOR = { tower: 7.2, tower_ruin: 5.1, lane_crystal: 5.0, nexus: 5.75 };
+// Q3：小兵可见高度 = st.size × 系数。超级兵/炮兵更大；与程序化小兵观感大致对齐、并与放大后的塔协调。
+const MINION_TOPY = { melee: 2.4, ranged: 2.4, super: 3.2, siege: 3.4 };
 
 // _mapTier → 模型角色。外/内/水晶塔/枢纽塔都用 tower.glb；两类水晶各有其模型。
 function tierRole(tier) {
@@ -201,6 +203,24 @@ export class ModelLibrary {
       this._scaled.set(sk, tpl);
     }
     return { key: 'M|' + sk, template: tpl.group, topY: tpl.topY, muzzleY: tpl.muzzleY };
+  }
+
+  /**
+   * Q3：取小兵的模型模板（melee/ranged/super/siege 有 GLB；totem/warlock/corrupt/ram 无 → 返回 null 回退程序化）。
+   * @returns { key, template(Group), topY, muzzleY } | null
+   */
+  forMinion(type, faction, size) {
+    if (!faction) return null;
+    const base = this._baseCache.get(faction + '|' + type);
+    if (!base) return null;
+    const sk = faction + '|' + type + '|m' + size;
+    let tpl = this._scaled.get(sk);
+    if (!tpl) {
+      const target = size * (MINION_TOPY[type] || 2.4);
+      tpl = buildScaled(base, target);
+      this._scaled.set(sk, tpl);
+    }
+    return { key: 'Mm|' + sk, template: tpl.group, topY: tpl.topY, muzzleY: tpl.muzzleY };
   }
 
   dispose() {

@@ -108,6 +108,15 @@ export class UnitLayer {
     }
     const st = MINION_STYLE[e.type] || { color: '#c0392b', icon: '❓', size: 10 };
     const faction = e._mapFaction || e.faction;
+    // Q3：小兵优先 GLB 模型（melee/ranged/super/siege）；无该模型或未加载 → 回退程序化几何。
+    if (!ghost && this.models && faction) {
+      const mdl = this.models.forMinion(e.type, faction, st.size);
+      if (mdl) {
+        return { key: mdl.key, isModel: true, template: mdl.template, topY: mdl.topY, muzzleY: mdl.muzzleY,
+                 size: st.size, barW: 40, barH: 4, barD: 6, alpha: 1, pulse: false,
+                 ringR: st.size + 5, facing: needsFacing(e.type) };
+      }
+    }
     // 阵营色优先于兵种色：立体化后兵种靠【造型】区分，颜色让位给敌我识别
     const color = faction === 'blue' ? '#5b9bd5' : faction === 'red' ? '#e0473f' : st.color;
     const key = `m|${e.type}|${faction || 'none'}`;
@@ -513,7 +522,8 @@ export class UnitLayer {
         while (d > Math.PI) d -= Math.PI * 2;
         while (d < -Math.PI) d += Math.PI * 2;
         en.faceA += d * 0.18;   // 转向平滑系数：掉头约 20 帧转完，快而不生硬
-        en.unit.rotation.y = en.faceA;
+        // Q3：GLB 小兵模型的正面轴与塔同一套偏移；程序化几何朝 +Z 建，偏移为 0。
+        en.unit.rotation.y = en.faceA + (en.unitIsModel ? MODEL_FORWARD_OFFSET : 0);
       }
     }
     en.bar.position.set(e.pos.x, gy + (en.topY || 0) * s, e.pos.y);
