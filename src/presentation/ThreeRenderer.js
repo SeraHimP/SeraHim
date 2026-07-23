@@ -376,8 +376,19 @@ export class ThreeRenderer {
     // PlaneGeometry 默认在 XY 平面。rotateX(-90°) 把它放平到 XZ：局部 +Y → 世界 -Z。
     // 于是 uv(0,0)（贴图左下）落在世界 (0, WH)，uv(1,1) 落在世界 (WW, 0)——
     // 正好对上离屏画布"像素 (0,0) = 世界 (0,0)"加上 three 默认 flipY=true 的翻转，无需再手动翻。
-    const geo = new THREE.PlaneGeometry(WW, WH);
+    // C 组·台阶地形：细分地面并按 heightAt 抬/沉顶点（高地 +20 / 河床 −10）。段≈48px，够出台阶感；
+    // 抬沉后重算法线，台阶侧面才吃光（否则整片平面法线、阶梯看不出）。WallLayer 丛林崖体不经此处。
+    const segX = Math.max(1, Math.round(WW / 48)), segZ = Math.max(1, Math.round(WH / 48));
+    const geo = new THREE.PlaneGeometry(WW, WH, segX, segZ);
     geo.rotateX(-Math.PI / 2);
+    if (ms?.heightAt) {
+      const pos = geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        pos.setY(i, ms.heightAt(WW / 2 + pos.getX(i), WH / 2 + pos.getZ(i)));
+      }
+      pos.needsUpdate = true;
+      geo.computeVertexNormals();
+    }
     // 第 6.1 步：改为受光材质。灯组标定到总辐照度 = π，故平面地面的出射色
     // 与此前 MeshBasicMaterial 时代逐像素相同——本步是刻意的"视觉空操作"。
     const mat = new THREE.MeshLambertMaterial({ map: tex });

@@ -431,6 +431,29 @@ export class MapSystem {
   }
 
   /**
+   * C 组·台阶地形：某点的【地面高度】（世界单位）。纯渲染/摆位查询——仿真层不读它，
+   * 不影响 isWalkable/移动/索敌，故加它对失败集合零影响。默认两级台阶：
+   *   高地 +20（两基地平台，baseOpenRadius 内）、河床 −10（主对角线 x≈z 河带）。
+   * 数值可由 map.heightZones 覆写；WallLayer 的丛林崖体不经此处（那是另一套，别动崖面绕序）。
+   */
+  heightAt(x, z) {
+    const m = this.currentMap;
+    if (!m || !m.world || !this.hasWalls?.()) return 0;
+    const cfg = m.heightZones || {};
+    const riverHalf = cfg.riverHalfWidth ?? 200, riverDepth = cfg.riverDepth ?? -10;
+    const platH = cfg.plateauHeight ?? 20;
+    let h = 0;
+    // 河床：到主对角线 x=z 的垂距（÷√2）小于半宽 → 下沉
+    if (Math.abs(x - z) * 0.70710678 < riverHalf) h = Math.min(h, riverDepth);
+    // 高地：两基地平台（开放内圈 90% 以内，留一圈过渡不顶到走廊口）
+    for (const f of ['blue', 'red']) {
+      const c = this.getBaseCircleCenter(f), r = this.getBaseOpenRadius(f);
+      if (c && r && Math.hypot(x - c.x, z - c.y) < r * 0.9) { h = Math.max(h, platH); break; }
+    }
+    return h;
+  }
+
+  /**
    * 把位置约束回可行走区域（就地修改 pos）。返回是否发生了修正。
    * 修正目标 = 所有走廊/基地区中【离该点最近的合法点】（贴着墙内侧 2px）。
    */

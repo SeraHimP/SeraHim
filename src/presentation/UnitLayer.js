@@ -208,7 +208,7 @@ export class UnitLayer {
     bar.renderOrder = ORDER_BAR;
 
     this.scene.add(unit); this.scene.add(bar);
-    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, dispFrac: -1, trailing: false, _lastT: 0,
+    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -310,8 +310,8 @@ export class UnitLayer {
       en.selGlow = this._flatMesh(this._flatGeo('ring', r + 3, 6), this._flatMat('#7ef0a0', 0.35));
       en.selCore.renderOrder = ORDER_SEL; en.selGlow.renderOrder = ORDER_SEL;
     }
-    en.selCore.position.set(e.pos.x, RING_LIFT, e.pos.y);
-    en.selGlow.position.set(e.pos.x, RING_LIFT, e.pos.y);
+    en.selCore.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
+    en.selGlow.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
   }
 
   _clearInfo(en) {
@@ -353,8 +353,8 @@ export class UnitLayer {
         en.rangeFill = this._flatMesh(this._flatGeo('disc', r), this._flatMat(color, 0x0f / 255));
         en.rangeEdge = this._flatMesh(this._flatGeo('ring', r, 1), this._flatMat(color, 0x33 / 255));
       }
-      en.rangeFill.position.set(x, RING_LIFT, z);
-      en.rangeEdge.position.set(x, RING_LIFT, z);
+      en.rangeFill.position.set(x, RING_LIFT + en.groundY, z);
+      en.rangeEdge.position.set(x, RING_LIFT + en.groundY, z);
     } else if (en.rangeFill) {
       en.rangeFill = this._removeFlat(en.rangeFill);
       en.rangeEdge = this._removeFlat(en.rangeEdge);
@@ -370,7 +370,7 @@ export class UnitLayer {
         en.own = this._removeFlat(en.own);
         en.own = this._flatMesh(this._flatGeo('ring', bSize + 4, 3), this._flatMat(oc, 1));
       }
-      en.own.position.set(x, RING_LIFT, z);
+      en.own.position.set(x, RING_LIFT + en.groundY, z);
     } else if (en.own) {
       en.own = this._removeFlat(en.own); en.ownKey = '';
     }
@@ -382,7 +382,7 @@ export class UnitLayer {
         en.soulKey = '1';
         en.soul = this._flatMesh(this._flatGeo('ring', 32, 2), this._flatMat('#f6c94a', 1));
       }
-      en.soul.position.set(x, RING_LIFT, z);
+      en.soul.position.set(x, RING_LIFT + en.groundY, z);
     } else if (en.soul) {
       en.soul = this._removeFlat(en.soul); en.soulKey = '';
     }
@@ -399,7 +399,7 @@ export class UnitLayer {
         this.scene.add(en.shield); this.infoObjs++;
         en.shieldOn = true;
       }
-      en.shield.position.set(x, en.topY || 0, z);
+      en.shield.position.set(x, (en.topY || 0) + en.groundY, z);
     } else if (en.shield) {
       this.scene.remove(en.shield); this.infoObjs--;
       en.shield.material.dispose();
@@ -488,7 +488,10 @@ export class UnitLayer {
     // 脉动（巨龙）改为整体缩放模型本身，与纸片人时代同一近似
     const s = vis.pulse ? (1 + 0.12 * Math.sin(tNow * 3)) : 1;
     en.unit.scale.set(s, s, s);
-    en.unit.position.set(e.pos.x, 0, e.pos.y);
+    // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。
+    const gy = (this.mapSystem && this.mapSystem.heightAt) ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
+    en.groundY = gy;
+    en.unit.position.set(e.pos.x, gy, e.pos.y);
 
     // A：GLB 塔按兵线朝敌方定向（固定 yaw，只算一次——塔不移动；损毁塔沿用）。
     if (vis.isModel && e.type === 'tower') {
@@ -513,7 +516,7 @@ export class UnitLayer {
         en.unit.rotation.y = en.faceA;
       }
     }
-    en.bar.position.set(e.pos.x, (en.topY || 0) * s, e.pos.y);
+    en.bar.position.set(e.pos.x, gy + (en.topY || 0) * s, e.pos.y);
 
     // 血条：塔/龙/幽灵始终显示；小兵条受 LOD 档1 控制（与 2D 的 lodBars 同口径）
     const showBar = ghost || e.type === 'tower' || e.type === 'dragon' || !lodHideBar;
