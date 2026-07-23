@@ -456,10 +456,16 @@ export class MapSystem {
     let h = 0;
     // 河床：到主对角线 x=z 的垂距（÷√2）小于半宽 → 下沉
     if (Math.abs(x - z) * 0.70710678 < riverHalf) h = Math.min(h, riverDepth);
-    // 高地：两基地平台（开放内圈 90% 以内，留一圈过渡不顶到走廊口）
+    // 高地：两基地平台。Q4——边缘做成【斜坡】而非陡坎：内核 rFull 内满高 platH，
+    // rFull→rEdge 之间线性降到 0，于是从各兵线口离开基地都是一段可走的坡（红圈处）。
+    const rFull = cfg.plateauFull ?? 0.60, rEdge = cfg.plateauEdge ?? 0.98;
     for (const f of ['blue', 'red']) {
       const c = this.getBaseCircleCenter(f), r = this.getBaseOpenRadius(f);
-      if (c && r && Math.hypot(x - c.x, z - c.y) < r * 0.9) { h = Math.max(h, platH); break; }
+      if (!c || !r) continue;
+      const d = Math.hypot(x - c.x, z - c.y), a = r * rFull, b = r * rEdge;
+      if (d >= b) continue;
+      const t = d <= a ? 1 : 1 - (d - a) / Math.max(1e-6, b - a);   // 1（核心）→ 0（坡脚）
+      h = Math.max(h, platH * t);
     }
     return h;
   }

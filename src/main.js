@@ -135,6 +135,24 @@ CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); render
     sl.disabled = true;   // 无 WebGL：控件留着但禁用，避免调了没反应
   }
 }
+// Q5：视角方位角（东南西北）工具条——滑块 0~360° + 靠近四方向自动吸附。与仰角同栏。
+{
+  const sl = document.getElementById('azimSlider'), lb = document.getElementById('azimLabel');
+  const NAME = (d) => ['北', '东', '南', '西'][Math.round((((d % 360) + 360) % 360) / 90) % 4];
+  const SNAP = 8; // 度：靠近 0/90/180/270 吸附
+  if (sl && renderer3d) {
+    sl.value = String(renderer3d.azimuthDeg || 0);
+    if (lb) lb.textContent = NAME(Number(sl.value));
+    sl.addEventListener('input', () => {
+      let d = Number(sl.value);
+      for (const s of [0, 90, 180, 270, 360]) if (Math.abs(d - s) <= SNAP) { d = s % 360; sl.value = String(d); break; }
+      renderer3d.setAzimuth(d);
+      if (lb) lb.textContent = NAME(d);
+    });
+  } else if (sl) {
+    sl.disabled = true;
+  }
+}
 // 第 6.1 步：阴影档位。'all' 全投影 / 'static' 仅塔与墙 / 'off' 关闭。
 // 默认 'all'——用户定稿：启动即全部投影（含小兵）。性能有余量；想省开销可在设置面板切 'static'，
 // 而"建筑有影子"的观感基本全留。当前无任何投影体，三档在画面上还看不出区别。

@@ -264,7 +264,8 @@ export class UnitLayer {
       const dx = en.unit.position.x - x, dz = en.unit.position.z - z;
       const d = dx * dx + dz * dz;
       // A：塔的炮口取模型挂点高度（Buffbone_Glb_Weapon_1，≈水晶处）；程序化回退取塔冠顶端。
-      if (d < bestD) { bestD = d; best = en.muzzleY || en.topY || 0; }
+      // 债c：叠上单位所在地面高度（高地/河床），子弹从正确世界高度出膛。
+      if (d < bestD) { bestD = d; best = (en.groundY || 0) + (en.muzzleY || en.topY || 0); }
     }
     return best;
   }
