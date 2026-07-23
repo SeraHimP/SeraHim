@@ -20,12 +20,13 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { GLTFLoader } from '../../vendor/GLTFLoader.js';
-import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from '../../vendor/BufferGeometryUtils.js';
 
 const MUZZLE_BONE = 'Buffbone_Glb_Weapon_1';
 
-// 归一化模板（高度=1）→ 目标 topY 的系数，按 tier 角色。与程序化造型的观感大致对齐。
-const TOPY_FACTOR = { tower: 2.4, tower_ruin: 1.7, lane_crystal: 2.0, nexus: 2.3 };
+// 归一化模板（高度=1）→ 目标 topY 的系数，按 tier 角色。
+// Q1（用户定稿）：整体放大——塔 ×3（2.4→7.2）、水晶/枢纽 ×2.5（2.0→5.0 / 2.3→5.75）、损毁塔同塔 ×3。
+const TOPY_FACTOR = { tower: 7.2, tower_ruin: 5.1, lane_crystal: 5.0, nexus: 5.75 };
 
 // _mapTier → 模型角色。外/内/水晶塔/枢纽塔都用 tower.glb；两类水晶各有其模型。
 function tierRole(tier) {
@@ -112,14 +113,22 @@ function bakeBase(gltf) {
   for (const m of merged) {
     m.geo.translate(-cx, 0, -cz);         // 只居中 x/z；y 保持地线不动
     m.geo.scale(inv, inv, inv);
-    m.geo.computeVertexNormals();         // ① 受光：unlit 源无有效法线响应，非索引烘焙后重算 = 平面着色
-    m.geo.computeBoundingBox();
+    // Q2 法线：焊接重合顶点再算法线 → 平滑着色，消除"非索引=每面独立"的切面/破碎感。
+    let g = m.geo;
+    try { g = mergeVertices(m.geo, 1e-4); } catch (e) { /* 属性不齐时退回原几何 */ }
+    g.computeVertexNormals();
+    g.computeBoundingBox();
     if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+    // Q2 自发光：源模型是 unlit（贴图=最终色，含发光水晶）。转受光后加一层 emissive=贴图，
+    // 让水晶/发光部件重新自亮、整体不再发黑；漫反射仍吃光，昼夜依然有明暗。
     const material = new THREE.MeshLambertMaterial({
       map: m.map || null,
       color: m.map ? 0xffffff : 0xcfd4dc,
+      emissive: m.map ? 0xffffff : 0x000000,
+      emissiveMap: m.map || null,
+      emissiveIntensity: m.map ? 0.5 : 0,
     });
-    parts.push({ geo: m.geo, material });
+    parts.push({ geo: g, material });
   }
   const muzzleYNorm = muzzle ? muzzle.y * inv : null;   // y 未平移，直接归一化
   return { parts, muzzleYNorm };

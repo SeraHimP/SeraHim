@@ -16,7 +16,7 @@ const KEYS = [
   { p: 0.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42, bg: '#241f2e' }, // 黎明
   { p: 0.25, sun: '#fff6e8', sky: '#8fbce6', gnd: '#6b7a5a', elev: 82, exp: 1.00, amb: 0.30, bg: '#1a2740' }, // 正午
   { p: 0.50, sun: '#ff8a4d', sky: '#e88a5a', gnd: '#4e3f34', elev: 10, exp: 0.70, amb: 0.44, bg: '#2a181c' }, // 黄昏
-  { p: 0.75, sun: '#6f86c9', sky: '#1b2440', gnd: '#182034', elev:  8, exp: 0.34, amb: 0.62, bg: '#070912' }, // 午夜
+  { p: 0.75, sun: '#8ea0d6', sky: '#28304e', gnd: '#20283c', elev:  8, exp: 0.52, amb: 0.60, bg: '#0c1020' }, // 午夜（抬亮：夜里也看得清）
   { p: 1.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42, bg: '#241f2e' }, // 回到黎明（闭合）
 ];
 
