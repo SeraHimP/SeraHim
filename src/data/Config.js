@@ -19,7 +19,7 @@ export const CONFIG = {
     battleTotemFromWave: 10,   // 第几波起开始生成图腾兵（对战模式）
     battleTotemInterval: 3,    // 每几波生成一次（对战模式）
     // v33：兵种生成总开关（沙盒+对战通用；模板编辑器"生成规则"里可切）
-    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: true }, // v35：图腾默认不生成（编辑器可开）
+    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: false }, // v35：图腾默认不生成；攻城车(ram)默认不生成——暂无模型（编辑器可开）
     waveShieldInterval: 4,
     waveWarlockInterval: 6,
     waveCorruptInterval: 7,
@@ -30,7 +30,7 @@ export const CONFIG = {
     battleTotemFromWave: 10,   // 第几波起开始生成
     battleTotemInterval: 3,    // 每几波生成一次
     // v33 Q4：各兵种"是否生成"总开关（沙盒+对战都生效；模板编辑器"生成规则"里可切）
-    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: true }, // v35：图腾默认不生成（编辑器可开）
+    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: false }, // v35：图腾默认不生成；攻城车(ram)默认不生成——暂无模型（编辑器可开）
     dragonFirstDelay: 60,
     dragonInterval: 90,
     dragonHpScale: 12,

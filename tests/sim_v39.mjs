@@ -203,7 +203,7 @@ function battle() {
     && CONFIG.templates.totem.attackRange > MELEE_RANGE_THRESHOLD
     && CONFIG.templates.tower.attackRange > MELEE_RANGE_THRESHOLD
     && ram.attackRange > MELEE_RANGE_THRESHOLD);
-  T('攻城车有体积与出兵开关', MINION_SIZES.ram === 14 && CONFIG.gameRules.spawnEnabled.ram === true);
+  T('攻城车有体积与出兵开关（默认关闭）', MINION_SIZES.ram === 14 && CONFIG.gameRules.spawnEnabled.ram === false);
   T('攻城武器被动已定义', !!SkillLibrary.passive_siege_weapon);
 
   // 伤害四规则（精确数值）
@@ -245,7 +245,11 @@ function battle() {
     spawned.push({ w: lws.waveNumber, type, laneId, f });
     return mkUnit(ents3, type, f, x, y);
   });
+  // 攻城车默认关闭（暂无模型）——此处显式开启以验证【出兵节奏机制】本身不变。
+  const _ramWas = CONFIG.gameRules.spawnEnabled.ram;
+  CONFIG.gameRules.spawnEnabled.ram = true;
   for (let t = 0; t < 52 * 30; t += DT) lws.update(DT);
+  CONFIG.gameRules.spawnEnabled.ram = _ramWas;
   const ramWaves = [...new Set(spawned.filter(s => s.type === 'ram').map(s => s.w))];
   T(`出生波次 5/20/35/50（实际 ${ramWaves.join(',')}）`, ramWaves.join(',') === '5,20,35,50');
   const w5 = spawned.filter(s => s.w === 5 && s.laneId === 'mid' && s.f === 'blue').map(s => s.type);
