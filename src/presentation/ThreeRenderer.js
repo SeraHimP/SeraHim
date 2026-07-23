@@ -91,6 +91,7 @@ export class ThreeRenderer {
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, CAM_DIST * 3);
     this.elevationDeg = CAM_ELEVATION_DEG;
+    this.azimuthDeg = 0;   // C 组·方位角（绕 Y 偏航）。0 = 原视角（无偏航）。
 
     this._buildLights();
     this.walls = new WallLayer(this.scene);
@@ -292,6 +293,12 @@ export class ThreeRenderer {
     return this.elevationDeg;
   }
 
+  // C 组·方位角：绕地图中心偏航（度）。0=原视角。取模到 [0,360)。
+  setAzimuth(deg) {
+    this.azimuthDeg = ((Number(deg) || 0) % 360 + 360) % 360;
+    return this.azimuthDeg;
+  }
+
   /**
    * 摄像机映射桥（第2步的临时件，第4步 ThreeCameraController 会取代它）。
    *
@@ -314,6 +321,7 @@ export class ThreeRenderer {
     const zoom = controller.zoom || 1;
     const p = this.elevationDeg * DEG;
     const sinP = Math.sin(p), cosP = Math.cos(p);
+    const az = (this.azimuthDeg || 0) * DEG, ca = Math.cos(az), sa = Math.sin(az);
 
     const tx = (W / 2 - controller.offsetX) / zoom;
     const tz = (H / 2 - controller.offsetY) / zoom;
@@ -324,10 +332,10 @@ export class ThreeRenderer {
     cam.top = H / 2; cam.bottom = -H / 2;
     cam.zoom = zoom;
     cam.near = 1; cam.far = CAM_DIST * 3;
-    // 摄像机站在 +Z 一侧向 -Z 看：世界 y 增大（2D 视图的"下方"）在屏幕上仍然靠下，朝向与 2D 一致
-    cam.position.set(tx, CAM_DIST * sinP, tz + CAM_DIST * cosP);
-    // up 显式给出，避免仰角 90° 时与视线共线导致 lookAt 退化
-    cam.up.set(0, cosP, -sinP);
+    // 摄像机站在目标的 +Z 一侧向目标看；方位角把这一"站位"绕目标（绕 Y）转过 az。
+    cam.position.set(tx + CAM_DIST * cosP * sa, CAM_DIST * sinP, tz + CAM_DIST * cosP * ca);
+    // up 显式给出（同样绕 az 旋转），避免仰角 90° 时与视线共线导致 lookAt 退化
+    cam.up.set(-sinP * sa, cosP, -sinP * ca);
     cam.lookAt(this._target);
     cam.updateProjectionMatrix();
   }
@@ -426,9 +434,13 @@ export class ThreeRenderer {
       // 第3.5步：弹道/指示线/静态参照。lodDots 与 2D 的档2 同阈值（rel < 1.02）
       // 摄像机不偏航、只有仰角，故视线与上方向是常量，每帧算一次传给特效层。
       // 视线用于把光束/红线做成朝向摄像机的带子；上方向用于把子弹做成面向摄像机的片。
+      // C 组·方位角：视线/上/右三基向量随仰角 + 方位角（绕 Y）旋转，每帧算一次传给特效层。
+      // 右向量供子弹广告牌用（原先硬编码"右=世界+X"，偏航后必须改成摄像机右向）。
       const pr = this.elevationDeg * DEG, sp = Math.sin(pr), cp = Math.cos(pr);
+      const az = (this.azimuthDeg || 0) * DEG, ca = Math.cos(az), sa = Math.sin(az);
       this.fx.update(this.deps, controller ? controller.zoom : 1, rel < 1.02,
-                     { vx: 0, vy: -sp, vz: -cp, ux: 0, uy: cp, uz: -sp },
+                     { vx: -cp * sa, vy: -sp, vz: -cp * ca, ux: -sp * sa, uy: cp, uz: -sp * ca,
+                       rx: ca, ry: 0, rz: -sa },
                      (x, z) => this.units.muzzleY(x, z));
     }
     this.gl.render(this.scene, this.camera);

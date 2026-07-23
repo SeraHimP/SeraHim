@@ -225,12 +225,14 @@ class Batch {
   }
 
   /** 悬空贴图片（子弹）：面向摄像机的正方形。右 = 世界 +X（无偏航），上 = 摄像机 up。 */
-  sprite3(x, y, z, size, col, a, ux, uy, uz) {
+  sprite3(x, y, z, size, col, a, ux, uy, uz, rrx = 1, rry = 0, rrz = 0) {
     const h = size * 0.5;
-    const rx = h, upx = ux * h, upy = uy * h, upz = uz * h;
+    // 右向量：无偏航时 = 世界 +X（原行为）；偏航时由调用方传摄像机右向。
+    const rpx = rrx * h, rpy = rry * h, rpz = rrz * h;
+    const upx = ux * h, upy = uy * h, upz = uz * h;
     const P = [
-      [x - rx - upx, y - upy, z - upz], [x + rx - upx, y - upy, z - upz],
-      [x + rx + upx, y + upy, z + upz], [x - rx + upx, y + upy, z + upz],
+      [x - rpx - upx, y - rpy - upy, z - rpz - upz], [x + rpx - upx, y + rpy - upy, z + rpz - upz],
+      [x + rpx + upx, y + rpy + upy, z + rpz + upz], [x - rpx + upx, y - rpy + upy, z - rpz + upz],
     ];
     this._tri3(P[0][0], P[0][1], P[0][2], P[1][0], P[1][1], P[1][2], P[2][0], P[2][1], P[2][2],
       col, a, [0, 1, 1, 1, 1, 0]);
@@ -331,7 +333,7 @@ export class EffectsLayer {
    * @param muzzleY(x, z) → 该处单位的炮口高度（无单位则 0）。由 ThreeRenderer 从 UnitLayer 取。
    */
   update(deps, zoom, lodDots, view, muzzleY) {
-    const V = view || { vx: 0, vy: -1, vz: 0, ux: 0, uy: 1, uz: 0 };
+    const V = view || { vx: 0, vy: -1, vz: 0, ux: 0, uy: 1, uz: 0, rx: 1, ry: 0, rz: 0 };
     const MY = muzzleY || (() => 0);
     const { entities, projectiles, mapSystem } = deps;
     // D 组：切图或首帧重建
@@ -483,14 +485,14 @@ export class EffectsLayer {
             for (let k = 1; k <= 4; k++) {          // 沿来向铺 4 片递减的残影（升温更亮）
               const back = k * hsz * 0.42;
               Q.sprite3(x - ux * back, by, y - uy2 * back,
-                        hsz * (1 - k * 0.17), dcol, (0.5 - k * 0.1) * (1 + heat * 0.6), V.ux, V.uy, V.uz);
+                        hsz * (1 - k * 0.17), dcol, (0.5 - k * 0.1) * (1 + heat * 0.6), V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
             }
           }
-          if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.7 + heat * 0.8), dcol, 0.10 + heat * 0.16, V.ux, V.uy, V.uz); // 热晕
+          if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.7 + heat * 0.8), dcol, 0.10 + heat * 0.16, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕
         }
-        Q.sprite3(x, by, y, hsz, dcol, 1, V.ux, V.uy, V.uz);          // 光晕
-        Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz);    // 核心
-        if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.14), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz);  // 白亮弹芯（升温更粗）
+        Q.sprite3(x, by, y, hsz, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);          // 光晕
+        Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);    // 核心
+        if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.14), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯（升温更粗）
       }
     }
 

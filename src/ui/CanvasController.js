@@ -71,8 +71,13 @@ export class CanvasController {
       if (this._placeMode) return; // 放置模式下不拖动视角，避免误触
       // v2.5D 第4步：3D 下世界 Z 在屏幕上被压缩 sin(仰角)，纵向要反除回去才跟手（横向无压缩）
       const ky = this.view3d?.active() ? this.view3d.panScaleY() : 1;
-      this.offsetX = this.dragStartOffsetX + dx;
-      this.offsetY = this.dragStartOffsetY + dy * ky;
+      // C 组·方位角：偏航后把屏幕拖拽量按方位角旋转到世界对齐的 offset 增量，拖拽仍跟手。
+      // az=0 时 ca=1/sa=0 → 退化为原来的直接赋值，无偏航行为逐像素不变。
+      const az = ((this.renderer?.azimuthDeg || 0) * Math.PI) / 180;
+      const ca = Math.cos(az), sa = Math.sin(az);
+      const mdx = dx, mdy = dy * ky;
+      this.offsetX = this.dragStartOffsetX + (mdx * ca - mdy * sa);
+      this.offsetY = this.dragStartOffsetY + (mdx * sa + mdy * ca);
       this.updateView();
     });
 
