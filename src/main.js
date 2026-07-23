@@ -18,6 +18,7 @@ import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
 import { FACTIONS, canTarget } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
+import { dayNightAt, DAY_PERIOD } from './presentation/DayNight.js';
 import { EventBus } from './utils/EventBus.js';
 import { CONFIG } from './data/Config.js';
 import { UIManager } from './ui/UIManager.js';
@@ -141,6 +142,11 @@ CTX.__setShadows = (lv) => renderer3d ? renderer3d.setShadowLevel(lv) : null;
 CTX.__textures = (on) => renderer3d ? renderer3d.setTexturesEnabled(on !== false) : null;
 // 长跑体检：children 应稳定不涨
 CTX.__sceneStats = () => renderer3d ? renderer3d.sceneStats() : null;
+// C 组·昼夜交替：默认开启。__dayNight(false) 关闭并复位正午；__dayPeriod(秒) 改一天时长；
+// __setDayPhase(0..1) 手动定格某时刻（null 恢复自动，随 gameTime 推进）。受光材质已接入 → 真实明暗。
+CTX.__dayNight = (on) => { CTX.__dayNightOn = on !== false; if (!CTX.__dayNightOn && renderer3d) renderer3d.setLighting(dayNightAt(0.25 * (CTX.__dayPeriodSec || DAY_PERIOD), CTX.__dayPeriodSec || DAY_PERIOD)); };
+CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || DAY_PERIOD); };
+CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem);
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
 const collisionSystem = new CollisionSystem(entityContainer, mapSystem);
@@ -868,6 +874,12 @@ function gameLoop(timestamp) {
   if (CTX.gamePaused) {
     attrCalc.tick();
     entityContainer.rebuildGridIfNeeded(attrCalc._frame);
+  }
+  // C 组·昼夜交替：每帧按游戏时间（或手动定格相位）推进灯光。setLighting 很轻，逐帧无压力。
+  if (renderer3d && CTX.__dayNightOn !== false) {
+    const period = CTX.__dayPeriodSec || DAY_PERIOD;
+    const gt = CTX.__dayPhaseOverride != null ? CTX.__dayPhaseOverride * period : CTX.gameTime;
+    renderer3d.setLighting(dayNightAt(gt, period));
   }
   renderer3d?.render(canvasController);
   const t2 = performance.now();
