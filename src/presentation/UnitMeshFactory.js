@@ -82,7 +82,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const R = bSize, parts = [];
-    let topY, muzzleR = 0;
+    let crystalGeo = null, crystalCy = 0, crystalR = 0;   // Q6：水晶单独成件，不并入石身
     if (ruin) {
       // 损毁结构：矮塌的断桩 / 碎裂台座 + 倾倒散落的碎块，明显区别于活体（读作"废墟"）。
       // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。topY 由 pack 从包围盒取真值。
@@ -123,11 +123,10 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
       const pedH = R * 0.45;
       parts.push({ geo: new THREE.CylinderGeometry(R * 0.75, R * 0.95, pedH, 8),
                    matrix: T(0, pedH / 2, 0), color: shade(STONE, 0.55) });
-      const gemR = R * 0.8, gemY = pedH + gemR * 0.95;
-      parts.push({ geo: kind === 'gem' ? new THREE.OctahedronGeometry(gemR)
-                                       : new THREE.SphereGeometry(gemR, 16, 12),
-                   matrix: T(0, gemY, 0), color: shade(color, 1.08) });
-      topY = gemY + gemR;
+      // Q6：宝石单独成件（会转/发光）。水晶枢纽=八面体；召唤水晶=二十面体（切面感，转起来好看）。
+      crystalR = R * 0.78; crystalCy = pedH + crystalR * 0.95;
+      crystalGeo = kind === 'gem' ? new THREE.OctahedronGeometry(crystalR)
+                                  : new THREE.IcosahedronGeometry(crystalR, 0);
     } else {
       // 塔身全部【中性石色】融入地形；队伍色只落在顶部小水晶（=武器，子弹由此射出，用户 Q2）
       const baseH = R * 0.40, shaftH = R * 1.45, crownH = R * 0.32;
@@ -146,18 +145,19 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
                      matrix: T(Math.cos(a) * rr, mY + mS * 0.15, Math.sin(a) * rr),
                      color: shade(STONE, 0.6) });
       }
-      // 顶部队伍色小水晶（八面体）＝武器；炮口取其中心（子弹从这颗水晶射出）
-      const gemR = R * 0.40, gemCY = mY + mS + gemR * 0.65;
-      parts.push({ geo: new THREE.OctahedronGeometry(gemR),
-                   matrix: T(0, gemCY, 0), color: shade(color, 1.12) });
-      muzzleR = gemR;   // muzzleY = topY − gemR = 顶部水晶中心
+      // 顶部队伍色小水晶（八面体）＝武器；单独成件（会转/发光/攻击辉光，见 UnitLayer），炮口=其中心。
+      crystalR = R * 0.40; crystalCy = mY + mS + crystalR * 0.65;
+      crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
     }
     hit = pack(parts);
-    hit.muzzleY = hit.topY - muzzleR;   // 有顶水晶的塔＝水晶中心；水晶/废墟＝塔冠顶（muzzleR=0）
+    // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
+    // topY/muzzleY 含水晶（血条浮顶、子弹出膛＝水晶中心）；废墟无水晶时退回石身顶。
+    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy; }
+    else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
   }
-  return { geo: hit.geo, mat: unitMaterial(ghost), topY: hit.topY, muzzleY: hit.muzzleY };
+  return { geo: hit.geo, mat: unitMaterial(ghost), topY: hit.topY, muzzleY: hit.muzzleY, crystal: hit.crystal };
 }
 
 // ===================== 分兵种造型（第 6.3 步补充） =====================
@@ -338,6 +338,17 @@ export function unitMaterial(ghost) {
     _matCache.set(k, m);
   }
   return m;
+}
+
+// Q6：水晶材质——玻璃/切面质感 + 自发光（队伍色）。每座塔【独立一份】（攻击辉光要逐塔调
+// emissiveIntensity），故不缓存、每次 new；调用方负责在替换/移除时 dispose。
+export function crystalMaterial(color) {
+  return new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: 0.7,
+    roughness: 0.18, metalness: 0.0,
+    flatShading: true,                 // 切面高光 → 水晶感
+    transparent: true, opacity: 0.88,
+  });
 }
 
 /** 仅测试/切换地图时调用：释放全部共享几何与材质 */

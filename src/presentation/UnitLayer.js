@@ -34,7 +34,7 @@ import { MINION_STYLE } from './SpriteFactory.js';   // 第 6.3 步：本体改�
 import { CONFIG } from '../data/Config.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, minionMesh, dragonMesh, unitMaterial, needsFacing } from './UnitMeshFactory.js';
+import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, needsFacing } from './UnitMeshFactory.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -42,6 +42,8 @@ const _EMPTY_GEO = new THREE.BufferGeometry();  // Mesh 首帧占位，随即被
 // Q3：程序化塔/水晶的视觉放大系数（纯表现；不动 CONFIG.buildingSizes，故 GLB/碰撞/玩法都不受影响）。
 const TOWER_VIZ = { tower: 1.25, orb: 1.10, gem: 1.10 };
 const towerVizScale = (tier) => (tier === 'nexus_lane' || tier === 'nexus_main') ? 1.10 : 1.25;
+// Q6：水晶慢转角速度(rad/s)与攻击辉光参数（自发光基准/峰值/衰减速率）。
+const CRYSTAL_SPIN = 0.6, CRYSTAL_EMI_BASE = 0.7, CRYSTAL_EMI_PEAK = 1.6, CRYSTAL_GLOW_DECAY = 2.6;
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
@@ -86,27 +88,22 @@ export class UnitLayer {
         }
       }
       const isLaneCrystal = e._mapTier === 'nexus_lane';
-      // 召唤水晶重生中不再半透明（用户定稿）：改为不透明、略暗的"休眠石"，靠灰色重生条示意重生中。
-      // 其余幽灵（若有）仍保留半透明观感。损毁（ruin）一律不透明。
+      // 补充：召唤水晶重生中(ghost)＝显示【损毁模型】(破损底座+碎水晶)、不透明，靠灰色重生条示意重生中
+      //（不再是"变灰的活体水晶"）。其余幽灵(若有)仍半透明；损毁(ruin)一律不透明。
+      const showRuin = ruin || (ghost && isLaneCrystal);
       const transparent = ghost && !isLaneCrystal;
-      const color = ruin
-        ? (e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0')  // Q2/Q3：废墟结构走石色(towerMesh内部)，此色只用于水晶碎片染阵营
-        : ghost
-          ? (isLaneCrystal
-              ? (e._mapFaction === 'blue' ? '#3f6f9c' : '#9c463f')   // 休眠水晶：暗一档，读作"未激活"
-              : (e._mapFaction === 'blue' ? '#5b9bd5' : '#e0473f'))
-          : (e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0');
+      const color = e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0';
       const wInst = (ghost || ruin) ? null : (e._skillInstances || []).find(s => s.skillId.startsWith('weapon_'));
-      // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵/损毁才换模型），
-      // 只是 key 现在索引的是几何而不是贴图，共享策略与缓存生命周期完全照旧。
+      // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵/损毁才换模型）。
       const kind = isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower');
       const rSize = bSize * (TOWER_VIZ[kind] || 1.25);   // Q3：塔×1.25、召唤水晶/水晶枢纽×1.10（纯表现）
       const wid = wInst ? wInst.skillId : '';
-      const key = `t|${color}|${wid}|${kind}|${rSize}|${transparent ? 'g' : ''}${ruin ? 'r' : ''}`;
-      const m = towerMesh(key, color, rSize, wid, kind, transparent, ruin);
+      const key = `t|${color}|${wid}|${kind}|${rSize}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
+      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin);
+      // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,
-               ringR: rSize + 8 };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
+               ringR: rSize + 8, crystal: m.crystal, crystalColor: color };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
     }
     if (e.type === 'dragon') {
       const color = e._dragonColor || '#c0392b';
@@ -187,6 +184,11 @@ export class UnitLayer {
     en.unit = obj;
   }
 
+  // Q6：水晶件的材质是【逐塔独立】的（攻击辉光要单独调），切换外观/移除时必须释放。
+  _disposeCrystal(en) {
+    if (en.crystal) { en.crystal.material.dispose(); en.crystal = null; }
+  }
+
   // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
   _applyUnitShadow(en) {
     const cast = this.shadowLevel === 'all' || (this.shadowLevel === 'static' && en.isTower);
@@ -229,7 +231,7 @@ export class UnitLayer {
     bar.renderOrder = ORDER_BAR;
 
     this.scene.add(unit); this.scene.add(bar);
-    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
+    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, crystal: null, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -243,6 +245,7 @@ export class UnitLayer {
     this.scene.remove(en.unit); this.scene.remove(en.bar);
     // 单位的几何与材质由 UnitMeshFactory 按 key 全局共享，此处【不得】dispose——
     // 释放它会连带弄坏所有同 key 的其他单位。共享资源随 disposeMeshCache 统一释放。
+    this._disposeCrystal(en);     // Q6：水晶材质逐塔独立，需释放
     en.bar.material.dispose();
     en.barTex.dispose();          // per-entity 纹理；共享单位纹理不在此释放
     this._clearInfo(en);          // E 组对象（几何/材质共享，摘场景即可；盾牌 material 独立需释放）
@@ -494,13 +497,24 @@ export class UnitLayer {
       en.muzzleY = vis.muzzleY != null ? vis.muzzleY : vis.topY;
       if (vis.isModel) {
         // GLB 模型：装配 Group 实例（clone 共享几何/材质）。
+        this._disposeCrystal(en);
         this._installUnit(en, vis.template.clone());
         en.unitIsModel = true;
+      } else if (vis.crystal) {
+        // Q6：程序化塔/水晶 + 独立水晶件 → Group(石身 Mesh + 会转/发光的水晶 Mesh)。
+        this._disposeCrystal(en);
+        const g = new THREE.Group();
+        g.add(new THREE.Mesh(vis.geo, vis.mat));               // 石身：共享几何/材质
+        const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
+        cm.position.set(0, vis.crystal.cy, 0);
+        g.add(cm);
+        this._installUnit(en, g);
+        en.crystal = cm; en.unitIsModel = false;
       } else {
-        // 程序化 Mesh：从模型态切回时重建一个 Mesh 壳，否则直接换共享几何/材质引用。
-        if (en.unitIsModel) { this._installUnit(en, new THREE.Mesh(_EMPTY_GEO, vis.mat)); en.unitIsModel = false; }
-        en.unit.geometry = vis.geo;      // 共享几何，直接换引用（旧的属于缓存，不释放）
-        en.unit.material = vis.mat;
+        // 单 Mesh（小兵/龙/废墟/重生水晶）：从 Group（模型/水晶塔）切回时重建 Mesh 壳，否则换共享几何/材质引用。
+        this._disposeCrystal(en);
+        if (!en.unit || !en.unit.isMesh) { this._installUnit(en, new THREE.Mesh(vis.geo, vis.mat)); en.unitIsModel = false; }
+        else { en.unit.geometry = vis.geo; en.unit.material = vis.mat; }
       }
       this._applyUnitShadow(en);
       en.bar.scale.set(vis.barW, vis.barH, 1);
@@ -515,6 +529,17 @@ export class UnitLayer {
     const gy = (this.mapSystem && this.mapSystem.heightAt) ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
     en.groundY = gy;
     en.unit.position.set(e.pos.x, gy, e.pos.y);
+
+    // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
+    if (en.crystal) {
+      en.crystal.rotation.y = tNow * CRYSTAL_SPIN;
+      const cd = e.attackCooldown || 0;
+      if (cd > (en._lastCd || 0) + 0.05) en._glow = 1;   // 冷却值跳增 = 刚开了一炮
+      en._lastCd = cd;
+      const gdt = Math.max(0, Math.min(0.1, tNow - (en._glowT || tNow))); en._glowT = tNow;
+      en._glow = Math.max(0, (en._glow || 0) - gdt * CRYSTAL_GLOW_DECAY);
+      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + en._glow * (CRYSTAL_EMI_PEAK - CRYSTAL_EMI_BASE);
+    }
 
     // A：GLB 塔按兵线朝敌方定向（固定 yaw，只算一次——塔不移动；损毁塔沿用）。
     if (vis.isModel && e.type === 'tower') {
