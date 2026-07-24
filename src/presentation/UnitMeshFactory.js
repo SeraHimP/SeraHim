@@ -91,13 +91,14 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
         const pedH = R * 0.30;
         parts.push({ geo: new THREE.CylinderGeometry(R * 0.6, R * 0.9, pedH, 8),
                      matrix: T(0, pedH / 2, 0), color: shade(STONE, 0.5) });
-        const isGem = kind === 'gem';
+        // 碎片一律用【八面体】切面（尖锐棱角，读作"碎裂的水晶"，与水晶枢纽废墟同款；
+        // 用户反馈：召唤水晶废墟原用球体=圆的太丑，改为切面碎片）。
         // [x, 碎片半径比, z, 旋转]；cy≈半径 → 碎片贴地不悬空
         const shards = [[-0.46, 0.30, 0.30, 0.5], [0.44, 0.24, -0.34, -0.7],
                         [0.08, 0.34, 0.55, 1.0], [-0.30, 0.22, -0.5, 0.3], [0.20, 0.20, 0.03, 1.4]];
         for (const [sx, sr, sz, rot] of shards) {
-          const g = isGem ? new THREE.OctahedronGeometry(R * sr) : new THREE.SphereGeometry(R * sr, 8, 6);
-          parts.push({ geo: g, matrix: compose(T(sx * R, R * sr * 0.95, sz * R), R_Z(rot), R_X(rot * 0.5)),
+          parts.push({ geo: new THREE.OctahedronGeometry(R * sr),
+                       matrix: compose(T(sx * R, R * sr * 0.95, sz * R), R_Z(rot), R_X(rot * 0.5)),
                        color: shade(color, 0.92) });
         }
       } else {
@@ -153,7 +154,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
     hit = pack(parts);
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
     // topY/muzzleY 含水晶（血条浮顶、子弹出膛＝水晶中心）；废墟无水晶时退回石身顶。
-    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy; }
+    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
   }
@@ -349,6 +350,39 @@ export function crystalMaterial(color) {
     flatShading: true,                 // 切面高光 → 水晶感
     transparent: true, opacity: 0.88,
   });
+}
+
+// Q6：水晶粒子——绕水晶悬浮的一圈发光尘埃（加法混合，类 LoL）。作为水晶 Mesh 的子物体挂上，
+// 随水晶慢转而公转。软圆点贴图全局共享（懒建，headless 不触发）；几何/材质逐塔独立、需 dispose。
+let _dotTex = null;
+function dotTexture() {
+  if (_dotTex) return _dotTex;
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.4, 'rgba(255,255,255,0.55)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 32, 32);
+  _dotTex = new THREE.CanvasTexture(c); _dotTex.colorSpace = THREE.SRGBColorSpace;
+  return _dotTex;
+}
+export function crystalParticles(color, r) {
+  const N = 16, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {                    // 螺旋分布在水晶周围一层薄壳里（确定性，无随机）
+    const a = i * 2.399963;                         // 黄金角 → 均匀铺开
+    const rad = r * (0.95 + 0.55 * ((i * 0.618) % 1));
+    pos[i * 3] = Math.cos(a) * rad;
+    pos[i * 3 + 1] = r * (-0.5 + 1.6 * ((i * 0.373) % 1));
+    pos[i * 3 + 2] = Math.sin(a) * rad;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    size: r * 0.55, map: dotTexture(), color,
+    transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending,
+    depthWrite: false, sizeAttenuation: true,
+  });
+  return new THREE.Points(geo, mat);
 }
 
 /** 仅测试/切换地图时调用：释放全部共享几何与材质 */

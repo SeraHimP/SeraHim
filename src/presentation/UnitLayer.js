@@ -34,7 +34,7 @@ import { MINION_STYLE } from './SpriteFactory.js';   // 第 6.3 步：本体改�
 import { CONFIG } from '../data/Config.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, needsFacing } from './UnitMeshFactory.js';
+import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -185,8 +185,12 @@ export class UnitLayer {
   }
 
   // Q6：水晶件的材质是【逐塔独立】的（攻击辉光要单独调），切换外观/移除时必须释放。
+  // 水晶几何是共享缓存（不释放）；子物体粒子（Points）的几何/材质逐塔独立（释放）。软圆点贴图全局共享（不释放）。
   _disposeCrystal(en) {
-    if (en.crystal) { en.crystal.material.dispose(); en.crystal = null; }
+    if (!en.crystal) return;
+    if (en.crystal.material) en.crystal.material.dispose();
+    en.crystal.traverse(o => { if (o.isPoints) { o.geometry.dispose(); o.material.dispose(); } });
+    en.crystal = null;
   }
 
   // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
@@ -507,6 +511,7 @@ export class UnitLayer {
         g.add(new THREE.Mesh(vis.geo, vis.mat));               // 石身：共享几何/材质
         const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
         cm.position.set(0, vis.crystal.cy, 0);
+        cm.add(crystalParticles(vis.crystalColor, vis.crystal.r || 8));   // Q6：绕水晶公转的发光粒子（随水晶慢转）
         g.add(cm);
         this._installUnit(en, g);
         en.crystal = cm; en.unitIsModel = false;
