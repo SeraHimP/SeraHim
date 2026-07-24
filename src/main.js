@@ -120,6 +120,9 @@ CTX.__setElevation = (deg) => renderer3d ? renderer3d.setElevation(deg) : null;
 CTX.__setAzimuth = (deg) => renderer3d ? renderer3d.setAzimuth(deg) : null; // C 组·方位角：绕地图中心偏航
 // C 组·河道玩法化（默认关闭）：开启后主对角线河带变可行走，重建地形开挖出下沉河道。
 CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); renderer3d?.invalidateTerrain?.(); return v; };
+// LOL 模型总开关（默认关，用旧程序化几何）。__useModels(true) 启用 GLB 模型（首次启用才懒加载），
+// __useModels(false) 切回旧模型。逐帧按 visKey 重建，切换即时生效。美术问题定夺前默认关闭。
+CTX.__useModels = (on) => renderer3d ? renderer3d.setUseModels(on !== false) : false;
 // 视角俯仰角工具条。放画布控件栏而不是设置面板：它是持续微调的手感参数，
 // 和缩放同类，藏进二级面板反而不好用。
 {

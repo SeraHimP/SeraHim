@@ -99,13 +99,15 @@ export class ThreeRenderer {
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
     this.units = new UnitLayer(this.scene);
-    // A：GLB 模型库。异步加载并烘焙（unlit→受光、烘骨架成静态、取挂点作炮口）。未完成时
+    // A：GLB 模型库（LOL 模型）。异步加载并烘焙（unlit→受光、烘骨架成静态、取挂点作炮口）。未完成时
     // UnitLayer.forTower 返回 null → 回退程序化几何；完成后 visKey 自然改变 → 下一帧自动换模型。
+    // 用户定夺：LOL 模型美术问题（半透穿模等）暂搁置，默认【关闭】改用旧程序化几何。
+    // 运行时可用 CTX.__useModels(true/false) 热切换（UnitLayer 按 visKey 逐帧重建，切回程序化亦即时生效）。
     this.models = new ModelLibrary();
-    this.units.models = this.models;
     this.units.mapSystem = mapSystem;   // A：塔按兵线朝敌方定向要读车道/基地几何
-
-    this.models.load().catch(e => console.warn('[ThreeRenderer] 模型库加载失败：', e?.message || e));
+    this._modelsLoadStarted = false;
+    this.useModels = false;             // 默认关（旧模型）；置 true（或调 setUseModels(true)）启用 LOL 模型
+    this.setUseModels(this.useModels);
     this.fx = new EffectsLayer(this.scene);
     this._target = new THREE.Vector3();
     this._terrainMesh = null;
@@ -297,6 +299,19 @@ export class ThreeRenderer {
   setAzimuth(deg) {
     this.azimuthDeg = ((Number(deg) || 0) % 360 + 360) % 360;
     return this.azimuthDeg;
+  }
+
+  // LOL 模型总开关。on=true 用 GLB 模型（首次启用才懒加载烘焙，避免关着也去拉 16 个 GLB）；
+  // on=false 把 units.models 置空 → _visualOf 回退旧程序化几何。切换即时生效：UnitLayer 逐帧比对
+  // visKey，模型态↔程序化态的重建在下一帧的 sync 里自动完成（见 UnitLayer 的 visKey 分支）。
+  setUseModels(on) {
+    this.useModels = !!on;
+    this.units.models = this.useModels ? this.models : null;
+    if (this.useModels && !this._modelsLoadStarted) {
+      this._modelsLoadStarted = true;
+      this.models.load().catch(e => console.warn('[ThreeRenderer] 模型库加载失败：', e?.message || e));
+    }
+    return this.useModels;
   }
 
   // 强制重建地形（含墙体重采样 isWalkable）。用于河道可行走开关切换后刷新开挖的河道。
