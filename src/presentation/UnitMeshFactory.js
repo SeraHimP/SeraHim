@@ -87,35 +87,35 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
       // 损毁结构：矮塌的断桩 / 碎裂台座 + 倾倒散落的碎块，明显区别于活体（读作"废墟"）。
       // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。topY 由 pack 从包围盒取真值。
       if (kind === 'gem' || kind === 'orb') {
-        const pedH = R * 0.34;
-        parts.push({ geo: new THREE.CylinderGeometry(R * 0.62, R * 0.92, pedH, 8),
-                     matrix: T(0, pedH / 2, 0), color: shade(color, 0.5) });
-        // 碎裂核心残片：水晶枢纽→八面体碎片，召唤水晶→球体碎片，散落并倾倒
-        const frag = kind === 'gem'
-          ? () => new THREE.OctahedronGeometry(R * 0.30)
-          : () => new THREE.SphereGeometry(R * 0.26, 10, 8);
-        const shards = [[-0.48, 0.18, 0.28, 0.5], [0.46, 0.16, -0.32, -0.7],
-                        [0.06, 0.22, 0.58, 1.0], [-0.30, 0.14, -0.52, 0.3]];
-        for (const [sx, sy, sz, rot] of shards) {
-          parts.push({ geo: frag(),
-                       matrix: compose(T(sx * R, pedH + sy * R, sz * R), R_Z(rot), R_X(rot * 0.6)),
-                       color: shade(color, 0.9) });
+        // Q3：破损【石色】底座 + 碎裂的【队伍色】水晶碎片（散落贴地）。
+        const pedH = R * 0.30;
+        parts.push({ geo: new THREE.CylinderGeometry(R * 0.6, R * 0.9, pedH, 8),
+                     matrix: T(0, pedH / 2, 0), color: shade(STONE, 0.5) });
+        const isGem = kind === 'gem';
+        // [x, 碎片半径比, z, 旋转]；cy≈半径 → 碎片贴地不悬空
+        const shards = [[-0.46, 0.30, 0.30, 0.5], [0.44, 0.24, -0.34, -0.7],
+                        [0.08, 0.34, 0.55, 1.0], [-0.30, 0.22, -0.5, 0.3], [0.20, 0.20, 0.03, 1.4]];
+        for (const [sx, sr, sz, rot] of shards) {
+          const g = isGem ? new THREE.OctahedronGeometry(R * sr) : new THREE.SphereGeometry(R * sr, 8, 6);
+          parts.push({ geo: g, matrix: compose(T(sx * R, R * sr * 0.95, sz * R), R_Z(rot), R_X(rot * 0.5)),
+                       color: shade(color, 0.92) });
         }
       } else {
-        const stumpH = R * 0.46;
+        // Q2：全【石色】废墟——矮断桩 + 横躺断段 + 散落石块，全部贴地。
+        const stumpH = R * 0.5;
         parts.push({ geo: new THREE.CylinderGeometry(R * 0.7, R * 0.94, stumpH, 8),
-                     matrix: T(0, stumpH / 2, 0), color: shade(color, 0.55) });
-        // 一截近乎倒下的断裂塔身残段（横躺，读作"塌了"）
-        parts.push({ geo: new THREE.CylinderGeometry(R * 0.3, R * 0.44, R * 0.5, 8),
-                     matrix: compose(T(R * 0.3, stumpH * 0.6, -R * 0.05), R_Z(1.15)),
-                     color: shade(color, 0.75) });
-        // 倒塌散落的石块
-        const chunks = [[-0.85, 0.14, 0.32, 0.6], [0.78, 0.12, -0.5, -0.8],
-                        [0.12, 0.1, 0.9, 0.3], [-0.5, 0.13, -0.78, 1.1]];
+                     matrix: T(0, stumpH / 2, 0), color: shade(STONE, 0.55) });
+        // 一截横躺的断裂塔身残段（近乎平放，bottom≈半径 → 贴地）
+        parts.push({ geo: new THREE.CylinderGeometry(R * 0.28, R * 0.4, R * 0.85, 8),
+                     matrix: compose(T(R * 0.5, R * 0.34, R * 0.05), R_Z(Math.PI / 2 - 0.12)),
+                     color: shade(STONE, 0.72) });
+        // 散落石块（cy≈半对角 → 贴地不悬空）
+        const chunks = [[-0.8, 0.26, 0.35, 0.6], [0.78, 0.26, -0.5, -0.8],
+                        [0.15, 0.26, 0.88, 0.3], [-0.5, 0.26, -0.72, 1.1]];
         for (const [cx, cy, cz, rot] of chunks) {
-          parts.push({ geo: new THREE.BoxGeometry(R * 0.34, R * 0.26, R * 0.3),
-                       matrix: compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.4)),
-                       color: shade(color, 0.68) });
+          parts.push({ geo: new THREE.BoxGeometry(R * 0.32, R * 0.3, R * 0.28),
+                       matrix: compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.35)),
+                       color: shade(STONE, 0.66) });
         }
       }
     } else if (kind === 'gem' || kind === 'orb') {
@@ -165,7 +165,10 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
 // 有"头尾"的单位（炮车/投石机/机甲/步兵）才转；图腾这类对称体不转，转了也看不出来。
 const R_X = (a) => new THREE.Matrix4().makeRotationX(a);
 const R_Z = (a) => new THREE.Matrix4().makeRotationZ(a);
-const compose = (m, ...rest) => rest.reduce((acc, x) => acc.premultiply(x), m.clone());
+// 部件变换：T×R（先在原地绕自身旋转，再平移到目标位）。
+// 修正：之前用 premultiply 得到的是 R×T（先平移、再绕【原点】旋转）→ 部件被甩到地下，
+// pack() 再把整体抬起补偿 → 模型悬空、盾/弓/炮管错位。改 multiply 后部件落回本位、贴地。
+const compose = (m, ...rest) => rest.reduce((acc, x) => acc.multiply(x), m.clone());
 
 /** 通用步兵骨架：身体 + 肩甲 + 头。melee/ranged 在此之上加武器。 */
 function infantryParts(color, S, slim) {

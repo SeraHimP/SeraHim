@@ -90,7 +90,7 @@ export class UnitLayer {
       // 其余幽灵（若有）仍保留半透明观感。损毁（ruin）一律不透明。
       const transparent = ghost && !isLaneCrystal;
       const color = ruin
-        ? (e._mapFaction === 'blue' ? '#3c4a5c' : e._mapFaction === 'red' ? '#5a3a38' : '#464a52')
+        ? (e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0')  // Q2/Q3：废墟结构走石色(towerMesh内部)，此色只用于水晶碎片染阵营
         : ghost
           ? (isLaneCrystal
               ? (e._mapFaction === 'blue' ? '#3f6f9c' : '#9c463f')   // 休眠水晶：暗一档，读作"未激活"
@@ -480,7 +480,7 @@ export class UnitLayer {
   }
 
   _syncOne(e, ghost, ctxDeps, lodHideBar, tNow, ruin) {
-    const { attrCalc, effects } = ctxDeps;
+    const { attrCalc, effects, entities } = ctxDeps;
     let en = this.map.get(e.id);
     if (!en) en = this._makeEntry(e.id);
     en.seen = this._frame;
@@ -542,8 +542,18 @@ export class UnitLayer {
     }
     en.bar.position.set(e.pos.x, gy + (en.topY || 0) * s, e.pos.y);
 
-    // 血条：塔/龙/幽灵始终显示；小兵条受 LOD 档1 控制（与 2D 的 lodBars 同口径）
-    const showBar = ghost || e.type === 'tower' || e.type === 'dragon' || !lodHideBar;
+    // 血条显示（Q4）：废墟不显示；建筑若【结构保护 && 满血】不显示（掉血或已解除保护才显示）；
+    // 龙/小兵照旧（幽灵水晶显示灰色重生条——那不是血条，保留）。
+    let showBar;
+    if (ruin) {
+      showBar = false;
+    } else if (e.type === 'tower' && !ghost) {
+      const mHP = attrCalc.calc(e, effects.getEffects(e.id)).maxHP || 1;
+      const full = e.currentHP >= mHP - 1e-6;
+      showBar = !(full && isStructureProtected(entities, e));
+    } else {
+      showBar = ghost || e.type === 'dragon' || !lodHideBar;
+    }
     en.bar.visible = showBar;
     if (showBar) {
       let barKey, maxHP = 1;
