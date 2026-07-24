@@ -46,6 +46,13 @@ const SUN_DIST = 2000;                   // 光源到视野中心的距离（仅
 const SHADOW_MAP_SIZE = 2048;
 const SKY_COLOR = 0xa8c4e0, GROUND_COLOR = 0x40485a; // 半球光上下色，冷调，贴合现有暗蓝底
 import { EffectsLayer } from './EffectsLayer.js';
+// P1 视觉优化：后处理管线（Bloom 辉光 + ACES 色调映射 + FXAA 抗锯齿）。插件本地 vendor（离线）。
+import { EffectComposer } from '../../vendor/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../vendor/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../vendor/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../vendor/postprocessing/OutputPass.js';
+import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
+import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
@@ -84,6 +91,11 @@ export class ThreeRenderer {
 
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.gl.setPixelRatio(window.devicePixelRatio || 1);
+    // P1：ACES 电影级色调映射（辉光/高光更自然）。OutputPass 在管线末端据此转码 + sRGB。
+    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
+    this.gl.toneMappingExposure = 1.0;
+    this.composer = null; this.bloomPass = null; this.fxaaPass = null;
+    this.postFX = true;   // 后处理总开关（setPostFX 切换）
 
     this.scene = new THREE.Scene();
     // 与 2D 画布 CSS 背景 #0a0d12 一致，切换时不闪底色
@@ -288,7 +300,31 @@ export class ThreeRenderer {
     this.width = width;
     this.height = height;
     this.gl.setSize(width, height, true);
+    this._sizeComposer(width, height);
   }
+
+  // P1：后处理管线。Bloom 让自发光水晶/粒子/明亮昼夜辉光起来；ACES 由 OutputPass 收尾；FXAA 抗锯齿。
+  _buildComposer() {
+    const w = this.width, h = this.height;
+    this.composer = new EffectComposer(this.gl);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.4, 0.82); // strength/radius/threshold
+    this.composer.addPass(this.bloomPass);
+    this.fxaaPass = new ShaderPass(FXAAShader);
+    this.composer.addPass(this.fxaaPass);
+    this.composer.addPass(new OutputPass());   // ACES 色调映射 + sRGB 转码（管线末端唯一一次）
+    this._sizeComposer(w, h);
+  }
+
+  _sizeComposer(w, h) {
+    if (!this.composer || !w || !h) return;
+    const pr = this.gl.getPixelRatio();
+    this.composer.setSize(w, h);
+    this.bloomPass.setSize(w, h);
+    this.fxaaPass.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+  }
+
+  setPostFX(on) { this.postFX = !!on; }
 
   setElevation(deg) {
     this.elevationDeg = Math.max(1, Math.min(90, Number(deg) || 0));
@@ -462,7 +498,13 @@ export class ThreeRenderer {
                        rx: ca, ry: 0, rz: -sa },
                      (x, z) => this.units.muzzleY(x, z));
     }
-    this.gl.render(this.scene, this.camera);
+    // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。
+    if (this.postFX) {
+      if (!this.composer) this._buildComposer();
+      this.composer.render();
+    } else {
+      this.gl.render(this.scene, this.camera);
+    }
   }
 
   // 长跑验收用：scene.children 应 = 地面(0/1) + 活体单位×2（本体+血条），稳定不涨
