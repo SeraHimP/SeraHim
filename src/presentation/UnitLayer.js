@@ -39,6 +39,9 @@ import { towerMesh, minionMesh, dragonMesh, unitMaterial, needsFacing } from './
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
 const _EMPTY_GEO = new THREE.BufferGeometry();  // Mesh 首帧占位，随即被 _visualOf 的共享几何替换
+// Q3：程序化塔/水晶的视觉放大系数（纯表现；不动 CONFIG.buildingSizes，故 GLB/碰撞/玩法都不受影响）。
+const TOWER_VIZ = { tower: 1.25, orb: 1.10, gem: 1.10 };
+const towerVizScale = (tier) => (tier === 'nexus_lane' || tier === 'nexus_main') ? 1.10 : 1.25;
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
@@ -97,12 +100,13 @@ export class UnitLayer {
       // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵/损毁才换模型），
       // 只是 key 现在索引的是几何而不是贴图，共享策略与缓存生命周期完全照旧。
       const kind = isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower');
+      const rSize = bSize * (TOWER_VIZ[kind] || 1.25);   // Q3：塔×1.25、召唤水晶/水晶枢纽×1.10（纯表现）
       const wid = wInst ? wInst.skillId : '';
-      const key = `t|${color}|${wid}|${kind}|${bSize}|${transparent ? 'g' : ''}${ruin ? 'r' : ''}`;
-      const m = towerMesh(key, color, bSize, wid, kind, transparent, ruin);
-      return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.topY, size: bSize,
+      const key = `t|${color}|${wid}|${kind}|${rSize}|${transparent ? 'g' : ''}${ruin ? 'r' : ''}`;
+      const m = towerMesh(key, color, rSize, wid, kind, transparent, ruin);
+      return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,
-               ringR: bSize + 8 };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
+               ringR: rSize + 8 };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
     }
     if (e.type === 'dragon') {
       const color = e._dragonColor || '#c0392b';
@@ -351,7 +355,8 @@ export class UnitLayer {
   _syncTowerInfo(e, en, ctxDeps, lodHideBar) {
     const { attrCalc, effects, entities } = ctxDeps;
     const bSizes = CONFIG.buildingSizes || {};
-    const bSize = e._modelSize || bSizes[e._mapTier] || bSizes.default || 28;
+    // Q3：与 _visualOf 同步放大——归属环等随放大后的模型走（纯表现）。
+    const bSize = (e._modelSize || bSizes[e._mapTier] || bSizes.default || 28) * towerVizScale(e._mapTier);
     const isNexus = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
     const color = e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0';
     const x = e.pos.x, z = e.pos.y;

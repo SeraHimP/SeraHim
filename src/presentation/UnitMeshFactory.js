@@ -70,6 +70,8 @@ function pack(parts) {
 
 const T = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
 const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+// 中性石色：塔身/底座用它，融入土色地形（用户 Q2）。队伍色只落在顶部/本体的小水晶上。
+const STONE = '#948b7c';
 
 /**
  * 防御塔：基座 → 塔身 → 雉堞冠 → 武器标记。
@@ -80,7 +82,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const R = bSize, parts = [];
-    let topY;
+    let topY, muzzleR = 0;
     if (ruin) {
       // 损毁结构：矮塌的断桩 / 碎裂台座 + 倾倒散落的碎块，明显区别于活体（读作"废墟"）。
       // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。topY 由 pack 从包围盒取真值。
@@ -117,41 +119,45 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
         }
       }
     } else if (kind === 'gem' || kind === 'orb') {
-      // 水晶：底部台座 + 悬浮宝石（八面体）/ 球体
+      // 水晶：中性石座 + 队伍色宝石（八面体）/ 球体（用户 Q2：底座石色、宝石染队色）
       const pedH = R * 0.45;
       parts.push({ geo: new THREE.CylinderGeometry(R * 0.75, R * 0.95, pedH, 8),
-                   matrix: T(0, pedH / 2, 0), color: shade(color, 0.55) });
+                   matrix: T(0, pedH / 2, 0), color: shade(STONE, 0.55) });
       const gemR = R * 0.8, gemY = pedH + gemR * 0.95;
       parts.push({ geo: kind === 'gem' ? new THREE.OctahedronGeometry(gemR)
                                        : new THREE.SphereGeometry(gemR, 16, 12),
-                   matrix: T(0, gemY, 0), color });
+                   matrix: T(0, gemY, 0), color: shade(color, 1.08) });
       topY = gemY + gemR;
     } else {
+      // 塔身全部【中性石色】融入地形；队伍色只落在顶部小水晶（=武器，子弹由此射出，用户 Q2）
       const baseH = R * 0.40, shaftH = R * 1.45, crownH = R * 0.32;
       parts.push({ geo: new THREE.CylinderGeometry(R * 0.88, R * 1.0, baseH, 10),
-                   matrix: T(0, baseH / 2, 0), color: shade(color, 0.5) });
+                   matrix: T(0, baseH / 2, 0), color: shade(STONE, 0.5) });
       parts.push({ geo: new THREE.CylinderGeometry(R * 0.58, R * 0.68, shaftH, 10),
-                   matrix: T(0, baseH + shaftH / 2, 0), color: shade(color, 0.85) });
+                   matrix: T(0, baseH + shaftH / 2, 0), color: shade(STONE, 0.82) });
       const crownY = baseH + shaftH;
       parts.push({ geo: new THREE.CylinderGeometry(R * 0.78, R * 0.72, crownH, 10),
-                   matrix: T(0, crownY + crownH / 2, 0), color });
+                   matrix: T(0, crownY + crownH / 2, 0), color: shade(STONE, 0.68) });
       // 雉堞：冠顶一圈小方块，是"塔楼"读感的关键
       const mN = 8, mS = R * 0.20, mY = crownY + crownH + mS / 2;
       for (let i = 0; i < mN; i++) {
         const a = (i / mN) * Math.PI * 2, rr = R * 0.66;
         parts.push({ geo: new THREE.BoxGeometry(mS, mS * 1.3, mS),
                      matrix: T(Math.cos(a) * rr, mY + mS * 0.15, Math.sin(a) * rr),
-                     color: shade(color, 0.7) });
+                     color: shade(STONE, 0.6) });
       }
-      topY = mY + mS;
-      // 武器标记已移除（用户拍板）：塔身不再冒几何标记，炮口高度取塔冠顶端。
-      // weaponId 形参保留（调用方仍传），只是不再影响几何——真实炮口由 GLB 挂点提供。
-      void weaponId;
+      // 顶部队伍色小水晶（八面体）＝武器；炮口取其中心（子弹从这颗水晶射出）
+      const gemR = R * 0.40, gemCY = mY + mS + gemR * 0.65;
+      parts.push({ geo: new THREE.OctahedronGeometry(gemR),
+                   matrix: T(0, gemCY, 0), color: shade(color, 1.12) });
+      muzzleR = gemR;   // muzzleY = topY − gemR = 顶部水晶中心
+      void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
     }
     hit = pack(parts);
+    hit.muzzleY = hit.topY - muzzleR;   // 有顶水晶的塔＝水晶中心；水晶/废墟＝塔冠顶（muzzleR=0）
     _geoCache.set(key, hit);
   }
-  return { geo: hit.geo, mat: unitMaterial(ghost), topY: hit.topY };
+  return { geo: hit.geo, mat: unitMaterial(ghost), topY: hit.topY, muzzleY: hit.muzzleY };
 }
 
 // ===================== 分兵种造型（第 6.3 步补充） =====================
