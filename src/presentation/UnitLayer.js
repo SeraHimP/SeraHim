@@ -82,18 +82,26 @@ export class UnitLayer {
                    alpha: 1, pulse: false, ringR: bSize + 8 };
         }
       }
-      const color = ghost
-        ? (e._mapFaction === 'blue' ? '#5b9bd5' : '#e0473f')
-        : (e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0');
-      const wInst = ghost ? null : (e._skillInstances || []).find(s => s.skillId.startsWith('weapon_'));
-      // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵才换模型），
+      const isLaneCrystal = e._mapTier === 'nexus_lane';
+      // 召唤水晶重生中不再半透明（用户定稿）：改为不透明、略暗的"休眠石"，靠灰色重生条示意重生中。
+      // 其余幽灵（若有）仍保留半透明观感。损毁（ruin）一律不透明。
+      const transparent = ghost && !isLaneCrystal;
+      const color = ruin
+        ? (e._mapFaction === 'blue' ? '#3c4a5c' : e._mapFaction === 'red' ? '#5a3a38' : '#464a52')
+        : ghost
+          ? (isLaneCrystal
+              ? (e._mapFaction === 'blue' ? '#3f6f9c' : '#9c463f')   // 休眠水晶：暗一档，读作"未激活"
+              : (e._mapFaction === 'blue' ? '#5b9bd5' : '#e0473f'))
+          : (e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0');
+      const wInst = (ghost || ruin) ? null : (e._skillInstances || []).find(s => s.skillId.startsWith('weapon_'));
+      // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵/损毁才换模型），
       // 只是 key 现在索引的是几何而不是贴图，共享策略与缓存生命周期完全照旧。
-      const kind = e._mapTier === 'nexus_lane' ? 'orb' : (isNexus ? 'gem' : 'tower');
+      const kind = isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower');
       const wid = wInst ? wInst.skillId : '';
-      const key = `t|${color}|${wid}|${kind}|${bSize}|${ghost ? 'g' : ''}${ruin ? 'r' : ''}`;
-      const m = towerMesh(key, color, bSize, wid, kind, ghost);
+      const key = `t|${color}|${wid}|${kind}|${bSize}|${transparent ? 'g' : ''}${ruin ? 'r' : ''}`;
+      const m = towerMesh(key, color, bSize, wid, kind, transparent, ruin);
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.topY, size: bSize,
-               barW: 80, barH: 6, barD: 10, alpha: ghost ? 0.35 : 1, pulse: false,
+               barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,
                ringR: bSize + 8 };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
     }
     if (e.type === 'dragon') {

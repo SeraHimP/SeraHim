@@ -167,10 +167,10 @@ CTX.__textures = (on) => renderer3d ? renderer3d.setTexturesEnabled(on !== false
 // 长跑体检：children 应稳定不涨
 CTX.__sceneStats = () => renderer3d ? renderer3d.sceneStats() : null;
 // C 组·昼夜交替：并入天气系统——【随天气系统开关而开关】。天气开→昼夜随 gameTime 推进；
-// 天气关→灯光锁定默认时刻（正午 0.25）。以下三个 CTX 为调试杠杆：
-// __dayNight(true/false/null)：强制开 / 强制锁正午 / 跟随天气(默认，传 null 恢复)；
+// 天气关→灯光锁定默认时刻（14 点，相位 1/3；比正午多些斜影）。以下三个 CTX 为调试杠杆：
+// __dayNight(true/false/null)：强制开 / 强制锁默认时刻 / 跟随天气(默认，传 null 恢复)；
 // __dayPeriod(秒) 改一天时长；__setDayPhase(0..1) 手动定格相位(null 恢复)。受光材质已接入 → 真实明暗。
-CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=强制锁正午
+CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=强制锁默认时刻（14 点）
 CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== false); };
 CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
@@ -913,13 +913,14 @@ function gameLoop(timestamp) {
   // C 组·昼夜交替（并入天气系统）：随天气开关而开关。setLighting 很轻，逐帧无压力。
   //   · 手动定格相位（__setDayPhase）优先，任何时候生效（调试/截图）；
   //   · 否则：昼夜生效（跟随天气 enabled，或被 __dayNightForce 强制）→ 随 gameTime 推进；
-  //   · 不生效（天气关且未强制）→ 锁定默认时刻＝正午（相位 0.25）。
+  //   · 不生效（天气关且未强制）→ 锁定默认时刻＝14 点（相位 1/3）。
+  //     选 14 点而非正午：正午太阳约 82° 近乎直射、几乎无阴影；14 点约 58°，有像样的斜影。
   if (renderer3d) {
     const period = CTX.__dayPeriodSec || DAY_PERIOD;
     const active = CTX.__dayNightForce != null ? CTX.__dayNightForce : weatherSystem.enabled;
     const gt = CTX.__dayPhaseOverride != null ? CTX.__dayPhaseOverride * period
              : active ? CTX.gameTime
-             : 0.25 * period;
+             : (1 / 3) * period;
     renderer3d.setLighting(dayNightAt(gt, period));
   }
   renderer3d?.render(canvasController);

@@ -76,12 +76,47 @@ const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexStr
  * 水晶（isNexus）走宝石造型，分路水晶走球体，与 2D 的 💎/🔮 语义对应。
  * 返回 { geo, mat, topY }；topY = 世界单位高度，血条据此上浮。
  */
-export function towerMesh(key, color, bSize, weaponId, kind, ghost) {
+export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const R = bSize, parts = [];
     let topY;
-    if (kind === 'gem' || kind === 'orb') {
+    if (ruin) {
+      // 损毁结构：矮塌的断桩 / 碎裂台座 + 倾倒散落的碎块，明显区别于活体（读作"废墟"）。
+      // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。topY 由 pack 从包围盒取真值。
+      if (kind === 'gem' || kind === 'orb') {
+        const pedH = R * 0.34;
+        parts.push({ geo: new THREE.CylinderGeometry(R * 0.62, R * 0.92, pedH, 8),
+                     matrix: T(0, pedH / 2, 0), color: shade(color, 0.5) });
+        // 碎裂核心残片：水晶枢纽→八面体碎片，召唤水晶→球体碎片，散落并倾倒
+        const frag = kind === 'gem'
+          ? () => new THREE.OctahedronGeometry(R * 0.30)
+          : () => new THREE.SphereGeometry(R * 0.26, 10, 8);
+        const shards = [[-0.48, 0.18, 0.28, 0.5], [0.46, 0.16, -0.32, -0.7],
+                        [0.06, 0.22, 0.58, 1.0], [-0.30, 0.14, -0.52, 0.3]];
+        for (const [sx, sy, sz, rot] of shards) {
+          parts.push({ geo: frag(),
+                       matrix: compose(T(sx * R, pedH + sy * R, sz * R), R_Z(rot), R_X(rot * 0.6)),
+                       color: shade(color, 0.9) });
+        }
+      } else {
+        const stumpH = R * 0.46;
+        parts.push({ geo: new THREE.CylinderGeometry(R * 0.7, R * 0.94, stumpH, 8),
+                     matrix: T(0, stumpH / 2, 0), color: shade(color, 0.55) });
+        // 一截近乎倒下的断裂塔身残段（横躺，读作"塌了"）
+        parts.push({ geo: new THREE.CylinderGeometry(R * 0.3, R * 0.44, R * 0.5, 8),
+                     matrix: compose(T(R * 0.3, stumpH * 0.6, -R * 0.05), R_Z(1.15)),
+                     color: shade(color, 0.75) });
+        // 倒塌散落的石块
+        const chunks = [[-0.85, 0.14, 0.32, 0.6], [0.78, 0.12, -0.5, -0.8],
+                        [0.12, 0.1, 0.9, 0.3], [-0.5, 0.13, -0.78, 1.1]];
+        for (const [cx, cy, cz, rot] of chunks) {
+          parts.push({ geo: new THREE.BoxGeometry(R * 0.34, R * 0.26, R * 0.3),
+                       matrix: compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.4)),
+                       color: shade(color, 0.68) });
+        }
+      }
+    } else if (kind === 'gem' || kind === 'orb') {
       // 水晶：底部台座 + 悬浮宝石（八面体）/ 球体
       const pedH = R * 0.45;
       parts.push({ geo: new THREE.CylinderGeometry(R * 0.75, R * 0.95, pedH, 8),
