@@ -25,10 +25,11 @@ import { mergeGeometries, mergeVertices } from '../../vendor/BufferGeometryUtils
 const MUZZLE_BONE = 'Buffbone_Glb_Weapon_1';
 
 // 归一化模板（高度=1）→ 目标 topY 的系数，按 tier 角色。
-// Q1（用户定稿）：整体放大——塔 ×3（2.4→7.2）、水晶/枢纽 ×2.5（2.0→5.0 / 2.3→5.75）、损毁塔同塔 ×3。
-const TOPY_FACTOR = { tower: 7.2, tower_ruin: 5.1, lane_crystal: 5.0, nexus: 5.75 };
-// Q3：小兵可见高度 = st.size × 系数。超级兵/炮兵更大；与程序化小兵观感大致对齐、并与放大后的塔协调。
-const MINION_TOPY = { melee: 2.4, ranged: 2.4, super: 3.2, siege: 3.4 };
+// 用户实测定稿：早前 Q1 一味放大（塔×3/水晶×2.5）导致基地那一簇（水晶 + 2 枢纽塔，中心仅相距约 127）
+// 石台/塔身互相穿插、观感"支离破碎"。此处为用户逐项实测后的收敛尺寸，消除穿模。
+const TOPY_FACTOR = { tower: 5, tower_ruin: 0.8, lane_crystal: 3.5, nexus: 2.25 };
+// 小兵可见高度 = st.size × 系数（用户实测定稿：各兵种统一 1.8，与收敛后的塔协调）。
+const MINION_TOPY = { melee: 1.8, ranged: 1.8, super: 1.8, siege: 1.8 };
 
 // _mapTier → 模型角色。外/内/水晶塔/枢纽塔都用 tower.glb；两类水晶各有其模型。
 function tierRole(tier) {
