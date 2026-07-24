@@ -20,7 +20,7 @@ const KEYS = [
   { p: 1.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42, bg: '#241f2e' }, // 回到黎明（闭合）
 ];
 
-export const DAY_PERIOD = 180;   // 一整天 = 180s 游戏时间（可由 CTX.__dayPeriod 改）
+export const DAY_PERIOD = 360;   // 一整天 = 360s（6 分钟）游戏时间（可由 CTX.__dayPeriod 改）
 
 const _a = new THREE.Color(), _b = new THREE.Color();
 const _lerpHex = (x, y, t) => '#' + _a.set(x).lerp(_b.set(y), t).getHexString();

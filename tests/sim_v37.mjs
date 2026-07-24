@@ -86,7 +86,12 @@ function equip(e, skillId, ents, fx, bus) {
   // main.js 装配（源码断言）
   const fs = await import('fs');
   const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  T('装配：外/内 fortify + 水晶 bulwark', mainSrc.includes("'passive_outer_fortify'") && mainSrc.includes("'passive_inner_fortify'") && mainSrc.includes("'passive_base_bulwark'"));
+  // Q3：水晶塔(tier base)不再默认装配钢铁烈阳护盾(passive_base_bulwark)——从 base 默认装配行移除。
+  // 外/内 fortify 仍在；base 行现在只有 fortify + armor_plating（bulwark 仅保留定义，可手动装/内塔光环版不受影响）。
+  const baseLine = (mainSrc.split('\n').find(l => l.includes("tier === 'base'") && l.includes('towerDefaults.push')) || '');
+  T('装配：外/内 fortify 仍在，水晶塔不再默认装 bulwark',
+    mainSrc.includes("'passive_outer_fortify'") && mainSrc.includes("'passive_inner_fortify'")
+    && baseLine.includes("'passive_base_fortify'") && !baseLine.includes("'passive_base_bulwark'"));
 
   // UI 过滤（FakeEl）
   class FakeEl { constructor() { this.dataset = {}; this._html = ''; } set innerHTML(v) { this._html = v; } get innerHTML() { return this._html; } }

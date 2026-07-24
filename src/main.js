@@ -166,9 +166,12 @@ CTX.__setShadows = (lv) => renderer3d ? renderer3d.setShadowLevel(lv) : null;
 CTX.__textures = (on) => renderer3d ? renderer3d.setTexturesEnabled(on !== false) : null;
 // 长跑体检：children 应稳定不涨
 CTX.__sceneStats = () => renderer3d ? renderer3d.sceneStats() : null;
-// C 组·昼夜交替：默认开启。__dayNight(false) 关闭并复位正午；__dayPeriod(秒) 改一天时长；
-// __setDayPhase(0..1) 手动定格某时刻（null 恢复自动，随 gameTime 推进）。受光材质已接入 → 真实明暗。
-CTX.__dayNight = (on) => { CTX.__dayNightOn = on !== false; if (!CTX.__dayNightOn && renderer3d) renderer3d.setLighting(dayNightAt(0.25 * (CTX.__dayPeriodSec || DAY_PERIOD), CTX.__dayPeriodSec || DAY_PERIOD)); };
+// C 组·昼夜交替：并入天气系统——【随天气系统开关而开关】。天气开→昼夜随 gameTime 推进；
+// 天气关→灯光锁定默认时刻（正午 0.25）。以下三个 CTX 为调试杠杆：
+// __dayNight(true/false/null)：强制开 / 强制锁正午 / 跟随天气(默认，传 null 恢复)；
+// __dayPeriod(秒) 改一天时长；__setDayPhase(0..1) 手动定格相位(null 恢复)。受光材质已接入 → 真实明暗。
+CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=强制锁正午
+CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== false); };
 CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem);
@@ -326,7 +329,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
         if (tier === 'outer') towerDefaults.push('passive_outer_fortify', 'passive_iron_line');
         // v39（Q5）：防御塔镀层从内塔移到水晶塔
         if (tier === 'inner') towerDefaults.push('passive_inner_fortify', 'passive_inner_bulwark');
-        if (tier === 'base') towerDefaults.push('passive_base_fortify', 'passive_base_bulwark', 'passive_armor_plating');
+        if (tier === 'base') towerDefaults.push('passive_base_fortify', 'passive_armor_plating'); // Q3：水晶塔不再默认装钢铁烈阳护盾(passive_base_bulwark)
         if (tier === 'hq_tower') towerDefaults.push('passive_last_stand', 'passive_hq_fortify');
         towerDefaults.push('passive_overload'); // v36 Q2：所有防御塔默认过载被动
       } else {
@@ -439,6 +442,14 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   const mapMinionPassives = (mapOpts && mapSystem.currentMap?.minionDefaultPassives) || {};
   const effectivePassiveMap = { ...defaultPassiveMap, ...mapMinionPassives };
   let passives = Array.isArray(tpl._templateSkills) ? tpl._templateSkills : (effectivePassiveMap[type] || []);
+
+  // Q2：技能的 minWave = 【默认装配波次门槛】。默认装配（非模板编辑器 _templateSkills）下，
+  // 当前波次未达门槛的技能不装上——如炮兵指挥官第20波起才默认装备（20波前不装、不显示）。
+  // 玩家在模板编辑器里手动设的 _templateSkills 走上面的分支、完全不受门槛限制，任何波次都装、都生效。
+  if (!Array.isArray(tpl._templateSkills)) {
+    const curWave = CTX.waveNumber || window.waveNumber || 0;
+    passives = passives.filter(k => (skillLibrary[k]?.minWave || 0) <= curWave);
+  }
 
   // Q9：嚎哭深渊小兵不装配屠戮被动（地图 minionNoRend 标记经 mapOpts 传入）
   if (mapOpts?.noRend) passives = passives.filter(k => !k.endsWith('_rend'));
@@ -899,10 +910,16 @@ function gameLoop(timestamp) {
     attrCalc.tick();
     entityContainer.rebuildGridIfNeeded(attrCalc._frame);
   }
-  // C 组·昼夜交替：每帧按游戏时间（或手动定格相位）推进灯光。setLighting 很轻，逐帧无压力。
-  if (renderer3d && CTX.__dayNightOn !== false) {
+  // C 组·昼夜交替（并入天气系统）：随天气开关而开关。setLighting 很轻，逐帧无压力。
+  //   · 手动定格相位（__setDayPhase）优先，任何时候生效（调试/截图）；
+  //   · 否则：昼夜生效（跟随天气 enabled，或被 __dayNightForce 强制）→ 随 gameTime 推进；
+  //   · 不生效（天气关且未强制）→ 锁定默认时刻＝正午（相位 0.25）。
+  if (renderer3d) {
     const period = CTX.__dayPeriodSec || DAY_PERIOD;
-    const gt = CTX.__dayPhaseOverride != null ? CTX.__dayPhaseOverride * period : CTX.gameTime;
+    const active = CTX.__dayNightForce != null ? CTX.__dayNightForce : weatherSystem.enabled;
+    const gt = CTX.__dayPhaseOverride != null ? CTX.__dayPhaseOverride * period
+             : active ? CTX.gameTime
+             : 0.25 * period;
     renderer3d.setLighting(dayNightAt(gt, period));
   }
   renderer3d?.render(canvasController);

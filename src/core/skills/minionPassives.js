@@ -45,10 +45,11 @@ export const minionPassives = {
   passive_artillery_commander: makeAuraPassive({
     id: 'passive_artillery_commander', name: '炮兵指挥官', icon: '📯',
     casterType: 'siege', targetTypes: ['melee', 'ranged', 'siege', 'super', 'totem'],
-    minWave: 20, // v35（Q1）：第20波起才生效（此前炮车存在但不放光环）
+    minWave: 20, // 默认装配门槛：炮车第20波起才【默认装备】此技能（20波前默认不装、不显示）；
+                 // 光环本身不再按波次拦截——玩家手动装备的任何波次都生效。装配逻辑见 main.js createMinion。
     effectsFn: () => [
-      { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'armor', flatValue: 20, description: '护甲+20（第20波起生效）' },
-      { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'magicResist', flatValue: 20, description: '魔抗+20（第20波起生效）' },
+      { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'armor', flatValue: 20, description: '护甲+20' },
+      { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'magicResist', flatValue: 20, description: '魔抗+20' },
     ],
   }),
 

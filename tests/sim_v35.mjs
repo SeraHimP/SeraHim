@@ -187,9 +187,11 @@ function equip(e, skillId, ents, fx) {
     && SkillLibrary.passive_ranged_rend.description.includes('4%')
     && SkillLibrary.passive_siege_rend.description.includes('6%'));
   T('图腾兵默认不生成', CONFIG.gameRules.spawnEnabled.totem === false);
-  T('炮兵指挥官描述含第20波门槛', JSON.stringify(SkillLibrary.passive_artillery_commander.effects || '')
-    .length >= 0 && SkillLibrary.passive_artillery_commander !== undefined);
-  // minWave 行为：wave 5 光环不生效，wave 20 生效
+  T('炮兵指挥官 minWave=20（默认装配门槛，暴露在技能定义上供装配逻辑读取）',
+    SkillLibrary.passive_artillery_commander.minWave === 20);
+  // v43（Q2）：波次门槛从【光环层】移到【默认装配层】——光环一旦装备（含玩家手动装备）
+  // 任何波次都生效；minWave 只决定"默认何时把技能装上"（见 main.js createMinion 的装配过滤）。
+  // 此处手动 push 了技能实例 = 手动装备，故 wave 5 也应生效（正是用户要的"手动设置任何波次都生效"）。
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
   const siege = { id: ++window._uid, type: 'siege', alive: true, pos: { x: 0, y: 0 },
     baseStats: { ...CONFIG.templates.siege }, currentHP: 900, shieldFixedCurrent: 0, tempShield: 0,
@@ -202,7 +204,7 @@ function equip(e, skillId, ents, fx) {
   attr.tick(); ents.rebuildGridIfNeeded?.(attr._frame);
   const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr, waveNumber: 5 };
   SkillLibrary.passive_artillery_commander.onFrame(siege.id, 0.5, inst, ctx);
-  T('第5波：炮兵指挥官不生效', !fx.getEffectByName(buddy.id, '炮兵指挥官'));
+  T('手动装备：第5波炮兵指挥官也生效（光环不再按波次拦截）', !!fx.getEffectByName(buddy.id, '炮兵指挥官'));
   ctx.waveNumber = 20;
   SkillLibrary.passive_artillery_commander.onFrame(siege.id, 0.5, inst, ctx);
   T('第20波：炮兵指挥官生效', !!fx.getEffectByName(buddy.id, '炮兵指挥官'));

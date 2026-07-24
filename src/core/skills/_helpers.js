@@ -61,14 +61,14 @@ export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range
   return {
     id, name, icon,
     category: 'passive',
+    // minWave 现在是【默认装配的波次门槛】（由 main.js 装备逻辑读取），不再在光环层拦截——
+    // 一旦装备（含玩家手动装备）光环即生效，波次门槛只决定"默认何时把技能装上"（炮兵指挥官第20波起默认装配）。
+    minWave,
     descTemplate: `唯一被动——${name}：为周围友军提供光环效果。`,
     effects: [],
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive || (casterType && entity.type !== casterType)) return;
-      // v35（Q1）：波次门槛——minWave 之前光环不生效（炮兵指挥官第20波起启用；
-      // 对战/沙盒各自把当前波次写进 window.waveNumber，此处读到的就是当前模式的波次）
-      if (minWave > 0 && (ctx.waveNumber || window.waveNumber || 0) < minWave) return;
       if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
       instance.state.timer += dt;
       if (instance.state.timer < AURA_THROTTLE) return;
