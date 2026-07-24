@@ -27,6 +27,7 @@ import { buildTerrainLayer } from './TerrainLayer.js';
 import { UnitLayer } from './UnitLayer.js';
 import { ModelLibrary } from './ModelLibrary.js';
 import { WallLayer } from './WallLayer.js';
+import { VegetationLayer } from './VegetationLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
 
@@ -107,6 +108,7 @@ export class ThreeRenderer {
 
     this._buildLights();
     this.walls = new WallLayer(this.scene);
+    this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -467,6 +469,7 @@ export class ThreeRenderer {
       this.walls.top.material.map = tex;
       this.walls.top.material.needsUpdate = true;
     }
+    this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
   }
 
   // ===== 第 5 步：接手 CanvasController 面向渲染器的接口 =====
