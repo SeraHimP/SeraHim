@@ -507,6 +507,90 @@ export class MapSystem {
     return Math.max(0, Math.min(1, f));
   }
 
+  /**
+   * Q1：兵线回流场（每路一张，navgrid 地图专用，按需构建并缓存）。
+   *
+   * 为什么需要它：只靠"朝兵线方向直线拉 + 撞墙滑行"这类**局部贪心**永远走不出凹形口袋——
+   * 出口在身后时，任何只看前方的转向都会把兵顶在凹壁上磨。实测本图上"朝推进方向 ±60°
+   * 全被地形挡住"的口袋格点有 577 个，最近的离兵线只有 73px，分离力把兵挤进去很正常。
+   *
+   * 做法：以"离该路中心线 ≤ 走廊半宽的可走格"为源点，在 navgrid 上做一次 BFS，
+   * 得到每个可走格【沿地形走回该路要几步】。小兵脱困时顺着这个距离场下山即可，
+   * 只要口袋与兵线连通就一定出得来，且是全局最优方向，不会被凹角骗。
+   * 成本：每路一次 BFS（256×256 ≈ 6.5 万格），切图时才算，之后每帧只是一次数组查表。
+   */
+  _laneField(laneId) {
+    const nav = this._navgrid();
+    const m = this.currentMap;
+    if (!nav || !m) return null;
+    this._fields = this._fields || {};
+    if (this._fieldsMapId !== m.id) { this._fields = {}; this._fieldsMapId = m.id; }
+    if (this._fields[laneId] !== undefined) return this._fields[laneId];
+
+    const lane = this.getLane(laneId);
+    if (!lane) return (this._fields[laneId] = null);
+    const n = nav.n, W = m.world;
+    const cw = W.w / n, ch = W.h / n;
+    // 源点半径要【比走廊半宽窄】：用 130 的走廊半宽当源，会把"离中线 73px 但被野区墙
+    // 隔在另一侧的凹角"也标成距离 0 —— 站在那儿的兵一查场就被告知"你已经到家了"，
+    // 于是拿不到任何脱困方向（实测中路这类点 30s 只挪 10px）。收到 50 才是真·路面。
+    const hw = m.heightZones?.laneFieldSource ?? 50;
+    const dist = new Uint16Array(n * n).fill(0xffff);
+    const q = new Int32Array(n * n);
+    let qh = 0, qt = 0;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const k = j * n + i;
+        if (nav.bits[k] !== 1) continue;
+        const x = (i + 0.5) * cw, y = (j + 0.5) * ch;
+        if (this._nearestOnLane(lane, x, y).dist <= hw) { dist[k] = 0; q[qt++] = k; }
+      }
+    }
+    if (qt === 0) return (this._fields[laneId] = null);
+    // 8 邻接 BFS（对角按 1 步算——只用来定"下山方向"，不需要精确欧氏距离）
+    while (qh < qt) {
+      const k = q[qh++], i = k % n, j = (k / n) | 0, d = dist[k] + 1;
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          if (!di && !dj) continue;
+          const i2 = i + di, j2 = j + dj;
+          if (i2 < 0 || j2 < 0 || i2 >= n || j2 >= n) continue;
+          const k2 = j2 * n + i2;
+          if (nav.bits[k2] !== 1 || dist[k2] !== 0xffff) continue;
+          dist[k2] = d; q[qt++] = k2;
+        }
+      }
+    }
+    return (this._fields[laneId] = { dist, n, cw, ch });
+  }
+
+  /**
+   * 顺着回流场"下山"的单位方向；已在兵线上（或没有场/不可达）返回 null。
+   * 返回 { x, y, steps }，steps = 距兵线还有几格，可用来判断偏离有多远。
+   */
+  laneFlowDir(laneId, x, y) {
+    const f = this._laneField(laneId);
+    if (!f) return null;
+    const { dist, n, cw, ch } = f;
+    const i = Math.floor(x / cw), j = Math.floor(y / ch);
+    if (i < 0 || j < 0 || i >= n || j >= n) return null;
+    const here = dist[j * n + i];
+    if (here === 0 || here === 0xffff) return null;   // 已在兵线上 / 站在墙里或不连通
+    let best = here, bi = 0, bj = 0;
+    for (let dj = -1; dj <= 1; dj++) {
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const i2 = i + di, j2 = j + dj;
+        if (i2 < 0 || j2 < 0 || i2 >= n || j2 >= n) continue;
+        const d = dist[j2 * n + i2];
+        if (d < best) { best = d; bi = di; bj = dj; }
+      }
+    }
+    if (!bi && !bj) return null;
+    const L = Math.hypot(bi, bj);
+    return { x: bi / L, y: bj / L, steps: here };
+  }
+
   /** 该点是否在可行走区域内（无墙地图恒 true） */
   isWalkable(x, y) {
     if (!this.hasWalls()) return true;

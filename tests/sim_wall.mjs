@@ -1,7 +1,9 @@
 // 远程兵墙验收（用户反馈：站着的一堆远程兵把近战的路挡死）。
 // 场景：5 个己方远程兵横排站定（锚定，模拟正在输出），后方 6 个近战兵要通过。
 // 期望：锚定队友给行军队友让路，兵墙被挤开一条通道，近战全部通过。
-globalThis.window={gameTime:0,waveNumber:0,_uid:0};
+// TERRAIN_AVOID=0 可关掉 Q1 的地形避障做对照：本用例的"越墙 6/6"正是靠它才成立
+//（关掉退回 5/6，是本次改动前的长期失败项）。默认开启。
+globalThis.window={gameTime:0,waveNumber:0,_uid:0,__terrainAvoid:process.env.TERRAIN_AVOID!=='0'};
 const {EntityContainer}=await import('../src/core/EntityContainer.js');
 const {EventBus}=await import('../src/utils/EventBus.js');
 const {EffectRegistry}=await import('../src/core/EffectRegistry.js');

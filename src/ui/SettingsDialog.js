@@ -130,6 +130,16 @@ export const SettingsDialog = {
           <div class="slider-row"><label>地面参考网格</label>
             <button id="setGridBtn" style="flex:1;">${window.__gridOn ? '▦ 已显示（点击隐藏）' : '⭕ 已隐藏（点击显示）'}</button>
           </div>
+        </div>
+        <div class="editor-section">
+          <h4>🧭 小兵寻路</h4>
+          <p style="color:#8b949e;font-size:11px;margin:4px 0 8px;">两项都是地形卡死的解药，独立开关；关掉可对照观察。</p>
+          <div class="slider-row"><label>预判式地形避障</label>
+            <button id="setTerrAvoidBtn" style="flex:1;">${window.__terrainAvoid !== false ? '👀 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label>兵线回流场（脱困）</label>
+            <button id="setLaneFlowBtn" style="flex:1;">${window.__laneFlow !== false ? '🧲 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
           ${mapSystem?.hasWalls?.() ? `
           <div class="slider-row"><label>小兵轨迹线</label>
             <button id="setLanePathBtn" style="flex:1;">${window.__showLanePaths ? '👁 已显示（点击隐藏）' : '🙈 已隐藏（点击显示）'}</button>
@@ -208,6 +218,16 @@ export const SettingsDialog = {
 
       // 地面参考网格（用户："地面上会显示格子，不要显示格子" → 默认关，这里可按需打开）。
       // 网格画在静态批里，改完必须让静态层重建才会真正消失/出现。
+      const bindFlag = (id, key, on, off) => {
+        document.getElementById(id)?.addEventListener('click', () => {
+          window[key] = window[key] === false;
+          logFn(window[key] !== false ? on : off, 'spawn');
+          render();
+        });
+      };
+      bindFlag('setTerrAvoidBtn', '__terrainAvoid', '👀 预判式地形避障已开启', '⭕ 预判式地形避障已关闭');
+      bindFlag('setLaneFlowBtn', '__laneFlow', '🧲 兵线回流场已开启', '⭕ 兵线回流场已关闭');
+
       document.getElementById('setGridBtn')?.addEventListener('click', () => {
         window.__gridOn = !window.__gridOn;
         window.__three?.fx?.markStaticDirty?.();

@@ -36,6 +36,30 @@ const LANE_KEEP = 150;      // 容许的离线距离（≈走廊半宽），以�
 const LANE_SPAN = 200;      // 从 LANE_KEEP 到满强度的过渡跨度
 const LANE_BACK_K = 1.6;    // 满强度权重（> 期望力 1.0 → 先回兵线再谈推进）
 
+// ==================== Q1：地形避障（预判式触须）====================
+// 此前地形是【纯反应式】的：先走进墙里，再由 constrainToWalkable 钳回来、把法向分量剔掉沿墙滑。
+// 在 navgrid 的凹角（尤其上/下路那两个圆弧拐角）这套会来回抖：钳回→再撞→再钳，净推进≈0。
+// 实测一局 5 分钟有 2~12 个小兵各卡 5s 以上，位置全部落在两个拐角，且 isWalkable 为真
+//（说明不是穿模，是走不出去）。
+// 现在改成【先探后走】：沿前进方向撒一组触须采样 isWalkable，正前方被挡就朝更开阔的一侧
+// 注入切向力，侧向被挡就向反侧轻推 —— 于是拐角处提前转弯，而不是撞上去再蹭。
+// 做法是【最小偏转扫描】而不是"撒触须各加一个力"：后者试过，正前方探针只要蹭到墙就注入
+// 强切向力，而 navgrid 的兵线两侧全是野区墙 —— 沿墙正常行军也会被判成"正面被挡"，
+// 小兵于是横着蟹步、推进反而更差（实测卡死数 2~12 → 21~23）。
+// 现在：先看期望方向通不通，通就【什么都不做】（零副作用）；不通才从小到大试偏转角，
+// 取第一个整条射线都可走的方向，即"够用就好"的最小转向。全部偏转角都不通才退化为贴墙切向。
+const TERRAIN_LOOK = 2.4;        // 前瞻距离 = (自身半径 + 30) × 本倍率
+const TERRAIN_PROBE = 30;
+const TERRAIN_STEPS = 4;         // 每条射线的采样点数（避免漏掉薄墙）
+const TERRAIN_FAN = [18, 36, 54, 72, 90];  // 依次尝试的偏转角（度），左右同时试
+const TERRAIN_K = 1.3;           // 转向力权重（略大于期望力 1.0，转得动又不至于压掉回归力）
+const TERRAIN_HOLD = 0.5;        // 绕行侧黏性（秒），防左右反复换边
+// 卡死看门狗：行军中长时间几乎没位移 → 强制换一侧重新绕
+const STUCK_T = 1.2;             // 观察窗口（秒）
+const STUCK_D = 14;              // 窗口内的最小位移（px）
+// 兵线回流场：距路面超过这么多格才接管前进方向（1~2 格属正常贴边行军，不该被接管）
+const LANE_FLOW_MIN_STEPS = 2;
+
 export class LaneMovementSystem {
   constructor(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem) {
     this.entities = entityContainer;
@@ -332,7 +356,13 @@ export class LaneMovementSystem {
       return;
     }
     const dist = Math.sqrt(distSq);
-    const mx = dx / dist, my = dy / dist; // 期望前进方向（指向当前路点）
+    let mx = dx / dist, my = dy / dist; // 期望前进方向（指向当前路点）
+    // Q1：人不在路面上时，"直奔下一个路点"是错的——路点方向多半指着一堵野区墙，
+    // 兵会顶着凹壁磨到死（实测中路凹角 30s 推进 10px）。这时改用兵线回流场的下山方向：
+    // 那是 navgrid 上真正走得通的回家路线，先照它走回路面，回到路面场值归零后自动恢复原逻辑。
+    const flow = window.__laneFlow === false ? null
+               : this.mapSystem.laneFlowDir?.(minion._laneId, minion.pos.x, minion.pos.y);
+    if (flow && flow.steps > LANE_FLOW_MIN_STEPS) { mx = flow.x; my = flow.y; }
     const speed = stats.moveSpeed || 30;
 
     // v36（Q5 寻路重做）：行军移动交给统一转向器 _steer——朝路点方向为主，
@@ -482,7 +512,14 @@ export class LaneMovementSystem {
       if (lane) {
         const n = this.mapSystem._nearestOnLane(lane, minion.pos.x, minion.pos.y);
         if (n && n.dist > 6) {
-          const cx = (n.px - minion.pos.x) / n.dist, cy = (n.py - minion.pos.y) / n.dist;
+          // Q1：回归方向优先走【兵线回流场】——沿地形真能走回去的那条路。
+          // 直线拉回（下面的 fallback）在凹形口袋里指的是墙，兵只会顶着凹壁磨；
+          // 回流场是 navgrid 上到本路的 BFS 距离场，下山方向天然绕开地形，
+          // 只要口袋与兵线连通就一定出得来。回到走廊附近后场值为 0、自动退回直线拉。
+          const flow = (n.dist > 40 && window.__laneFlow !== false)
+                     ? this.mapSystem.laneFlowDir?.(minion._laneId, minion.pos.x, minion.pos.y) : null;
+          const cx = flow ? flow.x : (n.px - minion.pos.x) / n.dist;
+          const cy = flow ? flow.y : (n.py - minion.pos.y) / n.dist;
           let w = Math.min(0.5, n.dist / 140) * 0.55; // 越偏离中线拉得越紧，上限温和
           // 野区回归：navgrid 让野区可走，小兵可能被挤进野区、或想抄近道斜穿。这里在偏离
           // 超过 LANE_KEEP 后把回归力抬到压过期望力，于是【不主动进野区、进了也尽快出来】。
@@ -492,6 +529,10 @@ export class LaneMovementSystem {
         }
       }
     }
+
+    // ===== Q1：地形避障 —— 放在合成前，让它和其它转向力一起参与归一化 =====
+    const terr = this._terrainAvoid(minion, fx, fy, rSelf, now);
+    if (terr) { fx += terr.x; fy += terr.y; }
 
     // 合成：期望 + 分离 + 让位
     let vx = fx + sepX + yieldX, vy = fy + sepY + yieldY;
@@ -544,6 +585,73 @@ export class LaneMovementSystem {
       }
     }
     this.mapSystem.constrainToWalkable?.(minion.pos); // 硬圆投影后可能又出界，最后兜一次
+  }
+
+  /**
+   * Q1：预判式地形避障。沿【当前合力方向】撒触须采样 isWalkable，返回一个避让力（或 null）。
+   *
+   *   · 正前方触须（前瞻 TERRAIN_LOOK 倍长）被挡 → 朝更开阔的一侧注入切向力 TERRAIN_TURN。
+   *     侧别由左右触须的通畅数投票决定，并在 _terrSide 上黏 TERRAIN_HOLD 秒，防止逐帧换边抖动。
+   *   · 侧向触须被挡 → 向反侧轻推 TERRAIN_SIDE，形成平滑的贴墙滑行（不必等撞上）。
+   *   · 看门狗：行军中 STUCK_T 秒内位移不足 STUCK_D → 强制翻到另一侧重绕，
+   *     破掉"两侧同样窄、投票平局"造成的对称死锁。
+   *
+   * 只读 isWalkable，不改任何单位状态（除自身的绕行侧/进度缓存），
+   * 无墙地图 hasWalls() 为假时整段短路 → 沙盒与嚎哭深渊行为完全不变。
+   */
+  _terrainAvoid(minion, dirX, dirY, rSelf, now) {
+    const ms = this.mapSystem;
+    if (window.__terrainAvoid === false) return null;      // 设置里可关（A/B 对照用）
+    if (!ms.isWalkable || !ms.hasWalls?.()) return null;
+    const L = Math.hypot(dirX, dirY);
+    if (L < 1e-4) return null;
+    const dx = dirX / L, dy = dirY / L;
+    const reach = (rSelf + TERRAIN_PROBE) * TERRAIN_LOOK;
+    const px = minion.pos.x, py = minion.pos.y;
+    // 整条射线可走才算通（只测端点会漏掉夹在中间的薄墙）
+    const clear = (ux, uy) => {
+      for (let s = 1; s <= TERRAIN_STEPS; s++) {
+        const d = reach * s / TERRAIN_STEPS;
+        if (!ms.isWalkable(px + ux * d, py + uy * d)) return false;
+      }
+      return true;
+    };
+
+    // ---- 看门狗：行军中长时间没位移 → 这一帧强制换边重绕 ----
+    let forceFlip = false;
+    const pr = minion._terrProg;
+    if (!pr || now < pr.t) {
+      minion._terrProg = { x: px, y: py, t: now };
+    } else if (now - pr.t >= STUCK_T) {
+      if (Math.hypot(px - pr.x, py - pr.y) < STUCK_D) forceFlip = true;
+      minion._terrProg = { x: px, y: py, t: now };
+    }
+
+    // ---- 期望方向本身通畅：不干预（沿墙正常行军不该被打扰）----
+    if (clear(dx, dy) && !forceFlip) {
+      if (now > (minion._terrUntil || 0)) minion._terrSide = 0;
+      return null;
+    }
+
+    // ---- 最小偏转扫描：从小角度往大角度试，先试上次选定的一侧（黏性）----
+    const sticky = (minion._terrSide && now <= (minion._terrUntil || 0)) ? minion._terrSide : 0;
+    let prefer = sticky || ((minion.id % 2) ? 1 : -1);
+    if (forceFlip) prefer = -prefer;                        // 卡死 → 换另一侧
+    for (const deg of TERRAIN_FAN) {
+      const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+      for (const side of [prefer, -prefer]) {
+        const ss = s * side;
+        const ux = dx * c - dy * ss, uy = dx * ss + dy * c;
+        if (!clear(ux, uy)) continue;
+        minion._terrSide = side;
+        minion._terrUntil = now + TERRAIN_HOLD;
+        return { x: ux * TERRAIN_K, y: uy * TERRAIN_K };
+      }
+    }
+    // ---- ±90° 内全被挡：退化为贴墙切向，至少沿墙挪动而不是顶着墙磨 ----
+    minion._terrSide = prefer;
+    minion._terrUntil = now + TERRAIN_HOLD;
+    return { x: -dy * prefer * TERRAIN_K, y: dx * prefer * TERRAIN_K };
   }
 
   // ==================== v34（Q3）：锚定落位（一次性） ====================
