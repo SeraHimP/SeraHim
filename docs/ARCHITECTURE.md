@@ -109,3 +109,49 @@
 - All new events MUST use GameEvents.js constants (no bare strings)
 - All runtime _-prefixed entity props documented in EntityFactory.js @typedef
 - New skills use SkillLibrary.register() ? never mutate SkillLibrary directly
+
+---
+
+## 技能文案规范（用户定稿 · Q3）
+
+### 统一格式
+
+所有技能的 `description` 与 `descTemplate` **一律**写成：
+
+```
+唯一被动——<技能名称>：<描述>
+```
+
+前缀在 `SkillLibrary.js` 的注册期统一补齐（已带前缀的原样不动），
+所以新增技能不必手写前缀也不会写歪。**不要**在各技能文件里各自拼前缀。
+
+### 文案不许手抄，必须从数据现拼
+
+这一条是硬约束，来自一次真实事故：枢纽塔生命恢复从 5 调成 3 后，
+`passive_hq_fortify` 的文案跟着变了，而身份技能 `core_tier_hq` 里那份
+**手抄副本**还写着 5 —— 玩家看到"技能里写 5、状态里是 3"。
+水晶塔 2→1 有同样的残留。
+
+因此：
+
+| 场景 | 做法 |
+| --- | --- |
+| 身份技能（`core_tier_*`）合并展示子技能 | `get description() { return mergedDescription(this.mergedSkills, false); }` |
+| 光环被动（`makeAuraPassive`） | 文案由 `auraDescription()` 从 `effectsFn` 实际返回的 blueprint 描述拼出 |
+| 普通被动 | 文案里的数值必须与 `onEquip/onFrame` 里 apply 的 `flatValue/percentValue` 同源（同一常量或同一生成器参数） |
+
+结论：**改数值只改一处，文案自动跟随**。任何"在两个地方各写一遍同一个数字"的写法都视为 bug。
+
+### 回归防线
+
+`tests/sim_skilldesc.mjs` 对全部技能逐条检查：
+
+1. 文案格式是否为「唯一被动——名称：描述」；
+2. `onEquip` + 60 秒 `onFrame` 实际施加的效果数值，是否都能被文案里的数字解释
+   （允许差值/乘积/百分比折算等派生形式）；
+3. 效果 blueprint 自带的**状态描述**里的数值，同样要能被文案解释。
+
+这条测试同时是"技能能不能跑"的冒烟测试——它抓出过 `weapon_corrosion`
+引用未定义变量 `p4` 的真实 bug：`onFrame` 一遇到射程内的敌人就抛异常，
+被 CombatSystem 的兜底 try-catch 静默吞掉，导致腐蚀武器的中毒/减速/减攻速
+**全部长期失效**且无人察觉。

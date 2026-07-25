@@ -78,10 +78,17 @@ function equip(e, skillId, ents, fx, bus) {
   const allMerged = ['core_tier_outer', 'core_tier_inner', 'core_tier_base', 'core_tier_hq'].flatMap(k => SkillLibrary[k].mergedSkills);
   T('独立被动不被合并（钢铁防线/镀层/烈阳护盾/过载）',
     !allMerged.some(k => ['passive_iron_line', 'passive_armor_plating', 'passive_inner_bulwark', 'passive_base_bulwark', 'passive_overload'].includes(k)));
-  // 身份描述含用户指定文案
-  T('身份描述含节点文案（外）', SkillLibrary.core_tier_outer.description.includes('33%，67%，100%'));
-  T('身份描述含 5 恢复（枢纽）', SkillLibrary.core_tier_hq.description.includes('5生命恢复'));
-  T('身份描述含 2 恢复（水晶）', SkillLibrary.core_tier_base.description.includes('2生命恢复'));
+  // 身份描述含用户指定文案。
+  // Q3 之后这三条改为【与子技能实时比对】而不是写死数字：身份技能的文案现在是从
+  // passive_*_fortify / passive_growth_* 现拼出来的，写死数字等于把手抄那套搬进测试——
+  // 原来的期望值 5恢复(枢纽)/2恢复(水晶) 正是平衡改动后没跟着更新的陈旧常量，
+  // 也就是用户报的'技能里写5、状态里是3'。现在只要子技能改了，这里自动跟上。
+  const _sub = (id) => SkillLibrary.get(id).description;
+  T('身份描述含节点文案（外）', SkillLibrary.core_tier_outer.description.includes('33%/67%/100%'));
+  T('身份描述 = 子技能文案拼接（枢纽）',
+    SkillLibrary.core_tier_hq.description === _sub('passive_hq_fortify') + _sub('passive_growth_hq'));
+  T('身份描述 = 子技能文案拼接（水晶）',
+    SkillLibrary.core_tier_base.description === _sub('passive_base_fortify') + _sub('passive_growth_base'));
 
   // main.js 装配（源码断言）
   const fs = await import('fs');

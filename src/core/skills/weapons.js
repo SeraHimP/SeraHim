@@ -382,7 +382,7 @@ export const weapons = {
           damageType: chosenType,
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
-          stackable: true, maxStacks: (p4 ? p4.maxStacks : 5), stackPolicy: 'stack', uniquePassive: true,
+          stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
           descTemplate: `唯一被动——腐蚀·毒素：每秒（【{val}】=攻击力1%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多50层。`,
           description: '毒素（{stacks}/50层）',
         }, 'weapon_corrosion_poisonA');
@@ -393,7 +393,7 @@ export const weapons = {
           damageType: 'true',
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
-          stackable: true, maxStacks: (p4 ? p4.maxStacks : 5), stackPolicy: 'stack', uniquePassive: true,
+          stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
           descTemplate: '唯一被动——腐蚀·剧毒：每秒（【{val}】=攻击力1%×层数）真实伤害，最多50层。',
           description: '剧毒（{stacks}/50层）',
         }, 'weapon_corrosion_poisonB');
@@ -402,7 +402,7 @@ export const weapons = {
         ctx.effectRegistry.apply(enemy.id, {
           name: '腐蚀·迟缓', icon: '🐌', kind: 'stat', color: '#7bc96f', type: 'debuff',
           statKey: 'moveSpeed', percentValue: -7, perStackPercent: -7,
-          duration: 5, stackable: true, maxStacks: (p4 ? p4.maxStacks : 5), stackPolicy: 'stack', uniquePassive: true,
+          duration: 5, stackable: true, maxStacks: 5, stackPolicy: 'stack', uniquePassive: true,
           descTemplate: '唯一被动——腐蚀·迟缓：移速降低（【{val}%】=-7%×层数），上限-35%。',
           description: '减速（{stacks}/5层）',
         }, 'weapon_corrosion_slow');
