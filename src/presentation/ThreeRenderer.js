@@ -93,14 +93,14 @@ export class ThreeRenderer {
 
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.gl.setPixelRatio(window.devicePixelRatio || 1);
-    // P1 画质选项。电影级色调（ACES）默认【关闭】——用户反馈对比度太高；可在设置里开。
-    this.gl.toneMapping = THREE.NoToneMapping;
+    // P1 画质选项。电影级色调（ACES）默认【开启】（用户定稿）；可在设置里关。
+    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.0;
     this.composer = null; this.bloomPass = null; this.fxaaPass = null;
     this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA 一并失效）
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
-    this.toneMapOn = false;  // 电影级色调（ACES）
+    this.toneMapOn = true;   // 电影级色调（ACES）
 
     this.scene = new THREE.Scene();
     // 与 2D 画布 CSS 背景 #0a0d12 一致，切换时不闪底色

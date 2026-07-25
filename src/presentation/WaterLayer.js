@@ -100,10 +100,12 @@ export class WaterLayer {
     this.mask = riverMaskTexture(WW, WH, half);
     const geo = new THREE.PlaneGeometry(WW, WH, 1, 1);
     geo.rotateX(-Math.PI / 2);                        // 躺平到 XZ
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x2f6d7a, transparent: true, opacity: 0.72,
-      roughness: 0.12, metalness: 0.25,
-      normalMap: this.tex, normalScale: new THREE.Vector2(0.8, 0.8),
+    // 材质用 Lambert（【无镜面反射】）而不是 Standard：低粗糙度+金属度会在太阳方向打出一大片高光，
+    // 再被 Bloom 放大成刺眼白斑（用户反馈"晃瞎"）。水面不是核心玩法，只需要"看得出是水"：
+    // 靠法线扰动做出细微涟漪的明暗起伏即可，不要任何高光。
+    const mat = new THREE.MeshLambertMaterial({
+      color: 0x35707c, transparent: true, opacity: 0.55,
+      normalMap: this.tex, normalScale: new THREE.Vector2(0.35, 0.35),
       alphaMap: this.mask,        // 只有河带处不透明
       depthWrite: false,          // 半透明水面不写深度，避免挡住河床里的单位/贴花
     });
