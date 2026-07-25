@@ -377,12 +377,17 @@ export function crystalParticles(color, r) {
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  // 尺寸：正交相机下 three 的 sizeAttenuation 【完全失效】（着色器里 gl_PointSize *= scale/-z
+  // 只在透视相机分支执行），gl_PointSize 就是固定像素数 → 缩小看全图时塔只剩几像素、粒子仍占那么多
+  // 像素，糊成一团。故这里只给"世界半径"，由 UnitLayer 每帧按 像素/世界单位 换算成 size。
   const mat = new THREE.PointsMaterial({
-    size: r * 0.55, map: dotTexture(), color,
+    size: 1, map: dotTexture(), color,
     transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending,
-    depthWrite: false, sizeAttenuation: true,
+    depthWrite: false, sizeAttenuation: false,
   });
-  return new THREE.Points(geo, mat);
+  const pts = new THREE.Points(geo, mat);
+  pts.userData.worldSize = r * 0.5;   // 期望的世界尺寸（UnitLayer 换算用）
+  return pts;
 }
 
 /** 仅测试/切换地图时调用：释放全部共享几何与材质 */

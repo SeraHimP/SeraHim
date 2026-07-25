@@ -44,6 +44,7 @@ const TOWER_VIZ = { tower: 1.25, orb: 1.10, gem: 1.10 };
 const towerVizScale = (tier) => (tier === 'nexus_lane' || tier === 'nexus_main') ? 1.10 : 1.25;
 // Q6：水晶慢转角速度(rad/s)与攻击辉光参数（自发光基准/峰值/衰减速率）。
 const CRYSTAL_SPIN = 0.6, CRYSTAL_EMI_BASE = 0.7, CRYSTAL_EMI_PEAK = 1.6, CRYSTAL_GLOW_DECAY = 2.6;
+const CRYSTAL_PT_MAX_PX = 9;   // 粒子屏幕尺寸上限（像素），近距离不至于过大
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
@@ -66,6 +67,8 @@ export class UnitLayer {
     this.models = null;            // A：GLB 模型库（浏览器注入）；null = 回退程序化几何（headless）
     this.mapSystem = null;         // A：塔按兵线朝敌方定向用（读车道 waypoints + 敌方基地中心）
     this.infoObjs = 0;             // E 组场景对象计数（sceneStats 用：children = 2×tracked + infoObjs + fx）
+    this.pxPerUnit = 1;            // 像素/世界单位（每帧由 ThreeRenderer 注入；正交相机 = zoom×DPR）
+    this.particlesOn = true;       // 水晶粒子开关（设置面板）
   }
 
 
@@ -190,7 +193,7 @@ export class UnitLayer {
     if (!en.crystal) return;
     if (en.crystal.material) en.crystal.material.dispose();
     en.crystal.traverse(o => { if (o.isPoints) { o.geometry.dispose(); o.material.dispose(); } });
-    en.crystal = null;
+    en.crystal = null; en.crystalPts = null;
   }
 
   // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
@@ -235,7 +238,7 @@ export class UnitLayer {
     bar.renderOrder = ORDER_BAR;
 
     this.scene.add(unit); this.scene.add(bar);
-    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, crystal: null, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
+    const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, crystal: null, crystalPts: null, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -511,7 +514,8 @@ export class UnitLayer {
         g.add(new THREE.Mesh(vis.geo, vis.mat));               // 石身：共享几何/材质
         const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
         cm.position.set(0, vis.crystal.cy, 0);
-        cm.add(crystalParticles(vis.crystalColor, vis.crystal.r || 8));   // Q6：绕水晶公转的发光粒子（随水晶慢转）
+        const pts = crystalParticles(vis.crystalColor, vis.crystal.r || 8);  // Q6：绕水晶公转的发光粒子（随水晶慢转）
+        cm.add(pts); en.crystalPts = pts;
         g.add(cm);
         this._installUnit(en, g);
         en.crystal = cm; en.unitIsModel = false;
@@ -538,6 +542,15 @@ export class UnitLayer {
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
     if (en.crystal) {
       en.crystal.rotation.y = tNow * CRYSTAL_SPIN;
+      // 粒子尺寸：正交相机下 gl_PointSize 是【像素】且不随缩放变，必须自己按 像素/世界单位 换算，
+      // 否则缩小看全图时粒子把塔糊成一团。上限 CRYSTAL_PT_MAX_PX 防近距离过大。
+      if (en.crystalPts) {
+        en.crystalPts.visible = this.particlesOn;
+        if (this.particlesOn) {
+          const px = (en.crystalPts.userData.worldSize || 4) * this.pxPerUnit;
+          en.crystalPts.material.size = Math.max(1, Math.min(CRYSTAL_PT_MAX_PX, px));
+        }
+      }
       const cd = e.attackCooldown || 0;
       if (cd > (en._lastCd || 0) + 0.05) en._glow = 1;   // 冷却值跳增 = 刚开了一炮
       en._lastCd = cd;

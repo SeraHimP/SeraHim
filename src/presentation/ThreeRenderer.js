@@ -92,11 +92,14 @@ export class ThreeRenderer {
 
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.gl.setPixelRatio(window.devicePixelRatio || 1);
-    // P1：ACES 电影级色调映射（辉光/高光更自然）。OutputPass 在管线末端据此转码 + sRGB。
-    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
+    // P1 画质选项。电影级色调（ACES）默认【关闭】——用户反馈对比度太高；可在设置里开。
+    this.gl.toneMapping = THREE.NoToneMapping;
     this.gl.toneMappingExposure = 1.0;
     this.composer = null; this.bloomPass = null; this.fxaaPass = null;
-    this.postFX = true;   // 后处理总开关（setPostFX 切换）
+    this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA 一并失效）
+    this.bloomOn = true;     // 辉光
+    this.fxaaOn = true;      // 抗锯齿
+    this.toneMapOn = false;  // 电影级色调（ACES）
 
     this.scene = new THREE.Scene();
     // 与 2D 画布 CSS 背景 #0a0d12 一致，切换时不闪底色
@@ -109,6 +112,7 @@ export class ThreeRenderer {
     this._buildLights();
     this.walls = new WallLayer(this.scene);
     this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
+    this.vegOn = true;
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -311,10 +315,13 @@ export class ThreeRenderer {
     this.composer = new EffectComposer(this.gl);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.4, 0.82); // strength/radius/threshold
+    this.bloomPass.enabled = this.bloomOn;
     this.composer.addPass(this.bloomPass);
     this.fxaaPass = new ShaderPass(FXAAShader);
+    this.fxaaPass.enabled = this.fxaaOn;
     this.composer.addPass(this.fxaaPass);
-    this.composer.addPass(new OutputPass());   // ACES 色调映射 + sRGB 转码（管线末端唯一一次）
+    this.outputPass = new OutputPass();        // 色调映射（按 gl.toneMapping）+ sRGB 转码，管线末端唯一一次
+    this.composer.addPass(this.outputPass);
     this._sizeComposer(w, h);
   }
 
@@ -326,7 +333,23 @@ export class ThreeRenderer {
     this.fxaaPass.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
   }
 
-  setPostFX(on) { this.postFX = !!on; }
+  // ==== P1 画质开关（设置面板）。Pass.enabled 是 three 后处理的标准开关，切换零重建。====
+  setPostFX(on) { this.postFX = !!on; return this.postFX; }
+  setBloom(on) { this.bloomOn = !!on; if (this.bloomPass) this.bloomPass.enabled = this.bloomOn; return this.bloomOn; }
+  setFXAA(on) { this.fxaaOn = !!on; if (this.fxaaPass) this.fxaaPass.enabled = this.fxaaOn; return this.fxaaOn; }
+  setToneMapping(on) {
+    this.toneMapOn = !!on;
+    this.gl.toneMapping = this.toneMapOn ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    // OutputPass 的着色器按 toneMapping 编译，改后必须让它重编（否则切换不生效）。
+    if (this.outputPass) this.outputPass.material.needsUpdate = true;
+    return this.toneMapOn;
+  }
+  setVegetation(on) {
+    this.vegOn = on !== false;
+    if (this.vegOn) this.veg.build(this.mapSystem); else this.veg.clear();
+    return this.vegOn;
+  }
+  setParticles(on) { this.units.particlesOn = on !== false; return this.units.particlesOn; }
 
   setElevation(deg) {
     this.elevationDeg = Math.max(1, Math.min(90, Number(deg) || 0));
@@ -469,7 +492,7 @@ export class ThreeRenderer {
       this.walls.top.material.map = tex;
       this.walls.top.material.needsUpdate = true;
     }
-    this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
+    if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
   }
 
   // ===== 第 5 步：接手 CanvasController 面向渲染器的接口 =====
@@ -488,6 +511,9 @@ export class ThreeRenderer {
     this._fitShadowToView(controller);
     if (this.deps) {
       const rel = controller ? (controller.zoom / (controller._fitZoom || 1)) : 1;
+      // 正交相机：可见世界高度 = (top−bottom)/zoom = H/zoom → 像素/世界单位 = zoom×DPR。
+      // 水晶粒子按它把世界尺寸换算成 gl_PointSize（像素），否则缩放时粒子尺寸恒定、糊成一团。
+      this.units.pxPerUnit = (controller ? (controller.zoom || 1) : 1) * this.gl.getPixelRatio();
       this.units.update(this.deps, rel, window.gameTime || 0);
       // 第3.5步：弹道/指示线/静态参照。lodDots 与 2D 的档2 同阈值（rel < 1.02）
       // 摄像机不偏航、只有仰角，故视线与上方向是常量，每帧算一次传给特效层。

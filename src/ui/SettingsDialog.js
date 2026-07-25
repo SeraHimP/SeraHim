@@ -83,6 +83,24 @@ export const SettingsDialog = {
           <div class="slider-row"><label>阴影质量</label>
             <button id="setShadowBtn" style="flex:1;">${{ all: '🌑 全部投影', static: '🏛️ 仅建筑投影', off: '⭕ 关闭阴影' }[window.__three?.shadowLevel || 'off']}</button>
           </div>
+          <div class="slider-row"><label>画质·后处理总开关</label>
+            <button id="setPostFXBtn" style="flex:1;">${window.__three?.postFX !== false ? '✨ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label>画质·辉光 Bloom</label>
+            <button id="setBloomBtn" style="flex:1;">${window.__three?.bloomOn !== false ? '🌟 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label>画质·电影级色调 ACES</label>
+            <button id="setToneBtn" style="flex:1;">${window.__three?.toneMapOn ? '🎬 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label>画质·抗锯齿 FXAA</label>
+            <button id="setFxaaBtn" style="flex:1;">${window.__three?.fxaaOn !== false ? '🔷 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label>画质·水晶粒子</label>
+            <button id="setPartBtn" style="flex:1;">${window.__three?.units?.particlesOn !== false ? '✦ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label>画质·野区植被</label>
+            <button id="setVegBtn" style="flex:1;">${window.__three?.vegOn !== false ? '🌲 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
           <div class="slider-row"><label>性能面板</label>
             <button id="setPerfBtn" style="flex:1;">${document.getElementById('perfHud')?.classList.contains('show') ? '📊 已显示（点击隐藏）' : '📊 显示性能面板'}</button>
           </div>
@@ -152,6 +170,31 @@ export const SettingsDialog = {
 
       // 第 6.1 步：阴影三档循环切换（全部 → 仅建筑 → 关闭）。小兵是同屏数量最大的一类，
       // "仅建筑"档把它们排除掉，性能收益最大而观感损失最小，故作为默认。
+      // P1 画质开关：统一的"读当前值 → 取反下发 → 按实际生效值刷新文案"三段式。
+      // 一律以渲染器【返回的实际值】刷新按钮，避免 UI 与真实状态脱节（如渲染器为 null 时）。
+      const bindFx = (id, get, set, onLabel, offLabel) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          const r = window.__three;
+          if (!r) return;
+          const applied = set(r, !get(r));
+          btn.textContent = applied ? onLabel : offLabel;
+        });
+      };
+      bindFx('setPostFXBtn', r => r.postFX !== false, (r, v) => r.setPostFX(v),
+             '✨ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setBloomBtn', r => r.bloomOn !== false, (r, v) => r.setBloom(v),
+             '🌟 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setToneBtn', r => !!r.toneMapOn, (r, v) => r.setToneMapping(v),
+             '🎬 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setFxaaBtn', r => r.fxaaOn !== false, (r, v) => r.setFXAA(v),
+             '🔷 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setPartBtn', r => r.units?.particlesOn !== false, (r, v) => r.setParticles(v),
+             '✦ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setVegBtn', r => r.vegOn !== false, (r, v) => r.setVegetation(v),
+             '🌲 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+
       const shadowBtn = document.getElementById('setShadowBtn');
       if (shadowBtn) shadowBtn.addEventListener('click', () => {
         const order = ['all', 'static', 'off'];
