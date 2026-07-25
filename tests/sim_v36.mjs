@@ -184,8 +184,22 @@ function equip(e, skillId, ents, fx, bus) {
     dist < map.baseOpenRadius && map.baseOpenRadius < dist + 180);
   const hw = map.walls.corridorHalfWidth;
   T(`射程180 > 走廊半宽${hw} → 几何必然穿墙`, 180 > hw);
-  // v38：塔已在开放高地内，四周皆可走（这正是"高地塔在高地范围里"的判据）。
-  T('塔侧方150px可行走（塔在开放高地内，不再被墙夹）', mapSys.isWalkable(tw.pos.x + 150, tw.pos.y));
+  // navgrid 版语义（用户定稿）：进入高地的入口【只有三座高地塔那里】，其余外沿一律是墙。
+  // 于是"塔四周皆可走"不再成立——塔正是把守窄口的那一座，两侧就该是墙。
+  // 改为断言这个新语义：沿兵线方向（进出高地的方向）可走，垂直兵线的侧向被墙夹住。
+  {
+    const lane = mapSys.getLane('top');
+    const n = mapSys._nearestOnLane(lane, tw.pos.x, tw.pos.y);
+    // 兵线切向（用最近点两侧取差分）
+    const n2 = mapSys._nearestOnLane(lane, tw.pos.x + 1, tw.pos.y + 1);
+    let tx = n2.px - n.px, ty = n2.py - n.py;
+    const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    T('高地口沿兵线方向可走（这就是那三个入口）',
+      mapSys.isWalkable(tw.pos.x + tx * 120, tw.pos.y + ty * 120));
+    T('高地口侧向被墙夹住（入口只在三座高地塔处）',
+      !mapSys.isWalkable(tw.pos.x - ty * 220, tw.pos.y + tx * 220)
+      || !mapSys.isWalkable(tw.pos.x + ty * 220, tw.pos.y - tx * 220));
+  }
   const dxr = tw.pos.x - c.x, dyr = tw.pos.y - c.y, dr = Math.hypot(dxr, dyr);
   T('更深处（开放区内）仍自由行走',
     mapSys.isWalkable(tw.pos.x - dxr / dr * 200, tw.pos.y - dyr / dr * 200));

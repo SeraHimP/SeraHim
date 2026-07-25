@@ -30,6 +30,11 @@ import { CONFIG, MINION_SIZES } from '../data/Config.js';
 // 调参归拢：数值住在 CONFIG.tuning（Config.js），这里只取默认兜底——调平衡改配置，不翻系统源码
 const ACQUISITION_RANGE = CONFIG.tuning?.acquisitionRange ?? 200;        // 仇恨获取半径（≈ LoL 800 × 0.24）
 const CHASE_DROP_RANGE = ACQUISITION_RANGE * (CONFIG.tuning?.chaseDropFactor ?? 1.2); // 追击放弃距离
+// navgrid 地形（野区可走）后的行军纪律（用户定稿）：小兵【不主动进野区】，被挤进/带偏后也要
+// 尽快回到本路兵线继续向敌方推进。偏离中线超过 LANE_KEEP 起，回归力线性增强到压过前进期望力。
+const LANE_KEEP = 150;      // 容许的离线距离（≈走廊半宽），以内只有原来的温和排队力
+const LANE_SPAN = 200;      // 从 LANE_KEEP 到满强度的过渡跨度
+const LANE_BACK_K = 1.6;    // 满强度权重（> 期望力 1.0 → 先回兵线再谈推进）
 
 export class LaneMovementSystem {
   constructor(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem) {
@@ -478,7 +483,11 @@ export class LaneMovementSystem {
         const n = this.mapSystem._nearestOnLane(lane, minion.pos.x, minion.pos.y);
         if (n && n.dist > 6) {
           const cx = (n.px - minion.pos.x) / n.dist, cy = (n.py - minion.pos.y) / n.dist;
-          const w = Math.min(0.5, n.dist / 140) * 0.55; // 越偏离中线拉得越紧，上限温和
+          let w = Math.min(0.5, n.dist / 140) * 0.55; // 越偏离中线拉得越紧，上限温和
+          // 野区回归：navgrid 让野区可走，小兵可能被挤进野区、或想抄近道斜穿。这里在偏离
+          // 超过 LANE_KEEP 后把回归力抬到压过期望力，于是【不主动进野区、进了也尽快出来】。
+          // 只在行军时生效（_offPath 为真＝交战/追击中，那是合理例外，脱战后自然回归）。
+          if (n.dist > LANE_KEEP) w += Math.min(1, (n.dist - LANE_KEEP) / LANE_SPAN) * LANE_BACK_K;
           fx += cx * w; fy += cy * w;
         }
       }
