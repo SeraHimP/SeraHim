@@ -104,22 +104,20 @@ export class LaneWaveSystem {
     //   术士/蚀骨暂不进对战（用户定稿"目前只加图腾兵"）。
     const EN = CONFIG.gameRules.spawnEnabled || {};
     const on = (t) => EN[t] !== false;
+    // 出兵编排【全部软编码】：读 CONFIG.gameRules.laneWaveComposition（数组顺序即出兵顺序）。
+    // 默认值逐条等价于此前的硬编码（近战×3 / 每3波炮兵 / 远程×3 / 第10波起每3波图腾 /
+    // 第5波起每15波攻城车 / 水晶陷落出超级兵），故不改参数时对战节奏完全不变。
     const order = [];
-    if (nexusDown && on('super')) order.push('super');
-    if (on('melee')) order.push('melee', 'melee', 'melee');
-    if (!nexusDown && this.waveNumber % 3 === 0 && on('siege')) order.push('siege');
-    if (on('ranged')) order.push('ranged', 'ranged', 'ranged');
-    const totemFrom = CONFIG.gameRules.battleTotemFromWave ?? 10;
-    const totemIntv = Math.max(1, CONFIG.gameRules.battleTotemInterval ?? 3);
-    if (on('totem') && this.waveNumber >= totemFrom && (this.waveNumber - totemFrom) % totemIntv === 0) {
-      order.push('totem');
+    for (const rule of (CONFIG.gameRules.laneWaveComposition || [])) {
+      if (!rule || !rule.type || !on(rule.type)) continue;
+      if (rule.when === 'nexusDown' && !nexusDown) continue;
+      if (rule.when === '!nexusDown' && nexusDown) continue;
+      const from = rule.fromWave ?? 0, every = Math.max(1, rule.everyN ?? 1);
+      if (this.waveNumber < from) continue;
+      if ((this.waveNumber - from) % every !== 0) continue;
+      const n = Math.max(0, Math.floor(rule.count ?? 1));
+      for (let k = 0; k < n; k++) order.push(rule.type);
     }
-    // v39（Q4）：攻城车——第 5 波首发，之后每 15 波（5/20/35/50…）。
-    // 压在 order【最末尾】= 出生在兵线最后方（_spawnQueue 按索引延时出兵，越靠后出得越晚、
-    // 位置也就越靠后），符合用户定稿"出生在兵线最后方"。
-    const ramMin = CONFIG.gameRules.ramMinWave ?? 5;
-    const ramIntv = Math.max(1, CONFIG.gameRules.waveRamInterval ?? 15);
-    if (on('ram') && this.waveNumber >= ramMin && (this.waveNumber - ramMin) % ramIntv === 0) order.push('ram');
 
     for (let i = 0; i < order.length; i++) {
       this._spawnQueue.push({

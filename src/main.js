@@ -256,7 +256,13 @@ function createTower(x, y) {
 // 武器按地图配置固定分配（而非模板默认）。沙盒模式不会调用这个函数，互不影响。
 function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, skills }) {
   const tpl = CONFIG.templates.tower;
-  const s = stats || {};
+  // 分层塔属性解析（用户定稿：【模板覆盖地图】）——
+  //   地图 tierStats（初始值） → CONFIG.towerTierOverrides[tier]（共享覆写）
+  //   → CONFIG.factionOverrides[faction]['tower_'+tier]（该阵营覆写）
+  // 覆写层只存"用户改过的字段"，没改的字段自然落回地图数值 → 不改就行为不变。
+  const s = { ...(stats || {}),
+              ...(CONFIG.towerTierOverrides?.[tier] || {}),
+              ...(CONFIG.factionOverrides?.[faction]?.['tower_' + tier] || {}) };
   const entity = {
     id: ++CTX._uid,
     type: 'tower',
@@ -271,8 +277,8 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
       baseAttackSpeed: s.baseAttackSpeed ?? tpl.baseAttackSpeed,
       shieldFixedMax: s.shieldFixedMax ?? 0,
       healthRegen: s.healthRegen ?? tpl.healthRegen,
-      // 攻击距离统一沿用塔的基础射程（不按 tier 区分——所有会攻击的建筑共用同一个射程）。
-      attackRange: tpl.attackRange,
+      // 攻击距离：默认沿用塔的基础射程（所有会攻击的建筑共用），但允许分层覆写。
+      attackRange: s.attackRange ?? tpl.attackRange,
     },
     currentHP: 0, // 下面按 maxHP 设置满血
     shieldFixedCurrent: s.shieldFixedMax ?? 0,

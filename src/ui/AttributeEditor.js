@@ -87,7 +87,7 @@ export const AttributeEditor = {
   // 布局：一级 tab（防御塔/小兵/巨龙）+ 二级 tab（仅小兵展开7个具体类型）+ 三级 tab（属性/武器/被动/状态/龙魂/生成规则），
   // 全部以顶部横排按钮堆叠显示，不使用卡片网格跳转。
   openTemplateEditorRoot(logFn, returnCallback) {
-    this._tplState = { category: this._TPL_CATEGORIES[0].key, type: 'tower' };
+    this._tplState = { category: this._TPL_CATEGORIES[0].key, type: 'tower', tier: 'outer' };
   // ============================================================
   //  SECTION 2: Template Editor ? defaults for new units
   // ============================================================
@@ -98,7 +98,7 @@ export const AttributeEditor = {
   openTemplateEditor(type, logFn, returnCallback) {
     // 兼容旧调用（直接指定具体类型，如 'tower' 或某个小兵类型）
     const category = this._categoryOfType(type);
-    this._tplState = { category, type: category === 'minion' ? type : type };
+    this._tplState = { category, type, tier: this._tplState?.tier || 'outer' };
     this._renderTemplateEditor(logFn, returnCallback);
   },
 
@@ -111,6 +111,17 @@ export const AttributeEditor = {
   _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', dragon: '巨龙' },
  _TPL_ICONS: { melee: '🗡️', ranged: '🏹', siege: '💣', super: '🦾', totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️' },
   _TPL_MINION_TYPES: ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram'],
+  // 分层防御塔：模板编辑器"防御塔"下的二级 tab。tier 与地图 tierStats / 生成建筑的 _mapTier 同键。
+  _TPL_TOWER_TIERS: [
+    { key: 'outer',      label: '外塔',     icon: '🗼' },
+    { key: 'inner',      label: '内塔',     icon: '🏯' },
+    { key: 'base',       label: '水晶塔',   icon: '🏛️' },
+    { key: 'hq_tower',   label: '枢纽塔',   icon: '🏰' },
+    { key: 'nexus_lane', label: '召唤水晶', icon: '🔮' },
+    { key: 'nexus_main', label: '水晶枢纽', icon: '💎' },
+  ],
+  // 应用范围（用户定稿）：仅模板 / 仅场上目标 / 两者。阵营筛选对【塔与小兵都生效】。
+  _applyScope: 'both',
   _TPL_CATEGORIES: [
     { key: 'tower', label: '🏰 防御塔' },
     { key: 'minion', label: '⚔️ 小兵' },
@@ -124,6 +135,21 @@ export const AttributeEditor = {
   // 仅"属性"tab 参与阵营覆写（技能/武器/状态等 tab 保持双方共享）。
   _factionScope: 'shared',
 
+  // 分层塔的"当前有效数值"：地图 tierStats → 共享覆写 → 阵营覆写（与 createBuilding 同一叠加顺序）
+  _tierBase(tier) {
+    const map = window.CTX?.__app?.mapSystem?.currentMap;
+    const fromMap = (map?.tierStats && map.tierStats[tier]) || {};
+    const tplTower = CONFIG.templates.tower || {};
+    // 地图只给了部分字段，其余落回塔模板，保证面板每项都有初值
+    return { ...tplTower, ...fromMap };
+  },
+  _tierEffective(tier) {
+    const shared = CONFIG.towerTierOverrides?.[tier] || {};
+    const fac = this._factionScope !== 'shared'
+      ? (CONFIG.factionOverrides?.[this._factionScope]?.['tower_' + tier] || {}) : {};
+    return { ...this._tierBase(tier), ...shared, ...fac };
+  },
+
   _scopedTpl(type) {
     const base = CONFIG.templates[type];
     if (this._factionScope === 'shared' || !base) return base;
@@ -132,9 +158,26 @@ export const AttributeEditor = {
   },
 
   _scopeHint() {
+    const A = { template: '仅写入模板（影响之后新生成的单位）',
+                field: '仅改场上已有单位（不动模板，新生成的仍用旧值）',
+                both: '模板 + 场上已有单位一起改' }[this._applyScope];
+    const F = this._factionScope === 'shared' ? '双方'
+            : (this._factionScope === 'blue' ? '仅🔵蓝方' : '仅🔴红方');
+    return `应用范围：${A}　｜　阵营：${F}`;
+  },
+  _scopeHintLegacy() {
     if (this._factionScope === 'shared') return '修改将影响所有新生成的该类型单位（双方共享基础值）';
     const label = this._factionScope === 'blue' ? '🔵蓝方' : '🔴红方';
     return `当前编辑【仅${label}】：保存时与共享基础不同的字段写入该阵营覆写层，另一方完全不受影响`;
+  },
+
+  // 应用范围条：仅模板 / 仅场上目标 / 两者（用户定稿）
+  _renderApplyScopeBar() {
+    const a = this._applyScope;
+    const btn = (k, txt) => `<button class="editor-tab ${a === k ? 'active' : ''}" data-applyscope="${k}">${txt}</button>`;
+    return `<div class="editor-tabs" style="margin-top:6px;">
+      ${btn('template', '📐 仅模板（影响新生成）')}${btn('field', '🎯 仅场上目标')}${btn('both', '🔗 模板 + 场上')}
+    </div>`;
   },
 
   _renderFactionScopeBar() {
@@ -173,9 +216,10 @@ export const AttributeEditor = {
           ${isTower ? `<button class="editor-tab" data-tpltab="bsize">建筑体积</button>` : ''}
           ${isMinion ? `<button class="editor-tab" data-tpltab="spawnrule">生成规则</button>` : ''}
         </div>
-        ${isMinion ? this._renderFactionScopeBar() : ''}
+        ${isDragon ? '' : this._renderFactionScopeBar()}
+        ${isDragon ? '' : this._renderApplyScopeBar()}
         <p style="color:#8b949e;font-size:11px;margin:8px 0;" id="tplScopeHint">${this._scopeHint()}</p>
-        <div id="templateContent">${this._renderAttrContent(this._scopedTpl(type), true)}</div>
+        <div id="templateContent">${this._renderAttrContent(isTower ? this._tierEffective(st.tier) : this._scopedTpl(type), true)}</div>
       `;
     } else {
       detailHtml = `<div style="color:#8b949e;font-size:12px;padding:12px;">巨龙暂无可编辑的固定模板（属性由波次/元素动态计算）。</div>`;
@@ -191,6 +235,11 @@ export const AttributeEditor = {
           ${category === 'minion' ? `
             <div class="editor-tabs" style="margin-top:8px;">
               ${this._TPL_MINION_TYPES.map(t => `<button class="editor-tab ${t === type ? 'active' : ''}" data-tpltype="${t}">${this._TPL_ICONS[t]} ${this._TPL_LABELS[t]}</button>`).join('')}
+            </div>
+          ` : ''}
+          ${category === 'tower' ? `
+            <div class="editor-tabs" style="margin-top:8px;">
+              ${this._TPL_TOWER_TIERS.map(t => `<button class="editor-tab ${t.key === st.tier ? 'active' : ''}" data-tpltier="${t.key}">${t.icon} ${t.label}</button>`).join('')}
             </div>
           ` : ''}
           <div style="margin-top:12px;">${detailHtml}</div>
@@ -299,6 +348,14 @@ export const AttributeEditor = {
 
     overlay.querySelectorAll('[data-tplscope]').forEach(b => b.addEventListener('click', () => {
       this._factionScope = b.dataset.tplscope;
+      this._renderTemplateEditor(logFn, returnCallback);
+    }));
+    overlay.querySelectorAll('[data-applyscope]').forEach(b => b.addEventListener('click', () => {
+      this._applyScope = b.dataset.applyscope;
+      this._renderTemplateEditor(logFn, returnCallback);
+    }));
+    overlay.querySelectorAll('[data-tpltier]').forEach(b => b.addEventListener('click', () => {
+      this._tplState.tier = b.dataset.tpltier;
       this._renderTemplateEditor(logFn, returnCallback);
     }));
     const clearBtn = overlay.querySelector('[data-tplscope-clear]');
@@ -1362,30 +1419,89 @@ export const AttributeEditor = {
     overlay.remove();
   },
 
+  // 把面板读到的字段应用出去。三条正交的维度（用户定稿）：
+  //   ① 对象：分层塔(tier) 还是 小兵/塔模板(type)
+  //   ② 阵营：共享 / 仅蓝 / 仅红   —— 塔与小兵都生效
+  //   ③ 应用范围：仅模板 / 仅场上目标 / 两者
   _applyTemplateAttrChanges(overlay, type, logFn) {
-    const base = CONFIG.templates[type];
-    const scope = this._factionScope;
-    const isMinionType = this._categoryOfType(type) === 'minion';
+    const isTower = this._categoryOfType(type) === 'tower';
+    const tier = this._tplState?.tier || 'outer';
+    const scope = this._factionScope;          // shared | blue | red
+    const apply = this._applyScope || 'both';  // template | field | both
+
     const readPairs = [];
     for (const inp of overlay.querySelectorAll('.editor-number')) {
       const val = parseFloat(inp.value);
       if (!isNaN(val)) readPairs.push([inp.dataset.key, val]);
     }
     for (const sel of overlay.querySelectorAll('.editor-select')) readPairs.push([sel.dataset.key, sel.value]);
+    if (!readPairs.length) { logFn('（没有可应用的字段）', 'spawn'); return; }
 
-    if (scope !== 'shared' && isMinionType) {
-      // 阵营覆写：只存与共享基础不同的字段；改回等于基础的字段自动从覆写层剔除
-      CONFIG.factionOverrides[scope] = CONFIG.factionOverrides[scope] || {};
-      const ovr = CONFIG.factionOverrides[scope][type] = CONFIG.factionOverrides[scope][type] || {};
-      for (const [key, val] of readPairs) {
-        if (val === base[key]) delete ovr[key]; else ovr[key] = val;
+    let tplMsg = '', fieldMsg = '';
+
+    // ---------- ① 写模板/覆写层 ----------
+    if (apply !== 'field') {
+      if (isTower) {
+        // 分层塔：只存与"地图初始值"不同的字段（模板覆盖地图，改回原值自动清除）
+        const base = this._tierBase(tier);
+        let store;
+        if (scope === 'shared') {
+          CONFIG.towerTierOverrides = CONFIG.towerTierOverrides || {};
+          store = CONFIG.towerTierOverrides[tier] = CONFIG.towerTierOverrides[tier] || {};
+        } else {
+          CONFIG.factionOverrides[scope] = CONFIG.factionOverrides[scope] || {};
+          store = CONFIG.factionOverrides[scope]['tower_' + tier] = CONFIG.factionOverrides[scope]['tower_' + tier] || {};
+        }
+        for (const [k, v] of readPairs) { if (v === base[k]) delete store[k]; else store[k] = v; }
+        tplMsg = `模板：${this._tierLabel(tier)}（${scope === 'shared' ? '双方' : (scope === 'blue' ? '仅蓝' : '仅红')}，${Object.keys(store).length} 个覆写字段）`;
+      } else {
+        const base = CONFIG.templates[type];
+        if (scope === 'shared') {
+          for (const [k, v] of readPairs) base[k] = v;
+          tplMsg = `模板：${type}（双方共享基础值）`;
+        } else {
+          CONFIG.factionOverrides[scope] = CONFIG.factionOverrides[scope] || {};
+          const ovr = CONFIG.factionOverrides[scope][type] = CONFIG.factionOverrides[scope][type] || {};
+          for (const [k, v] of readPairs) { if (v === base[k]) delete ovr[k]; else ovr[k] = v; }
+          if (Object.keys(ovr).length === 0) delete CONFIG.factionOverrides[scope][type];
+          tplMsg = `模板：${type}（${scope === 'blue' ? '仅蓝' : '仅红'}覆写 ${Object.keys(CONFIG.factionOverrides[scope]?.[type] || {}).length} 字段）`;
+        }
       }
-      if (Object.keys(ovr).length === 0) delete CONFIG.factionOverrides[scope][type];
-      logFn(`✅ ${scope === 'blue' ? '🔵蓝方' : '🔴红方'}覆写已更新（${type}，${Object.keys(CONFIG.factionOverrides[scope]?.[type] || {}).length} 个差异字段），另一方不受影响`, 'spawn');
-    } else {
-      for (const [key, val] of readPairs) base[key] = val;
-      logFn(`✅ 模板 ${type} 属性已更新（双方共享基础）`, 'spawn');
     }
+
+    // ---------- ② 改场上已有单位 ----------
+    if (apply !== 'template') {
+      const n = this._applyToFieldUnits({ isTower, tier, type, scope, readPairs });
+      fieldMsg = `场上：命中 ${n} 个单位`;
+    }
+    logFn(`✅ 已应用　${[tplMsg, fieldMsg].filter(Boolean).join('　｜　')}`, 'spawn');
+  },
+
+  _tierLabel(tier) {
+    return (this._TPL_TOWER_TIERS.find(t => t.key === tier) || {}).label || tier;
+  },
+
+  // 把字段直接写到场上已有单位的 baseStats。maxHP 变化时按比例保留当前血量百分比，
+  // 免得"调高上限"反而让单位显示成残血、或"调低上限"后当前血超过上限。
+  _applyToFieldUnits({ isTower, tier, type, scope, readPairs }) {
+    const ec = window.CTX?.__app?.entityContainer;
+    if (!ec || !ec.getAll) return 0;
+    let hit = 0;
+    for (const e of ec.getAll()) {
+      if (!e || !e.alive || !e.baseStats) continue;
+      if (isTower) {
+        if (e.type !== 'tower') continue;
+        if ((e._mapTier || 'outer') !== tier) continue;
+      } else {
+        if (e.type !== type) continue;
+      }
+      if (scope !== 'shared' && (e._mapFaction || e.faction) !== scope) continue;
+      const frac = e.baseStats.maxHP > 0 ? (e.currentHP / e.baseStats.maxHP) : 1;
+      for (const [k, v] of readPairs) e.baseStats[k] = v;
+      if (e.baseStats.maxHP > 0) e.currentHP = Math.max(1, Math.min(e.baseStats.maxHP, Math.round(e.baseStats.maxHP * frac)));
+      hit++;
+    }
+    return hit;
   },
 
   _applyTemplateSkillChanges(overlay, type, logFn) {

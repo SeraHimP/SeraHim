@@ -26,6 +26,23 @@ export const CONFIG = {
     waveRamInterval: 15,       // v40：攻城车每几波生成一次
     ramMinWave: 5,             // v40：攻城车最早生成波次
     milestoneEveryWaves: 10,
+    // ==================== 对战模式·每波出兵编排（软编码，模板编辑器可改）====================
+    // 数组【顺序即出兵顺序】（越靠后出得越晚、位置越靠后）；每项一条规则：
+    //   type   兵种；count 本波该兵种个数
+    //   fromWave 第几波起开始（默认 0 = 一直）；everyN 每几波一次（默认 1 = 每波）
+    //   触发判据统一为： wave >= fromWave && (wave - fromWave) % everyN === 0
+    //   when   'nexusDown'（己方水晶已陷落时才出）/ '!nexusDown'（未陷落时才出）/ 省略 = 不限
+    // 默认值【逐条等价于此前的硬编码】，因此不改参数时对战节奏完全不变：
+    //   super: 水晶陷落才出 1 个；melee×3；siege 每 3 波 1 个(未陷落)；ranged×3；
+    //   totem 第10波起每3波1个；ram 第5波起每15波1个。
+    laneWaveComposition: [
+      { type: 'super',  count: 1, when: 'nexusDown' },
+      { type: 'melee',  count: 3 },
+      { type: 'siege',  count: 1, everyN: 3, when: '!nexusDown' },
+      { type: 'ranged', count: 3 },
+      { type: 'totem',  count: 1, fromWave: 10, everyN: 3 },
+      { type: 'ram',    count: 1, fromWave: 5,  everyN: 15 },
+    ],
     // v33 Q4：对战模式特殊兵生成规则（模板编辑器"生成规则"可改）。目前只接入图腾兵。
     battleTotemFromWave: 10,   // 第几波起开始生成
     battleTotemInterval: 3,    // 每几波生成一次
@@ -43,6 +60,12 @@ export const CONFIG = {
   // 可在统一模板编辑器的"建筑体积"区块调整；沙盒手建塔无 tier，用 default。
   // 阵营模板覆写层：battle 模式生成单位时按 {...templates[type], ...factionOverrides[faction][type]} 合并。
   // 只存"与共享基础不同的字段"（模板编辑器按阵营页签写入/清除），改一方不影响另一方。
+  // 分层防御塔覆写层（模板编辑器"防御塔" 下的 外/内/水晶/枢纽塔、召唤水晶、水晶枢纽）。
+  // 语义：【模板覆盖地图】——地图 tierStats 作初始值，这里只存"用户改过的字段"，
+  // 生成建筑时按 地图 tierStats → towerTierOverrides → factionOverrides['tower_'+tier] 依次覆盖。
+  // 不改就是空对象 → 完全沿用地图数值，行为不变。
+  towerTierOverrides: { outer: {}, inner: {}, base: {}, hq_tower: {}, nexus_lane: {}, nexus_main: {} },
+
   factionOverrides: { blue: {}, red: {} },
 
   // ==================== 对战调参表（技术债清偿：原散落在各系统源码里的硬编码） ====================
