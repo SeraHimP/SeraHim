@@ -102,7 +102,8 @@ T('Q5 无敌/停火改为按阵营分管', fs.readFileSync(new URL('../src/syste
 T('小兵成长表(近战 ad0.3)', mainSrc.includes('ad: 0.3,'));
 T('Q3 炮车成长：降HP(18→10)、增双抗(0.13→0.30)', mainSrc.includes('siege:  { hp: 10, ad: 0.9,   res: 0.30 }'));
 T('碰撞阻挡Q11', fs.readFileSync(new URL('../src/systems/CollisionSystem.js', import.meta.url),'utf8').includes('BLOCK_FACTOR'));
-T('SR攻速Q8', fs.readFileSync(new URL('../src/systems/MapSystem.js', import.meta.url),'utf8').includes('baseAttackSpeed: 3.08'));
+// 用户定稿：水晶塔(base)攻速 3.08 → 2.50
+T('SR水晶塔攻速2.50', fs.readFileSync(new URL('../src/systems/MapSystem.js', import.meta.url),'utf8').includes('baseAttackSpeed: 2.50'));
 
 // Q6:重甲联防只计攻击者
 const twr={id:9001,type:'tower',alive:true,pos:{x:0,y:0},baseStats:{maxHP:1000,attackRange:180},currentHP:1000,_skillInstances:[]};ents.add(twr);

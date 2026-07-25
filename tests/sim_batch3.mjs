@@ -33,7 +33,7 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
 
 // 1. 成长一致性:模拟 createMinion 的缩放逻辑(直接调真实文件不可行,验证公式源头)
 const tpl=CONFIG.templates.melee;
-T('屠戮数值 3/4/6（v36）', SkillLibrary.passive_melee_rend.description.includes('3%') && SkillLibrary.passive_ranged_rend.description.includes('4%') && SkillLibrary.passive_siege_rend.description.includes('6%'));
+T('屠戮数值 4/6/7（用户定稿）', SkillLibrary.passive_melee_rend.description.includes('4%') && SkillLibrary.passive_ranged_rend.description.includes('6%') && SkillLibrary.passive_siege_rend.description.includes('7%'));
 
 // 2. 阵营覆写合并语义
 CONFIG.factionOverrides.blue.melee={attackDamage:99};

@@ -303,8 +303,8 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
 
 // ==================== 屠戮 & 防御护盾（v33 数值） ====================
 {
-  T('近战屠戮 3%（v36）', SkillLibrary.passive_melee_rend.description.includes('3%'));
-  T('远程屠戮 4%（v36）', SkillLibrary.passive_ranged_rend.description.includes('4%'));
+  T('近战屠戮 4%（用户定稿）', SkillLibrary.passive_melee_rend.description.includes('4%'));
+  T('远程屠戮 6%（用户定稿）', SkillLibrary.passive_ranged_rend.description.includes('6%'));
   T('防御护盾描述含超级兵来源', SkillLibrary.passive_siege_shield.description.includes('超级兵'));
   // 防御护盾：超级兵伤害 -30%
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);

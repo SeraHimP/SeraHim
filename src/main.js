@@ -336,7 +336,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
         // v39（Q5）：防御塔镀层从内塔移到水晶塔
         if (tier === 'inner') towerDefaults.push('passive_inner_fortify', 'passive_inner_bulwark');
         if (tier === 'base') towerDefaults.push('passive_base_fortify', 'passive_armor_plating'); // Q3：水晶塔不再默认装钢铁烈阳护盾(passive_base_bulwark)
-        if (tier === 'hq_tower') towerDefaults.push('passive_last_stand', 'passive_hq_fortify');
+        if (tier === 'hq_tower') towerDefaults.push('passive_hq_fortify');   // 用户定稿：删除不生效的"绝望反击"
         towerDefaults.push('passive_overload'); // v36 Q2：所有防御塔默认过载被动
       } else {
         towerDefaults.push('passive_nexus_regen'); // v36 Q4 修复：水晶/枢纽的生命恢复被动

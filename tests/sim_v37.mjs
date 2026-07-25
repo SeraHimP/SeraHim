@@ -44,14 +44,14 @@ function equip(e, skillId, ents, fx, bus) {
   const hq = mkTower(ents, 'hq_tower', null);
   equip(hq, 'passive_hq_fortify', ents, fx);
   attr.tick();
-  T('枢纽加固城防 +5 恢复（6→5）', attr.calc(hq, fx.getEffects(hq.id)).healthRegen === 5);
+  T('枢纽加固城防 +3 恢复（用户定稿：5→3）', attr.calc(hq, fx.getEffects(hq.id)).healthRegen === 3);
   T('枢纽节点 40/70/100 文案', SkillLibrary.passive_hq_fortify.description.includes('40%/70%/100%'));
 
   const base = mkTower(ents, 'base', 'mid');
   equip(base, 'passive_base_fortify', ents, fx);
   attr.tick();
   const bs = attr.calc(base, fx.getEffects(base.id));
-  T('水晶加固城防 +2 恢复、无盾', bs.healthRegen === 2 && bs.shieldFixedMax === 0);
+  T('水晶加固城防 +1 恢复、无盾（用户定稿：2→1）', bs.healthRegen === 1 && bs.shieldFixedMax === 0);
   equip(base, 'passive_base_bulwark', ents, fx);
   attr.tick();
   T('钢铁烈阳护盾（水晶版）独立技能 +800 盾', attr.calc(base, fx.getEffects(base.id)).shieldFixedMax === 800);
@@ -74,10 +74,10 @@ function equip(e, skillId, ents, fx, bus) {
   T('内塔身份 merged = fortify+growth', SkillLibrary.core_tier_inner.mergedSkills.includes('passive_inner_fortify') && SkillLibrary.core_tier_inner.mergedSkills.includes('passive_growth_inner'));
   T('水晶身份 merged = fortify+growth', SkillLibrary.core_tier_base.mergedSkills.includes('passive_base_fortify') && SkillLibrary.core_tier_base.mergedSkills.includes('passive_growth_base'));
   T('枢纽身份 merged = fortify+growth', SkillLibrary.core_tier_hq.mergedSkills.includes('passive_hq_fortify') && SkillLibrary.core_tier_hq.mergedSkills.includes('passive_growth_hq'));
-  // 身份技能不收编独立被动（钢铁防线/镀层/烈阳护盾/绝望反击/过载不在 mergedSkills）
+  // 身份技能不收编独立被动（钢铁防线/镀层/烈阳护盾/过载不在 mergedSkills；绝望反击已删除）
   const allMerged = ['core_tier_outer', 'core_tier_inner', 'core_tier_base', 'core_tier_hq'].flatMap(k => SkillLibrary[k].mergedSkills);
-  T('独立被动不被合并（钢铁防线/镀层/烈阳护盾/绝望反击/过载）',
-    !allMerged.some(k => ['passive_iron_line', 'passive_armor_plating', 'passive_inner_bulwark', 'passive_base_bulwark', 'passive_last_stand', 'passive_overload'].includes(k)));
+  T('独立被动不被合并（钢铁防线/镀层/烈阳护盾/过载）',
+    !allMerged.some(k => ['passive_iron_line', 'passive_armor_plating', 'passive_inner_bulwark', 'passive_base_bulwark', 'passive_overload'].includes(k)));
   // 身份描述含用户指定文案
   T('身份描述含节点文案（外）', SkillLibrary.core_tier_outer.description.includes('33%，67%，100%'));
   T('身份描述含 5 恢复（枢纽）', SkillLibrary.core_tier_hq.description.includes('5生命恢复'));

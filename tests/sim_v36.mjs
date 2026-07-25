@@ -276,9 +276,9 @@ function equip(e, skillId, ents, fx, bus) {
   T('负恢复可致死（100HP,-50/s扣到0死亡）', m.currentHP === 0 && !m.alive);
   attr.setWeatherSystem(null);
 
-  T('屠戮 3/4/6', SkillLibrary.passive_melee_rend.description.includes('3%')
-    && SkillLibrary.passive_ranged_rend.description.includes('4%')
-    && SkillLibrary.passive_siege_rend.description.includes('6%'));
+  T('屠戮 4/6/7（用户定稿）', SkillLibrary.passive_melee_rend.description.includes('4%')
+    && SkillLibrary.passive_ranged_rend.description.includes('6%')
+    && SkillLibrary.passive_siege_rend.description.includes('7%'));
   T('水晶塔节点 33/67/100%', SkillLibrary.passive_base_fortify.description.includes('33%/67%/100%'));
   T('枢纽塔节点 40/70/100%', SkillLibrary.passive_hq_fortify.description.includes('40%/70%/100%'));
 

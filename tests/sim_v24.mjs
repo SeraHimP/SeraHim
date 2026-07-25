@@ -67,33 +67,7 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
   T('Q4 闪电杖伤害类型为魔法', src.includes("performAttackDirect(entity.id, target.id, tickDamage, 'magic'"));
 }
 
-// ========== Q7: 绝望反击 ==========
-{
-  const bus=new EventBus(),ents=new EntityContainer(bus),fx=new EffectRegistry(bus);
-  const ctx={entityContainer:ents,effectRegistry:fx,attrCalc:AttributeCalculator,eventBus:bus};
-  const hq={id:++window._uid,type:'tower',alive:true,pos:{x:0,y:0},
-    baseStats:{maxHP:4750,attackDamage:150,damageAmpPct:0,armor:70,magicResist:70,healShieldPowerPct:0},currentHP:4750,
-    _skillInstances:[],_mapFaction:'blue',_mapTier:'hq_tower'};
-  ents.add(hq);
-  const inst={id:++window._uid,skillId:'passive_last_stand',state:{}};hq._skillInstances.push(inst);
-  SkillLibrary.passive_last_stand.onEquip(hq.id,inst,ctx);
-  AttributeCalculator.tick();
-  T('Q7 初始无加成', AttributeCalculator.calc(hq,fx.getEffects(hq.id)).damageAmpPct===0);
-  bus.emit('map:nexusDestroyed',{faction:'blue',laneId:'mid'});
-  AttributeCalculator.tick();
-  const s1=AttributeCalculator.calc(hq,fx.getEffects(hq.id));
-  T('v33 己方水晶陷落 → +105%增幅/+25双抗/+150%治疗护盾强度', s1.damageAmpPct===105 && s1.armor===95 && s1.magicResist===95 && s1.healShieldPowerPct===150);
-  bus.emit('map:nexusDestroyed',{faction:'blue',laneId:'top'});
-  AttributeCalculator.tick();
-  const s2=AttributeCalculator.calc(hq,fx.getEffects(hq.id));
-  T('v33 可叠加（2层=+210%/+50双抗/+300%治疗护盾）', s2.damageAmpPct===210 && s2.armor===120 && s2.healShieldPowerPct===300);
-  bus.emit('map:nexusDestroyed',{faction:'red',laneId:'bot'});
-  AttributeCalculator.tick();
-  T('Q7 敌方水晶陷落不触发', AttributeCalculator.calc(hq,fx.getEffects(hq.id)).damageAmpPct===210);
-  fx.update(61);
-  AttributeCalculator.tick();
-  T('v33 60秒后失效', AttributeCalculator.calc(hq,fx.getEffects(hq.id)).damageAmpPct===0);
-}
+// ========== Q7: 绝望反击 —— 技能已按用户定稿删除（此前长期不生效），本段测试随之移除 ==========
 
 // ========== Q2/Q5/Q10/Q11/Q12: 代码结构断言 ==========
 {

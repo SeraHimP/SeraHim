@@ -12,7 +12,7 @@
 import { renderSkillDescription } from './skills/_helpers.js';
 import { core } from './skills/core.js';
 import { weapons } from './skills/weapons.js';
-import { towerPassives, TowerGrowthSkills, HomeAuraSkill, LastStandSkill } from './skills/towerPassives.js';
+import { towerPassives, TowerGrowthSkills, HomeAuraSkill } from './skills/towerPassives.js';
 import { minionPassives } from './skills/minionPassives.js';
 import { dragonSouls } from './skills/dragonSouls.js';
 
@@ -33,7 +33,7 @@ export const SkillLibrary = {
 
 // Register all built-in skills
 const allSkills = { ...core, ...weapons, ...towerPassives, ...TowerGrowthSkills,
-  ...HomeAuraSkill, ...LastStandSkill, ...minionPassives, ...dragonSouls };
+  ...HomeAuraSkill, ...minionPassives, ...dragonSouls };
 for (const [id, def] of Object.entries(allSkills)) {
   SkillLibrary.register(id, def);
 }

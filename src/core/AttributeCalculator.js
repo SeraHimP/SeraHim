@@ -4,6 +4,10 @@
  * 支持护甲穿透和魔法穿透分别计算
  * 帧级缓存：同一帧内、同一实体、同样的效果集合与选项，直接复用上次结果。
  */
+// 条件型战斗属性白名单：基值恒为 0、只由效果提供，由 CombatSystem 在结算处按条件读取。
+// 哀兵（LaneAvengerSystem）：avengerVsMinionAmpPct = 对敌方小兵伤害%，avengerVsMinionRedPct = 减免敌方小兵伤害%。
+const CONDITIONAL_ZERO_BASE = new Set(['avengerVsMinionAmpPct', 'avengerVsMinionRedPct']);
+
 export const AttributeCalculator = {
   _cache: new WeakMap(),   // entity -> { frame, key, stats }
   _frame: 0,
@@ -103,7 +107,13 @@ export const AttributeCalculator = {
     }
 
     for (const [key, mod] of modMap) {
-      if (stats[key] === undefined) continue;
+      // 条件型战斗属性（不写进任何 baseStats，基值视为 0）：这类属性只在结算处按
+      // 攻击来源/目标类型生效（如哀兵的"对敌方小兵"加成），模板里没有对应字段。
+      // 只对白名单内的键开这个口子，其余键维持"baseStats 没有就丢弃"的原行为 → 零回归风险。
+      if (stats[key] === undefined) {
+        if (!CONDITIONAL_ZERO_BASE.has(key)) continue;
+        stats[key] = 0;
+      }
       let value = stats[key];
       value += mod.flat;
       value *= (1 + mod.percent / 100);

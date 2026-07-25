@@ -114,13 +114,13 @@ export const towerPassives = {
   // 枢纽塔：+5 恢复，节点 40/70/100%
   passive_hq_fortify: _makeFortify({
     id: 'passive_hq_fortify', name: '枢纽防御塔加固城防', icon: '🏯',
-    regen: 5, nodes: [0.40, 0.70, 1.0], tierLabel: '枢纽防御塔', // v37：6→5（用户定稿）
+    regen: 3, nodes: [0.40, 0.70, 1.0], tierLabel: '枢纽防御塔', // 用户定稿：5→3
   }),
 
   // 水晶塔：+2 恢复 + 800 固定护盾，节点 33/67/100%
   passive_base_fortify: _makeFortify({
     id: 'passive_base_fortify', name: '水晶防御塔加固城防', icon: '🏯',
-    regen: 2, nodes: [0.33, 0.67, 1.0], tierLabel: '水晶防御塔', // v37：800盾拆出为独立技能（钢铁烈阳护盾·水晶塔版）
+    regen: 1, nodes: [0.33, 0.67, 1.0], tierLabel: '水晶防御塔', // 用户定稿：2→1（800盾早前已拆为独立技能）
   }),
 
   // v37（Q1）：水晶塔版钢铁烈阳护盾——独立技能，仅给自己 +800 固定护盾（不含光环）。
@@ -864,8 +864,8 @@ export const HomeAuraSkill = {
     name: '基地光环',
     icon: '🏠',
     category: 'passive',
-    description: '唯一被动——基地光环：防守圈内的己方小兵获得+7%攻速/+3%移速/+1%伤害增幅。',
-    descTemplate: '唯一被动——基地光环：防守圈内己方小兵 +7%攻速/+3%移速/+1%伤害增幅（离圈自动失效）。',
+    description: '唯一被动——基地光环：防守圈内的己方小兵获得+5%移速/+3生命恢复。',
+    descTemplate: '唯一被动——基地光环：防守圈内己方小兵 +5%移速/+3生命恢复（离圈自动失效）。',
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       instance.state = instance.state || {};
@@ -907,77 +907,22 @@ export const HomeAuraSkill = {
         if (ally.id === entityId || ally.type === 'tower') continue;
         if ((ally._mapFaction || ally.faction) !== self._mapFaction) continue;
         if (!ally._laneId) continue;
+        // 用户定稿：基地光环 = +5% 移速 / +3 生命恢复（原 +7%攻速/+3%移速/+1%增幅 已取消）
         ctx.effectRegistry.apply(ally.id, {
-          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'bonusAttackSpeedPct', flatValue: 7,
+          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'moveSpeed', percentValue: 5,
           aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: '攻速+7%（基地防守圈）',
-        }, 'home_aura_as_' + entityId);
-        ctx.effectRegistry.apply(ally.id, {
-          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'moveSpeed', percentValue: 3,
-          aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: '移速+3%（基地防守圈）',
+          description: '移速+5%（基地防守圈）',
         }, 'home_aura_ms_' + entityId);
         ctx.effectRegistry.apply(ally.id, {
-          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'damageAmpPct', flatValue: 1,
+          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'healthRegen', flatValue: 3,
           aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: '伤害增幅+1%（基地防守圈）',
-        }, 'home_aura_amp_' + entityId);
+          description: '生命恢复+3（基地防守圈）',
+        }, 'home_aura_hp5_' + entityId);
       }
     },
   },
 };
 
-// ==================== Q7：枢纽塔"绝望反击" ====================
-// 问题：破了任一路召唤水晶后，防守方毫无反制手段，游戏基本就结束了——枢纽塔太弱。
-// 机制：己方每有一座召唤水晶【首次】被摧毁，双枢纽塔即获得一层"绝望反击"：
-//        +100% 伤害增幅、+50% 伤害转化，持续 90 秒，可叠加（破几路叠几层）。
-// 走效果系统（面板可见、自带倒计时环）。事件驱动，不轮询。
-export const LastStandSkill = {
-  passive_last_stand: {
-    id: 'passive_last_stand',
-    name: '绝望反击',
-    icon: '🔥',
-    category: 'passive',
-    description: '唯一被动——绝望反击：己方每有一座召唤水晶首次被摧毁，本塔获得 +105% 伤害增幅、+25 双抗、+150% 治疗与护盾强度，持续 60 秒（可叠加）。',
-    descTemplate: '唯一被动——绝望反击：召唤水晶陷落时触发（当前 【{val}】 层），每层 +105% 伤害增幅、+25 双抗、+150% 治疗与护盾强度，持续 60 秒。',
-    computeCurrent: (entity, ctx) => {
-      const effs = ctx?.effectRegistry?.getEffects(entity.id) || [];
-      const e = effs.find(x => x.blueprint.name === '绝望反击');
-      return e ? e.stacks : 0;
-    },
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      instance.state = instance.state || {};
-      // 事件驱动：监听召唤水晶首次陷落。用实例上的标记避免重复订阅。
-      if (instance.state._sub) return;
-      instance.state._sub = true;
-      const handler = ({ faction }) => {
-        const self = ctx.entityContainer.get(entityId);
-        if (!self || !self.alive || self._mapFaction !== faction) return; // 只有【己方】水晶陷落才触发
-        // v33 数值定稿：每层 +105% 伤害增幅、+25 护甲、+25 魔抗、+150% 治疗护盾强度，60s。
-        // （原 +100% 增幅 / +50% 伤害转化 / 90s——伤害转化词条随 Q10 改为防御向后从这里移除，
-        //  用双抗+治疗护盾强度补足枢纽塔的生存能力。）
-        for (const [key, label, val] of [
-          ['damageAmpPct', '伤害增幅', 105],
-          ['armor', '护甲', 25],
-          ['magicResist', '魔抗', 25],
-          ['healShieldPowerPct', '治疗护盾强度', 150],
-        ]) {
-          // perStackFlat 必须显式给出——效果系统的叠层是 flatValue + perStackFlat×(层数-1)，
-          // 只设 stackable 而不给 perStackFlat 的话，层数会涨但数值不涨（实测踩过）。
-          ctx.effectRegistry.apply(entityId, {
-            name: '绝望反击', icon: '🔥', kind: 'stat', statKey: key,
-            flatValue: val, perStackFlat: val,
-            duration: 60, stackable: true, maxStacks: (inst._params?.maxStacks ?? 10), stackPolicy: 'stack',
-            alwaysShowStacks: true, uniquePassive: false,
-            description: `${label}+${val}${key === 'armor' || key === 'magicResist' ? '' : '%'}/层（召唤水晶陷落，60秒）`,
-          }, 'last_stand_' + key);
-        }
-      };
-      ctx.eventBus?.on('map:nexusDestroyed', handler);
-    },
-  },
-};
 
 export const TowerGrowthSkills = {
   // Q9：嚎哭深渊统一塔成长——每分钟 +9攻击力/+1护甲，封顶14层（首层于 1:00）

@@ -483,9 +483,12 @@ export class CombatSystem {
     damage *= (1 - dmgReduction / 100);
     // 防御护盾（唯一被动）：来自【防御塔和超级兵】的伤害额外降低30%（v33 新增超级兵来源）——
     // 条件减伤依赖攻击来源，stat 管线拿不到攻击者，必须在引擎结算处判断。
-    if ((attacker.type === 'tower' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
+    if ((attacker.type === 'tower' || attacker.type === 'siege' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
       damage *= 0.7;
     }
+    // 哀兵（条件加成，用户定稿）：每层 +4% 对敌方小兵伤害、+10% 减免来自敌方小兵的伤害。
+    // 与防御护盾同理——依赖攻击来源类型，stat 管线拿不到，必须在结算处判断。
+    damage = this._applyAvenger(damage, attacker, target, atkStats, defStats);
     const block = defStats.damageBlock || 0;
     damage = Math.max(0, damage - block);
 
@@ -698,6 +701,21 @@ export class CombatSystem {
     }
   }
 
+  // 哀兵条件加成：只在【小兵 打 小兵】时生效。
+  //   攻击方带 avengerVsMinionAmpPct → 对敌方小兵伤害 ×(1+amp%)
+  //   防御方带 avengerVsMinionRedPct → 来自敌方小兵的伤害 ×(1−red%)
+  // 两者都由 LaneAvengerSystem 按层数（0~3）挂在单位身上；层数已折算进 stat 值。
+  _applyAvenger(damage, attacker, target, atkStats, defStats) {
+    if (!attacker || !target) return damage;
+    const isMinion = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
+    if (!isMinion(attacker) || !isMinion(target)) return damage;
+    const amp = (atkStats && atkStats.avengerVsMinionAmpPct) || 0;
+    const red = (defStats && defStats.avengerVsMinionRedPct) || 0;
+    if (amp) damage *= (1 + amp / 100);
+    if (red) damage *= Math.max(0, 1 - red / 100);
+    return damage;
+  }
+
   _hasSkill(entity, skillId) {
     return (entity._skillInstances || []).some(i => i.skillId === skillId && !i._disabled);
   }
@@ -770,9 +788,11 @@ export class CombatSystem {
       const dmgReduction = defStats.damageReduction || 0;
       mitigatedDamage *= (1 - dmgReduction / 100);
       // 防御护盾（唯一被动）：来自防御塔和超级兵的伤害降低30%（与 performAttack 路径一致，v33 含超级兵）
-      if (attacker && (attacker.type === 'tower' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
+      if (attacker && (attacker.type === 'tower' || attacker.type === 'siege' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
         mitigatedDamage *= 0.7;
       }
+      // 哀兵条件加成（与 performAttack 路径一致）
+      mitigatedDamage = this._applyAvenger(mitigatedDamage, attacker, target, atkStats, defStats);
       const block = defStats.damageBlock || 0;
       mitigatedDamage = Math.max(0, mitigatedDamage - block);
 

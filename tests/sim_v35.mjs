@@ -86,7 +86,7 @@ function equip(e, skillId, ents, fx) {
   const hq = mkTower(ents, 'hq_tower', null);
   const inst = equip(hq, 'passive_hq_fortify', ents, fx);
   attr.tick();
-  T('枢纽塔加固城防：+5生命恢复（v37：6→5）', attr.calc(hq, fx.getEffects(hq.id)).healthRegen === 5);
+  T('枢纽塔加固城防：+3生命恢复（用户定稿：5→3）', attr.calc(hq, fx.getEffects(hq.id)).healthRegen === 3);
   hq.currentHP = 4000 * 0.35; // 35% → 封顶 40%
   SkillLibrary.passive_hq_fortify.onFrame(hq.id, 0.5, inst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
   T('节点封顶已设置（35%血 → 封顶40%）', Math.abs(hq._regenCapHP - 4000 * 0.40) < 1);
@@ -111,7 +111,7 @@ function equip(e, skillId, ents, fx) {
   equip(base, 'passive_base_fortify', ents, fx);
   attr.tick();
   const bs = attr.calc(base, fx.getEffects(base.id));
-  T('水晶塔加固城防：+2恢复（v37：800盾拆出为独立技能）', bs.healthRegen === 2 && bs.shieldFixedMax === 0);
+  T('水晶塔加固城防：+1恢复（用户定稿：2→1；800盾早前已拆为独立技能）', bs.healthRegen === 1 && bs.shieldFixedMax === 0);
   // v37：800盾由独立技能"钢铁烈阳护盾"（水晶塔版，仅自身）提供
   equip(base, 'passive_base_bulwark', ents, fx);
   attr.tick();
@@ -182,10 +182,11 @@ function equip(e, skillId, ents, fx) {
 
 // ==================== ④ 杂项 ====================
 {
-  T('屠戮 3/4/6（v36 定稿）',
-    SkillLibrary.passive_melee_rend.description.includes('3%')
-    && SkillLibrary.passive_ranged_rend.description.includes('4%')
-    && SkillLibrary.passive_siege_rend.description.includes('6%'));
+  // 用户定稿（平衡性调整）：屠戮 3/4/6 → 4/6/7
+  T('屠戮 4/6/7（用户定稿）',
+    SkillLibrary.passive_melee_rend.description.includes('4%')
+    && SkillLibrary.passive_ranged_rend.description.includes('6%')
+    && SkillLibrary.passive_siege_rend.description.includes('7%'));
   T('图腾兵默认不生成', CONFIG.gameRules.spawnEnabled.totem === false);
   T('炮兵指挥官 minWave=20（默认装配门槛，暴露在技能定义上供装配逻辑读取）',
     SkillLibrary.passive_artillery_commander.minWave === 20);

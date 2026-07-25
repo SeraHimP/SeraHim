@@ -100,9 +100,9 @@ victim.baseStats.armor=0; victim.baseStats.magicResist=0;
 const vHP0=victim.currentHP;
 combat.performAttack(meleeAtk,victim);
 const meleeStats=attr.calc(meleeAtk,fx.getEffects(meleeAtk.id));
-const expectBonus=meleeAtk.currentHP*0.025; // v33：近战屠戮 1.5%→2.5%
+const expectBonus=meleeAtk.currentHP*0.04; // 用户定稿：近战屠戮 → 4%
 const totalDealt=vHP0-victim.currentHP;
-T(`屠戮生效且量级≈AD+自身HP×2.5%(实际${totalDealt.toFixed(1)},期望≈${(meleeStats.attackDamage+expectBonus).toFixed(1)})`,
+T(`屠戮生效且量级≈AD+自身HP×4%(实际${totalDealt.toFixed(1)},期望≈${(meleeStats.attackDamage+expectBonus).toFixed(1)})`,
   Math.abs(totalDealt-(meleeStats.attackDamage+expectBonus))<3);
 const towerV=find('red','outer','mid') || find('red','inner','mid');
 const tHP0=towerV.currentHP; meleeAtk.pos={...towerV.pos};

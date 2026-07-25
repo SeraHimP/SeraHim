@@ -72,8 +72,8 @@ export const minionPassives = {
     name: '防御护盾',
     icon: '🛡️',
     category: 'passive',
-    description: '受防御塔和超级兵的伤害降低30%。',
-    descTemplate: '唯一被动——防御护盾：受到防御塔和超级兵的伤害降低30%。（v33：新增超级兵来源）',
+    description: '受防御塔/炮兵/超级兵的伤害降低30%。',
+    descTemplate: '唯一被动——防御护盾：受到防御塔/炮兵/超级兵的伤害降低30%。（用户定稿：新增炮兵来源）',
     // 实现在 CombatSystem 的减免段（伤害来源需要判断攻击者类型，效果系统的
     // stat 管线只看防御方自身、拿不到攻击来源，所以这类"条件减伤"必须挂引擎钩子）。
     // CombatSystem 通过 _hasSkill(target, 'passive_siege_shield') 识别，此处仅作定义与展示。
@@ -86,9 +86,9 @@ export const minionPassives = {
   // 时序说明：onHit 在主伤害结算之后触发，因此百分比基于"扣完主伤害后的当前生命"——
   // 略弱于先算被动再算主伤害的顺序，属可接受偏差，好处是不侵入主伤害公式。
   // _noProc 防止该额外伤害再次触发 onHit 造成递归。
-  ..._makeRendPassive('melee',  '近战屠戮', 0.03),  // v36：3%（近/远/炮 = 3/4/6）
-  ..._makeRendPassive('ranged', '远程屠戮', 0.04),  // v36：4%
-  ..._makeRendPassive('siege',  '炮火屠戮', 0.06), // v36：6%
+  ..._makeRendPassive('melee',  '近战屠戮', 0.04),  // 用户定稿：近/远/炮 = 4/6/7
+  ..._makeRendPassive('ranged', '远程屠戮', 0.06),  // 用户定稿：6%
+  ..._makeRendPassive('siege',  '炮火屠戮', 0.07), // 用户定稿：7%
 
   passive_totem_guardian: {
     id: 'passive_totem_guardian',

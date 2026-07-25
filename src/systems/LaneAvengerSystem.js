@@ -99,9 +99,13 @@ export class LaneAvengerSystem {
   }
 
   _applyTo(entityId, stacks) {
+    // 用户定稿：哀兵改为【只针对敌方小兵】的攻防加成——每层 +4% 对敌方小兵伤害、
+    // +10% 减免来自敌方小兵的伤害。区别于旧版的"通用增幅/减免"（那会连带强化对塔输出）。
+    // 这两项是【条件加成】：stat 管线只看防御方自身、拿不到攻击来源，故与"防御护盾"同款，
+    // 由 CombatSystem 在结算处读层数生效；此处只负责挂效果（携带层数 + 供 UI 展示）。
     const base = [
-      ['damageAmpPct', 1, '伤害增幅'],
-      ['damageReduction', 3, '伤害减免'],
+      ['avengerVsMinionAmpPct', 4, '对敌方小兵伤害'],
+      ['avengerVsMinionRedPct', 10, '减免敌方小兵伤害'],
     ];
     for (const [key, per, label] of base) {
       this.fx.apply(entityId, {
