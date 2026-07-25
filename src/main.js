@@ -619,22 +619,15 @@ waveSystem.setCreateMinion(createMinion);
 // 对齐 LoL 参考值（45/70/14/5）。无百分比分量 → 负基值属性（如超级兵魔抗-30）天然只吃固定增量。
 // 数值偏保守，为龙魂等后续增益留出空间。沙盒模式里程碑成长公式不受影响。
 // Q10：攻击力成长降至原值 75%、双抗成长降至原值 33%（生命成长不变）。
-const BATTLE_GROWTH_FLAT = {
-  melee:  { hp: 7,  ad: 0.3,   res: 0.1 },
-  ranged: { hp: 5,  ad: 0.375, res: 0.1 },
-  // Q3：后期炮车过强 → 降生命成长(18→10)、增双抗成长(0.13→0.30)。
-  // 定位从"血厚打不动"转为"抗性高但血量正常"：坦度保留，但不再是无解的移动堡垒。
-  siege:  { hp: 10, ad: 0.9,   res: 0.30 },
-  super:  { hp: 20, ad: 1.875, res: 0.1 },
-  // v39（Q4）：攻城车——生命正常成长（同炮车 10/波），攻击力成长【非常慢】（0.1/波，
-  // 约为常规的 1/4~1/9），双抗恒定 0 不成长。用户定稿：影响力随时间自然衰减，不加速后期。
-  ram:    { hp: 10, ad: 0.1,   res: 0 },
-  _default: { hp: 8, ad: 0.375, res: 0.1 },
-};
+// 成长表已搬进 CONFIG.battleGrowth（Q2：软编码，模板编辑器可改、地图可覆写）。
+// 这里只保留取值逻辑：CONFIG 基表 → map.minionGrowth 覆写（浅合并，按兵种）。
 function battleGrowthFlat(type) {
   const n = Math.max(0, (laneWaveSystem.waveNumber || 1) - 1); // 第1波为基准无成长
-  const f = BATTLE_GROWTH_FLAT[type] || BATTLE_GROWTH_FLAT._default;
-  return { hp: f.hp * n, ad: f.ad * n, res: f.res * n };
+  const G = CONFIG.battleGrowth || {};
+  // 地图覆写：同一兵种在不同地图上可以有完全不同的成长曲线（用户要求预留）
+  const mapG = mapSystem.currentMap?.minionGrowth?.[type] || {};
+  const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
+  return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n };
 }
 laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
   // 对战模式小兵按 laneWaveSystem 自己的独立波次计数成长（不能用沙盒的 window.CTX.waveNumber，

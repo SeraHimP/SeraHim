@@ -60,7 +60,10 @@ T('召唤水晶/枢纽塔身存在', !!SkillLibrary.core_nexus_lane && !!SkillLi
 // 5. 对战成长复利与炮车减半(读 main.js 文本验证公式,运行时函数在 DOM 环境)
 import fs from 'fs';
 const mainSrc=fs.readFileSync(new URL('../src/main.js', import.meta.url),'utf8');
-T('成长为固定值表(Q2)', mainSrc.includes('BATTLE_GROWTH_FLAT') && mainSrc.includes('hp: 7,') && mainSrc.includes('hp: 10,'));
+// Q2：成长表搬到 CONFIG.battleGrowth，断言改读真值（仍是纯固定值/波，无复利项）。
+T('成长为固定值表(Q2)',
+  CONFIG.battleGrowth.melee.hp === 7 && CONFIG.battleGrowth.siege.hp === 10
+  && Object.values(CONFIG.battleGrowth).every(g => ['hp','ad','res'].every(k => typeof g[k] === 'number')));
 T('maxHP缩放修复', mainSrc.includes('entity.baseStats.maxHP = tpl.maxHP * hpScale'));
 T('固定值走growthFlat通道', mainSrc.includes('growthFlat: battleGrowthFlat(type)'));
 T('巨龙默认暂停', fs.readFileSync(new URL('../src/systems/DragonSystem.js', import.meta.url),'utf8').includes('this.paused = true'));

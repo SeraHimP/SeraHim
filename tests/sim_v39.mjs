@@ -258,7 +258,10 @@ function battle() {
 
   // 成长：HP 正常、AD 极慢、双抗恒 0
   const mainSrc = (await import('fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  T('成长表：ram = HP10/波、AD0.1/波、双抗0', /ram:\s*\{ hp: 10, ad: 0\.1,\s*res: 0 \}/.test(mainSrc));
+  // Q2：成长表已从 main.js 的 BATTLE_GROWTH_FLAT 常量搬进 CONFIG.battleGrowth（软编码，
+// 模板编辑器可改、地图可按兵种覆写）。断言改为读【真值】而不是 main.js 的源码文本。
+T('成长表：ram = HP10/波、AD0.1/波、双抗0',
+  CONFIG.battleGrowth.ram.hp === 10 && CONFIG.battleGrowth.ram.ad === 0.1 && CONFIG.battleGrowth.ram.res === 0);
 }
 
 // ==================== Q5 镀层：内塔 → 水晶塔 ====================

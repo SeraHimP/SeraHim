@@ -31,6 +31,7 @@ const {AttributeCalculator}=await import('../src/core/AttributeCalculator.js');
 const {SkillLibrary}=await import('../src/core/SkillLibrary.js');
 const {MapSystem}=await import('../src/systems/MapSystem.js');
 const {LaneWaveSystem}=await import('../src/systems/LaneWaveSystem.js');
+const {CONFIG}=await import('../src/data/Config.js');
 let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
 
 // ---- Q9 嚎哭深渊加载 ----
@@ -101,8 +102,10 @@ const mainSrc=fs.readFileSync(new URL('../src/main.js', import.meta.url),'utf8')
 // 故只断言其仍在 isNexus 门之外、按 tier 独立装配这一原始意图。
 T('光环装配移出isNexus门(Q5)', /if \(tier === 'nexus_main'/.test(mainSrc) && mainSrc.includes("skillLibrary['passive_home_aura']"));
 T('Q5 无敌/停火改为按阵营分管', fs.readFileSync(new URL('../src/systems/CombatSystem.js', import.meta.url),'utf8').includes("__towerRuleFor?.('invincible'") && fs.readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url),'utf8').includes('data-rule'));
-T('小兵成长表(近战 ad0.3)', mainSrc.includes('ad: 0.3,'));
-T('Q3 炮车成长：降HP(18→10)、增双抗(0.13→0.30)', mainSrc.includes('siege:  { hp: 10, ad: 0.9,   res: 0.30 }'));
+// Q2：成长表搬到 CONFIG.battleGrowth，断言改读真值。
+T('小兵成长表(近战 ad0.3)', CONFIG.battleGrowth.melee.ad === 0.3);
+T('Q3 炮车成长：降HP(18→10)、增双抗(0.13→0.30)',
+  CONFIG.battleGrowth.siege.hp === 10 && CONFIG.battleGrowth.siege.ad === 0.9 && CONFIG.battleGrowth.siege.res === 0.30);
 T('碰撞阻挡Q11', fs.readFileSync(new URL('../src/systems/CollisionSystem.js', import.meta.url),'utf8').includes('BLOCK_FACTOR'));
 // 用户定稿：水晶塔(base)攻速 3.08 → 2.50
 T('SR水晶塔攻速2.50', fs.readFileSync(new URL('../src/systems/MapSystem.js', import.meta.url),'utf8').includes('baseAttackSpeed: 2.50'));

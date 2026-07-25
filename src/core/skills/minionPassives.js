@@ -1,4 +1,5 @@
 ﻿import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION } from './_helpers.js';
+import { CONFIG } from '../../data/Config.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵与沙盒大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
@@ -8,30 +9,57 @@ function _makeRendPassive(casterType, name, pct) {
   return {
     [id]: {
       id, name, icon: '🩸', category: 'passive',
-      description: `攻击小兵单位时额外造成自身当前生命值${parseFloat((pct * 100).toFixed(2))}%的伤害（对防御塔无效）。`,
-      descTemplate: `唯一被动——${name}：攻击小兵单位额外造成（【{val}】=自身当前生命×${parseFloat((pct * 100).toFixed(2))}%）伤害（类型同自身普攻，对防御塔/巨龙无效）。`,
+      // 有 defaultParams 才会被 CombatSystem 注入 map.skillOverrides —— 数值与机制都能按地图改
+      defaultParams: { pct, base: 'template' },
+      // 文案与结算共用同一份参数解析（_resolve），不许两边各写一套 —— 见 ARCHITECTURE.md
+      //「技能文案规范」。基数模式变了，文案里的"自身当前生命 / 基础生命"也跟着变。
+      _resolve: function(instance) {
+        var cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
+        var p = (instance && instance._params && instance._params.pct != null) ? instance._params.pct
+              : (cfg.pct != null ? cfg.pct : pct);
+        var m = (instance && instance._params && instance._params.base) || cfg.base || 'template';
+        return { pct: p, base: m };
+      },
+      _text: function(instance) {
+        var r = this._resolve(instance);
+        var disp = parseFloat((r.pct * 100).toFixed(2));
+        var src = r.base === 'current' ? '自身当前生命' : '自身基础生命';
+        return '唯一被动——' + name + '：攻击小兵单位额外造成（【{val}】=' + src + '×' + disp +
+               '%）伤害（类型同自身普攻，对防御塔/巨龙无效）。';
+      },
+      get description() { return this._text(null); },
+      get descTemplate() { return this._text(null); },
       computeCurrent: function(entity) {
         var inst = (entity._skillInstances || []).find(function(i) { return i.skillId === id; });
-        var eff = inst && inst._params ? inst._params.pct : pct;
-        return Math.round((entity.currentHP || 0) * (eff || pct));
+        var r = this._resolve(inst);
+        var baseHP = r.base === 'current'
+          ? (entity.currentHP || 0)
+          : (((CONFIG.templates || {})[casterType] || {}).maxHP || (entity.baseStats || {}).maxHP || 0);
+        return Math.round(baseHP * r.pct);
       },
       effects: [],
-      // v42: dynamic descTemplate for per-map override
-      getDescTemplate: function(entity, instance) {
-        var eff = instance && instance._params ? instance._params.pct : pct;
-        var disp = (eff * 100).toFixed(0);
-        return '唯一被动——' + name + '：攻击小兵单位额外造成（【{val}】=自身当前生命×' + disp + '%）伤害（类型同自身普攻，对防御塔/巨龙无效）。';
-      },
+      // v42: dynamic descTemplate for per-map override（地图改了 pct/base，文案立刻跟着改）
+      getDescTemplate: function(entity, instance) { return this._text(instance); },
       onHit: (attackerId, targetId, instance, ctx) => {
         const attacker = ctx.entityContainer.get(attackerId);
         const target = ctx.entityContainer.get(targetId);
         if (!attacker || !target || !target.alive) return;
         if (attacker.type !== casterType) return;   // 防止技能被错误装到其他兵种
         if (!isMinionUnit(target)) return;          // 只对小兵单位，不打塔/龙
-        // 基数 = 攻击者自身当前生命（满血输出最高、随受伤衰减）——
-        // 血线占优的一方滚雪球推进，服务"聚团轮推"的宏观节奏设计。
-        const effectivePct = instance._params?.pct ?? pct;
-        const bonus = (attacker.currentHP || 0) * effectivePct;
+        // 伤害基数（Q2 定稿，见 CONFIG.rend 的长注释）：
+        //   'template' = 该兵种【模板基础生命】，不随波次成长膨胀 —— 现行默认
+        //   'current'  = 攻击者当前生命（旧行为，地图可切回）
+        // 改因：旧的 'current' 让屠戮与生命同步膨胀，兵杀兵所需时间永远恒定 14.4s，
+        // 两波兵总在半个波次周期内互相清完、永远聚不起来，高地就永远推不动。
+        // 取模板基础生命后，前期占比依旧很高（"加快前期互殴"的初衷保留），
+        // 后期随生命成长自然稀释，波次开始堆叠，防御塔参与的时间也随之变长。
+        const cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
+        const effectivePct = instance._params?.pct ?? cfg.pct ?? pct;
+        const mode = instance._params?.base ?? cfg.base ?? 'template';
+        const baseHP = mode === 'current'
+          ? (attacker.currentHP || 0)
+          : ((CONFIG.templates?.[casterType]?.maxHP) || attacker.baseStats?.maxHP || 0);
+        const bonus = baseHP * effectivePct;
         if (bonus <= 0 || !ctx.combat) return;
         ctx.combat.performAttackDirect(attackerId, targetId, bonus,
           attacker.baseStats?.attackType || 'physical', { _noProc: true });

@@ -236,8 +236,12 @@ export class CombatSystem {
       for (const inst of instances) {
         if (inst._disabled) continue;
         const def = this.skills[inst.skillId];
-        if (def && def.onFrame) {
-          // v41: auto-initialize per-instance params from skill defaults
+        // v41: auto-initialize per-instance params from skill defaults
+        // Q2 修复：这段原本嵌在 `if (def.onFrame)` 里，于是【只有 onFrame 技能】能拿到
+        // 地图覆写。屠戮只有 onHit，它读的 instance._params.pct 因此永远是 undefined ——
+        // "同一技能在不同地图上数值/机制不同"这条能力对它形同虚设。现在提到门外，
+        // 任何技能（onHit/onBeingAttacked/…）都能被地图按 tier/type 覆写参数。
+        if (def) {
           if (!inst._params && def.defaultParams) inst._params = { ...def.defaultParams };
           if (inst._params && SkillLibrary._mapOverrides) {
             const e2 = this.entities.get(entity.id);
@@ -247,6 +251,8 @@ export class CombatSystem {
               if (ov) Object.assign(inst._params, ov);
             }
           }
+        }
+        if (def && def.onFrame) {
           // 兜底（框架体检 P2）：技能是可扩展点，单个技能 onFrame 抛错只记日志跳过，
           // 不能打死整个模拟步（否则一个坏技能会冻结全场战斗）。
           try {

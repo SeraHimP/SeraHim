@@ -602,9 +602,40 @@ export const AttributeEditor = {
     if (!meta.countKey && !meta.intervalKey) {
       html += `<div style="color:#8b949e;font-size:12px;">该类型暂无可编辑的生成规则。</div>`;
     }
-    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">修改后立即影响后续波次的生成节奏。</div>`;
-    html += `</div>`;
-    return html;
+    // ==================== Q2：对战成长 + 屠戮（软编码，可按兵种改）====================
+    // 这两组数值原先硬编码在 main.js / 技能文件里，改平衡要翻源码。现在住在 CONFIG，
+    // 面板改完立刻对【之后生成】的小兵生效（已出场的沿用出生时的成长快照）。
+    const G = CONFIG.battleGrowth?.[type];
+    if (G) {
+      html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">📈 对战成长（每波固定增量）</div>
+        <div class="slider-row"><label>最大生命 /波</label>
+          <input type="number" class="growth-input" data-gkey="hp" step="0.1" value="${G.hp}" style="width:90px;"></div>
+        <div class="slider-row"><label>攻击力 /波</label>
+          <input type="number" class="growth-input" data-gkey="ad" step="0.05" value="${G.ad}" style="width:90px;"></div>
+        <div class="slider-row"><label>双抗 /波</label>
+          <input type="number" class="growth-input" data-gkey="res" step="0.05" value="${G.res}" style="width:90px;"></div>
+      </div>`;
+    }
+    const R = CONFIG.rend?.[type];
+    if (R) {
+      html += `<div style="margin-top:12px;border-top:1px solid #2d3540;padding-top:10px;">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">🩸 屠戮</div>
+        <div class="slider-row"><label>百分比（%）</label>
+          <input type="number" class="rend-input" data-rkey="pct" step="0.5" value="${(R.pct * 100).toFixed(2)}" style="width:90px;"></div>
+        <div class="slider-row"><label>伤害基数</label>
+          <select class="rend-input" data-rkey="base" style="flex:1;">
+            <option value="template" ${R.base !== 'current' ? 'selected' : ''}>模板基础生命（不随成长膨胀）</option>
+            <option value="current" ${R.base === 'current' ? 'selected' : ''}>自身当前生命（旧行为）</option>
+          </select></div>
+        <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">
+          基数取"当前生命"时，屠戮会与生命同步膨胀，兵杀兵耗时永远恒定、两波兵永远互相清完聚不起来。
+          取"模板基础生命"则前期照样快速清线、后期自然稀释。</div>
+      </div>`;
+    }
+    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">修改后立即影响后续波次的生成节奏。</div>`;
+    html += `</div>`;
+    return html;
   },
 
   _bindSpawnRuleEvents(overlay, type, logFn) {
@@ -794,7 +825,23 @@ export const AttributeEditor = {
         changed++;
       }
     });
-    logFn(`✅ 「${type}」生成规则已更新（${changed}项）`, 'spawn');
+    // Q2：对战成长表
+    if (CONFIG.battleGrowth?.[type]) {
+      overlay.querySelectorAll('.growth-input').forEach(inp => {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) { CONFIG.battleGrowth[type][inp.dataset.gkey] = v; changed++; }
+      });
+    }
+    // Q2：屠戮（百分比按 % 输入，存成小数）
+    if (CONFIG.rend?.[type]) {
+      overlay.querySelectorAll('.rend-input').forEach(inp => {
+        const k = inp.dataset.rkey;
+        if (k === 'base') { CONFIG.rend[type].base = inp.value; changed++; return; }
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) { CONFIG.rend[type].pct = v / 100; changed++; }
+      });
+    }
+    logFn(`✅ 「${type}」生成规则/成长/屠戮已更新（${changed}项）`, 'spawn');
   },
 
   // ==================== 渲染方法 ====================
