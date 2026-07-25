@@ -19,6 +19,13 @@
 const TILE_WORLD = 384;     // 一张材质覆盖的世界尺寸。小兵约 10~24 单位，故一块石子约 4 单位
 const AMPLIFY = 1.8;        // 材质自身对比放大（保留其原色，只把起伏拉明显）
 const CHROMA_KEEP = 0.85;   // 保留多少底图色偏：阵营基地圈的蓝/红靠它活下来
+// P1 野区提亮：布局因子 k = 像素亮度/全图均值，野区在底图里本就暗 → k 极小 → 野区被压成近黑
+// （植被/道具都"沉"进黑里看不见）。这里把 k 向 1 压缩并设下限：暗部大幅提亮、亮部几乎不变，
+// 走廊/野区的明暗层次仍在，只是不再死黑。
+const LAYOUT_CONTRAST = 0.55;  // 1=原样（死黑），越小越平
+const LAYOUT_MIN = 0.42;       // 布局因子下限
+// 野区（墙区）植被色偏：让野区读作"丛林草地"而不是"暗土"。0=不染，1=全绿。
+const JUNGLE_TINT = [0.42, 0.62, 0.30], JUNGLE_TINT_AMT = 0.30;
 
 /**
  * @param {HTMLCanvasElement} base      buildTerrainLayer 产出的地形画布（不被修改）
@@ -90,6 +97,24 @@ export function compositeTerrain(base, world, walk, nx, ny, texGround, texPlatea
   const nG = texGround, nP = texPlateau;
   if (nG) fill(lg, nG);
 
+  // P1：野区（墙区）全分辨率遮罩——供下面的"提亮 + 植被色偏"逐像素判断。
+  // 与高地材质用同一份 walk 网格、同样最近邻放大，故两者边界严格一致。
+  let jungle = null;
+  if (walk) {
+    const jc = document.createElement('canvas');
+    jc.width = W; jc.height = H;
+    const jg = jc.getContext('2d');
+    const src = document.createElement('canvas');
+    src.width = nx; src.height = ny;
+    const sg = src.getContext('2d');
+    const im = sg.createImageData(nx, ny);
+    for (let k = 0; k < nx * ny; k++) { const v = walk[k] ? 0 : 255; im.data[k * 4] = v; im.data[k * 4 + 3] = 255; }
+    sg.putImageData(im, 0, 0);
+    jg.imageSmoothingEnabled = false;
+    jg.drawImage(src, 0, 0, W, H);
+    jungle = jg.getImageData(0, 0, W, H).data;
+  }
+
   if (nP && walk) {
     const pl = document.createElement('canvas');
     pl.width = W; pl.height = H;
@@ -136,10 +161,21 @@ export function compositeTerrain(base, world, walk, nx, ny, texGround, texPlatea
   for (let i = 0; i < bp.length; i += 4) {
     if (lp[i + 3] === 0) continue;
     const bl = (bp[i] + bp[i + 1] + bp[i + 2]) / 3;
-    const k = bl / refLum;
-    bp[i]     = Math.max(0, Math.min(255, C(lp[i],     tr) * k + (bp[i]     - bl) * CHROMA_KEEP));
-    bp[i + 1] = Math.max(0, Math.min(255, C(lp[i + 1], tg) * k + (bp[i + 1] - bl) * CHROMA_KEEP));
-    bp[i + 2] = Math.max(0, Math.min(255, C(lp[i + 2], tb) * k + (bp[i + 2] - bl) * CHROMA_KEEP));
+    // P1：布局因子向 1 压缩 + 下限 → 野区不再死黑（暗部大幅提亮、亮部几乎不变）
+    const k = Math.max(LAYOUT_MIN, 1 + (bl / refLum - 1) * LAYOUT_CONTRAST);
+    let r = C(lp[i], tr) * k + (bp[i] - bl) * CHROMA_KEEP;
+    let g2 = C(lp[i + 1], tg) * k + (bp[i + 1] - bl) * CHROMA_KEEP;
+    let b2 = C(lp[i + 2], tb) * k + (bp[i + 2] - bl) * CHROMA_KEEP;
+    // P1：野区染一层植被绿（保留材质起伏，只挪色相）→ 读作丛林草地而非暗土
+    if (jungle && jungle[i] > 127) {
+      const lum = (r + g2 + b2) / 3, a = JUNGLE_TINT_AMT;
+      r  = r  * (1 - a) + lum * JUNGLE_TINT[0] * 2 * a;
+      g2 = g2 * (1 - a) + lum * JUNGLE_TINT[1] * 2 * a;
+      b2 = b2 * (1 - a) + lum * JUNGLE_TINT[2] * 2 * a;
+    }
+    bp[i]     = Math.max(0, Math.min(255, r));
+    bp[i + 1] = Math.max(0, Math.min(255, g2));
+    bp[i + 2] = Math.max(0, Math.min(255, b2));
   }
   g.putImageData(bd, 0, 0);
   return out;
