@@ -82,6 +82,7 @@ CTX.__weather = weatherSystem; // UI/调试入口
 // Q5：塔无敌/停火、小兵波次开关，全部支持【按阵营分管】。
 // 结构：{ blue: bool, red: bool }。读取一律走下面的 helper，避免各处散落判断。
 CTX.__showLanePaths = false; // v33 Q18：有墙地图默认不显示兵线虚线（设置里可开）
+CTX.__gridOn = false;        // 用户定稿：地面参考网格默认关闭（设置→画质 里可开）
 CTX.__towerRules = {
   invincible: { blue: false, red: false },
   attackOff:  { blue: false, red: false },

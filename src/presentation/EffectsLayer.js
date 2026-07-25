@@ -289,7 +289,9 @@ export class EffectsLayer {
 
     // D1 背景网格：2D 按视口裁剪，3D 一次性铺满同一个 [-500, 4100] 常量范围
     //（89×2 条线 ≈ 356 三角形，静态零成本，不必再做视口裁剪）
-    {
+    // 用户反馈"地面上会显示格子，不要显示格子" → 默认关闭，作为设置项（画质 tab）保留。
+    // 开关走 window.__gridOn，切换后由 SettingsDialog 调 markStaticDirty() 触发重建。
+    if (window.__gridOn) {
       const STEP = 40, LIM_MIN = -500, LIM_MAX = 4100;
       const col = rgbOf('#ffffff');
       for (let x = LIM_MIN; x < LIM_MAX; x += STEP) B.seg(x, LIM_MIN, x, LIM_MAX, 1, col, 0.06);

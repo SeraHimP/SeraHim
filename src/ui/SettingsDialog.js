@@ -31,6 +31,17 @@ function _ruleRow(kind, label, icon, defaultOn = false) {
 }
 
 export const SettingsDialog = {
+  // 用户反馈"目前的设置界面太杂乱了，按TAB标签分类显示"：
+  // 一屏 30+ 行全糊在一起，画质开关和波次参数混排。改为四个标签页，
+  // 当前页记在 _tab 上，重开设置面板会停在上次那一页。
+  _TABS: [
+    { key: 'flow',    label: '⏱ 流程' },
+    { key: 'quality', label: '🎨 画质' },
+    { key: 'wave',    label: '🌊 波次' },
+    { key: 'world',   label: '🌍 世界 · 调试' },
+  ],
+  _tab: 'flow',
+
   open(deps, logFn) {
     const { waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem } = deps;
     const overlay = document.getElementById('modalOverlay');
@@ -38,13 +49,14 @@ export const SettingsDialog = {
     document.getElementById('modalTitle').textContent = '⚙️ 设置';
 
     const render = () => {
-      document.getElementById('modalBody').innerHTML = `
-        <!-- v33（Q3）设置界面重构：全局区 + 当前模式专属区。
-             只显示当前模式的设置（对战模式看不到沙盒波次，反之亦然），
-             并砍掉了重复的"波次生成间隔"（此前全局区和对战区各有一个，改谁都心里没底）。 -->
+      const TAB = this._tab;
+      const tabBar = `<div class="editor-tabs" style="margin-bottom:10px;">
+        ${this._TABS.map(t => `<button class="editor-tab ${t.key === TAB ? 'active' : ''}" data-settab="${t.key}" style="flex:1;">${t.label}</button>`).join('')}
+      </div>`;
+      document.getElementById('modalBody').innerHTML = tabBar + `
+        ${TAB === 'flow' ? `
         <div class="editor-section">
-          <h4>⏱ 全局</h4>
-          <!-- v39（Q6）：详细游戏参数 -->
+          <h4>⏱ 时间与流程</h4>
           <div class="slider-row"><label>游戏进行时间</label>
             <div style="flex:1;font-family:monospace;font-size:14px;padding:5px 0;">
               ${_fmtTime(window.gameTime || 0)}
@@ -75,60 +87,59 @@ export const SettingsDialog = {
           ${(window.__ffRemain > 0) ? `<div class="slider-row"><label>快进中</label>
             <div style="flex:1;font-size:12px;color:#f6c94a;">剩余 ${Math.ceil(window.__ffRemain)}s（战斗照常结算）</div>
           </div>` : ''}
+        </div>
+        <div class="editor-section">
+          <h4>🛡 战场规则</h4>
           ${_ruleRow('invincible', '防御塔无敌', '🛡')}
           ${_ruleRow('attackOff', '防御塔停火', '🚫')}
           <div class="slider-row"><label>清屏（移除全部小兵）</label>
             <button id="setClearAllBtn" class="danger" style="flex:1;">💀 清屏</button>
           </div>
+        </div>` : ''}
+
+        ${TAB === 'quality' ? `
+        <div class="editor-section">
+          <h4>🎨 渲染</h4>
           <div class="slider-row"><label>阴影质量</label>
             <button id="setShadowBtn" style="flex:1;">${{ all: '🌑 全部投影', static: '🏛️ 仅建筑投影', off: '⭕ 关闭阴影' }[window.__three?.shadowLevel || 'off']}</button>
           </div>
-          <div class="slider-row"><label>画质·后处理总开关</label>
+          <div class="slider-row"><label>后处理总开关</label>
             <button id="setPostFXBtn" style="flex:1;">${window.__three?.postFX !== false ? '✨ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>画质·辉光 Bloom</label>
+          <div class="slider-row"><label>辉光 Bloom</label>
             <button id="setBloomBtn" style="flex:1;">${window.__three?.bloomOn !== false ? '🌟 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>画质·电影级色调 ACES</label>
+          <div class="slider-row"><label>电影级色调 ACES</label>
             <button id="setToneBtn" style="flex:1;">${window.__three?.toneMapOn ? '🎬 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>画质·抗锯齿 FXAA</label>
+          <div class="slider-row"><label>抗锯齿 FXAA</label>
             <button id="setFxaaBtn" style="flex:1;">${window.__three?.fxaaOn !== false ? '🔷 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>画质·水晶粒子</label>
+        </div>
+        <div class="editor-section">
+          <h4>🌿 场景元素</h4>
+          <div class="slider-row"><label>水晶粒子</label>
             <button id="setPartBtn" style="flex:1;">${window.__three?.units?.particlesOn !== false ? '✦ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>画质·河道水面</label>
+          <div class="slider-row"><label>河道水面</label>
             <button id="setWaterBtn" style="flex:1;">${window.__three?.water?.enabled !== false ? '🌊 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>画质·野区植被</label>
+          <div class="slider-row"><label>野区植被</label>
             <button id="setVegBtn" style="flex:1;">${window.__three?.vegOn !== false ? '🌲 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label>性能面板</label>
-            <button id="setPerfBtn" style="flex:1;">${document.getElementById('perfHud')?.classList.contains('show') ? '📊 已显示（点击隐藏）' : '📊 显示性能面板'}</button>
+          <div class="slider-row"><label>地面参考网格</label>
+            <button id="setGridBtn" style="flex:1;">${window.__gridOn ? '▦ 已显示（点击隐藏）' : '⭕ 已隐藏（点击显示）'}</button>
           </div>
-          <div class="slider-row"><label>天气系统</label>
-            <button id="setWeatherToggleBtn" style="flex:1;">${window.__weather?.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
-            <button id="setWeatherCfgBtn" style="flex:1;">⚙️ 天气配置…</button>
-          </div>
-          <div class="slider-row"><label>调试日志（${DebugLogger.entries.length}条）</label>
-            <button id="setExportLogBtn" style="flex:1;">💾 导出日志文件</button>
-          </div>
-        </div>
+          ${mapSystem?.hasWalls?.() ? `
+          <div class="slider-row"><label>小兵轨迹线</label>
+            <button id="setLanePathBtn" style="flex:1;">${window.__showLanePaths ? '👁 已显示（点击隐藏）' : '🙈 已隐藏（点击显示）'}</button>
+          </div>` : ''}
+        </div>` : ''}
 
-        <div class="editor-section">
-          <h4>🐉 巨龙波次</h4>
-          <div class="slider-row"><label>巨龙波次生成</label>
-            <button id="setToggleDragonBtn" style="flex:1;">${dragonSystem.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
-          </div>
-          <div class="slider-row"><label>首条龙延迟（秒）</label>
-            <input type="number" id="setDragonFirstDelay" class="editor-number" value="${dragonSystem.nextDragonTime || 60}" min="5" step="5">
-          </div>
-        </div>
-
+        ${TAB === 'wave' ? `
         ${mapSystem?.active ? `
         <div class="editor-section">
-          <h4>⚔️ 对战模式</h4>
+          <h4>⚔️ 对战模式 · 小兵波次</h4>
           <div class="slider-row"><label>双方波次生成</label>
             <button id="setToggleLaneWaveBtn" style="flex:1;">${laneWaveSystem?.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
             <button id="setSkipLaneWaveBtn" style="flex:1;">⏭ 立即下一波</button>
@@ -137,10 +148,6 @@ export const SettingsDialog = {
           <div class="slider-row"><label>波次生成间隔（秒）</label>
             <input type="number" id="setLaneWaveInterval" class="editor-number" value="${laneWaveSystem?.waveInterval || 30}" min="5" step="1">
           </div>
-          ${mapSystem.hasWalls?.() ? `
-          <div class="slider-row"><label>显示小兵轨迹</label>
-            <button id="setLanePathBtn" style="flex:1;">${window.__showLanePaths ? '👁 已显示（点击隐藏）' : '🙈 已隐藏（点击显示）'}</button>
-          </div>` : ''}
         </div>` : `
         <div class="editor-section">
           <h4>🗺️ 沙盒模式 · 小兵波次</h4>
@@ -155,11 +162,58 @@ export const SettingsDialog = {
             <button id="setResetWaveBtn" style="flex:1;">🔄 重置到第0波</button>
           </div>
         </div>`}
+        <div class="editor-section">
+          <h4>🐉 巨龙波次</h4>
+          <div class="slider-row"><label>巨龙波次生成</label>
+            <button id="setToggleDragonBtn" style="flex:1;">${dragonSystem.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
+          </div>
+          <div class="slider-row"><label>首条龙延迟（秒）</label>
+            <input type="number" id="setDragonFirstDelay" class="editor-number" value="${dragonSystem.nextDragonTime || 60}" min="5" step="5">
+          </div>
+        </div>` : ''}
+
+        ${TAB === 'world' ? `
+        <div class="editor-section">
+          <h4>🌦️ 天气 · 昼夜</h4>
+          <div class="slider-row"><label>天气系统（昼夜随其开关）</label>
+            <button id="setWeatherToggleBtn" style="flex:1;">${window.__weather?.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+            <button id="setWeatherCfgBtn" style="flex:1;">⚙️ 天气配置…</button>
+          </div>
+        </div>
+        <div class="editor-section">
+          <h4>🛠 调试</h4>
+          <div class="slider-row"><label>性能面板</label>
+            <button id="setPerfBtn" style="flex:1;">${document.getElementById('perfHud')?.classList.contains('show') ? '📊 已显示（点击隐藏）' : '📊 显示性能面板'}</button>
+          </div>
+          <div class="slider-row"><label>调试日志（${DebugLogger.entries.length}条）</label>
+            <button id="setExportLogBtn" style="flex:1;">💾 导出日志文件</button>
+          </div>
+        </div>` : ''}
       `;
       bindEvents();
     };
 
     const bindEvents = () => {
+      // 标签页切换（只换正文，标题/底部按钮不动）
+      overlay.querySelectorAll('[data-settab]').forEach(btn => {
+        btn.addEventListener('click', () => { this._tab = btn.dataset.settab; render(); });
+      });
+
+      // 游戏暂停：此前这个按钮只有外观、没有任何监听器，点了毫无反应。
+      document.getElementById('setGamePauseBtn')?.addEventListener('click', () => {
+        window.gamePaused = !window.gamePaused;
+        logFn(window.gamePaused ? '⏸ 游戏已暂停' : '▶ 游戏已继续', 'spawn');
+        render();
+      });
+
+      // 地面参考网格（用户："地面上会显示格子，不要显示格子" → 默认关，这里可按需打开）。
+      // 网格画在静态批里，改完必须让静态层重建才会真正消失/出现。
+      document.getElementById('setGridBtn')?.addEventListener('click', () => {
+        window.__gridOn = !window.__gridOn;
+        window.__three?.fx?.markStaticDirty?.();
+        logFn(window.__gridOn ? '▦ 地面网格已显示' : '⭕ 地面网格已隐藏', 'spawn');
+        render();
+      });
       // 天气系统入口（此前只做在天气条上，而天气条在关闭时是隐藏的 → 开关自己把自己藏起来了，
       // 用户根本无从开启。入口必须放在【永远可达】的设置面板里。）
       // Q12：性能面板开关从画布按钮移到设置里
@@ -259,7 +313,7 @@ export const SettingsDialog = {
         });
       });
 
-      document.getElementById('setClearAllBtn').addEventListener('click', () => {
+      document.getElementById('setClearAllBtn')?.addEventListener('click', () => {
         const minions = entityContainer.getAllMinions(true);
         for (const m of minions) { m.alive = false; m.currentHP = 0; }
         entityContainer.purgeDead();
@@ -291,19 +345,19 @@ export const SettingsDialog = {
           logFn('🔄 波次已重置', 'spawn');
         }
       });
-      document.getElementById('setToggleDragonBtn').addEventListener('click', () => {
+      document.getElementById('setToggleDragonBtn')?.addEventListener('click', () => {
         dragonSystem.paused = !dragonSystem.paused;
         logFn(dragonSystem.paused ? '⏸ 巨龙波次已暂停' : '▶ 巨龙波次已恢复', 'spawn');
         render();
       });
-      document.getElementById('setDragonFirstDelay').addEventListener('input', (e) => {
+      document.getElementById('setDragonFirstDelay')?.addEventListener('input', (e) => {
         const v = parseFloat(e.target.value);
         if (!isNaN(v) && v >= 0) {
           dragonSystem.nextDragonTime = v;
           logFn(`✅ 下一条龙将在 ${v}秒后刷新`, 'spawn');
         }
       });
-      document.getElementById('setExportLogBtn').addEventListener('click', () => {
+      document.getElementById('setExportLogBtn')?.addEventListener('click', () => {
         const ok = DebugLogger.downloadAsFile();
         logFn(ok ? '💾 日志已导出' : '❌ 日志导出失败', ok ? 'spawn' : 'death');
       });
