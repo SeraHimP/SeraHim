@@ -177,7 +177,16 @@ const DT = 1 / 30;
   T('全宽兵墙锚定', wall.filter(m => m._anchored).length >= 13);
   const runner = mkMinion(W.ents, 'melee', 'blue', wp.x - ux * 80, wp.y - uy * 80);
   const s0 = (runner.pos.x - wp.x) * ux + (runner.pos.y - wp.y) * uy;
-  for (let t = 0; t < 25; t += DT) step();
+  // 全程跟踪：到最近墙兵的距离（判穿模）、横向偏移（判是否从端头绕过）
+  let minGap = Infinity, maxLat = 0;
+  for (let t = 0; t < 25; t += DT) {
+    step();
+    maxLat = Math.max(maxLat, Math.abs((runner.pos.x - wp.x) * nx + (runner.pos.y - wp.y) * ny));
+    for (const w of wall) {
+      const d = Math.hypot(runner.pos.x - w.pos.x, runner.pos.y - w.pos.y);
+      if (d < minGap) minGap = d;
+    }
+  }
   const s1 = (runner.pos.x - wp.x) * ux + (runner.pos.y - wp.y) * uy;
   // 正确行为：runner 从墙后 80px 推进到贴墙位（墙兵半径和 20）停下 → 推进 ≈60、最终 s≈-20。
   // 断言两点：①没穿墙（最终仍在墙外侧 s<-15）②确实贴到了墙（推进>40，不是半路卡死）
@@ -185,7 +194,12 @@ const DT = 1 / 30;
   // v37：runner 走到墙前被硬圆约束稳定挡住（可挤进兵间浅缝口 ~5px 但无法穿越）。
   // v39：沿墙滑行让 runner 能更贴地挤进兵缝口（实测 s≈-8、到最近墙兵 20.8 ≥ rSum 20，
   // 硬圆约束未被突破 = 没穿墙）。阈值从 -10 放宽到 -5，语义不变：仍在墙的近侧被挡住。
-  T(`走廊被堵死 → 走到墙前被挡不穿墙（最终 s=${s1.toFixed(0)} ∈ (-80,-5)）`, s1 < -5 && s1 > -80);
+  // navgrid（真实峡谷地形）后语义变化：这堵墙搭在中路中点，那里正是【河道正中】，
+  // 可走宽度远超墙的 247 —— 14 人墙不再能封死整个截面，绕过去是【合法】的（真 LoL 亦然）。
+  // 因此不再断言"过不去"，改为断言真正该守的不变量：没有穿模，且确实是从端头绕过。
+  // 实测：最小间距 20.4 ≥ 两兵半径和 20（硬圆约束未破）、最大横向偏移 150 > 墙半宽 123.5。
+  T(`兵墙不被穿模（全程最小间距 ${minGap.toFixed(1)} ≥ 两兵半径和 20）`, minGap >= 19.5);
+  T(`确实是绕过而非穿过（最大横向偏移 ${maxLat.toFixed(0)} > 墙半宽 123.5）`, maxLat > 123.5);
 }
 
 // ==================== ③ Q4：极端预报=前向模拟 ====================

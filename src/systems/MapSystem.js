@@ -530,6 +530,37 @@ export class MapSystem {
    */
   constrainToWalkable(pos) {
     if (!this.hasWalls()) return false;
+    // navgrid 地图：碰撞【只认位图】。旧的"投影回三路走廊/基地圆"那套必须彻底让位——
+    // 否则站在野区（位图明明可走）的小兵会被硬拽回走廊边缘，表现为沿着早已不存在的
+    // 旧路径边缘卡住、挤成一堆（用户实测截图）。
+    const nav = this._navgrid();
+    if (nav) {
+      if (this.isWalkable(pos.x, pos.y)) return false;   // 已在可走区，无需修正
+      const W = this.currentMap.world, n = nav.n;
+      const sx = W.w / n, sy = W.h / n;
+      const ci = Math.floor(pos.x / sx), cj = Math.floor(pos.y / sy);
+      // 由内向外一圈圈找最近的可走格（越界点也能被拉回图内）。半径上限足够跨过最厚的野区墙块。
+      for (let r = 1; r <= 24; r++) {
+        let bestD = Infinity, bx = 0, by = 0;
+        for (let dj = -r; dj <= r; dj++) {
+          for (let di = -r; di <= r; di++) {
+            if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;   // 只扫这一圈
+            const i = ci + di, j = cj + dj;
+            if (i < 0 || j < 0 || i >= n || j >= n) continue;
+            if (nav.bits[j * n + i] !== 1) continue;
+            const wx = (i + 0.5) * sx, wy = (j + 0.5) * sy;
+            const d = (wx - pos.x) ** 2 + (wy - pos.y) ** 2;
+            if (d < bestD) { bestD = d; bx = wx; by = wy; }
+          }
+        }
+        if (bestD < Infinity) {
+          const dx = bx - pos.x, dy = by - pos.y, L = Math.hypot(dx, dy) || 1;
+          pos.x = bx; pos.y = by;
+          return { nx: dx / L, ny: dy / L };   // 法向 = 由墙内指向可走区（调用方据此剔除撞入分量）
+        }
+      }
+      return false;
+    }
     const hw = this._wallHalfWidth();
     let best = null, bestMove = Infinity;
     for (const lane of this.currentMap.lanes) {
