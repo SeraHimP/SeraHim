@@ -65,6 +65,13 @@ export const CONFIG = {
   // 生成建筑时按 地图 tierStats → towerTierOverrides → factionOverrides['tower_'+tier] 依次覆盖。
   // 不改就是空对象 → 完全沿用地图数值，行为不变。
   towerTierOverrides: { outer: {}, inner: {}, base: {}, hq_tower: {}, nexus_lane: {}, nexus_main: {} },
+  // 分层防御塔的【默认被动覆写】。undefined = 沿用 main.js createBuilding 的硬编码默认装配；
+  // 一旦模板编辑器"被动技能"tab 点过应用，就变成显式数组（空数组 = 该层级不装任何被动），
+  // 从此完全由这里决定，不再受代码默认与波次门槛影响（与小兵 _templateSkills 语义一致）。
+  towerTierSkills: {},
+  // 分层防御塔的【默认状态效果】。数组元素是 EffectRegistry 的 blueprint 对象；
+  // 新生成的该层级建筑会在入场时自动施加一次。undefined/空数组 = 不施加。
+  towerTierEffects: {},
 
   factionOverrides: { blue: {}, red: {} },
 

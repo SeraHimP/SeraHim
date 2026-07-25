@@ -347,6 +347,11 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     if (skillExcludeList.length) {
       towerDefaults = towerDefaults.filter(k => !skillExcludeList.includes(k));
     }
+    // 模板编辑器的分层被动覆写（用户定稿："所有的都不要硬编码，都应该是可编辑的软编码"）。
+    // 与小兵 _templateSkills 同语义：显式设过就完全由它决定（空数组=不装），没设过才走上面的默认。
+    // 放在排除表之后：玩家在编辑器里的显式选择优先于地图排除规则。
+    const tierSkillOverride = CONFIG.towerTierSkills?.[tier];
+    if (Array.isArray(tierSkillOverride)) towerDefaults = [...tierSkillOverride];
     for (const key of towerDefaults) {
       const inst = { id: ++CTX._uid, skillId: key, state: {} };
       entity._skillInstances.push(inst);
@@ -357,7 +362,8 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
 
   // Q5 修复：基地光环装在水晶枢纽上——原先写在 if(!isNexus) 块内，枢纽是 nexus 永远装不上，
   // 这就是"基地加成没生效"的根因。移到门外独立装配。
-  if (tier === 'nexus_main') {
+  // 分层被动覆写生效时，基地光环是否装备由那份清单说了算（否则会与清单里的同一项重复装配）。
+  if (tier === 'nexus_main' && !Array.isArray(CONFIG.towerTierSkills?.nexus_main)) {
     const inst = { id: ++CTX._uid, skillId: 'passive_home_aura', state: {} };
     entity._skillInstances.push(inst);
     const def = skillLibrary['passive_home_aura'];
@@ -365,6 +371,14 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   }
 
   entityContainer.add(entity);
+
+  // 分层默认状态（模板编辑器"状态"tab）。此前对战模式的建筑完全没有这条路径——
+  // tpl._templateEffects 只在沙盒 createTower 里被读，所以编辑器里配的状态对地图塔从不生效。
+  const tierEffects = CONFIG.towerTierEffects?.[tier];
+  if (Array.isArray(tierEffects)) {
+    for (const bp of tierEffects) effectRegistry.apply(entity.id, { ...bp }, 'template_effect_tier');
+  }
+
   eventBus.emit('entity:spawn', { entityId: entity.id });
   uiManager.log(`${isNexus ? '💎 水晶' : '🏯 ' + tier + '塔'}（${faction === FACTIONS.BLUE ? '蓝方' : '红方'}）已生成`, 'spawn');
   return entity;

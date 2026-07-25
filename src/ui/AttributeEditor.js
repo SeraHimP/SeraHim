@@ -256,19 +256,30 @@ export const AttributeEditor = {
     overlay.querySelectorAll('[data-tplcat]').forEach(btn => {
       btn.addEventListener('click', () => {
         const key = btn.dataset.tplcat;
-        this._tplState = { category: key, type: key === 'minion' ? 'melee' : key };
+        // tier 必须带上：丢了它，防御塔页签下 st.tier 会变 undefined，
+        // 属性/技能面板就会去查 _SKILLS_BY_TIER[undefined] 而整片空白。
+        this._tplState = { category: key, type: key === 'minion' ? 'melee' : key, tier: this._tplState?.tier || 'outer' };
         this._renderTemplateEditor(logFn, returnCallback);
       });
     });
     // 二级：小兵具体类型切换
     overlay.querySelectorAll('[data-tpltype]').forEach(btn => {
       btn.addEventListener('click', () => {
-        this._tplState = { category: 'minion', type: btn.dataset.tpltype };
+        this._tplState = { category: 'minion', type: btn.dataset.tpltype, tier: this._tplState?.tier || 'outer' };
         this._renderTemplateEditor(logFn, returnCallback);
       });
     });
 
-    if (tpl) this._bindTemplateDetailTabs(overlay, type, logFn, returnCallback);
+    if (tpl) {
+      this._bindTemplateDetailTabs(overlay, type, logFn, returnCallback);
+      // 切换层级/阵营/应用范围、以及点"应用"后都会整体重渲染；
+      // 这里把用户停留的那个 tab 重新点回来，免得每次操作都被弹回"属性"。
+      const want = st.tab;
+      if (want && want !== 'attr') {
+        const btn = overlay.querySelector(`.editor-tab[data-tpltab="${want}"]`);
+        if (btn) btn.click(); else st.tab = 'attr';
+      }
+    }
 
     const closeAndReturn = () => {
       overlay.remove();
@@ -321,16 +332,17 @@ export const AttributeEditor = {
         overlay.querySelectorAll('.editor-tab[data-tpltab]').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         const tabName = tab.dataset.tpltab;
+        this._tplState.tab = tabName;
         const content = overlay.querySelector('#templateContent');
         if (tabName === 'weapon') {
           content.innerHTML = this._renderTemplateWeaponContent(type);
           this._bindTemplateWeaponEvents(overlay, type, logFn);
         } else if (tabName === 'skill') {
-          content.innerHTML = this._renderTemplateSkillContent(type);
+          content.innerHTML = this._renderTemplateSkillContent(type, this._tplState.tier);
           this._bindTemplateSkillEvents(overlay, type, logFn);
         } else if (tabName === 'effect') {
-          content.innerHTML = this._renderTemplateEffectContent(type);
-          this._bindTemplateEffectEvents(overlay, type, logFn);
+          content.innerHTML = this._renderTemplateEffectContent(type, this._tplState.tier);
+          this._bindTemplateEffectEvents(overlay, type, logFn, this._tplState.tier);
         } else if (tabName === 'soul') {
           content.innerHTML = this._renderTemplateSoulContent(type);
           this._bindTemplateSoulEvents(overlay, type, logFn);
@@ -360,7 +372,10 @@ export const AttributeEditor = {
     }));
     const clearBtn = overlay.querySelector('[data-tplscope-clear]');
     if (clearBtn) clearBtn.addEventListener('click', () => {
-      const t = category === 'minion' ? (st.type || 'melee') : category;
+      // 塔的阵营覆写按层级存成 'tower_<tier>'，小兵/其它按类型存。
+      // （旧代码这里引用了 _renderTemplateEditor 的局部变量 category/st，
+      //   在本函数作用域里根本不存在 —— 点"清除覆写"必抛 ReferenceError。）
+      const t = this._categoryOfType(type) === 'tower' ? 'tower_' + (this._tplState?.tier || 'outer') : type;
       if (CONFIG.factionOverrides?.[this._factionScope]) delete CONFIG.factionOverrides[this._factionScope][t];
       logFn(`🧹 已清除 ${this._factionScope === 'blue' ? '蓝方' : '红方'} 对 ${t} 的覆写`, 'spawn');
       this._renderTemplateEditor(logFn, returnCallback);
@@ -377,8 +392,11 @@ export const AttributeEditor = {
       else if (tabName === 'spawnrule') this._applySpawnRuleChanges(overlay, type, logFn);
       else if (tabName === 'bsize') this._applyBuildingSizeChanges(overlay, logFn);
       else this._applyTemplateAttrChanges(overlay, type, logFn);
-      overlay.remove();
-      if (returnCallback) returnCallback();
+      // 应用后【不再关闭】编辑器：调参是连续动作（改一项→看效果→再改一项），
+      // 每次应用都弹回上级菜单正是"编辑器难用"的主因之一。改为原地刷新当前 tab，
+      // 让面板显示回写后的真实值；关闭仍走"关闭"按钮/点遮罩。
+      this._tplState.tab = tabName;
+      this._renderTemplateEditor(logFn, returnCallback);
     });
   },
 
@@ -717,16 +735,52 @@ export const AttributeEditor = {
   _SKILLS_BY_TYPE: {
     tower: {
       weapons: ['weapon_piercing', 'weapon_lightning', 'weapon_explosive', 'weapon_sniper', 'weapon_corrosion'],
-      passives: ['passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating', 'passive_overheat', 'passive_vampire', 'passive_phase'],
+      // 沙盒通用被动 + 对战实战塔被动。此前这里只有前 7 个沙盒被动，对战里塔真正装的那批
+      // （加固城防/成长/过载/钢铁防线/镀层/烈阳护盾/水晶再生/基地光环）一个都没列 —— 这正是
+      // 用户反馈"技能清单已经过时"的根因。现按 main.js 的实际装配逐条补齐。
+      passives: [
+        'passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating',
+        'passive_overheat', 'passive_vampire', 'passive_phase',
+        'passive_overload', 'passive_iron_line',
+        'passive_outer_fortify', 'passive_inner_fortify', 'passive_base_fortify', 'passive_hq_fortify',
+        'passive_growth_outer', 'passive_growth_inner', 'passive_growth_base', 'passive_growth_hq',
+        'passive_inner_bulwark', 'passive_base_bulwark',
+        'passive_nexus_regen', 'passive_home_aura',
+      ],
     },
-    melee: { weapons: [], passives: [] },
-    ranged: { weapons: [], passives: [] },
+    // 近战/远程此前是空列表，但它们默认就带屠戮被动（main.js defaultPassiveMap）—— 补上。
+    melee:  { weapons: [], passives: ['passive_melee_rend'] },
+    ranged: { weapons: [], passives: ['passive_ranged_rend'] },
     siege: { weapons: [], passives: ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'] },
     super: { weapons: [], passives: ['passive_super_commander'] },
     totem: { weapons: [], passives: ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura', 'passive_totem_sacrifice'] },
     warlock: { weapons: [], passives: ['passive_warlock_aura'] },
     corrupt: { weapons: [], passives: ['passive_corrupt_strike'] },
     ram:     { weapons: [], passives: ['passive_siege_weapon'] },
+  },
+
+  // 分层塔的技能清单：★ = main.js 里该层级的【默认装配】，其余为该层级可选。
+  // 与 main.js createBuilding 的装配分支逐条对应，改那边就要同步这里。
+  _SKILLS_BY_TIER: {
+    outer:      ['passive_outer_fortify', 'passive_growth_outer', 'passive_iron_line', 'passive_overload',
+                 'passive_armor_plating', 'passive_inner_bulwark', 'passive_thorns', 'passive_frost_plating'],
+    inner:      ['passive_inner_fortify', 'passive_growth_inner', 'passive_inner_bulwark', 'passive_overload',
+                 'passive_armor_plating', 'passive_iron_line', 'passive_thorns', 'passive_frost_plating'],
+    base:       ['passive_base_fortify', 'passive_growth_base', 'passive_armor_plating', 'passive_overload',
+                 'passive_base_bulwark', 'passive_iron_line', 'passive_heavy_defense', 'passive_thorns'],
+    hq_tower:   ['passive_hq_fortify', 'passive_growth_hq', 'passive_overload',
+                 'passive_armor_plating', 'passive_iron_line', 'passive_heavy_defense'],
+    nexus_lane: ['passive_nexus_regen', 'passive_base_bulwark', 'passive_heavy_defense'],
+    nexus_main: ['passive_nexus_regen', 'passive_home_aura', 'passive_heavy_defense'],
+  },
+  // main.js 中各层级的默认装配（用于在清单里标 ★ 默认）
+  _TIER_DEFAULT_SKILLS: {
+    outer:      ['passive_growth_outer', 'passive_outer_fortify', 'passive_iron_line', 'passive_overload'],
+    inner:      ['passive_growth_inner', 'passive_inner_fortify', 'passive_inner_bulwark', 'passive_overload'],
+    base:       ['passive_growth_base', 'passive_base_fortify', 'passive_armor_plating', 'passive_overload'],
+    hq_tower:   ['passive_growth_hq', 'passive_hq_fortify', 'passive_overload'],
+    nexus_lane: ['passive_nexus_regen'],
+    nexus_main: ['passive_nexus_regen', 'passive_home_aura'],
   },
 
   _renderSkillContent(entity) {
@@ -936,30 +990,45 @@ export const AttributeEditor = {
     ram:     ['passive_siege_weapon'],
   },
 
-  _renderTemplateSkillContent(type) {
-    const tpl = CONFIG.templates[type];
-    // 首次打开（从未被模板编辑器改过）：用代码里的硬编码默认值回填，
-    // 而不是显示成"全部未装备"（这正是 Q2 的根因）。
-    if (tpl._templateSkills === undefined) {
-      tpl._templateSkills = [...(this._DEFAULT_PASSIVE_MAP[type] || [])];
+  // 防御塔按【层级】取技能清单与默认装配（塔模板本身不再是一个整体）；
+  // 小兵仍按类型。返回 { pool, equipped, defaults, title }。
+  _skillSetFor(type, tier) {
+    if (this._categoryOfType(type) === 'tower') {
+      const pool = this._SKILLS_BY_TIER[tier] || [];
+      const defaults = this._TIER_DEFAULT_SKILLS[tier] || [];
+      CONFIG.towerTierSkills = CONFIG.towerTierSkills || {};
+      // 首次打开：用 main.js 的实际默认装配回填，避免显示成"全部未装备"、
+      // 一点应用就把默认被动清空（这是小兵那边曾经踩过的 Q2 坑）。
+      if (!Array.isArray(CONFIG.towerTierSkills[tier])) CONFIG.towerTierSkills[tier] = [...defaults];
+      return { pool, defaults, equipped: new Set(CONFIG.towerTierSkills[tier]), title: this._tierLabel(tier) };
     }
-    const allPassives = this._SKILLS_BY_TYPE[type]?.passives || [];
+    const tpl = CONFIG.templates[type];
+    const defaults = this._DEFAULT_PASSIVE_MAP[type] || [];
+    if (tpl._templateSkills === undefined) tpl._templateSkills = [...defaults];
+    return {
+      pool: this._SKILLS_BY_TYPE[type]?.passives || [],
+      defaults, equipped: new Set(tpl._templateSkills || []),
+      title: tpl.label || this._TPL_LABELS[type] || type,
+    };
+  },
 
-    const equipped = new Set(tpl._templateSkills || []);
+  _renderTemplateSkillContent(type, tier) {
+    const { pool, defaults, equipped, title } = this._skillSetFor(type, tier);
+    const defSet = new Set(defaults);
 
-    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${CONFIG.templates[type]?.label || type} 将自动装备选中的被动技能</p>`;
-    if (allPassives.length === 0) {
+    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${title} 将自动装备选中的被动技能（★ = 代码里的原始默认装配）</p>`;
+    if (pool.length === 0) {
       html += `<div class="pick-desc-box">该类型没有可配置的被动技能。</div>`;
       return html;
     }
     html += `<div class="pick-grid">`;
-    for (const key of allPassives) {
+    for (const key of pool) {
       const def = SkillLibrary[key];
       if (!def) continue;
       const isEquipped = equipped.has(key);
       html += `<div class="pick-card ${isEquipped ? 'selected' : ''}" data-skill="${key}">
         <div class="pick-icon">${def.icon || '🔹'}</div>
-        <div class="pick-label">${def.name || key}</div>
+        <div class="pick-label">${defSet.has(key) ? '★ ' : ''}${def.name || key}</div>
       </div>`;
     }
     html += `</div>`;
@@ -967,16 +1036,30 @@ export const AttributeEditor = {
     return html;
   },
 
-  _renderTemplateEffectContent(type) {
+  // 状态效果的存放位置：塔按层级存 CONFIG.towerTierEffects[tier]，小兵按类型存 tpl._templateEffects。
+  _effectListFor(type, tier) {
+    if (this._categoryOfType(type) === 'tower') {
+      CONFIG.towerTierEffects = CONFIG.towerTierEffects || {};
+      CONFIG.towerTierEffects[tier] = CONFIG.towerTierEffects[tier] || [];
+      return CONFIG.towerTierEffects[tier];
+    }
     const tpl = CONFIG.templates[type];
     tpl._templateEffects = tpl._templateEffects || [];
+    return tpl._templateEffects;
+  },
 
-    let html = `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
-    if (tpl._templateEffects.length === 0) {
+  _renderTemplateEffectContent(type, tier) {
+    const list = this._effectListFor(type, tier);
+    const title = this._categoryOfType(type) === 'tower'
+      ? this._tierLabel(tier) : (CONFIG.templates[type]?.label || this._TPL_LABELS[type] || type);
+
+    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${title} 入场时自动获得下列状态</p>`;
+    html += `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
+    if (list.length === 0) {
       html += `<div style="color:#8b949e;font-size:12px;padding:8px;">暂无默认状态效果</div>`;
     } else {
-      for (let i = 0; i < tpl._templateEffects.length; i++) {
-        const e = tpl._templateEffects[i];
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
         html += `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:#0d1013;border-radius:4px;margin-bottom:4px;">
           <span style="font-size:18px;">${e.icon || '🔹'}</span>
           <span style="flex:1;font-size:12px;">${e.name || '未命名'}</span>
@@ -1007,17 +1090,18 @@ export const AttributeEditor = {
     });
   },
 
-  _bindTemplateEffectEvents(overlay, type, logFn) {
-    const tpl = CONFIG.templates[type];
-    tpl._templateEffects = tpl._templateEffects || [];
+  _bindTemplateEffectEvents(overlay, type, logFn, tier) {
+    const list = this._effectListFor(type, tier);
+    const rerender = () => {
+      const content = overlay.querySelector('#templateContent');
+      content.innerHTML = this._renderTemplateEffectContent(type, tier);
+      this._bindTemplateEffectEvents(overlay, type, logFn, tier);
+    };
 
     overlay.querySelectorAll('.template-remove-effect').forEach(btn => {
       btn.addEventListener('click', () => {
-        const idx = parseInt(btn.dataset.index);
-        tpl._templateEffects.splice(idx, 1);
-        const content = overlay.querySelector('#templateContent');
-        content.innerHTML = this._renderTemplateEffectContent(type);
-        this._bindTemplateEffectEvents(overlay, type, logFn);
+        list.splice(parseInt(btn.dataset.index), 1);
+        rerender();
       });
     });
 
@@ -1034,13 +1118,10 @@ export const AttributeEditor = {
         box.querySelector('.effect-params').innerHTML = this._renderEffectParams(type2);
       });
       box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
-        const effect = this._buildEffectBlueprintFromPicker(box);
-        tpl._templateEffects.push(effect);
-        logFn(`✅ 已添加默认状态到 ${type} 模板`, 'spawn');
-        const content = overlay.querySelector('#templateContent');
-        content.innerHTML = this._renderTemplateEffectContent(type);
-        this._bindTemplateEffectEvents(overlay, type, logFn);
+        list.push(this._buildEffectBlueprintFromPicker(box));
+        logFn(`✅ 已添加默认状态到 ${this._categoryOfType(type) === 'tower' ? this._tierLabel(tier) : type} 模板`, 'spawn');
         box.style.display = 'none';
+        rerender();
       });
     });
   },
@@ -1100,13 +1181,18 @@ export const AttributeEditor = {
   },
 
   _renderEffectParams(type) {
+    // 与 CONFIG.templates 的实际字段 + AttributeCalculator 认得的条件字段对齐
+    // （此前漏了 baseAttackSpeed / baseHealthRegenMod / 护盾三项 / 溅射 / 弹速 / 哀兵两项）。
     const statKeys = [
-      'attackDamage', 'maxHP', 'healthRegen', 'armor', 'magicResist',
-      'moveSpeed', 'attackRange', 'bonusAttackSpeedPct', 'attackSpeedRatio',
+      'attackDamage', 'maxHP', 'healthRegen', 'baseHealthRegenMod', 'armor', 'magicResist',
+      'moveSpeed', 'attackRange', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio',
       'damageAmpPct', 'damageReduction', 'damageBlock', 'lifeStealPct',
       'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
       'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
-      'onHitDamage', 'onHitPercentDamage', 'shieldFixedMax',
+      'onHitDamage', 'onHitPercentDamage',
+      'shieldFixedMax', 'shieldRegenRate', 'tempShieldDecayPct',
+      'splashRadius', 'bulletSpeed',
+      'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
     ];
     if (type === 'stun') {
       return `
@@ -1504,17 +1590,97 @@ export const AttributeEditor = {
     return hit;
   },
 
+  // 被动技能同样走三条正交维度：对象（塔层级 / 小兵类型）、阵营筛选、应用范围。
   _applyTemplateSkillChanges(overlay, type, logFn) {
-    const tpl = CONFIG.templates[type];
-    const selected = overlay.querySelectorAll('.pick-card.selected[data-skill]');
-    const selectedSkills = new Set();
-    selected.forEach(el => selectedSkills.add(el.dataset.skill));
-    tpl._templateSkills = Array.from(selectedSkills);
-    logFn(`✅ 模板 ${type} 默认技能已更新`, 'spawn');
+    const isTower = this._categoryOfType(type) === 'tower';
+    const tier = this._tplState?.tier || 'outer';
+    const apply = this._applyScope || 'both';
+    const scope = this._factionScope;
+
+    const picked = [];
+    overlay.querySelectorAll('.pick-card.selected[data-skill]').forEach(el => {
+      if (!picked.includes(el.dataset.skill)) picked.push(el.dataset.skill);
+    });
+
+    let tplMsg = '', fieldMsg = '';
+    if (apply !== 'field') {
+      if (isTower) {
+        CONFIG.towerTierSkills = CONFIG.towerTierSkills || {};
+        CONFIG.towerTierSkills[tier] = [...picked];
+        tplMsg = `模板：${this._tierLabel(tier)} 默认被动 ${picked.length} 项`;
+      } else {
+        CONFIG.templates[type]._templateSkills = [...picked];
+        tplMsg = `模板：${type} 默认被动 ${picked.length} 项`;
+      }
+    }
+    if (apply !== 'template') {
+      const n = this._applyToFieldSkills({ isTower, tier, type, scope, picked });
+      fieldMsg = `场上：重装 ${n} 个单位的被动`;
+    }
+    logFn(`✅ 已应用　${[tplMsg, fieldMsg].filter(Boolean).join('　｜　')}`, 'spawn');
+  },
+
+  // 把勾选的被动重装到场上已有单位：只动"本清单管辖范围内"的被动槽（pool），
+  // 核心/武器/龙魂等其它技能实例一律保留，避免误删塔的身份技能与武器。
+  _applyToFieldSkills({ isTower, tier, type, scope, picked }) {
+    const app = window.CTX?.__app || window.__app;
+    const ec = app?.entityContainer;
+    if (!ec || !ec.getAll) return 0;
+    const pool = new Set(isTower
+      ? (this._SKILLS_BY_TIER[tier] || [])
+      : (this._SKILLS_BY_TYPE[type]?.passives || []));
+    const ctx = {
+      entityContainer: ec, effectRegistry: app?.effectRegistry, eventBus: app?.eventBus,
+      waveNumber: window.CTX?.waveNumber || window.waveNumber || 0, attrCalc: app?.attrCalc,
+    };
+    let hit = 0;
+    for (const e of ec.getAll()) {
+      if (!e || !e.alive || !Array.isArray(e._skillInstances)) continue;
+      if (isTower) {
+        if (e.type !== 'tower') continue;
+        if ((e._mapTier || 'outer') !== tier) continue;
+      } else if (e.type !== type) continue;
+      if (scope !== 'shared' && (e._mapFaction || e.faction) !== scope) continue;
+
+      for (const inst of e._skillInstances) {
+        if (!pool.has(inst.skillId)) continue;
+        const def = SkillLibrary[inst.skillId];
+        if (def?.onUnequip) def.onUnequip(e.id, inst, ctx);
+      }
+      e._skillInstances = e._skillInstances.filter(i => !pool.has(i.skillId));
+      for (const key of picked) {
+        const inst = { id: ++(window.CTX._uid), skillId: key, state: {} };
+        e._skillInstances.push(inst);
+        const def = SkillLibrary[key];
+        if (def?.onEquip) def.onEquip(e.id, inst, ctx);
+      }
+      hit++;
+    }
+    return hit;
   },
 
   _applyTemplateEffectChanges(overlay, type, logFn) {
-    // 效果已在绑定中直接修改 tpl._templateEffects
-    logFn(`✅ 模板 ${type} 默认状态已更新`, 'spawn');
+    // 列表在绑定里已经就地改好（塔=towerTierEffects[tier]，小兵=tpl._templateEffects）。
+    // 这里只补"应用到场上目标"这一维度：立刻把清单里的状态施加到符合筛选的单位上。
+    const isTower = this._categoryOfType(type) === 'tower';
+    const tier = this._tplState?.tier || 'outer';
+    const list = this._effectListFor(type, tier);
+    if ((this._applyScope || 'both') === 'template') {
+      logFn(`✅ 默认状态已更新（${list.length} 项，仅影响新生成的单位）`, 'spawn');
+      return;
+    }
+    const app = window.CTX?.__app || window.__app;
+    const ec = app?.entityContainer;
+    let hit = 0;
+    for (const e of (ec?.getAll?.() || [])) {
+      if (!e || !e.alive) continue;
+      if (isTower) {
+        if (e.type !== 'tower' || (e._mapTier || 'outer') !== tier) continue;
+      } else if (e.type !== type) continue;
+      if (this._factionScope !== 'shared' && (e._mapFaction || e.faction) !== this._factionScope) continue;
+      for (const bp of list) app.effectRegistry.apply(e.id, { ...bp }, 'template_effect_apply');
+      hit++;
+    }
+    logFn(`✅ 默认状态已更新（${list.length} 项）　｜　场上：施加到 ${hit} 个单位`, 'spawn');
   }
 };

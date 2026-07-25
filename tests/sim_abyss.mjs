@@ -97,7 +97,9 @@ T('超级兵波=超1+近3+远3且无炮', JSON.stringify(spawned)===JSON.stringi
 T('超级兵指挥官含自身(Q2)', fs.readFileSync(new URL('../src/core/skills/minionPassives.js', import.meta.url),'utf8').includes('includeSelf: true'));
 T('闪电充能duration=100(Q1)', fs.readFileSync(new URL('../src/core/skills/weapons.js', import.meta.url),'utf8').includes("kind: 'custom', duration: 100"));
 const mainSrc=fs.readFileSync(new URL('../src/main.js', import.meta.url),'utf8');
-T('光环装配移出isNexus门(Q5)', mainSrc.includes("if (tier === 'nexus_main') {") && mainSrc.includes("skillLibrary['passive_home_aura']"));
+// 该分支现在还带一个"分层被动覆写生效时交给覆写清单决定"的守卫，
+// 故只断言其仍在 isNexus 门之外、按 tier 独立装配这一原始意图。
+T('光环装配移出isNexus门(Q5)', /if \(tier === 'nexus_main'/.test(mainSrc) && mainSrc.includes("skillLibrary['passive_home_aura']"));
 T('Q5 无敌/停火改为按阵营分管', fs.readFileSync(new URL('../src/systems/CombatSystem.js', import.meta.url),'utf8').includes("__towerRuleFor?.('invincible'") && fs.readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url),'utf8').includes('data-rule'));
 T('小兵成长表(近战 ad0.3)', mainSrc.includes('ad: 0.3,'));
 T('Q3 炮车成长：降HP(18→10)、增双抗(0.13→0.30)', mainSrc.includes('siege:  { hp: 10, ad: 0.9,   res: 0.30 }'));
