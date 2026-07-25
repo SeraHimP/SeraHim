@@ -2,6 +2,7 @@ import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
 import { CONFIG } from '../data/Config.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected } from './FactionSystem.js';
+import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 
 /**
  * MapSystem.js
@@ -74,6 +75,7 @@ export class MapSystem {
     this.entities.purgeDead();
 
     this.currentMap = map;
+    this._nav = undefined;   // navgrid 随地图重新解码
     // Store per-type skill overrides for CombatSystem auto-init
     SkillLibrary._mapOverrides = map.skillOverrides || {};
     SkillLibrary._excludeSkills = map.excludeSkills || {};
@@ -416,9 +418,44 @@ export class MapSystem {
     return this.currentMap.baseOpenRadius || this.getBaseCircleRadius(faction);
   }
 
+  /**
+   * navgrid（可行走位图）：从 2D 导航图描出的真实峡谷地形（野区可走、野区墙体、河道）。
+   * 位图按需解码一次并缓存；只有声明了 useNavgrid 的地图走这条路，其余地图沿用走廊模型。
+   */
+  _navgrid() {
+    if (this._nav !== undefined) return this._nav;
+    this._nav = null;
+    if (this.currentMap?.useNavgrid) {
+      const n = SR_NAVGRID.n;
+      // base64 → 位数组。atob 在浏览器有、Node 18+ 全局也有；都没有就退回走廊模型（不炸）。
+      const dec = (typeof atob === 'function') ? atob
+        : (typeof Buffer !== 'undefined' ? (b) => Buffer.from(b, 'base64').toString('binary') : null);
+      if (dec) {
+        const bin = dec(SR_NAVGRID.bits);
+        const bits = new Uint8Array(n * n);
+        for (let k = 0; k < n * n; k++) bits[k] = (bin.charCodeAt(k >> 3) >> (k & 7)) & 1;
+        this._nav = { n, bits };
+      }
+    }
+    return this._nav;
+  }
+
+  /** 龙坑/男爵坑坑心（navgrid 地图才有）。name = 'dragon' | 'baron' */
+  getPit(name) {
+    return this.currentMap?.useNavgrid ? (SR_PITS[name] || null) : null;
+  }
+
   /** 该点是否在可行走区域内（无墙地图恒 true） */
   isWalkable(x, y) {
     if (!this.hasWalls()) return true;
+    // 真实峡谷地形：野区可走，墙体/河道形状来自描出的位图（是本图唯一判据）。
+    const nav = this._navgrid();
+    if (nav) {
+      const W = this.currentMap.world;
+      const i = Math.floor(x / W.w * nav.n), j = Math.floor(y / W.h * nav.n);
+      if (i < 0 || j < 0 || i >= nav.n || j >= nav.n) return false;
+      return nav.bits[j * nav.n + i] === 1;
+    }
     const hw = this._wallHalfWidth();
     for (const lane of this.currentMap.lanes) {
       if (this._nearestOnLane(lane, x, y).dist <= hw) return true;
@@ -466,6 +503,17 @@ export class MapSystem {
       if (d >= b) continue;
       const t = d <= a ? 1 : 1 - (d - a) / Math.max(1e-6, b - a);   // 1（核心）→ 0（坡脚）
       h = Math.max(h, platH * t);
+    }
+    // 龙坑/男爵坑：坑心下沉，边缘一段过渡（坑壁）。与 navgrid 同一份坑位数据。
+    if (m.useNavgrid) {
+      for (const key of ['dragon', 'baron']) {
+        const pit = SR_PITS[key]; if (!pit) continue;
+        const d = Math.hypot(x - pit.x, z - pit.y);
+        if (d < pit.r) {
+          const t = Math.min(1, (pit.r - d) / (pit.r * 0.45));   // 边缘→坑心 线性下沉
+          h = Math.min(h, pit.depth * t);
+        }
+      }
     }
     return h;
   }

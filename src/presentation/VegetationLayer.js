@@ -46,7 +46,8 @@ export class VegetationLayer {
     const heightAt = mapSystem.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
     const trees = [], rocks = [], bushes = [];
-    const STEP = 92, margin = 58, edge = 96;   // 采样步长 / 内部余量(不贴车道边) / 离图边余量
+    // navgrid 地形下墙块较窄（野区可走、只有墙块不可走），内部余量过大会几乎选不出点 → 放宽到 26。
+    const STEP = 62, margin = 26, edge = 90;   // 采样步长 / 内部余量(不贴车道边) / 离图边余量
     for (let gx = edge; gx < WW - edge; gx += STEP) for (let gy = edge; gy < WH - edge; gy += STEP) {
       const x = gx + (hash(gx + 11, gy) - 0.5) * STEP * 0.8;
       const y = gy + (hash(gx, gy + 11) - 0.5) * STEP * 0.8;

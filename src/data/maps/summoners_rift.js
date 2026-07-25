@@ -97,6 +97,11 @@ export const summoners_rift = {
   // 抬升高度 40（原默认 20，更"明显"）。窄坡宽(≈100)＝台阶感；河床沿用默认。
   heightZones: { plateauHeight: 40, plateauFull: 0.97, plateauEdge: 1.055 },
 
+  // 真实峡谷地形（navgrid）：可行走区改由 src/data/maps/sr_navgrid.js 的位图判定
+  // （自 assets/maps/preview.jpg 导航图描出）——野区可走、野区墙体成形、河道连通，
+  // 并带龙坑/男爵坑。置 false 可退回旧的"三路走廊"模型。
+  useNavgrid: true,
+
   // 兵线路点（Q1 拉直）：枢纽端原有贴着枢纽塔的中转点导致参考线/行军在枢纽处折一下，
   // 已删除，枢纽 → 主线为纯直线（中路即枢纽对枢纽两点直线）。
   lanes: [

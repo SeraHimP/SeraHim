@@ -529,11 +529,17 @@ function createDragon(type, opts = {}) {
   // 导致红方总能第一时间抢到龙、对蓝方明显不公平，这里修正。
   let dragonPos = { x: 850, y: 200 };
   if (mapSystem.active && mapSystem.currentMap) {
-    // 之前取 lanes[0] 实际是"上路"而非注释声称的"中路"——龙一直刷在上路半途，修正为按 id 找中路。
-    const lane = mapSystem.currentMap.lanes.find(l => l.id === 'mid') || mapSystem.currentMap.lanes[0];
-    if (lane) {
-      const mid = lane.waypoints[Math.floor(lane.waypoints.length / 2)];
-      dragonPos = { x: mid.x, y: mid.y };
+    // navgrid 地图（真实峡谷）有真正的【龙坑】——巨龙在龙坑里刷新，与 LoL 一致。
+    const pit = mapSystem.getPit?.('dragon');
+    if (pit) {
+      dragonPos = { x: pit.x, y: pit.y };
+    } else {
+      // 无龙坑的地图沿用中路中点。（之前取 lanes[0] 实际是"上路"而非注释声称的"中路"，已按 id 修正。）
+      const lane = mapSystem.currentMap.lanes.find(l => l.id === 'mid') || mapSystem.currentMap.lanes[0];
+      if (lane) {
+        const mid = lane.waypoints[Math.floor(lane.waypoints.length / 2)];
+        dragonPos = { x: mid.x, y: mid.y };
+      }
     }
   }
 

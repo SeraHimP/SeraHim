@@ -172,16 +172,26 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   const lane = mapSys.getLane('mid');
   const wp = lane.waypoints[Math.floor(lane.waypoints.length / 2)];
   T('走廊内可行走', mapSys.isWalkable(wp.x, wp.y));
-  // 走廊法向外 300px = 墙里
+  // 走廊法向外 300px
   const midIdx = Math.max(1, Math.floor(lane.waypoints.length / 2));
   const a = lane.waypoints[midIdx - 1], b = lane.waypoints[midIdx];
   const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
   const nx = -dy / L, ny = dx / L;
   const wallPt = { x: (a.x + b.x) / 2 + nx * 300, y: (a.y + b.y) / 2 + ny * 300 };
-  T('走廊外300px是墙', !mapSys.isWalkable(wallPt.x, wallPt.y));
-  const p = { ...wallPt };
-  const moved = mapSys.constrainToWalkable(p);
-  T('越界位置被推回走廊', moved && mapSys.isWalkable(p.x, p.y));
+  // navgrid（真实峡谷地形）启用后【野区可走】，"走廊外一律是墙"不再成立——那正是本次改动的目的。
+  // 改为断言真实墙体仍然存在且约束仍生效：① 地图边界外不可走；② 图内能找到野区墙块，
+  // 且越界修正能把点推回可行走区。
+  T('地图边界外不可走', !mapSys.isWalkable(-50, 1776) && !mapSys.isWalkable(3600, 1776));
+  let p = null;
+  for (let ang = 0; ang < 360 && !p; ang += 7) {
+    for (let d = 120; d <= 500 && !p; d += 20) {
+      const q = { x: wallPt.x + Math.cos(ang * Math.PI / 180) * d, y: wallPt.y + Math.sin(ang * Math.PI / 180) * d };
+      if (q.x > 0 && q.y > 0 && q.x < 3552 && q.y < 3552 && !mapSys.isWalkable(q.x, q.y)) p = q;
+    }
+  }
+  T('地图内存在真实墙体（野区墙块）', !!p);
+  const moved = p ? mapSys.constrainToWalkable(p) : false;
+  T('越界位置被推回可行走区', !!moved && mapSys.isWalkable(p.x, p.y));
   // 基地区可行走
   const c = mapSys.getBaseCircleCenter('blue'), r = mapSys.getBaseCircleRadius('blue');
   T('基地圈内可行走（半径与画布圈同源）', r > 0 && mapSys.isWalkable(c.x + r * 0.5, c.y - r * 0.5));
