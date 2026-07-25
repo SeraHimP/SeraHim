@@ -98,6 +98,9 @@ export const SettingsDialog = {
           <div class="slider-row"><label>画质·水晶粒子</label>
             <button id="setPartBtn" style="flex:1;">${window.__three?.units?.particlesOn !== false ? '✦ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
+          <div class="slider-row"><label>画质·河道水面</label>
+            <button id="setWaterBtn" style="flex:1;">${window.__three?.water?.enabled !== false ? '🌊 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
           <div class="slider-row"><label>画质·野区植被</label>
             <button id="setVegBtn" style="flex:1;">${window.__three?.vegOn !== false ? '🌲 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
@@ -194,6 +197,8 @@ export const SettingsDialog = {
              '✦ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       bindFx('setVegBtn', r => r.vegOn !== false, (r, v) => r.setVegetation(v),
              '🌲 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setWaterBtn', r => r.water?.enabled !== false, (r, v) => r.setWater(v),
+             '🌊 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
 
       const shadowBtn = document.getElementById('setShadowBtn');
       if (shadowBtn) shadowBtn.addEventListener('click', () => {

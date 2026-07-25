@@ -28,6 +28,7 @@ import { UnitLayer } from './UnitLayer.js';
 import { ModelLibrary } from './ModelLibrary.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
+import { WaterLayer } from './WaterLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
 
@@ -113,6 +114,7 @@ export class ThreeRenderer {
     this.walls = new WallLayer(this.scene);
     this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
     this.vegOn = true;
+    this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -350,6 +352,7 @@ export class ThreeRenderer {
     return this.vegOn;
   }
   setParticles(on) { this.units.particlesOn = on !== false; return this.units.particlesOn; }
+  setWater(on) { const v = this.water.setEnabled(on); if (v) this.water.build(this.mapSystem); return v; }
 
   setElevation(deg) {
     this.elevationDeg = Math.max(1, Math.min(90, Number(deg) || 0));
@@ -465,9 +468,9 @@ export class ThreeRenderer {
     // PlaneGeometry 默认在 XY 平面。rotateX(-90°) 把它放平到 XZ：局部 +Y → 世界 -Z。
     // 于是 uv(0,0)（贴图左下）落在世界 (0, WH)，uv(1,1) 落在世界 (WW, 0)——
     // 正好对上离屏画布"像素 (0,0) = 世界 (0,0)"加上 three 默认 flipY=true 的翻转，无需再手动翻。
-    // C 组·台阶地形：细分地面并按 heightAt 抬/沉顶点（高地 +20 / 河床 −10）。段≈48px，够出台阶感；
+    // C 组·台阶地形：细分地面并按 heightAt 抬/沉顶点。P1：段 48→24px 加密，台阶边缘与斜坡更利落（顶点数×4，仍是一次性构建）；
     // 抬沉后重算法线，台阶侧面才吃光（否则整片平面法线、阶梯看不出）。WallLayer 丛林崖体不经此处。
-    const segX = Math.max(1, Math.round(WW / 48)), segZ = Math.max(1, Math.round(WH / 48));
+    const segX = Math.max(1, Math.round(WW / 24)), segZ = Math.max(1, Math.round(WH / 24));
     const geo = new THREE.PlaneGeometry(WW, WH, segX, segZ);
     geo.rotateX(-Math.PI / 2);
     if (ms?.heightAt) {
@@ -493,6 +496,7 @@ export class ThreeRenderer {
       this.walls.top.material.needsUpdate = true;
     }
     if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
+    this.water.build(this.mapSystem);                 // P1：河道水面同上
   }
 
   // ===== 第 5 步：接手 CanvasController 面向渲染器的接口 =====
@@ -527,6 +531,7 @@ export class ThreeRenderer {
                        rx: ca, ry: 0, rz: -sa },
                      (x, z) => this.units.muzzleY(x, z));
     }
+    this.water.update(window.gameTime || 0);   // P1：水面滚动 UV
     // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
       if (!this.composer) this._buildComposer();

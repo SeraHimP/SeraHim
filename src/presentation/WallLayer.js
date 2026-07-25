@@ -33,6 +33,39 @@ const CLIFF_COLOR = 0x2a3142;   // 崖面色：比地形底色略深，与顶面
 const CLIFF_TILE = 300;
 const ORDER_WALL = 2;      // 地面(0) < 墙体(2) < 贴地环(5)
 
+// P1：程序化岩石法线贴图——给崖面加起伏（原本是纯平贴图，斜光下像贴纸）。
+// 值域用整数周期的多频正弦叠加，平铺无缝；只生成一次，全崖面共享。
+let _rockNrm = null;
+function rockNormalTexture(size = 256) {
+  if (_rockNrm) return _rockNrm;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const img = g.createImageData(size, size);
+  const TAU = Math.PI * 2;
+  const H = (u, v) =>
+      Math.sin((u * 5 + v * 3) * TAU) * 0.35
+    + Math.sin((u * 11 - v * 7) * TAU) * 0.18
+    + Math.sin((u * 2 + v * 13) * TAU) * 0.12;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size, v = y / size, e = 1 / size;
+      const h = H(u, v);
+      const nx = -(H(u + e, v) - h) / e * 0.05, ny = -(H(u, v + e) - h) / e * 0.05, nz = 1;
+      const L = Math.hypot(nx, ny, nz), i = (y * size + x) * 4;
+      img.data[i]     = (nx / L * 0.5 + 0.5) * 255;
+      img.data[i + 1] = (ny / L * 0.5 + 0.5) * 255;
+      img.data[i + 2] = (nz / L * 0.5 + 0.5) * 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  _rockNrm = new THREE.CanvasTexture(c);
+  _rockNrm.wrapS = _rockNrm.wrapT = THREE.RepeatWrapping;
+  _rockNrm.repeat.set(6, 2);
+  return _rockNrm;
+}
+
 export class WallLayer {
   constructor(scene) {
     this.scene = scene;
@@ -150,8 +183,12 @@ export class WallLayer {
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
       g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nrm), 3));
       g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+      // P1：加程序化岩石法线 → 崖面在斜光下有真实起伏，不再像一张贴纸。
+      // 无 tangent 属性时 three 用屏幕导数求切空间，普通网格可直接用。
       const m = new THREE.MeshLambertMaterial({ color: this.cliffTex ? 0xffffff : CLIFF_COLOR,
-                                                map: this.cliffTex || null });
+                                                map: this.cliffTex || null,
+                                                normalMap: rockNormalTexture(),
+                                                normalScale: new THREE.Vector2(0.9, 0.9) });
       this.cliff = new THREE.Mesh(g, m);
       this.cliff.renderOrder = ORDER_WALL;
       this.scene.add(this.cliff);
