@@ -454,7 +454,7 @@ export class ThreeRenderer {
     // 要等下一次切图才出现。这类"第一次不对、第二次才对"的时序坑最难查。
     this.walls.rebuild(this.mapSystem, null);
     const gr = this.walls.grid;
-    const composed = compositeTerrain(buildTerrainLayer(map), map.world,
+    const composed = compositeTerrain(buildTerrainLayer(map, gr, ms), map.world,
                                       gr?.walk || null, gr?.nx || 0, gr?.ny || 0,
                                       this.tex.ground, this.tex.plateau);
     const tex = new THREE.CanvasTexture(composed);

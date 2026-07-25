@@ -19,8 +19,17 @@ import { CONFIG } from '../data/Config.js';
 
 const _terrainCache = new Map();
 
-export function buildTerrainLayer(map) {
-  let c = _terrainCache.get(map.id);
+/**
+ * @param map        地图定义
+ * @param grid       WallLayer 的可走网格 { walk, nx, ny }（navgrid 地图才有意义）
+ * @param mapSystem  用于取河道强度场（riverFactor）；缺省则不画河
+ */
+export function buildTerrainLayer(map, grid = null, mapSystem = null) {
+  // Q4：navgrid 地图的底图改由【真实可走网格】生成，与走廊模型产出的底图不是一回事，
+  // 故缓存键要带上模式，切换时不会拿到上一版。
+  const navMode = !!(map.useNavgrid && grid && grid.walk);
+  const key = map.id + (navMode ? '#nav' : '');
+  let c = _terrainCache.get(key);
   if (c) return c;
   const { w: WW, h: WH } = map.world;
   const S = 0.5; // 半分辨率烘焙（3552² 全尺寸约 50MB，砍到 1/4）
@@ -42,14 +51,62 @@ export function buildTerrainLayer(map) {
     g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill();
   }
 
-  // 河道（装饰）：沿反对角线的水带。v34：地图可声明 walls.river:false 关闭
-  //（嚎哭深渊是冰桥，没有河道——用户 Q补充）。
-  if (map.walls?.river !== false) {
-    g.strokeStyle = 'rgba(60,120,150,0.35)';
-    g.lineWidth = 150;
-    g.lineCap = 'round';
-    g.beginPath(); g.moveTo(WW * 0.12, WH * 0.12); g.lineTo(WW * 0.88, WH * 0.88); g.stroke();
+  // 河道（装饰）：v34 起地图可声明 walls.river:false 关闭（嚎哭深渊是冰桥，没有河道）。
+  // Q5：不再画"整条对角线"，改为逐格采样 MapSystem.riverFactor —— 与水面/河床同一个场，
+  // 于是路面处自动没有河色（用户定稿：只有被三路切出来的那两段是河）。
+  const drawRiver = (riverAt) => {
+    if (map.walls?.river === false || !riverAt) return;
+    const STEP = 16;                                  // 世界单位；底图是半分辨率，16 已足够细
+    for (let y = 0; y < WH; y += STEP) {
+      for (let x = 0; x < WW; x += STEP) {
+        const a = riverAt(x + STEP / 2, y + STEP / 2);
+        if (a <= 0.01) continue;
+        g.fillStyle = `rgba(60,120,150,${(0.35 * a).toFixed(3)})`;
+        g.fillRect(x, y, STEP, STEP);
+      }
+    }
+  };
+  const riverAt = mapSystem ? ((x, y) => mapSystem.riverFactor(x, y)) : null;
+
+  // ============ Q4：navgrid 地图 —— 底图直接由真实可走网格生成 ============
+  // 此前底图是"沿兵线折线描三层粗线"画出来的走廊模型；而地形的真实形状早已换成 navgrid。
+  // 两者不重合，最外那层比走廊宽 14px 的亮边（'#43536a'）就在真实路面上留下一圈
+  // 【与地形无关的亮线】——正是用户圈出来的"原先的道路边缘标识线"。
+  // 现在底图与 navgrid 逐格一致，那圈亮线从源头消失，也不需要再叠加任何描边。
+  if (navMode) {
+    const { walk, nx, ny } = grid;
+    const cell = document.createElement('canvas');
+    cell.width = nx; cell.height = ny;
+    const cg = cell.getContext('2d');
+    const im = cg.createImageData(nx, ny);
+    // 走廊 #2b3647 / 野区 #151c26 —— 与走廊模型同一对颜色，材质合成的明暗关系保持不变
+    for (let k = 0; k < nx * ny; k++) {
+      const on = walk[k];
+      im.data[k * 4]     = on ? 0x2b : 0x15;
+      im.data[k * 4 + 1] = on ? 0x36 : 0x1c;
+      im.data[k * 4 + 2] = on ? 0x47 : 0x26;
+      im.data[k * 4 + 3] = 255;
+    }
+    cg.putImageData(im, 0, 0);
+    g.imageSmoothingEnabled = false;                  // 最近邻：格边界与 navgrid 严格对齐
+    g.drawImage(cell, 0, 0, WW, WH);
+    g.imageSmoothingEnabled = true;
+    drawRiver(riverAt);
+    // 阵营底色：基地圈的蓝/红是敌我识别信息（材质合成里靠 CHROMA_KEEP 单独保留），
+    // 但只染色不改亮度 —— 用叠加半透明色而不是实心填充，免得又造出一圈新的亮度边界。
+    const tintBase = (cx, cy, r, color) => {
+      const gr2 = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+      gr2.addColorStop(0, color); gr2.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr2;
+      g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill();
+    };
+    tintBase(305, WH - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
+    tintBase(WW - 326, 305, WW * 0.30, 'rgba(224,71,63,0.20)');
+    _terrainCache.set(key, c);
+    return c;
   }
+
+  drawRiver(riverAt);
 
   const strokeLanes = (width, color) => {
     g.strokeStyle = color;
@@ -96,6 +153,6 @@ export function buildTerrainLayer(map) {
 
   // v36（Q6）：高地门槛线已删除（用户反馈突兀且蓝红不对称）。
 
-  _terrainCache.set(map.id, c);
+  _terrainCache.set(key, c);
   return c;
 }

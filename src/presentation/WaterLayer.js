@@ -43,21 +43,17 @@ function rippleNormalTexture(size = 256) {
 
 // 河带 alpha 遮罩：与 MapSystem.heightAt 同一判据（到主对角线 x=z 的垂距 < riverHalfWidth），
 // 岸边留一段羽化，水陆过渡不是硬边。贴图整图 0~1 UV 对应世界 [0,WW]×[0,WH]。
-function riverMaskTexture(WW, WH, half, size = 512) {
+function riverMaskTexture(WW, WH, riverAt, size = 512) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d');
   const img = g.createImageData(size, size);
-  const FEATHER = 0.28;                       // 羽化占半宽的比例
   for (let j = 0; j < size; j++) {
     for (let i = 0; i < size; i++) {
       const x = (i + 0.5) / size * WW, z = (j + 0.5) / size * WH;
-      const d = Math.abs(x - z) * 0.70710678;  // 到 x=z 的垂距，与 heightAt 同式
-      let a = 0;
-      if (d < half) {
-        const t = d / half;
-        a = t < 1 - FEATHER ? 1 : (1 - t) / FEATHER;   // 中心满、岸边渐隐
-      }
+      // 直接采样 MapSystem.riverFactor —— 水面、河床高度、地形底图共用同一个场，
+      // 三者边界因此严格一致（此前这里另抄了一份"到 x=z 的垂距"判据）。
+      const a = riverAt(x, z);
       const k = (j * size + i) * 4;
       const v = Math.round(Math.max(0, Math.min(1, a)) * 255);
       img.data[k] = img.data[k + 1] = img.data[k + 2] = v;   // alphaMap 读绿通道，三通道同值最稳
@@ -90,14 +86,13 @@ export class WaterLayer {
 
     const { w: WW, h: WH } = map.world;
     const cfg = map.heightZones || {};
-    const half = cfg.riverHalfWidth ?? 200;          // 与 MapSystem.heightAt 同一份配置
     const depth = cfg.riverDepth ?? -10;
     this.tex = rippleNormalTexture();
     this.tex.repeat.set(WW / 150, WH / 150);          // 细密涟漪（平铺越多波纹越小，避免方格感）
 
     // 水面 = 整张地图大小的平面 + 河带 alpha 遮罩。比"旋转的长条"好在：
     //   ① 天然裁进地图边界（长条会从四角戳出去）；② 河带定义与 heightAt 逐像素一致；③ 岸边可羽化。
-    this.mask = riverMaskTexture(WW, WH, half);
+    this.mask = riverMaskTexture(WW, WH, (x, z) => mapSystem.riverFactor(x, z));
     const geo = new THREE.PlaneGeometry(WW, WH, 1, 1);
     geo.rotateX(-Math.PI / 2);                        // 躺平到 XZ
     // 材质用 Lambert（【无镜面反射】）而不是 Standard：低粗糙度+金属度会在太阳方向打出一大片高光，

@@ -445,6 +445,68 @@ export class MapSystem {
     return this.currentMap?.useNavgrid ? (SR_PITS[name] || null) : null;
   }
 
+  /**
+   * 河道强度场：0 = 没有河，1 = 河心满深。**河道的唯一真源**——
+   * 地形高度(heightAt)、水面遮罩(WaterLayer)、地形底图的河色(TerrainLayer)
+   * 三处一律读它，免得三份判据各写一套、改一处漏两处。
+   *
+   * 用户定稿（Q5）：河道不是贯穿地图对角的一整条，而是被三条路面切断的【两条支流】——
+   * 参照 LoL 小地图，上下两段河，路面处恢复原有地形高度。
+   * 实现就是"对角河带 ∩ 非路面"：
+   *   ① 河带 = 到河轴 x=y 的垂距 < riverHalfWidth（岸边 RIVER_BANK 比例羽化）；
+   *   ② 路面 = 到任一兵线折线的距离 ≤ 走廊半宽 + riverLaneClear（外侧再留一段渐变收口）。
+   * 河轴与三路的几何关系天然给出两段：上路拐角截掉西北端、下路拐角截掉东南端、
+   * 中路在正中把剩下的一刀两断 —— 正是用户圈出的那两段。
+   */
+  /**
+   * 是否落在【三路围出的可玩区域】内。上路与下路首尾都接在两座水晶枢纽上，
+   * 于是"上路正向 + 下路反向"天然闭合成一圈，把地图内场围起来。
+   * 用它把河道裁在内场里：否则河轴两端会在上路西北拐角外、下路东南拐角外
+   * 各留一小段贴着地图边界的水（用户圈的是两段，不是四段）。
+   * 缺 top/bot 的地图（嚎哭深渊）直接返回 true，行为不变。
+   */
+  _insideLaneRing(x, y) {
+    const m = this.currentMap;
+    if (!m) return true;
+    if (this._ringMapId !== m.id) {
+      this._ringMapId = m.id;
+      const top = (m.lanes || []).find(l => l.id === 'top');
+      const bot = (m.lanes || []).find(l => l.id === 'bot');
+      this._ring = (top && bot) ? [...top.waypoints, ...bot.waypoints.slice().reverse()] : null;
+    }
+    const P = this._ring;
+    if (!P) return true;
+    let inside = false;
+    for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+      const xi = P[i].x, yi = P[i].y, xj = P[j].x, yj = P[j].y;
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  riverFactor(x, y) {
+    const m = this.currentMap;
+    if (!m || !m.world || m.walls?.river === false) return 0;
+    if (!this._insideLaneRing(x, y)) return 0;
+    const cfg = m.heightZones || {};
+    const half = cfg.riverHalfWidth ?? 200;
+    const d = Math.abs(x - y) * Math.SQRT1_2;          // 到河轴 x=y 的垂距
+    if (d >= half) return 0;
+    const bank = cfg.riverBank ?? 0.28;                 // 岸边羽化占半宽的比例
+    const t = d / half;
+    let f = t < 1 - bank ? 1 : (1 - t) / bank;
+    if (f <= 0) return 0;
+    // 路面切断：路中心一段完全无河，外侧 fade 段线性收口（不留硬边）
+    const clear = (m.walls?.corridorHalfWidth ?? 95) + (cfg.riverLaneClear ?? 40);
+    const fade = cfg.riverLaneFade ?? 120;
+    for (const lane of (m.lanes || [])) {
+      const dl = this._nearestOnLane(lane, x, y).dist;
+      if (dl <= clear) return 0;
+      if (dl < clear + fade) f = Math.min(f, (dl - clear) / fade);
+    }
+    return Math.max(0, Math.min(1, f));
+  }
+
   /** 该点是否在可行走区域内（无墙地图恒 true） */
   isWalkable(x, y) {
     if (!this.hasWalls()) return true;
@@ -467,11 +529,7 @@ export class MapSystem {
     // C 组·河道玩法化（默认关闭 → 对失败集合零影响；setRiverWalkable(true) 开启）：
     // 主对角线河带（与 heightAt 的河床同一带）变为可行走，横穿并连通三路——LoL 式河道。
     // 已知并接受的后果（用户定稿）：跨河视线打通、小兵可能临时滞留河中、sim_avoid 基准会变。
-    if (this._riverWalkable) {
-      const cfg = this.currentMap.heightZones || {};
-      const rh = cfg.riverHalfWidth ?? 200;
-      if (Math.abs(x - y) * 0.70710678 < rh) return true;
-    }
+    if (this._riverWalkable && this.riverFactor(x, y) > 0) return true;
     return false;
   }
 
@@ -488,11 +546,13 @@ export class MapSystem {
     const m = this.currentMap;
     if (!m || !m.world || !this.hasWalls?.()) return 0;
     const cfg = m.heightZones || {};
-    const riverHalf = cfg.riverHalfWidth ?? 200, riverDepth = cfg.riverDepth ?? -10;
+    const riverDepth = cfg.riverDepth ?? -10;
     const platH = cfg.plateauHeight ?? 20;
     let h = 0;
-    // 河床：到主对角线 x=z 的垂距（÷√2）小于半宽 → 下沉
-    if (Math.abs(x - z) * 0.70710678 < riverHalf) h = Math.min(h, riverDepth);
+    // 河床：按河道强度场下沉。强度为 0 的地方（路面、河带之外）高度原样保持 0，
+    // 这就是用户要的"路面恢复原有地形高度"——河不再从三路底下横穿过去。
+    const rf = this.riverFactor(x, z);
+    if (rf > 0) h = Math.min(h, riverDepth * rf);
     // 高地：两基地平台。Q4——边缘做成【斜坡】而非陡坎：内核 rFull 内满高 platH，
     // rFull→rEdge 之间线性降到 0，于是从各兵线口离开基地都是一段可走的坡（红圈处）。
     const rFull = cfg.plateauFull ?? 0.60, rEdge = cfg.plateauEdge ?? 0.98;
