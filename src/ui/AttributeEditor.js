@@ -1,5 +1,6 @@
 ﻿import { CONFIG } from '../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
+import { buildWaveOrder, WHEN_OPTIONS } from '../data/waveComposition.js';
 
 // 属性字段元数据：中文标签 + 滑块范围 + 步长（供动态滑块条使用）
 const FIELD_META = {
@@ -215,6 +216,7 @@ export const AttributeEditor = {
           ${isTower ? `<button class="editor-tab" data-tpltab="soul">🐉 龙魂</button>` : ''}
           ${isTower ? `<button class="editor-tab" data-tpltab="bsize">建筑体积</button>` : ''}
           ${isMinion ? `<button class="editor-tab" data-tpltab="spawnrule">生成规则</button>` : ''}
+          ${isMinion ? `<button class="editor-tab" data-tpltab="waveorder">🧬 出兵顺序</button>` : ''}
         </div>
         ${isDragon ? '' : this._renderFactionScopeBar()}
         ${isDragon ? '' : this._renderApplyScopeBar()}
@@ -349,6 +351,9 @@ export const AttributeEditor = {
         } else if (tabName === 'spawnrule') {
           content.innerHTML = this._renderSpawnRuleContent(type);
           this._bindSpawnRuleEvents(overlay, type, logFn);
+        } else if (tabName === 'waveorder') {
+          content.innerHTML = this._renderWaveOrderContent();
+          this._bindWaveOrderEvents(overlay, logFn);
         } else if (tabName === 'bsize') {
           content.innerHTML = this._renderBuildingSizeContent();
         } else {
@@ -390,6 +395,7 @@ export const AttributeEditor = {
       else if (tabName === 'effect') this._applyTemplateEffectChanges(overlay, type, logFn);
       else if (tabName === 'soul') logFn('🐉 龙魂默认配置点击即时生效，无需点应用', 'spawn');
       else if (tabName === 'spawnrule') this._applySpawnRuleChanges(overlay, type, logFn);
+      else if (tabName === 'waveorder') this._applyWaveOrderChanges(overlay, logFn);
       else if (tabName === 'bsize') this._applyBuildingSizeChanges(overlay, logFn);
       else this._applyTemplateAttrChanges(overlay, type, logFn);
       // 应用后【不再关闭】编辑器：调参是连续动作（改一项→看效果→再改一项），
@@ -614,6 +620,167 @@ export const AttributeEditor = {
         logFn(`⚙️ 「${t}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
       });
     });
+  },
+
+  // ==================== 出兵顺序（对战模式，全局；用户："再加'出兵顺序'自定义"）====================
+  // 数据就是 CONFIG.gameRules.laneWaveComposition —— 数组顺序即出兵先后。
+  // 面板直接编排这个数组：上下移动 / 增删条目 / 改兵种·数量·起始波次·周期·触发条件，
+  // 再配一个"第 N 波会出什么"的实时预览（预览与真实出兵共用 buildWaveOrder，不会骗人）。
+  _waveOrderPreviewWave: 1,
+  _waveOrderPreviewNexusDown: false,
+
+  _renderWaveOrderContent() {
+    const gr = CONFIG.gameRules;
+    gr.laneWaveComposition = gr.laneWaveComposition || [];
+    const list = gr.laneWaveComposition;
+    const types = this._TPL_MINION_TYPES;
+    const EN = gr.spawnEnabled || {};
+
+    const cell = (rule, i, key, min, step) =>
+      `<input type="number" class="wo-field" data-idx="${i}" data-field="${key}" min="${min}" step="${step}"
+              value="${rule[key] ?? ''}" placeholder="${key === 'count' ? 1 : (key === 'everyN' ? 1 : 0)}"
+              style="width:62px;">`;
+
+    let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
+      🧬 <b>数组顺序 = 出兵先后</b>。每条规则命中当前波次时，就按"数量"往队列里追加该兵种。<br>
+      「起始波次」之前不出；之后每「每几波」出一次。「条件」用于超级兵（水晶陷落）与炮兵（水晶未陷落）。<br>
+      被「生成规则 → 是否生成该兵种」关掉的兵种，无论这里怎么排都不会出（下表会标灰）。
+    </div>`;
+
+    html += `<div style="display:flex;gap:6px;font-size:10px;color:#8b949e;padding:0 4px 4px;">
+      <span style="width:52px;">顺序</span><span style="width:96px;">兵种</span>
+      <span style="width:62px;">数量</span><span style="width:62px;">起始波</span>
+      <span style="width:62px;">每几波</span><span style="flex:1;">条件</span><span style="width:28px;"></span>
+    </div>`;
+
+    if (list.length === 0) {
+      html += `<div style="color:#8b949e;font-size:12px;padding:8px;">编排为空 —— 当前对战不会生成任何小兵。</div>`;
+    }
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const off = EN[r.type] === false;
+      html += `<div class="slider-row" style="gap:6px;align-items:center;opacity:${off ? 0.45 : 1};">
+        <span style="width:52px;display:flex;gap:2px;">
+          <button class="wo-move" data-idx="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} style="width:24px;">▲</button>
+          <button class="wo-move" data-idx="${i}" data-dir="1" ${i === list.length - 1 ? 'disabled' : ''} style="width:24px;">▼</button>
+        </span>
+        <select class="wo-field" data-idx="${i}" data-field="type" style="width:96px;">
+          ${types.map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${this._TPL_ICONS[t] || ''} ${this._TPL_LABELS[t] || t}</option>`).join('')}
+        </select>
+        ${cell(r, i, 'count', 0, 1)}${cell(r, i, 'fromWave', 0, 1)}${cell(r, i, 'everyN', 1, 1)}
+        <select class="wo-field" data-idx="${i}" data-field="when" style="flex:1;">
+          ${WHEN_OPTIONS.map(o => `<option value="${o.value}" ${(r.when || '') === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}
+        </select>
+        <button class="wo-del" data-idx="${i}" style="width:28px;background:#b33a3a;border:none;color:#fff;border-radius:4px;cursor:pointer;">✕</button>
+      </div>`;
+    }
+
+    html += `<div style="margin-top:8px;"><button id="woAddBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条</button>
+      <button id="woResetBtn" style="margin-left:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">↺ 恢复默认编排</button></div>`;
+
+    // ---- 实时预览 ----
+    const w = this._waveOrderPreviewWave, nd = this._waveOrderPreviewNexusDown;
+    const order = buildWaveOrder(w, nd, gr);
+    html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+      <div class="slider-row" style="gap:8px;">
+        <label style="width:auto;">预览第</label>
+        <input type="number" id="woPreviewWave" min="0" step="1" value="${w}" style="width:70px;">
+        <label style="width:auto;">波</label>
+        <button id="woPreviewNexus" class="editor-tab ${nd ? 'active' : ''}" style="flex:1;font-size:11px;">
+          ${nd ? '💥 本路水晶已陷落' : '🔮 本路水晶完好'}
+        </button>
+      </div>
+      <div class="pick-desc-box" style="margin-top:6px;">
+        共 <b>${order.length}</b> 个单位：${order.length
+          ? order.map(t => `${this._TPL_ICONS[t] || ''}${this._TPL_LABELS[t] || t}`).join(' → ')
+          : '（本波无兵）'}
+      </div>
+    </div>`;
+    html += `<div style="margin-top:8px;font-size:11px;color:var(--text-mute);">改完点【应用】写入；下一波起生效。</div>`;
+    return html;
+  },
+
+  _bindWaveOrderEvents(overlay, logFn) {
+    const gr = CONFIG.gameRules;
+    const rerender = () => {
+      const content = overlay.querySelector('#templateContent');
+      content.innerHTML = this._renderWaveOrderContent();
+      this._bindWaveOrderEvents(overlay, logFn);
+    };
+    // 结构性操作（上下移/删/加/恢复默认）即点即改数组并重绘；
+    // 重绘前先把当前所有输入框的值收回数组，否则移动一行会把没点应用的编辑丢掉。
+    const flush = () => this._readWaveOrderInputs(overlay);
+
+    overlay.querySelectorAll('.wo-move').forEach(b => b.addEventListener('click', () => {
+      flush();
+      const i = +b.dataset.idx, d = +b.dataset.dir, j = i + d;
+      if (j < 0 || j >= gr.laneWaveComposition.length) return;
+      const a = gr.laneWaveComposition;
+      [a[i], a[j]] = [a[j], a[i]];
+      rerender();
+    }));
+    overlay.querySelectorAll('.wo-del').forEach(b => b.addEventListener('click', () => {
+      flush();
+      gr.laneWaveComposition.splice(+b.dataset.idx, 1);
+      rerender();
+    }));
+    overlay.querySelector('#woAddBtn')?.addEventListener('click', () => {
+      flush();
+      gr.laneWaveComposition.push({ type: 'melee', count: 1 });
+      rerender();
+    });
+    overlay.querySelector('#woResetBtn')?.addEventListener('click', () => {
+      gr.laneWaveComposition = this._DEFAULT_WAVE_COMPOSITION.map(r => ({ ...r }));
+      logFn('↺ 出兵编排已恢复默认', 'spawn');
+      rerender();
+    });
+    // 字段改动即时反映到预览
+    overlay.querySelectorAll('.wo-field').forEach(el => el.addEventListener('change', () => { flush(); rerender(); }));
+
+    overlay.querySelector('#woPreviewWave')?.addEventListener('change', (e) => {
+      this._waveOrderPreviewWave = Math.max(0, parseInt(e.target.value, 10) || 0);
+      flush(); rerender();
+    });
+    overlay.querySelector('#woPreviewNexus')?.addEventListener('click', () => {
+      this._waveOrderPreviewNexusDown = !this._waveOrderPreviewNexusDown;
+      flush(); rerender();
+    });
+  },
+
+  // 默认编排（= Config.js 里的出厂值），供「恢复默认」使用
+  _DEFAULT_WAVE_COMPOSITION: [
+    { type: 'super',  count: 1, when: 'nexusDown' },
+    { type: 'melee',  count: 3 },
+    { type: 'siege',  count: 1, everyN: 3, when: '!nexusDown' },
+    { type: 'ranged', count: 3 },
+    { type: 'totem',  count: 1, fromWave: 10, everyN: 3 },
+    { type: 'ram',    count: 1, fromWave: 5,  everyN: 15 },
+  ],
+
+  // 把面板上所有 .wo-field 的当前值收回 laneWaveComposition。
+  // 留空的数值字段一律删除该键（回到规则默认：count=1 / fromWave=0 / everyN=1），
+  // 免得存下一堆 NaN 让 buildWaveOrder 静默漏兵。
+  _readWaveOrderInputs(overlay) {
+    const list = CONFIG.gameRules.laneWaveComposition || [];
+    overlay.querySelectorAll('.wo-field').forEach(el => {
+      const r = list[+el.dataset.idx];
+      if (!r) return;
+      const f = el.dataset.field;
+      if (f === 'type') { r.type = el.value; return; }
+      if (f === 'when') { if (el.value) r.when = el.value; else delete r.when; return; }
+      const raw = el.value.trim();
+      if (raw === '') { delete r[f]; return; }
+      const v = parseInt(raw, 10);
+      if (!isNaN(v)) r[f] = Math.max(f === 'everyN' ? 1 : 0, v);
+    });
+    return list;
+  },
+
+  _applyWaveOrderChanges(overlay, logFn) {
+    const list = this._readWaveOrderInputs(overlay);
+    const w = this._waveOrderPreviewWave;
+    const n = buildWaveOrder(w, this._waveOrderPreviewNexusDown).length;
+    logFn(`✅ 出兵编排已应用（${list.length} 条规则；第 ${w} 波将出 ${n} 个单位）`, 'spawn');
   },
 
   _applySpawnRuleChanges(overlay, type, logFn) {

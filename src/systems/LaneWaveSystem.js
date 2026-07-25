@@ -1,5 +1,6 @@
 ﻿import { FACTIONS } from './FactionSystem.js';
 import { CONFIG } from '../data/Config.js';
+import { buildWaveOrder } from '../data/waveComposition.js';
 
 /**
  * LaneWaveSystem.js
@@ -102,22 +103,12 @@ export class LaneWaveSystem {
     //   ② 图腾兵进入对战出兵：第 battleTotemFromWave（默认10）波起，
     //      每 battleTotemInterval（默认3）波在队尾（远程之后）生成 1 个。
     //   术士/蚀骨暂不进对战（用户定稿"目前只加图腾兵"）。
-    const EN = CONFIG.gameRules.spawnEnabled || {};
-    const on = (t) => EN[t] !== false;
     // 出兵编排【全部软编码】：读 CONFIG.gameRules.laneWaveComposition（数组顺序即出兵顺序）。
-    // 默认值逐条等价于此前的硬编码（近战×3 / 每3波炮兵 / 远程×3 / 第10波起每3波图腾 /
+    // 默认值逐条等价于更早的硬编码（近战×3 / 每3波炮兵 / 远程×3 / 第10波起每3波图腾 /
     // 第5波起每15波攻城车 / 水晶陷落出超级兵），故不改参数时对战节奏完全不变。
-    const order = [];
-    for (const rule of (CONFIG.gameRules.laneWaveComposition || [])) {
-      if (!rule || !rule.type || !on(rule.type)) continue;
-      if (rule.when === 'nexusDown' && !nexusDown) continue;
-      if (rule.when === '!nexusDown' && nexusDown) continue;
-      const from = rule.fromWave ?? 0, every = Math.max(1, rule.everyN ?? 1);
-      if (this.waveNumber < from) continue;
-      if ((this.waveNumber - from) % every !== 0) continue;
-      const n = Math.max(0, Math.floor(rule.count ?? 1));
-      for (let k = 0; k < n; k++) order.push(rule.type);
-    }
+    // 展开逻辑抽到 data/waveComposition.js，与模板编辑器「出兵顺序」面板的实时预览共用同一份，
+    // 免得预览和真实出兵两套实现漂移。
+    const order = buildWaveOrder(this.waveNumber, nexusDown);
 
     for (let i = 0; i < order.length; i++) {
       this._spawnQueue.push({
