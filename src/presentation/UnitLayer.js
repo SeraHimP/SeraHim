@@ -45,6 +45,14 @@ const towerVizScale = (tier) => (tier === 'nexus_lane' || tier === 'nexus_main')
 // Q6：水晶慢转角速度(rad/s)与攻击辉光参数（自发光基准/峰值/衰减速率）。
 const CRYSTAL_SPIN = 0.6, CRYSTAL_EMI_BASE = 0.7, CRYSTAL_EMI_PEAK = 1.6, CRYSTAL_GLOW_DECAY = 2.6;
 const CRYSTAL_PT_MAX_PX = 9;   // 粒子屏幕尺寸上限（像素），近距离不至于过大
+// Q5：小水晶蓄力→释放（类 LoL 塔）。全部是渲染侧派生量，逻辑层不提供也不需要知道。
+const CRYSTAL_CHARGE_POW = 2.6;    // 蓄力曲线指数：越大越集中在临射前才亮起来
+const CRYSTAL_CHARGE_GAIN = 1.1;   // 蓄力对自发光的最大增量
+const CRYSTAL_CHARGE_SCALE = 0.16; // 蓄满时水晶胀大比例
+const CRYSTAL_FIRE_POP = 0.22;     // 开火瞬间的额外弹跳
+const CRYSTAL_PT_PULL = 0.45;      // 蓄力时粒子向内收拢的比例
+const CRYSTAL_PT_BURST = 0.6;      // 开火瞬间粒子外弹的比例
+const CRYSTAL_WINDUP = 0.3;        // 锁定前摇时长（与 CONFIG.tuning.lockOnWindup 同值）
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
@@ -551,12 +559,41 @@ export class UnitLayer {
           en.crystalPts.material.size = Math.max(1, Math.min(CRYSTAL_PT_MAX_PX, px));
         }
       }
+      // ---- Q5：蓄力 → 释放（类 LoL 塔）----
+      // 蓄力度 charge = 距离下一次开火的接近程度（0 刚开完火，1 马上要开）。
+      // 由 attackCooldown 反推：冷却跳增的那一帧记下它的峰值当作本轮周期，
+      // 之后 charge = 1 - cd/周期。锁定前摇（_lockUntil）期间也算蓄力，
+      // 于是"换目标 → 蓄力 → 开火"整段都有能量聚拢感。纯渲染，逻辑层零改动。
       const cd = e.attackCooldown || 0;
-      if (cd > (en._lastCd || 0) + 0.05) en._glow = 1;   // 冷却值跳增 = 刚开了一炮
+      const fired = cd > (en._lastCd || 0) + 0.05;       // 冷却值跳增 = 刚开了一炮
+      if (fired) { en._cdMax = cd; en._glow = 1; }
       en._lastCd = cd;
       const gdt = Math.max(0, Math.min(0.1, tNow - (en._glowT || tNow))); en._glowT = tNow;
       en._glow = Math.max(0, (en._glow || 0) - gdt * CRYSTAL_GLOW_DECAY);
-      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + en._glow * (CRYSTAL_EMI_PEAK - CRYSTAL_EMI_BASE);
+
+      let charge = 0;
+      if (e.targetId) {                                   // 没目标就不蓄力（待机不发光）
+        const period = en._cdMax || 0;
+        charge = period > 0.05 ? 1 - Math.max(0, Math.min(1, cd / period)) : 1;
+        const lockLeft = (e._lockUntil || 0) - (window.gameTime || 0);
+        if (lockLeft > 0) charge = Math.min(charge, 1 - Math.min(1, lockLeft / CRYSTAL_WINDUP));
+        charge = Math.max(0, charge);
+      }
+      en._charge = charge;
+      // 蓄力用 pow 提到后段才明显（前半段几乎不亮 → 临射前迅速攒起来），
+      // 开火瞬间由 _glow 顶到峰值，随后衰减 —— 一收一放。
+      const chargeE = Math.pow(charge, CRYSTAL_CHARGE_POW) * CRYSTAL_CHARGE_GAIN;
+      en.crystal.material.emissiveIntensity =
+        CRYSTAL_EMI_BASE + chargeE + en._glow * (CRYSTAL_EMI_PEAK - CRYSTAL_EMI_BASE);
+      // 水晶本体随蓄力微微胀大，开火瞬间弹一下（scale 是最省的"体积感"）
+      const sc = 1 + chargeE * CRYSTAL_CHARGE_SCALE + en._glow * CRYSTAL_FIRE_POP;
+      en.crystal.scale.setScalar(sc);
+      // 粒子：蓄力时向水晶收拢（半径变小）+ 变亮，开火后弹开
+      if (en.crystalPts && this.particlesOn) {
+        const pull = 1 - chargeE * CRYSTAL_PT_PULL + en._glow * CRYSTAL_PT_BURST;
+        en.crystalPts.scale.setScalar(Math.max(0.2, pull));
+        en.crystalPts.material.opacity = Math.max(0, Math.min(1, 0.45 + chargeE * 0.5 + en._glow * 0.4));
+      }
     }
 
     // A：GLB 塔按兵线朝敌方定向（固定 yaw，只算一次——塔不移动；损毁塔沿用）。

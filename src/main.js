@@ -311,12 +311,23 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   const coreSkill = identityByTier[tier] || 'core_normal';
   entity._skillInstances.push({ id: ++CTX._uid, skillId: coreSkill, state: {} });
 
-  // 水晶不攻击：不装备武器；其余建筑按地图配置固定分配武器（外增幅/内穿透/高地闪电杖）
-  if (!isNexus && weapon) {
-    const wInst = { id: ++CTX._uid, skillId: 'weapon_' + weapon, state: {} };
+  // 武器装配（Q4 定稿：**所有建筑都可以装武器**，含召唤水晶/水晶枢纽，
+  // 只是后两者默认 'none'）。解析顺序：模板编辑器的分层覆写 → 地图给该建筑配的武器。
+  //   · 旧实现有两处毛病：① `!isNexus` 把水晶类彻底挡在门外，想让水晶开火根本没有入口；
+  //     ② 完全无视模板编辑器 —— 编辑器写的是 CONFIG.templates.tower._templateWeapon，
+  //     而这里读的是地图字段，于是"改了武器不生效"（用户报的 Q4）。
+  const tierW = CONFIG.towerTierWeapon?.[tier];
+  const wKey = tierW !== undefined ? tierW : (isNexus ? 'none' : weapon);
+  if (wKey && wKey !== 'none') {
+    const wInst = { id: ++CTX._uid, skillId: 'weapon_' + wKey, state: {} };
     entity._skillInstances.push(wInst);
     const wDef = skillLibrary[wInst.skillId];
     if (wDef?.onEquip) wDef.onEquip(entity.id, wInst, ctx);
+    // 水晶类的 tierStats 里 攻击力/攻速 是 0（它们本来不打人）。装了武器却是 0 就等于
+    // 装了个哑炮：攻速 0 → 冷却算出 Infinity，永远开不了火。所以只要真装了武器，
+    // 这两项为 0 时回落到塔模板值 —— "装上武器就能打"。想调具体数值走分层属性覆写。
+    if (!(entity.baseStats.attackDamage > 0)) entity.baseStats.attackDamage = tpl.attackDamage;
+    if (!(entity.baseStats.baseAttackSpeed > 0)) entity.baseStats.baseAttackSpeed = tpl.baseAttackSpeed;
   }
 
   // 对战模式防御塔默认技能：所有攻击型塔装备"冰霜镀层"（每分钟成长），

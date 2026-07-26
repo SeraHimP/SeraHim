@@ -75,6 +75,18 @@ function rgbOf(hex) {
 const HEAT_HOT = new THREE.Color('#ffcf6a');
 
 const GROUND_LIFT = 0.6;   // 贴地特效离地高度（世界单位）
+// Q1/Q2：塔弹拖尾 = 锥形光束（尾细头粗 + 辉光 + 白芯），与闪电杖同一套视觉语言。
+const TRAIL_LEN = 3.2;     // 尾巴长度 = 弹丸尺寸 × 本系数
+const TRAIL_GLOW = 2.6;    // 辉光层相对主体的宽度倍率
+const WHITE = new THREE.Color('#ffffff');
+const BEAM_TAPER = 0.35;   // 光束起点宽 = 终点宽 × 本系数（塔端细、目标端粗）
+// Q3：腐蚀塔不画红线，改为从塔向射程边缘扩散的毒雾波纹
+const CORROSION_RINGS = 3;      // 同时在飞的环数
+const CORROSION_SPEED = 0.45;   // 每秒扩散多少个完整周期
+const CORROSION_COL = new THREE.Color('#7bc96f');   // 与腐蚀效果同色系
+const CORROSION_ALPHA = 0.75;   // 最内圈（刚发出）的不透明度
+const CORROSION_W_PX = 3.5;     // 环宽的屏幕恒定分量（像素）
+const CORROSION_W_K = 0.028;    // 环宽随半径增长的系数
 
 class Batch {
   constructor(scene, maxTri, opts = {}) {
@@ -203,6 +215,62 @@ class Batch {
     this._tri3(ax + nx, ay + ny, az + nz, bx - nx, by - ny, bz - nz, ax - nx, ay - ny, az - nz, col, a);
   }
 
+  /**
+   * 三维【锥形】带子：起点宽 wA、终点宽 wB，alpha 也从 aA 渐变到 aB。
+   * 与 seg3 的区别只在两端可以不等宽 —— 这是"光束由细变粗"的基础图元
+   * （Q1/Q2：子弹拖尾与闪电杖统一成同一种锥形光束语言）。
+   * 宽度方向同样取 叉乘(线方向, 视线方向)，恒定朝向摄像机。
+   */
+  taper3(ax, ay, az, bx, by, bz, wA, wB, col, aA, aB, vx, vy, vz) {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    if (Math.hypot(dx, dy, dz) < 1e-6) return;
+    let nx = dy * vz - dz * vy, ny = dz * vx - dx * vz, nz = dx * vy - dy * vx;
+    const nl = Math.hypot(nx, ny, nz);
+    if (nl < 1e-6) return;
+    const ka = wA * 0.5 / nl, kb = wB * 0.5 / nl;
+    const ax1 = nx * ka, ay1 = ny * ka, az1 = nz * ka;
+    const bx1 = nx * kb, by1 = ny * kb, bz1 = nz * kb;
+    // 两端 alpha 不同 → 不能用 _tri3（它对三个顶点写同一个 alpha），这里逐顶点写。
+    this._triA(ax + ax1, ay + ay1, az + az1, aA,
+               bx + bx1, by + by1, bz + bz1, aB,
+               bx - bx1, by - by1, bz - bz1, aB, col);
+    this._triA(ax + ax1, ay + ay1, az + az1, aA,
+               bx - bx1, by - by1, bz - bz1, aB,
+               ax - ax1, ay - ay1, az - az1, aA, col);
+  }
+
+  /** 逐顶点 alpha 的三角形（taper3 专用；其余路径继续走 _tri3 的统一 alpha 快路径） */
+  _triA(x0, y0, z0, a0, x1, y1, z1, a1, x2, y2, z2, a2, col) {
+    if (this.n >= this.max) return;
+    const p = this.n * 9, q = this.n * 12;
+    const P = this.pos, C = this.col;
+    P[p] = x0; P[p + 1] = y0; P[p + 2] = z0;
+    P[p + 3] = x1; P[p + 4] = y1; P[p + 5] = z1;
+    P[p + 6] = x2; P[p + 7] = y2; P[p + 8] = z2;
+    const r = col.r, g = col.g, b = col.b, A = [a0, a1, a2];
+    for (let i = 0; i < 3; i++) {
+      C[q + i * 4] = r; C[q + i * 4 + 1] = g; C[q + i * 4 + 2] = b; C[q + i * 4 + 3] = A[i];
+    }
+    this.n++;
+  }
+
+  /**
+   * 水平圆环（Q3 腐蚀波纹）：躺在 y=cy 平面上的一圈定宽带子。
+   * 不用 seg3 逐段拼——那样宽度方向取的是"朝向摄像机"，环会拧成麻花；
+   * 这里宽度直接取径向（环躺平在地面上，跟着地面一起透视压缩，读作贴地的雾）。
+   */
+  ring3(cx, cy, cz, r, w, col, a, segs = 36) {
+    const hw = w * 0.5, ri = Math.max(0, r - hw), ro = r + hw;
+    for (let i = 0; i < segs; i++) {
+      const t0 = i / segs * Math.PI * 2, t1 = (i + 1) / segs * Math.PI * 2;
+      const c0 = Math.cos(t0), s0 = Math.sin(t0), c1 = Math.cos(t1), s1 = Math.sin(t1);
+      this._tri3(cx + c0 * ri, cy, cz + s0 * ri, cx + c0 * ro, cy, cz + s0 * ro,
+                 cx + c1 * ro, cy, cz + s1 * ro, col, a);
+      this._tri3(cx + c0 * ri, cy, cz + s0 * ri, cx + c1 * ro, cy, cz + s1 * ro,
+                 cx + c1 * ri, cy, cz + s1 * ri, col, a);
+    }
+  }
+
   /** 三维虚线：与 dashed 同参，只是端点带高度（沿线线性插值） */
   dashed3(ax, ay, az, bx, by, bz, w, col, a, dash, gap, phase, vx, vy, vz) {
     const dx = bx - ax, dy = by - ay, dz = bz - az;
@@ -275,10 +343,26 @@ export class EffectsLayer {
     this._dyn = new Batch(scene, MAX_DYN_TRI, { order: 30 });
     this._quad = new Batch(scene, MAX_QUAD * 2, { order: 31, uv: true, map: this._glowTex });
     this._statMapId = null;
+    this._weaponCache = new WeakMap();   // 塔 → 当前武器技能 id（Q3 腐蚀判定用）
     this._statDirty = true;
   }
 
   markStaticDirty() { this._statDirty = true; }
+
+  /**
+   * 取某座塔当前装备的武器技能 id（没有则 null）。
+   * 每帧对每座塔遍历技能实例是白费——技能实例只在装/卸时变，故按实例数组身份缓存。
+   */
+  _weaponOf(t) {
+    const arr = t._skillInstances;
+    if (!arr) return null;
+    const c = this._weaponCache.get(t);
+    if (c && c.arr === arr && c.len === arr.length) return c.id;
+    let id = null;
+    for (const i of arr) if (i.skillId && i.skillId.startsWith('weapon_')) { id = i.skillId; break; }
+    this._weaponCache.set(t, { arr, len: arr.length, id });
+    return id;
+  }
 
   // ============ D 组：静态参照层（切图重建一次） ============
   _rebuildStatic(mapSystem) {
@@ -354,6 +438,9 @@ export class EffectsLayer {
     const red = rgbOf('#ff3c3c');
     const screenW = (px) => Math.max(0.35, px / (zoom || 1)); // 屏幕恒定 → 世界宽度
     for (const t of entities.getAllTowers(true)) {
+      // ---- Q3 腐蚀型：没有"瞄准某个目标"这回事（它对射程内所有敌人持续叠毒），
+      //      画红线是错的语义。改为从塔脚扩散出去的毒雾波纹，见下面 C3。
+      if (this._weaponOf(t) === 'weapon_corrosion') continue;
       if (!t.targetId) continue;
       if ((window.gameTime || 0) < (t._lockUntil || 0)) continue;
       const tgt = entities.get(t.targetId);
@@ -361,6 +448,28 @@ export class EffectsLayer {
       D.seg3(t.pos.x, MY(t.pos.x, t.pos.y), t.pos.y,
               tgt.pos.x, MY(tgt.pos.x, tgt.pos.y) * 0.6, tgt.pos.y,
               screenW(0.5), red, 0.5, V.vx, V.vy, V.vz);
+    }
+
+    // ---- C3 腐蚀塔毒雾波纹：以塔为心、向射程边缘扩散的同心环 ----
+    // 语义对齐技能本身：腐蚀是"持续对射程内所有敌人叠层"的范围压制，
+    // 所以画的是覆盖范围的脉动，而不是指向某一个目标的线。
+    for (const t of entities.getAllTowers(true)) {
+      if (this._weaponOf(t) !== 'weapon_corrosion') continue;
+      const R = (t.baseStats?.attackRange || 250);
+      const gy = 1.5;                            // 贴着地面一点点，读作铺开的雾
+      for (let i = 0; i < CORROSION_RINGS; i++) {
+        // 每道环独立相位，匀速外扩后在边缘淡出；不依赖 gameTime（墙钟纪律）
+        const ph = ((wallT * CORROSION_SPEED + i / CORROSION_RINGS) % 1);
+        const r = R * (0.12 + ph * 0.88);
+        const a = (1 - ph) * (1 - ph) * CORROSION_ALPHA;   // 越往外越淡
+        if (a < 0.01) continue;
+        // 宽度必须给足：这是腐蚀塔【唯一】的攻击表现（没有红线也没有子弹），
+        // 首版按 1.6 屏幕像素画，全图视角下不到 1px、等于没有（实测取样 0 个绿像素）。
+        // 现在 = 屏幕恒定 3.5px 打底 + 随半径增粗，外圈更像扩散开的雾。
+        const w = screenW(CORROSION_W_PX) + r * CORROSION_W_K;
+        D.ring3(t.pos.x, gy, t.pos.y, r, w * 2.2, CORROSION_COL, a * 0.35, 44);   // 外层柔光
+        D.ring3(t.pos.x, gy, t.pos.y, r, w, CORROSION_COL, a, 44);                // 主环
+      }
     }
     // ---- C2 攻城车攻城红线（略粗，受 LOD 档2 抑制）----
     if (!lodDots) {
@@ -385,10 +494,13 @@ export class EffectsLayer {
         const dashLen = 5 + charge * 20;
         const gap = dashLen * (1 - charge) * 0.9 + (1 - charge) * 3;
         const flowSpeed = 60 + charge * 160;
-        // ① 底层辉光
+        // ① 底层辉光。Q2：与塔弹拖尾统一为【锥形】——塔端细、目标端粗，
+        //    两者因此读起来是同一套"光束"语言，而不是一个虚线一个残影两种东西。
         const sy = MY(b.startX, b.startY), ey = MY(b.endX, b.endY) * 0.6;
-        D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY, lineWidth + 5 + charge * 9, col,
-              fade * (20 + charge * 90) / 255, V.vx, V.vy, V.vz);
+        const gw = lineWidth + 5 + charge * 9;
+        const ga = fade * (20 + charge * 90) / 255;
+        D.taper3(b.startX, sy, b.startY, b.endX, ey, b.endY,
+                 gw * BEAM_TAPER, gw, col, ga * 0.55, ga, V.vx, V.vy, V.vz);
         // ② 主体：gap 随充能收缩，>0.4 时走流动虚线，否则退化为实线（与 2D 同判据）
         if (gap > 0.4) {
           const period = dashLen + gap;
@@ -401,16 +513,17 @@ export class EffectsLayer {
           D.dashed3(b.startX, sy, b.startY, b.endX, ey, b.endY, lineWidth, col, fade,
                     dashLen, gap, ph, V.vx, V.vy, V.vz);
         } else {
-          D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY, lineWidth, col, fade,
-                 V.vx, V.vy, V.vz);
+          D.taper3(b.startX, sy, b.startY, b.endX, ey, b.endY,
+                   lineWidth * BEAM_TAPER, lineWidth, col, fade * 0.8, fade, V.vx, V.vy, V.vz);
         }
-        // ③ 白热核：alpha 随充能二次曲线淡入，宽度带脉冲
+        // ③ 白热核：alpha 随充能二次曲线淡入，宽度带脉冲（同样锥形）
         const coreA = charge * charge;
         if (coreA > 0.02) {
           const pulse = 1 + Math.sin(wallT * 10) * 0.15 * charge;
-          D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY,
-                Math.max(0.8, lineWidth * 0.35) * pulse, rgbOf('#ffffff'), fade * coreA,
-                V.vx, V.vy, V.vz);
+          const cw = Math.max(0.8, lineWidth * 0.35) * pulse;
+          D.taper3(b.startX, sy, b.startY, b.endX, ey, b.endY,
+                   cw * BEAM_TAPER, cw, WHITE, fade * coreA * 0.7, fade * coreA,
+                   V.vx, V.vy, V.vz);
         }
       }
     }
@@ -480,15 +593,34 @@ export class EffectsLayer {
           dcol = this._heatCol.copy(col).lerp(HEAT_HOT, heat * 0.75);
         }
         if (isTower) {
+          // ---- Q1/Q2：拖尾改为【锥形光束】，且沿真实三维弹道 ----
+          // Q1 的"拖尾是水平的"根因：旧实现把 4 片残影全放在同一个高度 by 上，
+          // 只沿 XZ 往回退 —— 而弹道是从炮口斜射向目标的，于是尾巴与红线分家。
+          // 现在残影位置沿【同一条三维插值路径】回退（高度一起回退），尾巴自然贴着弹道。
+          // Q2：形态与闪电杖统一为"辉光 + 主体 + 白芯"的三层锥形光束，尾细头粗。
           const dx = x - p.startX, dy2 = y - p.startY;
           const d = Math.hypot(dx, dy2);
           if (d > 1) {
             const ux = dx / d, uy2 = dy2 / d;
-            for (let k = 1; k <= 4; k++) {          // 沿来向铺 4 片递减的残影（升温更亮）
-              const back = k * hsz * 0.42;
-              Q.sprite3(x - ux * back, by, y - uy2 * back,
-                        hsz * (1 - k * 0.17), dcol, (0.5 - k * 0.1) * (1 + heat * 0.6), V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
+            const tail = Math.min(d, hsz * TRAIL_LEN);       // 尾巴长度（不超过已飞行距离）
+            const tx = x - ux * tail, tz = y - uy2 * tail;
+            // 尾端高度：用与弹头相同的插值规则求出该处的路径高度（关键——别再用 by）
+            let ty = by;
+            if (tgtE?.pos) {
+              const tot = Math.hypot(tgtE.pos.x - p.startX, tgtE.pos.y - p.startY) || 1;
+              const doneT = Math.min(1, Math.max(0, Math.hypot(tx - p.startX, tz - p.startY) / tot));
+              ty = my + (MY(tgtE.pos.x, tgtE.pos.y) * 0.6 - my) * doneT;
             }
+            const wHead = hsz * (0.30 + heat * 0.14);
+            const gA = (0.05 + heat * 0.06), gB = (0.30 + heat * 0.22);
+            // ① 辉光（最宽、最淡）
+            D.taper3(tx, ty, tz, x, by, y, wHead * 0.6 * TRAIL_GLOW, wHead * TRAIL_GLOW,
+                     dcol, 0, gA + gB, V.vx, V.vy, V.vz);
+            // ② 主体
+            D.taper3(tx, ty, tz, x, by, y, wHead * 0.18, wHead, dcol, 0, 0.85, V.vx, V.vy, V.vz);
+            // ③ 白芯
+            D.taper3(tx, ty, tz, x, by, y, wHead * 0.06, wHead * 0.34, WHITE, 0, 0.9 * (0.6 + heat * 0.4),
+                     V.vx, V.vy, V.vz);
           }
           if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.7 + heat * 0.8), dcol, 0.10 + heat * 0.16, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕
         }

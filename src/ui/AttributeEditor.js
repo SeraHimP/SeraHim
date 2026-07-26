@@ -337,7 +337,7 @@ export const AttributeEditor = {
         this._tplState.tab = tabName;
         const content = overlay.querySelector('#templateContent');
         if (tabName === 'weapon') {
-          content.innerHTML = this._renderTemplateWeaponContent(type);
+          content.innerHTML = this._renderTemplateWeaponContent(type, this._tplState.tier);
           this._bindTemplateWeaponEvents(overlay, type, logFn);
         } else if (tabName === 'skill') {
           content.innerHTML = this._renderTemplateSkillContent(type, this._tplState.tier);
@@ -406,16 +406,32 @@ export const AttributeEditor = {
     });
   },
 
-  // 模板"武器"tab：设置该模板新建单位默认装备的武器
-  _renderTemplateWeaponContent(type) {
+  // 模板"武器"tab：设置该模板新建单位默认装备的武器。
+  // Q4：防御塔按【层级】存 —— 编辑器原先写 CONFIG.templates.tower._templateWeapon，
+  // 而对战建筑是 createBuilding 生成的、只读地图字段，所以"改了武器不生效"。
+  // 现在写 CONFIG.towerTierWeapon[tier]，与 createBuilding 读的是同一处。
+  _tierWeaponOf(tier) {
+    CONFIG.towerTierWeapon = CONFIG.towerTierWeapon || {};
+    if (CONFIG.towerTierWeapon[tier] !== undefined) return CONFIG.towerTierWeapon[tier];
+    // 未设过：显示该层级在当前地图上的实际武器（水晶类默认无武器）
+    const map = window.CTX?.__app?.mapSystem?.currentMap;
+    const b = (map?.buildings || []).find(x => x.tier === tier);
+    if (tier === 'nexus_lane' || tier === 'nexus_main') return 'none';
+    return b?.weapon || 'piercing';
+  },
+
+  _renderTemplateWeaponContent(type, tier) {
+    const isTower = this._categoryOfType(type) === 'tower';
     const tpl = CONFIG.templates[type];
-    const current = tpl._templateWeapon || 'piercing'; // v33：默认穿透型
+    const current = isTower ? this._tierWeaponOf(tier) : (tpl._templateWeapon || 'piercing');
     const weaponMeta = {
       none: { label: '无武器', icon: '🚫' }, piercing: { label: '穿透型', icon: '🔷' },
       lightning: { label: '闪电杖', icon: '⚡' }, explosive: { label: '爆炸型', icon: '💥' },
       sniper: { label: '狙击型', icon: '🎯' }, corrosion: { label: '腐蚀型', icon: '🌿' },
     };
-    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的防御塔默认装备该武器</p><div class="pick-grid">`;
+    const who = isTower ? this._tierLabel(tier) : (this._TPL_LABELS[type] || type);
+    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的${who}默认装备该武器`
+      + (isTower ? `（所有建筑都能装武器；召唤水晶/水晶枢纽默认无武器，装上即可开火）` : '') + `</p><div class="pick-grid">`;
     for (const [key, meta] of Object.entries(weaponMeta)) {
       const active = key === current;
       html += `<div class="pick-card ${active ? 'selected' : ''}" data-tplweapon="${key}">
@@ -446,9 +462,66 @@ export const AttributeEditor = {
 
   _applyTemplateWeaponChanges(overlay, type, logFn) {
     const selected = overlay.querySelector('[data-tplweapon].selected');
-    const tpl = CONFIG.templates[type];
-    tpl._templateWeapon = selected ? selected.dataset.tplweapon : 'piercing';
-    logFn(`✅ ${this._TPL_LABELS[type]}默认武器已设为 ${selected?.dataset.tplweapon || 'piercing'}`, 'spawn');
+    const key = selected ? selected.dataset.tplweapon : 'piercing';
+    const isTower = this._categoryOfType(type) === 'tower';
+    const tier = this._tplState?.tier || 'outer';
+    const apply = this._applyScope || 'both';
+
+    let tplMsg = '', fieldMsg = '';
+    if (apply !== 'field') {
+      if (isTower) {
+        CONFIG.towerTierWeapon = CONFIG.towerTierWeapon || {};
+        CONFIG.towerTierWeapon[tier] = key;
+        tplMsg = `模板：${this._tierLabel(tier)} → ${key}`;
+      } else {
+        CONFIG.templates[type]._templateWeapon = key;
+        tplMsg = `模板：${this._TPL_LABELS[type] || type} → ${key}`;
+      }
+    }
+    if (apply !== 'template') {
+      fieldMsg = `场上：换装 ${this._applyToFieldWeapon({ isTower, tier, type, key })} 个单位`;
+    }
+    logFn(`✅ 武器已应用　${[tplMsg, fieldMsg].filter(Boolean).join('　｜　')}`, 'spawn');
+  },
+
+  // 给场上已有单位换武器：卸掉旧的 weapon_*，装上新的（'none' 则只卸不装）。
+  // 与被动那边同口径 —— 只动武器槽，身份技能/被动/龙魂一律保留。
+  _applyToFieldWeapon({ isTower, tier, type, key }) {
+    const app = window.CTX?.__app || window.__app;
+    const ec = app?.entityContainer;
+    if (!ec || !ec.getAll) return 0;
+    const ctx = {
+      entityContainer: ec, effectRegistry: app?.effectRegistry, eventBus: app?.eventBus,
+      waveNumber: window.CTX?.waveNumber || 0, attrCalc: app?.attrCalc,
+    };
+    const tplTower = CONFIG.templates.tower;
+    let hit = 0;
+    for (const e of ec.getAll()) {
+      if (!e || !e.alive || !Array.isArray(e._skillInstances)) continue;
+      if (isTower) {
+        if (e.type !== 'tower' || (e._mapTier || 'outer') !== tier) continue;
+      } else if (e.type !== type) continue;
+      if (this._factionScope !== 'shared' && (e._mapFaction || e.faction) !== this._factionScope) continue;
+
+      for (const inst of e._skillInstances) {
+        if (!inst.skillId?.startsWith('weapon_')) continue;
+        const d = SkillLibrary[inst.skillId];
+        if (d?.onUnequip) d.onUnequip(e.id, inst, ctx);
+      }
+      e._skillInstances = e._skillInstances.filter(i => !i.skillId?.startsWith('weapon_'));
+      if (key && key !== 'none') {
+        const inst = { id: ++(window.CTX._uid), skillId: 'weapon_' + key, state: {} };
+        e._skillInstances.push(inst);
+        const d = SkillLibrary['weapon_' + key];
+        if (d?.onEquip) d.onEquip(e.id, inst, ctx);
+        // 同 createBuilding：水晶类攻击力/攻速为 0 时回落到塔模板，否则装了也打不出来
+        if (!(e.baseStats.attackDamage > 0)) e.baseStats.attackDamage = tplTower.attackDamage;
+        if (!(e.baseStats.baseAttackSpeed > 0)) e.baseStats.baseAttackSpeed = tplTower.baseAttackSpeed;
+      }
+      e.attackCooldown = 0; e.targetId = null;
+      hit++;
+    }
+    return hit;
   },
 
   // 模板"龙魂"tab：设置该模板（塔）新建单位默认装备的龙魂
