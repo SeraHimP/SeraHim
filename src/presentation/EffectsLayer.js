@@ -83,9 +83,11 @@ const TRAIL_W_HEAT = 0.05; // 升温对尾巴宽度的加成（Q2：从 0.14 压
 const TRAIL_FADE = 0.13;   // 子弹消失后尾迹余烬的淡出时长（秒）
 const WHITE = new THREE.Color('#ffffff');
 // Q1：闪电杖光束宽度只由充能驱动（细 → 粗），不再有虚线形态。
-const BEAM_W_MIN = 1.2;    // 零充能时的主体宽度
-const BEAM_W_MAX = 7.5;    // 满充能时的主体宽度
-const BEAM_GLOW_K = 3.2;   // 辉光层相对主体的宽度倍率
+// 主体与辉光走软边（两侧渐变透明），所以宽度可以给得比硬边时代大一些也不会显笨。
+const BEAM_W_MIN = 1.6;    // 零充能时的主体宽度
+const BEAM_W_MAX = 9.0;    // 满充能时的主体宽度
+const BEAM_GLOW_K = 3.0;   // 辉光层相对主体的宽度倍率
+const BEAM_CORE_K = 0.16;  // 白芯相对主体的宽度比（细才好看，实心不刺眼）
 // Q3：腐蚀塔不画红线，改为从塔向射程边缘扩散的毒雾波纹
 const CORROSION_RINGS = 3;      // 同时在飞的环数
 const CORROSION_SPEED = 0.45;   // 每秒扩散多少个完整周期
@@ -258,6 +260,30 @@ class Batch {
       C[q + i * 4] = r; C[q + i * 4 + 1] = g; C[q + i * 4 + 2] = b; C[q + i * 4 + 3] = A[i];
     }
     this.n++;
+  }
+
+  /**
+   * 【软边】三维带子：横截面上中线不透明、两侧线性渐变到全透明。
+   *
+   * seg3 画出来是一条硬边实带 —— 宽度一大就是一条死板的方条（用户："那个宽带太丑了"）。
+   * 光束本该是中间亮、边缘化开的。这里把带子拆成左右两片，
+   * 中线顶点 alpha = aMid、外沿顶点 alpha = 0，靠顶点色插值出横向渐变。
+   * 代价是 4 个三角形（seg3 是 2 个），换来的是"光"而不是"条"。
+   */
+  softSeg3(ax, ay, az, bx, by, bz, w, col, aMid, vx, vy, vz) {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    if (Math.hypot(dx, dy, dz) < 1e-6 || aMid <= 0.001) return;
+    let nx = dy * vz - dz * vy, ny = dz * vx - dx * vz, nz = dx * vy - dy * vx;
+    const nl = Math.hypot(nx, ny, nz);
+    if (nl < 1e-6) return;
+    const k = w * 0.5 / nl;
+    nx *= k; ny *= k; nz *= k;
+    // +n 侧：中线(aMid) → 外沿(0)
+    this._triA(ax, ay, az, aMid, bx, by, bz, aMid, bx + nx, by + ny, bz + nz, 0, col);
+    this._triA(ax, ay, az, aMid, bx + nx, by + ny, bz + nz, 0, ax + nx, ay + ny, az + nz, 0, col);
+    // -n 侧：同上镜像
+    this._triA(ax, ay, az, aMid, bx, by, bz, aMid, bx - nx, by - ny, bz - nz, 0, col);
+    this._triA(ax, ay, az, aMid, bx - nx, by - ny, bz - nz, 0, ax - nx, ay - ny, az - nz, 0, col);
   }
 
   /**
@@ -522,11 +548,16 @@ export class EffectsLayer {
         const w = BEAM_W_MIN + k * (BEAM_W_MAX - BEAM_W_MIN);
         // 轻微呼吸：只改宽度不改亮度，避免整束光一闪一闪
         const breathe = 1 + Math.sin(wallT * 6) * 0.06 * charge;
-        const seg = (width, color, alpha) =>
-          D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY, width, color, alpha, V.vx, V.vy, V.vz);
-        seg(w * BEAM_GLOW_K * breathe, col, fade * (0.10 + charge * 0.26));  // ① 辉光
-        seg(w * breathe, col, fade * (0.55 + charge * 0.40));                // ② 主体
-        seg(Math.max(0.7, w * 0.30) * breathe, WHITE, fade * (0.25 + charge * 0.70)); // ③ 白芯
+        // 满充能时那条"宽实带"很难看，因为硬边实心矩形读起来是条子不是光。
+        // 外面两层改用软边带（中线不透明、两侧渐变到全透），只有最细的白芯保持实心：
+        // 细到几个像素时实心反而是需要的"芯"，不会显得死板。
+        const soft = (width, color, alpha) =>
+          D.softSeg3(b.startX, sy, b.startY, b.endX, ey, b.endY, width, color, alpha, V.vx, V.vy, V.vz);
+        soft(w * BEAM_GLOW_K * breathe, col, fade * (0.14 + charge * 0.30));  // ① 外层辉光
+        soft(w * breathe, col, fade * (0.55 + charge * 0.40));                // ② 主体
+        D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY,                    // ③ 白芯（细，实心）
+               Math.max(0.6, w * BEAM_CORE_K) * breathe, WHITE,
+               fade * (0.30 + charge * 0.60), V.vx, V.vy, V.vz);
       }
     }
 
