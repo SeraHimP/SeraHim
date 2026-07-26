@@ -40,18 +40,24 @@ const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
 const _EMPTY_GEO = new THREE.BufferGeometry();  // Mesh 首帧占位，随即被 _visualOf 的共享几何替换
 // Q3：程序化塔/水晶的视觉放大系数（纯表现；不动 CONFIG.buildingSizes，故 GLB/碰撞/玩法都不受影响）。
-const TOWER_VIZ = { tower: 1.25, orb: 1.10, gem: 1.10 };
-const towerVizScale = (tier) => (tier === 'nexus_lane' || tier === 'nexus_main') ? 1.10 : 1.25;
+// Q4：系数搬到 CONFIG.towerVizScale，与 LaneMovementSystem 的避障半径同源 ——
+// 两边各写一份就会出现"画得比挡得大"，那正是废墟穿模的成因。
+const _VZ = () => CONFIG.towerVizScale || {};
+const TOWER_VIZ = {
+  get tower() { return _VZ().default ?? 1.25; },
+  get orb() { return _VZ().nexus_lane ?? 1.10; },
+  get gem() { return _VZ().nexus_main ?? 1.10; },
+};
+const towerVizScale = (tier) => _VZ()[tier] ?? _VZ().default ?? 1.25;
 // Q6：水晶慢转角速度(rad/s)与攻击辉光参数（自发光基准/峰值/衰减速率）。
 const CRYSTAL_SPIN = 0.6, CRYSTAL_EMI_BASE = 0.7, CRYSTAL_EMI_PEAK = 1.6, CRYSTAL_GLOW_DECAY = 2.6;
 const CRYSTAL_PT_MAX_PX = 9;   // 粒子屏幕尺寸上限（像素），近距离不至于过大
-// Q5：小水晶蓄力→释放（类 LoL 塔）。全部是渲染侧派生量，逻辑层不提供也不需要知道。
+// Q3：小水晶随【充能】变亮（仅穿透型/闪电杖）。全部是渲染侧派生量，逻辑层零改动。
+// 用户定稿：不要涨大、不要开火弹跳；闪电杖读武器实例的持续充能，穿透型按冷却反推。
 const CRYSTAL_CHARGE_POW = 2.6;    // 蓄力曲线指数：越大越集中在临射前才亮起来
 const CRYSTAL_CHARGE_GAIN = 1.1;   // 蓄力对自发光的最大增量
-const CRYSTAL_CHARGE_SCALE = 0.16; // 蓄满时水晶胀大比例
-const CRYSTAL_FIRE_POP = 0.22;     // 开火瞬间的额外弹跳
-const CRYSTAL_PT_PULL = 0.45;      // 蓄力时粒子向内收拢的比例
-const CRYSTAL_PT_BURST = 0.6;      // 开火瞬间粒子外弹的比例
+const CRYSTAL_RISE = 6.0;          // 充能亮度的上升速率（每秒），跟得上充能即可
+const CRYSTAL_FADE = 1.6;          // 失去目标后亮度滑回基准的速率（每秒）——过渡不突兀
 const CRYSTAL_WINDUP = 0.3;        // 锁定前摇时长（与 CONFIG.tuning.lockOnWindup 同值）
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
@@ -83,6 +89,19 @@ export class UnitLayer {
   // ============ 单位外观（key + 贴图）：与 CanvasRenderer 渲染循环同口径 ============
   // 返回 { key, sp, size, barW, barH, barD, alpha, pulse }
   //   key 变（换武器/换阵营/改模型大小/水晶转幽灵）→ 换贴图；size = 精灵世界边长。
+  /** 取塔当前武器技能 id（按技能实例数组身份缓存，不必每帧遍历） */
+  _weaponIdOf(e) {
+    const arr = e._skillInstances;
+    if (!arr) return null;
+    this._wCache = this._wCache || new WeakMap();
+    const c = this._wCache.get(e);
+    if (c && c.arr === arr && c.len === arr.length) return c.id;
+    let id = null;
+    for (const i of arr) if (i.skillId && i.skillId.startsWith('weapon_')) { id = i.skillId; break; }
+    this._wCache.set(e, { arr, len: arr.length, id });
+    return id;
+  }
+
   _visualOf(e, ghost, ruin) {
     if (e.type === 'tower') {
       const bSizes = CONFIG.buildingSizes || {};
@@ -559,40 +578,45 @@ export class UnitLayer {
           en.crystalPts.material.size = Math.max(1, Math.min(CRYSTAL_PT_MAX_PX, px));
         }
       }
-      // ---- Q5：蓄力 → 释放（类 LoL 塔）----
-      // 蓄力度 charge = 距离下一次开火的接近程度（0 刚开完火，1 马上要开）。
-      // 由 attackCooldown 反推：冷却跳增的那一帧记下它的峰值当作本轮周期，
-      // 之后 charge = 1 - cd/周期。锁定前摇（_lockUntil）期间也算蓄力，
-      // 于是"换目标 → 蓄力 → 开火"整段都有能量聚拢感。纯渲染，逻辑层零改动。
-      const cd = e.attackCooldown || 0;
-      const fired = cd > (en._lastCd || 0) + 0.05;       // 冷却值跳增 = 刚开了一炮
-      if (fired) { en._cdMax = cd; en._glow = 1; }
-      en._lastCd = cd;
+      // ---- Q3：水晶随「充能」变亮（只有穿透型 / 闪电杖两种武器有这个表现）----
+      // 上一版做成了"蓄力涨大 + 粒子收拢 + 开火弹跳"，两处不对：
+      //   ① 用户明确不要涨大（scale 已去掉，水晶恒定 1）；
+      //   ② 那套是"攒一发打出去"的语义，只对【发射子弹】的武器成立。
+      //      闪电杖是持续照射，没有"一炮"可言，套上去就不对味。
+      // 现在按武器分两条来源，最终都只驱动【自发光亮度】这一个量：
+      //   · 闪电杖  → 直接读武器实例的充能 state.charge（0→1 持续攒），照射期间越来越亮
+      //   · 穿透型  → 由 attackCooldown 反推距离下一发的接近度（临射前亮起来）
+      //   · 其它武器 → 不参与，保持基准亮度
+      // 失去目标时不瞬间归零，而是按 CRYSTAL_FADE 速率平滑滑回基准（用户要求的过渡）。
       const gdt = Math.max(0, Math.min(0.1, tNow - (en._glowT || tNow))); en._glowT = tNow;
-      en._glow = Math.max(0, (en._glow || 0) - gdt * CRYSTAL_GLOW_DECAY);
+      const cd = e.attackCooldown || 0;
+      if (cd > (en._lastCd || 0) + 0.05) en._cdMax = cd;   // 冷却跳增 = 刚开了一炮，记下本轮周期
+      en._lastCd = cd;
 
-      let charge = 0;
-      if (e.targetId) {                                   // 没目标就不蓄力（待机不发光）
-        const period = en._cdMax || 0;
-        charge = period > 0.05 ? 1 - Math.max(0, Math.min(1, cd / period)) : 1;
-        const lockLeft = (e._lockUntil || 0) - (window.gameTime || 0);
-        if (lockLeft > 0) charge = Math.min(charge, 1 - Math.min(1, lockLeft / CRYSTAL_WINDUP));
-        charge = Math.max(0, charge);
+      const wid = this._weaponIdOf(e);
+      let target = 0;                                      // 本帧"应该"达到的充能亮度 0..1
+      if (e.targetId) {
+        if (wid === 'weapon_lightning') {
+          const inst = (e._skillInstances || []).find(i => i.skillId === 'weapon_lightning');
+          target = Math.max(0, Math.min(1, inst?.state?.charge || 0));
+        } else if (wid === 'weapon_piercing') {
+          const period = en._cdMax || 0;
+          target = period > 0.05 ? 1 - Math.max(0, Math.min(1, cd / period)) : 1;
+          const lockLeft = (e._lockUntil || 0) - (window.gameTime || 0);
+          if (lockLeft > 0) target = Math.min(target, 1 - Math.min(1, lockLeft / CRYSTAL_WINDUP));
+          target = Math.max(0, target);
+        }
       }
-      en._charge = charge;
-      // 蓄力用 pow 提到后段才明显（前半段几乎不亮 → 临射前迅速攒起来），
-      // 开火瞬间由 _glow 顶到峰值，随后衰减 —— 一收一放。
-      const chargeE = Math.pow(charge, CRYSTAL_CHARGE_POW) * CRYSTAL_CHARGE_GAIN;
-      en.crystal.material.emissiveIntensity =
-        CRYSTAL_EMI_BASE + chargeE + en._glow * (CRYSTAL_EMI_PEAK - CRYSTAL_EMI_BASE);
-      // 水晶本体随蓄力微微胀大，开火瞬间弹一下（scale 是最省的"体积感"）
-      const sc = 1 + chargeE * CRYSTAL_CHARGE_SCALE + en._glow * CRYSTAL_FIRE_POP;
-      en.crystal.scale.setScalar(sc);
-      // 粒子：蓄力时向水晶收拢（半径变小）+ 变亮，开火后弹开
+      // 单向平滑：上升可以快（跟得上充能），回落走固定速率 → 切目标/脱战是"暗下去"而不是"啪一下灭"
+      const cur = en._charge || 0;
+      en._charge = target > cur
+        ? Math.min(target, cur + gdt * CRYSTAL_RISE)
+        : Math.max(target, cur - gdt * CRYSTAL_FADE);
+      const chargeE = Math.pow(en._charge, CRYSTAL_CHARGE_POW) * CRYSTAL_CHARGE_GAIN;
+      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE;
+      // 粒子随充能变亮（不再收拢/外弹——那也是"攒一发"的语义）
       if (en.crystalPts && this.particlesOn) {
-        const pull = 1 - chargeE * CRYSTAL_PT_PULL + en._glow * CRYSTAL_PT_BURST;
-        en.crystalPts.scale.setScalar(Math.max(0.2, pull));
-        en.crystalPts.material.opacity = Math.max(0, Math.min(1, 0.45 + chargeE * 0.5 + en._glow * 0.4));
+        en.crystalPts.material.opacity = Math.max(0, Math.min(1, 0.45 + chargeE * 0.45));
       }
     }
 

@@ -76,10 +76,16 @@ const HEAT_HOT = new THREE.Color('#ffcf6a');
 
 const GROUND_LIFT = 0.6;   // 贴地特效离地高度（世界单位）
 // Q1/Q2：塔弹拖尾 = 锥形光束（尾细头粗 + 辉光 + 白芯），与闪电杖同一套视觉语言。
-const TRAIL_LEN = 3.2;     // 尾巴长度 = 弹丸尺寸 × 本系数
-const TRAIL_GLOW = 2.6;    // 辉光层相对主体的宽度倍率
+const TRAIL_LEN = 2.2;     // 尾巴长度 = 弹丸尺寸 × 本系数（Q2：3.2→2.2，收敛）
+const TRAIL_GLOW = 2.0;    // 辉光层相对主体的宽度倍率（Q2：2.6→2.0）
+const TRAIL_W = 0.22;      // 尾巴头部宽度 = 弹丸尺寸 × 本系数
+const TRAIL_W_HEAT = 0.05; // 升温对尾巴宽度的加成（Q2：从 0.14 压到 0.05）
+const TRAIL_FADE = 0.13;   // 子弹消失后尾迹余烬的淡出时长（秒）
 const WHITE = new THREE.Color('#ffffff');
-const BEAM_TAPER = 0.35;   // 光束起点宽 = 终点宽 × 本系数（塔端细、目标端粗）
+// Q1：闪电杖光束宽度只由充能驱动（细 → 粗），不再有虚线形态。
+const BEAM_W_MIN = 1.2;    // 零充能时的主体宽度
+const BEAM_W_MAX = 7.5;    // 满充能时的主体宽度
+const BEAM_GLOW_K = 3.2;   // 辉光层相对主体的宽度倍率
 // Q3：腐蚀塔不画红线，改为从塔向射程边缘扩散的毒雾波纹
 const CORROSION_RINGS = 3;      // 同时在飞的环数
 const CORROSION_SPEED = 0.45;   // 每秒扩散多少个完整周期
@@ -344,10 +350,27 @@ export class EffectsLayer {
     this._quad = new Batch(scene, MAX_QUAD * 2, { order: 31, uv: true, map: this._glowTex });
     this._statMapId = null;
     this._weaponCache = new WeakMap();   // 塔 → 当前武器技能 id（Q3 腐蚀判定用）
+    this._seen = new Map();             // 子弹 → 上一帧尾迹快照（Q2 余烬用）
+    this._fading = [];                  // 正在淡出的尾迹余烬
     this._statDirty = true;
   }
 
   markStaticDirty() { this._statDirty = true; }
+
+  /**
+   * 塔弹拖尾：辉光 / 主体 / 白芯 三层锥形带（尾细头粗），沿真实三维弹道。
+   * k = 整体不透明度系数（命中后的残影靠它淡出）。
+   */
+  _trail(D, V, tx, ty, tz, x, by, y, hsz, heat, col, k) {
+    if (k <= 0.01) return;
+    // Q2：升温对拖尾的加成大幅收敛 —— 只留一点点，避免满升温时尾巴又粗又亮抢戏
+    const wHead = hsz * (TRAIL_W + heat * TRAIL_W_HEAT);
+    D.taper3(tx, ty, tz, x, by, y, wHead * 0.6 * TRAIL_GLOW, wHead * TRAIL_GLOW,
+             col, 0, (0.16 + heat * 0.08) * k, V.vx, V.vy, V.vz);
+    D.taper3(tx, ty, tz, x, by, y, wHead * 0.18, wHead, col, 0, 0.62 * k, V.vx, V.vy, V.vz);
+    D.taper3(tx, ty, tz, x, by, y, wHead * 0.06, wHead * 0.30, WHITE, 0,
+             0.70 * (0.7 + heat * 0.3) * k, V.vx, V.vy, V.vz);
+  }
 
   /**
    * 取某座塔当前装备的武器技能 id（没有则 null）。
@@ -483,48 +506,27 @@ export class EffectsLayer {
       }
     }
 
-    // ---- B2 闪电杖光束：辉光 + 流动虚线主体 + 白热核（充能连续过渡）----
+    // ---- B2 闪电杖光束（Q1 推翻重做）----
+    // 旧版是"流动虚线 + 实线 + 白核"三种形态混在一起，读起来是一串跑动的短横，
+    // 不是一束光。用户定稿：**一开始细、随充能变粗，配辉光**，去掉一切虚线。
+    // 现在整束光只有三层同心实带：辉光 / 主体 / 白芯，宽度都由 charge 单调驱动。
     if (projectiles?.getBeams) {
       for (const b of projectiles.getBeams()) {
         const charge = Math.max(0, Math.min(1, b.charge || 0));
-        const lineWidth = 1.5 + charge * 3.5;
         const fade = (b.fadeT !== undefined && b.fadeMax) ? Math.max(0, b.fadeT / b.fadeMax) : 1;
         if (fade <= 0) continue;
         const col = rgbOf(b.color || '#f1c40f');
-        const dashLen = 5 + charge * 20;
-        const gap = dashLen * (1 - charge) * 0.9 + (1 - charge) * 3;
-        const flowSpeed = 60 + charge * 160;
-        // ① 底层辉光。Q2：与塔弹拖尾统一为【锥形】——塔端细、目标端粗，
-        //    两者因此读起来是同一套"光束"语言，而不是一个虚线一个残影两种东西。
         const sy = MY(b.startX, b.startY), ey = MY(b.endX, b.endY) * 0.6;
-        const gw = lineWidth + 5 + charge * 9;
-        const ga = fade * (20 + charge * 90) / 255;
-        D.taper3(b.startX, sy, b.startY, b.endX, ey, b.endY,
-                 gw * BEAM_TAPER, gw, col, ga * 0.55, ga, V.vx, V.vy, V.vz);
-        // ② 主体：gap 随充能收缩，>0.4 时走流动虚线，否则退化为实线（与 2D 同判据）
-        if (gap > 0.4) {
-          const period = dashLen + gap;
-          let ph = this._beamPhase.get(b) || 0;
-          ph = (ph + flowSpeed * dtWall) % period;   // 积分推进：速度变只改速率，不改位置
-          this._beamPhase.set(b, ph);
-          // 相位取【正】：本实现里 t 从 phase 起步递增摆放虚线，phase 增大 ⇒ 虚线向终点推进。
-          // 首版照搬了 2D 的 `-offset`，但 canvas 的 lineDashOffset 与此处的符号语义相反
-          // （前者递减才前进），于是流向整个反了：实测虚线由目标流回塔。
-          D.dashed3(b.startX, sy, b.startY, b.endX, ey, b.endY, lineWidth, col, fade,
-                    dashLen, gap, ph, V.vx, V.vy, V.vz);
-        } else {
-          D.taper3(b.startX, sy, b.startY, b.endX, ey, b.endY,
-                   lineWidth * BEAM_TAPER, lineWidth, col, fade * 0.8, fade, V.vx, V.vy, V.vz);
-        }
-        // ③ 白热核：alpha 随充能二次曲线淡入，宽度带脉冲（同样锥形）
-        const coreA = charge * charge;
-        if (coreA > 0.02) {
-          const pulse = 1 + Math.sin(wallT * 10) * 0.15 * charge;
-          const cw = Math.max(0.8, lineWidth * 0.35) * pulse;
-          D.taper3(b.startX, sy, b.startY, b.endX, ey, b.endY,
-                   cw * BEAM_TAPER, cw, WHITE, fade * coreA * 0.7, fade * coreA,
-                   V.vx, V.vy, V.vz);
-        }
+        // 宽度：细 → 粗。charge 走一点点缓入，让"越充越粗"的手感集中在后半段。
+        const k = charge * charge * (3 - 2 * charge);          // smoothstep
+        const w = BEAM_W_MIN + k * (BEAM_W_MAX - BEAM_W_MIN);
+        // 轻微呼吸：只改宽度不改亮度，避免整束光一闪一闪
+        const breathe = 1 + Math.sin(wallT * 6) * 0.06 * charge;
+        const seg = (width, color, alpha) =>
+          D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY, width, color, alpha, V.vx, V.vy, V.vz);
+        seg(w * BEAM_GLOW_K * breathe, col, fade * (0.10 + charge * 0.26));  // ① 辉光
+        seg(w * breathe, col, fade * (0.55 + charge * 0.40));                // ② 主体
+        seg(Math.max(0.7, w * 0.30) * breathe, WHITE, fade * (0.25 + charge * 0.70)); // ③ 白芯
       }
     }
 
@@ -559,6 +561,10 @@ export class EffectsLayer {
     }
 
     // ---- B1 子弹：光晕四边形（贴图）+ 核心亮点 ----
+    // Q2：本帧还活着的塔弹尾迹收集在 live 里，帧末与上一帧对比，
+    // 消失的那些转入 _fading 做淡出——命中不再是"一整条尾巴瞬间没了"。
+    this._fxFrame = (this._fxFrame || 0) + 1;
+    const live = [];
     if (projectiles?.getProjectiles) {
       for (const p of projectiles.getProjectiles()) {
         const x = p.currentX !== undefined ? p.currentX : p.startX;
@@ -586,18 +592,17 @@ export class EffectsLayer {
         // 橙白偏、拖尾更亮、外加一层热晕、白芯更粗（参照闪电杖 charge 的做法）。heat=0 与原塔弹一致。
         const isTower = gsz >= 16;
         const heat = isTower ? Math.max(0, Math.min(1, p.heat || 0)) : 0;
-        const hsz = gsz * (1 + heat * 0.55);
+        const hsz = gsz * (1 + heat * 0.22);   // Q2：升温放大 0.55 → 0.22，别那么张扬
         let dcol = col;
         if (heat > 0.01) {
           this._heatCol = this._heatCol || new THREE.Color();
           dcol = this._heatCol.copy(col).lerp(HEAT_HOT, heat * 0.75);
         }
         if (isTower) {
-          // ---- Q1/Q2：拖尾改为【锥形光束】，且沿真实三维弹道 ----
-          // Q1 的"拖尾是水平的"根因：旧实现把 4 片残影全放在同一个高度 by 上，
-          // 只沿 XZ 往回退 —— 而弹道是从炮口斜射向目标的，于是尾巴与红线分家。
-          // 现在残影位置沿【同一条三维插值路径】回退（高度一起回退），尾巴自然贴着弹道。
-          // Q2：形态与闪电杖统一为"辉光 + 主体 + 白芯"的三层锥形光束，尾细头粗。
+          // ---- Q1：拖尾沿真实三维弹道（旧版把残影全放在同一高度、只沿 XZ 回退，
+          //      而弹道是斜的，于是尾巴与红线分家 = 用户看到的"拖尾是水平的"）。
+          // ---- Q2：收敛张扬度。升温对拖尾的加成从"越热越粗越亮"压到几乎只改颜色，
+          //      尾巴也缩短：之前满升温时尾巴又长又亮，喧宾夺主。
           const dx = x - p.startX, dy2 = y - p.startY;
           const d = Math.hypot(dx, dy2);
           if (d > 1) {
@@ -611,23 +616,40 @@ export class EffectsLayer {
               const doneT = Math.min(1, Math.max(0, Math.hypot(tx - p.startX, tz - p.startY) / tot));
               ty = my + (MY(tgtE.pos.x, tgtE.pos.y) * 0.6 - my) * doneT;
             }
-            const wHead = hsz * (0.30 + heat * 0.14);
-            const gA = (0.05 + heat * 0.06), gB = (0.30 + heat * 0.22);
-            // ① 辉光（最宽、最淡）
-            D.taper3(tx, ty, tz, x, by, y, wHead * 0.6 * TRAIL_GLOW, wHead * TRAIL_GLOW,
-                     dcol, 0, gA + gB, V.vx, V.vy, V.vz);
-            // ② 主体
-            D.taper3(tx, ty, tz, x, by, y, wHead * 0.18, wHead, dcol, 0, 0.85, V.vx, V.vy, V.vz);
-            // ③ 白芯
-            D.taper3(tx, ty, tz, x, by, y, wHead * 0.06, wHead * 0.34, WHITE, 0, 0.9 * (0.6 + heat * 0.4),
-                     V.vx, V.vy, V.vz);
+            this._trail(D, V, tx, ty, tz, x, by, y, hsz, heat, dcol, 1);
+            // Q2：记下这一帧的尾迹快照。子弹命中即从列表消失，若不留残影，
+            // 一整条尾巴会在命中的那一帧【整体瞬间消失】，看着很突兀（用户反馈）。
+            let sn = this._seen.get(p);
+            if (!sn) { sn = { col: new THREE.Color() }; this._seen.set(p, sn); }
+            sn.tx = tx; sn.ty = ty; sn.tz = tz; sn.x = x; sn.by = by; sn.y = y;
+            sn.hsz = hsz; sn.heat = heat; sn.col.copy(dcol); sn.f = this._fxFrame;
+            live.push(sn);
           }
-          if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.7 + heat * 0.8), dcol, 0.10 + heat * 0.16, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕
+          if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.4 + heat * 0.4), dcol, 0.07 + heat * 0.08, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕（压淡）
         }
         Q.sprite3(x, by, y, hsz, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);          // 光晕
         Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);    // 核心
-        if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.14), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯（升温更粗）
+        if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.10), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯
       }
+    }
+
+    // ---- Q2 拖尾余烬：本帧不在场的尾迹转入淡出队列，短暂留一下再消失 ----
+    for (const [p, sn] of this._seen) {
+      if (sn.f === this._fxFrame) continue;          // 还活着
+      this._seen.delete(p);
+      sn.t = 0;
+      this._fading.push(sn);
+    }
+    for (let i = this._fading.length - 1; i >= 0; i--) {
+      const s = this._fading[i];
+      s.t += dtWall;
+      const k = 1 - s.t / TRAIL_FADE;
+      if (k <= 0) { this._fading.splice(i, 1); continue; }
+      // 余烬同时缩短：尾端向弹着点收拢，读作"打中后一闪而散"，而不是原地淡掉一整条
+      const kk = k * k;
+      const sx = s.x + (s.tx - s.x) * kk, sz = s.y + (s.tz - s.y) * kk;
+      const sy2 = s.by + (s.ty - s.by) * kk;
+      this._trail(D, V, sx, sy2, sz, s.x, s.by, s.y, s.hsz, s.heat, s.col, kk);
     }
 
     D.flush(); Q.flush();

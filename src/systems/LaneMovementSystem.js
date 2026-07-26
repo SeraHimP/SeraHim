@@ -451,7 +451,11 @@ export class LaneMovementSystem {
       if (!(isRuin || (o.alive && sameFac))) continue;
       const ox = minion.pos.x - o.pos.x, oy = minion.pos.y - o.pos.y;
       const od = Math.hypot(ox, oy) || 0.001;
-      const rSum = rSelf + (o._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[o._mapTier]) || 28);
+      // Q4：半径必须乘上塔模型的【视觉放大系数】。渲染层把塔/废墟画大了 1.25×（水晶 1.10×），
+      // 而这里一直按未放大的尺寸算，于是小兵贴到"逻辑表面"时早已插进模型里 —— 就是穿模。
+      const vz = (CONFIG.towerVizScale || {});
+      const k = vz[o._mapTier] ?? vz.default ?? 1;
+      const rSum = rSelf + (o._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[o._mapTier]) || 28) * k;
       if (od > rSum + 26) continue;
       const ux = ox / od, uy = oy / od;
       const closeness = Math.max(0, 1 - (od - rSum) / 26);
