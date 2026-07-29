@@ -109,7 +109,106 @@ export const AttributeEditor = {
   _categoryOfType(type) {
     if (type === 'tower') return 'tower';
     if (type === 'dragon') return 'dragon';
+    if (type === 'skill') return 'skill';
     return 'minion';
+  },
+
+  // ==================== ✨ 技能数值编辑器 ====================
+  // 技能的数值此前**只能改源码**（写在各技能的 defaultParams 里），
+  // 或者改地图模块的 skillOverrides —— 前者要翻文件，后者只能整张地图一起改。
+  // 现在有了全局层 CONFIG.skillOverrides，面板可改、进存档、且不影响地图级覆写
+  // （地图更具体，仍然压在全局之上；见 CombatSystem 的三层叠加注释）。
+  //
+  // 只列出**声明了 defaultParams 的技能** —— 没声明的技能，其数值是写死在
+  // 函数体里的字面量，没有可覆写的键；列出来只会给人"改了却没反应"的错觉。
+  _skillsWithParams() {
+    const out = [];
+    for (const [id, def] of Object.entries(SkillLibrary)) {
+      if (!def || typeof def !== 'object') continue;
+      const dp = def.defaultParams;
+      if (!dp || typeof dp !== 'object' || Object.keys(dp).length === 0) continue;
+      out.push({ id, def, params: dp });
+    }
+    return out.sort((a, b) => (a.def.category || '').localeCompare(b.def.category || '') || a.id.localeCompare(b.id));
+  },
+
+  _renderSkillParamsContent() {
+    const list = this._skillsWithParams();
+    const ovr = CONFIG.skillOverrides || {};
+    let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
+      ✨ 技能参数的叠加顺序：<b>技能出厂值 → 这里的全局覆写 → 地图级覆写</b>（后者压前者）。<br>
+      改这里等于改"所有地图上的基准值"；某张地图要不一样，仍然在该地图模块的
+      <code>skillOverrides</code> 里单独写（这就是"同一技能在不同地图上数值可以不同"的做法）。<br>
+      留空 = 不覆写，用出厂值。改完点【应用】。
+    </div>`;
+
+    if (!list.length) {
+      html += `<div style="color:#8b949e;font-size:12px;">当前没有声明了可覆写参数的技能。</div>`;
+      return html;
+    }
+    html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:8px;">
+      共 ${list.length} 个技能可调。只列出声明了可覆写参数的技能 ——
+      其余技能的数值是写死在函数体里的字面量，列出来只会给人"改了没反应"的错觉。</div>`;
+
+    for (const { id, def, params } of list) {
+      const o = ovr[id] || {};
+      const dirty = Object.keys(o).length > 0;
+      html += `<div style="margin-bottom:10px;border:1px solid ${dirty ? '#58a6ff' : '#2d3540'};border-radius:4px;padding:8px;">
+        <div style="font-size:12px;margin-bottom:6px;">
+          ${def.icon || '✨'} <b>${def.name || id}</b>
+          <span style="font-size:10px;color:#8b949e;">${id}</span>
+          ${dirty ? '<span style="font-size:9px;color:#58a6ff;border:1px solid #58a6ff;border-radius:3px;padding:0 3px;">已覆写</span>' : ''}
+        </div>`;
+      for (const [k, base] of Object.entries(params)) {
+        const cur = o[k];
+        html += `<div class="slider-row">
+          <label style="font-size:11px;" title="出厂值 ${base}">${k}</label>
+          <input type="number" class="skillparam-input" data-skill="${id}" data-param="${k}"
+                 step="${Math.abs(base) < 1 ? 0.05 : 1}" value="${cur ?? ''}"
+                 placeholder="${base}（出厂）" style="width:100px;">
+        </div>`;
+      }
+      if (dirty) {
+        html += `<button class="skillparam-clear" data-skill="${id}"
+          style="margin-top:4px;font-size:11px;padding:2px 8px;border-radius:4px;cursor:pointer;">🧹 清除该技能的覆写</button>`;
+      }
+      html += `</div>`;
+    }
+    return html;
+  },
+
+  _bindSkillParamsEvents(overlay, logFn, returnCallback) {
+    overlay.querySelectorAll('.skillparam-clear').forEach(b => b.addEventListener('click', () => {
+      const id = b.dataset.skill;
+      if (CONFIG.skillOverrides) delete CONFIG.skillOverrides[id];
+      logFn(`🧹 已清除「${id}」的全局覆写（回到出厂值）`, 'spawn');
+      this._renderTemplateEditor(logFn, returnCallback);
+    }));
+  },
+
+  _applySkillParamsChanges(overlay, logFn) {
+    CONFIG.skillOverrides = CONFIG.skillOverrides || {};
+    let set = 0, cleared = 0;
+    overlay.querySelectorAll('.skillparam-input').forEach(inp => {
+      const id = inp.dataset.skill, k = inp.dataset.param;
+      const raw = inp.value.trim();
+      if (raw === '') {
+        // 留空 = 取消该键的覆写。整个技能没有覆写项了就把空壳也删掉，
+        // 否则存档里会攒出一堆 `"weapon_x": {}` 这种没有信息量的噪音。
+        if (CONFIG.skillOverrides[id] && k in CONFIG.skillOverrides[id]) {
+          delete CONFIG.skillOverrides[id][k];
+          cleared++;
+          if (Object.keys(CONFIG.skillOverrides[id]).length === 0) delete CONFIG.skillOverrides[id];
+        }
+        return;
+      }
+      const v = parseFloat(raw);
+      if (isNaN(v)) return;
+      CONFIG.skillOverrides[id] = CONFIG.skillOverrides[id] || {};
+      CONFIG.skillOverrides[id][k] = v;
+      set++;
+    });
+    logFn(`✅ 技能全局覆写已更新（写入 ${set} 项，清除 ${cleared} 项）。已在场上的单位下一帧生效`, 'spawn');
   },
 
   _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', dragon: '巨龙' },
@@ -130,6 +229,7 @@ export const AttributeEditor = {
     { key: 'tower', label: '🏰 防御塔' },
     { key: 'minion', label: '⚔️ 小兵' },
     { key: 'dragon', label: '🐉 巨龙' },
+    { key: 'skill', label: '✨ 技能数值' },
   ],
 
   // ==================== 阵营作用域（对战模式：改一方不影响另一方） ====================
@@ -196,13 +296,17 @@ export const AttributeEditor = {
     const category = st.category;
     const type = category === 'minion' ? (st.type || 'melee') : category; // tower/dragon 类别本身就是类型
 
-    const tpl = CONFIG.templates[type];
+    const isSkillCat = category === 'skill';
+    const tpl = isSkillCat ? null : CONFIG.templates[type];
     const isTower = type === 'tower';
     const isDragon = type === 'dragon';
-    const isMinion = !isTower && !isDragon;
+    const isMinion = !isTower && !isDragon && !isSkillCat;
 
     let detailHtml = '';
-    if (tpl) {
+    if (isSkillCat) {
+      // 技能数值是全局的，不参与阵营/应用范围作用域（它不属于任何单位模板）
+      detailHtml = `<div id="templateContent">${this._renderSkillParamsContent()}</div>`;
+    } else if (tpl) {
       detailHtml = `
         <div class="editor-tabs">
           <button class="editor-tab active" data-tpltab="attr">属性</button>
@@ -245,7 +349,7 @@ export const AttributeEditor = {
             <button id="tplSaveBtn" title="保存为本地文件（支持覆盖上次保存的那个文件）">💾 保存</button>
             <button id="tplOpenBtn" title="从本地文件读取配置">📂 打开</button>
             <button id="tplImportBtn" title="粘贴 JSON 导入 / 复制 JSON 导出">📋 JSON</button>
-            ${tpl ? `<button id="templateApplyBtn" class="primary">应用</button>` : ''}
+            ${(tpl || isSkillCat) ? `<button id="templateApplyBtn" class="primary">应用</button>` : ''}
             <button id="templateCloseBtn">关闭</button>
           </div>
         </div>
@@ -271,7 +375,13 @@ export const AttributeEditor = {
       });
     });
 
-    if (tpl) {
+    if (isSkillCat) {
+      this._bindSkillParamsEvents(overlay, logFn, returnCallback);
+      overlay.querySelector('#templateApplyBtn')?.addEventListener('click', () => {
+        this._applySkillParamsChanges(overlay, logFn);
+        this._renderTemplateEditor(logFn, returnCallback);
+      });
+    } else if (tpl) {
       this._bindTemplateDetailTabs(overlay, type, logFn, returnCallback);
       // 切换层级/阵营/应用范围、以及点"应用"后都会整体重渲染；
       // 这里把用户停留的那个 tab 重新点回来，免得每次操作都被弹回"属性"。

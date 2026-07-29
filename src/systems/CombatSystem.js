@@ -242,13 +242,28 @@ export class CombatSystem {
         // "同一技能在不同地图上数值/机制不同"这条能力对它形同虚设。现在提到门外，
         // 任何技能（onHit/onBeingAttacked/…）都能被地图按 tier/type 覆写参数。
         if (def) {
-          if (!inst._params && def.defaultParams) inst._params = { ...def.defaultParams };
-          if (inst._params && SkillLibrary._mapOverrides) {
-            const e2 = this.entities.get(entity.id);
-            if (e2) {
-              const tk = e2._mapTier ? 'tower:' + e2._mapTier : e2.type;
-              const ov = SkillLibrary._mapOverrides[tk]?.[inst.skillId];
-              if (ov) Object.assign(inst._params, ov);
+          // 技能参数的叠加顺序（后者覆盖前者），三层都可缺省：
+          //   ① def.defaultParams          技能出厂值
+          //   ② CONFIG.skillOverrides[id]  **全局**用户覆写（编辑器可改、可存档）
+          //   ③ 地图 skillOverrides[键][id] 地图级覆写（最具体，压过全局）
+          // ②③ 的分工正是用户提的那条："同一技能在不同地图上可能表现为
+          // 数值/机制不同" —— 全局定基准，地图按需改写。
+          const globalOv = CONFIG.skillOverrides && CONFIG.skillOverrides[inst.skillId];
+          // 注意：原来只在 def.defaultParams 存在时才建 _params。那样一来
+          // 没声明 defaultParams 的技能永远拿不到覆写（改了没反应）。
+          // 只要任一覆写层有东西，就得把 _params 建出来。
+          if (!inst._params && (def.defaultParams || globalOv)) {
+            inst._params = { ...(def.defaultParams || {}) };
+          }
+          if (inst._params) {
+            if (globalOv) Object.assign(inst._params, globalOv);
+            if (SkillLibrary._mapOverrides) {
+              const e2 = this.entities.get(entity.id);
+              if (e2) {
+                const tk = e2._mapTier ? 'tower:' + e2._mapTier : e2.type;
+                const ov = SkillLibrary._mapOverrides[tk]?.[inst.skillId];
+                if (ov) Object.assign(inst._params, ov);
+              }
             }
           }
         }
