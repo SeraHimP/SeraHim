@@ -121,6 +121,21 @@ export const CONFIG = {
     siege:  { pct: 0.07, base: 'template' },
   },
 
+  // ==================== 世界状态（P3：天气/昼夜/熵/龙魂 的统一落点）====================
+  // 每条耦合都是【独立开关】，且**默认全关** —— 打开任意一条才会改变现有平衡，
+  // 关掉全部时行为与接入前逐位一致。数值先给保守值，等批量模拟脚本出来再校准。
+  world: {
+    couplings: {
+      dayNightFaction: false,   // 昼夜 → 阵营非对称（白天蓝方优势 / 夜晚红方优势）
+      entropyToUnits: false,    // 熵 → 单位属性（熵系统实现后才有意义）
+      entropyToWeather: false,  // 熵 → 天气分布（熵越高极端天气越频繁）
+    },
+    // 昼夜给"当前占优阵营"的加成（用户定稿的方向：蓝=秩序=白天，红=混乱=夜晚）
+    dayNightBonus: { moveSpeedPct: 5, attackDamagePct: 4 },
+    // 熵的非对称加成幅度（|熵-0.5|×2 为系数，中性时恒为 0）
+    entropyBonus: { attackDamagePct: 8, armorFlat: 6 },
+  },
+
   factionOverrides: { blue: {}, red: {} },
 
   // ==================== 对战调参表（技术债清偿：原散落在各系统源码里的硬编码） ====================

@@ -10,6 +10,7 @@ import { BuffSystem } from './systems/BuffSystem.js';
 import { DragonSystem, DRAGON_ELEMENTS } from './systems/DragonSystem.js';
 import { MapSystem } from './systems/MapSystem.js';
 import { WeatherSystem } from './systems/WeatherSystem.js';
+import { WorldState } from './systems/WorldState.js';
 import { WeatherPanel } from './ui/WeatherPanel.js';
 import { LaneMovementSystem } from './systems/LaneMovementSystem.js';
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
@@ -77,6 +78,13 @@ mapSystem.setEffectRegistry(effectRegistry); // Q5：召唤水晶"重生中"状�
 // 默认关闭（独立总开关，在设置面板里开）。
 const weatherSystem = new WeatherSystem(eventBus);
 attrCalc.setWeatherSystem(weatherSystem);
+
+// P3：世界状态聚合层（天气/昼夜/熵/龙魂 的统一落点）。
+// 所有耦合默认关闭（CONFIG.world.couplings），全关时行为与接入前逐位一致；
+// 逐条打开即可引入昼夜阵营非对称、熵等玩法，而不必再改各系统内部。
+const worldState = new WorldState({ weather: weatherSystem, dragons: dragonSystem, entities: entityContainer });
+attrCalc.setWorldState(worldState);
+CTX.__world = worldState;   // UI/调试入口
 CTX.__weather = weatherSystem; // UI/调试入口
 
 // Q5：塔无敌/停火、小兵波次开关，全部支持【按阵营分管】。
@@ -888,6 +896,7 @@ function stepSimulation(dt) {
   dragonSystem.update(dt);
   combatSystem.update(dt);
   weatherSystem.update(dt);   // 天气演化（权重场，enabled=false 时零开销）
+  worldState.update(dt, CTX.gameTime);   // P3：昼夜相位 / 熵 / 龙魂统计（耦合默认全关）
   mapSystem.update(dt);       // 召唤水晶重生计时（仅对战模式内部生效）
   laneWaveSystem.update(dt);
       laneMovementSystem.update(dt);

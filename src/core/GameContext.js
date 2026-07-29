@@ -27,7 +27,7 @@ const _state = {
     return !!r[faction];
   },
   createMinion: null, createTower: null,
-  __app: null, __weather: null, __mapSystem: null,
+  __app: null, __weather: null, __world: null, __mapSystem: null,
   __uiManager: null, __weatherPanel: null, __entityContainer: null,
   __perf: null, __score: null, __gameLoop: null,
   __three: null,   // v2.5D：Three 渲染器（设置面板的阴影档位入口）
@@ -41,7 +41,7 @@ const SYNC_KEYS = [
   '__gameSpeed', '__ffRemain', '__showLanePaths', '__gridOn', '__terrainAvoid', '__laneFlow',
   '__towerRules', '__towerRuleFor',
   'createMinion', 'createTower',
-  '__app', '__weather', '__mapSystem', '__uiManager', '__weatherPanel',
+  '__app', '__weather', '__world', '__mapSystem', '__uiManager', '__weatherPanel',
   '__entityContainer', '__perf', '__score', '__gameLoop',
   '__three',
 ];

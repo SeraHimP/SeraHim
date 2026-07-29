@@ -39,6 +39,8 @@ export const AttributeCalculator = {
    * （塔成长那批踩过的坑）。这里做成属性合成时的一个 O(1) 修正层。
    */
   setWeatherSystem(ws) { this._weather = ws; },
+  /** P3：世界状态聚合层（昼夜/熵/龙魂）。未注入时整段短路，行为与接入前一致。 */
+  setWorldState(ws) { this._world = ws; },
 
   calc(entity, effects, options = { includeAllStats: true }) {
     const incAll = options.includeAllStats !== false;
@@ -46,7 +48,10 @@ export const AttributeCalculator = {
     // 否则天气变了而单位属性纹丝不动。用"权重量化到 1%"作为版本，
     // 避免浮点抖动导致缓存永不命中（1% 的精度对 buff 强度足够）。
     const wKey = this._weatherKey();
-    const cacheKey = (incAll ? '1|' : '0|') + wKey + '|' + this._effectsKey(effects);
+    // 世界状态也要进缓存键：昼夜昼→夜切换会改变阵营加成，不入键的话属性会停在旧值。
+    const sKey = this._world && this._world.enabled
+      ? (this._world.daynight.isNight ? 'n' : 'd') + ((this._world.entropy.value * 20) | 0) : 's0';
+    const cacheKey = (incAll ? '1|' : '0|') + wKey + '|' + sKey + '|' + this._effectsKey(effects);
     const cached = this._cache.get(entity);
     if (cached && cached.frame === this._frame && cached.key === cacheKey) {
       return cached.stats;
@@ -103,6 +108,19 @@ export const AttributeCalculator = {
           cur.percent += m.percent || 0;
           modMap.set(key, cur);
         }
+      }
+    }
+
+    // P3：世界状态（昼夜阵营非对称 / 熵）。天气【不走这里】——它已有成熟通道（上面那段
+    // 含负恢复的独立处理），搬过来只会平添回归风险。本层只负责天气之外的三项。
+    // CONFIG.world.couplings 默认全关，全关时这段等价于不存在。
+    if (this._world && this._world.enabled) {
+      const wsMods = this._world.getModifiers(entity);
+      for (const [key, m] of Object.entries(wsMods || {})) {
+        const cur = modMap.get(key) || { flat: 0, percent: 0 };
+        cur.flat += m.flat || 0;
+        cur.percent += m.pct || 0;
+        modMap.set(key, cur);
       }
     }
 
