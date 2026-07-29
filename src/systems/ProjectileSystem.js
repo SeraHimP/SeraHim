@@ -34,11 +34,13 @@ export class ProjectileSystem {
       existing.charge = beam.charge ?? existing.charge;
       existing.color = beam.color || existing.color;
       existing.ttl = beam.life || 0.3; // 刷新存活时间
+      existing.targetId = beam.targetId ?? existing.targetId;   // Q1：端点高度要按实体查，不能按坐标猜
       existing.fadeT = undefined;      // v39：复用时清除淡出标记（防止残影态被继承）
     } else {
       this.beams.set(key, {
         startX: beam.startX, startY: beam.startY, endX: beam.endX, endY: beam.endY,
         charge: beam.charge ?? 0, color: beam.color || '#f1c40f', ttl: beam.life || 0.3,
+        targetId: beam.targetId ?? null,
       });
     }
   }

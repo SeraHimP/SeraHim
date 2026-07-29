@@ -217,7 +217,7 @@ export const weapons = {
           attackerId: entity.id,
           startX: entity.pos.x, startY: entity.pos.y,
           endX: target.pos.x, endY: target.pos.y,
-          charge: instance.state.charge || 0, life: 0.4, color: beamColor,
+          charge: instance.state.charge || 0, life: 0.4, color: beamColor, targetId: target.id,
         });
       }
     },

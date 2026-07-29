@@ -378,6 +378,8 @@ export class EffectsLayer {
     this._weaponCache = new WeakMap();   // 塔 → 当前武器技能 id（Q3 腐蚀判定用）
     this._seen = new Map();             // 子弹 → 上一帧尾迹快照（Q2 余烬用）
     this._fading = [];                  // 正在淡出的尾迹余烬
+    this._beamEndY = new WeakMap();     // Q1：光束 → 冻结的末端高度（目标死亡后不再重算）
+    this._projTgt = new WeakMap();      // Q1：子弹 → 目标位置与落点高度的快照
     this._statDirty = true;
   }
 
@@ -467,9 +469,16 @@ export class EffectsLayer {
    * @param view  { vx,vy,vz, ux,uy,uz } 摄像机视线与上方向（摄像机不偏航，故为常量）
    * @param muzzleY(x, z) → 该处单位的炮口高度（无单位则 0）。由 ThreeRenderer 从 UnitLayer 取。
    */
-  update(deps, zoom, lodDots, view, muzzleY) {
+  update(deps, zoom, lodDots, view, muzzleY, muzzleOf) {
     const V = view || { vx: 0, vy: -1, vz: 0, ux: 0, uy: 1, uz: 0, rx: 1, ry: 0, rz: 0 };
     const MY = muzzleY || (() => 0);
+    // Q1：按【实体 id】取高度。坐标反查（MY）只作最后兜底 —— 它在目标死亡后返回 0、
+    // 或者搜到旁边另一个单位身上，正是"残留轨迹错位"的根因。
+    const MYOF = muzzleOf || (() => null);
+    const endHeightOf = (id, x, z) => {
+      const h = id != null ? MYOF(id) : null;
+      return (h != null ? h : MY(x, z)) * 0.6;
+    };
     const { entities, projectiles, mapSystem } = deps;
     // D 组：切图或首帧重建
     if (this._statDirty || this._statMapId !== (mapSystem?.currentMap?.id ?? null)) {
@@ -542,7 +551,17 @@ export class EffectsLayer {
         const fade = (b.fadeT !== undefined && b.fadeMax) ? Math.max(0, b.fadeT / b.fadeMax) : 1;
         if (fade <= 0) continue;
         const col = rgbOf(b.color || '#f1c40f');
-        const sy = MY(b.startX, b.startY), ey = MY(b.endX, b.endY) * 0.6;
+        const sy = MY(b.startX, b.startY);
+        // Q1：末端高度按 targetId 取；一旦进入淡出（目标已死/换目标）就【冻结】成快照，
+        // 不再重算 —— 重算会拿到 0 或旁边别人的高度，光束末端于是塌到地面 / 歪到别处。
+        let ey;
+        if (b.fadeT === undefined) {
+          ey = endHeightOf(b.targetId, b.endX, b.endY);
+          this._beamEndY.set(b, ey);
+        } else {
+          ey = this._beamEndY.get(b);
+          if (ey === undefined) ey = endHeightOf(b.targetId, b.endX, b.endY);
+        }
         // 宽度：细 → 粗。charge 走一点点缓入，让"越充越粗"的手感集中在后半段。
         const k = charge * charge * (3 - 2 * charge);          // smoothstep
         const w = BEAM_W_MIN + k * (BEAM_W_MAX - BEAM_W_MIN);
@@ -610,12 +629,22 @@ export class EffectsLayer {
         // 飞行进度必须拿【目标当前位置】算全程距离。首版误用了子弹自己的当前位置
         // 兜底（p.targetX 根本不存在），于是分子分母相同、进度恒等于 1，
         // 子弹永远取"终点高度"= 空地 0 → 全程贴地飞。这就是"红线对了子弹没对"的原因。
+        // Q1：目标位置与落点高度做成【快照】。旧实现每帧现查 entities.get(p.targetId)，
+        // 目标一死就拿不到 → by 退化成常量 my → 子弹从"沿弹道下降"突变为"水平飞"，
+        // 这就是"目标死亡后残余弹道异常"。现在死亡后沿用最后一次的快照，弹道继续走完。
         const tgtE = entities?.get?.(p.targetId);
-        let by = my;
+        let snap = this._projTgt.get(p);
         if (tgtE?.pos) {
-          const tot = Math.hypot(tgtE.pos.x - p.startX, tgtE.pos.y - p.startY) || 1;
+          snap = snap || {};
+          snap.x = tgtE.pos.x; snap.y = tgtE.pos.y;
+          snap.h = endHeightOf(p.targetId, tgtE.pos.x, tgtE.pos.y);
+          this._projTgt.set(p, snap);
+        }
+        let by = my;
+        if (snap) {
+          const tot = Math.hypot(snap.x - p.startX, snap.y - p.startY) || 1;
           const done = Math.min(1, Math.hypot(x - p.startX, y - p.startY) / tot);
-          by = my + (MY(tgtE.pos.x, tgtE.pos.y) * 0.6 - my) * done;
+          by = my + (snap.h - my) * done;
         }
         // 塔弹与兵弹的分野：CombatSystem 按攻击者类型给 size（塔 20 / 兵 12），这里据此
         // 分档。塔弹加拖尾 + 白亮核，兵弹保持两层——同屏兵弹上百，给它们加拖尾只会糊成一片。
@@ -641,11 +670,12 @@ export class EffectsLayer {
             const tail = Math.min(d, hsz * TRAIL_LEN);       // 尾巴长度（不超过已飞行距离）
             const tx = x - ux * tail, tz = y - uy2 * tail;
             // 尾端高度：用与弹头相同的插值规则求出该处的路径高度（关键——别再用 by）
+            // 尾端高度同样走快照（与弹头同一条路径规则），目标死亡后不再塌到 my
             let ty = by;
-            if (tgtE?.pos) {
-              const tot = Math.hypot(tgtE.pos.x - p.startX, tgtE.pos.y - p.startY) || 1;
+            if (snap) {
+              const tot = Math.hypot(snap.x - p.startX, snap.y - p.startY) || 1;
               const doneT = Math.min(1, Math.max(0, Math.hypot(tx - p.startX, tz - p.startY) / tot));
-              ty = my + (MY(tgtE.pos.x, tgtE.pos.y) * 0.6 - my) * doneT;
+              ty = my + (snap.h - my) * doneT;
             }
             this._trail(D, V, tx, ty, tz, x, by, y, hsz, heat, dcol, 1);
             // Q2：记下这一帧的尾迹快照。子弹命中即从列表消失，若不留残影，

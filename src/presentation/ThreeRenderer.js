@@ -529,7 +529,8 @@ export class ThreeRenderer {
       this.fx.update(this.deps, controller ? controller.zoom : 1, rel < 1.02,
                      { vx: -cp * sa, vy: -sp, vz: -cp * ca, ux: -sp * sa, uy: cp, uz: -sp * ca,
                        rx: ca, ry: 0, rz: -sa },
-                     (x, z) => this.units.muzzleY(x, z));
+                     (x, z) => this.units.muzzleY(x, z),
+                     (id) => this.units.muzzleYOf(id));   // Q1：按实体查高度（坐标查是错误抽象）
     }
     this.water.update(window.gameTime || 0);   // P1：水面滚动 UV
     // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。

@@ -69,7 +69,15 @@ export class EntityContainer {
     this._gridDirty = false;
     this._grid.clear();
     for (const e of this._entities.values()) {
-      if (!e.alive || !e.pos) continue;
+      if (!e.pos) continue;
+      // Q3：网格【也索引静态障碍】——塔废墟(_ruin)与待重生的召唤水晶(_respawnAt)。
+      // 原来这里只索引活体，导致所有 findInRadius(..., aliveOnly=false) 的调用都是
+      // 空头支票：网格里压根没有死亡实体，传什么都拿不到。
+      // 直接后果是 LaneMovementSystem 里那段"任意塔废墟 = 硬障碍"的避障【从未执行过】，
+      // 小兵一直穿废墟；点选那边也因此不得不额外做一次全量扫描来兜底。
+      // 这类实体全图最多几十个（塔 30 座），进网格的代价可以忽略。
+      // 注意：aliveOnly 过滤仍在 findInRadius 内部，既有调用点行为不变。
+      if (!e.alive && !e._ruin && !e._respawnAt) continue;
       const key = this._cellKey(e.pos.x, e.pos.y);
       let set = this._grid.get(key);
       if (!set) { set = []; this._grid.set(key, set); }

@@ -307,6 +307,18 @@ export class UnitLayer {
    * 而按位置查是纯渲染侧的推断，逻辑层一行都不用改。塔不动，命中是精确的；
    * 小兵会移动，故调用方（子弹）只在出膛那一刻解析一次并缓存。
    */
+  /**
+   * Q1：按【实体 id】取炮口高度 —— 这才是调用方真正想问的问题。
+   * muzzleY(x,z) 是坐标就近搜索，目标一死就返回 0（末端塌到地面），
+   * 或者搜到 26 单位内的另一个单位身上（末端歪到别人的高度）—— 混战时后者是常态。
+   * 查不到返回 null，由调用方决定回落策略（用死亡瞬间的快照，而不是 0）。
+   */
+  muzzleYOf(entityId) {
+    const en = this.map.get(entityId);
+    if (!en) return null;
+    return (en.groundY || 0) + (en.muzzleY || en.topY || 0);
+  }
+
   muzzleY(x, z, r = 26) {
     let best = 0, bestD = r * r;
     for (const [id, en] of this.map) {

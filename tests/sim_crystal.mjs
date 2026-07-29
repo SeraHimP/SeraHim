@@ -48,10 +48,17 @@ mapSys.update(0.1);
 T('Q4 幽灵保留在实体表中(可点选的前提)', ents.get(nl.id) && !ents.get(nl.id).alive && ents.get(nl.id)._respawnAt);
 T('Q3 幽灵有重生进度字段', typeof nl._respawnProgress==='number' && nl._respawnProgress>=0 && nl._respawnProgress<1);
 T('Q3 幽灵有剩余秒数', typeof nl._respawnRemain==='number' && nl._respawnRemain>0);
-// 幽灵不在空间网格里（这正是"点不到"的根因，UI 必须单独扫）
+// Q3 反转：幽灵/废墟现在【进】空间网格了。
+// 旧断言（"确实不在网格中，故 UI 需单独扫描"）是把 bug 本身钉成了规格 ——
+// 正因为不在网格里，findInRadius(..., aliveOnly=false) 一直是空头支票，
+// LaneMovementSystem 里那段废墟避障从未执行过，小兵才会穿废墟。
+// 现在网格索引静态障碍（废墟 + 待重生水晶），断言改为验证它【在】网格中，
+// 且 aliveOnly=true 时仍然取不到（既有调用点行为不变）。
 AttributeCalculator.tick(); ents.rebuildGridIfNeeded(AttributeCalculator._frame);
 const inGrid=ents.findInRadius(nl.pos.x,nl.pos.y,50,null,false).some(e=>e.id===nl.id);
-T('Q4 幽灵确实不在空间网格中(故UI需单独扫描)', !inGrid);
+const inGridAlive=ents.findInRadius(nl.pos.x,nl.pos.y,50,null,true).some(e=>e.id===nl.id);
+T('Q3 幽灵/废墟已进空间网格(aliveOnly=false 能取到)', inGrid);
+T('Q3 aliveOnly=true 仍取不到幽灵(既有调用点不受影响)', !inGridAlive);
 T('Q4 幽灵可经 getAllTowers(false) 取到', ents.getAllTowers(false).some(e=>e.id===nl.id&&e._respawnAt));
 // 进度推进
 mapSys.update(150);

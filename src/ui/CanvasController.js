@@ -162,14 +162,12 @@ export class CanvasController {
       const d = Math.hypot(e.pos.x - world.x, e.pos.y - world.y) - r;
       if (d <= slack && d < bestScore) { bestScore = d; best = e; }
     };
-    // 活体：走空间网格
-    for (const e of ents.findInRadius(world.x, world.y, 80 + slack, null, true)) consider(e);
-    // Q4：等待重生的召唤水晶幽灵（alive=false + _respawnAt）也要能点选查看属性。
-    // 必须单独扫描——空间网格【只索引活体】（rebuildGridIfNeeded 里 `if (!e.alive) continue`），
-    // 所以给 findInRadius 传 aliveOnly=false 是空头支票，永远拿不到幽灵。这就是"点不到"的根因。
-    // 幽灵数量极少（最多每方三路），全量扫描零性能负担。
-    for (const e of ents.getAllTowers(false)) {
-      if (!e.alive && e._respawnAt) consider(e);
+    // Q3：一次查询搞定活体 + 静态障碍（塔废墟 / 待重生水晶）。
+    // 网格现在也索引这两类（见 EntityContainer.rebuildGridIfNeeded），
+    // 所以 aliveOnly=false 终于是真的了，原来那段"必须单独全量扫描幽灵"的兜底已删。
+    // 死亡的塔同样可选中 —— 选中后可在属性编辑器里查看/改属性、改阵营、复活或击杀。
+    for (const e of ents.findInRadius(world.x, world.y, 80 + slack, null, false)) {
+      if (e.alive || e._ruin || e._respawnAt) consider(e);
     }
     if (best) this.onSelect(best.id);
     else if (this.onDeselect) this.onDeselect(); // Q3 回调：点空地重新恢复"关闭面板"行为
