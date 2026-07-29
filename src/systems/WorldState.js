@@ -24,6 +24,7 @@
  */
 import { CONFIG } from '../data/Config.js';
 import { DAY_PERIOD } from '../presentation/DayNight.js';
+import { EntropySystem } from './EntropySystem.js';
 
 // 昼夜相位与 DayNight.js 的关键帧同口径：0=黎明 0.25=正午 0.5=黄昏 0.75=午夜。
 // 因此 [0, 0.5) 是白天（黎明→正午→黄昏），[0.5, 1) 是夜晚（黄昏→午夜→黎明）。
@@ -32,12 +33,16 @@ const NIGHT_FROM = 0.5;
 const phaseOf = (t, period) => ((t / Math.max(1, period)) % 1 + 1) % 1;
 
 export class WorldState {
-  constructor({ weather = null, dragons = null, entities = null } = {}) {
+  constructor({ weather = null, dragons = null, entities = null, bus = null } = {}) {
     this.weather = weather;
     this.dragons = dragons;
     this.entities = entities;
-    // 熵：0 = 绝对秩序，1 = 绝对混乱，0.5 = 中性。未实现前恒为中性。
-    this.entropy = { value: 0.5, black: 0, white: 0, red: 0 };
+    // P5：熵由 EntropySystem 驱动（事件累积 + 均值回复）。WorldState 是它唯一的持有者 ——
+    // 三核不对外暴露可写引用，其它系统只能通过本层的 getModifiers 间接受影响。
+    this.entropySystem = new EntropySystem(bus, entities);
+    // 兼容既有读法：this.entropy 是一份【只读快照】，每帧 update 时刷新。
+    // （P3 时期这里是个恒定中性的占位对象，读它的地方都已就位，改成快照后无需改调用方。）
+    this.entropy = { value: 0.5, black: 0, white: 0, red: 0, volatility: 1 };
     this.daynight = { phase: 0.5, isNight: false, label: '正午' };
     this.souls = { blue: [], red: [] };
     this._enabled = true;
@@ -46,21 +51,58 @@ export class WorldState {
   setEnabled(on) { this._enabled = !!on; return this._enabled; }
   get enabled() { return this._enabled; }
 
+  /** 把熵钉死在某个值（批量模拟扫档用）。传 null 恢复由三核自然推进。 */
+  forceEntropy(v) { this._forcedEntropy = (v === null || v === undefined) ? null : v; }
+
+  /**
+   * 把"夜"在时间轴上拉长，白天相应压缩，总周期不变。
+   *
+   * 相位 phase 随时间线性推进，isNight 的判据是 phase ≥ 0.5。要让夜更长，
+   * 就得让相位【更早】越过 0.5、并且在 ≥0.5 停留更久。所以分段线性映射是：
+   *   原始 [0, dayCut)  → 映射 [0, 0.5)     ← 白天，占用的真实时间被压短
+   *   原始 [dayCut, 1)  → 映射 [0.5, 1)     ← 夜晚，占用的真实时间被拉长
+   * 其中 dayCut = 0.5/k，k>1 时 dayCut<0.5。
+   *
+   * （写反过一次：把 [0,0.5) 映到 [0,dayCut)，那是把白天的相位【压缩】而不是
+   *   把它占的时间压缩 —— 结果同一时刻的相位反而更早，夜晚变短了。）
+   */
+  _stretchNight(phase, k) {
+    const kk = Math.max(0.1, k || 1);
+    const dayCut = Math.min(0.999, Math.max(0.001, 0.5 / kk));
+    if (phase < dayCut) return (phase / dayCut) * 0.5;
+    return 0.5 + ((phase - dayCut) / (1 - dayCut)) * 0.5;
+  }
+
   /** 每帧推进。**只在这里做系统间耦合**，且严格单向。 */
   update(dt, gameTime) {
     if (!this._enabled) return;
     const cfg = CONFIG.world || {};
     const cp = cfg.couplings || {};
 
-    // ---- ① 昼夜相位（渲染层已在用同一个函数，这里只是把它数值化）----
+    // ---- ① 熵推进（必须排在最前：后面两条耦合都读它，顺序错了会用到上一帧的值）----
+    // 注意 FORCE 通道：批量模拟要把熵钉死在某个档位扫曲线，那时不推进累积。
+    if (this._forcedEntropy === null || this._forcedEntropy === undefined) {
+      this.entropySystem.update(dt);
+      this.entropy.value = this.entropySystem.value;
+    } else {
+      this.entropy.value = this._forcedEntropy;
+    }
+    this.entropy.black = this.entropySystem.black;
+    this.entropy.white = this.entropySystem.white;
+    this.entropy.red = this.entropySystem.red;
+    this.entropy.volatility = this.entropySystem.volatility;
+
+    // ---- ② 昼夜相位（渲染层已在用同一个函数，这里只是把它数值化）----
+    // 熵 → 昼夜：熵越高夜越长。做法是拉伸【夜的那一半】而不是改整个周期速度 ——
+    // 改周期速度会让白天也跟着变长，"高熵夜更长"就变成了"高熵一切都更慢"。
     const period = (typeof window !== 'undefined' && window.CTX?.__dayPeriod) || DAY_PERIOD;
-    const phase = phaseOf(gameTime || 0, period);
+    let phase = phaseOf(gameTime || 0, period);
+    if (cp.entropyToDayNight) phase = this._stretchNight(phase, this.entropySystem.nightStretch);
     this.daynight.phase = phase;
     this.daynight.isNight = phase >= NIGHT_FROM;
     this.daynight.label = this.daynight.isNight ? '夜晚' : '白天';
 
-    // ---- ② 熵 → 天气（预留：熵越高，极端天气的均值回复目标越高）----
-    // 熵未实现前 value 恒 0.5，下面这行等价于不改动天气，行为与现状一致。
+    // ---- ③ 熵 → 天气（熵越高，极端天气的均值回复目标越高）----
     if (cp.entropyToWeather && this.weather?.setEntropyBias) {
       this.weather.setEntropyBias(this.entropy.value);
     }
@@ -100,13 +142,14 @@ export class WorldState {
       }
     }
 
-    // ---- 熵 → 全局（预留。中性值 0.5 时下面全为 0，等价于未启用）----
+    // ---- 熵 → 全局（中性值 0.5 时下面全为 0，等价于未启用）----
     if (cp.entropyToUnits) {
       const k = (this.entropy.value - 0.5) * 2;      // -1（极秩序） .. +1（极混乱）
       const g = cfg.entropyBonus || {};
       const fac = entity._mapFaction || entity.faction;
-      // 混乱侧（红）在高熵时受益，秩序侧（蓝）在低熵时受益 —— 非对称的核心
-      const sign = fac === 'red' ? k : -k;
+      // 混乱侧（红）在高熵时受益，秩序侧（蓝）在低熵时受益 —— 非对称的核心。
+      // 红核（冲突烈度）只放大幅度、不改变方向：打得越凶，这份非对称越明显。
+      const sign = (fac === 'red' ? k : -k) * (this.entropy.volatility || 1);
       add('attackDamage', 0, sign * (g.attackDamagePct ?? 0));
       add('armor', sign * (g.armorFlat ?? 0), 0);
     }
@@ -136,8 +179,16 @@ export class WorldState {
       }
     }
     if (cp.entropyToUnits) {
-      rows.push({ source: `熵 ${(this.entropy.value * 100).toFixed(0)}%`,
-                  detail: this.entropy.value === 0.5 ? '中性（熵系统未启用实现）' : '非对称修正生效中' });
+      const k = (this.entropy.value - 0.5) * 2;
+      const g = cfg.entropyBonus || {};
+      const sign = (fac === 'red' ? k : -k) * (this.entropy.volatility || 1);
+      rows.push({
+        source: `熵 ${(this.entropy.value * 100).toFixed(0)}%`,
+        detail: Math.abs(sign) < 1e-6
+          ? '中性（无修正）'
+          : `${this.entropySystem.describe()} → 本方 ${sign > 0 ? '+' : ''}${(sign * (g.attackDamagePct ?? 0)).toFixed(1)}% 攻击力、` +
+            `${sign > 0 ? '+' : ''}${(sign * (g.armorFlat ?? 0)).toFixed(1)} 护甲`,
+      });
     }
     if (this.souls[fac]?.length) {
       rows.push({ source: '龙魂', detail: this.souls[fac].join('、') });

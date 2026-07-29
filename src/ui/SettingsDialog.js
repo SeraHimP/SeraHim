@@ -42,6 +42,112 @@ export const SettingsDialog = {
   ],
   _tab: 'flow',
 
+  // ==================== 🌍 世界耦合 · 熵（P5）====================
+  // 这几项此前【只能改源码】。用户的规矩是"所有的都不要硬编码，都应该是可编辑的软编码"，
+  // 而熵是全局非对称机制，调它的频率只会比别的更高，没有面板等于没法用。
+  //
+  // 每条耦合独立开关、默认全关；全关时世界层不产生任何修正，行为与接入前逐位一致。
+  _COUPLINGS: [
+    { key: 'dayNightFaction',   label: '昼夜 → 阵营', hint: '白天蓝方占优 / 夜晚红方占优' },
+    { key: 'entropyToUnits',    label: '熵 → 单位',   hint: '高熵利红（混乱）、低熵利蓝（秩序）' },
+    { key: 'entropyToWeather',  label: '熵 → 天气',   hint: '熵越高极端天气越频繁' },
+    { key: 'entropyToDayNight', label: '熵 → 昼夜',   hint: '熵越高夜晚越长' },
+  ],
+  // 数值项集中在这里声明，渲染与回写共用同一份，不会出现"面板改 A、运行时读 B"。
+  _WORLD_FIELDS: [
+    { path: 'dayNightBonus.moveSpeedPct',  label: '昼夜·移速加成(%)', step: 1 },
+    { path: 'dayNightBonus.attackDamagePct', label: '昼夜·攻击加成(%)', step: 1 },
+    { path: 'entropyBonus.attackDamagePct', label: '熵·攻击幅度(%)', step: 1 },
+    { path: 'entropyBonus.armorFlat',       label: '熵·护甲幅度',     step: 1 },
+    { path: 'entropy.scale',        label: '熵·归一化尺度', step: 10 },
+    { path: 'entropy.decayPerSec',  label: '熵·每秒衰减',   step: 0.1 },
+    { path: 'entropy.clampMin',     label: '熵·下限',       step: 0.05 },
+    { path: 'entropy.clampMax',     label: '熵·上限',       step: 0.05 },
+    { path: 'entropy.gainMinion',   label: '核增量·小兵',   step: 1 },
+    { path: 'entropy.gainTower',    label: '核增量·建筑',   step: 5 },
+    { path: 'entropy.gainDragon',   label: '核增量·巨龙',   step: 5 },
+    { path: 'entropy.redFromConflict', label: '红核·冲突系数', step: 0.1 },
+    { path: 'entropy.volatilityPct', label: '红核·波动放大(%)', step: 1 },
+    { path: 'entropy.nightStretchPct', label: '熵·夜晚延长(%)', step: 5 },
+  ],
+  _getPath(obj, path) {
+    return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  },
+  _setPath(obj, path, v) {
+    const ks = path.split('.');
+    const last = ks.pop();
+    const t = ks.reduce((o, k) => (o[k] = o[k] || {}), obj);
+    t[last] = v;
+  },
+
+  _renderWorldSection() {
+    const W = CONFIG.world || {};
+    const cp = W.couplings || {};
+    const ws = window.CTX?.__world;
+    // 实时快照：调这些数值时最需要的就是"现在到底是多少"，否则纯盲调。
+    const live = ws
+      ? `<div class="pick-desc-box" style="margin-bottom:8px;font-size:11px;">
+           ${ws.entropySystem ? ws.entropySystem.describe() : ''}<br>
+           昼夜：${ws.daynight.label}（相位 ${ws.daynight.phase.toFixed(2)}）
+         </div>`
+      : `<div class="pick-desc-box" style="margin-bottom:8px;font-size:11px;">（世界状态未接入，进入对战后显示实时值）</div>`;
+
+    const toggles = this._COUPLINGS.map(c => {
+      const on = cp[c.key] === true;
+      return `<div class="slider-row"><label title="${c.hint}">${c.label}</label>
+        <button class="editor-tab ${on ? 'active' : ''}" data-coupling="${c.key}" style="flex:1;font-size:11px;">
+          ${on ? '✅ 已开启' : '⭕ 已关闭'}</button></div>`;
+    }).join('');
+
+    const fields = this._WORLD_FIELDS.map(f => {
+      const v = this._getPath(W, f.path);
+      if (v === undefined) return '';
+      return `<div class="slider-row"><label style="font-size:11px;">${f.label}</label>
+        <input type="number" class="world-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
+    }).join('');
+
+    return `<div class="editor-section">
+      <h4>🌍 世界耦合 · 熵</h4>
+      ${live}
+      <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+        每条耦合独立开关，默认全关；全关时世界层不产生任何修正。
+        熵：0=绝对秩序（利蓝） 0.5=中性 1=绝对混乱（利红）。
+      </div>
+      ${toggles}
+      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">数值（改完点下方【应用世界数值】）</div>
+        ${fields}
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <button id="setWorldApplyBtn" style="flex:1;">✅ 应用世界数值</button>
+          <button id="setWorldResetEntropyBtn" style="flex:1;">↺ 三核归零</button>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  _bindWorldEvents(overlay, logFn, render) {
+    overlay.querySelectorAll('[data-coupling]').forEach(b => b.addEventListener('click', () => {
+      const k = b.dataset.coupling;
+      CONFIG.world.couplings[k] = !CONFIG.world.couplings[k];
+      logFn(`🌍 耦合「${k}」：${CONFIG.world.couplings[k] ? '开' : '关'}`, 'spawn');
+      render();
+    }));
+    document.getElementById('setWorldApplyBtn')?.addEventListener('click', () => {
+      let n = 0;
+      overlay.querySelectorAll('.world-field').forEach(inp => {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) { this._setPath(CONFIG.world, inp.dataset.path, v); n++; }
+      });
+      logFn(`🌍 世界数值已更新（${n} 项）`, 'spawn');
+      render();
+    });
+    document.getElementById('setWorldResetEntropyBtn')?.addEventListener('click', () => {
+      window.CTX?.__world?.entropySystem?.reset();
+      logFn('↺ 三核已归零（熵回到中性）', 'spawn');
+      render();
+    });
+  },
+
   open(deps, logFn) {
     const { waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem } = deps;
     const overlay = document.getElementById('modalOverlay');
@@ -190,6 +296,7 @@ export const SettingsDialog = {
             <button id="setWeatherCfgBtn" style="flex:1;">⚙️ 天气配置…</button>
           </div>
         </div>
+        ${this._renderWorldSection()}
         <div class="editor-section">
           <h4>🛠 调试</h4>
           <div class="slider-row"><label>性能面板</label>
@@ -208,6 +315,7 @@ export const SettingsDialog = {
       overlay.querySelectorAll('[data-settab]').forEach(btn => {
         btn.addEventListener('click', () => { this._tab = btn.dataset.settab; render(); });
       });
+      if (this._tab === 'world') this._bindWorldEvents(overlay, logFn, render);
 
       // 游戏暂停：此前这个按钮只有外观、没有任何监听器，点了毫无反应。
       document.getElementById('setGamePauseBtn')?.addEventListener('click', () => {

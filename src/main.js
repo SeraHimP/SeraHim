@@ -82,7 +82,7 @@ attrCalc.setWeatherSystem(weatherSystem);
 // P3：世界状态聚合层（天气/昼夜/熵/龙魂 的统一落点）。
 // 所有耦合默认关闭（CONFIG.world.couplings），全关时行为与接入前逐位一致；
 // 逐条打开即可引入昼夜阵营非对称、熵等玩法，而不必再改各系统内部。
-const worldState = new WorldState({ weather: weatherSystem, dragons: dragonSystem, entities: entityContainer });
+const worldState = new WorldState({ weather: weatherSystem, dragons: dragonSystem, entities: entityContainer, bus: eventBus });
 attrCalc.setWorldState(worldState);
 CTX.__world = worldState;   // UI/调试入口
 CTX.__weather = weatherSystem; // UI/调试入口

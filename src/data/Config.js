@@ -129,11 +129,27 @@ export const CONFIG = {
       dayNightFaction: false,   // 昼夜 → 阵营非对称（白天蓝方优势 / 夜晚红方优势）
       entropyToUnits: false,    // 熵 → 单位属性（熵系统实现后才有意义）
       entropyToWeather: false,  // 熵 → 天气分布（熵越高极端天气越频繁）
+      entropyToDayNight: false, // 熵 → 昼夜（熵越高夜晚越长）
     },
     // 昼夜给"当前占优阵营"的加成（用户定稿的方向：蓝=秩序=白天，红=混乱=夜晚）
     dayNightBonus: { moveSpeedPct: 5, attackDamagePct: 4 },
     // 熵的非对称加成幅度（|熵-0.5|×2 为系数，中性时恒为 0）
     entropyBonus: { attackDamagePct: 8, armorFlat: 6 },
+    // P5 熵/三核。全部软编码 —— 这套数值必然要反复调，写死在代码里等于每次调都改源码。
+    // 平衡风险见 EntropySystem.js 顶部注释（正反馈 + 三道刹车）。
+    entropy: {
+      enabled: true,        // 三核是否累积（与耦合开关分开：可以只观测不生效）
+      scale: 100,           // 核值 → 熵偏移的归一化尺度。越大熵越迟钝
+      decayPerSec: 0.6,     // 每秒衰减的核值（均值回复，防止一路顶死在上下限）
+      clampMin: 0.05,       // 熵值下限（极秩序也留一点余量，加成有硬顶）
+      clampMax: 0.95,       // 熵值上限
+      gainMinion: 1,        // 击杀小兵给击杀方一侧的核增量
+      gainTower: 25,        // 摧毁建筑
+      gainDragon: 40,       // 击杀巨龙（另见下方：龙是【反向】压回中性的）
+      redFromConflict: 0.5, // 每点冲突同时喂给红核（烈度）的比例
+      volatilityPct: 12,    // 红核满值时对非对称【幅度】的放大（%）
+      nightStretchPct: 30,  // entropyToDayNight：熵满时夜晚相位延长（%）
+    },
   },
 
   factionOverrides: { blue: {}, red: {} },

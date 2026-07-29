@@ -92,10 +92,9 @@ function runOne(seed) {
   const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, mapSys);
   const coll = new CollisionSystem(ents, mapSys);
   const waves = new LaneWaveSystem(ents, bus, mapSys);
-  const world = new WorldState({ entities: ents });
-  // 熵档位：WorldState.update() 不写 entropy.value（熵的推进规则还没实现），
-  // 所以这里直接钉住即可，等真实推进逻辑落地后把这行换成"按规则演化"。
-  if (FORCE_ENTROPY !== null) world.entropy.value = FORCE_ENTROPY;
+  const world = new WorldState({ entities: ents, bus });
+  // 熵档位：钉死在某个值扫曲线（此时三核不推进）。传 null 则由三核按对局事件自然演化。
+  world.forceEntropy(FORCE_ENTROPY);
   AttributeCalculator.setWorldState(world);
 
   const score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
@@ -229,6 +228,8 @@ function runOne(seed) {
     towers: { blue: score.blue.towers, red: score.red.towers },
     kills: { blue: score.blue.kills, red: score.red.kills },
     push: { blue: pushScore('blue'), red: pushScore('red') },
+    // 终局熵：自演化档位下用来判断"雪球有没有滚起来"（0.5=中性，逼近上下限=失控）
+    entropy: +world.entropy.value.toFixed(3),
   };
   AttributeCalculator.setWorldState(null);
   Math.random = _realRandom;
@@ -256,6 +257,7 @@ function runCell(label, apply, restore) {
     avgMin: avg(r => r.minutes),
     avgTB: avg(r => r.towers.blue), avgTR: avg(r => r.towers.red),
     pushB, pushR, pushDiff: +(pushB - pushR).toFixed(2),
+    entropy: avg(r => r.entropy),
     rows,
   };
 }
@@ -284,6 +286,22 @@ if (SWEEP === 'dayNight') {
       FORCE_ENTROPY = v;
     }, () => { cw.entropyToUnits = false; FORCE_ENTROPY = null; }]);
   }
+} else if (SWEEP === 'entropyLive') {
+  // 熵【自然演化】下扫加成幅度。这一档才是真正要看的：
+  // 钉死熵值只能验证"给定熵值时谁占优"，验证不了那条正反馈回路
+  // （红方多杀 → 熵升 → 红方更强 → 杀更多）会不会滚雪球。
+  // 判读：推进度差应随幅度增大而单调偏离 0；若在某一档突然跳变，就是雪球滚起来了。
+  const B0 = { ...CONFIG.world.entropyBonus };
+  for (const pct of [0, 4, 8, 16, 32]) {
+    cells.push(['熵自演化·幅度 ' + pct, () => {
+      cw.entropyToUnits = true;
+      CONFIG.world.entropyBonus = { attackDamagePct: pct, armorFlat: Math.round(pct * 0.75) };
+      FORCE_ENTROPY = null;
+    }, () => {
+      cw.entropyToUnits = false;
+      CONFIG.world.entropyBonus = { ...B0 };
+    }]);
+  }
 } else {
   cells.push(['基线（所有耦合关闭）', () => {}, () => {}]);
 }
@@ -302,7 +320,7 @@ for (const [label, apply, restore] of cells) {
     `${label.padEnd(22)} 蓝胜 ${String(r.blue).padStart(2)}/${r.runs}（${String(r.blueRate).padStart(3)}%）` +
     `  红胜 ${String(r.red).padStart(2)}  平 ${String(r.draw).padStart(2)}` +
     `  均时长 ${String(r.avgMin).padStart(5)} 分  推塔 蓝${r.avgTB}/红${r.avgTR}` +
-    `  推进度 蓝${r.pushB}/红${r.pushR}（差 ${sign}${r.pushDiff}）`
+    `  推进度 蓝${r.pushB}/红${r.pushR}（差 ${sign}${r.pushDiff}）  终局熵 ${r.entropy}`
   );
 }
 console.log(`\n耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
