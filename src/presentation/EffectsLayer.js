@@ -83,17 +83,11 @@ const TRAIL_W_HEAT = 0.05; // 升温对尾巴宽度的加成（Q2：从 0.14 压
 const TRAIL_FADE = 0.13;   // 子弹消失后尾迹余烬的淡出时长（秒）
 const WHITE = new THREE.Color('#ffffff');
 // Q1：闪电杖光束宽度只由充能驱动（细 → 粗），不再有虚线形态。
-// 用户定稿：整体要【很窄】—— 1.6~9.0 那版太张扬，满充能时一束光把塔和目标都盖住了。
-// 现在满充能也只有 2.4，读起来是一条会稍微变粗变亮的细激光，不抢戏。
-const BEAM_W_MIN = 0.45;   // 零充能时的主体宽度
-const BEAM_W_MAX = 2.4;    // 满充能时的主体宽度
-const BEAM_GLOW_K = 2.2;   // 辉光层相对主体的宽度倍率（软边，只让边缘化开一点）
-const BEAM_CORE_K = 0.30;  // 白芯相对主体的宽度比
-// 三层的不透明度上限。压低是"细而亮"的关键：宽度小了如果还满不透明，
-// 看着就是一根硬线；淡一点才有光感。
-const BEAM_A_GLOW = 0.10;
-const BEAM_A_BODY = 0.55;
-const BEAM_A_CORE = 0.85;
+// 主体与辉光走软边（两侧渐变透明），所以宽度可以给得比硬边时代大一些也不会显笨。
+const BEAM_W_MIN = 1.6;    // 零充能时的主体宽度
+const BEAM_W_MAX = 9.0;    // 满充能时的主体宽度
+const BEAM_GLOW_K = 3.0;   // 辉光层相对主体的宽度倍率
+const BEAM_CORE_K = 0.16;  // 白芯相对主体的宽度比（细才好看，实心不刺眼）
 // Q3：腐蚀塔不画红线，改为从塔向射程边缘扩散的毒雾波纹
 const CORROSION_RINGS = 3;      // 同时在飞的环数
 const CORROSION_SPEED = 0.45;   // 每秒扩散多少个完整周期
@@ -559,11 +553,11 @@ export class EffectsLayer {
         // 细到几个像素时实心反而是需要的"芯"，不会显得死板。
         const soft = (width, color, alpha) =>
           D.softSeg3(b.startX, sy, b.startY, b.endX, ey, b.endY, width, color, alpha, V.vx, V.vy, V.vz);
-        soft(w * BEAM_GLOW_K * breathe, col, fade * BEAM_A_GLOW * (0.4 + charge * 0.6));  // ① 外层辉光
-        soft(w * breathe, col, fade * BEAM_A_BODY * (0.45 + charge * 0.55));              // ② 主体
-        D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY,                                // ③ 白芯（细，实心）
-               Math.max(0.28, w * BEAM_CORE_K) * breathe, WHITE,
-               fade * BEAM_A_CORE * (0.4 + charge * 0.6), V.vx, V.vy, V.vz);
+        soft(w * BEAM_GLOW_K * breathe, col, fade * (0.14 + charge * 0.30));  // ① 外层辉光
+        soft(w * breathe, col, fade * (0.55 + charge * 0.40));                // ② 主体
+        D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY,                    // ③ 白芯（细，实心）
+               Math.max(0.6, w * BEAM_CORE_K) * breathe, WHITE,
+               fade * (0.30 + charge * 0.60), V.vx, V.vy, V.vz);
       }
     }
 
