@@ -1,6 +1,7 @@
 ﻿import { CONFIG } from '../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { buildWaveOrder, WHEN_OPTIONS } from '../data/waveComposition.js';
+import { towerTierBase, towerTierEffective } from '../data/schema/index.js';
 
 // 属性字段元数据：中文标签 + 滑块范围 + 步长（供动态滑块条使用）
 const FIELD_META = {
@@ -138,19 +139,12 @@ export const AttributeEditor = {
   _factionScope: 'shared',
 
   // 分层塔的"当前有效数值"：地图 tierStats → 共享覆写 → 阵营覆写（与 createBuilding 同一叠加顺序）
-  _tierBase(tier) {
-    const map = window.CTX?.__app?.mapSystem?.currentMap;
-    const fromMap = (map?.tierStats && map.tierStats[tier]) || {};
-    const tplTower = CONFIG.templates.tower || {};
-    // 地图只给了部分字段，其余落回塔模板，保证面板每项都有初值
-    return { ...tplTower, ...fromMap };
-  },
-  _tierEffective(tier) {
-    const shared = CONFIG.towerTierOverrides?.[tier] || {};
-    const fac = this._factionScope !== 'shared'
-      ? (CONFIG.factionOverrides?.[this._factionScope]?.['tower_' + tier] || {}) : {};
-    return { ...this._tierBase(tier), ...shared, ...fac };
-  },
+  // P1：分层塔的数值解析【全部转调 Schema】，编辑器不再自己写一份。
+  // 这两个函数原先是解析顺序的第【四】份实现（createBuilding 一份、Schema 一份、
+  // 运维改层级一份、这里一份）。同一套顺序抄四遍，正是"编辑器写 A 运行时读 B"
+  // 这类事故的温床 —— 抄的时候对，改的时候只改一处就错。
+  _tierBase(tier) { return towerTierBase(tier); },
+  _tierEffective(tier) { return towerTierEffective(tier, this._factionScope); },
 
   _scopedTpl(type) {
     const base = CONFIG.templates[type];
