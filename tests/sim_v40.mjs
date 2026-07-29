@@ -181,8 +181,14 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
             + fs.readFileSync(new URL('../src/presentation/SpriteFactory.js', import.meta.url), 'utf8');
   T('攻城车有渲染样式（不再 fallback 到 ❓）', /ram:\s*\{ color: '#7f8c8d', icon: '🛠️'/.test(src));
   T('攻城车有独立形状分支（横向长方形）', src.includes("case 'ram':"));
+  // 断言里写死了 \n，而 CanvasRenderer.js 是 CRLF —— 代码一直是对的，是断言匹配不上（假阳性）。
+  // 顺带把"活的"渲染路径也纳入：2D 渲染器已摘除，真正在跑的是 UnitLayer 的盾牌 sprite，
+  // 它靠自绘不透明白色纹理 + 不参与深度来保证实色，这才是今天该守住的行为。
+  const srcN = src.replace(/\r\n/g, '\n');
+  const ulSrc = fs.readFileSync(new URL('../src/presentation/UnitLayer.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   T('结构保护盾牌显式锁定不透明实色（修"透明"问题）',
-    src.includes("ctx.globalAlpha = 1;\n        ctx.fillStyle = '#ffffff';"));
+    srcN.includes("ctx.globalAlpha = 1;\n        ctx.fillStyle = '#ffffff';")
+    && /fillStyle = '#ffffff'/.test(ulSrc) && /depthTest: false, depthWrite: false/.test(ulSrc));
   T('攻城模式攻击指示红线', src.includes('m._ramLockId') && src.includes('rgba(255,60,60,0.55)'));
 }
 

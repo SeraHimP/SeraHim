@@ -74,7 +74,10 @@ A('main.js 可编译（无语法错误）', chk.status === 0);
   let depth = 0;
   const topLines = [];            // [{ lineNo, text }]，仅顶层
   lines.forEach((raw, i) => {
-    const line = raw.replace(/\/\/.*$/, '');
+    // 先去掉行尾 \r 再剥注释：main.js 是 CRLF，split('\n') 会留下 \r，
+    // 而 /\/\/.*$/ 的 . 不匹配 \r、$ 又只认字符串末尾 → 整行注释根本没被剥掉，
+    // 于是注释里出现的标识符被当成"先用后声明"，7 条全是假阳性。
+    const line = raw.replace(/\r$/, '').replace(/\/\/.*$/, '');
     if (depth === 0) topLines.push({ lineNo: i, text: line });
     const m = depth === 0 && line.match(/^(?:const|let|var|function)\s+(\w+)/);
     if (m && !declaredAt.has(m[1])) declaredAt.set(m[1], i);

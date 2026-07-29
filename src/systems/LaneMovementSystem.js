@@ -59,6 +59,10 @@ const STUCK_T = 1.2;             // 观察窗口（秒）
 const STUCK_D = 14;              // 窗口内的最小位移（px）
 // 兵线回流场：距路面超过这么多格才接管前进方向（1~2 格属正常贴边行军，不该被接管）
 const LANE_FLOW_MIN_STEPS = 2;
+// v39 互卡死锁让位：两个行军单位贴身对顶时，靠 id 比大小产生确定性的不对称来解锁。
+const DEADLOCK_GAP = 6;    // 贴身判据：间距小于 半径和 + 本值 才算对峙
+const DEADLOCK_DOT = 0.6;  // 双方"朝着对方"的方向余弦阈值（越大越只认正面顶牛）
+const YIELD_K = 0.9;       // 让位力权重（略小于期望力 1.0：让路但不放弃推进）
 
 export class LaneMovementSystem {
   constructor(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem) {
@@ -387,6 +391,7 @@ export class LaneMovementSystem {
     let blockerX = 0, blockerY = 0, blocked = false; // v37：最近的正面锚定障碍（绕行用）
     let blockerD = Infinity, blockerRSum = 0, blockerSepX = 0, blockerSepY = 0;
     let yieldX = 0, yieldY = 0;   // v39：互卡死锁的让位力
+    let deadlock = null, deadlockD = Infinity;   // 互卡对峙的那个邻居（取最近的一个）
     const contacts = []; // v37：贴身锚定接触（≤2-3个），位移后做硬圆投影防穿
 
     const R = rSelf + 34;
@@ -436,6 +441,34 @@ export class LaneMovementSystem {
         // 敌方非锚定单位：轻微分离即可（马上要接敌，不需要强避让）
         sepX += ux * closeness * 0.4;
         sepY += uy * closeness * 0.4;
+      }
+
+      // v39：互卡死锁检测 —— 两个都在行军的单位【贴身且互相顶着对方走】时，
+      // 纯分离力是对称的，双方原地互推谁也过不去。这里挑出这种对峙。
+      // 判据：我朝着它、它也朝着我（用它上一帧的转向方向），且已经贴身。
+      if (!o._anchored && od < rSum + DEADLOCK_GAP) {
+        const intoO = fx * (-ux) + fy * (-uy);              // 我的期望方向指向它的分量
+        const od2 = o._steerDir;
+        const intoMe = od2 ? (od2.x * ux + od2.y * uy) : 0;  // 它的转向方向指向我的分量
+        if (intoO > DEADLOCK_DOT && intoMe > DEADLOCK_DOT && od < deadlockD) {
+          deadlockD = od; deadlock = o;
+        }
+      }
+    }
+
+    // v39：互卡死锁的让位力。对称的力解不开对称的僵局，必须引入一个【确定性的不对称】——
+    // 用 id 比大小决定谁让（minion.id > o.id 的那个横向侧移），保证：
+    //   ① 双方结论必然相反（不会两个都让或都不让）；
+    //   ② 不依赖随机数，回放/测试可复现。
+    if (deadlock) {
+      const dx2 = minion.pos.x - deadlock.pos.x, dy2 = minion.pos.y - deadlock.pos.y;
+      const dl = Math.hypot(dx2, dy2) || 1;
+      // 让位方向 = 连线的垂线。取哪一侧同样按 id 定，两人才会往【同一侧】错身而过，
+      // 否则各让各的反而继续对撞。
+      const side = (minion.id + deadlock.id) % 2 ? 1 : -1;
+      if (minion.id > deadlock.id) {
+        yieldX = -dy2 / dl * side * YIELD_K;
+        yieldY = dx2 / dl * side * YIELD_K;
       }
     }
 

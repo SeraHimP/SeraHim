@@ -281,8 +281,9 @@ T('成长表：ram = HP10/波、AD0.1/波、双抗0',
   T('设置：快进 30s/300s', src.includes('data-ff="30"') && src.includes('data-ff="300"'));
   T('设置：波次概览（当前波次/下一波倒计时）', src.includes('当前波次') && src.includes('nextWaveTime'));
   const mainSrc = (await import('fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  // 同上：速度倍率读的是 CTX.__gameSpeed（会同步到 window），断言认 CTX 写法。
   T('主循环：速度倍率只放大投喂时间（SIM_DT 不变，判定一致）',
-    mainSrc.includes('window.__gameSpeed') && mainSrc.includes('realDt * speed'));
+    /CTX\.__gameSpeed/.test(mainSrc) && mainSrc.includes('realDt * speed'));
   T('快进=加速模拟真实跑完（非跳时钟）',
     mainSrc.includes('__ffRemain') && mainSrc.includes('FF_BUDGET'));
 }

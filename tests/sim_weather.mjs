@@ -249,8 +249,10 @@ import fs from 'fs';
   T('天气开关在设置面板里(永远可达)', settings.includes('setWeatherToggleBtn'));
   T('天气配置入口在设置面板里', settings.includes('setWeatherCfgBtn'));
   T('设置按钮本身永远可见(不在任何条件容器内)', html.includes('id="settingsBtn"'));
-  T('WeatherPanel 已挂到 window 供设置面板调用', main.includes('window.__weatherPanel'));
-  T('WeatherSystem 已挂到 window 供设置面板调用', main.includes('window.__weather ='));
+  // 挂载改走 CTX（GameContext 的 SYNC_KEYS 会同步到 window.__weatherPanel），
+  // 断言跟着改成认 CTX 写法 —— 测的是"设置面板拿得到入口"，不是某个字面量。
+  T('WeatherPanel 已挂到 window 供设置面板调用', /CTX\.__weatherPanel\s*=/.test(main));
+  T('WeatherSystem 已挂到 window 供设置面板调用', /CTX\.__weather\s*=/.test(main));
   T('天气条每帧更新(主循环里有 WeatherPanel.update)', main.includes('WeatherPanel.update()'));
 }
 
