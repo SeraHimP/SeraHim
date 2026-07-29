@@ -2,7 +2,7 @@
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { buildWaveOrder, WHEN_OPTIONS } from '../data/waveComposition.js';
 import { towerTierBase, towerTierEffective, towerTierSource } from '../data/schema/index.js';
-import { exportTemplates, importTemplates } from '../data/templateIO.js';
+import { exportTemplates, importTemplates, suggestedFileName } from '../data/templateIO.js';
 
 // 属性字段元数据：中文标签 + 滑块范围 + 步长（供动态滑块条使用）
 const FIELD_META = {
@@ -242,8 +242,9 @@ export const AttributeEditor = {
           ` : ''}
           <div style="margin-top:12px;">${detailHtml}</div>
           <div class="editor-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #2d3540;padding-top:12px;">
-            <button id="tplExportBtn" title="把当前全部模板配置导出为 JSON">📤 导出</button>
-            <button id="tplImportBtn" title="从 JSON 导入模板配置">📥 导入</button>
+            <button id="tplSaveBtn" title="保存为本地文件（支持覆盖上次保存的那个文件）">💾 保存</button>
+            <button id="tplOpenBtn" title="从本地文件读取配置">📂 打开</button>
+            <button id="tplImportBtn" title="粘贴 JSON 导入 / 复制 JSON 导出">📋 JSON</button>
             ${tpl ? `<button id="templateApplyBtn" class="primary">应用</button>` : ''}
             <button id="templateCloseBtn">关闭</button>
           </div>
@@ -295,26 +296,108 @@ export const AttributeEditor = {
   // 面板改完的东西刷新一下就没了 —— 调了半小时平衡，手滑刷新全白费。
   // 导出/导入让整套配置能存盘、能对比、能发给别人复现。
   // 真正的序列化逻辑在 src/data/templateIO.js（可 headless 回归），这里只管交互。
+  // 上次保存/打开的文件句柄（File System Access API）。留着它，再点"保存"就是
+  // **覆盖同一个文件**而不是每次都往下载目录扔一个新文件 —— 调平衡是"改一点存一次"
+  // 的循环，每次都新文件的话十分钟后下载目录里会有二十个同名带序号的 json，
+  // 根本分不清哪个是最新的。
+  _fileHandle: null,
+  get _canUseFS() { return typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function'; },
+
+  async _writeToHandle(handle, text) {
+    const w = await handle.createWritable();
+    await w.write(text);
+    await w.close();
+  },
+
+  _downloadFallback(text, name) {
+    const blob = new Blob([text], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  },
+
   _bindTemplateIO(overlay, logFn, returnCallback) {
-    overlay.querySelector('#tplExportBtn')?.addEventListener('click', () => {
+    // ---- 💾 保存到本地文件 ----
+    overlay.querySelector('#tplSaveBtn')?.addEventListener('click', async () => {
       const text = JSON.stringify(exportTemplates(CONFIG), null, 2);
-      // 优先下载成文件；浏览器不给下载时退回到"选中文本让用户自己复制"。
+      const kb = (text.length / 1024).toFixed(1);
+      const name = suggestedFileName();
+      if (this._canUseFS) {
+        try {
+          if (!this._fileHandle) {
+            this._fileHandle = await window.showSaveFilePicker({
+              suggestedName: name,
+              types: [{ description: 'SeraHim 配置', accept: { 'application/json': ['.json'] } }],
+            });
+          }
+          await this._writeToHandle(this._fileHandle, text);
+          logFn(`💾 已保存到 ${this._fileHandle.name}（${kb} KB）。再点保存会覆盖同一文件`, 'spawn');
+          return;
+        } catch (e) {
+          // 用户点了取消：这不是错误，静默返回，别把它当失败去走降级流程弹下载框。
+          if (e && e.name === 'AbortError') return;
+          // 句柄失效（文件被移走/权限撤销）时清掉，下次重新问一次路径
+          this._fileHandle = null;
+          logFn(`⚠️ 保存到文件失败（${e?.message || e}），改用下载`, 'spawn');
+        }
+      }
       try {
-        const blob = new Blob([text], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `serahim-templates-${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-        logFn(`📤 已导出模板配置（${(text.length / 1024).toFixed(1)} KB）`, 'spawn');
+        this._downloadFallback(text, name);
+        logFn(`💾 已导出 ${name}（${kb} KB）`, 'spawn');
       } catch (e) {
         this._showJsonBox(overlay, text, null, logFn);
-        logFn('📤 浏览器未允许下载，已改为文本框展示，请自行复制', 'spawn');
+        logFn('💾 浏览器未允许下载，已改为文本框展示，请自行复制', 'spawn');
       }
     });
 
+    // ---- 📂 从本地文件打开 ----
+    overlay.querySelector('#tplOpenBtn')?.addEventListener('click', async () => {
+      const apply = (text) => {
+        let data;
+        try { data = JSON.parse(text); }
+        catch (e) { logFn(`❌ 打开失败：JSON 解析错误（${e.message}）`, 'spawn'); return; }
+        const r = importTemplates(CONFIG, data);
+        if (!r.ok) { logFn(`❌ 打开失败：${r.error}`, 'spawn'); return; }
+        logFn(`📂 已载入 ${r.groups.length} 组配置：${r.groups.join('、')}` +
+              (r.skipped.length ? `（忽略 ${r.skipped.length} 个未知键）` : ''), 'spawn');
+        this._renderTemplateEditor(logFn, returnCallback);
+      };
+      if (typeof window.showOpenFilePicker === 'function') {
+        try {
+          const [h] = await window.showOpenFilePicker({
+            types: [{ description: 'SeraHim 配置', accept: { 'application/json': ['.json'] } }],
+          });
+          // 打开的文件同时成为后续"保存"的目标：打开→改→保存 是最常见的循环，
+          // 不接上的话保存又会去问一次路径，很容易存到另一个文件去。
+          this._fileHandle = h;
+          apply(await (await h.getFile()).text());
+          return;
+        } catch (e) {
+          if (e && e.name === 'AbortError') return;
+          logFn(`⚠️ 打开文件失败（${e?.message || e}），改用文件选择框`, 'spawn');
+        }
+      }
+      // 降级：传统 <input type=file>
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = '.json,application/json';
+      inp.addEventListener('change', () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => apply(String(rd.result || ''));
+        rd.readAsText(f);
+      });
+      inp.click();
+    });
+
+    // ---- 📋 JSON 文本框：既能复制走当前配置，也能粘贴新的进来 ----
+    // 预填当前配置而不是留空：这一个框同时服务"我想看看现在存了什么"和
+    // "我想粘一份进来"两种诉求，留空的话前者还得再点一次导出。
     overlay.querySelector('#tplImportBtn')?.addEventListener('click', () => {
-      this._showJsonBox(overlay, '', (text) => {
+      this._showJsonBox(overlay, JSON.stringify(exportTemplates(CONFIG), null, 2), (text) => {
         let data;
         try { data = JSON.parse(text); }
         catch (e) { logFn(`❌ 导入失败：JSON 解析错误（${e.message}）`, 'spawn'); return false; }
@@ -336,10 +419,11 @@ export const AttributeEditor = {
     box.innerHTML = `
       <div class="modal-box" style="max-width:560px;">
         <div class="editor-container">
-          <h4>${onConfirm ? '📥 导入模板配置' : '📤 导出模板配置'}</h4>
+          <h4>${onConfirm ? '📋 配置 JSON' : '📤 导出模板配置'}</h4>
           <p style="color:#8b949e;font-size:11px;margin:6px 0;">
             ${onConfirm
-              ? '把导出的 JSON 粘进来。导入是【深合并】：文件里没写的字段保持现值，不会被抹掉。'
+              ? '下面是当前的全部配置，可直接全选复制走。也可以粘一份进来再点【导入】——'
+                + '导入是【深合并】：文件里没写的字段保持现值，不会被抹掉。'
               : '复制下面的全部内容并自行保存为 .json 文件。'}
           </p>
           <textarea id="jsonBoxArea" spellcheck="false" style="width:100%;height:280px;font-family:monospace;

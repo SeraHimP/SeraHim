@@ -665,6 +665,24 @@ eventBus.on('dragon:killed', (d) => {
 eventBus.on('dragon:soulUnlocked', (d) => {
   uiManager.log(`✨ 龙魂解锁：${d.label}魂！所有防御塔获得强大效果，此后只刷新远古巨龙`, 'spawn');
 });
+// 阵营龙魂结算（用户定稿：6 条龙 + ≥4 击杀才成魂，都不到 4 则无魂，之后出远古龙）
+eventBus.on('dragon:soulResolved', (d) => {
+  const t = d.factionTotals || {};
+  if (d.owner) {
+    const who = d.owner === 'blue' ? '🔵蓝方' : '🔴红方';
+    uiManager.log(`✨ 龙魂归属：${who}取得【${d.label}魂】（蓝 ${t.blue||0} : ${t.red||0} 红），全军生效`, 'spawn');
+  } else {
+    uiManager.log(`❌ 无人成魂（蓝 ${t.blue||0} : ${t.red||0} 红，无一方达到门槛），直接进入远古龙阶段`, 'spawn');
+  }
+});
+// 召唤水晶重建后补发本阵营已有的龙魂 —— 重建路径是全新实体，不补就把魂丢了。
+// 写在这里而不是 MapSystem 里，是为了守住“系统之间禁止互相 import”的规矩。
+eventBus.on('map:nexusRespawned', ({ faction }) => {
+  if (!faction) return;
+  for (const t of entityContainer.getAllTowers(true)) {
+    if (t._mapFaction === faction) dragonSystem.equipExistingSoul(t);
+  }
+});
 eventBus.on('dragon:spawn', (d) => {
   uiManager.log(`⚠️ ${d.label} 即将降临`, 'spawn');
 });

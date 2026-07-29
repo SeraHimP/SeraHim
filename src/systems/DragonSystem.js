@@ -42,7 +42,42 @@ export class DragonSystem {
     this.soulUnlocked = false;
     this.ancientKills = 0;
 
+    // ==================== 阵营龙魂规则（用户定稿）====================
+    // 「6 条龙 + ≥4 击杀才成魂、都不到 4 则无魂、之后出远古龙」
+    //
+    // 改这块之前的实现是**按塔**结算的：每座塔各记自己的击杀、各自到 4 条解锁
+    // 自己的魂。那既不是 LoL 的口径也不是用户要的 —— 龙魂是**阵营级**的战利品，
+    // 一方拿到全军受益，另一方什么都没有。按塔算的结果是双方都能慢慢攒够、
+    // 龙魂从"争夺目标"退化成"时间到了就有"，整个争龙的博弈就没有了。
+    //
+    // 现在：元素龙总共 elementDragonTotal（默认 6）条。每条龙的击杀归属到阵营。
+    // 6 条打完后结算一次：谁 ≥ soulThreshold（默认 4）谁成魂；都不到则**无魂**
+    // （3:3 是合法结局，不是需要兜底的边界）。结算后转入远古龙阶段。
+    this.factionKills = { blue: {}, red: {} };   // 阵营 → { 元素: 次数 }
+    this.factionTotals = { blue: 0, red: 0 };
+    this.souls = { blue: [], red: [] };          // 阵营 → 已获得的龙魂 id
+    this.soulResolved = false;                   // 6 条龙是否已结算
+    this.soulOwner = null;                       // 成魂阵营（null = 无魂）
+
     this._bindDeath();
+  }
+
+  /** 元素龙总数与成魂门槛（软编码）。 */
+  get _soulRule() {
+    const g = CONFIG.gameRules || {};
+    return {
+      total: g.elementDragonTotal ?? 6,
+      threshold: g.dragonSoulThreshold ?? 4,
+    };
+  }
+
+  /**
+   * WorldState 读这个接口把龙魂并进世界状态层。
+   * 此前**这个方法根本不存在** —— WorldState 里写的是 `this.dragons?.getSouls?.()`，
+   * 可选调用把缺失静默吞掉了，于是"龙魂已接入 WorldState"其实一直是空转。
+   */
+  getSouls() {
+    return { blue: [...this.souls.blue], red: [...this.souls.red] };
   }
 
   setCreateEntity(fn) { this.createEntity = fn; }
@@ -160,14 +195,93 @@ export class DragonSystem {
       tower._dragonKills = tower._dragonKills || {};
       tower._dragonKills[el] = (tower._dragonKills[el] || 0) + 1;
       tower._dragonTotalKills = (tower._dragonTotalKills || 0) + 1;
-      // 给这座塔元素增益
+      // 给这座塔元素增益（这一层保持不变：元素增益本来就是"谁打的谁拿"）
       this._applyElementBuffToTower(tower, el);
-      // 这座塔达到4条且尚未解锁 → 解锁它自己的龙魂
-      if (!tower._soulUnlocked && tower._dragonTotalKills >= 4) {
-        this._unlockSoulForTower(tower);
-      }
     }
-    this.eventBus.emit('dragon:killed', { element: el, totalKills: this.totalKills, killCounts: { ...this.killCounts } });
+
+    // ---- 阵营归属：这条龙算谁杀的 ----
+    // 按参与塔的阵营投票，多者得。沙盒模式没有阵营标记，跳过阵营结算。
+    const votes = { blue: 0, red: 0 };
+    for (const tid of participants) {
+      const f = this.entities.get(tid)?._mapFaction;
+      if (f === 'blue' || f === 'red') votes[f]++;
+    }
+    if (votes.blue || votes.red) {
+      const owner = votes.blue >= votes.red ? 'blue' : 'red';
+      this.factionKills[owner][el] = (this.factionKills[owner][el] || 0) + 1;
+      this.factionTotals[owner]++;
+    }
+
+    this.eventBus.emit('dragon:killed', {
+      element: el, totalKills: this.totalKills, killCounts: { ...this.killCounts },
+      factionTotals: { ...this.factionTotals },
+    });
+
+    // ---- 6 条龙打完 → 结算龙魂 ----
+    // 用【已刷新数】而不是【已击杀数】判断阶段结束：龙可能自然消失/被跳过，
+    // 按击杀数算的话只要有一条没被杀掉，阶段就永远结束不了、远古龙永不出现。
+    if (!this.soulResolved && this.elementDragonSpawned >= this._soulRule.total) {
+      this._resolveSoul();
+    }
+  }
+
+  /**
+   * 6 条元素龙结束后的一次性结算。
+   * 达到门槛的阵营成魂（魂的元素 = 该阵营击杀最多的那种）；都不到则无魂。
+   * 之后转入远古龙阶段。
+   */
+  _resolveSoul() {
+    this.soulResolved = true;
+    const { threshold } = this._soulRule;
+    const b = this.factionTotals.blue, r = this.factionTotals.red;
+
+    // 双方都达标时按击杀多的一方（同分则无人成魂：平局不该白送任何一方）
+    let owner = null;
+    if (b >= threshold && r >= threshold) owner = b === r ? null : (b > r ? 'blue' : 'red');
+    else if (b >= threshold) owner = 'blue';
+    else if (r >= threshold) owner = 'red';
+
+    if (owner) {
+      const kills = this.factionKills[owner];
+      let best = null, bestCount = -1;
+      for (const [el, cnt] of Object.entries(kills)) {
+        if (cnt > bestCount) { bestCount = cnt; best = el; }
+      }
+      if (best) {
+        const soulId = DRAGON_ELEMENTS[best].soul;
+        this.soulOwner = owner;
+        this.souls[owner] = [soulId];
+        // 装备给该阵营【所有】塔，含之后新建的（见 equipSoulToTower 的调用点）
+        for (const t of this.entities.getAllTowers(true)) {
+          if (t._mapFaction === owner) this._equipSoul(t, soulId);
+        }
+        this.eventBus.emit('dragon:soulResolved', {
+          owner, element: best, soulId, label: DRAGON_ELEMENTS[best].label,
+          factionTotals: { ...this.factionTotals },
+        });
+      }
+    } else {
+      this.eventBus.emit('dragon:soulResolved', {
+        owner: null, element: null, soulId: null,
+        factionTotals: { ...this.factionTotals },
+      });
+    }
+
+    // 无论有没有成魂，都进入远古龙阶段（用户定稿："都不到 4 则无魂，之后出远古龙"）
+    this.soulUnlocked = true;
+    this._unlockWave = window.waveNumber || 0;
+    this.ancientSpawned = 0;
+    this.nextDragonTime = 300;
+  }
+
+  /** 新塔（重生/新建）补发本阵营已有的龙魂，否则重生后就把魂丢了。 */
+  equipExistingSoul(tower) {
+    const fac = tower?._mapFaction;
+    if (!fac) return false;
+    const soulId = this.souls[fac]?.[0];
+    if (!soulId) return false;
+    this._equipSoul(tower, soulId);
+    return true;
   }
 
   // 给单个塔叠加元素增益
@@ -190,26 +304,11 @@ export class DragonSystem {
     }
   }
 
-  // 为单个塔解锁龙魂（按该塔击杀最多的元素）
-  _unlockSoulForTower(tower) {
-    let best = null, bestCount = -1;
-    for (const [el, cnt] of Object.entries(tower._dragonKills || {})) {
-      if (cnt > bestCount) { bestCount = cnt; best = el; }
-    }
-    if (!best) return;
-    const soulId = DRAGON_ELEMENTS[best].soul;
-    tower._soulUnlocked = true;
-    tower._currentSoul = soulId;
-    this._equipSoul(tower, soulId);
-    // 首个塔解锁 → 开始刷新远古龙
-    if (!this.soulUnlocked) {
-      this.soulUnlocked = true;
-      this._unlockWave = window.waveNumber || 4;
-      this.ancientSpawned = 0;
-      this.nextDragonTime = 300;
-    }
-    this.eventBus.emit('dragon:soulUnlocked', { element: best, soulId, label: DRAGON_ELEMENTS[best].label, towerId: tower.id });
-  }
+  // 注：这里原有 _unlockSoulForTower(tower)（"每座塔各自攒够 4 条就解锁自己的魂"）。
+  // 它与用户定稿的阵营级规则冲突 —— 按塔算的话双方都能慢慢攒够，龙魂从"争夺目标"
+  // 退化成"时间到了就有"，而且"都不到 4 则无魂"这条永远不会发生（每座塔各算各的，
+  // 总有塔能到 4）。现已由 _resolveSoul() 的一次性阵营结算取代，故删除，
+  // 不留下一个语义相反的旁路入口。
 
   // 远古增益给单个塔
   _applyAncientBuffToTower(tower) {
@@ -300,12 +399,21 @@ export class DragonSystem {
   // 避免留下一个内部调用了已删除方法的坏函数。
 
   getState() {
+    const { total, threshold } = this._soulRule;
     return {
       killCounts: { ...this.killCounts },
       totalKills: this.totalKills,
       soulUnlocked: this.soulUnlocked,
       ancientKills: this.ancientKills,
       nextDragonTime: this.nextDragonTime,
+      // 阵营龙魂规则的可观测状态（UI 与验收都读这里）
+      elementDragonSpawned: this.elementDragonSpawned,
+      elementDragonTotal: total,
+      soulThreshold: threshold,
+      factionTotals: { ...this.factionTotals },
+      soulResolved: this.soulResolved,
+      soulOwner: this.soulOwner,
+      souls: this.getSouls(),
     };
   }
 }

@@ -133,5 +133,38 @@ T('属性 tab 切回时按层级解析（不再退化成通用模板）',
   && /this\._tierEffective\(this\._tplState\.tier\)/.test(src));
 T('取值来源角标已接入属性面板', /_srcBadge\(srcCtx, key\)/.test(src));
 
+// ---- ⑩ 存档结构稳定性 + 本地文件保存 ----
+// 存档格式不该随"用户这次有没有改过技能"而时有时无，否则 diff 两个存档时
+// 满屏是结构差异而不是数值差异，前后对比就没法做了。
+const { ensureGroups, suggestedFileName, IO_ENSURE } = await import('../src/data/templateIO.js');
+for (const g of IO_ENSURE) delete CONFIG[g];
+const snap2 = exportTemplates(CONFIG);
+T(`按需分组始终出现在存档里（${IO_ENSURE.join('、')}）`,
+  IO_ENSURE.every(g => snap2[g] !== undefined));
+T('ensureGroups 幂等', (() => {
+  CONFIG.skillOverrides.weapon_piercing = { dmg: 1 };
+  ensureGroups(CONFIG);
+  return CONFIG.skillOverrides.weapon_piercing.dmg === 1;
+})());
+T('技能/状态/地图覆写可往返', (() => {
+  CONFIG.skillOverrides = { weapon_lightning: { chainRange: 123 } };
+  CONFIG.effectOverrides = { slow: { pct: 45 } };
+  CONFIG.mapOverrides = { summoners_rift_v1: { riverHalfWidth: 77 } };
+  const s = exportTemplates(CONFIG);
+  CONFIG.skillOverrides = {}; CONFIG.effectOverrides = {}; CONFIG.mapOverrides = {};
+  importTemplates(CONFIG, s);
+  return CONFIG.skillOverrides.weapon_lightning.chainRange === 123
+    && CONFIG.effectOverrides.slow.pct === 45
+    && CONFIG.mapOverrides.summoners_rift_v1.riverHalfWidth === 77;
+})());
+T('文件名带日期、以 .json 结尾', /^serahim-config-\d{4}-\d{2}-\d{2}\.json$/.test(suggestedFileName()));
+
+// 本地文件保存：句柄要被记住，否则每点一次保存都往下载目录扔一个新文件。
+T('保存/打开会复用同一个文件句柄（改一点存一次不会堆出一堆文件）',
+  /_fileHandle/.test(src) && /this\._fileHandle = h;/.test(src));
+T('用户点取消不被当成失败（AbortError 静默返回）', /AbortError/.test(src));
+T('无 File System Access API 时降级为下载 / <input type=file>',
+  /_downloadFallback/.test(src) && /inp\.type = 'file'/.test(src));
+
 console.log(`模板 IO / 编辑器重构验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

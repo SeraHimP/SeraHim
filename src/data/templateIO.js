@@ -25,9 +25,17 @@ export const IO_GROUPS = [
   'factionOverrides',     // 阵营覆写层
   'battleGrowth',         // 对战成长
   'rend',                 // 屠戮
-  'gameRules',            // 出兵编排 + 沙盒节奏 + 兵种开关
+  'gameRules',            // 出兵编排 + 沙盒节奏 + 兵种开关 + 龙魂规则
   'world',                // 昼夜/熵/龙魂耦合与加成
+  'skillOverrides',       // 技能参数覆写（按 skillId → { 参数: 值 }）
+  'effectOverrides',      // 状态/效果参数覆写
+  'mapOverrides',         // 地图级覆写（河道/坑位/层级数值/技能改写）
 ];
+
+// 上面三个 *Overrides 分组可能尚未在 CONFIG 里存在（按需创建）。
+// 列进白名单是为了让导出的存档**结构稳定** —— 存档格式不该随"用户这次有没有改过技能"
+// 而时有时无，否则做前后对比（diff 两个存档）时会满屏是结构差异而不是数值差异。
+export const IO_ENSURE = ['skillOverrides', 'effectOverrides', 'mapOverrides'];
 
 export const IO_VERSION = 1;
 
@@ -49,14 +57,29 @@ export function deepMerge(dst, src) {
   return dst;
 }
 
+/** 确保按需分组存在（幂等）。运行时与导出共用，避免两边对"有没有这个键"看法不一致。 */
+export function ensureGroups(CONFIG) {
+  for (const g of IO_ENSURE) if (!isPlainObject(CONFIG[g])) CONFIG[g] = {};
+  return CONFIG;
+}
+
 /** 导出为普通对象（调用方自行 JSON.stringify）。 */
 export function exportTemplates(CONFIG) {
+  ensureGroups(CONFIG);
   const out = { _seraHimTemplates: IO_VERSION, _exportedAt: new Date().toISOString() };
   for (const g of IO_GROUPS) {
     if (CONFIG[g] === undefined) continue;
     out[g] = JSON.parse(JSON.stringify(CONFIG[g]));
   }
   return out;
+}
+
+/**
+ * 存档文件名。带日期便于按时间排序，不带时间戳以便同一天反复覆盖同一个文件。
+ * 单独成函数是为了让"另存为"和"下载降级"两条路径拿到同一个名字。
+ */
+export function suggestedFileName(prefix = 'serahim-config') {
+  return `${prefix}-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
 /**

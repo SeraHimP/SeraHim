@@ -15,9 +15,14 @@ export const CONFIG = {
     waveSiegeSuperInterval: 2,
     waveSuperFromWave: 20,
     waveTotemInterval: 5,
-    // v33：对战模式特殊兵种生成规则（模板编辑器"生成规则"可改；目前只接入图腾兵）
-    battleTotemFromWave: 10,   // 第几波起开始生成图腾兵（对战模式）
-    battleTotemInterval: 3,    // 每几波生成一次（对战模式）
+    // ⚠️ 死配置（保留仅为兼容旧存档，全仓库无人读取，tests/sim_tplio.mjs 有断言守着）：
+    // 对战出兵早已全部由 laneWaveComposition 驱动，图腾兵的对战节奏由其中那条规则的
+    // fromWave/everyN 决定。已从模板编辑器面板移除，请勿再新增读取点。
+    battleTotemFromWave: 10,
+    battleTotemInterval: 3,
+    // 阵营龙魂规则（用户定稿："6 条龙 + ≥4 击杀才成魂、都不到 4 则无魂、之后出远古龙"）
+    elementDragonTotal: 6,     // 元素龙总条数，打完即结算龙魂
+    dragonSoulThreshold: 4,    // 成魂门槛（阵营击杀数）；双方都达标时按击杀多者，同分则无魂
     // v33：兵种生成总开关（沙盒+对战通用；模板编辑器"生成规则"里可切）
     spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: false }, // v35：图腾默认不生成；攻城车(ram)默认不生成——暂无模型（编辑器可开）
     waveShieldInterval: 4,
