@@ -56,6 +56,7 @@ export const AttributeEditor = {
             <button class="editor-tab" data-tab="skill">被动技能</button>
             <button class="editor-tab" data-tab="effect">状态</button>
             ${isTower ? `<button class="editor-tab" data-tab="soul">🐉 龙魂</button>` : ''}
+            <button class="editor-tab" data-tab="ops">🛠 运维</button>
           </div>
           <div id="editorContent">
             ${this._renderAttrContent(entity)}
@@ -706,9 +707,9 @@ export const AttributeEditor = {
           取"模板基础生命"则前期照样快速清线、后期自然稀释。</div>
       </div>`;
     }
-    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">修改后立即影响后续波次的生成节奏。</div>`;
-    html += `</div>`;
-    return html;
+    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">修改后立即影响后续波次的生成节奏。</div>`;
+    html += `</div>`;
+    return html;
   },
 
   _bindSpawnRuleEvents(overlay, type, logFn) {
@@ -1092,6 +1093,130 @@ export const AttributeEditor = {
     html += `</div>`;
     html += `<div class="pick-desc-box" id="skillDescBox">点击某个被动查看说明；再次点击可切换装备/卸载。</div>`;
     return html;
+  },
+
+  // ==================== Q3：运维操作（复活 / 击杀 / 改阵营 / 改层级）====================
+  // 死亡的塔现在可被选中（网格已索引废墟），这一页让它可以被真正"运维"。
+  // 每个操作都有连锁副作用，全部在 _applyOps 里显式处理，不留隐式状态。
+  _renderOpsContent(entity) {
+    const isTower = entity.type === 'tower';
+    const dead = !entity.alive;
+    const fac = entity._mapFaction || entity.faction || '（无阵营）';
+    const facLabel = { blue: '🔵 蓝方', red: '🔴 红方' }[fac] || fac;
+    const state = dead ? (entity._respawnAt ? '💤 等待重生' : (entity._ruin ? '🪦 废墟' : '☠️ 已死亡')) : '✅ 存活';
+
+    let html = `<div style="padding:4px 0;">`;
+    html += `<div class="pick-desc-box" style="margin-bottom:10px;">
+      当前状态：<b>${state}</b>　｜　阵营：<b>${facLabel}</b>${isTower && entity._mapTier ? `　｜　层级：<b>${this._tierLabel(entity._mapTier)}</b>` : ''}
+      <br><span style="color:var(--text-mute);font-size:11px;">编辑器操作不计入比分，日志里会标 [编辑器]。</span>
+    </div>`;
+
+    html += `<div class="slider-row"><label>存活状态</label>
+      <div style="flex:1;display:flex;gap:6px;">
+        <button class="editor-tab ${!dead ? 'active' : ''}" data-op="revive" ${!dead ? 'disabled' : ''}>❤️ 复活（满血）</button>
+        <button class="editor-tab ${dead ? 'active' : ''}" data-op="kill" ${dead ? 'disabled' : ''}>💀 击杀</button>
+      </div></div>`;
+
+    html += `<div class="slider-row"><label>阵营</label>
+      <div style="flex:1;display:flex;gap:6px;">
+        <button class="editor-tab ${fac === 'blue' ? 'active' : ''}" data-op="fac" data-v="blue">🔵 蓝方</button>
+        <button class="editor-tab ${fac === 'red' ? 'active' : ''}" data-op="fac" data-v="red">🔴 红方</button>
+      </div></div>`;
+
+    if (isTower) {
+      html += `<div class="slider-row" style="align-items:flex-start;"><label style="padding-top:5px;">层级</label>
+        <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap;">
+          ${this._TPL_TOWER_TIERS.map(t => `<button class="editor-tab ${t.key === entity._mapTier ? 'active' : ''}" data-op="tier" data-v="${t.key}" style="font-size:11px;">${t.icon} ${t.label}</button>`).join('')}
+        </div></div>`;
+      html += `<div style="font-size:11px;color:var(--text-mute);margin-top:8px;">
+        改层级会按新层级重新解析属性与默认被动/武器（地图数值 → 分层覆写 → 阵营覆写）。
+      </div>`;
+    }
+
+    html += `<div style="margin-top:12px;font-size:11px;color:var(--text-mute);line-height:1.7;">
+      ⚠️ 这些操作会连锁影响：<br>
+      · <b>结构保护</b>按"外层建筑是否存活"判定，复活/击杀会改变【其它塔】的可选中与免伤状态；<br>
+      · 召唤水晶若在<b>重生队列</b>里，手动复活会把队列项一并撤掉，不会二次重生；<br>
+      · 改阵营会清空当前目标（否则它会继续攻击原队友），并刷新模型颜色。
+    </div>`;
+    html += `</div>`;
+    return html;
+  },
+
+  _bindOpsEvents(overlay, entity, logFn) {
+    const app = window.CTX?.__app || window.__app;
+    const ec = overlay._entityContainer || app?.entityContainer;
+    const rerender = () => {
+      overlay.querySelector('#editorContent').innerHTML = this._renderOpsContent(entity);
+      this._bindOpsEvents(overlay, entity, logFn);
+    };
+    overlay.querySelectorAll('[data-op]').forEach(btn => {
+      if (btn.disabled) return;
+      btn.addEventListener('click', () => {
+        const op = btn.dataset.op, v = btn.dataset.v;
+        this._applyOps(entity, op, v, ec, app, logFn);
+        rerender();
+      });
+    });
+  },
+
+  /**
+   * 运维操作的唯一入口。所有连锁副作用都写在这里，避免"改了标记但别处没跟上"。
+   * 刻意【不走 entity:death 事件】：那条链路会计分、会入重生队列、会触发超级兵，
+   * 而编辑器操作是调试手段，不该污染对局状态（用户定稿：不计分，日志标 [编辑器]）。
+   */
+  _applyOps(e, op, v, ec, app, logFn) {
+    const tag = '[编辑器]';
+    const name = e.type === 'tower' ? `塔 #${e.id}` : `${CONFIG.templates[e.type]?.label || e.type} #${e.id}`;
+
+    if (op === 'revive') {
+      const maxHP = e.baseStats?.maxHP || 1;
+      e.alive = true;
+      e.currentHP = maxHP;
+      e.shieldFixedCurrent = e.baseStats?.shieldFixedMax || 0;
+      e.tempShield = 0;
+      e.attackCooldown = 0;
+      e.targetId = null;
+      delete e._ruin;
+      // 重生队列里若还挂着这具尸体，撤掉——否则时间一到会再"重生"一次（凭空多一座）
+      // 无条件清扫队列：不能用 e._respawnAt 当守卫 —— 尸体上没有这个标记、
+      // 而队列里仍挂着条目的情形是存在的（标记被别处清过），那样就会漏撤、时间一到凭空多一座。
+      const q = app?.mapSystem?._respawnQueue;
+      if (q) for (let i = q.length - 1; i >= 0; i--) if (q[i].corpseId === e.id) q.splice(i, 1);
+      delete e._respawnAt; delete e._respawnProgress; delete e._respawnRemain;
+      ec?.markDirty?.();
+      logFn(`${tag} ❤️ ${name} 已复活（满血 ${maxHP}）`, 'spawn');
+
+    } else if (op === 'kill') {
+      e.alive = false;
+      e.currentHP = 0;
+      e.targetId = null;
+      // 地图建筑死亡后保留为废墟（与 MapSystem 同口径），否则会被 purgeDead 直接清掉
+      if (e._mapTier) e._ruin = true;
+      ec?.markDirty?.();
+      logFn(`${tag} 💀 ${name} 已击杀（不计入比分）`, 'death');
+
+    } else if (op === 'fac') {
+      if (v !== 'blue' && v !== 'red') return;
+      e._mapFaction = v; e.faction = v;
+      e.targetId = null;          // 不清目标它会继续打原来的队友
+      if (e._ramLockId) e._ramLockId = null;
+      logFn(`${tag} 🎌 ${name} 阵营 → ${v === 'blue' ? '蓝方' : '红方'}`, 'spawn');
+
+    } else if (op === 'tier') {
+      if (e.type !== 'tower') return;
+      e._mapTier = v;
+      // 按新层级重新解析数值：地图 tierStats → 分层覆写 → 阵营覆写（与 createBuilding 同序）
+      const map = app?.mapSystem?.currentMap;
+      const base = (map?.tierStats && map.tierStats[v]) || {};
+      const shared = CONFIG.towerTierOverrides?.[v] || {};
+      const facOvr = CONFIG.factionOverrides?.[e._mapFaction]?.['tower_' + v] || {};
+      const merged = { ...base, ...shared, ...facOvr };
+      const frac = e.baseStats?.maxHP > 0 ? e.currentHP / e.baseStats.maxHP : 1;
+      Object.assign(e.baseStats, merged);
+      if (e.baseStats.maxHP > 0) e.currentHP = Math.max(1, Math.round(e.baseStats.maxHP * frac));
+      logFn(`${tag} 🏯 ${name} 层级 → ${this._tierLabel(v)}（属性已按新层级重解析）`, 'spawn');
+    }
   },
 
   _renderEffectContent(entity) {
@@ -1553,6 +1678,9 @@ export const AttributeEditor = {
         } else if (tabName === 'soul') {
           content.innerHTML = this._renderSoulContent(entity);
           this._bindSoulEvents(overlay, entity, logFn);
+        } else if (tabName === 'ops') {
+          content.innerHTML = this._renderOpsContent(entity);
+          this._bindOpsEvents(overlay, entity, logFn);
         }
       });
     });

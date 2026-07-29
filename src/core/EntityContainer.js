@@ -34,6 +34,14 @@ export class EntityContainer {
     return this._entities.delete(id);
   }
 
+  /**
+   * 显式作废空间网格。
+   * Q3 之后网格按【存活/废墟状态】决定收不收一个实体，所以在容器外部直接改
+   * entity.alive / _ruin（编辑器的复活·击杀就是这么干的）必须跟一声，
+   * 否则网格要等到下一次 add/remove 才重建，中间这段时间查询结果是陈旧的。
+   */
+  markDirty() { this._gridDirty = true; }
+
   get(id) {
     return this._entities.get(id) || null;
   }
