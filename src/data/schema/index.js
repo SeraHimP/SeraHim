@@ -45,6 +45,34 @@ export function towerTierEffective(tier, faction) {
   return { ...towerTierBase(tier), ...shared, ...fac };
 }
 
+/**
+ * 某个字段的最终值是从叠加链的哪一层来的。
+ *
+ * 分层塔的数值要穿过四层：模板 → 地图 tierStats → 共享覆写 → 阵营覆写。
+ * 编辑器只显示最后那个数，于是"我明明改了却没变"和"我没改它怎么变了"
+ * 两类困惑都没法自查 —— 前者是被更靠后的层压住了，后者是地图带了 tierStats。
+ * 这个函数把链条摊开，界面上就能直接标出"这个值来自哪一层、被谁压住了"。
+ *
+ * 返回 { value, source, chain: [{ layer, value, winner }] }
+ */
+export function towerTierSource(tier, key, faction) {
+  const layers = [
+    { layer: '模板',     obj: CONFIG.templates.tower || {} },
+    { layer: '地图',     obj: ((typeof window !== 'undefined' && window.CTX?.__app?.mapSystem?.currentMap)?.tierStats || {})[tier] || {} },
+    { layer: '共享覆写', obj: CONFIG.towerTierOverrides?.[tier] || {} },
+  ];
+  if (faction && faction !== 'shared') {
+    layers.push({ layer: faction === 'blue' ? '蓝方覆写' : '红方覆写',
+                  obj: CONFIG.factionOverrides?.[faction]?.['tower_' + tier] || {} });
+  }
+  const chain = layers
+    .filter(l => l.obj[key] !== undefined)
+    .map(l => ({ layer: l.layer, value: l.obj[key], winner: false }));
+  if (chain.length) chain[chain.length - 1].winner = true;   // 后面的层覆盖前面的
+  const last = chain[chain.length - 1];
+  return { value: last ? last.value : undefined, source: last ? last.layer : '未定义', chain };
+}
+
 function towerStatGet(tier, key, ctx) {
   return towerTierEffective(tier, ctx?.faction)[key];
 }

@@ -1,7 +1,8 @@
 ﻿import { CONFIG } from '../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { buildWaveOrder, WHEN_OPTIONS } from '../data/waveComposition.js';
-import { towerTierBase, towerTierEffective } from '../data/schema/index.js';
+import { towerTierBase, towerTierEffective, towerTierSource } from '../data/schema/index.js';
+import { exportTemplates, importTemplates } from '../data/templateIO.js';
 
 // 属性字段元数据：中文标签 + 滑块范围 + 步长（供动态滑块条使用）
 const FIELD_META = {
@@ -210,13 +211,13 @@ export const AttributeEditor = {
           <button class="editor-tab" data-tpltab="effect">状态</button>
           ${isTower ? `<button class="editor-tab" data-tpltab="soul">🐉 龙魂</button>` : ''}
           ${isTower ? `<button class="editor-tab" data-tpltab="bsize">建筑体积</button>` : ''}
-          ${isMinion ? `<button class="editor-tab" data-tpltab="spawnrule">生成规则</button>` : ''}
-          ${isMinion ? `<button class="editor-tab" data-tpltab="waveorder">🧬 出兵顺序</button>` : ''}
+          ${isMinion ? `<button class="editor-tab" data-tpltab="growth">📈 成长与屠戮</button>` : ''}
+          ${isMinion ? `<button class="editor-tab" data-tpltab="spawn">🧬 出兵编排</button>` : ''}
         </div>
         ${isDragon ? '' : this._renderFactionScopeBar()}
         ${isDragon ? '' : this._renderApplyScopeBar()}
         <p style="color:#8b949e;font-size:11px;margin:8px 0;" id="tplScopeHint">${this._scopeHint()}</p>
-        <div id="templateContent">${this._renderAttrContent(isTower ? this._tierEffective(st.tier) : this._scopedTpl(type), true)}</div>
+        <div id="templateContent">${this._renderAttrContent(isTower ? this._tierEffective(st.tier) : this._scopedTpl(type), true, isTower ? { tier: st.tier } : null)}</div>
       `;
     } else {
       detailHtml = `<div style="color:#8b949e;font-size:12px;padding:12px;">巨龙暂无可编辑的固定模板（属性由波次/元素动态计算）。</div>`;
@@ -241,6 +242,8 @@ export const AttributeEditor = {
           ` : ''}
           <div style="margin-top:12px;">${detailHtml}</div>
           <div class="editor-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #2d3540;padding-top:12px;">
+            <button id="tplExportBtn" title="把当前全部模板配置导出为 JSON">📤 导出</button>
+            <button id="tplImportBtn" title="从 JSON 导入模板配置">📥 导入</button>
             ${tpl ? `<button id="templateApplyBtn" class="primary">应用</button>` : ''}
             <button id="templateCloseBtn">关闭</button>
           </div>
@@ -278,12 +281,84 @@ export const AttributeEditor = {
       }
     }
 
+    this._bindTemplateIO(overlay, logFn, returnCallback);
+
     const closeAndReturn = () => {
       overlay.remove();
       if (returnCallback) returnCallback();
     };
     document.getElementById('templateCloseBtn').addEventListener('click', closeAndReturn);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndReturn(); });
+  },
+
+  // ==================== 模板配置导入/导出 ====================
+  // 面板改完的东西刷新一下就没了 —— 调了半小时平衡，手滑刷新全白费。
+  // 导出/导入让整套配置能存盘、能对比、能发给别人复现。
+  // 真正的序列化逻辑在 src/data/templateIO.js（可 headless 回归），这里只管交互。
+  _bindTemplateIO(overlay, logFn, returnCallback) {
+    overlay.querySelector('#tplExportBtn')?.addEventListener('click', () => {
+      const text = JSON.stringify(exportTemplates(CONFIG), null, 2);
+      // 优先下载成文件；浏览器不给下载时退回到"选中文本让用户自己复制"。
+      try {
+        const blob = new Blob([text], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `serahim-templates-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        logFn(`📤 已导出模板配置（${(text.length / 1024).toFixed(1)} KB）`, 'spawn');
+      } catch (e) {
+        this._showJsonBox(overlay, text, null, logFn);
+        logFn('📤 浏览器未允许下载，已改为文本框展示，请自行复制', 'spawn');
+      }
+    });
+
+    overlay.querySelector('#tplImportBtn')?.addEventListener('click', () => {
+      this._showJsonBox(overlay, '', (text) => {
+        let data;
+        try { data = JSON.parse(text); }
+        catch (e) { logFn(`❌ 导入失败：JSON 解析错误（${e.message}）`, 'spawn'); return false; }
+        const r = importTemplates(CONFIG, data);
+        if (!r.ok) { logFn(`❌ 导入失败：${r.error}`, 'spawn'); return false; }
+        logFn(`📥 已导入 ${r.groups.length} 组配置：${r.groups.join('、')}` +
+              (r.skipped.length ? `（忽略了 ${r.skipped.length} 个未知键：${r.skipped.join('、')}）` : ''), 'spawn');
+        this._renderTemplateEditor(logFn, returnCallback);
+        return true;
+      }, logFn);
+    });
+  },
+
+  // 一个极简的 JSON 文本框弹层。onConfirm 为 null 时是只读展示（导出降级用）。
+  _showJsonBox(overlay, initial, onConfirm, logFn) {
+    const box = document.createElement('div');
+    box.className = 'modal-overlay open';
+    box.style.zIndex = '10000';
+    box.innerHTML = `
+      <div class="modal-box" style="max-width:560px;">
+        <div class="editor-container">
+          <h4>${onConfirm ? '📥 导入模板配置' : '📤 导出模板配置'}</h4>
+          <p style="color:#8b949e;font-size:11px;margin:6px 0;">
+            ${onConfirm
+              ? '把导出的 JSON 粘进来。导入是【深合并】：文件里没写的字段保持现值，不会被抹掉。'
+              : '复制下面的全部内容并自行保存为 .json 文件。'}
+          </p>
+          <textarea id="jsonBoxArea" spellcheck="false" style="width:100%;height:280px;font-family:monospace;
+            font-size:11px;background:#0d1117;color:#c9d1d9;border:1px solid #2d3540;border-radius:4px;padding:8px;"
+            ${onConfirm ? '' : 'readonly'}>${initial.replace(/</g, '&lt;')}</textarea>
+          <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
+            ${onConfirm ? '<button id="jsonBoxOk" class="primary">导入</button>' : ''}
+            <button id="jsonBoxCancel">${onConfirm ? '取消' : '关闭'}</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(box);
+    const area = box.querySelector('#jsonBoxArea');
+    if (!onConfirm) { area.focus(); area.select(); }
+    box.querySelector('#jsonBoxCancel').addEventListener('click', () => box.remove());
+    box.querySelector('#jsonBoxOk')?.addEventListener('click', () => {
+      // 只有导入成功才关闭：失败还关掉的话，用户辛苦粘进来的内容就没了。
+      if (onConfirm(area.value)) box.remove();
+    });
   },
 
   // ==================== 建筑体积（对战模式各档建筑的渲染半径）====================
@@ -343,17 +418,21 @@ export const AttributeEditor = {
         } else if (tabName === 'soul') {
           content.innerHTML = this._renderTemplateSoulContent(type);
           this._bindTemplateSoulEvents(overlay, type, logFn);
-        } else if (tabName === 'spawnrule') {
-          content.innerHTML = this._renderSpawnRuleContent(type);
-          this._bindSpawnRuleEvents(overlay, type, logFn);
-        } else if (tabName === 'waveorder') {
-          content.innerHTML = this._renderWaveOrderContent();
-          this._bindWaveOrderEvents(overlay, logFn);
+        } else if (tabName === 'growth') {
+          content.innerHTML = this._renderGrowthContent(type);
+        } else if (tabName === 'spawn') {
+          content.innerHTML = this._renderWaveOrderContent(type);
+          this._bindWaveOrderEvents(overlay, logFn, type);
         } else if (tabName === 'bsize') {
           content.innerHTML = this._renderBuildingSizeContent();
         } else {
-          content.innerHTML = this._renderAttrContent(this._scopedTpl(type), true);
-          this._bindAttrEvents(overlay, this._scopedTpl(type), logFn, true);
+          // 塔必须走【层级解析】。这里原先无条件用 _scopedTpl(type)，而 type 是 'tower'，
+          // 拿到的是未分层的通用模板 —— 首次打开显示的是外塔/枢纽塔各自的真实数值，
+          // 从别的 tab 点回"属性"却换成了一套通用值，同一个面板前后给出两个答案。
+          const isTowerTab = this._categoryOfType(type) === 'tower';
+          const src = isTowerTab ? this._tierEffective(this._tplState.tier) : this._scopedTpl(type);
+          content.innerHTML = this._renderAttrContent(src, true, isTowerTab ? { tier: this._tplState.tier } : null);
+          this._bindAttrEvents(overlay, src, logFn, true);
         }
       });
     });
@@ -389,8 +468,13 @@ export const AttributeEditor = {
       else if (tabName === 'skill') this._applyTemplateSkillChanges(overlay, type, logFn);
       else if (tabName === 'effect') this._applyTemplateEffectChanges(overlay, type, logFn);
       else if (tabName === 'soul') logFn('🐉 龙魂默认配置点击即时生效，无需点应用', 'spawn');
-      else if (tabName === 'spawnrule') this._applySpawnRuleChanges(overlay, type, logFn);
-      else if (tabName === 'waveorder') this._applyWaveOrderChanges(overlay, logFn);
+      else if (tabName === 'growth') this._applyGrowthChanges(overlay, type, logFn);
+      // 出兵编排页里同时有【对战编排】和【沙盒节奏】两组输入，一次应用两组都要写，
+      // 否则用户在同一页改了两处、点一次应用只生效一半 —— 这正是原来那种"改了没反应"的坑。
+      else if (tabName === 'spawn') {
+        this._applyWaveOrderChanges(overlay, logFn);
+        this._applySpawnRuleChanges(overlay, type, logFn);
+      }
       else if (tabName === 'bsize') this._applyBuildingSizeChanges(overlay, logFn);
       else this._applyTemplateAttrChanges(overlay, type, logFn);
       // 应用后【不再关闭】编辑器：调参是连续动作（改一项→看效果→再改一项），
@@ -622,18 +706,19 @@ export const AttributeEditor = {
     return map[type] || {};
   },
 
-  _renderSpawnRuleContent(type) {
+  // P2：原「生成规则」tab 已拆掉。用户原话是"目前的生成顺序和生成规则就是冲突或者是重合的" ——
+  // 病根在于那一个 tab 里塞了四件互不相干的事：①沙盒出兵节奏 ②兵种总开关
+  // ③对战成长 ④屠戮。而【对战】的出兵完全由另一个 tab 的 laneWaveComposition 决定。
+  // 于是同一屏上"每波生成数量=3"和出兵编排里的"近战兵 ×3"看着是一回事，
+  // 改前者在对战里纹丝不动 —— 这不是排版乱，是两套规则在同一个名字下打架。
+  // 现在：成长/屠戮 → 独立的「成长与屠戮」tab（它们本来就跟生成无关，是战斗数值）；
+  //       出兵的一切（对战编排 + 兵种开关 + 沙盒节奏）→ 合并进唯一的「出兵编排」tab，
+  //       内部按模式分区并标明"这一段只管沙盒 / 这一段只管对战"。
+  // 结论：现在"哪里改出兵"只有一个答案。
+  _renderSandboxRuleRows(type) {
     const meta = this._spawnRuleMeta(type);
     const gr = CONFIG.gameRules;
-    let html = `<div style="padding:4px 0;">`;
-    html += `<div class="pick-desc-box" style="margin-bottom:10px;">ℹ️ 数量/间隔类字段影响【沙盒模式】波次；标注"对战模式"的字段影响对战出兵（v33：图腾兵已接入对战）。兵种开关对两种模式都生效。</div>`;
-    // v33（Q4）：是否生成该兵种（沙盒+对战通用总开关）
-    const enabled = (gr.spawnEnabled || {})[type] !== false;
-    html += `<div class="slider-row"><label>是否生成该兵种</label>
-      <button class="editor-tab ${enabled ? 'active' : ''}" data-spawn-toggle="${type}" style="flex:1;font-size:12px;">
-        ${enabled ? '✅ 生成中（点击停用）' : '⛔ 已停用（点击启用）'}
-      </button>
-    </div>`;
+    let html = '';
     if (meta.countKey) {
       const v = gr[meta.countKey] ?? meta.countDefault;
       html += `<div class="slider-row"><label>${meta.countLabel}</label>
@@ -658,24 +743,35 @@ export const AttributeEditor = {
         <input type="number" class="spawnrule-input" data-key="${meta.extraKey}" min="0" step="1" value="${v}" style="width:90px;">
       </div>`;
     }
-    // v33（Q4）：对战模式专属字段（当前仅图腾兵）
+    // P2：这里原先还有两个标着"对战模式：第几波起生成 / 每几波生成一次"的框
+    // （battleTotemFromWave / battleTotemInterval）。它们是【死配置】——
+    // 全仓库除了 Config 的定义和一句过时注释，没有任何代码读取；对战出兵早已
+    // 全部改由 laneWaveComposition 驱动，默认编排里那条
+    // { type:'totem', count:1, fromWave:10, everyN:3 } 正是同一条规则的第二份表述。
+    // 用户改了这两个框会毫无反应 —— 这就是"生成顺序和生成规则重合"的原型。
+    // 已从面板移除；要调图腾兵的对战节奏请改上面②里那条规则。
     if (meta.battleFromKey) {
-      html += `<div class="slider-row"><label>${meta.battleFromLabel}</label>
-        <input type="number" class="spawnrule-input" data-key="${meta.battleFromKey}" min="1" step="1" value="${gr[meta.battleFromKey] ?? meta.battleFromDefault}" style="width:90px;">
-      </div>`;
-      html += `<div class="slider-row"><label>${meta.battleIntvLabel}</label>
-        <input type="number" class="spawnrule-input" data-key="${meta.battleIntvKey}" min="1" step="1" value="${gr[meta.battleIntvKey] ?? meta.battleIntvDefault}" style="width:90px;">
-      </div>`;
+      html += `<div style="font-size:11px;color:var(--text-mute);padding:4px 0;">
+        图腾兵的<b>对战</b>节奏由上面②的编排规则（起始波/每几波）决定，此处不再重复提供。</div>`;
     }
     if (!meta.countKey && !meta.intervalKey) {
-      html += `<div style="color:#8b949e;font-size:12px;">该类型暂无可编辑的生成规则。</div>`;
+      html += `<div style="color:#8b949e;font-size:12px;padding:4px 0;">该兵种在沙盒模式下没有独立的节奏参数。</div>`;
     }
-    // ==================== Q2：对战成长 + 屠戮（软编码，可按兵种改）====================
-    // 这两组数值原先硬编码在 main.js / 技能文件里，改平衡要翻源码。现在住在 CONFIG，
-    // 面板改完立刻对【之后生成】的小兵生效（已出场的沿用出生时的成长快照）。
+    return html;
+  },
+
+  // ==================== 成长与屠戮（战斗数值，与"什么时候出兵"无关）====================
+  // Q2：这两组数值原先硬编码在 main.js / 技能文件里，改平衡要翻源码。现在住在 CONFIG，
+  // 面板改完立刻对【之后生成】的小兵生效（已出场的沿用出生时的成长快照）。
+  _renderGrowthContent(type) {
+    let html = `<div style="padding:4px 0;">`;
+    html += `<div class="pick-desc-box" style="margin-bottom:10px;">
+      📈 这里只管【单位有多强】，不管【什么时候出多少】—— 后者在「出兵编排」tab。<br>
+      成长按<b>波次</b>线性累加，单位出生时结算一次并写死；已经在场上的兵不会追溯。
+    </div>`;
     const G = CONFIG.battleGrowth?.[type];
     if (G) {
-      html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+      html += `<div style="border-top:1px solid #2d3540;padding-top:10px;">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">📈 对战成长（每波固定增量）</div>
         <div class="slider-row"><label>最大生命 /波</label>
           <input type="number" class="growth-input" data-gkey="hp" step="0.1" value="${G.hp}" style="width:90px;"></div>
@@ -683,7 +779,14 @@ export const AttributeEditor = {
           <input type="number" class="growth-input" data-gkey="ad" step="0.05" value="${G.ad}" style="width:90px;"></div>
         <div class="slider-row"><label>双抗 /波</label>
           <input type="number" class="growth-input" data-gkey="res" step="0.05" value="${G.res}" style="width:90px;"></div>
+        <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">
+          第 N 波的加值 = 上面三项 ×(N−1)。当前第 <b>${Math.max(1, window.waveNumber || 1)}</b> 波，
+          该兵种加值：生命 +${(G.hp * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
+          攻击 +${(G.ad * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
+          双抗 +${(G.res * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}。</div>
       </div>`;
+    } else {
+      html += `<div style="color:#8b949e;font-size:12px;">该兵种未配置对战成长（每波数值恒定）。</div>`;
     }
     const R = CONFIG.rend?.[type];
     if (R) {
@@ -701,24 +804,9 @@ export const AttributeEditor = {
           取"模板基础生命"则前期照样快速清线、后期自然稀释。</div>
       </div>`;
     }
-    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">修改后立即影响后续波次的生成节奏。</div>`;
+    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">改完点【应用】写入，对之后生成的单位生效。</div>`;
     html += `</div>`;
     return html;
-  },
-
-  _bindSpawnRuleEvents(overlay, type, logFn) {
-    // v33（Q4）：兵种总开关即点即生效
-    overlay.querySelectorAll('[data-spawn-toggle]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const t = btn.dataset.spawnToggle;
-        CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
-        const now = CONFIG.gameRules.spawnEnabled[t] !== false;
-        CONFIG.gameRules.spawnEnabled[t] = !now;
-        btn.classList.toggle('active', !now);
-        btn.textContent = !now ? '✅ 生成中（点击停用）' : '⛔ 已停用（点击启用）';
-        logFn(`⚙️ 「${t}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
-      });
-    });
   },
 
   // ==================== 出兵顺序（对战模式，全局；用户："再加'出兵顺序'自定义"）====================
@@ -728,7 +816,7 @@ export const AttributeEditor = {
   _waveOrderPreviewWave: 1,
   _waveOrderPreviewNexusDown: false,
 
-  _renderWaveOrderContent() {
+  _renderWaveOrderContent(type) {
     const gr = CONFIG.gameRules;
     gr.laneWaveComposition = gr.laneWaveComposition || [];
     const list = gr.laneWaveComposition;
@@ -740,11 +828,31 @@ export const AttributeEditor = {
               value="${rule[key] ?? ''}" placeholder="${key === 'count' ? 1 : (key === 'everyN' ? 1 : 0)}"
               style="width:62px;">`;
 
+    // P2：出兵的一切都收在这一个 tab 里，但【必须】按模式分区并写明各自管谁 ——
+    // 两套规则同屏而不标注模式，正是用户说的"冲突或者是重合"。
     let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
-      🧬 <b>数组顺序 = 出兵先后</b>。每条规则命中当前波次时，就按"数量"往队列里追加该兵种。<br>
-      「起始波次」之前不出；之后每「每几波」出一次。「条件」用于超级兵（水晶陷落）与炮兵（水晶未陷落）。<br>
-      被「生成规则 → 是否生成该兵种」关掉的兵种，无论这里怎么排都不会出（下表会标灰）。
+      🧬 出兵的<b>全部</b>设置都在这一页。分三段，各管各的：<br>
+      　<b>① 兵种总开关</b>　对<b>沙盒+对战</b>都生效，关掉的兵种下面怎么排都不会出。<br>
+      　<b>② 对战编排</b>　只管<b>对战模式</b>：数组顺序 = 出兵先后。<br>
+      　<b>③ 沙盒节奏</b>　只管<b>沙盒模式</b>，对战模式<b>完全不读</b>这些字段。
     </div>`;
+
+    // ---- ① 兵种总开关（原「生成规则」里逐个类型翻页才能看到，现在一屏全景）----
+    html += `<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">① 兵种总开关（沙盒 + 对战通用）</div>`;
+    html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:12px;">
+      ${types.map(t => {
+        const on = EN[t] !== false;
+        return `<button class="editor-tab ${on ? 'active' : ''}" data-spawn-toggle="${t}"
+                 title="${on ? '点击停用' : '点击启用'}" style="font-size:11px;">
+          ${on ? '✅' : '⛔'} ${this._TPL_ICONS[t] || ''}${this._TPL_LABELS[t] || t}
+        </button>`;
+      }).join('')}
+    </div>`;
+
+    html += `<div style="font-size:12px;color:var(--text-dim);margin:0 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
+      ② 对战编排（数组顺序 = 出兵先后）</div>`;
+    html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+      「起始波」之前不出；之后每「每几波」出一次。「条件」用于超级兵（水晶陷落）与炮兵（水晶未陷落）。</div>`;
 
     html += `<div style="display:flex;gap:6px;font-size:10px;color:#8b949e;padding:0 4px 4px;">
       <span style="width:52px;">顺序</span><span style="width:96px;">兵种</span>
@@ -795,17 +903,55 @@ export const AttributeEditor = {
           : '（本波无兵）'}
       </div>
     </div>`;
-    html += `<div style="margin-top:8px;font-size:11px;color:var(--text-mute);">改完点【应用】写入；下一波起生效。</div>`;
+    // ---- ③ 沙盒节奏（原「生成规则」的数量/间隔字段，按当前兵种显示）----
+    const sandbox = this._renderSandboxRuleRows(type);
+    html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">
+        ③ 沙盒节奏 —— 当前兵种：${this._TPL_ICONS[type] || ''}${this._TPL_LABELS[type] || type}</div>
+      <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+        ⚠️ 这一段<b>只影响沙盒模式</b>。对战模式的出兵完全由上面的②决定，改这里在对战里看不到任何变化。
+        （切换顶部的兵种页签可编辑其它兵种的沙盒节奏。）</div>
+      ${sandbox}
+    </div>`;
+
+    html += `<div style="margin-top:8px;font-size:11px;color:var(--text-mute);">
+      ①即点即生效；②③改完点【应用】写入，下一波起生效。</div>`;
     return html;
   },
 
-  _bindWaveOrderEvents(overlay, logFn) {
+  // 兵种总开关：即点即生效（它只是个布尔，没有"批量应用"的必要）。
+  _bindSpawnToggles(overlay, logFn, rerender) {
+    overlay.querySelectorAll('[data-spawn-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.spawnToggle;
+        CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
+        const now = CONFIG.gameRules.spawnEnabled[t] !== false;
+        CONFIG.gameRules.spawnEnabled[t] = !now;
+        logFn(`⚙️ 「${this._TPL_LABELS[t] || t}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
+        // 重绘：编排表里该兵种的行要跟着变灰/变亮，预览也要重算
+        if (rerender) rerender(); else {
+          btn.classList.toggle('active', !now);
+        }
+      });
+    });
+  },
+
+  _bindWaveOrderEvents(overlay, logFn, type) {
     const gr = CONFIG.gameRules;
     const rerender = () => {
+      // 沙盒节奏那几个框是"点应用才写入 CONFIG"的，重绘会把没保存的编辑冲掉
+      // （用户改了沙盒数量、又顺手拖了一下对战编排的行序，沙盒那格就白改了）。
+      // 所以重绘前后原样搬运一次它们的当前值。
+      const draft = {};
+      overlay.querySelectorAll('.spawnrule-input').forEach(el => { draft[el.dataset.key] = el.value; });
       const content = overlay.querySelector('#templateContent');
-      content.innerHTML = this._renderWaveOrderContent();
-      this._bindWaveOrderEvents(overlay, logFn);
+      content.innerHTML = this._renderWaveOrderContent(type);
+      overlay.querySelectorAll('.spawnrule-input').forEach(el => {
+        if (draft[el.dataset.key] !== undefined) el.value = draft[el.dataset.key];
+      });
+      this._bindWaveOrderEvents(overlay, logFn, type);
     };
+    this._bindSpawnToggles(overlay, logFn, rerender);
     // 结构性操作（上下移/删/加/恢复默认）即点即改数组并重绘；
     // 重绘前先把当前所有输入框的值收回数组，否则移动一行会把没点应用的编辑丢掉。
     const flush = () => this._readWaveOrderInputs(overlay);
@@ -893,6 +1039,13 @@ export const AttributeEditor = {
         changed++;
       }
     });
+    if (changed) logFn(`✅ 「${this._TPL_LABELS[type] || type}」沙盒节奏已更新（${changed}项）`, 'spawn');
+  },
+
+  // P2：成长/屠戮从原「生成规则」里拆出来单独应用。它们是战斗数值，
+  // 跟"什么时候出多少兵"没有任何关系，塞在一起是原编辑器最误导的一处。
+  _applyGrowthChanges(overlay, type, logFn) {
+    let changed = 0;
     // Q2：对战成长表
     if (CONFIG.battleGrowth?.[type]) {
       overlay.querySelectorAll('.growth-input').forEach(inp => {
@@ -909,7 +1062,7 @@ export const AttributeEditor = {
         if (!isNaN(v)) { CONFIG.rend[type].pct = v / 100; changed++; }
       });
     }
-    logFn(`✅ 「${type}」生成规则/成长/屠戮已更新（${changed}项）`, 'spawn');
+    logFn(`✅ 「${this._TPL_LABELS[type] || type}」成长/屠戮已更新（${changed}项）`, 'spawn');
   },
 
   // ==================== 渲染方法 ====================
@@ -917,7 +1070,11 @@ export const AttributeEditor = {
   //  SECTION 1: Live Entity Editor ? attributes, weapons, passives, effects
   // ============================================================
 
-  _renderAttrContent(target, isTemplate = false) {
+  // srcCtx（可选，仅分层塔用）：{ tier }。给每个字段标出"这个数是从叠加链的哪一层来的"。
+  // 塔的数值要穿过 模板 → 地图 tierStats → 共享覆写 → 阵营覆写 四层，面板过去只显示最终值，
+  // 于是"我改了怎么没变"（被更靠后的层压住）和"我没改它怎么是这个数"（地图带了 tierStats）
+  // 两类问题都无法自查 —— 这是模板编辑器最费解的一处。
+  _renderAttrContent(target, isTemplate = false, srcCtx = null) {
     // 实体编辑：currentHP 存在 entity 上而非 baseStats，需合并进显示数据源，
     // 否则"当前生命"会显示 0（此前的 bug）。
     const data = isTemplate ? { ...target } : { ...target.baseStats, currentHP: target.currentHP };
@@ -973,7 +1130,7 @@ export const AttributeEditor = {
         } else {
           const meta = FIELD_META[key] || { min: 0, max: Math.max(100, value * 2), step: (key === 'currentHP' ? 1 : 0.1) };
           html += `<div class="slider-row">
-            <label title="${key}">${label}</label>
+            <label title="${key}">${label}${this._srcBadge(srcCtx, key)}</label>
             <div class="slider-wrap">
               <input type="range" class="editor-slider" data-key="${key}" min="${meta.min}" max="${meta.max}" step="${meta.step}" value="${Math.min(meta.max, Math.max(meta.min, value))}">
               <input type="number" class="editor-number" data-key="${key}" data-orig="${value}" step="${meta.step}" value="${value}">
@@ -985,6 +1142,21 @@ export const AttributeEditor = {
     }
     html += `</div>`;
     return modelSizeRow + html;
+  },
+
+  // 取值来源角标。只在分层塔的模板页显示；只有一层时不显示（没有信息量，纯噪音）。
+  _SRC_COLOR: { '模板': '#8b949e', '地图': '#d29922', '共享覆写': '#58a6ff', '蓝方覆写': '#58a6ff', '红方覆写': '#f85149' },
+  _srcBadge(srcCtx, key) {
+    if (!srcCtx?.tier) return '';
+    let r;
+    try { r = towerTierSource(srcCtx.tier, key, this._factionScope); } catch (e) { return ''; }
+    if (!r.chain.length || r.chain.length === 1) return '';
+    // 被压住的层按顺序列进 title，用户一眼能看出"我改的那层排在第几、被谁盖了"
+    const overridden = r.chain.slice(0, -1).map(c => `${c.layer} ${c.value}`).join(' → ');
+    const color = this._SRC_COLOR[r.source] || '#8b949e';
+    return `<span style="margin-left:4px;font-size:9px;color:${color};border:1px solid ${color};
+      border-radius:3px;padding:0 3px;vertical-align:middle;"
+      title="生效层：${r.source}（${r.value}）&#10;被覆盖：${overridden}">${r.source}</span>`;
   },
 
   _renderWeaponContent(entity) {
