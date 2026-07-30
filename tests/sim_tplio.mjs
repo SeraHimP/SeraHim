@@ -64,12 +64,15 @@ T('deepMerge 递归合并嵌套对象',
 const src = fs.readFileSync(path.join(root, 'src', 'ui', 'AttributeEditor.js'), 'utf8');
 T('已删除「生成规则」tab（它把出兵节奏/开关/成长/屠戮混在一起）',
   !/data-tpltab="spawnrule"/.test(src));
-T('出兵相关只剩唯一入口「出兵编排」', !/data-tpltab="waveorder"/.test(src)
-  && /data-tpltab="spawn"/.test(src));
-T('成长/屠戮拆成独立 tab（它们是战斗数值，与出兵无关）',
-  /data-tpltab="growth"/.test(src) && /_applyGrowthChanges/.test(src));
-T('出兵编排页明确标注了哪段管沙盒、哪段管对战',
-  /只影响沙盒模式/.test(src) && /只管<b>对战模式/.test(src));
+// 页签不再写死在模板字符串里，改由 _TPL_PAGES 注册表 + _pagesOf 推导，
+// 所以这三条改成钉注册表本身（它现在才是"面板长什么样"的唯一来源）。
+T('出兵编排只剩唯一入口，且提到了顶层（不再挂在某个兵种下）',
+  /wave:\s*\{ label: '出兵编排'/.test(src) && /case 'wave':\s*return \['wave'\]/.test(src));
+T('成长/屠戮是独立一页（它们是战斗数值，与出兵无关）',
+  /growth:\s*\{ label: '成长与屠戮'/.test(src) && /_applyGrowthChanges/.test(src));
+T('沙盒节奏与对战编排分处两页，且各自写明只管哪种模式',
+  /sandbox:\s*\{ label: '沙盒节奏'/.test(src)
+  && /只影响沙盒模式/.test(src) && /只管<b>对战模式/.test(src));
 
 // battleTotemFromWave / battleTotemInterval 是死配置：全仓库无人读取，
 // 而默认编排里 { totem, fromWave:10, everyN:3 } 是同一条规则的第二份表述。
@@ -125,12 +128,14 @@ T('未定义字段如实报告', towerTierSource('outer', '__nope__', 'shared').
 delete CONFIG.towerTierOverrides.outer;
 delete CONFIG.factionOverrides.blue.tower_outer;
 
-// ---- ⑨ 属性 tab 的塔数值解析：首屏与切回来必须是同一套 ----
+// ---- ⑨ 属性页的塔数值解析：首屏与切回来必须是同一套 ----
 // 原代码首屏用 _tierEffective(tier)、从别的 tab 点回"属性"却用 _scopedTpl('tower')，
-// 同一个面板前后给出两个答案。这里钉住两条路径读的是同一个解析函数。
-T('属性 tab 切回时按层级解析（不再退化成通用模板）',
-  /const isTowerTab = this\._categoryOfType\(type\) === 'tower'/.test(src)
-  && /this\._tierEffective\(this\._tplState\.tier\)/.test(src));
+// 同一个面板前后给出两个答案。重做之后**两条路径合并成了一条**（_renderPage 是
+// 唯一的内容分发口），所以现在钉的是"确实只有一处分发"，比原来更强。
+T('属性页无论首屏还是切回都按层级解析（不再退化成通用模板）',
+  /_renderPage\(page, type\) \{[\s\S]{0,600}?isTower \? this\._tierEffective\(tier\) : this\._scopedTpl\(type\)/.test(src));
+T('内容分发只有一处（首屏与切页共用 _renderPage）',
+  (src.match(/case 'weapon':\s*return this\._renderTemplateWeaponContent/g) || []).length === 1);
 T('取值来源角标已接入属性面板', /_srcBadge\(srcCtx, key\)/.test(src));
 
 // ---- ⑩ 存档结构稳定性 + 本地文件保存 ----

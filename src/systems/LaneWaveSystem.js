@@ -23,9 +23,12 @@ export class LaneWaveSystem {
     this.mapSystem = mapSystem;
     this.createMinion = null;
     this.waveInterval = 30;
-    this.nextWaveTime = 30; // v33（Q22）：对战模式首波小兵 10s → 30s
-    // Quick mode override (applied after map loads)
-    this.nextWaveTime = 30; // v33（Q22）：对战模式首波小兵 10s → 30s
+    // v33（Q22）：对战模式首波小兵 10s → 30s
+    //（这一句原本在同一个构造函数里写了【两遍】，后者静默盖掉前者，删掉重复的那句。）
+    this.nextWaveTime = 30;
+    // 首波延迟另存一份：编辑器的出兵预览要按"第 N 波 ≈ 开局多少秒"推算时间条件，
+    // 而 nextWaveTime 是每帧递减的倒计时，读它算出来的是个随机数。
+    this.firstWaveDelay = 30;
     this.waveNumber = 0;
     this.paused = false;
     this.spawnGap = (CONFIG.tuning?.spawnGap) ?? 0.35;   // 单列出兵间隔（秒），LoL 同波小兵间隔约 0.3s
@@ -44,7 +47,7 @@ export class LaneWaveSystem {
       if (m) {
         this._quickApplied = true;
         if (m.waveInterval) this.waveInterval = m.waveInterval;
-        if (m.firstWaveDelay) this.nextWaveTime = m.firstWaveDelay;
+        if (m.firstWaveDelay) { this.nextWaveTime = m.firstWaveDelay; this.firstWaveDelay = m.firstWaveDelay; }
         if (m.spawnGap) this.spawnGap = m.spawnGap;
         if (m.waveColumns) this.waveColumns = m.waveColumns;
         if (m.columnSpacing) this.columnSpacing = m.columnSpacing;
@@ -74,6 +77,10 @@ export class LaneWaveSystem {
   spawnWave() {
     this.waveNumber++;
     window.waveNumber = this.waveNumber; // v35：对战波次同步到全局（炮兵指挥官等波次门槛读它）
+    // 建筑普查每波只做一次，六个 (阵营×路) 的条件判定共用同一份快照 ——
+    // 每条规则各查一次会把一次遍历放大成几十次，而且同一波里前后两条规则
+    // 可能看到不同的世界状态（塔正好在这中间被拆掉），判定就不自洽了。
+    this._census = this.mapSystem.structureCensus ? this.mapSystem.structureCensus() : null;
     for (const lane of this.mapSystem.currentMap?.lanes || []) {
       this._enqueueForFaction(FACTIONS.BLUE, lane, 'forward');
       this._enqueueForFaction(FACTIONS.RED, lane, 'reverse');
@@ -110,7 +117,12 @@ export class LaneWaveSystem {
     // 免得预览和真实出兵两套实现漂移。
     // 传 faction：该阵营若配了独立编排（CONFIG.factionOverrides[阵营].laneWaveComposition）
     // 就整体用它，否则用共享基准 —— 用户定稿"出兵编排要能只对某一方生效"。
-    const order = buildWaveOrder(this.waveNumber, nexusDown, CONFIG.gameRules, faction);
+    // 条件判定的世界快照：出兵编排里"敌方内塔全灭""游戏满 10 分钟"这类条件读它。
+    // gameTime 用**对局时钟**（这一局跑了多久），不是 window.gameTime 那个会被
+    // 暂停/倍速影响的挂钟 —— 编排是玩法规则，必须跟着游戏时间走。
+    const order = buildWaveOrder(this.waveNumber, nexusDown, CONFIG.gameRules, faction, {
+      laneId: lane.id, gameTime: this._clock, census: this._census,
+    });
 
     for (let i = 0; i < order.length; i++) {
       this._spawnQueue.push({

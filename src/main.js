@@ -838,7 +838,8 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
       uiManager.log(`🐉 手动生成${ancient ? '远古巨龙' : (DRAGON_ELEMENTS[el]?.label || '巨龙')}`, 'spawn');
     },
     onEditSpawnRule: (type, returnCallback) => {
-      AttributeEditor.openTemplateEditor(type, uiManager.log.bind(uiManager), returnCallback);
+      // 落到「沙盒节奏」页 —— 这个按钮就是为沙盒出兵节奏来的，落在"属性"页等于没响应
+      AttributeEditor.openTemplateEditor(type, uiManager.log.bind(uiManager), returnCallback, 'sandbox');
     },
   });
 });

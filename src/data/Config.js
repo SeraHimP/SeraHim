@@ -102,13 +102,32 @@ export const CONFIG = {
     // 后声明的静默覆盖前面的，改前面那份毫无效果 —— 又一个"改了没反应"。
     // 已删除重复声明，这里是唯一一处。
     spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: true, warlock: true, corrupt: true, ram: true },
-    dragonFirstDelay: 60,
-    dragonInterval: 90,
-    dragonHpScale: 12,
-    dragonAttrScale: 3,
-    dragonKillsToUnlock: 4,
-    ancientDragonHpScale: 25,
-    ancientDragonAttrScale: 5,
+    // ==================== 巨龙：刷新节奏与强度曲线 ====================
+    // 这里原本是七个键（dragonFirstDelay / dragonInterval / dragonHpScale /
+    // dragonAttrScale / dragonKillsToUnlock / ancientDragonHpScale /
+    // ancientDragonAttrScale）—— **全仓库没有任何一处读它们**。它们是"龙按波次
+    // 长数值"那版旧公式的遗物，那版公式因为龙按固定时间表刷新、数值却按
+    // window.waveNumber 算而失控（见 DragonSystem._dragonStats 顶部注释），
+    // 早已被"按第几条龙算"的版本取代，键却留了下来。
+    // 于是编辑器一旦把它们摆出来，用户改多少都没反应 —— 正是本项目反复出事的那类"死配置"。
+    // 现在删掉那七个键，换成 DragonSystem **真正读取**的这一份：
+    // 原先写死在 DragonSystem 源码里的每一个魔数都搬到了这里，数值逐个保持不变。
+    dragon: {
+      firstDelay: 60,                    // 首条元素龙的出现时间（秒）
+      elementIntervals: [420, 480, 540], // 第 2/3/4 条元素龙的间隔；再往后沿用最后一项
+      ancientFirstDelay: 300,            // 成魂结算后，首条远古龙的间隔
+      ancientInterval: 600,              // 之后每条远古龙的间隔
+      // 强度曲线按【第几条龙】算，与游戏波次无关。
+      // 取值 = w<=knee ? base+(w-1)*step : base+(knee-1)*step+(w-knee)*lateStep，再按 cap 截顶。
+      // 默认值复刻原源码：生命 1200→3000、双抗 -40→200、攻击 23→252（第 1→4 条）。
+      curve: {
+        maxHP:        { base: 1200, step: 600,       knee: 4, lateStep: 500, cap: null },
+        resist:       { base: -40,  step: 80,        knee: 4, lateStep: 30,  cap: 500 },
+        attackDamage: { base: 23,   step: 229 / 3,   knee: 4, lateStep: 60,  cap: null },
+      },
+      // 远古龙在同序号曲线上的额外修正（原源码：hp*1.15、双抗+40、攻击*1.1）
+      ancient: { hpMult: 1.15, resistAdd: 40, adMult: 1.1 },
+    },
   },
   // 建筑渲染体积（半径 px）：LoL 中水晶枢纽 > 防御塔 > 召唤水晶，按 tier 区分。
   // 可在统一模板编辑器的"建筑体积"区块调整；沙盒手建塔无 tier，用 default。

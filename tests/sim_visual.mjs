@@ -58,10 +58,12 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 
   // 出兵系统真的按阵营取
   const src = fs.readFileSync('src/systems/LaneWaveSystem.js', 'utf8');
+  // 调用现在是多行的（第 5 个参数是条件判定用的世界快照），不能再用 [^)]* 匹配
   T('LaneWaveSystem 把 faction 传进 buildWaveOrder',
-    /buildWaveOrder\([^)]*faction\)/.test(src));
+    /buildWaveOrder\(this\.waveNumber, nexusDown, CONFIG\.gameRules, faction/.test(src));
   const ui = fs.readFileSync('src/ui/AttributeEditor.js', 'utf8');
-  T('编辑器预览也按阵营算（否则预览骗人）', /buildWaveOrder\(w, nd, gr, _pf\)/.test(ui));
+  // 预览调用现在是多行的（第 5 个参数是条件判定用的世界快照）
+  T('编辑器预览也按阵营算（否则预览骗人）', /buildWaveOrder\(w, nd, gr, _pf, \{/.test(ui));
   T('编辑器读写走同一个 _woList 入口', /_woList\(true\)/.test(ui) && /_woList\(false\)/.test(ui));
 
   delete CONFIG.factionOverrides.red.laneWaveComposition;

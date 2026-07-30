@@ -1,4 +1,5 @@
 import { CONFIG } from '../data/Config.js';
+import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../data/dragonCurve.js';
 
 /**
  * DragonSystem.js
@@ -31,7 +32,7 @@ export class DragonSystem {
     this.attrCalc = attrCalc;
     this.config = CONFIG.gameRules;
 
-    this.nextDragonTime = 60; // 首条元素龙：开局60秒
+    this.nextDragonTime = dragonCfg().firstDelay; // 首条元素龙：开局60秒（软编码）
     this.paused = true; // 开局默认暂停巨龙生成（用户要求：巨龙系统待大改，先默认关闭；原开关照常可开启）
     this.createEntity = null;
     this.elementDragonSpawned = 0; // 已刷新的元素龙数
@@ -90,17 +91,15 @@ export class DragonSystem {
   }
 
   // 下一条龙的刷新间隔（秒）——龙刷新后从此刻起重新计时。
+  // 这里原先是一串写死的 300/600/7*60/8*60/9*60。数值本身没错，但"巨龙多久刷一条"
+  // 是最该让用户调的东西之一，却只能改源码。现在读 CONFIG.gameRules.dragon，
+  // 实现在 data/dragonCurve.js —— 与模板编辑器的预览是**同一个函数**。
   _nextInterval() {
-    if (this.soulUnlocked) {
-      // 首条远古龙 5min，之后每 10min
-      return this.ancientSpawned <= 1 ? 300 : 600;
-    }
-    // 元素龙：第2条=7min，第3条=8min，第4条=9min（首条已在构造时设为60s）
-    const n = this.elementDragonSpawned;
-    if (n === 1) return 7 * 60;
-    if (n === 2) return 8 * 60;
-    if (n === 3) return 9 * 60;
-    return 9 * 60;
+    return dragonIntervalAt({
+      soulUnlocked: this.soulUnlocked,
+      elementSpawned: this.elementDragonSpawned,
+      ancientSpawned: this.ancientSpawned,
+    });
   }
 
   update(dt) {
@@ -120,20 +119,12 @@ export class DragonSystem {
   // 导致波次早已跑远时（如7分钟后刷第2条龙时波次可能已到10+），
   // 数值远超预期（双抗几百）。改为用龙的刷新序号，增长曲线可预期、可控。
   // 参考：第1→4条：生命 1200→3000，双抗 -40→200，攻击力 23→252。
+  //
+  // 三条曲线原先是六行写死的分段线性式。形状一样、只有系数不同，所以收敛成一条
+  // 参数化曲线搬进 data/dragonCurve.js，系数进 CONFIG.gameRules.dragon.curve。
+  // 默认值与原式**逐位相同**（tests/sim_tpleditor.mjs 有断言守着）。
   _dragonStats(dragonIndex, isAncient) {
-    const w = Math.max(1, dragonIndex);
-    let hp;
-    if (w <= 4) hp = 1200 + (w - 1) * 600;              // 1200 → 3000
-    else hp = 3000 + (w - 4) * 500;
-    let res;
-    if (w <= 4) res = -40 + (w - 1) * (240 / 3);        // -40 → 200
-    else res = Math.min(200 + (w - 4) * 30, 500);
-    let ad;
-    if (w <= 4) ad = 23 + (w - 1) * (229 / 3);          // 23 → 252
-    else ad = 252 + (w - 4) * 60;
-
-    if (isAncient) { hp *= 1.15; res += 40; ad *= 1.1; } // 远古龙仅轻微上升
-    return { maxHP: Math.round(hp), armor: Math.round(res), magicResist: Math.round(res), attackDamage: Math.round(ad) };
+    return dragonStatsAt(dragonIndex, isAncient);
   }
 
   spawnDragon() {

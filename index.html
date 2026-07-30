@@ -419,6 +419,75 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .status-list-item span.name { flex: 1; }
 .status-list-item button { padding: 3px 9px; font-size: 11px; }
 
+/* ==================== 模板编辑器：左树 + 右表单 ====================
+   原来是三层横向页签（大类 → 类型 → 内容页），一屏最多能出现四行胶囊按钮，
+   而且"我现在在编辑谁"要横着读三行才拼得出来。改为左侧固定导航树：
+   位置感由纵向层级承担，右侧只剩"当前页在编辑什么"这一件事。 */
+.tpl-layout { display: flex; gap: 14px; align-items: flex-start; }
+.tpl-nav {
+  width: 168px; flex-shrink: 0; max-height: 58vh; overflow-y: auto;
+  border-right: 1px solid var(--glass-border); padding-right: 10px;
+}
+.tpl-nav-group { margin-bottom: 10px; }
+.tpl-nav-title {
+  font-size: 10px; letter-spacing: 0.06em; color: var(--text-mute);
+  text-transform: uppercase; padding: 0 6px 4px;
+}
+.tpl-nav-item {
+  display: block; width: 100%; text-align: left; padding: 5px 9px; margin-bottom: 2px;
+  font-size: 12px; border-radius: var(--radius-xs); cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: var(--text-dim);
+  transition: all 0.12s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tpl-nav-item:hover { color: var(--text); background: var(--surface-3); }
+.tpl-nav-item.active {
+  background: linear-gradient(135deg, rgba(37,74,92,0.9), rgba(91,155,213,0.28));
+  border-color: var(--accent-2); color: var(--text);
+}
+.tpl-nav-item.child { padding-left: 22px; font-size: 11.5px; }
+.tpl-nav-item.open { color: var(--text); font-weight: 600; }
+.tpl-caret { display: inline-block; width: 10px; font-size: 9px; color: var(--text-mute); }
+.tpl-pane { flex: 1; min-width: 0; max-height: 58vh; overflow-y: auto; padding-right: 4px; }
+.tpl-pane-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.tpl-pane-head .tpl-crumb { font-size: 13px; font-weight: 600; }
+.tpl-pane-head .tpl-crumb-sub { font-size: 11px; color: var(--text-mute); }
+/* 即时生效角标：区分"点了就生效"与"改完要点应用"。两种控件混在一页而不加区分，
+   是用户反复问"我改了到底生效没有"的直接原因。 */
+.tpl-instant {
+  font-size: 9px; color: #f6c94a; border: 1px solid rgba(246,201,74,0.5);
+  border-radius: 3px; padding: 0 4px; white-space: nowrap;
+}
+.tpl-scope-note { font-size: 11px; color: var(--text-mute); margin: 6px 0 4px; }
+
+/* 出兵编排表：表头与数据行共用同一套列宽，两边各写一串 px 必然错位 */
+.wo-row {
+  display: grid;
+  grid-template-columns: 54px minmax(88px, 1.1fr) 56px 56px 56px minmax(140px, 2.2fr) 26px;
+  gap: 6px; align-items: center; margin-bottom: 6px; font-size: 12px;
+}
+.wo-row.wo-head { font-size: 10px; color: var(--text-mute); margin-bottom: 4px; padding: 0 2px; }
+.wo-row.wo-off { opacity: 0.45; }
+.wo-row > select, .wo-row > input, .wo-when-cell select, .wo-when-cell input {
+  min-width: 0; width: 100%;
+  background: var(--bg-deep); border: 1px solid var(--glass-border); color: var(--text);
+  padding: 4px 6px; border-radius: var(--radius-xs); font-size: 11.5px;
+}
+.wo-move-cell { display: flex; gap: 2px; }
+.wo-move-cell .wo-move {
+  width: 24px; padding: 3px 0; font-size: 10px; line-height: 1;
+  background: var(--surface-3); border: 1px solid var(--glass-border);
+  color: var(--text-dim); border-radius: var(--radius-xs); cursor: pointer;
+}
+.wo-move-cell .wo-move:disabled { opacity: 0.3; cursor: default; }
+/* 条件列：下拉占满，带参数的条件才追加一个窄数字框 */
+.wo-when-cell { display: flex; gap: 4px; min-width: 0; }
+.wo-when-cell select { flex: 1; }
+.wo-when-cell .wo-arg { flex: 0 0 62px; width: 62px; }
+.wo-row .wo-del {
+  width: 26px; padding: 4px 0; background: #b33a3a; border: none;
+  color: #fff; border-radius: var(--radius-xs); cursor: pointer; font-size: 11px; line-height: 1;
+}
+
 /* ==================== 弹窗 ==================== */
 .modal-overlay { position: fixed; inset: 0; background: rgba(4,6,9,0.68); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 300; display: none; align-items: center; justify-content: center; }
 .modal-overlay.open { display: flex; }

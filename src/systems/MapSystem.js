@@ -217,27 +217,7 @@ export class MapSystem {
     if (e._mapTier) e._ruin = true;
 
     if (e._mapTier === 'nexus_lane') {
-      // 分路水晶摧毁：该路（e._laneId）追加生成超级兵，其余兵种不受影响（LoL 真实机制，版本B）。
-      // 用 laneId 维度记录，而不是整个阵营——因为一个阵营三路的水晶是分别摧毁的。
-      const faction = e._mapFaction, laneId = e._laneId;
-      if (!laneId) return;
-      this.nexusDestroyed[faction] = this.nexusDestroyed[faction] || {};
-      if (this.nexusDestroyed[faction][laneId]) return;
-      this.nexusDestroyed[faction][laneId] = true;
-      this.eventBus.emit('map:nexusDestroyed', { faction, laneId });
-      // 5 分钟后重生（LoL 抑制水晶机制）：从地图定义里找回这座水晶的蓝图入队
-      const blueprint = this.currentMap?.buildings.find(b =>
-        b.tier === 'nexus_lane' && b.faction === faction && b.laneId === laneId);
-      // Q5：尸体保留（半透明可选中），到点原地复活；挂"重生中"状态（效果环即倒计时）
-      e._respawnAt = this._clock + this.NEXUS_RESPAWN_TIME;
-      if (this._fx) {
-        this._fx.apply(e.id, {
-          name: '重生中', icon: '⏳', kind: 'custom', duration: this.NEXUS_RESPAWN_TIME,
-          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: `召唤水晶重生中：${this.NEXUS_RESPAWN_TIME}s`,
-        }, 'nexus_respawn_' + e.id);
-      }
-      if (blueprint) this._respawnQueue.push({ at: e._respawnAt, blueprint, corpseId: e.id });
+      this.beginNexusRespawn(e);
     } else if (e._mapTier === 'nexus_main') {
       // 水晶枢纽摧毁：理论上是"游戏结束"的触发点，按之前确认暂不做终局判定，
       // 这里只发一个独立事件供以后接入，不影响现有的分路超级兵逻辑。
@@ -245,22 +225,165 @@ export class MapSystem {
     }
   }
 
+  // ==================== 召唤水晶：一路可以有多座 ====================
+  // 用户定稿（为以后的新地图预留）：「一路可能设置多个召唤水晶，必须这一路的
+  // **所有**召唤水晶都被摧毁，才算这一路被摧毁」。
+  // 原实现是"第一座死掉就 nexusDestroyed[faction][lane] = true 并 return"——
+  // 峡谷每路恰好只有一座，所以看不出问题；一旦某张地图放两座，拆掉一座就会立刻
+  // 开始给对方发超级兵，而防线其实还在。这类"数据一变就错、当前数据下看不出来"的
+  // 假设，是最难在事后定位的一种。
+
+  /**
+   * 该阵营该路的所有召唤水晶实体（含尸体/废墟，用 aliveOnly 过滤）。
+   * 从**实体容器**枚举而不是 this._buildingIds：后者只装地图加载时建的那批，
+   * 手动添加/编辑器改过层级的水晶不在里面，那样"这一路还剩几座"就会漏数。
+   * 场上真实存在什么，只有容器说了算。
+   */
+  laneNexuses(faction, laneId, aliveOnly = false) {
+    const out = [];
+    for (const e of this.entities.getAll(false)) {
+      if (!e || e._mapTier !== 'nexus_lane') continue;
+      if (e._mapFaction !== faction || e._laneId !== laneId) continue;
+      if (aliveOnly && !e.alive) continue;
+      out.push(e);
+    }
+    return out;
+  }
+
+  /**
+   * 这一路是否已经"全灭"。
+   * ignoreId：把某个实体**无条件当作已倒下**。死亡链路上要用它 ——
+   * 调用方是否已经把 alive 置成 false 是个时序细节（CombatSystem 是先置后发事件，
+   * 但手写测试/别的调用点未必），把判定押在那上面，就会出现"最后一座拆了却不算陷落"
+   * 这种偶发漏判，而且不会报任何错。
+   */
+  _laneNexusAllDown(faction, laneId, ignoreId = null) {
+    const all = this.laneNexuses(faction, laneId, false);
+    if (!all.length) return false;
+    return all.every(e => !e.alive || e.id === ignoreId);
+  }
+
+  /** 依据"这一路是否全灭"刷新摧毁标记，并在状态翻转时发事件。 */
+  _refreshLaneNexusFlag(faction, laneId, ignoreId = null) {
+    if (!faction || !laneId) return;
+    this.nexusDestroyed[faction] = this.nexusDestroyed[faction] || {};
+    const now = this._laneNexusAllDown(faction, laneId, ignoreId);
+    const was = !!this.nexusDestroyed[faction][laneId];
+    if (now === was) return;
+    if (now) {
+      this.nexusDestroyed[faction][laneId] = true;
+      this.eventBus.emit('map:nexusDestroyed', { faction, laneId });
+    } else {
+      delete this.nexusDestroyed[faction][laneId];
+      this.eventBus.emit('map:nexusRespawned', { faction, laneId });
+    }
+  }
+
+  /**
+   * 让一座召唤水晶进入重生倒计时。**唯一入口** ——
+   * 对局里的自然死亡（_onEntityDeath）和编辑器里的手动击杀都走这里。
+   * 原来编辑器的"击杀"是自己写的一段（刻意绕开 entity:death 以免计分），
+   * 于是手动打掉的召唤水晶【永远不会重生】，也不会触发超级兵：
+   * 同一件事在两处各实现一半，正是本仓库反复出事的形状。
+   */
+  beginNexusRespawn(e) {
+    if (!e || e._mapTier !== 'nexus_lane') return false;
+    if (e._respawnAt) return false;                  // 已在倒计时里，不重复入队
+    const faction = e._mapFaction, laneId = e._laneId;
+    if (!laneId) return false;
+    // 蓝图按【坐标】匹配这一座，不能用 (tier,faction,laneId) find 第一座 ——
+    // 一路多座时那会永远取到同一份蓝图，尸体不在时的重建路径就会把水晶建到别处去。
+    const blueprint = (this.currentMap?.buildings || []).find(b =>
+      b.tier === 'nexus_lane' && b.faction === faction && b.laneId === laneId
+      && b.pos && e.pos && Math.abs(b.pos.x - e.pos.x) < 1 && Math.abs(b.pos.y - e.pos.y) < 1)
+      || (this.currentMap?.buildings || []).find(b =>
+        b.tier === 'nexus_lane' && b.faction === faction && b.laneId === laneId);
+    // Q5：尸体保留（半透明可选中），到点原地复活；挂"重生中"状态（效果环即倒计时）
+    e._respawnAt = this._clock + this.NEXUS_RESPAWN_TIME;
+    if (this._fx) {
+      this._fx.apply(e.id, {
+        name: '重生中', icon: '⏳', kind: 'custom', duration: this.NEXUS_RESPAWN_TIME,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `召唤水晶重生中：${this.NEXUS_RESPAWN_TIME}s`,
+      }, 'nexus_respawn_' + e.id);
+    }
+    if (blueprint) this._respawnQueue.push({ at: e._respawnAt, blueprint, corpseId: e.id });
+    // 这一路是不是全灭了，交给统一判定 —— 多水晶地图上"拆一座 ≠ 这一路没了"。
+    // 传 e.id：这一座正在进重生倒计时，无论它的 alive 标记此刻是什么，都按"已倒下"算。
+    this._refreshLaneNexusFlag(faction, laneId, e.id);
+    return true;
+  }
+
+  /**
+   * 取消一座召唤水晶的重生倒计时（手动复活时用）。
+   * 队列项、_respawnAt 标记、"重生中"状态三样**必须一起清** ——
+   * 编辑器原来只清了前两样，于是复活之后那个 ⏳ 重生中 的状态还挂在水晶身上、
+   * 描述里的秒数还在往下走，看起来就像"复活了但倒计时还在跑"。
+   */
+  cancelNexusRespawn(entityId) {
+    let removed = 0;
+    for (let i = this._respawnQueue.length - 1; i >= 0; i--) {
+      if (this._respawnQueue[i].corpseId === entityId) { this._respawnQueue.splice(i, 1); removed++; }
+    }
+    const e = this.entities.get(entityId);
+    if (e) { delete e._respawnAt; delete e._respawnProgress; delete e._respawnRemain; }
+    this._clearRespawnEffect(entityId);
+    if (e) this._refreshLaneNexusFlag(e._mapFaction, e._laneId);
+    return removed;
+  }
+
   // 查询"某阵营的某一路"水晶是否已被摧毁（用于该路是否已进入"追加超级兵"状态）。
   /**
    * 该路召唤水晶【剩余重生时间】（秒）。未摧毁或已重生返回 null。
    * 供 Q2 使用：水晶即将重生时提前停发超级兵。
+   *
+   * 一路多座时取**最早**的那个：只要有一座回来了，这一路就不再是"已陷落"，
+   * 超级兵红利也就该停 —— 取最晚的会让防守方白白多挨几波。
    */
   getNexusRespawnRemain(faction, laneId) {
+    let best = null;
     for (const q of this._respawnQueue) {
-      if (q.blueprint?.faction === faction && q.blueprint?.laneId === laneId) {
-        return Math.max(0, q.at - this._clock);
-      }
+      if (q.blueprint?.faction !== faction || q.blueprint?.laneId !== laneId) continue;
+      const remain = Math.max(0, q.at - this._clock);
+      if (best === null || remain < best) best = remain;
     }
-    return null;
+    return best;
   }
 
   isNexusDestroyed(faction, laneId) {
     return !!(this.nexusDestroyed[faction] && this.nexusDestroyed[faction][laneId]);
+  }
+
+  /** 摘掉那颗 ⏳「重生中」状态。EffectRegistry.remove 收的是 effectId，不是 (entityId, source)。 */
+  _clearRespawnEffect(entityId) {
+    const eff = this._fx?.getEffectByName?.(entityId, '重生中');
+    if (eff) this._fx.remove(eff.id);
+  }
+
+  /**
+   * 各阵营各档建筑的存活/摧毁统计 —— 出兵编排的「条件」读这个。
+   * 分路的档位（外/内/水晶塔/召唤水晶）按 laneId 再分一层；
+   * 枢纽塔与水晶枢纽在地图定义里 laneId 为 null，属于全场。
+   */
+  structureCensus() {
+    const mk = () => ({ total: 0, alive: 0 });
+    const out = { blue: { all: {}, lanes: {} }, red: { all: {}, lanes: {} } };
+    // 同样从容器枚举（理由见 laneNexuses）：编排的条件问的是"场上还剩几座"，
+    // 而不是"地图当初建了几座"。
+    for (const e of this.entities.getAll(false)) {
+      if (!e || !e._mapTier || !e._mapFaction) continue;
+      const f = out[e._mapFaction];
+      if (!f) continue;
+      const t = e._mapTier;
+      f.all[t] = f.all[t] || mk();
+      f.all[t].total++; if (e.alive) f.all[t].alive++;
+      const lane = e._laneId;
+      if (!lane) continue;
+      f.lanes[lane] = f.lanes[lane] || {};
+      f.lanes[lane][t] = f.lanes[lane][t] || mk();
+      f.lanes[lane][t].total++; if (e.alive) f.lanes[lane][t].alive++;
+    }
+    return out;
   }
 
   // 每帧由主循环调用：推进内部时钟，处理召唤水晶重生。
@@ -291,9 +414,11 @@ export class MapSystem {
         });
         if (entity) this._buildingIds.push(entity.id);
       }
-      // 清除摧毁标记：下一波起对方停止追加超级兵（LoL 一致）
-      if (this.nexusDestroyed[b.faction]) delete this.nexusDestroyed[b.faction][b.laneId];
-      this.eventBus.emit('map:nexusRespawned', { faction: b.faction, laneId: b.laneId });
+      // 清除摧毁标记：下一波起对方停止追加超级兵（LoL 一致）。
+      // 走统一判定而不是直接 delete —— 一路多座时，另一座可能还躺着，
+      // 但"有一座活着"就足以让这一路不再算陷落（见 _refreshLaneNexusFlag）。
+      this._refreshLaneNexusFlag(b.faction, b.laneId);
+      this._clearRespawnEffect(corpseId);
     }
     // ==================== Q1：三种"规则性状态"进效果系统（面板可见） ====================
     // ① 结构保护（水晶塔/枢纽塔未破时，召唤水晶/水晶枢纽不可选中且不可被攻击）
