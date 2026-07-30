@@ -11,7 +11,7 @@
  * dragonSprite / WEAPON_ICONS 是本次新增（原先龙是每帧过程式绘制、武器图标表是
  * render() 内的局部常量），归拢进工厂统一管素材。
  */
-import { MINION_SIZES } from '../data/Config.js';
+import { CONFIG, MINION_SIZES } from '../data/Config.js';
 
 const _spriteCache = new Map();   // key -> { canvas, half, size }（half = 逻辑半宽，绘制时居中）
 
@@ -37,6 +37,27 @@ export const MINION_STYLE = {
   // v40：补上攻城车——此前缺失导致渲染 fallback 到 { icon: '❓' }，画板上显示问号
   ram:     { color: '#7f8c8d', icon: '🛠️', size: MINION_SIZES.ram },
 };
+
+/**
+ * 兵种样式解析：内置查上表，**自制兵种取用户自己填的图标/颜色**。
+ *
+ * 上面 ram 那条注释记的就是漏了一种兵会怎样：fallback 到 { icon:'❓' }，
+ * 画板上一排问号。自制兵种天生不在这张表里，如果各处继续直接下标访问，
+ * 用户做出来的每一个兵都会是问号 —— 这个坑等着被踩第二次。
+ * 所以统一走这个函数，各处不要再写 `MINION_STYLE[type] || {…}`。
+ */
+export function minionStyle(type, custom = null) {
+  const st = MINION_STYLE[type];
+  if (st) return st;
+  // 直接读 CONFIG 而不是绕 window：Config.js 没有任何渲染依赖，导它是安全的；
+  // 走 window.CTX 反而多一条"这个字段今天在不在"的不确定性。
+  const c = custom || (CONFIG.customMinions && CONFIG.customMinions[type]) || null;
+  return {
+    color: c?.color || '#c0392b',
+    icon: c?.icon || '⚔️',      // 未知兵种给通用兵刃而不是问号：问号看着像 bug
+    size: c?.size || MINION_SIZES.melee || 10,
+  };
+}
 
 // 离屏精灵：logicalSize 为世界坐标下的边长，内部以 SS 超采样烘焙保证放大后清晰
 export function getSprite(key, logicalSize, drawFn) {

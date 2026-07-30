@@ -30,12 +30,19 @@ export const IO_GROUPS = [
   'skillOverrides',       // 技能参数覆写（按 skillId → { 参数: 值 }）
   'effectOverrides',      // 状态/效果参数覆写
   'mapOverrides',         // 地图级覆写（河道/坑位/层级数值/技能改写）
+  // ===== 自制内容（用户"自己做一个"的成果，见 src/data/customContent.js）=====
+  // 这三组是用户的**创作**，不是调过的数字 —— 存档里丢了就等于作品没了，
+  // 所以它们和其它分组一样走同一条导出/导入通道，没有例外路径。
+  'customEffects',        // 自制状态（纯数据蓝图）
+  'customSkills',         // 自制技能/武器（声明式规格，由 behaviorVM 编译）
+  'customMinions',        // 自制兵种（模板数据）
 ];
 
 // 上面三个 *Overrides 分组可能尚未在 CONFIG 里存在（按需创建）。
 // 列进白名单是为了让导出的存档**结构稳定** —— 存档格式不该随"用户这次有没有改过技能"
 // 而时有时无，否则做前后对比（diff 两个存档）时会满屏是结构差异而不是数值差异。
-export const IO_ENSURE = ['skillOverrides', 'effectOverrides', 'mapOverrides'];
+export const IO_ENSURE = ['skillOverrides', 'effectOverrides', 'mapOverrides',
+                          'customEffects', 'customSkills', 'customMinions'];
 
 export const IO_VERSION = 1;
 

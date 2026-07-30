@@ -29,6 +29,7 @@ import { UnitAddDialog } from './ui/UnitAddDialog.js';
 import { SettingsDialog } from './ui/SettingsDialog.js';
 import { ModeDialog } from './ui/ModeDialog.js';
 import { DebugLogger } from './utils/DebugLogger.js';
+import { syncAll as syncCustomContent } from './data/customContent.js';
 
 CTX._uid = 0;
 DebugLogger.hookConsole();
@@ -51,6 +52,18 @@ const eventBus = new EventBus();
 const entityContainer = new EntityContainer();
 const effectRegistry = new EffectRegistry(eventBus);
 const skillLibrary = SkillLibrary;
+
+// 自制内容（用户在编辑器里做出来的状态/技能/兵种）载入进引擎。
+// 必须在装配阶段就做：自制技能要注册进 SkillLibrary、自制兵种要展开进
+// CONFIG.templates，晚于建筑/出兵初始化就会出现"存档里有、这一局却没有"。
+{
+  const r = syncCustomContent();
+  if (r.skills || r.minions || r.effects) {
+    console.log(`[自制内容] 技能 ${r.skills} / 兵种 ${r.minions} / 状态 ${r.effects}`);
+  }
+  // 坏内容不静默丢弃：用户会以为自己的作品还在。
+  for (const e of r.errors) console.warn('[自制内容] ' + e);
+}
 const attrCalc = AttributeCalculator;
 
 const combatSystem = new CombatSystem(entityContainer, effectRegistry, eventBus, skillLibrary);

@@ -7,7 +7,7 @@ import { isStructureProtected } from '../systems/FactionSystem.js';
 import { CONFIG } from '../data/Config.js';
 import { buildTerrainLayer } from './TerrainLayer.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { getSprite, towerSprite, minionSprite, MINION_STYLE, WEAPON_ICONS } from './SpriteFactory.js';
+import { getSprite, towerSprite, minionSprite, MINION_STYLE, minionStyle, WEAPON_ICONS } from './SpriteFactory.js';
 
 export class CanvasRenderer {
   constructor(canvas, entityContainer, effectRegistry, attrCalc, projectileSystem) {
@@ -91,7 +91,7 @@ export class CanvasRenderer {
     return t._modelSize || bs[t._mapTier] || bs.default || 28; // v33 Q13：单塔覆写
   }
   getMinionSize(m) {
-    return (MINION_STYLE[m.type] && MINION_STYLE[m.type].size) || 10;
+    return minionStyle(m.type).size || 10;
   }
 
   // 选中光圈（LoL 式绿色描边圈）
@@ -328,7 +328,7 @@ export class CanvasRenderer {
         continue;
       }
 
-      const st = MINION_STYLE[m.type] || { color: '#c0392b', icon: '❓', size: 10 };
+      const st = minionStyle(m.type);   // 自制兵种取用户填的图标/颜色
       const color = st.color, size = st.size;
 
       // v40：攻城模式攻击指示红线——与防御塔同款（锁定建筑期间常驻，代表"正在攻城"）。

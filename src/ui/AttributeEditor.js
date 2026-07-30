@@ -3,6 +3,7 @@ import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { buildWaveOrder, WHEN_OPTIONS } from '../data/waveComposition.js';
 import { towerTierBase, towerTierEffective, towerTierSource } from '../data/schema/index.js';
 import { exportTemplates, importTemplates, suggestedFileName } from '../data/templateIO.js';
+import { syncAll as syncCustomContent, allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
 
 // 属性字段元数据：中文标签 + 滑块范围 + 步长（供动态滑块条使用）
 const FIELD_META = {
@@ -211,9 +212,14 @@ export const AttributeEditor = {
     logFn(`✅ 技能全局覆写已更新（写入 ${set} 项，清除 ${cleared} 项）。已在场上的单位下一帧生效`, 'spawn');
   },
 
-  _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', dragon: '巨龙' },
+  _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', dragon: '巨龙', skill: '技能' },
  _TPL_ICONS: { melee: '🗡️', ranged: '🏹', siege: '💣', super: '🦾', totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️' },
-  _TPL_MINION_TYPES: ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram'],
+  // 兵种列表【不再写死】：自制兵种必须和内置兵种一样出现在页签、出兵编排、
+  // 成长表里。写死的话用户做出来的兵在界面上根本看不见 —— 等于没做出来。
+  // 名称/图标同理走 customContent 的统一查询，内置的仍从上面两张表取。
+  get _TPL_MINION_TYPES() { return allMinionTypes(); },
+  _labelOf(type) { return this._TPL_LABELS[type] || minionLabel(type); },
+  _iconOf(type) { return this._TPL_ICONS[type] || minionIcon(type); },
   // 分层防御塔：模板编辑器"防御塔"下的二级 tab。tier 与地图 tierStats / 生成建筑的 _mapTier 同键。
   _TPL_TOWER_TIERS: [
     { key: 'outer',      label: '外塔',     icon: '🗼' },
@@ -336,7 +342,7 @@ export const AttributeEditor = {
           </div>
           ${category === 'minion' ? `
             <div class="editor-tabs" style="margin-top:8px;">
-              ${this._TPL_MINION_TYPES.map(t => `<button class="editor-tab ${t === type ? 'active' : ''}" data-tpltype="${t}">${this._TPL_ICONS[t]} ${this._TPL_LABELS[t]}</button>`).join('')}
+              ${this._TPL_MINION_TYPES.map(t => `<button class="editor-tab ${t === type ? 'active' : ''}" data-tpltype="${t}">${this._iconOf(t)} ${this._labelOf(t)}</button>`).join('')}
             </div>
           ` : ''}
           ${category === 'tower' ? `
@@ -470,6 +476,13 @@ export const AttributeEditor = {
         catch (e) { logFn(`❌ 打开失败：JSON 解析错误（${e.message}）`, 'spawn'); return; }
         const r = importTemplates(CONFIG, data);
         if (!r.ok) { logFn(`❌ 打开失败：${r.error}`, 'spawn'); return; }
+        // 自制内容光是躺在 CONFIG 里还不算存在：技能得编译注册进 SkillLibrary、
+        // 兵种得展开进 templates。不同步的话导入后看着有、用起来没有。
+        const sy = syncCustomContent();
+        if (sy.skills || sy.minions || sy.effects) {
+          logFn(`✨ 自制内容已载入：技能 ${sy.skills} / 兵种 ${sy.minions} / 状态 ${sy.effects}`, 'spawn');
+        }
+        for (const e of sy.errors) logFn('⚠️ ' + e, 'spawn');
         logFn(`📂 已载入 ${r.groups.length} 组配置：${r.groups.join('、')}` +
               (r.skipped.length ? `（忽略 ${r.skipped.length} 个未知键）` : ''), 'spawn');
         this._renderTemplateEditor(logFn, returnCallback);
@@ -513,6 +526,11 @@ export const AttributeEditor = {
         catch (e) { logFn(`❌ 导入失败：JSON 解析错误（${e.message}）`, 'spawn'); return false; }
         const r = importTemplates(CONFIG, data);
         if (!r.ok) { logFn(`❌ 导入失败：${r.error}`, 'spawn'); return false; }
+        const sy = syncCustomContent();
+        if (sy.skills || sy.minions || sy.effects) {
+          logFn(`✨ 自制内容已载入：技能 ${sy.skills} / 兵种 ${sy.minions} / 状态 ${sy.effects}`, 'spawn');
+        }
+        for (const e of sy.errors) logFn('⚠️ ' + e, 'spawn');
         logFn(`📥 已导入 ${r.groups.length} 组配置：${r.groups.join('、')}` +
               (r.skipped.length ? `（忽略了 ${r.skipped.length} 个未知键：${r.skipped.join('、')}）` : ''), 'spawn');
         this._renderTemplateEditor(logFn, returnCallback);
@@ -702,7 +720,7 @@ export const AttributeEditor = {
       lightning: { label: '闪电杖', icon: '⚡' }, explosive: { label: '爆炸型', icon: '💥' },
       sniper: { label: '狙击型', icon: '🎯' }, corrosion: { label: '腐蚀型', icon: '🌿' },
     };
-    const who = isTower ? this._tierLabel(tier) : (this._TPL_LABELS[type] || type);
+    const who = isTower ? this._tierLabel(tier) : (this._labelOf(type));
     let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的${who}默认装备该武器`
       + (isTower ? `（所有建筑都能装武器；召唤水晶/水晶枢纽默认无武器，装上即可开火）` : '') + `</p><div class="pick-grid">`;
     for (const [key, meta] of Object.entries(weaponMeta)) {
@@ -748,7 +766,7 @@ export const AttributeEditor = {
         tplMsg = `模板：${this._tierLabel(tier)} → ${key}`;
       } else {
         CONFIG.templates[type]._templateWeapon = key;
-        tplMsg = `模板：${this._TPL_LABELS[type] || type} → ${key}`;
+        tplMsg = `模板：${this._labelOf(type)} → ${key}`;
       }
     }
     if (apply !== 'template') {
@@ -817,7 +835,7 @@ export const AttributeEditor = {
       ? activeChips.map(c => `<div class="transfer-chip" data-tplsoul-remove="${c.key}">
           <span class="chip-icon">${c.icon}</span><span>${c.label}</span><span class="chip-remove">✕</span>
         </div>`).join('')
-      : `<div class="transfer-active-empty">新生成的${this._TPL_LABELS[type]}默认不装备任何龙魂。点击下方池中的按钮即可默认装备。</div>`;
+      : `<div class="transfer-active-empty">新生成的${this._labelOf(type)}默认不装备任何龙魂。点击下方池中的按钮即可默认装备。</div>`;
 
     const poolHtml = Object.entries(DRAGON_ELEMENTS).map(([key, el]) => {
       const def = SkillLibrary[el.soul];
@@ -830,7 +848,7 @@ export const AttributeEditor = {
 
     return `
       <div class="transfer-box">
-        <p style="color:var(--text-dim);font-size:11px;">新生成的${this._TPL_LABELS[type]}将默认装备下方"已生效"框内的龙魂（可多选，不受击杀解锁限制，用于快速配置）</p>
+        <p style="color:var(--text-dim);font-size:11px;">新生成的${this._labelOf(type)}将默认装备下方"已生效"框内的龙魂（可多选，不受击杀解锁限制，用于快速配置）</p>
         <div class="transfer-active-zone">
           <div class="transfer-active-title">✨ 默认装备（点击移除）</div>
           <div class="transfer-active-list">${activeHtml}</div>
@@ -854,10 +872,10 @@ export const AttributeEditor = {
       const idx = tpl._templateSouls.indexOf(soulId);
       if (idx >= 0) {
         tpl._templateSouls.splice(idx, 1);
-        logFn(`🚫 ${this._TPL_LABELS[type]}默认龙魂已移除：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
+        logFn(`🚫 ${this._labelOf(type)}默认龙魂已移除：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
       } else {
         tpl._templateSouls.push(soulId);
-        logFn(`✅ ${this._TPL_LABELS[type]}默认龙魂已添加：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
+        logFn(`✅ ${this._labelOf(type)}默认龙魂已添加：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
       }
       rerender();
     };
@@ -1038,7 +1056,7 @@ export const AttributeEditor = {
         const on = EN[t] !== false;
         return `<button class="editor-tab ${on ? 'active' : ''}" data-spawn-toggle="${t}"
                  title="${on ? '点击停用' : '点击启用'}" style="font-size:11px;">
-          ${on ? '✅' : '⛔'} ${this._TPL_ICONS[t] || ''}${this._TPL_LABELS[t] || t}
+          ${on ? '✅' : '⛔'} ${this._iconOf(t)}${this._labelOf(t)}
         </button>`;
       }).join('')}
     </div>`;
@@ -1066,7 +1084,7 @@ export const AttributeEditor = {
           <button class="wo-move" data-idx="${i}" data-dir="1" ${i === list.length - 1 ? 'disabled' : ''} style="width:24px;">▼</button>
         </span>
         <select class="wo-field" data-idx="${i}" data-field="type" style="width:96px;">
-          ${types.map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${this._TPL_ICONS[t] || ''} ${this._TPL_LABELS[t] || t}</option>`).join('')}
+          ${types.map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${this._iconOf(t)} ${this._labelOf(t)}</option>`).join('')}
         </select>
         ${cell(r, i, 'count', 0, 1)}${cell(r, i, 'fromWave', 0, 1)}${cell(r, i, 'everyN', 1, 1)}
         <select class="wo-field" data-idx="${i}" data-field="when" style="flex:1;">
@@ -1093,7 +1111,7 @@ export const AttributeEditor = {
       </div>
       <div class="pick-desc-box" style="margin-top:6px;">
         共 <b>${order.length}</b> 个单位：${order.length
-          ? order.map(t => `${this._TPL_ICONS[t] || ''}${this._TPL_LABELS[t] || t}`).join(' → ')
+          ? order.map(t => `${this._iconOf(t)}${this._labelOf(t)}`).join(' → ')
           : '（本波无兵）'}
       </div>
     </div>`;
@@ -1101,7 +1119,7 @@ export const AttributeEditor = {
     const sandbox = this._renderSandboxRuleRows(type);
     html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
       <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">
-        ③ 沙盒节奏 —— 当前兵种：${this._TPL_ICONS[type] || ''}${this._TPL_LABELS[type] || type}</div>
+        ③ 沙盒节奏 —— 当前兵种：${this._iconOf(type)}${this._labelOf(type)}</div>
       <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
         ⚠️ 这一段<b>只影响沙盒模式</b>。对战模式的出兵完全由上面的②决定，改这里在对战里看不到任何变化。
         （切换顶部的兵种页签可编辑其它兵种的沙盒节奏。）</div>
@@ -1121,7 +1139,7 @@ export const AttributeEditor = {
         CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
         const now = CONFIG.gameRules.spawnEnabled[t] !== false;
         CONFIG.gameRules.spawnEnabled[t] = !now;
-        logFn(`⚙️ 「${this._TPL_LABELS[t] || t}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
+        logFn(`⚙️ 「${this._labelOf(t)}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
         // 重绘：编排表里该兵种的行要跟着变灰/变亮，预览也要重算
         if (rerender) rerender(); else {
           btn.classList.toggle('active', !now);
@@ -1233,7 +1251,7 @@ export const AttributeEditor = {
         changed++;
       }
     });
-    if (changed) logFn(`✅ 「${this._TPL_LABELS[type] || type}」沙盒节奏已更新（${changed}项）`, 'spawn');
+    if (changed) logFn(`✅ 「${this._labelOf(type)}」沙盒节奏已更新（${changed}项）`, 'spawn');
   },
 
   // P2：成长/屠戮从原「生成规则」里拆出来单独应用。它们是战斗数值，
@@ -1256,7 +1274,7 @@ export const AttributeEditor = {
         if (!isNaN(v)) { CONFIG.rend[type].pct = v / 100; changed++; }
       });
     }
-    logFn(`✅ 「${this._TPL_LABELS[type] || type}」成长/屠戮已更新（${changed}项）`, 'spawn');
+    logFn(`✅ 「${this._labelOf(type)}」成长/屠戮已更新（${changed}项）`, 'spawn');
   },
 
   // ==================== 渲染方法 ====================
@@ -1780,7 +1798,7 @@ export const AttributeEditor = {
     return {
       pool: this._SKILLS_BY_TYPE[type]?.passives || [],
       defaults, equipped: new Set(tpl._templateSkills || []),
-      title: tpl.label || this._TPL_LABELS[type] || type,
+      title: tpl.label || this._labelOf(type),
     };
   },
 
@@ -1823,7 +1841,7 @@ export const AttributeEditor = {
   _renderTemplateEffectContent(type, tier) {
     const list = this._effectListFor(type, tier);
     const title = this._categoryOfType(type) === 'tower'
-      ? this._tierLabel(tier) : (CONFIG.templates[type]?.label || this._TPL_LABELS[type] || type);
+      ? this._tierLabel(tier) : (CONFIG.templates[type]?.label || this._labelOf(type));
 
     let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${title} 入场时自动获得下列状态</p>`;
     html += `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;

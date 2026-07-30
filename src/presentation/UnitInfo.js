@@ -7,7 +7,7 @@
  */
 
 import { CONFIG } from '../data/Config.js';
-import { MINION_STYLE } from './SpriteFactory.js';
+import { MINION_STYLE, minionStyle } from './SpriteFactory.js';
 
 // v33（Q16）：下一个未破裂的镀层节点（HP 比例 0.8/0.6/0.4/0.2）；无镀层技能返回 null
 export function nextPlatingNode(tower) {
@@ -29,5 +29,5 @@ export function buildingSize(t) {
 }
 
 export function minionSize(m) {
-  return (MINION_STYLE[m.type] && MINION_STYLE[m.type].size) || 10;
+  return minionStyle(m.type).size || 10;
 }

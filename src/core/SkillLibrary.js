@@ -19,9 +19,13 @@ import { dragonSouls } from './skills/dragonSouls.js';
 export const SkillLibrary = {
   _registry: new Map(),
 
-  /** @param {string} id @param {object} def */
+  /**
+   * @param {string} id @param {object} def
+   * 覆盖同名时告警——内置技能重名基本都是笔误。但自制技能（def._isCustom）
+   * 每次保存/导入存档都会重新注册一遍，那是**正常路径**，不该刷告警。
+   */
   register(id, def) {
-    if (this._registry.has(id)) console.warn('SkillLibrary: overwriting "' + id + '"');
+    if (this._registry.has(id) && !def?._isCustom) console.warn('SkillLibrary: overwriting "' + id + '"');
     this._registry.set(id, def);
     this[id] = def; // backward-compat property access
     return this;

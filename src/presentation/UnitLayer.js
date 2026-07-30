@@ -30,7 +30,7 @@
  *   龙魂金环 dragonsoul_ 前缀技能；盾牌 isStructureProtected。幽灵水晶不参与 E 组。
  */
 import * as THREE from '../../vendor/three.module.js';
-import { MINION_STYLE } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
+import { MINION_STYLE, minionStyle } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
 import { CONFIG } from '../data/Config.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
@@ -145,7 +145,7 @@ export class UnitLayer {
                barW: 100, barH: 7, barD: 12, alpha: 1, pulse: true,
                ringR: size + 5 };
     }
-    const st = MINION_STYLE[e.type] || { color: '#c0392b', icon: '❓', size: 10 };
+    const st = minionStyle(e.type);   // 自制兵种取用户填的图标/颜色，见 SpriteFactory.minionStyle
     const faction = e._mapFaction || e.faction;
     // Q3：小兵优先 GLB 模型（melee/ranged/super/siege）；无该模型或未加载 → 回退程序化几何。
     if (!ghost && this.models && faction) {
