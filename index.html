@@ -459,6 +459,15 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 }
 .tpl-scope-note { font-size: 11px; color: var(--text-mute); margin: 6px 0 4px; }
 
+/* 世界 HUD：时间与天气并成一行（用户定稿）。两段各自 flex，分隔线只在两段都在时出现。 */
+#worldHud .wh-row-split { display: flex; align-items: center; gap: 8px; }
+#worldHud .wh-seg { display: flex; align-items: center; gap: 6px; }
+#worldHud .wh-seg .wh-bar { width: 96px; }
+/* 分隔线放在天气段【内部】的第一个 —— 天气隐藏时它自然跟着消失。
+   不用 :has()/兄弟选择器去猜隐藏状态：那种写法依赖内联 style 的字符串形式，
+   WeatherPanel 改一下赋值方式（'none' → ''）就会静默失效。 */
+#worldHud .wh-sep { width: 1px; height: 14px; margin-right: 2px; background: var(--glass-border); flex-shrink: 0; }
+
 /* 出兵编排表：表头与数据行共用同一套列宽，两边各写一串 px 必然错位 */
 .wo-row {
   display: grid;
@@ -572,23 +581,28 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
          统一设计语言：同一块玻璃面板、同样的行高与字号，每段一行、左侧固定宽度的标签位。
          点天气段开天气配置，点熵段开世界设置。 -->
     <div id="worldHud">
-      <div class="wh-row" id="whTimeRow" title="游戏时间 · 昼夜相位">
-        <span class="wh-label" id="whPhaseIcon">☀️</span>
-        <canvas id="whTimeBar" class="wh-bar"></canvas>
-        <span class="wh-val" id="whClock">0:00</span>
+      <!-- 布局（用户定稿）：**时间与天气并成一行**，熵单独一行（关闭时整行不显示）。
+           上一版我把三者做成了三行 —— 那是我把"天气那栏的第一个"理解成了行序，
+           实际要的是时间和天气在同一行里左右排开。
+           两段并排靠 .wh-seg 的 flex，而不是给每段写死宽度：天气名字长短不一
+           （"雷暴"两字 vs "雪盲"两字 vs 未来更长的），写死宽度必然有一天对不齐。 -->
+      <div class="wh-row wh-row-split" id="whTimeRow" title="游戏时间 · 昼夜相位　｜　右半：当前天气（点击打开天气配置）">
+        <span class="wh-seg" id="whTimeSeg">
+          <span class="wh-label" id="whPhaseIcon">☀️</span>
+          <canvas id="whTimeBar" class="wh-bar"></canvas>
+          <span class="wh-val" id="whClock">0:00</span>
+        </span>
+        <span class="wh-seg" id="whWeatherRow" style="display:none;">
+          <span class="wh-sep"></span>
+          <span class="wh-label" id="weatherNow"></span>
+          <canvas id="weatherBar" class="wh-bar"></canvas>
+          <span class="wh-val" id="whWeatherVal"></span>
+        </span>
       </div>
-      <!-- 行序（用户定稿）：① 昼夜/时间　② 熵　③ 天气及之后。
-           熵关闭时整行 display:none，此时看到的就是 昼夜 → 天气，中间不留空档。
-           顺序写在 DOM 里而不是靠 JS 插入 —— JS 插入顺序会随"谁先初始化"漂移。 -->
       <div class="wh-row" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
         <span class="wh-label" id="whEntIcon">🌀</span>
         <canvas id="whEntBar" class="wh-bar"></canvas>
         <span class="wh-val" id="whEntVal"></span>
-      </div>
-      <div class="wh-row" id="whWeatherRow" style="display:none;" title="点击打开天气配置">
-        <span class="wh-label" id="weatherNow"></span>
-        <canvas id="weatherBar" class="wh-bar"></canvas>
-        <span class="wh-val" id="whWeatherVal"></span>
       </div>
     </div>
 

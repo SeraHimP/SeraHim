@@ -265,7 +265,6 @@ export class ThreeRenderer {
       this.scene.add(l);
       this.towerLights.push(l);
     }
-    this._towerGlow = null;         // 地面辉光贴片层（懒建，见 _syncTowerGlow）
 
     this.shadowLevel = 'off';      // 'all' | 'static' | 'off'
     this._sunDir = new THREE.Vector3(
@@ -680,122 +679,35 @@ export class ThreeRenderer {
       let want = 0;
       if (e && this.deps?.attrCalc) {
         const range = this.deps.attrCalc.calc(e, this.deps.effects.getEffects(e.id)).attackRange || 250;
-        const R = range + extra;                       // 用户定稿：照亮"射程 + 50"
-        l.distance = R;
-        l.decay = decay;
-        // 灯挂在塔顶附近而不是地面：放地面的话光只往外糊一圈，
-        // 站在塔边的小兵反而被自己脚下的暗部吃掉。
+        const R = range + extra;                       // 用户定稿：照亮"射程 + 50"（这是【地面上】的半径）
+        // 灯挂在塔顶上方而不是地面：放地面的话光只往外糊一圈，
+        // 站在塔边的小兵反而被自己脚下的暗部吃掉；挂太低则塔身离灯太近会过曝。
         const ly = (this.units.muzzleYOf?.(e.id) ?? 40) + (c.heightBias ?? 10);
+        // ⚠️ distance 必须按【灯到地面边缘的斜距】给，不是地面半径 R。
+        // 灯在空中 ly 高处，地面上半径 R 处那一点离灯是 √(R²+ly²)。
+        // 直接把 distance 设成 R 的话，超出的部分被 Three 截成 0 —— 灯抬得越高，
+        // 地面被照到的圈越小；抬到 200 时地面几乎全黑（实测截图就是这么发现的）。
+        const dEdge = Math.hypot(R, ly);
+        l.distance = dEdge;
+        l.decay = decay;
         l.position.set(e.pos.x, ly, e.pos.y);
         const col = e._mapFaction === 'blue' ? c.colorBlue : e._mapFaction === 'red' ? c.colorRed : c.colorNeutral;
         l.color.set(col || '#ffe6b8');
         // ==================== 强度换算（这里曾经错了 5 个数量级）====================
-        // r155 起 PointLight 的 intensity 是【坎德拉】，地面照度 = intensity / d^decay。
+        // r155 起 PointLight 的 intensity 是【坎德拉】，照度 = intensity / d^decay。
         // 第一版写成 `0.55 × 夜色 × (半径/250)` ≈ 0.66 —— 150px 处照度约 3e-5，
         // 而场景方向光是 2.3，等于完全看不见，看起来就像"这功能没做"。
-        // 正确做法：从"边缘要剩多少照度"反推坎德拉，把半径的 decay 次方乘回去。
-        want = edgeLux * Math.pow(R, decay) * night;
-        // decay<2 时中心仍然很亮。按"最近可见距离"（塔身半径附近）估一次中心照度，
-        // 超过上限就整体压回来，免得塔脚糊成一片死白。
-        const dMin = Math.max(12, ly);                 // 灯到塔脚地面的最短距离
-        const centerLux = want / Math.pow(dMin, decay);
+        // 现在：从"地面边缘要剩多少照度"反推坎德拉，用的是斜距 dEdge（与 distance 同一个量）。
+        want = edgeLux * Math.pow(dEdge, decay) * night;
+        // 中心（塔脚正下方，离灯 ly）与边缘的照度比 = (dEdge/ly)^decay。
+        // 这个比值就是"光池均不均匀"：ly 越高、decay 越小，池子越平。
+        // clampLux 是最后一道保险，防某些塔的射程特别大时中心糊成死白。
+        const centerLux = want / Math.pow(Math.max(12, ly), decay);
         if (centerLux > clampLux) want *= clampLux / centerLux;
       }
       l.intensity += (want - l.intensity) * fade;
       if (l.intensity < 1e-4) l.intensity = 0;
     }
-    this._syncTowerGlow(c, night, picked);
-  }
-
-  /**
-   * 地面辉光贴片：给**够不上灯池**的塔补"这座塔也在发光"的观感。
-   * 它不参与光照计算，所以照不亮小兵 —— 真照明只有灯池那 N 盏。
-   * 但贴片数量无上限、开销恒定（一个 InstancedMesh + 一次 additive draw），
-   * 全图缩放时几十座塔一起亮才不至于只有最近的几座有光。
-   *
-   * 为什么不干脆把灯池开到 44：Three 的前向渲染把光源数编进着色器，
-   * 44 盏点光要在每个片元上算 44 次光照，地形那张大网格直接把帧时间吃光。
-   */
-  _syncTowerGlow(c, night, picked) {
-    if (c.glowDecal === false) { if (this._towerGlow) this._towerGlow.visible = false; return; }
-    const ents = this.deps?.entities;
-    if (!ents) return;
-    if (!this._towerGlow) {
-      // 径向渐变贴片：中心亮、边缘 smoothstep 到 0。用 shader 而不是贴图 ——
-      // 一是不用生成/解码纹理，二是 softness 可以随配置实时调。
-      const geo = new THREE.PlaneGeometry(1, 1);
-      geo.rotateX(-Math.PI / 2);                       // 躺平贴地
-      const mat = new THREE.ShaderMaterial({
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        // DoubleSide：几何体是 rotateX(-90°) 躺平的 Plane，绕轴旋转会把绕序翻过来，
-        // 单面材质下从上往下看正好是背面 → 整层被剔掉、什么都不显示（实测踩过）。
-        side: THREE.DoubleSide,
-        uniforms: { uSoft: { value: c.glowSoftness ?? 0.55 } },
-        vertexShader: `
-          attribute vec3 iPos; attribute float iScale; attribute vec3 iColor; attribute float iAlpha;
-          varying vec2 vUv; varying vec3 vCol; varying float vA;
-          void main(){ vUv = uv; vCol = iColor; vA = iAlpha;
-            vec3 p = position * iScale + iPos;
-            gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0); }`,
-        fragmentShader: `
-          uniform float uSoft; varying vec2 vUv; varying vec3 vCol; varying float vA;
-          void main(){
-            float d = length(vUv - 0.5) * 2.0;         // 0=中心 1=边缘
-            float inner = 1.0 - clamp(uSoft, 0.0, 0.99);
-            float a = 1.0 - smoothstep(inner, 1.0, d); // 中心满、边缘渐隐
-            a *= a;                                    // 再压一次，中心更聚拢
-            if (a * vA <= 0.001) discard;
-            gl_FragColor = vec4(vCol, a * vA); }`,
-      });
-      const MAX = 64;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 2;
-      const iPos = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
-      const iScale = new THREE.InstancedBufferAttribute(new Float32Array(MAX), 1);
-      const iColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
-      const iAlpha = new THREE.InstancedBufferAttribute(new Float32Array(MAX), 1);
-      const ig = new THREE.InstancedBufferGeometry();
-      ig.index = geo.index; ig.attributes = geo.attributes;
-      ig.setAttribute('iPos', iPos); ig.setAttribute('iScale', iScale);
-      ig.setAttribute('iColor', iColor); ig.setAttribute('iAlpha', iAlpha);
-      ig.instanceCount = 0;
-      mesh.geometry = ig;
-      this.scene.add(mesh);
-      this._towerGlow = mesh;
-      this._towerGlowMax = MAX;
-    }
-    const mesh = this._towerGlow;
-    mesh.material.uniforms.uSoft.value = c.glowSoftness ?? 0.55;
-    mesh.visible = night > 0.001;
-    if (!mesh.visible) { mesh.geometry.instanceCount = 0; return; }
-
-    const g = mesh.geometry;
-    const iPos = g.getAttribute('iPos'), iScale = g.getAttribute('iScale');
-    const iColor = g.getAttribute('iColor'), iAlpha = g.getAttribute('iAlpha');
-    const skip = new Set(picked.map(e => e.id));       // 有真光源的塔不再叠贴片（会过曝）
-    const extra = c.rangeExtra ?? 50;
-    const op = (c.glowOpacity ?? 0.3) * night;
-    const col = new THREE.Color();
-    let n = 0;
-    for (const e of ents.getAllTowers(true)) {
-      if (n >= this._towerGlowMax) break;
-      if (!e.pos || skip.has(e.id)) continue;
-      const range = this.deps.attrCalc
-        ? (this.deps.attrCalc.calc(e, this.deps.effects.getEffects(e.id)).attackRange || 250) : 250;
-      const R = (range + extra) * 2;                   // 贴片是直径
-      // 贴地高度走 MapSystem.heightAt —— 与 UnitLayer 给单位定高用的是同一个查询，
-      // 否则台阶地形上贴片会浮空或埋进地里。+1 是防和地面共面导致的 z-fighting。
-      const gy = this.units?.mapSystem?.heightAt ? this.units.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
-      iPos.setXYZ(n, e.pos.x, gy + 1, e.pos.y);
-      iScale.setX(n, R);
-      col.set((e._mapFaction === 'blue' ? c.colorBlue : e._mapFaction === 'red' ? c.colorRed : c.colorNeutral) || '#ffe6b8');
-      iColor.setXYZ(n, col.r, col.g, col.b);
-      iAlpha.setX(n, op);
-      n++;
-    }
-    g.instanceCount = n;
-    iPos.needsUpdate = iScale.needsUpdate = iColor.needsUpdate = iAlpha.needsUpdate = true;
   }
 
   render(controller) {
