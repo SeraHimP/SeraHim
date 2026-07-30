@@ -159,7 +159,17 @@ export class EntityContainer {
   purgeDead() {
     const toRemove = [];
     for (const [id, e] of this._entities) {
-      if (!e.alive && !e._respawnAt && !e._ruin) toRemove.push(id);
+      if (e.alive) continue;
+      // 用户定稿："死亡的塔也应该能被选中"。
+      // 所以【任何塔死后都留成废墟】而不是被清掉 —— 留着才点得中，
+      // 才能在属性编辑器里查看/改属性、改阵营、复活或彻底击杀。
+      //
+      // 原来只有 MapSystem._onEntityDeath 会打 _ruin，而那条路径有三重门槛
+      // （地图未激活 / 无 _mapFaction / 无 _mapTier 一律返回），于是**沙盒里手建的塔
+      // 死后直接被清掉，根本选不中**。规则挪到这里：实体生命周期归容器管，
+      // 放在这一处就漏不掉，也不需要各系统各记一遍。
+      if (e.type === 'tower' && !e._ruin) { e._ruin = true; this._gridDirty = true; }
+      if (!e._respawnAt && !e._ruin) toRemove.push(id);
     }
     for (const id of toRemove) this.remove(id);
     return toRemove.length;

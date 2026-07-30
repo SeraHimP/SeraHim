@@ -218,6 +218,22 @@ export const SettingsDialog = {
           <div class="slider-row"><label>电影级色调 ACES</label>
             <button id="setToneBtn" style="flex:1;">${window.__three?.toneMapOn ? '🎬 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
+          <div class="slider-row"><label title="需要 HDR 显示器且系统已开启 HDR。SDR 屏上强开只会更难看，所以默认按显示器能力自动判定。">HDR 输出</label>
+            <button id="setHdrBtn" style="flex:1;">${
+              !window.__three ? '—'
+              : !window.__three.hdrSupported?.() ? '🚫 浏览器不支持'
+              : window.__three.hdrOn ? '🌈 已开启（点击关闭）'
+              : (window.__three.hdrDisplay?.() ? '⭕ 已关闭（点击开启）' : '⭕ 已关闭（未检测到 HDR 屏）')
+            }</button>
+          </div>
+          <div class="slider-row"><label title="夜晚塔会照亮射程×1.2 的范围（真光源，能照到小兵）">塔夜间照明</label>
+            <button id="setTowerLightBtn" style="flex:1;">${CONFIG.ui?.towerLight?.enabled !== false ? '🔦 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label title="auto=选中或有敌人时显示；always=一直显示（旧行为）；selected=只看选中">射程圈显示</label>
+            <button id="setRingModeBtn" style="flex:1;">${
+              ({ auto: '🎯 智能（选中/有敌人）', always: '👁 一直显示', selected: '🖱 只看选中' })[CONFIG.ui?.rangeRing?.mode || 'auto']
+            }</button>
+          </div>
           <div class="slider-row"><label>抗锯齿 FXAA</label>
             <button id="setFxaaBtn" style="flex:1;">${window.__three?.fxaaOn !== false ? '🔷 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
@@ -375,6 +391,29 @@ export const SettingsDialog = {
              '🎬 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       bindFx('setFxaaBtn', r => r.fxaaOn !== false, (r, v) => r.setFXAA(v),
              '🔷 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      // HDR：手动切换要同时写 CONFIG.ui.hdr.force，否则下次自动判定会把它覆盖回去。
+      document.getElementById('setHdrBtn')?.addEventListener('click', (ev) => {
+        const r = window.__three;
+        if (!r || !r.hdrSupported?.()) return;
+        const want = !r.hdrOn;
+        CONFIG.ui.hdr.force = want;
+        const applied = r.setHDR(want);
+        ev.target.textContent = applied ? '🌈 已开启（点击关闭）'
+          : (r.hdrDisplay?.() ? '⭕ 已关闭（点击开启）' : '⭕ 已关闭（未检测到 HDR 屏）');
+        if (want && !applied) logFn('⚠️ HDR 开启失败，已降级为 SDR（见控制台）', 'spawn');
+      });
+      document.getElementById('setTowerLightBtn')?.addEventListener('click', (ev) => {
+        CONFIG.ui.towerLight.enabled = CONFIG.ui.towerLight.enabled === false;
+        ev.target.textContent = CONFIG.ui.towerLight.enabled
+          ? '🔦 已开启（点击关闭）' : '⭕ 已关闭（点击开启）';
+      });
+      document.getElementById('setRingModeBtn')?.addEventListener('click', (ev) => {
+        const order = ['auto', 'always', 'selected'];
+        const cur = CONFIG.ui.rangeRing.mode || 'auto';
+        const next = order[(order.indexOf(cur) + 1) % order.length];
+        CONFIG.ui.rangeRing.mode = next;
+        ev.target.textContent = ({ auto: '🎯 智能（选中/有敌人）', always: '👁 一直显示', selected: '🖱 只看选中' })[next];
+      });
       bindFx('setPartBtn', r => r.units?.particlesOn !== false, (r, v) => r.setParticles(v),
              '✦ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       bindFx('setVegBtn', r => r.vegOn !== false, (r, v) => r.setVegetation(v),

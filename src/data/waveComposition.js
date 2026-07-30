@@ -27,17 +27,45 @@ export const WHEN_OPTIONS = [
 ];
 
 /**
+ * 取某阵营实际生效的编排（用户定稿："出兵编排要能只对某一方生效"）。
+ *
+ * 解析顺序（**整体替换，不是逐条合并**）：
+ *   CONFIG.factionOverrides[阵营].laneWaveComposition   ← 存在且非空则用它
+ *   CONFIG.gameRules.laneWaveComposition               ← 否则用共享基准
+ *
+ * 为什么整体替换：编排的**顺序就是语义**。两份逐条合并会得到一个
+ * "谁都没要过"的出兵顺序（templateIO 对数组已经是同一口径，保持一致）。
+ *
+ * 这个函数是解析顺序的【唯一实现】—— 出兵、编辑器预览、批量模拟都走它。
+ * 抄第二份就是下一个"预览与实战不一致"。
+ */
+export function compositionFor(faction, rules = CONFIG.gameRules) {
+  if (faction) {
+    const ov = CONFIG.factionOverrides?.[faction]?.laneWaveComposition;
+    if (Array.isArray(ov) && ov.length) return ov;
+  }
+  return rules.laneWaveComposition || [];
+}
+
+/** 该阵营是否有独立编排（编辑器用来显示角标/启用"清除覆写"）。 */
+export function hasFactionComposition(faction) {
+  const ov = CONFIG.factionOverrides?.[faction]?.laneWaveComposition;
+  return Array.isArray(ov) && ov.length > 0;
+}
+
+/**
  * 展开某一波的出兵序列。
  * @param {number} waveNumber 当前波次
  * @param {boolean} nexusDown 该路水晶是否已被摧毁
  * @param {object} [rules] 覆盖用的 gameRules（默认读 CONFIG.gameRules），编辑器预览未应用的改动时会传
+ * @param {string|null} [faction] 阵营（'blue'/'red'）。传了就先看该阵营有没有独立编排
  * @returns {string[]} 兵种类型按出场先后排列
  */
-export function buildWaveOrder(waveNumber, nexusDown, rules = CONFIG.gameRules) {
+export function buildWaveOrder(waveNumber, nexusDown, rules = CONFIG.gameRules, faction = null) {
   const EN = rules.spawnEnabled || {};
   const on = (t) => EN[t] !== false;
   const order = [];
-  for (const rule of (rules.laneWaveComposition || [])) {
+  for (const rule of compositionFor(faction, rules)) {
     if (!rule || !rule.type || !on(rule.type)) continue;
     if (rule.when === 'nexusDown' && !nexusDown) continue;
     if (rule.when === '!nexusDown' && nexusDown) continue;

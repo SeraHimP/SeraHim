@@ -1,6 +1,6 @@
 ﻿import { CONFIG } from '../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
-import { buildWaveOrder, WHEN_OPTIONS } from '../data/waveComposition.js';
+import { buildWaveOrder, WHEN_OPTIONS, hasFactionComposition } from '../data/waveComposition.js';
 import { towerTierBase, towerTierEffective, towerTierSource } from '../data/schema/index.js';
 import { exportTemplates, importTemplates, suggestedFileName } from '../data/templateIO.js';
 import { syncAll as syncCustomContent, allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
@@ -1028,10 +1028,36 @@ export const AttributeEditor = {
   _waveOrderPreviewWave: 1,
   _waveOrderPreviewNexusDown: false,
 
-  _renderWaveOrderContent(type) {
+  /**
+   * 当前作用域下【要编辑哪一份编排】。
+   * 共享 → CONFIG.gameRules.laneWaveComposition
+   * 蓝/红 → CONFIG.factionOverrides[阵营].laneWaveComposition（不存在则从共享复制一份出来）
+   * 读写共用这一个入口，避免"面板改 A、出兵读 B"。
+   */
+  _woList(create = false) {
     const gr = CONFIG.gameRules;
     gr.laneWaveComposition = gr.laneWaveComposition || [];
-    const list = gr.laneWaveComposition;
+    const f = this._factionScope;
+    if (!f || f === 'shared') return gr.laneWaveComposition;
+    CONFIG.factionOverrides = CONFIG.factionOverrides || {};
+    CONFIG.factionOverrides[f] = CONFIG.factionOverrides[f] || {};
+    const cur = CONFIG.factionOverrides[f].laneWaveComposition;
+    if (Array.isArray(cur) && cur.length) return cur;
+    if (!create) return gr.laneWaveComposition;   // 只读时先显示共享基准
+    // 首次编辑该阵营：从共享基准复制一份，之后两边独立
+    const copy = gr.laneWaveComposition.map(r => ({ ...r }));
+    CONFIG.factionOverrides[f].laneWaveComposition = copy;
+    return copy;
+  },
+  _woSetList(arr) {
+    const f = this._factionScope;
+    if (!f || f === 'shared') CONFIG.gameRules.laneWaveComposition = arr;
+    else CONFIG.factionOverrides[f].laneWaveComposition = arr;
+  },
+
+  _renderWaveOrderContent(type) {
+    const gr = CONFIG.gameRules;
+    const list = this._woList(false);
     const types = this._TPL_MINION_TYPES;
     const EN = gr.spawnEnabled || {};
 
@@ -1061,8 +1087,16 @@ export const AttributeEditor = {
       }).join('')}
     </div>`;
 
+    const _f = this._factionScope;
+    const _own = _f && _f !== 'shared' && hasFactionComposition(_f);
+    const _who = _f === 'blue' ? '🔵蓝方' : _f === 'red' ? '🔴红方' : '双方共享';
     html += `<div style="font-size:12px;color:var(--text-dim);margin:0 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
-      ② 对战编排（数组顺序 = 出兵先后）</div>`;
+      ② 对战编排（数组顺序 = 出兵先后）　
+      <span style="font-size:10px;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
+        作用域：${_who}${_own ? '（已有独立编排）' : (_f !== 'shared' ? '（当前显示共享基准，一改就会复制成该阵营专属）' : '')}
+      </span>
+      ${_own ? `<button id="woClearFaction" style="float:right;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除该阵营编排</button>` : ''}
+      </div>`;
     html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
       「起始波」之前不出；之后每「每几波」出一次。「条件」用于超级兵（水晶陷落）与炮兵（水晶未陷落）。</div>`;
 
@@ -1099,7 +1133,10 @@ export const AttributeEditor = {
 
     // ---- 实时预览 ----
     const w = this._waveOrderPreviewWave, nd = this._waveOrderPreviewNexusDown;
-    const order = buildWaveOrder(w, nd, gr);
+    // 预览按【当前作用域的阵营】算 —— 不传 faction 的话，编了红方专属编排却预览共享的，
+    // 就又回到"预览骗人"那个老问题上了。
+    const _pf = (this._factionScope && this._factionScope !== 'shared') ? this._factionScope : null;
+    const order = buildWaveOrder(w, nd, gr, _pf);
     html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
       <div class="slider-row" style="gap:8px;">
         <label style="width:auto;">预览第</label>
@@ -1171,23 +1208,31 @@ export const AttributeEditor = {
     overlay.querySelectorAll('.wo-move').forEach(b => b.addEventListener('click', () => {
       flush();
       const i = +b.dataset.idx, d = +b.dataset.dir, j = i + d;
-      if (j < 0 || j >= gr.laneWaveComposition.length) return;
-      const a = gr.laneWaveComposition;
+      const a = this._woList(true);
+      if (j < 0 || j >= a.length) return;
       [a[i], a[j]] = [a[j], a[i]];
       rerender();
     }));
     overlay.querySelectorAll('.wo-del').forEach(b => b.addEventListener('click', () => {
       flush();
-      gr.laneWaveComposition.splice(+b.dataset.idx, 1);
+      this._woList(true).splice(+b.dataset.idx, 1);
       rerender();
     }));
     overlay.querySelector('#woAddBtn')?.addEventListener('click', () => {
       flush();
-      gr.laneWaveComposition.push({ type: 'melee', count: 1 });
+      this._woList(true).push({ type: 'melee', count: 1 });
+      rerender();
+    });
+    overlay.querySelector('#woClearFaction')?.addEventListener('click', () => {
+      const f = this._factionScope;
+      if (f && f !== 'shared' && CONFIG.factionOverrides?.[f]) {
+        delete CONFIG.factionOverrides[f].laneWaveComposition;
+        logFn(`🧹 已清除${f === 'blue' ? '蓝方' : '红方'}的独立出兵编排（回到共享基准）`, 'spawn');
+      }
       rerender();
     });
     overlay.querySelector('#woResetBtn')?.addEventListener('click', () => {
-      gr.laneWaveComposition = this._DEFAULT_WAVE_COMPOSITION.map(r => ({ ...r }));
+      this._woSetList(this._DEFAULT_WAVE_COMPOSITION.map(r => ({ ...r })));
       logFn('↺ 出兵编排已恢复默认', 'spawn');
       rerender();
     });
@@ -1218,7 +1263,9 @@ export const AttributeEditor = {
   // 留空的数值字段一律删除该键（回到规则默认：count=1 / fromWave=0 / everyN=1），
   // 免得存下一堆 NaN 让 buildWaveOrder 静默漏兵。
   _readWaveOrderInputs(overlay) {
-    const list = CONFIG.gameRules.laneWaveComposition || [];
+    // 走 _woList(true)：一旦在蓝/红作用域下动了输入框，就复制成该阵营专属编排。
+    // 写回共享基准的话，改红方会连蓝方一起改掉 —— 正是这条需求要避免的事。
+    const list = this._woList(true);
     overlay.querySelectorAll('.wo-field').forEach(el => {
       const r = list[+el.dataset.idx];
       if (!r) return;

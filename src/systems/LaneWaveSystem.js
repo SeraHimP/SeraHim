@@ -108,7 +108,9 @@ export class LaneWaveSystem {
     // 第5波起每15波攻城车 / 水晶陷落出超级兵），故不改参数时对战节奏完全不变。
     // 展开逻辑抽到 data/waveComposition.js，与模板编辑器「出兵顺序」面板的实时预览共用同一份，
     // 免得预览和真实出兵两套实现漂移。
-    const order = buildWaveOrder(this.waveNumber, nexusDown);
+    // 传 faction：该阵营若配了独立编排（CONFIG.factionOverrides[阵营].laneWaveComposition）
+    // 就整体用它，否则用共享基准 —— 用户定稿"出兵编排要能只对某一方生效"。
+    const order = buildWaveOrder(this.waveNumber, nexusDown, CONFIG.gameRules, faction);
 
     for (let i = 0; i < order.length; i++) {
       this._spawnQueue.push({

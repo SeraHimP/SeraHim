@@ -178,6 +178,52 @@ export const CONFIG = {
   // ==================== 世界状态（P3：天气/昼夜/熵/龙魂 的统一落点）====================
   // 每条耦合都是【独立开关】，且**默认全关** —— 打开任意一条才会改变现有平衡，
   // 关掉全部时行为与接入前逐位一致。数值先给保守值，等批量模拟脚本出来再校准。
+  // ==================== 表现层可调项（不影响任何玩法数值）====================
+  // 放在 CONFIG 里而不是散在各渲染文件的常量里，是为了守住"一切软编码"这条规矩：
+  // 这些数是要反复调手感的，写死在源码里等于每次调都改代码。
+  ui: {
+    // 射程圈：常显是画面最大的噪音源（22 座塔 ×2 阵营全亮着）。
+    // mode: 'auto'（选中 或 半径内有敌人）/ 'always'（旧行为）/ 'selected'（只看选中）
+    rangeRing: {
+      mode: 'auto',
+      probeInterval: 0.25,  // 敌人探测节流（秒）。每帧给 44 座塔查一次纯属白烧
+      fade: 0.18,           // 淡入淡出（秒）。直接切显隐会在敌人擦边走过时疯狂闪烁
+      hysteresis: 1.12,     // 退出阈值 = 射程 × 这个数。同样是防抖，边界上反复进出最烦人
+    },
+    // 塔的夜间照明（用户定稿：夜晚照亮射程 ×1.2，**要照到小兵**）。
+    // 实现是【固定大小的真光源池】，见 ThreeRenderer._buildLights / _syncTowerLights：
+    // 真光源才照得到单位；固定池是因为 Three 把光源数量编进着色器，数量一变全材质重编译。
+    towerLight: {
+      enabled: true,
+      poolSize: 8,          // 真光源数量（恒定）。只服务离视野中心最近的 N 座塔
+      rangeMult: 1.2,       // 照明半径 = 射程 × 此值
+      intensity: 0.55,      // 基础强度（会按 distance/250 归一，见实现注释）
+      nightOnly: true,      // false = 全天亮着（调试用）
+      lightInterval: 0.2,   // 重新挑塔的节流（秒）。每帧重排会让灯在两座塔之间跳
+      fade: 0.35,           // 强度淡入淡出（秒）
+      heightBias: 10,       // 灯高于炮口多少（放地面会被塔脚的暗部吃掉）
+      colorBlue: '#bcd8ff', colorRed: '#ffc9bc', colorNeutral: '#ffe6b8',
+      emissiveNight: 1.8,   // 夜间塔顶自发光强度（>1 才会被 Bloom 抓到，见 hdr 注释）
+    },
+    // 真 HDR 输出（用户点名要）。
+    // 现有管线【内部本来就是 HDR】：EffectComposer 用 HalfFloatType 渲染目标 + ACES 色调映射。
+    // 缺的是两件事：① 场景里没有任何东西超过 1.0（自发光只有 0.7），HDR 的余量完全没被用上；
+    //              ② 最终输出仍被压回 SDR 的 [0,1]，HDR 显示器上看不到真正的高光。
+    // 这里管的是 ②。①在 towerLight.emissiveNight 与 bloomThreshold 里。
+    //
+    // ⚠️ 诚实的边界：我无法验证 ②。这个环境是 headless、没有 HDR 显示器。
+    // 所以采用【自动探测】：只有浏览器支持 configureHighDynamicRange
+    // 且 matchMedia('(dynamic-range: high)') 报告显示器真的是 HDR 时才启用。
+    // SDR 屏上自动保持关闭 → 不会把你现在的画面搞灰。手动开关在设置·画质里。
+    hdr: {
+      auto: true,           // 自动探测（支持 + 显示器是 HDR 才开）
+      force: null,          // true/false 强制覆盖 auto（调试用）
+      headroom: 2.0,        // 高光超出 SDR 白点的倍数。太大在 HDR 屏上会刺眼
+      bloomThreshold: 1.0,  // Bloom 阈值。原 0.82 会把所有亮色都糊开（偏"脏"），
+                            // 提到 1.0 只抓真正过曝的东西
+    },
+  },
+
   world: {
     couplings: {
       // 用户定稿的默认值：昼夜【默认开】，熵的三条【默认全关】（熵开发已暂停）。

@@ -400,8 +400,70 @@ export class UnitLayer {
     en.shieldOn = false;
   }
 
+  /**
+   * 夜间自发光加成。每帧被几十座塔调用，所以按帧缓存一次 ——
+   * 读 WorldState 本身不贵，但重复读几十次纯属浪费。
+   */
+  _nightEmi() {
+    const f = this._emiFrame;
+    const now = window.gameTime || 0;
+    if (f === now) return this._emiVal || 0;
+    this._emiFrame = now;
+    const c = (CONFIG.ui && CONFIG.ui.towerLight) || {};
+    const peak = c.emissiveNight ?? 0;
+    if (!peak || c.enabled === false) return (this._emiVal = 0);
+    const ws = (typeof window !== 'undefined') ? window.CTX?.__world : null;
+    const p = (ws && ws.enabled && Number.isFinite(ws.daynight?.phase)) ? ws.daynight.phase : null;
+    // 与塔灯同一条夜晚曲线：黄昏/黎明渐入渐出，天一黑不会"啪"一下全亮
+    const night = (p !== null && p >= 0.5) ? Math.sin((p - 0.5) / 0.5 * Math.PI) : 0;
+    return (this._emiVal = peak * (c.nightOnly === false ? 1 : night));
+  }
+
+  /**
+   * 射程圈是否该显示（用户定稿：选中 ‖ 半径内有敌人）。
+   *
+   * 三个刻意的设计，都是为了不闪：
+   *   ① **节流**：敌人探测每 probeInterval 秒做一次。22 座塔每帧各查一次空间网格
+   *      纯属白烧，而"晚 0.25 秒亮起"根本看不出来。
+   *   ② **滞回**：进入用射程、退出用射程×hysteresis。边界上的敌人来回踱步时，
+   *      不加滞回会让圈疯狂开关 —— 那比常显还烦。
+   *   ③ 探测结果记在渲染层自己的 entry 上（en.*），**不往实体上写字段**。
+   *
+   * 注意 findInRadius 的 aliveOnly=true：死了的敌人不该让圈继续亮着。
+   */
+  _wantRangeRing(e, en, ctxDeps, selectedId) {
+    const cfg = (CONFIG.ui && CONFIG.ui.rangeRing) || {};
+    const mode = cfg.mode || 'auto';
+    if (mode === 'always') return true;
+    if (e.id === selectedId) { en.ringHot = true; return true; }
+    if (mode === 'selected') { en.ringHot = false; return false; }
+
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    const every = cfg.probeInterval ?? 0.25;
+    if (en.ringAt === undefined || now - en.ringAt >= every) {
+      en.ringAt = now;
+      const ents = ctxDeps.entities;
+      const base = ctxDeps.attrCalc.calc(e, ctxDeps.effects.getEffects(e.id)).attackRange || 250;
+      // 已经亮着就用放大后的半径判退出（滞回）
+      const r = en.ringHot ? base * (cfg.hysteresis ?? 1.12) : base;
+      let hot = false;
+      if (ents && ents.findInRadius) {
+        const fac = e._mapFaction || e.faction;
+        for (const o of ents.findInRadius(e.pos.x, e.pos.y, r, null, true)) {
+          if (o.id === e.id || o.type === 'tower') continue;
+          const of = o._mapFaction || o.faction;
+          // 沙盒模式（塔无阵营）：任何单位都算"有敌人"，与索敌口径一致
+          if (fac && of && of === fac) continue;
+          hot = true; break;
+        }
+      }
+      en.ringHot = hot;
+    }
+    return !!en.ringHot;
+  }
+
   // ============ E 组同步（仅活体塔；幽灵与非塔一律清空） ============
-  _syncTowerInfo(e, en, ctxDeps, lodHideBar) {
+  _syncTowerInfo(e, en, ctxDeps, lodHideBar, selectedId) {
     const { attrCalc, effects, entities } = ctxDeps;
     const bSizes = CONFIG.buildingSizes || {};
     // Q3：与 _visualOf 同步放大——归属环等随放大后的模型走（纯表现）。
@@ -414,7 +476,9 @@ export class UnitLayer {
     // 半径每帧读 attrCalc（buff/天气可变），量化 4px 步长做几何缓存 key（见头注刻意差异）。
     // attrCalc.calc 与血条处各调一次：≤30 塔的重复计算换第 3 步已验收路径零改动。
     const hasWeapon = (e._skillInstances || []).some(sk => sk.skillId.startsWith('weapon_'));
-    if (hasWeapon && !isNexus && !lodHideBar) {
+    // 用户定稿：射程圈【只在选中 或 半径内有敌人时】显示。
+    // 常显是画面最大的噪音源 —— 22 座塔 ×2 阵营的圈全亮着，地图上全是同心圆。
+    if (hasWeapon && !isNexus && !lodHideBar && this._wantRangeRing(e, en, ctxDeps, selectedId)) {
       const range = attrCalc.calc(e, effects.getEffects(e.id)).attackRange || 250;
       const r = Math.round(range / 4) * 4;
       const rk = r + '|' + color;
@@ -625,7 +689,11 @@ export class UnitLayer {
         ? Math.min(target, cur + gdt * CRYSTAL_RISE)
         : Math.max(target, cur - gdt * CRYSTAL_FADE);
       const chargeE = Math.pow(en._charge, CRYSTAL_CHARGE_POW) * CRYSTAL_CHARGE_GAIN;
-      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE;
+      // 夜间把自发光顶到 >1（默认 1.8）。这不只是"晚上亮一点"：
+      // Bloom 跑在【线性 HDR 缓冲】上、阈值是 1.0，场景里如果没有任何东西超过 1.0，
+      // 辉光就永远抓不到东西 —— 这正是"管线是 HDR 但看着不像 HDR"的原因。
+      // 塔顶水晶是全场最适合当高光源的东西，夜里让它真的过曝。
+      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE + this._nightEmi();
       // 粒子随充能变亮（不再收拢/外弹——那也是"攒一发"的语义）
       if (en.crystalPts && this.particlesOn) {
         en.crystalPts.material.opacity = Math.max(0, Math.min(1, 0.45 + chargeE * 0.45));
@@ -702,7 +770,10 @@ export class UnitLayer {
     }
 
     // E 组（第 3.7 步）：仅活体塔挂附属信息；幽灵（重生中）与损毁塔一律清干净（同 entry 复用）
-    if (e.type === 'tower' && !ghost && !ruin) this._syncTowerInfo(e, en, ctxDeps, lodHideBar);
+    if (e.type === 'tower' && !ghost && !ruin) {
+      this._syncTowerInfo(e, en, ctxDeps, lodHideBar,
+                          ctxDeps.getSelectedId ? ctxDeps.getSelectedId() : null);
+    }
     else if (en.rangeFill || en.own || en.soul || en.shield) this._clearInfo(en);
 
     // F1 选中光圈（第4步）：所有类型都可选中，含幽灵水晶

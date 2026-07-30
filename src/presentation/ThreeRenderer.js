@@ -30,6 +30,7 @@ import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
 import { WaterLayer } from './WaterLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
+import { CONFIG } from '../data/Config.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
 
 // ===== 第 6.1 步：光照基座 =====
@@ -139,6 +140,9 @@ export class ThreeRenderer {
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    // 真 HDR 输出：按【显示器能力】自动判定（SDR 屏上自动保持关闭，见 setHDR 的长注释）
+    this.hdrOn = false; this._hdrConfigured = false;
+    this.setHDR(null);
 
     // 切图后地面必须整体重建（贴图尺寸、世界尺寸都变了）
     eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap)); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); });
@@ -242,6 +246,23 @@ export class ThreeRenderer {
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
 
+    // ==================== 塔灯光池（夜间照亮周围，含小兵）====================
+    // 为什么是【固定大小的池】而不是"给每座塔挂一个灯"：
+    // Three 的前向渲染把光源数量编进着色器，**数量一变就要重编译所有材质** ——
+    // 对战地图有 44 座塔，按需增删灯会在每次开关灯时卡一下，比不做还糟。
+    // 所以池子在初始化时一次性建好、数量恒定，之后只改位置/强度/距离；
+    // 用不到的灯把 intensity 设 0（仍然参与着色器，但不产生亮度）。
+    // 池子只服务【离镜头最近的 N 座】塔，远处塔靠地面光晕贴花示意（见 UnitLayer）。
+    this.towerLights = [];
+    const poolSize = Math.max(0, (CONFIG.ui?.towerLight?.poolSize ?? 8) | 0);
+    for (let i = 0; i < poolSize; i++) {
+      // decay=2 是物理正确的平方反比；distance 每帧按塔的射程设，超出即完全无贡献
+      const l = new THREE.PointLight(0xffffff, 0, 100, 2);
+      l.castShadow = false;         // 44 座塔的阴影贴图不现实，且夜间光池本就该柔和
+      this.scene.add(l);
+      this.towerLights.push(l);
+    }
+
     this.shadowLevel = 'off';      // 'all' | 'static' | 'off'
     this._sunDir = new THREE.Vector3(
       Math.cos(SUN_AZIM_DEG * DEG) * Math.cos(SUN_ELEV_DEG * DEG),
@@ -309,6 +330,8 @@ export class ThreeRenderer {
     this.height = height;
     this.gl.setSize(width, height, true);
     this._sizeComposer(width, height);
+    // HDR 绘制缓冲跟着尺寸重设 —— 不重设的话缓冲还是旧分辨率，画面会被拉伸
+    if (this.hdrOn) { try { this._applyHDRBuffer(); } catch (e) { /* 降级不致命 */ } }
   }
 
   // P1：后处理管线。Bloom 让自发光水晶/粒子/明亮昼夜辉光起来；ACES 由 OutputPass 收尾；FXAA 抗锯齿。
@@ -316,7 +339,11 @@ export class ThreeRenderer {
     const w = this.width, h = this.height;
     this.composer = new EffectComposer(this.gl);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.4, 0.82); // strength/radius/threshold
+    // 阈值软编码：原来写死 0.82，会把所有偏亮的颜色都糊开（画面偏"脏"）。
+    // 提到 1.0 之后只抓【真正过曝】的东西 —— 前提是场景里真的有超过 1.0 的东西，
+    // 这正是 towerLight.emissiveNight 要把自发光推到 1.8 的原因。
+    const bt = CONFIG.ui?.hdr?.bloomThreshold ?? 0.82;
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.4, bt); // strength/radius/threshold
     this.bloomPass.enabled = this.bloomOn;
     this.composer.addPass(this.bloomPass);
     this.fxaaPass = new ShaderPass(FXAAShader);
@@ -333,6 +360,84 @@ export class ThreeRenderer {
     this.composer.setSize(w, h);
     this.bloomPass.setSize(w, h);
     this.fxaaPass.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+  }
+
+  /**
+   * ==================== 真 HDR 输出 ====================
+   *
+   * 先厘清一件事：这个管线**内部本来就是 HDR** —— EffectComposer 用
+   * HalfFloatType 渲染目标，Bloom 在线性空间做，ACES 在末端收尾。
+   * 缺的只是最后一步：输出仍被压回 SDR 的 [0,1]，HDR 显示器上看不到真高光。
+   * 这个方法补的就是这一步。
+   *
+   * 做法（Chrome 的 WebGL HDR 路径）：
+   *   ① canvas.configureHighDynamicRange({ mode:'extended' }) —— 让画布进入扩展动态范围
+   *   ② gl.drawingBufferStorage(RGBA16F, w, h)               —— 绘制缓冲改半浮点，>1 的值才存得住
+   *   ③ toneMappingExposure 乘 headroom                       —— 把高光顶到 SDR 白点之上
+   *
+   * ⚠️ 我无法验证这一条。这个开发环境是 headless、没有 HDR 显示器。
+   * 所以采用【显示器能力自动探测】而不是默认开启：
+   *   matchMedia('(dynamic-range: high)') 报告显示器真的是 HDR 时才启用。
+   * SDR 屏上永远保持关闭 → 不会把现有画面搞灰/搞怪。
+   * 想强制开关走 CONFIG.ui.hdr.force（true/false），设置·画质里有入口。
+   *
+   * 任何一步不支持都静默降级回 SDR，绝不因为"想要 HDR"而把画面搞坏。
+   */
+  hdrSupported() {
+    try {
+      if (typeof this.canvas.configureHighDynamicRange !== 'function') return false;
+      const ctx = this.gl.getContext();
+      if (!ctx || typeof ctx.drawingBufferStorage !== 'function') return false;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /** 显示器本身是不是 HDR（SDR 屏上开 HDR 只会更难看，所以这条是自动模式的闸门）。 */
+  hdrDisplay() {
+    try {
+      return typeof window !== 'undefined' && window.matchMedia
+        && window.matchMedia('(dynamic-range: high)').matches;
+    } catch (e) { return false; }
+  }
+
+  /** on 传 null = 走 CONFIG 的 auto/force 判定。返回最终是否启用。 */
+  setHDR(on = null) {
+    const c = CONFIG.ui?.hdr || {};
+    let want;
+    if (on !== null) want = !!on;
+    else if (c.force !== null && c.force !== undefined) want = !!c.force;
+    else want = (c.auto !== false) && this.hdrDisplay();
+
+    if (want && !this.hdrSupported()) want = false;   // 静默降级
+    this.hdrOn = want;
+
+    try {
+      if (want) {
+        this.canvas.configureHighDynamicRange({ mode: c.mode || 'extended' });
+        this._applyHDRBuffer();
+      } else if (this._hdrConfigured) {
+        // 关回 SDR：把画布模式与曝光都还原，否则会留在半亮不亮的状态
+        this.canvas.configureHighDynamicRange({ mode: 'standard' });
+      }
+      this._hdrConfigured = want;
+    } catch (e) {
+      console.warn('[HDR] 配置失败，已降级为 SDR：', e?.message || e);
+      this.hdrOn = false; this._hdrConfigured = false;
+    }
+    // 曝光：HDR 下把高光顶到 SDR 白点之上；SDR 下恢复 1.0
+    this.gl.toneMappingExposure = this.hdrOn ? (c.headroom ?? 2.0) : 1.0;
+    if (this.outputPass) { this.outputPass.material.needsUpdate = true; }
+    return this.hdrOn;
+  }
+
+  /** 绘制缓冲改 RGBA16F。尺寸变化后要重来一次，否则缓冲还是旧分辨率。 */
+  _applyHDRBuffer() {
+    const ctx = this.gl.getContext();
+    const pr = this.gl.getPixelRatio();
+    const w = Math.max(1, Math.round(this.width * pr)), h = Math.max(1, Math.round(this.height * pr));
+    // RGBA16F 的枚举值：WebGL2 常量，取不到就用字面量（0x881A）兜底
+    const RGBA16F = ctx.RGBA16F ?? 0x881A;
+    ctx.drawingBufferStorage(RGBA16F, w, h);
   }
 
   // ==== P1 画质开关（设置面板）。Pass.enabled 是 three 后处理的标准开关，切换零重建。====
@@ -508,8 +613,83 @@ export class ThreeRenderer {
   getBuildingSize(t) { return buildingSize(t); }
   getMinionSize(m) { return minionSize(m); }
 
+  /**
+   * 塔灯光池的每帧分配（用户定稿：塔在夜晚照亮射程 ×1.2 的范围，**要照到小兵**）。
+   *
+   * 池子大小恒定（见 _buildLights 的长注释：数量一变就要重编译所有材质），
+   * 这里只做三件事：挑塔 → 摆位 → 给强度。用不上的灯 intensity=0。
+   *
+   * 挑哪些塔：夜间 × 存活 × 有武器，按【离视野中心的距离】取最近的 poolSize 座。
+   * 不按"离摄像机"是因为正交相机没有透视距离概念，视野中心才是玩家在看的地方。
+   *
+   * 节流：分配每 lightInterval 秒做一次（默认 0.2s）。每帧重排会让灯在两座塔之间
+   * 反复跳；而灯的位置突变比"晚 0.2 秒亮起"难看得多。
+   * 强度的**淡入淡出仍然每帧插值**，所以切换是渐变的，不会闪。
+   */
+  _syncTowerLights(controller) {
+    const pool = this.towerLights;
+    if (!pool || !pool.length) return;
+    const c = CONFIG.ui?.towerLight || {};
+    if (c.enabled === false) { for (const l of pool) l.intensity = 0; return; }
+
+    // 夜晚程度：0=白天完全不亮，1=午夜最亮。取相位在 [0.5,1) 上的正弦包，
+    // 黄昏/黎明处自然渐入渐出（用阶跃的话天一黑所有灯"啪"一下全开）。
+    const ws = (typeof window !== 'undefined') ? window.CTX?.__world : null;
+    const phase = (ws && ws.enabled && Number.isFinite(ws.daynight?.phase)) ? ws.daynight.phase : null;
+    let night = (phase !== null && phase >= 0.5) ? Math.sin((phase - 0.5) / 0.5 * Math.PI) : 0;
+    if (c.nightOnly === false) night = 1;
+
+    // 节流分配
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    const every = c.lightInterval ?? 0.2;
+    if (!this._lightPick || now - (this._lightPickAt || 0) >= every) {
+      this._lightPickAt = now;
+      this._lightPick = [];
+      if (night > 0.001 && this.deps?.entities) {
+        const cx = this._target.x, cz = this._target.z;
+        const cand = [];
+        for (const e of this.deps.entities.getAllTowers(true)) {
+          if (!e.pos) continue;
+          if (!(e._skillInstances || []).some(sk => sk.skillId.startsWith('weapon_'))) continue;
+          const dx = e.pos.x - cx, dz = e.pos.y - cz;
+          cand.push({ e, d2: dx * dx + dz * dz });
+        }
+        cand.sort((a, b) => a.d2 - b.d2);
+        this._lightPick = cand.slice(0, pool.length).map(x => x.e);
+      }
+    }
+
+    const picked = this._lightPick || [];
+    const mult = c.rangeMult ?? 1.2;
+    const baseI = c.intensity ?? 0.55;
+    const fade = Math.min(1, (this._lightDt ?? 0.016) / Math.max(0.01, c.fade ?? 0.35));
+    for (let i = 0; i < pool.length; i++) {
+      const l = pool[i], e = picked[i];
+      let want = 0;
+      if (e && this.deps?.attrCalc) {
+        const range = this.deps.attrCalc.calc(e, this.deps.effects.getEffects(e.id)).attackRange || 250;
+        l.distance = range * mult;
+        // 灯挂在塔顶附近而不是地面：放地面的话光只往外糊一圈，
+        // 站在塔边的小兵反而被自己脚下的暗部吃掉。
+        l.position.set(e.pos.x, (this.units.muzzleYOf?.(e.id) ?? 40) + (c.heightBias ?? 10), e.pos.y);
+        const col = e._mapFaction === 'blue' ? c.colorBlue : e._mapFaction === 'red' ? c.colorRed : c.colorNeutral;
+        l.color.set(col || '#ffe6b8');
+        // 强度按 distance 归一：PointLight 用平方反比衰减，射程越大越需要更高强度
+        // 才能在边缘还有可见亮度，否则大射程塔的灯看起来反而更暗。
+        want = baseI * night * (l.distance / 250);
+      }
+      l.intensity += (want - l.intensity) * fade;
+      if (l.intensity < 1e-4) l.intensity = 0;
+    }
+  }
+
   render(controller) {
     if (!this.width || !this.height) return;
+    {
+      const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      this._lightDt = this._lastRenderAt ? Math.min(0.1, t - this._lastRenderAt) : 0.016;
+      this._lastRenderAt = t;
+    }
     if (this._terrainDirty) this._rebuildTerrain();
     if (controller) this.syncCameraFrom(controller);
     this._fitShadowToView(controller);
@@ -532,6 +712,7 @@ export class ThreeRenderer {
                      (x, z) => this.units.muzzleY(x, z),
                      (id) => this.units.muzzleYOf(id));   // Q1：按实体查高度（坐标查是错误抽象）
     }
+    this._syncTowerLights(controller);
     this.water.update(window.gameTime || 0);   // P1：水面滚动 UV
     // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
