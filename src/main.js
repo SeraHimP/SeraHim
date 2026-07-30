@@ -26,6 +26,7 @@ import { UIManager } from './ui/UIManager.js';
 import { CanvasController } from './ui/CanvasController.js';
 import { AttributeEditor } from './ui/AttributeEditor.js';
 import { UnitAddDialog } from './ui/UnitAddDialog.js';
+import { TOWER_MODEL_ROLES } from './data/towerModels.js';
 import { SettingsDialog } from './ui/SettingsDialog.js';
 import { ModeDialog } from './ui/ModeDialog.js';
 import { DebugLogger } from './utils/DebugLogger.js';
@@ -99,6 +100,7 @@ attrCalc.setWeatherSystem(weatherSystem);
 const worldState = new WorldState({ weather: weatherSystem, dragons: dragonSystem, entities: entityContainer, bus: eventBus });
 attrCalc.setWorldState(worldState);
 CTX.__world = worldState;   // UI/调试入口
+CTX.__CONFIG = CONFIG;      // UI/调试入口：控制台与无头冒烟里直接读写配置（与模块里是同一个对象）
 CTX.__weather = weatherSystem; // UI/调试入口
 
 // Q5：塔无敌/停火、小兵波次开关，全部支持【按阵营分管】。
@@ -742,7 +744,7 @@ eventBus.on('map:nexusDestroyed', (d) => {
 let _towerPlacementQueue = [];
 function _processNextTowerPlacement() {
   if (_towerPlacementQueue.length === 0) return;
-  const { weaponType, passiveKeys, faction } = _towerPlacementQueue.shift();
+  const { weaponType, passiveKeys, faction, model, modelStats } = _towerPlacementQueue.shift();
   uiManager.log(`🎯 请点击画布选择建塔位置（剩余 ${_towerPlacementQueue.length + 1} 个待放置）`, 'spawn');
   canvasController.armPlaceMode((worldX, worldY) => {
     const tower = createTower(worldX, worldY);
@@ -785,8 +787,36 @@ function _processNextTowerPlacement() {
         entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber || 0, attrCalc
       });
     }
+    // Q7：建筑模型（用户定稿：**默认只换外观**；勾了"套用该档位数值"才连带数值与层级）。
+    // 只写 _modelRole 的话，渲染层会用对应 GLB / 程序化几何，玩法完全不受影响。
+    let mTag = '';
+    if (model && model !== 'tower') {
+      tower._modelRole = model;
+      const meta = TOWER_MODEL_ROLES.find(r => r.key === model);
+      mTag = `，外观: ${meta ? meta.label : model}`;
+      if (modelStats && meta?.tier) {
+        // 套用该档位数值：走与 createBuilding / 运维改层级**同一条解析链**
+        // （地图 tierStats → towerTierOverrides → factionOverrides['tower_'+tier]），
+        // 不在这里自己拼一份 —— 那条链已经被抄过四遍，不再添第五份。
+        const map = mapSystem.currentMap;
+        const merged = {
+          ...((map?.tierStats && map.tierStats[meta.tier]) || {}),
+          ...(CONFIG.towerTierOverrides?.[meta.tier] || {}),
+          ...(CONFIG.factionOverrides?.[tower._mapFaction]?.['tower_' + meta.tier] || {}),
+        };
+        if (Object.keys(merged).length) {
+          Object.assign(tower.baseStats, merged);
+          if (tower.baseStats.maxHP > 0) tower.currentHP = tower.baseStats.maxHP;
+          tower.shieldFixedCurrent = tower.baseStats.shieldFixedMax || 0;
+        }
+        // 层级也一并设上：不设的话它在结构保护/推进度统计里仍算"沙盒塔"，
+        // 而面板写着"已套用召唤水晶数值" —— 又是一处面板与实际不符。
+        tower._mapTier = meta.tier;
+        mTag += `（已套用${meta.label}档位数值与层级）`;
+      }
+    }
     const fTag = faction === 'blue' ? '🔵蓝方' : (faction === 'red' ? '🔴红方' : (faction === 'neutral' ? '⚪中立' : ''));
-    uiManager.log(`🏗️ ${fTag}塔 #${tower.id} 建造完成，武器: ${weaponType}，被动: ${passiveKeys.length}个`, 'spawn');
+    uiManager.log(`🏗️ ${fTag}塔 #${tower.id} 建造完成，武器: ${weaponType}，被动: ${passiveKeys.length}个${mTag}`, 'spawn');
     // 继续放置队列中的下一个塔
     _processNextTowerPlacement();
   });
@@ -799,9 +829,10 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
   }
   UnitAddDialog.open({
     isBattle: () => mapSystem.active,
-    onBuildTower: (weaponType, passiveKeys, faction) => {
+    onBuildTower: (weaponType, passiveKeys, faction, opts) => {
       // 批量生成时可能一次性收到多个塔条目，串行进入选位模式，避免互相抢占
-      _towerPlacementQueue.push({ weaponType, passiveKeys, faction: faction || null });
+      _towerPlacementQueue.push({ weaponType, passiveKeys, faction: faction || null,
+                                  model: opts?.model || 'tower', modelStats: !!opts?.modelStats });
       if (_towerPlacementQueue.length === 1) _processNextTowerPlacement();
     },
     onAddMinion: (type, count, growth, faction, laneId) => {

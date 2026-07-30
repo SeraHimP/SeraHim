@@ -1,4 +1,5 @@
 import { CONFIG } from '../data/Config.js';
+import { mountDialogFooter, makeSnapshotter } from './dialogFooter.js';
 import { DebugLogger } from '../utils/DebugLogger.js';
 
 /**
@@ -554,10 +555,33 @@ export const SettingsDialog = {
       });
     };
 
+    // 渲染器侧开关的回推口。取消回滚时必须调它 —— 那些开关的权威值在渲染器实例上，
+    // 快照只还原了 CONFIG 与 window.__* 那部分。
+    const applyRendererFlags = () => {
+      const t = window.__three;
+      if (t && t.setHDR) t.setHDR(CONFIG.ui?.hdr?.force ?? null);
+    };
+
     render();
 
-    document.getElementById('modalActions').innerHTML = `<button id="settingsCloseBtn" class="primary">关闭</button>`;
-    document.getElementById('settingsCloseBtn').addEventListener('click', () => overlay.classList.remove('open'));
+    // ==================== 统一页脚：应用 / 确定 / 取消（用户定稿）====================
+    // 本窗口的开关是**即时预览**的（阴影/泛光/水面点一下就能看到效果），那是它们的价值，
+    // 不改成"要按应用才生效"。所以"取消"必须靠快照回滚才有意义 ——
+    // 否则点开设置、乱翻一通、点取消，改动全留着，那个按钮就是个谎。
+    // 快照要覆盖本窗口会动的**全部**状态；漏一个 = 那一项取消不掉，比没有取消更糟。
+    const snap = makeSnapshotter({ CONFIG, window },
+      ['CONFIG.world.couplings', 'CONFIG.world.dayNightBonus', 'CONFIG.world.entropy',
+       'CONFIG.ui.towerLight.enabled', 'CONFIG.ui.rangeRing.mode', 'CONFIG.ui.hdr.force',
+       'CONFIG.gameRules.waveInterval', 'CONFIG.gameRules.firstWaveDelay',
+       'window.__gameSpeed', 'window.__gridOn', 'window.__showLanePaths',
+       'window.__laneFlow', 'window.__terrainAvoid', 'window.__towerRules', 'window.__ffRemain']);
+    mountDialogFooter('modalActions', {
+      applyLabel: '应用设置',
+      snapshot: snap.snapshot,
+      restore: (b) => { snap.restore(b); applyRendererFlags(); },
+      rerender: render,
+      close: () => overlay.classList.remove('open'),
+    });
     if (!overlay._settingsCloseBound) {
       overlay._settingsCloseBound = true;
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });

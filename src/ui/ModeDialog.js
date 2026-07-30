@@ -62,7 +62,13 @@ export const ModeDialog = {
     };
 
     render();
-    document.getElementById('modalActions').innerHTML = `<button id="modeCloseBtn" class="primary">关闭</button>`;
+    // 统一页脚。切模式/换地图是**立刻发生**的重动作（会重建整张地图），
+    // 没有"改了还没生效"的中间态，所以这里的"取消"不做回滚（回滚等于再重建一次地图，
+    // 那不是点取消想要的），只关窗；"应用"同理无事可做，故只留【确定 / 取消】两个。
+    // 判据见 dialogFooter.js 顶部：有中间态才配三按钮，硬套只会造出没作用的按钮。
+    document.getElementById('modalActions').innerHTML =
+      `<button id="modeOkBtn" class="primary">确定</button><button id="modeCloseBtn">取消</button>`;
+    document.getElementById('modeOkBtn').addEventListener('click', () => overlay.classList.remove('open'));
     document.getElementById('modeCloseBtn').addEventListener('click', () => overlay.classList.remove('open'));
     if (!overlay._modeCloseBound) {
       overlay._modeCloseBound = true;

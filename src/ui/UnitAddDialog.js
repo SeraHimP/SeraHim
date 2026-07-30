@@ -1,4 +1,5 @@
 import { CONFIG } from '../data/Config.js';
+import { TOWER_MODEL_ROLES, towerModelTier } from '../data/towerModels.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 
 /**
@@ -73,7 +74,7 @@ export const UnitAddDialog = {
     }
 
     let detailHtml;
-    if (st.mainTab === 'tower') detailHtml = this._renderTowerDetail() + this._renderTowerFactionSelector();
+    if (st.mainTab === 'tower') detailHtml = this._renderTowerDetail() + this._renderTowerModelSelector() + this._renderTowerFactionSelector();
     else if (st.mainTab === 'dragon') detailHtml = this._renderDragonDetail();
     else detailHtml = this._renderMinionDetail(st.minionType) + this._renderBattleSelectors();
 
@@ -126,11 +127,24 @@ export const UnitAddDialog = {
       this._bindTowerDetailEvents(overlay);
       const buildBtn = document.getElementById('uadBuildTowerBtn');
       overlay.querySelectorAll('[data-uadtowerfaction]').forEach(b => b.addEventListener('click', () => { this._state.towerFaction = b.dataset.uadtowerfaction; this._render(); }));
+      overlay.querySelectorAll('[data-uadmodel]').forEach(b => b.addEventListener('click', () => {
+        this._state.towerModel = b.dataset.uadmodel;
+        // 换到"防御塔"时把勾选清掉：它没有对应档位，留着一个勾住但不可选的框最误导
+        if (!towerModelTier(this._state.towerModel)) this._state.towerModelStats = false;
+        this._render();
+      }));
+      const msBox = document.getElementById('uadModelStats');
+      if (msBox) msBox.addEventListener('change', () => {
+        this._state.towerModelStats = msBox.checked; this._render();
+      });
       if (buildBtn) buildBtn.addEventListener('click', () => {
         const weaponType = overlay._selectedWeapon || 'piercing'; // v33：默认穿透型
         const passiveKeys = Array.from(overlay._selectedPassives || []);
         const faction = this._callbacks?.isBattle?.() ? (this._state.towerFaction || 'neutral') : null;
-        this._callbacks.onBuildTower?.(weaponType, passiveKeys, faction);
+        const model = this._state.towerModel || 'tower';
+        const modelStats = !!this._state.towerModelStats
+          && !!towerModelTier(model);
+        this._callbacks.onBuildTower?.(weaponType, passiveKeys, faction, { model, modelStats });
         overlay.classList.remove('open');
       });
     } else {
@@ -230,6 +244,33 @@ export const UnitAddDialog = {
       else this._callbacks.onAddMinion?.(item.unitType, item.config.count, item.config.growth, item.config.faction, item.config.laneId);
     }
     this._queue = [];
+  },
+
+  // 建塔的模型选择（用户定稿：**外观** + 一个可选的"套用该档位数值"勾选框）。
+  // 选项来自 ModelLibrary.TOWER_MODEL_ROLES —— 这里不抄第二份清单，
+  // 否则以后加了新模型，界面上看不见 = 等于没做。
+  _renderTowerModelSelector() {
+    const cur = this._state.towerModel || 'tower';
+    const applyStats = !!this._state.towerModelStats;
+    const btn = (r) => `<button class="editor-tab ${r.key === cur ? 'active' : ''}" data-uadmodel="${r.key}">${r.icon} ${r.label}</button>`;
+    const meta = TOWER_MODEL_ROLES.find(r => r.key === cur) || TOWER_MODEL_ROLES[0];
+    return `
+      <div class="option-group" style="margin-top:14px;">
+        <label class="uad-section-label">🎨 建筑模型（只影响外观）</label>
+        <div class="editor-tabs" style="margin-bottom:6px;">${TOWER_MODEL_ROLES.map(btn).join('')}</div>
+        <div class="editor-checkbox-row">
+          <input type="checkbox" id="uadModelStats" ${applyStats ? 'checked' : ''}
+                 ${meta.tier ? '' : 'disabled'} style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
+          <label for="uadModelStats" style="cursor:pointer;">
+            同时套用该档位的数值${meta.tier ? `（${meta.label}的生命/双抗/射程等）` : '（防御塔没有对应档位，此项不可选）'}
+          </label>
+        </div>
+        <div class="pick-desc-box" style="margin-top:6px;">
+          默认<b>只换外观</b>：数值、武器、被动仍由上面的选择决定。<br>
+          勾上则额外把该档位在当前地图上的数值套到这座塔上（层级也会被设为
+          <code>${meta.tier || '—'}</code>，于是它在结构保护/推进度统计里也按那一档算）。
+        </div>
+      </div>`;
   },
 
   _renderTowerDetail() {

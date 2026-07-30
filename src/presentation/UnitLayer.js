@@ -32,6 +32,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { MINION_STYLE, minionStyle } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
 import { CONFIG } from '../data/Config.js';
+import { towerModelKind } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
@@ -110,14 +111,17 @@ export class UnitLayer {
       // A：GLB 模型优先（活体塔 + 损毁塔）。重生中的半透明幽灵仍走程序化（保留透明观感）。
       // 未加载完成时 forTower 返回 null → 自动回退程序化几何，故 headless 与首帧都安全。
       if (!ghost && this.models) {
-        const mdl = this.models.forTower(e._mapTier, e._mapFaction, !!ruin, bSize);
+        const mdl = this.models.forTower(e._mapTier, e._mapFaction, !!ruin, bSize, e._modelRole);
         if (mdl) {
           return { key: mdl.key, isModel: true, template: mdl.template, topY: mdl.topY,
                    muzzleY: mdl.muzzleY, size: bSize, barW: 80, barH: 6, barD: 10,
                    alpha: 1, pulse: false, ringR: bSize + 8 };
         }
       }
-      const isLaneCrystal = e._mapTier === 'nexus_lane';
+      // 程序化回退**也要认 _modelRole**：GLB 还没加载完（或 headless）时走这条路，
+      // 不认的话"我选了召唤水晶外观"在加载完成前完全没反应，用户会以为设置没生效。
+      const roleKind = towerModelKind(e._modelRole);
+      const isLaneCrystal = roleKind ? roleKind === 'orb' : e._mapTier === 'nexus_lane';
       // 补充：召唤水晶重生中(ghost)＝显示【损毁模型】(破损底座+碎水晶)、不透明，靠灰色重生条示意重生中
       //（不再是"变灰的活体水晶"）。其余幽灵(若有)仍半透明；损毁(ruin)一律不透明。
       const showRuin = ruin || (ghost && isLaneCrystal);
@@ -125,7 +129,7 @@ export class UnitLayer {
       const color = e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0';
       const wInst = (ghost || ruin) ? null : (e._skillInstances || []).find(s => s.skillId.startsWith('weapon_'));
       // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵/损毁才换模型）。
-      const kind = isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower');
+      const kind = roleKind || (isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower'));
       const rSize = bSize * (TOWER_VIZ[kind] || 1.25);   // Q3：塔×1.25、召唤水晶/水晶枢纽×1.10（纯表现）
       const wid = wInst ? wInst.skillId : '';
       const key = `t|${color}|${wid}|${kind}|${rSize}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;

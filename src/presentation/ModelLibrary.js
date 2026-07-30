@@ -21,6 +21,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { GLTFLoader } from '../../vendor/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from '../../vendor/BufferGeometryUtils.js';
+import { isTowerModelRole } from '../data/towerModels.js';
 
 const MUZZLE_BONE = 'Buffbone_Glb_Weapon_1';
 
@@ -188,9 +189,14 @@ export class ModelLibrary {
    * 取塔系单位的模型模板。未加载完成 → 返回 null（UnitLayer 回退到程序化几何）。
    * @returns { key, template(Group), topY, muzzleY } | null
    */
-  forTower(tier, faction, ruin, bSize) {
+  /**
+   * roleOverride（可选）：显式指定模型角色，绕过 tier 推导。
+   * 沙盒手建塔没有 _mapTier，按 tier 推导恒得 'tower' —— 想建一座外观是召唤水晶的塔
+   * 就没有任何入口。用户定稿：**模型选择只管外观**，数值/武器/被动仍由建塔面板决定。
+   */
+  forTower(tier, faction, ruin, bSize, roleOverride) {
     if (!faction) return null;
-    let role = tierRole(tier);
+    let role = isTowerModelRole(roleOverride) ? roleOverride : tierRole(tier);
     if (ruin && role === 'tower') role = 'tower_ruin';
     // 水晶暂无损毁模型 → 复用正常模型占位（用户定稿），待真实损毁模型到位直接替换。
     let base = this._baseCache.get(faction + '|' + role);
