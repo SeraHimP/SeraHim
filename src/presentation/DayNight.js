@@ -47,8 +47,47 @@ export function dayNightAt(gameTime, period = DAY_PERIOD) {
 /** 相位（0..1）对应的一天时刻标签，供 UI/调试显示。 */
 export function phaseLabel(gameTime, period = DAY_PERIOD) {
   const phase = ((gameTime / Math.max(1, period)) % 1 + 1) % 1;
-  if (phase < 0.15 || phase >= 0.9) return '黎明';
-  if (phase < 0.4) return '白昼';
-  if (phase < 0.6) return '黄昏';
+  return phaseLabelOf(phase);
+}
+
+/** 同上，但直接吃相位（0..1）。UI 已经有相位时不该再乘回时间去绕一圈。 */
+export function phaseLabelOf(phase) {
+  const p = ((phase % 1) + 1) % 1;
+  if (p < 0.15 || p >= 0.9) return '黎明';
+  if (p < 0.4) return '白昼';
+  if (p < 0.6) return '黄昏';
   return '夜晚';
+}
+
+/**
+ * 昼夜相位的【唯一解析口径】。
+ *
+ * 光照、WorldState 的数值化昼夜、HUD 时间条 —— 三处必须读同一个函数。
+ * 这不是洁癖：三处各算一遍时，"画面是白天而数值判定是夜晚"这种不一致
+ * 不会报任何错，只会让人怀疑自己的眼睛。
+ *
+ * 而且这里刚修过一个真实 bug：WorldState 与 WorldHud 都写了
+ * `window.CTX?.__dayPeriod || DAY_PERIOD`，但 `CTX.__dayPeriod` 是一个
+ * **setter 函数**（真正的秒数在 `CTX.__dayPeriodSec`）。函数是 truthy，
+ * 于是 period 变成函数、`Math.max(1, fn)` 得到 NaN、相位恒为 NaN。
+ * 表现是：HUD 时间条游标永远不动、标签永远显示"黎明"，
+ * 而昼夜的数值耦合（isNight 永远 false）其实一直没生效过。
+ *
+ * @param gameTime 游戏时间（秒）
+ * @param ctx      CTX（省略则取 window.CTX）
+ * @param weatherEnabled 天气是否开启（昼夜默认跟随天气；__dayNightForce 可覆盖）
+ * @returns { phase, period, active }  active=false 表示昼夜被锁定在固定时刻
+ */
+export function resolveDayPhase(gameTime, ctx = null, weatherEnabled = true) {
+  const c = ctx || (typeof window !== 'undefined' ? window.CTX : null) || {};
+  const period = c.__dayPeriodSec || DAY_PERIOD;
+  // 手动定格优先（调试用）
+  if (c.__dayPhaseOverride != null) {
+    return { phase: Math.max(0, Math.min(1, c.__dayPhaseOverride)), period, active: true };
+  }
+  const active = c.__dayNightForce != null ? !!c.__dayNightForce : !!weatherEnabled;
+  // 关闭昼夜时锁定在 1/3 相位（约下午 2 点）：正午太阳近乎直射几乎无阴影，
+  // 14 点约 58° 有像样的斜影 —— 与渲染层原有的取值保持一致。
+  if (!active) return { phase: 1 / 3, period, active: false };
+  return { phase: ((gameTime / Math.max(1, period)) % 1 + 1) % 1, period, active: true };
 }

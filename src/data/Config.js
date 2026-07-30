@@ -33,11 +33,17 @@ export const CONFIG = {
         auraDamageAmpPct: 7,   // 光环：伤害增幅（%）
         selfPenPct: 70,        // 自身双穿（%）
       },
-      // 蚀骨兵：近战，血量高于普通近战，小范围内所有敌人双抗降低（一次即满层）
+      // 蚀骨兵：近战，血量高于普通近战，小范围内所有敌人双抗【逐秒递减】。
+      // 用户定稿修正：上一版我把"叠层直满层"理解成"一次施加即满层"，
+      // 结果站进范围瞬间就 -30 双抗，等于一个 AoE 的即时破甲 —— 强得离谱且没有博弈。
+      // 正确口径是【每秒 -1，最高 -30】：要站在附近持续 30 秒才吃满，
+      // 离开就随层数过期而消退，于是"要不要绕开蚀骨兵"变成一个真实选择。
       corrupt: {
-        radius: 110,           // "小范围"
-        resistPerStack: 6,     // 每层降低的护甲/魔抗
-        maxStacks: 5,          // 满层数（一次施加即满）
+        radius: 110,             // "小范围"
+        resistPerStack: 1,       // 每层降低的护甲/魔抗
+        maxStacks: 30,           // 满层数（→ 最高 -30 双抗）
+        stackIntervalSec: 1,     // 每隔多少秒叠一层
+        stackDurationSec: 3,     // 单层持续时间（离开范围后逐层过期）
       },
     },
     // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
@@ -64,22 +70,24 @@ export const CONFIG = {
     // 免得同一波里同时冒出图腾+术士+蚀骨，一波兵变成一支全能小队、兵线直接推穿。
     //   · 近战 ×3 / 远程 ×3   每波必出，兵线的骨架
     //   · 炮兵 ×1             每 3 波（水晶未陷落时），攻城主力
-    //   · 蚀骨 ×1             第 4 波起每 3 波。近战破甲，走在近战之后
-    //   · 术士 ×1             第 6 波起每 4 波。增伤光环，要有兵可增才有意义
-    //   · 图腾 ×1             第 8 波起每 4 波。续航/减伤，最后到场
-    //   · 攻城车 ×1           第 5 波起每 15 波（罕见的攻城事件）
+    //   · 蚀骨 ×1             第 2 波起每 3 波。近战破甲，走在近战之后
+    //   · 术士 ×1             第 3 波起每 4 波。增伤光环，要有兵可增才有意义
+    //   · 图腾 ×1             第 4 波起每 4 波。续航/减伤，最后到场
+    //   · 攻城车 ×1           第 3 波起每 15 波（罕见的攻城事件）
+    // 用户定稿修正：起始波次整体前移（原 4/6/8/5）—— 原来的门槛意味着开局十几分钟
+    // 只有近战+远程+炮兵，三个刚重做的兵种要等很久才看得到，试都不好试。
     //   · 超级兵 ×1           水晶陷落后每波，取代炮兵
     // 蚀骨/术士/图腾的周期互质（3/4/4 且起始波错开），所以三者同时到场的波次很少，
     // 出现时也确实该是一波强攻 —— 这是有意的节奏起伏，不是失控。
     laneWaveComposition: [
       { type: 'super',   count: 1, when: 'nexusDown' },
       { type: 'melee',   count: 3 },
-      { type: 'corrupt', count: 1, fromWave: 4, everyN: 3 },
+      { type: 'corrupt', count: 1, fromWave: 2, everyN: 3 },
       { type: 'siege',   count: 1, everyN: 3, when: '!nexusDown' },
       { type: 'ranged',  count: 3 },
-      { type: 'warlock', count: 1, fromWave: 6, everyN: 4 },
-      { type: 'totem',   count: 1, fromWave: 8, everyN: 4 },
-      { type: 'ram',     count: 1, fromWave: 5, everyN: 15 },
+      { type: 'warlock', count: 1, fromWave: 3, everyN: 4 },
+      { type: 'totem',   count: 1, fromWave: 4, everyN: 4 },
+      { type: 'ram',     count: 1, fromWave: 3, everyN: 15 },
     ],
     // ⚠️ 死配置（保留仅为兼容旧存档，全仓库无人读取，tests/sim_tplio.mjs 有断言守着）：
     // 对战出兵全部由上面的 laneWaveComposition 驱动，图腾兵的节奏由其中那条规则的
@@ -172,13 +180,21 @@ export const CONFIG = {
   // 关掉全部时行为与接入前逐位一致。数值先给保守值，等批量模拟脚本出来再校准。
   world: {
     couplings: {
-      dayNightFaction: false,   // 昼夜 → 阵营非对称（白天蓝方优势 / 夜晚红方优势）
-      entropyToUnits: false,    // 熵 → 单位属性（熵系统实现后才有意义）
-      entropyToWeather: false,  // 熵 → 天气分布（熵越高极端天气越频繁）
+      // 用户定稿的默认值：昼夜【默认开】，熵的三条【默认全关】（熵开发已暂停）。
+      // 键名从 dayNightFaction 改为 dayNight —— 语义已从"按阵营"变成"按单位类别"，
+      // 留着旧名字做新的事就是骗人。旧存档里的 dayNightFaction 会被忽略（不在白名单读取点）。
+      dayNight: true,           // 昼夜 → 白天小兵占优 / 夜晚防御塔占优（双方对称）
+      entropyToUnits: false,    // 熵 → 单位属性
+      entropyToWeather: false,  // 熵 → 天气分布
       entropyToDayNight: false, // 熵 → 昼夜（熵越高夜晚越长）
     },
-    // 昼夜给"当前占优阵营"的加成（用户定稿的方向：蓝=秩序=白天，红=混乱=夜晚）
-    dayNightBonus: { moveSpeedPct: 5, attackDamagePct: 4 },
+    // 昼夜加成（用户定稿：白天【小兵】占优、夜晚【防御塔】占优，双方对称）。
+    // 这不再是先手优势，而是节奏开关：白天适合推，夜晚适合守。
+    // 幅度刻意保守 —— 昼夜周期只有 6 分钟，给太多会让对局变成"等天亮"。
+    dayNightBonus: {
+      day:   { moveSpeedPct: 6, attackDamagePct: 5 },              // 小兵：推得更快、更能打
+      night: { attackDamagePct: 8, attackRangeFlat: 15 },          // 防御塔：更疼、覆盖更远
+    },
     // 熵的非对称加成幅度（|熵-0.5|×2 为系数，中性时恒为 0）
     entropyBonus: { attackDamagePct: 8, armorFlat: 6 },
     // P5 熵/三核。全部软编码 —— 这套数值必然要反复调，写死在代码里等于每次调都改源码。

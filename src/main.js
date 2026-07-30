@@ -19,7 +19,7 @@ import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
 import { FACTIONS, canTarget } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
-import { dayNightAt, DAY_PERIOD } from './presentation/DayNight.js';
+import { dayNightAt, DAY_PERIOD, resolveDayPhase } from './presentation/DayNight.js';
 import { EventBus } from './utils/EventBus.js';
 import { CONFIG } from './data/Config.js';
 import { UIManager } from './ui/UIManager.js';
@@ -1002,12 +1002,10 @@ function gameLoop(timestamp) {
   //   · 不生效（天气关且未强制）→ 锁定默认时刻＝14 点（相位 1/3）。
   //     选 14 点而非正午：正午太阳约 82° 近乎直射、几乎无阴影；14 点约 58°，有像样的斜影。
   if (renderer3d) {
-    const period = CTX.__dayPeriodSec || DAY_PERIOD;
-    const active = CTX.__dayNightForce != null ? CTX.__dayNightForce : weatherSystem.enabled;
-    const gt = CTX.__dayPhaseOverride != null ? CTX.__dayPhaseOverride * period
-             : active ? CTX.gameTime
-             : (1 / 3) * period;
-    renderer3d.setLighting(dayNightAt(gt, period));
+    // 相位走 resolveDayPhase 这唯一口径（光照 / WorldState 数值化昼夜 / HUD 时间条共用）。
+    // 三处各算一遍时"画面白天、数值夜晚"这种不一致不会报错，只会让人怀疑眼睛。
+    const dp = resolveDayPhase(CTX.gameTime, CTX, weatherSystem.enabled);
+    renderer3d.setLighting(dayNightAt(dp.phase * dp.period, dp.period));
   }
   renderer3d?.render(canvasController);
   const t2 = performance.now();

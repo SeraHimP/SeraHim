@@ -249,8 +249,21 @@ export const WeatherPanel = {
     const key = icon + name;
     if (el.dataset.k !== key) {
       el.dataset.k = key;
-      el.innerHTML = `<span style="font-size:14px;">${icon}</span><span>${name}</span>`;
+      // 与世界状态小窗另两行【同一版式】：左边固定是 [图标 + 中文名]，
+      // 数值一律放右侧的 .wh-val 列。三行版式不统一时，小窗看起来就像三个
+      // 拼在一起的东西而不是一组信息（用户明确提过"这三个显示文字不统一"）。
+      el.innerHTML = `<span style="font-size:13px;">${icon}</span><span style="font-size:10px;">${name}</span>`;
       el.style.color = color;
+    }
+    // 右列数值：极端天气显示强度，否则显示主导天气的占比 —— 与时间行的时钟、
+    // 熵行的百分比同为"一个数"，不再是空白。
+    const val = document.getElementById('whWeatherVal');
+    if (val) {
+      const pct = ex.length
+        ? Math.round(ex.reduce((a, b) => (b.intensity > a.intensity ? b : a)).intensity * 100)
+        : Math.round((this._weather.getDominant()?.weight || 0) * 100);
+      const txt = pct + '%';
+      if (val.textContent !== txt) val.textContent = txt;
     }
   },
 

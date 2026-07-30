@@ -231,10 +231,17 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
     for (let t = 0; t < 30; t += 0.1) lws.update(0.1); return spawned.includes('totem'); };
   const f = totemRule.fromWave, n = totemRule.everyN;
   T(`图腾每 ${n} 波一次（${f + 1}✗ ${f + n}✓）`, !totemAt(f + 1) && totemAt(f + n));
-  // 兵种开关
+  // 兵种开关。
+  // 注意：必须先把【上一波遗留的出兵队列】排空再关开关，否则排在队列里的
+  // 炮兵（关开关之前就已入队）会在这一轮流出来，被误判成"开关失效"。
+  // 编排变大之后每波单位更多、队列更长，这个时序问题才暴露出来。
   CONFIG.gameRules.spawnEnabled.siege = false;
-  const hadSiege = totemAt(12); // 第12波是炮车波（12%3===0）
-  T('兵种开关生效（炮车关闭后不生成）', !spawned.includes('siege'));
+  for (let t = 0; t < 60; t += 0.1) { lws.nextWaveTime = 99999; lws.update(0.1); }
+  spawned.length = 0;
+  lws.waveNumber = 11; lws.nextWaveTime = 0; lws.update(0.01);
+  for (let t = 0; t < 30; t += 0.1) { lws.nextWaveTime = 99999; lws.update(0.1); }
+  T(`兵种开关生效（炮车关闭后不生成；本波 ${[...new Set(spawned)].join('/')}）`,
+    spawned.length > 0 && !spawned.includes('siege'));
   CONFIG.gameRules.spawnEnabled.siege = true;
   T('截止时间为45s（Q10）', (CONFIG.tuning?.superMinionCutoffBeforeRespawn ?? 0) === 45);
   // 截止逻辑：摧毁水晶 → 超级兵；重生剩余 <45s → 停发

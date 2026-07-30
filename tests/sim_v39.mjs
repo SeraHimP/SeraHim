@@ -254,10 +254,16 @@ function battle() {
   for (let t = 0; t < 52 * 30; t += DT) lws.update(DT);
   CONFIG.gameRules.spawnEnabled.ram = _ramWas;
   const ramWaves = [...new Set(spawned.filter(s => s.type === 'ram').map(s => s.w))];
-  T(`出生波次 5/20/35/50（实际 ${ramWaves.join(',')}）`, ramWaves.join(',') === '5,20,35,50');
-  const w5 = spawned.filter(s => s.w === 5 && s.laneId === 'mid' && s.f === 'blue').map(s => s.type);
-  T(`出生在兵线最后方（第5波：${w5.join('→')}）`, w5[w5.length - 1] === 'ram');
-  T('每波每路每方各 1 辆', spawned.filter(s => s.w === 5 && s.type === 'ram').length === 6);
+  // 波次【从编排里读】，不抄数字 —— 用户这轮把特殊兵种的起始波整体前移了。
+  const _ramRule = CONFIG.gameRules.laneWaveComposition.find(r => r.type === 'ram');
+  const expectWaves = [];
+  for (let w = _ramRule.fromWave; w <= 52; w += _ramRule.everyN) expectWaves.push(w);
+  T(`出生波次 ${expectWaves.join('/')}（实际 ${ramWaves.join(',')}）`,
+    ramWaves.join(',') === expectWaves.join(','));
+  const wF = _ramRule.fromWave;
+  const w5 = spawned.filter(s => s.w === wF && s.laneId === 'mid' && s.f === 'blue').map(s => s.type);
+  T(`出生在兵线最后方（第${wF}波：${w5.join('→')}）`, w5[w5.length - 1] === 'ram');
+  T('每波每路每方各 1 辆', spawned.filter(s => s.w === wF && s.type === 'ram').length === 6);
 
   // 成长：HP 正常、AD 极慢、双抗恒 0
   const mainSrc = (await import('fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');

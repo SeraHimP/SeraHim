@@ -49,7 +49,9 @@ const TIMELINE_LENGTH = 7200;   // 预生成的时间线长度（秒）＝2小�
 export class WeatherSystem {
   constructor(eventBus) {
     this.eventBus = eventBus;
-    this.enabled = false;          // 独立总开关（默认关闭，用户在配置面板里开）
+    // 用户定稿：天气【默认开启】。昼夜默认跟随天气开关（见 resolveDayPhase），
+    // 所以这一行同时决定了开局有没有昼夜循环。
+    this.enabled = true;
     this.baseIds = Object.keys(BASE_WEATHERS);
     this.disabledWeathers = new Set(); // 用户可在面板里单独禁用某些天气
 

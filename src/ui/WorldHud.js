@@ -13,7 +13,7 @@
  * 但任何呼吸/闪烁动画必须用挂钟（gameTime 会被暂停/倍速影响，暂停时动画会僵住）。
  */
 import { CONFIG } from '../data/Config.js';
-import { DAY_PERIOD } from '../presentation/DayNight.js';
+import { DAY_PERIOD, resolveDayPhase, phaseLabelOf } from '../presentation/DayNight.js';
 
 // 昼夜色带的关键帧配色，与 DayNight 的相位口径一致：0=黎明 .25=正午 .5=黄昏 .75=午夜
 const PHASE_STOPS = [
@@ -64,19 +64,23 @@ export const WorldHud = {
     const icon = document.getElementById('whPhaseIcon');
     if (!cv) return;
 
-    const period = (window.CTX?.__dayPeriod) || DAY_PERIOD;
-    // 相位优先取 WorldState 的（熵→昼夜耦合开启时它会被拉伸，
-    // 直接自己按 gameTime 算就会和实际光照/数值不一致）。
+    // 相位优先取 WorldState 的（熵→昼夜耦合开启时它会被拉伸）；没有 WorldState
+    // 时退回 resolveDayPhase —— 这两条路径现在是同一个口径。
+    // 【原来这里写的是 `window.CTX?.__dayPeriod || DAY_PERIOD`，而那是个 setter
+    //   函数，函数 truthy 导致 period 变成函数、相位恒为 NaN：时间条游标永远不动、
+    //   标签永远显示"黎明"。用户报的"时间条不动"就是这个。】
     const ws = this._world;
-    const phase = (ws && ws.enabled && ws.daynight)
+    const phase = (ws && ws.enabled && ws.daynight && Number.isFinite(ws.daynight.phase))
       ? ws.daynight.phase
-      : ((gameTime / Math.max(1, period)) % 1 + 1) % 1;
+      : resolveDayPhase(gameTime, window.CTX, true).phase;
     const pi = phaseInfo(phase);
+    // 文案走 phaseLabelOf（与 DayNight / 调试面板同一套措辞），不再自己定一套名字
+    const label = phaseLabelOf(phase);
 
     if (clock) clock.textContent = fmtClock(gameTime);
-    if (icon && icon.dataset.k !== pi.icon) {
-      icon.dataset.k = pi.icon;
-      icon.innerHTML = `<span style="font-size:13px;">${pi.icon}</span><span style="font-size:10px;">${pi.label}</span>`;
+    if (icon && icon.dataset.k !== label) {
+      icon.dataset.k = label;
+      icon.innerHTML = `<span style="font-size:13px;">${pi.icon}</span><span style="font-size:10px;">${label}</span>`;
       icon.style.color = pi.c;
     }
 
@@ -92,15 +96,54 @@ export const WorldHud = {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
 
-    // 夜的那一半压暗，让"现在是白天还是夜里"一眼可见
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    // 夜段（相位 ≥0.5）压暗。用**渐变**而不是一块平涂：平涂会在黄昏处留下一条
+    // 生硬的直边，而那里恰好是颜色最暖的位置，看着像贴了块补丁。
+    const nd = ctx.createLinearGradient(w * 0.5, 0, w, 0);
+    nd.addColorStop(0, 'rgba(0,0,0,0)');
+    nd.addColorStop(0.35, 'rgba(0,0,0,0.30)');
+    nd.addColorStop(1, 'rgba(0,0,0,0.42)');
+    ctx.fillStyle = nd;
     ctx.fillRect(w * 0.5, 0, w * 0.5, h);
 
-    // 当前相位游标
-    const x = Math.round(w * phase) + 0.5;
+    // 关键时刻刻度（正午/黄昏/午夜）：细竖线，给"现在大概几点"一个参照。
+    // 没有刻度的话游标停在哪都看不出意义。
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    ctx.lineWidth = 1;
+    for (const p of [0.25, 0.5, 0.75]) {
+      const tx = Math.round(w * p) + 0.5;
+      ctx.beginPath(); ctx.moveTo(tx, 0); ctx.lineTo(tx, h); ctx.stroke();
+    }
+
+    this._cursor(ctx, w, h, phase);
+    this._frame(ctx, w, h);
+  },
+
+  /**
+   * 当前位置游标：顶部小三角 + 全高细线，并且**先描一层深色再描白色**。
+   * 单画一条白线时，游标走到正午那段浅蓝底色上会几乎看不见 —— 描边是为了
+   * 让它在整条渐变的任意亮度上都读得出来。
+   */
+  _cursor(ctx, w, h, t) {
+    const x = Math.max(1, Math.min(w - 1, w * t));
+    const xr = Math.round(x) + 0.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(xr, 0); ctx.lineTo(xr, h); ctx.stroke();
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(xr, 0); ctx.lineTo(xr, h); ctx.stroke();
+    // 顶部三角：小窗只有 14px 高，纯竖线不够抓眼，三角给一个明确的"就是这里"
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.moveTo(xr, 3.5); ctx.lineTo(xr - 3, 0); ctx.lineTo(xr + 3, 0);
+    ctx.closePath(); ctx.fill();
+  },
+
+  /** 统一的内描边：让三条色带看起来是同一个组件（否则各自像贴上去的图片）。 */
+  _frame(ctx, w, h) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
   },
 
   // ==================== 熵 / 三核 ====================
@@ -125,13 +168,15 @@ export const WorldHud = {
     const v = e.value ?? 0.5;
 
     if (val) val.textContent = `${(v * 100).toFixed(0)}%`;
-    if (icon && icon.dataset.k !== String(black) + '/' + white) {
-      icon.dataset.k = String(black) + '/' + white;
-      // 标签直接写核数，比一个百分比更能说明"现在是谁在领先"
-      icon.innerHTML = `<span style="font-size:12px;">🌀</span>` +
-        `<span style="font-size:10px;">${white}·${red}·${black}</span>`;
+    // 三行统一版式：左侧一律 [图标 + 中文名]，数值一律在右列。
+    // 核数改放 tooltip —— 把 "3·0·5" 摆在名字的位置，那一列就不再是名字了。
+    const side = v > 0.5 ? '混乱' : (v < 0.5 ? '秩序' : '中性');
+    if (icon && icon.dataset.k !== side) {
+      icon.dataset.k = side;
+      icon.innerHTML = `<span style="font-size:13px;">🌀</span><span style="font-size:10px;">${side}</span>`;
       icon.style.color = v > 0.5 ? '#e0473f' : (v < 0.5 ? '#5b9bd5' : '#8b949e');
     }
+    row.title = `三核 白${white}·未归属${red}·黑${black}（共 ${total}）　熵 ${(v * 100).toFixed(1)}%\n点击打开世界设置`;
 
     const ctx = this._ctx(cv);
     if (!ctx) return;
@@ -171,6 +216,7 @@ export const WorldHud = {
     ctx.lineWidth = 1;
     const mx = Math.round(w / 2) + 0.5;
     ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, h); ctx.stroke();
+    this._frame(ctx, w, h);
   },
 
   // ==================== 画布尺寸（DPR 感知，与天气条同款）====================

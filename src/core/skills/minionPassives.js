@@ -434,26 +434,68 @@ export const minionPassives = {
   // 并对小范围内所有敌人施加双抗削弱 —— 且"叠层直满层"：一次施加即满层，
   // 不用靠平A慢慢叠。做成敌对光环而不是 onHit，因为它的语义是"站在附近就被腐蚀"，
   // 与"打到才叠"完全不同（原实现是 onHit 且只对塔生效）。
-  passive_corrupt_strike: makeAuraPassive({
-    id: 'passive_corrupt_strike', name: '蚀骨', icon: '🦇',
-    casterType: 'corrupt', targetTypes: null, minionsOnly: false,
-    hostile: true, initialStacks: 99,   // 99 会被 EffectRegistry 夹到 maxStacks，即"一次满层"
-    range: (CONFIG.gameRules.supportUnits?.corrupt?.radius) ?? 110,
-    effectsFn: () => {
-      const c = CONFIG.gameRules.supportUnits?.corrupt || {};
-      const per = c.resistPerStack ?? 6, mx = c.maxStacks ?? 5;
-      const mk = (key, label) => ({
-        name: '腐蚀', icon: '🦇', kind: 'stat', statKey: key, type: 'debuff',
-        flatValue: -per, perStackFlat: -per,
-        stackable: true, maxStacks: mx, stackPolicy: 'stack',
-        stackKey: `corrupt_${key}`,
-        description: `${label}降低（{stacks}/${mx}层，每层-${per}）`,
-        descTemplate: `唯一被动——蚀骨：${label}降低（【{val}】=-${per}×层数），最多${mx}层。`,
-      });
-      return [mk('armor', '护甲'), mk('magicResist', '魔抗')];
+  passive_corrupt_strike: {
+    id: 'passive_corrupt_strike',
+    name: '蚀骨',
+    icon: '🦇',
+    color: '#6b8e23',
+    category: 'passive',
+    _cfg: () => CONFIG.gameRules.supportUnits?.corrupt || {},
+    _text() {
+      const c = this._cfg();
+      return `唯一被动——蚀骨：${c.radius ?? 110} 范围内的所有敌人每 ${c.stackIntervalSec ?? 1} 秒`
+           + `叠加一层腐蚀，每层降低 ${c.resistPerStack ?? 1} 点护甲与魔抗，`
+           + `最多 ${c.maxStacks ?? 30} 层（【{val}】=最高 -${(c.resistPerStack ?? 1) * (c.maxStacks ?? 30)} 双抗）；`
+           + `离开范围后逐层消退。`;
     },
-  }),
+    get description() { return this._text(); },
+    get descTemplate() { return this._text(); },
+    computeCurrent() {
+      const c = this._cfg();
+      return (c.resistPerStack ?? 1) * (c.maxStacks ?? 30);
+    },
+    effects: [],
+    // 为什么不用 makeAuraPassive：
+    // 光环是"在范围内常驻、离开即脱落"的**存在型**效果（aura:true 会把时长设为 Infinity
+    // 并靠宽限期移除），而这里要的是【逐秒累积、离开后逐层过期】—— 层数必须能自然衰减。
+    // 两者的时长语义相反，硬套 aura 就会变成"进范围瞬间满层、出范围瞬间清零"。
+    onFrame: (entityId, dt, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive || e.type !== 'corrupt') return;
+      const c = CONFIG.gameRules.supportUnits?.corrupt || {};
+      const every = c.stackIntervalSec ?? 1;
+      if (typeof instance.state?.tick !== 'number') instance.state = { ...(instance.state || {}), tick: 0 };
+      instance.state.tick += dt;
+      // 容差 + 减掉一个周期保留余量：dt 是 1/30 这种二进制不精确的数，
+      // 朴素的 `< every` 每个周期都少触发一次，清 0 又会持续漂移（behaviorVM 里踩过）。
+      if (instance.state.tick < every - 1e-9) return;
+      instance.state.tick -= every;
 
+      const per = c.resistPerStack ?? 1;
+      const mx = c.maxStacks ?? 30;
+      const dur = c.stackDurationSec ?? 3;
+      const ef = e._mapFaction || e.faction;
+      const foes = ctx.entityContainer.findInRadius(e.pos.x, e.pos.y, c.radius ?? 110, null, true);
+      for (const t of foes) {
+        if (t.id === e.id || t.type === 'dragon') continue;
+        const tf = t._mapFaction || t.faction;
+        // 沙盒模式没有阵营：一个 debuff 都不发（给"所有人"上 debuff 显然不是本意）
+        if (!ef || !tf || tf === ef) continue;
+        for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔抗']]) {
+          ctx.effectRegistry.apply(t.id, {
+            name: '腐蚀', icon: '🦇', kind: 'stat', statKey: key, type: 'debuff', color: '#6b8e23',
+            flatValue: -per, perStackFlat: -per,
+            // 单层时长 > 叠加间隔：否则上一层在下一层叠上来之前就过期，永远停在 1 层。
+            duration: dur,
+            stackable: true, maxStacks: mx, stackPolicy: 'stack', uniquePassive: true,
+            stackKey: `corrupt_${key}`,
+            description: `${label}降低（{stacks}/${mx} 层，每层 -${per}）`,
+            descTemplate: `唯一被动——蚀骨：${label}降低（【{val}】=-${per}×层数），最多 ${mx} 层。`,
+          }, 'passive_corrupt_' + key);
+        }
+      }
+    },
+  },
 };
 
 // ============================================================================

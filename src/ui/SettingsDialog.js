@@ -48,15 +48,17 @@ export const SettingsDialog = {
   //
   // 每条耦合独立开关、默认全关；全关时世界层不产生任何修正，行为与接入前逐位一致。
   _COUPLINGS: [
-    { key: 'dayNightFaction',   label: '昼夜 → 阵营', hint: '白天蓝方占优 / 夜晚红方占优' },
+    { key: 'dayNight',          label: '昼夜 → 攻守', hint: '白天小兵占优 / 夜晚防御塔占优（双方对称）' },
     { key: 'entropyToUnits',    label: '熵 → 单位',   hint: '高熵利红（混乱）、低熵利蓝（秩序）' },
     { key: 'entropyToWeather',  label: '熵 → 天气',   hint: '熵越高极端天气越频繁' },
     { key: 'entropyToDayNight', label: '熵 → 昼夜',   hint: '熵越高夜晚越长' },
   ],
   // 数值项集中在这里声明，渲染与回写共用同一份，不会出现"面板改 A、运行时读 B"。
   _WORLD_FIELDS: [
-    { path: 'dayNightBonus.moveSpeedPct',  label: '昼夜·移速加成(%)', step: 1 },
-    { path: 'dayNightBonus.attackDamagePct', label: '昼夜·攻击加成(%)', step: 1 },
+    { path: 'dayNightBonus.day.moveSpeedPct',    label: '白天·小兵移速(%)', step: 1 },
+    { path: 'dayNightBonus.day.attackDamagePct', label: '白天·小兵攻击(%)', step: 1 },
+    { path: 'dayNightBonus.night.attackDamagePct', label: '夜晚·塔攻击(%)', step: 1 },
+    { path: 'dayNightBonus.night.attackRangeFlat', label: '夜晚·塔射程', step: 5 },
     { path: 'entropyBonus.attackDamagePct', label: '熵·攻击幅度(%)', step: 1 },
     { path: 'entropyBonus.armorFlat',       label: '熵·护甲幅度',     step: 1 },
     { path: 'entropy.coreTotal',    label: '核总数（恒定）', step: 1 },

@@ -23,7 +23,7 @@
  * 龙魂同理：souls 已接入统计，规则（6 龙 ≥4 成魂）待实现。
  */
 import { CONFIG } from '../data/Config.js';
-import { DAY_PERIOD } from '../presentation/DayNight.js';
+import { DAY_PERIOD, resolveDayPhase } from '../presentation/DayNight.js';
 import { EntropySystem } from './EntropySystem.js';
 
 // 昼夜相位与 DayNight.js 的关键帧同口径：0=黎明 0.25=正午 0.5=黄昏 0.75=午夜。
@@ -101,8 +101,12 @@ export class WorldState {
     // ---- ② 昼夜相位（渲染层已在用同一个函数，这里只是把它数值化）----
     // 熵 → 昼夜：熵越高夜越长。做法是拉伸【夜的那一半】而不是改整个周期速度 ——
     // 改周期速度会让白天也跟着变长，"高熵夜更长"就变成了"高熵一切都更慢"。
-    const period = (typeof window !== 'undefined' && window.CTX?.__dayPeriod) || DAY_PERIOD;
-    let phase = phaseOf(gameTime || 0, period);
+    // 相位走 resolveDayPhase（与光照、HUD 同一口径）。
+    // 这里原先自己写 `window.CTX?.__dayPeriod || DAY_PERIOD` —— 而那个字段是个
+    // **setter 函数**（秒数在 __dayPeriodSec），函数 truthy 导致 period 变成函数、
+    // 相位恒为 NaN、isNight 永远 false，昼夜的数值耦合其实一直没生效过。
+    let phase = resolveDayPhase(gameTime || 0, (typeof window !== 'undefined' ? window.CTX : null),
+                                this.weather ? this.weather.enabled : true).phase;
     if (cp.entropyToDayNight) phase = this._stretchNight(phase, this.entropySystem.nightStretch);
     this.daynight.phase = phase;
     this.daynight.isNight = phase >= NIGHT_FROM;
@@ -137,14 +141,21 @@ export class WorldState {
       e.flat += flat; e.pct += pct;
     };
 
-    // ---- 昼夜 → 阵营非对称（用户定稿：蓝=秩序，白天占优；红=混乱，夜晚占优）----
-    if (cp.dayNightFaction) {
-      const fac = entity._mapFaction || entity.faction;
+    // ---- 昼夜 → 兵种/建筑非对称（用户定稿改动：白天【小兵】占优，夜晚【防御塔】占优）----
+    // 注意这与上一版完全不同：上一版是按【阵营】给（白天蓝方 / 夜晚红方），
+    // 那是把昼夜做成了先手优势，双方都吃亏一半时间；现在按【单位类别】给，
+    // 双方对称，昼夜变成"什么时候适合推、什么时候适合守"的节奏开关。
+    if (cp.dayNight) {
       const g = cfg.dayNightBonus || {};
-      const favored = this.daynight.isNight ? 'red' : 'blue';
-      if (fac === favored) {
-        add('moveSpeed', 0, g.moveSpeedPct ?? 0);
-        add('attackDamage', 0, g.attackDamagePct ?? 0);
+      const side = this.daynight.isNight ? (g.night || {}) : (g.day || {});
+      const isTower = entity.type === 'tower';
+      // 白天利兵、夜晚利塔；巨龙不吃这条（它不属于任何一方的推进/防守）
+      const favored = this.daynight.isNight ? isTower : (!isTower && entity.type !== 'dragon');
+      if (favored) {
+        if (side.moveSpeedPct) add('moveSpeed', 0, side.moveSpeedPct);
+        if (side.attackDamagePct) add('attackDamage', 0, side.attackDamagePct);
+        if (side.attackRangeFlat) add('attackRange', side.attackRangeFlat, 0);
+        if (side.armorFlat) add('armor', side.armorFlat, 0);
       }
     }
 
@@ -174,15 +185,24 @@ export class WorldState {
     const cp = cfg.couplings || {};
     const fac = entity._mapFaction || entity.faction;
 
-    if (cp.dayNightFaction) {
-      const favored = this.daynight.isNight ? 'red' : 'blue';
+    if (cp.dayNight) {
       const g = cfg.dayNightBonus || {};
-      if (fac === favored) {
-        rows.push({ source: `昼夜 · ${this.daynight.label}`,
-                    detail: `${favored === 'blue' ? '蓝方' : '红方'}优势 +${g.moveSpeedPct ?? 0}% 移速 / +${g.attackDamagePct ?? 0}% 攻击力` });
-      } else {
-        rows.push({ source: `昼夜 · ${this.daynight.label}`, detail: '本方无加成' });
-      }
+      const night = this.daynight.isNight;
+      const side = night ? (g.night || {}) : (g.day || {});
+      const isTower = entity.type === 'tower';
+      const favored = night ? isTower : (!isTower && entity.type !== 'dragon');
+      const who = night ? '防御塔' : '小兵';
+      const parts = [];
+      if (side.moveSpeedPct) parts.push(`+${side.moveSpeedPct}% 移速`);
+      if (side.attackDamagePct) parts.push(`+${side.attackDamagePct}% 攻击力`);
+      if (side.attackRangeFlat) parts.push(`+${side.attackRangeFlat} 射程`);
+      if (side.armorFlat) parts.push(`+${side.armorFlat} 护甲`);
+      rows.push({
+        source: `昼夜 · ${this.daynight.label}`,
+        detail: favored
+          ? `${who}占优：${parts.join(' / ') || '无'}`
+          : `${who}占优（本单位不吃这条）`,
+      });
     }
     if (cp.entropyToUnits) {
       const k = (this.entropy.value - 0.5) * 2;

@@ -85,10 +85,17 @@ let spawned=[];
 lw.setCreateMinion((type)=>{spawned.push(type);return {id:++window._uid,alive:true};});
 lw.nextWaveTime=99999; lw.waveNumber=2; spawned=[]; lw._enqueueForFaction('blue',mapSys.currentMap.lanes[0],'forward');
 for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}
-T('普通波=近3+远3', JSON.stringify(spawned)===JSON.stringify(['melee','melee','melee','ranged','ranged','ranged']));
+// 编排是用户可调的（这一轮特殊兵种的起始波整体前移了），所以不再把整条队列逐字写死 ——
+// 只钉住这两条断言真正想说的事：骨架是"近战3 + 远程3"，且近战全部排在远程之前。
+const _cnt=(a,t)=>a.filter(x=>x===t).length;
+T(`普通波含近3+远3（实际 ${spawned.join('/')}）`, _cnt(spawned,'melee')===3 && _cnt(spawned,'ranged')===3);
+T('近战全部排在远程之前', spawned.lastIndexOf('melee') < spawned.indexOf('ranged'));
 lw.waveNumber=3; spawned=[]; lw._enqueueForFaction('blue',mapSys.currentMap.lanes[0],'forward');
 for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}
-T('炮车波=近3+炮1+远3(炮在中间)', JSON.stringify(spawned)===JSON.stringify(['melee','melee','melee','siege','ranged','ranged','ranged']));
+T(`炮兵波含炮兵1（实际 ${spawned.join('/')}）`, _cnt(spawned,'siege')===1);
+T('炮兵夹在近战与远程之间（不在队首也不在队尾）',
+  spawned.indexOf('siege') > spawned.lastIndexOf('melee')
+  && spawned.indexOf('siege') < spawned.indexOf('ranged'));
 mapSys.nexusDestroyed.red={mid:true}; // 蓝方打掉红方水晶→蓝方出超级兵
 lw.waveNumber=6; spawned=[]; lw._enqueueForFaction('blue',mapSys.currentMap.lanes[0],'forward');
 for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}

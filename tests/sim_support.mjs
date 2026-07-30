@@ -157,23 +157,46 @@ function world() {
   const farFoe = W.mk('melee', 'red', c.radius + 200);
   const ally = W.mk('melee', 'blue', 30);
   const foeTower = W.mk('tower', 'red', 40, 0, 'outer');
-  W.run(1, [cor]);
 
-  const drop = c.resistPerStack * c.maxStacks;
+  // 用户定稿修正：不是"一次即满层"，而是【每秒 -1，最高 -30】。
+  // 上一版我把"叠层直满层"理解成一次到顶，站进范围瞬间 -30 双抗，
+  // 等于一个即时 AoE 破甲 —— 强得离谱且没有博弈。
+  const stacksOf = (e) =>
+    W.fx.getEffects(e.id).find(x => x.blueprint?.statKey === 'armor')?.stacks || 0;
+  const iv = c.stackIntervalSec, per = c.resistPerStack, mx = c.maxStacks;
+  W.run(iv, [cor]);
+  T(`蚀骨·${iv} 秒后只有 1 层（不是一次满层）`, stacksOf(foe) === 1);
+  T(`蚀骨·1 层 = -${per} 双抗（护甲 ${CONFIG.templates.melee.armor} → ${W.stats(foe).armor}）`,
+    W.stats(foe).armor === CONFIG.templates.melee.armor - per);
+  W.run(iv * 4, [cor]);
+  T(`蚀骨·逐秒累积（${iv * 5} 秒后 ${stacksOf(foe)} 层）`, stacksOf(foe) === 5);
+  // 跑满并越过上限，验证封顶
+  W.run(iv * (mx + 10), [cor]);
+  const drop = per * mx;
   const fs = W.stats(foe);
-  T(`蚀骨·范围内敌人双抗降低 ${drop}（一次即满 ${c.maxStacks} 层；护甲 ${CONFIG.templates.melee.armor} → ${fs.armor}）`,
-    fs.armor === CONFIG.templates.melee.armor - drop
+  T(`蚀骨·封顶 ${mx} 层 = -${drop} 双抗（护甲 ${fs.armor} / 魔抗 ${fs.magicResist}）`,
+    stacksOf(foe) === mx
+    && fs.armor === CONFIG.templates.melee.armor - drop
     && fs.magicResist === CONFIG.templates.melee.magicResist - drop);
-  T('蚀骨·"叠层直满层"—— 不用平A慢慢叠',
-    W.fx.getEffects(foe.id).find(e => e.blueprint?.statKey === 'armor')?.stacks === c.maxStacks);
+  T(`蚀骨·上限就是用户定的 -30`, drop === 30);
+  // 单层时长必须 > 叠加间隔，否则上一层在下一层叠上来之前就过期，永远停在 1 层
+  T(`蚀骨·单层时长 ${c.stackDurationSec}s > 叠加间隔 ${iv}s（否则永远叠不上去）`,
+    c.stackDurationSec > iv);
   const as2 = W.stats(ally);
   T('蚀骨·不会削自己人', as2.armor === CONFIG.templates.melee.armor);
   const ffs = W.stats(farFoe);
   T(`蚀骨·范围外（>${c.radius}）不受影响`, ffs.armor === CONFIG.templates.melee.armor);
   const ts = W.stats(foeTower);
   T('蚀骨·"所有敌人"含敌方建筑', ts.armor < CONFIG.templates.tower.armor);
-  T('蚀骨·文案说的是"敌军"不是"友军"（文案与效果必须一致）',
-    /敌军/.test(SkillLibrary.get('passive_corrupt_strike').description));
+  // 离开范围 → 层数随过期自然消退（这正是"逐秒叠"与"一次满层"的关键差别：
+  // 满层实现下离开范围会瞬间清零，玩家完全感受不到腐蚀的持续性）
+  foe.pos.x = 99999;
+  W.run(c.stackDurationSec + 1, [cor]);
+  T(`蚀骨·离开范围后消退（护甲回到 ${W.stats(foe).armor}）`,
+    W.stats(foe).armor === CONFIG.templates.melee.armor);
+  T('蚀骨·文案写明"所有敌人"与逐秒叠加',
+    /所有敌人/.test(SkillLibrary.get('passive_corrupt_strike').description)
+    && /每 1 秒/.test(SkillLibrary.get('passive_corrupt_strike').description));
 }
 
 // ==================== 塔互攻 ====================
@@ -248,10 +271,16 @@ function world() {
   const at = (w) => buildWaveOrder(w, false, gr);
   T(`第 1 波只有基础兵（${at(1).join('/')}）`,
     at(1).every(t => t === 'melee' || t === 'ranged' || t === 'siege'));
-  T('蚀骨兵第 4 波起出现', !at(3).includes('corrupt') && at(4).includes('corrupt'));
-  T('术士兵第 6 波起出现', !at(5).includes('warlock') && at(6).includes('warlock'));
-  T('图腾兵第 8 波起出现', !at(7).includes('totem') && at(8).includes('totem'));
-  T('攻城车第 5 波起出现', !at(4).includes('ram') && at(5).includes('ram'));
+  // 起始波次【从编排里读】，不抄数字 —— 用户这轮把它们整体前移了（原 4/6/8/5），
+  // 抄一遍就等着下次调编排时又假失败。
+  for (const t of ['corrupt', 'warlock', 'totem', 'ram']) {
+    const r = gr.laneWaveComposition.find(x => x.type === t);
+    T(`${t} 第 ${r.fromWave} 波起出现，之前不出`,
+      at(r.fromWave).includes(t) && (r.fromWave <= 1 || !at(r.fromWave - 1).includes(t)));
+  }
+  T('特殊兵种起始波次都已前移到 4 波以内（用户："降低特殊兵种的生成波次"）',
+    ['corrupt', 'warlock', 'totem', 'ram']
+      .every(t => gr.laneWaveComposition.find(x => x.type === t).fromWave <= 4));
 
   // 支援兵种不应该每波都堆在一起 —— 那样一波兵会变成一支全能小队
   let allThree = 0;
@@ -265,6 +294,62 @@ function world() {
   // 超级兵仍然只在水晶陷落后出
   T('超级兵仅在水晶陷落后出现',
     !at(20).includes('super') && buildWaveOrder(20, true, gr).includes('super'));
+}
+
+// ==================== 昼夜相位：唯一解析口径 + 不能是 NaN ====================
+// 用户报的"时间条不动"就是这里：WorldState 与 WorldHud 都写了
+// `CTX.__dayPeriod || DAY_PERIOD`，而 __dayPeriod 是个 **setter 函数**
+// （秒数在 __dayPeriodSec）。函数 truthy → period 变成函数 → Math.max(1, fn) = NaN
+// → 相位恒 NaN → 游标不动、标签永远"黎明"，而昼夜的数值耦合（isNight 永远 false）
+// 其实一直没生效过。而这不报任何错。
+{
+  const { resolveDayPhase, DAY_PERIOD, phaseLabelOf } =
+    await import('../src/presentation/DayNight.js');
+  const ctx = {};
+  ctx.__dayPeriod = (sec) => { ctx.__dayPeriodSec = sec; };   // 复现真实的 CTX 形状
+  for (const t of [0, DAY_PERIOD * 0.25, DAY_PERIOD * 0.5, DAY_PERIOD * 0.75, 2508]) {
+    const r = resolveDayPhase(t, ctx, true);
+    T(`相位在 t=${Math.round(t)}s 是有限数（${r.phase.toFixed(3)}）`, Number.isFinite(r.phase));
+  }
+  T('相位随时间推进（时间条会动）',
+    resolveDayPhase(0, ctx, true).phase !== resolveDayPhase(DAY_PERIOD * 0.4, ctx, true).phase);
+  T('相位落在 [0,1)', [0, 100, 2508, 99999]
+    .every(t => { const p = resolveDayPhase(t, ctx, true).phase; return p >= 0 && p < 1; }));
+  T('关键帧标签与相位对应', phaseLabelOf(0) === '黎明' && phaseLabelOf(0.25) === '白昼'
+    && phaseLabelOf(0.5) === '黄昏' && phaseLabelOf(0.8) === '夜晚');
+  T('天气关闭时锁定在固定时刻（不再随时间跑）',
+    resolveDayPhase(0, ctx, false).phase === resolveDayPhase(9999, ctx, false).phase);
+  T('__dayPhaseOverride 优先（调试定格）',
+    resolveDayPhase(0, { ...ctx, __dayPhaseOverride: 0.75 }, true).phase === 0.75);
+  T('自定义周期生效（读 __dayPeriodSec 而不是那个 setter 函数）',
+    resolveDayPhase(30, { __dayPeriodSec: 120 }, true).phase === 0.25);
+
+  // 三处必须读同一个函数 —— 各算一遍时"画面白天、数值夜晚"不会报错，只会让人怀疑眼睛
+  const fs2 = (await import('fs')).default;
+  for (const f of ['src/main.js', 'src/systems/WorldState.js', 'src/ui/WorldHud.js']) {
+    T(`${f} 走 resolveDayPhase 统一口径`, /resolveDayPhase\(/.test(fs2.readFileSync(f, 'utf8')));
+  }
+  T('不再有人读那个 setter 函数当数字用', ['src/systems/WorldState.js', 'src/ui/WorldHud.js']
+    .every(f => !/__dayPeriod\s*\)\s*\|\|/.test(fs2.readFileSync(f, 'utf8'))));
+}
+
+// ==================== 世界状态小窗：三行版式统一 ====================
+// 用户："这三个显示文字不统一"。三行都必须是 [图标 + 中文名] + 色带 + 右侧数值。
+{
+  const fs2 = (await import('fs')).default;
+  const html = fs2.readFileSync('index.html', 'utf8');
+  for (const id of ['whTimeRow', 'whWeatherRow', 'whEntropyRow']) {
+    T(`${id} 存在于世界状态小窗`, html.includes(`id="${id}"`));
+  }
+  T('三行都有 [标签][色带][数值] 三列',
+    (html.match(/class="wh-label"/g) || []).length === 3
+    && (html.match(/class="wh-bar"/g) || []).length === 3
+    && (html.match(/class="wh-val"/g) || []).length === 3);
+  const hud = fs2.readFileSync('src/ui/WorldHud.js', 'utf8');
+  T('熵行右列是百分比、核数移到 tooltip（名字那一列只放名字）',
+    /whEntVal/.test(hud) && /row\.title = /.test(hud) && !/\$\{white\}·\$\{red\}·\$\{black\}/.test(hud));
+  const wp = fs2.readFileSync('src/ui/WeatherPanel.js', 'utf8');
+  T('天气行右列有数值（原先是空白）', /whWeatherVal/.test(wp));
 }
 
 console.log(`支援兵种 / 塔互攻 / 出兵编排验收: ${pass} 通过 / ${fail} 失败`);

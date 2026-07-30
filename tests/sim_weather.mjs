@@ -42,7 +42,8 @@ const t0=mkTower(null);
 AttributeCalculator.tick();
 const base=AttributeCalculator.calc(t0,[]);
 T('天气关闭时属性不受影响', base.attackDamage===200 && base.magicPenFlat===0);
-T('天气默认关闭', !ws.enabled);
+// 用户定稿：天气【默认开启】（昼夜默认跟随天气开关，所以这一行同时决定开局有没有昼夜循环）
+T('天气默认开启（用户定稿）', ws.enabled === true);
 
 ws.setEnabled(true);
 

@@ -20,9 +20,13 @@ const mkUnit = (fac) => ({
   _skillInstances: [], _mapFaction: fac, faction: fac,
 });
 
-// ---- ① 耦合全关 → 零影响（最重要的一条）----
+// ---- ① 熵的耦合全关 → 零影响（最重要的一条）----
 T('entropyToUnits 默认关闭', CONFIG.world.couplings.entropyToUnits === false);
 T('entropyToDayNight 默认关闭', CONFIG.world.couplings.entropyToDayNight === false);
+// 昼夜默认【开】（用户定稿），它会给小兵加成 —— 本套是验熵的，
+// 不关掉的话昼夜的加成会混进"零漂移"和"两方镜像"两条断言里，测出来的就不是熵了。
+const _dayNight0 = CONFIG.world.couplings.dayNight;
+CONFIG.world.couplings.dayNight = false;
 
 const bus0 = new EventBus();
 const w0 = new WorldState({ bus: bus0 });
@@ -259,6 +263,7 @@ T('周期总长不变（相位仍在 0..1）', hiPhase >= 0 && hiPhase < 1);
 // 还原，避免污染同进程内其它用例
 CONFIG.world.couplings.entropyToDayNight = false;
 CONFIG.world.couplings.entropyToUnits = false;
+CONFIG.world.couplings.dayNight = _dayNight0;   // 还原出厂默认
 AttributeCalculator.setWorldState(null);
 
 console.log(`熵/三核验收: ${pass} 通过 / ${fail} 失败`);
