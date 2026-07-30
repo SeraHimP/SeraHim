@@ -386,6 +386,7 @@ export class LaneMovementSystem {
   _steer(minion, dirX, dirY, speed, dt) {
     const rSelf = MINION_SIZES[minion.type] || 10;
     let fx = dirX, fy = dirY;         // 期望力（权重 1）
+    let enemyNear = false;            // 扫描半径内有没有敌方单位（走廊回归力据此让位）
     let sepX = 0, sepY = 0;           // 分离力累加
     let brake = 1;                    // 正前方有同向队友时减速（拉纵队，不追尾）
     let blockerX = 0, blockerY = 0, blocked = false; // v37：最近的正面锚定障碍（绕行用）
@@ -401,6 +402,9 @@ export class LaneMovementSystem {
       const ox = minion.pos.x - o.pos.x, oy = minion.pos.y - o.pos.y;
       const od = Math.hypot(ox, oy) || 0.001;
       const rSum = rSelf + (MINION_SIZES[o.type] || 10);
+      // 附近有没有敌人 —— 下面的"走廊中心线回归"要据此让位（见那一段的注释）。
+      // 判定放在 rSum+26 的早退【之前】：接敌前就得让位，等贴上了才让已经晚了。
+      if (!sameFac) enemyNear = true;
       if (od > rSum + 26) continue;
 
       const ux = ox / od, uy = oy / od;                    // 从邻居指向自己（斥力方向）
@@ -541,14 +545,39 @@ export class LaneMovementSystem {
       minion._detourSide = null;
     }
 
-    // ===== v39（Q3）：向走廊中心线回归（排队感）=====
+    // ===== 向走廊中心线回归（排队感）=====
     // 兵少时把队伍收拢成一列沿中线推进；兵多时 sep 的量级远大于它、自然被压过 → 恢复散开。
     // 只在行军（非追击、非锚定）时施加，避免干扰接敌走位。
+    //
+    // ==================== Q6：这段力原来太弱 ====================
+    // 用户观察到"上路乖乖排队、中/下路散开"。量出来的直接原因是**路点间距**：
+    // _advanceAlongLane 的期望方向是"指向当前路点"，横向偏移只在经过路点时才被顺带纠正。
+    // 实测三路段长：上路/下路 10 段（两头 2100 + 中间八段 135~300），中路只有 1 段（4131）。
+    // 中路目标永远是那个远端点 → 绕塔产生的偏移永远得不到纠正；上/下路走在中间密集段时
+    // 下一个路点很近，立刻被拉回纵队。所以"哪一路乖"取决于当前推到了哪一段。
+    //
+    // 而这段回归力本该兜住它，却兜不住：原来的权重是 min(0.5, dist/140) × 0.55，
+    // **上限只有 0.275**，在典型的 20~50px 偏移处只有 0.08~0.20 —— 远不足以对抗
+    // 分离力，于是偏移就那么留着了。现在权重进 CONFIG.tuning.laneCentering，实测调档。
+    //
+    // ⚠️ 必须在【附近有敌人】时让位。第一版没让位，结果居中力（要把兵拉到中线）
+    // 和分离力（要保持 20~30px 横向间距）在接敌瞬间对着挤，把兵从对手身边挤过去 ——
+    // tests/sim_passthrough.mjs 的"零未接敌穿越"从 0 变成 7。行军纪律该在交火时让位于交火。
+    const _lc = CONFIG.tuning?.laneCentering || {};
+    // 排队力的三个让位条件。每一条都是踩出来的，不是预防性写的：
+    //  ① enemyNear —— 不让位会和分离力对着挤，把兵从对手身边挤过去
+    //     （sim_passthrough 的"零未接敌穿越" 0 → 7）。
+    //  ② blocked  —— 正面有锚定障碍（兵墙/废墟）时正在绕行，居中力会把兵拽回被堵的中线，
+    //     于是绕不过去（sim_wall 的"近战全部越过兵墙" 6/6 → 5/6）。
+    //  ③ _detourSide —— 绕行黏性期内同理，别在半路把它拽回来。
+    // 共同的道理：**居中力是行军纪律，一旦在处理眼前的事就该让位。**
+    const _lcOn = _lc.enabled !== false && !enemyNear && !blocked && !minion._detourSide;
     if (!minion._offPath && this.mapSystem.getLane && minion._laneId) {
       const lane = this.mapSystem.getLane(minion._laneId);
       if (lane) {
         const n = this.mapSystem._nearestOnLane(lane, minion.pos.x, minion.pos.y);
-        if (n && n.dist > 6) {
+        const dead = _lc.deadZone ?? 6;
+        if (n && n.dist > dead) {
           // Q1：回归方向优先走【兵线回流场】——沿地形真能走回去的那条路。
           // 直线拉回（下面的 fallback）在凹形口袋里指的是墙，兵只会顶着凹壁磨；
           // 回流场是 navgrid 上到本路的 BFS 距离场，下山方向天然绕开地形，
@@ -557,12 +586,18 @@ export class LaneMovementSystem {
                      ? this.mapSystem.laneFlowDir?.(minion._laneId, minion.pos.x, minion.pos.y) : null;
           const cx = flow ? flow.x : (n.px - minion.pos.x) / n.dist;
           const cy = flow ? flow.y : (n.py - minion.pos.y) / n.dist;
-          let w = Math.min(0.5, n.dist / 140) * 0.55; // 越偏离中线拉得越紧，上限温和
+          // 排队力：接敌时归零（让位）；否则按 偏移/rampTo 线性升到满权重。
+          // 斜坡从 0 起算（不减死区）——这样默认参数与 v39 原式 **逐位等价**：
+          //   原式 min(0.5, d/140) × 0.55  ==  0.275 × min(1, d/70)
+          // 于是"默认不改行为、调了才改"是可证明的，而不是"看起来差不多"。
+          let w = _lcOn
+            ? (_lc.weight ?? 0.275) * Math.min(1, n.dist / Math.max(1, _lc.rampTo ?? 70))
+            : 0;
           // 野区回归：navgrid 让野区可走，小兵可能被挤进野区、或想抄近道斜穿。这里在偏离
           // 超过 LANE_KEEP 后把回归力抬到压过期望力，于是【不主动进野区、进了也尽快出来】。
-          // 只在行军时生效（_offPath 为真＝交战/追击中，那是合理例外，脱战后自然回归）。
+          // 这一段**不受接敌让位影响**：跑进野区是要纠正的错误位置，不是交火走位。
           if (n.dist > LANE_KEEP) w += Math.min(1, (n.dist - LANE_KEEP) / LANE_SPAN) * LANE_BACK_K;
-          fx += cx * w; fy += cy * w;
+          if (w > 0) { fx += cx * w; fy += cy * w; }
         }
       }
     }
