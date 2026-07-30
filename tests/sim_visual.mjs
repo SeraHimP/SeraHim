@@ -110,22 +110,22 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 }
 
 // ==================== 三、射程圈按需显示 ====================
+// 注：射程圈与塔灯的细节断言已经**整体搬到 tests/sim_lightring.mjs**。
+// 那一轮把布尔开关改成了按距离渐显（射程+50 起渐显、射程+10 全显），
+// 滞回随之取消、rangeMult 换成 rangeExtra，所以这里原来那几条钉的是已经不存在的
+// 实现细节。留在这里会变成"两套断言各钉一半"，改一处就得改两边。
+// 这里只保留最粗的一条：配置存在且默认按需显示（真正的逐档验证在 sim_lightring）。
 {
-  T('射程圈配置软编码且默认 auto',
-    CONFIG.ui?.rangeRing?.mode === 'auto'
-    && typeof CONFIG.ui.rangeRing.probeInterval === 'number'
-    && typeof CONFIG.ui.rangeRing.hysteresis === 'number');
   const ul = fs.readFileSync('src/presentation/UnitLayer.js', 'utf8');
-  T('显示条件接入 _wantRangeRing', /_wantRangeRing\(e, en, ctxDeps, selectedId\)/.test(ul));
+  T('射程圈配置软编码且默认按需显示',
+    CONFIG.ui?.rangeRing?.mode === 'auto'
+    && typeof CONFIG.ui.rangeRing.probeInterval === 'number');
   T('探测有节流（不是每帧给几十座塔查网格）', /probeInterval/.test(ul));
-  T('有滞回（边界上敌人踱步不会让圈疯狂开关）', /hysteresis/.test(ul));
   T('探测状态记在渲染层 entry 上，不往实体写字段',
     /en\.ringHot/.test(ul) && !/e\._ringHot/.test(ul));
   T('always 模式保留（可退回旧行为）', /'always'/.test(ul));
 
-  // 塔灯与 HDR 的配置也要软编码（实现本身靠浏览器冒烟验）
-  T('塔灯配置软编码', CONFIG.ui?.towerLight?.rangeMult === 1.2
-    && typeof CONFIG.ui.towerLight.poolSize === 'number');
+  T('塔灯配置软编码', typeof CONFIG.ui?.towerLight?.poolSize === 'number');
   T('HDR 配置软编码且默认走自动探测', CONFIG.ui?.hdr?.auto === true);
   const tr = fs.readFileSync('src/presentation/ThreeRenderer.js', 'utf8');
   T('塔灯是【固定大小的池】（数量变化会导致全材质重编译）',

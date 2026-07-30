@@ -487,9 +487,23 @@ export class UIManager {
   }
 
   // ==================== 点选面板（替代常驻列表） ====================
+  /**
+   * 能否被选中。**唯一判据** —— selectEntity / updateSelection 都读它，
+   * 且与 CanvasController._handleSelectClick 的命中条件保持同一口径
+   * （`e.alive || e._ruin || e._respawnAt`）。三处各写一份就会出现
+   * "点得中但打不开""打开了下一帧又消失"这类无声故障。
+   */
+  _selectable(e) {
+    return !!(e && (e.alive || e._ruin || e._respawnAt));
+  }
+
   selectEntity(id) {
     const e = this.entities.get(id);
-    if (!e || (!e.alive && !e._respawnAt)) return; // Q5：重生中的水晶尸体允许选中
+    // 可选中的三种"非存活"实体：重生中的水晶尸体、塔废墟、待重生的任何东西。
+    // 这里原来只放行 _respawnAt，于是**塔废墟点了没反应** ——
+    // CanvasController 的命中检测早就放行了 _ruin，命中也算出来了，是这一句把它拦掉的。
+    // 症状是"点了完全没动静"，最难查的那种：两处判断口径不一致，谁都没报错。
+    if (!e || !this._selectable(e)) return;
     this.selectedId = id;
     this.selCard.innerHTML = '';
     const card = e.type === 'tower' ? this.createTowerCard(e) : this.createMinionCard(e);
@@ -529,7 +543,8 @@ export class UIManager {
   updateSelection() {
     if (this.selectedId === null) return;
     const e = this.entities.get(this.selectedId);
-    if (!e || (!e.alive && !e._respawnAt)) {
+    // 与 selectEntity 同一个判据。只改上面那处的话，废墟能点开、但下一帧就被这里清掉。
+    if (!e || !this._selectable(e)) {
       this.log(`选中单位 #${this.selectedId} 已阵亡/移除`);
       this.clearSelection();
       return;

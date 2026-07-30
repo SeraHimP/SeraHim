@@ -577,15 +577,18 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
         <canvas id="whTimeBar" class="wh-bar"></canvas>
         <span class="wh-val" id="whClock">0:00</span>
       </div>
-      <div class="wh-row" id="whWeatherRow" style="display:none;" title="点击打开天气配置">
-        <span class="wh-label" id="weatherNow"></span>
-        <canvas id="weatherBar" class="wh-bar"></canvas>
-        <span class="wh-val" id="whWeatherVal"></span>
-      </div>
+      <!-- 行序（用户定稿）：① 昼夜/时间　② 熵　③ 天气及之后。
+           熵关闭时整行 display:none，此时看到的就是 昼夜 → 天气，中间不留空档。
+           顺序写在 DOM 里而不是靠 JS 插入 —— JS 插入顺序会随"谁先初始化"漂移。 -->
       <div class="wh-row" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
         <span class="wh-label" id="whEntIcon">🌀</span>
         <canvas id="whEntBar" class="wh-bar"></canvas>
         <span class="wh-val" id="whEntVal"></span>
+      </div>
+      <div class="wh-row" id="whWeatherRow" style="display:none;" title="点击打开天气配置">
+        <span class="wh-label" id="weatherNow"></span>
+        <canvas id="weatherBar" class="wh-bar"></canvas>
+        <span class="wh-val" id="whWeatherVal"></span>
       </div>
     </div>
 

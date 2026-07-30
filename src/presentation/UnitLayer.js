@@ -431,35 +431,63 @@ export class UnitLayer {
    *
    * 注意 findInRadius 的 aliveOnly=true：死了的敌人不该让圈继续亮着。
    */
-  _wantRangeRing(e, en, ctxDeps, selectedId) {
+  /**
+   * 射程圈的**显示强度**（0=完全不画，1=完全显示）。
+   *
+   * 用户定稿：敌人进到"射程 + fadeOuter"就开始渐显，进到"射程 + fadeInner"时完全显示。
+   * 改版前这里返回的是布尔值 —— 于是圈是"啪"地整片出现/消失，边界上敌人来回踱步时
+   * 只能靠滞回压抖动，观感仍然是硬开关。现在返回连续强度，滞回也就不需要了：
+   * 距离本身就是平滑的，透明度跟着距离走，天然不会闪。
+   *
+   * 返回 0..1。选中时恒为 1（选中是明确的意图表达，不该再打折）。
+   */
+  _rangeRingStrength(e, en, ctxDeps, selectedId) {
     const cfg = (CONFIG.ui && CONFIG.ui.rangeRing) || {};
     const mode = cfg.mode || 'auto';
-    if (mode === 'always') return true;
-    if (e.id === selectedId) { en.ringHot = true; return true; }
-    if (mode === 'selected') { en.ringHot = false; return false; }
+    if (mode === 'always') return 1;
+    if (e.id === selectedId) { en.ringHot = 1; return 1; }
+    if (mode === 'selected') { en.ringHot = 0; return 0; }
 
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
     const every = cfg.probeInterval ?? 0.25;
+    const outer = cfg.fadeOuter ?? 50;   // 射程 + 这么多：开始渐显
+    const inner = cfg.fadeInner ?? 10;   // 射程 + 这么多：完全显示
     if (en.ringAt === undefined || now - en.ringAt >= every) {
       en.ringAt = now;
       const ents = ctxDeps.entities;
       const base = ctxDeps.attrCalc.calc(e, ctxDeps.effects.getEffects(e.id)).attackRange || 250;
-      // 已经亮着就用放大后的半径判退出（滞回）
-      const r = en.ringHot ? base * (cfg.hysteresis ?? 1.12) : base;
-      let hot = false;
+      // 只查一次最外圈，取**最近**那个敌人的距离 —— 强度由它决定。
+      // 逐档查询（先查内圈再查外圈）会把一次网格查询变成两次，没有必要。
+      let best = Infinity;
       if (ents && ents.findInRadius) {
         const fac = e._mapFaction || e.faction;
-        for (const o of ents.findInRadius(e.pos.x, e.pos.y, r, null, true)) {
-          if (o.id === e.id || o.type === 'tower') continue;
+        for (const o of ents.findInRadius(e.pos.x, e.pos.y, base + outer, null, true)) {
+          if (o.id === e.id || o.type === 'tower' || !o.pos) continue;
           const of = o._mapFaction || o.faction;
           // 沙盒模式（塔无阵营）：任何单位都算"有敌人"，与索敌口径一致
           if (fac && of && of === fac) continue;
-          hot = true; break;
+          const d = Math.hypot(o.pos.x - e.pos.x, o.pos.y - e.pos.y);
+          if (d < best) best = d;
         }
       }
-      en.ringHot = hot;
+      // best <= 射程+inner → 1；best >= 射程+outer → 0；之间线性
+      let t = 0;
+      if (best < Infinity) {
+        const lo = base + inner, hi = base + outer;
+        t = hi > lo ? (hi - best) / (hi - lo) : (best <= hi ? 1 : 0);
+        t = Math.max(0, Math.min(1, t));
+      }
+      en.ringWant = t;
     }
-    return !!en.ringHot;
+    // 逐帧向目标强度插值：探测是 0.25s 一次的，直接用会看到台阶。
+    const fade = Math.max(0.01, cfg.fade ?? 0.18);
+    const dt = Math.min(0.1, Math.max(0, now - (en.ringLerpAt ?? now)));
+    en.ringLerpAt = now;
+    const cur = en.ringHot ?? 0;
+    const k = Math.min(1, dt / fade);
+    en.ringHot = cur + ((en.ringWant ?? 0) - cur) * k;
+    if (en.ringHot < 0.004) en.ringHot = 0;
+    return en.ringHot;
   }
 
   // ============ E 组同步（仅活体塔；幽灵与非塔一律清空） ============
@@ -478,7 +506,9 @@ export class UnitLayer {
     const hasWeapon = (e._skillInstances || []).some(sk => sk.skillId.startsWith('weapon_'));
     // 用户定稿：射程圈【只在选中 或 半径内有敌人时】显示。
     // 常显是画面最大的噪音源 —— 22 座塔 ×2 阵营的圈全亮着，地图上全是同心圆。
-    if (hasWeapon && !isNexus && !lodHideBar && this._wantRangeRing(e, en, ctxDeps, selectedId)) {
+    const ringK = (hasWeapon && !isNexus && !lodHideBar)
+      ? this._rangeRingStrength(e, en, ctxDeps, selectedId) : 0;
+    if (ringK > 0) {
       const range = attrCalc.calc(e, effects.getEffects(e.id)).attackRange || 250;
       const r = Math.round(range / 4) * 4;
       const rk = r + '|' + color;
@@ -489,6 +519,11 @@ export class UnitLayer {
         en.rangeFill = this._flatMesh(this._flatGeo('disc', r), this._flatMat(color, 0x0f / 255));
         en.rangeEdge = this._flatMesh(this._flatGeo('ring', r, 1), this._flatMat(color, 0x33 / 255));
       }
+      // 渐显靠改材质不透明度而不是重建网格：重建会在每一档强度上生成一份新材质，
+      // 渐变过程有几十帧，等于每次淡入都造几十个材质再丢掉。
+      const cfg = (CONFIG.ui && CONFIG.ui.rangeRing) || {};
+      en.rangeFill.material.opacity = (cfg.fillAlpha ?? (0x0f / 255)) * ringK;
+      en.rangeEdge.material.opacity = (cfg.edgeAlpha ?? (0x33 / 255)) * ringK;
       en.rangeFill.position.set(x, RING_LIFT + en.groundY, z);
       en.rangeEdge.position.set(x, RING_LIFT + en.groundY, z);
     } else if (en.rangeFill) {

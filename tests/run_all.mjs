@@ -4,7 +4,7 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const suites = ['sim_boot.mjs', 'sim_runtime.mjs', 'sim_accept.mjs', 'sim_batch3.mjs', 'sim_batch4.mjs', 'sim_passthrough.mjs', 'sim_full.mjs', 'sim_abyss.mjs', 'sim_avoid.mjs', 'sim_formation.mjs', 'sim_wall.mjs', 'sim_terrain.mjs', 'sim_ruin.mjs', 'sim_ops.mjs', 'sim_schema.mjs', 'sim_world.mjs', 'sim_entropy.mjs', 'sim_dragonsoul.mjs', 'sim_skilldesc.mjs', 'sim_skillparams.mjs', 'sim_custom.mjs', 'sim_support.mjs', 'sim_visual.mjs', 'sim_tpleditor.mjs', 'sim_balance_q2.mjs', 'sim_matrix.mjs', 'sim_tplio.mjs', 'sim_crystal.mjs', 'sim_weather.mjs', 'sim_v24.mjs', 'sim_v33.mjs', 'sim_v34.mjs', 'sim_v35.mjs', 'sim_v36.mjs', 'sim_v37.mjs', 'sim_v39.mjs', 'sim_v40.mjs'];
+const suites = ['sim_boot.mjs', 'sim_runtime.mjs', 'sim_accept.mjs', 'sim_batch3.mjs', 'sim_batch4.mjs', 'sim_passthrough.mjs', 'sim_full.mjs', 'sim_abyss.mjs', 'sim_avoid.mjs', 'sim_formation.mjs', 'sim_wall.mjs', 'sim_terrain.mjs', 'sim_ruin.mjs', 'sim_ops.mjs', 'sim_schema.mjs', 'sim_world.mjs', 'sim_entropy.mjs', 'sim_dragonsoul.mjs', 'sim_skilldesc.mjs', 'sim_skillparams.mjs', 'sim_custom.mjs', 'sim_support.mjs', 'sim_visual.mjs', 'sim_tpleditor.mjs', 'sim_lightring.mjs', 'sim_balance_q2.mjs', 'sim_matrix.mjs', 'sim_tplio.mjs', 'sim_crystal.mjs', 'sim_weather.mjs', 'sim_v24.mjs', 'sim_v33.mjs', 'sim_v34.mjs', 'sim_v35.mjs', 'sim_v36.mjs', 'sim_v37.mjs', 'sim_v39.mjs', 'sim_v40.mjs'];
 let failed = 0;
 for (const s of suites) {
   console.log(`\n===== ${s} =====`);

@@ -31,6 +31,7 @@ import { VegetationLayer } from './VegetationLayer.js';
 import { WaterLayer } from './WaterLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
 import { CONFIG } from '../data/Config.js';
+import { resolveDayPhase } from './DayNight.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
 
 // ===== 第 6.1 步：光照基座 =====
@@ -254,14 +255,17 @@ export class ThreeRenderer {
     // 用不到的灯把 intensity 设 0（仍然参与着色器，但不产生亮度）。
     // 池子只服务【离镜头最近的 N 座】塔，远处塔靠地面光晕贴花示意（见 UnitLayer）。
     this.towerLights = [];
-    const poolSize = Math.max(0, (CONFIG.ui?.towerLight?.poolSize ?? 8) | 0);
+    const _tl = CONFIG.ui?.towerLight || {};
+    const poolSize = Math.max(0, (_tl.poolSize ?? 20) | 0);
     for (let i = 0; i < poolSize; i++) {
-      // decay=2 是物理正确的平方反比；distance 每帧按塔的射程设，超出即完全无贡献
-      const l = new THREE.PointLight(0xffffff, 0, 100, 2);
+      // decay：2 = 物理正确的平方反比，但中心过曝、边缘断崖；1.2~1.5 才是"火柴"那种
+      // 平滑扩散（用户要的就是这个）。distance 每帧按"射程 + rangeExtra"设，超出即无贡献。
+      const l = new THREE.PointLight(0xffffff, 0, 100, _tl.decay ?? 1.35);
       l.castShadow = false;         // 44 座塔的阴影贴图不现实，且夜间光池本就该柔和
       this.scene.add(l);
       this.towerLights.push(l);
     }
+    this._towerGlow = null;         // 地面辉光贴片层（懒建，见 _syncTowerGlow）
 
     this.shadowLevel = 'off';      // 'all' | 'static' | 'off'
     this._sunDir = new THREE.Vector3(
@@ -634,9 +638,15 @@ export class ThreeRenderer {
 
     // 夜晚程度：0=白天完全不亮，1=午夜最亮。取相位在 [0.5,1) 上的正弦包，
     // 黄昏/黎明处自然渐入渐出（用阶跃的话天一黑所有灯"啪"一下全开）。
+    // 相位走 resolveDayPhase —— 与 HUD、WorldState 的数值耦合**同一口径**。
+    // 原来这里读 `CTX.__world.daynight.phase` 并要求 `ws.enabled`：那是第二个取值口，
+    // WorldState 被关掉（或还没跑第一帧）时相位就是 null → 灯永远不亮，
+    // 而 HUD 上明明显示着"夜晚"。同一个量两处取值，是本仓库反复出事的形状。
     const ws = (typeof window !== 'undefined') ? window.CTX?.__world : null;
-    const phase = (ws && ws.enabled && Number.isFinite(ws.daynight?.phase)) ? ws.daynight.phase : null;
-    let night = (phase !== null && phase >= 0.5) ? Math.sin((phase - 0.5) / 0.5 * Math.PI) : 0;
+    const phase = resolveDayPhase(window.gameTime || 0,
+                                  (typeof window !== 'undefined' ? window.CTX : null),
+                                  ws?.weather ? ws.weather.enabled : true).phase;
+    let night = (Number.isFinite(phase) && phase >= 0.5) ? Math.sin((phase - 0.5) / 0.5 * Math.PI) : 0;
     if (c.nightOnly === false) night = 1;
 
     // 节流分配
@@ -660,27 +670,132 @@ export class ThreeRenderer {
     }
 
     const picked = this._lightPick || [];
-    const mult = c.rangeMult ?? 1.2;
-    const baseI = c.intensity ?? 0.55;
+    const extra = c.rangeExtra ?? 50;
+    const decay = c.decay ?? 1.35;
+    const edgeLux = c.edgeLux ?? 0.16;
+    const clampLux = c.centerClampLux ?? 3.2;
     const fade = Math.min(1, (this._lightDt ?? 0.016) / Math.max(0.01, c.fade ?? 0.35));
     for (let i = 0; i < pool.length; i++) {
       const l = pool[i], e = picked[i];
       let want = 0;
       if (e && this.deps?.attrCalc) {
         const range = this.deps.attrCalc.calc(e, this.deps.effects.getEffects(e.id)).attackRange || 250;
-        l.distance = range * mult;
+        const R = range + extra;                       // 用户定稿：照亮"射程 + 50"
+        l.distance = R;
+        l.decay = decay;
         // 灯挂在塔顶附近而不是地面：放地面的话光只往外糊一圈，
         // 站在塔边的小兵反而被自己脚下的暗部吃掉。
-        l.position.set(e.pos.x, (this.units.muzzleYOf?.(e.id) ?? 40) + (c.heightBias ?? 10), e.pos.y);
+        const ly = (this.units.muzzleYOf?.(e.id) ?? 40) + (c.heightBias ?? 10);
+        l.position.set(e.pos.x, ly, e.pos.y);
         const col = e._mapFaction === 'blue' ? c.colorBlue : e._mapFaction === 'red' ? c.colorRed : c.colorNeutral;
         l.color.set(col || '#ffe6b8');
-        // 强度按 distance 归一：PointLight 用平方反比衰减，射程越大越需要更高强度
-        // 才能在边缘还有可见亮度，否则大射程塔的灯看起来反而更暗。
-        want = baseI * night * (l.distance / 250);
+        // ==================== 强度换算（这里曾经错了 5 个数量级）====================
+        // r155 起 PointLight 的 intensity 是【坎德拉】，地面照度 = intensity / d^decay。
+        // 第一版写成 `0.55 × 夜色 × (半径/250)` ≈ 0.66 —— 150px 处照度约 3e-5，
+        // 而场景方向光是 2.3，等于完全看不见，看起来就像"这功能没做"。
+        // 正确做法：从"边缘要剩多少照度"反推坎德拉，把半径的 decay 次方乘回去。
+        want = edgeLux * Math.pow(R, decay) * night;
+        // decay<2 时中心仍然很亮。按"最近可见距离"（塔身半径附近）估一次中心照度，
+        // 超过上限就整体压回来，免得塔脚糊成一片死白。
+        const dMin = Math.max(12, ly);                 // 灯到塔脚地面的最短距离
+        const centerLux = want / Math.pow(dMin, decay);
+        if (centerLux > clampLux) want *= clampLux / centerLux;
       }
       l.intensity += (want - l.intensity) * fade;
       if (l.intensity < 1e-4) l.intensity = 0;
     }
+    this._syncTowerGlow(c, night, picked);
+  }
+
+  /**
+   * 地面辉光贴片：给**够不上灯池**的塔补"这座塔也在发光"的观感。
+   * 它不参与光照计算，所以照不亮小兵 —— 真照明只有灯池那 N 盏。
+   * 但贴片数量无上限、开销恒定（一个 InstancedMesh + 一次 additive draw），
+   * 全图缩放时几十座塔一起亮才不至于只有最近的几座有光。
+   *
+   * 为什么不干脆把灯池开到 44：Three 的前向渲染把光源数编进着色器，
+   * 44 盏点光要在每个片元上算 44 次光照，地形那张大网格直接把帧时间吃光。
+   */
+  _syncTowerGlow(c, night, picked) {
+    if (c.glowDecal === false) { if (this._towerGlow) this._towerGlow.visible = false; return; }
+    const ents = this.deps?.entities;
+    if (!ents) return;
+    if (!this._towerGlow) {
+      // 径向渐变贴片：中心亮、边缘 smoothstep 到 0。用 shader 而不是贴图 ——
+      // 一是不用生成/解码纹理，二是 softness 可以随配置实时调。
+      const geo = new THREE.PlaneGeometry(1, 1);
+      geo.rotateX(-Math.PI / 2);                       // 躺平贴地
+      const mat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        // DoubleSide：几何体是 rotateX(-90°) 躺平的 Plane，绕轴旋转会把绕序翻过来，
+        // 单面材质下从上往下看正好是背面 → 整层被剔掉、什么都不显示（实测踩过）。
+        side: THREE.DoubleSide,
+        uniforms: { uSoft: { value: c.glowSoftness ?? 0.55 } },
+        vertexShader: `
+          attribute vec3 iPos; attribute float iScale; attribute vec3 iColor; attribute float iAlpha;
+          varying vec2 vUv; varying vec3 vCol; varying float vA;
+          void main(){ vUv = uv; vCol = iColor; vA = iAlpha;
+            vec3 p = position * iScale + iPos;
+            gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0); }`,
+        fragmentShader: `
+          uniform float uSoft; varying vec2 vUv; varying vec3 vCol; varying float vA;
+          void main(){
+            float d = length(vUv - 0.5) * 2.0;         // 0=中心 1=边缘
+            float inner = 1.0 - clamp(uSoft, 0.0, 0.99);
+            float a = 1.0 - smoothstep(inner, 1.0, d); // 中心满、边缘渐隐
+            a *= a;                                    // 再压一次，中心更聚拢
+            if (a * vA <= 0.001) discard;
+            gl_FragColor = vec4(vCol, a * vA); }`,
+      });
+      const MAX = 64;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 2;
+      const iPos = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
+      const iScale = new THREE.InstancedBufferAttribute(new Float32Array(MAX), 1);
+      const iColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
+      const iAlpha = new THREE.InstancedBufferAttribute(new Float32Array(MAX), 1);
+      const ig = new THREE.InstancedBufferGeometry();
+      ig.index = geo.index; ig.attributes = geo.attributes;
+      ig.setAttribute('iPos', iPos); ig.setAttribute('iScale', iScale);
+      ig.setAttribute('iColor', iColor); ig.setAttribute('iAlpha', iAlpha);
+      ig.instanceCount = 0;
+      mesh.geometry = ig;
+      this.scene.add(mesh);
+      this._towerGlow = mesh;
+      this._towerGlowMax = MAX;
+    }
+    const mesh = this._towerGlow;
+    mesh.material.uniforms.uSoft.value = c.glowSoftness ?? 0.55;
+    mesh.visible = night > 0.001;
+    if (!mesh.visible) { mesh.geometry.instanceCount = 0; return; }
+
+    const g = mesh.geometry;
+    const iPos = g.getAttribute('iPos'), iScale = g.getAttribute('iScale');
+    const iColor = g.getAttribute('iColor'), iAlpha = g.getAttribute('iAlpha');
+    const skip = new Set(picked.map(e => e.id));       // 有真光源的塔不再叠贴片（会过曝）
+    const extra = c.rangeExtra ?? 50;
+    const op = (c.glowOpacity ?? 0.3) * night;
+    const col = new THREE.Color();
+    let n = 0;
+    for (const e of ents.getAllTowers(true)) {
+      if (n >= this._towerGlowMax) break;
+      if (!e.pos || skip.has(e.id)) continue;
+      const range = this.deps.attrCalc
+        ? (this.deps.attrCalc.calc(e, this.deps.effects.getEffects(e.id)).attackRange || 250) : 250;
+      const R = (range + extra) * 2;                   // 贴片是直径
+      // 贴地高度走 MapSystem.heightAt —— 与 UnitLayer 给单位定高用的是同一个查询，
+      // 否则台阶地形上贴片会浮空或埋进地里。+1 是防和地面共面导致的 z-fighting。
+      const gy = this.units?.mapSystem?.heightAt ? this.units.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
+      iPos.setXYZ(n, e.pos.x, gy + 1, e.pos.y);
+      iScale.setX(n, R);
+      col.set((e._mapFaction === 'blue' ? c.colorBlue : e._mapFaction === 'red' ? c.colorRed : c.colorNeutral) || '#ffe6b8');
+      iColor.setXYZ(n, col.r, col.g, col.b);
+      iAlpha.setX(n, op);
+      n++;
+    }
+    g.instanceCount = n;
+    iPos.needsUpdate = iScale.needsUpdate = iColor.needsUpdate = iAlpha.needsUpdate = true;
   }
 
   render(controller) {
