@@ -390,9 +390,12 @@ import fs from 'fs';
   const wsSrc=fs.readFileSync(new URL('../src/systems/WeatherSystem.js', import.meta.url),'utf8');
   T('色带整条路径 fill（无接缝竖线、无闪烁）',
     panel.includes('每层画成【一条连续路径】'));
-  T('天气条为独立浮动窗口',
-    html.indexOf('id="weatherWrap"') > html.indexOf('<div id="canvasWrapper">'));
-  T('天气名固定宽度（色带不左右跳，v33 缩小）', html.includes('width: 62px; overflow: hidden'));
+  // 天气条已并入右上角的【世界状态小窗】（时间/昼夜 · 天气 · 熵 三段一窗），
+  // 不再是独立浮窗 #weatherWrap。这里改为钉住"天气是小窗里的一行"。
+  T('天气段在世界状态小窗内（画布层，非顶栏）',
+    html.indexOf('id="worldHud"') > html.indexOf('<div id="canvasWrapper">')
+    && html.indexOf('id="whWeatherRow"') > html.indexOf('id="worldHud"'));
+  T('天气名固定宽度（色带不左右跳）', html.includes('width: 62px; overflow: hidden'));
   T('游标在 20%（左=过去，右=未来）', panel.includes('CURSOR_RATIO = 0.20'));
   T('刻度只有 4 条', panel.includes('[0.2, 0.4, 0.6, 0.8]'));
   T('极端天气图标按【时长】判断绘制（不随滚动抖动）',

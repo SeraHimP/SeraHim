@@ -30,6 +30,7 @@ import { SettingsDialog } from './ui/SettingsDialog.js';
 import { ModeDialog } from './ui/ModeDialog.js';
 import { DebugLogger } from './utils/DebugLogger.js';
 import { syncAll as syncCustomContent } from './data/customContent.js';
+import { WorldHud } from './ui/WorldHud.js';
 
 CTX._uid = 0;
 DebugLogger.hookConsole();
@@ -489,8 +490,11 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'],
     'super': ['passive_super_commander'],
     'ram': ['passive_siege_weapon'],   // v40：攻城车的全部特殊机制都由这条被动驱动
-    'totem': ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura'],
-    'warlock': ['passive_warlock_aura'],
+    // 三个支援兵种（用户定稿重做）。旧的 totem_guardian/awaken/nourish/sacrifice
+    // 仍在 SkillLibrary 里（编辑器可手动装备），但不再默认装配 —— 它们的效果
+    // 与新的三件套重叠，同时装上会双份减伤、双份护盾。
+    'totem': ['passive_totem_aura', 'passive_totem_mend', 'passive_totem_bulwark'],
+    'warlock': ['passive_warlock_aura', 'passive_warlock_attune'],
     'corrupt': ['passive_corrupt_strike'],
   };
   // v42: merge map-level minionDefaultPassives overrides
@@ -881,6 +885,15 @@ updateModeBtnLabel();
 
 // ---------- 点选面板接线 ----------
 WeatherPanel.init(weatherSystem);
+// 世界状态小窗（时间/昼夜 · 天气 · 熵 三段合并在右上角一个窗口里）。
+// 点熵那一段直接跳设置面板的「🌍 世界」页 —— 用户看到熵在变，第一反应就是想调它。
+WorldHud.init(worldState, {
+  onEntropyClick: () => {
+    SettingsDialog._tab = 'world';
+    SettingsDialog.open({ waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem },
+      (m, k) => uiManager.log(m, k));
+  },
+});
 CTX.__weatherPanel = WeatherPanel; // 设置面板里的"天气配置…"入口
 
 canvasController.onSelect = (id) => uiManager.selectEntity(id);
@@ -1000,6 +1013,7 @@ function gameLoop(timestamp) {
   const t2 = performance.now();
   uiManager.update();
   WeatherPanel.update(); // 天气滚动条（关闭时零开销）
+  WorldHud.update(CTX.gameTime);  // 时间/昼夜 + 熵（熵无耦合开启时整行隐藏）
   const t3 = performance.now();
 
   PERF.sim += t1 - t0; PERF.render += t2 - t1; PERF.dom += t3 - t2; PERF.n++;

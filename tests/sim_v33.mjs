@@ -208,22 +208,29 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   T('对战首波倒计时 = 30s（Q22）', lws.nextWaveTime === 30);
   const spawned = [];
   lws.setCreateMinion((type) => { spawned.push(type); return { id: ++window._uid, alive: true }; });
-  // 推到第 10 波：图腾应出现且在队尾（远程之后）
-  for (let w = 1; w <= 10; w++) { spawned.length = 0; lws.waveNumber = w - 1; lws.nextWaveTime = 0; lws.update(0.01);
+  // 推到图腾的【起始波】：图腾应出现且在队尾（远程之后）。
+  // 波数从编排里读 —— 写死 10 的话，用户一改编排这条就假失败（上一轮就是这么挂的）。
+  const _totemFrom = CONFIG.gameRules.laneWaveComposition.find(r => r.type === 'totem').fromWave;
+  for (let w = 1; w <= _totemFrom; w++) { spawned.length = 0; lws.waveNumber = w - 1; lws.nextWaveTime = 0; lws.update(0.01);
     // 排空生成队列
     for (let t = 0; t < 30; t += 0.1) lws.update(0.1);
-    if (w === 9) { T('第9波无图腾', !spawned.includes('totem')); }
+    if (w === _totemFrom - 1) { T(`第 ${w} 波无图腾（起始波为第 ${_totemFrom} 波）`, !spawned.includes('totem')); }
   }
   const oneLane = spawned.slice(0, spawned.length / 6); // 单路单方序列（3路×2方）
-  T('第10波起生成图腾兵（对战模式，Q4）', spawned.includes('totem'));
+  // 用户重排了出兵编排（所有兵种默认生成、支援兵种错开波次）：
+  // 图腾从"第10波起每3波"改为"第8波起每4波"。这里跟着新编排断言，
+  // 并且【从 CONFIG 读】而不是再抄一遍数字 —— 抄一遍就等着下次改编排时又失同步。
+  const totemRule = CONFIG.gameRules.laneWaveComposition.find(r => r.type === 'totem');
+  T(`第 ${totemRule.fromWave} 波起生成图腾兵（编排驱动）`, spawned.includes('totem'));
   T('图腾排在远程之后（队尾）', (() => {
-    const li = spawned.lastIndexOf('ranged'), ti = spawned.indexOf('totem');
+    const ti = spawned.indexOf('totem');
     return ti > spawned.indexOf('ranged');
   })());
-  // 每3波：第11、12波无，第13波有
+  // 周期同样从编排里读（当前：第 8 波起每 4 波 → 9/10/11 无，12 有）
   const totemAt = (w) => { spawned.length = 0; lws.waveNumber = w - 1; lws.nextWaveTime = 0; lws.update(0.01);
     for (let t = 0; t < 30; t += 0.1) lws.update(0.1); return spawned.includes('totem'); };
-  T('图腾每3波一次（11✗ 12✗ 13✓）', !totemAt(11) && !totemAt(12) && totemAt(13));
+  const f = totemRule.fromWave, n = totemRule.everyN;
+  T(`图腾每 ${n} 波一次（${f + 1}✗ ${f + n}✓）`, !totemAt(f + 1) && totemAt(f + n));
   // 兵种开关
   CONFIG.gameRules.spawnEnabled.siege = false;
   const hadSiege = totemAt(12); // 第12波是炮车波（12%3===0）

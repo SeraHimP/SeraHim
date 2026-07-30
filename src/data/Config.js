@@ -15,16 +15,37 @@ export const CONFIG = {
     waveSiegeSuperInterval: 2,
     waveSuperFromWave: 20,
     waveTotemInterval: 5,
-    // ⚠️ 死配置（保留仅为兼容旧存档，全仓库无人读取，tests/sim_tplio.mjs 有断言守着）：
-    // 对战出兵早已全部由 laneWaveComposition 驱动，图腾兵的对战节奏由其中那条规则的
-    // fromWave/everyN 决定。已从模板编辑器面板移除，请勿再新增读取点。
-    battleTotemFromWave: 10,
-    battleTotemInterval: 3,
+    // ==================== 支援兵种数值（用户定稿的重做）====================
+    // 三个兵种的定位：图腾=续航/减伤、术士=增伤/破防、蚀骨=近战破甲。
+    // 全部软编码，源码里不留魔数。
+    supportUnits: {
+      // 图腾兵：周期性治疗【已损生命】百分比 + 减伤/护盾光环 + 自身高额固定护盾
+      totem: {
+        healIntervalSec: 15,   // 治疗周期（秒）
+        healMissingPct: 3,     // 每次治疗量 = 目标【已损生命】的百分比
+        auraDamageReduction: 10, // 光环：伤害减免（%）
+        auraShieldFlat: 25,      // 光环：固定护盾
+        selfShieldFlat: 900,     // 自身固定护盾（"高额"）
+      },
+      // 术士兵：给友军双穿+增伤光环；自身高额双穿
+      warlock: {
+        auraPenPct: 13,        // 光环：护甲穿透% / 魔法穿透%（双穿）
+        auraDamageAmpPct: 7,   // 光环：伤害增幅（%）
+        selfPenPct: 70,        // 自身双穿（%）
+      },
+      // 蚀骨兵：近战，血量高于普通近战，小范围内所有敌人双抗降低（一次即满层）
+      corrupt: {
+        radius: 110,           // "小范围"
+        resistPerStack: 6,     // 每层降低的护甲/魔抗
+        maxStacks: 5,          // 满层数（一次施加即满）
+      },
+    },
+    // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
+    // 仍受结构保护约束、且塔的索敌优先级最低（不会为了打塔而无视拆自己的小兵）。
+    towerAttacksTower: true,
     // 阵营龙魂规则（用户定稿："6 条龙 + ≥4 击杀才成魂、都不到 4 则无魂、之后出远古龙"）
     elementDragonTotal: 6,     // 元素龙总条数，打完即结算龙魂
     dragonSoulThreshold: 4,    // 成魂门槛（阵营击杀数）；双方都达标时按击杀多者，同分则无魂
-    // v33：兵种生成总开关（沙盒+对战通用；模板编辑器"生成规则"里可切）
-    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: false }, // v35：图腾默认不生成；攻城车(ram)默认不生成——暂无模型（编辑器可开）
     waveShieldInterval: 4,
     waveWarlockInterval: 6,
     waveCorruptInterval: 7,
@@ -37,22 +58,42 @@ export const CONFIG = {
     //   fromWave 第几波起开始（默认 0 = 一直）；everyN 每几波一次（默认 1 = 每波）
     //   触发判据统一为： wave >= fromWave && (wave - fromWave) % everyN === 0
     //   when   'nexusDown'（己方水晶已陷落时才出）/ '!nexusDown'（未陷落时才出）/ 省略 = 不限
-    // 默认值【逐条等价于此前的硬编码】，因此不改参数时对战节奏完全不变：
-    //   super: 水晶陷落才出 1 个；melee×3；siege 每 3 波 1 个(未陷落)；ranged×3；
-    //   totem 第10波起每3波1个；ram 第5波起每15波1个。
+    // 出兵编排（数组顺序 = 出兵先后）。用户："让所有兵种都会默认生成，你看怎么编排合适"。
+    //
+    // 编排思路：前排承伤 → 中段输出 → 后排支援，且支援兵种【错开波次】，
+    // 免得同一波里同时冒出图腾+术士+蚀骨，一波兵变成一支全能小队、兵线直接推穿。
+    //   · 近战 ×3 / 远程 ×3   每波必出，兵线的骨架
+    //   · 炮兵 ×1             每 3 波（水晶未陷落时），攻城主力
+    //   · 蚀骨 ×1             第 4 波起每 3 波。近战破甲，走在近战之后
+    //   · 术士 ×1             第 6 波起每 4 波。增伤光环，要有兵可增才有意义
+    //   · 图腾 ×1             第 8 波起每 4 波。续航/减伤，最后到场
+    //   · 攻城车 ×1           第 5 波起每 15 波（罕见的攻城事件）
+    //   · 超级兵 ×1           水晶陷落后每波，取代炮兵
+    // 蚀骨/术士/图腾的周期互质（3/4/4 且起始波错开），所以三者同时到场的波次很少，
+    // 出现时也确实该是一波强攻 —— 这是有意的节奏起伏，不是失控。
     laneWaveComposition: [
-      { type: 'super',  count: 1, when: 'nexusDown' },
-      { type: 'melee',  count: 3 },
-      { type: 'siege',  count: 1, everyN: 3, when: '!nexusDown' },
-      { type: 'ranged', count: 3 },
-      { type: 'totem',  count: 1, fromWave: 10, everyN: 3 },
-      { type: 'ram',    count: 1, fromWave: 5,  everyN: 15 },
+      { type: 'super',   count: 1, when: 'nexusDown' },
+      { type: 'melee',   count: 3 },
+      { type: 'corrupt', count: 1, fromWave: 4, everyN: 3 },
+      { type: 'siege',   count: 1, everyN: 3, when: '!nexusDown' },
+      { type: 'ranged',  count: 3 },
+      { type: 'warlock', count: 1, fromWave: 6, everyN: 4 },
+      { type: 'totem',   count: 1, fromWave: 8, everyN: 4 },
+      { type: 'ram',     count: 1, fromWave: 5, everyN: 15 },
     ],
-    // v33 Q4：对战模式特殊兵生成规则（模板编辑器"生成规则"可改）。目前只接入图腾兵。
-    battleTotemFromWave: 10,   // 第几波起开始生成
-    battleTotemInterval: 3,    // 每几波生成一次
-    // v33 Q4：各兵种"是否生成"总开关（沙盒+对战都生效；模板编辑器"生成规则"里可切）
-    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: false, warlock: true, corrupt: true, ram: false }, // v35：图腾默认不生成；攻城车(ram)默认不生成——暂无模型（编辑器可开）
+    // ⚠️ 死配置（保留仅为兼容旧存档，全仓库无人读取，tests/sim_tplio.mjs 有断言守着）：
+    // 对战出兵全部由上面的 laneWaveComposition 驱动，图腾兵的节奏由其中那条规则的
+    // fromWave/everyN 决定。已从模板编辑器面板移除，请勿再新增读取点。
+    battleTotemFromWave: 10,
+    battleTotemInterval: 3,
+    // 各兵种"是否生成"总开关（沙盒+对战都生效；模板编辑器「出兵编排」里可切）。
+    // 用户要求"让所有兵种都会默认生成"，所以全部为 true。
+    // 注意 ram（攻城车）没有 GLB 模型，会回退到程序化几何 —— 能玩，只是不好看。
+    //
+    // ⚠️ 这个键此前在同一个对象字面量里被声明了【两次】（另一处在上方约 30 行处），
+    // 后声明的静默覆盖前面的，改前面那份毫无效果 —— 又一个"改了没反应"。
+    // 已删除重复声明，这里是唯一一处。
+    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: true, warlock: true, corrupt: true, ram: true },
     dragonFirstDelay: 60,
     dragonInterval: 90,
     dragonHpScale: 12,
@@ -143,16 +184,28 @@ export const CONFIG = {
     // P5 熵/三核。全部软编码 —— 这套数值必然要反复调，写死在代码里等于每次调都改源码。
     // 平衡风险见 EntropySystem.js 顶部注释（正反馈 + 三道刹车）。
     entropy: {
-      enabled: true,        // 三核是否累积（与耦合开关分开：可以只观测不生效）
-      scale: 100,           // 核值 → 熵偏移的归一化尺度。越大熵越迟钝
-      decayPerSec: 0.6,     // 每秒衰减的核值（均值回复，防止一路顶死在上下限）
-      clampMin: 0.05,       // 熵值下限（极秩序也留一点余量，加成有硬顶）
-      clampMax: 0.95,       // 熵值上限
-      gainMinion: 1,        // 击杀小兵给击杀方一侧的核增量
-      gainTower: 25,        // 摧毁建筑
-      gainDragon: 40,       // 击杀巨龙（另见下方：龙是【反向】压回中性的）
-      redFromConflict: 0.5, // 每点冲突同时喂给红核（烈度）的比例
-      volatilityPct: 12,    // 红核满值时对非对称【幅度】的放大（%）
+      enabled: true,        // 三核是否推进（与耦合开关分开：可以只观测不生效）
+      // 用户定稿：三核**总数恒为 8**，互相争夺（black + white + red ≡ coreTotal）。
+      // 开局 8 颗全是未归属（红核）。每颗核 = 6.25% 的熵，要推满得连夺 8 次，
+      // 且红核拿光后必须从对方手里抢 —— 滚雪球在数学上不可能（总数守恒）。
+      coreTotal: 8,
+      // 下面三个数是【实测标定】的，不是估的。用 tools/killrate 探针量过真实对局：
+      // 稳态下每方约 35 次击杀/分钟（≈0.6/s），镜像对局两方净差仅约 1 次/分钟。
+      //   · chargeDecayPerSec 必须【低于】基准击杀率，否则衰减吃光充能、熵永远不动
+      //     —— 上一版取 1.5/s（是基准的 2.5 倍），实测 10 分钟对局终局熵恒为 0.500，
+      //     五个加成档位的推进度差一模一样，机制等于不存在。
+      //   · 也不能太低，否则回到"红方占优太快"（用户最初的反馈）。
+      //     取 0.3/s ≈ 基准的一半：基准表现净攒 0.3/s，压制方更快，被压制方几乎攒不动。
+      //   · chargePerCore 60 → 基准约 3.3 分钟夺一颗核，一局能推动几颗，量级合适。
+      chargePerCore: 60,
+      chargeDecayPerSec: 0.3,
+      coreReturnSec: 120,   // 每隔多少秒把优势方的一颗核归还未归属（慢速均值回复）
+      clampMin: 0,          // 熵值下限（8 颗全白 = 0）
+      clampMax: 1,          // 熵值上限（8 颗全黑 = 1）
+      gainMinion: 1,        // 击杀小兵的充能
+      gainTower: 20,        // 摧毁建筑的充能
+      gainDragon: 30,       // 保留字段；巨龙实际是【归还一颗己方核】而非充能
+      volatilityPct: 12,    // 未归属核为 0 时对非对称【幅度】的放大（%）
       nightStretchPct: 30,  // entropyToDayNight：熵满时夜晚相位延长（%）
     },
   },

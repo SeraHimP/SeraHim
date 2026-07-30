@@ -24,14 +24,15 @@ export const WeatherPanel = {
     this._weather = weatherSystem;
     this._canvas = document.getElementById('weatherBar');
     if (this._canvas) this._ctx = this._canvas.getContext('2d');
-    // 整条天气带都是配置入口（原来是条上的一个小按钮，太隐蔽）
-    const wrap = document.getElementById('weatherWrap');
+    // 整条天气带都是配置入口（原来是条上的一个小按钮，太隐蔽）。
+    // 天气段现在是世界状态小窗里的一行，不再是独立浮窗。
+    const wrap = document.getElementById('whWeatherRow');
     if (wrap) wrap.addEventListener('click', () => this.openConfig());
   },
 
   /** 每帧调用：渲染滚动预报条（天气关闭时隐藏整条） */
   update() {
-    const wrap = document.getElementById('weatherWrap');
+    const wrap = document.getElementById('whWeatherRow');
     if (!wrap || !this._weather) return;
     if (!this._weather.enabled) {
       if (wrap.style.display !== 'none') wrap.style.display = 'none';

@@ -105,7 +105,7 @@ export const AURA_DURATION = 3;
  * 不可能再出现文案一套、效果另一套。
  * effectsFn 需要 ally/ctx 时给最小桩；取不到就退回一句通用描述（绝不因为渲染文案而抛异常）。
  */
-export function auraDescription(name, range, includeSelf, effectsFn, minWave) {
+export function auraDescription(name, range, includeSelf, effectsFn, minWave, hostile = false) {
   let parts = [];
   try {
     const stub = { id: -1, type: 'melee', alive: true, pos: { x: 0, y: 0 }, baseStats: {}, currentHP: 1 };
@@ -116,10 +116,19 @@ export function auraDescription(name, range, includeSelf, effectsFn, minWave) {
   const who = includeSelf ? '自身及周围' : '周围';
   const body = parts.length ? parts.join('、') : '光环效果';
   const gate = minWave ? `第${minWave}波起默认装配；` : '';
-  return `唯一被动——${name}：${gate}为${who}${range}范围内的友军提供 ${body}。`;
+  // 敌对光环必须说"敌军"。说成"友军"就是文案与效果对不上 —— 用户 Q3 点过这类问题。
+  const side = hostile ? '敌军' : '友军';
+  return `唯一被动——${name}：${gate}为${who}${range}范围内的${side}施加 ${body}。`;
 }
 
-export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range = AURA_RANGE, includeSelf = false, minWave = 0, effectsFn }) {
+// minionsOnly：targetTypes 传 null（不限类型）时用它把塔/巨龙过滤掉。
+// 为什么需要这个开关：写死的 targetTypes 数组【收不到自制兵种】——
+// 用户做出来的兵拿不到任何光环，而这不会报错，只会静默变弱。
+// 传 null + minionsOnly 则天然覆盖所有现有与未来的兵种。
+// hostile：光环作用于敌方（蚀骨兵的双抗削弱）。initialStacks：一次施加即满层。
+export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range = AURA_RANGE,
+                                 includeSelf = false, minWave = 0, minionsOnly = false,
+                                 hostile = false, initialStacks = 1, effectsFn }) {
   return {
     id, name, icon,
     category: 'passive',
@@ -129,8 +138,8 @@ export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range
     // 文案从 effectsFn 现取现拼，不写死。写死过的后果见 Q3：超级兵指挥官实际给
     // +17% 减伤 / +1 生命恢复，文案却只有一句"为周围友军提供光环效果"，
     // 玩家在技能栏根本看不到自己吃了什么。现在改一个数值文案就跟着改。
-    get descTemplate() { return auraDescription(name, range, includeSelf, effectsFn, minWave); },
-    get description() { return auraDescription(name, range, includeSelf, effectsFn, minWave); },
+    get descTemplate() { return auraDescription(name, range, includeSelf, effectsFn, minWave, hostile); },
+    get description() { return auraDescription(name, range, includeSelf, effectsFn, minWave, hostile); },
     effects: [],
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
@@ -146,8 +155,13 @@ export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range
       // 施法者自己永远在半径 0 处，includeSelf=false 必须显式剔除。
       const allies = nearby.filter(a => {
         if (a.id === entityId) return includeSelf;
+        if (minionsOnly && (a.type === 'tower' || a.type === 'dragon')) return false;
         const af = a._mapFaction || a.faction, ef = entity._mapFaction || entity.faction;
-        return !ef || af === ef; // 沙盒无阵营单位视为友方，维持原行为
+        // hostile=true 的光环作用于【敌方】（如蚀骨兵的双抗削弱）。
+        // 沙盒模式没有阵营：友方光环维持原行为（视为友方），
+        // 敌对光环则一个都不发 —— 沙盒里给"所有人"上 debuff 显然不是本意。
+        if (hostile) return !!ef && !!af && af !== ef;
+        return !ef || af === ef;
       });
 
       for (const ally of allies) {
@@ -162,7 +176,7 @@ export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range
             stackPolicy: 'refresh',
             uniquePassive: true,
             ...bp,
-          }, id);
+          }, id, initialStacks > 1 ? { initialStacks } : undefined);
         }
       }
     },

@@ -203,7 +203,10 @@ function battle() {
     && CONFIG.templates.totem.attackRange > MELEE_RANGE_THRESHOLD
     && CONFIG.templates.tower.attackRange > MELEE_RANGE_THRESHOLD
     && ram.attackRange > MELEE_RANGE_THRESHOLD);
-  T('攻城车有体积与出兵开关（默认关闭）', MINION_SIZES.ram === 14 && CONFIG.gameRules.spawnEnabled.ram === false);
+  // 用户定稿改动："让所有兵种都会默认生成" —— 攻城车从默认关改为默认开
+  // （它没有 GLB 模型，会回退到程序化几何；能玩，只是不好看）。
+  T('攻城车有体积，且默认生成（用户定稿）',
+    MINION_SIZES.ram === 14 && CONFIG.gameRules.spawnEnabled.ram === true);
   T('攻城武器被动已定义', !!SkillLibrary.passive_siege_weapon);
 
   // 伤害四规则（精确数值）

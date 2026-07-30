@@ -39,66 +39,174 @@ const drift = Object.keys(before).filter(k => typeof before[k] === 'number' && M
 T(`熵已偏离中性（${w0.entropy.value.toFixed(2)}）但耦合关闭时属性零漂移（${drift.length} 项）`,
   w0.entropy.value > 0.6 && drift.length === 0);
 
-// ---- ② 归因方向：算【击杀方】不是死亡方 ----
-// 按死亡方记会把语义反过来——被打崩的一方反而推高自己的核。
-const e1 = new EntropySystem();
-e1.onDeath({ entity: { type: 'melee', _mapFaction: 'blue' } });   // 蓝方单位死 = 红方击杀
-T('蓝方单位阵亡 → 黑核（混乱侧）增长', e1.black > 0 && e1.white === 0);
-const e2 = new EntropySystem();
-e2.onDeath({ entity: { type: 'melee', _mapFaction: 'red' } });
-T('红方单位阵亡 → 白核（秩序侧）增长', e2.white > 0 && e2.black === 0);
-T('红核不分阵营，两种情况都增长', e1.red > 0 && e2.red > 0 && Math.abs(e1.red - e2.red) < 1e-9);
+// ---- ② 不变量：三核总数恒为 8（用户定稿）----
+// 这是整个模型的地基。总数一旦能变，"滚雪球不可能"的论证就失效了，
+// 所以任何操作之后都要成立 —— 包括推满、抢空、归还、归零之后。
+const CFG = () => CONFIG.world.entropy;
+const inv = (e) => e.black + e.white + e.red === CFG().coreTotal;
+const kills = (e, n, victimFac, type = 'melee') => {
+  for (let i = 0; i < n; i++) e.onDeath({ entity: { type, _mapFaction: victimFac } });
+};
+// 攒满一颗核需要的小兵击杀数
+const PER = Math.ceil(CFG().chargePerCore / CFG().gainMinion);
 
-// ---- ③ 熵值方向与量级 ----
-T(`红方压制 → 熵 > 0.5（${e1.value.toFixed(3)}）`, e1.value > 0.5);
-T(`蓝方压制 → 熵 < 0.5（${e2.value.toFixed(3)}）`, e2.value < 0.5);
-const e3 = new EntropySystem();
-T('无事件时熵为中性', Math.abs(e3.value - 0.5) < 1e-9);
-const e4 = new EntropySystem();
-e4.onDeath({ entity: { type: 'tower', _mapFaction: 'blue' } });
-T(`摧毁建筑的权重远高于小兵（${e4.black} vs ${e1.black}）`, e4.black === E().gainTower && e4.black > e1.black);
+{
+  const e = new EntropySystem();
+  T(`开局 8 颗全未归属（黑0/白0/红${e.red}）`, e.black === 0 && e.white === 0 && e.red === CFG().coreTotal);
+  T('开局熵为中性', Math.abs(e.value - 0.5) < 1e-9);
+  T('开局满足总数不变量', inv(e));
+}
 
-// ---- ④ 巨龙【反向】压回中性（报告："秩序压制混乱"）----
-// 从一个已经极化的局面出发才测得出来：核值有 0 下限，空系统里没有东西可压。
-const e5 = new EntropySystem();
-for (let i = 0; i < 60; i++) e5.onDeath({ entity: { type: 'melee', _mapFaction: 'blue' } });
-const polarized = e5.value;
-e5.onDeath({ entity: { type: 'dragon', _mapFaction: 'blue' } });  // 红方击杀龙
-T(`红方击杀巨龙反而降低自身极化（${polarized.toFixed(3)} → ${e5.value.toFixed(3)}）`,
-  e5.value < polarized);
-// 对照：同一局面下普通击杀是【提高】极化的，方向确实相反
-const e5b = new EntropySystem();
-for (let i = 0; i < 60; i++) e5b.onDeath({ entity: { type: 'melee', _mapFaction: 'blue' } });
-e5b.onDeath({ entity: { type: 'melee', _mapFaction: 'blue' } });
-T('对照：普通击杀提高极化（龙与之方向相反）', e5b.value > polarized);
-T('核值不会被压成负数', e5.black >= 0 && e5.white >= 0);
+// ---- ③ 争夺：攒满充能才夺一颗核，且优先从未归属里拿 ----
+{
+  const e = new EntropySystem();
+  kills(e, PER - 1, 'blue');                    // 蓝方单位阵亡 = 红方击杀
+  T(`充能未满时一颗核都不动（还差 1 杀，黑${e.black}）`, e.black === 0 && e.value === 0.5);
+  T('充能进度可读（供 UI 画进度条）', e.chargeProgress('black') > 0.9 && e.chargeProgress('black') < 1);
+  kills(e, 1, 'blue');
+  T(`充能攒满 → 夺得一颗核（黑${e.black}/白${e.white}/红${e.red}）`,
+    e.black === 1 && e.red === CFG().coreTotal - 1);
+  T('夺核后总数不变', inv(e));
+  T(`一颗核 = ${(100 / (2 * CFG().coreTotal)).toFixed(2)}% 的熵（${(e.value * 100).toFixed(2)}%）`,
+    Math.abs(e.value - (0.5 + 1 / (2 * CFG().coreTotal))) < 1e-9);
+}
 
-// ---- ⑤ 三道刹车必须都在 ----
-// 这个模型天然带正反馈（多杀→变强→杀更多），没有刹车就会滚雪球。
-const e6 = new EntropySystem();
-for (let i = 0; i < 100000; i++) e6.onDeath({ entity: { type: 'tower', _mapFaction: 'blue' } });
-T(`刹车①上限：极端堆核也不会突破 clampMax（${e6.value}）`, e6.value <= E().clampMax + 1e-9);
-const e7 = new EntropySystem();
-for (let i = 0; i < 100000; i++) e7.onDeath({ entity: { type: 'tower', _mapFaction: 'red' } });
-T(`刹车①下限：不会突破 clampMin（${e7.value}）`, e7.value >= E().clampMin - 1e-9);
+// ---- ④ 归因方向：算【击杀方】不是死亡方 ----
+// 按死亡方记会把语义反过来 —— 被打崩的一方反而推高自己的核。
+{
+  const a = new EntropySystem(); kills(a, PER, 'blue');
+  T(`蓝方单位阵亡 → 黑核（混乱侧）拿到核，熵升高（${(a.value * 100).toFixed(1)}%）`,
+    a.black === 1 && a.white === 0 && a.value > 0.5);
+  const b = new EntropySystem(); kills(b, PER, 'red');
+  T(`红方单位阵亡 → 白核（秩序侧）拿到核，熵降低（${(b.value * 100).toFixed(1)}%）`,
+    b.white === 1 && b.black === 0 && b.value < 0.5);
+}
 
-const e8 = new EntropySystem();
-for (let i = 0; i < 50; i++) e8.onDeath({ entity: { type: 'melee', _mapFaction: 'blue' } });
-const peak = e8.value;
-for (let i = 0; i < 3000; i++) e8.update(1 / 30);       // 100 秒无事发生
-T(`刹车②衰减：停止交火后熵回落（${peak.toFixed(3)} → ${e8.value.toFixed(3)}）`, e8.value < peak);
-T('刹车②衰减最终回到中性', Math.abs(e8.value - 0.5) < 1e-6);
-T('刹车③加成幅度可配且不大', CONFIG.world.entropyBonus.attackDamagePct <= 15);
-T('三核的每一项都软编码', ['scale', 'decayPerSec', 'clampMin', 'clampMax', 'gainMinion',
-  'gainTower', 'gainDragon', 'redFromConflict', 'volatilityPct', 'nightStretchPct']
-  .every(k => typeof E()[k] === 'number'));
+// ---- ⑤ 建筑权重远高于小兵 ----
+{
+  const a = new EntropySystem(); kills(a, 1, 'blue', 'tower');
+  const b = new EntropySystem(); kills(b, 1, 'blue', 'melee');
+  T(`摧毁建筑的充能远高于击杀小兵（${CFG().gainTower} vs ${CFG().gainMinion}）`,
+    a.chargeProgress('black') > b.chargeProgress('black') * 5);
+}
 
-// ---- ⑥ 红核只放大幅度、不改变方向 ----
-const e9 = new EntropySystem();
-T('无冲突时波动系数为 1', Math.abs(e9.volatility - 1) < 1e-9);
-for (let i = 0; i < 1000; i++) e9.onDeath({ entity: { type: 'melee', _mapFaction: 'blue' } });
-T(`高烈度下波动系数 > 1（${e9.volatility.toFixed(3)}）`, e9.volatility > 1);
-T('波动系数有上限（红核饱和）', e9.volatility <= 1 + E().volatilityPct / 100 + 1e-9);
+// ---- ⑥ 红核拿光后必须从对方手里抢（后期是真拉锯）----
+{
+  const e = new EntropySystem();
+  kills(e, PER * CFG().coreTotal, 'red');        // 蓝方连夺 8 颗
+  T(`蓝方可以拿满全部 ${CFG().coreTotal} 颗（白${e.white}/红${e.red}）`,
+    e.white === CFG().coreTotal && e.red === 0);
+  T('拿满时熵到达下限 0（绝对秩序）', Math.abs(e.value - 0) < 1e-9);
+  T('拿满后总数仍不变', inv(e));
+  // 再杀也不该溢出
+  kills(e, PER * 3, 'red');
+  T('已拿满后继续击杀不会溢出（核数不超过总数）',
+    e.white === CFG().coreTotal && inv(e));
+  // 现在红方开始抢
+  kills(e, PER, 'blue');
+  T(`红核为 0 时从对方手里抢（白 ${CFG().coreTotal} → ${e.white}，黑 ${e.black}）`,
+    e.white === CFG().coreTotal - 1 && e.black === 1);
+  T('抢核后总数不变', inv(e));
+}
+
+// ---- ⑦ 均值回复：优势方的核会被慢慢归还 ----
+{
+  const e = new EntropySystem();
+  kills(e, PER * 3, 'blue');
+  T(`红方拿到 3 颗（黑${e.black}）`, e.black === 3);
+  const peak = e.value;
+  // 跑够 coreReturnSec 应归还一颗
+  for (let i = 0; i < Math.ceil(CFG().coreReturnSec * 30) + 2; i++) e.update(1 / 30);
+  T(`静默 ${CFG().coreReturnSec}s 后归还一颗（黑 3 → ${e.black}，熵 ${(peak * 100).toFixed(1)}% → ${(e.value * 100).toFixed(1)}%）`,
+    e.black === 2 && e.value < peak);
+  T('归还后总数不变', inv(e));
+  // 跑很久应回到完全中性
+  for (let i = 0; i < Math.ceil(CFG().coreReturnSec * 30) * 4; i++) e.update(1 / 30);
+  T('长时间无交火后回到完全中性', e.black === 0 && e.white === 0 && e.red === CFG().coreTotal);
+  T('回到中性后熵为 0.5', Math.abs(e.value - 0.5) < 1e-9);
+}
+
+// ---- ⑧ 巨龙：反向归还己方核（"秩序压制混乱"）----
+{
+  const e = new EntropySystem();
+  kills(e, PER * 2, 'blue');
+  const before = e.black;
+  e.onDeath({ entity: { type: 'dragon', _mapFaction: 'blue' } });   // 红方击杀龙
+  T(`红方击杀巨龙反而归还自己一颗核（黑 ${before} → ${e.black}）`, e.black === before - 1);
+  T('巨龙归还后总数不变', inv(e));
+  // 对照：普通击杀是提高极化的，方向相反
+  const f = new EntropySystem();
+  kills(f, PER * 2, 'blue');
+  kills(f, PER, 'blue');
+  T('对照：普通击杀提高极化（与巨龙方向相反）', f.black === 3);
+}
+
+// ---- ⑨ 充能衰减：不持续压制就攒不满 ----
+{
+  const e = new EntropySystem();
+  kills(e, PER - 1, 'blue');
+  const p0 = e.chargeProgress('black');
+  for (let i = 0; i < 30 * 30; i++) e.update(1 / 30);   // 静默 30 秒
+  T(`充能会衰减（进度 ${(p0 * 100).toFixed(0)}% → ${(e.chargeProgress('black') * 100).toFixed(0)}%）`,
+    e.chargeProgress('black') < p0);
+  T('衰减不会把已经夺到的核吐出来（那是 coreReturnSec 的职责）', e.black === 0 && inv(e));
+}
+
+// ---- ⑩ 波动：未归属的核越少，世界越极化 ----
+{
+  const e = new EntropySystem();
+  T('开局波动为 1（8 颗全未归属）', Math.abs(e.volatility - 1) < 1e-9);
+  kills(e, PER * CFG().coreTotal, 'blue');
+  T(`红核归零时波动到顶（×${e.volatility.toFixed(2)}）`,
+    Math.abs(e.volatility - (1 + CFG().volatilityPct / 100)) < 1e-9);
+}
+
+// ---- ⑩·5 标定：衰减必须低于基准击杀率 ----
+// 这条是【实测标定的护栏】，不是风格偏好。真实对局稳态下每方约 35 次击杀/分钟
+// （≈0.58/s，用 killrate 探针量的）。若 chargeDecayPerSec ≥ 这个数，衰减会吃光充能、
+// 一颗核都夺不走 —— 上一版取 1.5/s，实测 10 分钟对局终局熵恒为 0.500，
+// 五个加成档位的推进度差一模一样，机制完全等于不存在，而这不会报任何错。
+// 反过来取得太低就回到用户最初反馈的"红方占优太快"。所以两边都钉住。
+{
+  const BASELINE_KILLS_PER_SEC = 0.58;
+  const d = CFG().chargeDecayPerSec;
+  T(`充能衰减 ${d}/s 低于基准击杀率 ${BASELINE_KILLS_PER_SEC}/s（否则熵永远不动）`,
+    d < BASELINE_KILLS_PER_SEC * CFG().gainMinion);
+  T(`充能衰减不低于基准的 1/4（否则熵变化过快，回到"红方占优太快"）`,
+    d >= BASELINE_KILLS_PER_SEC * CFG().gainMinion * 0.25);
+  // 夺一颗核的时间量级：基准净攒 = 击杀率 − 衰减
+  const net = BASELINE_KILLS_PER_SEC * CFG().gainMinion - d;
+  const secsPerCore = CFG().chargePerCore / net;
+  T(`基准表现下夺一颗核约 ${(secsPerCore / 60).toFixed(1)} 分钟（应在 1~10 分钟之间）`,
+    secsPerCore > 60 && secsPerCore < 600);
+  // 核归还必须慢于夺取，否则优势永远攒不起来
+  T(`归还间隔 ${CFG().coreReturnSec}s 慢于夺取耗时 ${secsPerCore.toFixed(0)}s`,
+    CFG().coreReturnSec > secsPerCore * 0.5);
+}
+
+// ---- ⑪ 软编码 ----
+T('三核的每一项都软编码', ['coreTotal', 'chargePerCore', 'chargeDecayPerSec', 'coreReturnSec',
+  'gainMinion', 'gainTower', 'volatilityPct', 'nightStretchPct']
+  .every(k => typeof CFG()[k] === 'number'));
+T('核总数可配（不是写死的 8）', (() => {
+  const saved = CFG().coreTotal;
+  CONFIG.world.entropy.coreTotal = 4;
+  const e = new EntropySystem();
+  const ok = e.red === 4 && inv(e);
+  CONFIG.world.entropy.coreTotal = saved;
+  return ok;
+})());
+T('reset 回到开局态', (() => {
+  const e = new EntropySystem();
+  kills(e, PER * 3, 'blue');
+  e.reset();
+  return e.black === 0 && e.white === 0 && e.red === CFG().coreTotal && inv(e);
+})());
+T('snapshot 暴露 UI 需要的全部字段', (() => {
+  const sn = new EntropySystem().snapshot();
+  return ['black', 'white', 'red', 'total', 'value', 'volatility', 'charge']
+    .every(k => sn[k] !== undefined);
+})());
 
 // ---- ⑦ 打开耦合：方向正确、另一方镜像、可解释 ----
 CONFIG.world.couplings.entropyToUnits = true;

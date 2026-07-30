@@ -42,7 +42,8 @@ export class WorldState {
     this.entropySystem = new EntropySystem(bus, entities);
     // 兼容既有读法：this.entropy 是一份【只读快照】，每帧 update 时刷新。
     // （P3 时期这里是个恒定中性的占位对象，读它的地方都已就位，改成快照后无需改调用方。）
-    this.entropy = { value: 0.5, black: 0, white: 0, red: 0, volatility: 1 };
+    this.entropy = { value: 0.5, black: 0, white: 0, red: 8, total: 8, volatility: 1,
+                     charge: { black: 0, white: 0 } };
     this.daynight = { phase: 0.5, isNight: false, label: '正午' };
     this.souls = { blue: [], red: [] };
     this._enabled = true;
@@ -90,7 +91,12 @@ export class WorldState {
     this.entropy.black = this.entropySystem.black;
     this.entropy.white = this.entropySystem.white;
     this.entropy.red = this.entropySystem.red;
+    this.entropy.total = this.entropySystem.cfg.coreTotal;
     this.entropy.volatility = this.entropySystem.volatility;
+    this.entropy.charge = {
+      black: this.entropySystem.chargeProgress('black'),
+      white: this.entropySystem.chargeProgress('white'),
+    };
 
     // ---- ② 昼夜相位（渲染层已在用同一个函数，这里只是把它数值化）----
     // 熵 → 昼夜：熵越高夜越长。做法是拉伸【夜的那一半】而不是改整个周期速度 ——

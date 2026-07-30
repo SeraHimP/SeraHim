@@ -1,4 +1,4 @@
-﻿import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION } from './_helpers.js';
+﻿import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION, AURA_RANGE } from './_helpers.js';
 import { CONFIG } from '../../data/Config.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵与沙盒大型兵）都算。
@@ -216,21 +216,122 @@ export const minionPassives = {
     },
   },
 
+  // ==================== 图腾兵（用户定稿重做）====================
+  // 定位：续航 + 减伤。三件事拆成三个技能，各自单一职责：
+  //   passive_totem_aura     减伤 + 固定护盾光环（自身也吃）
+  //   passive_totem_mend     每 15 秒治疗自身与附近友军【已损生命】的 3%
+  //   passive_totem_bulwark  自身高额固定护盾
+  // targetTypes 传 null + minionsOnly：写死的类型数组【收不到自制兵种】，
+  // 用户做出来的兵会拿不到光环，而这不报错、只是静默变弱。
   passive_totem_aura: makeAuraPassive({
-    id: 'passive_totem_aura', name: '图腾光环', icon: '🟣',
-    casterType: 'totem', targetTypes: ['melee', 'ranged', 'siege', 'super', 'totem'],
+    id: 'passive_totem_aura', name: '图腾守护', icon: '🟣',
+    casterType: 'totem', targetTypes: null, minionsOnly: true,
     includeSelf: true,
-    effectsFn: (ally, ctx, waveNumber) => {
-      const list = [
-        { name: '图腾光环', icon: '🟣', kind: 'stat', statKey: 'allStatsPct', flatValue: 3, description: '全属性+3%' },
+    effectsFn: () => {
+      const c = CONFIG.gameRules.supportUnits?.totem || {};
+      const dr = c.auraDamageReduction ?? 10, sh = c.auraShieldFlat ?? 25;
+      return [
+        { name: '图腾守护', icon: '🟣', kind: 'stat', statKey: 'damageReduction',
+          flatValue: dr, description: `伤害减免+${dr}%` },
+        { name: '图腾守护', icon: '🟣', kind: 'stat', statKey: 'shieldFixedMax',
+          flatValue: sh, description: `固定护盾+${sh}` },
       ];
-      if (waveNumber >= 10) {
-        list.push({ name: '图腾光环', icon: '🟣', kind: 'stat', statKey: 'attackRange', flatValue: 10, description: '射程+10' });
-        list.push({ name: '图腾光环', icon: '🟣', kind: 'stat', statKey: 'damageReduction', flatValue: 33, description: '减伤+33%' });
-      }
-      return list;
     },
   }),
+
+  // 治疗【已损生命】而不是最大生命：满血单位不会浪费掉一次治疗，
+  // 残血单位越危险回得越多 —— 与 LoL 同类效果同口径。
+  passive_totem_mend: {
+    id: 'passive_totem_mend',
+    name: '图腾涌泉',
+    icon: '💧',
+    color: '#bb86fc',
+    category: 'passive',
+    _cfg: () => CONFIG.gameRules.supportUnits?.totem || {},
+    _text() {
+      const c = this._cfg();
+      return `唯一被动——图腾涌泉：每 ${c.healIntervalSec ?? 15} 秒，为自身与 ${AURA_RANGE} 范围内的友军`
+           + `恢复（【{val}】=各自【已损生命】×${c.healMissingPct ?? 3}%）生命。`;
+    },
+    get description() { return this._text(); },
+    get descTemplate() { return this._text(); },
+    computeCurrent(entity) {
+      const c = this._cfg();
+      const max = entity?.baseStats?.maxHP || 0;
+      const missing = Math.max(0, max - (entity?.currentHP || 0));
+      return Math.round(missing * (c.healMissingPct ?? 3) / 100);
+    },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive || e.type !== 'totem') return;
+      const c = CONFIG.gameRules.supportUnits?.totem || {};
+      const every = c.healIntervalSec ?? 15;
+      if (typeof instance.state?.mendT !== 'number') instance.state = { ...(instance.state || {}), mendT: 0 };
+      instance.state.mendT += dt;
+      // 容差 + 减掉一个周期保留余量：dt 是 1/30 这种二进制不精确的数，
+      // 朴素的 `< every` 每个周期都会少触发一次，清 0 又会持续漂移（behaviorVM 里踩过）。
+      if (instance.state.mendT < every - 1e-9) return;
+      instance.state.mendT -= every;
+
+      const pct = (c.healMissingPct ?? 3) / 100;
+      const targets = ctx.entityContainer.findInRadius(e.pos.x, e.pos.y, AURA_RANGE, null, true);
+      const ef = e._mapFaction || e.faction;
+      let selfHealed = false;
+      for (const a of targets) {
+        if (a.type === 'tower' || a.type === 'dragon') continue;
+        const af = a._mapFaction || a.faction;
+        if (ef && af !== ef) continue;          // 沙盒无阵营则视为友方（与其它光环同口径）
+        const max = a.baseStats?.maxHP || 0;
+        const missing = Math.max(0, max - (a.currentHP || 0));
+        if (missing <= 0) continue;             // 满血的不浪费
+        a.currentHP = Math.min(max, (a.currentHP || 0) + missing * pct);
+        if (a.id === e.id) selfHealed = true;
+      }
+      // 自身单独补一次：findInRadius 是否返回半径 0 处的查询者本身不该被依赖。
+      // 用 selfHealed 去重，避免自己被治疗两次。
+      if (!selfHealed) {
+        const selfMax = e.baseStats?.maxHP || 0;
+        const selfMissing = Math.max(0, selfMax - (e.currentHP || 0));
+        if (selfMissing > 0) e.currentHP = Math.min(selfMax, e.currentHP + selfMissing * pct);
+      }
+    },
+  },
+
+  // 自身高额固定护盾。走 onEquip 改 baseStats.shieldFixedMax 而不是挂一个 stat 效果：
+  // 护盾上限是"这个单位有多厚"的固有属性，不是临时 buff；挂效果会在面板上
+  // 混进一条永久状态，还会被治疗强化之类的百分比修正二次缩放。
+  passive_totem_bulwark: {
+    id: 'passive_totem_bulwark',
+    name: '图腾壁垒',
+    icon: '🛡️',
+    color: '#bb86fc',
+    category: 'passive',
+    _cfg: () => CONFIG.gameRules.supportUnits?.totem || {},
+    _text() { return `唯一被动——图腾壁垒：自身获得（【{val}】=${this._cfg().selfShieldFlat ?? 900}）点固定护盾。`; },
+    get description() { return this._text(); },
+    get descTemplate() { return this._text(); },
+    computeCurrent() { return this._cfg().selfShieldFlat ?? 900; },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.baseStats) return;
+      const v = CONFIG.gameRules.supportUnits?.totem?.selfShieldFlat ?? 900;
+      instance.state = { ...(instance.state || {}), prevShield: e.baseStats.shieldFixedMax || 0 };
+      e.baseStats.shieldFixedMax = (e.baseStats.shieldFixedMax || 0) + v;
+      e.shieldFixedCurrent = e.baseStats.shieldFixedMax;   // 出场即满盾
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.baseStats) return;
+      // 还原到装备前的值而不是"减掉 v"：v 可能在装备期间被改过，
+      // 减法会留下残差（换一次技能就多/少一点盾，越换越偏）。
+      if (typeof instance.state?.prevShield === 'number') {
+        e.baseStats.shieldFixedMax = instance.state.prevShield;
+        e.shieldFixedCurrent = Math.min(e.shieldFixedCurrent || 0, e.baseStats.shieldFixedMax);
+      }
+    },
+  },
 
   passive_totem_sacrifice: {
     id: 'passive_totem_sacrifice',
@@ -267,43 +368,91 @@ export const minionPassives = {
   },
 
   // ==================== 新大型小兵光环/被动 ====================
+  // ==================== 术士兵（用户定稿重做）====================
+  // 定位：增伤 + 破防。给友军双穿与伤害增幅，自身带高额双穿。
+  //
+  // 口径说明：用户写的是"13%固定双穿"/"70%固定双穿"，两个数都带 %，
+  // 所以取【百分比穿透】（armorPenPercent / magicPenPercent），
+  // 而不是固定穿透（armorPenFlat / magicPenFlat）—— 后者的单位是点数、不带 %。
+  // 若本意是固定点数，改 CONFIG.gameRules.supportUnits.warlock 的 statKey 即可，
+  // 数值本身已软编码。
   passive_warlock_aura: makeAuraPassive({
-    id: 'passive_warlock_aura', name: '术法光环', icon: '🧙',
-    casterType: 'warlock', targetTypes: ['melee', 'ranged'],
-    effectsFn: () => [
-      { name: '术法光环', icon: '🧙', kind: 'stat', statKey: 'attackDamage', percentValue: 20, description: '攻击力+20%' },
-      { name: '术法光环', icon: '🧙', kind: 'stat', statKey: 'magicPenFlat', flatValue: 15, description: '固定法穿+15' },
-    ],
+    id: 'passive_warlock_aura', name: '术法共鸣', icon: '🧙',
+    casterType: 'warlock', targetTypes: null, minionsOnly: true,
+    effectsFn: () => {
+      const c = CONFIG.gameRules.supportUnits?.warlock || {};
+      const pen = c.auraPenPct ?? 13, amp = c.auraDamageAmpPct ?? 7;
+      return [
+        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'armorPenPercent',
+          flatValue: pen, description: `护甲穿透+${pen}%` },
+        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'magicPenPercent',
+          flatValue: pen, description: `法术穿透+${pen}%` },
+        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'damageAmpPct',
+          flatValue: amp, description: `伤害增幅+${amp}%` },
+      ];
+    },
   }),
 
-  passive_corrupt_strike: {
-    id: 'passive_corrupt_strike',
-    name: '蚀骨',
-    icon: '🦇',
-    color: '#6b8e23',
+  // 自身双穿走【状态】而不是改 baseStats：用户明确说"自身拥有70%固定双穿（状态）"，
+  // 而且做成状态后在属性面板里看得见，符合"所有修正都要可解释"这条。
+  passive_warlock_attune: {
+    id: 'passive_warlock_attune',
+    name: '术法贯通',
+    icon: '🔮',
+    color: '#8e44ad',
     category: 'passive',
-    description: '蚀骨兵：攻击给塔叠加“腐蚀”，每层-2双抗，最多5层，持续5秒。',
-    descTemplate: '唯一被动——蚀骨：攻击给塔叠加腐蚀，每层-2双抗，最多5层。',
+    _cfg: () => CONFIG.gameRules.supportUnits?.warlock || {},
+    _text() { return `唯一被动——术法贯通：自身获得（【{val}】=${this._cfg().selfPenPct ?? 70}%）护甲穿透与法术穿透。`; },
+    get description() { return this._text(); },
+    get descTemplate() { return this._text(); },
+    computeCurrent() { return this._cfg().selfPenPct ?? 70; },
     effects: [],
-    onHit: (attackerId, targetId, instance, ctx) => {
-      const target = ctx.entityContainer.get(targetId);
-      if (!target || !target.alive || target.type !== 'tower') return;
-      ctx.effectRegistry.apply(targetId, {
-        name: '腐蚀', icon: '🦇', kind: 'stat', statKey: 'armor', type: 'debuff',
-        flatValue: -2, perStackFlat: -2, duration: 5,
-        stackable: true, maxStacks: 5, stackPolicy: 'stack', uniquePassive: true,
-        descTemplate: '唯一被动——蚀骨：护甲降低（【{val}】=-2×层数），最多5层。',
-        description: '护甲腐蚀（{stacks}/5层）',
-      }, 'passive_corrupt_armor');
-      ctx.effectRegistry.apply(targetId, {
-        name: '腐蚀', icon: '🦇', kind: 'stat', statKey: 'magicResist', type: 'debuff',
-        flatValue: -2, perStackFlat: -2, duration: 5,
-        stackable: true, maxStacks: 5, stackPolicy: 'stack', uniquePassive: true,
-        descTemplate: '唯一被动——蚀骨：魔抗降低（【{val}】=-2×层数），最多5层。',
-        description: '魔抗腐蚀（{stacks}/5层）',
-      }, 'passive_corrupt_mr');
+    // 用 aura 机制常驻（无倒计时环、不会闪），每帧节流刷新一次即可。
+    // 不用 permanent 效果是因为改了配置要能立刻跟上，permanent 只在装备那一刻算一次。
+    onFrame: (entityId, dt, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive || e.type !== 'warlock') return;
+      if (typeof instance.state?.t !== 'number') instance.state = { ...(instance.state || {}), t: 0 };
+      instance.state.t += dt;
+      if (instance.state.t < AURA_THROTTLE) return;
+      instance.state.t = 0;
+      const pen = CONFIG.gameRules.supportUnits?.warlock?.selfPenPct ?? 70;
+      for (const key of ['armorPenPercent', 'magicPenPercent']) {
+        ctx.effectRegistry.apply(entityId, {
+          name: '术法贯通', icon: '🔮', kind: 'stat', statKey: key,
+          flatValue: pen, aura: true, auraGrace: 1.0,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `${key === 'armorPenPercent' ? '护甲' : '法术'}穿透+${pen}%`,
+          descTemplate: `唯一被动——术法贯通：${key === 'armorPenPercent' ? '护甲' : '法术'}穿透+${pen}%。`,
+        }, 'passive_warlock_attune_' + key);
+      }
     },
   },
+
+  // ==================== 蚀骨兵（用户定稿重做）====================
+  // 改为【近战】、血量高于普通近战（数值在 CONFIG.templates.corrupt），
+  // 并对小范围内所有敌人施加双抗削弱 —— 且"叠层直满层"：一次施加即满层，
+  // 不用靠平A慢慢叠。做成敌对光环而不是 onHit，因为它的语义是"站在附近就被腐蚀"，
+  // 与"打到才叠"完全不同（原实现是 onHit 且只对塔生效）。
+  passive_corrupt_strike: makeAuraPassive({
+    id: 'passive_corrupt_strike', name: '蚀骨', icon: '🦇',
+    casterType: 'corrupt', targetTypes: null, minionsOnly: false,
+    hostile: true, initialStacks: 99,   // 99 会被 EffectRegistry 夹到 maxStacks，即"一次满层"
+    range: (CONFIG.gameRules.supportUnits?.corrupt?.radius) ?? 110,
+    effectsFn: () => {
+      const c = CONFIG.gameRules.supportUnits?.corrupt || {};
+      const per = c.resistPerStack ?? 6, mx = c.maxStacks ?? 5;
+      const mk = (key, label) => ({
+        name: '腐蚀', icon: '🦇', kind: 'stat', statKey: key, type: 'debuff',
+        flatValue: -per, perStackFlat: -per,
+        stackable: true, maxStacks: mx, stackPolicy: 'stack',
+        stackKey: `corrupt_${key}`,
+        description: `${label}降低（{stacks}/${mx}层，每层-${per}）`,
+        descTemplate: `唯一被动——蚀骨：${label}降低（【{val}】=-${per}×层数），最多${mx}层。`,
+      });
+      return [mk('armor', '护甲'), mk('magicResist', '魔抗')];
+    },
+  }),
 
 };
 

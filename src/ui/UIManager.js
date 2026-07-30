@@ -156,6 +156,77 @@ export class UIManager {
    *     把正在 hover/点击的元素换掉了。现在脏检查的 key 只含档位，
    *     档位不变就完全不碰 DOM，hover 和点击都稳定。
    */
+  /**
+   * 世界影响行（昼夜 / 熵 / 龙魂）。
+   *
+   * 用户："我目前看不出来熵对世界有啥影响，在单位属性栏里也加上熵修正的描述"。
+   * 熵和天气一样【不进 EffectRegistry】（全局连续场），所以效果栏里看不到它，
+   * 必须有自己的展示位 —— 否则一个悄悄改属性的机制对玩家完全不可见。
+   *
+   * 视觉语言与上面的天气行【完全一致】（同款 34px 三角格 + 边框点亮 + 图标 + 悬停明细）：
+   * 天气与熵都属于"世界给这个单位的修正"，同一类信息用两种控件表达，用户得学两遍。
+   * 差别只在颜色语义：蓝=秩序侧（蓝方）受益 / 红=混乱侧（红方）受益 / 灰=无修正。
+   *
+   * 数据来源是 WorldState.getBreakdown(entity)【按选中单位实时计算】——
+   * 同一时刻蓝红两方拿到的修正是反的，显示一张全局表就会有一半人看到错的。
+   */
+  _updateWorldRow(card, entity) {
+    const box = card?.querySelector?.('.world-row');
+    if (!box || !entity) return;
+    const ws = window.CTX?.__world;
+    const rows = (ws && ws.enabled) ? ws.getBreakdown(entity) : [];
+    if (!rows.length) {
+      if (box.dataset.on !== '0') { box.dataset.on = '0'; box.innerHTML = ''; box.style.display = 'none'; }
+      return;
+    }
+    box.style.display = '';
+    box.dataset.on = '1';
+
+    // 节流 0.5s + 脏检查：与天气行同款。用户提醒过每帧重建 innerHTML 会把正在
+    // hover/点击的元素换掉，导致"鼠标移上去一直在刷新、点不动"。
+    const nowMs = performance.now();
+    if (box._nextAt && nowMs < box._nextAt) return;
+    box._nextAt = nowMs + 500;
+
+    const key = rows.map(r => r.source + '|' + r.detail).join('#');
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+
+    const fac = entity._mapFaction || entity.faction;
+    const ICONS = { 昼夜: '🕓', 熵: '🌀', 龙魂: '🐉' };
+    box.innerHTML = rows.map(r => {
+      const head = r.source.replace(/[ ·].*$/, '').slice(0, 2);
+      const icon = ICONS[head] || (r.source.startsWith('熵') ? '🌀' : '🌍');
+      // 边框点亮格数 = 这条修正的强弱（0~3）。熵按偏离中性的程度，其余给满。
+      let lit = 3, cls = '';
+      if (r.source.startsWith('熵')) {
+        const v = ws.entropy?.value ?? 0.5;
+        const dev = Math.abs(v - 0.5) * 2;                 // 0（中性）~ 1（推满）
+        lit = dev < 0.02 ? 0 : (dev < 0.4 ? 1 : (dev < 0.75 ? 2 : 3));
+        // 本方是受益还是受罚：高熵利红、低熵利蓝
+        const favored = v > 0.5 ? 'red' : (v < 0.5 ? 'blue' : null);
+        if (favored && fac) cls = (fac === favored) ? ' wx-chaos' : ' wx-order';
+      }
+      const col = r.source.startsWith('熵')
+        ? ((ws.entropy?.value ?? 0.5) > 0.5 ? '#e0473f' : '#5b9bd5')
+        : '#8ab4f8';
+      const EDGES = ['M17,3 L32,27', 'M32,27 L2,27', 'M2,27 L17,3'];
+      const edgeHtml = EDGES.map((d, i) =>
+        `<path d="${d}" fill="none" stroke="${i < lit ? col : 'rgba(255,255,255,0.14)'}"
+           stroke-width="${i < lit ? 2.2 : 1.2}" stroke-linecap="round"/>`).join('');
+      // title 里放完整明细：三核构成 + 本方最终加成，"为什么我的属性变了"当场能答
+      const tip = `${r.source} — ${r.detail}`.replace(/"/g, '&quot;');
+      return `
+        <div class="wx-tri${cls}" title="${tip}">
+          <svg viewBox="0 0 34 30" class="wx-tri-svg">
+            <polygon points="17,3 32,27 2,27" fill="${col}22" stroke="none"/>
+            ${edgeHtml}
+          </svg>
+          <span class="wx-tri-ic">${icon}</span>
+        </div>`;
+    }).join('');
+  }
+
   _updateWeatherRow(card, entity) {
     const box = card?.querySelector?.('.weather-row');
     if (!box || !entity) return;
@@ -501,6 +572,7 @@ export class UIManager {
       <div class="skill-slot-row" id="tower-skills-${tower.id}"></div>
       <div class="effect-row" id="tower-effects-${tower.id}"></div>
       <div class="weather-row" id="tower-weather-${tower.id}"></div>
+      <div class="world-row" id="tower-world-${tower.id}"></div>
     `;
     // v33（Q11）：底部"编辑/删除"按钮行已删除——图标化后移至面板右上角（selectionActions）
     return card;
@@ -619,6 +691,7 @@ export class UIManager {
     const effectsContainer = card.querySelector(`#tower-effects-${id}`);
     this._updateEffectIcons(effectsContainer, this.effects.getEffects(id));
     this._updateWeatherRow(card, tower);
+    this._updateWorldRow(card, tower);
   }
 
   // ==================== 小兵卡片 ====================
@@ -646,6 +719,7 @@ export class UIManager {
       <div class="skill-slot-row" id="minion-skills-${minion.id}"></div>
       <div class="effect-row" id="minion-effects-${minion.id}"></div>
       <div class="weather-row" id="minion-weather-${minion.id}"></div>
+      <div class="world-row" id="minion-world-${minion.id}"></div>
     `;
     // v33（Q11）：底部按钮行已删除——图标化后移至面板右上角
     return card;
@@ -737,6 +811,7 @@ export class UIManager {
     const effectsContainer = card.querySelector(`#minion-effects-${id}`);
     this._updateEffectIcons(effectsContainer, this.effects.getEffects(id));
     this._updateWeatherRow(card, minion);
+    this._updateWorldRow(card, minion);
   }
 
   updateTopBar() {

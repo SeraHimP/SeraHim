@@ -208,10 +208,13 @@ T('技能：校验失败时不注册半个坏技能',
   ents.add(e);
   const ctx = { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator };
   // 跑 3 秒：1 秒周期应触发 3 次（+15），10 秒周期一次都不该触发
-  for (let i = 0; i < 90; i++) d.onFrame(e.id, inst, ctx, 1 / 30);
+  // 参数顺序必须与 CombatSystem 的调用一致：(entityId, dt, instance, ctx)。
+  // 这条测试原先按 (id, inst, ctx, dt) 调用 —— 与被测代码同错，所以两边都错却全绿。
+  // 跨模块回调的签名要以【调用方】为准核对，不能以自己写的测试为准。
+  for (let i = 0; i < 90; i++) d.onFrame(e.id, 1 / 30, inst, ctx);
   T(`frame：短周期按 every 触发（生命 100 → ${e.currentHP}）`, e.currentHP === 115);
   T('frame：长周期未到点不触发（两条规则计时器互相独立）', e.tempShield === 0);
-  for (let i = 0; i < 210; i++) d.onFrame(e.id, inst, ctx, 1 / 30);
+  for (let i = 0; i < 210; i++) d.onFrame(e.id, 1 / 30, inst, ctx);
   T(`frame：长周期到点后触发（护盾 ${e.tempShield}）`, e.tempShield === 100);
 }
 
@@ -348,5 +351,17 @@ T('每个条件都声明了 arg 类型', Object.values(CONDITIONS).every(c => ['
 }
 
 clean();
+// ---- 十一、onFrame 签名必须与引擎的调用约定一致 ----
+// 这里直接读 CombatSystem 的源码核对调用顺序 —— 光靠"我的测试通过了"证明不了
+// 签名是对的（本项目已经因此漏过一次：两边同错，全绿，运行时必崩）。
+T('CombatSystem 以 (entityId, dt, inst, ctx) 调用 onFrame', (() => {
+  const src2 = fs.readFileSync('src/systems/CombatSystem.js', 'utf8');
+  return /def\.onFrame\(entity\.id,\s*dt,\s*inst,/.test(src2);
+})());
+T('behaviorVM 编译出的 onFrame 采用同一顺序', (() => {
+  const src3 = fs.readFileSync('src/core/behaviorVM.js', 'utf8');
+  return /def\.onFrame = \(selfId, dt, instance, ctx\)/.test(src3);
+})());
+
 console.log(`自制内容验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

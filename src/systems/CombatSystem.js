@@ -319,10 +319,24 @@ export class CombatSystem {
     // （实测：修复 LaneMovementSystem 的同类问题后，这里变成新的最大耗时来源，单帧10ms+）。
     const nearby = this.entities.findInRadius(tower.pos.x, tower.pos.y, range, null, true);
     const inRange = [];
+    // 塔打塔（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
+    // 原来这里无条件 `continue` 掉所有塔，所以射程内的敌方塔是绝对安全的。
+    // 现在允许，但必须尊重两条既有规则，否则会打出很怪的局面：
+    //   ① 结构保护：外塔没掉就打内塔，等于跳过 LoL 的推进顺序；
+    //   ② 优先级最低：塔是不会动的，永远打得到；若与小兵同优先级，
+    //      塔会一直咬着对面塔而无视正在拆自己的小兵。
+    const towerVsTower = CONFIG.gameRules.towerAttacksTower !== false;
     for (const m of nearby) {
       if (m.id === tower.id) continue;
-      if (m.type === 'tower') continue; // findInRadius 不限类型，这里排除塔本身/其他塔
       if (!m.pos) continue;
+      if (m.type === 'tower') {
+        if (!towerVsTower) continue;
+        if (!tower._mapFaction || !m._mapFaction) continue;   // 沙盒塔无阵营，不互打
+        if (!canTarget(tower._mapFaction, m._mapFaction)) continue;
+        if (isStructureProtected(this.entities, m)) continue;
+        inRange.push(m);
+        continue;
+      }
       // 对战模式：塔只能攻击敌对阵营的单位；沙盒模式塔（无 _mapFaction）行为不变，照打所有小兵
       if (tower._mapFaction && !canTarget(tower._mapFaction, m._mapFaction || m.faction || null) && m.type !== 'dragon') continue;
       inRange.push(m);
@@ -334,6 +348,9 @@ export class CombatSystem {
       if (m.type === 'hero') return 4;
       if (m.type === 'monster') return 3;
       if (m.type === 'super' || m.type === 'siege' || m.type === 'totem') return 2;
+      // 塔【最低优先级】：它不会跑，什么时候打都来得及；排在小兵前面的话
+      // 塔会一直咬着对面塔，对正在拆自己的小兵不闻不问。
+      if (m.type === 'tower') return 0;
       return 1;
     };
 

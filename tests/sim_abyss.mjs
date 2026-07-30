@@ -92,7 +92,13 @@ T('炮车波=近3+炮1+远3(炮在中间)', JSON.stringify(spawned)===JSON.strin
 mapSys.nexusDestroyed.red={mid:true}; // 蓝方打掉红方水晶→蓝方出超级兵
 lw.waveNumber=6; spawned=[]; lw._enqueueForFaction('blue',mapSys.currentMap.lanes[0],'forward');
 for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}
-T('超级兵波=超1+近3+远3且无炮', JSON.stringify(spawned)===JSON.stringify(['super','melee','melee','melee','ranged','ranged','ranged']));
+// 用户重排了出兵编排（所有兵种默认生成、支援兵种错开波次），第 6 波起术士兵入场。
+// 这条断言的本意是"水晶陷落后【超级兵取代炮兵】"，所以只钉这一点，
+// 不再把整条队列逐字写死 —— 写死的话每次调编排都会假失败（这次就是）。
+T('超级兵波：超级兵在队首、且不再出炮兵',
+  spawned[0] === 'super' && !spawned.includes('siege'));
+T('超级兵波仍保留近战/远程骨架',
+  spawned.filter(t => t === 'melee').length === 3 && spawned.filter(t => t === 'ranged').length === 3);
 
 // ---- Q2/Q1/Q6/Q7/Q10/Q11/Q5 静态与逻辑断言 ----
 T('超级兵指挥官含自身(Q2)', fs.readFileSync(new URL('../src/core/skills/minionPassives.js', import.meta.url),'utf8').includes('includeSelf: true'));

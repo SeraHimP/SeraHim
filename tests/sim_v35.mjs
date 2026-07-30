@@ -187,7 +187,8 @@ function equip(e, skillId, ents, fx) {
     SkillLibrary.passive_melee_rend.description.includes('4%')
     && SkillLibrary.passive_ranged_rend.description.includes('6%')
     && SkillLibrary.passive_siege_rend.description.includes('7%'));
-  T('图腾兵默认不生成', CONFIG.gameRules.spawnEnabled.totem === false);
+  // 用户定稿改动："让所有兵种都会默认生成" —— 图腾从默认关改为默认开。
+  T('图腾兵默认生成（用户定稿：所有兵种默认开启）', CONFIG.gameRules.spawnEnabled.totem === true);
   T('炮兵指挥官 minWave=20（默认装配门槛，暴露在技能定义上供装配逻辑读取）',
     SkillLibrary.passive_artillery_commander.minWave === 20);
   // v43（Q2）：波次门槛从【光环层】移到【默认装配层】——光环一旦装备（含玩家手动装备）

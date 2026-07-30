@@ -88,10 +88,13 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
   T('Q12 🎯 重置为全图视角', cc.includes('this.fitToWorld(map.world.w, map.world.h)'));
   T('Q12 性能面板移入设置（画布按钮已删）', !html.includes('id="perfBtn"') && settings.includes('setPerfBtn'));
   T('Q6 重生进度条无倒计时数字', !rend.includes('_respawnRemain != null'));
-  T('Q9 天气条在顶栏内', html.indexOf('id="weatherWrap"') > html.indexOf('<div id="topbar">')
-    && html.indexOf('id="weatherWrap"') < html.indexOf('</div>', html.indexOf('<div id="topbar">')) + 2000);
+  // 天气条现在是右上角【世界状态小窗】里的一行（与时间/昼夜、熵同窗分段显示）。
+  T('Q9 天气段在世界状态小窗内', html.includes('id="worldHud"') && html.includes('id="whWeatherRow"'));
   T('Q9 属性面板有天气行（塔+小兵各一）',
     (ui.match(/class="weather-row"/g)||[]).length===2 && ui.includes('_updateWeatherRow'));
+  // 熵修正也必须在属性面板里看得见（用户："在单位属性栏里也加上熵修正的描述"）
+  T('属性面板有世界影响行（塔+小兵各一）',
+    (ui.match(/class="world-row"/g)||[]).length===2 && ui.includes('_updateWorldRow'));
   T('Q9 天气行显示生效强度（经67%截断，经 getModifierBreakdown 间接调用）',
     ui.includes('getModifierBreakdown(entity)'));
 }

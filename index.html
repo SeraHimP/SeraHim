@@ -162,27 +162,52 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   pointer-events: none;
 }
 
-/* 天气条（v33）：移到右上角、缩小、色块化——只保留当前天气 + 一条迷你色带；
-   详细的堆叠预报图移进天气配置面板（点击这里打开）。 */
-#weatherWrap {
+/* ==================== 单位属性面板：世界影响（昼夜/熵/龙魂）====================
+   与上面的天气行【共用同一套视觉语言】：同款 34px 三角格 + 边框点亮 + 图标，
+   悬停看明细。区别只在颜色语义：蓝=秩序侧受益 / 红=混乱侧受益 / 灰=无修正。
+   为什么复用而不是新做一种：天气与熵都是"世界给这个单位的修正"，
+   同一类信息用两种控件表达，用户得学两遍。 */
+.world-row {
+  margin-top: 6px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.wx-tri.wx-order  { filter: drop-shadow(0 0 4px rgba(91,155,213,0.45)); }
+.wx-tri.wx-chaos  { filter: drop-shadow(0 0 4px rgba(224,71,63,0.45)); }
+
+/* ==================== 世界状态小窗（时间 · 天气 · 熵）====================
+   三段共用一个玻璃面板、逐行显示。统一设计语言的三条：
+     ① 每行都是 [固定宽标签] [等宽色带] [固定宽读数] —— 三列纵向对齐，
+        数值长短变化不会让色带左右跳动（天气条以前就吃过这个亏）；
+     ② 色带尺寸/行高/字号三段完全一致，一眼看出是同一组信息；
+     ③ 只有"当前值"上主界面，所有明细都在各自的配置面板里。 */
+#worldHud {
   position: absolute; top: 12px; right: 12px;
-  z-index: 25; cursor: pointer;
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 8px; border-radius: 8px;
+  z-index: 25;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 5px 8px; border-radius: 8px;
   background: var(--surface-1, rgba(16,20,28,0.90));
   border: 1px solid var(--glass-border, rgba(255,255,255,0.10));
   backdrop-filter: blur(10px);
   box-shadow: 0 6px 20px rgba(0,0,0,0.35);
-  transition: border-color 0.15s;
 }
-#weatherWrap:hover { border-color: rgba(255,255,255,0.28); }
-/* 固定宽度 + 左对齐：天气名长短不一时，色带不会跟着左右跳动 */
-#weatherNow {
+#worldHud .wh-row {
+  display: flex; align-items: center; gap: 6px;
+  height: 18px;
+}
+#worldHud .wh-row[title]:not(#whTimeRow) { cursor: pointer; }
+#worldHud .wh-row:not(#whTimeRow):hover .wh-bar { outline: 1px solid rgba(255,255,255,0.28); }
+/* 固定宽度 + 左对齐：标签长短不一时，色带不会跟着左右跳动 */
+#worldHud .wh-label {
   font-size: 11px; font-weight: 600; flex-shrink: 0;
   display: flex; align-items: center; gap: 3px;
   width: 62px; overflow: hidden; white-space: nowrap;
 }
-#weatherBar { width: 150px; height: 16px; display: block; flex-shrink: 0; }
+#worldHud .wh-bar { width: 150px; height: 14px; display: block; flex-shrink: 0; border-radius: 2px; }
+#worldHud .wh-val {
+  font-size: 10px; font-variant-numeric: tabular-nums; flex-shrink: 0;
+  width: 58px; text-align: right; color: var(--text-dim, #8b949e);
+  overflow: hidden; white-space: nowrap;
+}
 .panel-header {
   padding: 11px 16px; border-bottom: 1px solid var(--glass-border);
   font-size: 13px; font-weight: 700; flex-shrink: 0;
@@ -474,10 +499,25 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
        改为 LoL 式点选：点击画布上的单位，左上角弹出属性面板（selectionPanel），
        实时刷新、保留原有的编辑/删除/击杀按钮与技能/效果图标交互。 -->
   <div id="canvasWrapper">
-    <!-- 天气条：独立浮动窗口，画布顶部居中。游标在 20%（左=过去，右=未来）。 -->
-    <div id="weatherWrap" style="display:none;" title="点击打开天气配置">
-      <span id="weatherNow"></span>
-      <canvas id="weatherBar"></canvas>
+    <!-- 世界状态小窗（右上角）：时间/昼夜 · 天气 · 熵 三段合并在一个窗口里分开显示。
+         统一设计语言：同一块玻璃面板、同样的行高与字号，每段一行、左侧固定宽度的标签位。
+         点天气段开天气配置，点熵段开世界设置。 -->
+    <div id="worldHud">
+      <div class="wh-row" id="whTimeRow" title="游戏时间 · 昼夜相位">
+        <span class="wh-label" id="whPhaseIcon">☀️</span>
+        <canvas id="whTimeBar" class="wh-bar"></canvas>
+        <span class="wh-val" id="whClock">0:00</span>
+      </div>
+      <div class="wh-row" id="whWeatherRow" style="display:none;" title="点击打开天气配置">
+        <span class="wh-label" id="weatherNow"></span>
+        <canvas id="weatherBar" class="wh-bar"></canvas>
+        <span class="wh-val" id="whWeatherVal"></span>
+      </div>
+      <div class="wh-row" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
+        <span class="wh-label" id="whEntIcon">🌀</span>
+        <canvas id="whEntBar" class="wh-bar"></canvas>
+        <span class="wh-val" id="whEntVal"></span>
+      </div>
     </div>
 
     <div id="canvasWrap">

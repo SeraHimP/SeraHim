@@ -361,7 +361,13 @@ export function compileSpec(spec, onError = null) {
     };
   }
   if (byTrigger.frame) {
-    def.onFrame = (selfId, instance, ctx, dt) => {
+    // 参数顺序必须是 (entityId, dt, instance, ctx) —— 这是 CombatSystem 的调用约定
+    // （见 CombatSystem 里 def.onFrame(entity.id, dt, inst, {...})）。
+    // 这里曾写成 (selfId, instance, ctx, dt)：于是 instance 收到的是数字 dt，
+    // 给数字挂 _vmTimers 在 ESM 的严格模式下直接抛 TypeError —— 所有带"每隔一段时间"
+    // 触发的自制技能【运行时必崩】。而单元测试当时按同一个错误顺序调用，所以全绿。
+    // 教训：跨模块的回调签名要以【调用方】为准去核对，不能以自己写的测试为准。
+    def.onFrame = (selfId, dt, instance, ctx) => {
       const c = mkCtx(spec, selfId, null, instance, ctx);
       instance._vmTimers = instance._vmTimers || {};
       for (let i = 0; i < byTrigger.frame.length; i++) {
