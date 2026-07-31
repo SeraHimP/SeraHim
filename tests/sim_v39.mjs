@@ -56,7 +56,9 @@ function battle() {
 {
   // 期望常量更新：howling_abyss 788 → 460。788 > 召唤水晶到角点的 701，
   // 意味着抑制器被基地广场吞在里面，ARAM「抑制器在桥上」的形态从来没成立过。
-  for (const [mid, r] of [['summoners_rift_v1', 1185], ['howling_abyss_v1', 460]]) {
+// 基地圈（圆心+半径）是【走廊模型】专有的概念。嚎哭深渊/扭曲丛林已改成 navgrid
+// 逐像素地形，压根没有基地圈 —— 这几条只对走廊模型的地图成立。
+  for (const [mid, r] of [['summoners_rift_v1', 1185]]) {
     const map = MAPS[mid];
     T(`${mid} 光环圈=地形半径=${r}`, map.baseCircleRadius === r && map.baseOpenRadius === r);
   }

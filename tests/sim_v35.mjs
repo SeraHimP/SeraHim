@@ -211,8 +211,12 @@ function equip(e, skillId, ents, fx) {
   SkillLibrary.passive_artillery_commander.onFrame(siege.id, 0.5, inst, ctx);
   T('第20波：炮兵指挥官生效', !!fx.getEffectByName(buddy.id, '炮兵指挥官'));
 
-  T('路宽 SR 130 / HA 135（v35 Q4）',
-    MAPS.summoners_rift_v1.walls.corridorHalfWidth === 130 && MAPS.howling_abyss_v1.walls.corridorHalfWidth === 135);
+  // 期望常量更新：删掉 HA 那半条。嚎哭深渊的地形已按标准小地图改成 navgrid 逐像素描图，
+  // 走廊半宽这个字段整个不存在了（走廊模型画不出"等宽直桥 + 两端变宽"）。
+  T('路宽 SR 130（v35 Q4）', MAPS.summoners_rift_v1.walls.corridorHalfWidth === 130);
+  T('嚎哭深渊/扭曲丛林已无走廊半宽（改 navgrid）',
+    MAPS.howling_abyss_v1.walls.corridorHalfWidth === undefined
+    && MAPS.twisted_treeline_v1.walls.corridorHalfWidth === undefined);
   T('兵线端点已同步新枢纽', MAPS.summoners_rift_v1.lanes.every(l =>
     l.waypoints[0].x === 305 && l.waypoints[0].y === 3226
     && l.waypoints[l.waypoints.length - 1].x === 3226 && l.waypoints[l.waypoints.length - 1].y === 305));

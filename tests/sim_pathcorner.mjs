@@ -135,20 +135,36 @@ async function battle(arriveR, seconds) {
     waves.update(DT); move.update(DT); coll.update(DT); combat.update(DT); proj.update(DT);
   }
   // "卡在基地口"= 活过 30 秒、还没离开自家基地圈两倍半径的范围
-  const tt = MAPS['twisted_treeline_v1'];
   const mins = ents.getAllMinions(true).filter(m => m._laneId && (window.gameTime - m._birth) > 30);
-  const stuck = mins.filter(m => {
-    const c = tt.baseCenters[m._mapFaction];
-    return Math.hypot(m.pos.x - c.x, m.pos.y - c.y) < tt.baseOpenRadius * 2;
-  });
+  // 判据用"离**出生点**多远"，不是"离枢纽多远"：
+  // 后者在地形改 navgrid 之后不再等价 —— 兵线出基地的走法变缓了，正常推进的兵
+  // 也可能还在枢纽 600px 内，那个阈值会把好兵一起算成卡住（实测 51/52 全是误报）。
+  // 卡在转角的症状是"活了很久却没离开出生点"，所以直接量这个。
+  const stuck = mins.filter(m => Math.hypot(m.pos.x - m._spawn.x, m.pos.y - m._spawn.y) < 300);
   CONFIG.tuning.waypointArriveRadius = save;
   return { stuck: stuck.length, total: mins.length };
 }
 {
   const good = await battle(CONFIG.tuning.waypointArriveRadius ?? 24, 100);
   T(`真实对局：没有兵卡在自家基地口（${good.stuck}/${good.total}）`, good.stuck === 0 && good.total > 10);
-  const bad = await battle(2, 100);   // 2px < 一帧位移 3.9px，等价于修复前
-  T(`反证：到达半径小于一帧位移时确实复现（卡住 ${bad.stuck}/${bad.total}）`, bad.stuck > 0);
+  // 这里原本有一条反证（把到达半径调回 2px，同一局必须复现卡死）。
+  // 地形按标准小地图重描之后，扭曲丛林基地口那个 84° 死弯**已经不存在了**
+  // （兵线改从高地北口平缓出去），所以这张图上再也复现不出来 —— 反证移到①的合成兵线上，
+  // 那里 84°/100°/130° 都在测，且不依赖任何一张具体地图的当前形状。
+  // 这一条留着的意义是"真实对局里没有兵卡住"，与①互补。
+  {
+    const maxTurn = Math.max(...MAPS['twisted_treeline_v1'].lanes.flatMap((l) => {
+      const w = l.waypoints, out = [];
+      for (let i = 1; i < w.length - 1; i++) {
+        const a = { x: w[i].x - w[i - 1].x, y: w[i].y - w[i - 1].y };
+        const b = { x: w[i + 1].x - w[i].x, y: w[i + 1].y - w[i].y };
+        out.push(Math.abs(Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y)) * 180 / Math.PI);
+      }
+      return out;
+    }));
+    T(`[扭曲丛林] 兵线最大转角 ${maxTurn.toFixed(0)}° < 70°（基地口那个 84° 死弯已随地形重做消失）`,
+      maxTurn < 70);
+  }
 }
 
 // ==================== ④ 到达半径不许提前抄内角 ====================

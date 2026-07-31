@@ -66,12 +66,15 @@ for (const map of Object.values(MAPS)) {
   // 圆心默认取世界角点，那只是峡谷/深渊的巧合。扭曲丛林的基地在左右两侧【中点】，
   // 不声明 baseCenters 的话基地圈会被甩到地图角落的空地上：光环画错地方、
   // 高地地形长在空地上、基地自己反倒没有开阔地 —— 而且不会抛任何异常。
-  for (const f of ['blue', 'red']) {
-    const c = baseCircleCenter(map, f);
-    const nx = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
-    const R = map.baseOpenRadius ?? map.baseCircleRadius ?? 0;
-    T(`${tag} ${f} 基地圈罩住自家水晶枢纽（圈心距枢纽 ${len(c, nx.pos).toFixed(0)} < ${R}）`,
-      len(c, nx.pos) < R);
+  // 只对【走廊模型】地图成立：navgrid 地图（嚎哭深渊/扭曲丛林）没有基地圈这个概念。
+  if (!map.useNavgrid) {
+    for (const f of ['blue', 'red']) {
+      const c = baseCircleCenter(map, f);
+      const nx = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
+      const R = map.baseOpenRadius ?? map.baseCircleRadius ?? 0;
+      T(`${tag} ${f} 基地圈罩住自家水晶枢纽（圈心距枢纽 ${len(c, nx.pos).toFixed(0)} < ${R}）`,
+        len(c, nx.pos) < R);
+    }
   }
 
   // ---- 所有建筑必须在世界范围内 ----
@@ -137,28 +140,30 @@ for (const map of Object.values(MAPS)) {
 {
   const ha = MAPS['howling_abyss_v1'];
   T('[嚎哭深渊] 是单路', ha.lanes.length === 1);
-  // 重做的核心：它是一座窄桥，不是两块大平台。
-  // 改动前 baseOpenRadius=788 → 每方一块直径 1576 的开阔地，那不是嚎哭深渊。
-  // 这里【不钉具体数字】，钉的是形状：基地圈必须小到装不下召唤水晶（抑制器在桥上）。
-  // 旧值 788 之所以一定错，就是因为它 > 召唤水晶到圈心的 701。
+  // 地形按标准小地图逐像素重描（navgrid）。用户原话：
+  // "真正的嚎哭深渊两端有那个圆吗？？难道不是变成更宽的桥了吗？？"
+  // ——**没有圆**。走廊模型（折线+半宽+基地圆）结构上就画不出"等宽直桥+两端变宽"。
+  T('[嚎哭深渊] 用 navgrid 描图，不再有走廊/基地圈',
+    ha.useNavgrid && !!ha.navgrid && ha.walls?.corridorHalfWidth === undefined
+    && ha.baseCircleRadius === undefined && ha.baseOpenRadius === undefined);
+  T('[嚎哭深渊] 世界是正方形（采样矩形 510×510，长宽比不一致就会整张图拉伸）',
+    ha.world.w === ha.world.h);
+  T('[嚎哭深渊] 桥两侧声明了缺口障碍', (ha.obstacles || []).length >= 20);
   {
-    const c = { x: 0, y: ha.world.h };   // 未声明 baseCenters 的地图，圈心 = 世界角点
-    const inh0 = ha.buildings.find(b => b.faction === 'blue' && b.tier === 'nexus_lane');
-    T('[嚎哭深渊] 基地圈装不下召唤水晶（抑制器在桥上，不在广场里）',
-      ha.baseOpenRadius < len(c, inh0.pos));
+    // 桥必须是笔直的一条：所有建筑都落在同一条反对角线 x+y=2325 附近
+    const off = ha.buildings.map(b => Math.abs(b.pos.x + b.pos.y - 2325));
+    T(`[嚎哭深渊] 建筑都贴在桥心线 x+y=2325 上（最大偏离 ${Math.max(...off).toFixed(0)} < 90）`,
+      Math.max(...off) < 90);
   }
-  T('[嚎哭深渊] 基地圈与视觉光环圈一致（所见即所得）',
-    ha.baseCircleRadius === ha.baseOpenRadius);
-  const nx = ha.buildings.find(b => b.faction === 'blue' && b.tier === 'nexus_main');
-  const inh = ha.buildings.find(b => b.faction === 'blue' && b.tier === 'nexus_lane');
-  const bt = ha.buildings.find(b => b.faction === 'blue' && b.tier === 'base');
-  // 用户："高地那里水晶塔/召唤水晶往外一些"
-  T('[嚎哭深渊] 召唤水晶已挪到基地圈【外】的桥面上（原来缩在高地里）',
-    len(nx.pos, inh.pos) > ha.baseOpenRadius);
-  T('[嚎哭深渊] 水晶塔在召唤水晶更外侧', len(nx.pos, bt.pos) > len(nx.pos, inh.pos));
-  T('[嚎哭深渊] 桥面仍然窄（走廊半宽 ≤ 160）', ha.walls.corridorHalfWidth <= 160);
 
   const tt = MAPS['twisted_treeline_v1'];
+  // 真实可走判定（navgrid），供下面的地形厚度断言使用
+  const { EntityContainer: _EC } = await import('../src/core/EntityContainer.js');
+  const { EventBus: _EB } = await import('../src/utils/EventBus.js');
+  const { MapSystem: _MS } = await import('../src/systems/MapSystem.js');
+  const _bus = new _EB(), _ents = new _EC(_bus), _ms = new _MS(_ents, _bus);
+  _ms.setCreateBuildingFn(() => null); _ms.loadMap('twisted_treeline_v1');
+  const walkTT = (x, y) => _ms.isWalkable(x, y);
   T('[扭曲丛林] 是双路（上/下）', tt.lanes.length === 2
     && tt.lanes.map(l => l.id).sort().join() === 'bot,top');
   // 用户确认的塔位：每路 2 塔 + 每路 1 召唤水晶 + 1 枢纽塔 + 水晶枢纽
@@ -186,18 +191,33 @@ for (const map of Object.values(MAPS)) {
       for (const p of wpTop) if (Math.abs(p.x - x) < best) { best = Math.abs(p.x - x); bo = Math.abs(cy - p.y); }
       return bo;
     };
-    const nearBase = offAt(700), waist = offAt(tt.world.w / 2);
-    T(`[扭曲丛林] 腰部比基地端窄（花生形：基地端 ${nearBase.toFixed(0)} > 腰部 ${waist.toFixed(0)}）`,
-      nearBase > waist * 1.2);
+    // 花生形改钉【地形本身】而不是兵线：兵线要绕开中间那块大草丛，
+    // 已经不能代表地图轮廓了（改 navgrid 后上路在腰部被顶到很上面）。
+    // 这里直接量可走区的上下厚度：基地端应当明显厚于腰部。
+    // 量【外轮廓高度】（第一行到最后一行可走），不是可走格计数 ——
+    // 计数会把中间那些草丛的面积一起扣掉，腰部和基地端就都被扣，差异被抹平。
+    const thick = (wx) => {
+      let lo = -1, hi = -1;
+      for (let wy = 0; wy < tt.world.h; wy += 2) if (walkTT(wx, wy)) { if (lo < 0) lo = wy; hi = wy; }
+      return lo < 0 ? 0 : hi - lo;
+    };
+    const nearBase = thick(700), waist = thick(tt.world.w / 2);
+    T(`[扭曲丛林] 腰部比基地端窄（花生形：基地端 ${nearBase} > 腰部 ${waist}）`,
+      nearBase > waist * 1.10);
     T('[扭曲丛林] 长宽比接近小地图的 2.14（不是方形）',
       Math.abs(tt.world.w / tt.world.h - 2.14) < 0.15);
-    T('[扭曲丛林] 声明了 baseCenters（基地不在世界角点上）', !!tt.baseCenters);
+    T('[扭曲丛林] 用 navgrid 描图（走廊模型画不出野区草丛）',
+      tt.useNavgrid && !!tt.navgrid && tt.walls?.corridorHalfWidth === undefined);
+    T('[扭曲丛林] 长宽比 = 采样矩形 752×347（不拉伸）',
+      Math.abs(tt.world.w / tt.world.h - 752 / 347) < 0.01);
     const hq = bb.find(b => b.tier === 'hq_tower'), nxm = bb.find(b => b.tier === 'nexus_main');
     T(`[扭曲丛林] 唯一的枢纽塔护得住水晶枢纽（间距 ${len(hq.pos, nxm.pos).toFixed(0)} < 射程 ${TOWER_RANGE}）`,
       len(hq.pos, nxm.pos) < TOWER_RANGE);
-    const inh = bb.find(b => b.tier === 'nexus_lane');
-    T(`[扭曲丛林] 召唤水晶在基地圈外的路上（离圈心 ${len(nxm.pos, inh.pos).toFixed(0)} > ${tt.baseOpenRadius}）`,
-      len(nxm.pos, inh.pos) > tt.baseOpenRadius);
+    // 用户："枢纽塔的位置靠着水晶枢纽（蓝方在左，红方在右）"——从小地图上直接读的像素位置。
+    T(`[扭曲丛林] 蓝方枢纽塔在水晶枢纽【左】侧（${hq.pos.x} < ${nxm.pos.x}）`, hq.pos.x < nxm.pos.x);
+    const rHq = tt.buildings.find(b => b.faction === 'red' && b.tier === 'hq_tower');
+    const rNx = tt.buildings.find(b => b.faction === 'red' && b.tier === 'nexus_main');
+    T(`[扭曲丛林] 红方枢纽塔在水晶枢纽【右】侧（${rHq.pos.x} > ${rNx.pos.x}）`, rHq.pos.x > rNx.pos.x);
   }
 }
 

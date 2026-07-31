@@ -563,12 +563,16 @@ export class MapSystem {
     if (this._nav !== undefined) return this._nav;
     this._nav = null;
     if (this.currentMap?.useNavgrid) {
-      const n = SR_NAVGRID.n;
+      // ⚠️ 这里原来写死了 SR_NAVGRID —— 于是任何声明 useNavgrid 的新地图都会拿到
+      // **召唤师峡谷的地形**，而且不会报任何错，只是走位莫名其妙。
+      // 现在优先用地图自带的 navgrid，未声明的沿用峡谷那张（对已有地图逐位不变）。
+      const NG = this.currentMap.navgrid || SR_NAVGRID;
+      const n = NG.n;
       // base64 → 位数组。atob 在浏览器有、Node 18+ 全局也有；都没有就退回走廊模型（不炸）。
       const dec = (typeof atob === 'function') ? atob
         : (typeof Buffer !== 'undefined' ? (b) => Buffer.from(b, 'base64').toString('binary') : null);
       if (dec) {
-        const bin = dec(SR_NAVGRID.bits);
+        const bin = dec(NG.bits);
         const bits = new Uint8Array(n * n);
         for (let k = 0; k < n * n; k++) bits[k] = (bin.charCodeAt(k >> 3) >> (k & 7)) & 1;
         this._nav = { n, bits };

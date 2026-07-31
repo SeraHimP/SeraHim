@@ -250,7 +250,9 @@ const DT = 1 / 30;
 // ==================== ③ Q3 收束段延伸 ====================
 {
   // 期望常量更新：HA 788 → 460（重做后召唤水晶/水晶塔在桥上，基地平台随之收小）。
-  T('openRadius SR 1185 / HA 460', MAPS.summoners_rift_v1.baseOpenRadius === 1185 && MAPS.howling_abyss_v1.baseOpenRadius === 460);
+// 基地圈（圆心+半径）是【走廊模型】专有的概念。嚎哭深渊/扭曲丛林已改成 navgrid
+// 逐像素地形，压根没有基地圈 —— 这几条只对走廊模型的地图成立。
+  T('openRadius SR 1185', MAPS.summoners_rift_v1.baseOpenRadius === 1185);
 
   // ===== v38.1 永久几何断言：每条路【两侧】走廊墙与高地边界的交汇点都必须落进高地塔射程 =====
   // 用户诉求逐字："确保塔的射程和地形相接触"。上/下路走廊非径向，高地圆斜切走廊 →
@@ -258,7 +260,7 @@ const DT = 1 / 30;
   // 这条断言把"六个墙角全部 ≤ 射程"锁死，任何人再动 openRadius / 路宽 / 塔位都会立刻红。
   {
     const TOWER_RANGE = 180;
-    for (const mid of ['summoners_rift_v1', 'howling_abyss_v1']) {
+    for (const mid of ['summoners_rift_v1']) {
       const map = MAPS[mid];
       const c = { x: 0, y: map.world.h }, hw = map.walls.corridorHalfWidth, R = map.baseOpenRadius;
       const ds = [];
@@ -300,7 +302,7 @@ const DT = 1 / 30;
       T(`${mid} 三路两侧墙角全部落进塔射程（最远 ${worst.k}=${worst.d.toFixed(0)} ≤ 180）`, worst.d <= TOWER_RANGE);
     }
   }
-  for (const [mid, R] of [['summoners_rift_v1', 180], ['howling_abyss_v1', 180]]) {
+  for (const [mid, R] of [['summoners_rift_v1', 180]]) {
     const map = MAPS[mid];
     const c = { x: 0, y: map.world.h };
     const tw = map.buildings.find(b => b.faction === 'blue' && b.tier === (map.gateTier || 'base'));

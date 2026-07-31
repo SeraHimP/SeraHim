@@ -45,7 +45,9 @@ T('体积新值（LoL 对齐：近战/远程10 炮车12 超级14 图腾11）',
   }
   // 期望常量更新：howling_abyss 788 → 460（重做把水晶塔/召唤水晶挪到了桥上，
   // 基地平台随之收小；788 会把召唤水晶圈进广场里）。
-  for (const [mid, expectR] of [['summoners_rift_v1', 1185], ['howling_abyss_v1', 460]]) {
+// 基地圈（圆心+半径）是【走廊模型】专有的概念。嚎哭深渊/扭曲丛林已改成 navgrid
+// 逐像素地形，压根没有基地圈 —— 这几条只对走廊模型的地图成立。
+  for (const [mid, expectR] of [['summoners_rift_v1', 1185]]) {
     const map = MAPS[mid];
     T(`${mid} 基地光环圈=地形半径（v39） ${expectR}`, map.baseCircleRadius === expectR);
     const ms = new MapSystem(ents, bus); ms.setCreateBuildingFn(() => null); ms.loadMap(mid);

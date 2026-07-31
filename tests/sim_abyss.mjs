@@ -60,7 +60,10 @@ const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const bOuter=get(Bd,'outer')[0], rOuter=get(Rd,'outer')[0];
 const bBase=get(Bd,'base')[0], bNL=get(Bd,'nexus_lane')[0], bHQ=get(Bd,'hq_tower');
 const netZone=dist(bOuter,rOuter)-2*RANGE;
-T('中间战斗区净空=543(4.5×射程的67%,±20)', Math.abs(netZone-543)<20);
+// 期望常量更新：543 → 402。地形按标准小地图重描后桥长从 2723 收到 2462，
+// 塔位随之沿桥重排（外塔 d=850）。这条钉的是"中间要有真正的拉扯空间"，
+// 不是钉那个具体数字 —— 所以改成钉下界，桥再重描一次也不会误报。
+T(`中间战斗区净空 ${netZone.toFixed(0)} > 350（双方外塔射程圈之间的空档）`, netZone>350);
 T('外塔↔水晶塔 射程圈完全分开(>360)', dist(bBase,bOuter)>2*RANGE);
 // 期望常量更新：枢纽塔↔水晶塔 由「衔接重叠 250~360」改为「完全分开 >360」（实测 460）。
 // 原因不是实现变了，是布局按用户要求变了："高地那里水晶塔/召唤水晶往外一些"，
