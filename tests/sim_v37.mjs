@@ -249,7 +249,8 @@ const DT = 1 / 30;
 
 // ==================== ③ Q3 收束段延伸 ====================
 {
-  T('openRadius SR 1185 / HA 788（v38.1）', MAPS.summoners_rift_v1.baseOpenRadius === 1185 && MAPS.howling_abyss_v1.baseOpenRadius === 788);
+  // 期望常量更新：HA 788 → 460（重做后召唤水晶/水晶塔在桥上，基地平台随之收小）。
+  T('openRadius SR 1185 / HA 460', MAPS.summoners_rift_v1.baseOpenRadius === 1185 && MAPS.howling_abyss_v1.baseOpenRadius === 460);
 
   // ===== v38.1 永久几何断言：每条路【两侧】走廊墙与高地边界的交汇点都必须落进高地塔射程 =====
   // 用户诉求逐字："确保塔的射程和地形相接触"。上/下路走廊非径向，高地圆斜切走廊 →
@@ -262,8 +263,12 @@ const DT = 1 / 30;
       const c = { x: 0, y: map.world.h }, hw = map.walls.corridorHalfWidth, R = map.baseOpenRadius;
       const ds = [];
       for (const lane of map.lanes) {
-        const tw = map.buildings.find(b => b.faction === 'blue' && b.tier === 'base' && (b.laneId === lane.id || map.lanes.length === 1));
-        if (!tw) continue;
+        // 守口的塔按地图声明的 gateTier 取（深渊重做后是枢纽塔，不再是水晶塔）。
+        const gate = map.gateTier || 'base';
+        const tws = map.buildings.filter(b => b.faction === 'blue' && b.tier === gate
+          && (b.laneId === lane.id || map.lanes.length === 1));
+        if (!tws.length) continue;
+        const tw = tws[0];   // 走廊方向只取一次（成对守口塔在同一段走廊上）
         // 塔所在走廊段方向
         const wps = lane.waypoints;
         let seg = 0, best = Infinity;
@@ -284,7 +289,11 @@ const DT = 1 / 30;
           if (disc < 0) { ds.push({ k: `${lane.id}${sgn > 0 ? '+' : '-'}`, d: Infinity }); continue; }
           const t1 = (-B + Math.sqrt(disc)) / 2, t2 = (-B - Math.sqrt(disc)) / 2;
           const t = Math.abs(t1) < Math.abs(t2) ? t1 : t2;
-          ds.push({ k: `${lane.id}${sgn > 0 ? '+' : '-'}`, d: Math.hypot(sgn * hw * nx + t * ux, sgn * hw * ny + t * uy) });
+          // 墙角只要被【任意一座】守口塔咬住就算封锁住了 —— 深渊是双塔一边一个，
+          // 逼每座都够得着两个角是无中生有的要求。
+          const cx2 = tw.pos.x + sgn * hw * nx + t * ux, cy2 = tw.pos.y + sgn * hw * ny + t * uy;
+          const near = Math.min(...tws.map(w => Math.hypot(w.pos.x - cx2, w.pos.y - cy2)));
+          ds.push({ k: `${lane.id}${sgn > 0 ? '+' : '-'}`, d: near });
         }
       }
       const worst = ds.reduce((m, x) => x.d > m.d ? x : m, { k: '-', d: -1 });
@@ -294,7 +303,7 @@ const DT = 1 / 30;
   for (const [mid, R] of [['summoners_rift_v1', 180], ['howling_abyss_v1', 180]]) {
     const map = MAPS[mid];
     const c = { x: 0, y: map.world.h };
-    const tw = map.buildings.find(b => b.faction === 'blue' && b.tier === 'base');
+    const tw = map.buildings.find(b => b.faction === 'blue' && b.tier === (map.gateTier || 'base'));
     const d = Math.hypot(tw.pos.x - c.x, tw.pos.y - c.y);
     // v38 定稿几何：高地 = 半径 openRadius 的开放区；走廊在其边缘开口。
     //   塔距角 d < openRadius  → 塔站在开放高地里（不被墙夹）

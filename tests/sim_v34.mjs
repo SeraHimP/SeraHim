@@ -43,22 +43,36 @@ T('体积新值（LoL 对齐：近战/远程10 炮车12 超级14 图腾11）',
     }
     return null;
   }
-  for (const [mid, expectR] of [['summoners_rift_v1', 1185], ['howling_abyss_v1', 788]]) {
+  // 期望常量更新：howling_abyss 788 → 460（重做把水晶塔/召唤水晶挪到了桥上，
+  // 基地平台随之收小；788 会把召唤水晶圈进广场里）。
+  for (const [mid, expectR] of [['summoners_rift_v1', 1185], ['howling_abyss_v1', 460]]) {
     const map = MAPS[mid];
     T(`${mid} 基地光环圈=地形半径（v39） ${expectR}`, map.baseCircleRadius === expectR);
     const ms = new MapSystem(ents, bus); ms.setCreateBuildingFn(() => null); ms.loadMap(mid);
     T(`${mid} getBaseCircleRadius 读声明值`, ms.getBaseCircleRadius('blue') === expectR && ms.getBaseCircleRadius('red') === expectR);
     for (const lane of map.lanes) {
       const ent = entrance(map, lane, expectR);
-      const tower = map.buildings.find(b => b.faction === 'blue' && b.tier === 'base' && b.laneId === lane.id);
+      // 守口的塔不一定是 base：深渊重做后水晶塔在桥上，把口的是枢纽塔。按地图声明取。
+      const gate = map.gateTier || 'base';
+      const cands = map.buildings.filter(b => b.faction === 'blue' && b.tier === gate
+        && (b.laneId === lane.id || map.lanes.length === 1));
+      // 成对的守口塔（深渊枢纽双塔）取离入口最近的那座 —— 入口被【火力】封锁即可，
+      // 不要求每一座都够得着。
+      const tower = cands.reduce((m, b) =>
+        (m && Math.hypot(m.pos.x - ent.x, m.pos.y - ent.y) <= Math.hypot(b.pos.x - ent.x, b.pos.y - ent.y)) ? m : b, null);
       const d = Math.hypot(tower.pos.x - ent.x, tower.pos.y - ent.y);
       // v39 语义更新：v34 时代要求"塔恰好站在入口射程边缘"（d≈180）。
       // v38 起高地重做为 LoL 形态——塔【站在高地内】、入口落在射程圈里被射程盖住，
       // 因此 d 应显著小于射程（塔到入口 80~130px），而不是精确等于 180。
       T(`${mid}/${lane.id} 入口落在塔射程内（塔距入口 ${d.toFixed(0)} < 180，射程盖住入口）`, d > 0 && d < 180);
+      // 这一条钉的是【召唤水晶紧贴水晶塔后方】—— 那永远是 base 这一档，
+      // 和"谁守着基地口"是两回事。深渊重做后守口的换成了枢纽塔，这里不能跟着换成 gateTier，
+      // 否则量的是水晶到枢纽塔的距离（350），断言会以完全无关的理由报红。
       const crystal = map.buildings.find(b => b.faction === 'blue' && b.tier === 'nexus_lane' && b.laneId === lane.id);
-      const dc = Math.hypot(crystal.pos.x - tower.pos.x, crystal.pos.y - tower.pos.y);
-      T(`${mid}/${lane.id} 召唤水晶贴塔后方≈110（实际${dc.toFixed(0)}）`, Math.abs(dc - 110) < 6);
+      const guard = map.buildings.find(b => b.faction === 'blue' && b.tier === 'base'
+        && (b.laneId === lane.id || map.lanes.length === 1));
+      const dc = Math.hypot(crystal.pos.x - guard.pos.x, crystal.pos.y - guard.pos.y);
+      T(`${mid}/${lane.id} 召唤水晶贴水晶塔后方≈110（实际${dc.toFixed(0)}）`, Math.abs(dc - 110) < 6);
     }
   }
   T('嚎哭深渊河道已关闭（river:false）', MAPS.howling_abyss_v1.walls.river === false && MAPS.summoners_rift_v1.walls.river === undefined);

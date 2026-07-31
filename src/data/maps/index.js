@@ -1,6 +1,7 @@
 import { summoners_rift } from './summoners_rift.js';
 import { summoners_rift_quick } from './summoners_rift_quick.js';
 import { howling_abyss } from './howling_abyss.js';
+import { twisted_treeline } from './twisted_treeline.js';
 
 /**
  * maps/index.js
@@ -15,7 +16,8 @@ import { howling_abyss } from './howling_abyss.js';
 export const MAPS = {
   [summoners_rift_quick.id]: summoners_rift_quick,
   [summoners_rift.id]: summoners_rift,
-  [howling_abyss.id]: howling_abyss, // Q9：嚎哭深渊（单路）
+  [howling_abyss.id]: howling_abyss,       // 嚎哭深渊（单路窄桥）
+  [twisted_treeline.id]: twisted_treeline, // 扭曲丛林（双路）
 };
 
 export const DEFAULT_MAP_ID = summoners_rift.id;

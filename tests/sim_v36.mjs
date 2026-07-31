@@ -168,8 +168,9 @@ function equip(e, skillId, ents, fx, bus) {
   const fs = await import('fs');
   const src = fs.readFileSync(new URL('../src/presentation/CanvasRenderer.js', import.meta.url), 'utf8');
   T('高地门槛线渲染代码已删除', !src.includes('drawThreshold'));
-  T('SR/HA 声明 baseOpenRadius（v38.1：1185/788，六个墙角全落进射程）',
-    MAPS.summoners_rift_v1.baseOpenRadius === 1185 && MAPS.howling_abyss_v1.baseOpenRadius === 788);
+  // 期望常量更新：HA 788 → 460（见 src/data/maps/howling_abyss.js 里的说明）。
+  T('SR/HA 声明 baseOpenRadius（1185/460，墙角全落进射程）',
+    MAPS.summoners_rift_v1.baseOpenRadius === 1185 && MAPS.howling_abyss_v1.baseOpenRadius === 460);
 
   const bus = new EventBus(), ents = new EntityContainer(bus);
   const mapSys = new MapSystem(ents, bus);

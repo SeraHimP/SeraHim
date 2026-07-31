@@ -3,6 +3,7 @@ import { CONFIG } from '../data/Config.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
+import { baseCircleCenter } from '../data/baseCircle.js';
 
 /**
  * MapSystem.js
@@ -477,10 +478,11 @@ export class MapSystem {
   // 圆心 = 该方基地角点（蓝 = 左下 (0, WH)，红 = 右上 (WW, 0)）；
   // 半径 = 覆盖该方全部高地建筑（水晶枢纽/枢纽塔/召唤水晶/水晶塔）的最远距离 + 塔身半径。
   // 画布上画多大圈，基地光环就罩多大——一处数据，两处使用（Q9）。
+  //
+  // 圆心的取值口在 src/data/baseCircle.js（TerrainLayer 也用同一个函数）——
+  //「基地一定在世界的对角」只是峡谷/深渊的巧合，那里写清了为什么。
   getBaseCircleCenter(faction) {
-    if (!this.currentMap?.world) return null;
-    const { w: WW, h: WH } = this.currentMap.world;
-    return faction === 'blue' ? { x: 0, y: WH } : { x: WW, y: 0 };
+    return baseCircleCenter(this.currentMap, faction);
   }
 
   getBaseCircleRadius(faction) {

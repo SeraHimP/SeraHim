@@ -16,6 +16,7 @@
  * 走廊外沿一圈"墙缘"高光，读起来就是 LoL 小地图的结构。
  */
 import { CONFIG } from '../data/Config.js';
+import { baseCircleCenter } from '../data/baseCircle.js';
 
 const _terrainCache = new Map();
 
@@ -100,8 +101,11 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
       g.fillStyle = gr2;
       g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill();
     };
-    tintBase(305, WH - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
-    tintBase(WW - 326, 305, WW * 0.30, 'rgba(224,71,63,0.20)');
+    // 阵营底色的圆心跟着基地圈走（原来写死在两个角上，扭曲丛林的基地不在角上）。
+    // 305/326 是相对角点的内缩偏移，改成沿"角点→基地圈心"同向内缩同样的量。
+    const bcB = baseCircleCenter(map, 'blue'), bcR = baseCircleCenter(map, 'red');
+    tintBase(bcB.x + 305, bcB.y - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
+    tintBase(bcR.x - 326, bcR.y + 305, WW * 0.30, 'rgba(224,71,63,0.20)');
     _terrainCache.set(key, c);
     return c;
   }
@@ -137,7 +141,8 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // v36（Q6）：开放内圈（baseOpenRadius）——圆内到这个半径才整片开放着色；
   // 未声明时退回旧地图行为（= baseCircleRadius，即无收束段，整圆开放）。
   const openRFor = (r) => map.baseOpenRadius || r;
-  const rBlue = baseRFor('blue', 0, WH), rRed = baseRFor('red', WW, 0);
+  const cB = baseCircleCenter(map, 'blue'), cR = baseCircleCenter(map, 'red');
+  const rBlue = baseRFor('blue', cB.x, cB.y), rRed = baseRFor('red', cR.x, cR.y);
   const oBlue = openRFor(rBlue), oRed = openRFor(rRed);
 
   // 墙缘（比走廊宽一圈的亮边）→ 走廊路面。基地区同理两层。
@@ -145,9 +150,9 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // 收束段（oBlue~rBlue 之间）不再被开放色覆盖，corridor 墙壁在那一圈保持可见，
   // 高地塔（落在收束段内）的射程圈因此会真实穿过两侧墙壁。
   strokeLanes(hw * 2 + 14, '#43536a');
-  fillBase(0, WH, oBlue + 7, '#43536a'); fillBase(WW, 0, oRed + 7, '#43536a');
+  fillBase(cB.x, cB.y, oBlue + 7, '#43536a'); fillBase(cR.x, cR.y, oRed + 7, '#43536a');
   strokeLanes(hw * 2, '#2b3647');
-  fillBase(0, WH, oBlue, '#2b3647'); fillBase(WW, 0, oRed, '#2b3647');
+  fillBase(cB.x, cB.y, oBlue, '#2b3647'); fillBase(cR.x, cR.y, oRed, '#2b3647');
   // 走廊中心细线（路感）
   strokeLanes(3, 'rgba(246,201,74,0.10)');
 

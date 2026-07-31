@@ -54,7 +54,9 @@ function battle() {
 
 // ==================== Q1 基地光环圈 = 高地地形半径 ====================
 {
-  for (const [mid, r] of [['summoners_rift_v1', 1185], ['howling_abyss_v1', 788]]) {
+  // 期望常量更新：howling_abyss 788 → 460。788 > 召唤水晶到角点的 701，
+  // 意味着抑制器被基地广场吞在里面，ARAM「抑制器在桥上」的形态从来没成立过。
+  for (const [mid, r] of [['summoners_rift_v1', 1185], ['howling_abyss_v1', 460]]) {
     const map = MAPS[mid];
     T(`${mid} 光环圈=地形半径=${r}`, map.baseCircleRadius === r && map.baseOpenRadius === r);
   }
