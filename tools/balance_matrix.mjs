@@ -30,6 +30,10 @@ const arg = (name, def) => {
 };
 const RUNS = parseInt(arg('runs', '5'), 10);
 const MAX_MIN = parseFloat(arg('minutes', '45'));
+// --map：在指定地图上跑。默认召唤师峡谷（历史基线都是在它上面测的，不要随便改默认值）。
+// 加这个参数是因为新地图做完必须能【用同一把尺子】量一遍 ——
+// 我自己临时写的简易脚手架量出来"塔零掉血"，连峡谷也是零，说明那种脚手架说明不了任何事。
+const MAP_ID = arg('map', 'summoners_rift_v1');
 const SWEEP = arg('sweep', 'none');
 const JSON_OUT = arg('json', '');
 
@@ -170,7 +174,7 @@ function runOne(seed) {
     } else score[scorer].kills++;
   });
 
-  mapSys.loadMap('summoners_rift_v1');
+  mapSys.loadMap(MAP_ID);
 
   // ---- 主循环 ----
   const maxT = MAX_MIN * 60;
@@ -307,7 +311,7 @@ if (SWEEP === 'dayNight') {
 }
 
 // ==================== 跑 ====================
-console.log(`批量对局模拟：每档 ${RUNS} 局，单局上限 ${MAX_MIN} 分钟，档位 ${cells.length} 个`);
+console.log(`批量对局模拟：地图 ${MAP_ID}，每档 ${RUNS} 局，单局上限 ${MAX_MIN} 分钟，档位 ${cells.length} 个`);
 console.log('（纯 headless，使用真实的 MapSystem/LaneWaveSystem/CombatSystem，非简化模型）\n');
 
 const t0 = Date.now();

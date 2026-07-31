@@ -51,6 +51,7 @@ const TOWER_VIZ = {
 };
 const towerVizScale = (tier) => _VZ()[tier] ?? _VZ().default ?? 1.25;
 // Q6：水晶慢转角速度(rad/s)与攻击辉光参数（自发光基准/峰值/衰减速率）。
+// 水晶本体转速（弧度/秒）。粒子的转速在 CONFIG.ui.crystal 里单独给 —— 见下面的说明。
 const CRYSTAL_SPIN = 0.6, CRYSTAL_EMI_BASE = 0.7, CRYSTAL_EMI_PEAK = 1.6, CRYSTAL_GLOW_DECAY = 2.6;
 const CRYSTAL_PT_MAX_PX = 9;   // 粒子屏幕尺寸上限（像素），近距离不至于过大
 // Q3：小水晶随【充能】变亮（仅穿透型/闪电杖）。全部是渲染侧派生量，逻辑层零改动。
@@ -683,7 +684,9 @@ export class UnitLayer {
 
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
     if (en.crystal) {
-      en.crystal.rotation.y = tNow * CRYSTAL_SPIN;
+      const cc = CONFIG.ui?.crystal || {};
+      const spin = cc.spin ?? CRYSTAL_SPIN;
+      en.crystal.rotation.y = tNow * spin;
       // 粒子尺寸：正交相机下 gl_PointSize 是【像素】且不随缩放变，必须自己按 像素/世界单位 换算，
       // 否则缩小看全图时粒子把塔糊成一团。上限 CRYSTAL_PT_MAX_PX 防近距离过大。
       if (en.crystalPts) {
@@ -692,6 +695,16 @@ export class UnitLayer {
           const px = (en.crystalPts.userData.worldSize || 4) * this.pxPerUnit;
           en.crystalPts.material.size = Math.max(1, Math.min(CRYSTAL_PT_MAX_PX, px));
         }
+        // ==================== 粒子与水晶【转速不同】（用户要求）====================
+        // 粒子是水晶 Mesh 的**子节点**（crystalParticles 被 cm.add 进去了），
+        // 所以它默认继承水晶的旋转 —— 两者严丝合缝地一起转，看起来像焊死在一块儿的。
+        // 想让它们相对转动，就得给子节点一个**相对**角速度：
+        //   子节点世界角速度 = 水晶角速度 + 子节点自身角速度
+        // 所以要达到目标世界角速度 ptsSpin，自身要转 (ptsSpin − spin)。
+        // 直接把 pts.rotation.y 设成 tNow * ptsSpin 是错的 —— 那样它的世界转速会变成
+        // spin + ptsSpin，两个数一起调时永远对不上你想要的效果。
+        const ptsSpin = cc.particleSpin ?? -0.42;   // 负号 = 反向转，反向比同向异速更容易看出来
+        en.crystalPts.rotation.y = tNow * (ptsSpin - spin);
       }
       // ---- Q3：水晶随「充能」变亮（只有穿透型 / 闪电杖两种武器有这个表现）----
       // 上一版做成了"蓄力涨大 + 粒子收拢 + 开火弹跳"，两处不对：
