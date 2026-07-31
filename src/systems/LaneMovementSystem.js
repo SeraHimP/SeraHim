@@ -341,13 +341,36 @@ export class LaneMovementSystem {
 
     // 路点跳跃：追击可能把小兵带到了当前路点前方——若已比"当前路点"更接近
     // "下一个路点"，直接推进索引，避免往回走。最多连跳数个（限制防死循环）。
+    //
+    // ⚠️ 这一条【在急转弯处永远不会触发】。它比的是"离哪个路点近"，也就是以
+    // wp[i] 与 wp[i+1] 的**垂直平分线**为界。转角平缓时（峡谷最大转角 16°）
+    // 沿行进方向越过 wp[i] 基本就同时越过了那条线，所以一直好用；
+    // 但扭曲丛林在基地口有个 84° 的弯，沿来向越过 wp[i] 之后离 wp[i+1] 反而更远，
+    // 想跳多远都跳不了 —— 只能靠下面"距路点 4px"那一条来推进索引。
+    // 而小兵一帧只走 speed×dt ≈ 3.9px，4px 的到达圈比一步还小，稍有推挤就踩不中，
+    // 于是绕着转角那个点无限打转（实测：路程 11738px、净位移 465px、150 秒不推进一格）。
+    // 所以补一条与转角无关的判据：**沿来向越过该路点所在的平面**就算到达。
+    const passedWaypoint = (i) => {
+      const prevIdx = forward ? i - 1 : i + 1;
+      if (prevIdx < 0 || prevIdx >= wps.length) return false;
+      const w = wps[i], pv = wps[prevIdx];
+      const ax = w.x - pv.x, ay = w.y - pv.y;          // 来向（上一段的方向）
+      const L = Math.hypot(ax, ay) || 1;
+      // 越过 = 位置相对该路点在来向上的投影为正
+      return ((minion.pos.x - w.x) * ax + (minion.pos.y - w.y) * ay) / L > 0;
+    };
     for (let hop = 0; hop < 4; hop++) {
       const nextIdx = forward ? idx + 1 : idx - 1;
       if (nextIdx < 0 || nextIdx >= wps.length) break;
       const cur = wps[idx], nxt = wps[nextIdx];
       const dCur = (cur.x - minion.pos.x) ** 2 + (cur.y - minion.pos.y) ** 2;
       const dNxt = (nxt.x - minion.pos.x) ** 2 + (nxt.y - minion.pos.y) ** 2;
-      if (dNxt < dCur) idx = nextIdx; else break;
+      if (dNxt < dCur) { idx = nextIdx; continue; }
+      // 到达圈：至少要能装下一帧的位移，否则"踩不中"。半径软编码，
+      // 且只在【已越过该路点】时才认——不加这个前提会在路点前方提前拐弯、抄内角。
+      const arriveR = CONFIG.tuning?.waypointArriveRadius ?? 24;
+      if (dCur < arriveR * arriveR && passedWaypoint(idx)) { idx = nextIdx; continue; }
+      break;
     }
 
     const target = wps[idx];

@@ -279,5 +279,41 @@ for (const map of Object.values(MAPS)) {
   T(`[扭曲丛林] 起步攻击力与峡谷同档一致（${ad0}）`, ad0 === 152);
 }
 
+// ==================== 切地图必须把上一张图的建筑真删掉 ====================
+// 用户报的"切换地图后会残余其他地图的防御塔废墟"。
+// 根因不在地图数据，在实体生命周期：purgeDead 为了满足"死亡的塔也应该能被选中"，
+// 改成了【任何塔死后都留成废墟(_ruin)而不删除】。而 clearCurrentMap 一直沿用
+// "alive=false 然后 purgeDead()"这套老写法收尸 —— 于是切图时一座塔都删不掉。
+// 实测峡谷→扭曲丛林：容器里 46 座塔而不是 16 座，8 座旧废墟落在新图可视范围内。
+// 同一个坑此前以 _respawnAt 的形态出过一次，_ruin 是第二扇门 —— 所以这里钉死它。
+{
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { MapSystem } = await import('../src/systems/MapSystem.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+  const ids = Object.keys(MAPS);
+  for (let i = 0; i < ids.length; i++) {
+    const from = ids[i], to = ids[(i + 1) % ids.length];
+    if (from === to) continue;
+    const bus = new EventBus(), ents = new EntityContainer(bus);
+    const ms = new MapSystem(ents, bus);
+    ms.setCreateBuildingFn(({ faction, tier, laneId, pos, stats }) => {
+      const e = { id: ++window._uid, type: 'tower', alive: true, pos: { x: pos.x, y: pos.y },
+        baseStats: { ...CONFIG.templates.tower, ...(stats || {}) }, currentHP: 1,
+        shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity, attackCooldown: 0,
+        targetId: null, _skillInstances: [], _mapFaction: faction, _mapTier: tier,
+        _laneId: laneId || null, faction };
+      ents.add(e); return e;
+    });
+    window.gameTime = 0;
+    ms.loadMap(from);
+    ms.loadMap(to);
+    const towers = ents.getAllTowers(false);   // false = 连废墟一起数
+    const want = MAPS[to].buildings.length;
+    T(`${from} → ${to} 切图后只剩新图的建筑（${towers.length} 座，应为 ${want}）`, towers.length === want);
+    T(`${from} → ${to} 没有残留废墟`, towers.every(t => !t._ruin && t.alive));
+  }
+}
+
 console.log(`地图几何验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

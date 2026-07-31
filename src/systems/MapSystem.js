@@ -196,6 +196,16 @@ export class MapSystem {
     // 但它们既不会被攻击也不会消失，永久卡场占用渲染/实体资源）。
     const laneMinions = this.entities.getAllMinions(true).filter(m => m._laneId);
     for (const m of laneMinions) { m.alive = false; m.currentHP = 0; }
+    // ⚠️ 这里【不能】只靠 purgeDead 收尸。
+    // purgeDead 现在的规则是"任何塔死后都留成废墟（_ruin）而不删除"——那是为了满足
+    // "死亡的塔也应该能被选中"。于是 alive=false + purgeDead() 这套老写法对塔彻底失效：
+    // 切地图时上一张图的塔一个都删不掉，全部变成废墟留在新图里（实测峡谷→扭曲丛林：
+    // 容器里 46 座塔而不是 16 座，其中 8 座旧废墟落在新图可视范围内、有的就压在兵线上）。
+    // 同一个坑此前以 _respawnAt 的形态出过一次（见上面那段注释）；_ruin 是第二扇门。
+    // 所以对【本图自己的建筑】一律显式 remove，不走 purgeDead 那条会被豁免的路。
+    for (const t of this.entities.getAllTowers(false)) {
+      if (t._mapFaction || t._mapTier) { delete t._ruin; delete t._respawnAt; this.entities.remove(t.id); }
+    }
     this.entities.purgeDead();
     this.active = false;
     this.currentMap = null;
