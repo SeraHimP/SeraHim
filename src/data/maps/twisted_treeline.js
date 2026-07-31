@@ -66,6 +66,13 @@ export const twisted_treeline = {
   navgrid: TT_NAVGRID,
   walls: { river: false },
 
+  // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管，
+  // MapSystem.isWalkable 走 navgrid 分支时根本不看这两个字段）。
+  // 不声明的话 getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地毫不相干的
+  // 巨圈 —— 用户看到的"基地圈可视化乱七八糟"就是这个。圆心显式给到水晶枢纽上。
+  baseCenters: { blue: { x: 584, y: 676 }, red: { x: 2424, y: 676 } },
+  baseCircleRadius: 300,
+
   // === 波次节奏 ===
   waveInterval: 35,
   firstWaveDelay: 25,

@@ -143,9 +143,19 @@ for (const map of Object.values(MAPS)) {
   // 地形按标准小地图逐像素重描（navgrid）。用户原话：
   // "真正的嚎哭深渊两端有那个圆吗？？难道不是变成更宽的桥了吗？？"
   // ——**没有圆**。走廊模型（折线+半宽+基地圆）结构上就画不出"等宽直桥+两端变宽"。
-  T('[嚎哭深渊] 用 navgrid 描图，不再有走廊/基地圈',
+  // 走廊半宽必须没有（地形归 navgrid）；baseCircleRadius 保留，但它现在**只是光环圈**，
+  // 不参与地形判定 —— MapSystem.isWalkable 走 navgrid 分支时根本不读它。
+  // 不声明反而不行：getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地无关的巨圈。
+  T('[嚎哭深渊] 用 navgrid 描图，走廊半宽已删除',
     ha.useNavgrid && !!ha.navgrid && ha.walls?.corridorHalfWidth === undefined
-    && ha.baseCircleRadius === undefined && ha.baseOpenRadius === undefined);
+    && ha.baseOpenRadius === undefined);
+  for (const m2 of [ha, MAPS['twisted_treeline_v1']]) {
+    T(`[${m2.label}] 光环圈心显式声明在水晶枢纽上（否则会退回世界角点，画得乱七八糟）`,
+      ['blue', 'red'].every((f) => {
+        const nx = m2.buildings.find((b) => b.tier === 'nexus_main' && b.faction === f);
+        return m2.baseCenters?.[f] && len(m2.baseCenters[f], nx.pos) < 1;
+      }));
+  }
   T('[嚎哭深渊] 世界是正方形（采样矩形 510×510，长宽比不一致就会整张图拉伸）',
     ha.world.w === ha.world.h);
   T('[嚎哭深渊] 桥两侧声明了缺口障碍', (ha.obstacles || []).length >= 20);
