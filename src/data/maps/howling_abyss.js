@@ -66,6 +66,14 @@ export const howling_abyss = {
   baseCenters: { blue: { x: 292, y: 2033 }, red: { x: 2033, y: 292 } },
   baseCircleRadius: 330,
 
+  // 高地范围：界线 = 过水晶塔、**垂直于桥**的一条线，往自家那一侧全是高地。
+  // 用户定稿"从水晶塔开始就已经是高地了"。dir 指向自家（即 −U / +U）。
+  highground: {
+    blue: { at: { x: 631, y: 1694 }, dir: { x: -Math.SQRT1_2, y: Math.SQRT1_2 } },
+    red:  { at: { x: 1694, y: 631 }, dir: { x: Math.SQRT1_2, y: -Math.SQRT1_2 } },
+    ramp: 140,
+  },
+
   // 桥两侧的缺口 —— 小地图上那一串棕色方块。用户："上桥的缺口（用障碍物替代）"。
   // 贴着桥的两条边、沿桥等距排布；按沿桥弧长 d + 垂直偏移 off 声明，r = 碰撞半径。
   // 偏移 ±175：桥中段半宽 ≈ 196（图上 86px ÷2 ×4.56），所以这一排刚好贴在桥沿内侧，

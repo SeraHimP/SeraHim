@@ -778,16 +778,39 @@ export class MapSystem {
     // 这就是用户要的"路面恢复原有地形高度"——河不再从三路底下横穿过去。
     const rf = this.riverFactor(x, z);
     if (rf > 0) h = Math.min(h, riverDepth * rf);
-    // 高地：两基地平台。Q4——边缘做成【斜坡】而非陡坎：内核 rFull 内满高 platH，
-    // rFull→rEdge 之间线性降到 0，于是从各兵线口离开基地都是一段可走的坡（红圈处）。
-    const rFull = cfg.plateauFull ?? 0.60, rEdge = cfg.plateauEdge ?? 0.98;
-    for (const f of ['blue', 'red']) {
-      const c = this.getBaseCircleCenter(f), r = this.getBaseOpenRadius(f);
-      if (!c || !r) continue;
-      const d = Math.hypot(x - c.x, z - c.y), a = r * rFull, b = r * rEdge;
-      if (d >= b) continue;
-      const t = d <= a ? 1 : 1 - (d - a) / Math.max(1e-6, b - a);   // 1（核心）→ 0（坡脚）
-      h = Math.max(h, platH * t);
+    // 高地。**两种形状，按地图声明选**：
+    //
+    // ① map.highground（半平面）—— 用户定稿："从水晶塔前方就开始有高低差
+    //    （从水晶塔开始就已经是高地了）"。即高地是【水晶塔那条线往自家方向的一整片】，
+    //    不是一个圆。圆那套只对峡谷成立（那里基地确实是个角上的圆台）。
+    //    在扭曲丛林/嚎哭深渊上按圆抬，抬出来的就是"水晶周围凭空隆起一个包"——
+    //    用户问的"水晶周围为什么会隆起来"就是这个。
+    //    声明形式：{ blue:{at,dir}, red:{at,dir}, ramp }
+    //      at  = 界线上一点（放水晶塔位置）
+    //      dir = 指向【自家】的单位向量（界线的内法向）
+    //      ramp= 界线处的坡宽（世界单位），做成斜坡而不是陡坎，兵能走上去
+    // ② 未声明 highground 的地图退回原来的圆（峡谷/Quick 逐位不变）。
+    const hg = m.highground;
+    if (hg) {
+      const ramp = hg.ramp ?? 120;
+      for (const f of ['blue', 'red']) {
+        const z0 = hg[f]; if (!z0) continue;
+        const sIn = (x - z0.at.x) * z0.dir.x + (z - z0.at.y) * z0.dir.y;   // >0 = 在自家高地这侧
+        if (sIn <= 0) continue;
+        h = Math.max(h, platH * Math.min(1, sIn / Math.max(1e-6, ramp)));
+      }
+    } else {
+      // Q4——边缘做成【斜坡】而非陡坎：内核 rFull 内满高 platH，
+      // rFull→rEdge 之间线性降到 0，于是从各兵线口离开基地都是一段可走的坡（红圈处）。
+      const rFull = cfg.plateauFull ?? 0.60, rEdge = cfg.plateauEdge ?? 0.98;
+      for (const f of ['blue', 'red']) {
+        const c = this.getBaseCircleCenter(f), r = this.getBaseOpenRadius(f);
+        if (!c || !r) continue;
+        const d = Math.hypot(x - c.x, z - c.y), a = r * rFull, b = r * rEdge;
+        if (d >= b) continue;
+        const t = d <= a ? 1 : 1 - (d - a) / Math.max(1e-6, b - a);   // 1（核心）→ 0（坡脚）
+        h = Math.max(h, platH * t);
+      }
     }
     // 龙坑/男爵坑：坑心下沉，边缘一段过渡（坑壁）。与 navgrid 同一份坑位数据。
     if (m.useNavgrid) {

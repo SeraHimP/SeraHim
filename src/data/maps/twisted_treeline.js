@@ -82,6 +82,16 @@ export const twisted_treeline = {
   baseCenters: { blue: { x: 584, y: 676 }, red: { x: 2424, y: 676 } },
   baseCircleRadius: 300,
 
+  // 高地范围（用户定稿："从水晶塔前方就开始有高低差，从水晶塔开始就已经是高地了"）。
+  // 界线 = 过水晶塔的一条竖线，往自家那一侧全是高地。**不是圆** ——
+  // 按圆抬会在水晶枢纽周围凭空隆起一个包（用户问的"水晶周围为什么会隆起来"）。
+  // 蓝方水晶塔 x：上路 879 / 下路 896 → 界线取 888（两者中间）。
+  highground: {
+    blue: { at: { x: 888, y: 664 }, dir: { x: -1, y: 0 } },
+    red:  { at: { x: 2120, y: 664 }, dir: { x: 1, y: 0 } },
+    ramp: 140,
+  },
+
   // === 波次节奏 ===
   waveInterval: 35,
   firstWaveDelay: 25,
