@@ -39,6 +39,7 @@
  * 这是 3D 侧【优于】2D 的一处刻意差异：2D 第 5 步即摘除，不回填。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { CONFIG } from '../data/Config.js';
 
 const MAX_DYN_TRI = 24000;    // 动态线批三角形上限（电弧封顶 120 条 × 分段，余量充足）
 const MAX_QUAD = 4000;        // 子弹上限（每颗 2 个四边形：光晕 + 核心）
@@ -437,11 +438,14 @@ export class EffectsLayer {
       const { w: WW, h: WH } = map.world;
       // D2 世界边界框
       B.rectStroke(0, 0, WW, WH, 4, rgbOf('#ffffff'), 0.18);
-      // D3 双方基地高地扇形（半径与 MapSystem/基地光环同源）
-      const baseR = mapSystem.getBaseCircleRadius?.('blue') || WW * 0.37;
-      const baseR2 = mapSystem.getBaseCircleRadius?.('red') || baseR;
-      B.fan(0, WH, baseR, -Math.PI / 2, 0, rgbOf('#5b9bd5'), 0.07);
-      B.fan(WW, 0, baseR2, Math.PI / 2, Math.PI, rgbOf('#e0473f'), 0.07);
+      // D3 双方基地高地扇形 —— 默认不画（CONFIG.tuning.showBaseCircle，设置里可开）。
+      // 关掉的只是这个圈的**画法**；基地光环是玩法效果，走 towerPassives，与此无关。
+      if (CONFIG.tuning?.showBaseCircle) {
+        const baseR = mapSystem.getBaseCircleRadius?.('blue') || WW * 0.37;
+        const baseR2 = mapSystem.getBaseCircleRadius?.('red') || baseR;
+        B.fan(0, WH, baseR, -Math.PI / 2, 0, rgbOf('#5b9bd5'), 0.07);
+        B.fan(WW, 0, baseR2, Math.PI / 2, Math.PI, rgbOf('#e0473f'), 0.07);
+      }
     }
 
     // D4 兵线虚线：有墙地图默认隐藏，设置里"显示小兵轨迹"可开（与 2D 同条件）

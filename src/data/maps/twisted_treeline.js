@@ -59,10 +59,19 @@ const mirror = (half) => [...half, ...half.slice(0, -1).reverse().map(M)];
 const LANE_TOP = mirror(TOP_HALF);
 const LANE_BOT = mirror(BOT_HALF);
 
-// 蓝方建筑。水晶枢纽/枢纽塔是从小地图上直接读出来的像素位置。
+// 蓝方基地里的 6 个点位 —— **全部是从标准小地图上量出来的像素位置**（用户在图上圈出并确认）：
+//   红圈：青色菱形 = 水晶枢纽 img(146,405)；紧贴它左边的小圆 = 枢纽塔 img(121,403)
+//   橙圈（4 个，上下各一对，x 都在 107~108）：外侧的是水晶塔、内侧的是召唤水晶
+//     上外 img(108,309) 上内 img(108,349) ／ 下内 img(107,460) 下外 img(107,501)
+// 换算 world_x = img_x×4，world_y = (img_y−236)×4。
+//
+// ⚠️ 注意这张图的基地布局和 LoL 常规**相反**：水晶枢纽在最前（靠敌方），
+// 枢纽塔、水晶塔、召唤水晶依次在它【后方】。这是用户反复确认过的图上事实，不是笔误。
 const B = {
-  nexus_main: { x: 584, y: 676 },   // 青色菱形，img(146,405)
-  hq_tower:   { x: 460, y: 672 },   // 紧贴枢纽左侧的圆盘，img(115,404)；距枢纽 124 < 射程 180
+  nexus_main: { x: 584, y: 676 },   // 红圈·青色菱形
+  hq_tower:   { x: 484, y: 668 },   // 红圈·贴着菱形左侧的小圆；距枢纽 100 < 射程 180
+  top: { base: { x: 432, y: 292 }, nexus_lane: { x: 432, y: 452 } },   // 橙圈①②
+  bot: { nexus_lane: { x: 428, y: 896 }, base: { x: 428, y: 1060 } },  // 橙圈③④
 };
 
 export const twisted_treeline = {
@@ -119,8 +128,8 @@ export const twisted_treeline = {
     { id: 'bot', waypoints: LANE_BOT },
   ],
 
-  // ⚠️ 本次只重做地形。除水晶枢纽/枢纽塔（从小地图直接读出）外，
-  // 各路的外塔/水晶塔/召唤水晶仍按沿兵线弧长临时摆放，等地形定稿后再按小地图逐个对位。
+  // 塔位：水晶枢纽/枢纽塔/水晶塔/召唤水晶 **全部从标准小地图逐个量出**（见上面 B）；
+  // 只有外塔小地图上没标，仍按沿兵线弧长取点。
   buildings: (() => {
     // 每条路各自沿【自己的】折线按弧长取点 —— 上下两条不是镜像关系（见上面的说明），
     // 用上路的点镜像下来会落在墙里。
@@ -140,16 +149,23 @@ export const twisted_treeline = {
       };
     };
     const at = { top: atOn(LANE_TOP), bot: atOn(LANE_BOT) };
-    const D = { nexus_lane: 640, base: 800, outer: 1180 };
     const out = [];
-    for (const [tier, w, sk] of [['outer', 'piercing', 'passive_growth_outer'],
-                                 ['base', 'piercing', 'passive_growth_base'],
-                                 ['nexus_lane', null, null]]) {
-      for (const lane of ['top', 'bot']) {
-        const p = at[lane](D[tier]);
+    // 水晶塔 / 召唤水晶：**直接用从小地图量出来的坐标**，不再按弧长估。
+    for (const lane of ['top', 'bot']) {
+      for (const [tier, sk] of [['base', 'passive_growth_base'], ['nexus_lane', null]]) {
+        const p = B[lane][tier];
+        const w = tier === 'base' ? 'piercing' : null;
         out.push({ faction: FACTIONS.BLUE, tier, laneId: lane, pos: p, weapon: w, skills: sk ? [sk] : undefined });
         out.push({ faction: FACTIONS.RED, tier, laneId: lane, pos: M(p), weapon: w, skills: sk ? [sk] : undefined });
       }
+    }
+    // 外塔仍按弧长取点（小地图上没标外塔）。用户："现有的外塔位置稍微往内侧移动一些"
+    // → 弧长 1180 收到 1010（往自家方向挪约 170）。
+    const OUTER_D = 1010;
+    for (const lane of ['top', 'bot']) {
+      const p = at[lane](OUTER_D);
+      out.push({ faction: FACTIONS.BLUE, tier: 'outer', laneId: lane, pos: p, weapon: 'piercing', skills: ['passive_growth_outer'] });
+      out.push({ faction: FACTIONS.RED, tier: 'outer', laneId: lane, pos: M(p), weapon: 'piercing', skills: ['passive_growth_outer'] });
     }
     out.push({ faction: FACTIONS.BLUE, tier: 'hq_tower', laneId: null, pos: B.hq_tower, weapon: 'piercing', skills: ['passive_growth_hq'] });
     out.push({ faction: FACTIONS.RED, tier: 'hq_tower', laneId: null, pos: M(B.hq_tower), weapon: 'piercing', skills: ['passive_growth_hq'] });

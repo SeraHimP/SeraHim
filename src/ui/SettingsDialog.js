@@ -267,6 +267,9 @@ export const SettingsDialog = {
           <div class="slider-row"><label>小兵轨迹线</label>
             <button id="setLanePathBtn" style="flex:1;">${window.__showLanePaths ? '👁 已显示（点击隐藏）' : '🙈 已隐藏（点击显示）'}</button>
           </div>` : ''}
+          <div class="slider-row"><label>基地圈</label>
+            <button id="setBaseCircleBtn" style="flex:1;">${CONFIG.tuning?.showBaseCircle ? '👁 已显示（点击隐藏）' : '🙈 已隐藏（点击显示）'}</button>
+          </div>
         </div>` : ''}
 
         ${TAB === 'wave' ? `
@@ -538,6 +541,12 @@ export const SettingsDialog = {
         logFn(window.__showLanePaths ? '👁 小兵轨迹已显示' : '🙈 小兵轨迹已隐藏', 'spawn');
         render();
       });
+      // 基地圈只管画不画；基地光环是玩法效果（towerPassives），与这个开关无关。
+      document.getElementById('setBaseCircleBtn')?.addEventListener('click', () => {
+        CONFIG.tuning.showBaseCircle = !CONFIG.tuning.showBaseCircle;
+        logFn(CONFIG.tuning.showBaseCircle ? '👁 基地圈已显示（光环效果不受影响）' : '🙈 基地圈已隐藏（光环效果照常）', 'spawn');
+        render();
+      });
       const toggleLaneWaveBtn = document.getElementById('setToggleLaneWaveBtn');
       if (toggleLaneWaveBtn) toggleLaneWaveBtn.addEventListener('click', () => {
         laneWaveSystem.paused = !laneWaveSystem.paused;
@@ -572,7 +581,7 @@ export const SettingsDialog = {
     const snap = makeSnapshotter({ CONFIG, window },
       ['CONFIG.world.couplings', 'CONFIG.world.dayNightBonus', 'CONFIG.world.entropy',
        'CONFIG.ui.towerLight.enabled', 'CONFIG.ui.rangeRing.mode', 'CONFIG.ui.hdr.force',
-       'CONFIG.gameRules.waveInterval', 'CONFIG.gameRules.firstWaveDelay',
+       'CONFIG.gameRules.waveInterval', 'CONFIG.gameRules.firstWaveDelay', 'CONFIG.tuning.showBaseCircle',
        'window.__gameSpeed', 'window.__gridOn', 'window.__showLanePaths',
        'window.__laneFlow', 'window.__terrainAvoid', 'window.__towerRules', 'window.__ffRemain']);
     mountDialogFooter('modalActions', {

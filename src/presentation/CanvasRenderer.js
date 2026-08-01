@@ -153,12 +153,16 @@ export class CanvasRenderer {
       // 外塔/内塔是前线塔，仍在圈外。半径由地图实际几何算出，任何尺寸的地图都正确
       // （原为写死的 WW×0.37，在小图上会把圈画成半张地图）。
       // v33（Q9）：基地圈半径改由 MapSystem 统一提供——基地光环与画布圈是同一份数据
+      // 基地圈默认不画（CONFIG.tuning.showBaseCircle，设置里可开）。
+      // 而且这里的圆心一直写死在世界角点上，对 baseCenters 不在角上的地图本来就画错位置。
+      if (CONFIG.tuning?.showBaseCircle) {
       const baseR = this.mapSystem.getBaseCircleRadius?.('blue') || WW * 0.37;
       const baseR2 = this.mapSystem.getBaseCircleRadius?.('red') || baseR;
       ctx.fillStyle = 'rgba(91,155,213,0.07)';
       ctx.beginPath(); ctx.moveTo(0, WH); ctx.arc(0, WH, baseR, -Math.PI / 2, 0); ctx.closePath(); ctx.fill();
       ctx.fillStyle = 'rgba(224,71,63,0.07)';
       ctx.beginPath(); ctx.moveTo(WW, 0); ctx.arc(WW, 0, baseR2, Math.PI / 2, Math.PI); ctx.closePath(); ctx.fill();
+      }
       
       // EQ3：新增的参考线与原有兵线虚线叠加（虚线叠虚线），已回退，保留原有渲染。
       ctx.restore();
