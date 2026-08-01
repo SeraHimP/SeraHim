@@ -184,6 +184,80 @@ export class UnitLayer {
     return m;
   }
 
+  /**
+   * 射程圈的**随地形起伏**几何（"披"在地形上，而不是一张平面片）。
+   *
+   * 用户："塔的射程圈只要出现了高低差就会被吞掉一部分，修复问题，让射程浮在地形上。"
+   * 根因：圈是一张【平的】面片，整片按塔脚那一点的高度摆。地形一有高低差，
+   * 高的那半边地面就比面片高，depthTest 直接把它剪掉 —— 看起来就是"被吞掉一块"。
+   *
+   * 这里逐顶点按 heightAt 抬沉，让圈贴着坡爬上去。两处细节都是必须的：
+   *   · 高度取【邻域最大值】（probe）。地面网格是 24px 一段的线性插值，而 heightAt 在
+   *     台阶处是阶跃的 —— 只取本点，台阶低侧那一圈顶点会被插值出来的地面盖住，
+   *     等于没修。取邻域最大值相当于让圈在台阶边缘提前抬起来。
+   *   · 几何依赖【圆心的世界坐标】，所以**不能进 _geoCache 共享**，只能挂在 entry 上，
+   *     换半径/换位置时自己 dispose（塔不会移动，所以实际只在建塔时构建一次）。
+   */
+  _drapeGeo(kind, r, w, cx, cz) {
+    const d = (CONFIG.ui && CONFIG.ui.rangeRing && CONFIG.ui.rangeRing.drape) || {};
+    const SEG = Math.max(8, d.segments ?? 72);
+    const probe = d.probe ?? 12;
+    const raw = (x, z) => this.mapSystem.heightAt(x, z);
+    const hAt = (x, z) => {
+      let h = raw(x, z);
+      if (probe > 0) {
+        h = Math.max(h, raw(x + probe, z), raw(x - probe, z), raw(x, z + probe), raw(x, z - probe));
+      }
+      return h;
+    };
+    const h0 = raw(cx, cz);          // 网格摆在 groundY 上，顶点存的是相对高度
+    const steps = Math.max(1, d.radialSteps ?? 10);
+    const radii = kind === 'ring'
+      ? [Math.max(0.1, r - w / 2), r + w / 2]
+      : Array.from({ length: steps + 1 }, (_, i) => (r * i) / steps);
+    const pos = [], idx = [];
+    for (const rad of radii) {
+      for (let a = 0; a <= SEG; a++) {
+        const th = (a / SEG) * Math.PI * 2;
+        const dx = Math.cos(th) * rad, dz = Math.sin(th) * rad;
+        pos.push(dx, hAt(cx + dx, cz + dz) - h0, dz);
+      }
+    }
+    const row = SEG + 1;
+    for (let ri = 0; ri < radii.length - 1; ri++) {
+      for (let a = 0; a < SEG; a++) {
+        const p0 = ri * row + a, p1 = p0 + 1, p2 = p0 + row, p3 = p2 + 1;
+        idx.push(p0, p2, p1, p1, p2, p3);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    return g;
+  }
+
+  /**
+   * 射程圈的材质是**每座塔独有**的（不进 _matCache）。
+   * 共享材质在这里是错的：渐显靠逐帧改 .opacity，而一个阵营十几座塔共用一份材质时，
+   * 最后写进去的那座说了算，各塔的渐显互相踩。距离渐显时代这条就错着
+   *（当时各塔强度差不多，看不太出来），改成逐塔独立的渐显/渐隐后必须分开。
+   */
+  _rangeMat(color, opacity) {
+    return new THREE.MeshBasicMaterial({ color, transparent: true, opacity,
+                                         depthTest: true, depthWrite: false,
+                                         side: THREE.DoubleSide });
+  }
+
+  // 射程圈专用清理：贴合地形的几何与逐塔材质都是**这座塔独有**的，必须真 dispose
+  //（不像共享几何/材质那样只摘出场景）。
+  _clearRange(en) {
+    en.rangeFill = this._removeFlat(en.rangeFill);
+    en.rangeEdge = this._removeFlat(en.rangeEdge);
+    if (en.rangeGeo) { for (const g of en.rangeGeo) g.dispose(); en.rangeGeo = null; }
+    if (en.rangeMat) { for (const m of en.rangeMat) m.dispose(); en.rangeMat = null; }
+    en.rangeKey = '';
+  }
+
   _flatGeo(kind, r, w = 0) {
     const k = kind + '|' + r + '|' + w;
     let g = this._geoCache.get(k);
@@ -392,8 +466,7 @@ export class UnitLayer {
 
   _clearInfo(en) {
     this._clearSel(en);
-    en.rangeFill = this._removeFlat(en.rangeFill);
-    en.rangeEdge = this._removeFlat(en.rangeEdge);
+    this._clearRange(en);
     en.soul = this._removeFlat(en.soul);
     en.own = this._removeFlat(en.own);
     if (en.shield) {
@@ -425,73 +498,68 @@ export class UnitLayer {
   }
 
   /**
-   * 射程圈是否该显示（用户定稿：选中 ‖ 半径内有敌人）。
-   *
-   * 三个刻意的设计，都是为了不闪：
-   *   ① **节流**：敌人探测每 probeInterval 秒做一次。22 座塔每帧各查一次空间网格
-   *      纯属白烧，而"晚 0.25 秒亮起"根本看不出来。
-   *   ② **滞回**：进入用射程、退出用射程×hysteresis。边界上的敌人来回踱步时，
-   *      不加滞回会让圈疯狂开关 —— 那比常显还烦。
-   *   ③ 探测结果记在渲染层自己的 entry 上（en.*），**不往实体上写字段**。
-   *
-   * 注意 findInRadius 的 aliveOnly=true：死了的敌人不该让圈继续亮着。
-   */
-  /**
    * 射程圈的**显示强度**（0=完全不画，1=完全显示）。
    *
-   * 用户定稿：敌人进到"射程 + fadeOuter"就开始渐显，进到"射程 + fadeInner"时完全显示。
-   * 改版前这里返回的是布尔值 —— 于是圈是"啪"地整片出现/消失，边界上敌人来回踱步时
-   * 只能靠滞回压抖动，观感仍然是硬开关。现在返回连续强度，滞回也就不需要了：
-   * 距离本身就是平滑的，透明度跟着距离走，天然不会闪。
+   * ==================== 用户定稿（本次改版）====================
+   * 「设置这个必须按照渐显渐隐的方式，而不再是根据单位的距离了，
+   *   只要出现目标或者是点了，就渐显，消失了就渐隐。」
    *
-   * 返回 0..1。选中时恒为 1（选中是明确的意图表达，不该再打折）。
+   * 也就是说：**强度不再是距离的函数**。目标的有无是一个布尔量，
+   * 平滑完全交给时间上的渐显/渐隐（fadeIn / fadeOut 两个时间常数）。
+   *
+   * 上一版是按距离插值的（敌人进到"射程+220"开始渐显、"射程+30"完全显示）。
+   * 那套的毛病：圈的亮度跟着敌人走位一直抖，而且【敌人在射程外老远就把圈点亮】—— 
+   * 一个 250 射程的塔，220 的渐显带意味着 470px 外就开始亮，满地图都是半亮的圈。
+   * 现在只认"射程内有没有敌人"，圈亮 = 这座塔真的能打到人，信息量回来了。
+   *
+   * 三个保留下来的设计：
+   *   ① **节流**：敌人探测每 probeInterval 秒做一次（44 座塔每帧各查一次空间网格纯属白烧；
+   *      "晚 0.25 秒亮起"看不出来，而且渐显本身就有 fadeIn 那么长）。
+   *   ② 探测结果记在渲染层自己的 entry 上（en.*），**不往实体上写字段**。
+   *   ③ findInRadius 的 aliveOnly=true：死了的敌人不该让圈继续亮着。
+   *
+   * 返回 0..1。
    */
   _rangeRingStrength(e, en, ctxDeps, selectedId) {
     const cfg = (CONFIG.ui && CONFIG.ui.rangeRing) || {};
     const mode = cfg.mode || 'auto';
     if (mode === 'always') return 1;
-    if (e.id === selectedId) { en.ringHot = 1; return 1; }
-    if (mode === 'selected') { en.ringHot = 0; return 0; }
 
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-    const every = cfg.probeInterval ?? 0.25;
-    const outer = cfg.fadeOuter ?? 50;   // 射程 + 这么多：开始渐显
-    const inner = cfg.fadeInner ?? 10;   // 射程 + 这么多：完全显示
-    if (en.ringAt === undefined || now - en.ringAt >= every) {
-      en.ringAt = now;
-      const ents = ctxDeps.entities;
-      const base = ctxDeps.attrCalc.calc(e, ctxDeps.effects.getEffects(e.id)).attackRange || 250;
-      // 只查一次最外圈，取**最近**那个敌人的距离 —— 强度由它决定。
-      // 逐档查询（先查内圈再查外圈）会把一次网格查询变成两次，没有必要。
-      let best = Infinity;
-      if (ents && ents.findInRadius) {
-        const fac = e._mapFaction || e.faction;
-        for (const o of ents.findInRadius(e.pos.x, e.pos.y, base + outer, null, true)) {
-          if (o.id === e.id || o.type === 'tower' || !o.pos) continue;
-          const of = o._mapFaction || o.faction;
-          // 沙盒模式（塔无阵营）：任何单位都算"有敌人"，与索敌口径一致
-          if (fac && of && of === fac) continue;
-          const d = Math.hypot(o.pos.x - e.pos.x, o.pos.y - e.pos.y);
-          if (d < best) best = d;
+    // 目标强度是**布尔**的：选中 ‖ 射程内有敌人。
+    let want;
+    if (e.id === selectedId) want = 1;          // 点了就亮（也走渐显，不是啪一下）
+    else if (mode === 'selected') want = 0;
+    else {
+      const every = cfg.probeInterval ?? 0.25;
+      if (en.ringAt === undefined || now - en.ringAt >= every) {
+        en.ringAt = now;
+        const ents = ctxDeps.entities;
+        const base = ctxDeps.attrCalc.calc(e, ctxDeps.effects.getEffects(e.id)).attackRange || 250;
+        let hit = false;
+        if (ents && ents.findInRadius) {
+          const fac = e._mapFaction || e.faction;
+          for (const o of ents.findInRadius(e.pos.x, e.pos.y, base, null, true)) {
+            if (o.id === e.id || o.type === 'tower' || !o.pos) continue;
+            const of = o._mapFaction || o.faction;
+            // 沙盒模式（塔无阵营）：任何单位都算"有敌人"，与索敌口径一致
+            if (fac && of && of === fac) continue;
+            if (Math.hypot(o.pos.x - e.pos.x, o.pos.y - e.pos.y) <= base) { hit = true; break; }
+          }
         }
+        en.ringWant = hit ? 1 : 0;
       }
-      // best <= 射程+inner → 1；best >= 射程+outer → 0；之间线性
-      let t = 0;
-      if (best < Infinity) {
-        const lo = base + inner, hi = base + outer;
-        t = hi > lo ? (hi - best) / (hi - lo) : (best <= hi ? 1 : 0);
-        t = Math.max(0, Math.min(1, t));
-      }
-      en.ringWant = t;
+      want = en.ringWant ?? 0;
     }
-    // 逐帧向目标强度插值：探测是 0.25s 一次的，直接用会看到台阶。
-    const fade = Math.max(0.01, cfg.fade ?? 0.18);
+
+    // 渐显 / 渐隐：两个方向各一个时间常数（淡出慢一点，目标死了圈不会"啪"地消失）
+    const cur = en.ringHot ?? 0;
+    const tau = Math.max(0.01, (want > cur ? (cfg.fadeIn ?? cfg.fade) : (cfg.fadeOut ?? cfg.fade)) ?? 0.18);
     const dt = Math.min(0.1, Math.max(0, now - (en.ringLerpAt ?? now)));
     en.ringLerpAt = now;
-    const cur = en.ringHot ?? 0;
-    const k = Math.min(1, dt / fade);
-    en.ringHot = cur + ((en.ringWant ?? 0) - cur) * k;
+    en.ringHot = cur + (want - cur) * Math.min(1, dt / tau);
     if (en.ringHot < 0.004) en.ringHot = 0;
+    if (en.ringHot > 0.996) en.ringHot = 1;
     return en.ringHot;
   }
 
@@ -516,25 +584,33 @@ export class UnitLayer {
     if (ringK > 0) {
       const range = attrCalc.calc(e, effects.getEffects(e.id)).attackRange || 250;
       const r = Math.round(range / 4) * 4;
-      const rk = r + '|' + color;
+      const cfg0 = (CONFIG.ui && CONFIG.ui.rangeRing) || {};
+      // 贴合地形的几何依赖圆心坐标，所以 key 里必须带上位置（塔不动，实际只建一次）
+      const drape = (cfg0.drape?.enabled !== false) && !!(this.mapSystem && this.mapSystem.heightAt);
+      const rk = r + '|' + color + (drape ? `|${Math.round(x)},${Math.round(z)}` : '');
       if (en.rangeKey !== rk) {
+        this._clearRange(en);
         en.rangeKey = rk;
-        en.rangeFill = this._removeFlat(en.rangeFill);
-        en.rangeEdge = this._removeFlat(en.rangeEdge);
-        en.rangeFill = this._flatMesh(this._flatGeo('disc', r), this._flatMat(color, 0x0f / 255));
-        en.rangeEdge = this._flatMesh(this._flatGeo('ring', r, 1), this._flatMat(color, 0x33 / 255));
+        en.rangeMat = [this._rangeMat(color, 0x0f / 255), this._rangeMat(color, 0x33 / 255)];
+        if (drape) {
+          en.rangeGeo = [this._drapeGeo('disc', r, 0, x, z), this._drapeGeo('ring', r, 1, x, z)];
+          en.rangeFill = this._flatMesh(en.rangeGeo[0], en.rangeMat[0]);
+          en.rangeEdge = this._flatMesh(en.rangeGeo[1], en.rangeMat[1]);
+        } else {
+          en.rangeFill = this._flatMesh(this._flatGeo('disc', r), en.rangeMat[0]);
+          en.rangeEdge = this._flatMesh(this._flatGeo('ring', r, 1), en.rangeMat[1]);
+        }
       }
       // 渐显靠改材质不透明度而不是重建网格：重建会在每一档强度上生成一份新材质，
       // 渐变过程有几十帧，等于每次淡入都造几十个材质再丢掉。
+      // 材质是逐塔独有的（见 _rangeMat 的注释），所以这里改 .opacity 只影响自己。
       const cfg = (CONFIG.ui && CONFIG.ui.rangeRing) || {};
       en.rangeFill.material.opacity = (cfg.fillAlpha ?? (0x0f / 255)) * ringK;
       en.rangeEdge.material.opacity = (cfg.edgeAlpha ?? (0x33 / 255)) * ringK;
       en.rangeFill.position.set(x, RING_LIFT + en.groundY, z);
       en.rangeEdge.position.set(x, RING_LIFT + en.groundY, z);
     } else if (en.rangeFill) {
-      en.rangeFill = this._removeFlat(en.rangeFill);
-      en.rangeEdge = this._removeFlat(en.rangeEdge);
-      en.rangeKey = '';
+      this._clearRange(en);
     }
 
     // --- E5 归属环：手动建造对战塔（_mapFaction && !_mapTier），中立灰白，宽 3 ---

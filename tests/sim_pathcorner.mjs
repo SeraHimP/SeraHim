@@ -276,5 +276,155 @@ for (const map of Object.values(MAPS)) {
   T(`[绕塔] 没有长时间贴着塔身滑（贴壳帧数 ${hug} / ${frames}，< 25%）`, hug < frames * 0.25);
 }
 
+// ==================== ⑦ 塔正压在兵线【中心线】上时不许绕着塔转圈 ====================
+// 用户："依旧会转圈（扭曲丛林上路会下路不会），但是一旦范围内出现敌人直接就好。"
+// 量出来的闭环：
+//   ① 两张新图的塔都压在兵线中心线上（嚎哭深渊三座塔精确在线上；
+//      扭曲丛林上路 wp8 离外塔只有 21px，而塔的避障半径 35 + 小兵 10 = 45
+//      —— 路点在塔肚子里，小兵最近只能靠到离路点 24px，正好等于到达半径，**踩不中**）；
+//   ② 索引卡住 → 期望方向永远指着塔后面那个够不着的点；
+//   ③ 绕开一点点之后 blocked 立刻变 false、绕行状态被释放，
+//      居中力满权重把兵拉回那条【穿过塔身】的中心线 → 又撞上去。
+// "一有敌人就好"正是因为 enemyNear 会关掉居中力，闭环被打断。
+// 这里合成一张"塔压在中间路点上"的图，直接钉住三件事：能过去、不转圈、索引能推进。
+{
+  const map = {
+    id: '__onlane', label: '__onlane', world: { w: 2400, h: 2000 },
+    walls: { corridorHalfWidth: 260, river: false },
+    baseCenters: { blue: { x: 200, y: 1000 }, red: { x: 2200, y: 1000 } },
+    baseCircleRadius: 150, baseOpenRadius: 150,
+    // 中间那个路点与塔【只差 20px】—— 复刻扭曲丛林上路 wp8 的实际关系
+    lanes: [{ id: 'mid', waypoints: [{ x: 200, y: 1000 }, { x: 1200, y: 1000 }, { x: 2200, y: 1000 }] }],
+    buildings: [{ faction: 'blue', tier: 'outer', pos: { x: 1220, y: 1000 }, weapon: 'none' }],
+  };
+  MAPS[map.id] = map;
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  const ms = new MapSystem(ents, bus);
+  const tplT = CONFIG.templates.tower;
+  ms.setCreateBuildingFn(({ faction, tier, pos }) => {
+    const e = { id: ++window._uid, type: 'tower', alive: true, pos: { x: pos.x, y: pos.y },
+      baseStats: { ...tplT }, currentHP: 99999, shieldFixedCurrent: 0, tempShield: 0,
+      lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [],
+      _mapFaction: faction, faction, _mapTier: tier };
+    ents.add(e); return e;
+  });
+  window.gameTime = 0; ms.loadMap(map.id);
+  const lane = ms.getLane('mid');
+  T(`[压线塔] loadMap 算出了路点被建筑吃掉的深度（wp1 = ${(lane._wpBlock?.[1] ?? 0).toFixed(0)}px > 0）`,
+    (lane._wpBlock?.[1] ?? -1) > 0);
+
+  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, ms);
+  const tpl = CONFIG.templates.melee;
+  const m = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 800, y: 1000 },
+    baseStats: { ...tpl }, currentHP: tpl.maxHP, shieldFixedCurrent: 0, tempShield: 0,
+    lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [],
+    _mapFaction: 'blue', faction: 'blue', _laneId: 'mid', _laneDirection: 'forward' };
+  ents.add(m);
+  let path = 0, last = { ...m.pos }, laps = 0, prevAng = null, turn = 0;
+  for (let i = 0; i < 40 / DT; i++) {
+    window.gameTime = i * DT; move.update(DT);
+    path += Math.hypot(m.pos.x - last.x, m.pos.y - last.y);
+    last = { x: m.pos.x, y: m.pos.y };
+    // 累计绕塔的方位角变化 —— 转圈的定义就是"这个角一直往一个方向加"
+    const ang = Math.atan2(m.pos.y - 1000, m.pos.x - 1220);
+    if (prevAng !== null) {
+      let d = ang - prevAng;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      turn += d;
+    }
+    prevAng = ang;
+    if (m.pos.x > 1800) break;
+  }
+  laps = Math.abs(turn) / (2 * Math.PI);
+  delete MAPS[map.id];
+  const net = Math.hypot(m.pos.x - 800, m.pos.y - 1000);
+  T(`[压线塔] 能走过去（x ${m.pos.x.toFixed(0)} > 1800）`, m.pos.x > 1800);
+  T(`[压线塔] 不是绕着塔转圈（绕塔累计 ${laps.toFixed(2)} 圈 < 0.6）`, laps < 0.6);
+  T(`[压线塔] 路程/净位移 ${(path / Math.max(1, net)).toFixed(2)} < 1.35`, path / Math.max(1, net) < 1.35);
+  T(`[压线塔] 路点索引推进到了终点（idx=${m._laneWaypointIndex}）`, m._laneWaypointIndex >= 2);
+}
+
+// ==================== ⑧ 真实对局（扭曲丛林）：没有兵在绕塔转圈 ====================
+// ⑦ 是合成的、只有一个兵；实战里还叠着整波拥挤、交火、地形。这一条守实战。
+//
+// ⚠️ 判据不能用【路程 / 净位移】—— 我先写的就是那个，然后发现它**噪声太大不能当门限**：
+// 同一份代码、同一张图，只把时长从 120 改到 210 秒，最差值就在 1.85 / 3.58 / 5.03
+// 之间乱跳（交火走位、临死抽搐都会拉高它），阈值取 4 会随机红。
+// 换成【绕最近的己方塔累计转了多少圈】（缠绕角 / 2π）：这才是"转圈"的定义本身，
+// 与交火抖动无关。同一组对照：修复前 9.62 圈，修复后 0.51 圈，差 19 倍，
+// 三张图跑下来修复后都稳定在 0.5 附近 —— 门限取 2 圈，两边都离得很远。
+{
+  const save = CONFIG.tuning.waypointArriveRadius;
+  const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
+  const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
+  const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  const proj = new ProjectileSystem(ents, bus, combat); combat.setProjectileSystem(proj);
+  const ms = new MapSystem(ents, bus); ms.setEffectRegistry(fx);
+  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, ms);
+  const coll = new CollisionSystem(ents, ms);
+  const waves = new LaneWaveSystem(ents, bus, ms);
+  ms.setCreateBuildingFn(({ faction, tier, laneId, pos, stats, weapon, isNexus }) => {
+    const tpl = CONFIG.templates.tower, st = { ...(stats || {}) };
+    const e = { id: ++window._uid, type: 'tower', alive: true, pos: { x: pos.x, y: pos.y },
+      baseStats: { ...tpl, ...st, attackRange: st.attackRange ?? tpl.attackRange },
+      currentHP: st.maxHP ?? tpl.maxHP, shieldFixedCurrent: 0, tempShield: 0,
+      lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [],
+      _inCombat: false, _attackerCount: 0, _mapFaction: faction, _mapTier: tier,
+      _laneId: laneId || null, faction };
+    const w = isNexus ? 'none' : weapon;
+    if (w && w !== 'none') e._skillInstances.push({ id: ++window._uid, skillId: 'weapon_' + w, state: {} });
+    ents.add(e); return e;
+  });
+  waves.createMinion = (type, x, y, faction, laneId, direction) => {
+    const tpl = CONFIG.templates[type]; if (!tpl) return null;
+    const e = { id: ++window._uid, type, alive: true, pos: { x, y }, baseStats: { ...tpl },
+      currentHP: tpl.maxHP, shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity,
+      attackCooldown: 0, targetId: null, _skillInstances: [], _inCombat: false,
+      _mapFaction: faction, faction, _laneId: laneId, _laneDirection: direction,
+      _birth: window.gameTime, _spawn: { x, y }, _wt: null, _wa: 0, _wind: 0 };
+    ents.add(e); return e;
+  };
+  window.gameTime = 0; window.waveNumber = 0;
+  ms.loadMap('twisted_treeline_v1');
+  // 缠绕角：跟踪每个兵【最近的那座己方塔】（150px 内），累计方位角变化。
+  // 换了塔就清零重新算 —— 只有"一直绕着同一座塔"才算转圈。
+  let laps = 0, lapsAt = '';
+  let seen = 0;
+  for (let i = 0; i < 150 / DT; i++) {
+    window.gameTime = i * DT;
+    waves.update(DT); move.update(DT); coll.update(DT); combat.update(DT); proj.update(DT);
+    const tws = ents.getAllTowers(false);
+    for (const m of ents.getAllMinions(true)) {
+      let best = null, bd = 150;
+      for (const t of tws) {
+        const d = Math.hypot(t.pos.x - m.pos.x, t.pos.y - m.pos.y);
+        if (d < bd) { bd = d; best = t; }
+      }
+      if (!best) { m._wt = null; m._wind = 0; continue; }
+      const a = Math.atan2(m.pos.y - best.pos.y, m.pos.x - best.pos.x);
+      if (m._wt !== best.id) { m._wt = best.id; m._wa = a; m._wind = 0; continue; }
+      let d = a - m._wa;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      m._wa = a; m._wind += d;
+      const L = Math.abs(m._wind) / (2 * Math.PI);
+      if (L > laps) { laps = L; lapsAt = `${m._laneId}/${m._mapFaction} @塔(${best.pos.x},${best.pos.y})`; }
+    }
+  }
+  CONFIG.tuning.waypointArriveRadius = save;
+  const mins = ents.getAllMinions(true).filter(m => m._laneId && (window.gameTime - m._birth) > 25);
+  seen = mins.length;
+  T(`[扭曲丛林实战] 没有兵绕着塔转圈（最多 ${laps.toFixed(2)} 圈 ${lapsAt} < 2，存活样本 ${seen}）`,
+    seen > 10 && laps < 2);
+  // 到达半径必须真的把"路点被塔吃掉的那一截"算进去 —— 否则上路索引卡在 8 永远不推进
+  const top = MAPS['twisted_treeline_v1'].lanes.find(l => l.id === 'top');
+  T(`[扭曲丛林] 上路 wp8 确实被外塔吃掉了一截（${(top._wpBlock?.[8] ?? 0).toFixed(0)}px > 0）`,
+    (top._wpBlock?.[8] ?? -1) > 0);
+}
+
 console.log(`急转弯寻路验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -13,7 +13,12 @@ const { CONFIG } = await import('../src/data/Config.js');
 let pass = 0, fail = 0;
 const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 
-// ==================== 一、射程圈：按距离渐显 ====================
+// ==================== 一、射程圈：按【时间】渐显渐隐（不再按距离）====================
+// 用户定稿：「设置这个必须按照渐显渐隐的方式，而不再是根据单位的距离了，
+//            只要出现目标或者是点了，就渐显，消失了就渐隐。」
+// 所以这一节测的形状变了：**强度对距离不敏感**（射程内哪个位置都一样），
+// 只对"射程内有没有敌人"敏感，且切换时是随时间的一阶滞后。
+//
 // UnitLayer 是浏览器模块（import 了 three），headless 下不能实例化。
 // 但 _rangeRingStrength 只用到 CONFIG + 传进来的 ctxDeps，所以把方法**从原型上借出来**
 // 单独调用即可 —— 这样测的是产品代码本身，不是抄一份公式（抄的那份永远会通过）。
@@ -25,12 +30,13 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   const fn = new Function('CONFIG', `return function ${m[0]}`)(CONFIG);
 
   const cfg = CONFIG.ui.rangeRing;
-  // 用户反馈"射程圈也是突然一下就出来了"：50→10 只有 40px 过渡带，
-  // 小兵走过不到半秒，观感上就是"啪"地出现。放宽到 220→30。
-  T('渐显带够宽（不然还是"啪"地出现）',
-    cfg.fadeOuter - cfg.fadeInner >= 150);
-  T('内圈仍留一点余量（进射程前就该完全显示）', cfg.fadeInner > 0 && cfg.fadeInner < 60);
-  T('滞回已移除（距离本身连续，不再需要防抖阈值）', cfg.hysteresis === undefined);
+  T('按距离插值的两个参数已删干净（留着就会有人以为还能调）',
+    cfg.fadeOuter === undefined && cfg.fadeInner === undefined);
+  T('滞回也不存在（渐显渐隐本身就是防抖）', cfg.hysteresis === undefined);
+  T('渐显/渐隐各有一个时间常数，且渐隐更慢（目标死了不该"啪"地消失）',
+    cfg.fadeIn > 0 && cfg.fadeOut > 0 && cfg.fadeOut > cfg.fadeIn);
+  T('源码里不再按距离算强度（没有 fadeOuter/fadeInner 的痕迹）',
+    !/fadeOuter|fadeInner/.test(src));
 
   const RANGE = 200;
   const tower = { id: 1, pos: { x: 0, y: 0 }, _mapFaction: 'blue' };
@@ -42,38 +48,64 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
         : [{ id: 2, type: 'melee', pos: { x: enemyDist, y: 0 }, _mapFaction: 'red' }],
     },
   });
-  // 每次都用全新 entry，并把插值一次走完（fade 走完 = 目标值）
-  const strengthAt = (d) => {
+  // 跑到收敛（每次强制重新探测，喂一个稳定的 dt）
+  const settle = (d, selected = null, steps = 400) => {
     const en = {};
     let v = 0;
-    for (let i = 0; i < 400; i++) {
-      en.ringAt = undefined;                 // 强制每次都重新探测
-      en.ringLerpAt = (en.ringLerpAt ?? 0) - 0.05;   // 喂一个稳定的 dt，让插值收敛
-      v = fn.call({}, tower, en, mkDeps(d), null);
+    for (let i = 0; i < steps; i++) {
+      en.ringAt = undefined;
+      en.ringLerpAt = (en.ringLerpAt ?? 0) - 0.05;
+      v = fn.call({}, tower, en, mkDeps(d), selected);
     }
     return v;
   };
 
-  // 阈值从配置读，不写死 —— 上一版写死 50/10，用户一嫌"太突然"我把带宽调到 220/30，
-  // 三条断言当场全红。断言该钉的是【行为形状】（外圈 0、内圈 1、中点约一半、单调），
-  // 不是某个具体数字。
-  const OUT = cfg.fadeOuter, IN = cfg.fadeInner, MIDD = (OUT + IN) / 2;
-  T(`敌人在 射程+${OUT}（外圈）→ 0（刚好不显示）`, strengthAt(RANGE + OUT) < 0.02);
-  T(`敌人在 射程+${OUT + 20}（外圈之外）→ 0`, strengthAt(RANGE + OUT + 20) === 0);
-  T(`敌人在 射程+${IN}（内圈）→ 1（完全显示）`, strengthAt(RANGE + IN) > 0.98);
-  T('敌人在 射程内 → 1（完全显示）', strengthAt(RANGE - 50) > 0.98);
-  T(`射程+${MIDD}（正中间）→ 约 0.5`, Math.abs(strengthAt(RANGE + MIDD) - 0.5) < 0.06);
-  const a = strengthAt(RANGE + OUT - 10), b = strengthAt(RANGE + MIDD), c = strengthAt(RANGE + IN + 10);
-  T('强度随距离单调递增（越近越亮）', a < b && b < c);
-  T('没有敌人 → 0', strengthAt(null) === 0);
+  // ---- 形状①：射程内 = 亮，射程外 = 灭，且【与距离无关】 ----
+  T('敌人在射程内（贴脸）→ 完全显示', settle(10) > 0.98);
+  T('敌人在射程内（边缘内侧）→ 完全显示', settle(RANGE - 5) > 0.98);
+  T('射程内不同距离强度一样（不再按距离打折）',
+    Math.abs(settle(10) - settle(RANGE - 5)) < 1e-9);
+  T('敌人刚出射程 → 灭', settle(RANGE + 5) === 0);
+  T('敌人在老远 → 灭（以前 射程+220 就会点亮，现在不会）', settle(RANGE + 220) === 0);
+  T('没有敌人 → 灭', settle(null) === 0);
 
-  // 选中恒为完全显示 —— 选中是明确的意图，不该被距离打折
+  // ---- 形状②：切换是【随时间】的一阶滞后，不是一帧到位 ----
   {
     const en = {};
-    T('选中的塔恒为 1（即使一个敌人都没有）',
-      fn.call({}, tower, en, mkDeps(null), 1) === 1);
+    const step = (d, sel) => {
+      en.ringAt = undefined;
+      en.ringLerpAt = (en.ringLerpAt ?? 0) - 0.05;   // 每步 0.05s
+      return fn.call({}, tower, en, mkDeps(d), sel);
+    };
+    const v1 = step(10, null);
+    T(`渐显不是一帧到位（第一帧 ${v1.toFixed(3)} 在 0 和 1 之间）`, v1 > 0 && v1 < 0.9);
+    const seq = [v1, step(10, null), step(10, null)];
+    T('渐显过程单调上升', seq[0] < seq[1] && seq[1] < seq[2]);
+    for (let i = 0; i < 200; i++) step(10, null);
+    // 敌人消失 → 渐隐，同样不是一帧到 0
+    const d1 = step(null, null);
+    T(`渐隐不是一帧到 0（第一帧 ${d1.toFixed(3)}）`, d1 > 0.1 && d1 < 1);
+    const d2 = step(null, null);
+    T('渐隐过程单调下降', d2 < d1);
+    for (let i = 0; i < 400; i++) step(null, null);
+    T('渐隐最终归零', step(null, null) === 0);
   }
-  // 己方单位不算"有敌人"
+
+  // ---- 形状③：选中也走渐显（用户："或者是点了，就渐显"）----
+  {
+    const en = {};
+    const step = (sel) => {
+      en.ringAt = undefined;
+      en.ringLerpAt = (en.ringLerpAt ?? 0) - 0.05;
+      return fn.call({}, tower, en, mkDeps(null), sel);
+    };
+    const first = step(1);
+    T(`选中的第一帧是渐显的中间值（${first.toFixed(3)}），不是啪一下 1`, first > 0 && first < 0.9);
+    for (let i = 0; i < 200; i++) step(1);
+    T('选中收敛到完全显示（即使一个敌人都没有）', step(1) === 1);
+  }
+
+  // ---- 己方单位不算"有敌人" ----
   {
     const deps = {
       attrCalc: { calc: () => ({ attackRange: RANGE }) },
@@ -90,7 +122,7 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
     const neutral = { id: 9, pos: { x: 0, y: 0 } };   // 没有 _mapFaction
     const en = {};
     let v = 0;
-    for (let i = 0; i < 400; i++) { en.ringAt = undefined; en.ringLerpAt = (en.ringLerpAt ?? 0) - 0.05; v = fn.call({}, neutral, en, mkDeps(RANGE), null); }
+    for (let i = 0; i < 400; i++) { en.ringAt = undefined; en.ringLerpAt = (en.ringLerpAt ?? 0) - 0.05; v = fn.call({}, neutral, en, mkDeps(RANGE - 10), null); }
     T('沙盒塔（无阵营）任何单位都算敌人', v > 0.98);
   }
 
@@ -100,10 +132,87 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
     CONFIG.ui.rangeRing.mode = 'auto';
     return r === 1;
   })());
-  T('渐显靠改材质 opacity，不重建网格（否则每次淡入都造几十个材质）',
+  T('渐显靠改材质 opacity，不重建网格（否则每次淡入都造几十个材质再丢掉）',
     /en\.rangeFill\.material\.opacity = .*ringK/.test(src));
   T('探测状态仍只写在渲染层 entry 上（不往实体挂字段）',
     /en\.ringWant/.test(src) && !/e\._ring/.test(src));
+
+  // ==================== 射程圈贴合地形 ====================
+  // 用户："塔的射程圈只要出现了高低差就会被吞掉一部分，修复问题，让射程浮在地形上。"
+  T('有 _drapeGeo（逐顶点按 heightAt 抬沉的几何）', /_drapeGeo\(kind, r, w, cx, cz\)/.test(src));
+  T('顶点高度真的来自 heightAt', /this\.mapSystem\.heightAt\(x, z\)/.test(src));
+  T('取邻域最大值（只取本点会在台阶低侧被插值出来的地面盖住）',
+    /Math\.max\(h, raw\(x \+ probe, z\)/.test(src));
+  T('几何依赖圆心坐标，所以 key 里带了位置（不能进共享缓存）',
+    /const rk = r \+ '\|' \+ color \+ \(drape \? `\|\$\{Math\.round\(x\)\},\$\{Math\.round\(z\)\}` : ''\)/.test(src));
+  T('逐塔独有的几何/材质会被真 dispose（不是只摘出场景）',
+    /_clearRange\(en\)/.test(src) && /for \(const g of en\.rangeGeo\) g\.dispose\(\)/.test(src)
+    && /for \(const m of en\.rangeMat\) m\.dispose\(\)/.test(src));
+  T('材质逐塔独有（共享材质下十几座塔共用一份 opacity，渐显会互相踩）',
+    /_rangeMat\(color, opacity\)/.test(src) && /en\.rangeMat = \[this\._rangeMat/.test(src));
+  T('贴合参数全在配置里（分段数/径向段/探针）',
+    typeof cfg.drape === 'object' && cfg.drape.enabled === true
+    && cfg.drape.segments >= 24 && cfg.drape.radialSteps >= 4 && cfg.drape.probe > 0);
+  T('可以关掉退回平面片（关了就用共享几何，零额外开销）',
+    /cfg0\.drape\?\.enabled !== false/.test(src) && /this\._flatGeo\('disc', r\)/.test(src));
+
+  // ---- 真跑一遍 _drapeGeo：形状对不对，靠断言顶点，不靠"源码里有这几个字" ----
+  // 同样是把方法从原型上借出来（它只用 CONFIG / THREE / this.mapSystem）。
+  {
+    const gm = src.match(/_drapeGeo\(kind, r, w, cx, cz\) \{[\s\S]*?\n  \}/);
+    T('能定位到 _drapeGeo 实现', !!gm);
+    // 最小 THREE 桩：只需要 BufferGeometry / Float32BufferAttribute 能存下顶点
+    const THREE = {
+      BufferGeometry: class { setAttribute(k, a) { this[k] = a; } setIndex(i) { this.index = i; } },
+      Float32BufferAttribute: class { constructor(arr) { this.array = arr; } },
+    };
+    const drapeFn = new Function('CONFIG', 'THREE', `return function ${gm[0]}`)(CONFIG, THREE);
+
+    // 合成地形：x < 500 平地 0，x > 700 高地 20，中间线性斜坡（和产品里高地/坡道同形状）
+    const H = (x) => x < 500 ? 0 : x > 700 ? 20 : (x - 500) / 200 * 20;
+    const self = { mapSystem: { heightAt: (x, z) => H(x) } };
+    const g = drapeFn.call(self, 'ring', 300, 1, 600, 0);   // 圆心正好在坡中间
+    const pos = g.position.array;
+    const n = pos.length / 3;
+    T(`[贴地] 生成了顶点（${n} 个）`, n > 100);
+
+    let vary = 0, below = 0, maxAbs = 0;
+    const h0 = H(600);
+    for (let i = 0; i < n; i++) {
+      const dx = pos[i * 3], y = pos[i * 3 + 1], dz = pos[i * 3 + 2];
+      const world = y + h0;                     // 网格摆在 groundY=h0 上
+      if (Math.abs(y) > 1e-6) vary++;
+      maxAbs = Math.max(maxAbs, Math.abs(y));
+      // 关键性质：任何一点都不许沉到该点地面【之下】—— 沉下去就是"被吞掉一部分"
+      if (world < H(600 + dx) - 1e-6) below++;
+    }
+    T('[贴地] 顶点高度确实跟着地形变（不是一张平的面片）', vary > n * 0.5);
+    T(`[贴地] 起伏幅度与地形落差同量级（最大 ${maxAbs.toFixed(1)}，坡高 20）`,
+      maxAbs > 8 && maxAbs < 40);
+    T(`[贴地] 没有任何顶点沉到自己脚下的地面以下（${below} 个）`, below === 0);
+
+    // 反证：把 drape 关掉时用的那种平面片，在同一地形上必然有一半沉进地里
+    let flatBelow = 0;
+    for (let a = 0; a < 72; a++) {
+      const th = a / 72 * Math.PI * 2, dx = Math.cos(th) * 300;
+      if (h0 < H(600 + dx) - 1e-6) flatBelow++;
+    }
+    T(`[贴地·反证] 平面片在同一地形上有 ${flatBelow}/72 个点沉在地下（这就是"被吞掉一部分"）`,
+      flatBelow > 20);
+
+    // 台阶：邻域最大值必须让圈在台阶【低侧】提前抬起来，否则地面网格的线性插值会盖住它
+    const STEP = (x) => x < 600 ? 0 : 20;
+    const self2 = { mapSystem: { heightAt: (x) => STEP(x) } };
+    const g2 = drapeFn.call(self2, 'ring', 300, 1, 300, 0);   // 圆心在低地，圈右缘跨过台阶
+    const p2 = g2.position.array;
+    let lifted = 0;
+    for (let i = 0; i < p2.length / 3; i++) {
+      const dx = p2[i * 3], y = p2[i * 3 + 1];
+      // 台阶低侧（探针范围内）就该已经抬起来了
+      if (dx + 300 < 600 && dx + 300 > 600 - (CONFIG.ui.rangeRing.drape.probe ?? 12) && y > 10) lifted++;
+    }
+    T(`[贴地] 台阶低侧的顶点被邻域最大值提前抬起（${lifted} 个）`, lifted > 0);
+  }
 }
 
 // ==================== 二、塔灯：强度换算必须落在能看见的量级 ====================

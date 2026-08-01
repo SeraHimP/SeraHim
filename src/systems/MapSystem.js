@@ -102,8 +102,40 @@ export class MapSystem {
         if (entity) this._buildingIds.push(entity.id);
       }
     }
+    this._computeWaypointBlock(map);
     this.active = true;
     this.eventBus.emit('map:loaded', { mapId, label: map.label });
+  }
+
+  /**
+   * 逐路点算出"这个路点被建筑吃掉了多深"，结果写在 lane._wpBlock[i]（px，可为负）。
+   *
+   * 为什么需要：小兵推进路点索引的判据之一是"离该路点 < 到达半径"。
+   * 而**两张新图的塔就压在兵线上**——扭曲丛林上路 wp8(1104,336) 离蓝方外塔(1085,328)
+   * 只有 21px，塔的避障半径 35px（28 × towerVizScale 1.25），加上小兵自己 10px，
+   * 小兵最近只能站到离路点 45−21 = 24px 处，而到达半径正好也是 24 —— **踩不中**。
+   * 于是索引永远停在 8，兵一直朝着塔肚子里那个点走，绕着塔转圈
+   *（实测 150 秒路程 9068px、净位移 534px，轨迹是以塔为圆心的正圆）。
+   * 下路是 24px（45−24 = 21 < 24，够得着）所以不犯 —— 这正是用户说的"上路会下路不会"。
+   *
+   * 存的是【路点陷进建筑圆里多深】= 建筑半径 − 圆心距，不含小兵半径：
+   * 小兵半径按类型不同，留到运行时再加（见 LaneMovementSystem 的到达半径）。
+   * 每次 loadMap 重算，所以塔位改了不会用到旧值。
+   */
+  _computeWaypointBlock(map) {
+    const sizes = CONFIG.buildingSizes || {};
+    const vz = CONFIG.towerVizScale || {};
+    for (const lane of (map.lanes || [])) {
+      const out = new Array(lane.waypoints.length).fill(-Infinity);
+      for (let i = 0; i < lane.waypoints.length; i++) {
+        const w = lane.waypoints[i];
+        for (const b of (map.buildings || [])) {
+          const r = (sizes[b.tier] || sizes.default || 28) * (vz[b.tier] ?? vz.default ?? 1);
+          out[i] = Math.max(out[i], r - Math.hypot(b.pos.x - w.x, b.pos.y - w.y));
+        }
+      }
+      lane._wpBlock = out;
+    }
   }
 
   // 判断一个类型字符串是否是"小兵"类（塔/龙以外的都算），用于清理沙盒残留单位。

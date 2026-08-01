@@ -368,7 +368,18 @@ export class LaneMovementSystem {
       if (dNxt < dCur) { idx = nextIdx; continue; }
       // 到达圈：至少要能装下一帧的位移，否则"踩不中"。半径软编码，
       // 且只在【已越过该路点】时才认——不加这个前提会在路点前方提前拐弯、抄内角。
-      const arriveR = CONFIG.tuning?.waypointArriveRadius ?? 24;
+      //
+      // ⚠️ 还必须【加上这个路点被建筑吃掉的那一截】—— 用户报的"扭曲丛林上路还是转圈、
+      // 下路不会"就是这里。两张新图的塔压在兵线上：上路 wp8(1104,336) 离蓝方外塔(1085,328)
+      // 只有 21px，而塔的避障半径 35（28 × towerVizScale 1.25）加小兵自己 10 = 45，
+      // 小兵最近只能站到离路点 45−21 = 24px 处 —— **正好等于到达半径，永远踩不中**。
+      // 于是索引死在 8，期望方向永远指着塔肚子里那个够不着的点，绕着塔画圆
+      //（实测 150 秒路程 9068px、净位移 534px，轨迹是圆心 (1920,327)、半径 51 的正圆，
+      //  圆心就是那座塔）。下路是 24px（45−24 = 21 < 24，够得着）所以不犯 ——
+      // "上路会下路不会"这三个字就是这么来的。
+      // lane._wpBlock[i] = 建筑半径 − 圆心距（loadMap 时算好，见 MapSystem._computeWaypointBlock）。
+      const arriveR = (CONFIG.tuning?.waypointArriveRadius ?? 24)
+        + Math.max(0, (lane._wpBlock?.[idx] ?? -Infinity) + (MINION_SIZES[minion.type] || 10));
       if (dCur < arriveR * arriveR && passedWaypoint(idx)) { idx = nextIdx; continue; }
       break;
     }
