@@ -31,8 +31,19 @@ function _makeRendPassive(casterType, name, pct) {
   return {
     [id]: {
       id, name, icon: '🩸', category: 'passive',
-      // 有 defaultParams 才会被 CombatSystem 注入 map.skillOverrides —— 数值与机制都能按地图改
-      defaultParams: { pct, base: 'template' },
+      // 有 defaultParams 才会被 CombatSystem 注入 map.skillOverrides —— 数值与机制都能按地图改。
+      //
+      // ⚠️ 必须是 **getter**，从 CONFIG.rend 现取，不能写死一份副本。
+      // 用户："屠戮的改动你实装了吗？为啥我看技能介绍还是没变？" —— 就是写死那份副本的锅：
+      // CombatSystem 会把 defaultParams 整份拷进 inst._params，而 _resolve 里
+      // `instance._params.base` 的优先级**高于** CONFIG.rend。于是把 CONFIG.rend 的
+      // base 改成 templateByHpPct 之后，运行时读到的仍是这份副本里的 'template' ——
+      // 数值配置改了、实际结算和面板文案都不跟着变。
+      // 现在 CONFIG.rend 是唯一来源，编辑器改它（它就写这里）立刻贯通到出厂值这一层。
+      get defaultParams() {
+        const cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
+        return { pct: cfg.pct != null ? cfg.pct : pct, base: cfg.base || 'templateByHpPct' };
+      },
       // 文案与结算共用同一份参数解析（_resolve），不许两边各写一套 —— 见 ARCHITECTURE.md
       //「技能文案规范」。基数模式变了，文案里的"自身当前生命 / 基础生命"也跟着变。
       _resolve: function(instance) {

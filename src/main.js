@@ -362,6 +362,10 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     // 各身份技能的 groupedChildren 声明了该层级应装配的特殊被动；此处据此装配。
     // 地图显式指定 skills（嚎哭深渊）时优先用地图配置。
     const growthByTier = { outer: 'passive_growth_outer', inner: 'passive_growth_inner', base: 'passive_growth_base', hq_tower: 'passive_growth_hq' };
+    // 加固城防属于【层级身份】的一部分，不是可有可无的默认被动 ——
+    // 身份技能 core_tier_* 的面板文案是从 mergedSkills（含 fortify）现拼出来的，
+    // 也就是说：只要这座塔是"外侧防御塔"，面板上就写着"三个生命节点 33%/67%/100%"。
+    const fortifyByTier = { outer: 'passive_outer_fortify', inner: 'passive_inner_fortify', base: 'passive_base_fortify', hq_tower: 'passive_hq_fortify' };
     let towerDefaults = [];
     if (Array.isArray(skills)) {
       towerDefaults = [...skills];
@@ -379,6 +383,20 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
       } else {
         towerDefaults.push('passive_nexus_regen'); // v36 Q4 修复：水晶/枢纽的生命恢复被动
       }
+    }
+    // ==================== 加固城防：地图显式指定 skills 时也必须补上 ====================
+    // 用户："XX加固城防中的生命节点失效（嚎哭深渊，扭曲丛林）"。
+    // 根因不是节点算错了，而是 fortify **压根没装上**：
+    // 这两张图的地图数据给建筑写了显式 skills（为了换成本图专属的成长/钢铁防线），
+    // 而上面那句 `towerDefaults = [...skills]` 是**整体替换** —— 默认列表里的 fortify
+    // 连同别的一起被顶掉了，_regenCapHP 从没被设过。
+    // 可身份技能（core_tier_*）是无条件装的，它的面板照样写着"三个生命节点"——
+    // 于是"看得见、写得明白、就是不生效"。
+    // 这里只补 fortify 一项，不补 iron_line / overload / plating 那些：
+    // 那几个是"默认配置"，地图有权换掉；而 fortify 是身份技能承诺过的东西，
+    // 面板上写了就必须真的有。地图仍可用 excludeSkills 显式排除（下面那一步）。
+    if (!isNexus && fortifyByTier[tier] && !towerDefaults.includes(fortifyByTier[tier])) {
+      towerDefaults.unshift(fortifyByTier[tier]);
     }
     // ==================== v42: Apply map-level skill exclusions ====================
     const skillExcludeList = SkillLibrary._excludeSkills?.["tower:" + tier] || [];

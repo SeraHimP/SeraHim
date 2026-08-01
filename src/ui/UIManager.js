@@ -1,5 +1,6 @@
 import { CONFIG } from '../data/Config.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
+import { resolveMergedIds } from '../core/skills/_helpers.js';
 import { AttributeEditor } from './AttributeEditor.js';
 import * as WEATHER_DEFS from '../data/Weather.js';
 import { DetailModal, STAT_LABELS } from './DetailModal.js';
@@ -105,10 +106,14 @@ export class UIManager {
     // 加固城防与塔成长的文案已合并进身份技能描述，对应实例仍真实装配生效
     //（节点封顶/成长/状态栏效果照常），但技能栏不再为它们单独出格。
     // 其余被动（钢铁防线/镀层/钢铁烈阳护盾/绝望反击/过载/武器）保持独立技能格。
+    // 隐藏集合必须按【这座塔真的装了什么】算，不能照 def.mergedSkills 那份写死的清单：
+    // 嚎哭深渊用 passive_growth_ha 换掉了 passive_growth_outer，照写死的算会让替身
+    // 既被合并进身份技能的文案、又单独占一格（重复展示）。见 _helpers.resolveMergedIds。
+    const pseudo = { _skillInstances: instances };
     const merged = new Set();
     for (const inst of instances) {
       const def = SkillLibrary[inst.skillId];
-      if (def?.mergedSkills) for (const k of def.mergedSkills) merged.add(k);
+      if (def?.mergedSkills) for (const k of resolveMergedIds(def, pseudo)) merged.add(k);
     }
     const visible = instances.filter(i => !merged.has(i.skillId));
     const sig = visible.map(i => i.id + (i._disabled ? 'd' : '')).join(',');

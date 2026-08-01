@@ -16,7 +16,7 @@ export function renderSkillDescription(def, entity, ctx) {
   // 差别在于占位符——子技能各自有 computeCurrent/getDisplayValue，分开渲染才能填出真实的
   // "当前封顶节点/当前成长层数"；对拼好的整段渲染则找不到归属，只会被兜底成 0。
   if (def.mergedSkills && def.mergedSkills.length) {
-    const parts = def.mergedSkills.map((id) => renderSkillDescription(lookupSkill(id), entity, ctx));
+    const parts = resolveMergedIds(def, entity).map((id) => renderSkillDescription(lookupSkill(id), entity, ctx));
     const joined = parts.filter(Boolean).join('');
     if (joined) return joined;
   }
@@ -51,6 +51,35 @@ export function renderSkillDescription(def, entity, ctx) {
   // 未替换的占位符显示为 0
   text = text.replace(/\{[a-zA-Z_]+\}/g, '0');
   return text;
+}
+
+/**
+ * 合并展示的身份技能到底该展示【哪几条】。
+ *
+ * def.mergedSkills 是一份**写死的**清单（如 core_tier_outer → 外塔加固城防 + 外塔成长）。
+ * 直接照它渲染会说谎，两种情况都真实发生过：
+ *   ① 这座塔根本没装那条子技能 —— 扭曲丛林/嚎哭深渊的地图数据给建筑写了显式 skills，
+ *      把默认列表整体顶掉，加固城防没装上，面板却照旧写着"三个生命节点"。
+ *      （加固城防本身已改成无条件装配，见 main.js；这里是第二道保险：
+ *        地图若用 excludeSkills 明确排除掉，面板就不该再吹。）
+ *   ② 装的是【同族的替身】—— 嚎哭深渊用 passive_growth_ha 换掉了 passive_growth_outer，
+ *      面板上那段成长文案指的是一个没装的技能，数值与层数全是另一座塔的。
+ * 所以：有实体上下文时，按【这座塔真的装了什么】来渲染，并把同族替身接上。
+ * 没有实体上下文（模板预览/技能百科）时才退回写死的清单。
+ */
+const _family = (id) => (id.startsWith('passive_growth') ? 'growth'
+                       : id.endsWith('_fortify') ? 'fortify' : id);
+
+export function resolveMergedIds(def, entity) {
+  const want = def.mergedSkills || [];
+  const have = (entity && entity._skillInstances) ? entity._skillInstances.map(i => i.skillId) : null;
+  if (!have || !have.length) return want;
+  const out = want.filter(id => have.includes(id));
+  for (const id of have) {
+    if (out.includes(id)) continue;
+    if (want.some(w => _family(w) === _family(id))) out.push(id);   // 同族替身
+  }
+  return out;
 }
 
 /**
