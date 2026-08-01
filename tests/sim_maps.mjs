@@ -248,8 +248,9 @@ for (const map of Object.values(MAPS)) {
   // 用户指定的数值（改了这里就要同步改地图，反之亦然）
   const WANT = {
     outer:      { maxHP: 1750, armor: 100, magicResist: 100, baseAttackSpeed: 0.833, healthRegen: 0 },
-    base:       { maxHP: 2250, armor: 100, magicResist: 100, baseAttackSpeed: 1.25,  healthRegen: 0 },
-    hq_tower:   { maxHP: 3750, armor: 100, magicResist: 100, baseAttackSpeed: 2.50,  healthRegen: 10 },
+    // 期望常量更新：水晶塔双抗 100 -> 125、枢纽塔双抗 100 -> 200（用户本轮定稿）
+    base:       { maxHP: 2250, armor: 125, magicResist: 125, baseAttackSpeed: 1.25,  healthRegen: 0 },
+    hq_tower:   { maxHP: 3750, armor: 200, magicResist: 200, baseAttackSpeed: 2.50,  healthRegen: 10 },
     nexus_lane: { maxHP: 4000, armor: 20,  magicResist: 0,   healthRegen: 10 },
     nexus_main: { maxHP: 5500, armor: 0,   magicResist: 0,   healthRegen: 10 },
   };

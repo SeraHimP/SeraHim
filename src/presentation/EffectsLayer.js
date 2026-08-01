@@ -684,9 +684,15 @@ export class EffectsLayer {
         // Q1：目标位置与落点高度做成【快照】。旧实现每帧现查 entities.get(p.targetId)，
         // 目标一死就拿不到 → by 退化成常量 my → 子弹从"沿弹道下降"突变为"水平飞"，
         // 这就是"目标死亡后残余弹道异常"。现在死亡后沿用最后一次的快照，弹道继续走完。
+        // ⚠️ 刷新条件必须是"目标还【活着】"，不能只判 `tgtE?.pos` 存在。
+        // 用户："水晶塔被摧毁留下的弹道轨迹会突然变成平面的（水平的）。"
+        // 根因：塔死了会变成**废墟**留在容器里（为了还能被点选），pos 照样在，
+        // 于是这里继续每帧刷新 —— 可废墟的模型比塔矮一大截，endHeightOf 返回的
+        // 落点高度当场塌下来，整条弹道从"斜着落下"变成"贴着地面平飞"。
+        // 与闪电杖光束末端那条是同一类错误（那边是查不到就退化成按坐标反查）。
         const tgtE = entities?.get?.(p.targetId);
         let snap = this._projTgt.get(p);
-        if (tgtE?.pos) {
+        if (tgtE?.pos && tgtE.alive) {
           snap = snap || {};
           snap.x = tgtE.pos.x; snap.y = tgtE.pos.y;
           snap.h = endHeightOf(p.targetId, tgtE.pos.x, tgtE.pos.y);

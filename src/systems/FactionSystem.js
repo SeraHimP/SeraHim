@@ -72,12 +72,26 @@ export function canTarget(attackerFaction, targetFaction) {
  * 结构保护（v35 追加Q2：扩展到全部塔层级，LoL 对齐）。
  * 受保护 = 不可被选中 + 免疫一切伤害（含天气负恢复的环境扣血）。
  * 保护链（动态判定，水晶重生后保护自动恢复——LoL 同款）：
- *   内塔     ← 同路己方外塔存活
- *   水晶塔   ← 同路己方内塔存活
- *   召唤水晶 ← 同路己方水晶塔存活（原有）
- *   枢纽塔   ← 三路召唤水晶【全部】完好（任一被毁即暴露；重生后三路恢复完好则重新无敌）
- *   水晶枢纽 ← 双枢纽塔任一存活（原有）
+ *   分路链    ← 同路上【任何一个仍然存在且存活】的前置层级（外塔 → 内塔 → 水晶塔 → 召唤水晶）
+ *   枢纽塔    ← 三路召唤水晶【全部】完好（任一被毁即暴露；重生后三路恢复完好则重新无敌）
+ *   水晶枢纽  ← 双枢纽塔任一存活（原有）
+ *
+ * ==================== 为什么分路链要"按地图实际有的层级"算 ====================
+ * 用户："扭曲丛林/嚎哭深渊中结构保护有错误，只有召唤水晶/枢纽塔/水晶枢纽生效，
+ *        外/内/水晶塔不生效。"
+ * 根因：原来这条链是**写死的一对一**——水晶塔的保护者固定是"内塔"。
+ * 而这两张图**根本没有内塔**（层级只有 outer/base/nexus_lane/hq_tower/nexus_main），
+ * 于是 aliveTier('inner') 永远为假 → 水晶塔从开局就是裸的，外塔没掉就能直接拆。
+ * 用户列的那三条能生效，正因为它们的保护者（水晶塔/召唤水晶/枢纽塔）在这两张图上都存在。
+ *（外塔是最前排，设计上本来就没有保护者，"不生效"是对的。）
+ *
+ * 现在改成：沿 LANE_CHAIN 往前找，只要**同路上还存在**（哪怕已经打没了，看的是"这张图有没有
+ * 这个层级"）的前置层级里有【任意一个还活着】，就受保护。缺层的地图自动把链接上：
+ *   扭曲丛林/嚎哭深渊：水晶塔 ← 外塔（跳过不存在的内塔）
+ *   召唤师峡谷：       水晶塔 ← 内塔（内塔存在，行为与改动前逐位一致）
  */
+const LANE_CHAIN = ['outer', 'inner', 'base', 'nexus_lane'];
+
 export function isStructureProtected(entityContainer, target) {
   if (!target || !target._mapFaction) return false;
   const towers = entityContainer.getAllTowers(true);
@@ -85,10 +99,25 @@ export function isStructureProtected(entityContainer, target) {
     t.alive && t._mapFaction === target._mapFaction && t._mapTier === tier &&
     (laneId === undefined || t._laneId === laneId)
   );
+  // 这张图的这一路上到底有哪些层级（含已被摧毁的废墟——层级"存在过"就算存在，
+  // 否则外塔一没就会把"缺层"误判成"这张图没有外塔"，保护链会往前跳一格）
+  const tierExists = (tier, laneId) => entityContainer.getAllTowers(false).some(t =>
+    t._mapFaction === target._mapFaction && t._mapTier === tier &&
+    (laneId === undefined || t._laneId === laneId)
+  );
+  const idx = LANE_CHAIN.indexOf(target._mapTier);
+  if (idx > 0) {
+    // 往前找【紧邻的那个这张图上存在的前置层级】，由它一家说了算：它活着就受保护，
+    // 它没了就解除。不继续往更前面找 —— LoL 规则就是"前一座塌了，下一座才能碰"，
+    // 再往前的塔早就死透了。跳过的只有"这张图压根没有的层级"（如两张新图的内塔）。
+    for (let i = idx - 1; i >= 0; i--) {
+      const tier = LANE_CHAIN[i];
+      if (!tierExists(tier, target._laneId)) continue;   // 这张图没有这一层，跳过
+      return aliveTier(tier, target._laneId);
+    }
+    return false;   // 前面一层都没有（自己就是最前排）→ 不受保护
+  }
   switch (target._mapTier) {
-    case 'inner':      return aliveTier('outer', target._laneId);
-    case 'base':       return aliveTier('inner', target._laneId);
-    case 'nexus_lane': return aliveTier('base', target._laneId);
     case 'hq_tower': {
       // 三路召唤水晶全部完好才保护（单路地图=该路水晶完好）。
       // 注意：路集合必须从【含尸体】的全部实体收集——getAllTowers(true) 只有活的，

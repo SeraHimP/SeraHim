@@ -251,6 +251,9 @@ export const SettingsDialog = {
           <div class="slider-row"><label>野区植被</label>
             <button id="setVegBtn" style="flex:1;">${window.__three?.vegOn !== false ? '🌲 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
+          <div class="slider-row"><label>天气可视化</label>
+            <button id="setWfxBtn" style="flex:1;">${window.__three?.weatherFx?.enabled !== false ? '🌧️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
           <div class="slider-row"><label>地面参考网格</label>
             <button id="setGridBtn" style="flex:1;">${window.__gridOn ? '▦ 已显示（点击隐藏）' : '⭕ 已隐藏（点击显示）'}</button>
           </div>
@@ -425,6 +428,8 @@ export const SettingsDialog = {
              '🌲 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       bindFx('setWaterBtn', r => r.water?.enabled !== false, (r, v) => r.setWater(v),
              '🌊 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setWfxBtn', r => r.weatherFx?.enabled !== false, (r, v) => r.setWeatherFx(v),
+             '🌧️ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
 
       const shadowBtn = document.getElementById('setShadowBtn');
       if (shadowBtn) shadowBtn.addEventListener('click', () => {

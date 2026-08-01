@@ -809,7 +809,7 @@ export const AttributeEditor = {
     const weaponMeta = {
       none: { label: '无武器', icon: '🚫' }, piercing: { label: '穿透型', icon: '🔷' },
       lightning: { label: '闪电杖', icon: '⚡' }, explosive: { label: '爆炸型', icon: '💥' },
-      sniper: { label: '狙击型', icon: '🎯' }, corrosion: { label: '腐蚀型', icon: '🌿' },
+      corrosion: { label: '腐蚀型', icon: '🌿' },
     };
     const who = isTower ? this._tierLabel(tier) : (this._labelOf(type));
     let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的${who}默认装备该武器`
@@ -1687,7 +1687,6 @@ export const AttributeEditor = {
       weapon_piercing: { label: '穿透型', icon: '🔷' },
       weapon_lightning: { label: '闪电杖', icon: '⚡' },
       weapon_explosive: { label: '爆炸型', icon: '💥' },
-      weapon_sniper: { label: '狙击型', icon: '🎯' },
       weapon_corrosion: { label: '腐蚀型', icon: '🌿' },
     };
     const weaponIds = this._SKILLS_BY_TYPE.tower.weapons;
@@ -1710,7 +1709,7 @@ export const AttributeEditor = {
   // 避免此前两处列表各写一份、又漏掉新增类型/新增技能的问题（Q3）。
   _SKILLS_BY_TYPE: {
     tower: {
-      weapons: ['weapon_piercing', 'weapon_lightning', 'weapon_explosive', 'weapon_sniper', 'weapon_corrosion'],
+      weapons: ['weapon_piercing', 'weapon_lightning', 'weapon_explosive', 'weapon_corrosion'],
       // 沙盒通用被动 + 对战实战塔被动。此前这里只有前 7 个沙盒被动，对战里塔真正装的那批
       // （加固城防/成长/过载/钢铁防线/镀层/烈阳护盾/水晶再生/基地光环）一个都没列 —— 这正是
       // 用户反馈"技能清单已经过时"的根因。现按 main.js 的实际装配逐条补齐。

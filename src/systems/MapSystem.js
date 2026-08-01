@@ -84,6 +84,11 @@ export class MapSystem {
     this._clock = 0;
     this._respawnQueue = [];
 
+    // ⚠️ 必须在【创建建筑之前】发。听它的那一侧要把 gameTime 归零，
+    // 而塔成长被动在 onEquip 里就把当时的 gameTime 记成了起算点 t0 ——
+    // 归零晚一步，成长就被推迟"归零前已经过去的那么多秒"（见 main.js 的长注释）。
+    this.eventBus.emit('map:loading', { mapId, label: map.label });
+
     if (this.createBuildingFn) {
       for (const b of map.buildings) {
         // Q9：地图可自带 tierStats 覆写（嚎哭深渊建筑数值与峡谷不同）

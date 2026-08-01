@@ -46,9 +46,11 @@ const outer=captured.find(c=>c.tier==='outer'&&c.faction==='blue');
 T('HA外塔数值覆写', outer && outer.stats.maxHP===2250 && outer.stats.attackDamage===152);
 T('HA外塔技能=深渊成长', outer && Array.isArray(outer.skills) && outer.skills.includes('passive_growth_ha'));
 const base=captured.find(c=>c.tier==='base'&&c.faction==='blue');
-T('HA水晶塔穿透+永久钢铁防线', base && base.weapon==='piercing' && base.skills.includes('passive_iron_line_ha') && base.stats.maxHP===3750);
+// 期望常量更新：水晶塔 maxHP 3750 -> 5100（用户本轮定稿）
+T('HA水晶塔穿透+永久钢铁防线', base && base.weapon==='piercing' && base.skills.includes('passive_iron_line_ha') && base.stats.maxHP===5100);
 const hqs=captured.filter(c=>c.tier==='hq_tower'&&c.faction==='blue');
-T('HA枢纽塔×2穿透(最新确认)', hqs.length===2 && hqs.every(h=>h.weapon==='piercing'&&h.stats.maxHP===2750));
+// 期望常量更新：枢纽塔 maxHP 2750 -> 4750（用户本轮定稿）
+T('HA枢纽塔×2穿透(最新确认)', hqs.length===2 && hqs.every(h=>h.weapon==='piercing'&&h.stats.maxHP===4750));
 T('HA所有塔攻速统一0.833(最新确认)', [outer,base,...hqs].every(t=>t.stats.baseAttackSpeed===0.833));
 
 // ==================== 几何硬校验（用户确认的 LoL 复刻约束） ====================
@@ -78,7 +80,9 @@ const atkB=[...bHQ,bBase,bOuter], atkR=[...get(Rd,'hq_tower'),get(Rd,'base')[0],
 let crossMin=1e9;
 for(const a of atkB) for(const b of atkR) crossMin=Math.min(crossMin,dist(a,b));
 T('敌我攻击塔射程无交集(>360)', crossMin>2*RANGE);
-T('HA noRend 标记', mapSys.currentMap.minionNoRend===true);
+// 用户本轮定稿：所有地图小兵默认装备屠戮 —— minionNoRend 这个字段连同它在
+// main.js 里的整条传参链一起删掉了。这一条反过来钉住别再加回来。
+T('HA 不再摘掉屠戮（所有地图小兵默认装备屠戮）', mapSys.currentMap.minionNoRend === undefined);
 // 建筑到兵线距离 ≤190
 const wps=mapSys.currentMap.lanes[0].waypoints;
 function distToLane(p){const a=wps[0],b=wps[1];const vx=b.x-a.x,vy=b.y-a.y,L2=vx*vx+vy*vy;const t=Math.max(0,Math.min(1,((p.x-a.x)*vx+(p.y-a.y)*vy)/L2));return Math.hypot(p.x-(a.x+t*vx),p.y-(a.y+t*vy));}

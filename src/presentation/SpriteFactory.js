@@ -20,7 +20,6 @@ export const WEAPON_ICONS = {
   weapon_piercing:  { icon: '🔷' },
   weapon_lightning: { icon: '⚡' },
   weapon_explosive: { icon: '💥' },
-  weapon_sniper:    { icon: '🎯' },
   weapon_corrosion: { icon: '🌿' },
 };
 

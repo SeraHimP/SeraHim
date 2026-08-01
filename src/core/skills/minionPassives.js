@@ -5,6 +5,27 @@ import { CONFIG } from '../../data/Config.js';
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵与沙盒大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
 
+/**
+ * 屠戮的伤害【基数】。三种口径共用这一个函数 —— 文案（computeCurrent）与结算（onHit）
+ * 必须读同一份，否则会出现"面板写 A、实际打 B"（ARCHITECTURE.md「技能文案规范」）。
+ *
+ *   'templateByHpPct'（用户定稿，现行默认）= 模板基础生命 × (当前生命 / 最大生命)
+ *   'template'                             = 模板基础生命
+ *   'current'                              = 自身当前生命
+ *
+ * 为什么是"模板基础生命 × 血量比例"而不是"当前生命"：见 CONFIG.rend 的长注释。
+ * 一句话——基数用模板值所以不随波次成长膨胀，比例用当前血量所以残血兵打得软。
+ * 满血时与 'template' 逐位相同。
+ */
+function _rendBase(entity, casterType, mode) {
+  const tplHP = (CONFIG.templates?.[casterType]?.maxHP) || entity?.baseStats?.maxHP || 0;
+  if (mode === 'current') return entity?.currentHP || 0;
+  if (mode === 'template') return tplHP;
+  const maxHP = entity?.baseStats?.maxHP || tplHP || 1;
+  const frac = Math.max(0, Math.min(1, (entity?.currentHP || 0) / (maxHP || 1)));
+  return tplHP * frac;
+}
+
 function _makeRendPassive(casterType, name, pct) {
   const id = `passive_${casterType}_rend`;
   return {
@@ -24,7 +45,9 @@ function _makeRendPassive(casterType, name, pct) {
       _text: function(instance) {
         var r = this._resolve(instance);
         var disp = parseFloat((r.pct * 100).toFixed(2));
-        var src = r.base === 'current' ? '自身当前生命' : '自身基础生命';
+        var src = r.base === 'current' ? '自身当前生命'
+                : r.base === 'template' ? '自身基础生命'
+                : '自身基础生命×当前生命比例';
         return '唯一被动——' + name + '：攻击小兵单位额外造成（【{val}】=' + src + '×' + disp +
                '%）伤害（类型同自身普攻，对防御塔/巨龙无效）。';
       },
@@ -33,10 +56,7 @@ function _makeRendPassive(casterType, name, pct) {
       computeCurrent: function(entity) {
         var inst = (entity._skillInstances || []).find(function(i) { return i.skillId === id; });
         var r = this._resolve(inst);
-        var baseHP = r.base === 'current'
-          ? (entity.currentHP || 0)
-          : (((CONFIG.templates || {})[casterType] || {}).maxHP || (entity.baseStats || {}).maxHP || 0);
-        return Math.round(baseHP * r.pct);
+        return Math.round(_rendBase(entity, casterType, r.base) * r.pct);
       },
       effects: [],
       // v42: dynamic descTemplate for per-map override（地图改了 pct/base，文案立刻跟着改）
@@ -56,11 +76,8 @@ function _makeRendPassive(casterType, name, pct) {
         // 后期随生命成长自然稀释，波次开始堆叠，防御塔参与的时间也随之变长。
         const cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
         const effectivePct = instance._params?.pct ?? cfg.pct ?? pct;
-        const mode = instance._params?.base ?? cfg.base ?? 'template';
-        const baseHP = mode === 'current'
-          ? (attacker.currentHP || 0)
-          : ((CONFIG.templates?.[casterType]?.maxHP) || attacker.baseStats?.maxHP || 0);
-        const bonus = baseHP * effectivePct;
+        const mode = instance._params?.base ?? cfg.base ?? 'templateByHpPct';
+        const bonus = _rendBase(attacker, casterType, mode) * effectivePct;
         if (bonus <= 0 || !ctx.combat) return;
         ctx.combat.performAttackDirect(attackerId, targetId, bonus,
           attacker.baseStats?.attackType || 'physical', { _noProc: true });

@@ -334,50 +334,9 @@ export const weapons = {
     onHit: () => {},
   },
 
-  weapon_sniper: {
-    defaultParams: { rangeMult: 1.5, damageMult: 1.3 },
-    id: 'weapon_sniper',
-    name: '狙击型',
-    icon: '🎯',
-    color: '#e0c25b',
-    category: 'weapon',
-    description: '攻速-33%，伤害随目标距离变化（近×0.6、远×1.6线性），命中施加0.5秒眩晕。',
-    descTemplate: '唯一被动——狙击：攻速-33%，伤害随目标距离变化（【{val}】=近×0.6→远×1.6）；命中施加0.5秒眩晕。',
-    computeCurrent: (entity, ctx) => '×0.6~×1.6',
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (entity) {
-        // 攻速-33%（通过降低基础攻速实现，卸载时恢复）
-        instance.state = instance.state || {};
-        instance.state.savedAS = entity.baseStats.baseAttackSpeed;
-        entity.baseStats.baseAttackSpeed = entity.baseStats.baseAttackSpeed * 0.67;
-      }
-    },
-    onUnequip: (entityId, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (entity && instance.state?.savedAS !== undefined) {
-        entity.baseStats.baseAttackSpeed = instance.state.savedAS;
-      }
-    },
-    // 开火前根据距离计算伤害倍率
-    onBeforeAttack: (attacker, target, instance, ctx) => {
-      const range = ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attacker.id)).attackRange || 250;
-      const dist = Math.hypot(target.pos.x - attacker.pos.x, target.pos.y - attacker.pos.y);
-      const frac = Math.max(0, Math.min(1, dist / range));
-      // 近 ×0.6 → 远 ×1.6 线性
-      const mult = 0.6 + frac * 1.0;
-      return { preDamageMult: mult };
-    },
-    onHit: (attackerId, targetId, instance, ctx) => {
-      const target = ctx.entityContainer.get(targetId);
-      if (!target || !target.alive) return;
-      ctx.effectRegistry.apply(targetId, {
-        name: '眩晕', icon: '💫', kind: 'stun', color: '#f1c40f',
-        duration: 0.5, stackPolicy: 'refresh', description: '被眩晕，无法行动',
-      }, `weapon_sniper_${attackerId}`);
-    },
-  },
+  // （原 weapon_sniper「狙击型」已按用户定稿删除：攻速-33%、伤害随距离 ×0.6~×1.6、
+  //   命中 0.5s 眩晕。整块删掉而不是留着置灰 —— 留着编辑器里就会有人选，
+  //   选了之后所有关于它的平衡结论都得重新算一遍。）
 
   weapon_corrosion: {
     defaultParams: { tickDamage: 5, tickInterval: 1, maxStacks: 5 },

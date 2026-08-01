@@ -420,10 +420,19 @@ for (const map of Object.values(MAPS)) {
   seen = mins.length;
   T(`[扭曲丛林实战] 没有兵绕着塔转圈（最多 ${laps.toFixed(2)} 圈 ${lapsAt} < 2，存活样本 ${seen}）`,
     seen > 10 && laps < 2);
-  // 到达半径必须真的把"路点被塔吃掉的那一截"算进去 —— 否则上路索引卡在 8 永远不推进
+  // 到达半径必须真的把"路点被塔吃掉的那一截"算进去 —— 否则那个路点的索引永远推不过去。
+  // ⚠️ 不要写死索引：兵线重描过（基地段加了两个路点），外塔挨着的那个路点就不再是 wp8 了。
+  // 改成"找出离外塔最近的那个路点"，与兵线怎么改都无关。
   const top = MAPS['twisted_treeline_v1'].lanes.find(l => l.id === 'top');
-  T(`[扭曲丛林] 上路 wp8 确实被外塔吃掉了一截（${(top._wpBlock?.[8] ?? 0).toFixed(0)}px > 0）`,
-    (top._wpBlock?.[8] ?? -1) > 0);
+  const outer = MAPS['twisted_treeline_v1'].buildings
+    .find(b => b.tier === 'outer' && b.faction === 'blue' && b.laneId === 'top');
+  let near = 0, nd = Infinity;
+  top.waypoints.forEach((w, i) => {
+    const d = Math.hypot(w.x - outer.pos.x, w.y - outer.pos.y);
+    if (d < nd) { nd = d; near = i; }
+  });
+  T(`[扭曲丛林] 离外塔最近的路点 wp${near}（距塔 ${nd.toFixed(0)}px）确实被吃掉一截（${(top._wpBlock?.[near] ?? 0).toFixed(0)}px > 0）`,
+    (top._wpBlock?.[near] ?? -1) > 0);
 }
 
 console.log(`急转弯寻路验收: ${pass} 通过 / ${fail} 失败`);

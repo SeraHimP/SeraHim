@@ -28,6 +28,7 @@ import { UnitLayer } from './UnitLayer.js';
 import { ModelLibrary } from './ModelLibrary.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
+import { WeatherLayer } from './WeatherLayer.js';
 import { WaterLayer } from './WaterLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
 import { CONFIG } from '../data/Config.js';
@@ -117,6 +118,7 @@ export class ThreeRenderer {
     this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
     this.vegOn = true;
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
+    this.weatherFx = new WeatherLayer(this.scene); // 天气可视化（雨/雪/雾/风/晴的粒子与薄纱）
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -454,6 +456,8 @@ export class ThreeRenderer {
     if (this.outputPass) this.outputPass.material.needsUpdate = true;
     return this.toneMapOn;
   }
+  setWeatherFx(on) { this.weatherFx?.setEnabled(on); }
+
   setVegetation(on) {
     this.vegOn = on !== false;
     if (this.vegOn) this.veg.build(this.mapSystem); else this.veg.clear();
@@ -741,6 +745,16 @@ export class ThreeRenderer {
     }
     this._syncTowerLights(controller);
     this.water.update(window.gameTime || 0);   // P1：水面滚动 UV
+    // 天气可视化：粒子盒跟着镜头走，尺寸 = 当前可见世界范围。
+    // 正交相机下可见世界宽 = W/zoom；纵深要把仰角压缩还原回去（屏幕上 Z 被压了 sin(仰角)）。
+    // dt 用【墙钟】而不是 gameTime —— 游戏暂停时雨该继续下（那是天，不是战斗）。
+    if (this.weatherFx) {
+      const z = controller ? (controller.zoom || 1) : 1;
+      const sinP = Math.max(0.15, Math.sin(this.elevationDeg * DEG));
+      this.weatherFx.update(window.__weather || null, this._target,
+                            this.width / z, (this.height / z) / sinP,
+                            this._lightDt || 0.016);
+    }
     // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
       if (!this.composer) this._buildComposer();

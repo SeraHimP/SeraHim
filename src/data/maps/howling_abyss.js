@@ -88,13 +88,15 @@ export const howling_abyss = {
   firstWaveDelay: 30,
   spawnGap: 0.55,
   nexusRespawnTime: 300,
-  minionNoRend: true,        // Q9：本图小兵不装配屠戮被动
+  // （原来这里有 minionNoRend: true —— 本图小兵不装屠戮。用户本轮定稿
+  //   "所有地图小兵默认装备屠戮"，该开关已删除，本图与召唤师峡谷同规则。）
 
   // 本图专属建筑数值（Q9 指定，未随本次地形重做改动）
   tierStats: {
     outer:      { maxHP: 2250, shieldFixedMax: 0, healthRegen: 0,  armor: 70, magicResist: 70, attackDamage: 152, baseAttackSpeed: 0.833 },
-    base:       { maxHP: 3750, shieldFixedMax: 0, healthRegen: 0,  armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
-    hq_tower:   { maxHP: 2750, shieldFixedMax: 0, healthRegen: 0,  armor: 70, magicResist: 70, attackDamage: 150, baseAttackSpeed: 0.833 },
+    // 用户本轮定稿：水晶塔(base) 3750 → 5100、枢纽塔(hq_tower) 2750 → 4750
+    base:       { maxHP: 5100, shieldFixedMax: 0, healthRegen: 0,  armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
+    hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0,  armor: 70, magicResist: 70, attackDamage: 150, baseAttackSpeed: 0.833 },
     nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 10, armor: 20, magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 10, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
   },

@@ -40,6 +40,17 @@ function rendDamage(attackerHP, params) {
   def.onHit(1, 2, { state: {}, _params: params }, ctx);
   return dealt[0] || 0;
 }
+// 与 rendDamage 同一条路径，但当前生命可以与 maxHP 不同（测"残血打得软"）
+function rendDamageAtHP(maxHP, curHP, params) {
+  const dealt = [];
+  const A = { id: 1, type: 'melee', alive: true, pos: { x: 0, y: 0 },
+              baseStats: { ...CONFIG.templates.melee, maxHP }, currentHP: curHP, _skillInstances: [] };
+  const B = { ...A, id: 2 };
+  const ctx = { entityContainer: { get: (i) => (i === 1 ? A : B) },
+                combat: { performAttackDirect: (a, b, dmg) => dealt.push(dmg) } };
+  def.onHit(1, 2, { state: {}, _params: params }, ctx);
+  return dealt[0] || 0;
+}
 const base = CONFIG.templates.melee.maxHP;
 const d1 = rendDamage(base), d2 = rendDamage(base * 3);
 T(`屠戮伤害不随自身生命膨胀（${d1} vs 生命×3 时 ${d2}）`, Math.abs(d1 - d2) < 1e-6);
@@ -56,8 +67,27 @@ T('地图覆写注入不再局限于 onFrame 技能（屠戮只有 onHit）',
   combatSrc.indexOf('_mapOverrides') < combatSrc.indexOf('if (def && def.onFrame)'));
 
 // ---- ⑤ 文案跟着基数走 ----
-T('屠戮文案写的是"基础生命"而不是"当前生命"',
-  def.description.includes('基础生命') && !def.description.includes('当前生命'));
+// 期望常量更新：默认基数模式 'template' → 'templateByHpPct'（用户本轮定稿
+// "以当前生命值的百分比的基础生命值×XX%"），文案随之变成"基础生命×当前生命比例"。
+// 断言仍然只钉【形状】：写的是"基础生命"（不随波次膨胀那一半）而不是裸的"当前生命"。
+T('屠戮文案写的是"基础生命(×当前生命比例)"而不是裸的"自身当前生命"',
+  def.description.includes('基础生命') && !def.description.includes('自身当前生命'));
+T('屠戮默认基数模式 = 模板基础生命 × 当前血量比例',
+  CONFIG.rend.melee.base === 'templateByHpPct'
+  && CONFIG.rend.ranged.base === 'templateByHpPct'
+  && CONFIG.rend.siege.base === 'templateByHpPct');
+// 满血时与旧的 'template' 逐位相同 —— 这是本次改动"只往下调、不往上调"的证据
+T(`满血时与 'template' 逐位相同（${rendDamage(base)} = ${base * CONFIG.rend.melee.pct}）`,
+  Math.abs(rendDamage(base) - base * CONFIG.rend.melee.pct) < 1e-9);
+// 残血时按比例变软 —— 这正是用户要回来的那层手感
+{
+  const half = rendDamageAtHP(base, base / 2);
+  T(`半血时打出一半（${half} = ${base * CONFIG.rend.melee.pct / 2}）`,
+    Math.abs(half - base * CONFIG.rend.melee.pct / 2) < 1e-9);
+}
+// 而且【不随波次成长膨胀】：maxHP 涨到 3 倍且满血，伤害仍然不变
+T('波次成长后满血伤害不变（基数用的是模板值，不是成长后的 maxHP）',
+  Math.abs(rendDamage(base * 3) - base * CONFIG.rend.melee.pct) < 1e-9);
 
 // ---- ⑥ 枢纽塔魔抗（用户定稿：护甲70 / 魔抗110）----
 T('枢纽塔 护甲70 / 魔抗110',

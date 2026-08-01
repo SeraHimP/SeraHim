@@ -385,7 +385,8 @@ export class CombatSystem {
     // （原"攻城武器"固定加伤已随该技能删除。）
 
     // ---- 武器 onBeforeAttack 钩子：可返回 { preDamageMult, skipProjectile } ----
-    // 用于狙击型（按距离调整伤害）、无弹道武器等特殊逻辑。
+    // 用于开火前就要定下的伤害修正（穿透型的升温倍率）、无弹道武器等特殊逻辑。
+    //（原来这里举的例子是狙击型按距离调整伤害，那把武器已按用户定稿删除。）
     let preDamageMult = 1;
     let pierceHeat = 0;   // #10：穿透弹升温强度（0..1），仅作渲染提示挂到子弹上，不进伤害
 

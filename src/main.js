@@ -512,8 +512,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     passives = passives.filter(k => (skillLibrary[k]?.minWave || 0) <= curWave);
   }
 
-  // Q9：嚎哭深渊小兵不装配屠戮被动（地图 minionNoRend 标记经 mapOpts 传入）
-  if (mapOpts?.noRend) passives = passives.filter(k => !k.endsWith('_rend'));
+  // （原来这里有 `if (mapOpts?.noRend) …` —— 嚎哭深渊靠地图字段 minionNoRend 摘掉屠戮。
+  //   用户本轮定稿"所有地图小兵默认装备屠戮"，那条开关与它的整条传参链一起删掉了：
+  //   留着一个没有任何地图会设的字段，只会让下一个人以为"屠戮还能按图关"。）
   for (const key of passives) {
     const inst = { id: ++CTX._uid, skillId: key, state: {} };
     entity._skillInstances.push(inst);
@@ -670,7 +671,7 @@ function battleGrowthFlat(type) {
 laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
   // 对战模式小兵按 laneWaveSystem 自己的独立波次计数成长（不能用沙盒的 window.CTX.waveNumber，
   // 两套波次计数完全独立）。成长公式与沙盒模式一致：固定值线性增长 × 复合增长叠加。
-  const ent = createMinion(type, x, y, 1, 1, { faction, laneId, direction, growthFlat: battleGrowthFlat(type), templateOverride: mapSystem.currentMap?.minionTemplates?.[type], noRend: !!mapSystem.currentMap?.minionNoRend });
+  const ent = createMinion(type, x, y, 1, 1, { faction, laneId, direction, growthFlat: battleGrowthFlat(type), templateOverride: mapSystem.currentMap?.minionTemplates?.[type] });
   // v42: template override now happens inside createMinion (before growth), passed via templateOverride
   // The growth is already applied on top of template values inside createMinion.
   return ent;
@@ -718,10 +719,26 @@ eventBus.on('entity:death', ({ entityId }) => {
     CTX.__score[scorer].kills++;
   }
 });
+// ⚠️ 时钟必须在【建筑创建之前】归零 —— 这是 map:loading，不是 map:loaded。
+//
+// 用户报的"所有地图的塔都不会正常成长"就出在这个时序上：
+// 塔成长被动在 onEquip 里记 `t0 = window.gameTime`，而建筑是在 loadMap 的中段创建的；
+// 原来只有 map:loaded（loadMap 的**最后一行**）里才 `CTX.gameTime = 0`，
+// 于是 t0 记的是【归零之前】那个时间 —— 玩家在沙盒/菜单里待了多久，
+// 成长就被推迟多久（elapsed = max(0, gameTime − t0) 要等 gameTime 重新爬回 t0 才开始走）。
+// 实测：载图时 gameTime=300，跑满 15 分钟只长到 9 层（正常 14 层）；
+// 待得越久越像"完全不长"，切第二张图必中。
+eventBus.on('map:loading', () => {
+  CTX.gameTime = 0;
+  CTX.waveNumber = 0;
+  CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
+});
 eventBus.on('map:loaded', (d) => {
   CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
   weatherSystem.reset(); // 每次载图重新随机：起始权重、变化快慢（θ）全部重抽
   // v42: full state reset on map switch
+  // 时钟三项已在上面的 map:loading 里归零（必须早于建筑创建，见那段注释）。
+  // 这里保留一次幂等重置，兜住"有人直接 emit map:loaded"的路径。
   CTX.gameTime = 0;
   CTX.waveNumber = 0;
   CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
@@ -845,7 +862,7 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
         const gf = growth ? battleGrowthFlat(type) : null;
         for (let i = 0; i < count; i++) {
           createMinion(type, px + (Math.random() - 0.5) * 16, py + (Math.random() - 0.5) * 16,
-            1, 1, { faction, laneId: laneId || 'mid', direction: dir, growthFlat: gf, noRend: !!mapSystem.currentMap?.minionNoRend });
+            1, 1, { faction, laneId: laneId || 'mid', direction: dir, growthFlat: gf });
         }
         uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${laneId || 'mid'} 路`, 'spawn');
         return;

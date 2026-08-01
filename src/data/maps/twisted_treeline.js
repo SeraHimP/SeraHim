@@ -37,10 +37,21 @@ const M = (p) => ({ x: 3008 - p.x, y: p.y });     // 红方 = 左右镜像（本
 // 正确值是 world 480（img 356）：在草丛【下面】那条带里，离边界很远。
 //
 // 高地北口的位置是扫出来的：沿 x 扫可走区间，x=600 处弧墙挡住 y 320~452，x≈556 整列通。
+// ⚠️ 基地段（前 5 个点）**重描过一次**。用户："高地那里贴地形太近了，特别容易卡小兵"，
+// 并画了参考线。量出来的确实如此 —— 沿兵线逐点采样"到最近墙格的距离"（净空）：
+//     旧上路 高地北口段：36px      旧下路 高地南口段：42~48px
+//     其余路段：72~144px           小兵半径 10、队形横向间距 20~30
+// 也就是说那两段只有别处的 1/3，一波兵挤进去必卡。
+// 根因是旧线沿 x=556 直上直下，正好擦着高地弧墙向西鼓出来的那一块（墙边在 x≈592）。
+// 新线改走【基地开阔区的脊线】：对每一行 y 扫出净空最大的 x，那条脊在 x≈420~500，
+// 净空 150~250px。这里取比脊线略偏东一点，让水晶塔/召唤水晶落在兵线【旁边】
+// 55~60px 处（LoL 里塔本来就贴着兵线站），而不是像旧线那样离 124~137px 远得像野塔。
+// 重描后：上路基地段净空 108~150px、下路 120~138px，最大转角 41°/42°（仍 < 70°）。
 const TOP_HALF = [
   { x: 584, y: 676 },                       // 蓝方水晶枢纽
-  { x: 556, y: 520 }, { x: 556, y: 320 },   // 穿过高地北口
-  { x: 596, y: 224 }, { x: 640, y: 180 },   // 出口拐弯拆成两段（单角 71°→<40°，排队更顺）
+  { x: 520, y: 604 }, { x: 490, y: 486 },   // 沿开阔区脊线向西北，绕开弧墙的鼓包
+  { x: 474, y: 362 }, { x: 496, y: 252 },   // 经过水晶塔(432,292)东侧 55px
+  { x: 572, y: 194 }, { x: 650, y: 172 },   // 出口拐弯拆两段，单角 < 45°
   { x: 720, y: 168 }, { x: 848, y: 192 },
   { x: 976, y: 280 }, { x: 1104, y: 336 }, { x: 1232, y: 392 },
   { x: 1360, y: 456 }, { x: 1504, y: 480 },   // 腰部：从中间那块大草丛【下面】绕过去
@@ -49,8 +60,9 @@ const TOP_HALF = [
 // （img x=372 处：上路中心离中轴 46px、下路 100px）。镜像出来的下路有 21% 的采样点落在墙里。
 const BOT_HALF = [
   { x: 584, y: 676 },                       // 蓝方水晶枢纽
-  { x: 556, y: 820 }, { x: 556, y: 1010 },  // 穿过高地南口
-  { x: 596, y: 1120 }, { x: 640, y: 1164 },   // 同上
+  { x: 520, y: 752 }, { x: 490, y: 870 },   // 与上路同理走脊线（数值仍是分别量的，不是镜像）
+  { x: 474, y: 994 }, { x: 500, y: 1100 },  // 经过召唤水晶(428,896)/水晶塔(428,1060)东侧 58~60px
+  { x: 576, y: 1152 }, { x: 652, y: 1170 },
   { x: 720, y: 1176 }, { x: 848, y: 1168 },
   { x: 976, y: 1144 }, { x: 1104, y: 1120 }, { x: 1232, y: 1104 },
   { x: 1360, y: 1072 }, { x: 1504, y: 1064 },  // 腰部：从下面那块大草丛【上面】绕过去
@@ -110,11 +122,12 @@ export const twisted_treeline = {
   spawnGap: 0.55,
   nexusRespawnTime: 240,
 
-  // 本图专属建筑数值（用户指定，本次地形重做未改动）
+  // 本图专属建筑数值（用户指定）。
+  // 用户本轮定稿：水晶塔(base) 双抗 100 → 125、枢纽塔(hq_tower) 双抗 100 → 200。
   tierStats: {
     outer:      { maxHP: 1750, shieldFixedMax: 0, healthRegen: 0,  armor: 100, magicResist: 100, attackDamage: 152, baseAttackSpeed: 0.833 },
-    base:       { maxHP: 2250, shieldFixedMax: 0, healthRegen: 0,  armor: 100, magicResist: 100, attackDamage: 170, baseAttackSpeed: 1.25 },
-    hq_tower:   { maxHP: 3750, shieldFixedMax: 0, healthRegen: 10, armor: 100, magicResist: 100, attackDamage: 150, baseAttackSpeed: 2.50 },
+    base:       { maxHP: 2250, shieldFixedMax: 0, healthRegen: 0,  armor: 125, magicResist: 125, attackDamage: 170, baseAttackSpeed: 1.25 },
+    hq_tower:   { maxHP: 3750, shieldFixedMax: 0, healthRegen: 10, armor: 200, magicResist: 200, attackDamage: 150, baseAttackSpeed: 2.50 },
     nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 10, armor: 20,  magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 10, armor: 0,   magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
   },
@@ -164,7 +177,11 @@ export const twisted_treeline = {
     }
     // 外塔仍按弧长取点（小地图上没标外塔）。用户："现有的外塔位置稍微往内侧移动一些"
     // → 弧长 1180 收到 1010（往自家方向挪约 170）。
-    const OUTER_D = 1010;
+    // ⚠️ 基地段重描之后弧长口径变了：新线绕开高地弧墙走了个更大的弧，
+    // 从枢纽到出口比旧线长了约 96px。若继续用 1010，外塔会跟着往自家方向再缩 90px ——
+    // 而用户这次只要求改兵线、没要求动塔位。所以把 OUTER_D 重锚到 1106，
+    // 让两条路的外塔**落回原来那两个点**（上路 1085,328 / 下路 1128,1117，实测偏差 1px）。
+    const OUTER_D = 1106;
     for (const lane of ['top', 'bot']) {
       const p = at[lane](OUTER_D);
       out.push({ faction: FACTIONS.BLUE, tier: 'outer', laneId: lane, pos: p, weapon: 'piercing', skills: ['passive_growth_outer'] });

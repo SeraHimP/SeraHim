@@ -773,6 +773,16 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
       // 根治进度环不断重置的闪烁）；层与层之间只直写 remainingTime = 距下一层的剩余秒数，
       // 进度环即"下一次成长倒计时"，右下角层数徽标 = 当前层数；封顶后转常驻（无进度环）。
       if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0, t0: window.gameTime || 0, adSteps: -1, resSteps: -1 };
+      // 时钟回退自愈：起算点 t0 是装备那一刻的 gameTime，可只要时钟被重置（换地图、
+      // 重开一局），t0 就成了一个【未来】的时间戳，elapsed 恒为 0 —— 成长看起来完全不长。
+      // 这正是用户报的"所有地图的塔都不会正常成长"的根因之一（另一半是 map:loaded
+      // 归零晚于建筑创建，已在 MapSystem/main.js 侧修好）。这里再兜一层：
+      // 只要发现"现在比起算点还早"，就把起算点重锚到现在，层数一并清零重来。
+      if ((window.gameTime || 0) < (instance.state.t0 || 0)) {
+        instance.state.t0 = window.gameTime || 0;
+        instance.state.adSteps = -1;
+        instance.state.resSteps = -1;
+      }
       instance.state.timer += dt;
       if (instance.state.timer < 0.25) return;
       instance.state.timer = 0;

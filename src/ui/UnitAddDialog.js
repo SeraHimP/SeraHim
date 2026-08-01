@@ -34,7 +34,6 @@ const WEAPONS = {
   piercing: { label: '穿透型', icon: '🔷' },
   lightning: { label: '闪电杖', icon: '⚡' },
   explosive: { label: '爆炸型', icon: '💥' },
-  sniper: { label: '狙击型', icon: '🎯' },
   corrosion: { label: '腐蚀型', icon: '🌿' },
 };
 
