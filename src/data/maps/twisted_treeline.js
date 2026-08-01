@@ -25,30 +25,39 @@ import { TT_NAVGRID } from './map_navgrids.js';
  */
 
 const M = (p) => ({ x: 3008 - p.x, y: p.y });     // 红方 = 左右镜像（本图左右对称，不是中心对称）
-const AXIS = 664;                                  // 上下镜像轴
-const F = (p) => ({ x: p.x, y: 2 * AXIS - p.y });  // 上下镜像
+// （上下镜像函数已删除：小地图上两条路并不对称，下路必须单独量）
 
-// 上路兵线（蓝半程 + 腰部），路点是从小地图逐列量出来的兵线中心线。
-// 起点先从高地出口(600,336)出去再上行——直接从枢纽拉一条到 (592,172) 会形成 84° 的死弯。
-// 高地北口的位置是**扫出来的**，不是估的：沿 x 扫可走区间，
-//   x=520 → y 36-600 / 608-696   x=560 → y 20-696（整列通）   x=600 → y 20-320 / 452-696
-// 也就是弧墙在 x≈600 处挡住 y 320~452，而 x≈556 是那个口子。走 600 会直接撞墙
-// （第一版就是这样：上路 9% 的采样点落在墙里，小兵到高地口就走不动）。
+// 上路兵线（蓝半程 + 腰部）。路点 = 从小地图逐列采样【浅色路面】取的中心线。
+//
+// ⚠️ 用户指出："上路不是从最顶上那个路走的！那个是野区！从上面的第二条路走！"
+// 小地图上有两种蓝：**浅紫白 = 兵线路面**，**中蓝 = 野区**。到了地图中段，
+// 浅色那条会【从上方那块草丛的下面绕过去】，而草丛【上面】贴着外墙的那条是野区。
+// 我第一版量对了（腰部 img y≈356），第二版发现 y=372 world 压在草丛边缘上，
+// 就把腰部整段往上挪到 world 190 —— 那正好挪进了野区，错得更离谱。
+// 正确值是 world 480（img 356）：在草丛【下面】那条带里，离边界很远。
+//
+// 高地北口的位置是扫出来的：沿 x 扫可走区间，x=600 处弧墙挡住 y 320~452，x≈556 整列通。
 const TOP_HALF = [
   { x: 584, y: 676 },                       // 蓝方水晶枢纽
-  { x: 556, y: 520 }, { x: 556, y: 300 },   // 穿过高地北口（x≈556 整列可走）
-  { x: 592, y: 172 }, { x: 720, y: 160 }, { x: 848, y: 176 },
-  // 腰部：中间那块大草丛把可走区切成上下两条（x=1504 处：上 36~300、下 372~604）。
-  // 上路必须走【上面那条】—— 我按小地图量的 y=372 正好压在草丛边缘上，
-  // 小兵一到腰部就撞墙（实测上路 4% 的采样点在墙里）。可走区间是扫出来的，不是估的。
-  { x: 976, y: 232 }, { x: 1104, y: 240 }, { x: 1232, y: 230 },
-  { x: 1360, y: 210 }, { x: 1504, y: 190 },
+  { x: 556, y: 520 }, { x: 556, y: 320 },   // 穿过高地北口
+  { x: 596, y: 224 }, { x: 640, y: 180 },   // 出口拐弯拆成两段（单角 71°→<40°，排队更顺）
+  { x: 720, y: 168 }, { x: 848, y: 192 },
+  { x: 976, y: 280 }, { x: 1104, y: 336 }, { x: 1232, y: 392 },
+  { x: 1360, y: 456 }, { x: 1504, y: 480 },   // 腰部：从中间那块大草丛【下面】绕过去
 ];
-const LANE_TOP = [
-  ...TOP_HALF,
-  ...TOP_HALF.slice(0, -1).reverse().map(M),
+// 下路**单独量**，不是上路的上下镜像 —— 小地图上这两条并不严格对称
+// （img x=372 处：上路中心离中轴 46px、下路 100px）。镜像出来的下路有 21% 的采样点落在墙里。
+const BOT_HALF = [
+  { x: 584, y: 676 },                       // 蓝方水晶枢纽
+  { x: 556, y: 820 }, { x: 556, y: 1010 },  // 穿过高地南口
+  { x: 596, y: 1120 }, { x: 640, y: 1164 },   // 同上
+  { x: 720, y: 1176 }, { x: 848, y: 1168 },
+  { x: 976, y: 1144 }, { x: 1104, y: 1120 }, { x: 1232, y: 1104 },
+  { x: 1360, y: 1072 }, { x: 1504, y: 1064 },  // 腰部：从下面那块大草丛【上面】绕过去
 ];
-const LANE_BOT = LANE_TOP.map(F);
+const mirror = (half) => [...half, ...half.slice(0, -1).reverse().map(M)];
+const LANE_TOP = mirror(TOP_HALF);
+const LANE_BOT = mirror(BOT_HALF);
 
 // 蓝方建筑。水晶枢纽/枢纽塔是从小地图上直接读出来的像素位置。
 const B = {
@@ -103,26 +112,31 @@ export const twisted_treeline = {
   // ⚠️ 本次只重做地形。除水晶枢纽/枢纽塔（从小地图直接读出）外，
   // 各路的外塔/水晶塔/召唤水晶仍按沿兵线弧长临时摆放，等地形定稿后再按小地图逐个对位。
   buildings: (() => {
-    const L = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-    const acc = [0];
-    for (let i = 1; i < LANE_TOP.length; i++) acc.push(acc[i - 1] + L(LANE_TOP[i - 1], LANE_TOP[i]));
-    const at = (s) => {
-      for (let i = 1; i < acc.length; i++) {
-        if (acc[i] >= s) {
-          const t = (s - acc[i - 1]) / (acc[i] - acc[i - 1]);
-          return { x: Math.round(LANE_TOP[i - 1].x + (LANE_TOP[i].x - LANE_TOP[i - 1].x) * t),
-                   y: Math.round(LANE_TOP[i - 1].y + (LANE_TOP[i].y - LANE_TOP[i - 1].y) * t) };
+    // 每条路各自沿【自己的】折线按弧长取点 —— 上下两条不是镜像关系（见上面的说明），
+    // 用上路的点镜像下来会落在墙里。
+    const atOn = (wps) => {
+      const L = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+      const acc = [0];
+      for (let i = 1; i < wps.length; i++) acc.push(acc[i - 1] + L(wps[i - 1], wps[i]));
+      return (s) => {
+        for (let i = 1; i < acc.length; i++) {
+          if (acc[i] >= s) {
+            const t = (s - acc[i - 1]) / (acc[i] - acc[i - 1]);
+            return { x: Math.round(wps[i - 1].x + (wps[i].x - wps[i - 1].x) * t),
+                     y: Math.round(wps[i - 1].y + (wps[i].y - wps[i - 1].y) * t) };
+          }
         }
-      }
-      return LANE_TOP[LANE_TOP.length - 1];
+        return wps[wps.length - 1];
+      };
     };
-    const spots = { nexus_lane: at(640), base: at(800), outer: at(1180) };
+    const at = { top: atOn(LANE_TOP), bot: atOn(LANE_BOT) };
+    const D = { nexus_lane: 640, base: 800, outer: 1180 };
     const out = [];
     for (const [tier, w, sk] of [['outer', 'piercing', 'passive_growth_outer'],
                                  ['base', 'piercing', 'passive_growth_base'],
                                  ['nexus_lane', null, null]]) {
       for (const lane of ['top', 'bot']) {
-        const p = lane === 'top' ? spots[tier] : F(spots[tier]);
+        const p = at[lane](D[tier]);
         out.push({ faction: FACTIONS.BLUE, tier, laneId: lane, pos: p, weapon: w, skills: sk ? [sk] : undefined });
         out.push({ faction: FACTIONS.RED, tier, laneId: lane, pos: M(p), weapon: w, skills: sk ? [sk] : undefined });
       }
