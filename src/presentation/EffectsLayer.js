@@ -697,6 +697,19 @@ export class EffectsLayer {
           snap.x = tgtE.pos.x; snap.y = tgtE.pos.y;
           snap.h = endHeightOf(p.targetId, tgtE.pos.x, tgtE.pos.y);
           this._projTgt.set(p, snap);
+        } else if (!snap && p.lastTx != null) {
+          // 目标在【这发子弹被画出来之前】就已经死了 —— 一次快照都没取到。
+          // 于是下面的 by 退化成常量 my（炮口高度），子弹平着飞出去直到消失
+          //（用户："塔在攻速快的时候…射出去的子弹就是不变的高度射直至消失"）。
+          // 高攻速塔特别容易撞上：开火与目标死亡经常落在同一个逻辑帧里，
+          // 中间根本没轮到一次渲染帧，所以"目标活着时先记一笔"这条路走不通。
+          // 补法：用 ProjectileSystem 已经冻结好的最后落点（p.lastTx/lastTy）现补一张快照
+          // —— 那正是这发子弹实际要飞到的地方（见 ProjectileSystem.update 的 B2 段），
+          // 弹道于是照常从炮口斜落到那一点，而不是平飞。
+          // 高度用 endHeightOf 查：目标实体已经没了，会退化成按坐标查（≈地面），
+          // 也就是"落到它倒下的那块地上"，正是想要的观感。
+          snap = { x: p.lastTx, y: p.lastTy, h: endHeightOf(p.targetId, p.lastTx, p.lastTy) };
+          this._projTgt.set(p, snap);
         }
         let by = my;
         if (snap) {

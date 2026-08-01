@@ -279,6 +279,15 @@ function mkWorld() {
   const src = fs.readFileSync('src/presentation/EffectsLayer.js', 'utf8');
   T('刷新条件必须带 tgtE.alive', /if \(tgtE\?\.pos && tgtE\.alive\) \{/.test(src));
   T('注释写清了根因（废墟仍在容器里、模型更矮）', /废墟/.test(src) && /贴着地面平飞/.test(src));
+
+  // ⚠️ 收紧刷新条件的**另一面**：目标在这发子弹被画出来【之前】就死了的话，
+  // 一次快照都取不到 → by 退化成常量炮口高度 → 子弹平着飞出去
+  //（用户："塔在攻速快的时候…射出去的子弹就是不变的高度射直至消失"）。
+  // 高攻速塔常见：开火与目标死亡落在同一个逻辑帧，中间没有渲染帧。
+  T('没有快照时用 ProjectileSystem 冻结的最后落点补一张（否则子弹平飞）',
+    /else if \(!snap && p\.lastTx != null\) \{/.test(src)
+    && /snap = \{ x: p\.lastTx, y: p\.lastTy, h: endHeightOf\(p\.targetId, p\.lastTx, p\.lastTy\) \};/.test(src));
+  T('注释写清了为什么"目标活着时先记一笔"这条路走不通', /中间根本没轮到一次渲染帧/.test(src));
 }
 
 // ==================== 八、天气可视化 ====================
