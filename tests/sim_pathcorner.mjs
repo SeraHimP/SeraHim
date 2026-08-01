@@ -223,5 +223,58 @@ for (const map of Object.values(MAPS)) {
   }
 }
 
+// ==================== ⑥ 绕过自家塔不许贴着塔身圆周走 ====================
+// 用户："小兵非要严格绕着他的圆边缘走"（嚎哭深渊外塔处）。
+// 老实现在绕行时显式补了一个径向定距项，注释原话是"维持 od ≈ rSum+5 贴着障碍表面
+// 做圆周绕行"—— 它**主动**把兵拉回圆周；而且绕行状态只有超时 0.8s 才退出，
+// 已经绕过去了还继续吃切向力，于是又多贴半圈。
+// 这里钉住两件事：① 能绕过去；② 绕过去的轨迹是"掠过"而不是"贴边圆弧"。
+{
+  const map = {
+    id: '__obst', label: '__obst', world: { w: 2000, h: 2000 },
+    walls: { corridorHalfWidth: 300, river: false },
+    baseCenters: { blue: { x: 100, y: 1000 }, red: { x: 1900, y: 1000 } },
+    baseCircleRadius: 150, baseOpenRadius: 150,
+    lanes: [{ id: 'mid', waypoints: [{ x: 100, y: 1000 }, { x: 1900, y: 1000 }] }], buildings: [],
+  };
+  MAPS[map.id] = map;
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  const ms = new MapSystem(ents, bus); ms.setCreateBuildingFn(() => null);
+  window.gameTime = 0; ms.loadMap(map.id);
+  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, ms);
+  // 一座【自家】塔正压在兵线上 —— 就是嚎哭深渊外塔那个场景
+  const TOW = { x: 1000, y: 1000 };
+  ents.add({ id: ++window._uid, type: 'tower', alive: true, pos: { ...TOW },
+    baseStats: { ...CONFIG.templates.tower }, currentHP: 9999, shieldFixedCurrent: 0, tempShield: 0,
+    lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [],
+    _mapFaction: 'blue', faction: 'blue', _mapTier: 'outer' });
+  const tpl = CONFIG.templates.melee;
+  const m = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 600, y: 1000 },
+    baseStats: { ...tpl }, currentHP: tpl.maxHP, shieldFixedCurrent: 0, tempShield: 0,
+    lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [],
+    _mapFaction: 'blue', faction: 'blue', _laneId: 'mid', _laneDirection: 'forward' };
+  ents.add(m);
+  let path = 0, last = { ...m.pos }, hug = 0, frames = 0, minD = Infinity;
+  const rTow = (CONFIG.buildingSizes?.outer ?? CONFIG.buildingSizes?.default ?? 28);
+  for (let i = 0; i < 30 * 25; i++) {
+    window.gameTime = i * DT; move.update(DT);
+    path += Math.hypot(m.pos.x - last.x, m.pos.y - last.y);
+    last = { x: m.pos.x, y: m.pos.y };
+    const d = Math.hypot(m.pos.x - TOW.x, m.pos.y - TOW.y);
+    minD = Math.min(minD, d);
+    // "贴边"= 停留在塔身表面外 0~18px 的薄壳里。贴边圆弧会在这层里待很久。
+    if (d >= rTow && d <= rTow + 28) hug++;
+    frames++;
+    if (m.pos.x > 1400) break;
+  }
+  delete MAPS[map.id];
+  T(`[绕塔] 能绕过去（x ${m.pos.x.toFixed(0)} > 1400）`, m.pos.x > 1400);
+  const net = Math.hypot(m.pos.x - 600, m.pos.y - 1000);
+  T(`[绕塔] 轨迹是掠过不是贴边圆弧（路程 ${path.toFixed(0)} / 净位移 ${net.toFixed(0)} < 1.35）`,
+    path / Math.max(1, net) < 1.35);
+  T(`[绕塔] 没有长时间贴着塔身滑（贴壳帧数 ${hug} / ${frames}，< 25%）`, hug < frames * 0.25);
+}
+
 console.log(`急转弯寻路验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

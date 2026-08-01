@@ -552,14 +552,27 @@ export class LaneMovementSystem {
     // v37 调试定稿：绕行力在【窗口期内持续】施加，不要求本帧仍 blocked——
     // 否则绕出两步 residual 回升力就消失、又直冲撞回障碍，形成"绕-撞-绕"踏步
     //（插桩实测：blk true/false 交替、0.6s 仅推进 3px）。窗口内持续切向 → 一口气绕过。
+    // ⚠️ 用户报的"小兵非要严格绕着他的圆边缘走"就出在下面这段。
+    // 真因是**绕行状态只有【超时 0.8s】才退出** —— 已经绕过障碍了还在继续吃切向力，
+    // 于是又贴着圆周多走大半圈。修法：**绕通了立刻退出**（见下面的 !blocked 分支）。
+    //
+    // 我一开始怀疑的是那个径向定距项（`err = blockerD − (blockerRSum+5)`，
+    // 注释原话"维持 od ≈ rSum+5 贴着障碍表面做圆周绕行"）—— **判断错了，它不能删**：
+    //   · 只删它、不加"绕通即退出"：合成用例照样过（说明它不是贴边的主因）
+    //   · 删了它之后 sim_v34「确实是绕过而非穿过」当场红（最大横向偏移 88 < 墙半宽 123.5）
+    //     —— 沿墙滑到端头绕过去，靠的正是这一项把兵**贴着**墙面推过去。
+    // 也就是说：贴着障碍滑是**兵墙场景需要的能力**，问题只在于绕过去之后不肯松手。
     if (minion._detourSide && now <= (minion._detourUntil || 0)) {
-      const bx = blocked ? blockerX : dirX, by = blocked ? blockerY : dirY;
-      const tx = -by * minion._detourSide, ty = bx * minion._detourSide;
-      fx += tx * 1.2; fy += ty * 1.2; // 主导力：沿障碍边缘切向绕
-      if (blocked) {
-        // v37 调试定稿：贴身绕行时抵消对 blocker 的【弹开斥力】（1.8 系数的后推与
-        // 1.2 切向打架 → B 被弹出贴身区、blocked 断、又冲回——净踏步，插桩实测）。
-        // 换成温和的径向定距项：维持 od ≈ rSum+5 贴着障碍表面做圆周绕行。
+      // 绕通判据：期望方向已经不再撞进障碍（正面无锚定障碍，或期望力没被截光）。
+      // 这一条让"绕过去"立刻结束绕行，而不是等 0.8s 窗口自然过期。
+      if (!blocked) {
+        minion._detourSide = null;
+        minion._detourUntil = 0;
+      } else {
+        const tx = -blockerY * minion._detourSide, ty = blockerX * minion._detourSide;
+        fx += tx * 1.2; fy += ty * 1.2; // 主导力：沿障碍切向绕
+        // 抵消对 blocker 的【弹开斥力】（1.8 系数的后推与 1.2 切向打架 →
+        // 兵被弹出贴身区、blocked 断、又冲回，净踏步，v37 插桩实测）。
         sepX -= blockerSepX; sepY -= blockerSepY;
         const err = blockerD - (blockerRSum + 5);
         fx += blockerX * err * 0.06; fy += blockerY * err * 0.06;
