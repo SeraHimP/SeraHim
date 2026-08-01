@@ -345,5 +345,58 @@ for (const map of Object.values(MAPS)) {
   }
 }
 
+// ==================== 高地（heightAt）：形状必须是用户定的那个 ====================
+// 这两条都是踩出来的，钉住免得又被改回去：
+//   · 扭曲丛林原来用"过水晶塔的一条竖线"半平面，位置对不上用户画的圆 → 改成圆。
+//   · 嚎哭深渊**没有高低差**（平桥）。但它为了光环圈保留了 baseCircleRadius，
+//     一旦不声明 highground，heightAt 就会退回"按基地圈抬圆台"的老分支，
+//     在桥两端凭空鼓起两个包。所以它必须显式声明 `highground: {}`。
+{
+  const { EntityContainer: _E2 } = await import('../src/core/EntityContainer.js');
+  const { EventBus: _B2 } = await import('../src/utils/EventBus.js');
+  const { MapSystem: _M2 } = await import('../src/systems/MapSystem.js');
+  const mk = (id) => {
+    const bus = new _B2(), ents = new _E2(bus), ms = new _M2(ents, bus);
+    ms.setCreateBuildingFn(() => null); window.gameTime = 0; ms.loadMap(id); return ms;
+  };
+  // ---- 扭曲丛林：圆形高地 ----
+  {
+    const ms = mk('twisted_treeline_v1'), tt = MAPS['twisted_treeline_v1'];
+    const H = (p) => ms.heightAt(p.x, p.y);
+    const g = (t, l) => tt.buildings.find(b => b.faction === 'blue' && b.tier === t && (l ? b.laneId === l : true));
+    const platH = tt.heightZones?.plateauHeight ?? 20;
+    for (const [n, t, l] of [['水晶枢纽', 'nexus_main'], ['枢纽塔', 'hq_tower'],
+                             ['上路召唤水晶', 'nexus_lane', 'top'], ['上路水晶塔', 'base', 'top'],
+                             ['下路水晶塔', 'base', 'bot']]) {
+      T(`[扭曲丛林] ${n}处是满高高地（${H(g(t, l).pos).toFixed(1)} = ${platH}）`, Math.abs(H(g(t, l).pos) - platH) < 0.01);
+    }
+    T(`[扭曲丛林] 外塔处不是高地（${H(g('outer', 'top').pos).toFixed(1)} = 0）`, H(g('outer', 'top').pos) === 0);
+    // 用户："从水晶塔前面就是斜坡" —— 必须是一段【连续的坡】，不是陡坎。
+    // 沿"枢纽 → 兵线出口方向"的射线按距离采样：高度应随距离单调不增，且中间有过渡值。
+    // （不要拿兵线路点当采样序列 —— 路点离枢纽的距离并不单调，会误判成"不单调"。）
+    const c0 = tt.highground.blue.center;
+    const dir = { x: (556 - c0.x), y: (320 - c0.y) };
+    const dl = Math.hypot(dir.x, dir.y); dir.x /= dl; dir.y /= dl;
+    const hs = [];
+    for (let d = 300; d <= 620; d += 40) hs.push(H({ x: c0.x + dir.x * d, y: c0.y + dir.y * d }));
+    T(`[扭曲丛林] 高地边缘是连续斜坡不是陡坎（离枢纽 300→620：${hs.map(h => h.toFixed(1)).join(' ')}）`,
+      hs.every((h, i) => i === 0 || h <= hs[i - 1]) && Math.abs(hs[0] - platH) < 0.01
+      && hs.at(-1) === 0 && hs.filter((h) => h > 0 && h < platH).length >= 2);
+    T('[扭曲丛林] 高地声明成【圆】（圆心在水晶枢纽上）',
+      !!tt.highground?.blue?.center && len(tt.highground.blue.center, g('nexus_main').pos) < 1);
+  }
+  // ---- 嚎哭深渊：平桥，全图零高差 ----
+  {
+    const ms = mk('howling_abyss_v1'), ha = MAPS['howling_abyss_v1'];
+    T('[嚎哭深渊] 显式声明了 highground（不声明会退回老分支，在桥两端鼓两个包）',
+      ha.highground !== undefined);
+    const pts = [...ha.buildings.map(b => b.pos), { x: 1162, y: 1162 }, { x: 600, y: 1700 }];
+    T(`[嚎哭深渊] 全图零高差（平桥）`, pts.every((p) => ms.heightAt(p.x, p.y) === 0));
+    T('[嚎哭深渊] 但基地光环圈仍在（用户：无高低差但是有基地环）',
+      ms.getBaseCircleRadius('blue') > 0 && len(ms.getBaseCircleCenter('blue'),
+        ha.buildings.find(b => b.tier === 'nexus_main' && b.faction === 'blue').pos) < 1);
+  }
+}
+
 console.log(`地图几何验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

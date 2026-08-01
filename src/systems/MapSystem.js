@@ -795,7 +795,15 @@ export class MapSystem {
       const ramp = hg.ramp ?? 120;
       for (const f of ['blue', 'red']) {
         const z0 = hg[f]; if (!z0) continue;
-        const sIn = (x - z0.at.x) * z0.dir.x + (z - z0.at.y) * z0.dir.y;   // >0 = 在自家高地这侧
+        // 两种形状：
+        //   { at, dir } 半平面 —— 界线往 dir 那一侧是高地
+        //   { center, full } 圆   —— 离圆心 < full 满高，full~full+ramp 之间是斜坡
+        // 扭曲丛林用圆（用户定稿："效果就是从水晶塔前面就是斜坡，枢纽那里都是高地"）：
+        // 圆心放水晶枢纽，full=420 正好把水晶塔（离枢纽 413）圈进满高区，
+        // 兵线从外面进来依次经过 499→452→357，天然就是一段爬坡。
+        let sIn;
+        if (z0.center) sIn = (z0.full ?? 0) + ramp - Math.hypot(x - z0.center.x, z - z0.center.y);
+        else sIn = (x - z0.at.x) * z0.dir.x + (z - z0.at.y) * z0.dir.y;
         if (sIn <= 0) continue;
         h = Math.max(h, platH * Math.min(1, sIn / Math.max(1e-6, ramp)));
       }
