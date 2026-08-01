@@ -209,6 +209,16 @@ export class MapSystem {
   }
 
   clearCurrentMap() {
+    // 全局光环是**按地图**的：换图必须先把上一张图的那条从所有残留单位身上摘掉，
+    // 否则跨图存活的单位（沙盒手动放的、还没被清掉的）会带着上一张图的光环进新图。
+    if (this._fx) {
+      for (const e of this.entities.getAll(false)) {
+        for (const eff of this._fx.getEffects(e.id)) {
+          if (eff.sourceId === 'map_global_aura') this._fx.remove(eff.id);
+        }
+      }
+    }
+    this._auraT = 0;
     for (const id of this._buildingIds) {
       const e = this.entities.get(id);
       if (e) {
@@ -435,9 +445,54 @@ export class MapSystem {
   }
 
   // 每帧由主循环调用：推进内部时钟，处理召唤水晶重生。
+  /**
+   * 地图全局光环：把 map.globalAura 声明的效果挂到**场上所有单位**（现有 + 待生成）。
+   *
+   * 用户定稿：
+   *   嚎哭深渊 —— 所有单位治疗与护盾强度 −80%
+   *   扭曲丛林 —— 所有单位 +18 固定双穿；+[0.5% × 本局分钟数] 攻速（上限 15%）
+   * "所有单位"按用户确认= **真的所有**，含防御塔与水晶。
+   *
+   * 为什么放在这里逐帧刷，而不是在单位创建时挂一次：
+   *   ① "待生成"的单位不需要任何额外接线 —— 下一次 tick 自然就带上了，
+   *      出兵/建塔/水晶重生/沙盒手动放置全都覆盖到，不会漏掉某条创建路径；
+   *   ② 有些条目是**随时间变的**（扭曲丛林的攻速随分钟数涨），必须重算；
+   *   ③ permanent + refresh 的 apply 是幂等的，重复挂只会更新数值（见 EffectRegistry.apply）。
+   * 节流到 refreshSec（默认 0.5s）一次：几百个实体的遍历，30Hz 跑纯属白烧。
+   */
+  _applyGlobalAura(dt) {
+    const aura = this.currentMap && this.currentMap.globalAura;
+    if (!this._fx) return;
+    this._auraT = (this._auraT || 0) + dt;
+    const every = aura?.refreshSec ?? 0.5;
+    if (this._auraT < every) return;
+    this._auraT = 0;
+    if (!aura || !aura.effects || !aura.effects.length) return;
+    const minutes = (window.gameTime || 0) / 60;
+    for (const e of this.entities.getAll(true)) {
+      if (!e || !e.alive) continue;
+      for (const it of aura.effects) {
+        // perMinute：随本局时间线性成长，到 max 封顶（扭曲丛林的攻速那条）
+        let flat = it.flat ?? 0;
+        if (typeof it.perMinute === 'number') {
+          flat = Math.min(it.max ?? Infinity, it.perMinute * minutes);
+          flat = Math.round(flat * 100) / 100;   // 面板上别出现 7.333333%
+        }
+        this._fx.apply(e.id, {
+          name: aura.name, icon: aura.icon || '🌐', kind: 'stat', statKey: it.statKey,
+          flatValue: flat, percentValue: it.percent,
+          duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh',
+          uniquePassive: true,
+          description: `${it.label || it.statKey}${flat >= 0 ? '+' : ''}${flat}`,
+        }, 'map_global_aura');
+      }
+    }
+  }
+
   update(dt) {
     if (!this.active) return;
     this._clock += dt;
+    this._applyGlobalAura(dt);
     while (this._respawnQueue.length && this._respawnQueue[0].at <= this._clock) {
       const { blueprint: b, corpseId } = this._respawnQueue.shift();
       if (!this.currentMap) continue;

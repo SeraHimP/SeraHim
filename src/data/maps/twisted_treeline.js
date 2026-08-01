@@ -124,19 +124,42 @@ export const twisted_treeline = {
 
   // 本图专属建筑数值（用户指定）。
   // 用户本轮定稿：水晶塔(base) 双抗 100 → 125、枢纽塔(hq_tower) 双抗 100 → 200。
+  //
+  // ⚠️ healthRegen 这一列**全是 0**，一个都不许写在这里。用户定稿：
+  // "水晶塔默认无生命恢复，水晶和枢纽生命恢复都是10，而是都从XX防御塔加固城防/水晶恢复来实现"。
+  // 原来 nexus_lane / nexus_main / hq_tower 这三行各写了 10，而技能层**又给了一份**
+  //（水晶再生 +10、枢纽塔加固城防 +3）—— 实测召唤水晶与水晶枢纽拿到的是 **20**、
+  // 枢纽塔是 13，召唤师峡谷同位置却是正确的 10 / 3。恢复的唯一来源改成技能层之后，
+  // 这类"两处各加一份"的双计不可能再发生。
   tierStats: {
-    outer:      { maxHP: 1750, shieldFixedMax: 0, healthRegen: 0,  armor: 100, magicResist: 100, attackDamage: 152, baseAttackSpeed: 0.833 },
-    base:       { maxHP: 2250, shieldFixedMax: 0, healthRegen: 0,  armor: 125, magicResist: 125, attackDamage: 170, baseAttackSpeed: 1.25 },
-    hq_tower:   { maxHP: 3750, shieldFixedMax: 0, healthRegen: 10, armor: 200, magicResist: 200, attackDamage: 150, baseAttackSpeed: 2.50 },
-    nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 10, armor: 20,  magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
-    nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 10, armor: 0,   magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
+    outer:      { maxHP: 1750, shieldFixedMax: 0, healthRegen: 0, armor: 100, magicResist: 100, attackDamage: 152, baseAttackSpeed: 0.833 },
+    base:       { maxHP: 2250, shieldFixedMax: 0, healthRegen: 0, armor: 125, magicResist: 125, attackDamage: 170, baseAttackSpeed: 1.25 },
+    hq_tower:   { maxHP: 3750, shieldFixedMax: 0, healthRegen: 0, armor: 200, magicResist: 200, attackDamage: 150, baseAttackSpeed: 2.50 },
+    nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20,  magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
+    nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,   magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
   },
 
-  // 成长：只有攻击力成长、从开局起算（用户指定）
+  // ==================== 本图全局光环（用户定稿）====================
+  // "扭曲丛林所有单位持有光环（永久状态）：①所有单位获得18护甲穿透/固定法穿。
+  //   ②所有单位获得【0.5%×本局分钟数】攻速加成（最高15%）。"
+  // "所有单位"= 真的所有（含防御塔与水晶，用户确认）。挂载与刷新见 MapSystem._applyGlobalAura。
+  // 攻速那条随时间涨：0.5%/分钟，30 分钟触顶 15%。
+  globalAura: {
+    name: '扭曲丛林光环', icon: '🌲',
+    effects: [
+      { statKey: 'armorPenFlat', flat: 18, label: '固定护甲穿透' },
+      { statKey: 'magicPenFlat', flat: 18, label: '固定法术穿透' },
+      { statKey: 'bonusAttackSpeedPct', perMinute: 0.5, max: 15, label: '攻速' },
+    ],
+  },
+
+  // 成长：只有攻击力成长、从开局起算（用户指定）。
+  // 生命恢复也在这里覆写（用户定稿："扭曲丛林水晶塔1.5，枢纽塔10"）——
+  // 恢复的唯一来源是加固城防，tierStats 里那一列全是 0，见上面的说明。
   skillOverrides: {
     'tower:outer':    { passive_growth_outer: { adStartT: 0 } },
-    'tower:base':     { passive_growth_base:  { adStartT: 0 } },
-    'tower:hq_tower': { passive_growth_hq:    { adStartT: 0 } },
+    'tower:base':     { passive_growth_base:  { adStartT: 0 }, passive_base_fortify: { regen: 1.5 } },
+    'tower:hq_tower': { passive_growth_hq:    { adStartT: 0 }, passive_hq_fortify:   { regen: 10 } },
   },
 
   lanes: [

@@ -20,7 +20,7 @@ function _countTowerAttackers(entity, ctx) {
 // 节点 [0.4,0.67,1.0]：血量 35% → 封顶 40%；55% → 67%；80% → 满血。恰好在节点上 = 停在节点。
 // 实现：被动 onFrame 节流更新 entity._regenCapHP，CombatSystem 恢复结算读它。
 // v36 Q1：节点封顶重算（onEquip 与 onFrame 共用；修"getDisplayValue 初始显示0"的 bug）
-function _fortifyRecalc(entityId, instance, ctx, nodes) {
+function _fortifyRecalc(entityId, instance, ctx, nodes, meta) {
   const e = ctx.entityContainer.get(entityId);
   if (!e || !e.alive) return;
   const maxHP = ctx.attrCalc.calc(e, ctx.effectRegistry.getEffects(e.id)).maxHP || e.baseStats.maxHP || 1;
@@ -29,25 +29,57 @@ function _fortifyRecalc(entityId, instance, ctx, nodes) {
   for (const n of nodes) { if (p <= n + 1e-6) { node = n; break; } }
   e._regenCapHP = node * maxHP;
   instance.state._capPct = Math.round(node * 100);
+
+  // ==================== 生命恢复也在这里刷，不在 onEquip ====================
+  // 用户定稿把恢复数值挪到了地图层（"扭曲丛林水晶塔1.5，枢纽塔10；嚎哭深渊所有塔无生命恢复"），
+  // 靠 map.skillOverrides 覆写 defaultParams.regen 实现。而 _params 是 **CombatSystem 在
+  // 第一帧才注入**的 —— onEquip 那会儿还读不到，写死在闭包里的 regen 会赢。
+  // 所以恢复效果跟着 onFrame 刷（0.3s 一次，refresh 策略会同步 flatValue，幂等）。
+  if (!meta) return;
+  const regen = (instance._params && typeof instance._params.regen === 'number')
+    ? instance._params.regen : meta.regen;
+  const id = meta.id;
+  if (regen > 0) {
+    ctx.effectRegistry.apply(entityId, {
+      name: meta.name, icon: meta.icon, kind: 'stat', statKey: 'healthRegen', flatValue: regen,
+      duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+      description: `生命恢复+${regen}（恢复不超过生命值节点 ${meta.nodesTxt}）`,
+    }, id + '_regen');
+  } else {
+    // 覆写成 0（嚎哭深渊）时要把已经挂上的那条摘掉，否则出厂值会一直留在身上
+    for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+      if (eff.blueprint.name === meta.name && eff.blueprint.statKey === 'healthRegen') {
+        ctx.effectRegistry.remove(eff.id);
+      }
+    }
+  }
 }
 
 function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
   const nodesTxt = nodes.map(n => Math.round(n * 100) + '%').join('/');
   // v37：regen 可为 0（外/内塔版加固城防：只有节点封顶，不提供恢复数值）
   const regenTxt = regen > 0 ? `${tierLabel}获得${regen}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
+  const meta = { id, name, icon, regen, nodesTxt };
   return {
     id, name, icon,
     category: 'passive',
+    // 恢复数值可按地图覆写（map.skillOverrides['tower:base'].passive_base_fortify = { regen: 1.5 }）。
+    // 声明 defaultParams 才会被 CombatSystem 注入覆写 —— 见 _fortifyRecalc 里那段说明。
+    defaultParams: { regen },
+    // 文案跟着实际生效的 regen 走，不写死出厂值（地图改了 1→1.5，面板必须也是 1.5）
+    getDescTemplate: (entity, instance) => {
+      const r = (instance && instance._params && typeof instance._params.regen === 'number')
+        ? instance._params.regen : regen;
+      const t = r > 0 ? `${tierLabel}获得${r}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
+      return `唯一被动——${name}：${t}生命恢复不超过生命值节点（【{val}】为当前封顶节点）。`;
+    },
     description: `${regenTxt}生命恢复不超过生命值节点（${nodesTxt}）。`,
     descTemplate: `唯一被动——${name}：${regenTxt}生命恢复不超过生命值节点（【{val}】为当前封顶节点）。`,
     effects: [],
     onEquip: (entityId, instance, ctx) => {
-      // 惯例：静态 stat 效果由 onEquip 手动 apply（effects 数组只是元数据，无人消费）
-      if (regen > 0) ctx.effectRegistry.apply(entityId, {
-        name, icon, kind: 'stat', statKey: 'healthRegen', flatValue: regen,
-        duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `生命恢复+${regen}（恢复不超过生命值节点 ${nodesTxt}）`,
-      }, id + '_regen');
+      // 这里挂的是**出厂值**（_params 要等 CombatSystem 第一帧才注入，读不到地图覆写），
+      // 下一次 onFrame（≤0.3s）会用覆写值刷新它 —— 见 _fortifyRecalc 里那段说明。
+      // 之所以仍然在 onEquip 挂一次：装备即生效，不留"第一帧没有恢复"的空窗。
       if (shield) {
         ctx.effectRegistry.apply(entityId, {
           name, icon, kind: 'stat', statKey: 'shieldFixedMax', flatValue: shield,
@@ -55,13 +87,13 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
           description: `固定护盾+${shield}`,
         }, id + '_shield');
       }
-      _fortifyRecalc(entityId, instance, ctx, nodes); // v36 Q1：装备即算初始节点（修显示 0 的 bug）
+      _fortifyRecalc(entityId, instance, ctx, nodes, meta); // v36 Q1：装备即算初始节点（修显示 0 的 bug）
     },
     onFrame: (entityId, dt, instance, ctx) => {
       instance.state.t = (instance.state.t || 0) + dt;
       if (instance.state.t < 0.3) return;
       instance.state.t = 0;
-      _fortifyRecalc(entityId, instance, ctx, nodes);
+      _fortifyRecalc(entityId, instance, ctx, nodes, meta);
     },
     onUnequip: (entityId, instance, ctx) => {
       const e = ctx.entityContainer.get(entityId);

@@ -248,11 +248,14 @@ for (const map of Object.values(MAPS)) {
   // 用户指定的数值（改了这里就要同步改地图，反之亦然）
   const WANT = {
     outer:      { maxHP: 1750, armor: 100, magicResist: 100, baseAttackSpeed: 0.833, healthRegen: 0 },
-    // 期望常量更新：水晶塔双抗 100 -> 125、枢纽塔双抗 100 -> 200（用户本轮定稿）
+    // 期望常量更新：水晶塔双抗 100 -> 125、枢纽塔双抗 100 -> 200（用户本轮定稿）。
+    // healthRegen 这一列**全部归 0**：用户定稿"都从XX防御塔加固城防/水晶恢复来实现"。
+    // 原来 hq_tower/nexus_lane/nexus_main 各写 10，而技能层又给一份（加固城防 +3 / 水晶再生 +10）
+    // —— 实测两座水晶拿到的是 20、枢纽塔 13。恢复的唯一来源改成技能层，双计不可能再发生。
     base:       { maxHP: 2250, armor: 125, magicResist: 125, baseAttackSpeed: 1.25,  healthRegen: 0 },
-    hq_tower:   { maxHP: 3750, armor: 200, magicResist: 200, baseAttackSpeed: 2.50,  healthRegen: 10 },
-    nexus_lane: { maxHP: 4000, armor: 20,  magicResist: 0,   healthRegen: 10 },
-    nexus_main: { maxHP: 5500, armor: 0,   magicResist: 0,   healthRegen: 10 },
+    hq_tower:   { maxHP: 3750, armor: 200, magicResist: 200, baseAttackSpeed: 2.50,  healthRegen: 0 },
+    nexus_lane: { maxHP: 4000, armor: 20,  magicResist: 0,   healthRegen: 0 },
+    nexus_main: { maxHP: 5500, armor: 0,   magicResist: 0,   healthRegen: 0 },
   };
   for (const [tier, want] of Object.entries(WANT)) {
     const got = tt.tierStats[tier] || {};
