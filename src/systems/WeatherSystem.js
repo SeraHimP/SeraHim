@@ -232,7 +232,12 @@ export class WeatherSystem {
     const DRAIN = T.weatherDrainSec ?? 30;         // 从满充放空需要的秒数
 
     for (const id of this.baseIds) {
-      const ratio = this.disabledWeathers.has(id) ? 0 : (w[id] || 0);
+      // 关掉的天气一律不充能。正常路径下它的占比已经是严格 0（_softmax 把它剔出候选集），
+      // 这一条是**兜底**：占比表可以由外部传入（预报前向模拟、测试桩），不能假定它一定归了零。
+      // 唯一的例外是"全部拉到底"时被 _softmax 兜底留下的那一个 —— 它虽然 _isOff 为真，
+      // 但占比是 1，必须允许充能，否则会"占比 100% 却永远充不上能"。
+      const off = this._isOff(id) && id !== this._fallbackId;
+      const ratio = off ? 0 : (w[id] || 0);
       const target = ratio >= MIN ? ratio : 0;   // 占比不足门槛 → 目标为 0（开始放电）
       const c = base[id] || 0;
       const tau = target > c ? FULL : DRAIN;     // 上升用充能时间常数，下降用放电时间常数
@@ -240,7 +245,7 @@ export class WeatherSystem {
     }
 
     for (const [id, def] of EXTREME_ENTRIES) {
-      let met = !this.disabledWeathers.has(id);
+      let met = !this._isOff(id);
       let drive = 1; // 触发条件的"富余程度"，决定充能速率
       if (met) {
         for (const [baseId, rawThreshold] of Object.entries(def.trigger)) {
@@ -296,11 +301,23 @@ export class WeatherSystem {
   /** 预报缓存失效：时间线重算 / 天气开关 / 极端权重变化时调用 */
   _invalidateForecast() { this._fcVersion = (this._fcVersion || 0) + 1; }
 
-  /** 极端天气的实际触发阈值：权重越高 → 阈值越低 → 越容易触发 */
+  /**
+   * 极端天气的实际触发阈值：权重越高 → 阈值越低 → 越容易触发。
+   *
+   * weatherExtremeThresholdScale 是整体难度旋钮（用户："可以适当增加进入极端天气的门槛"）。
+   * 它乘在【原始阈值】上，所以各极端天气之间的相对难易不变，只是整条线一起抬高。
+   * 下限从 0.05 抬到 0.15：0.05 的意思是"基础天气充能 5% 就能进极端"，
+   * 那等于权重一拉满就必进，门槛形同虚设。
+   *
+   * ⚠️ 这里【没有冷却】，也不打算加 —— 用户定稿："极端天气不要冷却，随即成啥样就是啥样"。
+   * 排查过了：改动前也从来没有过冷却机制，极端天气纯粹由充能与阈值决定。
+   */
   _extremeThreshold(id, rawThreshold) {
-    const infl = CONFIG.tuning?.weatherExtremeWeightInfluence ?? 0.35;
+    const T = CONFIG.tuning || {};
+    const infl = T.weatherExtremeWeightInfluence ?? 0.35;
+    const scale = T.weatherExtremeThresholdScale ?? 1;
     const wt = this._extremeWeight[id] ?? 0;
-    return Math.max(0.05, Math.min(0.95, rawThreshold * (1 - wt * infl)));
+    return Math.max(0.15, Math.min(0.98, rawThreshold * scale * (1 - wt * infl)));
   }
 
   /** 某天气的当前充能值（0~1） */
@@ -364,9 +381,38 @@ export class WeatherSystem {
     return this._softmax(this._x);
   }
 
+  /**
+   * 某个天气是不是被【彻底关掉】了。
+   *
+   * ==================== 为什么需要这条 ====================
+   * 用户："除了晴之外所有权重调到最低了，但是天气还是啥都有。"
+   * 根因：占比走的是 **softmax**，而 softmax 的值域是开区间 (0,1) —— 它**永远不会给 0**。
+   * mu 拉到 −1 只是把那个天气的潜在分数压低，占比仍有十几个百分点，
+   * 越过充能门槛照样能积累到"中等/严重"。滑条拉到底 ≠ 关掉，这不符合直觉。
+   * 现在：mu ≤ muOff（默认 −0.995，即滑条拉到最左端）= **从 softmax 的候选集里剔除**，
+   * 占比严格 0，充能目标恒 0 —— 拉到底就是真的没有。
+   * 极端天气的权重滑条同理（拉到最左端 = 这种极端天气不会出现）。
+   */
+  _isOff(id) {
+    if (this.disabledWeathers.has(id)) return true;
+    const off = CONFIG.tuning?.weatherOffAt ?? -0.995;
+    if (EXTREME_WEATHERS[id]) return (this._extremeWeight[id] ?? EXTREME_WEATHERS[id].weight ?? 0) <= off;
+    return (this._mu[id] ?? BASE_WEATHERS[id]?.mu ?? 0) <= off;
+  }
+
   _softmax(x) {
-    const active = this.baseIds.filter(id => !this.disabledWeathers.has(id));
-    if (!active.length) return {};
+    let active = this.baseIds.filter(id => !this._isOff(id));
+    // 兜底：全都被拉到底时保留 mu 最高的那一个。天气占比之和必须是 1，
+    // 全空会让"当前天气"变成 null，界面与效果链路都没有定义这种状态。
+    // 记住是谁被兜底留下的：_stepCharges 要放它一马，否则会出现
+    // "占比 100% 却永远充不上能"（两处口径打架）。
+    this._fallbackId = null;
+    if (!active.length) {
+      let best = this.baseIds[0];
+      for (const id of this.baseIds) if ((this._mu[id] ?? 0) > (this._mu[best] ?? 0)) best = id;
+      active = [best];
+      this._fallbackId = best;
+    }
     // 温度 T<1 让分布更"尖锐"：占比差距被放大，主导天气更鲜明、极端天气有机会触发。
     // T=1（标准 softmax）时五种天气的占比长期挤在 20~28%，谁都不占优——那不叫天气，
     // 叫五种天气的平均值。SHARPNESS 就是这个"尖锐度"旋钮。
@@ -379,7 +425,7 @@ export class WeatherSystem {
       sum += exps[id];
     }
     const out = {};
-    for (const id of this.baseIds) out[id] = this.disabledWeathers.has(id) ? 0 : exps[id] / sum;
+    for (const id of this.baseIds) out[id] = exps[id] === undefined ? 0 : exps[id] / sum;
     return out;
   }
 
@@ -590,6 +636,7 @@ export class WeatherSystem {
   getExtremeWeight(id) { return this._extremeWeight[id] ?? EXTREME_WEATHERS[id]?.weight ?? 0; }
   setExtremeWeight(id, value) {
     this._extremeWeight[id] = Math.max(-1, Math.min(1, value));
+    // 拉到最左端 = 彻底关闭（见 _isOff）。这条不需要重算时间线，只影响触发判定。
     this._invalidateForecast(); // v34 Q4：权重改触发阈值 → 前向模拟结果变
     // 不需要重算时间线——权重只影响触发阈值的判定，不影响底层的天气演化
   }

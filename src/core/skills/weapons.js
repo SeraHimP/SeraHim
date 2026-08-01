@@ -1,15 +1,12 @@
 import { CONFIG } from '../../data/Config.js';
 
-// 闪电杖满充时间基准（秒）：攻速 1.0 时充满需要 12 秒；实际满充时间 = 12 / 最终攻速。
-// （v33 用户确认：维持 12s 基准——充能速度本就与攻速挂钩，高地塔攻速 4.0 时约 3 秒充满，
-//   再缩短基准会让高攻速塔的充能形同虚设。）
-const CHARGE_TIME_AT_AS1 = 12;
-const LIGHTNING_MAX_PEN = 0.60;   // 满充能时无视 60% 全部防御措施（含双抗/减伤）
-// v35 回调（用户定稿方案B）：每跳 15%→20% AD、倍率上限 2.2→1.8、【删除】满充闪电链弹射。
-// 单体 DPS 对比：旧满充 = 4×15%×2.2 = 132%AD/s（+链）；新满充 = 4×20%×1.8 = 144%AD/s（纯单体）。
-// 定位从"满充 AOE 质变"回归"蓄力单体炮"，60% 无视防御与麻痹光环保留。
-const LIGHTNING_TICK_PCT = 0.20;  // 每跳伤害占 AD 比例（15% → 20%）
-const LIGHTNING_MAX_MULT = 1.8;   // 满充能伤害倍率（2.2 → 1.8）
+// ==================== 闪电杖的数值全部搬进 defaultParams（软编码）====================
+// 原来这几个是模块级 const（写死在源码里），编辑器改不了；而 weapon_lightning 的
+// defaultParams 里躺着 { damage, bounces, interval } 三个**根本没人读**的键 ——
+// 面板上摆着三个改了没反应的滑块。现在两边合一：面板列什么，代码就读什么。
+//
+// 充能时间保持 12s 基准不变（用户定稿："充能时间不要改，就用现在的"）：
+// 充能速度本就与攻速挂钩，攻速 4.0 的枢纽塔约 3 秒充满，再缩短基准等于取消充能。
 
 export const weapons = {
   weapon_piercing: {
@@ -106,16 +103,45 @@ export const weapons = {
   },
 
   weapon_lightning: {
-    defaultParams: { damage: 45, bounces: 3, interval: 0.25 },
+    // 单位统一用"百分数写百分数、秒写秒"，面板上直接可读。
+    defaultParams: {
+      chargeTimeAtAS1: 12,    // 攻速 1.0 时充满需要几秒（实际 = 本值 / 最终攻速）
+      tickPct: 20,            // 每跳伤害 = 攻击力 × 本值%
+      tickPerSec: 4,          // 每秒跳几次（独立于攻速）
+      maxMult: 180,           // 满充能伤害倍率（%）
+      maxPenPct: 90,          // 满充能无视防御（%）——只无视【保护性】防御，见 CombatSystem
+      bonusVsShieldPct: 7,    // 目标持盾时的额外伤害（%）
+      slowPct: 15,            // 麻痹：移速 −%
+      ampDownPct: 15,         // 麻痹：伤害增幅 −%
+      asDownPct: 20,          // 麻痹：攻速 −%
+      grievousPct: 40,        // 重伤：满充能时减少目标治疗与护盾强度 −%
+    },
     id: 'weapon_lightning',
     name: '闪电杖 (魔法)',
     icon: '⚡',
     category: 'weapon',
-    description: '魔法伤害，每秒固定跳4次伤害（各20%攻击力），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标归零），伤害倍率随充能升至1.8倍、无视防御升至60%；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
-    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（【{val}】=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→60%（攻速1.0约12秒充满）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
+    description: '魔法伤害，每秒固定跳4次伤害（各20%攻击力），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至90%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
+    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（【{val}】=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→90%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
     computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.attackDamage||0)*0.15); },
     specialAttack: true,
     effects: [],
+    // 参数取值：实例覆写（全局/地图级）→ 出厂值。所有数值都从这里过一遍，
+    // 源码里不再出现第二份字面量。
+    _p(instance) {
+      const d = weapons.weapon_lightning.defaultParams;
+      const o = (instance && instance._params) || {};
+      const g = (k) => (typeof o[k] === 'number' ? o[k] : d[k]);
+      return {
+        chargeTime: Math.max(0.01, g('chargeTimeAtAS1')),
+        tickPct: g('tickPct') / 100,
+        tickInterval: 1 / Math.max(0.01, g('tickPerSec')),
+        maxMult: g('maxMult') / 100,
+        maxPen: g('maxPenPct') / 100,
+        bonusVsShieldPct: g('bonusVsShieldPct'),
+        slowPct: g('slowPct'), ampDownPct: g('ampDownPct'), asDownPct: g('asDownPct'),
+        grievousPct: g('grievousPct'),
+      };
+    },
     onEquip: (entityId, instance, ctx) => {
       instance.state = instance.state || {};
       instance.state.charge = 0;
@@ -167,7 +193,8 @@ export const weapons = {
       // 正确：充能速率正比于【最终攻速的绝对值】，以攻速 1.0 为基准。
       //   满充时间 = CHARGE_TIME_AT_AS1 / finalAS
       //   → 攻速 1.0：12s；攻速 2.0：6s；攻速 4.0：3s。攻速加成同样直接生效。
-      instance.state.charge = Math.min(1, (instance.state.charge || 0) + (dt * finalAS) / CHARGE_TIME_AT_AS1);
+      const P = weapons.weapon_lightning._p(instance);
+      instance.state.charge = Math.min(1, (instance.state.charge || 0) + (dt * finalAS) / P.chargeTime);
 
       // EQ4：充能以【状态】形式展示——挂一个"闪电充能"效果，用效果栏自带的倒计时环当进度条
       // （环的已消耗比例 = 充能比例），描述实时显示百分比；掉目标后停止刷新即自动脱落。
@@ -187,13 +214,13 @@ export const weapons = {
         const chEff = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === '闪电充能');
         if (chEff) {
           chEff.remainingTime = Math.max((1 - ch) * 100, 0.5); // 环的已消耗部分 = 充能比例
-          chEff.blueprint.description = `充能 ${(ch * 100).toFixed(0)}%（满充能：1.8倍伤害、60%无视防御）`;
+          chEff.blueprint.description = `充能 ${(ch * 100).toFixed(0)}%（满充能：${P.maxMult.toFixed(1)}倍伤害、${(P.maxPen * 100) | 0}%无视防御、施加${P.grievousPct}%重伤）`;
         }
       }
 
       // 固定 4 次/秒 tick（伤害结算），完全独立于攻速
       instance.state.tickTimer = (instance.state.tickTimer || 0) + dt;
-      const tickInterval = 0.25;
+      const tickInterval = P.tickInterval;
       let safety = 0;
       while (instance.state.tickTimer >= tickInterval && safety < 8) {
         instance.state.tickTimer -= tickInterval;
@@ -229,17 +256,37 @@ export const weapons = {
 
       const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       const charge = instance.state.charge || 0;
-      // v35 方案B：每跳 20% AD × 充能倍率（1.0 ~ 1.8）
-      const chargeMultiplier = 1 + charge * (LIGHTNING_MAX_MULT - 1);
-      const tickDamage = LIGHTNING_TICK_PCT * (atkStats.attackDamage || 0) * chargeMultiplier;
+      const P = weapons.weapon_lightning._p(instance);
+      // 每跳 tickPct × AD × 充能倍率（1.0 ~ maxMult）
+      const chargeMultiplier = 1 + charge * (P.maxMult - 1);
+      const tickDamage = P.tickPct * (atkStats.attackDamage || 0) * chargeMultiplier;
 
       if (ctx.combat && typeof ctx.combat.performAttackDirect === 'function') {
-        // 无视防御随充能【连续】增长至 60%；伤害类型固定魔法。
+        // 无视防御随充能【连续】增长至 maxPen（用户定稿 90%）；伤害类型固定魔法。
+        // ⚠️ "无视防御"只无视【保护性】的那部分：目标双抗/减伤/格挡若是负值，
+        // 那是给攻击方的增伤，不能被一起抹掉 —— 这条在 CombatSystem 里实现，
+        // 见 performAttackDirect 里 `keepAmp` 那段（用户指出的坑）。
         ctx.combat.performAttackDirect(entity.id, target.id, tickDamage, 'magic', {
-          ignoreDefenseRatio: charge * LIGHTNING_MAX_PEN,
-          bonusVsShieldPct: 7,
+          ignoreDefenseRatio: charge * P.maxPen,
+          bonusVsShieldPct: P.bonusVsShieldPct,
         });
         // （v35：满充闪电链弹射已按方案B删除——纯单体，无 AOE）
+      }
+
+      // ==================== 重伤（满充能才施加）====================
+      // 用户定稿："改为满充无视90%防御并且对攻击目标施加40%重伤
+      //（状态：减少目标40%治疗与护盾强度）" + "把重伤改成满充能后才会施加"。
+      // 走光环机制（aura:true）与麻痹同规格：照射期间常驻、停照 0.6s 自动脱落，
+      // 于是"切目标 → 充能归零 → 重伤自然掉"不需要额外的清理代码。
+      // 治疗与护盾强度是【被治疗方】的属性（见 core/healing.js 头注），所以减它
+      // 能压住这个目标身上【所有】来源的回血与护盾，包括别人给他的。
+      if (charge >= 1 && P.grievousPct > 0) {
+        ctx.effectRegistry.apply(target.id, {
+          name: '重伤', icon: '💔', kind: 'stat', statKey: 'healShieldPowerPct',
+          flatValue: -P.grievousPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+          descTemplate: `唯一被动——重伤：治疗与护盾强度-${P.grievousPct}%。`,
+          description: `治疗与护盾强度-${P.grievousPct}%`,
+        }, 'weapon_lightning_grievous');
       }
 
       // 被动：减速 / 减伤害增幅 / 减攻速——唯一被动，多个闪电杖塔打同一目标只生效一份。
@@ -247,18 +294,18 @@ export const weapons = {
       // 停止照射后由 EffectRegistry 的光环宽限期（0.6s）自动脱落。
       ctx.effectRegistry.apply(target.id, {
         name: '闪电麻痹', icon: '⚡', kind: 'stat', statKey: 'moveSpeed',
-        flatValue: -15, aura: true, stackPolicy: 'refresh', uniquePassive: true,
-        descTemplate: '唯一被动——闪电麻痹：移速-15%。', description: '移速-15%',
+        flatValue: -P.slowPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+        descTemplate: `唯一被动——闪电麻痹：移速-${P.slowPct}%。`, description: `移速-${P.slowPct}%`,
       }, 'weapon_lightning_slow');
       ctx.effectRegistry.apply(target.id, {
         name: '闪电麻痹', icon: '⚡', kind: 'stat', statKey: 'damageAmpPct',
-        flatValue: -15, aura: true, stackPolicy: 'refresh', uniquePassive: true,
-        descTemplate: '唯一被动——闪电麻痹：伤害增幅-15%。', description: '伤害增幅-15%',
+        flatValue: -P.ampDownPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+        descTemplate: `唯一被动——闪电麻痹：伤害增幅-${P.ampDownPct}%。`, description: `伤害增幅-${P.ampDownPct}%`,
       }, 'weapon_lightning_amp');
       ctx.effectRegistry.apply(target.id, {
         name: '闪电麻痹', icon: '⚡', kind: 'stat', statKey: 'bonusAttackSpeedPct',
-        flatValue: -20, aura: true, stackPolicy: 'refresh', uniquePassive: true,
-        descTemplate: '唯一被动——闪电麻痹：攻速-20%。', description: '攻速-20%',
+        flatValue: -P.asDownPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+        descTemplate: `唯一被动——闪电麻痹：攻速-${P.asDownPct}%。`, description: `攻速-${P.asDownPct}%`,
       }, 'weapon_lightning_as');
     },
   },

@@ -556,15 +556,22 @@ export class EffectsLayer {
         if (fade <= 0) continue;
         const col = rgbOf(b.color || '#f1c40f');
         const sy = MY(b.startX, b.startY);
-        // Q1：末端高度按 targetId 取；一旦进入淡出（目标已死/换目标）就【冻结】成快照，
-        // 不再重算 —— 重算会拿到 0 或旁边别人的高度，光束末端于是塌到地面 / 歪到别处。
+        // ==================== 末端高度：目标一死就【冻结】 ====================
+        // 用户："闪电杖攻击该目标死亡后会瞬间往下移动（就像是目标突然跳到了下面一样）。"
+        // 上一版的冻结条件是 `b.fadeT === undefined`，也就是【等光束的 ttl 走完 0.4s
+        // 之后】才冻。可是目标一死，武器层立刻停止刷新光束，而这 0.4s 里光束照样在画，
+        // 且每帧都拿 targetId 去查高度 —— 实体没了，MYOF 返回 null，
+        // 于是退化成按坐标反查（≈0），末端**当场塌到地面**。冻结晚了整整 0.4 秒。
+        // 现在改成：只要这一帧还能按 id 查到高度就刷新快照，查不到（死亡/移除）
+        // 或已进入淡出，就一律用最后一次的快照值。
         let ey;
-        if (b.fadeT === undefined) {
-          ey = endHeightOf(b.targetId, b.endX, b.endY);
+        const liveH = b.targetId != null ? MYOF(b.targetId) : null;
+        if (liveH != null && b.fadeT === undefined) {
+          ey = liveH * 0.6;
           this._beamEndY.set(b, ey);
         } else {
-          ey = this._beamEndY.get(b);
-          if (ey === undefined) ey = endHeightOf(b.targetId, b.endX, b.endY);
+          const snap = this._beamEndY.get(b);
+          ey = snap !== undefined ? snap : endHeightOf(b.targetId, b.endX, b.endY);
         }
         // 宽度：细 → 粗。charge 走一点点缓入，让"越充越粗"的手感集中在后半段。
         const k = charge * charge * (3 - 2 * charge);          // smoothstep
@@ -581,6 +588,47 @@ export class EffectsLayer {
         D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY,                    // ③ 白芯（细，实心）
                Math.max(0.6, w * BEAM_CORE_K) * breathe, WHITE,
                fade * (0.30 + charge * 0.60), V.vx, V.vy, V.vz);
+
+        // ==================== ④ 流动：沿光束推进的亮脉冲 ====================
+        // 用户："我想要闪电杖的攻击轨迹有流动效果（不是那种虚线的效果，之前做过效果太差）"。
+        // 虚线为什么差：它把一条连续的光**切断**成一串短横，读起来是"跑动的破折号"，
+        // 光束本身消失了。这里反过来做——光束保持①②③三层连续不动，
+        // 在它**上面叠**几团顺着流的亮斑（加算感），于是读到的是"这束光里有东西在跑"。
+        //
+        // 三个刻意的细节：
+        //   · 亮斑的透明度用 sin(πt) 开窗：两端自然收没，不会在塔口/目标处出现硬边，
+        //     那种硬边正是"虚线感"的来源。
+        //   · 相位仍然逐帧积分（phase += 速度 × dtWall），不是"绝对时间 × 速度"。
+        //     后者在速度随充能变化时会瞬移（见本文件头注那段）。
+        //   · 速度随充能升高：充满时明显更急，充能过程自带视觉反馈。
+        const F = (CONFIG.ui && CONFIG.ui.beamFlow) || {};
+        if (F.enabled !== false) {
+          const bx = b.endX - b.startX, bz = b.endY - b.startY;
+          const blen = Math.hypot(bx, bz);
+          if (blen > 4) {
+            const spd = (F.speed ?? 200) + charge * (F.speedCharge ?? 320);   // px/s
+            let ph = (this._beamPhase.get(b) || 0) + spd * dtWall;
+            ph %= blen;
+            this._beamPhase.set(b, ph);
+            const n = Math.max(1, F.pulses ?? 3);
+            const half = Math.max(6, blen * (F.len ?? 0.16)) / 2 / blen;      // 半长（归一化）
+            for (let i = 0; i < n; i++) {
+              const t = ((ph / blen) + i / n) % 1;
+              const win = Math.sin(Math.PI * t);          // 两端收没
+              if (win <= 0.03) continue;
+              const t0 = Math.max(0, t - half), t1 = Math.min(1, t + half);
+              if (t1 - t0 < 1e-3) continue;
+              const X0 = b.startX + bx * t0, Z0 = b.startY + bz * t0, Y0 = sy + (ey - sy) * t0;
+              const X1 = b.startX + bx * t1, Z1 = b.startY + bz * t1, Y1 = sy + (ey - sy) * t1;
+              const aBase = fade * win * (F.alpha ?? 0.5) * (0.35 + 0.65 * charge);
+              // 两层：宽的软斑给"体积"，细的白芯给"速度感"
+              D.softSeg3(X0, Y0, Z0, X1, Y1, Z1, w * (F.widthK ?? 1.5) * breathe,
+                         col, aBase, V.vx, V.vy, V.vz);
+              D.softSeg3(X0, Y0, Z0, X1, Y1, Z1, Math.max(0.8, w * BEAM_CORE_K * 2.2) * breathe,
+                         WHITE, aBase * 1.1, V.vx, V.vy, V.vz);
+            }
+          }
+        }
       }
     }
 

@@ -54,8 +54,19 @@ function equip(e, skillId, ents, fx, bus) {
   const dmgs = [];
   for (let i = 0; i < 4; i++) { attr.tick(); const b = t1.currentHP; combat.performAttack(tw, t1); dmgs.push(b - t1.currentHP); }
   const ratios = dmgs.map(d => d / dmgs[0]);
-  T(`升温精确 100/130/160/190（实际比值 ${ratios.map(r => r.toFixed(2)).join(',')}）`,
-    Math.abs(ratios[1] - 1.3) < 0.01 && Math.abs(ratios[2] - 1.6) < 0.01 && Math.abs(ratios[3] - 1.9) < 0.01);
+  // 期望值 = 升温倍率 × 削抗带来的伤害乘数变化。
+  //
+  // ⚠️ 原来这里只钉升温那一半（1.30/1.60/1.90），因为**削抗当时是无效的**：
+  // calcEffectiveArmor 无条件 Math.max(0, …)，把负抗性一律夹成 0，
+  // 于是"命中削目标 3 双抗【至 -12】"这条描述里的负数段从来没生效过
+  //（穿透型子弹的技能说明白纸黑字写着"至-12"）。
+  // 修好负抗性增伤之后，第 2/3/4 发的目标护甲是 -3/-6/-9，
+  // 按 calcDamageMultiplier 的负值分支 2 − 100/(100−r) 各自额外增伤 2.9%/5.7%/8.3%。
+  // 这一条现在同时钉住两个机制，任何一个失效都会红。
+  const mult = (r) => (r >= 0 ? 100 / (100 + r) : 2 - 100 / (100 - r));
+  const want = [0, 1, 2, 3].map(i => (1 + 0.3 * i) * mult(-3 * i) / mult(0));
+  T(`升温×削抗 = ${want.map(v => v.toFixed(2)).join(',')}（实际 ${ratios.map(r => r.toFixed(2)).join(',')}）`,
+    ratios.every((r, i) => Math.abs(r - want[i]) < 0.01));
   T('不写入塔属性 damageAmpPct（display纯计数）', attr.calc(tw, fx.getEffects(tw.id)).damageAmpPct === 0);
   const heat = fx.getEffectByName(tw.id, '升温');
   T('状态栏可见升温层数（4发命中后=4层封顶）', !!heat && heat.stacks === 4 && heat.blueprint.kind === 'display');

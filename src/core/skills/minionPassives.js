@@ -1,4 +1,5 @@
 ﻿import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION, AURA_RANGE } from './_helpers.js';
+import { applyHeal, healPowerFor } from '../healing.js';
 import { CONFIG } from '../../data/Config.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵与沙盒大型兵）都算。
@@ -285,7 +286,9 @@ export const minionPassives = {
         const max = a.baseStats?.maxHP || 0;
         const missing = Math.max(0, max - (a.currentHP || 0));
         if (missing <= 0) continue;             // 满血的不浪费
-        a.currentHP = Math.min(max, (a.currentHP || 0) + missing * pct);
+        // 强度取【被治疗方】的（见 core/healing.js 头注）：奶量不该由奶妈的属性决定，
+        // 而且这样重伤才压得住"别人给我的治疗"。
+        applyHeal(a, missing * pct, healPowerFor(a, ctx), max);
         if (a.id === e.id) selfHealed = true;
       }
       // 自身单独补一次：findInRadius 是否返回半径 0 处的查询者本身不该被依赖。
@@ -293,7 +296,7 @@ export const minionPassives = {
       if (!selfHealed) {
         const selfMax = e.baseStats?.maxHP || 0;
         const selfMissing = Math.max(0, selfMax - (e.currentHP || 0));
-        if (selfMissing > 0) e.currentHP = Math.min(selfMax, e.currentHP + selfMissing * pct);
+        applyHeal(e, selfMissing * pct, healPowerFor(e, ctx), selfMax);
       }
     },
   },

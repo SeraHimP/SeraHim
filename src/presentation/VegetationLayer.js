@@ -7,6 +7,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
+import { WALL_H } from './WallLayer.js';
 
 function withColor(geo, hex) {
   const c = new THREE.Color(hex), n = geo.getAttribute('position').count, col = new Float32Array(n * 3);
@@ -55,11 +56,18 @@ export class VegetationLayer {
       if (walk(x + margin, y) || walk(x - margin, y) || walk(x, y + margin) || walk(x, y - margin)) continue; // 内部，不贴车道/高地边
       const gh = heightAt(x, y);
       if (gh < -2) continue;                                                // 河床不放
+      // ⚠️ 摆放高度是【墙顶】，不是地面高度。用户："你这做的植被都跑到了贴图底下，
+      // 正常根本看不到。" 根因：植被只撒在【不可走】的格子上（野区/墙块），
+      // 而 WallLayer 把不可走区整块拔高到 WALL_H(70) 画成台地 ——
+      // 而这里取的 heightAt 是**地形高度场**，压根不含墙体那 70 单位。
+      // 于是每一棵树都被埋在自己脚下那块墙体里，一棵也看不见。
+      // 往下沉 1.5：树干底面正好咬进墙顶，不会看到悬空的接缝。
+      const y0 = WALL_H - 1.5;
       const r = hash(gx, gy);
       const sc = 0.65, rot = hash(gx + 5, gy + 5) * 6.2832;
-      if (r < 0.44) trees.push([x, gh, y, sc + hash(gx + 7, gy) * 0.7, rot]);
-      else if (r < 0.70) rocks.push([x, gh, y, sc + hash(gx + 3, gy) * 0.9, rot]);
-      else if (r < 0.88) bushes.push([x, gh, y, sc + hash(gx + 9, gy) * 0.8, rot]);
+      if (r < 0.44) trees.push([x, y0, y, sc + hash(gx + 7, gy) * 0.7, rot]);
+      else if (r < 0.70) rocks.push([x, y0, y, sc + hash(gx + 3, gy) * 0.9, rot]);
+      else if (r < 0.88) bushes.push([x, y0, y, sc + hash(gx + 9, gy) * 0.8, rot]);
     }
 
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(),

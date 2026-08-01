@@ -55,7 +55,9 @@ export class ProjectileSystem {
       const p = this.projectiles[i];
       const target = this.entities.get(p.targetId);
       // B2：目标存活 → 追踪其位置（记录最后落点）；目标中途死亡 → 不再删除子弹，
-      // 冻结到【最后已知落点】继续飞，命中时不造成直接伤害、但溅射仍在落点生效。
+      // 冻结到【最后已知落点】继续飞到底，然后消失，**不造成任何伤害**
+      //（用户定稿："残余的子弹会到达已经死亡的目标处才会消失而不是在半空直接消失，
+      //   并且这个子弹不造成任何伤害（包括爆炸型）"）。
       let tx, ty;
       if (target && target.alive) {
         tx = target.pos.x; ty = target.pos.y;
@@ -101,10 +103,11 @@ export class ProjectileSystem {
     const target = this.entities.get(p.targetId);
     if (target && target.alive) {
       this.combat._resolveHit(p.pendingHit);            // 正常命中：直伤 + 溅射
-    } else {
-      // B2：目标已死 → 无直接伤害，但溅射仍在原落点坐标生效（_applyExplosion 已依赖坐标）
-      this.combat._resolveHitSplashOnly(p.pendingHit, p.lastTx, p.lastTy);
     }
+    // 目标已死：子弹已经飞到落点了，这里【什么都不做】——不结算直伤，也不炸。
+    // 上一版还会在落点走一次 _resolveHitSplashOnly（爆炸型/攻城车仍然溅射），
+    // 用户明确否掉了："这个子弹不造成任何伤害（包括爆炸型）"。
+    // 于是"目标死了还被残弹的溅射补刀"这种事不会再发生。
   }
 
   getProjectiles() { return this.projectiles; }

@@ -10,6 +10,7 @@
  * 昼夜会真实地改变整场明暗与色温，而不是像 unlit 时代那样白天黑夜一个样。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { CONFIG } from '../data/Config.js';
 
 //               相位   太阳色     天空色(半球上)  地面反照色     太阳仰角  曝光   环境占比   天穹/边界底色
 const KEYS = [
@@ -20,7 +21,16 @@ const KEYS = [
   { p: 1.00, sun: '#ffb066', sky: '#f2a06a', gnd: '#5a4a3a', elev: 10, exp: 0.72, amb: 0.42, bg: '#241f2e' }, // 回到黎明（闭合）
 ];
 
-export const DAY_PERIOD = 360;   // 一整天 = 360s（6 分钟）游戏时间（可由 CTX.__dayPeriod 改）
+// 一整天的游戏秒数。**权威值在 CONFIG.world.dayPeriodSec**（用户定稿默认 480 = 8 分钟）；
+// 这里的常量只是模块自己的兜底（Config 缺字段时用），以及给测试当参照。
+// 覆盖优先级：CTX.__dayPeriodSec（运行时调试杠杆） > CONFIG.world.dayPeriodSec > DAY_PERIOD。
+export const DAY_PERIOD = 480;
+
+/** 当前生效的一天时长（秒）。所有读周期的地方都必须走这里，不要各自 `|| DAY_PERIOD`。 */
+export function dayPeriodSec(ctx = null) {
+  const c = ctx || (typeof window !== 'undefined' ? window.CTX : null) || {};
+  return c.__dayPeriodSec || CONFIG.world?.dayPeriodSec || DAY_PERIOD;
+}
 
 const _a = new THREE.Color(), _b = new THREE.Color();
 const _lerpHex = (x, y, t) => '#' + _a.set(x).lerp(_b.set(y), t).getHexString();
@@ -80,7 +90,7 @@ export function phaseLabelOf(phase) {
  */
 export function resolveDayPhase(gameTime, ctx = null, weatherEnabled = true) {
   const c = ctx || (typeof window !== 'undefined' ? window.CTX : null) || {};
-  const period = c.__dayPeriodSec || DAY_PERIOD;
+  const period = dayPeriodSec(c);
   // 手动定格优先（调试用）
   if (c.__dayPhaseOverride != null) {
     return { phase: Math.max(0, Math.min(1, c.__dayPhaseOverride)), period, active: true };

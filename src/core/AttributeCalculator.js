@@ -191,15 +191,26 @@ export const AttributeCalculator = {
 
   /**
    * 计算有效抗性（支持百分比穿透和固定穿透）
+   *
+   * ⚠️ 负抗性【本身就是增伤】——下面 calcDamageMultiplier 专门写了 resist<0 的分支
+   *（2 − 100/(100−resist)，抗性 −50 时受到 1.33 倍伤害）。
+   * 但改动前这里无条件 `Math.max(0, effective)`，把负抗性一律夹成 0，
+   * **那条增伤分支于是成了死代码**：双抗调成负数在游戏里完全没有效果。
+   * 排查缘由：用户问"如果单位防御已经为负，无视防御别把增伤减免没了" ——
+   * 顺着查发现负抗性根本就没生效过。
+   *
+   * 现在的规则（与 LoL 一致）：
+   *   · 原始抗性为负 → 原样传下去（增伤生效）。穿透不再往下打——已经是负的了，
+   *     再穿只会让"穿透"变成无上限的增伤放大器。
+   *   · 原始抗性为正 → 照旧穿透，并夹到 0：穿透**不能**把正抗性打成负数变增伤。
    * @param {number} resist - 原始抗性（护甲或魔抗）
    * @param {number} penPercent - 百分比穿透（如 30 表示 30%）
    * @param {number} penFlat - 固定穿透
-   * @returns {number} 有效抗性（最小0）
+   * @returns {number} 有效抗性（正抗性夹到 ≥0；负抗性原样返回）
    */
   calcEffectiveArmor(resist, penPercent, penFlat) {
-    let effective = resist * (1 - penPercent / 100);
-    effective -= penFlat;
-    return Math.max(0, effective);
+    if (resist < 0) return resist;
+    return Math.max(0, resist * (1 - penPercent / 100) - penFlat);
   },
 
   /**

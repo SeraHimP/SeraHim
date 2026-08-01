@@ -199,7 +199,7 @@ CTX.__sceneStats = () => renderer3d ? renderer3d.sceneStats() : null;
 // __dayPeriod(秒) 改一天时长；__setDayPhase(0..1) 手动定格相位(null 恢复)。受光材质已接入 → 真实明暗。
 CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=强制锁默认时刻（14 点）
 CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== false); };
-CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || DAY_PERIOD); };
+CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || CONFIG.world?.dayPeriodSec || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem);
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);

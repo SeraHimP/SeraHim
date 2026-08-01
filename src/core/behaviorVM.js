@@ -27,6 +27,7 @@
  * 就被告知哪里写错了，不是等到某个兵进入射程才发现技能是坏的。
  */
 import { CONFIG } from '../data/Config.js';
+import { applyHeal, grantTempShield, healPowerFor } from './healing.js';
 
 // ==================== 原语表 ====================
 // 加新原语只改这两张表；表本身也是"编辑器该显示哪些选项"的唯一来源，
@@ -122,7 +123,8 @@ export const ACTIONS = {
       const who = a.to === 'target' ? c.target : c.self;
       if (!who || !who.alive) return;
       const max = who.baseStats?.maxHP ?? who.currentHP;
-      who.currentHP = Math.min(max, who.currentHP + num(c, a.amount, 0));
+      // 治疗与护盾强度取【被治疗方】的（统一口径，见 core/healing.js）
+      applyHeal(who, num(c, a.amount, 0), healPowerFor(who, c.ctx), max);
     },
   },
   shield: {
@@ -131,7 +133,7 @@ export const ACTIONS = {
     fn: (c, a) => {
       const who = a.to === 'target' ? c.target : c.self;
       if (!who || !who.alive) return;
-      who.tempShield = (who.tempShield || 0) + num(c, a.amount, 0);
+      grantTempShield(who, num(c, a.amount, 0), healPowerFor(who, c.ctx));
     },
   },
   modifyStat: {

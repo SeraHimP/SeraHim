@@ -74,6 +74,8 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
   };
 }
 
+import { applyHeal, healPowerFor } from '../healing.js';
+
 export const towerPassives = {
   // ==================== v35（Q5）：建筑默认被动 ====================
   // 背景：所有塔的地图默认 固定护盾/生命恢复 清零，改由下列可卸被动提供——
@@ -490,7 +492,8 @@ export const towerPassives = {
       const heal = (ctx.finalDamage || 0) * 0.08;
       if (heal > 0) {
         const maxHP = ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attackerId)).maxHP || 1;
-        attacker.currentHP = Math.min(maxHP, attacker.currentHP + heal);
+        // 治疗与护盾强度：走统一入口（见 core/healing.js），因而也受重伤压制
+        applyHeal(attacker, heal, healPowerFor(attacker, ctx), maxHP);
       }
     },
   },

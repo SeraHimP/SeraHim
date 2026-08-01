@@ -1,3 +1,5 @@
+import { applyHeal, healPowerFor } from '../healing.js';
+
 export const dragonSouls = {
   dragonsoul_fire: {
     id: 'dragonsoul_fire', name: '炎魂', icon: '🔥', color: '#e74c3c', category: 'dragonsoul',
@@ -56,7 +58,9 @@ export const dragonSouls = {
       if (!entity || !entity.alive) return;
       const st = instance.state || (instance.state = { shieldTimer: 0, soulShield: 0 });
       const maxHP = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId)).maxHP || 1;
-      const shieldAmt = Math.round(maxHP * 0.2 * (1 + (st.ancientBonus || 0) * 0.5));
+      // 治疗与护盾强度作用在护盾量上（统一口径，见 core/healing.js）
+      const shieldAmt = Math.round(maxHP * 0.2 * (1 + (st.ancientBonus || 0) * 0.5)
+                                   * healPowerFor(entity, ctx));
 
       // 减伤（唯一被动）
       ctx.effectRegistry.apply(entityId, {
@@ -140,7 +144,8 @@ export const dragonSouls = {
         const towers = ctx.entityContainer.getByType('tower', true);
         for (const t of towers) {
           const maxHP = ctx.attrCalc.calc(t, ctx.effectRegistry.getEffects(t.id)).maxHP || 1;
-          t.currentHP = Math.min(maxHP, t.currentHP + maxHP * healPct);
+          // 强度取【被治疗方】的（见 core/healing.js 头注），所以重伤能压住水龙魂的回复
+          applyHeal(t, maxHP * healPct, healPowerFor(t, ctx), maxHP);
         }
       }
     },

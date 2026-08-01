@@ -56,6 +56,7 @@ export const SettingsDialog = {
   ],
   // 数值项集中在这里声明，渲染与回写共用同一份，不会出现"面板改 A、运行时读 B"。
   _WORLD_FIELDS: [
+    { path: 'dayPeriodSec', label: '一天时长(秒)', step: 30 },
     { path: 'dayNightBonus.day.moveSpeedPct',    label: '白天·小兵移速(%)', step: 1 },
     { path: 'dayNightBonus.day.attackDamagePct', label: '白天·小兵攻击(%)', step: 1 },
     { path: 'dayNightBonus.night.attackDamagePct', label: '夜晚·塔攻击(%)', step: 1 },

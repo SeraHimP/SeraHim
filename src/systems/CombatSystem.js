@@ -2,6 +2,7 @@ import { AttributeCalculator } from '../core/AttributeCalculator.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
 import { canTarget, isStructureProtected } from './FactionSystem.js';
+import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
@@ -85,10 +86,9 @@ export class CombatSystem {
       if (regen > 0 && regenMod > 0 && entity.currentHP > 0) {
         // v35（Q5）：生命恢复封顶——"加固城防"类被动设置 _regenCapHP（当前血量所在
         // 区间的上界节点），恢复只能回到节点、不能越过；无被动时封顶=满血。
-        const cap = Math.min(stats.maxHP || entity.currentHP, entity._regenCapHP ?? Infinity);
-        if (entity.currentHP < cap) {
-          entity.currentHP = Math.min(cap, entity.currentHP + regen * regenMod * dt);
-        }
+        // 治疗与护盾强度在这里生效（改动前不吃，光龙的 +8% 等于白买；见 core/healing.js）。
+        applyHeal(entity, regen * regenMod * dt, healPowerOf(stats),
+                  stats.maxHP || entity.currentHP, entity._regenCapHP);
       }
       // v36（Q1 修正）：天气负生命恢复 = 字面扣血（原值、无任何加成、不乘恢复系数），
       // 【可致死】（用户改口：扣到 0 正常死亡，不再保底 1HP）。
@@ -105,7 +105,8 @@ export class CombatSystem {
         }
       }
 
-      const shieldMax = stats.shieldFixedMax || 0;
+      // 固定护盾：强度作用在【上限】上。只乘"回满的那一下"会被下面那句夹回去，等于没乘。
+      const shieldMax = effectiveFixedShieldMax(stats.shieldFixedMax || 0, healPowerOf(stats));
       if (shieldMax > 0) {
         const lastDamage = entity.lastDamageTime ?? -Infinity;
         if (now - lastDamage >= shieldRegenDelay && entity.shieldFixedCurrent < shieldMax) {
@@ -570,11 +571,11 @@ export class CombatSystem {
     // ---- 生命偷取 ----
     const lifesteal = atkStats.lifeStealPct || 0;
     if (lifesteal > 0 && damage > 0) {
-      const healPower = 1 + (atkStats.healShieldPowerPct || 0) / 100;
-      const steal = damage * (lifesteal / 100) * healPower;
+      const power = healPowerOf(atkStats);   // 被治疗方 = 攻击者本人
+      const steal = damage * (lifesteal / 100);
       const maxHP = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)).maxHP || 1;
-      attacker.currentHP = Math.min(attacker.currentHP + steal * 0.5, maxHP);
-      attacker.tempShield = (attacker.tempShield || 0) + steal * 0.5;
+      applyHeal(attacker, steal * 0.5, power, maxHP);
+      grantTempShield(attacker, steal * 0.5, power);
     }
 
     // ---- 触发武器 onHit ----
@@ -721,23 +722,9 @@ export class CombatSystem {
     }
   }
 
-  // B2：主目标在子弹在途中死亡——直接伤害作废，但溅射仍在【原落点坐标】生效。
-  // 溅射基数取攻击方原始伤害（不含随目标而定的 onHitPct 与双抗/建筑增幅），以免读已消失的目标。
-  _resolveHitSplashOnly(hitInfo, x, y) {
-    if (x == null || y == null) return;
-    const attacker = this.entities.get(hitInfo.attackerId);
-    if (!attacker || !attacker.alive) return;
-    const preMult = hitInfo.preDamageMult ?? 1;
-    const raw = (hitInfo.baseDamage + (hitInfo.onHitFixed || 0)) * (1 + (hitInfo.dmgAmp || 0) / 100) * preMult;
-    const weaponDef = hitInfo.weaponId ? this.skills[hitInfo.weaponId] : null;
-    if (weaponDef && weaponDef.id === 'weapon_explosive') {
-      this._applyExplosionAt(attacker, x, y, raw, hitInfo.attackType, null, null);
-    }
-    const ramSplashR = attacker.baseStats?.splashRadius || 0;
-    if (getSiegeWeaponDef(attacker, this.skills) && ramSplashR > 0) {
-      this._applyExplosionAt(attacker, x, y, raw, hitInfo.attackType, ramSplashR, null);
-    }
-  }
+  // （原 _resolveHitSplashOnly 已删除：主目标在途中死亡时，残弹现在飞到落点后
+  //   **不造成任何伤害**，包括爆炸型的溅射。用户定稿，见 ProjectileSystem._hit。
+  //   留着一个没人调的方法只会让下一个人以为"死了还会炸"。）
 
   // 哀兵条件加成：只在【小兵 打 小兵】时生效。
   //   攻击方带 avengerVsMinionAmpPct → 对敌方小兵伤害 ×(1+amp%)
@@ -767,8 +754,7 @@ export class CombatSystem {
   _applyDamageConversion(target, defStats, finalDamage) {
     const pct = defStats.damageConvertPct || 0;
     if (pct <= 0 || finalDamage <= 0 || !target.alive) return;
-    const healPower = 1 + (defStats.healShieldPowerPct || 0) / 100;
-    target.tempShield = (target.tempShield || 0) + finalDamage * Math.min(pct / 100, 1) * healPower;
+    grantTempShield(target, finalDamage * Math.min(pct / 100, 1), healPowerOf(defStats));
   }
 
   performAttackDirect(attackerId, targetId, baseDamage, attackType, options = {}) {
@@ -814,27 +800,49 @@ export class CombatSystem {
       if (options.armorPenPercent !== undefined) penPercent = options.armorPenPercent;
       if (options.armorPenFlat !== undefined) penFlat = options.armorPenFlat;
 
-      // 无视防御比例：这一部分伤害完全跳过双抗/伤害减免/格挡，直接命中（仍受护盾吸收）
+      // ==================== 无视防御比例 ====================
+      // 这一部分伤害跳过双抗/伤害减免/格挡直接命中（仍受护盾吸收）。
+      //
+      // ⚠️ 只能无视【保护性】的那部分。用户指出的坑：目标的双抗/伤害减免/格挡
+      // **是可以为负的**（编辑器下限 −100，天气/技能也能压到负），负值意味着
+      // "受到的伤害更多" —— 那是给攻击方的增伤。如果"无视防御"把这一份也一起跳过，
+      // 闪电杖满充 90% 打一个双抗 −50 的目标，反而比不无视还打得少，方向整个反了。
+      //
+      // 做法：被无视的那一股仍然吃【放大】的部分（乘子 > 1 / 负格挡），
+      // 只跳过【削减】的部分（乘子 ≤ 1 / 正格挡）。
+      // 于是当所有防御都 ≥ 0 时，keepAmp 恒为 1、blockNeg 恒为 0，
+      // 结果与改动前**逐位一致**；只有出现负防御时行为才不同。
       const ignoreRatio = Math.max(0, Math.min(1, options.ignoreDefenseRatio || 0));
-      const ignoredDamage = damage * ignoreRatio;
+      const keepAmp = (m) => Math.max(1, m);   // 只保留放大，削减的部分交给 mitigated 那一股
+      let ignoredDamage = damage * ignoreRatio;
       let mitigatedDamage = damage * (1 - ignoreRatio);
 
       const effectiveResist = this.attrCalc.calcEffectiveArmor(resist, penPercent, penFlat);
       const multiplier = this.attrCalc.calcDamageMultiplier(effectiveResist);
       mitigatedDamage *= multiplier;
+      ignoredDamage *= keepAmp(multiplier);          // 双抗为负 → 增伤，保留
 
       const dmgReduction = defStats.damageReduction || 0;
       mitigatedDamage *= (1 - dmgReduction / 100);
+      ignoredDamage *= keepAmp(1 - dmgReduction / 100);  // 减伤为负 → 增伤，保留
       // 防御护盾（唯一被动）：来自防御塔和超级兵的伤害降低30%（与 performAttack 路径一致，v33 含超级兵）
+      // 0.7 恒 < 1（纯保护性），所以只作用在 mitigated 那一股 —— 与改动前一致。
       if (attacker && (attacker.type === 'tower' || attacker.type === 'siege' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
         mitigatedDamage *= 0.7;
       }
-      // 哀兵条件加成（与 performAttack 路径一致）
-      mitigatedDamage = this._applyAvenger(mitigatedDamage, attacker, target, atkStats, defStats);
+      // 哀兵条件加成（与 performAttack 路径一致）。它里面既有攻击方的增伤、
+      // 也有防御方的减伤：增伤那半边属于攻击方的属性，不该被"无视防御"影响，
+      // 所以被无视的那一股也照吃（同样用 keepAmp 保证只吃到放大的那部分）。
+      const avengerFactor = this._applyAvenger(1, attacker, target, atkStats, defStats);
+      mitigatedDamage *= avengerFactor;
+      ignoredDamage *= keepAmp(avengerFactor);
+      // 格挡是【平坦】值：正格挡 = 保护，只削减未被无视的那一股；
+      // 负格挡 = 给攻击方的固定增伤，对整份伤害生效一次（分摊到两股会被算两遍）。
       const block = defStats.damageBlock || 0;
-      mitigatedDamage = Math.max(0, mitigatedDamage - block);
+      mitigatedDamage = Math.max(0, mitigatedDamage - Math.max(0, block));
 
       damage = ignoredDamage + mitigatedDamage;
+      damage = Math.max(0, damage - Math.min(0, block));
     }
 
     // 护盾吸收
