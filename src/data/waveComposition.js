@@ -143,17 +143,45 @@ export function whenPasses(rule, ctx) {
  * 这个函数是解析顺序的【唯一实现】—— 出兵、编辑器预览、批量模拟都走它。
  * 抄第二份就是下一个"预览与实战不一致"。
  */
-export function compositionFor(faction, rules = CONFIG.gameRules) {
-  if (faction) {
-    const ov = CONFIG.factionOverrides?.[faction]?.laneWaveComposition;
-    if (Array.isArray(ov) && ov.length) return ov;
-  }
-  return rules.laneWaveComposition || [];
+export function compositionFor(faction, rules = CONFIG.gameRules, laneId = null) {
+  // ==================== v43 Q5：编排是【阵营 × 路】的二维网格 ====================
+  // 用户："出兵编排应该是每一路+每阵营都可调整，特别注意！每个地图的路数不同，
+  //        UI上记得做区分！"
+  // 改动前只有"阵营"一维（factionOverrides[阵营].laneWaveComposition），
+  // 三路共用一份，做不出"红方上路多压一个炮车"这种事。
+  //
+  // 解析顺序 = **从最具体到最笼统**，先命中先返回：
+  //   ① 该阵营的该路   factionOverrides[阵营].laneWaveCompositionByLane[路]
+  //   ② 该阵营的全部路 factionOverrides[阵营].laneWaveComposition        （原有）
+  //   ③ 双方共享的该路 gameRules.laneWaveCompositionByLane[路]
+  //   ④ 双方共享的基准 gameRules.laneWaveComposition                     （原有）
+  // 为什么 ② 排在 ③ 前面：阵营是这套覆写体系里的**外层键**（factionOverrides 的结构
+  // 本来就是"先分阵营再分对象"），所以"我给红方单独排过兵"应当压过"我给上路排过兵"。
+  // 顺序写死在这一个函数里，出兵、编辑器预览、批量模拟共用它。
+  const fo = faction ? CONFIG.factionOverrides?.[faction] : null;
+  const pick = (a) => (Array.isArray(a) && a.length) ? a : null;
+  return pick(laneId && fo?.laneWaveCompositionByLane?.[laneId])
+      || pick(fo?.laneWaveComposition)
+      || pick(laneId && rules.laneWaveCompositionByLane?.[laneId])
+      || rules.laneWaveComposition || [];
 }
 
 /** 该阵营是否有独立编排（编辑器用来显示角标/启用"清除覆写"）。 */
 export function hasFactionComposition(faction) {
   const ov = CONFIG.factionOverrides?.[faction]?.laneWaveComposition;
+  return Array.isArray(ov) && ov.length > 0;
+}
+
+/**
+ * (阵营, 路) 这一格是否有自己的编排。faction 传 null/'shared' 表示共享那一行。
+ * 编辑器用它给格子打角标、决定"清除本格"按钮是否可用。
+ */
+export function hasLaneComposition(faction, laneId) {
+  if (!laneId) return false;
+  const box = (faction && faction !== 'shared')
+    ? CONFIG.factionOverrides?.[faction]?.laneWaveCompositionByLane
+    : CONFIG.gameRules?.laneWaveCompositionByLane;
+  const ov = box?.[laneId];
   return Array.isArray(ov) && ov.length > 0;
 }
 
@@ -174,7 +202,9 @@ export function buildWaveOrder(waveNumber, nexusDown, rules = CONFIG.gameRules, 
   const wctx = { nexusDown, faction, enemy: faction === 'blue' ? 'red' : (faction === 'red' ? 'blue' : null), ...(ctx || {}) };
   if (wctx.nexusDown === undefined) wctx.nexusDown = nexusDown;
   const order = [];
-  for (const rule of compositionFor(faction, rules)) {
+  // v43 Q5：编排按 (阵营, 路) 解析。laneId 来自 ctx（LaneWaveSystem 一直在传，
+  // 只是以前只用于条件判定的"本路"，没参与选编排）。
+  for (const rule of compositionFor(faction, rules, wctx.laneId || null)) {
     if (!rule || !rule.type || !on(rule.type)) continue;
     if (!whenPasses(rule, wctx)) continue;
     const from = rule.fromWave ?? 0, every = Math.max(1, rule.everyN ?? 1);

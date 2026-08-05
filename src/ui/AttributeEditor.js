@@ -1,6 +1,6 @@
 ﻿import { CONFIG } from '../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
-import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition } from '../data/waveComposition.js';
+import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../data/waveComposition.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, DRAGON_DEFAULTS } from '../data/dragonCurve.js';
 import { towerTierBase, towerTierEffective, towerTierSource } from '../data/schema/index.js';
 import { exportTemplates, importTemplates, suggestedFileName } from '../data/templateIO.js';
@@ -1229,31 +1229,103 @@ export const AttributeEditor = {
   // 分路条件（外/内/水晶塔/召唤水晶）得指明看哪一路，否则"本路"没有着落
   _waveOrderPreviewLane: 'mid',
 
+  // v43 Q5：编排的第二个维度 —— 路。'all' = 该阵营的全部路（原有行为）。
+  // 具体路 id 由**当前地图**决定（峡谷 top/mid/bot、扭曲丛林 top/bot、嚎哭深渊 mid），
+  // 所以页签是现生成的，不写死。
+  _waveLaneScope: 'all',
+
+  /** 当前地图的路列表（拿不到地图时退回三路，单测/沙盒下也有东西可显示）。 */
+  _mapLaneIds() {
+    const m = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
+    const ids = (m?.lanes || []).map(l => l.id).filter(Boolean);
+    return ids.length ? ids : ['top', 'mid', 'bot'];
+  },
+  _laneLabel(id) {
+    return ({ top: '⬆️ 上路', mid: '➡️ 中路', bot: '⬇️ 下路' })[id] || id;
+  },
+
   /**
-   * 当前作用域下【要编辑哪一份编排】。
-   * 共享 → CONFIG.gameRules.laneWaveComposition
-   * 蓝/红 → CONFIG.factionOverrides[阵营].laneWaveComposition（不存在则从共享复制一份出来）
+   * 当前作用域下【要编辑哪一份编排】。作用域是二维的：阵营 × 路。
+   *   共享 + 全部路 → CONFIG.gameRules.laneWaveComposition            （最笼统，出厂基准）
+   *   共享 + 某一路 → CONFIG.gameRules.laneWaveCompositionByLane[路]
+   *   蓝/红 + 全部路 → CONFIG.factionOverrides[阵营].laneWaveComposition
+   *   蓝/红 + 某一路 → CONFIG.factionOverrides[阵营].laneWaveCompositionByLane[路]
    * 读写共用这一个入口，避免"面板改 A、出兵读 B"。
+   * create=false（只读渲染）时，某一格还没有自己的编排就**显示它实际会生效的那一份**
+   *（顺序与 waveComposition.compositionFor 完全一致），一旦真的动手改才复制成本格专属。
    */
   _woList(create = false) {
     const gr = CONFIG.gameRules;
     gr.laneWaveComposition = gr.laneWaveComposition || [];
-    const f = this._factionScope;
-    if (!f || f === 'shared') return gr.laneWaveComposition;
-    CONFIG.factionOverrides = CONFIG.factionOverrides || {};
-    CONFIG.factionOverrides[f] = CONFIG.factionOverrides[f] || {};
-    const cur = CONFIG.factionOverrides[f].laneWaveComposition;
-    if (Array.isArray(cur) && cur.length) return cur;
-    if (!create) return gr.laneWaveComposition;   // 只读时先显示共享基准
-    // 首次编辑该阵营：从共享基准复制一份，之后两边独立
-    const copy = gr.laneWaveComposition.map(r => ({ ...r }));
-    CONFIG.factionOverrides[f].laneWaveComposition = copy;
+    const f = this._factionScope, lane = this._waveLaneScope;
+    const isFac = f && f !== 'shared';
+    const isLane = lane && lane !== 'all';
+    const nonEmpty = (a) => (Array.isArray(a) && a.length) ? a : null;
+
+    // ---- 本格已经有自己的编排？直接用 ----
+    let box;
+    if (isFac) {
+      CONFIG.factionOverrides = CONFIG.factionOverrides || {};
+      CONFIG.factionOverrides[f] = CONFIG.factionOverrides[f] || {};
+      box = CONFIG.factionOverrides[f];
+    } else {
+      box = gr;
+    }
+    if (isLane) {
+      const own = nonEmpty(box.laneWaveCompositionByLane?.[lane]);
+      if (own) return own;
+    } else if (isFac) {
+      const own = nonEmpty(box.laneWaveComposition);
+      if (own) return own;
+    } else {
+      return gr.laneWaveComposition;   // 共享 + 全部路 = 出厂基准本身
+    }
+
+    // ---- 本格还没有：按 compositionFor 的顺序找出"实际生效的那一份" ----
+    const inherited =
+         (isLane && isFac && nonEmpty(CONFIG.factionOverrides?.[f]?.laneWaveComposition))
+      || (isLane && nonEmpty(gr.laneWaveCompositionByLane?.[lane]))
+      || gr.laneWaveComposition;
+    if (!create) return inherited;   // 只读时显示继承来的那份
+
+    // 首次编辑本格：从继承来的那份复制一份，之后各改各的
+    const copy = inherited.map(r => ({ ...r }));
+    if (isLane) {
+      box.laneWaveCompositionByLane = box.laneWaveCompositionByLane || {};
+      box.laneWaveCompositionByLane[lane] = copy;
+    } else {
+      box.laneWaveComposition = copy;
+    }
     return copy;
   },
   _woSetList(arr) {
-    const f = this._factionScope;
-    if (!f || f === 'shared') CONFIG.gameRules.laneWaveComposition = arr;
-    else CONFIG.factionOverrides[f].laneWaveComposition = arr;
+    const f = this._factionScope, lane = this._waveLaneScope;
+    const isFac = f && f !== 'shared';
+    const box = isFac
+      ? ((CONFIG.factionOverrides = CONFIG.factionOverrides || {},
+          CONFIG.factionOverrides[f] = CONFIG.factionOverrides[f] || {}))
+      : CONFIG.gameRules;
+    if (lane && lane !== 'all') {
+      box.laneWaveCompositionByLane = box.laneWaveCompositionByLane || {};
+      box.laneWaveCompositionByLane[lane] = arr;
+    } else {
+      box.laneWaveComposition = arr;
+    }
+  },
+  /** 清掉当前这一格的专属编排（回到它继承的那一份）。 */
+  _woClearCell() {
+    const f = this._factionScope, lane = this._waveLaneScope;
+    const isFac = f && f !== 'shared';
+    const box = isFac ? CONFIG.factionOverrides?.[f] : CONFIG.gameRules;
+    if (!box) return;
+    if (lane && lane !== 'all') { if (box.laneWaveCompositionByLane) delete box.laneWaveCompositionByLane[lane]; }
+    else if (isFac) delete box.laneWaveComposition;
+  },
+  /** 当前格子有没有自己的编排（决定角标与"清除本格"按钮）。 */
+  _woCellOwned() {
+    const f = this._factionScope, lane = this._waveLaneScope;
+    if (lane && lane !== 'all') return hasLaneComposition(f, lane);
+    return f && f !== 'shared' ? hasFactionComposition(f) : false;
   },
 
   _renderWaveOrderContent() {
@@ -1289,15 +1361,30 @@ export const AttributeEditor = {
     </div>`;
 
     const _f = this._factionScope;
-    const _own = _f && _f !== 'shared' && hasFactionComposition(_f);
+    const _lane = this._waveLaneScope || 'all';
+    const _own = this._woCellOwned();
     const _who = _f === 'blue' ? '🔵蓝方' : _f === 'red' ? '🔴红方' : '双方共享';
+    const _laneTxt = _lane === 'all' ? '全部路' : this._laneLabel(_lane);
+    // v43 Q5：路的页签。**按当前地图的 lanes 现生成** —— 峡谷 3 路、扭曲丛林 2 路、
+    // 嚎哭深渊 1 路，写死三路的话在后两张图上会摆出根本不存在的页签
+    //（用户："每个地图的路数不同，UI上记得做区分！"）。
+    const _laneIds = this._mapLaneIds();
+    const _mapLabel = ((window.CTX?.__app || window.__app)?.mapSystem?.currentMap?.label) || '当前地图';
     html += `<div style="font-size:12px;color:var(--text-dim);margin:0 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
       ② 对战编排（数组顺序 = 出兵先后）　
       <span style="font-size:10px;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
-        作用域：${_who}${_own ? '（已有独立编排）' : (_f !== 'shared' ? '（当前显示共享基准，一改就会复制成该阵营专属）' : '')}
+        作用域：${_who} × ${_laneTxt}${_own ? '（本格已有独立编排）' : '（当前显示继承来的那份，一改就会复制成本格专属）'}
       </span>
-      ${_own ? `<button id="woClearFaction" style="float:right;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除该阵营编排</button>` : ''}
+      ${_own ? `<button id="woClearFaction" style="float:right;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除本格编排</button>` : ''}
       </div>`;
+    html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:6px;">
+      <span style="font-size:10px;color:var(--text-mute);align-self:center;margin-right:6px;">路（${_mapLabel}，${_laneIds.length} 条）：</span>
+      <button class="editor-tab ${_lane === 'all' ? 'active' : ''}" data-wo-lane="all" style="font-size:11px;">🌐 全部路</button>
+      ${_laneIds.map(id => `<button class="editor-tab ${_lane === id ? 'active' : ''}" data-wo-lane="${id}" style="font-size:11px;">${this._laneLabel(id)}${hasLaneComposition(_f, id) ? ' ●' : ''}</button>`).join('')}
+    </div>`;
+    html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+      解析顺序（先命中先用）：<b>本阵营·本路</b> → <b>本阵营·全部路</b> → <b>共享·本路</b> → <b>共享·基准</b>。
+      页签上的 ● 表示那一格有自己的编排。</div>`;
     html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
       「起始波」之前不出；之后每「每几波」出一次；「生效条件」再叠一层门槛（三者是<b>与</b>的关系）。<br>
       条件里的<b>本路</b>指这条规则当前正在为之出兵的那一路；枢纽塔/水晶枢纽不分路，按<b>全场</b>算。
@@ -1461,12 +1548,19 @@ export const AttributeEditor = {
       this._woList(true).push({ type: 'melee', count: 1 });
       rerender();
     });
+    overlay.querySelectorAll('[data-wo-lane]').forEach(b => b.addEventListener('click', () => {
+      flush();
+      this._waveLaneScope = b.dataset.woLane;
+      // 预览也跟着切到这一路：否则会出现"在上路页签上看着中路的预览"
+      if (this._waveLaneScope !== 'all') this._waveOrderPreviewLane = this._waveLaneScope;
+      rerender();
+    }));
     overlay.querySelector('#woClearFaction')?.addEventListener('click', () => {
-      const f = this._factionScope;
-      if (f && f !== 'shared' && CONFIG.factionOverrides?.[f]) {
-        delete CONFIG.factionOverrides[f].laneWaveComposition;
-        logFn(`🧹 已清除${f === 'blue' ? '蓝方' : '红方'}的独立出兵编排（回到共享基准）`, 'spawn');
-      }
+      const f = this._factionScope, lane = this._waveLaneScope || 'all';
+      this._woClearCell();
+      const who = f === 'blue' ? '蓝方' : f === 'red' ? '红方' : '共享';
+      const where = lane === 'all' ? '全部路' : this._laneLabel(lane);
+      logFn(`🧹 已清除【${who} × ${where}】的独立出兵编排（回到它继承的那一份）`, 'spawn');
       rerender();
     });
     overlay.querySelector('#woResetBtn')?.addEventListener('click', () => {

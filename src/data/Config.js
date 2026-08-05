@@ -89,6 +89,13 @@ export const CONFIG = {
       { type: 'totem',   count: 1, fromWave: 4, everyN: 4 },
       { type: 'ram',     count: 1, fromWave: 3, everyN: 15 },
     ],
+    // v43 Q5：**双方共享的按路覆写**（键 = 地图的 lane id，如 'top'/'mid'/'bot'）。
+    // 空 = 每一路都跟随上面那份共享基准。阵营专属的按路覆写存在
+    // CONFIG.factionOverrides[阵营].laneWaveCompositionByLane 里。
+    // 四层的解析顺序写在 data/waveComposition.js 的 compositionFor 里（唯一实现）。
+    // ⚠️ 路的集合是**每张地图各不相同**的（峡谷 3 路 / 扭曲丛林 2 路 / 嚎哭深渊 1 路），
+    // 所以这里不预置任何键——编辑器按当前地图的 lanes 现生成页签。
+    laneWaveCompositionByLane: {},
     // ⚠️ 死配置（保留仅为兼容旧存档，全仓库无人读取，tests/sim_tplio.mjs 有断言守着）：
     // 对战出兵全部由上面的 laneWaveComposition 驱动，图腾兵的节奏由其中那条规则的
     // fromWave/everyN 决定。已从模板编辑器面板移除，请勿再新增读取点。
@@ -259,6 +266,22 @@ export const CONFIG = {
     //（不是那种虚线的效果，之前做过效果太差）"）。
     // 做法不是把光切成虚线，而是在连续的三层光带**上面叠**几团顺着跑的亮斑：
     // 光束本身始终完整，读到的是"这束光里有东西在流"。
+    // v43 Q8：腐蚀型武器的立体表现（射程雾球 + 扩散雾波）。
+    // 上一版是贴地的 2D 同心环，用户定稿否掉：要 3D、要常驻射程球、要"有兵才发波"。
+    corrosionFx: {
+      enabled: true,
+      color: '#7bc96f',      // 与腐蚀 debuff 同色系
+      segW: 20, segH: 14,    // 球的经纬分段（低模：要的是团雾不是宝石，面数 ~500）
+      renderOrder: 20,
+      domeLift: 0,           // 球心离地高度（0 = 以塔脚为心，上半球罩住射程范围）
+      domeAlphaIdle: 0.045,  // 射程内没兵：较淡的常驻雾区
+      domeAlphaBusy: 0.085,  // 射程内有兵：略浓
+      domeLerp: 3.0,         // 浓淡切换速率（每秒），防止最后一个兵死掉时"啪"地变淡
+      maxWaves: 4,           // 每塔同时在飞的雾波上限（网格数封顶，极端攻速也不会堆爆）
+      waveLife: 1.1,         // 一波从塔心扩到射程边缘要几秒
+      waveAlpha: 0.22,       // 刚发出时的不透明度（之后按 (1-p)² 衰减）
+      waveStartK: 0.08,      // 起始半径占射程的比例
+    },
     // v43 Q8：炮口位置微调。水晶类建筑（召唤水晶/水晶枢纽）的宝石本体很大，
     // 从几何中心出膛看着像"子弹从石头里钻出来"；nexusTopK = 炮口相对中心上移多少个半径。
     // 0 = 正中心（旧行为），1 = 尖端。

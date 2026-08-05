@@ -90,12 +90,7 @@ const BEAM_W_MAX = 9.0;    // 满充能时的主体宽度
 const BEAM_GLOW_K = 3.0;   // 辉光层相对主体的宽度倍率
 const BEAM_CORE_K = 0.16;  // 白芯相对主体的宽度比（细才好看，实心不刺眼）
 // Q3：腐蚀塔不画红线，改为从塔向射程边缘扩散的毒雾波纹
-const CORROSION_RINGS = 3;      // 同时在飞的环数
-const CORROSION_SPEED = 0.45;   // 每秒扩散多少个完整周期
-const CORROSION_COL = new THREE.Color('#7bc96f');   // 与腐蚀效果同色系
-const CORROSION_ALPHA = 0.75;   // 最内圈（刚发出）的不透明度
-const CORROSION_W_PX = 3.5;     // 环宽的屏幕恒定分量（像素）
-const CORROSION_W_K = 0.028;    // 环宽随半径增长的系数
+// v43 Q8：腐蚀型的 2D 环常量已随实现一起迁到 presentation/CorrosionLayer.js（改为 3D 雾球）。
 
 class Batch {
   constructor(scene, maxTri, opts = {}) {
@@ -516,27 +511,13 @@ export class EffectsLayer {
               screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
     }
 
-    // ---- C3 腐蚀塔毒雾波纹：以塔为心、向射程边缘扩散的同心环 ----
-    // 语义对齐技能本身：腐蚀是"持续对射程内所有敌人叠层"的范围压制，
-    // 所以画的是覆盖范围的脉动，而不是指向某一个目标的线。
-    for (const t of entities.getAllTowers(true)) {
-      if (this._weaponOf(t) !== 'weapon_corrosion') continue;
-      const R = (t.baseStats?.attackRange || 250);
-      const gy = 1.5;                            // 贴着地面一点点，读作铺开的雾
-      for (let i = 0; i < CORROSION_RINGS; i++) {
-        // 每道环独立相位，匀速外扩后在边缘淡出；不依赖 gameTime（墙钟纪律）
-        const ph = ((wallT * CORROSION_SPEED + i / CORROSION_RINGS) % 1);
-        const r = R * (0.12 + ph * 0.88);
-        const a = (1 - ph) * (1 - ph) * CORROSION_ALPHA;   // 越往外越淡
-        if (a < 0.01) continue;
-        // 宽度必须给足：这是腐蚀塔【唯一】的攻击表现（没有红线也没有子弹），
-        // 首版按 1.6 屏幕像素画，全图视角下不到 1px、等于没有（实测取样 0 个绿像素）。
-        // 现在 = 屏幕恒定 3.5px 打底 + 随半径增粗，外圈更像扩散开的雾。
-        const w = screenW(CORROSION_W_PX) + r * CORROSION_W_K;
-        D.ring3(t.pos.x, gy, t.pos.y, r, w * 2.2, CORROSION_COL, a * 0.35, 44);   // 外层柔光
-        D.ring3(t.pos.x, gy, t.pos.y, r, w, CORROSION_COL, a, 44);                // 主环
-      }
-    }
+    // ---- C3 腐蚀塔的表现已迁出本文件 ----
+    // v43（Q8）：上一版在这里用三角批画一圈圈**贴地的 2D 同心环**。用户定稿否掉了：
+    // "射程球（立体3D，半径最大射程）常驻显示……一波波向外扩散的雾（3D，遵循攻速），
+    //  不要做成2D的，并且只有范围内有兵的时候在显示一波波的雾。"
+    // 2D 环用三角批合适，3D 球不合适（球要真正的网格 + 双面低透明才有体积感），
+    // 所以整块搬到 presentation/CorrosionLayer.js，由 ThreeRenderer 单独驱动。
+
     // ---- C2 攻城车攻城红线（受 LOD 档2 抑制）----
     // v43 Q4：宽度/透明度改为与塔**完全一致**（同一份 CONFIG.ui.aimLine）。
     // 旧版刻意画粗（0.9px/α0.55）来"凸显攻城状态"，用户要的是统一样式。

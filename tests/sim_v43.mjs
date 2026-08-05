@@ -351,5 +351,83 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     fs2.armor === 0 && fs2.magicResist === 0);
 }
 
+// ==================== 十、Q5(b) 出兵编排 = 阵营 × 路 的二维网格 ====================
+// 用户："出兵编排应该是每一路+每阵营都可调整，特别注意！每个地图的路数不同，UI上记得做区分！"
+// 改动前只有"阵营"一维，三路共用一份。
+{
+  const { compositionFor, hasLaneComposition } = await import('../src/data/waveComposition.js');
+  const { buildWaveOrder } = await import('../src/data/waveComposition.js');
+  const gr = CONFIG.gameRules;
+  const base = gr.laneWaveComposition;
+  // 备份，测完还原 —— 别把全局配置弄脏，后面的套件还要用
+  const bakLane = gr.laneWaveCompositionByLane;
+  const bakFO = CONFIG.factionOverrides;
+  gr.laneWaveCompositionByLane = { top: [{ type: 'melee', count: 9 }] };
+  CONFIG.factionOverrides = {
+    red:  { laneWaveComposition: [{ type: 'ranged', count: 7 }] },
+    blue: { laneWaveCompositionByLane: { bot: [{ type: 'siege', count: 5 }] } },
+  };
+
+  T('Q5b① 共享·某一路 压过 共享·基准', compositionFor(null, gr, 'top')[0].count === 9);
+  T('Q5b② 没配过的路仍然跟随共享基准', compositionFor(null, gr, 'mid') === base);
+  T('Q5b③ 阵营·全部路 压过 共享·某一路（阵营是外层键）',
+    compositionFor('red', gr, 'top')[0].count === 7);
+  T('Q5b④ 阵营·某一路 最优先', compositionFor('blue', gr, 'bot')[0].count === 5);
+  T('Q5b⑤ 该阵营没配的路落到共享·该路', compositionFor('blue', gr, 'top')[0].count === 9);
+  T('Q5b⑥ 该阵营没配的路、共享也没配 → 落到基准',
+    compositionFor('blue', gr, 'mid') === base);
+  T('Q5b⑦ hasLaneComposition 只认本格', hasLaneComposition('blue', 'bot') === true
+    && hasLaneComposition('blue', 'top') === false && hasLaneComposition(null, 'top') === true);
+
+  // 真正出兵也必须跟着走（buildWaveOrder 从 ctx.laneId 取路）
+  const orderTop = buildWaveOrder(1, false, gr, 'blue', { laneId: 'top' });
+  const orderBot = buildWaveOrder(1, false, gr, 'blue', { laneId: 'bot' });
+  T('Q5b⑧ 同一波、同阵营、不同路的出兵序列确实不同',
+    orderTop.length === 9 && orderBot.length === 5
+    && orderTop.every(t => t === 'melee') && orderBot.every(t => t === 'siege'));
+
+  // 编辑器：作用域读写 + 清除本格
+  const { AttributeEditor } = await import('../src/ui/AttributeEditor.js');
+  AttributeEditor._factionScope = 'red'; AttributeEditor._waveLaneScope = 'top';
+  T('Q5b⑨ 只读时显示"实际会生效的那一份"（红方·全部路）',
+    AttributeEditor._woList(false)[0].type === 'ranged');
+  AttributeEditor._woList(true)[0].count = 42;
+  T('Q5b⑩ 一动手就复制成本格专属', compositionFor('red', gr, 'top')[0].count === 42);
+  T('Q5b⑪ 同阵营的其它路不受影响', compositionFor('red', gr, 'bot')[0].count === 7);
+  AttributeEditor._woClearCell();
+  T('Q5b⑫ 清除本格后回到继承的那一份', compositionFor('red', gr, 'top')[0].count === 7);
+  T('Q5b⑬ 路页签按当前地图现生成（拿不到地图时退回三路）',
+    JSON.stringify(AttributeEditor._mapLaneIds()) === JSON.stringify(['top', 'mid', 'bot']));
+
+  const ae = stripComments(readSrc('../src/ui/AttributeEditor.js'));
+  T('Q5b⑭ UI 上确实有路页签，且不是写死的三路',
+    /data-wo-lane=/.test(ae) && /_mapLaneIds\(\)/.test(ae) && /m\?\.lanes \|\| \[\]/.test(ae));
+
+  gr.laneWaveCompositionByLane = bakLane; CONFIG.factionOverrides = bakFO;
+  AttributeEditor._factionScope = 'shared'; AttributeEditor._waveLaneScope = 'all';
+}
+
+// ==================== 十一、Q8(下) 腐蚀型改成 3D 雾 ====================
+{
+  const cl = stripComments(readSrc('../src/presentation/CorrosionLayer.js'));
+  T('Q8⑦ 用的是球体网格，不是 2D 环', /new THREE\.SphereGeometry\(1,/.test(cl));
+  T('Q8⑧ 雾的观感靠"双面 + 不写深度 + 低透明"', /depthWrite: false, side: THREE\.DoubleSide/.test(cl));
+  T('Q8⑨ 常驻球半径 = 有效射程', /scale\.setScalar\(range\)/.test(cl));
+  T('Q8⑩ 只有射程内有敌人才发波', /if \(hasFoe\) \{/.test(cl) && /hasFoe = true; break;/.test(cl));
+  T('Q8⑪ 发波节奏 = 1/当前攻速（与 weapon_corrosion 的叠层节奏同源）',
+    /const interval = 1 \/ Math\.max\(0\.1, as\);/.test(cl));
+  T('Q8⑫ 没兵时只留更淡的常驻雾', /const want = hasFoe \? domeBusy : domeIdle;/.test(cl));
+  T('Q8⑬ 波数有硬上限（极端攻速不会堆爆网格）', /rec\.waves\.length < maxWaves/.test(cl));
+  T('Q8⑭ 塔没了/换武器会回收网格', /this\.scene\.remove\(rec\.dome\)/.test(cl));
+  const c = CONFIG.ui.corrosionFx;
+  T('Q8⑮ 全部数值软编码', !!c && c.domeAlphaIdle < c.domeAlphaBusy
+    && c.maxWaves >= 1 && c.waveLife > 0 && c.waveStartK >= 0 && c.waveStartK < 1);
+  const fx = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  T('Q8⑯ 旧的 2D 同心环已从 EffectsLayer 移除', !/CORROSION_RINGS/.test(fx));
+  const tr = stripComments(readSrc('../src/presentation/ThreeRenderer.js'));
+  T('Q8⑰ 渲染器驱动新层，且复用 EffectsLayer 的武器缓存',
+    /this\.corrosionFx\.update\(this\.deps/.test(tr) && /this\.fx\._weaponOf\(t\)/.test(tr));
+}
+
 console.log(`v43验收: ${pass} 通过 / ${fail} 失败`);
 if (fail > 0) process.exit(1);

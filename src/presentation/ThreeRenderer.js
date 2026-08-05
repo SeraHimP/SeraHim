@@ -29,6 +29,7 @@ import { ModelLibrary } from './ModelLibrary.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
+import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
 import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
 import { CONFIG } from '../data/Config.js';
@@ -133,6 +134,10 @@ export class ThreeRenderer {
     this.useModels = false;             // 默认关（旧模型）；置 true（或调 setUseModels(true)）启用 LOL 模型
     this.setUseModels(this.useModels);
     this.fx = new EffectsLayer(this.scene);
+    // v43 Q8：腐蚀型的 3D 雾（常驻射程球 + 有敌时按攻速发出的扩散波）。
+    // 单独成层是因为它要的是真网格（双面低透明球才有体积感），
+    // 而 EffectsLayer 是三角批 —— 两者的资源生命周期完全不同。
+    this.corrosionFx = new CorrosionLayer(this.scene);
     this._target = new THREE.Vector3();
     this._terrainMesh = null;
     this._terrainMapId = null;
@@ -742,6 +747,11 @@ export class ThreeRenderer {
                        rx: ca, ry: 0, rz: -sa },
                      (x, z) => this.units.muzzleY(x, z),
                      (id) => this.units.muzzleYOf(id));   // Q1：按实体查高度（坐标查是错误抽象）
+      // v43 Q8：腐蚀雾。复用 EffectsLayer 的武器缓存（同一份 WeakMap，别再查第二遍），
+      // dt 走**墙钟**——暂停时雾该继续飘，与 WeatherLayer 同口径。
+      if (this.corrosionFx) {
+        this.corrosionFx.update(this.deps, this._lightDt || 0.016, (t) => this.fx._weaponOf(t));
+      }
     }
     this._syncTowerLights(controller);
     this.water.update(window.gameTime || 0);   // P1：水面滚动 UV
