@@ -429,5 +429,45 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /this\.corrosionFx\.update\(this\.deps/.test(tr) && /this\.fx\._weaponOf\(t\)/.test(tr));
 }
 
+// ==================== 十二、Q1 所有窗口统一为模板编辑器样式 ====================
+// 用户："所有窗口UI都统一为新版的模板编辑器样式（左侧栏那种的）。"
+// 钉的是**结构**（左侧 .tpl-nav + 右侧 .tpl-pane），不钉具体像素/文案。
+{
+  const shell = stripComments(readSrc('../src/ui/dialogShell.js'));
+  T('Q1① 有一份共用外壳模块', /export function shellHtml/.test(shell) && /export function bindNav/.test(shell));
+  T('Q1② 外壳沿用模板编辑器已有的类名，不另起一套 CSS',
+    /tpl-layout/.test(shell) && /tpl-nav/.test(shell) && /tpl-pane/.test(shell));
+  T('Q1③ 没有分组时不摆只有一项的假侧栏', /const hasNav = groups\.length > 0;/.test(shell));
+
+  const need = (name, src, checks) => {
+    for (const [label, re] of checks) T(`Q1 ${name}：${label}`, re.test(src));
+  };
+  need('设置面板', stripComments(readSrc('../src/ui/SettingsDialog.js')), [
+    ['左侧栏结构', /<div class="tpl-layout">/],
+    ['导航项用 tpl-nav-item（不再是横排 editor-tab）', /tpl-nav-item \$\{t\.key === TAB/],
+    ['右侧是 tpl-pane + 面包屑', /<div class="tpl-pane">[\s\S]*?tpl-crumb/],
+  ]);
+  need('添加单位', stripComments(readSrc('../src/ui/UnitAddDialog.js')), [
+    ['左侧栏结构', /<div class="tpl-layout">/],
+    ['兵种作为侧栏子项缩进（不再是第二排横页签）', /tpl-nav-item child \$\{m === st\.minionType/],
+    ['右侧面包屑标明"我在编辑谁"', /tpl-crumb">\$\{crumb\}/],
+  ]);
+  need('天气面板', stripComments(readSrc('../src/ui/WeatherPanel.js')), [
+    ['左侧栏结构', /<div class="tpl-layout">/],
+    ['外框换成 modal-box + editor-container（原来是第三套 .modal 壳）', /<div class="modal-box"[\s\S]*?editor-container/],
+    ['切页只切 display，不重建 DOM（保住既有绑定与逐帧重绘）', /d\.style\.display = d\.dataset\.wxsec === this\._cfgSec/],
+  ]);
+  need('模式选择', stripComments(readSrc('../src/ui/ModeDialog.js')), [
+    ['左侧栏结构', /<div class="tpl-layout">/],
+    ['两段内容各自成页', /data-modenav/],
+  ]);
+  need('详情框', stripComments(readSrc('../src/ui/DetailModal.js')), [
+    ['同一套外框', /editor-container/],
+    ['单页 → 用 tpl-pane 但不摆侧栏', /<div class="tpl-pane">\$\{contentHtml\}<\/div>/],
+  ]);
+  T('Q1④ 详情框确实没有侧栏（一项的导航是纯装饰）',
+    !/tpl-nav/.test(stripComments(readSrc('../src/ui/DetailModal.js'))));
+}
+
 console.log(`v43验收: ${pass} 通过 / ${fail} 失败`);
 if (fail > 0) process.exit(1);

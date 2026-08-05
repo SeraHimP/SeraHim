@@ -65,30 +65,42 @@ export const UnitAddDialog = {
       { key: 'dragon', label: '🐉 巨龙' },
     ];
 
+    // v43 Q1：主分类从横排页签改成左侧栏（与模板编辑器一致）；
+    // 小兵的兵种子页签沿用**模板编辑器的做法**——作为侧栏里的子项缩进列出，
+    // 而不是在右侧再摆一排横页签。两层横排正是改版前"我在编辑谁要横着读两行才拼得出来"的来源。
     let subTabsHtml = '';
-    if (st.mainTab === 'minion') {
-      subTabsHtml = `<div class="editor-tabs" style="margin-top:8px;">
-        ${MINION_TYPES.map(t => `<button class="editor-tab ${t === st.minionType ? 'active' : ''}" data-subtab="${t}">${TYPE_META[t].icon} ${TYPE_META[t].label}</button>`).join('')}
-      </div>`;
-    }
 
     let detailHtml;
     if (st.mainTab === 'tower') detailHtml = this._renderTowerDetail() + this._renderTowerModelSelector() + this._renderTowerFactionSelector();
     else if (st.mainTab === 'dragon') detailHtml = this._renderDragonDetail();
     else detailHtml = this._renderMinionDetail(st.minionType) + this._renderBattleSelectors();
 
+    let nav = '';
+    for (const t of mainTabs) {
+      const open = t.key === 'minion' && st.mainTab === 'minion';
+      nav += `<button class="tpl-nav-item ${t.key === st.mainTab ? 'active' : ''}${open ? ' open' : ''}" data-maintab="${t.key}">${open ? '<span class="tpl-caret">▾</span>' : (t.key === 'minion' ? '<span class="tpl-caret">▸</span>' : '')}${t.label}</button>`;
+      if (!open) continue;
+      for (const m of MINION_TYPES) {
+        nav += `<button class="tpl-nav-item child ${m === st.minionType ? 'active' : ''}" data-subtab="${m}">${TYPE_META[m].icon} ${TYPE_META[m].label}</button>`;
+      }
+    }
+    const crumb = st.mainTab === 'minion'
+      ? `${TYPE_META[st.minionType].icon} ${TYPE_META[st.minionType].label}`
+      : (mainTabs.find(t => t.key === st.mainTab) || {}).label;
     document.getElementById('modalBody').innerHTML = `
-      <div class="editor-tabs">
-        ${mainTabs.map(t => `<button class="editor-tab ${t.key === st.mainTab ? 'active' : ''}" data-maintab="${t.key}">${t.label}</button>`).join('')}
-      </div>
+      <div class="tpl-layout">
+      <div class="tpl-nav"><div class="tpl-nav-group">${nav}</div></div>
+      <div class="tpl-pane">
+      <div class="tpl-pane-head"><span class="tpl-crumb">${crumb}</span></div>
       ${subTabsHtml}
-      <div id="uadDetailContent" style="margin-top:12px;">${detailHtml}</div>
+      <div id="uadDetailContent">${detailHtml}</div>
       ${st.mainTab !== 'tower' ? `
         <div class="uad-queue-box">
           <div class="uad-queue-title">📋 待生成清单（${this._queue.length}）</div>
           <div class="uad-queue-list">${this._renderQueueList()}</div>
         </div>
       ` : `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">防御塔单独建造：确认后请在画布上点击选择位置（不进入批量清单）</div>`}
+      </div></div>
     `;
 
     let actions = '';

@@ -273,13 +273,33 @@ export const WeatherPanel = {
     if (!ws) return;
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay open';
+    // ==================== v43 Q1：统一到模板编辑器那套外壳 ====================
+    // 用户："所有窗口UI都统一为新版的模板编辑器样式（左侧栏那种的）。"
+    // 这里原本是第三套壳（.modal / .modal-header / .modal-body），与设置面板的横排页签、
+    // 模板编辑器的纵向导航三种语言并存。
+    //
+    // 关键实现选择：各段内容【全部留在 DOM 里】，切页只切 display。
+    // 为什么不按当前页只渲染一段：本面板的行是 renderRows() 在挂载**之后**塞进
+    // #wxBase / #wxExtreme / #wxTemplates 的，还有两个 canvas 每帧在画（#wxBigBar / #wxLive）。
+    // 按页重建 DOM 就得把那一整套绑定和重绘时机全部改一遍 —— 那是"顺手统一个样式"
+    // 变成"重写一个面板"的典型路径。切 display 则一行绑定都不用动。
+    const SECS = [
+      { key: 'live', label: '📊 实时与预报' },
+      { key: 'tpl',  label: '🌍 气候模板' },
+      { key: 'base', label: '🌤 基础天气' },
+      { key: 'ex',   label: '⚡ 极端天气' },
+    ];
+    if (!this._cfgSec) this._cfgSec = 'live';
+    const sec = (k, inner) => `<div data-wxsec="${k}" style="display:${k === this._cfgSec ? '' : 'none'};">${inner}</div>`;
     overlay.innerHTML = `
-      <div class="modal" style="max-width:640px;max-height:86vh;display:flex;flex-direction:column;">
-        <div class="modal-header" style="flex-shrink:0;">
-          <h3>🌦️ 天气系统</h3>
-          <button class="modal-close">✕</button>
-        </div>
-        <div class="modal-body" id="weatherCfgBody" style="overflow-y:auto;flex:1;min-height:0;">
+      <div class="modal-box" style="max-width:880px;">
+        <div class="editor-container">
+          <h4>🌦️ 天气系统 <button class="modal-close" style="float:right;font-size:12px;padding:1px 8px;border-radius:4px;cursor:pointer;">✕</button></h4>
+          <div class="tpl-layout">
+            <div class="tpl-nav"><div class="tpl-nav-group">
+              ${SECS.map(x => `<button class="tpl-nav-item ${x.key === this._cfgSec ? 'active' : ''}" data-wxnav="${x.key}">${x.label}</button>`).join('')}
+            </div></div>
+            <div class="tpl-pane" id="weatherCfgBody">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
             <button id="wxToggle" style="flex:1;">${ws.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
             <button id="wxReroll" style="flex:1;">🎲 重新随机本局天气</button>
@@ -292,31 +312,45 @@ export const WeatherPanel = {
             均独享第 5 档【极端 150%】（充能≥88%，重辉光）。<br>
             本局天气性格：平均主导时长约 <b>${ws.averageDuration}s</b>（每次载入地图重新随机）。
           </p>
+          ${sec('live', `
           <h4 style="margin:2px 0 6px;font-size:13px;">📊 天气预报（堆叠图）</h4>
           <canvas id="wxBigBar" style="width:100%;height:64px;display:block;margin-bottom:12px;"></canvas>
           <div id="wxLive" style="font-size:12px;line-height:1.8;font-variant-numeric:tabular-nums;background:rgba(0,0,0,0.25);
-            border-radius:8px;padding:8px 10px;margin-bottom:12px;"></div>
+            border-radius:8px;padding:8px 10px;margin-bottom:12px;"></div>`)}
+          ${sec('tpl', `
           <h4 style="margin:10px 0 6px;font-size:13px;">🌍 气候模板</h4>
           <p style="color:var(--text-dim);font-size:10px;margin:0 0 6px;">
             按真实世界的地貌选择气候。套用后各天气的出现倾向一次性替换（并做随机扰动，
             所以同一个"沙漠"每局也不完全一样）。默认「全随机」。
           </p>
-          <div id="wxTemplates" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;"></div>
-
+          <div id="wxTemplates" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;"></div>`)}
+          ${sec('base', `
           <h4 style="margin:10px 0 6px;font-size:13px;">基础天气（参与演化）</h4>
           <p style="color:var(--text-dim);font-size:10px;margin:0 0 6px;">
             滑条 = 该天气的<b>出现倾向</b>（-1 ~ +1，越高越常见）。调整后<b>立即重算未来</b>——
             当下的天气不跳变，但往后的走向会按新规则演化（预报条右侧会重画一次）。
           </p>
-          <div id="wxBase"></div>
+          <div id="wxBase"></div>`)}
+          ${sec('ex', `
           <h4 style="margin:14px 0 6px;font-size:13px;">极端天气（阈值涌现）</h4>
-          <div id="wxExtreme"></div>
+          <div id="wxExtreme"></div>`)}
+            </div>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(overlay);
 
     const close = () => overlay.remove();
     overlay.querySelector('.modal-close').addEventListener('click', close);
+    // 左侧栏切页：只切 display，不动任何已有绑定（见上面那段说明）
+    overlay.querySelectorAll('[data-wxnav]').forEach(b => b.addEventListener('click', () => {
+      this._cfgSec = b.dataset.wxnav;
+      overlay.querySelectorAll('[data-wxsec]').forEach(d => {
+        d.style.display = d.dataset.wxsec === this._cfgSec ? '' : 'none';
+      });
+      overlay.querySelectorAll('[data-wxnav]').forEach(x =>
+        x.classList.toggle('active', x.dataset.wxnav === this._cfgSec));
+    }));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
     const renderRows = () => {

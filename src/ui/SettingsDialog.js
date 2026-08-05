@@ -158,10 +158,10 @@ export const SettingsDialog = {
 
     const render = () => {
       const TAB = this._tab;
-      const tabBar = `<div class="editor-tabs" style="margin-bottom:10px;">
-        ${this._TABS.map(t => `<button class="editor-tab ${t.key === TAB ? 'active' : ''}" data-settab="${t.key}" style="flex:1;">${t.label}</button>`).join('')}
-      </div>`;
-      document.getElementById('modalBody').innerHTML = tabBar + `
+      // v43 Q1：统一到模板编辑器那套「左侧栏 + 右侧单页」。
+      // 改动前是四个横排页签铺在正文上方，与模板编辑器的纵向导航是两种语言。
+      // 正文一行没动 —— 换的只是它被摆进哪个容器。
+      const body = `
         ${TAB === 'flow' ? `
         <div class="editor-section">
           <h4>⏱ 时间与流程</h4>
@@ -331,6 +331,16 @@ export const SettingsDialog = {
           </div>
         </div>` : ''}
       `;
+      document.getElementById('modalBody').innerHTML =
+        `<div class="tpl-layout">
+          <div class="tpl-nav"><div class="tpl-nav-group">
+            ${this._TABS.map(t => `<button class="tpl-nav-item ${t.key === TAB ? 'active' : ''}" data-settab="${t.key}">${t.label}</button>`).join('')}
+          </div></div>
+          <div class="tpl-pane">
+            <div class="tpl-pane-head"><span class="tpl-crumb">${(this._TABS.find(t => t.key === TAB) || {}).label || ''}</span></div>
+            ${body}
+          </div>
+        </div>`;
       bindEvents();
     };
 

@@ -125,7 +125,16 @@ export const DetailModal = {
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay open';
-    modal.innerHTML = `<div class="modal-box"><h3>${title}</h3><div>${contentHtml}</div><div class="modal-actions"><button id="detailCloseBtn" class="primary">关闭</button></div></div>`;
+    // v43 Q1：与模板编辑器同一套外框（.editor-container + h4 + .tpl-pane）。
+    // 这个框只有一页内容，所以**不摆侧边栏** —— 一个只有一项的导航是纯装饰，
+    // 比没有更糟。统一的是外框、字号与滚动行为，不是"每个窗口都必须有侧栏"。
+    modal.innerHTML = `<div class="modal-box" style="max-width:880px;">
+      <div class="editor-container">
+        <h4>${title}</h4>
+        <div class="tpl-pane">${contentHtml}</div>
+        <div class="modal-actions"><button id="detailCloseBtn" class="primary">关闭</button></div>
+      </div>
+    </div>`;
     document.body.appendChild(modal);
     modal.querySelector('#detailCloseBtn').addEventListener('click', () => modal.remove());
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });

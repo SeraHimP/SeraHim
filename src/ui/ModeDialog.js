@@ -9,9 +9,21 @@ export const ModeDialog = {
     overlay.classList.add('open');
     document.getElementById('modalTitle').textContent = '🗺️ 游戏模式';
 
+    // v43 Q1：套用模板编辑器那套外壳（左侧栏 + 右侧单页）。
+    // 这个窗口只有两段内容，本来"够用了"，但一个应用里两种导航语言就是两套要学的东西 ——
+    // 用户要的是"所有窗口统一"，所以这里也统一，哪怕它自己并不需要。
+    const SECS = [{ key: 'mode', label: '🎮 模式' }, { key: 'map', label: '🗺️ 地图' }];
+    if (!this._sec) this._sec = 'mode';
     const render = () => {
       const maps = mapSystem.getAvailableMaps();
+      const sec = (k, inner) => `<div style="display:${k === this._sec ? '' : 'none'};">${inner}</div>`;
       document.getElementById('modalBody').innerHTML = `
+        <div class="tpl-layout">
+        <div class="tpl-nav"><div class="tpl-nav-group">
+          ${SECS.map(x => `<button class="tpl-nav-item ${x.key === this._sec ? 'active' : ''}" data-modenav="${x.key}">${x.label}</button>`).join('')}
+        </div></div>
+        <div class="tpl-pane">
+        ${sec('mode', `
         <div class="editor-section">
           <h4>当前模式：${mapSystem.active ? '⚔️ 对战模式' : '🗺️ 沙盒模式'}</h4>
           <p style="color:var(--text-dim);font-size:12px;margin-bottom:10px;">
@@ -22,7 +34,8 @@ export const ModeDialog = {
             <button id="switchSandboxBtn" style="flex:1;" ${!mapSystem.active ? 'disabled' : ''}>🗺️ 沙盒模式</button>
             <button id="switchBattleBtn" style="flex:1;" ${mapSystem.active ? 'disabled' : ''}>⚔️ 对战模式</button>
           </div>
-        </div>
+        </div>`)}
+        ${sec('map', `
         <div class="editor-section">
           <h4>选择地图</h4>
           <div class="pick-grid">
@@ -31,8 +44,12 @@ export const ModeDialog = {
             </div>`).join('')}
           </div>
           <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">选择地图会重新加载对战模式（清空当前对战单位）。</div>
-        </div>
+        </div>`)}
+        </div></div>
       `;
+      document.querySelectorAll('[data-modenav]').forEach(b => b.addEventListener('click', () => {
+        this._sec = b.dataset.modenav; render();
+      }));
       bindEvents();
     };
 
