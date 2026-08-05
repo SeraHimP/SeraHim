@@ -259,6 +259,26 @@ export const CONFIG = {
     //（不是那种虚线的效果，之前做过效果太差）"）。
     // 做法不是把光切成虚线，而是在连续的三层光带**上面叠**几团顺着跑的亮斑：
     // 光束本身始终完整，读到的是"这束光里有东西在流"。
+    // v43 Q8：炮口位置微调。水晶类建筑（召唤水晶/水晶枢纽）的宝石本体很大，
+    // 从几何中心出膛看着像"子弹从石头里钻出来"；nexusTopK = 炮口相对中心上移多少个半径。
+    // 0 = 正中心（旧行为），1 = 尖端。
+    muzzle: { nexusTopK: 0.9 },
+    // v43 Q4：攻击指示红线的样式。**塔与攻城车共用同一份** ——
+    // 用户："攻城车的红线样式应该和塔的是一样的"。旧实现两处各写各的
+    //（塔 0.5px/α0.5，攻城车 0.9px/α0.55），改一处忘另一处是迟早的事。
+    aimLine: {
+      widthPx: 0.5,          // 屏幕恒定宽度（px），世界宽度 = widthPx / zoom
+      minWidth: 0.35,        // 世界宽度下限（缩得再小也不至于消失）
+      alpha: 0.5,
+      color: '#ff3c3c',
+    },
+    // v43 Q2：光束的出现/消失节奏。三个时长分开可调——
+    // 「目标死了」和「打完一轮自然停火」是两件事，不该共用一个淡出时长。
+    beam: {
+      fadeIn: 0.10,      // 淡入时长（秒）。0 = 立刻满亮度（旧行为）
+      fadeOut: 0.35,     // 自然停火后的淡出时长（与参数化前一致）
+      fadeOnDeath: 0.12, // 目标死亡后的淡出时长——短促收掉，不在尸体上挂光
+    },
     beamFlow: {
       enabled: true,
       pulses: 3,        // 同时在束上跑几团
@@ -522,7 +542,11 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', bulletSpeed: 400,
+      // v43 Q9：**所有塔的默认伤害类型改为魔法**（用户定稿："所有塔的默认伤害改为魔法伤害，
+      // 依旧可以在编辑界面改"）。原为 'physical'。
+      // 注意：光改这里还不够——分层/阵营覆写此前根本进不到塔的 baseStats（见 main.js
+      // createBuilding 的白名单注释），所以编辑器改了也没反应。那处一并修了。
+      attackType: 'magic', bulletSpeed: 400,
     },
     melee: {
       label: '近战兵', type: 'melee',
@@ -640,7 +664,12 @@ export const CONFIG = {
       isLargeMinion: true, isMonster: false,
       maxHP: 800, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 312,   // v40：260 → +20% = 312
-      attackDamage: 60, baseAttackSpeed: 0.25,   // v40：35 → 60（远高于炮兵17.5） bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // v40：AD 35 → 60（远高于炮兵 17.5）。
+      // v43 Q4：这一行原本是 `attackDamage: 60, baseAttackSpeed: 0.25,   // 注释… bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,`
+      // —— 后两个键被吞进了行尾注释里，攻城车模板实际**没有**这两个字段。
+      // 运行时靠 `|| 0.667` 兜住了没出事，但那是巧合不是设计；拆行修正。
+      attackDamage: 60, baseAttackSpeed: 0.25,
+      bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 0, magicResist: 0,
       damageReduction: 0, damageBlock: 0,

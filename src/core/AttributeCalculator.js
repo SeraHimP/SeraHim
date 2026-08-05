@@ -181,6 +181,27 @@ export const AttributeCalculator = {
    * 计算最终攻击速度
    * 规则：正值攻速加成受"攻速收益率"影响；负值攻速修正不受收益率影响，直接按原值生效。
    */
+  /**
+   * 由【已算好的属性表】取实际攻速。
+   *
+   * ==================== v43 Q7：战斗侧必须走这里 ====================
+   * 用户："我设置塔全属性加成，面板上攻速加成了但是实际上子弹并没有加成。"
+   * 根因：面板（UIManager）读的是 `stats.baseAttackSpeed` —— 吃过 allStatsPct 与
+   * 一切 statKey='baseAttackSpeed' 的效果；而**所有**战斗节奏点读的都是
+   * `entity.baseStats.baseAttackSpeed`，那是**原始模板值**，任何加成都进不去。
+   * 于是"全属性加成"对射速的作用只存在于面板上。
+   *
+   * 顺带说明为什么 allStatsPct 对攻速的唯一通路就是 baseAttackSpeed：
+   * 它虽然也乘 bonusAttackSpeedPct，但塔模板里那个值是 **0**，0×1.5 还是 0。
+   * 真正被放大的是 baseAttackSpeed —— 也就是这条被战斗侧绕开的路。
+   *
+   * 新增行为都必须调这个函数，别再从 entity.baseStats 直接取攻速字段。
+   */
+  calcAttackSpeedOf(stats, cap = 5.0) {
+    return this.calcAttackSpeed(
+      stats.baseAttackSpeed, stats.bonusAttackSpeedPct || 0, stats.attackSpeedRatio || 0.667, cap);
+  },
+
   calcAttackSpeed(baseAttackSpeed, bonusAttackSpeedPct, attackSpeedRatio, cap = 5.0) {
     const positive = Math.max(0, bonusAttackSpeedPct);
     const negative = Math.min(0, bonusAttackSpeedPct);

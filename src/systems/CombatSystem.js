@@ -39,14 +39,13 @@ export class CombatSystem {
 
     // ---- 更新冷却与战斗计时器 ----
     for (const entity of this.entities.getAll(true)) {
+      // v43 Q7：属性表提到循环顶部——攻速也要从这里取（见 calcAttackSpeedOf 的注释）。
+      // attrCalc.calc 每帧带缓存，提前算不增加开销。
+      const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
       // 攻击冷却按"当前实时攻速"消耗：cooldownRemain 记剩余"攻击次数份额"，
       // 每帧减去 (当前攻速 × dt)。攻速中途变化（如减攻速）立即反映到冷却推进速度。
       if (entity.attackCooldown > 0) {
-        const curAS = this.attrCalc.calcAttackSpeed(
-          entity.baseStats.baseAttackSpeed,
-          this.attrCalc.calc(entity, this.effects.getEffects(entity.id)).bonusAttackSpeedPct || 0,
-          entity.baseStats.attackSpeedRatio || 0.667
-        );
+        const curAS = this.attrCalc.calcAttackSpeedOf(stats);
         // attackCooldown 存"剩余秒数"，但按当前攻速等比缩放推进：
         // 剩余秒数 -= dt × (当前攻速 / 设定冷却时的攻速)。用 _cdAS 记录设定时攻速。
         const refAS = entity._cdAS || curAS || 0.5;
@@ -67,7 +66,6 @@ export class CombatSystem {
       entity._attackerCount = 0;
 
       // ---- 生命恢复 / 护盾延迟回满 / 临时护盾衰减（此前未实现） ----
-      const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
       const regen = stats.healthRegen || 0;
       const regenMod = entity.baseStats.baseHealthRegenMod ?? 1;
       // v39（Q7 修复）：负生命恢复此前被 `regen > 0` 直接跳过 → 手动把恢复调成负值不掉血。
@@ -163,11 +161,8 @@ export class CombatSystem {
         const dy = target.pos.y - tower.pos.y;
         if (dx * dx + dy * dy <= range * range && tower.attackCooldown <= 0 && !((window.gameTime || 0) < (tower._lockUntil || 0))) {
           this.performAttack(tower, target);
-          const finalAS = this.attrCalc.calcAttackSpeed(
-            tower.baseStats.baseAttackSpeed,
-            this.attrCalc.calc(tower, this.effects.getEffects(tower.id)).bonusAttackSpeedPct || 0,
-            tower.baseStats.attackSpeedRatio || 0.667
-          );
+          const finalAS = this.attrCalc.calcAttackSpeedOf(
+            this.attrCalc.calc(tower, this.effects.getEffects(tower.id)));
           tower.attackCooldown = 1 / (finalAS || 0.5);
           tower._cdAS = finalAS;
         }
@@ -212,11 +207,8 @@ export class CombatSystem {
       if (dist <= range && minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))) {
         minion.targetId = nearestTower.id;
         this.performAttack(minion, nearestTower);
-        const finalAS = this.attrCalc.calcAttackSpeed(
-          minion.baseStats.baseAttackSpeed,
-          this.attrCalc.calc(minion, this.effects.getEffects(minion.id)).bonusAttackSpeedPct || 0,
-          minion.baseStats.attackSpeedRatio || 0.667
-        );
+        const finalAS = this.attrCalc.calcAttackSpeedOf(
+          this.attrCalc.calc(minion, this.effects.getEffects(minion.id)));
         minion.attackCooldown = 1 / (finalAS || 0.5);
         minion._cdAS = finalAS;
       } else if (dist > range) {
@@ -310,8 +302,15 @@ export class CombatSystem {
 
   // 新索敌逻辑
   selectTarget(tower, minions) {
-    // 水晶不主动攻击（无武器已经在上层拦截了，这里双重保险）
-    if (tower._mapTier === 'nexus_lane' || tower._mapTier === 'nexus_main') return null;
+    // ==================== v43 Q8：水晶的索敌闸门已删除 ====================
+    // 这里原本是：
+    //     if (tower._mapTier === 'nexus_lane' || tower._mapTier === 'nexus_main') return null;
+    // 注释写的是"双重保险"，实际是**一道硬闸**：召唤水晶/水晶枢纽哪怕在编辑器里
+    // 装上了武器，也永远索不到目标 —— 用户报的"水晶枢纽和召唤水晶在我手动设置后依旧无法攻击"。
+    // createBuilding 那边早在 v36 就放开了"所有建筑都可以装武器"（默认 'none'），
+    // 这里是最后一处没跟上的。
+    // 真正的保险在调用方：CombatSystem.update 里的 hasWeapon 检查——没装武器的塔
+    // 连索敌都不会进来。所以删掉这两行不会让默认无武器的水晶开火。
 
     const range = this.attrCalc.calc(tower, this.effects.getEffects(tower.id)).attackRange || 250;
 

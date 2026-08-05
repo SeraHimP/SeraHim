@@ -380,6 +380,7 @@ export class EffectsLayer {
     this._seen = new Map();             // 子弹 → 上一帧尾迹快照（Q2 余烬用）
     this._fading = [];                  // 正在淡出的尾迹余烬
     this._beamEndY = new WeakMap();     // Q1：光束 → 冻结的末端高度（目标死亡后不再重算）
+    this._beamStartY = new WeakMap();   // v43 Q2：光束 → 冻结的**起点**高度（塔死后不再重算）
     this._projTgt = new WeakMap();      // Q1：子弹 → 目标位置与落点高度的快照
     this._statDirty = true;
   }
@@ -497,8 +498,11 @@ export class EffectsLayer {
     this._lastWall = wallT;
 
     // ---- C1 塔攻击红线（前摇期间不画；语义 = "正在输出"）----
-    const red = rgbOf('#ff3c3c');
-    const screenW = (px) => Math.max(0.35, px / (zoom || 1)); // 屏幕恒定 → 世界宽度
+    // v43 Q4：样式集中到 CONFIG.ui.aimLine，塔与攻城车共用同一份（用户要求两者一致）。
+    const AL = (CONFIG.ui && CONFIG.ui.aimLine) || {};
+    const AL_W = AL.widthPx ?? 0.5, AL_A = AL.alpha ?? 0.5, AL_MIN = AL.minWidth ?? 0.35;
+    const red = rgbOf(AL.color || '#ff3c3c');
+    const screenW = (px) => Math.max(AL_MIN, px / (zoom || 1)); // 屏幕恒定 → 世界宽度
     for (const t of entities.getAllTowers(true)) {
       // ---- Q3 腐蚀型：没有"瞄准某个目标"这回事（它对射程内所有敌人持续叠毒），
       //      画红线是错的语义。改为从塔脚扩散出去的毒雾波纹，见下面 C3。
@@ -509,7 +513,7 @@ export class EffectsLayer {
       if (!tgt || !tgt.alive || !tgt.pos) continue;
       D.seg3(t.pos.x, MY(t.pos.x, t.pos.y), t.pos.y,
               tgt.pos.x, MY(tgt.pos.x, tgt.pos.y) * 0.6, tgt.pos.y,
-              screenW(0.5), red, 0.5, V.vx, V.vy, V.vz);
+              screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
     }
 
     // ---- C3 腐蚀塔毒雾波纹：以塔为心、向射程边缘扩散的同心环 ----
@@ -533,7 +537,9 @@ export class EffectsLayer {
         D.ring3(t.pos.x, gy, t.pos.y, r, w, CORROSION_COL, a, 44);                // 主环
       }
     }
-    // ---- C2 攻城车攻城红线（略粗，受 LOD 档2 抑制）----
+    // ---- C2 攻城车攻城红线（受 LOD 档2 抑制）----
+    // v43 Q4：宽度/透明度改为与塔**完全一致**（同一份 CONFIG.ui.aimLine）。
+    // 旧版刻意画粗（0.9px/α0.55）来"凸显攻城状态"，用户要的是统一样式。
     if (!lodDots) {
       for (const m of entities.getAllMinions(true)) {
         if (!m._ramLockId) continue;
@@ -541,7 +547,7 @@ export class EffectsLayer {
         if (!tgt || !tgt.alive || !tgt.pos) continue;
         D.seg3(m.pos.x, MY(m.pos.x, m.pos.y), m.pos.y,
                 tgt.pos.x, MY(tgt.pos.x, tgt.pos.y) * 0.6, tgt.pos.y,
-                screenW(0.9), red, 0.55, V.vx, V.vy, V.vz);
+                screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
       }
     }
 
@@ -552,10 +558,26 @@ export class EffectsLayer {
     if (projectiles?.getBeams) {
       for (const b of projectiles.getBeams()) {
         const charge = Math.max(0, Math.min(1, b.charge || 0));
-        const fade = (b.fadeT !== undefined && b.fadeMax) ? Math.max(0, b.fadeT / b.fadeMax) : 1;
+        // v43 Q2：透明度 = 淡出 × 淡入。淡入由 ProjectileSystem 的 riseT 提供
+        //（0→1 线性），解决"光束啪一下出现"；淡出沿用 fadeT/fadeMax。
+        const fadeOut = (b.fadeT !== undefined && b.fadeMax) ? Math.max(0, b.fadeT / b.fadeMax) : 1;
+        const fadeIn = (b.riseT !== undefined && b.riseMax) ? Math.min(1, 1 - b.riseT / b.riseMax) : 1;
+        const fade = fadeOut * fadeIn;
         if (fade <= 0) continue;
         const col = rgbOf(b.color || '#f1c40f');
-        const sy = MY(b.startX, b.startY);
+        // ==================== 起点高度：塔一死也【冻结】 ====================
+        // 用户："闪电杖塔死亡后，残余的弹道突然就到水平面上了。"
+        // 根因与末端那处**同一族**：这里原本是 `MY(b.startX, b.startY)` —— 按【坐标】
+        // 反查该处单位的炮口高度。塔一没，那个坐标上再也搜不到单位，返回 0，
+        // 于是整束光的起点当场塌到地面，看起来就是"弹道躺平了"。
+        // 末端早在上一版就改成了"按 id 查 + 快照兜底"，起点漏了 —— 现在补齐。
+        let sy;
+        const liveS = b.attackerId != null ? MYOF(b.attackerId) : null;
+        if (liveS != null) { sy = liveS; this._beamStartY.set(b, sy); }
+        else {
+          const snapS = this._beamStartY.get(b);
+          sy = snapS !== undefined ? snapS : MY(b.startX, b.startY);
+        }
         // ==================== 末端高度：目标一死就【冻结】 ====================
         // 用户："闪电杖攻击该目标死亡后会瞬间往下移动（就像是目标突然跳到了下面一样）。"
         // 上一版的冻结条件是 `b.fadeT === undefined`，也就是【等光束的 ttl 走完 0.4s

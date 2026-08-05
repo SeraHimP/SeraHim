@@ -18,6 +18,7 @@
  * 骨骼（Buffbone_Glb_Weapon_1）提供，程序化塔仅作为模型未加载时的回退，炮口取塔冠顶端。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { CONFIG } from '../data/Config.js';
 
 const _geoCache = new Map();
 const _matCache = new Map();
@@ -83,6 +84,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
   if (!hit) {
     const R = bSize, parts = [];
     let crystalGeo = null, crystalCy = 0, crystalR = 0;   // Q6：水晶单独成件，不并入石身
+    let crystalMuzzleK = 0;   // v43 Q8：炮口相对水晶中心上移的比例（× crystalR），0 = 正中心
     if (ruin) {
       // 损毁结构：矮塌的断桩 / 碎裂台座 + 倾倒散落的碎块，明显区别于活体（读作"废墟"）。
       // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。topY 由 pack 从包围盒取真值。
@@ -128,6 +130,11 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
       crystalR = R * 0.78; crystalCy = pedH + crystalR * 0.95;
       crystalGeo = kind === 'gem' ? new THREE.OctahedronGeometry(crystalR)
                                   : new THREE.IcosahedronGeometry(crystalR, 0);
+      // v43 Q8：水晶类建筑现在可以装武器开火了（索敌闸门已删）。
+      // 用户："那个子弹是从水晶中央射出来的" —— 普通塔的顶部小水晶半径只有 R*0.40，
+      // 中心与尖端差不多；可召唤水晶/水晶枢纽的宝石本体半径 R*0.78，是整座建筑最大的部件，
+      // 从它的**几何中心**出膛看起来就是"子弹从石头里面钻出来"。抬到接近尖端。
+      crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
     } else {
       // 塔身全部【中性石色】融入地形；队伍色只落在顶部小水晶（=武器，子弹由此射出，用户 Q2）
       const baseH = R * 0.40, shaftH = R * 1.45, crownH = R * 0.32;
@@ -154,7 +161,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
     hit = pack(parts);
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
     // topY/muzzleY 含水晶（血条浮顶、子弹出膛＝水晶中心）；废墟无水晶时退回石身顶。
-    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy; }
+    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
   }

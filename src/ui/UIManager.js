@@ -674,7 +674,7 @@ export class UIManager {
     if (attrsContainer) {
       attrsContainer.innerHTML = `
         <div class="a"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
-        <div class="a"><label>攻速</label><span>${this.attrCalc.calcAttackSpeed(stats.baseAttackSpeed, stats.bonusAttackSpeedPct||0, stats.attackSpeedRatio||0.667).toFixed(2)}</span></div>
+        <div class="a"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
         <div class="a"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
         <div class="a"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
       `;
@@ -795,7 +795,7 @@ export class UIManager {
     if (attrsContainer) {
       attrsContainer.innerHTML = `
         <div class="a"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
-        <div class="a"><label>攻速</label><span>${this.attrCalc.calcAttackSpeed(stats.baseAttackSpeed, stats.bonusAttackSpeedPct||0, stats.attackSpeedRatio||0.667).toFixed(2)}</span></div>
+        <div class="a"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
         <div class="a"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
         <div class="a"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
       `;

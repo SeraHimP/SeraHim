@@ -45,13 +45,23 @@ const find=(f,tier,lane)=>ents.getAllTowers(true).find(t=>t._mapFaction===f&&t._
 
 // ---------- 1. 结构保护 ----------
 const redMidInhib=find('red','nexus_lane','mid'), redMidBase=find('red','base','mid');
+// v43（Q3 定稿 B）：保护链从"只看紧邻前一层"改成"同路**任意**前置层还有活着的塔即受保护"。
+// 于是"解除保护"必须把该路 outer/inner/base **全部**打掉，只杀高地塔已经不够了。
+const redMidChain=['outer','inner','base'].map(t=>find('red',t,'mid')).filter(Boolean);
+const killChain=()=>redMidChain.forEach(t=>{t.alive=false;t.currentHP=0;});
+// 用完即复活：后面还有别的用例要用这一路的外/内塔（屠戮对塔无效那条），
+// 把它们留在死状态会让那条用例找不到目标。
+const reviveChain=()=>redMidChain.forEach(t=>{t.alive=true;t.currentHP=t.baseStats.maxHP;});
 const redNexus=find('red','nexus_main'), redHqs=ents.getAllTowers(true).filter(t=>t._mapFaction==='red'&&t._mapTier==='hq_tower');
 T('高地塔存活→召唤水晶受保护', isStructureProtected(ents,redMidInhib));
 const hp0=redMidInhib.currentHP;
 combat.performAttackDirect(mkMinion('melee',redMidInhib.pos.x,redMidInhib.pos.y,'blue','mid','forward').id, redMidInhib.id, 500, 'physical');
 T('受保护水晶零伤害', redMidInhib.currentHP===hp0);
 redMidBase.alive=false; redMidBase.currentHP=0;
-T('高地塔死后水晶解除保护', !isStructureProtected(ents,redMidInhib));
+T('仅高地塔死、外/内塔尚在 → 水晶【仍】受保护（v43 规则B）', isStructureProtected(ents,redMidInhib));
+killChain();
+T('同路前置层全灭后水晶解除保护', !isStructureProtected(ents,redMidInhib));
+reviveChain();
 T('枢纽双塔存活→水晶枢纽受保护', isStructureProtected(ents,redNexus));
 redHqs[0].alive=false;
 T('单塔死亡→枢纽仍受保护(需双塔全灭)', isStructureProtected(ents,redNexus));
@@ -66,7 +76,9 @@ for(let t=0;t<301;t+=1) mapSys.update(1);
 const respawned=find('red','nexus_lane','mid');
 T('300s后水晶重生', !!respawned && respawned.alive);
 T('重生后超级兵标记清除', !mapSys.isNexusDestroyed('red','mid'));
-T('重生水晶因高地塔已死→直接可选中', !isStructureProtected(ents,respawned));
+killChain();
+T('重生水晶因同路前置层全灭→直接可选中', !isStructureProtected(ents,respawned));
+reviveChain();
 
 // ---------- 3. 守家优先 ----------
 const zone=mapSys.getDefenseZone('blue');

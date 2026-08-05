@@ -1,3 +1,8 @@
+import { CONFIG } from '../data/Config.js';
+
+/** 光束的淡入/淡出时长（软编码，编辑器可调）。缺省值与参数化前逐位一致。 */
+const beamCfg = () => (CONFIG.ui && CONFIG.ui.beam) || {};
+
 export class ProjectileSystem {
   constructor(entityContainer, eventBus, combatSystem) {
     this.entities = entityContainer;
@@ -35,12 +40,17 @@ export class ProjectileSystem {
       existing.color = beam.color || existing.color;
       existing.ttl = beam.life || 0.3; // 刷新存活时间
       existing.targetId = beam.targetId ?? existing.targetId;   // Q1：端点高度要按实体查，不能按坐标猜
+      existing.attackerId = beam.attackerId ?? existing.attackerId; // v43 Q2：起点高度同理
       existing.fadeT = undefined;      // v39：复用时清除淡出标记（防止残影态被继承）
     } else {
+      const rise = beamCfg().fadeIn ?? 0.10;
       this.beams.set(key, {
         startX: beam.startX, startY: beam.startY, endX: beam.endX, endY: beam.endY,
         charge: beam.charge ?? 0, color: beam.color || '#f1c40f', ttl: beam.life || 0.3,
         targetId: beam.targetId ?? null,
+        attackerId: beam.attackerId ?? null,
+        // v43 Q2：淡入。用户："出现也应该是淡入"——旧版是"啪"地整束光满亮度出现。
+        riseT: rise > 0 ? rise : undefined, riseMax: rise > 0 ? rise : undefined,
       });
     }
   }
@@ -78,12 +88,26 @@ export class ProjectileSystem {
     }
 
     // 光束：存活计时递减。v36（Q2）：攻击停止（目标死亡/脱离）后不再刷新 →
-    // 进入淡出残留期（fadeT 从 0.35s 递减，渲染层据此淡出最后一段轨迹）。
+    // 进入淡出残留期（渲染层据此淡出最后一段轨迹）。
+    //
+    // ==================== v43 Q2：目标一死就立刻淡出 ====================
+    // 用户："目标死亡后弹道仍会残留极短时间。目标死亡后应该立即淡出。"
+    // 旧实现只看 ttl：目标死了武器层停止刷新，但光束还要把剩下的 ttl（最多 0.3s）
+    // **满亮度**走完，才开始 0.35s 的淡出 —— 也就是最坏情况下尸体上挂着 0.65s 的光。
+    // 现在把"目标没了"提升为与 ttl 到期同级的淡出触发条件，且用一条更短的
+    // fadeOnDeath（默认 0.12s）：死亡是个瞬间事件，该干脆地收掉。
+    const B = beamCfg();
     for (const [key, b] of this.beams) {
+      if (b.riseT !== undefined) { b.riseT -= dt; if (b.riseT <= 0) b.riseT = undefined; }
+      const tgt = b.targetId != null ? this.entities.get(b.targetId) : null;
+      const targetGone = b.targetId != null && (!tgt || !tgt.alive);
       b.ttl -= dt;
-      if (b.ttl <= 0) {
+      if (b.ttl <= 0 || targetGone) {
         // 首次到期：转入淡出态而不是立即删除（残留一小段时间）
-        if (b.fadeT === undefined) { b.fadeT = 0.35; b.fadeMax = 0.35; }
+        if (b.fadeT === undefined) {
+          const d = targetGone ? (B.fadeOnDeath ?? 0.12) : (B.fadeOut ?? 0.35);
+          b.fadeT = d; b.fadeMax = d;
+        }
         b.fadeT -= dt;
         if (b.fadeT <= 0) this.beams.delete(key);
       } else {

@@ -89,6 +89,19 @@ export function canTarget(attackerFaction, targetFaction) {
  * 这个层级"）的前置层级里有【任意一个还活着】，就受保护。缺层的地图自动把链接上：
  *   扭曲丛林/嚎哭深渊：水晶塔 ← 外塔（跳过不存在的内塔）
  *   召唤师峡谷：       水晶塔 ← 内塔（内塔存在，行为与改动前逐位一致）
+ *
+ * ==================== v43：从"只看紧邻前一层"改成"任意前置层活着即保护" ====================
+ * 用户："结构保护bug，如果我手动设置了外塔存在，如果此时内塔不存在的话，
+ *        水晶塔的结构保护未生效。"（定稿选 B）
+ * 上一版是 LoL 口径：**只认紧邻的那个"这张图上存在"的前置层级**，它死了就解除，
+ * 更前面的层还活着也不管。于是"内塔已拆、手动把外塔复活回来"这种编辑器场景下，
+ * 水晶塔仍然是裸的 —— 站在用户视角这就是"我明明把外塔弄回来了，保护却没回来"。
+ * 现在改成：沿链往前扫，**任意一个前置层级还有活着的塔**就受保护，
+ * 全部倒光才解除。副作用（有意的）：
+ *   · 拆塔顺序必须自外向内**全部**拆完，不能跳着拆；
+ *   · 水晶重生后，只要该路还有任何一座前置塔活着，它就是无敌的。
+ * tierExists 这个辅助函数随之失去意义（不再需要"这张图有没有这一层"这一步，
+ * 缺层天然就是"没有活着的塔"，扫过去即可），一并删掉。
  */
 const LANE_CHAIN = ['outer', 'inner', 'base', 'nexus_lane'];
 
@@ -99,23 +112,14 @@ export function isStructureProtected(entityContainer, target) {
     t.alive && t._mapFaction === target._mapFaction && t._mapTier === tier &&
     (laneId === undefined || t._laneId === laneId)
   );
-  // 这张图的这一路上到底有哪些层级（含已被摧毁的废墟——层级"存在过"就算存在，
-  // 否则外塔一没就会把"缺层"误判成"这张图没有外塔"，保护链会往前跳一格）
-  const tierExists = (tier, laneId) => entityContainer.getAllTowers(false).some(t =>
-    t._mapFaction === target._mapFaction && t._mapTier === tier &&
-    (laneId === undefined || t._laneId === laneId)
-  );
   const idx = LANE_CHAIN.indexOf(target._mapTier);
   if (idx > 0) {
-    // 往前找【紧邻的那个这张图上存在的前置层级】，由它一家说了算：它活着就受保护，
-    // 它没了就解除。不继续往更前面找 —— LoL 规则就是"前一座塌了，下一座才能碰"，
-    // 再往前的塔早就死透了。跳过的只有"这张图压根没有的层级"（如两张新图的内塔）。
+    // v43：往前扫【全部】前置层级，任意一个还有活着的塔就受保护。
+    // 缺层的地图不用特判——没有的层级自然一个活的都找不到，直接落到下一层。
     for (let i = idx - 1; i >= 0; i--) {
-      const tier = LANE_CHAIN[i];
-      if (!tierExists(tier, target._laneId)) continue;   // 这张图没有这一层，跳过
-      return aliveTier(tier, target._laneId);
+      if (aliveTier(LANE_CHAIN[i], target._laneId)) return true;
     }
-    return false;   // 前面一层都没有（自己就是最前排）→ 不受保护
+    return false;   // 同路前置层级全部倒光（或自己就是最前排）→ 不受保护
   }
   switch (target._mapTier) {
     case 'hq_tower': {

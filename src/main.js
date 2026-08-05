@@ -297,15 +297,22 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     pos: { x: pos.x, y: pos.y },
     baseStats: {
       ...tpl,
-      maxHP: s.maxHP ?? tpl.maxHP,
-      armor: s.armor ?? tpl.armor,
-      magicResist: s.magicResist ?? tpl.magicResist,
-      attackDamage: s.attackDamage ?? tpl.attackDamage,
-      baseAttackSpeed: s.baseAttackSpeed ?? tpl.baseAttackSpeed,
+      // ==================== v43 Q9：覆写从"白名单"改成"模板里有的键都能盖" ====================
+      // 用户："编辑界面依旧有bug，伤害类型还是显示为物理"。
+      // 根因不在编辑器：这里原本是一张**写死的八字段白名单**
+      //（maxHP/armor/magicResist/attackDamage/baseAttackSpeed/shieldFixedMax/healthRegen/attackRange），
+      // 白名单以外的一切覆写在建塔那一刻就被丢掉了。被丢掉的包括：
+      //   attackType（本次报的）、bulletSpeed、attackSpeedRatio、bonusAttackSpeedPct、
+      //   四个穿透字段、damageReduction/damageBlock、shieldRegenRate、tempShieldDecayPct、
+      //   onHitDamage/onHitPercentDamage、damageConvertPct/lifeStealPct/damageAmpPct、
+      //   allStatsPct、healShieldPowerPct……
+      // 编辑器面板读的是 towerTierEffective（叠加链算出来的值），所以面板上改了会"显示成功"，
+      // 场上的塔却按模板值打——又一个本仓库反复出现的"编辑器写 A、运行时读 B"。
+      // 现在改成：**凡是塔模板里存在的键，覆写层都能盖**。非模板键（weapon/skills/size 等
+      // 地图配置）照旧不进 baseStats。
+      ...Object.fromEntries(Object.entries(s).filter(([k, v]) => (k in tpl) && v !== undefined)),
+      // 固定护盾例外：语义是"地图没写就当 0"（不回落到模板值），与改动前逐位一致。
       shieldFixedMax: s.shieldFixedMax ?? 0,
-      healthRegen: s.healthRegen ?? tpl.healthRegen,
-      // 攻击距离：默认沿用塔的基础射程（所有会攻击的建筑共用），但允许分层覆写。
-      attackRange: s.attackRange ?? tpl.attackRange,
     },
     currentHP: 0, // 下面按 maxHP 设置满血
     shieldFixedCurrent: s.shieldFixedMax ?? 0,

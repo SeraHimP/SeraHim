@@ -59,12 +59,12 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
   T('Q1 满充时间 ≈ 12/攻速', Math.abs(t0833-12/0.833)<1.0 && Math.abs(t4-12/4)<0.5);
 }
 
-// ========== Q8: 无视防御连续增长至上限（用户改口后为 90%）==========
+// ========== Q8: 无视防御连续增长至上限（v43 定稿 67%，历史：60% → 90% → 67%）==========
 {
   const src=fs.readFileSync(new URL('../src/core/skills/weapons.js', import.meta.url),'utf8');
   // 数值已从模块级 const 搬进 defaultParams（软编码，编辑器可改），所以断言改钉参数值。
-  T('Q8 无视防御上限 90%（用户定稿，原 60%）',
-    SkillLibrary.weapon_lightning.defaultParams.maxPenPct === 90);
+  T('Q8 无视防御上限 67%（v43 定稿，原 90%）',
+    SkillLibrary.weapon_lightning.defaultParams.maxPenPct === 67);
   T('Q8 无视防御随充能连续（非满充阶跃）', src.includes('ignoreDefenseRatio: charge * P.maxPen'));
   T('Q8 数值不再写死在源码里（模块级 const 已删）',
     !src.includes('LIGHTNING_MAX_PEN') && !src.includes('LIGHTNING_MAX_MULT')

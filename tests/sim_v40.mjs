@@ -189,7 +189,12 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   T('结构保护盾牌显式锁定不透明实色（修"透明"问题）',
     srcN.includes("ctx.globalAlpha = 1;\n        ctx.fillStyle = '#ffffff';")
     && /fillStyle = '#ffffff'/.test(ulSrc) && /depthTest: false, depthWrite: false/.test(ulSrc));
-  T('攻城模式攻击指示红线', src.includes('m._ramLockId') && src.includes('rgba(255,60,60,0.55)'));
+  // v43 Q4：红线样式收敛到 CONFIG.ui.aimLine，塔与攻城车共用同一份（用户要求两者一致）。
+  // 原断言钉的是攻城车那条独有的 rgba(255,60,60,0.55)——那正是"两处各写各的"的痕迹，
+  // 现在改为钉"两处都从 aimLine 取值"。
+  T('攻城模式攻击指示红线（与塔同款）',
+    src.includes('m._ramLockId') && src.includes('CONFIG.ui.aimLine')
+    && !src.includes('rgba(255,60,60,0.55)'));
 }
 
 // ==================== ⑥ 编辑器 ====================

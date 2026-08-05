@@ -110,9 +110,15 @@ function mkWorld() {
 {
   const src = fs.readFileSync('src/systems/FactionSystem.js', 'utf8');
   T('保护链是一张有序表，不是写死的 switch 分支', /const LANE_CHAIN = \['outer', 'inner', 'base', 'nexus_lane'\]/.test(src));
-  T('会跳过这张图没有的层级', /if \(!tierExists\(tier, target\._laneId\)\) continue;/.test(src));
-  T('"存在"要从含废墟的全量里查（只查活的，外塔一没就会被当成"这张图没有外塔"）',
-    /getAllTowers\(false\)\.some/.test(src));
+  // v43（Q3 定稿 B）：规则从"只看紧邻的那个存在的前置层"改成"任意前置层还活着即受保护"。
+  // 于是 tierExists 这个辅助函数没了存在意义（缺层天然就是"一个活的都没有"），一并删除。
+  // 这两条断言随之改口径：钉的是"往前扫全部层级、任意一层活着就 return true"。
+  T('保护链往前扫【全部】前置层级，不是只看紧邻的一层',
+    /for \(let i = idx - 1; i >= 0; i--\) \{\s*if \(aliveTier\(LANE_CHAIN\[i\], target\._laneId\)\) return true;/.test(src.replace(/\r\n/g, '\n')));
+  // ⚠️ 不能直接 !src.includes('tierExists')：源码的说明注释里就写着这个名字，
+  // 会把自己的解释文字当成"函数还在"（本仓库栽过好几次的自触发陷阱）。钉定义式。
+  T('tierExists 辅助函数已删除（规则 B 下不再需要"这张图有没有这一层"这一步）',
+    !/const tierExists\s*=/.test(src));
 
   const probe = (mapId) => {
     const W = mkWorld();

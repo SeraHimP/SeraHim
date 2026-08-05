@@ -25,11 +25,17 @@ mapSys.loadMap('summoners_rift_v1');
 mapSys.update(0.1);
 const nl=ents.getAllTowers(true).find(t=>t._mapTier==='nexus_lane'&&t._mapFaction==='blue'&&t._laneId==='mid');
 T('Q1 受保护水晶挂"结构保护"状态', fx.getEffects(nl.id).some(e=>e.blueprint.name==='结构保护'));
-// 打掉该路水晶塔 → 保护解除
-const baseT=ents.getAllTowers(true).find(t=>t._mapTier==='base'&&t._mapFaction==='blue'&&t._laneId==='mid');
-baseT.alive=false;baseT.currentHP=0;
+// v43（Q3 定稿 B）：保护链改成"同路**任意**前置层还有活着的塔即受保护"，
+// 所以只打掉水晶塔已经解不开保护了（外塔/内塔还在），必须把该路前置层全部打掉。
+const midChain=['outer','inner','base'].map(tier=>
+  ents.getAllTowers(true).find(t=>t._mapTier===tier&&t._mapFaction==='blue'&&t._laneId==='mid')).filter(Boolean);
+midChain.find(t=>t._mapTier==='base').alive=false;
 mapSys.update(0.1);
-T('Q1 水晶塔倒下后保护状态移除', !fx.getEffects(nl.id).some(e=>e.blueprint.name==='结构保护'));
+T('Q1 仅水晶塔倒下、外/内塔尚在 → 保护状态仍在（v43 规则B）',
+  fx.getEffects(nl.id).some(e=>e.blueprint.name==='结构保护'));
+midChain.forEach(t=>{t.alive=false;t.currentHP=0;});
+mapSys.update(0.1);
+T('Q1 同路前置层全灭后保护状态移除', !fx.getEffects(nl.id).some(e=>e.blueprint.name==='结构保护'));
 
 // ---- Q1: 全局无敌/停火状态 ----
 window.__towerRules.invincible.blue=true; window.__towerRules.attackOff.blue=true;

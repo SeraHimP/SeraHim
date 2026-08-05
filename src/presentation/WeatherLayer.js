@@ -134,8 +134,9 @@ export class WeatherLayer {
    * @param viewW    可见世界宽度
    * @param viewD    可见世界纵深（已按仰角还原，不是屏幕高度）
    * @param dt       墙钟秒（渲染帧间隔，不用 gameTime —— 暂停时雨也该继续下）
+   * @param azimuthDeg 摄像机方位角（绕 Y 偏航，度）。见下面盒子尺寸那段。
    */
-  update(weather, target, viewW, viewD, dt) {
+  update(weather, target, viewW, viewD, dt, azimuthDeg = 0) {
     if (!this.enabled || !weather || !weather.enabled) {
       if (this._built) this._hideAll();
       return;
@@ -151,12 +152,26 @@ export class WeatherLayer {
     };
     const rain = ch('rain'), snow = ch('snow'), fog = ch('fog'), wind = ch('wind'), clear = ch('clear');
 
-    // 盒子：跟着镜头走，尺寸 = 可见范围 × pad
+    // ==================== 盒子：跟着镜头走 ====================
+    // v43 Q6 修正。用户："天气可视化效果如果我旋转了视角那就会有一部分少了显示不到！"
+    // 根因：粒子盒是**轴对齐**的，尺寸直接取 viewW × viewD，完全没读方位角。
+    // 可摄像机一偏航，可见区域就是一个绕 Y 转了 az 度的矩形；轴对齐盒子装不下它的四个角，
+    // 那几块就是空的 —— 转到 45° 时缺得最狠。
+    //
+    // 修法：把盒子撑成"旋转后矩形的**轴对齐外接盒**"（AABB），这是能保证全覆盖的
+    // 最小轴对齐盒：
+    //     hx = (|W·cos| + |D·sin|) / 2 ,  hz = (|W·sin| + |D·cos|) / 2
+    // 为什么不选"外接圆"（hx = hz = ½·hypot(W,D)）：那个更省事，但面积能大一倍，
+    // 粒子总数固定的前提下密度直接掉一半。为什么不把 _wrap 改到摄像机基向量上：
+    // 那样最省粒子，但要把三处粒子写入全部改成"先在旋转系里 wrap 再转回世界系"，
+    // 改动面大得多，而 AABB 在最坏角度（45°）也只多 41% 面积。
     const pad = C.viewPad ?? 1.15;
     const B = this._box;
+    const azr = (azimuthDeg || 0) * Math.PI / 180;
+    const ca = Math.abs(Math.cos(azr)), sa = Math.abs(Math.sin(azr));
     B.cx = target.x; B.cz = target.z;
-    B.hx = Math.max(200, viewW * 0.5 * pad);
-    B.hz = Math.max(200, viewD * 0.5 * pad);
+    B.hx = Math.max(200, (viewW * ca + viewD * sa) * 0.5 * pad);
+    B.hz = Math.max(200, (viewW * sa + viewD * ca) * 0.5 * pad);
     const top = C.ceiling ?? 520;
 
     this._updateRain(rain, wind, top, C);

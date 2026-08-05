@@ -751,9 +751,11 @@ export class ThreeRenderer {
     if (this.weatherFx) {
       const z = controller ? (controller.zoom || 1) : 1;
       const sinP = Math.max(0.15, Math.sin(this.elevationDeg * DEG));
+      // v43 Q6：方位角必须一起传下去。可见区域是一个**绕 Y 旋转过的**矩形，
+      // 天气层原先按轴对齐盒子铺粒子，转视角后四个角落在盒外 → 那几块没有雨雪。
       this.weatherFx.update(window.__weather || null, this._target,
                             this.width / z, (this.height / z) / sinP,
-                            this._lightDt || 0.016);
+                            this._lightDt || 0.016, this.azimuthDeg || 0);
     }
     // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {

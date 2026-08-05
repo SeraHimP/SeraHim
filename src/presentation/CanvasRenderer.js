@@ -310,8 +310,9 @@ export class CanvasRenderer {
       if (t.targetId && !((window.gameTime || 0) < (t._lockUntil || 0))) {
         const tgt = this.entities.get(t.targetId);
         if (tgt && tgt.alive && tgt.pos) {
-          ctx.strokeStyle = 'rgba(255,60,60,0.5)';
-          ctx.lineWidth = Math.max(0.35, 0.5 / this.viewZoom);
+          const AL = (CONFIG.ui && CONFIG.ui.aimLine) || {};
+          ctx.strokeStyle = `rgba(255,60,60,${AL.alpha ?? 0.5})`;
+          ctx.lineWidth = Math.max(AL.minWidth ?? 0.35, (AL.widthPx ?? 0.5) / this.viewZoom);
           ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tgt.pos.x, tgt.pos.y); ctx.stroke();
         }
       }
@@ -341,8 +342,10 @@ export class CanvasRenderer {
         const lockTgt = this.entities.get(m._ramLockId);
         if (lockTgt && lockTgt.alive && lockTgt.pos) {
           ctx.save();
-          ctx.strokeStyle = 'rgba(255,60,60,0.55)';
-          ctx.lineWidth = Math.max(0.5, 0.9 / this.viewZoom); // 比塔的线略粗，凸显攻城状态
+          // v43 Q4：与塔的红线完全一致（同一份 CONFIG.ui.aimLine），不再刻意画粗
+          const AL = (CONFIG.ui && CONFIG.ui.aimLine) || {};
+          ctx.strokeStyle = `rgba(255,60,60,${AL.alpha ?? 0.5})`;
+          ctx.lineWidth = Math.max(AL.minWidth ?? 0.35, (AL.widthPx ?? 0.5) / this.viewZoom);
           ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(lockTgt.pos.x, lockTgt.pos.y); ctx.stroke();
           ctx.restore();
         }

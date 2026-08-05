@@ -20,8 +20,8 @@ export const weapons = {
     // 切换目标（含目标死亡）从头计。倍率在【开火时刻】结算进 hitInfo.preDamageMult，
     // 命中时乘入——不进塔的属性系统。状态栏只显示"升温 N 层"（纯计数，无属性）。
     //   穿透：30% 护甲穿透 + 30% 法术穿透（永久状态）；命中削目标 3 双抗最多 -12（原有）。
-    description: '唯一被动——升温：连续攻击同一目标，伤害逐次提升（100%→130%→160%…每层+30%，最高+120%），切换目标或目标死亡重置；唯一被动——穿透：30%护甲穿透与30%法术穿透，命中削减目标3双抗（最高12）。',
-    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（【{val}%】=100%+30%×层数），切换目标重置；唯一被动——穿透：30%双穿，命中削目标3双抗至-12。',
+    description: '唯一被动——升温：连续攻击同一目标，伤害逐次提升（100%→130%→160%…每层+30%，最高+120%），切换目标或目标死亡重置；唯一被动——穿透：固定30%护甲穿透与30%法术穿透。',
+    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（【{val}%】=100%+30%×层数），切换目标重置；唯一被动——穿透：固定30%双穿。',
     computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '升温'); return 100 + 30 * (e ? e.stacks : 0); },
     HEAT_MAX_STACKS: 4,          // 最多 4 层（+120% → 220% 上限），与旧上限一致
     HEAT_PER_STACK: 0.30,
@@ -40,7 +40,7 @@ export const weapons = {
       }
     },
     onUnequip: (entityId, instance, ctx) => {
-      // 卸下武器：移除穿透与升温状态（已经打在敌人身上的破甲 debuff 不撤销，自然走完 4 秒）
+      // 卸下武器：移除穿透与升温状态（v43 起不再有破甲 debuff）
       for (const eff of ctx.effectRegistry.getEffects(entityId)) {
         if (eff.blueprint.name === '穿透' || eff.blueprint.name === '升温') ctx.effectRegistry.remove(eff.id);
       }
@@ -72,33 +72,12 @@ export const weapons = {
         description: `升温 ${st} 层 → 下次 ${100 + 30 * st}% 伤害`,
       }, 'weapon_piercing_heat', { initialStacks: st });
 
-      // ---- 破甲（命中削双抗，-3×4=-12，原有实现） ----
-      ctx.effectRegistry.apply(targetId, {
-        name: '破甲',
-        icon: '💠',
-        kind: 'stat',
-        statKey: 'armor',
-        flatValue: -3,
-        duration: 4,
-        stackable: true,
-        maxStacks: 4,
-        perStackFlat: -3,
-        stackPolicy: 'stack',
-        description: '护甲降低（{stacks}/4层）',
-      }, `weapon_piercing_armor_${attackerId}`);
-      ctx.effectRegistry.apply(targetId, {
-        name: '破甲',
-        icon: '💠',
-        kind: 'stat',
-        statKey: 'magicResist',
-        flatValue: -3,
-        duration: 4,
-        stackable: true,
-        maxStacks: 4,
-        perStackFlat: -3,
-        stackPolicy: 'stack',
-        description: '魔抗降低（{stacks}/4层）',
-      }, `weapon_piercing_mr_${attackerId}`);
+      // ---- v43 Q10：破甲已删除 ----
+      // 用户："穿透型太强了……直接改为固定+30%双穿和原来的升温。剩下的都不要了。"
+      // 这里原本还会给目标叠一层"破甲"：命中削 3 点双抗、最多 4 层（-12/-12），持续 4 秒。
+      // 它与固定 30% 双穿是**乘上加**的关系（先按百分比削、再减固定值），
+      // 对低抗性的小兵等于把有效抗性直接打穿到 0 —— 这是穿透型过强的主要来源之一。
+      // 现在整条移除：穿透型 = 30% 双穿（永久） + 升温（连续命中同目标的伤害倍率），仅此两项。
     },
   },
 
@@ -109,7 +88,9 @@ export const weapons = {
       tickPct: 20,            // 每跳伤害 = 攻击力 × 本值%
       tickPerSec: 4,          // 每秒跳几次（独立于攻速）
       maxMult: 180,           // 满充能伤害倍率（%）
-      maxPenPct: 90,          // 满充能无视防御（%）——只无视【保护性】防御，见 CombatSystem
+      // v43 Q10：90 → 67（用户定稿："闪电杖改为满充能无视67%防御，剩下不改"）。
+      // 与穿透型的削弱同批，避免穿透被砍之后闪电杖独大。
+      maxPenPct: 67,          // 满充能无视防御（%）——只无视【保护性】防御，见 CombatSystem
       bonusVsShieldPct: 7,    // 目标持盾时的额外伤害（%）
       slowPct: 15,            // 麻痹：移速 −%
       ampDownPct: 15,         // 麻痹：伤害增幅 −%
@@ -120,8 +101,8 @@ export const weapons = {
     name: '闪电杖 (魔法)',
     icon: '⚡',
     category: 'weapon',
-    description: '魔法伤害，每秒固定跳4次伤害（各20%攻击力），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至90%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
-    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（【{val}】=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→90%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
+    description: '魔法伤害，每秒固定跳4次伤害（各20%攻击力），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
+    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（【{val}】=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
     computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.attackDamage||0)*0.15); },
     specialAttack: true,
     effects: [],
@@ -182,11 +163,7 @@ export const weapons = {
 
       // 充能速度：攻速越快充能越快。基准：攻速 1.0 → 12s 充满（用户定稿：满充时间维持 12s 保平衡，
       // 高攻速塔自然快——枢纽塔攻速 4.0 时约 3s 充满）。
-      const finalAS = ctx.attrCalc.calcAttackSpeed(
-        entity.baseStats.baseAttackSpeed,
-        atkStats.bonusAttackSpeedPct || 0,
-        entity.baseStats.attackSpeedRatio || 0.667
-      );
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(atkStats);   // v43 Q7：走属性表，不读原始模板值
       // Q1 BUG 修复：原式 asRatio = finalAS / baseAS 把【模板攻速约掉了】——
       // 分子分母同时随模板攻速变化，比值恒为 1。实测：塔攻速 0.833 与 4.0 的满充时间
       // 一模一样（都是 10.9s），"攻速影响充能"完全没生效。
@@ -262,7 +239,7 @@ export const weapons = {
       const tickDamage = P.tickPct * (atkStats.attackDamage || 0) * chargeMultiplier;
 
       if (ctx.combat && typeof ctx.combat.performAttackDirect === 'function') {
-        // 无视防御随充能【连续】增长至 maxPen（用户定稿 90%）；伤害类型固定魔法。
+        // 无视防御随充能【连续】增长至 maxPen（v43 定稿 67%，原 90%）；伤害类型固定魔法。
         // ⚠️ "无视防御"只无视【保护性】的那部分：目标双抗/减伤/格挡若是负值，
         // 那是给攻击方的增伤，不能被一起抹掉 —— 这条在 CombatSystem 里实现，
         // 见 performAttackDirect 里 `keepAmp` 那段（用户指出的坑）。
@@ -364,8 +341,7 @@ export const weapons = {
 
       const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       // 叠层速度基于攻速：每秒叠 (攻速) 层
-      const finalAS = ctx.attrCalc.calcAttackSpeed(entity.baseStats.baseAttackSpeed,
-        stats.bonusAttackSpeedPct || 0, entity.baseStats.attackSpeedRatio || 0.667);
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(stats);   // v43 Q7：走属性表，不读原始模板值
       st.timer += dt;
       const interval = 1 / Math.max(0.1, finalAS); // 按攻速决定叠层间隔
       if (st.timer < interval) return;

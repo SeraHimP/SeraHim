@@ -54,19 +54,21 @@ function equip(e, skillId, ents, fx, bus) {
   const dmgs = [];
   for (let i = 0; i < 4; i++) { attr.tick(); const b = t1.currentHP; combat.performAttack(tw, t1); dmgs.push(b - t1.currentHP); }
   const ratios = dmgs.map(d => d / dmgs[0]);
-  // 期望值 = 升温倍率 × 削抗带来的伤害乘数变化。
+  // 期望值 = **纯升温倍率**（1.00/1.30/1.60/1.90）。
   //
-  // ⚠️ 原来这里只钉升温那一半（1.30/1.60/1.90），因为**削抗当时是无效的**：
-  // calcEffectiveArmor 无条件 Math.max(0, …)，把负抗性一律夹成 0，
-  // 于是"命中削目标 3 双抗【至 -12】"这条描述里的负数段从来没生效过
-  //（穿透型子弹的技能说明白纸黑字写着"至-12"）。
-  // 修好负抗性增伤之后，第 2/3/4 发的目标护甲是 -3/-6/-9，
-  // 按 calcDamageMultiplier 的负值分支 2 − 100/(100−r) 各自额外增伤 2.9%/5.7%/8.3%。
-  // 这一条现在同时钉住两个机制，任何一个失效都会红。
-  const mult = (r) => (r >= 0 ? 100 / (100 + r) : 2 - 100 / (100 - r));
-  const want = [0, 1, 2, 3].map(i => (1 + 0.3 * i) * mult(-3 * i) / mult(0));
-  T(`升温×削抗 = ${want.map(v => v.toFixed(2)).join(',')}（实际 ${ratios.map(r => r.toFixed(2)).join(',')}）`,
+  // 变更史（两次改口，都留着，省得后人再推一遍）：
+  //   ① 最早只钉升温那一半，因为削抗当时是**无效的**：calcEffectiveArmor 无条件
+  //      Math.max(0, …) 把负抗性夹成 0，"命中削目标 3 双抗【至 -12】"的负数段从没生效。
+  //   ② 修好负抗性增伤后，这条同时钉住"升温 × 削抗"两个机制。
+  //   ③ v43（Q10）：用户"穿透型太强了……直接改为固定+30%双穿和原来的升温。剩下的都不要了。"
+  //      → 破甲整条删除。于是期望回到纯升温倍率，与 ① 的形状相同但含义不同：
+  //      ① 是"削抗坏了所以看不出来"，③ 是"削抗被明确删掉了"。
+  const want = [0, 1, 2, 3].map(i => 1 + 0.3 * i);
+  T(`升温倍率 = ${want.map(v => v.toFixed(2)).join(',')}（实际 ${ratios.map(r => r.toFixed(2)).join(',')}）`,
     ratios.every((r, i) => Math.abs(r - want[i]) < 0.01));
+  T('破甲已删除：命中不再给目标叠双抗削减（v43 Q10）',
+    !fx.getEffectByName(t1.id, '破甲')
+    && attr.calc(t1, fx.getEffects(t1.id)).armor === 0);   // 这个靶子建时就把双抗置 0
   T('不写入塔属性 damageAmpPct（display纯计数）', attr.calc(tw, fx.getEffects(tw.id)).damageAmpPct === 0);
   const heat = fx.getEffectByName(tw.id, '升温');
   T('状态栏可见升温层数（4发命中后=4层封顶）', !!heat && heat.stacks === 4 && heat.blueprint.kind === 'display');

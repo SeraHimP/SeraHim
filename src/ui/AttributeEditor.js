@@ -2243,15 +2243,35 @@ export const AttributeEditor = {
   },
 
   // 根据"添加状态"面板的选中类型，构建对应的效果 blueprint（stat/stun/dot 共用）
+  /**
+   * 手动添加的状态：造蓝图。
+   *
+   * ==================== v43 Q5：为什么每条都必须自带 stackKey ====================
+   * 用户："同一种类的属性（比如攻击力等）无法叠加，①+20%攻击力 ②+5%攻击力，
+   *        正常是 +25% 但是只生效 5%，第一个被覆盖了。"
+   * 根因：EffectRegistry 的合并键是 `blueprint.stackKey || name::statKey`，
+   * 而这里造出来的蓝图**名字恒为 '默认状态'**、stackPolicy 又是 'refresh'。
+   * 于是两条都是 `默认状态::attackDamage` —— 第二条把第一条 refresh 掉了。
+   * 单个实体手动加时还能靠 sourceId 分开，但"模板默认状态"那几条路径
+   *（main.js 的 template_effect_tower/tier/<type>、编辑器的 template_effect_apply）
+   * 用的是**同一个常量 sourceId**，于是必然互相顶掉。
+   * 现在每条蓝图诞生时就领一个唯一 stackKey，天生互不相干；想要"同名互斥"的
+   * 语义仍然可以手写 stackKey（技能层就是那么做的），这里只管手动添加的那类。
+   */
+  _newCustomStackKey() {
+    AttributeEditor._customEffectSeq = (AttributeEditor._customEffectSeq || 0) + 1;
+    return `custom_${Date.now().toString(36)}_${AttributeEditor._customEffectSeq}`;
+  },
   _buildEffectBlueprintFromPicker(box) {
     const type2 = box.querySelector('.effect-type-select').value;
     const rawDur = box.querySelector('.effect-duration')?.value;
     const parsedDur = parseFloat(rawDur);
+    const stackKey = this._newCustomStackKey();
 
     if (type2 === 'stun') {
       const duration = isNaN(parsedDur) ? 1 : parsedDur;
       return {
-        name: '眩晕', icon: '💫', kind: 'stun', color: '#f1c40f',
+        name: '眩晕', icon: '💫', kind: 'stun', color: '#f1c40f', stackKey,
         duration: Math.max(0.1, duration), stackPolicy: 'refresh',
         description: '被眩晕，无法行动',
       };
@@ -2261,7 +2281,7 @@ export const AttributeEditor = {
       const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 10;
       const duration = isNaN(parsedDur) ? 5 : parsedDur;
       return {
-        name: '持续伤害', icon: '🩸', kind: 'dot', damageType,
+        name: '持续伤害', icon: '🩸', kind: 'dot', damageType, stackKey,
         flatValue, tickInterval: 1, duration: Math.max(1, duration),
         stackable: false, stackPolicy: 'refresh',
         description: `每秒${flatValue}点${damageType === 'magic' ? '魔法' : damageType === 'physical' ? '物理' : '真实'}伤害`,
@@ -2274,7 +2294,7 @@ export const AttributeEditor = {
     const isPermanent = !isNaN(parsedDur) && parsedDur <= 0;
     const duration = isNaN(parsedDur) ? 5 : (isPermanent ? Infinity : parsedDur);
     return {
-      name: '默认状态', icon: '📌', kind: 'stat', statKey, flatValue, percentValue,
+      name: '默认状态', icon: '📌', kind: 'stat', statKey, flatValue, percentValue, stackKey,
       duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
       description: `${statKey} ${flatValue !== 0 ? (flatValue > 0 ? '+' : '') + flatValue : ''}${percentValue !== 0 ? (percentValue > 0 ? '+' : '') + percentValue + '%' : ''}${isPermanent ? ' (永久)' : ''}`,
     };

@@ -109,7 +109,11 @@ export class LaneMovementSystem {
       }
 
       // ---- 2. 扫描：单次查询取"索敌半径内最近敌"与"攻击射程内最近敌" ----
-      const scan = AISystem.scanEnemies(this.entities, this.mapSystem, minion, ACQUISITION_RANGE, range);
+      // v43 Q4：索敌半径不能小于自己的攻击射程。攻城车射程 312 > ACQUISITION_RANGE(200)，
+      // 旧写法把它的索敌硬砍到 200 —— 它必须先走进 200px 才"看得见"塔，
+      // 312 的越塔射程完全作废，表现出来就是"攻城模式好像没生效"。
+      const acqR = Math.max(ACQUISITION_RANGE, range);
+      const scan = AISystem.scanEnemies(this.entities, this.mapSystem, minion, acqR, range);
 
       // ---- 3. 守家优先：己方防守圈内有敌人且自己也在圈内 → 锁定圈内最近敌人。
       //     覆盖普通仇恨（不受追击放弃距离约束）。射程内规则（下方）仍然优先——
@@ -197,9 +201,7 @@ export class LaneMovementSystem {
           minion._offPath = true; // 交战过（可能被位移/追击带离路径），脱战后需重投影
           if (minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))) {
             this.combat.performAttack(minion, target);
-            let finalAS = this.attrCalc.calcAttackSpeed(
-              minion.baseStats.baseAttackSpeed, stats.bonusAttackSpeedPct || 0, minion.baseStats.attackSpeedRatio || 0.667
-            );
+            let finalAS = this.attrCalc.calcAttackSpeedOf(stats);   // v43 Q7：走属性表，不读原始模板值
             // ===== v40 攻城武器被动：攻击建筑时 攻速-50% + 自损20%最大生命 =====
             // 装备了被动才生效，倍率/百分比全部取自技能定义（拆掉被动即失效）。
             const swDef = getSiegeWeaponDef(minion, this.combat.skills);
