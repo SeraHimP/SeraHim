@@ -217,8 +217,11 @@ const mkE = (ents, type, x, y, extra = {}) => {
   const tr = srcOf('src/presentation/ThreeRenderer.js');
   T('炬①-独立光池（与塔灯分开，否则野区那几盏永远抢不过一堆塔）',
     /this\.torchLights = \[\]/.test(tr) && /_syncTorchLights\(\)/.test(tr));
+  // v45：布点已抽成 torchPlacement.js 的纯函数（理由见那个文件的头注：
+  // 逻辑住在只有真浏览器才跑的地方 = 没有断言守着，那个"全图没灯"的 bug 就是这么漏的）。
   T('炬②-布点：地图声明优先，否则程序化（用户定稿"两者都要"）',
-    /Array\.isArray\(map\.torches\)/.test(tr) && /抖动网格/.test(srcRaw('src/presentation/ThreeRenderer.js')));
+    /Array\.isArray\(map\.torches\)/.test(srcOf('src/presentation/torchPlacement.js'))
+    && /抖动网格/.test(srcRaw('src/presentation/torchPlacement.js')));
   T('炬③-数值全部软编码在 CONFIG.ui.torch',
     ['enabled', 'poolSize', 'spacing', 'radius', 'height', 'edgeLux', 'color']
       .every(k => k in CONFIG.ui.torch));
@@ -226,6 +229,68 @@ const mkE = (ents, type, x, y, extra = {}) => {
     CONFIG.ui.torch.edgeLux < CONFIG.ui.towerLight.edgeLux);
   T('炬⑤-切图时重算布点（不然换了图还亮在上一张图的位置）',
     /_torchPts = null/.test(tr));
+
+  // ==================== 布点必须真的撒得出点来 ====================
+  // 用户："地图还是乌漆嘛黑的，环境中的灯在哪？？？"——第一版把世界尺寸写成
+  // `map.width || 900`，而地图的世界尺寸在 `map.world.w`（召唤师峡谷 3552）。
+  // `||` 把"字段不存在"静默变成了合法值，撒点范围被限死在左上角 900×700 的一小块，
+  // 全图等于没有火炬。不报错、画面只是"有点暗"，这类错误最难查。
+  //
+  // 光钉源码是钉不住这种错的（写成什么字段名都"看起来对"），所以布点已抽成纯函数
+  // torchPlacement.js，下面直接跑它。
+  const { torchPoints } = await import('../src/presentation/torchPlacement.js');
+  const { MAPS: M2 } = await import('../src/data/maps/index.js');
+  for (const map of Object.values(M2)) {
+    const pts = torchPoints(map, () => true, CONFIG.ui.torch);
+    const W = map.world?.w || 0, H = map.world?.h || 0;
+    T(`炬⑥-${map.id}：撒得出足够多的火炬点（至少够填满光池）`,
+      pts.length >= CONFIG.ui.torch.poolSize);
+    T(`炬⑦-${map.id}：点都落在世界范围内`,
+      pts.every(p => p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H));
+    // 覆盖面：点必须散布到地图**右下半区**，而不是全挤在左上角（那正是 bug 的形状）
+    T(`炬⑧-${map.id}：右下半区也有点（不是全挤在左上角）`,
+      pts.some(p => p.x > W * 0.6 && p.y > H * 0.6));
+  }
+  T('炬⑨-地图声明的 torches 优先于自动布点（用户定稿"两者都要"）', (() => {
+    const fake = { world: { w: 1000, h: 1000 }, torches: [{ x: 5, y: 7 }] };
+    const pts = torchPoints(fake, () => true, CONFIG.ui.torch);
+    return pts.length === 1 && pts[0].x === 5 && pts[0].y === 7;
+  })());
+  T('炬⑩-不可走的地方不撒点', (() => {
+    const fake = { world: { w: 2000, h: 2000 }, lanes: [] };
+    return torchPoints(fake, () => false, CONFIG.ui.torch).length === 0;
+  })());
+
+  // ==================== 龙的朝向：钉在**链路**上，不是钉在定义上 ====================
+  // 用户第二次报"龙的朝向问题依旧没有被修复"。我上一轮做了两件事（几何转正、删白名单），
+  // 唯独漏了真正的开关：UnitLayer 的**龙分支从来没有返回 facing 字段**，
+  // en.facing 恒为 false，那段旋转代码对龙一次都没执行过。
+  // 我当时验证的是"needsFacing('dragon') 返回 true"——钉在了定义上，不是链路上。
+  const ul2 = srcOf('src/presentation/UnitLayer.js');
+  T('龙朝①-龙的 visual 里带 facing 字段（这才是真正的开关）', (() => {
+    const i = ul2.indexOf("if (e.type === 'dragon')");
+    const j = ul2.indexOf("const st = minionStyle", i);
+    return i > 0 && j > i && /facing: needsFacing\(e\.type\)/.test(ul2.slice(i, j));
+  })());
+  T('龙朝②-塔的 visual 里**没有** facing（塔豁免，多给了反而会转）', (() => {
+    const i = ul2.indexOf("if (e.type === 'tower')");
+    const j = ul2.indexOf("if (e.type === 'dragon')", i);
+    return i >= 0 && j > i && !/facing:/.test(ul2.slice(i, j));
+  })());
+
+  // ==================== 建筑尺寸 ====================
+  T('尺①-四种塔一律 24、召唤水晶 28、水晶枢纽 40（用户定稿）',
+    ['outer', 'inner', 'base', 'hq_tower'].every(k => CONFIG.buildingSizes[k] === 24)
+    && CONFIG.buildingSizes.nexus_lane === 28 && CONFIG.buildingSizes.nexus_main === 40);
+  T('尺②-渲染不再额外乘系数（"写多少就画多大"）',
+    /const rSize = bSize;/.test(ul2));
+
+  // ==================== 分区贴图默认退回原有贴图 ====================
+  const tr2 = srcOf('src/presentation/ThreeRenderer.js');
+  T('区⑨-缺分区图时回落到现有 ground/plateau，而不是彩色占位图（用户："先借用原有的贴图"）',
+    CONFIG.ui.zoneTextures.usePlaceholder === false
+    && tr2.includes('usePh ? placeholderTexture(zn) : null')
+    && tr2.includes("zn === 'plateau' ? plateau : ground"));
 }
 
 // ==================== 六、天气盒深度 ====================
@@ -383,6 +448,110 @@ const mkE = (ents, type, x, y, extra = {}) => {
     try { return srcRaw('docs/TEXTURE-PROMPTS.md').includes('seamless tileable'); }
     catch { return false; }
   })());
+}
+
+// ==================== 十、脚手架自身的一个真 bug ====================
+// 排查"区⑨怎么都匹配不上"时挖出来的：stripComments **先剥块注释、后剥行注释**，
+// 于是行注释里出现的 `/*`（ThreeRenderer.js 里就有一处：`default/*.png`）
+// 会被当成块注释的开始，一路吃到后面第一个 `*​/` —— 实测吞掉 1981 个字符的真代码。
+//
+// 后果不是报错，是**断言凭空失效**：对那段代码的 srcOf 断言永远为假、
+// 否定断言则永远为真，而且看起来完全像"我正则写错了"。
+// 这正是 _harness 当初被造出来要防的那一类问题，只是方向反了过来。
+// 已改成先行后块。下面两条钉住它，免得哪天有人"顺手"把顺序调回去。
+{
+  const { stripComments } = await import('./_harness.mjs');
+  const sample = [
+    '// 说明里提到了 assets/textures/default/*.png 这个路径',
+    'const KEEP_ME = 1;',
+    '/* 真的块注释 DROP_ME */',
+    'const ALSO_KEEP = 2;',
+  ].join('\n');
+  const out = stripComments(sample);
+  T('架①-行注释里的 /* 不会吞掉后面的真代码', /KEEP_ME/.test(out) && /ALSO_KEEP/.test(out));
+  T('架②-真的块注释仍然被剥掉', !/DROP_ME/.test(out));
+  T('架③-真实文件上验一遍（ThreeRenderer 就是踩到的那个）', (() => {
+    const st = srcOf('src/presentation/ThreeRenderer.js');
+    // 这一句在被吞掉的那 1981 字符里
+    return st.includes('const pick = async (name)');
+  })());
+}
+
+// ==================== 十一、闪电杖的攻击特效每跳修正 ====================
+// 用户定稿："由于闪电杖是固定每秒四次伤害，所以遇到攻击特效时应该每次伤害造成的
+// 攻击特效应该进行修正，每次 ×0.25。"
+{
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { CombatSystem } = await import('../src/systems/CombatSystem.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+
+  const mkWorld = () => {
+    const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+    const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+    return { bus, ents, fx, combat };
+  };
+  const mkPair = (ents, onHitFlat = 100) => {
+    const a = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...CONFIG.templates.tower, onHitDamage: onHitFlat, onHitPercentDamage: 0,
+                   attackDamage: 0, damageAmpPct: 0 },
+      currentHP: 9999, shieldFixedCurrent: 0, tempShield: 0, _skillInstances: [],
+      _mapFaction: 'blue', faction: 'blue' };
+    const t = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 10, y: 0 },
+      baseStats: { ...CONFIG.templates.melee, armor: 0, magicResist: 0, damageReduction: 0, damageBlock: 0 },
+      currentHP: 1e7, shieldFixedCurrent: 0, tempShield: 0, _skillInstances: [],
+      _mapFaction: 'red', faction: 'red' };
+    ents.add(a); ents.add(t); return { a, t };
+  };
+
+  // ① 数值部分：按系数并入
+  {
+    const w = mkWorld(); const { a, t } = mkPair(w.ents, 100);
+    const hp0 = t.currentHP;
+    w.combat.performAttackDirect(a.id, t.id, 0, 'magic', { onHitScale: 0.25 });
+    const dealt = hp0 - t.currentHP;
+    T('特①-攻击特效的固定伤害按 ×0.25 并入（100 → 25）', Math.abs(dealt - 25) < 0.5);
+  }
+  // ② 不传系数时**逐位不变**：溅射/DOT 那些调用方不该带攻击特效
+  {
+    const w = mkWorld(); const { a, t } = mkPair(w.ents, 100);
+    const hp0 = t.currentHP;
+    w.combat.performAttackDirect(a.id, t.id, 0, 'magic');
+    T('特②-不传系数的调用方一点攻击特效都不带（溅射不该结算两遍）',
+      Math.abs(hp0 - t.currentHP) < 1e-9);
+  }
+  // ③ 百分比攻击特效同样按系数走
+  {
+    const w = mkWorld(); const { a, t } = mkPair(w.ents, 0);
+    a.baseStats.onHitPercentDamage = 1;      // 1% 当前生命
+    const hp0 = t.currentHP;
+    w.combat.performAttackDirect(a.id, t.id, 0, 'magic', { onHitScale: 0.25 });
+    T('特③-百分比攻击特效同样 ×0.25（1% × 0.25 = 0.25%）',
+      Math.abs((hp0 - t.currentHP) - hp0 * 0.0025) < hp0 * 1e-6);
+  }
+  // ④ 被动限流：4 跳只触发 1 次
+  {
+    const w = mkWorld(); const { a, t } = mkPair(w.ents, 0);
+    let procs = 0;
+    SkillLibrary.__test_proc = { id: '__test_proc', name: 'T', category: 'passive',
+      onDealtDamage: () => { procs++; } };
+    a._skillInstances.push({ id: ++window._uid, skillId: '__test_proc', state: {} });
+    for (let i = 0; i < 12; i++) w.combat.performAttackDirect(a.id, t.id, 1, 'magic', { onHitScale: 0.25 });
+    T('特④-被动限流：12 跳只触发 3 次（= 每秒 1 次，与 1.0 攻速同节奏）', procs === 3);
+
+    procs = 0;
+    for (let i = 0; i < 5; i++) w.combat.performAttackDirect(a.id, t.id, 1, 'magic');
+    T('特⑤-不传系数时被动每次都触发（其余路径行为不变）', procs === 5);
+    delete SkillLibrary.__test_proc;
+  }
+  // ⑤ 系数由跳数派生，不写死
+  {
+    const wp = srcOf('src/core/skills/weapons.js');
+    T('特⑥-系数默认取 1/tickPerSec，不是写死的 0.25（改跳数时自动跟上）',
+      /onHitScale: P\.onHitScale \?\? \(1 \/ Math\.max\(1, P\.tickPerSec \|\| 4\)\)/.test(wp));
+    T('特⑦-系数是软编码的，编辑器里可改', 'onHitScale' in SkillLibrary.weapon_lightning.defaultParams);
+  }
 }
 
 done();

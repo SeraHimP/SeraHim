@@ -121,7 +121,11 @@ export class UnitLayer {
       const wInst = (ghost || ruin) ? null : (e._skillInstances || []).find(s => s.skillId.startsWith('weapon_'));
       // 第 6.3 步：纸片人 → 程序化三维几何。key 语义不变（换武器/阵营/尺寸/转幽灵/损毁才换模型）。
       const kind = roleKind || (isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower'));
-      const rSize = bSize * (TOWER_VIZ[kind] || 1.25);   // Q3：塔×1.25、召唤水晶/水晶枢纽×1.10（纯表现）
+      // v45：**渲染系数去掉**。用户定稿"最终大小，去掉系数"——
+      // 以后 CONFIG.buildingSizes 里写多少就是画多大，不再有"写 28 实际画 35"这种错位。
+      // towerVizScale 仍然保留给避障半径用（那边要的是"画得多大就挡多大"），
+      // 但显示尺寸不再乘它 —— 两个用途本来就该分开，混用才是错位的来源。
+      const rSize = bSize;
       const wid = wInst ? wInst.skillId : '';
       // v44：tier 与 faction 进 key —— 造型现在由这两项决定，不进 key 的话
       // 四个档次会共用第一个被缓存的那个几何（这正是"四档长得一样"的另一半原因）。
@@ -150,6 +154,14 @@ export class UnitLayer {
                // 全场只有龙设了这一项，它每帧把整个模型缩放 1±12%（3rad/s）——
                // 那是纸片人时代用来"让龙有存在感"的补偿，立体化之后纯属抖动。
                barW: 100, barH: 7, barD: 12, alpha: 1, pulse: false,
+               // ⚠️ v45：**这一行是龙朝向的真正开关**，上一轮漏了。
+               // 用户第二次报"龙的朝向问题依旧没有被修复"——我上一轮做了两件事
+               //（把几何转正到 +Z、把 needsFacing 的白名单删掉），但**龙分支从来就没有
+               // 返回 facing 字段**，于是 en.facing 恒为 false，那段旋转代码对龙一次都没跑过。
+               // 教训：改一个开关之前先确认那个开关**被读到了**。
+               // 我当时验证的是"needsFacing('dragon') 现在返回 true"，
+               // 却没验证"龙的 visual 里有没有 facing" —— 断言钉在了定义上，不是钉在链路上。
+               facing: needsFacing(e.type),
                ringR: size + 5 };
     }
     const st = minionStyle(e.type);   // 自制兵种取用户填的图标/颜色，见 SpriteFactory.minionStyle

@@ -87,6 +87,9 @@ export const weapons = {
       chargeTimeAtAS1: 12,    // 攻速 1.0 时充满需要几秒（实际 = 本值 / 最终攻速）
       tickPct: 20,            // 每跳伤害 = 攻击力 × 本值%
       tickPerSec: 4,          // 每秒跳几次（独立于攻速）
+      // 攻击特效的每跳修正系数。留空(null)时自动取 1/tickPerSec —— 见 onFrame 里的说明。
+      // 显式填一个数可以让攻击特效相对普通攻击更强/更弱（软编码，编辑器里可改）。
+      onHitScale: null,
       maxMult: 180,           // 满充能伤害倍率（%）
       // v43 Q10：90 → 67（用户定稿："闪电杖改为满充能无视67%防御，剩下不改"）。
       // 与穿透型的削弱同批，避免穿透被砍之后闪电杖独大。
@@ -243,9 +246,14 @@ export const weapons = {
         // ⚠️ "无视防御"只无视【保护性】的那部分：目标双抗/减伤/格挡若是负值，
         // 那是给攻击方的增伤，不能被一起抹掉 —— 这条在 CombatSystem 里实现，
         // 见 performAttackDirect 里 `keepAmp` 那段（用户指出的坑）。
+        // v45：攻击特效按"每跳 × onHitScale"修正（用户定稿）。
+        // 默认 0.25 = 1 / tickPerSec：4 跳合起来正好等于一个 1.0 攻速单位打一下。
+        // 写成 `1 / tickPerSec` 而不是写死 0.25 —— 以后谁调了跳数，修正系数自动跟上；
+        // 写死的话改跳数就会**静默**把攻击特效放大或缩小，而且没人会想到来改这里。
         ctx.combat.performAttackDirect(entity.id, target.id, tickDamage, 'magic', {
           ignoreDefenseRatio: charge * P.maxPen,
           bonusVsShieldPct: P.bonusVsShieldPct,
+          onHitScale: P.onHitScale ?? (1 / Math.max(1, P.tickPerSec || 4)),
         });
         // （v35：满充闪电链弹射已按方案B删除——纯单体，无 AOE）
       }

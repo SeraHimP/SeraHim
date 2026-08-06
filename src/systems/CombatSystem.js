@@ -905,7 +905,27 @@ export class CombatSystem {
     const atkStats = attacker ? this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)) : {};
     const defStats = this.attrCalc.calc(target, this.effects.getEffects(target.id));
 
+    // ==================== v45：攻击特效的"每跳修正" ====================
+    // 用户定稿："由于闪电杖是固定每秒四次伤害，所以遇到攻击特效时应该每次伤害造成的
+    // 攻击特效应该进行修正，每次 ×0.25。"
+    //
+    // 闪电杖的伤害不走 performAttack（那条路才带攻击特效），而是每秒 4 次直接调这里。
+    // 于是它有两个方向相反的问题：
+    //   ① 攻击特效的【数值部分】（onHitDamage / onHitPercentDamage）**一次都没生效过** ——
+    //      这条路径压根不读那两项属性；
+    //   ② 攻击特效的【被动部分】（onDealtDamage）却**每秒触发 4 次**，
+    //      是 1.0 攻速单位的 4 倍（叠层类被动因此快 4 倍、自损类被动因此痛 4 倍）。
+    // onHitScale 一次修正两头：数值按比例并入，被动按比例限流（见下面的 credit 累加器）。
+    //
+    // 默认 0：其余调用方（溅射、DOT、龙魂、环境伤害）行为**逐位不变** ——
+    // 它们本来就不该带攻击特效，溅射带的话等于一次攻击结算两遍。
+    const onHitScale = options.onHitScale || 0;
     let damage = baseDamage;
+    if (onHitScale > 0 && attacker) {
+      const flat = atkStats.onHitDamage || 0;
+      const pct = (atkStats.onHitPercentDamage || 0) / 100 * (target.currentHP || 0);
+      damage += (flat + pct) * onHitScale;
+    }
     const dmgAmp = atkStats.damageAmpPct || 0;
     damage *= (1 + dmgAmp / 100);
     // ==================== v43 巨龙宿怨：增伤那一半 ====================
@@ -1029,7 +1049,22 @@ export class CombatSystem {
       target._lastHitFaction = attacker._mapFaction || attacker.faction || null;
     }
     // 使闪电杖、腐蚀型等通过 performAttackDirect 造成的伤害也能触发这些被动。
-    if (attacker && !options._noProc && !this._procGuard) {
+    // ==================== 被动的限流：分数累加器 ====================
+    // 为什么不是"给每个被动传一个系数、让它们各自乘 0.25"：
+    // 这些被动里有一半是**计数**型的（叠一层、消耗一发充能、自损 2% 生命），
+    // "叠 0.25 层"没有意义；而且那要求 7 个被动逐个改对，改漏一个就是隐性 bug。
+    //
+    // 改成在**唯一的触发点**上限流：每次伤害给攻击者攒 onHitScale 点信用，
+    // 攒满 1 点才真正触发一次全部被动。0.25 → 每 4 跳触发一次 = 每秒 1 次，
+    // 恰好等于一个 1.0 攻速单位的节奏。确定性的，不掺随机。
+    // 于是**所有被动自动正确**，一个都不用改。
+    let _proc = true;
+    if (attacker && onHitScale > 0 && onHitScale < 1) {
+      attacker._onHitCredit = (attacker._onHitCredit || 0) + onHitScale;
+      if (attacker._onHitCredit >= 1) attacker._onHitCredit -= 1;
+      else _proc = false;
+    }
+    if (attacker && _proc && !options._noProc && !this._procGuard) {
       this._procGuard = true;
       try {
         for (const inst of attacker._skillInstances || []) {
@@ -1038,7 +1073,7 @@ export class CombatSystem {
             def.onDealtDamage(attacker.id, target.id, inst, {
               entityContainer: this.entities, effectRegistry: this.effects, eventBus: this.eventBus,
               waveNumber: window.waveNumber || 0, attrCalc: this.attrCalc, combat: this,
-              totalRaw: baseDamage, finalDamage, attackType,
+              totalRaw: baseDamage, finalDamage, attackType, onHitScale: onHitScale || 1,
             });
           }
         }

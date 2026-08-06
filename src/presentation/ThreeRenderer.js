@@ -31,6 +31,7 @@ import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
 import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
+import { torchPoints } from './torchPlacement.js';
 import { CONFIG } from '../data/Config.js';
 import { resolveDayPhase } from './DayNight.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
@@ -178,13 +179,21 @@ export class ThreeRenderer {
     // 缺哪张就用程序化占位图先顶上（用户定稿："先把分区贴图管线做出来"），
     // 手绘图回来后按同名文件丢进 assets/textures/<主题>/ 即可替换，不用再动代码。
     // 提示词见 docs/TEXTURE-PROMPTS.md。
-    const probe = CONFIG.ui?.zoneTextures?.probe === true;
+    const zc = CONFIG.ui?.zoneTextures || {};
+    const probe = zc.probe === true;
+    const usePh = zc.usePlaceholder === true;
     const zoneTex = {};
     await Promise.all(ZONES.map(async (zn) => {
       const img = (zn === 'ground') ? ground
                 : (zn === 'plateau') ? plateau
                 : (probe ? await pick(zn) : null);
-      zoneTex[zn] = img || placeholderTexture(zn);
+      // 缺图时的回落顺序：真图 → （可选）程序化占位图 → **现有的 ground/plateau**。
+      // 默认不走占位图：那套彩色分区是调试件，当默认画面太难看（用户原话"不忍直视"）。
+      // 回落到 ground/plateau 的效果 = 与加分区贴图之前逐像素一致。
+      zoneTex[zn] = img
+                 || (usePh ? placeholderTexture(zn) : null)
+                 || (zn === 'plateau' ? plateau : ground)
+                 || null;
     }));
     if (this._texTheme !== theme) return;   // 期间又切了图，丢弃这批结果
     this.zoneTex = zoneTex;
@@ -756,47 +765,14 @@ export class ThreeRenderer {
    */
   _torchPoints() {
     if (this._torchPts) return this._torchPts;
-    const c = CONFIG.ui?.torch || {};
     const map = this.mapSystem?.currentMap;
     if (!map) return (this._torchPts = []);
-
-    // ① 地图声明优先
-    if (Array.isArray(map.torches) && map.torches.length) {
-      return (this._torchPts = map.torches.map(t => ({ x: t.x, y: t.y })));
-    }
-
-    // ② 程序化撒点
-    const W = map.width || 900, H = map.height || 700;
-    const gap = Math.max(60, c.spacing ?? 260);
-    const laneKeep = c.nearLane === false ? 0 : gap * 0.55;
-    const lanes = map.lanes || [];
-    const farFromLane = (x, y) => {
-      if (!laneKeep) return true;
-      for (const ln of lanes) {
-        const wps = ln.waypoints || [];
-        for (const w of wps) {
-          const dx = w.x - x, dy = w.y - y;
-          if (dx * dx + dy * dy < laneKeep * laneKeep) return false;
-        }
-      }
-      return true;
-    };
-    const walk = (x, y) => (this.mapSystem?.isWalkable ? this.mapSystem.isWalkable(x, y) : true);
-
-    const pts = [];
-    // 抖动网格而不是纯随机：纯随机会扎堆，而这些点是"每张图固定一次"的，
-    // 扎堆一次就永远扎堆。抖动量取间距的 1/5，既不成排又不聚团。
-    for (let y = gap * 0.6; y < H && pts.length < 400; y += gap) {
-      for (let x = gap * 0.6; x < W; x += gap) {
-        const jx = x + ((x * 7 + y * 13) % 100 / 100 - 0.5) * gap * 0.4;
-        const jy = y + ((x * 11 + y * 5) % 100 / 100 - 0.5) * gap * 0.4;
-        if (jx < 0 || jy < 0 || jx > W || jy > H) continue;
-        if (!walk(jx, jy)) continue;
-        if (!farFromLane(jx, jy)) continue;
-        pts.push({ x: jx, y: jy });
-      }
-    }
-    return (this._torchPts = pts);
+    // 实现搬到 torchPlacement.js 的纯函数里 —— 它现在**可以被单测直接跑**。
+    // 上一版这段逻辑埋在渲染器方法里，于是"世界尺寸取错字段导致全图没灯"
+    // 这种错误在 headless 下一条用例都碰不到，只能靠人眼在游戏里发现（确实也是那样发现的）。
+    return (this._torchPts = torchPoints(
+      map, (x, y) => (this.mapSystem?.isWalkable ? this.mapSystem.isWalkable(x, y) : true),
+      CONFIG.ui?.torch || {}));
   }
 
   /**

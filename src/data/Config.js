@@ -568,7 +568,12 @@ export const CONFIG = {
     //
     // 画好图丢进 assets/textures/<主题>/ 之后，把这一项改成 true 即可（编辑器里可改）。
     // 提示词与文件名见 docs/TEXTURE-PROMPTS.md。
-    zoneTextures: { probe: false },
+    // usePlaceholder=false（默认）：缺分区图时回落到**现有的 ground/plateau**，
+    // 画面与加分区贴图之前**逐像素一致**。用户："目前的贴图简直是不忍直视，
+    // 目前借用原有的贴图，等我手动再替换。"
+    // 程序化占位图（彩色分区）只在显式打开时才用 —— 它是给"想看分区有没有生效"用的调试件，
+    // 不该是默认画面。管线本身全部保留，换上真图即刻生效。
+    zoneTextures: { probe: false, usePlaceholder: false },
 
     // ==================== v45：建筑损毁档 ====================
     // 用户定稿："每种塔有不同生命节点下的模型（生命节点为 33/67/100）：
@@ -802,9 +807,12 @@ export const CONFIG = {
     lockOnWindup: 0.3,            // v33（Q14）：锁定新目标的攻击前摇（秒），塔和小兵通用，腐蚀型除外
   },
 
+  // v45：用户定稿「建筑的模型大小统一：塔为 24，水晶 40，召唤水晶 28」，
+  // 并确认这是**最终看到的大小**（渲染层那个 ×1.25 / ×1.10 的系数已去掉）。
+  // 四种塔一律 24 —— 层级差异靠造型（环廊 / 角楼 / 顶盖高度），不靠体积。
   buildingSizes: {
-    outer: 28, inner: 28, base: 28, hq_tower: 24,
-    nexus_lane: 20, nexus_main: 40, default: 28,
+    outer: 24, inner: 24, base: 24, hq_tower: 24,
+    nexus_lane: 28, nexus_main: 40, default: 24,
   },
 
   templates: {

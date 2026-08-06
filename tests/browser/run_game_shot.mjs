@@ -43,6 +43,12 @@ const errs = [];
 page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
 page.on('pageerror', (e) => errs.push(String(e)));
 await page.goto(`http://127.0.0.1:${port}/index.html`);
+// 可选：把昼夜相位定格（0.75 = 午夜）。夜间的东西（塔灯/火炬/自发光）只有定格才验得了 ——
+// 默认相位跑到哪儿是随机的，等它自己走到夜里要好几分钟。
+const PHASE = process.argv[4];
+if (PHASE !== undefined) {
+  await page.evaluate((v) => { window.CTX = window.CTX || {}; window.CTX.__dayPhaseOverride = Number(v); }, PHASE);
+}
 await page.waitForTimeout(SECS * 1000);
 await page.screenshot({ path: OUT });
 console.log('截图已写入', OUT);
