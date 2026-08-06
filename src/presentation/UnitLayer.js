@@ -812,15 +812,18 @@ export class UnitLayer {
       }
     }
 
-    // 朝向：由【位置增量】自己算，逻辑层不需要提供 facing 字段。
-    // 模拟跑 30Hz、渲染跑 60Hz，因此有一半的帧位移为 0——那时保持上一次朝向，不要清零。
-    // 角度做最短弧插值（跨 ±π 时不绕远路），避免掉头瞬间原地转一圈。
+    // ==================== 朝向（v45：改为读模拟层）====================
+    // 这里原来自己拿位置增量 atan2 出朝向。那份角度**只存在于渲染层**，
+    // 模拟层看不见，于是"必须转过来才能打"根本没法按它判 ——
+    // 而且无头模式（tests / balance_matrix）里连这段代码都不跑，规则会在
+    // 最需要它的地方（平衡测量）静默消失。
+    // 现在朝向由 FacingSystem 维护在 entity._facing 上，渲染层**只读**。
+    // 一个量一个来源：本仓库反复出事的形状就是同一个量两处各算一份。
+    //
+    // 仍然保留渲染侧的平滑插值：模拟 30Hz、渲染 60Hz，直接贴 _facing 会有台阶感。
+    // 塔没有 _facing（豁免），en.facing 为 false，整段跳过。
     if (en.facing) {
-      if (en.lastX !== null) {
-        const dx = e.pos.x - en.lastX, dz = e.pos.y - en.lastZ;
-        if (dx * dx + dz * dz > 0.25) en.faceT = Math.atan2(dx, dz);   // 模型一律朝 +Z 建
-      }
-      en.lastX = e.pos.x; en.lastZ = e.pos.y;
+      if (e._facing !== undefined) en.faceT = e._facing;
       if (en.faceT !== undefined) {
         let d = en.faceT - en.faceA;
         while (d > Math.PI) d -= Math.PI * 2;

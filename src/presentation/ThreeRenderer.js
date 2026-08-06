@@ -148,7 +148,7 @@ export class ThreeRenderer {
     this.setHDR(null);
 
     // 切图后地面必须整体重建（贴图尺寸、世界尺寸都变了）
-    eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap)); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); });
+    eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap)); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); this._torchPts = null; });
     // 清理保险 A：死亡事件即时删（保险 B = UnitLayer.update 里的帧戳兜底扫描）
     eventBus?.on?.('entity:death', ({ entityId }) => this.units.remove(entityId));
   }
@@ -267,6 +267,22 @@ export class ThreeRenderer {
       this.scene.add(l);
       this.towerLights.push(l);
     }
+
+    // ==================== v45：地图火炬光池 ====================
+    // 与塔灯**分开一个池**而不是共用：两者的挑选规则完全不同（塔灯跟着塔走、
+    // 每 0.2s 重挑；火炬是钉在地上的静态点，挑一次就不动了），
+    // 共池的话每帧都要区分"这盏是塔的还是地的"，还会互相抢名额 ——
+    // 野区那几盏永远抢不过身边一堆塔，等于白做。
+    this.torchLights = [];
+    const _tc = CONFIG.ui?.torch || {};
+    const tPool = _tc.enabled === false ? 0 : Math.max(0, (_tc.poolSize ?? 12) | 0);
+    for (let i = 0; i < tPool; i++) {
+      const l = new THREE.PointLight(0xffb066, 0, 100, _tc.decay ?? 1.1);
+      l.castShadow = false;
+      this.scene.add(l);
+      this.torchLights.push(l);
+    }
+    this._torchPts = null;      // 当前地图的火炬坐标（切图时置 null 重算）
 
     this.shadowLevel = 'off';      // 'all' | 'static' | 'off'
     this._sunDir = new THREE.Vector3(
@@ -704,23 +720,144 @@ export class ThreeRenderer {
    * 反复跳；而灯的位置突变比"晚 0.2 秒亮起"难看得多。
    * 强度的**淡入淡出仍然每帧插值**，所以切换是渐变的，不会闪。
    */
+  /**
+   * ==================== v45：地图火炬 ====================
+   * 用户："实在不行可以在地图中增加光源（火炬等）。""扭曲丛林这张图晚上看起来很怪。"
+   *
+   * 为什么塔灯解决不了：塔灯池只挑「有武器 × 离视野中心最近的 N 座塔」，
+   * **野区、河道、龙坑一盏灯都没有** —— 野区占比越大的图夜里越黑，
+   * 扭曲丛林正是野区最大的那张，所以它最明显。
+   *
+   * 布点（用户定稿"两者都要"）：
+   *   ① 地图自己写了 `torches: [{x,y}]` → 用地图的（作者摆得比算法准）；
+   *   ② 没写 → 程序化撒点：在可走格里按最小间距贪心取点，且**避开兵线附近**
+   *      （路面本来就有塔灯，再撒等于把光都堆在已经亮的地方）。
+   * 结果缓存在 _torchPts，切图时置 null 重算 —— 这是静态数据，不必每帧算。
+   *
+   * 火炬是**纯装饰**：不是实体、不可选中、不可摧毁、不参与任何战斗判定。
+   */
+  _torchPoints() {
+    if (this._torchPts) return this._torchPts;
+    const c = CONFIG.ui?.torch || {};
+    const map = this.mapSystem?.currentMap;
+    if (!map) return (this._torchPts = []);
+
+    // ① 地图声明优先
+    if (Array.isArray(map.torches) && map.torches.length) {
+      return (this._torchPts = map.torches.map(t => ({ x: t.x, y: t.y })));
+    }
+
+    // ② 程序化撒点
+    const W = map.width || 900, H = map.height || 700;
+    const gap = Math.max(60, c.spacing ?? 260);
+    const laneKeep = c.nearLane === false ? 0 : gap * 0.55;
+    const lanes = map.lanes || [];
+    const farFromLane = (x, y) => {
+      if (!laneKeep) return true;
+      for (const ln of lanes) {
+        const wps = ln.waypoints || [];
+        for (const w of wps) {
+          const dx = w.x - x, dy = w.y - y;
+          if (dx * dx + dy * dy < laneKeep * laneKeep) return false;
+        }
+      }
+      return true;
+    };
+    const walk = (x, y) => (this.mapSystem?.isWalkable ? this.mapSystem.isWalkable(x, y) : true);
+
+    const pts = [];
+    // 抖动网格而不是纯随机：纯随机会扎堆，而这些点是"每张图固定一次"的，
+    // 扎堆一次就永远扎堆。抖动量取间距的 1/5，既不成排又不聚团。
+    for (let y = gap * 0.6; y < H && pts.length < 400; y += gap) {
+      for (let x = gap * 0.6; x < W; x += gap) {
+        const jx = x + ((x * 7 + y * 13) % 100 / 100 - 0.5) * gap * 0.4;
+        const jy = y + ((x * 11 + y * 5) % 100 / 100 - 0.5) * gap * 0.4;
+        if (jx < 0 || jy < 0 || jx > W || jy > H) continue;
+        if (!walk(jx, jy)) continue;
+        if (!farFromLane(jx, jy)) continue;
+        pts.push({ x: jx, y: jy });
+      }
+    }
+    return (this._torchPts = pts);
+  }
+
+  /**
+   * ==================== 夜色程度（0=白天 1=午夜）====================
+   * 塔灯与火炬**都读这一个函数**。两处各算一遍是本仓库反复出事的形状 ——
+   * 昼夜相位本身就因为"三处各算一遍"栽过一次（见 resolveDayPhase 的头注）。
+   *
+   * v45 修的真 bug：原式是 `phase >= 0.5 ? sin((phase-0.5)/0.5·π) : 0`，
+   * 一个**半开区间**。而 phaseLabelOf 判定的"黎明"是 `p < 0.15 || p >= 0.9`，
+   * 一段**跨零点**的区间。于是相位 0.90→1.00 那半段黎明灯还亮着（约 0.59），
+   * 一过零点进入 0.00→0.15 那半段就 `phase < 0.5` → 灯**瞬间全灭**；
+   * 而此时太阳仰角只有 16°、曝光 0.86 —— 画面纯黑，正是用户报的现象。
+   * 同一句"天黑了"，HUD 和灯光各画了一条曲线。
+   *
+   * 现在以**离正午(0.25)的角距**为准：天然跨零点连续，午夜为 1、正午为 0，
+   * 黎明两半严丝合缝。dawnFloor 是第二层保险：太阳压得很低的两段（黎明/黄昏）
+   * 自然衰减仍偏暗，给个地板比整体提曝光更准 —— 只影响该亮灯的时候。
+   */
+  _nightLevel() {
+    const ws = (typeof window !== 'undefined') ? window.CTX?.__world : null;
+    const phase = resolveDayPhase(window.gameTime || 0,
+                                  (typeof window !== 'undefined' ? window.CTX : null),
+                                  ws?.weather ? ws.weather.enabled : true).phase;
+    if (!Number.isFinite(phase)) return 0;
+    const c = CONFIG.ui?.towerLight || {};
+    const away = Math.abs(((phase - 0.25) % 1 + 1) % 1 - 0.5) / 0.5;   // 0=正午 1=午夜
+    let night = Math.max(0, 1 - Math.cos(away * Math.PI / 2) ** 1.5);
+    if (away > 0.45) night = Math.max(night, c.dawnFloor ?? 0.35);     // 低阳段地板
+    return Math.max(0, Math.min(1, night));
+  }
+
+  _syncTorchLights() {
+    const pool = this.torchLights;
+    if (!pool || !pool.length) return;
+    const c = CONFIG.ui?.torch || {};
+    if (c.enabled === false) { for (const l of pool) l.intensity = 0; return; }
+
+    // 夜色包络与塔灯**共用同一个量**：两处各算一遍必然漂移（塔灯那次就是这么黑掉的）。
+    const night = this._nightLevel();
+    if (night <= 0.001) { for (const l of pool) l.intensity = 0; return; }
+
+    const pts = this._torchPoints();
+    if (!pts.length) { for (const l of pool) l.intensity = 0; return; }
+
+    // 只点亮离视野中心最近的 poolSize 盏（同塔灯：正交相机没有透视距离，视野中心才是"玩家在看哪"）
+    const cx = this._target.x, cz = this._target.z;
+    const cand = pts.map(p => ({ p, d2: (p.x - cx) ** 2 + (p.y - cz) ** 2 }))
+                    .sort((a, b) => a.d2 - b.d2)
+                    .slice(0, pool.length);
+
+    const R = c.radius ?? 190, ly = c.height ?? 46, decay = c.decay ?? 1.1;
+    const dEdge = Math.hypot(R, ly);
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    for (let i = 0; i < pool.length; i++) {
+      const l = pool[i], hit = cand[i];
+      if (!hit) { l.intensity = 0; continue; }
+      l.position.set(hit.p.x, ly, hit.p.y);
+      l.distance = dEdge;
+      l.decay = decay;
+      l.color.set(c.color || '#ffb066');
+      // 摇曳：每盏用自己的相位（按坐标派生），否则全场火炬会整齐地一起明灭，
+      // 那看起来像屏幕在闪，不像火。
+      const ph = (hit.p.x * 0.013 + hit.p.y * 0.021);
+      const fl = 1 + (c.flicker ?? 0.14) * Math.sin(t * (c.flickerHz ?? 3.1) * Math.PI * 2 + ph);
+      l.intensity = (c.edgeLux ?? 1.6) * Math.pow(dEdge, decay) * night * fl;
+    }
+  }
+
   _syncTowerLights(controller) {
     const pool = this.towerLights;
     if (!pool || !pool.length) return;
     const c = CONFIG.ui?.towerLight || {};
     if (c.enabled === false) { for (const l of pool) l.intensity = 0; return; }
 
-    // 夜晚程度：0=白天完全不亮，1=午夜最亮。取相位在 [0.5,1) 上的正弦包，
-    // 黄昏/黎明处自然渐入渐出（用阶跃的话天一黑所有灯"啪"一下全开）。
-    // 相位走 resolveDayPhase —— 与 HUD、WorldState 的数值耦合**同一口径**。
-    // 原来这里读 `CTX.__world.daynight.phase` 并要求 `ws.enabled`：那是第二个取值口，
-    // WorldState 被关掉（或还没跑第一帧）时相位就是 null → 灯永远不亮，
-    // 而 HUD 上明明显示着"夜晚"。同一个量两处取值，是本仓库反复出事的形状。
-    const ws = (typeof window !== 'undefined') ? window.CTX?.__world : null;
-    const phase = resolveDayPhase(window.gameTime || 0,
-                                  (typeof window !== 'undefined' ? window.CTX : null),
-                                  ws?.weather ? ws.weather.enabled : true).phase;
-    let night = (Number.isFinite(phase) && phase >= 0.5) ? Math.sin((phase - 0.5) / 0.5 * Math.PI) : 0;
+    // 夜色程度走 _nightLevel()：塔灯与火炬**共用同一个函数**。
+    // 这个量此前只在这里算一份，v45 加火炬时如果照抄一份，两条曲线迟早漂移 ——
+    // "同一个量两处各算一遍"正是本仓库反复出事的形状（相位本身就栽过一次）。
+    // nightOnly=false 是调试/截图用的：全天亮着。
+    let night = this._nightLevel();
     if (c.nightOnly === false) night = 1;
 
     // 节流分配
@@ -819,17 +956,33 @@ export class ThreeRenderer {
       }
     }
     this._syncTowerLights(controller);
+    this._syncTorchLights();
     this.water.update(window.gameTime || 0);   // P1：水面滚动 UV
     // 天气可视化：粒子盒跟着镜头走，尺寸 = 当前可见世界范围。
     // 正交相机下可见世界宽 = W/zoom；纵深要把仰角压缩还原回去（屏幕上 Z 被压了 sin(仰角)）。
     // dt 用【墙钟】而不是 gameTime —— 游戏暂停时雨该继续下（那是天，不是战斗）。
     if (this.weatherFx) {
       const z = controller ? (controller.zoom || 1) : 1;
-      const sinP = Math.max(0.15, Math.sin(this.elevationDeg * DEG));
+      // ==================== v45：视角拉低时下面缺一条带 ====================
+      // 用户：「视角拉低的时候下面依旧有一块不显示天气的可视化效果。」
+      //
+      // 根因是几何算错，不是粒子不够。viewD = 屏幕高 / sin(仰角) 只对【地面上】
+      // （y=0）的点成立；而雨雪是从 ceiling(约 520) 高处往下落的。
+      // 高度 y 的粒子在屏幕上的纵坐标正比于 z·sin + y·cos，
+      // 所以屏幕【底边】那一行对应的高空粒子，其地面投影落在盒子近边【之外】
+      // 约 ceiling·cot(仰角) 处 —— 仰角越低这个量越大，缺的带就越宽，完全对上现象。
+      //
+      // 另外 Math.max(0.15, sin) 这个下限在仰角小于 8.6 度时会把 viewD【算小】，
+      // 是同一症状的第二个来源（本该更深，反而更浅）。一并去掉：
+      // 现在下限只用于防除零，真正的兜底是下面这条 cot 余量。
+      const sinP = Math.max(1e-3, Math.sin(this.elevationDeg * DEG));
+      const cotP = Math.cos(this.elevationDeg * DEG) / sinP;
+      const ceilY = CONFIG.ui?.weatherFx?.ceiling ?? 520;
+      const depthPad = Math.min(ceilY * cotP, ceilY * 12);   // 极低仰角 cot 会爆，夹一下
       // v43 Q6：方位角必须一起传下去。可见区域是一个**绕 Y 旋转过的**矩形，
       // 天气层原先按轴对齐盒子铺粒子，转视角后四个角落在盒外 → 那几块没有雨雪。
       this.weatherFx.update(window.__weather || null, this._target,
-                            this.width / z, (this.height / z) / sinP,
+                            this.width / z, (this.height / z) / sinP + depthPad,
                             this._lightDt || 0.016, this.azimuthDeg || 0);
     }
     // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。

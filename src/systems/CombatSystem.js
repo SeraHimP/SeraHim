@@ -3,6 +3,7 @@ import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
 import { canTarget, isStructureProtected } from './FactionSystem.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
+import { canFire } from './FacingSystem.js';
 
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
@@ -213,7 +214,9 @@ export class CombatSystem {
         minion.targetId = nearestTower.id;
         minion._lockUntil = (window.gameTime || 0) + (CONFIG.tuning?.lockOnWindup ?? 0.3); // v33（Q14）：小兵同样有锁定前摇
       }
-      if (dist <= range && minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))) {
+      // v45：朝向门（与对战路径共用 canFire 这一份实现，不在这里再判一次角差）。
+      if (dist <= range && minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))
+          && canFire(minion, nearestTower)) {
         minion.targetId = nearestTower.id;
         this.performAttack(minion, nearestTower);
         // v43 Q2：与对战路径共用同一个攻城结算（攻速 -50% + 自损 20%）。

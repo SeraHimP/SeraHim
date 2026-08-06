@@ -106,6 +106,10 @@ export const summoners_rift = {
   // （自 assets/maps/preview.jpg 导航图描出）——野区可走、野区墙体成形、河道连通，
   // 并带龙坑/男爵坑。置 false 可退回旧的"三路走廊"模型。
   useNavgrid: true,
+  // v45：只有这张图有龙（用户定稿："只有在召唤师峡谷中才有龙的生成！其他地图没有！"）。
+  // 与下面的 pits 同一个口径：**地图自己声明自己有什么**，引擎不按 id 猜。
+  // 嚎哭深渊 / 扭曲丛林不写这一项 → DragonSystem.mapAllowsDragon() 为 false，不自动刷龙。
+  dragon: { enabled: true },
   // v44：龙坑归**地图**所有，不再由 MapSystem 按 useNavgrid 一律发 SR 的坑。
   // 原实现是 `getPit = useNavgrid ? SR_PITS : null` —— 于是嚎哭深渊和扭曲丛林
   // 这两张同样用 navgrid 的图，也被挖了召唤师峡谷的两个坑（坐标在那两张图上毫无意义）。

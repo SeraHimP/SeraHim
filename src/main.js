@@ -13,6 +13,7 @@ import { WeatherSystem } from './systems/WeatherSystem.js';
 import { WorldState } from './systems/WorldState.js';
 import { WeatherPanel } from './ui/WeatherPanel.js';
 import { LaneMovementSystem } from './systems/LaneMovementSystem.js';
+import { FacingSystem } from './systems/FacingSystem.js';
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
 import { CollisionSystem } from './systems/CollisionSystem.js';
 import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
@@ -204,6 +205,9 @@ CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.m
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem);
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
 const collisionSystem = new CollisionSystem(entityContainer, mapSystem);
+// v45：朝向/转身。排在移动之后（用最新位置转），攻击门读的是上一帧的朝向 ——
+// 见 FacingSystem 头注的「时序」一节。
+const facingSystem = new FacingSystem(entityContainer);
 const laneAvengerSystem = new LaneAvengerSystem(entityContainer, effectRegistry, eventBus, mapSystem); // v33 Q20：哀兵
 
 
@@ -218,6 +222,9 @@ const { createTower, createBuilding, createMinion, createDragon } = createFactor
 });
 mapSystem.setCreateBuildingFn(createBuilding);
 dragonSystem.setCreateEntity(createDragon);
+// v45：让巨龙系统能问"这张图声明了 dragon 吗"。注入而不是 import MAPS：
+// 自制地图存在 MapSystem 那边，直接 import 只能看到内置的三张。
+dragonSystem.setMapLookup((id) => mapSystem.getMapById?.(id) || null);
 // v43：龙的「宿怨」被动（对某阵营的减伤/增伤随该阵营击杀数增长）在 CombatSystem 里结算，
 // 击杀数由 DragonSystem 灌过去 —— 这里做一次注入，避免两个系统互相 import。
 dragonSystem.setCombatSystem(combatSystem);
@@ -599,6 +606,7 @@ function stepSimulation(dt) {
   laneWaveSystem.update(dt);
       laneMovementSystem.update(dt);
       collisionSystem.update(dt);
+  facingSystem.update(dt);      // v45：朝向必须在移动/碰撞之后，才用得上这一帧的位置
   laneAvengerSystem.update(dt); // v33 Q20：哀兵光环（0.5s 节奏内部节流）
   projectileSystem.update(dt);
 }

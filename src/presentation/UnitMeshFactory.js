@@ -541,11 +541,16 @@ const MINION_BUILDERS = {
   },
 };
 
-// 需要朝向的兵种（有明确头尾）。图腾/护盾/术士/蚀骨等对称造型不转。
-// v44：术士与蚀骨也进来 —— 它们的新造型有明确的正面（法杖/镰爪在固定一侧），
-// 不转的话走反方向时会看到「背对着挥镰刀」。图腾是轴对称的，仍然不转。
-const FACING_TYPES = new Set(['melee', 'ranged', 'siege', 'ram', 'super', 'warlock', 'corrupt']);
-export function needsFacing(type) { return FACING_TYPES.has(type); }
+// ==================== 谁要转（v45 改为"除塔之外全都转"）====================
+// 这里原来是一张白名单（melee/ranged/siege/ram/super/warlock/corrupt），
+// 理由是"图腾这类轴对称造型转了也看不出来"。那个理由在 v45 之前成立，现在不成立了：
+// **朝向已经变成战斗规则**（非塔单位必须转到正面才能开火，见 FacingSystem）。
+// 一个单位如果受规则约束却在画面上从不转身，玩家看到的就是"它明明对着敌人却不打" ——
+// 表现与规则脱节比"转了看不出来"糟得多。轴对称的单位转起来无害，只是看不见而已。
+//
+// 判据必须与 FacingSystem.facingExempt **同一句话**（塔豁免），否则两处一旦漂移，
+// 又会变成"规则说要转、画面不转"的那种查不出来的不一致。
+export function needsFacing(type) { return type !== 'tower'; }
 
 /**
  * 小兵：身体（下粗上细的柱体）+ 头（球）+ 肩甲，阵营色。
@@ -583,7 +588,15 @@ export function minionMesh(key, color, size, type, faction) {
  * 远古龙不再是"同一个模型放大"：它多一对犄角、背板更高、翼展更大，
  * 光靠剪影就能和元素龙分开。
  *
- * 朝向约定：模型面朝 -Z（与 needsFacing 的其余单位一致）。
+ * ==================== 朝向（v45 修：龙走路头没朝前）====================
+ * 用户："龙目前走路头没有朝着前面。"两个原因叠在一起：
+ *   ① 龙**不在** FACING_TYPES 里 —— 它从来就没转过，永远朝正北；
+ *   ② 更隐蔽的一条：这条龙的几何是**朝 -Z 建**的（头在 -Z、尾在 +Z），
+ *      而项目里其余程序化模型一律朝 +Z 建（UnitLayer 直接把 _facing 赋给 rotation.y）。
+ *      也就是说即使把它加进 FACING_TYPES，它也会**倒着走**。
+ * 头注原来那句"朝向约定：模型面朝 -Z（与其余单位一致）"是错的 —— 其余单位朝 +Z。
+ * 这种"注释写着一致、其实相反"的东西最坑，所以不靠改注释解决：
+ * 造完之后把整块几何绕 Y 转 180°，让它**真的**朝 +Z，与全项目同一个约定。
  */
 export function dragonMesh(key, color, ancient) {
   let hit = _geoCache.get(key);
@@ -693,6 +706,9 @@ export function dragonMesh(key, color, ancient) {
     });
 
     hit = pack(parts);
+    // 归一到全项目的朝向约定（正面 = +Z）。这条龙上面所有部件都是按"头在 -Z"摆的，
+    // 与其重排几十个坐标（每改一处都可能把翼/尾摆错），不如整体转 180° —— 一行，且无歧义。
+    hit.geo.rotateY(Math.PI);
     _geoCache.set(key, hit);
   }
   return { geo: hit.geo, mat: unitMaterial(false), topY: hit.topY };

@@ -61,6 +61,13 @@ export class MapSystem {
     return Object.values(MAPS).map(m => ({ id: m.id, label: m.label }));
   }
 
+  /**
+   * v45：按 id 取地图数据。给"需要问地图声明了什么"的系统用（目前是 DragonSystem
+   * 问 `dragon.enabled`）。走这一个入口而不是让各系统自己 import MAPS ——
+   * 自制地图也注册在 MAPS 里，但入口只有一个，以后改注册方式只改这一处。
+   */
+  getMapById(id) { return MAPS[id] || null; }
+
   loadMap(mapId = DEFAULT_MAP_ID) {
     const map = MAPS[mapId];
     if (map?.nexusRespawnTime != null) this.NEXUS_RESPAWN_TIME = map.nexusRespawnTime;

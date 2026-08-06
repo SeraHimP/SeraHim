@@ -1,6 +1,7 @@
 import { canTarget, isStructureProtected } from './FactionSystem.js';
 import { AISystem } from './AISystem.js';
 import { getSiegeWeaponDef } from './CombatSystem.js';
+import { canFire } from './FacingSystem.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
 
 /**
@@ -206,7 +207,11 @@ export class LaneMovementSystem {
           // ---- 5a. 射程内：站定输出（锚定标记供碰撞系统识别，锚定单位几乎不可推动） ----
           minion._anchored = true;
           minion._offPath = true; // 交战过（可能被位移/追击带离路径），脱战后需重投影
-          if (minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))) {
+          // v45：朝向门。目标不在正面扇形内 → 这一下打不出去，等 FacingSystem 转到位。
+          // 冷却**不重置**（只是"这一帧没开火"），否则转身会顺带清空攻击节奏，
+          // 变成"每次换目标都白等一个完整攻击间隔"，那是双重惩罚。
+          if (minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))
+              && canFire(minion, target)) {
             this.combat.performAttack(minion, target);
             // v43 Q7：走属性表，不读原始模板值。
             // v43 Q2：攻城副作用（攻速 -50% + 自损）搬进 CombatSystem.finishAttack，

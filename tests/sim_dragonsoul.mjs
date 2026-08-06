@@ -92,7 +92,15 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   const hasPower = (e) => w.fx.getEffects(e.id).some(x => x.blueprint?.stackKey?.startsWith('dragon_fire'));
   T('②-该阵营全部塔拿到巨龙之力', w.pick('blue', 'tower').every(hasPower));
   T('②-该阵营大型小兵也拿到', w.pick('blue', 'siege').every(hasPower));
-  T('②-近战兵不拿（不在领受范围内）', w.pick('blue', 'melee').every(e => !hasPower(e)));
+  // v45：用户改了规则 ——「巨龙之力现在作用于所有单位（包含普通小兵），
+  // 只有龙魂作用于大型小兵+塔」。所以这一条从"近战兵不拿"翻成"近战兵也拿"。
+  // 这是**规则改了**，不是断言写错了；魂的那条范围断言（③）原样保留。
+  T('②-近战兵现在也拿力（v45：力的范围放宽到所有单位）',
+    w.pick('blue', 'melee').every(hasPower));
+  T('②-力的层数不因兵种打折（近战与大型兵同层）', (() => {
+    const st = (e) => (w.fx.getEffects(e.id).find(x => x.blueprint?.stackKey?.startsWith('dragon_fire')) || {}).stacks;
+    return st(w.pick('blue', 'melee')[0]) === st(w.pick('blue', 'siege')[0]);
+  })());
   T('②-敌方一点都没有', [...w.units.red].every(e => !hasPower(e)));
   void fx; void units; void pick;
 }
@@ -150,7 +158,13 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   const freshSiege = mkFresh('siege', 'blue');
   T('⑤-新出的大型小兵同样补发', ds.equipExistingSoul(freshSiege) === true && anySoul(freshSiege));
   const freshMelee = mkFresh('melee', 'blue');
-  T('⑤-新出的近战兵不补发', ds.equipExistingSoul(freshMelee) === false && !anySoul(freshMelee));
+  // v45：近战兵现在要补【力】、但仍然不给【魂】。
+  // 补发这条尤其不能漏：击杀时的 _grantAll 已经放宽到所有单位，补发这边如果还卡着
+  // 老范围，就会变成"开局在场的近战兵有力、后面出的没有" —— 两处范围不一致
+  // 比两处都窄难查得多（本仓库刚在龙的两条出生路径上栽过同一形状）。
+  T('⑤-新出的近战兵要补【力】', ds.equipExistingSoul(freshMelee) === true
+    && fx.getEffects(freshMelee.id).some(x => x.blueprint?.stackKey?.startsWith('dragon_fire')));
+  T('⑤-但近战兵仍然拿不到【魂】', !anySoul(freshMelee));
   const freshRed = mkFresh('tower', 'red');
   T('⑤-敌方新塔不补发', ds.equipExistingSoul(freshRed) === false && !anySoul(freshRed));
 

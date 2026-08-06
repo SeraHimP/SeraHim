@@ -541,11 +541,14 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     NEED.every(k => builders.includes(k)));
   T('模④-模板里配置的兵种与有造型的兵种对得上',
     NEED.every(k => !!CONFIG.templates[k]));
-  T('模⑤-有正面的兵种会转向（术士的法杖、蚀骨的镰爪都在固定一侧）', (() => {
-    const m = umf.match(/const FACING_TYPES = new Set\(\[([^\]]*)\]/);
-    if (!m) return false;
-    const set = m[1];
-    return /'warlock'/.test(set) && /'corrupt'/.test(set) && !/'totem'/.test(set);
+  // v45：白名单 FACING_TYPES 已删。原因不是"这条不重要了"，而是**它变重要了**：
+  // 朝向从纯表现升级成了战斗规则（非塔单位必须转到正面才能开火）。
+  // 受规则约束却在画面上从不转身 = 玩家看到"它对着敌人却不打"，
+  // 所以判据从"哪些兵种在白名单里"改成"除塔之外全都转，且与 FacingSystem 同一句话"。
+  T('模⑤-除塔之外的单位都会转向（与 FacingSystem.facingExempt 同一判据）', (() => {
+    const okShape = /needsFacing\(type\) \{ return type !== 'tower'; \}/.test(umf);
+    const noWhitelist = !/FACING_TYPES/.test(umf);
+    return okShape && noWhitelist;
   })());
 
   // ---- 真的能造出几何来（headless 下 three 可用）----

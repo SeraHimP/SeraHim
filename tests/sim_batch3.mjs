@@ -71,7 +71,15 @@ T('成长为固定值表(Q2)',
   && Object.values(CONFIG.battleGrowth).every(g => ['hp','ad','res'].every(k => typeof g[k] === 'number')));
 T('maxHP缩放修复', mainSrc.includes('entity.baseStats.maxHP = tpl.maxHP * hpScale'));
 T('固定值走growthFlat通道', mainSrc.includes('growthFlat: battleGrowthFlat(type)'));
-T('巨龙默认暂停', fs.readFileSync(new URL('../src/systems/DragonSystem.js', import.meta.url),'utf8').includes('this.paused = true'));
+// v45：用户定稿"龙开关默认启用"。原来默认暂停的理由是"巨龙系统待大改，先默认关闭"，
+// 那一轮大改已经做完了。现在守的是**反过来**的形状：默认不暂停，
+// 而"这张图有没有龙"改由地图声明 dragon.enabled 决定（只有召唤师峡谷声明了）。
+{
+  const dsrc = fs.readFileSync(new URL('../src/systems/DragonSystem.js', import.meta.url),'utf8');
+  T('巨龙默认启用（不再默认暂停）',
+    /this\.paused = false;/.test(dsrc) && !/this\.paused = true/.test(dsrc));
+  T('是否生成龙改由地图声明决定', /mapAllowsDragon\(\)/.test(dsrc));
+}
 T('四塔成长技能注册', !!SkillLibrary.passive_growth_outer && !!SkillLibrary.passive_growth_inner && !!SkillLibrary.passive_growth_base && !!SkillLibrary.passive_growth_hq);
 T('基地光环注册', !!SkillLibrary.passive_home_aura);
 const {canTarget:ct}=await import('../src/systems/FactionSystem.js');

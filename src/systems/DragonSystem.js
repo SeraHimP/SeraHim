@@ -60,7 +60,14 @@ export class DragonSystem {
     this.config = CONFIG.gameRules;
 
     this.nextDragonTime = dragonCfg().firstDelay; // 首条元素龙：开局60秒（软编码）
-    this.paused = true; // 开局默认暂停巨龙生成（用户要求：巨龙系统待大改，先默认关闭；原开关照常可开启）
+    // v45：默认**启用**（用户定稿："龙开关默认启用"）。
+    // 此前默认 true（暂停），理由是"巨龙系统待大改，先默认关闭"——那一轮大改已经做完了。
+    this.paused = false;
+    // v45：这张图有没有龙。用户定稿："只有在召唤师峡谷中才有龙的生成！其他地图没有！"
+    // 判据是**地图自己声明** `dragon.enabled`（与龙坑 v44 改成地图自有是同一个口径），
+    // 不是在 Config 里维护一张 id 白名单 —— 那样自制地图想要龙还得去改引擎配置。
+    // 默认 null = 还没载入任何地图（沙盒），此时不拦（沙盒里手动生成龙照常可用）。
+    this._mapDragon = null;
     this.createEntity = null;
     this.elementDragonSpawned = 0; // 已刷新的元素龙数
     this.ancientSpawned = 0;       // 已刷新的远古龙数
@@ -89,6 +96,31 @@ export class DragonSystem {
     this._nextPitSide = 'top';                   // v43：上/下龙坑交替，首条从上坑出
 
     this._bindDeath();
+    this._bindMap();
+  }
+
+  /**
+   * v45：换地图时同步两件事（用户定稿："重新载入地图龙的波次等也应该重置！"）。
+   *   ① 局内进度整个清零 —— 否则换图后第一条龙可能直接是第 5 条的属性，
+   *      甚至因为 soulUnlocked 还留着而直接出远古龙。
+   *   ② 记下这张图允不允许生成龙。
+   * 挂在 map:loaded 上而不是让 main.js 去调：这条规则属于巨龙系统自己，
+   * 放在外面就会出现"某个新的载图入口忘了调"——本仓库刚因为同类问题
+   *（龙的两条出生路径）踩过一次。
+   */
+  _bindMap() {
+    this.eventBus.on('map:loaded', ({ mapId }) => {
+      this.resetRun();
+      const m = this._mapOf ? this._mapOf(mapId) : null;
+      this._mapDragon = m ? (m.dragon?.enabled === true) : null;
+    });
+  }
+  /** main.js 注入"按 id 取地图数据"的函数（不注入时退化为不拦，单测里可缺省）。 */
+  setMapLookup(fn) { this._mapOf = fn; }
+
+  /** 这张图现在允不允许**自动生成**龙。null（沙盒/未注入）一律放行。 */
+  mapAllowsDragon() {
+    return this._mapDragon === null ? true : this._mapDragon;
   }
 
   /**
@@ -162,6 +194,7 @@ export class DragonSystem {
     this._expireSlayers();   // v45：屠龙者的 60s 魂到点摘掉
     if (CONFIG.dragonToggles && CONFIG.dragonToggles.spawn === false) return;
     if (this.paused) return;
+    if (!this.mapAllowsDragon()) return;   // v45：这张图没有龙（只有召唤师峡谷声明了 dragon.enabled）
     const alive = this.entities.getByType('dragon', true);
     if (alive.length > 0) return;
 
@@ -196,6 +229,21 @@ export class DragonSystem {
     if (e.type === 'tower') return true;
     if (e.type === 'dragon') return false;
     return e.type !== 'melee' && e.type !== 'ranged';
+  }
+
+  /**
+   * v45：**巨龙之力**的领受范围 —— 全部单位（塔 + 所有小兵，含近战/远程）。
+   * 用户定稿："巨龙之力现在作用于所有单位（包含普通小兵），只有龙魂作用于大型小兵+塔。"
+   * 追加确认：小兵拿到的层数与大型兵**完全一样**，不打折。
+   *
+   * 与 SOUL_REWARD_OK 分成两个函数而不是加一个布尔参数：这是两条会各自演化的
+   * 设计规则（"力"给谁、"魂"给谁），共用一个带开关的函数迟早变成一堆嵌套 if，
+   * 而且调用点看不出自己问的到底是哪一条。
+   * 龙自己不在领受范围内 —— 它自带的那份走 applyDragonSelfBuffs，是另一回事。
+   */
+  static POWER_REWARD_OK(e) {
+    if (!e) return false;
+    return e.type !== 'dragon';
   }
 
   spawnDragon() {
@@ -263,7 +311,7 @@ export class DragonSystem {
       this.factionKills[owner][el] = (this.factionKills[owner][el] || 0) + 1;
       this.factionTotals[owner]++;
       // 巨龙之力：给该阵营**全体**（塔 + 大型小兵）叠一层该元素的永久增益
-      this._grantAll(owner, (e) => this._applyElementBuff(e, el));
+      this._grantAll(owner, (e) => this._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
       // 把击杀数灌给 CombatSystem —— 龙的「宿怨」被动要按它算减伤/增伤
       this._pushKillCounts();
     }
@@ -395,14 +443,16 @@ export class DragonSystem {
   setCombatSystem(combat) { this._combat = combat; this._pushKillCounts(); }
 
   /**
-   * 对某阵营的**全部**领受者（塔 + 大型小兵）执行 fn。
-   * 领受范围判定走 SOUL_REWARD_OK —— 见那个函数的注释。
+   * 对某阵营的全部领受者执行 fn。
+   * v45：范围**由调用方指定**——龙魂给 SOUL_REWARD_OK（塔 + 大型小兵），
+   * 巨龙之力给 POWER_REWARD_OK（所有单位）。默认值保持龙魂那条，
+   * 这样漏传参数时是"更保守的范围"而不是"意外发给所有人"。
    */
-  _grantAll(faction, fn) {
+  _grantAll(faction, fn, okFn = DragonSystem.SOUL_REWARD_OK) {
     if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return 0;
     let n = 0;
     for (const e of this.entities.getAll(true)) {
-      if (!DragonSystem.SOUL_REWARD_OK(e)) continue;
+      if (!okFn(e)) continue;
       if ((e._mapFaction || e.faction) !== faction) continue;
       fn(e); n++;
     }
@@ -416,17 +466,21 @@ export class DragonSystem {
    * main.js 的 createBuilding / createMinion 在实体入场后调它。
    */
   equipExistingSoul(entity) {
-    if (!DragonSystem.SOUL_REWARD_OK(entity)) return false;
     if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return false;
     const fac = entity?._mapFaction || entity?.faction;
     if (fac !== 'blue' && fac !== 'red') return false;
     let any = false;
-    // ① 巨龙之力：按该阵营每种元素已击杀的条数逐层补
-    for (const [el, cnt] of Object.entries(this.factionKills[fac] || {})) {
-      for (let i = 0; i < cnt; i++) { this._applyElementBuff(entity, el); any = true; }
+    // ① 巨龙之力：按该阵营每种元素已击杀的条数逐层补 —— **所有单位**都补（v45）。
+    // 这个门原来写在函数开头，是一句 SOUL_REWARD_OK 管两件事；力的范围放宽之后
+    // 必须拆开，否则新出的近战/远程兵永远补不到力（只有开局那一刻在场的能拿到，
+    // 而击杀时的 _grantAll 已经放宽了 —— 两处范围不一致比两处都窄更难查）。
+    if (DragonSystem.POWER_REWARD_OK(entity)) {
+      for (const [el, cnt] of Object.entries(this.factionKills[fac] || {})) {
+        for (let i = 0; i < cnt; i++) { this._applyElementBuff(entity, el); any = true; }
+      }
     }
-    // ② 龙魂本体
-    if (this.soulOwner === fac && this.souls[fac]?.[0]) {
+    // ② 龙魂本体：仍然只给塔 + 大型小兵
+    if (DragonSystem.SOUL_REWARD_OK(entity) && this.soulOwner === fac && this.souls[fac]?.[0]) {
       this._equipSoul(entity, this.souls[fac][0]); any = true;
     }
     return any;
