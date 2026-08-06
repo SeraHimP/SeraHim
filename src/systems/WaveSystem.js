@@ -1,4 +1,4 @@
-﻿import { CONFIG } from '../data/Config.js';
+import { CONFIG } from '../data/Config.js';
 
 export class WaveSystem {
   constructor(entityContainer, eventBus) {

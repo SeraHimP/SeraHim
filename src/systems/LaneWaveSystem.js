@@ -1,4 +1,4 @@
-﻿import { FACTIONS } from './FactionSystem.js';
+import { FACTIONS } from './FactionSystem.js';
 import { CONFIG } from '../data/Config.js';
 import { buildWaveOrder } from '../data/waveComposition.js';
 

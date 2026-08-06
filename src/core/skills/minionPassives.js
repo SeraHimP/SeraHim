@@ -1,4 +1,4 @@
-﻿import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION, AURA_RANGE } from './_helpers.js';
+import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION, AURA_RANGE } from './_helpers.js';
 import { applyHeal, healPowerFor } from '../healing.js';
 import { CONFIG } from '../../data/Config.js';
 

@@ -1,4 +1,4 @@
-﻿import { CONFIG } from '../data/Config.js';
+import { CONFIG } from '../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../data/waveComposition.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, DRAGON_DEFAULTS } from '../data/dragonCurve.js';

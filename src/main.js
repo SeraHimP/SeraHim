@@ -1,4 +1,4 @@
-﻿import { EntityContainer } from './core/EntityContainer.js';
+import { EntityContainer } from './core/EntityContainer.js';
 import { CTX } from './core/GameContext.js';
 import { EffectRegistry } from './core/EffectRegistry.js';
 import { SkillLibrary } from './core/SkillLibrary.js';

@@ -7,41 +7,18 @@
 架构、数据流、编辑器、自制内容、地图、渲染层、测试规范、调平衡、界面规范，
 以及一份"症状 → 真实根因"的事故档案。**动手前请完整读一遍那份文件。**
 
-本页只留**四条硬约束**：违反其中任何一条，改动都算失败。别的可以后看，这四条得先看。
+本页只留**三条硬约束**：违反其中任何一条，改动都算失败。别的可以后看，这三条得先看。
+
+> **v43 起，原第 1 条「行尾必须逐文件保持原样」已作废。**
+> 全仓库已统一为 **LF、无 BOM**，`.gitattributes` 改成 `* text=auto eol=lf`。
+> 直接用普通编辑器/脚本改文件即可，不用再探测和保留行尾。
+> 作废的理由与那次归一提交的做法写在 `.gitattributes` 的注释里。
+> 唯一仍然成立的老教训：**用脚本改文件时先算出新字符串再打开写句柄**
+> ——`open(p,'w')` 会立刻截断文件，曾经把 `ModeDialog.js` 清成 0 字节。
 
 ---
 
-## 1. 行尾必须逐文件保持原样
-
-`.gitattributes` 是 `* -text`：git **不做任何行尾转换**，仓库里存什么就是什么。
-而本仓库的行尾是**混合**的（`src/main.js`、`src/ui/AttributeEditor.js` 是 CRLF+BOM；
-`src/systems/LaneWaveSystem.js` 是 CRLF+BOM 且夹着 18 个孤立 LF；其余绝大多数是 LF）。
-完整清单见 `docs/DEVELOPMENT.md` §0.1。
-
-用脚本改文件时**必须**同时保留行尾和 BOM，且**先算出新字符串再打开写句柄**
-（`io.open(p,'w')` 会立刻截断文件——曾经把 `ModeDialog.js` 清成 0 字节）：
-
-```python
-s = io.open(p, encoding='utf-8', newline='').read()   # newline='' 双向禁用换行转换
-out = s.replace(old, new)                             # 先算完，再开写句柄
-assert out != s
-io.open(p, 'w', encoding='utf-8', newline='').write(out)
-```
-
-改完自查：
-
-```bash
-node -e "const b=require('fs').readFileSync(process.argv[1],'utf8');
-console.log('CRLF='+(b.match(/\r\n/g)||[]).length,
-            'loneLF='+(b.match(/(^|[^\r])\n/g)||[]).length,
-            'BOM='+(b.charCodeAt(0)===0xFEFF))" src/main.js
-```
-
-**这不是洁癖。** 已经出过三次事故：往 CRLF 文件里混进几行 LF，diff 变成整段重写、
-真实改动被埋掉；一个测试用 `split('\n')` 切 CRLF 文件，残留的 `\r` 让 `/\/\/.*$/`
-永远匹配不到整行注释，于是"检查未使用变量"的用例报了 7 个假阳性；写句柄截断文件。
-
-## 2. 交付前 `npm test` 必须全绿
+## 1. 交付前 `npm test` 必须全绿
 
 ```bash
 node tests/run_all.mjs      # 约 5~8 分钟，41 套
@@ -54,7 +31,7 @@ node tests/run_all.mjs      # 约 5~8 分钟，41 套
 否则等于没做——没有断言守着的行为，下一个人改两行就没了。断言要钉**行为形状**，
 不要钉具体数字（见 `docs/DEVELOPMENT.md` §8.2）。
 
-## 3. 一切数值都必须软编码
+## 2. 一切数值都必须软编码
 
 用户的原话：「所有的都不要硬编码，都应该是可编辑的软编码」。
 新数值一律进 `src/data/Config.js`，并在编辑器里给出可改入口。
@@ -64,7 +41,7 @@ node tests/run_all.mjs      # 约 5~8 分钟，41 套
 （见 `docs/DEVELOPMENT.md` §8.3）。另外注意：**同一技能在不同地图上可能表现不同**，
 技能参数要留地图级覆写的余地（见 `MapSystem` 的 `_params` 注入）。
 
-## 4. 改了期望常量，必须在提交信息里逐项报告
+## 3. 改了期望常量，必须在提交信息里逐项报告
 
 用户明确要求：「随改更新被影响的期望常量，每项在提交里报告」。
 提交信息里要写清**哪个常量、从什么改成什么、为什么**。没改也要写"本次未改动任何期望常量"。

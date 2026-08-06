@@ -28,50 +28,27 @@
 
 ## 零、硬约束（违反其中任何一条，改动都算失败）
 
-### 0.1 行尾必须逐文件保持原样
+### 0.1 行尾：全仓库统一 LF、无 BOM（v43 起）
 
-`.gitattributes` 是 `* -text`：git **不做任何行尾转换**，仓库里存什么就是什么。
-而本仓库的行尾是**混合**的：
+`.gitattributes` = `* text=auto eol=lf`。**改文件时不用再管行尾**，普通编辑器/脚本直接写即可。
 
-| 文件 | 行尾 | 备注 |
-|---|---|---|
-| `src/main.js` | CRLF | **带 BOM** |
-| `src/ui/AttributeEditor.js` | CRLF | **带 BOM** |
-| `src/systems/LaneWaveSystem.js` | CRLF | **带 BOM，且有 18 行是 lone LF** |
-| `src/systems/CombatSystem.js` | CRLF | 有 3 行 import 是 lone LF |
-| `src/ui/SettingsDialog.js`、`src/core/skills/_helpers.js` | CRLF | 无 BOM |
-| `src/core/skills/minionPassives.js` | LF | **带 BOM** |
-| 其余绝大多数 | LF | |
-
-用脚本改文件时**必须**同时保留行尾和 BOM：
-
-```python
-# 正确：newline='' 双向禁用换行转换；encoding='utf-8' 会把 BOM 当普通字符原样带过
-s = io.open(p, encoding='utf-8', newline='').read()
-io.open(p, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
-```
-
-改完自查：
-
-```bash
-node -e "const b=require('fs').readFileSync(process.argv[1],'utf8');
-console.log('CRLF='+(b.match(/\r\n/g)||[]).length,
-            'loneLF='+(b.match(/(^|[^\r])\n/g)||[]).length,
-            'BOM='+(b.charCodeAt(0)===0xFEFF))" src/main.js
-```
-
-**这不是洁癖。** 已经出过三次事故：
+以前这里是 `* -text`（git 不做任何转换），仓库里 CRLF+BOM / CRLF / LF+BOM / LF 四种并存，
+还有 7 个文件在 CRLF 里夹着孤立 LF。每改一个文件都要先探测、再逐文件保留原样，
+为此出过三次事故：
 
 1. 往 CRLF 文件里混进几行 LF，diff 变成整段重写，真实改动被埋掉。
 2. 一个测试用 `split('\n')` 切 CRLF 文件，残留的 `\r` 让 `/\/\/.*$/` 永远匹配不到整行注释
    （`.` 不匹配 `\r`，`$` 锚在字符串末尾），"检查未使用变量"的用例报了 7 个假阳性，全是注释。
-3. **用 Python 改文件时 `io.open(p,'w')` 会先把文件截成 0 字节**，如果后面那行表达式抛异常，
-   文件就永久变空了（本仓库真发生过，`ModeDialog.js` 被清空）。
-   **正确写法：先把新内容算完，再打开文件写。**
+3. 用 Python 改文件时 `io.open(p,'w')` 会先把文件截成 0 字节。
+
+v43 把全仓库归一到 LF 无 BOM（`scratchpad/normalize_eol.py`，只改行尾与 BOM，
+内容逐字节未变，已用"去掉行尾与 BOM 后比对"复核）。上面 1、2 两条从此不可能再发生。
+
+**第 3 条仍然成立，与行尾无关**：任何语言里，写句柄一打开就截断文件。
 
 ```python
-out = s.replace(old, new)                       # 先算
-io.open(p, 'w', encoding='utf-8', newline='').write(out)   # 再写
+out = s.replace(old, new)          # 先算完
+open(p, 'w', encoding='utf-8').write(out)   # 再开写句柄
 ```
 
 ### 0.2 交付前 `npm test` 必须全绿

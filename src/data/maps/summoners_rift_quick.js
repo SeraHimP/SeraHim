@@ -1,4 +1,4 @@
-﻿import { WORLD_SIZE, summoners_rift } from './summoners_rift.js';
+import { WORLD_SIZE, summoners_rift } from './summoners_rift.js';
 
 /**
  * summoners_rift_quick.js - Quick Mode (15-minute games).
