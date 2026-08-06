@@ -228,8 +228,12 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     /faction === 'blue' \? '#4a9eff'/.test(ul) && /faction === 'red' \? '#ff5a5a'/.test(ul)
     && /'#4caf50';\s*\/\/ 中立一律绿色/.test(ul));
   const um = srcOf('src/ui/UIManager.js');
-  T('中立②-面板徽标有三档（原来是个没有第三档的三元，非蓝一律显示红方）',
-    /FAC_BADGE = \{[\s\S]*blue:[\s\S]*red:[\s\S]*neutral:/.test(um));
+  // v45：徽标（FAC_BADGE）已被抬头的阵营色圆点（FAC_DOT）取代 —— 用户要求把
+  // 左上角的「#1 防御塔」与右上角的「🔵 蓝方 · 外塔」合并成一处。
+  // 这条断言要守的**教训没变**：阵营是三值的，按它分叉的地方必须有三个分支，
+  // 少一档就会把中立单位贴上敌方标签。所以只把被钉的名字换掉，判据照旧。
+  T('中立②-面板抬头的阵营色有三档（原来是个没有第三档的三元，非蓝一律显示红方）',
+    /FAC_DOT = \{[\s\S]*blue:[\s\S]*red:[\s\S]*neutral:/.test(um));
   const pe = srcOf('src/ui/editor/pagesEntity.js');
   T('中立③-运维页有「中立」按钮', /data-op="fac" data-v="neutral"/.test(pe));
   T('中立③-切阵营的白名单也放行 neutral（否则按钮点了静默失败）',
@@ -397,10 +401,15 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('龙⑬-雷魂取消均摊（改为每目标固定一份）',
     'perTargetPct' in CONFIG.dragonSouls.thunder && !('totalPct' in CONFIG.dragonSouls.thunder)
     && /const per = \(ctx\.totalRaw \|\| 0\) \* \(\(p\.perTargetPct/.test(ds));
-  T('龙⑭-风魂给塔的是射程不是攻速（塔不会动，移速对它是废的）',
-    'towerAttackRangeFlat' in CONFIG.dragonSouls.wind
-    && !('towerAttackSpeedPct' in CONFIG.dragonSouls.wind)
-    && /statKey: 'attackRange', flatValue: p\.towerAttackRangeFlat/.test(ds));
+  // v45：本条推翻了 v44 的判断。v44 我给塔发的是**射程**，理由是"塔不会动，移速对它是废的"
+  // ——前半句没错，后半句结论错了：不能因为"移速对塔无效"就跳出速度这个主题。
+  // 用户明确要求风保持「+移速 +攻速 +攻速收益率」的方向，所以塔那一半改为发
+  // attackSpeedRatio（攻速收益率）：它同样是"速度"，同样对静止的塔有效，
+  // 而且是全局乘在所有攻速加成上的，与风的主题一致。
+  T('龙⑭-风魂给塔的是攻速收益率（同属速度主题，且对不会动的塔有效）',
+    'towerAttackSpeedRatio' in CONFIG.dragonSouls.wind
+    && !('towerAttackRangeFlat' in CONFIG.dragonSouls.wind)
+    && /statKey: 'attackSpeedRatio', flatValue: p\.towerAttackSpeedRatio/.test(ds));
   T('龙⑮-暗魂改为偷取（削对方多少自己得多少）',
     CONFIG.dragonSouls.dark.steal === true && /dragonsoul_dark_steal/.test(ds));
   T('龙⑯-山魂大削（v43 对照 6/6 全胜、推进度差 +3.65）',

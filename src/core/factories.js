@@ -525,6 +525,16 @@ function createDragon(type, opts = {}) {
   }
 
   entityContainer.add(entity);
+  // v45：元素龙自带对应的龙魂（1 层）+ 巨龙之力（该元素已死数 + 1 层）。
+  //
+  // ⚠️ 这一句原来写在 DragonSystem.spawnDragon() 里，用户实测"元素龙并没有自带"。
+  // 根因不是发放逻辑错了（单测里它一直是对的），而是**龙有两条出生路径**：
+  //   ① DragonSystem.spawnDragon()  —— 计时刷新
+  //   ② main.js 的 onAddDragon()    —— 设置里的"手动生成龙"，直接调 createDragon
+  // 挂在 ① 上就等于只覆盖了一半，手动生成出来的龙是裸的。
+  // 本仓库这个形状已经犯过好几次（攻城模式、重生规则都是"一件事写了半份在两处"）。
+  // 正确的挂点是**实体真正诞生的这一处**，只有一个，任何新的生成入口都自动覆盖。
+  dragonSystem.applyDragonSelfBuffs(entity);
   eventBus.emit('entity:spawn', { entityId: entity.id });
   const label = isAncient ? '🐲 远古巨龙' : `${entity._dragonIcon} ${entity.baseStats.label}`;
   uiManager.log(`${label} 降临！击败它获得龙之增益`, 'spawn');

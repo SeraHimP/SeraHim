@@ -192,15 +192,17 @@ export const dragonSouls = {
     id: 'dragonsoul_wind', name: '风魂', icon: '🌪', color: '#1abc9c', category: 'dragonsoul',
     get description() {
       const p = P('wind');
-      return `小兵移速 +${p.moveSpeedPct ?? 15}%，脱战后提升至 +${p.moveSpeedOutPct ?? 30}%；防御塔额外获得 +${p.towerAttackRangeFlat ?? 45} 攻击距离。`;
+      const mv = p.moveSpeedPct ?? 0;
+      return (mv > 0 ? `小兵移速 +${mv}%，脱战后提升至 +${p.moveSpeedOutPct ?? 25}%` : `小兵脱战后移速 +${p.moveSpeedOutPct ?? 25}%`)
+           + `；防御塔额外获得 +${p.towerAttackSpeedRatio ?? 0.15} 攻速收益率（把所有攻速加成整体放大）。`;
     },
     get descTemplate() {
       const p = P('wind');
-      return `唯一被动——风魂：小兵移速（【{val}%】，脱战后升至 +${p.moveSpeedOutPct ?? 30}%）；防御塔 +${p.towerAttackRangeFlat ?? 45} 攻击距离。`;
+      return `唯一被动——风魂：小兵移速（【{val}%】，脱战后升至 +${p.moveSpeedOutPct ?? 25}%）；防御塔 +${p.towerAttackSpeedRatio ?? 0.15} 攻速收益率。`;
     },
     computeCurrent: (entity) => {
       const p = P('wind');
-      return entity && entity._inCombat ? (p.moveSpeedPct ?? 15) : (p.moveSpeedOutPct ?? 30);
+      return entity && entity._inCombat ? (p.moveSpeedPct ?? 0) : (p.moveSpeedOutPct ?? 25);
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -212,13 +214,17 @@ export const dragonSouls = {
       //（那和别的魂重复），是**更早开火** —— 射程 +45 意味着敌方兵线还没进场就先挨一轮，
       // 而且这份收益是复利的：塔多打一轮 → 兵线更早崩 → 塔挨的伤害更少 → 又多打一轮。
       // 对照数据里风魂是 -0.54（比不拿还差），移速那一半反而把兵线推得脱离己方塔的保护。
+      // v45：塔那一半改回【速度】主题 —— 攻速收益率。
+      // 它是**乘性**的：本项目的攻速公式是 有效加成 = 正值 × attackSpeedRatio(默认 0.667)，
+      // 抬高收益率等于把这座塔身上所有来源的攻速加成一起放大，
+      // 而且对"不会移动"的单位完全有效（射程那一版方向对，但主题不是速度）。
       ctx.effectRegistry.apply(entityId, {
         name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
-        statKey: 'attackRange', flatValue: p.towerAttackRangeFlat ?? 45,
+        statKey: 'attackSpeedRatio', flatValue: p.towerAttackSpeedRatio ?? 0.15,
         duration: Infinity, permanent: true,
         stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        stackKey: 'dragonsoul_wind_range',
-        description: `攻击距离 +${p.towerAttackRangeFlat ?? 45}`,
+        stackKey: 'dragonsoul_wind_asr',
+        description: `攻速收益率 +${p.towerAttackSpeedRatio ?? 0.15}`,
       }, 'dragonsoul_wind');
     },
     onUnequip: (entityId, instance, ctx) => {
@@ -233,7 +239,7 @@ export const dragonSouls = {
       // 脱战判定复用引擎已有的 _inCombat / _combatTimer（攻击或受击时置起，4 秒后落下）。
       // 自己再记一套"上次交战时间"必然与引擎那套漂移 —— 双份状态是本项目的老毛病。
       const out = !e._inCombat;
-      const pct = out ? (p.moveSpeedOutPct ?? 30) : (p.moveSpeedPct ?? 15);
+      const pct = out ? (p.moveSpeedOutPct ?? 25) : (p.moveSpeedPct ?? 0);
       ctx.effectRegistry.apply(entityId, {
         name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
         aura: true, auraGrace: 1.0,

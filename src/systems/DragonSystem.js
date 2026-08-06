@@ -159,6 +159,7 @@ export class DragonSystem {
     // effect 那个开关不在这里 —— 龙照常刷、照常结算归属，只是不发放增益，
     // 这样才能量出"有龙但没魂"的平衡基线。
     this._expireAncient();   // v43：远古之力是限时的，到点摘掉
+    this._expireSlayers();   // v45：屠龙者的 60s 魂到点摘掉
     if (CONFIG.dragonToggles && CONFIG.dragonToggles.spawn === false) return;
     if (this.paused) return;
     const alive = this.entities.getByType('dragon', true);
@@ -218,9 +219,10 @@ export class DragonSystem {
     // 交替而不是随机：随机会出现"连着三条都压同一方"，那不是压力是处刑。
     const pitSide = this._nextPitSide;
     this._nextPitSide = (pitSide === 'top') ? 'bot' : 'top';
-    if (this.createEntity) {
-      this.createEntity('dragon', { element, isAncient, absStats: dstats, pitSide });
-    }
+    // 注：自带的魂/力**不在这里**发放。龙有两条出生路径（计时刷新 + 设置里的手动生成），
+    // 挂在这一条上会让手动生成的龙是裸的 —— 已实测踩到。现在挂在 createDragon()
+    // 里（实体真正诞生的唯一一处），任何新的生成入口都自动覆盖。
+    if (this.createEntity) this.createEntity('dragon', { element, isAncient, absStats: dstats, pitSide });
 
     const label = isAncient ? '🐲 远古巨龙' : `${DRAGON_ELEMENTS[element].icon} ${DRAGON_ELEMENTS[element].label}`;
     this.eventBus.emit('dragon:spawn', { element, isAncient, label });
@@ -242,6 +244,7 @@ export class DragonSystem {
    */
   _onDragonKilled(dragon) {
     const owner = dragon._lastHitFaction || null;   // 最后一击的阵营（可能为 null=沙盒/环境击杀）
+    this._grantSlayer(dragon);                      // v45：屠龙者（给出最后一击的**那一个单位**）
 
     if (dragon._isAncient) {
       this.ancientKills++;
@@ -274,6 +277,111 @@ export class DragonSystem {
     if (!this.soulResolved && owner && this.factionTotals[owner] >= this._soulRule.threshold) {
       this._resolveSoul(owner);
     }
+  }
+
+  /**
+   * ==================== v45：屠龙者 ====================
+   * 用户定稿："击杀龙的单位（唯一一个给予最后一击的）获得额外的 buff 屠龙者：
+   *            获得该龙对应的龙魂，持续 60s。比如击杀了雷龙就获得 60s 的雷魂。"
+   *
+   * 两条与"阵营级永久奖励"的区别，都要写清楚，否则很容易被误认为同一件事：
+   *   ① 领受者是**那一个单位**，不是全阵营；
+   *   ② **不受 SOUL_REWARD_OK 限制**（用户定稿"谁最后一击就给谁"）——
+   *      近战兵抢到人头也能拿。限制领受者的话它会在最常见的情形下静默失效：
+   *      兵线上近战兵最多，最可能补到尾刀。
+   * 与阵营已有的永久魂**并存**（用户定稿）：走 _toggleSoul 这条多选叠加的入口，
+   * 而不是 _equipSoul（那条是"单一替换"，会把永久魂顶掉）。
+   *
+   * 到期靠 state.slayerUntil + 每帧的 _expireSlayers 摘除 —— 不用效果系统的
+   * duration，因为要摘的是【技能实例】而不是一条 stat 效果。
+   */
+  _grantSlayer(dragon) {
+    if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return null;
+    const cfg = (CONFIG.gameRules?.dragon?.slayer) || {};
+    if (cfg.enabled === false) return null;
+    const sec = cfg.durationSec ?? 60;
+    const killerId = dragon._lastHitBy;
+    if (killerId == null) return null;
+    const killer = this.entities.get(killerId);
+    if (!killer || !killer.alive) return null;
+    const soulId = dragon._isAncient
+      ? 'dragonsoul_ancient'
+      : (DRAGON_ELEMENTS[dragon._element] || {}).soul;
+    if (!soulId || !this.skills[soulId]) return null;
+
+    // 已经有这条魂（阵营永久魂或上一次屠龙）→ 只续期，不重复装
+    const existing = (killer._skillInstances || []).find(i => i.skillId === soulId);
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    if (!existing) this._toggleSoul(killer, soulId);
+    const inst = (killer._skillInstances || []).find(i => i.skillId === soulId);
+    if (!inst) return null;
+    inst.state = inst.state || {};
+    // 阵营永久魂不该被 60 秒后摘掉 —— 只给"本来没有这条魂"的实例打限时标记。
+    // ⚠️ 这里最初写成 `else inst.state.slayerUntil = Math.max(slayerUntil||0, now+sec)`，
+    // 与上面那句注释**自相矛盾**：永久魂的 slayerUntil 本来是 undefined，
+    // Math.max(0, now+sec) 会给它盖上一个到期时间，60 秒后 _expireSlayers 就把
+    // 玩家辛苦拿到的阵营永久魂摘了 —— 而且症状只会在"已成魂的一方再补一刀"时出现，
+    // 极难复现。判据是 slayerUntil 本身存不存在，不是 existing 存不存在。
+    if (!existing) inst.state.slayerUntil = now + sec;
+    else if (inst.state.slayerUntil) inst.state.slayerUntil = Math.max(inst.state.slayerUntil, now + sec);
+    // else：这条是永久魂，本来就常驻，不打任何限时标记。
+    this._slayerWatch = this._slayerWatch || new Set();
+    this._slayerWatch.add(killer.id);
+
+    this.effects.apply(killer.id, {
+      name: '屠龙者', icon: '🗡', kind: 'display', type: 'buff', color: '#f0a03c',
+      duration: sec, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+      description: `击杀${dragon._isAncient ? '远古巨龙' : (DRAGON_ELEMENTS[dragon._element] || {}).label || '巨龙'}`
+                 + `：获得 ${this.skills[soulId].name} ${sec} 秒`,
+    }, 'dragon_slayer');
+    this.eventBus.emit('dragon:slayer', { entityId: killer.id, soulId, sec });
+    return killer.id;
+  }
+
+  /** 屠龙者到期：把限时那条魂摘掉（阵营永久魂没有 slayerUntil，不受影响）。 */
+  _expireSlayers() {
+    if (!this._slayerWatch || !this._slayerWatch.size) return;
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    for (const id of [...this._slayerWatch]) {
+      const e = this.entities.get(id);
+      if (!e || !e.alive) { this._slayerWatch.delete(id); continue; }
+      let left = 0;
+      for (const inst of [...(e._skillInstances || [])]) {
+        const until = inst.state && inst.state.slayerUntil;
+        if (!until) continue;
+        if (now >= until) this._toggleSoul(e, inst.skillId);   // 同一个入口卸下，onUnequip 会收尾
+        else left++;
+      }
+      if (!left) this._slayerWatch.delete(id);
+    }
+  }
+
+  /**
+   * ==================== v45：元素龙自带对应的力与魂 ====================
+   * 用户定稿："不同的元素龙自带对应种类的巨龙之力和龙魂，巨龙之力的层数为
+   *            死亡的该种的龙数量+1。龙魂为1层。"
+   * 例：已死 2 雷 + 1 火 + 1 山，第 5 条若是雷龙 → 自带 1 雷魂 + 3 雷之力（2+1）。
+   *
+   * 效果是"越往后的龙越难打"，而且**难在你放走过的那一种**上 —— 这比单纯按序号
+   * 加数值有叙事：一直不去打雷龙，雷龙就一直在变强。
+   * 计数用 this.killCounts（全局按元素计数，不分阵营）——"该种的龙死了几条"
+   * 与谁杀的无关。
+   */
+  applyDragonSelfBuffs(dragon) {
+    if (!dragon) return;
+    if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return;
+    if (dragon._isAncient) {
+      // 远古龙没有元素，自带远古之力（层数概念不适用）
+      if (this.skills.dragonsoul_ancient) this._toggleSoul(dragon, 'dragonsoul_ancient');
+      return;
+    }
+    const el = dragon._element;
+    const def = DRAGON_ELEMENTS[el];
+    if (!def) return;
+    if (this.skills[def.soul]) this._toggleSoul(dragon, def.soul);   // 龙魂 1 层
+    const stacks = (this.killCounts[el] || 0) + 1;                   // 力 = 该元素已死数 + 1
+    for (let i = 0; i < stacks; i++) this._applyElementBuff(dragon, el);
+    dragon._selfPowerStacks = stacks;   // 供 UI / 验收读，不参与结算
   }
 
   /** 把"各阵营已击杀的元素龙数"同步给 CombatSystem（龙的宿怨被动读它）。 */

@@ -128,7 +128,12 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   color: var(--text-dim, #8a93a3); cursor: pointer; font-size: 12px; padding: 2px 7px; border-radius: 6px;
 }
 #selectionActions button:hover { color: #fff; border-color: rgba(255,255,255,0.3); }
-#selectionBadge .type-tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; }
+/* v45：标题里的阵营色圆点（取代了原来右侧的【🔵 蓝方 · 外塔】徽标） */
+#selectionTitle { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text, #e6ebf2); }
+#selectionTitle .fac-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  box-shadow: 0 0 6px currentColor;
+}
 #selectionCard { padding: 8px; }
 #selectionCard .unit-card { margin: 0; }
 #perfHud {
@@ -691,12 +696,12 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
         <input id="azimSlider" type="range" min="0" max="360" step="1" value="0" title="视角方位角（0北 / 90东 / 180南 / 270西）· 靠近四方向自动吸附" style="width:96px;vertical-align:middle;">
       </div>
       <div id="selectionPanel">
-        <!-- v33（Q11）：✕ 关闭按钮已删（点击画布空白处即取消选中）；
-             左 = #id 单位名，右 = 阵营·层级徽标 + 图标化的编辑/删除按钮 -->
+        <!-- v33（Q11）：✕ 关闭按钮已删（点击画布空白处即取消选中）。
+             v45：左 = 阵营色圆点 + 单位类型（原「#id 防御塔」与右侧「蓝方·外塔」合并成这一处），
+                  右 = 图标化的编辑/删除按钮。 -->
         <div id="selectionHeader">
           <span id="selectionTitle">单位详情</span>
           <span style="display:flex;align-items:center;gap:6px;">
-            <span id="selectionBadge"></span>
             <span id="selectionActions"></span>
           </span>
         </div>

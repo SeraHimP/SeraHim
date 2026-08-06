@@ -25,7 +25,7 @@ const suites = [
   'sim_tplio.mjs', 'sim_crystal.mjs', 'sim_weather.mjs',
   'sim_v24.mjs', 'sim_v33.mjs', 'sim_v34.mjs', 'sim_v35.mjs', 'sim_v36.mjs', 'sim_v37.mjs',
   'sim_v39.mjs', 'sim_v40.mjs', 'sim_v41.mjs', 'sim_v42.mjs', 'sim_v43.mjs',
-  'sim_deadcode.mjs', 'sim_v44.mjs',
+  'sim_deadcode.mjs', 'sim_v44.mjs', 'sim_v45.mjs',
 ];
 
 const args = process.argv.slice(2);

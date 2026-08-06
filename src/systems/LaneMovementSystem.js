@@ -104,8 +104,21 @@ export class LaneMovementSystem {
       let target = minion.targetId ? this.entities.get(minion.targetId) : null;
       if (target && (!target.alive || !canTarget(minion._mapFaction, target._mapFaction || target.faction))) target = null;
       if (target) {
+        // ==================== v45：放弃距离同样不能小于自己的射程 ====================
+        // 用户："攻城车依旧不显示攻城模式，红线也不显示。是不是因为攻城车射程比较长？"
+        // —— 是。CHASE_DROP_RANGE 固定 240，攻城车射程 312：它站在 240~312 打塔时，
+        // **每一帧**都会在这里被判定"目标跑太远"而丢掉仇恨（target = null），
+        // 于是下面的 siegeAcquire 永远拿到 null，锁定永远建立不起来。
+        // 红线与【攻城模式】状态都以 _ramLockId 为唯一依据，两个症状同时消失。
+        // 攻击本身照常发生（第 4 步会从 scan 里重新捡回同一个目标），所以看起来
+        // "在打塔但没有攻城模式"，非常迷惑。
+        //
+        // v43 Q4 修过同一个形状的另一半（索敌半径 acqR），但只改了那一处 ——
+        // "射程比常量大"这件事影响的是**每一个拿射程和固定常量比较的地方**，
+        // 修的时候必须把这一类全找出来，只修被报告的那一个必然复发。
+        const dropR = Math.max(CHASE_DROP_RANGE, range * (CONFIG.tuning?.chaseDropFactor ?? 1.2));
         const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
-        if (dx * dx + dy * dy > CHASE_DROP_RANGE * CHASE_DROP_RANGE) target = null;
+        if (dx * dx + dy * dy > dropR * dropR) target = null;
       }
 
       // ---- 2. 扫描：单次查询取"索敌半径内最近敌"与"攻击射程内最近敌" ----

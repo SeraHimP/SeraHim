@@ -35,7 +35,7 @@ export class UIManager {
       });
     }
     // v33（Q11）：✕ 关闭按钮已移除——点击画布空白处取消选中（CanvasController 负责）
-    this.selBadge = document.getElementById('selectionBadge');
+    // v45：selectionBadge 已删（阵营与单位类型合并到 selectionTitle 左上角）。
     this.selActions = document.getElementById('selectionActions');
   }
 
@@ -662,28 +662,20 @@ export class UIManager {
     this.selCard.appendChild(card);
     this._selCardEl = card;
     const tierLabels = { outer: '外塔', inner: '内塔', base: '高地塔', nexus_lane: '召唤水晶', hq_tower: '枢纽塔', nexus_main: '水晶枢纽' };
-    // v33（Q11）：标题只留 #id 单位名（左）；【蓝方·高地塔】徽标移到右侧；
-    // 编辑/删除简化为纯图标按钮放右上角。
-    this.selTitle.textContent = e.type === 'tower'
-      ? `🏰 #${e.id} 防御塔`
-      : `${e.baseStats?.label || e.type} #${e.id}`;
-    if (this.selBadge) {
-      // v43：徽标补上【中立】这一档。
-      // 用户："我新建了中立防御塔……属性框里显示的是红方塔。"
-      // 原写法是个**没有第三档的三元**：`fac === 'blue' ? 蓝方 : 红方` ——
-      // 于是凡是"有阵营但不是蓝"的一律显示红方，中立单位被贴上了敌方的标签。
-      // 阵营是三值的（blue/red/neutral），任何按它分叉的地方都必须有三个分支。
-      const fac = e._mapFaction;
-      const FAC_BADGE = {
-        blue:    { text: '🔵 蓝方', bg: 'rgba(74,158,255,0.18)', fg: '#4a9eff' },
-        red:     { text: '🔴 红方', bg: 'rgba(255,90,90,0.18)',  fg: '#ff5a5a' },
-        neutral: { text: '⚪ 中立', bg: 'rgba(76,175,80,0.18)',  fg: '#4caf50' },
-      };
-      const fb = FAC_BADGE[fac];
-      this.selBadge.innerHTML = fb
-        ? `<span class="type-tag" style="background:${fb.bg};color:${fb.fg};">${fb.text}${e.type === 'tower' && e._mapTier ? ' · ' + (tierLabels[e._mapTier] || e._mapTier) : ''}</span>`
-        : '';
-    }
+    // v45：标题与右侧徽标合并。
+    // 用户："左上角那个就显示为 [阵营色圆圈] 单位类型。不要显示文字的阵营和右侧的＃编号"
+    // 合并前左边写「🏰 #1 防御塔」、右边写「🔵 蓝方 · 外塔」，两处说的是同一件事，
+    // 而且"防御塔"和"外塔"还互相重复。现在**只留一处**：一个阵营色圆点 + 单位类型。
+    // 阵营改用颜色而不是文字——颜色本来就是这个游戏里识别敌我的方式，写成文字反而占地方。
+    // ⚠️ 阵营是三值的（blue/red/neutral），任何按它分叉的地方都必须有三个分支：
+    // v43 修过一次「没有第三档的三元」，中立塔被显示成红方塔。
+    const FAC_DOT = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#4caf50' };
+    const dot = FAC_DOT[e._mapFaction] || '#8a93a3';
+    const typeName = e.type === 'tower'
+      ? (tierLabels[e._mapTier] || '防御塔')
+      : (e.baseStats?.label || e.type);
+    this.selTitle.innerHTML =
+      `<span class="fac-dot" style="background:${dot};"></span>${typeName}`;
     if (this.selActions) {
       this.selActions.innerHTML = e.type === 'tower'
         ? `<button data-action="towerEdit" data-id="${e.id}" title="编辑">✏️</button>

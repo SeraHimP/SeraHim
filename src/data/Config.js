@@ -184,6 +184,10 @@ export const CONFIG = {
       // 推导过程见 sr_navgrid.js 的 SR_PITS 注释）。填 { x, y } 即手动指定。
       // 上坑 = baron（地图左上那段河），下坑 = dragon（右下那段河）。
       pits: { baron: null, dragon: null },
+      // v45 屠龙者：给出最后一击的**那一个单位**获得对应龙魂，限时。
+      // 用户定稿"谁最后一击就给谁" —— 不受 SOUL_REWARD_OK 限制（近战兵抢到人头也算），
+      // 且与该阵营已有的永久魂**并存**。
+      slayer: { enabled: true, durationSec: 60 },
     },
   },
   // 建筑渲染体积（半径 px）：LoL 中水晶枢纽 > 防御塔 > 召唤水晶，按 tier 区分。
@@ -229,10 +233,9 @@ export const CONFIG = {
       water:   { healShieldPowerPct: 12, healthRegen: 2 },
       earth:   { armor: 8, magicResist: 8, maxHPPct: 6 },
       thunder: { armorPenPercent: 12, magicPenPercent: 12, maxHPPct: 4 },
-      // 风魂的生存分量给 damageReduction 而不是护甲/生命：主题是"难以捉摸"，
-      // 而且这条魂的机制侧（塔 +射程）已经很"进攻"，配一点纯减伤刚好。
-      // 数值给得比山魂（15%）小得多 —— 它是配角，不是第二个山魂。
-      wind:    { bonusAttackSpeedPct: 12, attackRange: 16, damageReduction: 3 },
+      // 风魂的生存分量给 damageReduction：主题是"难以捉摸"，而且数值给得比山魂小得多
+      // —— 它是配角，不是第二个山魂。
+      wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06, damageReduction: 3 },
       dark:    { damageAmpPct: 7, lifeStealPct: 4 },
       poison:  { onHitPercentDamage: 0.7, maxHPPct: 4 },
     },
@@ -266,7 +269,12 @@ export const CONFIG = {
     // 从 33 降到 15，没有解决方向问题 —— 判断错了。
     // 现在：交战中不再加移速（0），只在**脱战**时给一点（追赶/回防用），
     // 推进的收益全部交给塔的射程那一半。
-    wind:    { moveSpeedPct: 0, moveSpeedOutPct: 25, towerAttackRangeFlat: 45 },
+    // v45 风魂机制：塔那一半从「射程」改回【攻速收益率】—— 用户要的是速度主题。
+    // 收益率是乘性的：塔本来就带攻速加成，抬高收益率等于把已有的加成全部放大，
+    // 而且它对**不动的单位**完全有效（射程那一版是对的方向，但不是"速度"）。
+    // 小兵移速仍然只在**脱战**时给：v44 对照证明交战中加移速会把兵线推得脱离
+    // 己方塔的保护、反被反打（推进度差 −0.05）。脱战加速只影响赶路与回防，无害。
+    wind:    { moveSpeedPct: 0, moveSpeedOutPct: 25, towerAttackSpeedRatio: 0.15 },
     // 🌑 暗魂：命中削双抗，**全队共享层数**（友军攻击也叠）。
     // v44：改为"偷取" —— 削掉对方多少，自己就得到多少（上限同）。
     // 纯减抗在对照里是最差的一档（-0.90）：减抗只在自己有输出时才有价值，
@@ -311,7 +319,12 @@ export const CONFIG = {
     // 固定穿 10 点里有八九点是浪费的；真正有护甲的是塔（40~70），可那是**百分比**才吃得到的。
     // 换成百分比穿透 —— 仍然只属于雷（独占性不破），但收益终于落在有抗性的目标上。
     thunder: { armorPenPercent: 5, magicPenPercent: 5 },
-    wind:    { bonusAttackSpeedPct: 3, attackRange: 5 },
+    // v45 风改回【速度】主题（用户定稿："改为 +移速 +攻速 +攻击速度收益率等等"）。
+    // 三项都归风独占：attackRange 让出去（原来在风这里），attackSpeedRatio 这一项
+    // 全场只有风用 —— 而且它对**塔**有效（塔不动，移速对塔是废的，这正是上一版
+    // 风魂推进度差 −0.05 的根因）。收益率把"攻速加成"的折扣（默认 0.667）往上抬，
+    // 于是风与自己的攻速加成、以及别处来的攻速加成都产生乘性协同，这是它独有的手感。
+    wind:    { moveSpeed: 3, bonusAttackSpeedPct: 4, attackSpeedRatio: 0.02 },
     dark:    { damageAmpPct: 2.5, lifeStealPct: 1.5 },
     // ⚠️ 毒之力对照 100% / +2.81，是八档里最强的一条 —— %当前生命的攻击特效对
     // 高血量目标（塔）收益极高，而推进度量的正是推塔。首版 0.5 已砍到 0.25，仍偏强，再砍一半。
