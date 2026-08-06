@@ -57,10 +57,28 @@ for (const id of SkillLibrary.ids()) {
   for (const key of ['description', 'descTemplate']) {
     let raw;
     try { raw = def[key]; } catch (e) { continue; }
-    if (typeof raw !== 'string' || !raw || _PREFIX.test(raw)) continue;
-    // getter 定义的（合并文案/光环文案）已经带前缀，走不到这里；剩下的都是普通字符串字段
     const d = Object.getOwnPropertyDescriptor(def, key);
-    if (d && d.get) continue;
+    // ==================== v43：getter 也要规范化 ====================
+    // 这里原本是 `if (d && d.get) continue;`，理由写的是"getter 定义的（合并文案/
+    // 光环文案）已经带前缀"。那个假设在 v43 当场失效：八条龙魂改成用 getter
+    // 现读 CONFIG（这样编辑器改数值文案立刻跟上），而它们的 description 没带前缀，
+    // 于是 9 条技能一起从格式检查里漏了出去 —— 注释宣称的"注册期规范化，新技能自动合规"
+    // 对 getter 型技能根本不成立。
+    // 改法：getter 就地包一层，**在读取时**判前缀。已经带前缀的（合并文案/光环文案）
+    // 走进包装后原样返回，不会叠成"唯一被动——X：唯一被动——Y："。
+    if (d && d.get) {
+      const orig = d.get;
+      Object.defineProperty(def, key, {
+        configurable: true, enumerable: d.enumerable,
+        get() {
+          const v = orig.call(this);
+          if (typeof v !== 'string' || !v || _PREFIX.test(v)) return v;
+          return `唯一被动——${this.name}：${v}`;
+        },
+      });
+      continue;
+    }
+    if (typeof raw !== 'string' || !raw || _PREFIX.test(raw)) continue;
     def[key] = `唯一被动——${def.name}：${raw}`;
   }
 }

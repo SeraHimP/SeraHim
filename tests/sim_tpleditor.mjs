@@ -113,16 +113,20 @@ const AE_SRC = fs.readFileSync('src/ui/AttributeEditor.js', 'utf8');
     if (JSON.stringify(oldStats(w, anc)) !== JSON.stringify(DC.dragonStatsAt(w, anc))) same = false;
   }
   T('曲线搬进配置后与原写死公式逐位一致（前 20 条 × 元素/远古）', same);
-  T('刷新节奏一致：首条 60s，第 2/3/4 条 7/8/9 分钟',
+  // v43（用户定稿）："龙改为每5分钟一条。第一条龙1分钟就刷。"
+  // 元素龙间隔 [420,480,540] → [300]；远古龙 600 → 300。
+  // 远古龙也提到 300 的理由：成魂方顶着**永久**龙魂，而远古龙的处决 buff 是落后方
+  // 唯一的翻盘工具 —— 10 分钟才有一次机会的话"另一方不用玩了"依然成立。
+  T('刷新节奏：首条 60s，之后一律 5 分钟',
     DC.dragonCfg().firstDelay === 60
-    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 1 }) === 420
-    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 2 }) === 480
-    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 3 }) === 540);
+    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 1 }) === 300
+    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 2 }) === 300
+    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 3 }) === 300);
   T('元素龙间隔越界沿用最后一项（不会返回 undefined 让计时变 NaN）',
-    DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 99 }) === 540);
-  T('远古龙：首条 5min、之后 10min',
+    DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 99 }) === 300);
+  T('远古龙：首条与之后都是 5 分钟',
     DC.dragonIntervalAt({ soulUnlocked: true, ancientSpawned: 1 }) === 300
-    && DC.dragonIntervalAt({ soulUnlocked: true, ancientSpawned: 2 }) === 600);
+    && DC.dragonIntervalAt({ soulUnlocked: true, ancientSpawned: 2 }) === 300);
 
   // 真的读配置，不是摆设
   const bak = JSON.parse(JSON.stringify(CONFIG.gameRules.dragon));

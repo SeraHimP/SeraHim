@@ -57,8 +57,9 @@ export class DragonSystem {
     this.factionKills = { blue: {}, red: {} };   // 阵营 → { 元素: 次数 }
     this.factionTotals = { blue: 0, red: 0 };
     this.souls = { blue: [], red: [] };          // 阵营 → 已获得的龙魂 id
-    this.soulResolved = false;                   // 6 条龙是否已结算
+    this.soulResolved = false;                   // 是否已结算过龙魂
     this.soulOwner = null;                       // 成魂阵营（null = 无魂）
+    this._nextPitSide = 'top';                   // v43：上/下龙坑交替，首条从上坑出
 
     this._bindDeath();
   }
@@ -84,6 +85,7 @@ export class DragonSystem {
     this.souls = { blue: [], red: [] };
     this.soulResolved = false;
     this.soulOwner = null;
+    this._nextPitSide = 'top';
   }
 
   /** 元素龙总数与成魂门槛（软编码）。 */
@@ -126,6 +128,11 @@ export class DragonSystem {
   }
 
   update(dt) {
+    // v43：两个独立开关（用户定稿）。spawn 关掉 = 这局没有龙。
+    // effect 那个开关不在这里 —— 龙照常刷、照常结算归属，只是不发放增益，
+    // 这样才能量出"有龙但没魂"的平衡基线。
+    this._expireAncient();   // v43：远古之力是限时的，到点摘掉
+    if (CONFIG.dragonToggles && CONFIG.dragonToggles.spawn === false) return;
     if (this.paused) return;
     const alive = this.entities.getByType('dragon', true);
     if (alive.length > 0) return;
@@ -150,6 +157,19 @@ export class DragonSystem {
     return dragonStatsAt(dragonIndex, isAncient);
   }
 
+  /**
+   * v43：奖励的领受范围 —— 全部塔 + 大型小兵（= 除近战/远程外的所有兵种）。
+   * 用户重新规定过一次："除了近战兵和远程兵都是。"
+   * 刻意**不读 isLargeMinion**：那个标记还被渲染体积等处用着，
+   * 把"体型"和"够不够格拿龙魂"绑死在一个字段上，改一个必然误伤另一个。
+   */
+  static SOUL_REWARD_OK(e) {
+    if (!e) return false;
+    if (e.type === 'tower') return true;
+    if (e.type === 'dragon') return false;
+    return e.type !== 'melee' && e.type !== 'ranged';
+  }
+
   spawnDragon() {
     const isAncient = this.soulUnlocked;
 
@@ -167,33 +187,40 @@ export class DragonSystem {
       this.ancientSpawned++;
     }
 
+    // v43：上/下龙坑**交替**。上坑的走上路推**蓝方**基地，下坑的走下路推**红方**基地。
+    // 交替而不是随机：随机会出现"连着三条都压同一方"，那不是压力是处刑。
+    const pitSide = this._nextPitSide;
+    this._nextPitSide = (pitSide === 'top') ? 'bot' : 'top';
     if (this.createEntity) {
-      this.createEntity('dragon', { element, isAncient, absStats: dstats });
+      this.createEntity('dragon', { element, isAncient, absStats: dstats, pitSide });
     }
 
     const label = isAncient ? '🐲 远古巨龙' : `${DRAGON_ELEMENTS[element].icon} ${DRAGON_ELEMENTS[element].label}`;
     this.eventBus.emit('dragon:spawn', { element, isAncient, label });
   }
 
+  /**
+   * ==================== v43：击杀结算全部重写 ====================
+   * 用户定稿："杀死（最后一击）的队伍全部塔 + 大型小兵（除了近战/远程之外）的兵获得增益效果。"
+   *
+   * 与改动前的三处关键差别：
+   *   ① 归属从"参与塔投票"改成 **最后一击**（_lastHitFaction，由 CombatSystem 记录）。
+   *      投票制的问题：一条龙被双方轮流打，谁塔多谁拿 —— 抢龙这件事就没有博弈了。
+   *   ② 奖励对象从"参与的那几座塔"扩到 **该阵营全体塔 + 全体大型小兵**，
+   *      而且**新生成的单位也要补发**（走 _grantAll / equipExistingSoul），
+   *      否则奖励只对当时在场的生效，后面出的兵全是裸的。
+   *   ③ 成魂时机从"6 条龙全部刷完再结算"改成 **拿满 4 条立即成魂**，
+   *      之后元素龙停刷、只出远古龙（用户定稿）。紧迫感完全不同：
+   *      旧规则下前 5 条龙谁拿都无所谓，反正最后一起算。
+   */
   _onDragonKilled(dragon) {
-    // 参与击杀的塔 = 对该龙造成过伤害的塔（记录在 dragon._damagers）
-    let participants = Array.from(dragon._damagers || []);
-    // 兜底："无记录则算全体塔参与"——这个兜底只在沙盒模式安全（不分敌我，本来也没有阵营概念）。
-    // 对战模式下如果直接沿用，会导致：龙如果被非塔伤害来源（如某些间接AOE/DOT）补刀致死，
-    // _damagers 记录不完整或为空时，敌我双方所有塔会一起获得击杀奖励——包括本不该受益的敌方。
-    // 所以对战模式下宁可少发（无记录就不发），也不能误发给敌方。
-    const isBattleMode = this.entities.getAllTowers(true).some(t => t._mapFaction);
-    if (participants.length === 0 && !isBattleMode) {
-      participants = this.entities.getByType('tower', true).map(t => t.id);
-    }
+    const owner = dragon._lastHitFaction || null;   // 最后一击的阵营（可能为 null=沙盒/环境击杀）
 
     if (dragon._isAncient) {
       this.ancientKills++;
-      for (const tid of participants) {
-        const tower = this.entities.get(tid);
-        if (tower) this._applyAncientBuffToTower(tower);
-      }
-      this.eventBus.emit('dragon:killed', { ancient: true, ancientKills: this.ancientKills });
+      // 远古之力是**限时** 240 秒的处决（八条龙魂里唯一限时的一条）。
+      if (owner) this._grantAncient(owner);
+      this.eventBus.emit('dragon:killed', { ancient: true, ancientKills: this.ancientKills, owner });
       return;
     }
 
@@ -202,59 +229,87 @@ export class DragonSystem {
     this.killCounts[el] = (this.killCounts[el] || 0) + 1; // 全局统计（仅用于显示）
     this.totalKills++;
 
-    for (const tid of participants) {
-      const tower = this.entities.get(tid);
-      if (!tower) continue;
-      // 每塔独立记录击杀元素
-      tower._dragonKills = tower._dragonKills || {};
-      tower._dragonKills[el] = (tower._dragonKills[el] || 0) + 1;
-      tower._dragonTotalKills = (tower._dragonTotalKills || 0) + 1;
-      // 给这座塔元素增益（这一层保持不变：元素增益本来就是"谁打的谁拿"）
-      this._applyElementBuffToTower(tower, el);
-    }
-
-    // ---- 阵营归属：这条龙算谁杀的 ----
-    // 按参与塔的阵营投票，多者得。沙盒模式没有阵营标记，跳过阵营结算。
-    const votes = { blue: 0, red: 0 };
-    for (const tid of participants) {
-      const f = this.entities.get(tid)?._mapFaction;
-      if (f === 'blue' || f === 'red') votes[f]++;
-    }
-    if (votes.blue || votes.red) {
-      const owner = votes.blue >= votes.red ? 'blue' : 'red';
+    if (owner === 'blue' || owner === 'red') {
       this.factionKills[owner][el] = (this.factionKills[owner][el] || 0) + 1;
       this.factionTotals[owner]++;
+      // 巨龙之力：给该阵营**全体**（塔 + 大型小兵）叠一层该元素的永久增益
+      this._grantAll(owner, (e) => this._applyElementBuff(e, el));
+      // 把击杀数灌给 CombatSystem —— 龙的「宿怨」被动要按它算减伤/增伤
+      this._pushKillCounts();
     }
 
     this.eventBus.emit('dragon:killed', {
-      element: el, totalKills: this.totalKills, killCounts: { ...this.killCounts },
+      element: el, owner, totalKills: this.totalKills, killCounts: { ...this.killCounts },
       factionTotals: { ...this.factionTotals },
     });
 
-    // ---- 6 条龙打完 → 结算龙魂 ----
-    // 用【已刷新数】而不是【已击杀数】判断阶段结束：龙可能自然消失/被跳过，
-    // 按击杀数算的话只要有一条没被杀掉，阶段就永远结束不了、远古龙永不出现。
-    if (!this.soulResolved && this.elementDragonSpawned >= this._soulRule.total) {
-      this._resolveSoul();
+    // ---- 拿满门槛 → **立即**成魂（v43：不再等 6 条全刷完）----
+    if (!this.soulResolved && owner && this.factionTotals[owner] >= this._soulRule.threshold) {
+      this._resolveSoul(owner);
     }
   }
 
+  /** 把"各阵营已击杀的元素龙数"同步给 CombatSystem（龙的宿怨被动读它）。 */
+  _pushKillCounts() {
+    const combat = this._combat || (typeof window !== 'undefined' && window.CTX?.__app?.combatSystem);
+    if (combat && combat.setDragonKillCounts) {
+      combat.setDragonKillCounts({ blue: this.factionTotals.blue, red: this.factionTotals.red });
+    }
+  }
+  /** main.js 注入，供上面那个函数用（不注入时退化为读 window，单测里两条都可缺省）。 */
+  setCombatSystem(combat) { this._combat = combat; this._pushKillCounts(); }
+
   /**
-   * 6 条元素龙结束后的一次性结算。
-   * 达到门槛的阵营成魂（魂的元素 = 该阵营击杀最多的那种）；都不到则无魂。
-   * 之后转入远古龙阶段。
+   * 对某阵营的**全部**领受者（塔 + 大型小兵）执行 fn。
+   * 领受范围判定走 SOUL_REWARD_OK —— 见那个函数的注释。
    */
-  _resolveSoul() {
+  _grantAll(faction, fn) {
+    if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return 0;
+    let n = 0;
+    for (const e of this.entities.getAll(true)) {
+      if (!DragonSystem.SOUL_REWARD_OK(e)) continue;
+      if ((e._mapFaction || e.faction) !== faction) continue;
+      fn(e); n++;
+    }
+    return n;
+  }
+
+  /**
+   * 新单位入场时补发本阵营已有的全部龙之奖励。
+   * **这条不能省**：龙魂/巨龙之力都是永久的，只发给"当时在场"的话，
+   * 后面每一波新兵都是裸的 —— 那等于奖励在几十秒后就自动失效了。
+   * main.js 的 createBuilding / createMinion 在实体入场后调它。
+   */
+  equipExistingSoul(entity) {
+    if (!DragonSystem.SOUL_REWARD_OK(entity)) return false;
+    if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return false;
+    const fac = entity?._mapFaction || entity?.faction;
+    if (fac !== 'blue' && fac !== 'red') return false;
+    let any = false;
+    // ① 巨龙之力：按该阵营每种元素已击杀的条数逐层补
+    for (const [el, cnt] of Object.entries(this.factionKills[fac] || {})) {
+      for (let i = 0; i < cnt; i++) { this._applyElementBuff(entity, el); any = true; }
+    }
+    // ② 龙魂本体
+    if (this.soulOwner === fac && this.souls[fac]?.[0]) {
+      this._equipSoul(entity, this.souls[fac][0]); any = true;
+    }
+    return any;
+  }
+
+  /**
+   * v43：**拿满门槛立即成魂**（用户定稿："某阵营拿满 4 条直接获得龙魂，
+   * 然后不再生成元素龙而是一直生成远古龙"）。
+   *
+   * 旧规则是"6 条元素龙全部刷完再一次性结算，谁多谁拿、都不到 4 则无魂"。
+   * 它的问题是紧迫感为零：前 5 条龙谁拿都无所谓，反正最后一起算。
+   * 改成"先到先得"之后，第 4 条龙就是全局的胜负手 —— 而龙的「宿怨」被动
+   *（杀得越多龙对你越硬）恰好让这第 4 条最难抢，两条规则是配套的。
+   *
+   * 魂的元素 = 该阵营击杀最多的那一种。
+   */
+  _resolveSoul(owner) {
     this.soulResolved = true;
-    const { threshold } = this._soulRule;
-    const b = this.factionTotals.blue, r = this.factionTotals.red;
-
-    // 双方都达标时按击杀多的一方（同分则无人成魂：平局不该白送任何一方）
-    let owner = null;
-    if (b >= threshold && r >= threshold) owner = b === r ? null : (b > r ? 'blue' : 'red');
-    else if (b >= threshold) owner = 'blue';
-    else if (r >= threshold) owner = 'red';
-
     if (owner) {
       const kills = this.factionKills[owner];
       let best = null, bestCount = -1;
@@ -265,10 +320,8 @@ export class DragonSystem {
         const soulId = DRAGON_ELEMENTS[best].soul;
         this.soulOwner = owner;
         this.souls[owner] = [soulId];
-        // 装备给该阵营【所有】塔，含之后新建的（见 equipSoulToTower 的调用点）
-        for (const t of this.entities.getAllTowers(true)) {
-          if (t._mapFaction === owner) this._equipSoul(t, soulId);
-        }
+        // 发给该阵营**全体**（塔 + 大型小兵）；之后新生成的由 equipExistingSoul 补发
+        this._grantAll(owner, (e) => this._equipSoul(e, soulId));
         this.eventBus.emit('dragon:soulResolved', {
           owner, element: best, soulId, label: DRAGON_ELEMENTS[best].label,
           factionTotals: { ...this.factionTotals },
@@ -281,25 +334,16 @@ export class DragonSystem {
       });
     }
 
-    // 无论有没有成魂，都进入远古龙阶段（用户定稿："都不到 4 则无魂，之后出远古龙"）
+    // 成魂后元素龙停刷，改为一直刷远古龙（用户定稿）
     this.soulUnlocked = true;
-    this._unlockWave = window.waveNumber || 0;
+    this._unlockWave = (typeof window !== 'undefined' && window.waveNumber) || 0;
     this.ancientSpawned = 0;
-    this.nextDragonTime = 300;
+    this.nextDragonTime = dragonCfg().ancientFirstDelay;
   }
 
-  /** 新塔（重生/新建）补发本阵营已有的龙魂，否则重生后就把魂丢了。 */
-  equipExistingSoul(tower) {
-    const fac = tower?._mapFaction;
-    if (!fac) return false;
-    const soulId = this.souls[fac]?.[0];
-    if (!soulId) return false;
-    this._equipSoul(tower, soulId);
-    return true;
-  }
-
-  // 给单个塔叠加元素增益
-  _applyElementBuffToTower(tower, el) {
+  // v43：给单个**领受者**（塔或大型小兵）叠加一层元素增益。
+  // 改名去掉 ToTower：奖励范围已扩到大型小兵，名字里带 Tower 会误导下一个人。
+  _applyElementBuff(tower, el) {
     const def = DRAGON_ELEMENTS[el];
     if (!def) return;
     for (let i = 0; i < def.buff.length; i++) {
@@ -324,21 +368,42 @@ export class DragonSystem {
   // 总有塔能到 4）。现已由 _resolveSoul() 的一次性阵营结算取代，故删除，
   // 不留下一个语义相反的旁路入口。
 
-  // 远古增益给单个塔
-  _applyAncientBuffToTower(tower) {
-    this.effects.apply(tower.id, {
-      name: '远古之力', icon: '🐲', kind: 'stat', color: '#e67e22',
-      statKey: 'allStatsPct', flatValue: 10, perStackFlat: 10,
-      duration: Infinity, permanent: true, stackable: true, maxStacks: 99, stackPolicy: 'stack',
-      stackKey: 'ancient_allstats',
-      descTemplate: '唯一被动——远古之力：全属性提升（{stacks}层）。',
-      description: '远古之力（{stacks}层）',
-    }, 'dragon_ancient_buff');
-    for (const inst of tower._skillInstances || []) {
-      if (inst.skillId.startsWith('dragonsoul_')) {
-        inst.state = inst.state || {};
-        inst.state.ancientBonus = (inst.state.ancientBonus || 0) + 1;
-      }
+  /**
+   * v43：远古龙奖励 = **限时 240 秒的处决**（用户定稿：八条龙魂全部永久，只有它限时）。
+   *
+   * 旧实现是"给参与的塔永久 +10% 全属性、每条叠一层"——纯数值、永久、只给塔。
+   * 现在改成阵营级的限时技能：成魂后元素龙停刷、只出远古龙，**双方都能抢**，
+   * 于是它成了落后方唯一的翻盘工具。处决专治"最后 20% 特别难啃"，
+   * 恰好克制山魂/光魂/潮魂这三条防守型龙魂 —— 这是防止"一方成魂另一方不用玩了"的关键。
+   */
+  _grantAncient(faction) {
+    const p = (CONFIG.dragonSouls && CONFIG.dragonSouls.ancient) || {};
+    const dur = p.durationSec ?? 240;
+    const n = this._grantAll(faction, (e) => {
+      this._equipSoul(e, 'dragonsoul_ancient');
+      // 限时：到点由 EffectRegistry 移除显示状态，同时把技能实例摘掉。
+      // 这里用一个 display 效果做"倒计时可见"，真正的到期回收在 update 里按 _ancientUntil 走。
+      this.effects.apply(e.id, {
+        name: '远古之力', icon: '🐲', kind: 'display', type: 'buff', color: '#e67e22',
+        duration: dur, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        stackKey: 'dragon_ancient',
+        description: `处决：对生命低于 ${p.executeAtPct ?? 20}% 的敌人额外造成 ${p.executePct ?? 20}% 最大生命真实伤害`,
+      }, 'dragon_ancient_buff');
+      e._ancientUntil = ((typeof window !== 'undefined' && window.gameTime) || 0) + dur;
+    });
+    this._ancientFaction = faction;
+    return n;
+  }
+
+  /** 远古之力到期回收：把技能实例摘掉（显示状态由 EffectRegistry 自己过期）。 */
+  _expireAncient() {
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    for (const e of this.entities.getAll(true)) {
+      if (!e._ancientUntil || now < e._ancientUntil) continue;
+      e._ancientUntil = 0;
+      const arr = e._skillInstances || [];
+      const i = arr.findIndex(x => x.skillId === 'dragonsoul_ancient');
+      if (i >= 0) arr.splice(i, 1);
     }
   }
 

@@ -425,6 +425,9 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     for (const bp of tierEffects) effectRegistry.apply(entity.id, { ...bp }, 'template_effect_tier');
   }
 
+  // v43：补发本阵营已有的龙之奖励（巨龙之力各层 + 龙魂）。
+  // 不补的话，成魂之后新建/重生的建筑全是裸的 —— 奖励等于几十秒后自动失效。
+  dragonSystem.equipExistingSoul(entity);
   eventBus.emit('entity:spawn', { entityId: entity.id });
   uiManager.log(`${isNexus ? '💎 水晶' : '🏯 ' + tier + '塔'}（${faction === FACTIONS.BLUE ? '蓝方' : '红方'}）已生成`, 'spawn');
   return entity;
@@ -543,6 +546,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   }
 
   entityContainer.add(entity);
+  // v43：新出的大型小兵也要拿到本阵营已有的龙之奖励（见 createBuilding 那条同样的注释）。
+  // equipExistingSoul 内部按 SOUL_REWARD_OK 过滤，近战/远程会被自然排除。
+  dragonSystem.equipExistingSoul(entity);
   eventBus.emit('entity:spawn', { entityId: entity.id });
   return entity;
 }
@@ -593,15 +599,33 @@ function createDragon(type, opts = {}) {
   // 沙盒模式沿用原固定坐标。此前固定用 (850,200) 在对战模式里几乎贴着红方水晶/外塔，
   // 导致红方总能第一时间抢到龙、对蓝方明显不公平，这里修正。
   let dragonPos = { x: 850, y: 200 };
+  // ==================== v43：龙从上/下龙坑交替出，走对应的路推向某一方基地 ====================
+  // 用户定稿："上路的走到蓝方，下路走到红方。""龙永久存活，就像是敌方小兵一样推进到基地。"
+  //
+  // 兵线的 waypoints 一律是【蓝方基地 → 红方基地】的顺序，所以：
+  //   forward = 推向红方，reverse = 推向蓝方。
+  // 于是：上坑 → 上路 → reverse（推蓝方）；下坑 → 下路 → forward（推红方）。
+  //
+  // 龙**没有阵营**（_mapFaction = 'neutral'）：canTarget 里中立与红蓝互为敌对，
+  // 所以两边都会打它、它也打两边挡路的一切。它挂上 _laneId/_laneDirection 之后
+  // 自动被 LaneMovementSystem 接管（那边的过滤条件就是 `m._mapFaction && m._laneId`），
+  // 与小兵完全同一套行进/绕障/接敌逻辑 —— 不另写一份寻路。
+  let dragonLane = null, dragonDir = 'forward';
   if (mapSystem.active && mapSystem.currentMap) {
-    // navgrid 地图（真实峡谷）有真正的【龙坑】——巨龙在龙坑里刷新，与 LoL 一致。
-    const pit = mapSystem.getPit?.('dragon');
-    if (pit) {
-      dragonPos = { x: pit.x, y: pit.y };
-    } else {
-      // 无龙坑的地图沿用中路中点。（之前取 lanes[0] 实际是"上路"而非注释声称的"中路"，已按 id 修正。）
-      const lane = mapSystem.currentMap.lanes.find(l => l.id === 'mid') || mapSystem.currentMap.lanes[0];
-      if (lane) {
+    const lanes = mapSystem.currentMap.lanes || [];
+    const pitSide = opts.pitSide === 'bot' ? 'bot' : 'top';
+    // 路：优先取同名的那条；没有（如嚎哭深渊只有 mid）就退到唯一那条。
+    const laneId = lanes.some(l => l.id === pitSide) ? pitSide
+                 : (lanes.find(l => l.id === 'mid') ? 'mid' : (lanes[0] && lanes[0].id));
+    const lane = lanes.find(l => l.id === laneId);
+    if (lane) {
+      dragonLane = lane.id;
+      dragonDir = (pitSide === 'top') ? 'reverse' : 'forward';
+      // 出生点：优先用真正的龙坑（navgrid 峡谷有 baron/dragon 两个），
+      // 上坑取 baron（上半河道）、下坑取 dragon（下半河道）；没有龙坑的图退到兵线中点。
+      const pit = mapSystem.getPit?.(pitSide === 'top' ? 'baron' : 'dragon');
+      if (pit) dragonPos = { x: pit.x, y: pit.y };
+      else {
         const mid = lane.waypoints[Math.floor(lane.waypoints.length / 2)];
         dragonPos = { x: mid.x, y: mid.y };
       }
@@ -625,17 +649,31 @@ function createDragon(type, opts = {}) {
     _attackerCount: 0,
     _element: element,
     _isAncient: isAncient,
+    // v43：中立 + 挂到兵线上，由 LaneMovementSystem 驱动（与小兵同一套逻辑）
+    _mapFaction: 'neutral',
+    faction: 'neutral',
+    _laneId: dragonLane,
+    _laneDirection: dragonDir,
   };
   // 绝对属性
   entity.baseStats.maxHP = abs.maxHP;
   entity.baseStats.armor = abs.armor;
   entity.baseStats.magicResist = abs.magicResist;
   entity.baseStats.attackDamage = abs.attackDamage;
-  // 巨龙主动进场攻击塔
-  entity.baseStats.moveSpeed = 22;
-  entity.baseStats.attackRange = 60;
-  entity.baseStats.baseAttackSpeed = 0.25;
-  entity.baseStats.attackType = 'physical';
+  // v43：战斗属性全部软编码到 CONFIG.gameRules.dragon.combat（原先写死在这里）。
+  // 形状按用户定稿：攻击力低→高、攻速低、血量/双抗低→高 —— 前三项由上面的
+  // dragonCurve 提供（已经是这个形状），这里补的是"会动、够得着、带溅射"。
+  {
+    const c = (CONFIG.gameRules.dragon && CONFIG.gameRules.dragon.combat) || {};
+    entity.baseStats.moveSpeed = c.moveSpeed ?? 25;
+    entity.baseStats.attackRange = c.attackRange ?? 200;
+    entity.baseStats.baseAttackSpeed = c.baseAttackSpeed ?? 0.4;
+    entity.baseStats.attackSpeedRatio = 0.667;
+    entity.baseStats.attackType = c.attackType || 'physical';
+    // 溅射：复用引擎既有的 splashRadius 通道（攻城车用的是同一条）
+    entity.baseStats.splashRadius = c.splashRadius ?? 90;
+    entity.baseStats.bulletSpeed = 0;   // 近身挥击，不走弹道
+  }
 
   if (isAncient) {
     entity.baseStats.label = '远古巨龙';
@@ -655,6 +693,9 @@ function createDragon(type, opts = {}) {
   return entity;
 }
 dragonSystem.setCreateEntity(createDragon);
+// v43：龙的「宿怨」被动（对某阵营的减伤/增伤随该阵营击杀数增长）在 CombatSystem 里结算，
+// 击杀数由 DragonSystem 灌过去 —— 这里做一次注入，避免两个系统互相 import。
+dragonSystem.setCombatSystem(combatSystem);
 waveSystem.setCreateMinion(createMinion);
 // 对战模式成长（Q2 再重做）：纯固定值/波，杜绝复利后期爆炸，只动 最大生命/攻击力/双抗。
 // 数值经仿真校准：10分钟（约20波）时穿透塔单发 ≈ 近战44.9%/远程69.0%/炮车13.7%/超级兵4.3% 生命，
@@ -705,6 +746,7 @@ eventBus.on('map:nexusRespawned', ({ faction }) => {
   for (const t of entityContainer.getAllTowers(true)) {
     if (t._mapFaction === faction) dragonSystem.equipExistingSoul(t);
   }
+
 });
 eventBus.on('dragon:spawn', (d) => {
   uiManager.log(`⚠️ ${d.label} 即将降临`, 'spawn');

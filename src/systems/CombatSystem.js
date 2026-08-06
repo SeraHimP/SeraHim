@@ -500,6 +500,17 @@ export class CombatSystem {
     // 伤害减免 & 格挡
     const dmgReduction = defStats.damageReduction || 0;
     damage *= (1 - dmgReduction / 100);
+    // ==================== v43：巨龙被动「宿怨」 ====================
+    // 用户定稿："龙对某阵营所有单位获得 7%×该阵营击杀龙数量（不含远古龙）伤害减免
+    //          和 11%×数量 伤害提升。"
+    // 也就是说：**你杀的龙越多，下一条龙对你越硬、打你越疼**。
+    // 这是个天然的橡皮筋，但不是"系统偷偷给弱方加数值"——它有叙事（龙记住了谁在杀它）、
+    // 可观测（状态栏能看到层数）、可预期（抢第 4 条龙时你就知道它会更难打）。
+    // 因为它依赖【攻击方/受击方的阵营】，stat 管线拿不到攻击者，必须在这里判。
+    // v43 巨龙宿怨。_resolveHit 只有一个 damage 变量，但两半的**位置**仍有意义：
+    // 这里已经过了双抗结算、正要进减免段，所以放这一句同时覆盖两个方向即可
+    //（这条路径没有"无视防御"的分股，也没有真伤旁路 —— 真伤走的是 performAttackDirect）。
+    damage *= this._dragonGrudge(attacker, target).k;
     // 防御护盾（唯一被动）：来自【防御塔】的伤害降低 30%。
     // v43（用户定稿："炮兵的被动防御护盾改为只对塔减伤30%"）：来源从
     // 塔 / 炮兵 / 超级兵 收窄到**只有塔**。
@@ -544,6 +555,9 @@ export class CombatSystem {
       if (atk && atk.type === 'tower') {
         (target._damagers = target._damagers || new Set()).add(atk.id);
       }
+      // v43：龙的奖励按【最后一击】归属（用户定稿），不再按参与者投票。
+      // 记谁打的、以及它的阵营 —— 阵营要当场记下来：结算时那个单位可能已经死了。
+      if (atk) { target._lastHitBy = atk.id; target._lastHitFaction = atk._mapFaction || atk.faction || null; }
     }
     const totalAbsorbed = damage - remainingDamage;
 
@@ -687,6 +701,39 @@ export class CombatSystem {
     }
   }
 
+  /**
+   * 巨龙被动「宿怨」：龙对某阵营的减伤/增伤，随该阵营已击杀的**元素龙**数量增长。
+   * 两个方向都走这一个函数：
+   *   · 龙**受到**某阵营的伤害 → 按该阵营的击杀数减伤；
+   *   · 龙**打向**某阵营       → 按该阵营的击杀数增伤。
+   * 击杀数由 DragonSystem 通过 setDragonKillCounts() 灌进来（远古龙不计入计数，
+   * 但远古龙自己也吃这条被动 —— 用户定稿）。
+   */
+  _dragonGrudge(attacker, target) {
+    const NONE = { k: 1, protective: false };
+    const K = this._dragonKills;
+    if (!K) return NONE;
+    const p = (CONFIG.gameRules?.dragon?.passive) || {};
+    const dr = p.damageReductionPerKill ?? 7, amp = p.damageAmpPerKill ?? 11;
+    if (target?.type === 'dragon' && attacker) {
+      const f = attacker._mapFaction || attacker.faction;
+      const n = (f && K[f]) || 0;
+      // 龙**受到**该阵营的伤害 → 减伤。纯保护性（k<1），所以只作用在"可被减免"的那一股。
+      return n > 0 ? { k: Math.max(0, 1 - (dr * n) / 100), protective: true } : NONE;
+    }
+    if (attacker?.type === 'dragon' && target) {
+      const f = target._mapFaction || target.faction;
+      const n = (f && K[f]) || 0;
+      // 龙**打向**该阵营 → 增伤。这是攻击方的属性（k>1），两股都吃
+      //（与"哀兵"的增伤同口径：无视防御不该把攻击方的增益也一起无视掉）。
+      return n > 0 ? { k: 1 + (amp * n) / 100, protective: false } : NONE;
+    }
+    return NONE;
+  }
+
+  /** DragonSystem 每次结算完击杀就灌一次：{ blue: n, red: n }（只数元素龙）。 */
+  setDragonKillCounts(counts) { this._dragonKills = counts; }
+
   _applyExplosion(attacker, target, baseDamage, attackType, radiusOverride) {
     // 兼容旧调用：中心取目标坐标、排除主目标（主目标已单独结算直伤）。
     this._applyExplosionAt(attacker, target.pos.x, target.pos.y, baseDamage, attackType, radiusOverride, target.id);
@@ -760,6 +807,15 @@ export class CombatSystem {
     let damage = baseDamage;
     const dmgAmp = atkStats.damageAmpPct || 0;
     damage *= (1 + dmgAmp / 100);
+    // ==================== v43 巨龙宿怨：增伤那一半 ====================
+    // 拆开放置是有讲究的（见 _dragonGrudge 的注释）：
+    //   · **增伤**（龙打向某阵营）是**攻击方**属性，与 damageAmpPct 同类 →
+    //     放在这里，真实伤害也吃得到；
+    //   · **减伤**（龙受到某阵营的伤害）是**防御方**属性，与 damageReduction 同类 →
+    //     放在下面的减免块里，真实伤害照本项目既有口径**绕过**它。
+    // 第一版我把两半都塞进减免块，结果龙的增伤对真伤完全不生效 —— 方向错了。
+    const grudgeAmp = this._dragonGrudge(attacker, target);
+    if (!grudgeAmp.protective && grudgeAmp.k !== 1) damage *= grudgeAmp.k;
 
     // 若目标当前持有护盾，额外造成一定比例伤害（如闪电杖破盾+7%）
     const shieldBeforeHit = (target.tempShield || 0) + (target.shieldFixedCurrent || 0);
@@ -811,6 +867,15 @@ export class CombatSystem {
       ignoredDamage *= keepAmp(1 - dmgReduction / 100);  // 减伤为负 → 增伤，保留
       // 防御护盾（唯一被动）：来自防御塔和超级兵的伤害降低30%（与 performAttack 路径一致，v33 含超级兵）
       // 0.7 恒 < 1（纯保护性），所以只作用在 mitigated 那一股 —— 与改动前一致。
+      // v43 巨龙宿怨：**减伤**那一半（增伤已在上面处理，见那段注释）。
+      // ⚠️ 这条路径把伤害拆成了 mitigated（可被减免）/ ignored（被"无视防御"跳过）两股，
+      // 所以不能只写一句 `damage *= k` —— 那个 damage 变量在这里已经没有下游了
+      //（我第一版就是这么写的，测出来伤害一点没变，等于这条被动完全没生效）。
+      const grudge = this._dragonGrudge(attacker, target);
+      if (grudge.protective && grudge.k !== 1) {
+        mitigatedDamage *= grudge.k;
+        ignoredDamage *= keepAmp(grudge.k);   // 保护性 → 只保留放大部分，与双抗/减伤同规则
+      }
       // v43：同上，来源收窄到只有塔
       if (attacker && attacker.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
         mitigatedDamage *= 0.7;
@@ -856,8 +921,11 @@ export class CombatSystem {
     // 伤害转化（v33 Q10）：防御向，两条伤害路径（performAttack/Direct）行为一致
     this._applyDamageConversion(target, defStats, finalDamage);
     // 记录巨龙的伤害来源塔
-    if (target.type === 'dragon' && finalDamage > 0 && attacker && attacker.type === 'tower') {
-      (target._damagers = target._damagers || new Set()).add(attacker.id);
+    if (target.type === 'dragon' && finalDamage > 0 && attacker) {
+      if (attacker.type === 'tower') (target._damagers = target._damagers || new Set()).add(attacker.id);
+      // v43：最后一击归属（见 _resolveHit 里那条同样的注释）
+      target._lastHitBy = attacker.id;
+      target._lastHitFaction = attacker._mapFaction || attacker.faction || null;
     }
     // 使闪电杖、腐蚀型等通过 performAttackDirect 造成的伤害也能触发这些被动。
     if (attacker && !options._noProc && !this._procGuard) {

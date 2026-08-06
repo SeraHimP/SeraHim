@@ -686,5 +686,143 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     ds.paused === false && ds.createEntity === fn);
 }
 
+// ==================== 十七、巨龙重做：会走路的中立攻城单位 ====================
+{
+  const D = CONFIG.gameRules.dragon;
+  T('龙①-刷新节奏：首条 60s，之后一律 300s（含远古龙）',
+    D.firstDelay === 60 && D.elementIntervals.every(v => v === 300)
+    && D.ancientInterval === 300 && D.ancientFirstDelay === 300);
+  T('龙②-战斗属性软编码（会动、够得着、带溅射）',
+    D.combat.moveSpeed > 0 && D.combat.attackRange > 0
+    && D.combat.baseAttackSpeed > 0 && D.combat.splashRadius > 0);
+  T('龙③-移速比近战兵慢（压迫感来自躲不掉，不是追得快）',
+    D.combat.moveSpeed < CONFIG.templates.melee.moveSpeed);
+  T('龙④-射程比塔远（能站在塔的射程边缘拆塔）',
+    D.combat.attackRange > CONFIG.templates.tower.attackRange);
+  T('龙⑤-低攻速（用户定稿：单发重、间隔长）',
+    D.combat.baseAttackSpeed < CONFIG.templates.melee.baseAttackSpeed);
+  T('龙⑥-成长曲线仍是"低→高"（血/双抗/攻击）', (() => {
+    const c = D.curve;
+    return c.maxHP.step > 0 && c.resist.step > 0 && c.attackDamage.step > 0;
+  })());
+
+  const mainSrc = stripComments(readSrc('../src/main.js'));
+  T('龙⑦-中立阵营（两边都打它、它也打两边）', /_mapFaction: 'neutral'/.test(mainSrc));
+  T('龙⑧-挂到兵线上，由 LaneMovementSystem 驱动（不另写一套寻路）',
+    /_laneId: dragonLane/.test(mainSrc) && /_laneDirection: dragonDir/.test(mainSrc));
+  T('龙⑨-上坑推蓝方(reverse)、下坑推红方(forward)',
+    /dragonDir = \(pitSide === 'top'\) \? 'reverse' : 'forward'/.test(mainSrc));
+  T('龙⑩-上坑取 baron 位、下坑取 dragon 位',
+    /getPit\?\.\(pitSide === 'top' \? 'baron' : 'dragon'\)/.test(mainSrc));
+
+  // LaneMovementSystem 的接管条件：有阵营 + 有路。中立龙两者都满足。
+  const lms = stripComments(readSrc('../src/systems/LaneMovementSystem.js'));
+  T('龙⑪-兵线系统的过滤条件能收下中立龙',
+    /getAllMinions\(true\)\.filter\(m => m\._mapFaction && m\._laneId\)/.test(lms));
+
+  // 宿怨被动：对某阵营的减伤/增伤随该阵营击杀数增长
+  const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  T('龙⑫-宿怨被动在引擎里结算，且**两条伤害路径都接上了**',
+    /damage \*= this\._dragonGrudge\(attacker, target\)\.k;/.test(cs)
+    && /const grudge = this\._dragonGrudge\(attacker, target\);/.test(cs));
+  T('龙⑬-增伤放在顶部（攻击方属性，真伤也吃）、减伤放在减免块（防御方属性，真伤绕过）',
+    /if \(!grudgeAmp\.protective && grudgeAmp\.k !== 1\) damage \*= grudgeAmp\.k;/.test(cs)
+    && /if \(grudge\.protective && grudge\.k !== 1\) \{/.test(cs)
+    && /ignoredDamage \*= keepAmp\(grudge\.k\);/.test(cs));
+  T('龙⑭-最后一击的阵营被记下来（结算时那个单位可能已经死了）',
+    /_lastHitFaction = /.test(cs));
+  {
+    // 行为验证：杀得越多，龙对你越硬、打你越疼
+    const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+    const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+    const mk = (type, fac) => {
+      const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+        baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower), armor: 0, magicResist: 0,
+                     damageReduction: 0, damageBlock: 0, maxHP: 1e7 },
+        currentHP: 1e7, shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity,
+        _skillInstances: [], _mapFaction: fac, faction: fac };
+      ents.add(e); return e;
+    };
+    const tw = mk('tower', 'blue');
+    const dragon = mk('dragon', 'neutral');
+    const P = CONFIG.gameRules.dragon.passive;
+
+    // ⚠️ 减伤这一半要用**非真实伤害**测：本项目的"真实伤害"按既有口径完全绕过
+    // 双抗/减伤/格挡，宿怨的减伤半边与 damageReduction 同类，自然也被绕过。
+    // 用 'true' 测的话恒等于 100%，会误判成"被动没生效"（我第一版就这么翻车的）。
+    attr.tick();
+    const base = combat.performAttackDirect(tw.id, dragon.id, 1000, 'physical');
+    combat.setDragonKillCounts({ blue: 3, red: 0 });
+    attr.tick();
+    const after = combat.performAttackDirect(tw.id, dragon.id, 1000, 'physical');
+    const wantDR = 1 - (P.damageReductionPerKill * 3) / 100;
+    T(`龙⑮-杀过 3 条后，蓝方打龙的伤害降到 ${(wantDR * 100).toFixed(0)}%（实际 ${(after / base * 100).toFixed(0)}%）`,
+      Math.abs(after / base - wantDR) < 0.02);
+
+    // 增伤这一半反过来：它是攻击方属性，**真实伤害也该吃到**，所以用 'true' 测最干净
+    const d2 = combat.performAttackDirect(dragon.id, tw.id, 1000, 'true');
+    combat.setDragonKillCounts({ blue: 0, red: 0 });
+    attr.tick();
+    const d0 = combat.performAttackDirect(dragon.id, tw.id, 1000, 'true');
+    const wantAmp = 1 + (P.damageAmpPerKill * 3) / 100;
+    T(`龙⑯-龙打蓝方的伤害涨到 ${(wantAmp * 100).toFixed(0)}%（实际 ${(d2 / d0 * 100).toFixed(0)}%）`,
+      Math.abs(d2 / d0 - wantAmp) < 0.02);
+    T('龙⑰-没击杀记录时不产生任何修正', Math.abs(d0 - 1000) < 1e-6);
+    T('龙⑱-减伤半边遵循"真实伤害绕过减免"的既有口径',
+      Math.abs(combat.performAttackDirect(tw.id, dragon.id, 1000, 'true') - 1000) < 1e-6);
+  }
+}
+
+// ==================== 十八、八条龙魂的形状 ====================
+{
+  const S = CONFIG.dragonSouls;
+  T('魂①-九项数值全部软编码（八条魂 + 远古之力）',
+    ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison', 'ancient']
+      .every(k => S[k] && typeof S[k] === 'object'));
+  T('魂②-山魂的格挡压到很低（对小 AD 单位不能等于免疫）',
+    S.earth.damageBlock <= 3 && S.earth.damageBlock < CONFIG.templates.ranged.attackDamage);
+  T('魂③-毒魂对建筑打折（百分比最大生命的 DoT 天然反建筑）',
+    S.poison.vsBuildingPct > 0 && S.poison.vsBuildingPct < 100);
+  T('魂④-只有远古之力是限时的，其余八条永久',
+    S.ancient.durationSec === 240
+    && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison']
+        .every(k => S[k].durationSec === undefined));
+  const src = stripComments(readSrc('../src/core/skills/dragonSouls.js'));
+  T('魂⑤-所有触发点都不需要判断（onHit/onDealtDamage/onFrame/onEquip）',
+    !/优先攻击|选择目标|残血/.test(src));
+  T('魂⑥-冷却型用 gameTime 绝对时间戳（onHit 拿不到 dt）',
+    /function offCooldown\(instance, seconds\)/.test(src) && /instance\.state\.nextAt/.test(src));
+  T('魂⑦-暗魂全队共享层数（固定 sourceId + uniquePassive）',
+    /}, 'dragonsoul_dark'\);/.test(src) && /uniquePassive: true/.test(src));
+  T('魂⑧-潮魂回血不无视加固城防的节点封顶',
+    /e\._regenCapHP/.test(src));
+  T('魂⑨-光魂的重生规则由技能自己声明（MapSystem 读它，数值只有一份）',
+    /respawnRuleFor\(tier, usedCount\)/.test(src));
+  // 八条魂 + 远古之力都要能被技能库查到（否则装备时静默失败）
+  for (const k of ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison', 'ancient']) {
+    T(`魂⑩-dragonsoul_${k} 已注册进技能库`, !!SkillLibrary['dragonsoul_' + k]);
+  }
+  T('魂⑪-文案格式统一（getter 型技能也要被规范化）',
+    ['fire', 'poison', 'ancient'].every(k =>
+      /^唯一被动——/.test(SkillLibrary['dragonsoul_' + k].description)));
+
+  const sl = stripComments(readSrc('../src/core/SkillLibrary.js'));
+  T('魂⑫-注册期规范化现在也处理 getter（原来直接 continue，9 条龙魂整体漏检）',
+    /if \(d && d\.get\) \{/.test(sl) && /Object\.defineProperty\(def, key/.test(sl));
+}
+
+// ==================== 十九、龙魂平衡对照工具 ====================
+{
+  const bm = stripComments(readSrc('../tools/balance_matrix.mjs'));
+  T('对照①-有 --sweep soul 档位', /SWEEP === 'soul'/.test(bm));
+  T('对照②-含"双方无魂"的基线档（没有基线就没法判读）', /基线·双方无魂/.test(bm));
+  T('对照③-八条魂各一档', (bm.match(/蓝方持\$\{k\}魂/g) || []).length === 1
+    && /'fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison'/.test(bm));
+  T('对照④-领受范围与引擎同源（不能自己另写一份判定）',
+    /DragonSystem\.SOUL_REWARD_OK\(e\)/.test(bm));
+  T('对照⑤-走 equipSkill（手动 push 会漏掉 onEquip 里的常驻效果）',
+    /equipSkill\(e, FORCE_SOUL/.test(bm));
+}
+
 console.log(`v43验收: ${pass} 通过 / ${fail} 失败`);
 if (fail > 0) process.exit(1);

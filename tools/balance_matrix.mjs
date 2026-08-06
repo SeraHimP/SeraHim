@@ -13,6 +13,8 @@
  *   node tools/balance_matrix.mjs --runs 8 --minutes 40 # 每档 8 局、每局上限 40 分钟
  *   node tools/balance_matrix.mjs --sweep dayNight      # 扫昼夜阵营加成
  *   node tools/balance_matrix.mjs --sweep entropy       # 扫熵档位（熵实现后可用）
+ *   node tools/balance_matrix.mjs --sweep soul --runs 20 # v43：八条龙魂的强度对照
+ *                                                       #   基线档差值应≈0；每条魂目标胜率带 60~70%
  *   node tools/balance_matrix.mjs --json out.json       # 结果落盘，便于前后对比
  *
  * 说明：
@@ -35,6 +37,8 @@ const MAX_MIN = parseFloat(arg('minutes', '45'));
 // 我自己临时写的简易脚手架量出来"塔零掉血"，连峡谷也是零，说明那种脚手架说明不了任何事。
 const MAP_ID = arg('map', 'summoners_rift_v1');
 const SWEEP = arg('sweep', 'none');
+// v43：--sweep soul 用。非 null 时给**蓝方**的全部领受者（塔 + 大型小兵）装上这条龙魂。
+let FORCE_SOUL = null;
 const JSON_OUT = arg('json', '');
 
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
@@ -48,6 +52,8 @@ const { MapSystem } = await import('../src/systems/MapSystem.js');
 const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
 const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
 const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
+const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+const { equipSkill } = await import('../src/core/skillParams.js');
 const { BuffSystem } = await import('../src/systems/BuffSystem.js');
 const { WorldState } = await import('../src/systems/WorldState.js');
 const { CONFIG } = await import('../src/data/Config.js');
@@ -130,6 +136,7 @@ function runOne(seed) {
     const wKey = CONFIG.towerTierWeapon?.[tier] !== undefined
       ? CONFIG.towerTierWeapon[tier] : (isNexus ? 'none' : weapon);
     if (wKey && wKey !== 'none') e._skillInstances.push({ id: ++window._uid, skillId: 'weapon_' + wKey, state: {} });
+    equipForcedSoul(e, fx, ents, bus);   // v43：龙魂对照档
     ents.add(e);
     return e;
   });
@@ -161,6 +168,7 @@ function runOne(seed) {
     // 屠戮（对战节奏的主导项，必须带上，否则模拟结果没有参考价值）
     const rend = { melee: 'passive_melee_rend', ranged: 'passive_ranged_rend', siege: 'passive_siege_rend' }[type];
     if (rend) e._skillInstances.push({ id: ++window._uid, skillId: rend, state: {} });
+    equipForcedSoul(e, fx, ents, bus);   // v43：龙魂对照档
     ents.add(e);
     return e;
   });
@@ -266,6 +274,22 @@ function runCell(label, apply, restore) {
   };
 }
 
+/**
+ * v43：龙魂对照档专用 —— 给**蓝方**的领受者装上 FORCE_SOUL。
+ * 领受范围与引擎同源（DragonSystem.SOUL_REWARD_OK），否则测出来的东西不是游戏里的东西。
+ * 走 equipSkill 而不是手动 push：龙魂的 onEquip 里要施加常驻效果（山魂/风魂），
+ * 手动 push 会漏掉那一步，量出来的强度偏低。
+ */
+function equipForcedSoul(e, fx, ents, bus) {
+  if (!FORCE_SOUL) return;
+  if ((e._mapFaction || e.faction) !== 'blue') return;
+  if (!DragonSystem.SOUL_REWARD_OK(e)) return;
+  equipSkill(e, FORCE_SOUL, {
+    entityContainer: ents, effectRegistry: fx, eventBus: bus,
+    attrCalc: AttributeCalculator, waveNumber: 0,
+  }, SkillLibrary);
+}
+
 // ==================== 档位定义 ====================
 const cells = [];
 const cw = CONFIG.world.couplings;
@@ -289,6 +313,24 @@ if (SWEEP === 'dayNight') {
       cw.entropyToUnits = true;
       FORCE_ENTROPY = v;
     }, () => { cw.entropyToUnits = false; FORCE_ENTROPY = null; }]);
+  }
+} else if (SWEEP === 'soul') {
+  // ==================== v43：龙魂平衡对照 ====================
+  // 用户："做模拟对照吧。"
+  // 八条龙魂各自跑一档「蓝方持魂 vs 红方无魂」，外加一档双方都无魂的**基线**。
+  // 判读标准写死在这里，免得下次又靠感觉调：
+  //   · 基线档的推进度差应当接近 0（对称局面）；
+  //   · 每条魂的目标是让蓝方**略微**占优 —— 胜率带 60~70%。
+  //     超过 70% 就砍数值，低于 55% 就加。龙魂该是胜负手，不该是终局宣告。
+  //
+  // 实现方式：直接给蓝方全体领受者装上那条魂（不真的去打龙）——
+  // 我们要量的是"拿到魂之后的强度差"，不是"抢龙的难易"，两件事必须分开测，
+  // 混在一起的话抢龙成功率会把魂本身的强度掩盖掉。
+  const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison'];
+  cells.push(['基线·双方无魂', () => { FORCE_SOUL = null; }, () => { FORCE_SOUL = null; }]);
+  for (const k of SOULS) {
+    cells.push([`蓝方持${k}魂`, () => { FORCE_SOUL = 'dragonsoul_' + k; },
+                () => { FORCE_SOUL = null; }]);
   }
 } else if (SWEEP === 'entropyLive') {
   // 熵【自然演化】下扫加成幅度。这一档才是真正要看的：

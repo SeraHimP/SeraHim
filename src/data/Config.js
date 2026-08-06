@@ -132,10 +132,17 @@ export const CONFIG = {
     // 现在删掉那七个键，换成 DragonSystem **真正读取**的这一份：
     // 原先写死在 DragonSystem 源码里的每一个魔数都搬到了这里，数值逐个保持不变。
     dragon: {
+      // v43（用户定稿）："龙改为每5分钟一条。第一条龙1分钟就刷。"
+      // 且"改为龙死亡后下一条龙的倒计时才开始计时"—— 这条在 DragonSystem.update 里
+      // 本来就成立（场上有龙时直接 return，计时器冻结），不需要额外改代码。
+      // 于是场上**最多同时存在一条龙**，不会堆积。
       firstDelay: 60,                    // 首条元素龙的出现时间（秒）
-      elementIntervals: [420, 480, 540], // 第 2/3/4 条元素龙的间隔；再往后沿用最后一项
-      ancientFirstDelay: 300,            // 成魂结算后，首条远古龙的间隔
-      ancientInterval: 600,              // 之后每条远古龙的间隔
+      elementIntervals: [300],           // v43：[420,480,540] → 统一 300（越界沿用最后一项）
+      ancientFirstDelay: 300,            // v43：成魂后首条远古龙也是 300（原 300，未变）
+      ancientInterval: 300,              // v43：600 → 300。理由见下。
+      // 为什么远古龙也要提到 300：成魂方顶着**永久**龙魂，而远古龙的处决 buff 是
+      // 落后方唯一的翻盘工具。10 分钟才有一次机会的话，"拿到龙魂之后另一方不用玩了"
+      // 这句话依然成立。翻盘窗口的密度必须配得上永久优势。
       // 强度曲线按【第几条龙】算，与游戏波次无关。
       // 取值 = w<=knee ? base+(w-1)*step : base+(knee-1)*step+(w-knee)*lateStep，再按 cap 截顶。
       // 默认值复刻原源码：生命 1200→3000、双抗 -40→200、攻击 23→252（第 1→4 条）。
@@ -146,6 +153,28 @@ export const CONFIG = {
       },
       // 远古龙在同序号曲线上的额外修正（原源码：hp*1.15、双抗+40、攻击*1.1）
       ancient: { hpMult: 1.15, resistAdd: 40, adMult: 1.1 },
+      // ==================== v43：龙变成会走路的中立攻城单位 ====================
+      // 用户定稿："龙永久存活，就像是敌方小兵一样推进到基地。"
+      // 上/下龙坑交替刷新；**上坑的走上路推蓝方基地，下坑的走下路推红方基地**。
+      // 属性形状（用户定稿）：攻击力低→高、攻速低、血量/双抗低→高 ——
+      // 前三项上面的 curve 本来就是这个形状（第 1→4 条：HP 1200→3000、
+      // 双抗 −40→200、AD 23→252），这里只补"会动、够得着、带溅射"这几项。
+      combat: {
+        moveSpeed: 25,        // 比近战兵(33)慢：压迫感来自"躲不掉"，不是"追得快"
+        attackRange: 200,     // 比塔(180)略远，能站在塔的射程边缘拆塔
+        baseAttackSpeed: 0.4, // 低攻速（用户定稿）。单发重、间隔长
+        attackType: 'physical',
+        splashRadius: 90,     // 溅射半径（参考爆炸型的 75，大一圈——大家伙的挥击）
+        splashPct: 50,        // 溅射伤害占主伤害的比例（爆炸型中心是 60%，这里弱一点）
+      },
+      // 龙的被动（用户定稿）：龙对**某阵营**的减伤/增伤随该阵营已击杀的**元素龙**数量增长。
+      // 远古龙不计入这个计数，但远古龙自己也带这条被动。
+      // 这是个天然的橡皮筋：杀得越多，下一条龙对你越硬、打你越疼，
+      // 抢龙的天平自动往落后方倾斜 —— 有叙事、可观测，比"系统偷偷给弱方加数值"好得多。
+      passive: {
+        damageReductionPerKill: 7,   // 对该阵营的伤害减免（%/条）
+        damageAmpPerKill: 11,        // 对该阵营的伤害提升（%/条）
+      },
     },
   },
   // 建筑渲染体积（半径 px）：LoL 中水晶枢纽 > 防御塔 > 召唤水晶，按 tier 区分。
@@ -157,6 +186,47 @@ export const CONFIG = {
   // 生成建筑时按 地图 tierStats → towerTierOverrides → factionOverrides['tower_'+tier] 依次覆盖。
   // 不改就是空对象 → 完全沿用地图数值，行为不变。
   towerTierOverrides: { outer: {}, inner: {}, base: {}, hq_tower: {}, nexus_lane: {}, nexus_main: {} },
+  // ==================== v43：八条龙魂 + 远古之力的全部数值 ====================
+  // 领受者是**塔与大型小兵**，没有玩家 —— 所以每条的触发条件都不需要判断
+  //（命中就触发 / 受击就触发 / 每隔 N 秒就触发），机械单位也能吃满。
+  // 设计背景详见 src/core/skills/dragonSouls.js 的头注。
+  //
+  // ⚠️ 平衡验收：用 `node tools/balance_matrix.mjs --soul <id>` 跑"持魂方 vs 无魂方"，
+  // 目标胜率 **60~70%**。超过 70% 就砍数值 —— 龙魂该是胜负手，不该是终局宣告。
+  dragonSouls: {
+    // 🔥 炎魂：攻击附带溅射
+    fire:    { pct: 60, radius: 75, cooldown: 8 },
+    // 🌊 潮魂：攻击后回复已损生命 + 治疗强度。回血**不无视**加固城防的节点封顶
+    water:   { healMissingPct: 8, powerPct: 25, buffSec: 5, cooldown: 8 },
+    // 🗿 山魂：减伤 + 格挡。
+    // ⚠️ damageBlock 是【每次命中扣固定值】，对小 AD 单位近乎免疫：
+    // 近战兵 AD 9、远程兵 6.5 —— 给到 7 就等于把对手整条兵线的输出删掉
+    //（第一版方案写的就是 7，用户选方案 A 砍到 2）。这个数不要再往上调。
+    earth:   { damageReduction: 33, damageBlock: 2 },
+    // ⚡ 雷魂：连锁真伤，总量固定、在最多 6 人间**均摊**（与炎魂的独立溅射语义不同）
+    thunder: { totalPct: 150, targets: 6, range: 200, cooldown: 8 },
+    // 🌪 风魂：移速（脱战更快）+ 塔攻速。
+    // towerAttackSpeedPct 是**面板值**：攻速公式为 正值×attackSpeedRatio(0.667)，
+    // 所以填 33 实际约 +22%（用户定稿要的就是面板 33）。
+    wind:    { moveSpeedPct: 33, moveSpeedOutPct: 50, towerAttackSpeedPct: 33 },
+    // 🌑 暗魂：命中削双抗，**全队共享层数**（友军攻击也叠）。
+    // 减抗顺序：先固定后百分比（属性管线本来就是这个顺序，见 dragonSouls.js 注释）。
+    dark:    { flatPerStack: 1, pctPerStack: 0.5, maxFlat: 30, maxPct: 15, duration: 6 },
+    // ☀️ 光魂：塔重生。外/内塔各限 1 次，枢纽塔无限次。
+    // 枢纽塔无限重生看起来会让游戏打不完，但**过载被动**会持续削最大生命直到归零，
+    // 所以有天花板（这一点是用户指出的，我原先想岔了）。
+    light:   { respawnSec: 300, outerInnerHpPct: 33, hqHpPct: 40, outerInnerLimit: 1 },
+    // ☠️ 毒魂：命中叠中毒，无限叠加。
+    // 对建筑打 25 折：百分比最大生命的 DoT 天然反建筑，不打折的话一波兵十秒推平一座塔。
+    poison:  { pctPerStack: 0.4, duration: 4, vsBuildingPct: 25, maxStacks: 999 },
+    // 🐲 远古之力：唯一**限时**的一条（其余八条全部永久）
+    ancient: { executeAtPct: 20, executePct: 20, durationSec: 240 },
+  },
+  // v43：龙的两个独立开关（用户定稿："龙魂效果有独立开关（是否生成/效果）"）。
+  //   spawn  —— 是否生成巨龙（关掉 = 这局没有龙，也就不会有龙魂）
+  //   effect —— 龙魂效果是否生效（龙照常刷、照常结算归属，但不发放增益）
+  // 拆成两个是为了做平衡对照：开 spawn 关 effect，就能量出"有龙但没魂"的基线。
+  dragonToggles: { spawn: true, effect: true },
   // 分层防御塔的【默认被动覆写】。undefined = 沿用 main.js createBuilding 的硬编码默认装配；
   // 一旦模板编辑器"被动技能"tab 点过应用，就变成显式数组（空数组 = 该层级不装任何被动），
   // 从此完全由这里决定，不再受代码默认与波次门槛影响（与小兵 _templateSkills 语义一致）。
