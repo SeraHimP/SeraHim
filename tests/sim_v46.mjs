@@ -587,4 +587,87 @@ const mkE = (ents, type, x, y, extra = {}) => {
   }
 }
 
+// ==================== 十二、塔的静态朝向（沿兵线朝敌方）====================
+// 用户："路径上塔的朝向也需要修改，看图……另一阵营同理。"
+//        "枢纽塔那里注意看一下，两侧的看向对角线但是略微朝两侧一些。"
+{
+  const { towerFacingRad } = await import('../src/presentation/towerFacing.js');
+  const { MAPS: M3 } = await import('../src/data/maps/index.js');
+  const map = M3.summoners_rift_v1;
+  const deg = (r) => (r === null ? null : Math.round(r * 180 / Math.PI));
+  const of = (b) => deg(towerFacingRad(
+    { pos: b.pos, _mapFaction: b.faction, _laneId: b.laneId, _mapTier: b.tier }, map));
+  const pick = (f, lane, tier) => map.buildings.find(
+    b => b.faction === f && b.laneId === lane && b.tier === tier);
+
+  // ① 每座塔都朝**敌方半场**（红蓝各自成立）。
+  //
+  // ⚠️ 这一条我第一版写成了"同一路同一档，红蓝朝向必须差 180°"，**前提就是错的**：
+  // 上路是条折线（蓝方那几座在左侧竖直段、红方那几座在顶部水平段），
+  // 各自贴着自己所在那一段的切线，本来就不该是 180° 互补。中/下路同理。
+  // 真正该守的不变量是"朝向敌方"，与路的形状无关 —— 钉错不变量比不钉更糟：
+  // 它会逼着后来的人去"修"一个本来就对的实现。
+  for (const f of ['blue', 'red']) {
+    const foe = map.buildings.find(b => b.tier === 'nexus_main' && b.faction !== f && b.pos);
+    for (const lane of ['top', 'mid', 'bot']) {
+      for (const tier of ['outer', 'inner', 'base']) {
+        const b = pick(f, lane, tier);
+        if (!b) continue;
+        const a = towerFacingRad(
+          { pos: b.pos, _mapFaction: f, _laneId: lane, _mapTier: tier }, map);
+        // 朝向单位向量 · 指向敌方水晶的向量 > 0 → 朝着敌方半场
+        const dot = Math.sin(a) * (foe.pos.x - b.pos.x) + Math.cos(a) * (foe.pos.y - b.pos.y);
+        T(`向①-${f}/${lane}/${tier}：朝向敌方半场`, dot > 0);
+      }
+    }
+  }
+  // ② 同一路同一阵营的塔朝向一致（它们在同一段路上）
+  for (const lane of ['top', 'mid', 'bot']) {
+    const angs = ['outer', 'inner', 'base'].map(t => pick('blue', lane, t)).filter(Boolean).map(of);
+    T(`向②-${lane}：蓝方同路各档朝向一致`, new Set(angs).size === 1);
+  }
+  // ③ 三条路的朝向互不相同（不是全都朝同一个方向 —— 那正是改动前的样子）
+  T('向③-三条路朝向各不相同（改动前是所有塔一个朝向）',
+    new Set(['top', 'mid', 'bot'].map(l => of(pick('blue', l, 'outer')))).size === 3);
+  // ⑤ 枢纽塔：在对角线基础上**各自向外**张开
+  {
+    for (const f of ['blue', 'red']) {
+      const hs = map.buildings.filter(b => b.tier === 'hq_tower' && b.faction === f);
+      const nx = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
+      const base = deg(towerFacingRad({ pos: nx.pos, _mapFaction: f, _mapTier: 'nexus_main' }, map));
+      const angs = hs.map(b => deg(towerFacingRad(
+        { pos: b.pos, _mapFaction: f, _laneId: null, _mapTier: 'hq_tower' }, map)));
+      T(`向⑤-${f} 两座枢纽塔朝向不同（不是两个复制品）`, angs[0] !== angs[1]);
+      T(`向⑥-${f} 两座各自偏在对角线两侧`, (() => {
+        const d = angs.map(a => { let x = a - base; while (x > 180) x -= 360; while (x <= -180) x += 360; return x; });
+        return Math.sign(d[0]) !== Math.sign(d[1]) && d.every(x => Math.abs(x) > 5);
+      })());
+      T(`向⑦-${f} 张开角度取自配置 hqSpreadDeg`, (() => {
+        const d = angs.map(a => { let x = a - base; while (x > 180) x -= 360; while (x <= -180) x += 360; return Math.abs(x); });
+        return d.every(x => Math.abs(x - CONFIG.ui.towerFacing.hqSpreadDeg) <= 1);
+      })());
+    }
+  }
+  // ⑥ 开关与翻转（图示方向有歧义，留了一个值可整体翻转）
+  T('向⑧-总开关关掉后不定向（返回 null = 保持默认朝向）',
+    towerFacingRad({ pos: { x: 0, y: 0 }, _mapFaction: 'blue', _laneId: 'mid' }, map,
+                   { enabled: false }) === null);
+  T('向⑨-flip 能整体翻转 180°（万一图上的箭头我读反了）', (() => {
+    const e = { pos: pick('blue', 'mid', 'outer').pos, _mapFaction: 'blue', _laneId: 'mid', _mapTier: 'outer' };
+    const a = deg(towerFacingRad(e, map, { hqSpreadDeg: 25 }));
+    const b = deg(towerFacingRad(e, map, { flip: true, hqSpreadDeg: 25 }));
+    return Math.abs(Math.abs(((a - b) % 360 + 540) % 360 - 180) - 180) < 1 || Math.abs(a - b) === 180;
+  })());
+  // ⑦ 非对战单位不定向
+  T('向⑩-中立/沙盒塔（没有阵营）不定向',
+    towerFacingRad({ pos: { x: 0, y: 0 }, _mapFaction: null }, map) === null);
+
+  // 渲染层接线：换模型时必须重赋，否则塔一掉血就转回正北
+  const ul3 = srcOf('src/presentation/UnitLayer.js');
+  T('向⑪-渲染层每帧都赋朝向（换模型会重置 rotation，只赋一次会转回正北）',
+    /if \(en\.faceFixed !== null\) en\.unit\.rotation\.y = en\.faceFixed;/.test(ul3));
+  T('向⑫-复用了原有的 faceFixed 字段（它本来是个死字段）',
+    /en\.faceFixed = towerFacingRad/.test(ul3));
+}
+
 done();

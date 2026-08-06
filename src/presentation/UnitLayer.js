@@ -36,6 +36,7 @@ import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
+import { towerFacingRad } from './towerFacing.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -842,6 +843,21 @@ export class UnitLayer {
     //
     // 仍然保留渲染侧的平滑插值：模拟 30Hz、渲染 60Hz，直接贴 _facing 会有台阶感。
     // 塔没有 _facing（豁免），en.facing 为 false，整段跳过。
+    // ==================== 塔：沿兵线朝向敌方（v45，静态）====================
+    // 用户："路径上塔的朝向也需要修改……另一阵营同理。"
+    // 塔**不参与**上面那套动态转向（战斗规则里塔是豁免的），它只是摆放角度不同：
+    // 每座塔面朝自己这一路的敌人来向，红蓝镜像。算一次就固定，不随帧变。
+    //
+    // en.faceFixed 这个字段**本来就在 entry 里**，声明了却从没被读写过 —— 是个死字段，
+    // 显然当初想做这件事没做完。现在把它做实，而不是再加一个新字段。
+    if (en.isTower && this.mapSystem?.currentMap) {
+      if (en.faceFixed === null) en.faceFixed = towerFacingRad(e, this.mapSystem.currentMap);
+      // ⚠️ 每帧**都要赋**，不能只在算出来那一次赋。
+      // 换模型时（损毁档跳变、变废墟、幽灵态）_installUnit 会把 en.unit 整个换掉，
+      // 新对象的 rotation 是 0 —— 只赋一次的话，塔一掉血就会"啪"地转回正北。
+      // 赋值本身是一次浮点写入，比记一个"要不要重赋"的脏标记还便宜。
+      if (en.faceFixed !== null) en.unit.rotation.y = en.faceFixed;
+    }
     if (en.facing) {
       if (e._facing !== undefined) en.faceT = e._facing;
       if (en.faceT !== undefined) {
