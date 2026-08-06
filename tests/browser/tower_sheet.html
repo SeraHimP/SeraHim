@@ -15,8 +15,10 @@ const COLS = [
     ['blue','red'].map(f => ['tower', t, f, 1, `${f} ${t} 轻损`])),
   ...['outer','inner','base','hq_tower'].flatMap(t =>
     ['blue','red'].map(f => ['tower', t, f, 2, `${f} ${t} 重损`])),
-  ...['blue','red'].map(f => ['orb', 'nexus_lane', f, 0, `${f} 召唤水晶`]),
-  ...['blue','red'].map(f => ['gem', 'nexus_main', f, 0, `${f} 水晶枢纽`]),
+  ...[0,1,2].flatMap(d => ['blue','red'].map(f =>
+    ['orb', 'nexus_lane', f, d, `${f} 召唤水晶${['','轻损','重损'][d]}`])),
+  ...[0,1,2].flatMap(d => ['blue','red'].map(f =>
+    ['gem', 'nexus_main', f, d, `${f} 水晶枢纽${['','轻损','重损'][d]}`])),
 ];
 
 const CELL = 200, PER_ROW = 8;

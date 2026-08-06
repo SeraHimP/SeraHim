@@ -326,6 +326,20 @@ const mkE = (ents, type, x, y, extra = {}) => {
   })());
   T('损⑱b-顶部已精简：悬浮件与尖塔都删了（用户："顶部元素别整的太多了"）',
     !/orbs/.test(umf2) && !/SP\.spire/.test(umf2) && /topScale/.test(umf2));
+
+  // 用户说的是"**每种**塔"，召唤水晶/水晶枢纽也算。它们与防御塔用同一套损毁词汇：
+  // 主体尺寸不动、护柱断成残根（不整根消失）、加掉块与碎石。
+  if (THREE) {
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    for (const kind of ['orb', 'gem']) {
+      const m = [0, 1, 2].map(d =>
+        towerMesh(`v46c|${kind}|${d}`, '#5b9bd5', 34, '', kind, false, false, 'nexus_main', 'blue', d));
+      T(`损⑲-${kind}：三档炮口高度一致（水晶就是炮口）`,
+        Math.abs(m[0].muzzleY - m[1].muzzleY) < 1e-6 && Math.abs(m[0].muzzleY - m[2].muzzleY) < 1e-6);
+      T(`损⑳-${kind}：损毁确实换了几何`,
+        m[0].geo.attributes.position.count !== m[2].geo.attributes.position.count);
+    }
+  }
   T('损⑱-角楼架在冠顶（crownTopY），不是架在雉堞推进后的高度上（那样会悬空）',
     /const crownTopY = y;/.test(umf2) && /T\(tx, crownTopY \+ th \/ 2, tz\)/.test(umf2));
 

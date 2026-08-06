@@ -280,6 +280,12 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       // 红方护柱还带 lean 外倾 —— 必然插进去。**根因是位置写死、不看柱子在哪。**
       // 现在碎晶的轨道半径由柱子半径 + 两者半径和 + 余量算出来，柱子怎么摆都不会插。
       const isNexus = kind === 'gem';
+      // v45d：召唤水晶/水晶枢纽同样吃损毁档 —— 用户说的是"**每种**塔"。
+      // 与防御塔同一套词汇：主体尺寸不动，只减细节（护柱断掉几根）+ 加损伤（掉块、碎石）。
+      const cWear = dmg === 0 ? 1 : dmg === 1 ? 0.94 : 0.85;
+      const cTrim = dmg === 0 ? F.trim : desat(F.trim, dmg === 1 ? 0.93 : 0.86, 1);
+      const cStone = dmg === 0 ? F.stone : desat(F.stone, dmg === 1 ? 0.94 : 0.88, 1);
+      const cChar = desat(F.stone, 0.34, 0.42);
       const nCol = isNexus ? 4 : 3;
       const pedH = R * (isNexus ? 0.58 : 0.34);
       const colH = R * (isNexus ? 1.12 : 0.74);
@@ -288,27 +294,50 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
 
       if (isNexus) {
         // 高台 + 环形阶梯（两级），把"基地核心"垫起来
-        add(new THREE.CylinderGeometry(R * 1.18, R * 1.34, pedH * 0.34, 8), T(0, pedH * 0.17, 0), shade(F.stone, 0.44));
-        add(new THREE.CylinderGeometry(R * 0.92, R * 1.10, pedH * 0.36, 8), T(0, pedH * 0.52, 0), shade(F.stone, 0.52));
-        add(new THREE.CylinderGeometry(R * 0.74, R * 0.88, pedH * 0.32, 8), T(0, pedH * 0.86, 0), shade(F.stone, 0.60));
+        add(new THREE.CylinderGeometry(R * 1.18, R * 1.34, pedH * 0.34, 8), T(0, pedH * 0.17, 0), shade(cStone, 0.44 * cWear));
+        add(new THREE.CylinderGeometry(R * 0.92, R * 1.10, pedH * 0.36, 8), T(0, pedH * 0.52, 0), shade(cStone, 0.52 * cWear));
+        add(new THREE.CylinderGeometry(R * 0.74, R * 0.88, pedH * 0.32, 8), T(0, pedH * 0.86, 0), shade(cStone, 0.60 * cWear));
       } else {
-        add(new THREE.CylinderGeometry(R * 0.72, R * 0.98, pedH, F.crownSides + 2), T(0, pedH / 2, 0), shade(F.stone, 0.52));
+        add(new THREE.CylinderGeometry(R * 0.72, R * 0.98, pedH, F.crownSides + 2), T(0, pedH / 2, 0), shade(cStone, 0.52 * cWear));
       }
 
       // 护柱：枢纽是**直立方碑**（庄重），召唤水晶是**向内合抱的斜柱**（封印）
       for (let i = 0; i < nCol; i++) {
         const a = (i / nCol) * Math.PI * 2 + (isNexus ? Math.PI / 4 : 0);
         const px = Math.cos(a) * colR, pz = Math.sin(a) * colR;
+        // 损毁：断掉几根护柱。**留断根**而不是整根消失 —— 整根消失会让剪影缺一大块，
+        // 那又回到"主体不一样了"那个错误上去。
+        const brk = (dmg === 1 && i === 0) || (dmg === 2 && i % 2 === 0);
+        const hK = brk ? (dmg === 2 ? 0.34 : 0.55) : 1;
         if (isNexus) {
-          add(new THREE.BoxGeometry(R * 0.20, colH, R * 0.20), T(px, pedH + colH / 2, pz), shade(F.stone, 0.74));
-          // 碑顶的小盖，让它读作"碑"而不是"柱"
-          add(new THREE.BoxGeometry(R * 0.28, R * 0.07, R * 0.28), T(px, pedH + colH + R * 0.035, pz), shade(F.trim, 0.62));
+          add(new THREE.BoxGeometry(R * 0.20, colH * hK, R * 0.20),
+              T(px, pedH + colH * hK / 2, pz), brk ? cChar : shade(cStone, 0.74 * cWear));
+          if (!brk) {
+            // 碑顶的小盖，让它读作"碑"而不是"柱"
+            add(new THREE.BoxGeometry(R * 0.28, R * 0.07, R * 0.28),
+                T(px, pedH + colH + R * 0.035, pz), shade(cTrim, 0.62 * cWear));
+          }
         } else {
           // 向内倾（负号 = 朝圆心倒），与红方 lean 的外倾叠加后仍然朝内
           const lean = 0.26 - F.lean * 0.5;
-          add(new THREE.CylinderGeometry(R * 0.07, R * 0.13, colH, 5),
-              compose(T(px, pedH + colH / 2, pz), R_Z(-Math.cos(a) * lean), R_X(Math.sin(a) * lean)),
-              shade(F.stone, 0.74));
+          add(new THREE.CylinderGeometry(R * 0.07, R * 0.13, colH * hK, 5),
+              compose(T(px, pedH + colH * hK / 2, pz), R_Z(-Math.cos(a) * lean), R_X(Math.sin(a) * lean)),
+              brk ? cChar : shade(cStone, 0.74 * cWear));
+        }
+      }
+      // 掉块 + 碎石（与防御塔同一套词汇）
+      if (dmg > 0) {
+        const nC = dmg === 1 ? 2 : 4;
+        for (let i = 0; i < nC; i++) {
+          const a = (i / nC) * Math.PI * 2 + 0.6;
+          add(new THREE.BoxGeometry(R * 0.26, R * 0.20, R * 0.14),
+              compose(T(Math.cos(a) * R * 0.82, pedH * 0.62, Math.sin(a) * R * 0.82), R_Y(-a)), cChar);
+        }
+        const rub = dmg === 1 ? [[0.92, 0.34, 0.20], [-0.84, 0.48, 0.17]]
+                              : [[1.02, 0.30, 0.26], [-0.90, 0.52, 0.22], [0.36, -1.00, 0.19], [-0.44, -0.86, 0.16]];
+        for (const [rx, rz, sz] of rub) {
+          add(new THREE.BoxGeometry(R * sz, R * sz * 0.85, R * sz * 0.9),
+              compose(T(rx * R, R * sz * 0.42, rz * R), R_Z(0.6), R_X(0.3)), shade(cStone, 0.50 * cWear));
         }
       }
 
@@ -333,6 +362,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
                                crystalR + shardR + gap);        // 躲宝石
         const shardY = pedH + colH + shardR + gap;             // 抬到碑顶之上，纵向也不会碰
         for (let i = 0; i < 6; i++) {
+          if (dmg === 1 && i % 3 === 0) continue;   // 损毁时碎晶也少几颗
+          if (dmg === 2 && i % 2 === 0) continue;
           const a = (i / 6) * Math.PI * 2 + Math.PI / 6;        // 与四根碑错开
           add(new THREE.OctahedronGeometry(shardR),
               compose(T(Math.cos(a) * orbit, shardY, Math.sin(a) * orbit), R_Z(a)), shade(color, 1.1));
