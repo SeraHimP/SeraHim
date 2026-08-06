@@ -35,7 +35,7 @@ import { CONFIG } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
+import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -127,8 +127,13 @@ export class UnitLayer {
       // 四个档次会共用第一个被缓存的那个几何（这正是"四档长得一样"的另一半原因）。
       const vTier = towerModelTier(e._modelRole) || e._mapTier || 'outer';
       const vFac = e._mapFaction || 'neutral';
-      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
-      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac);
+      // v45：损毁档进 key。不进 key 的话三档会共用第一个被缓存的几何 ——
+      // 与 v44「四个档次长得一样」是同一个坑（那次是 tier/faction 没进 key）。
+      // 已经是废墟(showRuin)时不再分档：废墟有自己一套造型，再叠损毁没有意义。
+      const hpMax = e.baseStats?.maxHP || 1;
+      const dmg = showRuin ? 0 : towerDamageStage(e, (e.currentHP || 0) / hpMax);
+      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
+      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac, dmg);
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,

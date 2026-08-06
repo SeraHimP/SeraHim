@@ -103,6 +103,12 @@ export class FacingSystem {
         if (dx * dx + dz * dz > 0.25) want = Math.atan2(dx, dz);
       }
       e._faceLastX = e.pos.x; e._faceLastZ = e.pos.y;
+      // 记住最后一次算出来的期望方向，位移为 0 的帧继续朝它转。
+      // 不记的话会**转到一半冻住**：模拟 30Hz、渲染 60Hz，本来就有半数帧位移为 0；
+      // 而一个刚起步又立刻停下的单位（被挡、被锚定）会永远歪着。
+      // 是 sim_v46「朝⑧」抓到的 —— 那条用例只推了一次位置，于是只转了一帧。
+      if (want !== undefined) e._faceWant = want;
+      else want = e._faceWant;
 
       if (e._facing === undefined) {
         // 入场即面向期望方向，不从 0（正北）转过去 —— 否则每个新兵一出生

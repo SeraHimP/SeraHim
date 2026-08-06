@@ -75,7 +75,98 @@ function normed(img) {
   return c;
 }
 
-export function compositeTerrain(base, world, walk, nx, ny, texGround, texPlateau) {
+// ==================== v45：分区贴图 ====================
+// 用户："目前的贴图太简单了，我想要高地/路径/野区等都用不同贴图看起来好看一些。"
+//
+// 分区从**已有数据**推，不新增数据源（新增一份就要维护两份，迟早对不上）：
+//   plateau（高地）= walk 网格里不可走的格 —— 与原有高地材质完全同一份遮罩，边界严格一致
+//   lane   （路径）= 离任一兵线路点足够近的可走格
+//   base   （基地）= 离任一基地锚点足够近
+//   river  （河道）= 地图声明的河道多边形/带（没有就没有这一区）
+//   jungle （野区）= 其余可走格
+// 优先级 base > river > lane > plateau > jungle：越"专有"的区越优先，
+// 否则基地圈会被路径盖掉（三条路都通到基地）。
+//
+// **每一区的贴图都是可选的**：缺哪张就退回 ground，所以现有只有 ground/plateau/cliff
+// 的三张图不会因为这次改动变样 —— 这是刻意的，"加通道"和"改画面"要分两次做。
+export const ZONES = ['ground', 'plateau', 'lane', 'jungle', 'river', 'base'];
+
+/**
+ * 程序化占位材质。用户的手绘图回来之前，让分区**看得见**地起作用 ——
+ * 否则管线做完了也验不了，只能等图。
+ * 刻意做得朴素（低对比噪声 + 区域色相），它就是占位，不是最终质感。
+ */
+export function placeholderTexture(zone, size = 256) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const TINT = {
+    ground:  [104, 104,  86], plateau: [ 96,  92,  88],
+    lane:    [134, 120,  92], jungle:  [ 62,  92,  58],
+    river:   [ 58,  92, 118], base:    [ 92,  96, 112],
+  };
+  const t = TINT[zone] || TINT.ground;
+  const d = g.createImageData(size, size);
+  // 值噪声（可平铺）：用坐标的正弦和，天然在边界对齐，不会露接缝。
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = x / size * Math.PI * 2, v = y / size * Math.PI * 2;
+    const n = Math.sin(u * 3) * Math.sin(v * 3) * 0.5
+            + Math.sin(u * 7 + 1.3) * Math.sin(v * 5 + 0.7) * 0.3
+            + Math.sin(u * 13 + 2.1) * Math.sin(v * 11 + 1.9) * 0.2;
+    const k = 1 + n * 0.16;
+    const i = (y * size + x) * 4;
+    d.data[i] = Math.max(0, Math.min(255, t[0] * k));
+    d.data[i + 1] = Math.max(0, Math.min(255, t[1] * k));
+    d.data[i + 2] = Math.max(0, Math.min(255, t[2] * k));
+    d.data[i + 3] = 255;
+  }
+  g.putImageData(d, 0, 0);
+  return c;
+}
+
+/**
+ * 逐格算出分区 id（返回 Uint8Array，长度 nx*ny，值是 ZONES 的下标）。
+ * 在**网格分辨率**上算而不是逐像素：这是给最近邻放大用的遮罩，
+ * 与既有的 walk 遮罩同一套做法，边界因此严格一致（逐像素算反而会与高地边界错开一格）。
+ */
+export function zoneGrid(map, walk, nx, ny, world) {
+  const out = new Uint8Array(nx * ny);
+  const iOf = (z) => ZONES.indexOf(z);
+  const cw = world.w / nx, ch = world.h / ny;
+  const laneR = (map?.zoneRadii?.lane) ?? 90;
+  const baseR = (map?.zoneRadii?.base) ?? 190;
+  const riverR = (map?.zoneRadii?.river) ?? 70;
+  const lanePts = [];
+  for (const ln of (map?.lanes || [])) for (const w of (ln.waypoints || [])) lanePts.push(w);
+  const basePts = [];
+  for (const b of (map?.buildings || [])) {
+    if (b.tier === 'nexus_main' && b.pos) basePts.push(b.pos);
+  }
+  const riverPts = [];
+  for (const r of (map?.river?.path || map?.riverPath || [])) riverPts.push(r);
+
+  const near = (pts, x, y, r) => {
+    const r2 = r * r;
+    for (let i = 0; i < pts.length; i++) {
+      const dx = pts[i].x - x, dy = pts[i].y - y;
+      if (dx * dx + dy * dy <= r2) return true;
+    }
+    return false;
+  };
+
+  for (let gy = 0; gy < ny; gy++) for (let gx = 0; gx < nx; gx++) {
+    const k = gy * nx + gx;
+    const x = (gx + 0.5) * cw, y = (gy + 0.5) * ch;
+    if (walk && !walk[k]) { out[k] = iOf('plateau'); continue; }
+    if (basePts.length && near(basePts, x, y, baseR)) { out[k] = iOf('base'); continue; }
+    if (riverPts.length && near(riverPts, x, y, riverR)) { out[k] = iOf('river'); continue; }
+    if (lanePts.length && near(lanePts, x, y, laneR)) { out[k] = iOf('lane'); continue; }
+    out[k] = walk ? iOf('jungle') : iOf('ground');
+  }
+  return out;
+}
+
+export function compositeTerrain(base, world, walk, nx, ny, texGround, texPlateau, zones = null, zoneTex = null) {
   const W = base.width, H = base.height;
   const out = document.createElement('canvas');
   out.width = W; out.height = H;
@@ -115,7 +206,42 @@ export function compositeTerrain(base, world, walk, nx, ny, texGround, texPlatea
     jungle = jg.getImageData(0, 0, W, H).data;
   }
 
-  if (nP && walk) {
+  // ==================== v45：分区铺贴 ====================
+  // 有 zones 时**整层重铺**：每一区各铺各的材质，然后按该区遮罩裁进去。
+  // 走这条路时下面的 plateau 分支就不必再跑了（高地已经是其中一区）。
+  // zoneTex 里缺哪张，zoneGrid 那一区就退回 ground —— 现有只有 ground/plateau
+  // 的地图因此逐像素不变（"加通道"与"改画面"分两次做）。
+  let zonedOK = false;
+  if (zones && zoneTex) {
+    lg.clearRect(0, 0, W, H);
+    for (let zi = 0; zi < ZONES.length; zi++) {
+      const zn = ZONES[zi];
+      const tex = zoneTex[zn] || (zn === 'plateau' ? nP : null) || nG;
+      if (!tex) continue;
+      // 该区有没有格子？没有就别白铺一层（每层都是一次全画布合成）
+      let any = false;
+      for (let k = 0; k < nx * ny; k++) if (zones[k] === zi) { any = true; break; }
+      if (!any) continue;
+      const zc = document.createElement('canvas');
+      zc.width = W; zc.height = H;
+      const zg = zc.getContext('2d');
+      fill(zg, tex);
+      const mc = document.createElement('canvas');
+      mc.width = nx; mc.height = ny;
+      const mg3 = mc.getContext('2d');
+      const im3 = mg3.createImageData(nx, ny);
+      for (let k = 0; k < nx * ny; k++) im3.data[k * 4 + 3] = (zones[k] === zi) ? 255 : 0;
+      mg3.putImageData(im3, 0, 0);
+      zg.globalCompositeOperation = 'destination-in';
+      zg.imageSmoothingEnabled = false;      // 最近邻：格点数据平滑插值只会在边界糊出混色
+      zg.drawImage(mc, 0, 0, W, H);
+      zg.globalCompositeOperation = 'source-over';
+      lg.drawImage(zc, 0, 0);
+      zonedOK = true;
+    }
+  }
+
+  if (!zonedOK && nP && walk) {
     const pl = document.createElement('canvas');
     pl.width = W; pl.height = H;
     const pg = pl.getContext('2d');

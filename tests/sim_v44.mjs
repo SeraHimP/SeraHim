@@ -529,8 +529,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   })());
   T('模③-阵营语言成对声明，且两边部件数量一致（观感不同，强弱对称）',
     /const FACTION_STYLE = \{[\s\S]*blue:[\s\S]*red:[\s\S]*neutral:/.test(umf));
+  // v45：签名多了一个 dmg（损毁档 0/1/2）。判据保持"tier 与 faction 在签名里"这条
+  // 不变的意图，但不再钉死整串参数 —— 参数列表是会长的，钉全串等于每加一个可选参数
+  // 都要来改一次断言，而那次改动本身与这条断言想守的东西无关。
   T('模③-towerMesh 收 tier 与 faction（原签名根本不知道 tier 是什么）',
-    /export function towerMesh\(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction\)/.test(umf));
+    /export function towerMesh\([^)]*\btier\b[^)]*\bfaction\b[^)]*\)/.test(umf));
   T('模③-tier/faction 进了几何缓存 key（不进则四档共用第一个被缓存的几何）',
     /\$\{vTier\}\|\$\{vFac\}/.test(ul));
 

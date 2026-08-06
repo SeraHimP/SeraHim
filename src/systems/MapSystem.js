@@ -538,6 +538,11 @@ export class MapSystem {
         delete corpse._respawnProgress;
         delete corpse._respawnRemain;
         delete corpse._ruin;   // 复活后不再是损毁幽灵
+        // v45：损毁档一并清零（用户定稿："塔手动重生时要恢复零损毁的模型"）。
+        // 放在这里而不是渲染层：损毁档是**单向**的，渲染层只会往上抬、永远不会自己归零，
+        // 所以"什么时候可以清"这件事必须由知道"这是一次重生"的这一处来说。
+        // 与上面 delete _ruin 挨着，是为了让"复活要清哪些标记"永远在同一处看得全。
+        delete corpse._dmgStage;
         this.entities.markDirty?.();
       } else if (b && this.createBuildingFn) {
         const entity = this.createBuildingFn({

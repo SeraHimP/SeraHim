@@ -126,23 +126,59 @@ const STONE = '#948b7c';
  */
 
 // 每档的规模。数字是"相对 R（建筑显示半径）"的比例，改这里就能整体调气派程度。
+// v45：层级差异从"只改数字"扩到**也改造型**。这四行仍然只管规模，
+// 但造型语言现在按阵营分家（见 towerMesh 里的 red 分支），四档的剪影因此真的不同。
+// halo 字段已删（用户要求去掉基座那圈队伍色环），不留死开关。
 const TIER_SPEC = {
-  outer:      { tiers: 1, buttress: 0, orbs: 0, shaft: 1.35, crown: 0.30, halo: false },
-  inner:      { tiers: 2, buttress: 2, orbs: 0, shaft: 1.70, crown: 0.34, halo: false },
-  base:       { tiers: 3, buttress: 4, orbs: 1, shaft: 2.05, crown: 0.38, halo: false },
-  hq_tower:   { tiers: 3, buttress: 4, orbs: 3, shaft: 2.45, crown: 0.44, halo: true },
+  outer:      { tiers: 1, buttress: 0, orbs: 0, shaft: 1.35, crown: 0.30 },
+  inner:      { tiers: 2, buttress: 2, orbs: 0, shaft: 1.70, crown: 0.34 },
+  base:       { tiers: 3, buttress: 4, orbs: 1, shaft: 2.05, crown: 0.38 },
+  hq_tower:   { tiers: 3, buttress: 4, orbs: 3, shaft: 2.45, crown: 0.44 },
 };
 const TIER_FALLBACK = TIER_SPEC.outer;
 
 // 阵营语言。两边**部件数量一致**，只换形状/角度/配色 —— 不对称的是观感，不是强弱。
+// v45：`spikes` 与 `pointy` 已删 —— 它们是**死字段**。
+// spikes 从 v44 起就没有任何部件读它（配置里写着 8，红方的骨刺从来没画出来），
+// 这正是"红蓝看不出区别"的一半原因；pointy 在阵营分家后也失去意义
+//（尖顶与否现在由 red 分支直接决定）。死字段留着比删掉更危险：
+// 下一个人会以为改它有用，改完发现没反应，然后开始怀疑别的地方。
 const FACTION_STYLE = {
-  blue:    { stone: '#8e9aa8', trim: '#cfe3ff', lean: 0,     spikes: 0, crownSides: 6, pointy: true },
-  red:     { stone: '#9a8478', trim: '#ffd0c0', lean: 0.10,  spikes: 8, crownSides: 5, pointy: false },
-  neutral: { stone: STONE,     trim: '#d8dee8', lean: 0,     spikes: 0, crownSides: 8, pointy: true },
+  blue:    { stone: '#8e9aa8', trim: '#cfe3ff', lean: 0,    crownSides: 6 },
+  red:     { stone: '#9a8478', trim: '#ffd0c0', lean: 0.10, crownSides: 5 },
+  neutral: { stone: STONE,     trim: '#d8dee8', lean: 0,    crownSides: 8 },
 };
 const facStyle = (f) => FACTION_STYLE[f] || FACTION_STYLE.neutral;
 
-export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction) {
+/**
+ * ==================== v45：建筑损毁档（0 完好 / 1 轻度 / 2 重度）====================
+ * 用户定稿："每种塔有不同生命节点下的模型，以内塔举例（生命节点为 33/67/100），
+ * 67-100 就是正常模型，33-67 为看起来轻度损毁，0-33 看起来重度损毁。"
+ * 追加定稿："塔的模型损毁是**不可逆**的，只会从低损毁向高损毁转变。
+ * 并且塔手动重生时要恢复零损毁的模型。"
+ *
+ * 做法上没有"做三个模型"这回事 —— towerMesh 本来就是参数化拼件（parts[] + key 缓存），
+ * 而废墟(ruin)早就是 key 里的一档。损毁只是同一个 builder 的第三个维度：
+ * 掉冠 / 塌一段 / 换焦黑色 / 加碎石。三档共用一份代码，几何仍然全缓存。
+ *
+ * **不可逆**这条让实现变简单而不是变难：不需要向下的滞回（血量在阈值附近抖动时
+ * 模型来回重建是这类功能最典型的坑），只需要 `stage = max(已有, 按血量算出的)`。
+ * 复位由重生流程显式 `delete e._dmgStage` 完成 —— 写在 MapSystem 的复活分支里，
+ * 与 `delete e._ruin` 挨着，这样"复活要清哪些标记"永远在同一处看得全。
+ */
+export function towerDamageStage(e, hpFrac) {
+  const c = CONFIG.ui?.towerDamage || {};
+  if (c.enabled === false) return 0;
+  const nodes = c.nodes || [33, 67];   // [重度上界, 轻度上界]，单位 %
+  const pct = Math.max(0, Math.min(1, hpFrac)) * 100;
+  const now = pct < nodes[0] ? 2 : pct < nodes[1] ? 1 : 0;
+  const prev = e._dmgStage || 0;
+  const stage = Math.max(prev, now);   // 单向：只增不减
+  if (stage !== prev) e._dmgStage = stage;
+  return stage;
+}
+
+export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction, dmg = 0) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const R = bSize, parts = [];
@@ -213,106 +249,252 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
             T(R * 0.35, R * 0.02, R * 0.05), char);
       }
     } else if (kind === 'gem' || kind === 'orb') {
-      // ---- 两类水晶：祭坛底座 + 护柱 + 悬浮宝石 ----
-      // 水晶枢纽（gem）比召唤水晶（orb）多一圈环绕碎晶与更高的祭坛 —— 同样是"越核心越繁复"。
+      // ==================== 召唤水晶 / 水晶枢纽（v45 分家重做）====================
+      // 用户："枢纽塔看起来就是变瘦版本的水晶塔。并且水晶塔和枢纽塔的装饰小水晶
+      //        （非攻击水晶）存在穿模的情况。"
+      //
+      // 前一句是准确的：v44 里 gem 与 orb 走的是**同一段代码**，差别只有
+      // 祭坛高一点、护柱 3→4 根、多一圈碎晶、宝石换个多面体 —— 本来就是同一个模型换参数。
+      // 现在两者按"它在对局里是什么"分开：
+      //   orb（召唤水晶）＝**前哨的封印**：矮、三根斜柱向内合抱、宝石半嵌在柱间，
+      //                    读作"被扣住的东西"。
+      //   gem（水晶枢纽）＝**基地的心脏**：高台 + 环形阶梯 + 四根直立方碑 +
+      //                    悬在正中的大宝石 + 一圈**水平轨道上**的卫星碎晶，
+      //                    剪影是"一座祭坛"而不是"一根柱子"。
+      //
+      // 穿模那句也定位到了：v44 的碎晶固定摆在半径 R*0.95、高度 pedH+colH*0.75，
+      // 而护柱在 R*0.72、顶端 pedH+colH；半径只差 0.23R，碎晶自身半径就有 0.16R，
+      // 红方护柱还带 lean 外倾 —— 必然插进去。**根因是位置写死、不看柱子在哪。**
+      // 现在碎晶的轨道半径由柱子半径 + 两者半径和 + 余量算出来，柱子怎么摆都不会插。
       const isNexus = kind === 'gem';
-      const pedH = R * (isNexus ? 0.52 : 0.40);
-      add(new THREE.CylinderGeometry(R * 0.72, R * 0.98, pedH, F.crownSides + 2), T(0, pedH / 2, 0), shade(F.stone, 0.52));
-      // 护柱：orb 三根、gem 四根，围住宝石。红方的柱子外倾（混乱），蓝方笔直（秩序）。
-      const nCol = isNexus ? 4 : 3, colH = R * (isNexus ? 1.05 : 0.85);
+      const nCol = isNexus ? 4 : 3;
+      const pedH = R * (isNexus ? 0.58 : 0.34);
+      const colH = R * (isNexus ? 1.12 : 0.74);
+      const colR = R * (isNexus ? 0.78 : 0.66);   // 护柱所在半径
+      const colHalf = R * 0.13;                    // 护柱最粗处的半径
+
+      if (isNexus) {
+        // 高台 + 环形阶梯（两级），把"基地核心"垫起来
+        add(new THREE.CylinderGeometry(R * 1.18, R * 1.34, pedH * 0.34, 8), T(0, pedH * 0.17, 0), shade(F.stone, 0.44));
+        add(new THREE.CylinderGeometry(R * 0.92, R * 1.10, pedH * 0.36, 8), T(0, pedH * 0.52, 0), shade(F.stone, 0.52));
+        add(new THREE.CylinderGeometry(R * 0.74, R * 0.88, pedH * 0.32, 8), T(0, pedH * 0.86, 0), shade(F.stone, 0.60));
+      } else {
+        add(new THREE.CylinderGeometry(R * 0.72, R * 0.98, pedH, F.crownSides + 2), T(0, pedH / 2, 0), shade(F.stone, 0.52));
+      }
+
+      // 护柱：枢纽是**直立方碑**（庄重），召唤水晶是**向内合抱的斜柱**（封印）
       for (let i = 0; i < nCol; i++) {
         const a = (i / nCol) * Math.PI * 2 + (isNexus ? Math.PI / 4 : 0);
-        add(new THREE.CylinderGeometry(R * 0.09, R * 0.13, colH, 5),
-            compose(T(Math.cos(a) * R * 0.72, pedH + colH / 2, Math.sin(a) * R * 0.72), R_Z(F.lean * Math.cos(a)), R_X(-F.lean * Math.sin(a))),
-            shade(F.stone, 0.74));
-      }
-      // 环绕碎晶（仅枢纽）：读作"力量的核心"
-      if (isNexus) {
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2;
-          add(new THREE.OctahedronGeometry(R * 0.16),
-              compose(T(Math.cos(a) * R * 0.95, pedH + colH * 0.75, Math.sin(a) * R * 0.95), R_Z(a)), shade(color, 1.1));
+        const px = Math.cos(a) * colR, pz = Math.sin(a) * colR;
+        if (isNexus) {
+          add(new THREE.BoxGeometry(R * 0.20, colH, R * 0.20), T(px, pedH + colH / 2, pz), shade(F.stone, 0.74));
+          // 碑顶的小盖，让它读作"碑"而不是"柱"
+          add(new THREE.BoxGeometry(R * 0.28, R * 0.07, R * 0.28), T(px, pedH + colH + R * 0.035, pz), shade(F.trim, 0.62));
+        } else {
+          // 向内倾（负号 = 朝圆心倒），与红方 lean 的外倾叠加后仍然朝内
+          const lean = 0.26 - F.lean * 0.5;
+          add(new THREE.CylinderGeometry(R * 0.07, R * 0.13, colH, 5),
+              compose(T(px, pedH + colH / 2, pz), R_Z(-Math.cos(a) * lean), R_X(Math.sin(a) * lean)),
+              shade(F.stone, 0.74));
         }
       }
-      crystalR = R * (isNexus ? 0.82 : 0.70);
-      crystalCy = pedH + colH * 0.55 + crystalR * 0.75;
+
+      crystalR = R * (isNexus ? 0.80 : 0.62);
+      crystalCy = pedH + colH * (isNexus ? 0.72 : 0.46) + crystalR * 0.72;
       crystalGeo = isNexus ? new THREE.OctahedronGeometry(crystalR)
                            : new THREE.IcosahedronGeometry(crystalR, 0);
       crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
+
+      // 卫星碎晶（仅枢纽）：轨道半径**由几何算出来**，不再写死。
+      // 需要同时躲开两样东西：护柱（半径 colR、半宽 colHalf）与中心宝石（半径 crystalR）。
+      // 这就是 v44 穿模的修法 —— 位置一旦写死，改任何一处柱子/宝石尺寸都会重新插进去。
+      if (isNexus) {
+        const shardR = R * 0.15;
+        const gap = R * 0.10;                                  // 余量
+        const orbit = Math.max(colR + colHalf + shardR + gap,  // 躲柱子
+                               crystalR + shardR + gap);        // 躲宝石
+        const shardY = pedH + colH + shardR + gap;             // 抬到碑顶之上，纵向也不会碰
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2 + Math.PI / 6;        // 与四根碑错开
+          add(new THREE.OctahedronGeometry(shardR),
+              compose(T(Math.cos(a) * orbit, shardY, Math.sin(a) * orbit), R_Z(a)), shade(color, 1.1));
+        }
+      }
     } else {
-      // ---- 防御塔：层数/扶壁/悬浮晶随 tier 递增 ----
+      // ==================== 防御塔（v45 按阵营彻底分家）====================
+      // 用户："新模型的塔我觉得一般，并没有做出差异化，红蓝方，外/内等。"
+      //
+      // v44 的问题诊断清楚了再改：那一版把红蓝差异全压在 FACTION_STYLE 的
+      // lean / spikes / crownSides / 配色 四项上，而 **spikes 那一项压根没有部件读它**
+      //（红方的骨刺从来没被画出来）。实际生效的只剩"颜色 + 柱子微倾"，
+      // 所以看起来就是同一座塔刷了两种漆。层级同理：TIER_SPEC 只改层数和粗细，
+      // 造型语言从头到尾一样，四档就是同一座塔的大中小码。
+      //
+      // 现在两边**走各自的建造函数**，从剪影就能分开：
+      //   蓝方＝秩序：正方基座、逐层内收的台阶、笔直的立柱、方齿雉堞、尖顶、悬浮法环
+      //   红方＝混沌：不对称的岩基、外倾的骨架肋、歪斜的冠、成排骨刺、熔岩裂缝
+      // 部件**数量对等**（不影响任何强弱读感），只是长得完全不同。
       const SP = TIER_SPEC[tier] || TIER_FALLBACK;
+      const red = faction === 'red';
+      const stone = F.stone, trim = F.trim;
+      // 损毁：dmg=1 掉冠/少一段/换旧色；dmg=2 塔身塌一截、断口焦黑、脚下碎石。
+      // 这三行是三档共用的"损毁词汇"，下面各处直接引用，不各自算一遍。
+      const wear  = dmg === 0 ? 1 : dmg === 1 ? 0.86 : 0.70;              // 整体压暗
+      const cSt   = dmg === 0 ? stone : desat(stone, dmg === 1 ? 0.82 : 0.60, dmg === 1 ? 0.90 : 0.74);
+      const cTr   = dmg === 0 ? trim  : desat(trim,  dmg === 1 ? 0.80 : 0.55, dmg === 1 ? 0.88 : 0.70);
+      const char  = desat(stone, 0.30, 0.55);                              // 焦黑断口
+      const tiers = Math.max(1, SP.tiers - (dmg === 2 ? 1 : 0));           // 重度损毁少一段塔身
+      const shaftK = dmg === 2 ? 0.62 : dmg === 1 ? 0.88 : 1;              // 塔身高度缩水
+
       const baseH = R * 0.42;
-      add(new THREE.CylinderGeometry(R * 0.92, R * 1.06, baseH, F.crownSides + 4), T(0, baseH / 2, 0), shade(F.stone, 0.48));
-      // 台阶式基座（档次越高台阶越多，从下往上收）
+      if (red) {
+        // 红方基座：三块高低不一的岩台叠出不对称
+        const rocks = [[0.00, 0.00, 1.06, 1.00], [0.26, -0.16, 0.62, 0.72], [-0.30, 0.20, 0.54, 0.58]];
+        for (const [rx, rz, rr, rh] of rocks) {
+          add(new THREE.CylinderGeometry(R * rr * 0.86, R * rr, baseH * rh, 5),
+              compose(T(rx * R, baseH * rh / 2, rz * R), R_Z(0.06 * rx), R_X(-0.06 * rz)), shade(cSt, 0.46 * wear));
+        }
+      } else {
+        // 蓝方基座：正方 + 一圈窄边，读作"砌出来的"
+        add(new THREE.BoxGeometry(R * 1.78, baseH, R * 1.78), T(0, baseH / 2, 0), shade(cSt, 0.48 * wear));
+        add(new THREE.BoxGeometry(R * 1.96, baseH * 0.22, R * 1.96), T(0, baseH * 0.11, 0), shade(cSt, 0.40 * wear));
+      }
+
+      // 台阶：蓝方方形逐层内收（秩序），红方圆台且逐层偏移（混沌）
       let y = baseH;
-      for (let i = 1; i < SP.tiers; i++) {
+      for (let i = 1; i < tiers; i++) {
         const h = R * 0.22, rr = 0.92 - i * 0.10;
-        add(new THREE.CylinderGeometry(R * (rr - 0.04), R * rr, h, F.crownSides + 4), T(0, y + h / 2, 0), shade(F.stone, 0.56));
+        if (red) {
+          add(new THREE.CylinderGeometry(R * (rr - 0.06), R * rr, h, 5),
+              compose(T(R * 0.05 * (i % 2 ? 1 : -1), y + h / 2, R * 0.04 * (i % 2 ? -1 : 1)), R_Z(0.05)), shade(cSt, 0.56 * wear));
+        } else {
+          const w = R * (rr * 1.7);
+          add(new THREE.BoxGeometry(w, h, w), T(0, y + h / 2, 0), shade(cSt, 0.56 * wear));
+        }
         y += h;
       }
-      // 塔身：分成 tiers 段，每段更细 —— 收分是"高塔"读感的来源
-      const segH = R * SP.shaft / SP.tiers;
-      for (let i = 0; i < SP.tiers; i++) {
+
+      // 塔身
+      const segH = R * SP.shaft * shaftK / tiers;
+      for (let i = 0; i < tiers; i++) {
         const rb = R * (0.62 - i * 0.07), rt = R * (0.62 - (i + 1) * 0.07);
-        add(new THREE.CylinderGeometry(rt, rb, segH, F.crownSides + 4), T(0, y + segH / 2, 0), shade(F.stone, 0.80 + i * 0.04));
-        // 段与段之间一道箍
-        if (i < SP.tiers - 1) {
-          add(new THREE.CylinderGeometry(R * (rb / R + 0.05), R * (rb / R + 0.05), R * 0.07, F.crownSides + 4),
-              T(0, y + segH, 0), shade(F.stone, 0.62));
+        if (red) {
+          // 红方：主体 + 外露的骨架肋（外倾），肋比塔身高出一截，剪影带尖
+          add(new THREE.CylinderGeometry(rt, rb, segH, 6),
+              compose(T(0, y + segH / 2, 0), R_Z(0.05 * (i % 2 ? 1 : -1))), shade(cSt, 0.78 * wear + i * 0.04));
+          const ribs = 5;
+          for (let k = 0; k < ribs; k++) {
+            const a = (k / ribs) * Math.PI * 2 + i * 0.4;
+            add(new THREE.BoxGeometry(R * 0.075, segH * 1.06, R * 0.11),
+                compose(T(Math.cos(a) * rb * 1.02, y + segH / 2, Math.sin(a) * rb * 1.02),
+                        R_Z(Math.cos(a) * 0.16), R_X(-Math.sin(a) * 0.16)), shade(cTr, 0.52 * wear));
+          }
+        } else {
+          // 蓝方：方柱 + 四角立柱，笔直、对齐
+          const w = rb * 1.62;
+          add(new THREE.BoxGeometry(w, segH, w), T(0, y + segH / 2, 0), shade(cSt, 0.80 * wear + i * 0.04));
+          for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+            add(new THREE.BoxGeometry(R * 0.10, segH, R * 0.10),
+                T(sx * w * 0.5, y + segH / 2, sz * w * 0.5), shade(cTr, 0.46 * wear));
+          }
+        }
+        // 段间箍
+        if (i < tiers - 1) {
+          add(red
+              ? new THREE.CylinderGeometry(rb * 1.10, rb * 1.10, R * 0.07, 6)
+              : new THREE.BoxGeometry(rb * 1.86, R * 0.08, rb * 1.86),
+              T(0, y + segH, 0), shade(cSt, 0.62 * wear));
         }
         y += segH;
       }
-      // 扶壁：贴着塔身的斜撑，档次越高越多
-      for (let i = 0; i < SP.buttress; i++) {
-        const a = (i / Math.max(1, SP.buttress)) * Math.PI * 2 + Math.PI / 4;
-        const bh = R * SP.shaft * 0.55;
-        add(new THREE.BoxGeometry(R * 0.16, bh, R * 0.30),
-            compose(T(Math.cos(a) * R * 0.66, baseH + bh / 2, Math.sin(a) * R * 0.66), R_Z(Math.cos(a) * 0.12), R_X(-Math.sin(a) * 0.12)),
-            shade(F.stone, 0.66));
-      }
-      // 冠：蓝方尖顶收束、红方偏斜且带骨刺
-      const crownH = R * SP.crown;
-      add(new THREE.CylinderGeometry(R * 0.80, R * 0.70, crownH, F.crownSides),
-          compose(T(0, y + crownH / 2, 0), R_Z(F.lean)), shade(F.stone, 0.70));
-      y += crownH;
-      // 雉堞：一圈小方块，是"塔楼"读感的关键。档次越高越密。
-      const mN = 6 + SP.tiers * 2, mS = R * 0.19, rr = R * 0.68;
-      for (let i = 0; i < mN; i++) {
-        const a = (i / mN) * Math.PI * 2;
-        add(new THREE.BoxGeometry(mS, mS * (F.pointy ? 1.5 : 1.2), mS),
-            T(Math.cos(a) * rr, y + mS * 0.65, Math.sin(a) * rr), shade(F.stone, 0.60));
-      }
-      // 红方专属：冠上一圈骨刺（蓝方 spikes=0，这个循环不跑）
-      for (let i = 0; i < F.spikes; i++) {
-        const a = (i / Math.max(1, F.spikes)) * Math.PI * 2 + 0.3;
-        add(new THREE.ConeGeometry(R * 0.07, R * 0.34, 4),
-            compose(T(Math.cos(a) * R * 0.52, y + R * 0.30, Math.sin(a) * R * 0.52), R_Z(Math.cos(a) * 0.5), R_X(-Math.sin(a) * 0.5)),
-            shade(F.trim, 0.8));
-      }
-      y += mS * 1.3;
-      // 蓝方专属：尖顶（红方 pointy=false，改成一个偏斜的短柱）
-      if (F.pointy) {
-        add(new THREE.ConeGeometry(R * 0.42, R * 0.55, F.crownSides), T(0, y + R * 0.27, 0), shade(F.trim, 0.75));
-        y += R * 0.55;
+
+      // 重度损毁：塔身顶端加一圈焦黑斜断口，并到此为止（不再往上造冠/雉堞/尖顶）
+      if (dmg === 2) {
+        add(new THREE.CylinderGeometry(R * 0.60, R * 0.66, R * 0.10, red ? 6 : 4),
+            compose(T(0, y, 0), R_Z(0.24)), char);
+        // 脚下碎石：顺一个方向散开，读作"塌下来的"
+        const chunks = [[0.60, 0.14, 0.20, 0.5, 0.26], [1.02, 0.11, -0.34, -0.8, 0.21],
+                        [-0.52, 0.12, 0.44, 0.9, 0.19], [0.24, 0.09, 0.86, 0.3, 0.16]];
+        for (const [cx, cy, cz, rot, sz] of chunks) {
+          add(new THREE.BoxGeometry(R * sz, R * sz * 0.9, R * sz * 0.85),
+              compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.35)), shade(cSt, 0.5 * wear));
+        }
+        y += R * 0.10;
       } else {
-        add(new THREE.CylinderGeometry(R * 0.30, R * 0.44, R * 0.30, F.crownSides),
-            compose(T(0, y + R * 0.15, 0), R_Z(F.lean * 2)), shade(F.trim, 0.7));
-        y += R * 0.30;
+        // 扶壁 / 肋撑
+        for (let i = 0; i < SP.buttress; i++) {
+          const a = (i / Math.max(1, SP.buttress)) * Math.PI * 2 + (red ? 0.35 : Math.PI / 4);
+          const bh = R * SP.shaft * shaftK * 0.55;
+          add(red ? new THREE.ConeGeometry(R * 0.13, bh, 4) : new THREE.BoxGeometry(R * 0.16, bh, R * 0.30),
+              compose(T(Math.cos(a) * R * 0.66, baseH + bh / 2, Math.sin(a) * R * 0.66),
+                      R_Z(Math.cos(a) * (red ? 0.22 : 0.12)), R_X(-Math.sin(a) * (red ? 0.22 : 0.12))),
+              shade(cSt, 0.66 * wear));
+        }
+        // 冠
+        const crownH = R * SP.crown * (dmg === 1 ? 0.8 : 1);
+        add(red
+            ? new THREE.CylinderGeometry(R * 0.66, R * 0.86, crownH, 6)
+            : new THREE.BoxGeometry(R * 1.56, crownH, R * 1.56),
+            compose(T(0, y + crownH / 2, 0), R_Z(red ? 0.10 : 0)), shade(cSt, 0.70 * wear));
+        y += crownH;
+
+        // 雉堞（蓝方方齿）/ 骨刺（红方）—— 轻度损毁时**缺几个**，这是最好读的"受损"信号
+        if (red) {
+          const nS = 8;
+          for (let i = 0; i < nS; i++) {
+            if (dmg === 1 && i % 3 === 0) continue;   // 掉了几根
+            const a = (i / nS) * Math.PI * 2 + 0.3;
+            add(new THREE.ConeGeometry(R * 0.08, R * 0.40, 4),
+                compose(T(Math.cos(a) * R * 0.58, y + R * 0.20, Math.sin(a) * R * 0.58),
+                        R_Z(Math.cos(a) * 0.55), R_X(-Math.sin(a) * 0.55)), shade(cTr, 0.8 * wear));
+          }
+          y += R * 0.30;
+        } else {
+          const mN = 8 + SP.tiers * 2, mS = R * 0.19, rr = R * 0.74;
+          for (let i = 0; i < mN; i++) {
+            if (dmg === 1 && i % 4 === 0) continue;   // 崩了几块
+            const a = (i / mN) * Math.PI * 2;
+            add(new THREE.BoxGeometry(mS, mS * 1.5, mS),
+                T(Math.cos(a) * rr, y + mS * 0.75, Math.sin(a) * rr), shade(cSt, 0.60 * wear));
+          }
+          y += mS * 1.5;
+        }
+
+        // 顶：蓝方尖顶（秩序），红方歪斜的熔岩冠（混沌）。轻度损毁时都塌掉。
+        if (dmg === 0) {
+          if (red) {
+            add(new THREE.ConeGeometry(R * 0.40, R * 0.46, 5),
+                compose(T(R * 0.05, y + R * 0.23, 0), R_Z(0.22)), shade(cTr, 0.72));
+            y += R * 0.46;
+          } else {
+            add(new THREE.ConeGeometry(R * 0.42, R * 0.62, 4), T(0, y + R * 0.31, 0), shade(cTr, 0.75));
+            y += R * 0.62;
+          }
+        } else {
+          // 断掉的顶：一个矮的斜切残根
+          add(new THREE.CylinderGeometry(R * 0.22, R * 0.36, R * 0.16, red ? 5 : 4),
+              compose(T(0, y + R * 0.08, 0), R_Z(0.28)), char);
+          y += R * 0.16;
+        }
       }
-      // 悬浮晶（档次越高越多）：绕塔顶排开，纯装饰，读作"这座塔有分量"
-      for (let i = 0; i < SP.orbs; i++) {
-        const a = (i / Math.max(1, SP.orbs)) * Math.PI * 2;
-        add(new THREE.OctahedronGeometry(R * 0.17),
-            compose(T(Math.cos(a) * R * 0.62, y * 0.86, Math.sin(a) * R * 0.62), R_Z(0.6)), shade(color, 1.15));
+
+      // 悬浮件：蓝方法环（水平圆环，秩序），红方碎岩（无序漂浮）。损毁时数量递减。
+      const orbN = Math.max(0, SP.orbs - dmg);
+      for (let i = 0; i < orbN; i++) {
+        const a = (i / Math.max(1, orbN)) * Math.PI * 2;
+        add(red ? new THREE.TetrahedronGeometry(R * 0.19) : new THREE.OctahedronGeometry(R * 0.17),
+            compose(T(Math.cos(a) * R * 0.62, y * 0.86, Math.sin(a) * R * 0.62), R_Z(red ? 0.9 : 0.6)),
+            shade(color, 1.15));
       }
-      // 底座光环（仅枢纽塔）
-      if (SP.halo) {
-        add(new THREE.TorusGeometry(R * 1.15, R * 0.05, 5, 16),
-            compose(T(0, baseH * 0.55, 0), R_X(Math.PI / 2)), shade(color, 1.1));
-      }
+      // v45：**底座那圈队伍色光环已删**。用户："水晶塔下面那个颜色的环不要。"
+      // 它是 TIER_SPEC.halo 驱动的一圈 TorusGeometry（队伍色，贴在基座腰上），
+      // 全场只有枢纽塔有 —— 也是整座建筑上唯一"贴地的彩色圆环"，
+      // 与地面上的射程圈/归属环/选中圈叠在一起时读起来就是一堆同心圆。
+      // halo 这个字段一并从 TIER_SPEC 里删掉，不留一个没人读的开关
+      //（v44 的 spikes 就是这么变成死字段的：配置里写着 8，没有任何部件读它）。
       // 顶部队伍色小水晶＝武器；单独成件（会转/发光/攻击辉光，见 UnitLayer），炮口=其中心。
-      crystalR = R * (0.34 + SP.tiers * 0.035);
+      // 重度损毁时水晶变小 —— 它同时是炮口，不能直接删掉（删了炮口就没了）。
+      crystalR = R * (0.34 + SP.tiers * 0.035) * (dmg === 2 ? 0.62 : dmg === 1 ? 0.84 : 1);
       crystalCy = y + crystalR * 0.75;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）

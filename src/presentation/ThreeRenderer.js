@@ -30,7 +30,7 @@ import { VegetationLayer } from './VegetationLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
-import { compositeTerrain, loadTexture } from './TerrainMaterial.js';
+import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
 import { CONFIG } from '../data/Config.js';
 import { resolveDayPhase } from './DayNight.js';
 import { buildingSize, minionSize } from './UnitInfo.js';
@@ -174,7 +174,17 @@ export class ThreeRenderer {
       (theme !== 'default' && await loadTexture(`assets/textures/${theme}/${name}.png`, true))
       || (await loadTexture(`assets/textures/${name}.png`));
     const [ground, plateau, cliff] = await Promise.all([pick('ground'), pick('plateau'), pick('cliff')]);
+    // v45：分区贴图（高地/路径/野区/河道/基地）。每一张都是**可选**的：
+    // 缺哪张就用程序化占位图先顶上（用户定稿："先把分区贴图管线做出来"），
+    // 手绘图回来后按同名文件丢进 assets/textures/<主题>/ 即可替换，不用再动代码。
+    // 提示词见 docs/TEXTURE-PROMPTS.md。
+    const zoneTex = {};
+    await Promise.all(ZONES.map(async (zn) => {
+      const img = (zn === 'ground') ? ground : (zn === 'plateau') ? plateau : await pick(zn);
+      zoneTex[zn] = img || placeholderTexture(zn);
+    }));
     if (this._texTheme !== theme) return;   // 期间又切了图，丢弃这批结果
+    this.zoneTex = zoneTex;
     this.tex = { ground, plateau, cliff };
     // 必须连地图 id 缓存一起作废：_rebuildTerrain 开头有 "同一张图就跳过" 的守卫，
     // 只置 _terrainDirty 会被它挡回去 —— 症状正是"贴图要切一次图才出现"。
@@ -653,9 +663,14 @@ export class ThreeRenderer {
     // 要等下一次切图才出现。这类"第一次不对、第二次才对"的时序坑最难查。
     this.walls.rebuild(this.mapSystem, null);
     const gr = this.walls.grid;
+    // v45：分区遮罩（高地/路径/野区/河道/基地）。与 walls.grid **同一份网格**算 ——
+    // 另起一套分辨率的话高地边界会与既有的 plateau 遮罩错开一格，接缝立刻可见。
+    const zones = (gr?.walk && gr.nx && gr.ny)
+      ? zoneGrid(map, gr.walk, gr.nx, gr.ny, map.world) : null;
     const composed = compositeTerrain(buildTerrainLayer(map, gr, ms), map.world,
                                       gr?.walk || null, gr?.nx || 0, gr?.ny || 0,
-                                      this.tex.ground, this.tex.plateau);
+                                      this.tex.ground, this.tex.plateau,
+                                      zones, this.zoneTex || null);
     const tex = new THREE.CanvasTexture(composed);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -804,7 +819,12 @@ export class ThreeRenderer {
                                   ws?.weather ? ws.weather.enabled : true).phase;
     if (!Number.isFinite(phase)) return 0;
     const c = CONFIG.ui?.towerLight || {};
-    const away = Math.abs(((phase - 0.25) % 1 + 1) % 1 - 0.5) / 0.5;   // 0=正午 1=午夜
+    // ⚠️ 这一行第一版写反了：`away = |d - 0.5| / 0.5` 在正午得 1、午夜得 0，
+    // 于是"夜色"在大中午拉满、半夜归零 —— 灯全天亮着、夜里反而灭。
+    // 是 sim_v46「光⑥-正午仍然是白天」当场抓到的。少一个 `1 -` 就完全反过来，
+    // 而且症状（白天灯亮）与我正在修的症状（夜里灯灭）看起来毫不相干。
+    const d = ((phase - 0.25) % 1 + 1) % 1;              // 0=正午，0.5=午夜
+    const away = 1 - Math.abs(d - 0.5) / 0.5;            // 0=正午 1=午夜
     let night = Math.max(0, 1 - Math.cos(away * Math.PI / 2) ** 1.5);
     if (away > 0.45) night = Math.max(night, c.dawnFloor ?? 0.35);     // 低阳段地板
     return Math.max(0, Math.min(1, night));
