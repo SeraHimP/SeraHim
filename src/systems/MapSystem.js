@@ -276,8 +276,6 @@ export class MapSystem {
 
     if (e._mapTier === 'nexus_lane') {
       this.beginNexusRespawn(e);
-    } else if (this.beginLightRespawn(e)) {
-      // ☀️ 光魂：外/内/枢纽塔重生（见 beginLightRespawn 的头注释）
     } else if (e._mapTier === 'nexus_main') {
       // 水晶枢纽摧毁：理论上是"游戏结束"的触发点，按之前确认暂不做终局判定，
       // 这里只发一个独立事件供以后接入，不影响现有的分路超级兵逻辑。
@@ -388,53 +386,6 @@ export class MapSystem {
     this._respawnQueue.push(item);
     this._respawnQueue.sort((a, b) => a.at - b.at);
     return item;
-  }
-
-  /**
-   * ☀️ 光魂：外塔/内塔（各限 N 次）与枢纽塔（无限次）被摧毁后延时重生。
-   *
-   * ==================== 这段是补做的，之前它压根没接上 ====================
-   * 龙魂重做那一版里，光魂只在技能定义里写了 `respawnRuleFor(tier, usedCount)`，
-   * 注释还写着"触发点在 MapSystem._onEntityDeath 里查这一方有没有光魂"——
-   * 但那个调用**从来没有被写出来**。也就是说：面板上写着塔会重生、
-   * 平衡对照跑出来光魂这一档与基线**逐位相同**，因为它什么也没做。
-   * 是龙魂平衡对照把它抓出来的：九档里唯独 light 与基线数字一模一样。
-   *
-   * 更该记的是：sim_v43 里那条"魂⑨-光魂的重生规则由技能自己声明"的断言当时是**绿的**——
-   * 它匹配的是 `respawnRuleFor(tier, usedCount)` 这个**定义**本身，
-   * 而不是任何调用点。又一次自证式断言。现在那条断言改成钉调用点。
-   *
-   * 规则与数值全部来自技能定义（CONFIG.dragonSouls.light），这里不复制第二份。
-   * 返回是否真的安排了重生 —— 调用方据此决定要不要走别的分支。
-   */
-  beginLightRespawn(e) {
-    if (!e || e._respawnAt) return false;
-    const tier = e._mapTier;
-    if (tier !== 'outer' && tier !== 'inner' && tier !== 'hq_tower') return false;
-    // 这座塔身上有没有光魂。龙魂是按阵营发到每座塔上的，所以查这座塔自己就够；
-    // 编辑器手动给单塔挂光魂也能生效，与"面板上装了什么就是什么"一致。
-    const hasLight = (e._skillInstances || []).some(i => i.skillId === 'dragonsoul_light');
-    if (!hasLight) return false;
-    const def = SkillLibrary.dragonsoul_light;
-    if (!def || typeof def.respawnRuleFor !== 'function') return false;
-    const rule = def.respawnRuleFor(tier, e._lightRespawnUsed || 0);
-    if (!rule || !rule.ok) return false;
-
-    const sec = (CONFIG.dragonSouls?.light?.respawnSec) ?? 300;
-    e._lightRespawnUsed = (e._lightRespawnUsed || 0) + 1;
-    e._respawnAt = this._clock + sec;
-    if (this._fx) {
-      this._fx.apply(e.id, {
-        name: '重生中', icon: '⏳', kind: 'custom', duration: sec,
-        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `☀️ 光魂重生中：${sec}s（${rule.hpPct}% 生命）`,
-      }, 'light_respawn_' + e.id);
-    }
-    // 光魂走**原地复活尸体**这条路（塔身/技能/成长都在原实体上），不需要蓝图重建：
-    // 与召唤水晶不同，防御塔死了不会被 purgeDead 清掉（_ruin 幽灵一直留着）。
-    this._enqueueRespawn({ at: e._respawnAt, blueprint: null, corpseId: e.id,
-                           dur: sec, hpPct: rule.hpPct, isNexus: false });
-    return true;
   }
 
   /**
@@ -755,8 +706,28 @@ export class MapSystem {
   }
 
   /** 龙坑/男爵坑坑心（navgrid 地图才有）。name = 'dragon' | 'baron' */
+  /**
+   * 龙坑 / 男爵坑。默认取 SR_PITS（= 每段河道的几何重心，推导过程见那里的注释）。
+   * v44：加一层 CONFIG 覆写 —— 硬约束是"一切数值都必须软编码"，
+   * 而坑位此前只能改源码。地图自己声明的 pits 优先级最高（以后新图各有各的河）。
+   */
   getPit(name) {
-    return this.currentMap?.useNavgrid ? (SR_PITS[name] || null) : null;
+    const m = this.currentMap;
+    if (!m) return null;
+    // 顺序：**用户覆写 → 地图声明 → 没有**。
+    // 与本项目其它分层一致（towerTierOverrides 也是用户覆写盖过地图 tierStats）——
+    // 用户在编辑器里显式改过的东西，不该被地图数据顶回去。
+    const fromMap = (m.pits && m.pits[name]) || null;
+    const ovr = CONFIG.gameRules?.dragon?.pits?.[name];
+    if (ovr && Number.isFinite(ovr.x) && Number.isFinite(ovr.y)) {
+      const base = fromMap || SR_PITS[name] || {};
+      return { r: base.r ?? 150, depth: base.depth ?? -26, ...ovr };
+    }
+    if (fromMap) return fromMap;
+    // v44：不再有 `useNavgrid ? SR_PITS : null` 这条兜底 ——
+    // 那等于把召唤师峡谷的龙坑发给每一张用 navgrid 的地图（嚎哭深渊、扭曲丛林都中招，
+    // 各自的地形上被挖了两个毫无意义的坑）。坑属于地图，没声明就是没有。
+    return null;
   }
 
   /**
@@ -993,10 +964,14 @@ export class MapSystem {
         h = Math.max(h, platH * t);
       }
     }
-    // 龙坑/男爵坑：坑心下沉，边缘一段过渡（坑壁）。与 navgrid 同一份坑位数据。
-    if (m.useNavgrid) {
+    // 龙坑/男爵坑：坑心下沉，边缘一段过渡（坑壁）。
+    // v44：闸门从 `m.useNavgrid` 改为 **getPit**（= 地图自己声明的坑）。
+    // 原来按 useNavgrid 判断，等于把召唤师峡谷的两个坑挖进了每一张 navgrid 地图 ——
+    // 嚎哭深渊是一座平桥、扭曲丛林根本没有河，却都被挖了 SR 的坑。
+    // 这里与 getPit 共用同一个取值口径，地形与出生点不会再各说各话。
+    {
       for (const key of ['dragon', 'baron']) {
-        const pit = SR_PITS[key]; if (!pit) continue;
+        const pit = this.getPit(key); if (!pit) continue;
         const d = Math.hypot(x - pit.x, z - pit.y);
         if (d < pit.r) {
           const t = Math.min(1, (pit.r - d) / (pit.r * 0.45));   // 边缘→坑心 线性下沉

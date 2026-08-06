@@ -1,4 +1,5 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
+import { SR_PITS } from './sr_navgrid.js';
 
 /**
  * summoners_rift.js
@@ -105,6 +106,12 @@ export const summoners_rift = {
   // （自 assets/maps/preview.jpg 导航图描出）——野区可走、野区墙体成形、河道连通，
   // 并带龙坑/男爵坑。置 false 可退回旧的"三路走廊"模型。
   useNavgrid: true,
+  // v44：龙坑归**地图**所有，不再由 MapSystem 按 useNavgrid 一律发 SR 的坑。
+  // 原实现是 `getPit = useNavgrid ? SR_PITS : null` —— 于是嚎哭深渊和扭曲丛林
+  // 这两张同样用 navgrid 的图，也被挖了召唤师峡谷的两个坑（坐标在那两张图上毫无意义）。
+  // 之前没被发现，只是因为旧坑位恰好落在没人采样的地方；v44 把坑挪到河段重心之后，
+  // 嚎哭深渊的"全图零高差"断言当场就红了。
+  pits: SR_PITS,
 
   // 兵线路点（Q1 拉直）：枢纽端原有贴着枢纽塔的中转点导致参考线/行军在枢纽处折一下，
   // 已删除，枢纽 → 主线为纯直线（中路即枢纽对枢纽两点直线）。

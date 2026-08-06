@@ -786,7 +786,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 {
   const S = CONFIG.dragonSouls;
   T('魂①-九项数值全部软编码（八条魂 + 远古之力）',
-    ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison', 'ancient']
+    ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison', 'ancient']
       .every(k => S[k] && typeof S[k] === 'object'));
   T('魂②-山魂的格挡压到很低（对小 AD 单位不能等于免疫）',
     S.earth.damageBlock <= 3 && S.earth.damageBlock < CONFIG.templates.ranged.attackDamage);
@@ -794,7 +794,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     S.poison.vsBuildingPct > 0 && S.poison.vsBuildingPct < 100);
   T('魂④-只有远古之力是限时的，其余八条永久',
     S.ancient.durationSec === 240
-    && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison']
+    && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison']
         .every(k => S[k].durationSec === undefined));
   const src = srcOf(('../src/core/skills/dragonSouls.js'));
   T('魂⑤-所有触发点都不需要判断（onHit/onDealtDamage/onFrame/onEquip）',
@@ -805,16 +805,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /}, 'dragonsoul_dark'\);/.test(src) && /uniquePassive: true/.test(src));
   T('魂⑧-潮魂回血不无视加固城防的节点封顶',
     /e\._regenCapHP/.test(src));
-  // ⚠️ 这条断言原来写的是 `/respawnRuleFor\(tier, usedCount\)/.test(src)` —— 它匹配的是
-  // dragonSouls.js 里那个**方法定义**本身，而不是任何调用点。于是"MapSystem 读它"这句话
-  // 从来没被验证过，而 MapSystem 里那个调用**根本没写**：光魂整整一版什么也没做。
-  // 是龙魂平衡对照把它抓出来的（九档里唯独 light 与基线逐位相同）。
-  // 第 N 次栽在自证式断言上。现在钉**调用点**，而且钉在 MapSystem 那一侧。
-  T('魂⑨-光魂的重生规则由技能声明、由 MapSystem 真的调用（不是只定义不用）',
-    /respawnRuleFor\(tier, usedCount\)/.test(src)
-    && /def\.respawnRuleFor\(tier, e\._lightRespawnUsed \|\| 0\)/.test(srcOf('src/systems/MapSystem.js')));
-  // 八条魂 + 远古之力都要能被技能库查到（否则装备时静默失败）
-  for (const k of ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison', 'ancient']) {
+  // v44：光魂随【光龙】一并删除（用户定稿："光龙直接删除吧"），
+  // 原"魂⑨-光魂重生规则"整条断言随之移除 —— 断言的对象没了就该删，
+  // 留着一条永远为真的空壳比没有更糟。删除本身由下面那条"技能库里查得到"反向盯住：
+  // 元素清单里不再有 light，如果谁把它加回来而没接上，那条会先红。
+  // 七条魂 + 远古之力都要能被技能库查到（否则装备时静默失败）
+  for (const k of ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison', 'ancient']) {
     T(`魂⑩-dragonsoul_${k} 已注册进技能库`, !!SkillLibrary['dragonsoul_' + k]);
   }
   T('魂⑪-文案格式统一（getter 型技能也要被规范化）',
@@ -832,7 +828,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('对照①-有 --sweep soul 档位', /SWEEP === 'soul'/.test(bm));
   T('对照②-含"双方无魂"的基线档（没有基线就没法判读）', /基线·双方无魂/.test(bm));
   T('对照③-八条魂各一档', (bm.match(/蓝方持\$\{k\}魂/g) || []).length === 1
-    && /'fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison'/.test(bm));
+    && /'fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'/.test(bm));
   T('对照④-领受范围与引擎同源（不能自己另写一份判定）',
     /DragonSystem\.SOUL_REWARD_OK\(e\)/.test(bm));
   T('对照⑤-走 equipSkill（手动 push 会漏掉 onEquip 里的常驻效果）',

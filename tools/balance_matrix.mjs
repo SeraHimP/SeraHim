@@ -39,6 +39,7 @@ const MAP_ID = arg('map', 'summoners_rift_v1');
 const SWEEP = arg('sweep', 'none');
 // v43：--sweep soul 用。非 null 时给**蓝方**的全部领受者（塔 + 大型小兵）装上这条龙魂。
 let FORCE_SOUL = null;
+let FORCE_POWER = null;   // v44：巨龙之力对照档（元素 key），给蓝方叠满层
 const JSON_OUT = arg('json', '');
 
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
@@ -52,7 +53,7 @@ const { MapSystem } = await import('../src/systems/MapSystem.js');
 const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
 const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
 const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
-const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+const { DragonSystem, dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
 const { BuffSystem } = await import('../src/systems/BuffSystem.js');
 const { WorldState } = await import('../src/systems/WorldState.js');
@@ -281,13 +282,38 @@ function runCell(label, apply, restore) {
  * 手动 push 会漏掉那一步，量出来的强度偏低。
  */
 function equipForcedSoul(e, fx, ents, bus) {
-  if (!FORCE_SOUL) return;
   if ((e._mapFaction || e.faction) !== 'blue') return;
   if (!DragonSystem.SOUL_REWARD_OK(e)) return;
-  equipSkill(e, FORCE_SOUL, {
-    entityContainer: ents, effectRegistry: fx, eventBus: bus,
-    attrCalc: AttributeCalculator, waveNumber: 0,
-  }, SkillLibrary);
+  if (FORCE_SOUL) {
+    equipSkill(e, FORCE_SOUL, {
+      entityContainer: ents, effectRegistry: fx, eventBus: bus,
+      attrCalc: AttributeCalculator, waveNumber: 0,
+    }, SkillLibrary);
+  }
+  // v44：巨龙之力单独一档。力和魂必须**分开测** ——
+  // 混在一起的话，某一档偏强时分不清是"力给多了"还是"魂给多了"，
+  // 只能整体往下砍，而整体砍会把本来正常的那一半也砍坏。
+  if (FORCE_POWER) {
+    const cap = (CONFIG.dragonPower && CONFIG.dragonPower.maxStacks) || 4;
+    const el = FORCE_POWER;
+    const buffs = dragonPowerBuffs(el);
+    for (let i = 0; i < buffs.length; i++) {
+      const b = buffs[i];
+      const id = fx.apply(e.id, {
+        name: `${el}之力`, icon: '🐉', kind: 'stat',
+        statKey: b.statKey,
+        flatValue: b.flat || 0, percentValue: b.percent || 0,
+        perStackFlat: b.flat || 0, perStackPercent: b.percent || 0,
+        duration: Infinity, permanent: true,
+        stackable: true, maxStacks: cap, stackPolicy: 'stack',
+        stackKey: `dragon_${el}_${b.statKey}`,
+        description: `${el}增益`,
+      }, `dragon_buff_${el}_${i}`);
+      // 直接顶到满层：对照要量的是"集齐 4 条之后"的强度，不是攒的过程
+      const eff = fx.getEffect(id);
+      if (eff) { eff.stacks = cap; fx._recalcEffectValues(eff); fx._updateDescription(eff); }
+    }
+  }
 }
 
 // ==================== 档位定义 ====================
@@ -326,11 +352,20 @@ if (SWEEP === 'dayNight') {
   // 实现方式：直接给蓝方全体领受者装上那条魂（不真的去打龙）——
   // 我们要量的是"拿到魂之后的强度差"，不是"抢龙的难易"，两件事必须分开测，
   // 混在一起的话抢龙成功率会把魂本身的强度掩盖掉。
-  const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison'];
+  const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];  // v44：光魂随光龙删除
   cells.push(['基线·双方无魂', () => { FORCE_SOUL = null; }, () => { FORCE_SOUL = null; }]);
   for (const k of SOULS) {
     cells.push([`蓝方持${k}魂`, () => { FORCE_SOUL = 'dragonsoul_' + k; },
                 () => { FORCE_SOUL = null; }]);
+  }
+} else if (SWEEP === 'power') {
+  // v44：**巨龙之力**单独一档（满 4 层，不给魂）。
+  // 判读：力是"过程奖励"，强度应当明显低于魂 —— 每档的推进度差落在基线 +0.3~+1.0 之间。
+  // 力比魂还强就说明成魂这件事没有意义了。
+  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+  cells.push(['基线·双方无力', () => { FORCE_POWER = null; }, () => { FORCE_POWER = null; }]);
+  for (const k of ELS) {
+    cells.push([`蓝方满${k}之力`, () => { FORCE_POWER = k; }, () => { FORCE_POWER = null; }]);
   }
 } else if (SWEEP === 'entropyLive') {
   // 熵【自然演化】下扫加成幅度。这一档才是真正要看的：

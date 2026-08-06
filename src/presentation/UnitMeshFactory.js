@@ -307,25 +307,131 @@ export function minionMesh(key, color, size, type) {
 }
 
 /** 巨龙：拉长的身体 + 头 + 双翼，比小兵大一圈，古龙更大 */
+/**
+ * ==================== 巨龙（v44 重造）====================
+ * 用户："龙的模型太丑了，而且不要一会大一会小那种效果。"
+ *
+ * 旧造型只有 5 件：一个压扁的球（身）、一个锥（头）、两块斜板（翼）、一根柱（腿）。
+ * 问题不在件数少，在**比例**：那个球被 scale(1, 0.72, 1.45) 压成一坨，
+ * 锥直接怼在球侧面当头（没有脖子），两块板从球心穿出去当翅膀，
+ * 一根柱子代表全部四条腿。远看是个带刺的土豆。
+ *
+ * 现在按"低多边形四足飞龙"重造，形状语言与场景里的树/石一致（都是低面数硬边）：
+ *   躯干（前粗后细的两段）→ 颈（向前上方斜）→ 头（楔形）+ 下颚 → 犄角
+ *   → 四条腿 + 脚掌 → 双翼（翼骨 + 两片翼膜，向后掠且上扬）→ 分节的尾 + 尾刺
+ *   → 背脊骨板（沿脊线由大到小）
+ * 远古龙不再是"同一个模型放大"：它多一对犄角、背板更高、翼展更大，
+ * 光靠剪影就能和元素龙分开。
+ *
+ * 朝向约定：模型面朝 -Z（与 needsFacing 的其余单位一致）。
+ */
 export function dragonMesh(key, color, ancient) {
   let hit = _geoCache.get(key);
   if (!hit) {
-    const S = ancient ? 30 : 24, parts = [];
-    const bodyH = S * 0.85;
-    parts.push({ geo: new THREE.SphereGeometry(S * 0.62, 14, 10),
-                 matrix: new THREE.Matrix4().makeScale(1, 0.72, 1.45).premultiply(T(0, bodyH, 0)),
-                 color });
-    parts.push({ geo: new THREE.ConeGeometry(S * 0.34, S * 0.7, 8),
-                 matrix: new THREE.Matrix4().makeRotationX(Math.PI / 2)
-                   .premultiply(T(0, bodyH * 1.05, -S * 0.9)), color: shade(color, 1.15) });
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 1.15, S * 0.08, S * 0.55),
-                   matrix: new THREE.Matrix4().makeRotationZ(sx * 0.42)
-                     .premultiply(T(sx * S * 0.78, bodyH * 1.25, S * 0.1)),
-                   color: shade(color, 0.72) });
+    const S = ancient ? 30 : 24;
+    const parts = [];
+    const dark = shade(color, 0.62);      // 腹部/腿/翼膜
+    const lite = shade(color, 1.22);      // 头/犄角/背板/尖端
+    const mid  = shade(color, 0.86);
+    const add = (geo, m, c) => parts.push({ geo, matrix: m, color: c });
+    const M = () => new THREE.Matrix4();
+    const rot = (rx, ry, rz) => M().makeRotationFromEuler(new THREE.Euler(rx, ry, rz));
+
+    const bodyY = S * 0.62;               // 躯干中心高度（四条腿把它撑起来）
+
+    // ---- 躯干：前胸粗、后腰细，两段拼出锥度，比单个压扁的球有体积感 ----
+    add(new THREE.SphereGeometry(S * 0.40, 10, 7),
+        M().makeScale(1.0, 0.92, 1.25).premultiply(T(0, bodyY, -S * 0.18)), color);
+    add(new THREE.SphereGeometry(S * 0.31, 10, 7),
+        M().makeScale(1.0, 0.88, 1.30).premultiply(T(0, bodyY * 0.96, S * 0.30)), color);
+    // 腹部（浅色一条，低多边形生物常用的分色）
+    add(new THREE.SphereGeometry(S * 0.26, 8, 6),
+        M().makeScale(1.0, 0.42, 1.5).premultiply(T(0, bodyY - S * 0.20, 0)), dark);
+
+    // ---- 颈 + 头：先有脖子再有头，这是旧造型最缺的一段 ----
+    add(new THREE.CylinderGeometry(S * 0.13, S * 0.19, S * 0.52, 7),
+        rot(-0.62, 0, 0).premultiply(T(0, bodyY + S * 0.30, -S * 0.44)), color);
+    // 头：楔形（前窄后宽），比锥体像头
+    add(new THREE.BoxGeometry(S * 0.26, S * 0.24, S * 0.42),
+        rot(-0.18, 0, 0).premultiply(T(0, bodyY + S * 0.56, -S * 0.76)), lite);
+    // 吻部
+    add(new THREE.ConeGeometry(S * 0.13, S * 0.26, 6),
+        rot(-Math.PI / 2 - 0.18, 0, 0).premultiply(T(0, bodyY + S * 0.52, -S * 1.02)), lite);
+    // 下颚
+    add(new THREE.BoxGeometry(S * 0.18, S * 0.08, S * 0.30),
+        rot(-0.10, 0, 0).premultiply(T(0, bodyY + S * 0.44, -S * 0.86)), dark);
+    // 犄角：元素龙一对、远古龙两对（剪影层面的区分）
+    const horns = ancient ? [[0.62, 0.30], [0.34, 0.62]] : [[0.52, 0.34]];
+    for (const [zk, spread] of horns) {
+      for (const sx of [-1, 1]) {
+        add(new THREE.ConeGeometry(S * 0.05, S * 0.30, 5),
+            rot(-0.5, 0, sx * 0.42).premultiply(
+              T(sx * S * spread * 0.30, bodyY + S * 0.74, -S * zk)), lite);
+      }
     }
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.16, S * 0.22, bodyH, 6),
-                 matrix: T(0, bodyH / 2, 0), color: shade(color, 0.6) });
+
+    // ---- 四条腿 + 脚掌 ----
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const lx = sx * S * 0.26, lz = sz * S * 0.34;
+      add(new THREE.CylinderGeometry(S * 0.075, S * 0.10, bodyY * 0.62, 6),
+          T(lx, bodyY * 0.34, lz), dark);
+      add(new THREE.BoxGeometry(S * 0.17, S * 0.07, S * 0.21),
+          T(lx, S * 0.035, lz - S * 0.03), dark);
+    }
+
+    // ---- 双翼 ----
+    // 做法：**先把几何体自己平移到"内缘贴在原点"**，再整体旋转、再挪到肩点。
+    // 第一版是把三个矩阵 premultiply 串起来（rot → 局部平移 → base），
+    // 结果那个"局部平移"用的是世界轴而不是旋转后的坐标系，翼板被甩到身体外面
+    // 变成两根穿身而过的螺旋桨叶。几何体自带偏移之后，旋转天然绕内缘发生，
+    // 怎么转都还连在肩上。
+    //
+    // 姿态：这是一条**落地的**龙，翼不该像飞机一样平展。所以三个角一起给：
+    //   dihedral 上反角（翼尖抬高） + sweep 后掠（翼面向后拖） + 翼膜比翼骨更宽，
+    // 让剪影是"收在背上的一对翼"而不是两根横棍。
+    const span = S * 0.86, chord = S * 0.80;
+    const dihedral = 0.95, sweep = 0.62;
+    for (const sx of [-1, 1]) {
+      const shX = sx * S * 0.22, shY = bodyY + S * 0.30, shZ = -S * 0.06;
+      const pose = rot(0, sx * sweep, sx * dihedral);
+      // 翼骨（前缘）：底端在原点的柱体，沿 +Y 立起来，由 pose 摆成翼展方向
+      const bone = new THREE.CylinderGeometry(S * 0.036, S * 0.055, span, 5);
+      bone.translate(0, span / 2, 0);
+      add(bone, rot(0, sx * sweep, sx * (dihedral - Math.PI / 2 + 0.30))
+                  .premultiply(T(shX, shY, shZ)), mid);
+      // 翼膜：内缘在原点、向 +Y（翼展方向）铺开，chord 沿 Z 向后拖
+      const mem = new THREE.BoxGeometry(S * 0.022, span * 0.92, chord);
+      mem.translate(0, span * 0.46, chord * 0.34);
+      add(mem, rot(0, sx * sweep, sx * (dihedral - Math.PI / 2 + 0.30))
+                 .premultiply(T(shX, shY, shZ)), dark);
+      // 翼指：翼膜后缘的两根细骨，低多边形龙翼的辨识点
+      for (const k of [0.45, 0.80]) {
+        const rib = new THREE.CylinderGeometry(S * 0.022, S * 0.028, chord * 0.86, 4);
+        rib.rotateX(Math.PI / 2);
+        rib.translate(0, span * k, chord * 0.40);
+        add(rib, rot(0, sx * sweep, sx * (dihedral - Math.PI / 2 + 0.30))
+                   .premultiply(T(shX, shY, shZ)), mid);
+      }
+    }
+
+    // ---- 尾：三节递减 + 尾刺 ----
+    const tail = [[0.62, 0.13, 0.34], [0.94, 0.10, 0.30], [1.22, 0.07, 0.26]];
+    for (const [tz, tr, tl] of tail) {
+      add(new THREE.CylinderGeometry(S * tr * 0.8, S * tr, S * tl, 6),
+          rot(Math.PI / 2 - 0.10, 0, 0).premultiply(
+            T(0, bodyY - S * (tz - 0.62) * 0.18, S * tz)), color);
+    }
+    add(new THREE.ConeGeometry(S * 0.09, S * 0.28, 5),
+        rot(Math.PI / 2 - 0.10, 0, 0).premultiply(T(0, bodyY - S * 0.13, S * 1.48)), lite);
+
+    // ---- 背脊骨板：沿脊线由大到小，低多边形龙的标志性剪影 ----
+    const spine = ancient ? [0.28, 0.24, 0.20, 0.15, 0.11] : [0.20, 0.17, 0.14, 0.10];
+    spine.forEach((h, i) => {
+      add(new THREE.ConeGeometry(S * 0.055, S * h, 4),
+          rot(0.12, Math.PI / 4, 0).premultiply(
+            T(0, bodyY + S * 0.36, -S * 0.28 + i * S * 0.26)), lite);
+    });
+
     hit = pack(parts);
     _geoCache.set(key, hit);
   }

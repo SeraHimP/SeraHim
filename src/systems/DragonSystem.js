@@ -12,16 +12,43 @@ import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../data/dragonCurve.
  */
 
 // 8 种元素龙定义：击杀后给所有塔叠加的增益（永久，可叠加同种）
+/**
+ * ==================== 元素龙清单（v44 重排）====================
+ * 用户定稿："光龙直接删除吧" —— 元素与魂**一并**删除，剩七条。
+ * 删的理由记在这里，免得下一个人以为是漏了：塔无限重生会把对局拖成平局；
+ * 而且它在 v43 的对照里整档与基线逐位相同 —— 当时它根本没接上
+ *（respawnRuleFor 从没被调用过）。
+ *
+ * `power` 不再在这里写死数值，改为指向 CONFIG.dragonPower 里的同名键 ——
+ * 硬约束是"一切数值软编码"，写在这个 export const 里编辑器改不了。
+ * 每个元素的属性**互不重复**（用户定稿："+最大生命值只是山龙的增益，其他的没有"），
+ * sim_v44.mjs 里有一条断言盯着这件事。
+ */
 export const DRAGON_ELEMENTS = {
-  fire:    { key: 'fire',    label: '炎龙', icon: '🔥', color: '#e74c3c', soul: 'dragonsoul_fire',    buff: [{ statKey: 'attackDamage', percent: 8 }] },
-  water:   { key: 'water',   label: '潮龙', icon: '🌊', color: '#3498db', soul: 'dragonsoul_water',   buff: [{ statKey: 'bonusAttackSpeedPct', flat: 6 }] },
-  earth:   { key: 'earth',   label: '山龙', icon: '🗿', color: '#95a5a6', soul: 'dragonsoul_earth',   buff: [{ statKey: 'armor', flat: 10 }, { statKey: 'magicResist', flat: 10 }, { statKey: 'maxHP', percent: 5 }] },
-  thunder: { key: 'thunder', label: '雷龙', icon: '⚡', color: '#f1c40f', soul: 'dragonsoul_thunder', buff: [{ statKey: 'armorPenFlat', flat: 6 }, { statKey: 'magicPenFlat', flat: 6 }, { statKey: 'attackDamage', percent: 5 }] },
-  wind:    { key: 'wind',    label: '风龙', icon: '🌪', color: '#1abc9c', soul: 'dragonsoul_wind',    buff: [{ statKey: 'bonusAttackSpeedPct', flat: 6 }, { statKey: 'attackRange', flat: 8 }] },
-  dark:    { key: 'dark',    label: '暗龙', icon: '🌑', color: '#8e44ad', soul: 'dragonsoul_dark',    buff: [{ statKey: 'damageAmpPct', flat: 6 }, { statKey: 'lifeStealPct', flat: 4 }] },
-  light:   { key: 'light',   label: '光龙', icon: '☀️', color: '#f39c12', soul: 'dragonsoul_light',   buff: [{ statKey: 'healShieldPowerPct', flat: 8 }, { statKey: 'healthRegen', flat: 2 }] },
-  poison:  { key: 'poison',  label: '毒龙', icon: '☠️', color: '#27ae60', soul: 'dragonsoul_poison',  buff: [{ statKey: 'onHitPercentDamage', flat: 0.5 }] },
+  fire:    { key: 'fire',    label: '炎龙', icon: '🔥', color: '#e74c3c', soul: 'dragonsoul_fire' },
+  water:   { key: 'water',   label: '潮龙', icon: '🌊', color: '#3498db', soul: 'dragonsoul_water' },
+  earth:   { key: 'earth',   label: '山龙', icon: '🗿', color: '#95a5a6', soul: 'dragonsoul_earth' },
+  thunder: { key: 'thunder', label: '雷龙', icon: '⚡', color: '#f1c40f', soul: 'dragonsoul_thunder' },
+  wind:    { key: 'wind',    label: '风龙', icon: '🌪', color: '#1abc9c', soul: 'dragonsoul_wind' },
+  dark:    { key: 'dark',    label: '暗龙', icon: '🌑', color: '#8e44ad', soul: 'dragonsoul_dark' },
+  poison:  { key: 'poison',  label: '毒龙', icon: '☠️', color: '#27ae60', soul: 'dragonsoul_poison' },
 };
+
+/**
+ * 某元素的【巨龙之力】属性表（每层）。数值住在 CONFIG.dragonPower，可在编辑器里改。
+ * 返回 [{ statKey, flat, percent }]；空数组表示该元素没有配置（不该发生，但不炸）。
+ * 约定：键名以 `Pct` 结尾的算百分比，其余算固定值 —— 这样配置里只写一层对象，
+ * 不必给每一项都套 { flat } / { percent } 的壳。
+ */
+export function dragonPowerBuffs(el) {
+  const tbl = (CONFIG.dragonPower && CONFIG.dragonPower[el]) || null;
+  if (!tbl) return [];
+  return Object.entries(tbl).map(([k, v]) => (
+    k.endsWith('Pct')
+      ? { statKey: k.slice(0, -3), percent: v }
+      : { statKey: k, flat: v }
+  ));
+}
 
 export class DragonSystem {
   constructor(entityContainer, eventBus, effectRegistry, skillLibrary, attrCalc) {
@@ -346,15 +373,20 @@ export class DragonSystem {
   _applyElementBuff(tower, el) {
     const def = DRAGON_ELEMENTS[el];
     if (!def) return;
-    for (let i = 0; i < def.buff.length; i++) {
-      const b = def.buff[i];
+    // v44：属性表从 DRAGON_ELEMENTS[].buff（写死）改为读 CONFIG.dragonPower（可编辑）。
+    // 层数上限也从 99 改成 CONFIG.dragonPower.maxStacks（默认 4）——
+    // 满 4 条就成魂、元素龙停刷，99 是个永远到不了的虚数，写在那里只会误导。
+    const buffs = dragonPowerBuffs(el);
+    const cap = (CONFIG.dragonPower && CONFIG.dragonPower.maxStacks) || 4;
+    for (let i = 0; i < buffs.length; i++) {
+      const b = buffs[i];
       this.effects.apply(tower.id, {
         name: `${def.label}之力`, icon: def.icon, kind: 'stat', color: def.color,
         statKey: b.statKey,
         flatValue: b.flat || 0, percentValue: b.percent || 0,
         perStackFlat: b.flat || 0, perStackPercent: b.percent || 0,
         duration: Infinity, permanent: true,
-        stackable: true, maxStacks: 99, stackPolicy: 'stack',
+        stackable: true, maxStacks: cap, stackPolicy: 'stack',
         stackKey: `dragon_${el}_${b.statKey}`,
         descTemplate: `唯一被动——${def.label}之力：击杀${def.label}获得的永久增益（{stacks}层）。`,
         description: `${def.label}增益（{stacks}层）`,

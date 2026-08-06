@@ -51,23 +51,30 @@ export const dragonSouls = {
     id: 'dragonsoul_fire', name: '炎魂', icon: '🔥', color: '#e74c3c', category: 'dragonsoul',
     get description() {
       const p = P('fire');
-      return `攻击附带溅射伤害（半径 ${p.radius ?? 75}、${p.pct ?? 60}% 伤害），冷却 ${p.cooldown ?? 8} 秒。`;
+      const cd = p.cooldown ?? 0;
+      return `攻击附带溅射伤害（半径 ${p.radius ?? 75}、${p.pct ?? 30}% 伤害）` + (cd > 0 ? `，冷却 ${cd} 秒。` : '，无冷却。');
     },
     get descTemplate() {
       const p = P('fire');
-      return `唯一被动——炎魂：攻击附带溅射（【{val}】=${p.pct ?? 60}% 伤害，半径 ${p.radius ?? 75}），冷却 ${p.cooldown ?? 8} 秒。`;
+      const cd = p.cooldown ?? 0;
+      return `唯一被动——炎魂：攻击附带溅射（【{val}】=${p.pct ?? 30}% 伤害，半径 ${p.radius ?? 75}）` + (cd > 0 ? `，冷却 ${cd} 秒。` : '，无冷却。');
     },
-    computeCurrent: () => `${P('fire').pct ?? 60}%`,
+    computeCurrent: () => `${P('fire').pct ?? 30}%`,
     effects: [],
     onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('fire');
-      if (!offCooldown(instance, p.cooldown ?? 8)) return;
+      // v44：cooldown 为 0 时**不走冷却门**（常驻溅射）。
+      // 8 秒一次的溅射在"机械攻击"的单位身上几乎感觉不到 —— 塔约 1.2 秒一次攻击，
+      // 也就是七发里只有一发带溅射，玩家根本看不出来自己拿了炎魂。
+      // 改成常驻低比例：总收益相近，但**稳定**，而且看得见。
+      const cd = p.cooldown ?? 0;
+      if (cd > 0 && !offCooldown(instance, cd)) return;
       const target = ctx.entityContainer.get(targetId);
       const attacker = ctx.entityContainer.get(attackerId);
       if (!target || !attacker || !ctx.combat) return;
       // 走引擎既有的溅射结算：中心取目标坐标、排除主目标（主伤害已单独结算）。
       ctx.combat._applyExplosion(attacker, target,
-        (ctx.totalRaw || 0) * ((p.pct ?? 60) / 100),
+        (ctx.totalRaw || 0) * ((p.pct ?? 30) / 100),
         ctx.attackType || 'physical', p.radius ?? 75);
     },
   },
@@ -154,13 +161,13 @@ export const dragonSouls = {
     id: 'dragonsoul_thunder', name: '雷魂', icon: '⚡', color: '#f1c40f', category: 'dragonsoul',
     get description() {
       const p = P('thunder');
-      return `攻击附带连锁：对附近最多 ${p.targets ?? 6} 个敌人【均摊】${p.totalPct ?? 150}% 伤害（真实伤害），冷却 ${p.cooldown ?? 8} 秒。`;
+      return `攻击附带连锁：对附近最多 ${p.targets ?? 6} 个敌人**各**造成 ${p.perTargetPct ?? 35}% 真实伤害，冷却 ${p.cooldown ?? 8} 秒。`;
     },
     get descTemplate() {
       const p = P('thunder');
-      return `唯一被动——雷魂：连锁对最多 ${p.targets ?? 6} 个敌人均摊（【{val}】=${p.totalPct ?? 150}% 伤害）真实伤害，冷却 ${p.cooldown ?? 8} 秒。`;
+      return `唯一被动——雷魂：连锁对最多 ${p.targets ?? 6} 个敌人各造成（【{val}】=${p.perTargetPct ?? 35}% 伤害）真实伤害，冷却 ${p.cooldown ?? 8} 秒。`;
     },
-    computeCurrent: () => `${P('thunder').totalPct ?? 150}%`,
+    computeCurrent: () => `${P('thunder').perTargetPct ?? 35}%`,
     effects: [],
     onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('thunder');
@@ -169,10 +176,13 @@ export const dragonSouls = {
       const target = ctx.entityContainer.get(targetId);
       if (!attacker || !target || !ctx.combat) return;
       const n = Math.max(1, p.targets ?? 6);
-      // "均摊"= 总量固定，人越多每人吃得越少。这与炎魂的溅射（每人独立结算）
-      // 是两种不同的 AOE 语义，别混：炎魂打人堆越多总伤越高，雷魂总伤恒定。
-      const total = (ctx.totalRaw || 0) * ((p.totalPct ?? 150) / 100);
-      ctx.combat.connectChain(attackerId, target, total / n, 'true',
+      // ==================== v44：取消均摊 ====================
+      // 旧语义是"总量固定、在最多 6 人间均摊"，于是打单体时每人 = 总量/6 —— 也就是说
+      // 在**推塔**（这个游戏里最常见的情形）时它只有名义伤害的六分之一。
+      // 对照数据里雷魂的推进度差是 -0.38，比不拿魂还差，根子就在这。
+      // 现在每个目标各吃一份固定真伤，目标数仍然封顶（不会在人堆里失控）。
+      const per = (ctx.totalRaw || 0) * ((p.perTargetPct ?? 35) / 100);
+      ctx.combat.connectChain(attackerId, target, per, 'true',
                               n, p.range ?? 200, '#f1c40f');
     },
   },
@@ -182,30 +192,33 @@ export const dragonSouls = {
     id: 'dragonsoul_wind', name: '风魂', icon: '🌪', color: '#1abc9c', category: 'dragonsoul',
     get description() {
       const p = P('wind');
-      return `所有单位移速 +${p.moveSpeedPct ?? 33}%，脱战后提升至 +${p.moveSpeedOutPct ?? 50}%；防御塔额外获得 +${p.towerAttackSpeedPct ?? 33}% 攻速（面板值）。`;
+      return `小兵移速 +${p.moveSpeedPct ?? 15}%，脱战后提升至 +${p.moveSpeedOutPct ?? 30}%；防御塔额外获得 +${p.towerAttackRangeFlat ?? 45} 攻击距离。`;
     },
     get descTemplate() {
       const p = P('wind');
-      return `唯一被动——风魂：移速（【{val}%】，脱战后升至 +${p.moveSpeedOutPct ?? 50}%）；防御塔 +${p.towerAttackSpeedPct ?? 33}% 攻速。`;
+      return `唯一被动——风魂：小兵移速（【{val}%】，脱战后升至 +${p.moveSpeedOutPct ?? 30}%）；防御塔 +${p.towerAttackRangeFlat ?? 45} 攻击距离。`;
     },
     computeCurrent: (entity) => {
       const p = P('wind');
-      return entity && entity._inCombat ? (p.moveSpeedPct ?? 33) : (p.moveSpeedOutPct ?? 50);
+      return entity && entity._inCombat ? (p.moveSpeedPct ?? 15) : (p.moveSpeedOutPct ?? 30);
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       const p = P('wind');
       const e = ctx.entityContainer.get(entityId);
       if (!e || e.type !== 'tower') return;
-      // ⚠️ "+33% 攻速"是**面板值**（用户定稿）。本项目的攻速公式是
-      // effectiveBonus = 正值 × attackSpeedRatio(0.667)，所以面板 33 实际约 +22%。
+      // ==================== v44：塔的那一半从攻速改为射程 ====================
+      // 上一版给塔的是攻速。但风魂的主题是"快"，而塔身上"快"的唯一有效形态不是攻速
+      //（那和别的魂重复），是**更早开火** —— 射程 +45 意味着敌方兵线还没进场就先挨一轮，
+      // 而且这份收益是复利的：塔多打一轮 → 兵线更早崩 → 塔挨的伤害更少 → 又多打一轮。
+      // 对照数据里风魂是 -0.54（比不拿还差），移速那一半反而把兵线推得脱离己方塔的保护。
       ctx.effectRegistry.apply(entityId, {
         name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
-        statKey: 'bonusAttackSpeedPct', flatValue: p.towerAttackSpeedPct ?? 33,
+        statKey: 'attackRange', flatValue: p.towerAttackRangeFlat ?? 45,
         duration: Infinity, permanent: true,
         stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        stackKey: 'dragonsoul_wind_as',
-        description: `攻速 +${p.towerAttackSpeedPct ?? 33}%（面板值）`,
+        stackKey: 'dragonsoul_wind_range',
+        description: `攻击距离 +${p.towerAttackRangeFlat ?? 45}`,
       }, 'dragonsoul_wind');
     },
     onUnequip: (entityId, instance, ctx) => {
@@ -220,7 +233,7 @@ export const dragonSouls = {
       // 脱战判定复用引擎已有的 _inCombat / _combatTimer（攻击或受击时置起，4 秒后落下）。
       // 自己再记一套"上次交战时间"必然与引擎那套漂移 —— 双份状态是本项目的老毛病。
       const out = !e._inCombat;
-      const pct = out ? (p.moveSpeedOutPct ?? 50) : (p.moveSpeedPct ?? 33);
+      const pct = out ? (p.moveSpeedOutPct ?? 30) : (p.moveSpeedPct ?? 15);
       ctx.effectRegistry.apply(entityId, {
         name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
         aura: true, auraGrace: 1.0,
@@ -237,11 +250,13 @@ export const dragonSouls = {
     id: 'dragonsoul_dark', name: '暗魂', icon: '🌑', color: '#8e44ad', category: 'dragonsoul',
     get description() {
       const p = P('dark');
-      return `命中降低目标 ${p.flatPerStack ?? 1} 点与 ${p.pctPerStack ?? 0.5}% 双抗，最多 ${p.maxFlat ?? 30} 点 / ${p.maxPct ?? 15}%；【友军攻击也会叠层】（全队共享同一份层数）。`;
+      const st = p.steal !== false ? '，并为自己**偷取等量**双抗' : '';
+      return `命中降低目标 ${p.flatPerStack ?? 1} 点与 ${p.pctPerStack ?? 0.5}% 双抗${st}，最多 ${p.maxFlat ?? 30} 点 / ${p.maxPct ?? 15}%；【友军攻击也会叠层】（全队共享同一份层数）。`;
     },
     get descTemplate() {
       const p = P('dark');
-      return `唯一被动——暗魂：命中削目标双抗（【{val}】=每层 ${p.flatPerStack ?? 1} 点 + ${p.pctPerStack ?? 0.5}%），上限 ${p.maxFlat ?? 30} 点 / ${p.maxPct ?? 15}%，友军攻击共享层数。`;
+      const st = p.steal !== false ? '，同时为自己偷取等量' : '';
+      return `唯一被动——暗魂：命中削目标双抗（【{val}】=每层 ${p.flatPerStack ?? 1} 点 + ${p.pctPerStack ?? 0.5}%）${st}，上限 ${p.maxFlat ?? 30} 点 / ${p.maxPct ?? 15}%，友军攻击共享层数。`;
     },
     computeCurrent: () => `-${P('dark').maxFlat ?? 30} / -${P('dark').maxPct ?? 15}%`,
     effects: [],
@@ -270,39 +285,26 @@ export const dragonSouls = {
           descTemplate: `唯一被动——侵蚀：${label}降低（【{val}】），{stacks}/${maxStacks} 层。`,
           description: `${label}降低（{stacks}/${maxStacks}层）`,
         }, 'dragonsoul_dark');
-      }
-    },
-  },
 
-  // ==================== ☀️ 光魂：外/内/枢纽塔重生 ====================
-  // 这条没有 onFrame/onHit —— 重生是**建筑级**的事件，由 MapSystem 的重生队列处理
-  //（与召唤水晶重生走同一套流程）。技能定义只负责声明数值与文案，
-  // 触发点在 MapSystem._onEntityDeath 里查"这一方有没有光魂"。
-  dragonsoul_light: {
-    id: 'dragonsoul_light', name: '光魂', icon: '☀️', color: '#f39c12', category: 'dragonsoul',
-    get description() {
-      const p = P('light');
-      return `被摧毁的外塔/内塔（各限 ${p.outerInnerLimit ?? 1} 次）与枢纽塔（无限次）在 ${p.respawnSec ?? 300} 秒后重生：`
-           + `外/内塔 ${p.outerInnerHpPct ?? 33}% 最大生命，枢纽塔 ${p.hqHpPct ?? 40}%。`;
-    },
-    get descTemplate() {
-      const p = P('light');
-      return `唯一被动——光魂：外/内塔各限 ${p.outerInnerLimit ?? 1} 次、枢纽塔无限次，`
-           + `【{val}】=${p.respawnSec ?? 300} 秒后重生（外/内 ${p.outerInnerHpPct ?? 33}%、枢纽 ${p.hqHpPct ?? 40}% 生命）。`;
-    },
-    computeCurrent: () => `${P('light').respawnSec ?? 300}s`,
-    effects: [],
-    /**
-     * 该层级能否重生、重生血量百分比。MapSystem 读这里，数值只有这一份。
-     * 水晶塔/召唤水晶/水晶枢纽**不在**光魂范围内（召唤水晶本来就有自己的重生规则）。
-     */
-    respawnRuleFor(tier, usedCount) {
-      const p = P('light');
-      if (tier === 'hq_tower') return { ok: true, hpPct: p.hqHpPct ?? 40 };
-      if (tier === 'outer' || tier === 'inner') {
-        return { ok: (usedCount || 0) < (p.outerInnerLimit ?? 1), hpPct: p.outerInnerHpPct ?? 33 };
+        // ==================== v44：削掉多少，自己就偷多少 ====================
+        // 纯减抗在 v43 的对照里是最差的一档（推进度差 -0.90，垫底）。
+        // 根子在于：减抗只有在**自己有输出**的时候才值钱，而塔和大兵的输出是固定的 ——
+        // 把对方护甲削 30 点，多打出来的那点伤害远不如"自己多 30 点护甲"活得久。
+        // 现在改成偷取：对方掉多少、自己加多少，上限同。攻防一体，收益不再单边。
+        if (p.steal !== false) {
+          ctx.effectRegistry.apply(attackerId, {
+            name: '掠夺', icon: '🌑', kind: 'stat', color: '#8e44ad', type: 'buff',
+            statKey,
+            flatValue: (p.flatPerStack ?? 1), perStackFlat: (p.flatPerStack ?? 1),
+            percentValue: (p.pctPerStack ?? 0.5), perStackPercent: (p.pctPerStack ?? 0.5),
+            duration: p.duration ?? 6,
+            stackable: true, maxStacks, stackPolicy: 'stack', uniquePassive: true,
+            stackKey: `dragonsoul_dark_steal_${statKey}`,
+            descTemplate: `唯一被动——掠夺：${label}提升（【{val}】），{stacks}/${maxStacks} 层。`,
+            description: `${label}提升（{stacks}/${maxStacks}层）`,
+          }, 'dragonsoul_dark_steal');
+        }
       }
-      return { ok: false, hpPct: 0 };
     },
   },
 
@@ -380,5 +382,114 @@ export const dragonSouls = {
     },
   },
 };
+
+/**
+ * ==================== v44：给每条魂补上【数值部分】 ====================
+ * 用户定稿："巨龙之力做成简单的数值调整。龙魂做成数值+机制的。"
+ *
+ * 于是每条魂 = 一份常驻属性（这里）+ 一份机制（上面各自的 onHit/onFrame/…）。
+ * 属性表住在 CONFIG.dragonSouls.stat[元素]，键名即 statKey，
+ * 以 `Pct` 结尾的算百分比 —— 与 CONFIG.dragonPower 同一套约定，只有一份规则要记。
+ *
+ * 为什么在这里统一包一层，而不是在七条定义里各写一遍 onEquip：
+ * 那样等于把同一件事抄七遍，改一处漏六处是迟早的事。这里包一层之后，
+ * 七条魂的定义里只剩下**它自己独有的机制**，数值全部由配置驱动。
+ *
+ * ⚠️ 为什么每条魂的数值里都有一份生存分量（哪怕它的主题是输出）：
+ * v43 的对照数据显示，这个引擎里输出收益封顶、生存收益复利
+ *（塔和大兵机械攻击，输出增益只是把本来就杀得掉的东西杀快一点）。
+ * 当时纯输出的炎/雷/暗三条魂推进度差全为负 —— 比不拿还差。
+ * 独占性的要求落在【巨龙之力】上（每种元素的属性互不重复），
+ * 平衡的要求落在【魂】上，两边不打架。
+ */
+const SOUL_STAT_KEYS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+
+// 属性中文名。只覆盖龙魂用得到的那几项 —— 面板那份完整表在 UI 层（editor/fields.js），
+// core 不该反向依赖 UI，所以这里留一份小的。多出来的键会原样显示，不会漏说。
+const STAT_LABEL = {
+  attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔抗',
+  healShieldPowerPct: '治疗与护盾强度', healthRegen: '生命回复',
+  armorPenFlat: '固定护甲穿透', magicPenFlat: '固定法术穿透',
+  bonusAttackSpeedPct: '攻速', attackRange: '攻击距离',
+  damageAmpPct: '伤害增幅', lifeStealPct: '生命偷取',
+  onHitPercentDamage: '攻击特效%当前生命',
+};
+
+/** 把某条魂的常驻属性拼成一句人话，追加到面板文案里。 */
+function statSummary(el) {
+  const tbl = (CONFIG.dragonSouls && CONFIG.dragonSouls.stat && CONFIG.dragonSouls.stat[el]) || null;
+  if (!tbl) return '';
+  const parts = Object.entries(tbl).map(([k, v]) => {
+    const pct = k.endsWith('Pct');
+    const key = pct ? k.slice(0, -3) : k;
+    const label = STAT_LABEL[k] || STAT_LABEL[key] || key;
+    // 键名本身带 Pct（如 healShieldPowerPct）时不要再补一个 %，否则会写成"强度 +20%%"
+    const unit = pct ? '%' : (/Pct$/.test(key) ? '%' : '');
+    return `${label} +${v}${unit}`;
+  });
+  return parts.length ? `　常驻加持：${parts.join('、')}。` : '';
+}
+
+/** 某条魂的常驻属性蓝图列表（读 CONFIG，编辑器改了立刻生效）。 */
+export function soulStatBlueprints(el) {
+  const tbl = (CONFIG.dragonSouls && CONFIG.dragonSouls.stat && CONFIG.dragonSouls.stat[el]) || null;
+  if (!tbl) return [];
+  const def = dragonSouls['dragonsoul_' + el] || {};
+  return Object.entries(tbl).map(([k, v]) => {
+    const pct = k.endsWith('Pct');
+    return {
+      name: `${def.name || el}·加持`, icon: def.icon || '🐉', color: def.color, kind: 'stat',
+      statKey: pct ? k.slice(0, -3) : k,
+      flatValue: pct ? 0 : v, percentValue: pct ? v : 0,
+      duration: Infinity, permanent: true,
+      stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+      stackKey: `soul_stat_${el}_${k}`,
+      description: `${def.name || el}的常驻加持`,
+    };
+  });
+}
+
+for (const el of SOUL_STAT_KEYS) {
+  const def = dragonSouls['dragonsoul_' + el];
+  if (!def) continue;
+
+  // 文案：把常驻属性追加进去。
+  // 不追加的话面板会**少说一半** —— sim_skilldesc 那套"文案数值与实际效果一致"的断言
+  // 当场就会红（它逐条比对技能挂出来的效果数值有没有出现在文案里）。
+  // 那条断言是对的：面板上看不到的加成，等于玩家不知道自己拿了什么。
+  for (const key of ['description', 'descTemplate']) {
+    const d = Object.getOwnPropertyDescriptor(def, key);
+    if (!d) continue;
+    if (d.get) {
+      const orig = d.get;
+      Object.defineProperty(def, key, {
+        configurable: true, enumerable: d.enumerable,
+        get() { return String(orig.call(this)) + statSummary(el); },
+      });
+    } else if (typeof d.value === 'string') {
+      const orig = d.value;
+      Object.defineProperty(def, key, {
+        configurable: true, enumerable: d.enumerable,
+        get() { return orig + statSummary(el); },
+      });
+    }
+  }
+
+  const prevEquip = def.onEquip, prevUnequip = def.onUnequip;
+  def.onEquip = (entityId, instance, ctx) => {
+    if (prevEquip) prevEquip(entityId, instance, ctx);
+    if (!ctx || !ctx.effectRegistry) return;
+    for (const bp of soulStatBlueprints(el)) {
+      ctx.effectRegistry.apply(entityId, { ...bp }, `soul_stat_${el}`);
+    }
+  };
+  def.onUnequip = (entityId, instance, ctx) => {
+    if (prevUnequip) prevUnequip(entityId, instance, ctx);
+    if (!ctx || !ctx.effectRegistry) return;
+    for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+      if (eff.sourceId === `soul_stat_${el}`) ctx.effectRegistry.remove(eff.id);
+    }
+  };
+}
 
 export default dragonSouls;

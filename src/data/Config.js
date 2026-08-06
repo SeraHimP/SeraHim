@@ -180,6 +180,10 @@ export const CONFIG = {
         damageReductionPerKill: 7,   // 对该阵营的伤害减免（%/条）
         damageAmpPerKill: 11,        // 对该阵营的伤害提升（%/条）
       },
+      // v44：龙坑坐标覆写。null = 用地图默认（每段河道的几何重心，
+      // 推导过程见 sr_navgrid.js 的 SR_PITS 注释）。填 { x, y } 即手动指定。
+      // 上坑 = baron（地图左上那段河），下坑 = dragon（右下那段河）。
+      pits: { baron: null, dragon: null },
     },
   },
   // 建筑渲染体积（半径 px）：LoL 中水晶枢纽 > 防御塔 > 召唤水晶，按 tier 区分。
@@ -199,34 +203,99 @@ export const CONFIG = {
   // ⚠️ 平衡验收：用 `node tools/balance_matrix.mjs --soul <id>` 跑"持魂方 vs 无魂方"，
   // 目标胜率 **60~70%**。超过 70% 就砍数值 —— 龙魂该是胜负手，不该是终局宣告。
   dragonSouls: {
-    // 🔥 炎魂：攻击附带溅射
-    fire:    { pct: 60, radius: 75, cooldown: 8 },
+    // ==================== v44 重做：数值部分 + 机制部分 ====================
+    // 用户定稿："巨龙之力做成简单的数值调整。龙魂做成数值+机制的。"
+    //
+    // 于是"抢龙"的收益变成连续的一条线：
+    //   每杀一条元素龙 → 一层【巨龙之力】（纯属性，见下面的 dragonPower）
+    //   满 4 条成魂    → 同方向属性拉到满档 **并且** 解锁该元素的机制
+    // 力和魂不再是两套不相干的东西。
+    //
+    // ⚠️ 数值来源：`node tools/balance_matrix.mjs --sweep soul` / `--sweep power`。
+    // 目标是每一档的推进度差落在基线附近的一个带里；胜率在 30 分钟上限下几乎全是平局，
+    // **不能**拿它当主指标（v43 那一轮就是被这个坑了，九档里八档 0% 胜率）。
+    //
+    // ⚠️ v43 对照跑出来的结构性结论（不是口味，是数据）：
+    // **这个引擎里生存收益是复利的，输出收益是封顶的。** 塔和大型小兵机械攻击，
+    // 输出增益只是把本来就杀得掉的东西杀快一点；减伤让塔多活一秒就多打一轮。
+    // 当时纯输出的炎/雷/暗三条魂推进度差全为负（比不拿还差），而纯减伤的山魂 6/6 全胜。
+    // 所以每条魂的【数值部分】都含一份生存分量 —— 独占性归"力"，平衡归"魂"。
+    stat: {
+      // 每条魂的常驻属性（在巨龙之力 4 层的基础上再加这一份）。
+      // 键名即 statKey，直接进 EffectRegistry 的 stat 效果，不另写一套。
+      fire:    { attackDamagePct: 12, maxHPPct: 8 },
+      water:   { healShieldPowerPct: 20, healthRegen: 4 },
+      earth:   { armor: 12, magicResist: 12, maxHPPct: 10 },
+      thunder: { armorPenFlat: 10, magicPenFlat: 10, maxHPPct: 6 },
+      // 风魂的生存分量给 damageReduction 而不是护甲/生命：主题是"难以捉摸"，
+      // 而且这条魂的机制侧（塔 +射程）已经很"进攻"，配一点纯减伤刚好。
+      // 数值给得比山魂（15%）小得多 —— 它是配角，不是第二个山魂。
+      wind:    { bonusAttackSpeedPct: 18, attackRange: 25, damageReduction: 5 },
+      dark:    { damageAmpPct: 10, lifeStealPct: 6 },
+      poison:  { onHitPercentDamage: 1.0, maxHPPct: 6 },
+    },
+    // 🔥 炎魂：攻击附带溅射。
+    // v44：冷却从 8s 去掉改为常驻但比例砍半 —— 8 秒一次的溅射在"机械攻击"的单位身上
+    // 几乎感觉不到（塔每 1.2 秒一次攻击，命中率 1/7），而常驻低比例是稳定收益。
+    fire:    { pct: 30, radius: 75, cooldown: 0 },
     // 🌊 潮魂：攻击后回复已损生命 + 治疗强度。回血**不无视**加固城防的节点封顶
     water:   { healMissingPct: 8, powerPct: 25, buffSec: 5, cooldown: 8 },
     // 🗿 山魂：减伤 + 格挡。
     // ⚠️ damageBlock 是【每次命中扣固定值】，对小 AD 单位近乎免疫：
-    // 近战兵 AD 9、远程兵 6.5 —— 给到 7 就等于把对手整条兵线的输出删掉
-    //（第一版方案写的就是 7，用户选方案 A 砍到 2）。这个数不要再往上调。
-    earth:   { damageReduction: 33, damageBlock: 2 },
-    // ⚡ 雷魂：连锁真伤，总量固定、在最多 6 人间**均摊**（与炎魂的独立溅射语义不同）
-    thunder: { totalPct: 150, targets: 6, range: 200, cooldown: 8 },
-    // 🌪 风魂：移速（脱战更快）+ 塔攻速。
-    // towerAttackSpeedPct 是**面板值**：攻速公式为 正值×attackSpeedRatio(0.667)，
-    // 所以填 33 实际约 +22%（用户定稿要的就是面板 33）。
-    wind:    { moveSpeedPct: 33, moveSpeedOutPct: 50, towerAttackSpeedPct: 33 },
+    // 近战兵 AD 9、远程兵 6.5 —— 给到 7 就等于把对手整条兵线的输出删掉。
+    // v44：33% → 15%，格挡 2 → 1。对照里这条 6/6 全胜、推进度差 +3.65，远超其余六条。
+    // 这个数不要再往上调。
+    earth:   { damageReduction: 15, damageBlock: 1 },
+    // ⚡ 雷魂：连锁真伤。
+    // v44：取消**均摊**。均摊的意思是"打 1 个人和打 6 个人总伤一样"，
+    // 于是它对单体（推塔时最常见的情形）等于什么都没有 —— 对照里推进度差 -0.38。
+    // 现在每个目标各吃一份固定真伤，目标数仍然封顶。
+    thunder: { perTargetPct: 35, targets: 6, range: 200, cooldown: 8 },
+    // 🌪 风魂：塔 +射程 / 小兵 +移速。
+    // v44：塔的部分从"攻速"改为"射程" —— 塔不会动，移速对它是废的；
+    // 而射程是复利收益（更早开火 = 多打一轮 = 兵线更早崩）。
+    // 小兵的移速保留但降幅度：对照里 +33% 移速把兵线推得脱离己方塔的保护，反被反打（-0.54）。
+    wind:    { moveSpeedPct: 15, moveSpeedOutPct: 30, towerAttackRangeFlat: 45 },
     // 🌑 暗魂：命中削双抗，**全队共享层数**（友军攻击也叠）。
+    // v44：改为"偷取" —— 削掉对方多少，自己就得到多少（上限同）。
+    // 纯减抗在对照里是最差的一档（-0.90）：减抗只在自己有输出时才有价值，
+    // 而塔的输出是固定的；偷取让它同时变成生存收益。
     // 减抗顺序：先固定后百分比（属性管线本来就是这个顺序，见 dragonSouls.js 注释）。
-    dark:    { flatPerStack: 1, pctPerStack: 0.5, maxFlat: 30, maxPct: 15, duration: 6 },
-    // ☀️ 光魂：塔重生。外/内塔各限 1 次，枢纽塔无限次。
-    // 枢纽塔无限重生看起来会让游戏打不完，但**过载被动**会持续削最大生命直到归零，
-    // 所以有天花板（这一点是用户指出的，我原先想岔了）。
-    light:   { respawnSec: 300, outerInnerHpPct: 33, hqHpPct: 40, outerInnerLimit: 1 },
+    dark:    { flatPerStack: 1, pctPerStack: 0.5, maxFlat: 30, maxPct: 15, duration: 6, steal: true },
     // ☠️ 毒魂：命中叠中毒，无限叠加。
     // 对建筑打 25 折：百分比最大生命的 DoT 天然反建筑，不打折的话一波兵十秒推平一座塔。
-    poison:  { pctPerStack: 0.4, duration: 4, vsBuildingPct: 25, maxStacks: 999 },
-    // 🐲 远古之力：唯一**限时**的一条（其余八条全部永久）
+    // v44：0.4 → 0.3（对照里 +1.96，偏强）。
+    poison:  { pctPerStack: 0.3, duration: 4, vsBuildingPct: 25, maxStacks: 999 },
+    // 🐲 远古之力：唯一**限时**的一条（其余七条全部永久）
     ancient: { executeAtPct: 20, executePct: 20, durationSec: 240 },
+    // ☀️ 光魂已随【光龙】一并删除（用户定稿："光龙直接删除吧"）。
+    // 删除理由记在这里，免得下一个人以为是漏了：塔无限重生会把对局拖成平局，
+    // 而且它在 v43 的对照里整档与基线**逐位相同** —— 因为当时它根本没接上
+    //（respawnRuleFor 从没被调用过，见那次的修复提交）。
   },
+
+  // ==================== 巨龙之力（v44 新增：从 DRAGON_ELEMENTS 里搬出来）====================
+  // 用户定稿："巨龙之力是击杀龙获得的小增益，某阵营集齐 4 个巨龙之力后获得龙魂。
+  //            每一种做出差异，最好不要重复，比如说 +最大生命值只是山龙的增益，其他的没有。"
+  //
+  // 所以这里的**每个属性只属于一个元素**，七条互不重叠：
+  //   炎 攻击力 ｜ 潮 治疗护盾强度+生命回复 ｜ 山 最大生命+护甲+魔抗
+  //   雷 双穿   ｜ 风 攻速+射程            ｜ 暗 伤害增幅+生命偷取 ｜ 毒 攻击特效%当前生命
+  // 一眼就能从面板上看出"这一方抢的是哪条龙"。
+  //
+  // maxStacks 定 4 而不是原来的 99：满 4 条就成魂、元素龙停刷，99 是个永远到不了的虚数。
+  // 键名即 statKey；percent 结尾的写在 *Pct 里，其余是固定值。
+  dragonPower: {
+    maxStacks: 4,
+    fire:    { attackDamagePct: 6 },
+    water:   { healShieldPowerPct: 8, healthRegen: 2 },
+    earth:   { maxHPPct: 5, armor: 8, magicResist: 8 },
+    thunder: { armorPenFlat: 5, magicPenFlat: 5 },
+    wind:    { bonusAttackSpeedPct: 6, attackRange: 10 },
+    dark:    { damageAmpPct: 5, lifeStealPct: 3 },
+    poison:  { onHitPercentDamage: 0.5 },
+  },
+
   // v43：龙的两个独立开关（用户定稿："龙魂效果有独立开关（是否生成/效果）"）。
   //   spawn  —— 是否生成巨龙（关掉 = 这局没有龙，也就不会有龙魂）
   //   effect —— 龙魂效果是否生效（龙照常刷、照常结算归属，但不发放增益）

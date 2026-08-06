@@ -147,7 +147,10 @@ export class UnitLayer {
       const key = `d|${color}|${anc ? 1 : 0}`;
       const m = dragonMesh(key, color, anc);
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, size,
-               barW: 100, barH: 7, barD: 12, alpha: 1, pulse: true,
+               // v44：pulse 关掉。用户："不要一会大一会小那种效果。"
+               // 全场只有龙设了这一项，它每帧把整个模型缩放 1±12%（3rad/s）——
+               // 那是纸片人时代用来"让龙有存在感"的补偿，立体化之后纯属抖动。
+               barW: 100, barH: 7, barD: 12, alpha: 1, pulse: false,
                ringR: size + 5 };
     }
     const st = minionStyle(e.type);   // 自制兵种取用户填的图标/颜色，见 SpriteFactory.minionStyle
