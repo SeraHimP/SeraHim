@@ -9,8 +9,8 @@
 //   · 攻城车：索敌半径写死 200 < 自身射程 312；
 //   · 天气盒：轴对齐，完全没读方位角。
 // 每条都尽量钉"行为形状"而不是某个具体数字。
-globalThis.window = { gameTime: 0, waveNumber: 1, _uid: 0, CTX: {} };
-import fs from 'fs';
+import { setupWindow, scoreboard, srcOf, stripComments } from './_harness.mjs';
+setupWindow({ waveNumber: 1 });
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
 const { EventBus } = await import('../src/utils/EventBus.js');
 const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
@@ -22,12 +22,16 @@ const { MapSystem } = await import('../src/systems/MapSystem.js');
 const { isStructureProtected } = await import('../src/systems/FactionSystem.js');
 const { CONFIG } = await import('../src/data/Config.js');
 
-let pass = 0, fail = 0;
-const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
+const board = scoreboard('v43验收');
+const T = board.T;
 const attr = AttributeCalculator;
-const readSrc = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-/** 去掉注释再做源码断言 —— 本仓库栽过好几次"断言匹配到了自己的解释文字"。 */
-const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+// 源码断言统一走 harness 的 srcOf（**默认剥注释**）。
+// 本套件里 `srcOf((x))` 的写法保留成一个小适配，避免大改断言体；
+// 新写的断言请直接用 srcOf('src/xxx.js')。
+// 源码断言统一走 harness 的 srcOf（**默认剥注释**）——
+// 这是 harness 存在的首要理由：本仓库已经五次因为"断言匹配到自己写的解释注释"而误判
+//（tierExists、破甲、getWeights、cooldown|冷却、isLargeMinion）。
+// srcOf 容忍 '../src/xxx.js' 这种按 tests/ 写的老路径，迁移时不必逐条改字符串。
 
 function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   const e = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
@@ -71,7 +75,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('B⑧ 最前排的外塔自己永远没有保护者', isStructureProtected(ents, outer) === false);
 
   // 反证：把"扫全部层"退化回"只看紧邻一层"，B② 必须当场变红
-  const src = stripComments(readSrc('../src/systems/FactionSystem.js'));
+  const src = srcOf(('../src/systems/FactionSystem.js'));
   T('B⑨ 源码确实是"扫到任意一层活着就 return true"',
     /for \(let i = idx - 1; i >= 0; i--\) \{\s*if \(aliveTier\(LANE_CHAIN\[i\], target\._laneId\)\) return true;/.test(src));
 }
@@ -116,7 +120,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     b2 && Math.abs(b2.fadeMax - cfgBeam.fadeOut) < 1e-9);
 
   // 渲染层：起点高度必须按 attackerId 查 + 快照兜底（塔死后不塌到地面）
-  const fxSrc = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  const fxSrc = srcOf(('../src/presentation/EffectsLayer.js'));
   // v43 P0-③ 之后：起点、末端、炮口全部走同一个 hOf(owner, key, entityId)。
   T('Q2⑧ 起点高度按实体 id 查并做快照（塔死后不塌到水平面）',
     /const sy = hOf\(b, 'start', b\.attackerId\);/.test(fxSrc));
@@ -127,7 +131,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 
 // ==================== 三、Q4 攻城车：索敌半径不得小于射程 ====================
 {
-  const lms = stripComments(readSrc('../src/systems/LaneMovementSystem.js'));
+  const lms = srcOf(('../src/systems/LaneMovementSystem.js'));
   T('Q4① 索敌半径取 max(仇恨半径, 自身射程)',
     /const acqR = Math\.max\(ACQUISITION_RANGE, range\);/.test(lms)
     && /scanEnemies\(this\.entities, this\.mapSystem, minion, acqR, range\)/.test(lms));
@@ -143,7 +147,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q4⑤ 攻城模式状态由被动 onFrame 维护（状态栏可见）',
     typeof sw.onFrame === 'function' && /攻城模式/.test(String(sw.onFrame)));
   // 红线：塔与攻城车共用同一份样式
-  const fxSrc = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  const fxSrc = srcOf(('../src/presentation/EffectsLayer.js'));
   T('Q4⑥ 红线样式集中到 CONFIG.ui.aimLine，塔与攻城车共用',
     /CONFIG\.ui && CONFIG\.ui\.aimLine/.test(fxSrc)
     && (fxSrc.match(/screenW\(AL_W\), red, AL_A/g) || []).length === 2);
@@ -189,19 +193,19 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q5④ 反证：没有 stackKey 时确实只剩一条（改动前的 bug 形状）',
     fx2.getEffects(e2.id).filter(x => x.blueprint.name === '默认状态').length === 1);
 
-  const ae = stripComments(readSrc('../src/ui/AttributeEditor.js'));
+  const ae = srcOf(('../src/ui/AttributeEditor.js'));
   T('Q5⑤ 三种手动状态（stat/dot/stun）都带 stackKey',
     (ae.match(/stackKey,/g) || []).length >= 3);
 }
 
 // ==================== 五、Q6 天气盒必须随方位角变形 ====================
 {
-  const wl = stripComments(readSrc('../src/presentation/WeatherLayer.js'));
+  const wl = srcOf(('../src/presentation/WeatherLayer.js'));
   T('Q6① update 收方位角参数', /update\(weather, target, viewW, viewD, dt, azimuthDeg = 0\)/.test(wl));
   T('Q6② 盒子按旋转矩形的外接盒算（|W·cos|+|D·sin|）',
     /B\.hx = Math\.max\(200, \(viewW \* ca \+ viewD \* sa\) \* 0\.5 \* pad\)/.test(wl)
     && /B\.hz = Math\.max\(200, \(viewW \* sa \+ viewD \* ca\) \* 0\.5 \* pad\)/.test(wl));
-  const tr = stripComments(readSrc('../src/presentation/ThreeRenderer.js'));
+  const tr = srcOf(('../src/presentation/ThreeRenderer.js'));
   T('Q6③ 渲染器把 azimuthDeg 传下去了（否则改了也白改）',
     /weatherFx\.update\([\s\S]*?this\.azimuthDeg \|\| 0\)/.test(tr));
 
@@ -260,9 +264,9 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   for (const f of ['../src/systems/CombatSystem.js', '../src/systems/LaneMovementSystem.js',
                    '../src/core/skills/weapons.js']) {
     T(`Q7⑤ ${f.split('/').pop()} 不再直读 baseStats.baseAttackSpeed`,
-      !/baseStats\.baseAttackSpeed/.test(stripComments(readSrc(f))));
+      !/baseStats\.baseAttackSpeed/.test(srcOf((f))));
   }
-  const ui = stripComments(readSrc('../src/ui/UIManager.js'));
+  const ui = srcOf(('../src/ui/UIManager.js'));
   T('Q7⑥ 面板与战斗走同一个函数（不可能再各算各的）',
     /calcAttackSpeedOf\(stats\)/.test(ui));
 }
@@ -282,21 +286,21 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     combat.selectTarget(nexus, [foe]) === foe);
   const main = mkTower(ents, 'nexus_main', null);
   T('Q8② 水晶枢纽同样可以', combat.selectTarget(main, [foe]) === foe);
-  const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  const cs = srcOf(('../src/systems/CombatSystem.js'));
   T('Q8③ 索敌闸门确实删了',
     !/tower\._mapTier === 'nexus_lane' \|\| tower\._mapTier === 'nexus_main'\) return null/.test(cs));
   T('Q8④ 真正的保险仍在（没装武器的塔连索敌都不进）', /const hasWeapon = /.test(cs));
   // 炮口：水晶本体很大，从几何中心出膛看着像"子弹从石头里钻出来"
   T('Q8⑤ 水晶炮口抬到接近尖端（可软编码）',
     (CONFIG.ui?.muzzle?.nexusTopK ?? 0) > 0);
-  const umf = stripComments(readSrc('../src/presentation/UnitMeshFactory.js'));
+  const umf = srcOf(('../src/presentation/UnitMeshFactory.js'));
   T('Q8⑥ 炮口高度用了这个系数', /crystalCy \+ crystalR \* crystalMuzzleK/.test(umf));
 }
 
 // ==================== 八、Q9 塔默认魔法伤害 + 分层覆写贯通 ====================
 {
   T('Q9① 塔模板默认魔法伤害', CONFIG.templates.tower.attackType === 'magic');
-  const mainSrc = stripComments(readSrc('../src/main.js'));
+  const mainSrc = srcOf(('../src/main.js'));
   T('Q9② createBuilding 不再用八字段白名单，改为"模板里有的键都能覆写"',
     /Object\.fromEntries\(Object\.entries\(s\)\.filter\(\(\[k, v\]\) => \(k in tpl\) && v !== undefined\)\)/.test(mainSrc));
   T('Q9③ 固定护盾保留"地图没写就当 0"的既有语义',
@@ -400,7 +404,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q5b⑬ 路页签按当前地图现生成（拿不到地图时退回三路）',
     JSON.stringify(AttributeEditor._mapLaneIds()) === JSON.stringify(['top', 'mid', 'bot']));
 
-  const ae = stripComments(readSrc('../src/ui/AttributeEditor.js'));
+  const ae = srcOf(('../src/ui/AttributeEditor.js'));
   T('Q5b⑭ UI 上确实有路页签，且不是写死的三路',
     /data-wo-lane=/.test(ae) && /_mapLaneIds\(\)/.test(ae) && /m\?\.lanes \|\| \[\]/.test(ae));
 
@@ -410,7 +414,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 
 // ==================== 十一、Q8(下) 腐蚀型改成 3D 雾 ====================
 {
-  const cl = stripComments(readSrc('../src/presentation/CorrosionLayer.js'));
+  const cl = srcOf(('../src/presentation/CorrosionLayer.js'));
   T('Q8⑦ 用的是球体网格，不是 2D 环', /new THREE\.SphereGeometry\(1,/.test(cl));
   T('Q8⑧ 雾的观感靠"双面 + 不写深度 + 低透明"', /depthWrite: false, side: THREE\.DoubleSide/.test(cl));
   T('Q8⑨ 常驻球半径 = 有效射程', /scale\.setScalar\(range\)/.test(cl));
@@ -423,9 +427,9 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   const c = CONFIG.ui.corrosionFx;
   T('Q8⑮ 全部数值软编码', !!c && c.domeAlphaIdle < c.domeAlphaBusy
     && c.maxWaves >= 1 && c.waveLife > 0 && c.waveStartK >= 0 && c.waveStartK < 1);
-  const fx = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  const fx = srcOf(('../src/presentation/EffectsLayer.js'));
   T('Q8⑯ 旧的 2D 同心环已从 EffectsLayer 移除', !/CORROSION_RINGS/.test(fx));
-  const tr = stripComments(readSrc('../src/presentation/ThreeRenderer.js'));
+  const tr = srcOf(('../src/presentation/ThreeRenderer.js'));
   T('Q8⑰ 渲染器驱动新层，且复用 EffectsLayer 的武器缓存',
     /this\.corrosionFx\.update\(this\.deps/.test(tr) && /this\.fx\._weaponOf\(t\)/.test(tr));
 }
@@ -434,7 +438,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // 用户："所有窗口UI都统一为新版的模板编辑器样式（左侧栏那种的）。"
 // 钉的是**结构**（左侧 .tpl-nav + 右侧 .tpl-pane），不钉具体像素/文案。
 {
-  const shell = stripComments(readSrc('../src/ui/dialogShell.js'));
+  const shell = srcOf(('../src/ui/dialogShell.js'));
   T('Q1① 有一份共用外壳模块', /export function paneHtml/.test(shell) && /export function shellHtml/.test(shell));
   T('Q1② 外壳沿用模板编辑器已有的类名，不另起一套 CSS',
     /tpl-layout/.test(shell) && /tpl-nav/.test(shell) && /tpl-pane/.test(shell));
@@ -444,36 +448,36 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   // 死代码守卫（sim_deadcode）当场抓到。现在钉"确实有人在调它"。
   for (const f of ['SettingsDialog', 'UnitAddDialog', 'ModeDialog', 'DetailModal']) {
     T(`Q1④ ${f} 真的调用了外壳模块（不是手写同款标记）`,
-      /from '\.\/dialogShell\.js'/.test(stripComments(readSrc(`../src/ui/${f}.js`))));
+      /from '\.\/dialogShell\.js'/.test(srcOf((`../src/ui/${f}.js`))));
   }
 
   const need = (name, src, checks) => {
     for (const [label, re] of checks) T(`Q1 ${name}：${label}`, re.test(src));
   };
-  need('设置面板', stripComments(readSrc('../src/ui/SettingsDialog.js')), [
+  need('设置面板', srcOf(('../src/ui/SettingsDialog.js')), [
     ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'settab'/],
     ['_TABS 直接当导航源（页签定义只有一处）', /groups: \[\{ items: this\._TABS \}\]/],
   ]);
-  need('添加单位', stripComments(readSrc('../src/ui/UnitAddDialog.js')), [
+  need('添加单位', srcOf(('../src/ui/UnitAddDialog.js')), [
     ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'uadnav'/],
     ['兵种作为侧栏子项缩进（不再是第二排横页签）', /child: true/],
     ['子项 key 与主分类 key 同一套（避免两层选中错位）', /k\.startsWith\('minion:'\)/],
   ]);
-  need('天气面板', stripComments(readSrc('../src/ui/WeatherPanel.js')), [
+  need('天气面板', srcOf(('../src/ui/WeatherPanel.js')), [
     ['左侧栏结构', /<div class="tpl-layout">/],
     ['外框换成 modal-box + editor-container（原来是第三套 .modal 壳）', /<div class="modal-box"[\s\S]*?editor-container/],
     ['切页只切 display，不重建 DOM（保住既有绑定与逐帧重绘）', /d\.style\.display = d\.dataset\.wxsec === this\._cfgSec/],
   ]);
-  need('模式选择', stripComments(readSrc('../src/ui/ModeDialog.js')), [
+  need('模式选择', srcOf(('../src/ui/ModeDialog.js')), [
     ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'modenav'/],
     ['两段内容各自成页', /data-modenav/],
   ]);
-  need('详情框', stripComments(readSrc('../src/ui/DetailModal.js')), [
+  need('详情框', srcOf(('../src/ui/DetailModal.js')), [
     ['走 shellHtml（它自带 overlay，要完整外框）', /shellHtml\(\{/],
     ['单页 → 不传 groups', /body: contentHtml, crumb: ''/],
   ]);
   T('Q1⑤ 详情框确实没有侧栏（一项的导航是纯装饰）',
-    !/tpl-nav/.test(stripComments(readSrc('../src/ui/DetailModal.js'))));
+    !/tpl-nav/.test(srcOf(('../src/ui/DetailModal.js'))));
 }
 
 // ==================== 十三、P0-② 技能参数必须在【装备时】就解析好 ====================
@@ -532,11 +536,11 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   CONFIG.skillOverrides = bakGlobal; SkillLibrary._mapOverrides = bakMap;
 
   // ---- ④ 装备点必须全部走 equipSkill（手写 push+onEquip 就会绕开参数解析）----
-  const mainSrc = stripComments(readSrc('../src/main.js'));
+  const mainSrc = srcOf(('../src/main.js'));
   T('P0②⑥ main.js 不再有手写的"push 实例 + 调 onEquip"',
     !/_skillInstances\.push\(\{ id: \+\+CTX\._uid/.test(mainSrc));
   T('P0②⑦ 装备一律走 equipSkill', (mainSrc.match(/equipSkill\(/g) || []).length >= 8);
-  const csSrc = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  const csSrc = srcOf(('../src/systems/CombatSystem.js'));
   T('P0②⑧ CombatSystem 只保留"覆写变了就刷新"，不再自己拼解析逻辑',
     /resolveSkillParams\(inst, entity, this\.skills\)/.test(csSrc)
     && !/CONFIG\.skillOverrides\[inst\.skillId\]/.test(csSrc));
@@ -547,14 +551,14 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // 轨迹当场塌到地面；混战时还会搜到旁边另一个单位身上。
 // 它一个人制造了四次"轨迹突然躺平"：光束末端、子弹落点、废墟落点、光束起点。
 {
-  const ul = stripComments(readSrc('../src/presentation/UnitLayer.js'));
+  const ul = srcOf(('../src/presentation/UnitLayer.js'));
   T('P0③① UnitLayer 的 muzzleY(x,z) 已删除', !/\bmuzzleY\s*\(x, z/.test(ul));
   T('P0③② muzzleYOf(entityId) 保留（唯一取高入口）', /muzzleYOf\(entityId\)/.test(ul));
 
-  const tr = stripComments(readSrc('../src/presentation/ThreeRenderer.js'));
+  const tr = srcOf(('../src/presentation/ThreeRenderer.js'));
   T('P0③③ 渲染器不再把坐标查函数传下去', !/units\.muzzleY\(x, z\)/.test(tr));
 
-  const fx = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  const fx = srcOf(('../src/presentation/EffectsLayer.js'));
   T('P0③④ 特效层没有任何 MY(x, z) 调用', !/\bMY\(/.test(fx));
   T('P0③⑤ 三份重复的快照 WeakMap 合并成一份 + 一个 hOf()',
     /this\._snap = new WeakMap\(\)/.test(fx)
@@ -568,11 +572,11 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /return \(box && box\[key\] !== undefined\) \? box\[key\] : 0;/.test(fx));
 
   // 子弹必须带 attackerId，否则炮口高度查不到
-  const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  const cs = srcOf(('../src/systems/CombatSystem.js'));
   T('P0③⑧ 开火时把 attackerId 一并交给子弹', /attackerId: attacker\.id/.test(cs));
 
   // 死电弧：闪电链 v35 就删了，fireArc 从此没有调用者
-  const ps = stripComments(readSrc('../src/systems/ProjectileSystem.js'));
+  const ps = srcOf(('../src/systems/ProjectileSystem.js'));
   T('P0③⑨ 电弧系统（arcs/fireArc/getArcs）已整个删除',
     !/fireArc/.test(ps) && !/getArcs/.test(ps) && !/this\.arcs/.test(ps));
   T('P0③⑩ 特效层的锯齿电弧绘制也一并删除', !/getArcs/.test(fx));
@@ -609,7 +613,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('兵⑩-防御护盾只剩防御塔来源',
     shieldDesc.includes('防御塔') && !shieldDesc.includes('超级兵') && !shieldDesc.includes('炮兵'));
   {
-    const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+    const cs = srcOf(('../src/systems/CombatSystem.js'));
     T('兵⑪-引擎侧同步收窄（两处判定都只认 tower）',
       !/attacker\.type === 'siege' \|\| attacker\.type === 'super'/.test(cs)
       && (cs.match(/attacker\.type === 'tower' && this\._hasSkill\(target, 'passive_siege_shield'\)/g) || []).length
@@ -621,7 +625,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     CONFIG.templates.melee.isLargeMinion === false && CONFIG.templates.ranged.isLargeMinion === false);
 
   // 光环一律对自己生效
-  const helpers = stripComments(readSrc('../src/core/skills/_helpers.js'));
+  const helpers = srcOf(('../src/core/skills/_helpers.js'));
   T('兵⑭-makeAuraPassive 的 includeSelf 默认改为 true', /includeSelf = true,/.test(helpers));
   T('兵⑮-敌对光环（hostile）强制排除自身（否则等于自残）',
     /const selfIncluded = hostile \? false : includeSelf;/.test(helpers));
@@ -651,7 +655,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 
 // ==================== 十六、重置本局 ====================
 {
-  const mainSrc = stripComments(readSrc('../src/main.js'));
+  const mainSrc = srcOf(('../src/main.js'));
   T('重①-有一个统一入口 CTX.__resetRun', /CTX\.__resetRun = \(\) => \{/.test(mainSrc));
   T('重②-清掉非建筑实体（建筑交给 clearCurrentMap，避免两套清场逻辑）',
     /if \(e\.type === 'tower'\) continue;/.test(mainSrc));
@@ -665,7 +669,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     !/CONFIG\s*=/.test(mainSrc.slice(mainSrc.indexOf('CTX.__resetRun'),
                                      mainSrc.indexOf('// ---------- 按钮绑定'))));
 
-  const sd = stripComments(readSrc('../src/ui/SettingsDialog.js'));
+  const sd = srcOf(('../src/ui/SettingsDialog.js'));
   T('重⑦-设置面板有按钮，且只调 __resetRun（UI 不另写清场）',
     /id="setResetRunBtn"/.test(sd) && /app\.__resetRun\(\)/.test(sd));
 
@@ -706,7 +710,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     return c.maxHP.step > 0 && c.resist.step > 0 && c.attackDamage.step > 0;
   })());
 
-  const mainSrc = stripComments(readSrc('../src/main.js'));
+  const mainSrc = srcOf(('../src/main.js'));
   T('龙⑦-中立阵营（两边都打它、它也打两边）', /_mapFaction: 'neutral'/.test(mainSrc));
   T('龙⑧-挂到兵线上，由 LaneMovementSystem 驱动（不另写一套寻路）',
     /_laneId: dragonLane/.test(mainSrc) && /_laneDirection: dragonDir/.test(mainSrc));
@@ -716,12 +720,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /getPit\?\.\(pitSide === 'top' \? 'baron' : 'dragon'\)/.test(mainSrc));
 
   // LaneMovementSystem 的接管条件：有阵营 + 有路。中立龙两者都满足。
-  const lms = stripComments(readSrc('../src/systems/LaneMovementSystem.js'));
+  const lms = srcOf(('../src/systems/LaneMovementSystem.js'));
   T('龙⑪-兵线系统的过滤条件能收下中立龙',
     /getAllMinions\(true\)\.filter\(m => m\._mapFaction && m\._laneId\)/.test(lms));
 
   // 宿怨被动：对某阵营的减伤/增伤随该阵营击杀数增长
-  const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  const cs = srcOf(('../src/systems/CombatSystem.js'));
   T('龙⑫-宿怨被动在引擎里结算，且**两条伤害路径都接上了**',
     /damage \*= this\._dragonGrudge\(attacker, target\)\.k;/.test(cs)
     && /const grudge = this\._dragonGrudge\(attacker, target\);/.test(cs));
@@ -787,7 +791,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     S.ancient.durationSec === 240
     && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison']
         .every(k => S[k].durationSec === undefined));
-  const src = stripComments(readSrc('../src/core/skills/dragonSouls.js'));
+  const src = srcOf(('../src/core/skills/dragonSouls.js'));
   T('魂⑤-所有触发点都不需要判断（onHit/onDealtDamage/onFrame/onEquip）',
     !/优先攻击|选择目标|残血/.test(src));
   T('魂⑥-冷却型用 gameTime 绝对时间戳（onHit 拿不到 dt）',
@@ -806,14 +810,14 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     ['fire', 'poison', 'ancient'].every(k =>
       /^唯一被动——/.test(SkillLibrary['dragonsoul_' + k].description)));
 
-  const sl = stripComments(readSrc('../src/core/SkillLibrary.js'));
+  const sl = srcOf(('../src/core/SkillLibrary.js'));
   T('魂⑫-注册期规范化现在也处理 getter（原来直接 continue，9 条龙魂整体漏检）',
     /if \(d && d\.get\) \{/.test(sl) && /Object\.defineProperty\(def, key/.test(sl));
 }
 
 // ==================== 十九、龙魂平衡对照工具 ====================
 {
-  const bm = stripComments(readSrc('../tools/balance_matrix.mjs'));
+  const bm = srcOf(('../tools/balance_matrix.mjs'));
   T('对照①-有 --sweep soul 档位', /SWEEP === 'soul'/.test(bm));
   T('对照②-含"双方无魂"的基线档（没有基线就没法判读）', /基线·双方无魂/.test(bm));
   T('对照③-八条魂各一档', (bm.match(/蓝方持\$\{k\}魂/g) || []).length === 1
@@ -824,5 +828,4 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /equipSkill\(e, FORCE_SOUL/.test(bm));
 }
 
-console.log(`v43验收: ${pass} 通过 / ${fail} 失败`);
-if (fail > 0) process.exit(1);
+board.done();

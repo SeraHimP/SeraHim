@@ -14,7 +14,8 @@
 //      旧规则下前 5 条龙谁拿都无所谓，反正最后一起算。
 //
 // 于是"3:3 平局无魂"这个旧结局**不再存在**：先到 4 的一方当场拿走。
-globalThis.window = { gameTime: 0, waveNumber: 1, _uid: 0, CTX: {} };
+import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
+setupWindow({ waveNumber: 1 });
 const { CONFIG } = await import('../src/data/Config.js');
 const { DragonSystem, DRAGON_ELEMENTS } = await import('../src/systems/DragonSystem.js');
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
@@ -22,8 +23,8 @@ const { EventBus } = await import('../src/utils/EventBus.js');
 const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
 const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
 const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
-let pass = 0, fail = 0;
-const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
+const board = scoreboard('阵营龙魂规则验收');
+const T = board.T;
 
 /** 造一个世界：双方各 2 塔 + 各 1 个炮车（大型小兵）+ 各 1 个近战（不该拿奖励）。 */
 function mk() {
@@ -69,11 +70,10 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     ['siege', 'super', 'totem', 'warlock', 'corrupt', 'ram'].every(t => ok({ type: t }) === true));
   T('①-近战/远程不算', ok({ type: 'melee' }) === false && ok({ type: 'ranged' }) === false);
   T('①-龙自己不算', ok({ type: 'dragon' }) === false);
-  // ⚠️ 判定刻意不读 isLargeMinion —— 那个标记还被渲染体积等处用着。
-  // ⚠️ 必须把 /* */ 块注释也剥掉：SOUL_REWARD_OK 的 JSDoc 里就写着"刻意不读 isLargeMinion"，
-  // 只剥 // 行注释的话会匹配到自己的解释文字（本仓库反复踩的自触发陷阱）。
-  const src = (await import('fs')).readFileSync('src/systems/DragonSystem.js', 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // 判定刻意不读 isLargeMinion —— 那个标记还被渲染体积等处用着。
+  // srcOf **默认剥注释**（含块注释）：SOUL_REWARD_OK 的 JSDoc 里就写着
+  // "刻意不读 isLargeMinion"，不剥的话这条断言会匹配到自己的解释文字。
+  const src = srcOf('src/systems/DragonSystem.js');
   T('①-判定不依赖 isLargeMinion（两件事不绑死在一个字段上）',
     !/isLargeMinion/.test(src));
 }
@@ -271,5 +271,4 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     ds._applyElementBuffToTower === undefined && typeof ds._applyElementBuff === 'function');
 }
 
-console.log(`阵营龙魂规则验收: ${pass} 通过 / ${fail} 失败`);
-process.exit(fail ? 1 : 0);
+board.done();
