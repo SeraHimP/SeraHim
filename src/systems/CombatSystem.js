@@ -500,9 +500,13 @@ export class CombatSystem {
     // 伤害减免 & 格挡
     const dmgReduction = defStats.damageReduction || 0;
     damage *= (1 - dmgReduction / 100);
-    // 防御护盾（唯一被动）：来自【防御塔和超级兵】的伤害额外降低30%（v33 新增超级兵来源）——
+    // 防御护盾（唯一被动）：来自【防御塔】的伤害降低 30%。
+    // v43（用户定稿："炮兵的被动防御护盾改为只对塔减伤30%"）：来源从
+    // 塔 / 炮兵 / 超级兵 收窄到**只有塔**。
+    // 原来那两个来源让炮兵在兵线互耗里也硬得离谱 —— 炮兵打炮兵、超级兵打炮兵都要吃 30% 减免，
+    // 而它本来的设计意图只是"顶着塔往前推"。收窄之后它对塔仍然耐揍，兵线里恢复正常体量。
     // 条件减伤依赖攻击来源，stat 管线拿不到攻击者，必须在引擎结算处判断。
-    if ((attacker.type === 'tower' || attacker.type === 'siege' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
+    if (attacker.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
       damage *= 0.7;
     }
     // 哀兵（条件加成，用户定稿）：每层 +4% 对敌方小兵伤害、+10% 减免来自敌方小兵的伤害。
@@ -807,7 +811,8 @@ export class CombatSystem {
       ignoredDamage *= keepAmp(1 - dmgReduction / 100);  // 减伤为负 → 增伤，保留
       // 防御护盾（唯一被动）：来自防御塔和超级兵的伤害降低30%（与 performAttack 路径一致，v33 含超级兵）
       // 0.7 恒 < 1（纯保护性），所以只作用在 mitigated 那一股 —— 与改动前一致。
-      if (attacker && (attacker.type === 'tower' || attacker.type === 'siege' || attacker.type === 'super') && this._hasSkill(target, 'passive_siege_shield')) {
+      // v43：同上，来源收窄到只有塔
+      if (attacker && attacker.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
         mitigatedDamage *= 0.7;
       }
       // 哀兵条件加成（与 performAttack 路径一致）。它里面既有攻击方的增伤、

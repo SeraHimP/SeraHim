@@ -63,13 +63,25 @@ const ENTRY = new Set(
   const orphans = [];
   for (const f of srcFiles) {
     if (ENTRY.has(f)) continue;
-    const base = path.basename(f);                      // 'CorrosionLayer.js'
-    const stem = base.replace(/\.m?js$/, '');           // 'CorrosionLayer'
     // 只认**真正的 import/动态 import 路径**，不认注释里提到的名字 ——
     // 本仓库的注释里到处写着模块名（"从 CanvasRenderer 原样抽出…"），
     // 按名字模糊匹配的话，一个死模块只要被谁在注释里念叨一句就永远判不了死。
-    const re = new RegExp(`(from|import)\\s*\\(?\\s*['"][^'"]*/${stem}\\.m?js['"]`);
-    const used = refFiles.some(r => r !== f && re.test(fs.readFileSync(r, 'utf8')));
+    //
+    // ⚠️ 而且必须把 import 路径**解析成绝对路径**再比，不能只比文件名：
+    // 第一版按 basename 匹配，于是 src/data/maps/index.js 被引用这一件事，
+    // 让全仓库**所有** index.js 都被判成"有人用"—— src/data/templates/index.js
+    // （一份没人读的模板 JSON 加载器）因此漏网。同名文件在这个项目里很常见。
+    const used = refFiles.some((r) => {
+      if (r === f) return false;
+      const src = fs.readFileSync(r, 'utf8');
+      const dir = path.dirname(r);
+      for (const m of src.matchAll(/(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g)) {
+        const spec = m[1];
+        if (!/\.m?js$/.test(spec)) continue;
+        if (path.resolve(dir, spec) === f) return true;
+      }
+      return false;
+    });
     if (!used) orphans.push(path.relative(ROOT, f));
   }
   T(`src/ 下没有零引用模块${orphans.length ? '（发现：' + orphans.join(', ') + '）' : ''}`,

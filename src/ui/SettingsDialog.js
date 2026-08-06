@@ -204,6 +204,13 @@ export const SettingsDialog = {
           <div class="slider-row"><label>清屏（移除全部小兵）</label>
             <button id="setClearAllBtn" class="danger" style="flex:1;">💀 清屏</button>
           </div>
+          <div class="slider-row"><label title="按当前地图与当前所有属性/覆写设置，从头重开一局">重置本局</label>
+            <button id="setResetRunBtn" class="danger" style="flex:1;">🔄 重置本局</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-mute);margin-top:2px;line-height:1.6;">
+            重置会清空：全部单位与建筑、飞行中的弹道、对局时钟与波次、比分、巨龙进度（含已获得的龙魂）。<br>
+            <b>不会</b>动你在模板编辑器里改过的任何数值（分层塔覆写、出兵编排、技能参数、天气权重…）。
+          </div>
         </div>` : ''}
 
         ${TAB === 'quality' ? `
@@ -494,6 +501,15 @@ export const SettingsDialog = {
         });
       });
 
+      // v43：重置本局。走 CTX.__resetRun（唯一实现，见 main.js 那段注释）——
+      // UI 只负责问一句、调一下、重绘，不在这里另写一套清场逻辑。
+      document.getElementById('setResetRunBtn')?.addEventListener('click', () => {
+        const app = window.CTX || window.__app;
+        if (!app?.__resetRun) { logFn('⚠️ 重置入口不可用', 'death'); return; }
+        app.__resetRun();
+        logFn('🔄 已重置本局', 'spawn');
+        render();
+      });
       document.getElementById('setClearAllBtn')?.addEventListener('click', () => {
         const minions = entityContainer.getAllMinions(true);
         for (const m of minions) { m.alive = false; m.currentHP = 0; }

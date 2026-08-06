@@ -103,7 +103,9 @@ def.onFrame(siegeB.id,0.4,inst,ctxOf()); // 超过节流阈值触发一次
 const hasAura=(id)=>fx.getEffects(id).some(e=>(e.blueprint?.name||e.name)==='炮兵指挥官');
 T('光环覆盖友方小兵', hasAura(allyM.id));
 T('光环不给敌方', !hasAura(enemyM.id));
-T('光环不含自身', !hasAura(siegeB.id));
+// v43（用户定稿："所有光环类的效果也对自己生效，要不然太乱了逻辑"）：
+// makeAuraPassive 的 includeSelf 默认从 false 反转为 true，本条随之改口径。
+T('光环也覆盖施法者自身（v43 口径反转）', hasAura(siegeB.id));
 
 // ---------- 5. 屠戮:自身当前生命基数、只对小兵 ----------
 const meleeAtk=mkMinion('melee',1800,1800,'blue','mid','forward',['passive_melee_rend']);

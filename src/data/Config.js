@@ -21,17 +21,24 @@ export const CONFIG = {
     supportUnits: {
       // 图腾兵：周期性治疗【已损生命】百分比 + 减伤/护盾光环 + 自身高额固定护盾
       totem: {
-        healIntervalSec: 15,   // 治疗周期（秒）
-        healMissingPct: 3,     // 每次治疗量 = 目标【已损生命】的百分比
-        auraDamageReduction: 10, // 光环：伤害减免（%）
-        auraShieldFlat: 25,      // 光环：固定护盾
-        selfShieldFlat: 900,     // 自身固定护盾（"高额"）
+        // v43（用户定稿）：治疗节奏从"每 15 秒回已损 3%"改成"每 4 秒回已损 2%"。
+        // 注意这是**加强**：0.2%/秒 → 0.5%/秒，强了 2.5 倍。手感也完全不同——
+        // 旧版是每 15 秒一次的大跳，新版是几乎连续的滴血回复，前排更难被磨死。
+        // 与之配套，下面两条光环数值同批**削弱**（用户："图腾兵光环效果太强了，削数值"）。
+        healIntervalSec: 4,    // 治疗周期（秒）。v43：15 → 4
+        healMissingPct: 2,     // 每次治疗量 = 目标【已损生命】的百分比。v43：3 → 2
+        auraDamageReduction: 6,  // 光环：伤害减免（%）。v43：10 → 6
+        auraShieldFlat: 15,      // 光环：固定护盾。v43：25 → 15
+        selfShieldFlat: 900,     // 自身固定护盾（"高额"）。这是图腾兵的存在意义，不动
       },
       // 术士兵：给友军双穿+增伤光环；自身高额双穿
       warlock: {
-        auraPenPct: 13,        // 光环：护甲穿透% / 魔法穿透%（双穿）
-        auraDamageAmpPct: 7,   // 光环：伤害增幅（%）
-        selfPenPct: 70,        // 自身双穿（%）
+        // v43（用户定稿："术士兵光环效果太强了，削数值"）。
+        // 光环的双穿+增伤是全队乘算，一个术士就让整条兵线的有效输出跳一档，
+        // 而它自己只有 520 血 —— 收益与风险完全不成比例。
+        auraPenPct: 8,         // 光环：护甲穿透% / 魔法穿透%（双穿）。v43：13 → 8
+        auraDamageAmpPct: 4,   // 光环：伤害增幅（%）。v43：7 → 4
+        selfPenPct: 70,        // 自身双穿（%）。只作用于自己，不动
       },
       // 蚀骨兵：近战，血量高于普通近战，小范围内所有敌人双抗【逐秒递减】。
       // 用户定稿修正：上一版我把"叠层直满层"理解成"一次施加即满层"，
@@ -83,7 +90,12 @@ export const CONFIG = {
       { type: 'super',   count: 1, when: 'nexusDown' },
       { type: 'melee',   count: 3 },
       { type: 'corrupt', count: 1, fromWave: 2, everyN: 3 },
-      { type: 'siege',   count: 1, everyN: 3, when: '!nexusDown' },
+      // v43（用户定稿）：炮车从"每 3 波"改成"每 2 波"，且落在 **1/3/5/7… 奇数波**。
+      // ⚠️ fromWave 必须显式写 1：判据是 `wave >= fromWave && (wave-fromWave)%everyN===0`，
+      // fromWave 缺省是 0，那样 everyN:2 会落在 0/2/4/6 **偶数**波 —— 与用户说的 1/3/5/7 正好错开一波。
+      // 出场频率 +50%，是本次推进强度提升的主要来源；与之配套，
+      // 炮车自身属性同批下调、"防御护盾"被动的减伤来源也收窄（见下）。
+      { type: 'siege',   count: 1, fromWave: 1, everyN: 2, when: '!nexusDown' },
       { type: 'ranged',  count: 3 },
       { type: 'warlock', count: 1, fromWave: 3, everyN: 4 },
       { type: 'totem',   count: 1, fromWave: 4, everyN: 4 },
@@ -606,11 +618,16 @@ export const CONFIG = {
     siege: {
       label: '炮兵', type: 'siege',
       isLargeMinion: true, isMonster: false,
-      maxHP: 1088, healthRegen: 0, baseHealthRegenMod: 1.0,
-      moveSpeed: 78, attackRange: 127.5,
-      attackDamage: 17.5, baseAttackSpeed: 1.0, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // ==================== v43：炮兵整体下调（用户："炮兵的全属性调低"）====================
+      // 起因：出场频率从每 3 波提到每 2 波（+50%），不配套下调的话推进强度会失控。
+      // 口径按用户选的 B —— **只砍战斗力，射程与移速不动**：
+      // 那两项是兵种的"手感"（127.5 的射程决定它站在近战身后打塔），
+      // 不该跟着强度一起浮动。用 allStatsPct:-15 一刀切会连它们一起缩。
+      maxHP: 900, healthRegen: 0, baseHealthRegenMod: 1.0,      // v43：1088 → 900（−17%）
+      moveSpeed: 78, attackRange: 127.5,                        // 不动（手感）
+      attackDamage: 15, baseAttackSpeed: 1.0, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667, // v43：AD 17.5 → 15
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
-      armor: 40, magicResist: 40,
+      armor: 34, magicResist: 34,                               // v43：40/40 → 34/34
       damageReduction: 0, damageBlock: 0,
       shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
@@ -620,7 +637,10 @@ export const CONFIG = {
     },
     totem: {
       label: '图腾兵', type: 'totem',
-      isLargeMinion: false, isMonster: false,
+      // v43：图腾兵改判为**大型小兵**。用户重新规定："除了近战兵和远程兵都是。"
+      // 它本身只有 150 血、攻速 0.42，体量确实不大，但这个标记现在的语义是
+      // "非近战/远程的特殊兵"，而不是"体型大" —— 龙魂奖励的发放范围按它来。
+      isLargeMinion: true, isMonster: false,
       maxHP: 150, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 180,
       attackDamage: 7.5, baseAttackSpeed: 0.422, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,

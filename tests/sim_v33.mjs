@@ -319,8 +319,12 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
 {
   T('近战屠戮 4%（用户定稿）', SkillLibrary.passive_melee_rend.description.includes('4%'));
   T('远程屠戮 6%（用户定稿）', SkillLibrary.passive_ranged_rend.description.includes('6%'));
-  T('防御护盾描述含超级兵来源', SkillLibrary.passive_siege_shield.description.includes('超级兵'));
-  // 防御护盾：超级兵伤害 -30%
+  // v43（用户定稿："炮兵的被动防御护盾改为只对塔减伤30%"）：
+  // 减伤来源从 塔/炮兵/超级兵 收窄到**只有塔**。文案与行为同批改。
+  T('防御护盾描述只剩防御塔来源',
+    SkillLibrary.passive_siege_shield.description.includes('防御塔')
+    && !SkillLibrary.passive_siege_shield.description.includes('超级兵'));
+  // 防御护盾：超级兵伤害【不再】减免；塔的伤害仍减 30%
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
   const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
   const sup = mkMinion(ents, 'super', 'blue', 0, 0);
@@ -329,7 +333,14 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   siege._skillInstances.push({ id: ++window._uid, skillId: 'passive_siege_shield', state: {} });
   attr.tick();
   const dealt = combat.performAttackDirect(sup.id, siege.id, 100, 'physical');
-  T(`超级兵打防御护盾单位 -30%（实际${dealt.toFixed(1)}）`, Math.abs(dealt - 70) < 2);
+  T(`超级兵打防御护盾单位【不再】减免（实际${dealt.toFixed(1)}）`, Math.abs(dealt - 100) < 2);
+  // 塔来源仍然生效
+  const tw = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 5, y: 0 },
+    baseStats: { ...CONFIG.templates.tower }, currentHP: 9000, shieldFixedCurrent: 0,
+    tempShield: 0, lastDamageTime: -Infinity, _skillInstances: [], _mapFaction: 'blue' };
+  ents.add(tw); attr.tick();
+  const dealt2 = combat.performAttackDirect(tw.id, siege.id, 100, 'physical');
+  T(`防御塔打防御护盾单位 -30%（实际${dealt2.toFixed(1)}）`, Math.abs(dealt2 - 70) < 2);
 }
 
 console.log(`v33验收: ${pass} 通过 / ${fail} 失败`);

@@ -97,11 +97,21 @@ for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}
 // 编排是用户可调的（这一轮特殊兵种的起始波整体前移了），所以不再把整条队列逐字写死 ——
 // 只钉住这两条断言真正想说的事：骨架是"近战3 + 远程3"，且近战全部排在远程之前。
 const _cnt=(a,t)=>a.filter(x=>x===t).length;
+let _unusedGuard;
 T(`普通波含近3+远3（实际 ${spawned.join('/')}）`, _cnt(spawned,'melee')===3 && _cnt(spawned,'ranged')===3);
 T('近战全部排在远程之前', spawned.lastIndexOf('melee') < spawned.indexOf('ranged'));
+// v43：炮兵从 everyN:3 改成 everyN:2 → 出现在 1/3/5/7… 波。
+// 第 3 波仍然有炮兵（3 是奇数），但**第 4 波没有**，所以顺带钉一下"隔一波"这个形状。
 lw.waveNumber=3; spawned=[]; lw._enqueueForFaction('blue',mapSys.currentMap.lanes[0],'forward');
 for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}
 T(`炮兵波含炮兵1（实际 ${spawned.join('/')}）`, _cnt(spawned,'siege')===1);
+{
+  lw.waveNumber=4; const s4=[]; const _bak=spawned; spawned=s4;
+  lw._enqueueForFaction('blue',mapSys.currentMap.lanes[0],'forward');
+  for(let i=0;i<30;i++){lw.update(0.5);lw.nextWaveTime=99999;}
+  T(`偶数波不出炮兵（v43：炮兵落在 1/3/5/7 奇数波，实际第4波 ${s4.join('/')}）`, _cnt(s4,'siege')===0);
+  spawned=_bak;
+}
 T('炮兵夹在近战与远程之间（不在队首也不在队尾）',
   spawned.indexOf('siege') > spawned.lastIndexOf('melee')
   && spawned.indexOf('siege') < spawned.indexOf('ranged'));

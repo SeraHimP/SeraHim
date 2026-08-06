@@ -578,5 +578,113 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('P0③⑩ 特效层的锯齿电弧绘制也一并删除', !/getArcs/.test(fx));
 }
 
+// ==================== 十五、兵种调整批（用户定稿）====================
+{
+  const S = CONFIG.gameRules.supportUnits;
+  T('兵①-图腾治疗改为每 4 秒回已损 2%（这是加强 2.5 倍，与光环削弱配套）',
+    S.totem.healIntervalSec === 4 && S.totem.healMissingPct === 2);
+  T('兵②-图腾光环削弱：减伤 10→6、固定护盾 25→15',
+    S.totem.auraDamageReduction === 6 && S.totem.auraShieldFlat === 15);
+  T('兵③-图腾自身 900 护盾不动（那是它的存在意义）', S.totem.selfShieldFlat === 900);
+  T('兵④-术士光环削弱：双穿 13→8、增伤 7→4',
+    S.warlock.auraPenPct === 8 && S.warlock.auraDamageAmpPct === 4);
+  T('兵⑤-术士自身 70% 双穿不动（只作用于自己）', S.warlock.selfPenPct === 70);
+
+  // 炮兵：频率 +50%、属性下调、护盾来源收窄
+  const siegeRule = CONFIG.gameRules.laneWaveComposition.find(r => r.type === 'siege');
+  T('兵⑥-炮兵每 2 波一次，且落在 1/3/5/7 奇数波（fromWave 必须显式为 1）',
+    siegeRule.everyN === 2 && siegeRule.fromWave === 1);
+  {
+    const { buildWaveOrder } = await import('../src/data/waveComposition.js');
+    const has = (w) => buildWaveOrder(w, false, CONFIG.gameRules, 'blue', { laneId: 'mid' }).includes('siege');
+    T('兵⑦-奇数波有炮兵、偶数波没有（钉行为不钉配置）',
+      has(1) && !has(2) && has(3) && !has(4) && has(5));
+  }
+  const sg = CONFIG.templates.siege;
+  T('兵⑧-炮兵战斗力下调（血/攻/双抗）', sg.maxHP === 900 && sg.attackDamage === 15
+    && sg.armor === 34 && sg.magicResist === 34);
+  T('兵⑨-炮兵的射程与移速【不动】（口径 B：只砍战斗力，手感不变）',
+    sg.attackRange === 127.5 && sg.moveSpeed === 78);
+  const shieldDesc = SkillLibrary.passive_siege_shield.description;
+  T('兵⑩-防御护盾只剩防御塔来源',
+    shieldDesc.includes('防御塔') && !shieldDesc.includes('超级兵') && !shieldDesc.includes('炮兵'));
+  {
+    const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+    T('兵⑪-引擎侧同步收窄（两处判定都只认 tower）',
+      !/attacker\.type === 'siege' \|\| attacker\.type === 'super'/.test(cs)
+      && (cs.match(/attacker\.type === 'tower' && this\._hasSkill\(target, 'passive_siege_shield'\)/g) || []).length
+         + (cs.match(/attacker && attacker\.type === 'tower' && this\._hasSkill\(target, 'passive_siege_shield'\)/g) || []).length >= 2);
+  }
+  T('兵⑫-图腾兵纳入"大型小兵"（除近战/远程外都是）',
+    CONFIG.templates.totem.isLargeMinion === true);
+  T('兵⑬-近战/远程仍不算大型小兵',
+    CONFIG.templates.melee.isLargeMinion === false && CONFIG.templates.ranged.isLargeMinion === false);
+
+  // 光环一律对自己生效
+  const helpers = stripComments(readSrc('../src/core/skills/_helpers.js'));
+  T('兵⑭-makeAuraPassive 的 includeSelf 默认改为 true', /includeSelf = true,/.test(helpers));
+  T('兵⑮-敌对光环（hostile）强制排除自身（否则等于自残）',
+    /const selfIncluded = hostile \? false : includeSelf;/.test(helpers));
+  {
+    // 行为验证：炮兵指挥官现在给自己也加
+    const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+    const mk = (type, x, faction) => {
+      const e = { id: ++window._uid, type, alive: true, pos: { x, y: 0 },
+        baseStats: { ...CONFIG.templates[type] }, currentHP: 999, shieldFixedCurrent: 0,
+        tempShield: 0, lastDamageTime: -Infinity, _skillInstances: [], _mapFaction: faction };
+      ents.add(e); return e;
+    };
+    const caster = mk('siege', 0, 'blue');
+    const ally = mk('melee', 40, 'blue');
+    const foe = mk('melee', 80, 'red');
+    const inst = { id: 1, skillId: 'passive_artillery_commander', state: {} };
+    caster._skillInstances.push(inst);
+    attr.tick(); ents.rebuildGridIfNeeded?.(attr._frame);
+    window.waveNumber = 30;
+    SkillLibrary.passive_artillery_commander.onFrame(caster.id, 1, inst,
+      { entityContainer: ents, effectRegistry: fx, attrCalc: attr, eventBus: bus, waveNumber: 30 });
+    const has = (id) => fx.getEffects(id).some(e => e.blueprint.name === '炮兵指挥官');
+    T('兵⑯-指挥官光环覆盖自身 + 友军，且不给敌方',
+      has(caster.id) && has(ally.id) && !has(foe.id));
+  }
+}
+
+// ==================== 十六、重置本局 ====================
+{
+  const mainSrc = stripComments(readSrc('../src/main.js'));
+  T('重①-有一个统一入口 CTX.__resetRun', /CTX\.__resetRun = \(\) => \{/.test(mainSrc));
+  T('重②-清掉非建筑实体（建筑交给 clearCurrentMap，避免两套清场逻辑）',
+    /if \(e\.type === 'tower'\) continue;/.test(mainSrc));
+  T('重③-清掉飞行物（否则上一局的子弹会落到新一局的实体 id 上）',
+    /projectileSystem\.projectiles\.length = 0;/.test(mainSrc)
+    && /projectileSystem\.beams\.clear\(\);/.test(mainSrc));
+  T('重④-龙系统整局进度归零', /dragonSystem\.resetRun\(\);/.test(mainSrc));
+  T('重⑤-对战模式复用 loadMap(当前图) 做完整清场，不另写一套',
+    /mapSystem\.loadMap\(mapSystem\.currentMap\.id\);/.test(mainSrc));
+  T('重⑥-不碰 CONFIG（玩家的属性/覆写设置必须留着）',
+    !/CONFIG\s*=/.test(mainSrc.slice(mainSrc.indexOf('CTX.__resetRun'),
+                                     mainSrc.indexOf('// ---------- 按钮绑定'))));
+
+  const sd = stripComments(readSrc('../src/ui/SettingsDialog.js'));
+  T('重⑦-设置面板有按钮，且只调 __resetRun（UI 不另写清场）',
+    /id="setResetRunBtn"/.test(sd) && /app\.__resetRun\(\)/.test(sd));
+
+  // DragonSystem.resetRun 的行为形状：局内进度清零、接线与配置不动
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const ds = new DragonSystem(new EntityContainer(new EventBus()), new EventBus(),
+    new EffectRegistry(new EventBus()), SkillLibrary, attr);
+  ds.elementDragonSpawned = 5; ds.totalKills = 4; ds.soulUnlocked = true;
+  ds.soulOwner = 'blue'; ds.souls = { blue: ['dragonsoul_fire'], red: [] };
+  ds.factionTotals = { blue: 4, red: 2 }; ds.paused = false;
+  const fn = () => {}; ds.createEntity = fn;
+  ds.resetRun();
+  T('重⑧-龙的整局进度（含已获得的龙魂）清零',
+    ds.elementDragonSpawned === 0 && ds.totalKills === 0 && ds.soulUnlocked === false
+    && ds.soulOwner === null && ds.souls.blue.length === 0
+    && ds.factionTotals.blue === 0 && ds.factionTotals.red === 0);
+  T('重⑨-接线不动（paused / createEntity 保持原样）',
+    ds.paused === false && ds.createEntity === fn);
+}
+
 console.log(`v43验收: ${pass} 通过 / ${fail} 失败`);
 if (fail > 0) process.exit(1);

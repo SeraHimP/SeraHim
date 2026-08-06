@@ -113,11 +113,9 @@ export const minionPassives = {
   passive_super_commander: makeAuraPassive({
     id: 'passive_super_commander', name: '超级兵指挥官', icon: '📯',
     casterType: 'super', targetTypes: ['melee', 'ranged', 'siege', 'super', 'totem'],
-    // 指挥官光环只惠及【周围的小兵】，不含自身（用户最新确认；此前 includeSelf:true 让
-    // 超级兵自己也吃 17% 减伤+1 回复，等于凭空多一层自增益）。
-    // 注意：另一个超级兵仍在其 targetTypes 内 —— 两个超级兵互相给对方加成是正常的，
-    // 被排除的只有"给自己加"。炮兵指挥官走 makeAuraPassive 的默认 includeSelf=false，本就正确。
-    includeSelf: false,
+    // v43：改为**也对自己生效**（用户："所有光环类的效果也对自己生效，要不然太乱了逻辑"）。
+    // 这里此前显式写了 includeSelf:false —— 那是更早一轮的定稿（"指挥官光环只惠及周围的小兵"）。
+    // 现在统一口径，删掉这行、跟随 makeAuraPassive 的新默认值 true。
     effectsFn: () => [
       { name: '超级兵指挥官', icon: '📯', kind: 'stat', statKey: 'damageReduction', flatValue: 17, description: '伤害减免+17%' },
       { name: '超级兵指挥官', icon: '📯', kind: 'stat', statKey: 'healthRegen', flatValue: 1, description: '生命恢复+1' },
@@ -129,8 +127,8 @@ export const minionPassives = {
     name: '防御护盾',
     icon: '🛡️',
     category: 'passive',
-    description: '受防御塔/炮兵/超级兵的伤害降低30%。',
-    descTemplate: '唯一被动——防御护盾：受到防御塔/炮兵/超级兵的伤害降低30%。（用户定稿：新增炮兵来源）',
+    description: '受防御塔的伤害降低30%。',
+    descTemplate: '唯一被动——防御护盾：受到【防御塔】的伤害降低30%。',
     // 实现在 CombatSystem 的减免段（伤害来源需要判断攻击者类型，效果系统的
     // stat 管线只看防御方自身、拿不到攻击来源，所以这类"条件减伤"必须挂引擎钩子）。
     // CombatSystem 通过 _hasSkill(target, 'passive_siege_shield') 识别，此处仅作定义与展示。
@@ -255,7 +253,7 @@ export const minionPassives = {
   passive_totem_aura: makeAuraPassive({
     id: 'passive_totem_aura', name: '图腾守护', icon: '🟣',
     casterType: 'totem', targetTypes: null, minionsOnly: true,
-    includeSelf: true,
+    includeSelf: true,   // 与 v43 后的默认值一致，保留只为显式
     effectsFn: () => {
       const c = CONFIG.gameRules.supportUnits?.totem || {};
       const dr = c.auraDamageReduction ?? 10, sh = c.auraShieldFlat ?? 25;

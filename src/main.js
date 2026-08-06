@@ -759,6 +759,49 @@ eventBus.on('map:nexusDestroyed', (d) => {
   DebugLogger.log('map', `水晶摧毁: faction=${d.faction}`);
 });
 
+// ==================== v43：重置本局 ====================
+// 用户："设置里新加一个按钮重置本局，按照目前现有的地图+属性等从头重新来一局。"
+//
+// 关键是划清"局内进度"与"玩家的设置"这条界：
+//   **清掉**：全部实体（含建筑与尸体/废墟）、飞行中的弹道、对局时钟与波次、
+//             比分、龙系统的整局进度（含已获得的龙魂）、水晶重生队列、天气重抽。
+//   **保留**：CONFIG 里的一切 —— 分层塔覆写、出兵编排、模板改动、技能参数覆写、
+//             天气权重、画质选项。也就是"按照目前现有的地图+属性等"重来。
+//
+// 实现上直接复用 mapSystem.loadMap(当前地图 id)：换图路径本来就要做一次完整清场
+//（clearCurrentMap → map:loading 归零时钟 → 重建建筑 → map:loaded 重置波次系统），
+// 重开一局与"切到同一张图"在语义上是同一件事。自己另写一套清场逻辑的话，
+// 以后往换图路径里加的每一步都得记得同步到这边 —— 那是必然会漏的。
+CTX.__resetRun = () => {
+  // ① 小兵/巨龙：loadMap 只管建筑，其余实体要自己清
+  for (const e of entityContainer.getAll(false)) {
+    if (e.type === 'tower') continue;              // 建筑交给 clearCurrentMap
+    e.alive = false; e.currentHP = 0;
+    for (const eff of effectRegistry.getEffects(e.id)) effectRegistry.remove(eff.id);
+  }
+  entityContainer.purgeDead();
+  // ② 飞行物：不清的话上一局的子弹会带着 pendingHit 落到新一局的实体 id 上
+  projectileSystem.projectiles.length = 0;
+  projectileSystem.beams.clear();
+  // ③ 龙系统的整局进度（含龙魂归属）
+  dragonSystem.resetRun();
+  // ④ 沙盒波次
+  waveSystem.waveNumber = 0;
+  CTX.waveNumber = 0;
+  CTX.gameTime = 0;
+  CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
+  CTX.__ffRemain = 0;
+  // ⑤ 地图：对战模式重载当前图；沙盒模式没有地图，上面四步已经够了
+  if (mapSystem.active && mapSystem.currentMap) {
+    mapSystem.loadMap(mapSystem.currentMap.id);
+  } else {
+    weatherSystem.reset();
+    CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
+  }
+  uiManager.log('🔄 本局已重置（地图与所有属性设置保持不变）', 'spawn');
+  return true;
+};
+
 // ---------- 按钮绑定 ----------
 // 统一添加单位按钮（建塔 + 添加小兵 + 手动生成巨龙）
 let _towerPlacementQueue = [];

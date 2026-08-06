@@ -63,6 +63,29 @@ export class DragonSystem {
     this._bindDeath();
   }
 
+  /**
+   * v43：把巨龙系统整个退回开局状态（供"重置本局"调用）。
+   *
+   * 刻意**不**动 this.paused、this.createEntity、以及 CONFIG 里的任何配置 ——
+   * 前两个是"这局怎么跑"的接线，后者是玩家在编辑器里调过的设置。
+   * 用户对重置的定义是"按照目前现有的地图+属性等从头重新来一局"，
+   * 也就是说：局内进度清空，玩家的调参保留。
+   */
+  resetRun() {
+    this.nextDragonTime = dragonCfg().firstDelay;
+    this.elementDragonSpawned = 0;
+    this.ancientSpawned = 0;
+    this.killCounts = {};
+    this.totalKills = 0;
+    this.soulUnlocked = false;
+    this.ancientKills = 0;
+    this.factionKills = { blue: {}, red: {} };
+    this.factionTotals = { blue: 0, red: 0 };
+    this.souls = { blue: [], red: [] };
+    this.soulResolved = false;
+    this.soulOwner = null;
+  }
+
   /** 元素龙总数与成魂门槛（软编码）。 */
   get _soulRule() {
     const g = CONFIG.gameRules || {};

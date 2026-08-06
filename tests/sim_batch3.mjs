@@ -90,9 +90,13 @@ T('红蓝攻击中立', ct('blue','neutral') && ct('red','neutral'));
   const allyBuffed=fx2.getEffects(ally.id).some(e=>e.blueprint.name==='炮兵指挥官');
   const selfSuper=fx2.getEffects(sup.id).some(e=>e.blueprint.name==='超级兵指挥官');
   const ally2Buffed=fx2.getEffects(ally2.id).some(e=>e.blueprint.name==='超级兵指挥官');
-  T('炮兵指挥官不给自己加成', !selfSiege);
+  // v43（用户定稿："所有光环类的效果也对自己生效，要不然太乱了逻辑"）：
+  // makeAuraPassive 的 includeSelf 默认值 false → true，两条指挥官光环随之惠及自身。
+  // 这**推翻了更早一轮的定稿**（"指挥官光环只惠及周围的小兵，不含自身"）——
+  // 那一版的问题是：面板写着"周围友军 +20 护甲"，施法者自己却没有，读起来像 bug。
+  T('炮兵指挥官也给自己加成（v43 口径反转）', selfSiege);
   T('炮兵指挥官给周围小兵加成', allyBuffed);
-  T('超级兵指挥官不给自己加成(最新确认)', !selfSuper);
+  T('超级兵指挥官也给自己加成（v43 口径反转）', selfSuper);
   T('超级兵指挥官给周围小兵加成', ally2Buffed);
 }
 // 穿透武器走效果系统（用户 Q2 方案B）+ 增幅武器配色统一（Q1）
