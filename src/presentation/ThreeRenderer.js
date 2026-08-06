@@ -178,9 +178,12 @@ export class ThreeRenderer {
     // 缺哪张就用程序化占位图先顶上（用户定稿："先把分区贴图管线做出来"），
     // 手绘图回来后按同名文件丢进 assets/textures/<主题>/ 即可替换，不用再动代码。
     // 提示词见 docs/TEXTURE-PROMPTS.md。
+    const probe = CONFIG.ui?.zoneTextures?.probe === true;
     const zoneTex = {};
     await Promise.all(ZONES.map(async (zn) => {
-      const img = (zn === 'ground') ? ground : (zn === 'plateau') ? plateau : await pick(zn);
+      const img = (zn === 'ground') ? ground
+                : (zn === 'plateau') ? plateau
+                : (probe ? await pick(zn) : null);
       zoneTex[zn] = img || placeholderTexture(zn);
     }));
     if (this._texTheme !== theme) return;   // 期间又切了图，丢弃这批结果
