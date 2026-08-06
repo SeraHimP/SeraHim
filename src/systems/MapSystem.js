@@ -276,6 +276,8 @@ export class MapSystem {
 
     if (e._mapTier === 'nexus_lane') {
       this.beginNexusRespawn(e);
+    } else if (this.beginLightRespawn(e)) {
+      // ☀️ 光魂：外/内/枢纽塔重生（见 beginLightRespawn 的头注释）
     } else if (e._mapTier === 'nexus_main') {
       // 水晶枢纽摧毁：理论上是"游戏结束"的触发点，按之前确认暂不做终局判定，
       // 这里只发一个独立事件供以后接入，不影响现有的分路超级兵逻辑。
@@ -365,10 +367,73 @@ export class MapSystem {
         description: `召唤水晶重生中：${this.NEXUS_RESPAWN_TIME}s`,
       }, 'nexus_respawn_' + e.id);
     }
-    if (blueprint) this._respawnQueue.push({ at: e._respawnAt, blueprint, corpseId: e.id });
+    if (blueprint) this._enqueueRespawn({ at: e._respawnAt, blueprint, corpseId: e.id,
+                                          dur: this.NEXUS_RESPAWN_TIME, hpPct: 100, isNexus: true });
     // 这一路是不是全灭了，交给统一判定 —— 多水晶地图上"拆一座 ≠ 这一路没了"。
     // 传 e.id：这一座正在进重生倒计时，无论它的 alive 标记此刻是什么，都按"已倒下"算。
     this._refreshLaneNexusFlag(faction, laneId, e.id);
+    return true;
+  }
+
+  /**
+   * 入队并按到点时间排序。
+   *
+   * 排序这件事以前不需要：队列里只有召唤水晶、重生时长恒定，入队顺序天然就是时间顺序
+   *（原来那行注释就是这么写的）。光魂进来之后不再成立 —— 光魂的 respawnSec 与
+   * 召唤水晶的 NEXUS_RESPAWN_TIME 是两个独立可调的数，出队用的又是
+   * `while (queue[0].at <= clock)`，一旦短的排在长的后面，短的会被长的堵在后面
+   * 一直不出队。所以这里改成入队即排序。
+   */
+  _enqueueRespawn(item) {
+    this._respawnQueue.push(item);
+    this._respawnQueue.sort((a, b) => a.at - b.at);
+    return item;
+  }
+
+  /**
+   * ☀️ 光魂：外塔/内塔（各限 N 次）与枢纽塔（无限次）被摧毁后延时重生。
+   *
+   * ==================== 这段是补做的，之前它压根没接上 ====================
+   * 龙魂重做那一版里，光魂只在技能定义里写了 `respawnRuleFor(tier, usedCount)`，
+   * 注释还写着"触发点在 MapSystem._onEntityDeath 里查这一方有没有光魂"——
+   * 但那个调用**从来没有被写出来**。也就是说：面板上写着塔会重生、
+   * 平衡对照跑出来光魂这一档与基线**逐位相同**，因为它什么也没做。
+   * 是龙魂平衡对照把它抓出来的：九档里唯独 light 与基线数字一模一样。
+   *
+   * 更该记的是：sim_v43 里那条"魂⑨-光魂的重生规则由技能自己声明"的断言当时是**绿的**——
+   * 它匹配的是 `respawnRuleFor(tier, usedCount)` 这个**定义**本身，
+   * 而不是任何调用点。又一次自证式断言。现在那条断言改成钉调用点。
+   *
+   * 规则与数值全部来自技能定义（CONFIG.dragonSouls.light），这里不复制第二份。
+   * 返回是否真的安排了重生 —— 调用方据此决定要不要走别的分支。
+   */
+  beginLightRespawn(e) {
+    if (!e || e._respawnAt) return false;
+    const tier = e._mapTier;
+    if (tier !== 'outer' && tier !== 'inner' && tier !== 'hq_tower') return false;
+    // 这座塔身上有没有光魂。龙魂是按阵营发到每座塔上的，所以查这座塔自己就够；
+    // 编辑器手动给单塔挂光魂也能生效，与"面板上装了什么就是什么"一致。
+    const hasLight = (e._skillInstances || []).some(i => i.skillId === 'dragonsoul_light');
+    if (!hasLight) return false;
+    const def = SkillLibrary.dragonsoul_light;
+    if (!def || typeof def.respawnRuleFor !== 'function') return false;
+    const rule = def.respawnRuleFor(tier, e._lightRespawnUsed || 0);
+    if (!rule || !rule.ok) return false;
+
+    const sec = (CONFIG.dragonSouls?.light?.respawnSec) ?? 300;
+    e._lightRespawnUsed = (e._lightRespawnUsed || 0) + 1;
+    e._respawnAt = this._clock + sec;
+    if (this._fx) {
+      this._fx.apply(e.id, {
+        name: '重生中', icon: '⏳', kind: 'custom', duration: sec,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `☀️ 光魂重生中：${sec}s（${rule.hpPct}% 生命）`,
+      }, 'light_respawn_' + e.id);
+    }
+    // 光魂走**原地复活尸体**这条路（塔身/技能/成长都在原实体上），不需要蓝图重建：
+    // 与召唤水晶不同，防御塔死了不会被 purgeDead 清掉（_ruin 幽灵一直留着）。
+    this._enqueueRespawn({ at: e._respawnAt, blueprint: null, corpseId: e.id,
+                           dur: sec, hpPct: rule.hpPct, isNexus: false });
     return true;
   }
 
@@ -494,15 +559,21 @@ export class MapSystem {
     this._clock += dt;
     this._applyGlobalAura(dt);
     while (this._respawnQueue.length && this._respawnQueue[0].at <= this._clock) {
-      const { blueprint: b, corpseId } = this._respawnQueue.shift();
+      const { blueprint: b, corpseId, hpPct = 100, isNexus = true } = this._respawnQueue.shift();
       if (!this.currentMap) continue;
-      const stats = (this.currentMap.tierStats && this.currentMap.tierStats[b.tier]) || TIER_STATS[b.tier] || TIER_STATS.outer;
+      // 光魂的队列项没有蓝图（一定是原地复活尸体），tier 从尸体本身取。
+      const tier = b ? b.tier : (this.entities.get(corpseId)?._mapTier);
+      const stats = (this.currentMap.tierStats && this.currentMap.tierStats[tier]) || TIER_STATS[tier] || TIER_STATS.outer;
       // Q5：优先原地复活尸体（技能/塔身在原实体上都还在，满血满盾归位即可）；
       // 尸体意外不在（旧存档等）才回退到重建路径。
       const corpse = corpseId ? this.entities.get(corpseId) : null;
       if (corpse) {
         corpse.alive = true;
-        corpse.currentHP = stats.maxHP;
+        // 血量按队列项的 hpPct（召唤水晶 100%，光魂 外/内 33%、枢纽 40%）。
+        // 取 baseStats.maxHP 而不是 tierStats 的原始值：这座塔身上可能带着成长/覆写，
+        // 用原始表会把它打回"刚开局的样子"，"重生 33% 生命"就成了别的意思。
+        const maxHP = corpse.baseStats?.maxHP ?? stats.maxHP;
+        corpse.currentHP = Math.max(1, Math.round(maxHP * (hpPct / 100)));
         corpse.shieldFixedCurrent = stats.shieldFixedMax || 0;
         corpse.tempShield = 0;
         delete corpse._respawnAt;
@@ -510,7 +581,7 @@ export class MapSystem {
         delete corpse._respawnRemain;
         delete corpse._ruin;   // 复活后不再是损毁幽灵
         this.entities.markDirty?.();
-      } else if (this.createBuildingFn) {
+      } else if (b && this.createBuildingFn) {
         const entity = this.createBuildingFn({
           faction: b.faction, tier: b.tier, laneId: b.laneId,
           isNexus: true, pos: b.pos, weapon: b.weapon, stats, skills: b.skills,
@@ -520,7 +591,9 @@ export class MapSystem {
       // 清除摧毁标记：下一波起对方停止追加超级兵（LoL 一致）。
       // 走统一判定而不是直接 delete —— 一路多座时，另一座可能还躺着，
       // 但"有一座活着"就足以让这一路不再算陷落（见 _refreshLaneNexusFlag）。
-      this._refreshLaneNexusFlag(b.faction, b.laneId);
+      // 只有召唤水晶才动"这一路陷落没有"的旗标。光魂复活的是外/内/枢纽塔，
+      // 与超级兵红利无关；无条件调用会在 b 为 null 时直接抛。
+      if (isNexus && b) this._refreshLaneNexusFlag(b.faction, b.laneId);
       this._clearRespawnEffect(corpseId);
     }
     // ==================== Q1：三种"规则性状态"进效果系统（面板可见） ====================
@@ -539,7 +612,10 @@ export class MapSystem {
       if (!corpse) continue;
       const remain = Math.max(0, q.at - this._clock);
       corpse._respawnRemain = remain;
-      corpse._respawnProgress = Math.max(0, Math.min(1, 1 - remain / this.NEXUS_RESPAWN_TIME)); // 填满即重生
+      // 分母用**这一项自己的**总时长：光魂与召唤水晶的重生时间是两个独立可调的数，
+      // 统一按 NEXUS_RESPAWN_TIME 算的话，光魂那圈进度条会走错速度（甚至满了还不复活）。
+      const dur = q.dur || this.NEXUS_RESPAWN_TIME;
+      corpse._respawnProgress = Math.max(0, Math.min(1, 1 - remain / dur)); // 填满即重生
     }
     // 重生状态描述每秒同步剩余秒数
     this._descTimer = (this._descTimer || 0) + dt;
@@ -548,10 +624,15 @@ export class MapSystem {
       for (const q of this._respawnQueue) {
         if (!q.corpseId) continue;
         const eff = this._fx.getEffects(q.corpseId).find(x => x.blueprint.name === '重生中');
-        if (eff) eff.blueprint.description = `召唤水晶重生中：${Math.max(0, Math.ceil(q.at - this._clock))}s`;
+        if (!eff) continue;
+        const left = Math.max(0, Math.ceil(q.at - this._clock));
+        eff.blueprint.description = q.isNexus
+          ? `召唤水晶重生中：${left}s`
+          : `☀️ 光魂重生中：${left}s（${q.hpPct}% 生命）`;
       }
     }
-    // 注：重生队列按入队顺序即时间顺序（重生时长恒定），无需排序。
+    // 队列排序由 _enqueueRespawn 负责 —— 光魂进来之后"重生时长恒定"不再成立，
+    // 原来那句"按入队顺序即时间顺序，无需排序"已经作废，理由写在 _enqueueRespawn 上。
   }
 
   // 基地防守圈：以己方水晶枢纽为圆心，半径 = 枢纽到最远枢纽塔的距离 + 塔射程。

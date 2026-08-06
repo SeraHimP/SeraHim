@@ -805,8 +805,14 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /}, 'dragonsoul_dark'\);/.test(src) && /uniquePassive: true/.test(src));
   T('魂⑧-潮魂回血不无视加固城防的节点封顶',
     /e\._regenCapHP/.test(src));
-  T('魂⑨-光魂的重生规则由技能自己声明（MapSystem 读它，数值只有一份）',
-    /respawnRuleFor\(tier, usedCount\)/.test(src));
+  // ⚠️ 这条断言原来写的是 `/respawnRuleFor\(tier, usedCount\)/.test(src)` —— 它匹配的是
+  // dragonSouls.js 里那个**方法定义**本身，而不是任何调用点。于是"MapSystem 读它"这句话
+  // 从来没被验证过，而 MapSystem 里那个调用**根本没写**：光魂整整一版什么也没做。
+  // 是龙魂平衡对照把它抓出来的（九档里唯独 light 与基线逐位相同）。
+  // 第 N 次栽在自证式断言上。现在钉**调用点**，而且钉在 MapSystem 那一侧。
+  T('魂⑨-光魂的重生规则由技能声明、由 MapSystem 真的调用（不是只定义不用）',
+    /respawnRuleFor\(tier, usedCount\)/.test(src)
+    && /def\.respawnRuleFor\(tier, e\._lightRespawnUsed \|\| 0\)/.test(srcOf('src/systems/MapSystem.js')));
   // 八条魂 + 远古之力都要能被技能库查到（否则装备时静默失败）
   for (const k of ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'light', 'poison', 'ancient']) {
     T(`魂⑩-dragonsoul_${k} 已注册进技能库`, !!SkillLibrary['dragonsoul_' + k]);
