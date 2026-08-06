@@ -516,14 +516,19 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     if (!m) return false;
     const spec = {};
     for (const line of m[1].split('\n')) {
-      const g = line.match(/(\w+):\s*\{ tiers: (\d+), buttress: (\d+), orbs: (\d+), shaft: ([\d.]+)/);
-      if (g) spec[g[1]] = { tiers: +g[2], buttress: +g[3], orbs: +g[4], shaft: +g[5] };
+      // v45：`orbs`（绕塔顶的悬浮碎晶）已删 —— 用户："顶部元素别整的太多了，堆在一起不好看。"
+      // 它与顶部水晶抢同一片视觉位置。递增性改看 topScale（顶盖高度），
+      // 那是它的替代者：层级差异从"再堆一件"改成"同一件长高"。
+      const g = line.match(/(\w+):\s*\{ tiers: (\d+), buttress: (\d+), shaft: ([\d.]+), crown: [\d.]+, balcony: (\w+),\s*turrets: (\d+), topScale: ([\d.]+)/);
+      if (g) spec[g[1]] = { tiers: +g[2], buttress: +g[3], shaft: +g[4],
+                            balcony: g[5] === 'true', turrets: +g[6], topScale: +g[7] };
     }
     const order = ['outer', 'inner', 'base', 'hq_tower'];
     if (order.some(k => !spec[k])) return false;
     for (let i = 1; i < order.length; i++) {
       const a = spec[order[i - 1]], b = spec[order[i]];
-      if (!(b.shaft > a.shaft && b.tiers >= a.tiers && b.buttress >= a.buttress && b.orbs >= a.orbs)) return false;
+      if (!(b.shaft > a.shaft && b.tiers >= a.tiers && b.buttress >= a.buttress
+            && b.turrets >= a.turrets && b.topScale > a.topScale)) return false;
     }
     return true;
   })());

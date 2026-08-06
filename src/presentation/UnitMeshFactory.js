@@ -129,11 +129,24 @@ const STONE = '#948b7c';
 // v45：层级差异从"只改数字"扩到**也改造型**。这四行仍然只管规模，
 // 但造型语言现在按阵营分家（见 towerMesh 里的 red 分支），四档的剪影因此真的不同。
 // halo 字段已删（用户要求去掉基座那圈队伍色环），不留死开关。
+// v45b：**每档多一件专属部件**。只调数字（层数/粗细/高度）做不出"等级越高越牛逼"——
+// 对照图（tests/browser/run_tower_sheet.mjs）一拉出来，四档的剪影几乎一模一样，
+// 因为四档用的是同一套部件、只是尺寸不同，而尺寸差异在各自居中的画面里根本看不出来。
+// 现在逐档**加东西**：内塔起有环廊、高地塔起有角楼、枢纽塔另有尖塔。
+// 这是"看得出来的差异"与"数字上的差异"的区别 —— v44 只做了后者。
+// v45d：**顶部大幅精简**。用户："所有塔的顶部不好看，顶部元素别整的太多了，堆在一起不好看。"
+// 精简前塔顶自下而上堆了七层：冠 → 雉堞/骨刺 → 角楼 → 顶盖 → 尖塔 → 悬浮件 → 水晶。
+// 层数一多，每一层都被挤扁，谁也读不清楚，而且顶部本来就是全塔最小的一段面积。
+// 现在**至多四层**：冠 → 雉堞/骨刺 → 顶盖 → 水晶。
+//   · `orbs`（绕塔顶的悬浮碎晶）整个删掉 —— 它和水晶抢同一片视觉位置。
+//   · `spire`（水晶之上再起一根细塔）删掉 —— 与顶盖功能重复，改为**把顶盖本身加高**，
+//     枢纽塔的"最高剪影"这一点靠 topScale 实现，不再靠多堆一件。
+// 层级差异改由"往下"走：环廊在塔身、角楼在冠上、顶盖高度递增 —— 分散开，不再全挤在顶上。
 const TIER_SPEC = {
-  outer:      { tiers: 1, buttress: 0, orbs: 0, shaft: 1.35, crown: 0.30 },
-  inner:      { tiers: 2, buttress: 2, orbs: 0, shaft: 1.70, crown: 0.34 },
-  base:       { tiers: 3, buttress: 4, orbs: 1, shaft: 2.05, crown: 0.38 },
-  hq_tower:   { tiers: 3, buttress: 4, orbs: 3, shaft: 2.45, crown: 0.44 },
+  outer:      { tiers: 1, buttress: 0, shaft: 1.35, crown: 0.30, balcony: false, turrets: 0, topScale: 1.00 },
+  inner:      { tiers: 2, buttress: 2, shaft: 1.70, crown: 0.34, balcony: true,  turrets: 0, topScale: 1.15 },
+  base:       { tiers: 3, buttress: 4, shaft: 2.05, crown: 0.38, balcony: true,  turrets: 4, topScale: 1.30 },
+  hq_tower:   { tiers: 3, buttress: 4, shaft: 2.45, crown: 0.44, balcony: true,  turrets: 4, topScale: 1.75 },
 };
 const TIER_FALLBACK = TIER_SPEC.outer;
 
@@ -299,8 +312,13 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         }
       }
 
-      crystalR = R * (isNexus ? 0.80 : 0.62);
-      crystalCy = pedH + colH * (isNexus ? 0.72 : 0.46) + crystalR * 0.72;
+      // ⚠️ 宝石的高度必须让它**整个在护柱顶端之上**。
+      // 第一版把召唤水晶的宝石放在 pedH + 0.46·colH + 0.72·R_gem —— 我当时的说法是
+      // "半嵌在柱间，读作被扣住的东西"，但对照图（run_tower_sheet）一拉出来，
+      // 它读起来就是**穿模**，和用户报的枢纽碎晶穿模是同一种观感。
+      // 设计意图再好，看起来像 bug 就是 bug。现在按几何算：宝石底 ≥ 柱顶。
+      crystalR = R * (isNexus ? 0.80 : 0.54);
+      crystalCy = pedH + colH + crystalR * (isNexus ? 0.10 : 0.55);
       crystalGeo = isNexus ? new THREE.OctahedronGeometry(crystalR)
                            : new THREE.IcosahedronGeometry(crystalR, 0);
       crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
@@ -337,14 +355,66 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       const SP = TIER_SPEC[tier] || TIER_FALLBACK;
       const red = faction === 'red';
       const stone = F.stone, trim = F.trim;
-      // 损毁：dmg=1 掉冠/少一段/换旧色；dmg=2 塔身塌一截、断口焦黑、脚下碎石。
-      // 这三行是三档共用的"损毁词汇"，下面各处直接引用，不各自算一遍。
-      const wear  = dmg === 0 ? 1 : dmg === 1 ? 0.86 : 0.70;              // 整体压暗
-      const cSt   = dmg === 0 ? stone : desat(stone, dmg === 1 ? 0.82 : 0.60, dmg === 1 ? 0.90 : 0.74);
-      const cTr   = dmg === 0 ? trim  : desat(trim,  dmg === 1 ? 0.80 : 0.55, dmg === 1 ? 0.88 : 0.70);
-      const char  = desat(stone, 0.30, 0.55);                              // 焦黑断口
-      const tiers = Math.max(1, SP.tiers - (dmg === 2 ? 1 : 0));           // 重度损毁少一段塔身
-      const shaftK = dmg === 2 ? 0.62 : dmg === 1 ? 0.88 : 1;              // 塔身高度缩水
+      // ==================== 损毁怎么做（v45c 推翻重来）====================
+      // 用户："损毁是指**在原有的模型上**损毁，你这损毁的模型主体甚至都跟原先不一样了！"
+      // —— 说得对，前两版是我做错了。我用"塔身高度×0.74"和"跳过整段冠/雉堞/尖顶"
+      // 来表达损毁，结果**主体本身变了**：矮一截、少几层，读起来是另一种建筑，
+      // 而不是同一座塔被打坏。玩家要先认出"还是那座塔"，才谈得上"它坏了"。
+      //
+      // 正确的做法是：**主体逐件不动**（基座/台阶/塔身/扶壁/环廊/冠/角楼/尖塔的
+      // 尺寸与位置在三档里完全一致），损毁只做两件事：
+      //   ① 减细节：雉堞崩掉几块、角楼顶碎掉、顶端的尖顶断成焦黑残根、悬浮件少几个
+      //   ② 加损伤：塔身上的裂缝、断口的焦黑、脚下的碎石
+      // 于是剪影的**主干**三档一致，改变的是轮廓上的缺口与颜色。
+      //
+      // 所以这里**没有** shaftK 了 —— 那个变量本身就是错误的具象化。
+      // 颜色：用户"我看你做的重度损毁甚至和其他模型颜色都不同！这是不对的！"——对。
+      // 上一版把重损压到 wear 0.58 + 去饱和到 0.40，整座塔变成灰黑色块，
+      // 读起来是**另一种材质**而不是同一座塔脏了。石头被打了不会换材质。
+      // 现在只做很轻的做旧（最多暗 15%、去饱和 12%），损毁的可读性交给**形状**：
+      // 掉块、缺口、裂缝、碎石 —— 那才是"坏了"该有的信号。
+      // char 只用在断口与坑洞里，是局部的，不铺满整座塔。
+      const wear  = dmg === 0 ? 1 : dmg === 1 ? 0.94 : 0.85;
+      const cSt   = dmg === 0 ? stone : desat(stone, dmg === 1 ? 0.94 : 0.88, 1);
+      const cTr   = dmg === 0 ? trim  : desat(trim,  dmg === 1 ? 0.93 : 0.86, 1);
+      const char  = desat(stone, 0.34, 0.42);                              // 断口/坑洞（局部）
+
+      /**
+       * 掉块：在某个圆柱面上凿一圈"缺口"。
+       * 没有 CSG 可用，所以用**贴在表面的深色凹块**来读作"这里掉了一块" ——
+       * 低多边形风格里这套骗术是成立的（缺口边缘有硬边、内部是暗面）。
+       * 用户："应该是塔身等所有地方出现掉块等！"—— 所以基座/塔身/环廊/冠**都要调它**，
+       * 不能只在塔顶做文章。
+       */
+      const chip = (cy, rad, n, seed, sz = 1) => {
+        if (!dmg) return;
+        const cnt = dmg === 1 ? n : n * 2;
+        for (let i = 0; i < cnt; i++) {
+          const a = (i / cnt) * Math.PI * 2 + seed;
+          // 尺寸比第一版大一倍多。上一版做得太秀气（0.16R 的小块），
+          // 用户："我看你新做的损毁根本不明显！"—— 在实际游戏尺寸下那点小块看不见。
+          const w = R * 0.34 * sz, h = R * 0.26 * sz, d2 = R * 0.18 * sz;
+          // 暗腔：往里压 0.86 倍半径，读作"凹进去的洞"
+          add(new THREE.BoxGeometry(w, h, d2),
+              compose(T(Math.cos(a) * rad * 0.86, cy + (i % 3 - 1) * R * 0.07, Math.sin(a) * rad * 0.86),
+                      R_Y(-a), R_Z(0.18 * (i % 2 ? 1 : -1))), char);
+          // 洞口的破边：两块比洞略小、略亮的斜块卡在洞沿，制造"石头崩开"的硬边。
+          // 只有暗腔的话读起来是贴了一块黑纸。
+          for (const sgn of [-1, 1]) {
+            add(new THREE.BoxGeometry(w * 0.34, h * 0.85, d2 * 0.7),
+                compose(T(Math.cos(a) * rad * 0.99 + Math.cos(a + Math.PI / 2) * w * 0.42 * sgn,
+                          cy + (i % 3 - 1) * R * 0.07,
+                          Math.sin(a) * rad * 0.99 + Math.sin(a + Math.PI / 2) * w * 0.42 * sgn),
+                        R_Y(-a), R_Z(0.34 * sgn)), shade(cSt, 0.58 * wear));
+          }
+          // 洞下沿挂着的碎渣
+          add(new THREE.BoxGeometry(w * 0.5, h * 0.36, d2 * 0.9),
+              compose(T(Math.cos(a) * rad * 1.0, cy - h * 0.66, Math.sin(a) * rad * 1.0),
+                      R_Y(-a), R_Z(0.4)), shade(cSt, 0.5 * wear));
+        }
+      };
+      const tiers = SP.tiers;
+      const shaftK = 1;   // 主体尺寸**永不随损毁改变**（见上面那段）
 
       const baseH = R * 0.42;
       if (red) {
@@ -359,6 +429,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         add(new THREE.BoxGeometry(R * 1.78, baseH, R * 1.78), T(0, baseH / 2, 0), shade(cSt, 0.48 * wear));
         add(new THREE.BoxGeometry(R * 1.96, baseH * 0.22, R * 1.96), T(0, baseH * 0.11, 0), shade(cSt, 0.40 * wear));
       }
+
+      chip(baseH * 0.55, R * 1.00, 2, 0.7, 1.15);   // 基座掉块
 
       // 台阶：蓝方方形逐层内收（秩序），红方圆台且逐层偏移（混沌）
       let y = baseH;
@@ -398,6 +470,34 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
                 T(sx * w * 0.5, y + segH / 2, sz * w * 0.5), shade(cTr, 0.46 * wear));
           }
         }
+        // 裂缝（损毁才有）：贴在塔身外表面的深色细长条，斜着走。
+        // 这是"同一座塔坏了"最省事也最有效的信号 —— 不动任何主体尺寸。
+        if (dmg > 0) {
+          const nCk = dmg === 1 ? 3 : 6;
+          for (let k = 0; k < nCk; k++) {
+            const a = (k / nCk) * Math.PI * 2 + i * 1.1 + 0.4;
+            const ch2 = segH * (dmg === 1 ? 0.55 : 0.82);
+            add(new THREE.BoxGeometry(R * 0.05, ch2, R * 0.06),
+                compose(T(Math.cos(a) * rb * 1.01, y + segH * 0.5, Math.sin(a) * rb * 1.01),
+                        R_Y(-a), R_Z(0.24 * (k % 2 ? 1 : -1))), char);
+          }
+          // 每一段塔身各掉两处块（重损翻倍）—— 用户要的"塔身等所有地方"
+          chip(y + segH * 0.34, rb, 2, i * 0.9 + 0.2, 1.0);
+          chip(y + segH * 0.74, rt, 2, i * 0.9 + 1.7, 0.85);
+        }
+        // 顶沿锯齿（只在最上一段）：损毁时缺几个，剪影上又多一处缺口。
+        // 完好档同样有 —— 它是塔身与冠之间的过渡饰边，不是"损毁专用件"。
+        if (i === tiers - 1) {
+          const nT = red ? 8 : 10;
+          for (let k = 0; k < nT; k++) {
+            if (dmg === 1 && k % 5 === 0) continue;
+            if (dmg === 2 && k % 2 === 0) continue;
+            const a = (k / nT) * Math.PI * 2;
+            add(new THREE.BoxGeometry(R * 0.11, R * 0.13, R * 0.09),
+                compose(T(Math.cos(a) * rt * 1.04, y + segH - R * 0.02, Math.sin(a) * rt * 1.04), R_Y(-a)),
+                shade(cSt, 0.62 * wear));
+          }
+        }
         // 段间箍
         if (i < tiers - 1) {
           add(red
@@ -408,19 +508,37 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         y += segH;
       }
 
-      // 重度损毁：塔身顶端加一圈焦黑斜断口，并到此为止（不再往上造冠/雉堞/尖顶）
-      if (dmg === 2) {
-        add(new THREE.CylinderGeometry(R * 0.60, R * 0.66, R * 0.10, red ? 6 : 4),
-            compose(T(0, y, 0), R_Z(0.24)), char);
-        // 脚下碎石：顺一个方向散开，读作"塌下来的"
-        const chunks = [[0.60, 0.14, 0.20, 0.5, 0.26], [1.02, 0.11, -0.34, -0.8, 0.21],
-                        [-0.52, 0.12, 0.44, 0.9, 0.19], [0.24, 0.09, 0.86, 0.3, 0.16]];
-        for (const [cx, cy, cz, rot, sz] of chunks) {
+      // 脚下碎石（损毁才有）：从塔上掉下来的石块，顺一个方向散开。
+      // 它**加在主体之外**，不替换任何主体部件 —— 这是与前两版最本质的区别。
+      if (dmg > 0) {
+        const chunks = dmg === 1
+          ? [[0.86, 0.13, 0.32, 0.5, 0.26], [-0.78, 0.12, 0.46, 0.9, 0.22],
+             [0.30, 0.10, -0.88, 0.3, 0.18]]
+          : [[0.90, 0.18, 0.28, 0.5, 0.36], [1.30, 0.14, -0.40, -0.8, 0.29],
+             [-0.74, 0.16, 0.54, 0.9, 0.27], [0.32, 0.12, 1.10, 0.3, 0.23],
+             [-1.10, 0.11, -0.30, 1.3, 0.20], [0.62, 0.10, 0.98, -0.4, 0.18]];
+        for (const [cx, cy2, cz, rot, sz] of chunks) {
           add(new THREE.BoxGeometry(R * sz, R * sz * 0.9, R * sz * 0.85),
-              compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.35)), shade(cSt, 0.5 * wear));
+              compose(T(cx * R, cy2 * R, cz * R), R_Z(rot), R_X(rot * 0.35)), shade(cSt, 0.5 * wear));
         }
-        y += R * 0.10;
-      } else {
+      }
+      {
+        // 环廊（内塔起）：塔身上部一圈外挑的平台。**三档都在**，只是托架会崩掉几个。
+        if (SP.balcony) {
+          const by = baseH + R * SP.shaft * shaftK * 0.72;
+          add(red ? new THREE.CylinderGeometry(R * 0.82, R * 0.74, R * 0.10, 6)
+                  : new THREE.BoxGeometry(R * 1.62, R * 0.10, R * 1.62),
+              T(0, by, 0), shade(cSt, 0.58 * wear));
+          // 平台下的托架，让它读作"挑出来的"而不是"套上去的"
+          const nb = red ? 6 : 4;
+          for (let i = 0; i < nb; i++) {
+            if (dmg === 2 && i % 2 === 0) continue;   // 重损：崩掉一半托架（平台还在）
+            const a = (i / nb) * Math.PI * 2 + (red ? 0.5 : Math.PI / 4);
+            add(new THREE.BoxGeometry(R * 0.09, R * 0.20, R * 0.16),
+                compose(T(Math.cos(a) * R * 0.62, by - R * 0.12, Math.sin(a) * R * 0.62),
+                        R_Z(Math.cos(a) * 0.30), R_X(-Math.sin(a) * 0.30)), shade(cSt, 0.50 * wear));
+          }
+        }
         // 扶壁 / 肋撑
         for (let i = 0; i < SP.buttress; i++) {
           const a = (i / Math.max(1, SP.buttress)) * Math.PI * 2 + (red ? 0.35 : Math.PI / 4);
@@ -431,18 +549,48 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
               shade(cSt, 0.66 * wear));
         }
         // 冠
-        const crownH = R * SP.crown * (dmg === 1 ? 0.8 : 1);
+        const crownH = R * SP.crown;   // 主体尺寸不随损毁变
+        // ==================== 冠：三档**同一种做法** ====================
+        // 用户："红方的塔顶部，正常和损毁的样式甚至都对应不上。"—— 对。
+        // 上一版完好档画整块、损毁档改画一圈扇形块，两者的轮廓根本不是同一个东西，
+        // 于是塔一掉血，顶部像是被换了个零件，而不是"同一个零件坏了"。
+        //
+        // 现在三档一律**整块**，损毁只做两件加法：① 冠沿咬掉几口（char 色的缺口块，
+        // 嵌在冠的外沿上）；② 该处的雉堞/骨刺一并不画。
+        // 于是"完好"与"损毁"的冠是同一个形状，只是后者边上少了几块、缺口是黑的。
+        const nSec = red ? 6 : 8;
+        const crownR = red ? R * 0.86 : R * 0.80;
+        const skip = dmg === 0 ? [] : dmg === 1 ? [1] : [1, 2, Math.floor(nSec / 2) + 1];
         add(red
-            ? new THREE.CylinderGeometry(R * 0.66, R * 0.86, crownH, 6)
+            ? new THREE.CylinderGeometry(R * 0.72, R * 0.86, crownH, 6)
             : new THREE.BoxGeometry(R * 1.56, crownH, R * 1.56),
-            compose(T(0, y + crownH / 2, 0), R_Z(red ? 0.10 : 0)), shade(cSt, 0.70 * wear));
+            T(0, y + crownH / 2, 0), shade(cSt, 0.70 * wear));
+        // 缺口：嵌在冠外沿的暗块 + 上沿的破边
+        // ⚠️ 缺口块必须**嵌在冠里**（半径小于冠的外沿），不能摆在外面。
+        // 第一版摆在 0.90 倍外沿处、宽度还按整段弧长给 —— 它整个凸在冠的外侧，
+        // 红方六边冠上读起来像塔顶横架了一根炮管（对照图上非常明显）。
+        // 现在：半径收到 0.58 倍（在冠体内部），宽度砍到 0.5 倍弧长，高度只占冠的上半。
+        for (const i of skip) {
+          const a = (i / nSec) * Math.PI * 2;
+          const w = 2 * crownR * Math.tan(Math.PI / nSec) * 0.50;
+          add(new THREE.BoxGeometry(w, crownH * 0.62, crownR * 0.30),
+              compose(T(Math.cos(a) * crownR * 0.58, y + crownH * 0.70, Math.sin(a) * crownR * 0.58), R_Y(-a)),
+              char);
+          add(new THREE.BoxGeometry(w * 0.34, crownH * 0.30, crownR * 0.20),
+              compose(T(Math.cos(a) * crownR * 0.70, y + crownH * 0.36, Math.sin(a) * crownR * 0.70),
+                      R_Y(-a), R_Z(0.4)), shade(cSt, 0.54 * wear));
+        }
         y += crownH;
+        chip(y - crownH * 0.5, R * 0.78, 1, 1.3, 1.0);   // 冠上掉块
+        // 角楼要架在冠顶上，不能架在"雉堞推进之后"的 y 上（那样底下没东西托着 = 悬空）。
+        const crownTopY = y;
 
         // 雉堞（蓝方方齿）/ 骨刺（红方）—— 轻度损毁时**缺几个**，这是最好读的"受损"信号
         if (red) {
           const nS = 8;
           for (let i = 0; i < nS; i++) {
-            if (dmg === 1 && i % 3 === 0) continue;   // 掉了几根
+            if (skip.includes(i % nSec)) continue;    // 与冠的缺口对齐（同一处坏掉）
+            if (dmg === 2 && i % 2 === 0) continue;   // 重损：再掉一半
             const a = (i / nS) * Math.PI * 2 + 0.3;
             add(new THREE.ConeGeometry(R * 0.08, R * 0.40, 4),
                 compose(T(Math.cos(a) * R * 0.58, y + R * 0.20, Math.sin(a) * R * 0.58),
@@ -452,7 +600,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         } else {
           const mN = 8 + SP.tiers * 2, mS = R * 0.19, rr = R * 0.74;
           for (let i = 0; i < mN; i++) {
-            if (dmg === 1 && i % 4 === 0) continue;   // 崩了几块
+            if (skip.includes(i % nSec)) continue;    // 与冠的缺口对齐（同一处坏掉）
+            if (dmg === 2 && i % 3 === 0) continue;   // 重损：再崩几块
             const a = (i / mN) * Math.PI * 2;
             add(new THREE.BoxGeometry(mS, mS * 1.5, mS),
                 T(Math.cos(a) * rr, y + mS * 0.75, Math.sin(a) * rr), shade(cSt, 0.60 * wear));
@@ -460,32 +609,56 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
           y += mS * 1.5;
         }
 
-        // 顶：蓝方尖顶（秩序），红方歪斜的熔岩冠（混沌）。轻度损毁时都塌掉。
-        if (dmg === 0) {
-          if (red) {
-            add(new THREE.ConeGeometry(R * 0.40, R * 0.46, 5),
-                compose(T(R * 0.05, y + R * 0.23, 0), R_Z(0.22)), shade(cTr, 0.72));
-            y += R * 0.46;
-          } else {
-            add(new THREE.ConeGeometry(R * 0.42, R * 0.62, 4), T(0, y + R * 0.31, 0), shade(cTr, 0.75));
-            y += R * 0.62;
+        // 角楼（高地塔起）：冠上四个小塔楼，是"这是一座要塞"的读感来源。轻损时缺一角。
+        for (let i = 0; i < SP.turrets; i++) {
+          const broken = (dmg === 1 && i === 0) || (dmg === 2 && i % 2 === 0);
+          const a = (i / Math.max(1, SP.turrets)) * Math.PI * 2 + Math.PI / 4;
+          const tx = Math.cos(a) * R * 0.52, tz = Math.sin(a) * R * 0.52;
+          // 塌掉的角楼**留一截断根**，不是整个消失 —— 整个消失会让剪影缺一块，
+          // 那又变成"主体不一样了"。坏掉的东西还在原地，只是矮了、黑了。
+          const th = broken ? R * 0.16 : R * 0.42;
+          add(red ? new THREE.CylinderGeometry(R * (broken ? 0.16 : 0.13), R * 0.17, th, 5)
+                  : new THREE.BoxGeometry(R * 0.26, th, R * 0.26),
+              T(tx, crownTopY + th / 2, tz), broken ? char : shade(cSt, 0.66 * wear));
+          if (!broken) {
+            add(new THREE.ConeGeometry(R * 0.16, R * 0.22, red ? 5 : 4),
+                T(tx, crownTopY + R * 0.53, tz), shade(cTr, 0.70 * wear));
           }
-        } else {
-          // 断掉的顶：一个矮的斜切残根
-          add(new THREE.CylinderGeometry(R * 0.22, R * 0.36, R * 0.16, red ? 5 : 4),
-              compose(T(0, y + R * 0.08, 0), R_Z(0.28)), char);
-          y += R * 0.16;
         }
+
+        // 顶：蓝方尖顶（秩序），红方歪斜的熔岩冠（混沌）。轻度损毁时都塌掉。
+        // ==================== 顶盖：一件事只做一件 ====================
+        // 精简前这里是"顶盖"，上面还要再叠一根尖塔。现在合成一件，
+        // 高度按 topScale 随层级递增 —— 枢纽塔"全场最高的剪影"由它一件承担。
+        const topH = (red ? R * 0.50 : R * 0.66) * SP.topScale;
+        if (dmg === 0) {
+          add(new THREE.ConeGeometry(red ? R * 0.38 : R * 0.40, topH, red ? 6 : 4),
+              T(0, y + topH / 2, 0), shade(cTr, red ? 0.72 : 0.75));
+        } else {
+          // 断掉的顶：同一个位置上一截斜切残根 + 一块歪倒在冠上的碎顶。
+          // y 仍按完整高度推进 —— 水晶（炮口）的高度三档必须一致，
+          // 否则弹道起点会随掉血上下跳，看起来像换了一把武器。
+          const stub = topH * (dmg === 1 ? 0.58 : 0.30);
+          add(new THREE.ConeGeometry(red ? R * 0.38 : R * 0.40, stub, red ? 6 : 4),
+              compose(T(0, y + stub / 2, 0), R_Z(0.12)), shade(cTr, (red ? 0.72 : 0.75) * wear));
+          add(new THREE.CylinderGeometry(R * 0.20, R * 0.20, R * 0.05, red ? 6 : 4),
+              compose(T(0, y + stub, 0), R_Z(0.26)), char);
+          // 断下来的那截：**斜靠在冠上**，不是横着伸出去。
+          // 上一版给了近 90° 的横倒 + 0.58R 的偏移，在对照图上读起来像塔顶架了一根炮管。
+          // 现在改成 55° 斜倚、偏移收到 0.34R、长度砍到 0.30 —— 是"塌下来的一块"，
+          // 不是一件新装备。
+          add(new THREE.ConeGeometry(R * 0.17, topH * 0.30, red ? 6 : 4),
+              compose(T(R * 0.34, y + topH * 0.06, R * 0.12), R_Z(-0.96), R_Y(0.5)),
+              shade(cTr, 0.62 * wear));
+        }
+        y += topH;
       }
 
       // 悬浮件：蓝方法环（水平圆环，秩序），红方碎岩（无序漂浮）。损毁时数量递减。
-      const orbN = Math.max(0, SP.orbs - dmg);
-      for (let i = 0; i < orbN; i++) {
-        const a = (i / Math.max(1, orbN)) * Math.PI * 2;
-        add(red ? new THREE.TetrahedronGeometry(R * 0.19) : new THREE.OctahedronGeometry(R * 0.17),
-            compose(T(Math.cos(a) * R * 0.62, y * 0.86, Math.sin(a) * R * 0.62), R_Z(red ? 0.9 : 0.6)),
-            shade(color, 1.15));
-      }
+      // 注：这里原来还有「绕塔顶的悬浮碎晶(orbs)」与「水晶之上的尖塔(spire)」两件。
+      // 用户："顶部元素别整的太多了，堆在一起不好看。"—— 两件都删。
+      // orbs 与顶部水晶抢同一片视觉位置；spire 与顶盖功能重复。
+      // 层级差异改由环廊（塔身）、角楼（冠上）、顶盖高度（topScale）承担，分散开了。
       // v45：**底座那圈队伍色光环已删**。用户："水晶塔下面那个颜色的环不要。"
       // 它是 TIER_SPEC.halo 驱动的一圈 TorusGeometry（队伍色，贴在基座腰上），
       // 全场只有枢纽塔有 —— 也是整座建筑上唯一"贴地的彩色圆环"，
@@ -494,7 +667,9 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       //（v44 的 spikes 就是这么变成死字段的：配置里写着 8，没有任何部件读它）。
       // 顶部队伍色小水晶＝武器；单独成件（会转/发光/攻击辉光，见 UnitLayer），炮口=其中心。
       // 重度损毁时水晶变小 —— 它同时是炮口，不能直接删掉（删了炮口就没了）。
-      crystalR = R * (0.34 + SP.tiers * 0.035) * (dmg === 2 ? 0.62 : dmg === 1 ? 0.84 : 1);
+      // 水晶＝武器＝炮口。它的**大小与高度都不随损毁变** ——
+      // 前一版让它缩小，等于损毁顺带改了炮口位置，弹道会看起来像换了把武器。
+      crystalR = R * (0.34 + SP.tiers * 0.035);
       crystalCy = y + crystalR * 0.75;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）

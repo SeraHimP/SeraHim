@@ -282,6 +282,53 @@ const mkE = (ents, type, x, y, extra = {}) => {
   T('损⑧-开关关掉后一律 0 档', towerDamageStage({}, 0.05) === 0);
   CONFIG.ui.towerDamage.enabled = sav;
 
+  // ==================== 主体尺寸不随损毁变（用户当场推翻了我前两版）====================
+  // 用户："损毁是指**在原有的模型上**损毁，你这损毁的模型主体甚至都跟原先不一样了！"
+  // 我前两版用"塔身高度×0.74 / 跳过整段冠与雉堞"来表达损毁 —— 主体本身变了，
+  // 读起来是另一种建筑。这两条钉的就是那个错误：三档的**塔顶高度与炮口高度必须一致**。
+  // 炮口尤其重要：它随损毁上下跳的话，弹道会看起来像换了一把武器。
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    for (const fac of ['blue', 'red']) {
+      for (const tier of ['outer', 'inner', 'base', 'hq_tower']) {
+        const m = [0, 1, 2].map(d =>
+          towerMesh(`v46|${fac}|${tier}|${d}`, '#5b9bd5', 34, '', 'tower', false, false, tier, fac, d));
+        T(`损⑪-${fac}/${tier}：三档塔顶高度一致（主体不变）`,
+          Math.abs(m[0].topY - m[1].topY) < 1e-6 && Math.abs(m[0].topY - m[2].topY) < 1e-6);
+        T(`损⑫-${fac}/${tier}：三档炮口高度一致（否则弹道像换了武器）`,
+          Math.abs(m[0].muzzleY - m[1].muzzleY) < 1e-6 && Math.abs(m[0].muzzleY - m[2].muzzleY) < 1e-6);
+        T(`损⑬-${fac}/${tier}：损毁档确实换了几何（不是什么都没做）`,
+          m[0].geo !== m[1].geo && m[1].geo !== m[2].geo
+          && m[0].geo.attributes.position.count !== m[2].geo.attributes.position.count);
+      }
+    }
+  }
+  const umf2 = srcOf('src/presentation/UnitMeshFactory.js');
+  T('损⑭-塔身高度不再随损毁缩水（shaftK 恒为 1）',
+    /const shaftK = 1;/.test(umf2));
+  // 用户："我看你做的重度损毁甚至和其他模型颜色都不同！这是不对的！"
+  // 损毁只做很轻的做旧，可读性靠形状（掉块/缺口/碎石）。这条钉住"别再变成另一种材质"。
+  T('损⑮-损毁只做轻度做旧，不换材质（重损压暗不超过 20%）',
+    /const wear  = dmg === 0 \? 1 : dmg === 1 \? 0\.9\d : 0\.8\d;/.test(umf2));
+  T('损⑯-掉块函数存在，且基座/塔身/冠都调了它（"塔身等所有地方"）',
+    /const chip = \(cy, rad, n, seed/.test(umf2)
+    && (umf2.match(/\bchip\(/g) || []).length >= 4);
+  // v45d：冠的做法又改了一次，理由是用户"红方的塔顶部，正常和损毁的样式甚至都对应不上"。
+  // 上一版完好画整块、损毁改画扇形环 —— 两者轮廓根本不是同一个东西。
+  // 现在**三档一律整块**，损毁只是在冠沿嵌几块 char 色的缺口。
+  // 所以这条从"完好是整块"改成"三档都是整块（冠体只 add 一次）"。
+  T('损⑰-冠的做法三档一致（同一个零件坏掉，不是换了个零件）', (() => {
+    const seg = umf2.slice(umf2.indexOf('const nSec = red'), umf2.indexOf('const crownTopY'));
+    // 冠体本身只画一次，且不在任何 dmg 分支里
+    return (seg.match(/new THREE\.CylinderGeometry\(R \* 0\.72, R \* 0\.86, crownH/g) || []).length === 1
+        && !/if \(dmg === 0\)/.test(seg);
+  })());
+  T('损⑱b-顶部已精简：悬浮件与尖塔都删了（用户："顶部元素别整的太多了"）',
+    !/orbs/.test(umf2) && !/SP\.spire/.test(umf2) && /topScale/.test(umf2));
+  T('损⑱-角楼架在冠顶（crownTopY），不是架在雉堞推进后的高度上（那样会悬空）',
+    /const crownTopY = y;/.test(umf2) && /T\(tx, crownTopY \+ th \/ 2, tz\)/.test(umf2));
+
   const ms = srcOf('src/systems/MapSystem.js');
   T('损⑨-重生时清零（用户："塔手动重生时要恢复零损毁的模型"）',
     /delete corpse\._dmgStage/.test(ms));

@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>塔模型对照表</title>
+<style>body{margin:0;background:#12161d}canvas{display:block}</style>
+<canvas id="c"></canvas>
+<script type="module">
+import * as THREE from '/vendor/three.module.js';
+import { towerMesh } from '/src/presentation/UnitMeshFactory.js';
+
+const COLS = [
+  // [kind, tier, faction, dmg, 标签]
+  ...['outer','inner','base','hq_tower'].flatMap(t =>
+    ['blue','red'].map(f => ['tower', t, f, 0, `${f} ${t}`])),
+  ...['outer','inner','base','hq_tower'].flatMap(t =>
+    ['blue','red'].map(f => ['tower', t, f, 1, `${f} ${t} 轻损`])),
+  ...['outer','inner','base','hq_tower'].flatMap(t =>
+    ['blue','red'].map(f => ['tower', t, f, 2, `${f} ${t} 重损`])),
+  ...['blue','red'].map(f => ['orb', 'nexus_lane', f, 0, `${f} 召唤水晶`]),
+  ...['blue','red'].map(f => ['gem', 'nexus_main', f, 0, `${f} 水晶枢纽`]),
+];
+
+const CELL = 200, PER_ROW = 8;
+const rows = Math.ceil(COLS.length / PER_ROW);
+const W = CELL * PER_ROW, H = CELL * rows;
+const cv = document.getElementById('c');
+cv.width = W; cv.height = H;
+
+const gl = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: false });
+gl.setSize(W, H, false);
+gl.setClearColor(0x12161d, 1);
+gl.autoClear = false;
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xa8c4e0, 0x40485a, 2.0));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(-1, 1.6, 1); scene.add(sun);
+
+const cam = new THREE.OrthographicCamera(-70, 70, 70, -70, 1, 4000);
+const group = new THREE.Group(); scene.add(group);
+
+const labels = [];
+for (let i = 0; i < COLS.length; i++) {
+  const [kind, tier, fac, dmg, label] = COLS[i];
+  group.clear();
+  const key = `sheet|${kind}|${tier}|${fac}|${dmg}`;
+  const color = fac === 'blue' ? '#5b9bd5' : '#e0473f';
+  const m = towerMesh(key, color, 34, '', kind, false, false, tier, fac, dmg);
+  const mesh = new THREE.Mesh(m.geo, m.mat);
+  group.add(mesh);
+  if (m.crystal) {
+    const cm = new THREE.Mesh(m.crystal.geo,
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8 }));
+    cm.position.y = m.crystal.cy;
+    group.add(cm);
+  }
+  // 摄像机对准这一格
+  const cx = (i % PER_ROW) * CELL, cy = Math.floor(i / PER_ROW) * CELL;
+  const top = m.topY || 80;
+  group.position.set(0, -top * 0.5, 0);
+  const d = Math.max(top * 0.72, 46);
+  cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
+  cam.position.set(d * 2.2, d * 1.7, d * 2.2);
+  cam.lookAt(0, 0, 0);
+  cam.updateProjectionMatrix();
+  gl.setViewport(cx, H - cy - CELL, CELL, CELL);
+  gl.setScissor(cx, H - cy - CELL, CELL, CELL);
+  gl.setScissorTest(true);
+  gl.render(scene, cam);
+  labels.push({ x: cx, y: cy, label });
+}
+gl.setScissorTest(false);
+
+// 把画好的 WebGL 结果转到 2D 画布上加文字标签
+const png = cv.toDataURL('image/png');
+const out = document.createElement('canvas');
+out.width = W; out.height = H;
+const g2 = out.getContext('2d');
+const img = new Image();
+img.onload = () => {
+  g2.drawImage(img, 0, 0);
+  g2.font = '13px sans-serif'; g2.fillStyle = '#9fe8dc';
+  for (const l of labels) g2.fillText(l.label, l.x + 8, l.y + 18);
+  window.__sheet = out.toDataURL('image/png');
+  window.__ready = true;
+};
+img.src = png;
+</script>

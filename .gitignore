@@ -1,2 +1,5 @@
 node_modules/
 tests/browser/_bake_shot.png
+
+tests/browser/_tower_sheet.png
+node_modules
