@@ -621,4 +621,82 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     /const maxDebt = SIM_DT \* Math\.max\(2, Math\.min\(8, speed\) \* 2\);/.test(mj));
 }
 
+// ==================== 十三、属性面板重做 + 数值显示口径 ====================
+{
+  const fs5 = (await import('fs')).default;
+  const html = fs5.readFileSync('index.html', 'utf8');
+  const um = srcOf('src/ui/UIManager.js');
+  const op = srcOf('src/ui/editor/open.js');
+  const ev = srcOf('src/ui/editor/events.js');
+
+  // ---- 显示口径：182（152+30），按符号着色 ----
+  const { UIManager } = await import('../src/ui/UIManager.js').catch(() => ({}));
+  T('值①-口径函数存在且是唯一实现（面板与弹窗都走它）',
+    /_statParts\(key, entity, stats\)/.test(um) && /_statValueHtml\(key, entity, stats/.test(um));
+  T('值②-基础值取 baseStats、最终值取 attrCalc，差额即"各渠道修正之和"',
+    /const base = entity && entity\.baseStats \? entity\.baseStats\[key\] : undefined;/.test(um)
+    && /const delta = now - base;/.test(um));
+  T('值③-正修正橙色 / 负修正红色 / 无修正默认色',
+    /cls: clean > 0 \? 'stat-up' : clean < 0 \? 'stat-down' : ''/.test(um)
+    && /\.stat-up\s*\{ color: #f0a03c; \}/.test(html)
+    && /\.stat-down \{ color: #ef6b6b; \}/.test(html));
+  T('值④-没有修正就不显示括号（用户明确要求）',
+    /const paren = p\.delta === 0 \? ''/.test(um));
+  T('值⑤-括号里是「基础 ± 修正和」，负数用减号',
+    /（\$\{p\.base\}\$\{p\.delta > 0 \? '\+' : '−'\}\$\{Math\.abs\(p\.delta\)\}）/.test(um));
+  T('值⑥-浮点噪声当作无修正（否则 40 会显示成 40（40+0））',
+    /Math\.abs\(delta\) < 0\.005 \? 0 : delta/.test(um));
+
+  // 真的算一遍
+  if (UIManager) {
+    const { ents, fx } = world();
+    const t = mk(ents, 'tower', { stats: { maxHP: 4000, attackDamage: 152 } });
+    const ui = Object.create(UIManager.prototype || {});
+    const parts = (UIManager.prototype ? UIManager.prototype._statParts : UIManager._statParts);
+    if (parts) {
+      const p0 = parts.call(ui, 'attackDamage', t, { attackDamage: 152 });
+      const pUp = parts.call(ui, 'attackDamage', t, { attackDamage: 182 });
+      const pDn = parts.call(ui, 'attackDamage', t, { attackDamage: 129 });
+      T('值⑦-无修正：无 delta、无着色', p0.delta === 0 && p0.cls === '');
+      T('值⑦-正修正：182（152+30）且标橙', pUp.now === 182 && pUp.base === 152 && pUp.delta === 30 && pUp.cls === 'stat-up');
+      T('值⑦-负修正：129（152−23）且标红', pDn.now === 129 && pDn.delta === -23 && pDn.cls === 'stat-down');
+    }
+  }
+
+  // ---- 面板重做 ----
+  T('板①-属性做成 chip（标签在上、数值在下），不再是密排两列',
+    /\.attrs \.a, \.attrs-ext \.a \{[^}]*flex-direction: column/.test(html));
+  T('板②-每组有小标题（属性/技能/状态/世界影响）',
+    /class="panel-sec">属性</.test(um) && /class="panel-sec">技能</.test(um)
+    && /class="panel-sec">状态</.test(um) && /class="panel-sec">世界影响</.test(um));
+  T('板③-血条数值压在条上（一行解决，不再另起一行）',
+    /\.bar-text \{[^}]*margin: -17px/.test(html));
+  T('板④-展开按钮做成整宽分隔条', /\.toggle-ext \{[^}]*width: 100%/.test(html));
+  T('板⑤-「展开更多」里有伤害增幅（此前漏了）',
+    (um.match(/data-stat="damageAmpPct"/g) || []).length === 2);
+
+  // ---- 攻击力弹窗写伤害类型 ----
+  T('板⑥-攻击力弹窗写明伤害类型，且从**实体**读而不是查模板表',
+    /key === 'attackDamage' && entity/.test(um)
+    && /entity\.baseStats\?\.attackType/.test(um)
+    && /physical: '⚔️ 物理伤害', magic: '✨ 魔法伤害', true: '💠 真实伤害'/.test(um));
+  T('板⑥-武器带来的额外伤害股也会列出（腐蚀型是魔法+真实两股）',
+    /weapon_corrosion'\) extras\.push/.test(um));
+
+  // ---- 实体编辑器换壳 ----
+  T('板⑦-实体编辑器改用统一外壳（v43 统一弹窗那轮漏了它）',
+    /shellHtml\(\{/.test(op) && !/class="editor-tab active" data-tab="attr"/.test(op));
+  T('板⑦-侧栏条目由一张表推出（不再手写六个按钮）', /const NAV = \[/.test(op));
+  T('板⑧-事件分发放宽到 \[data-tab\]，不绑死 class（换壳时不必跟着改分发）',
+    /overlay\.querySelectorAll\('\[data-tab\]'\)/.test(ev)
+    && !/querySelectorAll\('\.editor-tab\[data-tab\]'\)/.test(ev));
+  T('板⑧-切页时面包屑跟着走', /const crumb = overlay\.querySelector\('\.tpl-crumb'\);/.test(ev));
+
+  // 每个可点击 statKey 仍然都有说明（新增的 damageAmpPct 也要有）
+  const { statDoc } = await import('../src/data/statDocs.js');
+  const keys = [...um.matchAll(/data-stat="(\w+)"/g)].map(m => m[1]);
+  T('板⑨-新增的属性行也有说明（点了弹空窗比不能点更糟）',
+    keys.includes('damageAmpPct') && keys.every(k => !!statDoc(k)));
+}
+
 done();

@@ -9,6 +9,7 @@
  * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
  */
 import { CONFIG } from '../../data/Config.js';
+import { shellHtml } from '../dialogShell.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
 import { allMinionTypes, minionLabel, minionIcon } from '../../data/customContent.js';
 
@@ -20,31 +21,34 @@ export const EDITOR_OPEN = {
     const isTower = entity.type === 'tower';
     const title = isTower ? `塔 #${entity.id}` : `${CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
 
+    // ==================== v44：换成与模板编辑器同一套外壳 ====================
+    // 用户："单位编辑窗口也未修改（从属性窗口的编辑按钮点开的），依旧是旧UI。"
+    // 说得对 —— v43 Q1 把弹窗统一到「左侧栏 + 右侧单页」时**漏了这一个**：
+    // 它当时保留着顶部横排的 .editor-tab 按钮条，而设置/添加单位/模板编辑器都已经改完了，
+    // 于是同一个应用里还剩这一处是另一种导航语言。
+    // 正文渲染函数（_renderAttrContent 等）一行没动，换的只是它被摆进哪个容器。
+    const NAV = [
+      { key: 'attr',   label: '📊 属性' },
+      ...(isTower ? [{ key: 'weapon', label: '🔫 武器' }] : []),
+      { key: 'skill',  label: '🌀 被动技能' },
+      { key: 'effect', label: '🧪 状态' },
+      ...(isTower ? [{ key: 'soul', label: '🐉 龙魂' }] : []),
+      { key: 'ops',    label: '🛠 运维' },
+    ];
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay open';
-    overlay.innerHTML = `
-      <div class="modal-box" style="max-width:640px;">
-        <div class="editor-container">
-          <h4>✏️ 编辑 ${title}</h4>
-          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;border-bottom:1px solid #2d3540;padding-bottom:8px;">
-            <button class="editor-tab active" data-tab="attr">属性</button>
-            ${isTower ? `<button class="editor-tab" data-tab="weapon">武器</button>` : ''}
-            <button class="editor-tab" data-tab="skill">被动技能</button>
-            <button class="editor-tab" data-tab="effect">状态</button>
-            ${isTower ? `<button class="editor-tab" data-tab="soul">🐉 龙魂</button>` : ''}
-            <button class="editor-tab" data-tab="ops">🛠 运维</button>
-          </div>
-          <div id="editorContent">
-            ${this._renderAttrContent(entity)}
-          </div>
-          <div class="editor-actions" style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #2d3540;padding-top:12px;">
-            <button id="editorApplyBtn" class="primary">应用</button>
-            <button id="editorResetBtn" class="danger">重置为模板默认</button>
-            <button id="editorCloseBtn">关闭</button>
-          </div>
-        </div>
-      </div>
-    `;
+    overlay.innerHTML = shellHtml({
+      title: `✏️ 编辑 ${title}`, width: '860px',
+      groups: [{ title: '', items: NAV }],
+      activeKey: 'attr',
+      navAttr: 'tab',                       // 复用既有的 [data-tab] 事件绑定，不改 events.js 的分发
+      body: `<div id="editorContent">${this._renderAttrContent(entity)}</div>`,
+      footer: `<div class="modal-actions">
+          <button id="editorApplyBtn" class="primary">应用</button>
+          <button id="editorResetBtn" class="danger">重置为模板默认</button>
+          <button id="editorCloseBtn">关闭</button>
+        </div>`,
+    });
     document.body.appendChild(overlay);
 
     overlay._entity = entity;

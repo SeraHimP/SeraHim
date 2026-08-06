@@ -17,11 +17,18 @@ export const EDITOR_EVENTS = {
     const entity = overlay._entity;
     const logFn = overlay._logFn;
 
-    overlay.querySelectorAll('.editor-tab[data-tab]').forEach(tab => {
+    // v44：实体编辑器换成了「左侧栏 + 右侧单页」的统一外壳，导航按钮的 class 从
+    // .editor-tab 变成了 .tpl-nav-item（dialogShell 生成，navAttr:'tab' 让 data 属性名不变）。
+    // 选择器因此放宽到 **[data-tab]**，不再绑死某个 class —— 分发逻辑一行没动，
+    // 换外壳时也就不必跟着改一遍。
+    overlay.querySelectorAll('[data-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
         const tabName = tab.dataset.tab;
-        overlay.querySelectorAll('.editor-tab[data-tab]').forEach(t => t.classList.remove('active'));
+        overlay.querySelectorAll('[data-tab]').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
+        // 面包屑跟着切（统一外壳里右侧顶部那一行）
+        const crumb = overlay.querySelector('.tpl-crumb');
+        if (crumb) crumb.textContent = (tab.textContent || '').trim();
         const content = overlay.querySelector('#editorContent');
         if (tabName === 'attr') {
           content.innerHTML = this._renderAttrContent(entity);

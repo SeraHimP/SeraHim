@@ -393,6 +393,43 @@ export class UIManager {
   }
 
   /**
+   * ==================== v44：属性值的统一显示口径 ====================
+   * 用户定稿（原话）："攻击力：182（152+30）。括号里的内容为（原始 + 通过任何渠道
+   * 修正的数值和，也可能为负），如果没有修正就不显示括号。如果修正值大于 0，
+   * 182 就显示为橙色，无修正就默认颜色，负修正为红色。"
+   *
+   * 为什么值得单独抽一个函数：面板上十几行属性 + 说明弹窗的抬头，都要按同一套规则显示。
+   * 抄两份的话，下次改配色只会改到其中一处 —— 本项目"编辑器写 A、运行时读 B"那类
+   * 问题的同一个成因。
+   *
+   * 口径：**基础值 = entity.baseStats[key]**（模板/地图/覆写解析完的那个），
+   * **最终值 = attrCalc.calc() 的结果**（叠了技能/状态/世界修正之后）。
+   * 两者之差就是"通过任何渠道修正的数值和" —— 不需要去逐条累加各个来源，
+   * 那样反而会与真正的属性管线漂移。
+   */
+  _statParts(key, entity, stats) {
+    const now = stats ? stats[key] : undefined;
+    const base = entity && entity.baseStats ? entity.baseStats[key] : undefined;
+    if (!Number.isFinite(now)) return null;
+    const r = (v) => (Math.abs(v) < 10 ? Math.round(v * 100) / 100 : Math.round(v));
+    if (!Number.isFinite(base)) return { now: r(now), base: null, delta: 0, cls: '' };
+    const delta = now - base;
+    // 浮点噪声：0.005 以内当作"没修正"，否则 40 会显示成 40（40+0）
+    const clean = Math.abs(delta) < 0.005 ? 0 : delta;
+    return {
+      now: r(now), base: r(base), delta: r(clean),
+      cls: clean > 0 ? 'stat-up' : clean < 0 ? 'stat-down' : '',
+    };
+  }
+
+  /** 面板里一行属性的值（带颜色，无括号——括号明细在点开的说明弹窗里）。 */
+  _statValueHtml(key, entity, stats, suffix = '') {
+    const p = this._statParts(key, entity, stats);
+    if (!p) return '';
+    return `<span class="${p.cls}">${p.now}${suffix}</span>`;
+  }
+
+  /**
    * 属性说明弹窗（点属性面板上任意一行）。
    * 用户："属性（攻击力，攻速等都可以点击）描述这个属性。"
    *
@@ -408,19 +445,43 @@ export class UIManager {
     let live = '';
     if (entity) {
       const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
-      const raw = entity.baseStats ? entity.baseStats[key] : undefined;
-      const now = stats[key];
-      if (Number.isFinite(now)) {
-        const shown = Math.abs(now) < 10 ? Number(now.toFixed(2)) : Math.round(now);
-        const base = Number.isFinite(raw) ? (Math.abs(raw) < 10 ? Number(raw.toFixed(2)) : Math.round(raw)) : null;
-        live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:12px;">
-            这个单位当前：<b>${shown}</b>${base !== null && base !== shown
-              ? `　<span style="color:var(--text-mute);">（基础 ${base}，其余来自技能/状态/世界修正）</span>` : ''}
+      const p = this._statParts(key, entity, stats);
+      if (p) {
+        // 用户定稿的格式：攻击力：182（152+30）。没有修正就不显示括号。
+        const paren = p.delta === 0 ? ''
+          : `<span class="stat-break">（${p.base}${p.delta > 0 ? '+' : '−'}${Math.abs(p.delta)}）</span>`;
+        live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
+            ${doc.label}：<b class="${p.cls}">${p.now}</b>${paren}
+            ${p.delta !== 0 ? '<div style="font-size:11px;color:var(--text-mute);margin-top:4px;">'
+              + '括号内为（基础值 ' + (p.delta > 0 ? '+' : '−') + ' 各渠道修正之和）。修正来自技能、状态、世界影响（天气/昼夜/熵）与龙之奖励。</div>' : ''}
           </div>`;
       }
     }
 
-    const body = `${live}
+    // v44：攻击力这一条额外写清**这个单位打出来是什么伤害类型**。
+    // 用户："攻击力详细窗口里也写上伤害类型（物理/魔法/真实/魔法+真实/等等）。"
+    // 类型不是一个常量：模板给基准（v43 起塔默认魔法），武器技能可以再改或再加一股
+    //（腐蚀型是魔法 + 真实两股 DoT、闪电杖满充无视防御）。所以这里从**实体身上**读，
+    // 而不是从模板表里查 —— 查模板的话手动改过伤害类型的单位会显示错的。
+    let dmgType = '';
+    if (key === 'attackDamage' && entity) {
+      const TYPE_LABEL = { physical: '⚔️ 物理伤害', magic: '✨ 魔法伤害', true: '💠 真实伤害' };
+      const base = TYPE_LABEL[entity.baseStats?.attackType] || TYPE_LABEL.physical;
+      const extras = [];
+      for (const inst of (entity._skillInstances || [])) {
+        const def = SkillLibrary[inst.skillId];
+        if (!def || !inst.skillId.startsWith('weapon_')) continue;
+        if (def.extraDamageTypes) extras.push(...def.extraDamageTypes);
+        else if (inst.skillId === 'weapon_corrosion') extras.push('✨ 魔法 DoT', '💠 真实 DoT');
+        else if (inst.skillId === 'weapon_lightning') extras.push('满充能时按比例无视防御');
+      }
+      dmgType = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">伤害类型</div>
+        <p style="font-size:12px;line-height:1.8;margin:0 0 10px;"><b>${base}</b>${
+          extras.length ? `　<span style="color:var(--text-mute);">＋ ${extras.join(' ＋ ')}</span>` : ''}
+        </p>`;
+    }
+
+    const body = `${live}${dmgType}
       <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${doc.desc}</p>
       ${doc.formula ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">结算规则</div>
         <p style="font-size:11px;color:var(--text-dim);line-height:1.8;margin:0 0 10px;">${doc.formula}</p>` : ''}
@@ -683,11 +744,15 @@ export class UIManager {
         <span id="tower-hptext-${tower.id}"></span>
         <span class="shield-total" id="tower-shieldtext-${tower.id}"></span>
       </div>
+      <div class="panel-sec">属性</div>
       <div class="attrs" id="tower-attrs-${tower.id}"></div>
       <div class="attrs-ext" id="tower-attrs-ext-${tower.id}"></div>
       <button class="toggle-ext" data-action="toggleAttrs" data-id="${tower.id}">▼ 展开更多</button>
+      <div class="panel-sec">技能</div>
       <div class="skill-slot-row" id="tower-skills-${tower.id}"></div>
+      <div class="panel-sec">状态</div>
       <div class="effect-row" id="tower-effects-${tower.id}"></div>
+      <div class="panel-sec">世界影响</div>
       <div class="state-row">
         <div class="weather-row" id="tower-weather-${tower.id}"></div>
         <div class="world-row" id="tower-world-${tower.id}"></div>
@@ -769,13 +834,14 @@ export class UIManager {
     if (shieldText) shieldText.textContent = `🛡 ${Math.round(shieldTotal)}`;
 
     // 核心属性
+    const E = tower;   // v44：属性值统一走 _statValueHtml（基础/修正着色），需要实体本身
     const attrsContainer = card.querySelector(`#tower-attrs-${id}`);
     if (attrsContainer) {
       this._setAttrs(attrsContainer, `
-        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
+        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${this._statValueHtml('attackDamage', E, stats)}</span></div>
         <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
-        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
-        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
+        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${this._statValueHtml('armor', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${this._statValueHtml('magicResist', E, stats)}</span></div>
       `);
     }
 
@@ -785,20 +851,21 @@ export class UIManager {
       // v33（Q17）：穿透一类一行——固定值在左列、百分比在右列（网格两列，顺序即位置）。
       // 顺带修正旧版的标签张冠李戴（"魔抗削减"标着 magicPenFlat、"固定法穿%"标着百分比）。
       this._setAttrs(attrsExtContainer, `
-        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${Math.round(stats.armorPenFlat)}</span></div>
-        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${Math.round(stats.armorPenPercent)}%</span></div>
-        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${Math.round(stats.magicPenFlat)}</span></div>
-        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${Math.round(stats.magicPenPercent)}%</span></div>
-        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${Math.round(stats.damageReduction)}%</span></div>
-        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${Math.round(stats.damageBlock)}</span></div>
-        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${Math.round(stats.damageConvertPct)}%</span></div>
-        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${Math.round(stats.lifeStealPct)}%</span></div>
-        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${Math.round(stats.onHitDamage)}</span></div>
-        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${Math.round(stats.onHitPercentDamage)}%</span></div>
-        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${Math.round(stats.healShieldPowerPct)}%</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${Math.round(stats.bonusAttackSpeedPct)}%</span></div>
-        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${Math.round(stats.allStatsPct)}%</span></div>
-        <div class="a stat-doc" data-stat="bulletSpeed" title="点击查看说明"><label>子弹速度</label><span>${Math.round(stats.bulletSpeed)}</span></div>
+        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${this._statValueHtml('armorPenFlat', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${this._statValueHtml('armorPenPercent', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${this._statValueHtml('magicPenFlat', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${this._statValueHtml('magicPenPercent', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${this._statValueHtml('damageReduction', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${this._statValueHtml('damageBlock', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${this._statValueHtml('damageConvertPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${this._statValueHtml('lifeStealPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${this._statValueHtml('onHitDamage', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${this._statValueHtml('onHitPercentDamage', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${this._statValueHtml('healShieldPowerPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${this._statValueHtml('bonusAttackSpeedPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="damageAmpPct" title="点击查看说明"><label>伤害增幅%</label><span>${this._statValueHtml('damageAmpPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${this._statValueHtml('allStatsPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="bulletSpeed" title="点击查看说明"><label>子弹速度</label><span>${this._statValueHtml('bulletSpeed', E, stats)}</span></div>
       `);
     }
 
@@ -832,11 +899,15 @@ export class UIManager {
         <span id="minion-hptext-${minion.id}"></span>
         <span class="shield-total" id="minion-shieldtext-${minion.id}"></span>
       </div>
+      <div class="panel-sec">属性</div>
       <div class="attrs" id="minion-attrs-${minion.id}"></div>
       <div class="attrs-ext" id="minion-attrs-ext-${minion.id}"></div>
       <button class="toggle-ext" data-action="toggleAttrs" data-id="${minion.id}">▼ 展开更多</button>
+      <div class="panel-sec">技能</div>
       <div class="skill-slot-row" id="minion-skills-${minion.id}"></div>
+      <div class="panel-sec">状态</div>
       <div class="effect-row" id="minion-effects-${minion.id}"></div>
+      <div class="panel-sec">世界影响</div>
       <div class="state-row">
         <div class="weather-row" id="minion-weather-${minion.id}"></div>
         <div class="world-row" id="minion-world-${minion.id}"></div>
@@ -892,13 +963,14 @@ export class UIManager {
     const shieldText = card.querySelector(`#minion-shieldtext-${id}`);
     if (shieldText) shieldText.textContent = `🛡 ${Math.round(shieldTotal)}`;
 
+    const E = minion;   // 同上
     const attrsContainer = card.querySelector(`#minion-attrs-${id}`);
     if (attrsContainer) {
       this._setAttrs(attrsContainer, `
-        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
+        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${this._statValueHtml('attackDamage', E, stats)}</span></div>
         <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
-        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
-        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
+        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${this._statValueHtml('armor', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${this._statValueHtml('magicResist', E, stats)}</span></div>
       `);
     }
 
@@ -906,19 +978,20 @@ export class UIManager {
     if (attrsExtContainer) {
       // v33（Q17）：与塔卡片同款列布局（固定值左列、百分比右列，一类一行）
       this._setAttrs(attrsExtContainer, `
-        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${Math.round(stats.armorPenFlat)}</span></div>
-        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${Math.round(stats.armorPenPercent)}%</span></div>
-        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${Math.round(stats.magicPenFlat)}</span></div>
-        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${Math.round(stats.magicPenPercent)}%</span></div>
-        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${Math.round(stats.damageReduction)}%</span></div>
-        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${Math.round(stats.damageBlock)}</span></div>
-        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${Math.round(stats.damageConvertPct)}%</span></div>
-        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${Math.round(stats.lifeStealPct)}%</span></div>
-        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${Math.round(stats.onHitDamage)}</span></div>
-        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${Math.round(stats.onHitPercentDamage)}%</span></div>
-        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${Math.round(stats.healShieldPowerPct)}%</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${Math.round(stats.bonusAttackSpeedPct)}%</span></div>
-        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${Math.round(stats.allStatsPct)}%</span></div>
+        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${this._statValueHtml('armorPenFlat', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${this._statValueHtml('armorPenPercent', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${this._statValueHtml('magicPenFlat', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${this._statValueHtml('magicPenPercent', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${this._statValueHtml('damageReduction', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${this._statValueHtml('damageBlock', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${this._statValueHtml('damageConvertPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${this._statValueHtml('lifeStealPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${this._statValueHtml('onHitDamage', E, stats)}</span></div>
+        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${this._statValueHtml('onHitPercentDamage', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${this._statValueHtml('healShieldPowerPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${this._statValueHtml('bonusAttackSpeedPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="damageAmpPct" title="点击查看说明"><label>伤害增幅%</label><span>${this._statValueHtml('damageAmpPct', E, stats, '%')}</span></div>
+        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${this._statValueHtml('allStatsPct', E, stats, '%')}</span></div>
         <div class="a stat-doc" data-stat="moveSpeed" title="点击查看说明"><label>移速</label><span>${Math.round(stats.moveSpeed)}</span></div>
         <div class="a stat-doc" data-stat="attackRange" title="点击查看说明"><label>攻击距离</label><span>${Math.round(stats.attackRange)}</span></div>
       `);

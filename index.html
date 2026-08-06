@@ -182,9 +182,9 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* v44：可点击的属性行（点开看该属性的结算规则）。
    只给下划虚线 + 手型，不改颜色 —— 属性面板一屏十几行，
    全部高亮反而让人不知道该看哪一行。 */
-.a.stat-doc { cursor: pointer; }
-.a.stat-doc label { border-bottom: 1px dashed rgba(255,255,255,0.22); }
-.a.stat-doc:hover label { border-bottom-color: rgba(255,255,255,0.6); color: var(--text); }
+/* 可点击的属性 chip。v44 chip 化之后不再给标签画虚线下划线（每格都有边框反而更乱），
+   改成整格 hover 变亮 —— 与技能/状态图标的交互语言一致。 */
+.a.stat-doc { cursor: pointer; transition: background 0.12s, border-color 0.12s; }
 
 .state-row {
   margin-top: 8px;
@@ -323,7 +323,34 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .type-dragon { background: rgba(246,201,74,0.2); color: var(--gold); }
 
 /* 血条 */
-.bar-row { display: flex; align-items: stretch; height: 14px; margin-bottom: 3px; }
+/* ==================== v44：左上角属性面板重做 ====================
+   用户："左上角属性面板UI我觉得过时了。重做一下。"
+
+   过时在哪（具体的，不是"感觉"）：
+     · 血条只有 14px 高、数值另起一行 —— 最重要的信息占了两行还不显眼；
+     · 属性是一张 11px 的两列密排网格，标签与数值靠 space-between 拉开，
+       行与行之间没有节奏，十几行糊成一片；
+     · 技能/状态/世界影响三组图标直接堆在一起，没有任何分组标题 ——
+       "这一排是什么"要靠悬停才知道；
+     · 「▼ 展开更多」是个裸文字按钮，与面板里其它控件不是一套。
+
+   重做的四条：
+     ① 血条加高到 18px，数值**压在条上**（一行解决），护盾段仍然分色；
+     ② 属性行做成一格一格的 chip：标签在上、数值在下，等宽数字，
+        行距按 8px 节奏；修正过的值按符号着色（橙/红，见 UIManager._statParts）；
+     ③ 每组前面加一条小标题（属性 / 技能 / 状态 / 世界影响）；
+     ④ 展开按钮做成整宽的分隔条，与卡片同一套边框语言。 */
+.stat-up   { color: #f0a03c; }   /* 有正向修正 */
+.stat-down { color: #ef6b6b; }   /* 有负向修正 */
+.stat-break { color: var(--text-mute); font-size: 0.82em; margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+.panel-sec {
+  font-size: 10px; letter-spacing: 1.2px; color: var(--text-mute);
+  margin: 12px 0 5px; display: flex; align-items: center; gap: 8px;
+}
+.panel-sec::after { content: ''; flex: 1; height: 1px; background: var(--glass-border); }
+
+.bar-row { display: flex; align-items: stretch; height: 18px; margin-bottom: 3px; }
 .bar-track { position: relative; flex: 1; height: 100%; background: var(--bg-deep); border: 1px solid var(--glass-border); border-radius: 4px; overflow: hidden; }
 .bar-hp-trail { position: absolute; top: 0; left: 0; height: 100%; background: #a68a2e; transition: width 0.45s ease-out; pointer-events: none; }
 .bar-hp { position: absolute; top: 0; left: 0; height: 100%; background: linear-gradient(180deg, #5cc85f, #43a047); transition: width 0.08s linear; }
@@ -333,19 +360,41 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .bar-hp.faction-red { background: linear-gradient(180deg, #ff8a7a, #d0453b); }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
-.bar-text { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-bottom: 5px; font-variant-numeric: tabular-nums; }
+.bar-track { border-radius: 5px; }
+.bar-text {
+  display: flex; justify-content: space-between; font-size: 11px;
+  color: #f2f6fa; margin: -17px 0 6px; padding: 0 7px;
+  position: relative; z-index: 1; pointer-events: none;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+}
 .bar-text .shield-total { color: #cfd6dd; }
 
 /* 属性 */
-.attrs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; font-size: 11px; margin: 4px 0; }
-.attrs .a { display: flex; justify-content: space-between; color: var(--text-dim); }
-.attrs .a span:last-child { color: var(--text); font-variant-numeric: tabular-nums; }
-.attrs-ext { display: none; grid-template-columns: 1fr 1fr; gap: 2px 14px; font-size: 11px; margin: 4px 0; padding-top: 5px; border-top: 1px solid var(--glass-border); }
+/* 属性 chip：标签在上、数值在下。两列网格，行距按 8px 节奏。 */
+.attrs, .attrs-ext { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 4px 0; }
+.attrs-ext { display: none; margin-top: 6px; }
 .attrs-ext.open { display: grid; }
-.attrs-ext .a { display: flex; justify-content: space-between; color: var(--text-dim); }
-.attrs-ext .a span:last-child { color: var(--text); font-variant-numeric: tabular-nums; }
-.toggle-ext { font-size: 10px; color: var(--text-dim); cursor: pointer; background: none; border: none; padding: 2px 4px; }
-.toggle-ext:hover { color: var(--text); }
+.attrs .a, .attrs-ext .a {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 5px 8px; border-radius: var(--radius-xs);
+  background: rgba(255,255,255,0.028); border: 1px solid transparent;
+}
+.attrs .a label, .attrs-ext .a label {
+  font-size: 10px; color: var(--text-mute); letter-spacing: 0.2px; line-height: 1.2;
+}
+.attrs .a > span:last-child, .attrs-ext .a > span:last-child {
+  font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums;
+  font-weight: 600; line-height: 1.2;
+}
+.a.stat-doc:hover { background: rgba(255,255,255,0.07); border-color: var(--glass-border); }
+
+.toggle-ext {
+  width: 100%; margin-top: 8px; font-size: 11px; color: var(--text-dim);
+  cursor: pointer; background: rgba(255,255,255,0.03);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-xs); padding: 5px 8px;
+}
+.toggle-ext:hover { color: var(--text); background: rgba(255,255,255,0.07); }
 
 /* 技能栏 */
 .skill-slot-row { display: flex; gap: var(--gap-sm); flex-wrap: wrap; margin: 5px 0 4px; padding: 2px 0; }
