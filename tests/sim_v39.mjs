@@ -294,8 +294,11 @@ T('成长表：ram = HP10/波、AD0.1/波、双抗0',
 {
   const src = (await import('fs')).readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url), 'utf8');
   T('设置：游戏进行时间', src.includes('游戏进行时间') && src.includes('_fmtTime'));
-  T('设置：速度 0.5/1/2x', src.includes('[0.5, 1, 2]') && src.includes('data-speed'));
-  T('设置：快进 30s/300s', src.includes('data-ff="30"') && src.includes('data-ff="300"'));
+  // v44 用户定稿："快进改为 1x/2x/4x/8x"。倍率表从 [0.5,1,2] 换成 [1,2,4,8]，
+  // 「快进 N 秒」整块删除（8x 已经覆盖它的用途，而它自己那套"每帧固定补 2 秒模拟时间"
+  //  的预算正是"单位一多就特别卡"的来源之一）。断言随定稿走。
+  T('设置：速度 1/2/4/8x', src.includes('[1, 2, 4, 8]') && src.includes('data-speed'));
+  T('设置：快进 N 秒已删除（并入倍率）', !src.includes('data-ff='));
   T('设置：波次概览（当前波次/下一波倒计时）', src.includes('当前波次') && src.includes('nextWaveTime'));
   const _fs39 = (await import('fs')).default;
   const mainSrc = ['../src/main.js','../src/core/factories.js']   // v43 P1-4: 工厂已搬走，读组合根两份
@@ -303,8 +306,13 @@ T('成长表：ram = HP10/波、AD0.1/波、双抗0',
   // 同上：速度倍率读的是 CTX.__gameSpeed（会同步到 window），断言认 CTX 写法。
   T('主循环：速度倍率只放大投喂时间（SIM_DT 不变，判定一致）',
     /CTX\.__gameSpeed/.test(mainSrc) && mainSrc.includes('realDt * speed'));
-  T('快进=加速模拟真实跑完（非跳时钟）',
-    mainSrc.includes('__ffRemain') && mainSrc.includes('FF_BUDGET'));
+  // v44：判据从"有 __ffRemain / FF_BUDGET"改为"每帧预算按墙钟毫秒收"。
+  // 加速仍然是**真实跑完**（不是跳时钟）——SIM_DT 恒定、只是单位时间内跑的步数不同，
+  // 变的只是"一帧最多花多少毫秒在模拟上"。
+  T('加速=真实跑完，且每帧模拟预算按墙钟时间收（不再按写死的步数）',
+    mainSrc.includes('realDt * speed') && mainSrc.includes('simBudgetMs')
+    && mainSrc.includes('performance.now() - tSim0 >= budgetMs')
+    && !mainSrc.includes('FF_BUDGET'));
 }
 
 // ==================== Q7 负生命恢复扣血 ====================

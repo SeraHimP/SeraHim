@@ -13,7 +13,7 @@
 // Internal state store
 const _state = {
   gameTime: 0, waveNumber: 0, gamePaused: false, _uid: 0,
-  _nextWaveTime: 20, __gameSpeed: 1, __ffRemain: 0,
+  _nextWaveTime: 20, __gameSpeed: 1,   // v44：__ffRemain 已删（并入 1/2/4/8 倍率）
   __showLanePaths: false, __gridOn: false, __terrainAvoid: true, __laneFlow: true,
   __towerRules: {
     invincible: { blue: false, red: false },
@@ -38,7 +38,7 @@ export const CTX = {};
 // Sync keys: writing to CTX.xxx also writes to window.xxx
 const SYNC_KEYS = [
   'gameTime', 'waveNumber', 'gamePaused', '_uid', '_nextWaveTime',
-  '__gameSpeed', '__ffRemain', '__showLanePaths', '__gridOn', '__terrainAvoid', '__laneFlow',
+  '__gameSpeed', '__showLanePaths', '__gridOn', '__terrainAvoid', '__laneFlow',
   '__towerRules', '__towerRuleFor',
   'createMinion', 'createTower',
   '__app', '__weather', '__world', '__mapSystem', '__uiManager', '__weatherPanel',

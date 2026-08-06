@@ -52,11 +52,16 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
 /* ==================== 顶栏 ==================== */
+/* v44：顶栏改为**悬浮**（用户："顶栏也可以做成悬浮那种"）。
+   与右下角工具栏、右上角世界小窗共用同一套玻璃面板参数（surface + blur + 圆角 + 边框 + 阴影），
+   三块浮层这才看起来是同一套东西 —— 这就是"UI 要统一"落到具体处的样子。
+   贴边的 border-bottom 换成整圈 border，否则悬浮起来之后底边那道线会很突兀。 */
 #topbar {
-  display: flex; align-items: center; gap: 16px; padding: 10px 18px;
+  position: absolute; top: 10px; left: 12px; right: 12px;
+  display: flex; align-items: center; gap: 16px; padding: 8px 14px;
   background: var(--surface);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
   flex-shrink: 0; flex-wrap: wrap; z-index: 20;
   box-shadow: var(--shadow-sm);
 }
@@ -101,12 +106,15 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 
 /* ==================== 侧栏 ==================== */
 /* ==================== 点选属性面板（替代常驻侧栏） ==================== */
+/* v44：顶栏改悬浮之后要给它让位（原来 top:12px 会盖住顶栏左半边的波次/塔数）。
+   玻璃参数也与另外三块浮层统一 —— 四块浮层同一套 surface + blur(14) + 圆角 + 边框。 */
 #selectionPanel {
-  position: absolute; top: 12px; left: 12px; width: 320px; max-width: 82vw;
-  max-height: calc(100% - 24px); overflow-y: auto; z-index: 30;
-  background: var(--surface-1, rgba(16,20,28,0.92)); border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
-  border-radius: 10px; backdrop-filter: blur(8px); display: none;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  position: absolute; top: 66px; left: 12px; width: 320px; max-width: 82vw;
+  max-height: calc(100% - 78px); overflow-y: auto; z-index: 30;
+  background: var(--surface); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); display: none;
+  box-shadow: var(--shadow-sm);
 }
 #selectionPanel.show { display: block; }
 #selectionHeader {
@@ -138,7 +146,6 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    轻微 = 不点亮 / 有限 = 1 条边 / 中等 = 2 条边 / 严重 = 3 条边全亮。
    极端天气自带辉光，第 5 档"极端"叠加重辉光。下方 3 格进度已删除（v33）。 */
 .weather-row {
-  margin-top: 8px;
   display: flex; flex-wrap: wrap; gap: 6px;
 }
 .wx-tri {
@@ -167,8 +174,25 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    悬停看明细。区别只在颜色语义：蓝=秩序侧受益 / 红=混乱侧受益 / 灰=无修正。
    为什么复用而不是新做一种：天气与熵都是"世界给这个单位的修正"，
    同一类信息用两种控件表达，用户得学两遍。 */
+/* v44：天气行与世界行合并成**一栏**（用户："属性栏的天气显示应该和天气是在同一栏的，
+   而不是像现在的两栏"）。两者本来就是同一类信息（世界给这个单位的修正）、
+   用的也是同一套三角格控件，分成上下两行只会让人以为是两回事。
+   DOM 上仍保留两个盒子（各自有独立的刷新节流与脏检查），
+   外面套一个 .state-row 让它们排在同一行 —— 合的是版式，不是刷新逻辑。 */
+/* v44：可点击的属性行（点开看该属性的结算规则）。
+   只给下划虚线 + 手型，不改颜色 —— 属性面板一屏十几行，
+   全部高亮反而让人不知道该看哪一行。 */
+.a.stat-doc { cursor: pointer; }
+.a.stat-doc label { border-bottom: 1px dashed rgba(255,255,255,0.22); }
+.a.stat-doc:hover label { border-bottom-color: rgba(255,255,255,0.6); color: var(--text); }
+
+.state-row {
+  margin-top: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+}
+.state-row .weather-row,
+.state-row .world-row { margin-top: 0; }
 .world-row {
-  margin-top: 6px;
   display: flex; flex-wrap: wrap; gap: 6px;
 }
 .wx-tri.wx-order  { filter: drop-shadow(0 0 4px rgba(91,155,213,0.45)); }
@@ -180,15 +204,18 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
         数值长短变化不会让色带左右跳动（天气条以前就吃过这个亏）；
      ② 色带尺寸/行高/字号三段完全一致，一眼看出是同一组信息；
      ③ 只有"当前值"上主界面，所有明细都在各自的配置面板里。 */
+/* v44：顶栏改成悬浮之后要给它让位（原来 top:12px 会被压在顶栏底下）。
+   玻璃参数也与顶栏/右下角工具栏统一 —— 三块浮层同一套 surface + blur(14) + 圆角 + 边框。
+   之前三块各写各的（0.90 实心底 / blur10 / 8px 圆角），并排看得出来不是一套。 */
 #worldHud {
-  position: absolute; top: 12px; right: 12px;
+  position: absolute; top: 66px; right: 12px;
   z-index: 25;
   display: flex; flex-direction: column; gap: 3px;
-  padding: 5px 8px; border-radius: 8px;
-  background: var(--surface-1, rgba(16,20,28,0.90));
-  border: 1px solid var(--glass-border, rgba(255,255,255,0.10));
-  backdrop-filter: blur(10px);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  padding: 8px 14px; border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-sm);
 }
 #worldHud .wh-row {
   display: flex; align-items: center; gap: 6px;
@@ -235,12 +262,13 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    绝对定位铺满 #canvasWrap；面板类覆盖层 z-index 10~30，仍在最上。 */
 #canvasWrap canvas { position: absolute; left: 0; top: 0; }
 #glCanvas { background: #0a0d12; }
+/* 右下角工具栏。v44：blur/padding 与顶栏对齐（原来是 10px/6px，顶栏是 14px/8px，
+   两块浮层的玻璃厚度肉眼能看出差别）。三块浮层现在用同一组参数。 */
 #canvasControls {
-  /* v33：移到右下角（右上角让给天气条） */
   position: absolute; bottom: 12px; right: 12px; z-index: 10;
   display: flex; gap: var(--gap-sm); align-items: center;
-  background: var(--surface); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  padding: 6px 10px; border-radius: var(--radius-sm);
+  background: var(--surface); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  padding: 8px 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border); box-shadow: var(--shadow-sm);
 }
 #canvasControls button { background: var(--surface-3); padding: 3px 11px; font-size: 14px; }
@@ -459,14 +487,6 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 }
 .tpl-scope-note { font-size: 11px; color: var(--text-mute); margin: 6px 0 4px; }
 
-/* 世界 HUD：时间与天气并成一行（用户定稿）。两段各自 flex，分隔线只在两段都在时出现。 */
-#worldHud .wh-row-split { display: flex; align-items: center; gap: 8px; }
-#worldHud .wh-seg { display: flex; align-items: center; gap: 6px; }
-#worldHud .wh-seg .wh-bar { width: 96px; }
-/* 分隔线放在天气段【内部】的第一个 —— 天气隐藏时它自然跟着消失。
-   不用 :has()/兄弟选择器去猜隐藏状态：那种写法依赖内联 style 的字符串形式，
-   WeatherPanel 改一下赋值方式（'none' → ''）就会静默失效。 */
-#worldHud .wh-sep { width: 1px; height: 14px; margin-right: 2px; background: var(--glass-border); flex-shrink: 0; }
 
 /* 出兵编排表：表头与数据行共用同一套列宽，两边各写一串 px 必然错位 */
 .wo-row {
@@ -555,7 +575,9 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   <span class="sep">|</span>
   <span class="stat">小兵 <b id="minionCount">0</b></span>
   <span class="sep">|</span>
-  <span class="stat" id="scoreBoard" title="击杀数 / 推塔数">🔵 <b id="scoreBlue">0/0</b> ⚔ 🔴 <b id="scoreRed">0/0</b></span>
+  <!-- v44：击杀数不再上顶栏（用户："杀了多少个兵就不要显示了，只显示塔数就行"）。
+       击杀仍然照常统计（CTX.__score.*.kills），只是不占顶栏这一格 —— 那是最贵的一块地方。 -->
+  <span class="stat" id="scoreBoard" title="推塔数">🔵 <b id="scoreBlue">0</b> ⚔ 🔴 <b id="scoreRed">0</b></span>
 
   <span class="spacer"></span>
   <div class="btn-group">
@@ -581,23 +603,24 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
          统一设计语言：同一块玻璃面板、同样的行高与字号，每段一行、左侧固定宽度的标签位。
          点天气段开天气配置，点熵段开世界设置。 -->
     <div id="worldHud">
-      <!-- 布局（用户定稿）：**时间与天气并成一行**，熵单独一行（关闭时整行不显示）。
-           上一版我把三者做成了三行 —— 那是我把"天气那栏的第一个"理解成了行序，
-           实际要的是时间和天气在同一行里左右排开。
-           两段并排靠 .wh-seg 的 flex，而不是给每段写死宽度：天气名字长短不一
-           （"雷暴"两字 vs "雪盲"两字 vs 未来更长的），写死宽度必然有一天对不齐。 -->
-      <div class="wh-row wh-row-split" id="whTimeRow" title="游戏时间 · 昼夜相位　｜　右半：当前天气（点击打开天气配置）">
-        <span class="wh-seg" id="whTimeSeg">
-          <span class="wh-label" id="whPhaseIcon">☀️</span>
-          <canvas id="whTimeBar" class="wh-bar"></canvas>
-          <span class="wh-val" id="whClock">0:00</span>
-        </span>
-        <span class="wh-seg" id="whWeatherRow" style="display:none;">
-          <span class="wh-sep"></span>
-          <span class="wh-label" id="weatherNow"></span>
-          <canvas id="weatherBar" class="wh-bar"></canvas>
-          <span class="wh-val" id="whWeatherVal"></span>
-        </span>
+      <!-- 布局（v44 用户定稿）：**三条竖排**，每条独占一行。
+           用户："主窗口右上角的天气条，时间条，熵条应该是竖着排列的。"
+           这**推翻了上一版**（时间与天气并成一行）—— 上一版的注释还写着
+           "上一版我把三者做成了三行，那是理解错了"，现在又回到三行。
+           如实记在这里：这一处我来回改过两次，最终以本次为准。
+           并排那一版还有个副作用：天气段被裹在 #whTimeRow 里，
+           而 CSS 的 `.wh-row[title]:not(#whTimeRow) { cursor:pointer }` 恰好把它排除了，
+           于是"天气可点"这件事没有任何视觉提示 —— 用户报的"天气那个无法点击"就是这个。
+           拆成独立一行之后它自然拿回 pointer 光标与 hover 描边。 -->
+      <div class="wh-row" id="whTimeRow" title="游戏时间 · 昼夜相位">
+        <span class="wh-label" id="whPhaseIcon">☀️</span>
+        <canvas id="whTimeBar" class="wh-bar"></canvas>
+        <span class="wh-val" id="whClock">0:00</span>
+      </div>
+      <div class="wh-row" id="whWeatherRow" style="display:none;" title="当前天气 · 点击打开天气配置">
+        <span class="wh-label" id="weatherNow"></span>
+        <canvas id="weatherBar" class="wh-bar"></canvas>
+        <span class="wh-val" id="whWeatherVal"></span>
       </div>
       <div class="wh-row" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
         <span class="wh-label" id="whEntIcon">🌀</span>

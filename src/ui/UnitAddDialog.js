@@ -266,7 +266,7 @@ export const UnitAddDialog = {
   },
 
   // 建塔的模型选择（用户定稿：**外观** + 一个可选的"套用该档位数值"勾选框）。
-  // 选项来自 ModelLibrary.TOWER_MODEL_ROLES —— 这里不抄第二份清单，
+  // 选项来自 data/towerModels.js 的 TOWER_MODEL_ROLES —— 这里不抄第二份清单，
   // 否则以后加了新模型，界面上看不见 = 等于没做。
   _renderTowerModelSelector() {
     const cur = this._state.towerModel || 'tower';

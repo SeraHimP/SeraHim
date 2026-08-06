@@ -382,20 +382,17 @@ export const SettingsDialog = {
           <div class="slider-row"><label>游戏暂停</label>
             <button id="setGamePauseBtn" style="flex:1;">${window.gamePaused ? '▶ 继续' : '⏸ 暂停'}</button>
           </div>
-          <div class="slider-row"><label>游戏速度</label>
+          <div class="slider-row"><label title="真实加速模拟：战斗照常结算，不是跳时钟">游戏速度</label>
             <div style="flex:1;display:flex;gap:4px;">
-              ${[0.5, 1, 2].map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}" style="flex:1;">${v}x</button>`).join('')}
+              ${[1, 2, 4, 8].map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}" style="flex:1;">${v}x</button>`).join('')}
             </div>
           </div>
-          <div class="slider-row"><label>快进（加速模拟真实跑完）</label>
-            <div style="flex:1;display:flex;gap:4px;">
-              <button data-ff="30" style="flex:1;">⏩ 30s</button>
-              <button data-ff="300" style="flex:1;">⏩⏩ 300s</button>
-            </div>
+          <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
+            v44：「快进 N 秒」已并入倍率（8x 就是它）。同时把每帧的模拟预算从
+            <b>固定步数</b> 改成 <b>墙钟毫秒</b>（CONFIG.tuning.simBudgetMs = ${CONFIG.tuning?.simBudgetMs ?? 12}ms）——
+            原来限步数，而单步耗时随单位数增长，满场时同样的步数就是几百毫秒的卡顿。
+            现在倍率再高也只会「跑得慢一点」，不会卡住。
           </div>
-          ${(window.__ffRemain > 0) ? `<div class="slider-row"><label>快进中</label>
-            <div style="flex:1;font-size:12px;color:#f6c94a;">剩余 ${Math.ceil(window.__ffRemain)}s（战斗照常结算）</div>
-          </div>` : ''}
         </div>
         <div class="editor-section">
           <h4>🛡 战场规则</h4>
@@ -676,16 +673,6 @@ export const SettingsDialog = {
           render();
         });
       });
-      // v39（Q6）：快进——加速模拟真实跑完（非跳时钟，战斗照常发生）
-      overlay.querySelectorAll('[data-ff]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const sec = parseInt(btn.dataset.ff, 10);
-          window.__ffRemain = (window.__ffRemain || 0) + sec;
-          logFn(`⏩ 快进 ${sec}s（加速模拟，战斗照常结算）`, 'spawn');
-          render();
-        });
-      });
-
       // Q5：按阵营规则开关（统一 / 仅蓝 / 仅红）
       overlay.querySelectorAll('[data-rule]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -803,7 +790,11 @@ export const SettingsDialog = {
        'CONFIG.ui.towerLight.enabled', 'CONFIG.ui.rangeRing.mode', 'CONFIG.ui.hdr.force',
        'CONFIG.gameRules.waveInterval', 'CONFIG.gameRules.firstWaveDelay', 'CONFIG.tuning.showBaseCircle',
        'window.__gameSpeed', 'window.__gridOn', 'window.__showLanePaths',
-       'window.__laneFlow', 'window.__terrainAvoid', 'window.__towerRules', 'window.__ffRemain']);
+       // v44：快照键表里去掉了那个已删的「快进剩余秒数」字段。
+      // ⚠️ 注释必须**独占一行**：_harness 的 stripComments 只剥整行注释，
+      // 行尾注释会留在断言看到的文本里 —— 本仓库第 N 次栽在自证式断言上，
+      // 这次就是我把「已删」两个字写在行尾，结果断言自己匹配到了自己。
+      'window.__laneFlow', 'window.__terrainAvoid', 'window.__towerRules']);
     mountDialogFooter('modalActions', {
       applyLabel: '应用设置',
       snapshot: snap.snapshot,

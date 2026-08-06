@@ -4,6 +4,8 @@ import { resolveMergedIds } from '../core/skills/_helpers.js';
 import { AttributeEditor } from './AttributeEditor.js';
 import * as WEATHER_DEFS from '../data/Weather.js';
 import { DetailModal, STAT_LABELS } from './DetailModal.js';
+import { statDoc } from '../data/statDocs.js';
+import { shellHtml } from './dialogShell.js';
 
 export class UIManager {
   constructor(entityContainer, effectRegistry, attrCalc) {
@@ -20,6 +22,18 @@ export class UIManager {
     this._selCardEl = null;
     this._txtCache = {}; // 顶栏文本脏检查缓存：值没变就不碰 DOM
     this.bindCardEvents();
+    // v44：属性行点击 → 说明弹窗。
+    // 必须用**事件委托**绑在容器上：属性行是每帧重建 innerHTML 的，
+    // 逐行 addEventListener 会在下一帧连同旧节点一起被丢掉（本项目的老坑，
+    // 技能栏/效果栏当年就是因此改成 diff 式渲染的）。
+    if (this.selCard) {
+      this.selCard.addEventListener('click', (e) => {
+        const row = e.target.closest?.('.stat-doc[data-stat]');
+        if (!row || !this.selCard.contains(row)) return;
+        e.stopPropagation();
+        this._showStatDoc(row.dataset.stat, this.entities.get(this.selectedId));
+      });
+    }
     // v33（Q11）：✕ 关闭按钮已移除——点击画布空白处取消选中（CanvasController 负责）
     this.selBadge = document.getElementById('selectionBadge');
     this.selActions = document.getElementById('selectionActions');
@@ -300,7 +314,34 @@ export class UIManager {
     });
   }
 
-  /** 天气详情弹窗（点击三角形图标后显示） */
+
+  /**
+   * 属性区写入：**值没变就不碰 DOM**。
+   *
+   * v44 加这个的直接原因：属性行现在可以点击了，而它原本是每帧无条件
+   * `innerHTML = ...` 全量重建的 —— 节点每帧都是新的，
+   * 一次点击的 mousedown 与 mouseup 很可能落在两个不同的节点上，点击因此丢失。
+   * （自动化测试里表现为 "element was detached from the DOM, retrying"，
+   *   真人手上表现为"点了没反应"。）
+   *
+   * 技能栏与效果栏当年就是为同样的理由改成 diff 式渲染的，这里补上属性栏这一块。
+   */
+  _setAttrs(el, html) {
+    if (!el || el._lastHtml === html) return;
+    el._lastHtml = html;
+    el.innerHTML = html;
+  }
+
+  /**
+   * ==================== v44：弹窗统一到 dialogShell ====================
+   * 用户："属性栏点击的天气窗口还是旧版本的……属性栏点击出现的窗口 UI 应是统一的。"
+   *
+   * 这个弹窗此前是自己拼一套 `.modal / .modal-header / .modal-body` ——
+   * v43 Q1 把全部弹窗统一到模板编辑器那套外框时**漏了它**（它藏在 UIManager 里，
+   * 不在 src/ui/*Dialog.js 那一批里，搜"Dialog"搜不到）。
+   * 表现就是用户截图里的样子：标题图标与关闭按钮各占一行、字号与别的窗口对不上。
+   * 现在与详情框走同一个 shellHtml，正文一行没动，换的只是外框。
+   */
   _showWeatherDetail(row) {
     const { def, tier, charge, mods, extreme } = row;
     const old = document.getElementById('wxDetailOverlay');
@@ -317,39 +358,84 @@ export class UIManager {
       return `<div class="a"><label>${label}</label><span>${parts.join(' ')}</span></div>`;
     }).join('');
 
+    const body = `
+      <p style="font-size:11px;color:var(--text-dim);line-height:1.7;margin:0 0 10px;">${def.desc}</p>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;
+        padding:7px 9px;background:rgba(255,255,255,0.04);border-radius:6px;
+        ${tier.isExtremeTier ? 'box-shadow:0 0 10px rgba(255,215,94,0.55);border:1px solid rgba(255,215,94,0.5);' : ''}">
+        <span style="font-size:12px;font-weight:600;color:${tier.isExtremeTier ? '#ffd75e' : def.color};">${tier.name}</span>
+        <span style="flex:1;display:flex;gap:3px;">
+          ${[0, 1, 2].map(i => `<span style="flex:1;height:4px;border-radius:2px;
+            background:${i < tier.pips ? def.color : 'rgba(255,255,255,0.10)'};"></span>`).join('')}
+        </span>
+        <span style="font-size:10px;color:var(--text-dim);">强度 ${Math.round(tier.scale * 100)}%</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
+      <div class="attrs" style="display:grid;">${effLines}</div>
+      <p style="font-size:10px;color:var(--text-mute,#6b7480);line-height:1.6;margin:10px 0 0;">
+        天气影响按【充能条】积累：天气越剧烈，充能越快；档位（轻微25%/有限50%/中等75%/严重100%，
+        极端天气充能≥88%时进入第5档【极端150%】）决定效果强度。天气回落后影响会缓慢消散，而非立即消失。
+      </p>`;
+
     const overlay = document.createElement('div');
     overlay.id = 'wxDetailOverlay';
     overlay.className = 'modal-overlay open';
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:380px;">
-        <div class="modal-header">
-          <h3><span style="color:${def.color};">${def.icon} ${def.name}</span>
-            ${extreme ? '<span style="font-size:11px;color:#ffd75e;margin-left:6px;">极端天气</span>' : ''}</h3>
-          <button class="modal-close">✕</button>
-        </div>
-        <div class="modal-body">
-          <p style="font-size:11px;color:var(--text-dim);line-height:1.7;margin:0 0 10px;">${def.desc}</p>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;
-            padding:7px 9px;background:rgba(255,255,255,0.04);border-radius:6px;
-            ${tier.isExtremeTier ? 'box-shadow:0 0 10px rgba(255,215,94,0.55);border:1px solid rgba(255,215,94,0.5);' : ''}">
-            <span style="font-size:12px;font-weight:600;color:${tier.isExtremeTier ? '#ffd75e' : def.color};">${tier.name}</span>
-            <span style="flex:1;display:flex;gap:3px;">
-              ${[0, 1, 2].map(i => `<span style="flex:1;height:4px;border-radius:2px;
-                background:${i < tier.pips ? def.color : 'rgba(255,255,255,0.10)'};"></span>`).join('')}
-            </span>
-            <span style="font-size:10px;color:var(--text-dim);">强度 ${Math.round(tier.scale * 100)}%</span>
-          </div>
-          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
-          <div class="attrs" style="display:grid;">${effLines}</div>
-          <p style="font-size:10px;color:var(--text-mute,#6b7480);line-height:1.6;margin:10px 0 0;">
-            天气影响按【充能条】积累：天气越剧烈，充能越快；档位（轻微25%/有限50%/中等75%/严重100%，
-            极端天气充能≥88%时进入第5档【极端150%】）决定效果强度。天气回落后影响会缓慢消散，而非立即消失。
-          </p>
-        </div>
-      </div>`;
+    overlay.innerHTML = shellHtml({
+      title: `<span style="color:${def.color};">${def.icon} ${def.name}</span>`
+           + (extreme ? '<span style="font-size:11px;color:#ffd75e;margin-left:6px;">极端天气</span>' : ''),
+      body, crumb: '', width: '480px',
+      footer: '<div class="modal-actions"><button class="wx-detail-close primary">关闭</button></div>',
+    });
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
-    overlay.querySelector('.modal-close').addEventListener('click', close);
+    overlay.querySelector('.wx-detail-close').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  }
+
+  /**
+   * 属性说明弹窗（点属性面板上任意一行）。
+   * 用户："属性（攻击力，攻速等都可以点击）描述这个属性。"
+   *
+   * 文字住在 src/data/statDocs.js，与公式同源 —— 说明写在渲染函数里的话，
+   * 下次改公式的人根本不会想到还要去改一段模板字符串。
+   */
+  _showStatDoc(key, entity) {
+    const doc = statDoc(key);
+    if (!doc) return;
+    const old = document.getElementById('statDocOverlay');
+    if (old) old.remove();
+
+    let live = '';
+    if (entity) {
+      const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
+      const raw = entity.baseStats ? entity.baseStats[key] : undefined;
+      const now = stats[key];
+      if (Number.isFinite(now)) {
+        const shown = Math.abs(now) < 10 ? Number(now.toFixed(2)) : Math.round(now);
+        const base = Number.isFinite(raw) ? (Math.abs(raw) < 10 ? Number(raw.toFixed(2)) : Math.round(raw)) : null;
+        live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:12px;">
+            这个单位当前：<b>${shown}</b>${base !== null && base !== shown
+              ? `　<span style="color:var(--text-mute);">（基础 ${base}，其余来自技能/状态/世界修正）</span>` : ''}
+          </div>`;
+      }
+    }
+
+    const body = `${live}
+      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${doc.desc}</p>
+      ${doc.formula ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">结算规则</div>
+        <p style="font-size:11px;color:var(--text-dim);line-height:1.8;margin:0 0 10px;">${doc.formula}</p>` : ''}
+      ${doc.tip ? `<p style="font-size:11px;color:var(--text-mute,#6b7480);line-height:1.7;margin:0;">${doc.tip}</p>` : ''}`;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'statDocOverlay';
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = shellHtml({
+      title: `📊 ${doc.label}`, body, crumb: '', width: '460px',
+      footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
+    });
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.stat-doc-close').addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
@@ -602,8 +688,10 @@ export class UIManager {
       <button class="toggle-ext" data-action="toggleAttrs" data-id="${tower.id}">▼ 展开更多</button>
       <div class="skill-slot-row" id="tower-skills-${tower.id}"></div>
       <div class="effect-row" id="tower-effects-${tower.id}"></div>
-      <div class="weather-row" id="tower-weather-${tower.id}"></div>
-      <div class="world-row" id="tower-world-${tower.id}"></div>
+      <div class="state-row">
+        <div class="weather-row" id="tower-weather-${tower.id}"></div>
+        <div class="world-row" id="tower-world-${tower.id}"></div>
+      </div>
     `;
     // v33（Q11）：底部"编辑/删除"按钮行已删除——图标化后移至面板右上角（selectionActions）
     return card;
@@ -683,12 +771,12 @@ export class UIManager {
     // 核心属性
     const attrsContainer = card.querySelector(`#tower-attrs-${id}`);
     if (attrsContainer) {
-      attrsContainer.innerHTML = `
-        <div class="a"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
-        <div class="a"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
-        <div class="a"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
-        <div class="a"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
-      `;
+      this._setAttrs(attrsContainer, `
+        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
+        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
+        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
+      `);
     }
 
     // 扩展属性（默认折叠）
@@ -696,22 +784,22 @@ export class UIManager {
     if (attrsExtContainer) {
       // v33（Q17）：穿透一类一行——固定值在左列、百分比在右列（网格两列，顺序即位置）。
       // 顺带修正旧版的标签张冠李戴（"魔抗削减"标着 magicPenFlat、"固定法穿%"标着百分比）。
-      attrsExtContainer.innerHTML = `
-        <div class="a"><label>固定穿甲</label><span>${Math.round(stats.armorPenFlat)}</span></div>
-        <div class="a"><label>护甲穿透%</label><span>${Math.round(stats.armorPenPercent)}%</span></div>
-        <div class="a"><label>固定法穿</label><span>${Math.round(stats.magicPenFlat)}</span></div>
-        <div class="a"><label>法术穿透%</label><span>${Math.round(stats.magicPenPercent)}%</span></div>
-        <div class="a"><label>伤害减免</label><span>${Math.round(stats.damageReduction)}%</span></div>
-        <div class="a"><label>伤害格挡</label><span>${Math.round(stats.damageBlock)}</span></div>
-        <div class="a"><label>伤害转化%</label><span>${Math.round(stats.damageConvertPct)}%</span></div>
-        <div class="a"><label>生命偷取%</label><span>${Math.round(stats.lifeStealPct)}%</span></div>
-        <div class="a"><label>攻击特效(固定)</label><span>${Math.round(stats.onHitDamage)}</span></div>
-        <div class="a"><label>攻击特效(%当前生命)</label><span>${Math.round(stats.onHitPercentDamage)}%</span></div>
-        <div class="a"><label>治疗与护盾强度%</label><span>${Math.round(stats.healShieldPowerPct)}%</span></div>
-        <div class="a"><label>攻速加成%</label><span>${Math.round(stats.bonusAttackSpeedPct)}%</span></div>
-        <div class="a"><label>全属性加成%</label><span>${Math.round(stats.allStatsPct)}%</span></div>
-        <div class="a"><label>子弹速度</label><span>${Math.round(stats.bulletSpeed)}</span></div>
-      `;
+      this._setAttrs(attrsExtContainer, `
+        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${Math.round(stats.armorPenFlat)}</span></div>
+        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${Math.round(stats.armorPenPercent)}%</span></div>
+        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${Math.round(stats.magicPenFlat)}</span></div>
+        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${Math.round(stats.magicPenPercent)}%</span></div>
+        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${Math.round(stats.damageReduction)}%</span></div>
+        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${Math.round(stats.damageBlock)}</span></div>
+        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${Math.round(stats.damageConvertPct)}%</span></div>
+        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${Math.round(stats.lifeStealPct)}%</span></div>
+        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${Math.round(stats.onHitDamage)}</span></div>
+        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${Math.round(stats.onHitPercentDamage)}%</span></div>
+        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${Math.round(stats.healShieldPowerPct)}%</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${Math.round(stats.bonusAttackSpeedPct)}%</span></div>
+        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${Math.round(stats.allStatsPct)}%</span></div>
+        <div class="a stat-doc" data-stat="bulletSpeed" title="点击查看说明"><label>子弹速度</label><span>${Math.round(stats.bulletSpeed)}</span></div>
+      `);
     }
 
     // 技能栏（diff式渲染，避免每帧重建导致点击失效）
@@ -749,8 +837,10 @@ export class UIManager {
       <button class="toggle-ext" data-action="toggleAttrs" data-id="${minion.id}">▼ 展开更多</button>
       <div class="skill-slot-row" id="minion-skills-${minion.id}"></div>
       <div class="effect-row" id="minion-effects-${minion.id}"></div>
-      <div class="weather-row" id="minion-weather-${minion.id}"></div>
-      <div class="world-row" id="minion-world-${minion.id}"></div>
+      <div class="state-row">
+        <div class="weather-row" id="minion-weather-${minion.id}"></div>
+        <div class="world-row" id="minion-world-${minion.id}"></div>
+      </div>
     `;
     // v33（Q11）：底部按钮行已删除——图标化后移至面板右上角
     return card;
@@ -804,34 +894,34 @@ export class UIManager {
 
     const attrsContainer = card.querySelector(`#minion-attrs-${id}`);
     if (attrsContainer) {
-      attrsContainer.innerHTML = `
-        <div class="a"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
-        <div class="a"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
-        <div class="a"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
-        <div class="a"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
-      `;
+      this._setAttrs(attrsContainer, `
+        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${Math.round(stats.attackDamage)}</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
+        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${Math.round(stats.armor)}</span></div>
+        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${Math.round(stats.magicResist)}</span></div>
+      `);
     }
 
     const attrsExtContainer = card.querySelector(`#minion-attrs-ext-${id}`);
     if (attrsExtContainer) {
       // v33（Q17）：与塔卡片同款列布局（固定值左列、百分比右列，一类一行）
-      attrsExtContainer.innerHTML = `
-        <div class="a"><label>固定穿甲</label><span>${Math.round(stats.armorPenFlat)}</span></div>
-        <div class="a"><label>护甲穿透%</label><span>${Math.round(stats.armorPenPercent)}%</span></div>
-        <div class="a"><label>固定法穿</label><span>${Math.round(stats.magicPenFlat)}</span></div>
-        <div class="a"><label>法术穿透%</label><span>${Math.round(stats.magicPenPercent)}%</span></div>
-        <div class="a"><label>伤害减免</label><span>${Math.round(stats.damageReduction)}%</span></div>
-        <div class="a"><label>伤害格挡</label><span>${Math.round(stats.damageBlock)}</span></div>
-        <div class="a"><label>伤害转化%</label><span>${Math.round(stats.damageConvertPct)}%</span></div>
-        <div class="a"><label>生命偷取%</label><span>${Math.round(stats.lifeStealPct)}%</span></div>
-        <div class="a"><label>攻击特效(固定)</label><span>${Math.round(stats.onHitDamage)}</span></div>
-        <div class="a"><label>攻击特效(%当前生命)</label><span>${Math.round(stats.onHitPercentDamage)}%</span></div>
-        <div class="a"><label>治疗与护盾强度%</label><span>${Math.round(stats.healShieldPowerPct)}%</span></div>
-        <div class="a"><label>攻速加成%</label><span>${Math.round(stats.bonusAttackSpeedPct)}%</span></div>
-        <div class="a"><label>全属性加成%</label><span>${Math.round(stats.allStatsPct)}%</span></div>
-        <div class="a"><label>移速</label><span>${Math.round(stats.moveSpeed)}</span></div>
-        <div class="a"><label>攻击距离</label><span>${Math.round(stats.attackRange)}</span></div>
-      `;
+      this._setAttrs(attrsExtContainer, `
+        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${Math.round(stats.armorPenFlat)}</span></div>
+        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${Math.round(stats.armorPenPercent)}%</span></div>
+        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${Math.round(stats.magicPenFlat)}</span></div>
+        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${Math.round(stats.magicPenPercent)}%</span></div>
+        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${Math.round(stats.damageReduction)}%</span></div>
+        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${Math.round(stats.damageBlock)}</span></div>
+        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${Math.round(stats.damageConvertPct)}%</span></div>
+        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${Math.round(stats.lifeStealPct)}%</span></div>
+        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${Math.round(stats.onHitDamage)}</span></div>
+        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${Math.round(stats.onHitPercentDamage)}%</span></div>
+        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${Math.round(stats.healShieldPowerPct)}%</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${Math.round(stats.bonusAttackSpeedPct)}%</span></div>
+        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${Math.round(stats.allStatsPct)}%</span></div>
+        <div class="a stat-doc" data-stat="moveSpeed" title="点击查看说明"><label>移速</label><span>${Math.round(stats.moveSpeed)}</span></div>
+        <div class="a stat-doc" data-stat="attackRange" title="点击查看说明"><label>攻击距离</label><span>${Math.round(stats.attackRange)}</span></div>
+      `);
     }
 
     // 技能栏（diff式渲染）
@@ -864,8 +954,9 @@ export class UIManager {
     // 对战计分板（击杀/推塔）；沙盒模式显示占位
     const sc = window.__score;
     if (sc) {
-      this._setText('scoreBlue', `${sc.blue.kills}/${sc.blue.towers}`);
-      this._setText('scoreRed', `${sc.red.kills}/${sc.red.towers}`);
+      // v44：顶栏只显示推塔数（用户定稿）。击杀数照常统计，只是不占顶栏那一格。
+      this._setText('scoreBlue', `${sc.blue.towers}`);
+      this._setText('scoreRed', `${sc.red.towers}`);
     }
 
     // 龙魂提示条

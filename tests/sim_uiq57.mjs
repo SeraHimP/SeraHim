@@ -20,16 +20,16 @@ const rd = (p) => fs.readFileSync(p, 'utf8');
   T('程序化回退的形状也来自同一张表',
     TM.towerModelKind('lane_crystal') === 'orb' && TM.towerModelKind('nexus') === 'gem');
 
-  const ml = rd('src/presentation/ModelLibrary.js');
-  T('ModelLibrary 接受角色覆写并做合法性校验',
-    /forTower\(tier, faction, ruin, bSize, roleOverride\)/.test(ml)
-    && /isTowerModelRole\(roleOverride\) \? roleOverride : tierRole\(tier\)/.test(ml));
-  T('ModelLibrary 从 data 模块导入清单（不自己再列一份）',
-    /from '\.\.\/data\/towerModels\.js'/.test(ml) && !/TOWER_MODEL_ROLES = \[/.test(ml));
-
+  // v44：GLB 模型库（ModelLibrary.js + assets/models/*.glb）整条删除，
+  // 全部造型改为程序化生成（用户定稿"全部程序化，删 GLB"）。
+  // 原来这三条断言钉的是 ModelLibrary 的接口，对象没了就该改成钉**接替它的那条路**。
   const ul = rd('src/presentation/UnitLayer.js');
-  T('渲染层把实体上的 _modelRole 传下去',
-    /forTower\(e\._mapTier, e\._mapFaction, !!ruin, bSize, e\._modelRole\)/.test(ul));
+  T('GLB 那条路已删干净（不再有 ModelLibrary / isModel 分支）',
+    !/ModelLibrary/.test(ul) && !/vis\.isModel/.test(ul));
+  T('渲染层把实体上的 _modelRole 传下去（外观选择仍然生效，只是落到程序化几何上）',
+    /towerModelKind\(e\._modelRole\)/.test(ul) && /towerModelTier\(e\._modelRole\)/.test(ul));
+  T('tier 与 faction 进了几何缓存 key（不进的话四个档次会共用第一个被缓存的几何）',
+    /\$\{vTier\}\|\$\{vFac\}/.test(ul));
   // GLB 没加载完 / headless 时走程序化回退。不认 _modelRole 的话，
   // "我选了召唤水晶外观"在加载完成前完全没反应，用户会以为设置没生效。
   T('程序化回退也认 _modelRole', /const roleKind = towerModelKind\(e\._modelRole\)/.test(ul));

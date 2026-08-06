@@ -32,7 +32,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { MINION_STYLE, minionStyle } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
 import { CONFIG } from '../data/Config.js';
-import { towerModelKind } from '../data/towerModels.js';
+import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
@@ -65,7 +65,6 @@ const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-figh
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
 // 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
-const MODEL_FORWARD_OFFSET = -Math.PI / 2;
 
 // 血条画布分辨率：宽 64 = 量化粒度（1/64 条宽 ≈ 2D 的 80px 条上 1.25px，人眼阈值之下）
 const BAR_W = 64, BAR_H = 8;
@@ -80,7 +79,6 @@ export class UnitLayer {
     this._shieldTex = null;        // 🛡️ 共享纹理（懒建）
     this._frame = 0;
     this.shadowLevel = 'off';      // 第 6.1 步：由 ThreeRenderer.setShadowLevel 注入
-    this.models = null;            // A：GLB 模型库（浏览器注入）；null = 回退程序化几何（headless）
     this.mapSystem = null;         // A：塔按兵线朝敌方定向用（读车道 waypoints + 敌方基地中心）
     this.infoObjs = 0;             // E 组场景对象计数（sceneStats 用：children = 2×tracked + infoObjs + fx）
     this.pxPerUnit = 1;            // 像素/世界单位（每帧由 ThreeRenderer 注入；正交相机 = zoom×DPR）
@@ -109,18 +107,10 @@ export class UnitLayer {
       const bSizes = CONFIG.buildingSizes || {};
       const bSize = e._modelSize || bSizes[e._mapTier] || bSizes.default || 28;
       const isNexus = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
-      // A：GLB 模型优先（活体塔 + 损毁塔）。重生中的半透明幽灵仍走程序化（保留透明观感）。
-      // 未加载完成时 forTower 返回 null → 自动回退程序化几何，故 headless 与首帧都安全。
-      if (!ghost && this.models) {
-        const mdl = this.models.forTower(e._mapTier, e._mapFaction, !!ruin, bSize, e._modelRole);
-        if (mdl) {
-          return { key: mdl.key, isModel: true, template: mdl.template, topY: mdl.topY,
-                   muzzleY: mdl.muzzleY, size: bSize, barW: 80, barH: 6, barD: 10,
-                   alpha: 1, pulse: false, ringR: bSize + 8 };
-        }
-      }
-      // 程序化回退**也要认 _modelRole**：GLB 还没加载完（或 headless）时走这条路，
-      // 不认的话"我选了召唤水晶外观"在加载完成前完全没反应，用户会以为设置没生效。
+      // v44：GLB 路径整个删掉（用户定稿："全部程序化，删 GLB"）。
+      // 理由见 UnitMeshFactory.towerMesh 的头注释：GLB 那条路是
+      // `_mapTier → tower.glb`，四个档次共用一个文件，做不出"等级越高越牛逼"；
+      // 而我在这个环境里也做不出新的 GLB。两套造型语言并存本身也是"看着乱"的原因之一。
       const roleKind = towerModelKind(e._modelRole);
       const isLaneCrystal = roleKind ? roleKind === 'orb' : e._mapTier === 'nexus_lane';
       // 补充：召唤水晶重生中(ghost)＝显示【损毁模型】(破损底座+碎水晶)、不透明，靠灰色重生条示意重生中
@@ -133,8 +123,12 @@ export class UnitLayer {
       const kind = roleKind || (isLaneCrystal ? 'orb' : (isNexus ? 'gem' : 'tower'));
       const rSize = bSize * (TOWER_VIZ[kind] || 1.25);   // Q3：塔×1.25、召唤水晶/水晶枢纽×1.10（纯表现）
       const wid = wInst ? wInst.skillId : '';
-      const key = `t|${color}|${wid}|${kind}|${rSize}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
-      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin);
+      // v44：tier 与 faction 进 key —— 造型现在由这两项决定，不进 key 的话
+      // 四个档次会共用第一个被缓存的那个几何（这正是"四档长得一样"的另一半原因）。
+      const vTier = towerModelTier(e._modelRole) || e._mapTier || 'outer';
+      const vFac = e._mapFaction || 'neutral';
+      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
+      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac);
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,
@@ -155,19 +149,13 @@ export class UnitLayer {
     }
     const st = minionStyle(e.type);   // 自制兵种取用户填的图标/颜色，见 SpriteFactory.minionStyle
     const faction = e._mapFaction || e.faction;
-    // Q3：小兵优先 GLB 模型（melee/ranged/super/siege）；无该模型或未加载 → 回退程序化几何。
-    if (!ghost && this.models && faction) {
-      const mdl = this.models.forMinion(e.type, faction, st.size);
-      if (mdl) {
-        return { key: mdl.key, isModel: true, template: mdl.template, topY: mdl.topY, muzzleY: mdl.muzzleY,
-                 size: st.size, barW: 40, barH: 4, barD: 6, alpha: 1, pulse: false,
-                 ringR: st.size + 5, facing: needsFacing(e.type) };
-      }
-    }
+    // v44：GLB 路径删除。原来只有 melee/ranged/super/siege 四种有 GLB，
+    // 其余（图腾/术士/蚀骨/攻城车）落到程序化 —— 同一批小兵里两种造型语言，
+    // 而且"哪个兵有 GLB"是隐性知识。现在全部走 minionMesh 一条路。
     // 阵营色优先于兵种色：立体化后兵种靠【造型】区分，颜色让位给敌我识别
     const color = faction === 'blue' ? '#5b9bd5' : faction === 'red' ? '#e0473f' : st.color;
     const key = `m|${e.type}|${faction || 'none'}`;
-    const m = minionMesh(key, color, st.size, e.type);
+    const m = minionMesh(key, color, st.size, e.type, faction);
     return { key, geo: m.geo, mat: m.mat, topY: m.topY, size: st.size,
              barW: 40, barH: 4, barD: 6, alpha: 1, pulse: false,
              ringR: st.size + 5, facing: needsFacing(e.type) };
@@ -722,12 +710,7 @@ export class UnitLayer {
       en.facing = !!vis.facing;
       en.topY = vis.topY;
       en.muzzleY = vis.muzzleY != null ? vis.muzzleY : vis.topY;
-      if (vis.isModel) {
-        // GLB 模型：装配 Group 实例（clone 共享几何/材质）。
-        this._disposeCrystal(en);
-        this._installUnit(en, vis.template.clone());
-        en.unitIsModel = true;
-      } else if (vis.crystal) {
+      if (vis.crystal) {
         // Q6：程序化塔/水晶 + 独立水晶件 → Group(石身 Mesh + 会转/发光的水晶 Mesh)。
         this._disposeCrystal(en);
         const g = new THREE.Group();
@@ -829,12 +812,6 @@ export class UnitLayer {
       }
     }
 
-    // A：GLB 塔按兵线朝敌方定向（固定 yaw，只算一次——塔不移动；损毁塔沿用）。
-    if (vis.isModel && e.type === 'tower') {
-      if (en.faceFixed === null) en.faceFixed = this._towerYaw(e) + MODEL_FORWARD_OFFSET;
-      en.unit.rotation.y = en.faceFixed;
-    }
-
     // 朝向：由【位置增量】自己算，逻辑层不需要提供 facing 字段。
     // 模拟跑 30Hz、渲染跑 60Hz，因此有一半的帧位移为 0——那时保持上一次朝向，不要清零。
     // 角度做最短弧插值（跨 ±π 时不绕远路），避免掉头瞬间原地转一圈。
@@ -850,7 +827,7 @@ export class UnitLayer {
         while (d < -Math.PI) d += Math.PI * 2;
         en.faceA += d * 0.18;   // 转向平滑系数：掉头约 20 帧转完，快而不生硬
         // Q3：GLB 小兵模型的正面轴与塔同一套偏移；程序化几何朝 +Z 建，偏移为 0。
-        en.unit.rotation.y = en.faceA + (en.unitIsModel ? MODEL_FORWARD_OFFSET : 0);
+        en.unit.rotation.y = en.faceA;   // v44：GLB 删除后不再有朝向偏置（程序化模型一律朝 +Z 建）
       }
     }
     en.bar.position.set(e.pos.x, gy + (en.topY || 0) * s, e.pos.y);

@@ -282,25 +282,35 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   T('命中检测与它同口径', /e\.alive \|\| e\._ruin \|\| e\._respawnAt/.test(cc));
 }
 
-// ==================== 四、世界 HUD 布局（用户定稿：时间+天气同一行，熵单独一行）====================
-// 上一版我做成了三行 —— 把"天气那栏的第一个"理解成了行序，实际要的是时间和天气
-// 在同一行里左右排开。这里钉住结构，免得以后又拆回三行。
+// ==================== 世界小窗：三条竖排（v44 用户定稿）====================
+// 用户："主窗口右上角的天气条，时间条，熵条应该是竖着排列的。"
+//
+// ⚠️ 这一处**来回改过两次**，如实记下来：
+//   v43 我先做成三行 → 用户说要并成一行（我把"天气那栏的第一个"理解成了行序）
+//   v44 用户又要三条竖排 → 改回三行
+// 所以下面这组断言在 v43 是反着写的。断言随定稿走，不是产品有 bug。
+//
+// 并排那一版还留了个副作用：天气段被裹在 #whTimeRow 内部，而 CSS 的
+// `.wh-row[title]:not(#whTimeRow) { cursor:pointer }` 恰好把它排除了 ——
+// "天气可点击"这件事因此没有任何视觉提示，用户报的"天气那个无法点击"就是它。
 {
   const html = fs.readFileSync('index.html', 'utf8');
   const iTime = html.indexOf('id="whTimeRow"');
   const iWx = html.indexOf('id="whWeatherRow"');
   const iEnt = html.indexOf('id="whEntropyRow"');
   T('三段都在', iTime > 0 && iWx > 0 && iEnt > 0);
-  // 天气段必须在时间行【内部】：找到时间行的收尾位置，天气段的下标要在它之前
-  const rowEnd = html.indexOf('</div>', html.indexOf('id="whEntropyRow"') > iTime ? iTime : 0);
-  T('天气段嵌在时间行里（同一行，不是另起一行）',
-    iWx > iTime && iWx < iEnt && /wh-row wh-row-split/.test(html));
-  T('时间段与天气段都是 .wh-seg（靠 flex 并排，不写死宽度）',
-    (html.match(/class="wh-seg"/g) || []).length >= 2);
-  T('熵是独立一行且默认隐藏', /id="whEntropyRow" style="display:none;"/.test(html)
-    && iEnt > iWx);
-  T('分隔线放在天气段内部（天气隐藏时它自然跟着消失）',
-    /id="whWeatherRow"[^>]*>\s*<span class="wh-sep">/.test(html));
+  T('三段各自独占一行（都是 .wh-row，天气不再嵌在时间行里）',
+    /<div class="wh-row" id="whTimeRow"/.test(html)
+    && /<div class="wh-row" id="whWeatherRow"/.test(html)
+    && /<div class="wh-row" id="whEntropyRow"/.test(html));
+  T('顺序 时间 → 天气 → 熵', iTime < iWx && iWx < iEnt);
+  T('熵默认隐藏（关闭时整行不显示）', /id="whEntropyRow" style="display:none;"/.test(html));
+  T('天气默认隐藏（天气系统关时不占位）', /id="whWeatherRow" style="display:none;"/.test(html));
+  T('并排布局的样式与标记已删干净（留着就是死样式）',
+    !/wh-row-split/.test(html) && !/wh-seg/.test(html) && !/wh-sep/.test(html));
+  T('天气行能拿到 pointer 光标（它不再是 #whTimeRow）',
+    /#worldHud \.wh-row\[title\]:not\(#whTimeRow\) \{ cursor: pointer; \}/.test(html)
+    && /id="whWeatherRow"[^>]*title=/.test(html));
 }
 
 console.log(`射程圈/塔灯/废墟点选 验收: ${pass} 通过 / ${fail} 失败`);

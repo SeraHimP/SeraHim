@@ -40,8 +40,9 @@ DebugLogger.hookConsole();
 CTX.waveNumber = 0;
 CTX.gameTime = 0;
 CTX.gamePaused = false;
-CTX.__gameSpeed = 1;    // v39（Q6）：游戏速度倍率 0.5 / 1 / 2
-CTX.__ffRemain = 0;     // v39（Q6）：剩余快进秒数（真实加速模拟，非跳时钟）
+CTX.__gameSpeed = 1;    // 游戏速度倍率。v44 用户定稿：1x / 2x / 4x / 8x
+// v44：__ffRemain（快进 N 秒）已删除 —— 它的作用被 1x/2x/4x/8x 倍率完全覆盖，
+// 而它那套「每帧固定补 2 秒模拟时间」的预算正是卡顿的来源之一（见 gameLoop）。
 CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
 // ============================
 //  Backward-compat bridge: expose CTX on window so all modules can access it.
@@ -149,9 +150,6 @@ CTX.__setElevation = (deg) => renderer3d ? renderer3d.setElevation(deg) : null;
 CTX.__setAzimuth = (deg) => renderer3d ? renderer3d.setAzimuth(deg) : null; // C 组·方位角：绕地图中心偏航
 // C 组·河道玩法化（默认关闭）：开启后主对角线河带变可行走，重建地形开挖出下沉河道。
 CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); renderer3d?.invalidateTerrain?.(); return v; };
-// LOL 模型总开关（默认关，用旧程序化几何）。__useModels(true) 启用 GLB 模型（首次启用才懒加载），
-// __useModels(false) 切回旧模型。逐帧按 visKey 重建，切换即时生效。美术问题定夺前默认关闭。
-CTX.__useModels = (on) => renderer3d ? renderer3d.setUseModels(on !== false) : false;
 // 视角俯仰角工具条。放画布控件栏而不是设置面板：它是持续微调的手感参数，
 // 和缩放同类，藏进二级面板反而不好用。
 {
@@ -359,7 +357,6 @@ CTX.__resetRun = () => {
   CTX.waveNumber = 0;
   CTX.gameTime = 0;
   CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
-  CTX.__ffRemain = 0;
   // ⑤ 地图：对战模式重载当前图；沙盒模式没有地图，上面四步已经够了
   if (mapSystem.active && mapSystem.currentMap) {
     mapSystem.loadMap(mapSystem.currentMap.id);
@@ -577,11 +574,10 @@ canvasController.onDeselect = () => uiManager.clearSelection();
 // ---------- 游戏循环：固定步长累积器（模拟与渲染解耦） ----------
 // 旧问题：模拟步长 = 渲染帧间隔（钳制 0.05s）。渲染一掉帧，游戏时间就膨胀（倒计时变慢）。
 // 新模型：模拟固定 30Hz 步进（SIM_DT），渲染每个 rAF 一帧。渲染掉帧时一帧内补跑多步模拟，
-// 游戏时间保持与现实同速。补步上限 MAX_SUBSTEPS 防"模拟自身超支→越补越欠"的死亡螺旋：
+// 游戏时间保持与现实同速。补步预算（v44 改为墙钟毫秒，见 gameLoop）防"模拟自身超支→越补越欠"的死亡螺旋：
 // 达到上限时丢弃欠账（表现为轻微慢动作），这只在模拟本体过载的极端情况下发生。
 // 30Hz 模拟顺带把模拟开销砍半（移速 78px/s 下单步 2.6px，视觉无感）。
 const SIM_DT = 1 / 30;
-const MAX_SUBSTEPS = 4;
 let _lastTs = 0, _acc = 0;
 
 // 性能分解统计：滚动窗口累计 模拟/渲染/DOM 耗时，PerfHud 低频读取。
@@ -615,38 +611,43 @@ function gameLoop(timestamp) {
 
   const t0 = performance.now();
 
-  // ===== v39（Q6）：游戏速度倍率 + 快进 =====
-  // 速度倍率只放大【投喂给模拟的时间】，模拟步长 SIM_DT 恒定不变 → 物理/战斗判定完全一致，
-  // 只是单位时间内跑的步数不同（0.5x 减半、2x 加倍）。
-  // 快进（CTX.__ffRemain 秒）= 用户选定的 A 方案：真实加速模拟把这段时间跑完，
-  // 战斗照常发生、结果真实，不是跳时钟。每帧最多补 FF_BUDGET 秒，避免单帧卡死。
   const speed = CTX.__gameSpeed || 1;
-  let feed = realDt * speed;
-  if (CTX.__ffRemain > 0 && !CTX.gamePaused) {
-    const FF_BUDGET = 2.0; // 每帧最多推进 2 秒模拟时间（约 60 个子步）
-    const chunk = Math.min(CTX.__ffRemain, FF_BUDGET);
-    feed += chunk;
-    CTX.__ffRemain -= chunk;
-    if (CTX.__ffRemain <= 0) CTX.__ffRemain = 0;
-  }
+  const feed = realDt * speed;
 
   if (!CTX.gamePaused) {
     _acc += feed;
     let steps = 0;
-    const maxSteps = CTX.__ffRemain > 0 || feed > realDt * 1.5 ? 240 : MAX_SUBSTEPS;
-    while (_acc >= SIM_DT && steps < maxSteps) {
+    // ==================== v44：预算从「步数」改成「墙钟时间」 ====================
+    // 用户："单位一多，天气一开就特别卡，是那种每帧的延迟特别高。"
+    //
+    // 原实现有两个写死的**步数**上限：快进时每帧最多推 2 秒模拟时间（≈60 步），
+    // 加速时 maxSteps 直接放到 240。问题在于 —— **步数是常量，单步耗时不是**。
+    // 空场时一步几十微秒，60 步无感；上百个单位 + 天气开着时一步能到好几毫秒，
+    // 同样的 60 步就是几百毫秒的卡顿，而且单位越多越卡，正是用户描述的现象。
+    //
+    // 现在按「这一帧还能花多少毫秒」来收：跑够时间就停，欠的账留到下一帧。
+    // 于是不管场上有多少单位、倍率开到几，单帧耗时都被钉在预算内 ——
+    // 快进变成「慢一点跑完」而不是「卡住不动」。
+    const budgetMs = (CONFIG.tuning?.simBudgetMs) ?? 12;
+    const tSim0 = performance.now();
+    while (_acc >= SIM_DT) {
       // 每个模拟步都要让属性缓存失效并重建空间网格——位置/效果在步进中变化
       attrCalc.tick();
       entityContainer.rebuildGridIfNeeded(attrCalc._frame);
       stepSimulation(SIM_DT);
       _acc -= SIM_DT;
       steps++;
+      // 至少跑一步（否则低帧率时永远追不上），之后按墙钟时间收
+      if (performance.now() - tSim0 >= budgetMs) break;
     }
-    if (_acc > SIM_DT) _acc = SIM_DT; // 丢弃超出上限的欠账
+    // 欠账上限：按倍率放宽但封顶 —— 留太多会在卡顿缓解后突然补跑一大段（画面跳）。
+    const maxDebt = SIM_DT * Math.max(2, Math.min(8, speed) * 2);
+    if (_acc > maxDebt) _acc = maxDebt;
     PERF.steps += steps;
   } else {
     _acc = 0;
   }
+
   const t1 = performance.now();
   // 渲染复用最后一个模拟步的属性缓存（tick 会作废缓存、逼渲染全量重算 attrCalc）。
   // 模拟没跑的帧缓存本来就没变；暂停时例外——编辑器可能改了属性，需保持失效让改动可见。

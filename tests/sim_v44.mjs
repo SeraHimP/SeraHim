@@ -433,4 +433,192 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     mHA.getPit('baron') === null && mHA.getPit('dragon') === null);
 }
 
+// ==================== 十、界面统一（用户补充的一批）====================
+{
+  const fs2 = (await import('fs')).default;
+  const html = fs2.readFileSync('index.html', 'utf8');
+  const um = srcOf('src/ui/UIManager.js');
+
+  // ① 右上角三条竖排（这一处推翻了上一版的"时间与天气并成一行"）
+  T('界①-三条各占一行（whTimeRow / whWeatherRow / whEntropyRow 都是 .wh-row）',
+    /<div class="wh-row" id="whTimeRow"/.test(html)
+    && /<div class="wh-row" id="whWeatherRow"/.test(html)
+    && /<div class="wh-row" id="whEntropyRow"/.test(html));
+  T('界①-并排布局的残留样式已删干净（留着就是死样式）',
+    !/wh-row-split/.test(html) && !/wh-seg/.test(html) && !/wh-sep/.test(html));
+  T('界②-天气行拿回了 pointer 光标（此前被裹在 #whTimeRow 里，正好被 :not(#whTimeRow) 排除）',
+    /#worldHud \.wh-row\[title\]:not\(#whTimeRow\) \{ cursor: pointer; \}/.test(html));
+
+  // ② 属性栏：天气行与世界行合并成一栏
+  T('界③-两行被同一个 .state-row 包住（合的是版式，不是刷新逻辑）',
+    /<div class="state-row">[\s\S]{0,200}weather-row[\s\S]{0,200}world-row[\s\S]{0,80}<\/div>/.test(um));
+  T('界③-CSS 里 .state-row 是一行横排',
+    /\.state-row \{[^}]*display: flex[^}]*\}/.test(html));
+  T('界③-两个盒子各自的刷新入口都还在（没有为了合并而合掉逻辑）',
+    /_updateWeatherRow\(card, /.test(um) && /_updateWorldRow\(card, /.test(um));
+
+  // ③ 弹窗统一外壳
+  T('界④-天气详情弹窗改用 shellHtml（v43 统一弹窗那轮漏了它，它藏在 UIManager 里）',
+    /_showWeatherDetail\(row\) \{[\s\S]{0,3000}shellHtml\(\{/.test(um)
+    && !/<div class="modal" style="max-width:380px;">/.test(um));
+  T('界④-属性说明弹窗也走同一个外壳',
+    /_showStatDoc\(key, entity\) \{[\s\S]{0,2500}shellHtml\(\{/.test(um));
+
+  // ④ 属性可点击
+  const { STAT_DOCS, statDoc } = await import('../src/data/statDocs.js');
+  T('界⑤-属性行带 data-stat 且可点击', (um.match(/class="a stat-doc" data-stat="/g) || []).length >= 20);
+  T('界⑤-点击走**事件委托**绑在容器上（属性行是重建的，逐行绑会连同旧节点被丢掉）',
+    /this\.selCard\.addEventListener\('click'/.test(um)
+    && /closest\?\.\('\.stat-doc\[data-stat\]'\)/.test(um));
+  T('界⑤-属性行加了脏检查（每帧全量重建时，mousedown 与 mouseup 会落在不同节点上）',
+    /_setAttrs\(el, html\)/.test(um) && /el\._lastHtml === html/.test(um));
+  T('界⑥-说明文字住在 data 层（与公式同源，不是嵌在渲染函数里的模板字符串）',
+    typeof STAT_DOCS === 'object' && Object.keys(STAT_DOCS).length >= 20);
+  T('界⑥-面板上每一个可点击的 statKey 都有对应说明（点了弹空窗比不能点更糟）', (() => {
+    const keys = [...um.matchAll(/data-stat="(\w+)"/g)].map(m => m[1]);
+    return keys.length > 0 && keys.every(k => !!statDoc(k));
+  })());
+  T('界⑥-说明里写了结算规则而不只是名词解释',
+    ['attackDamage', 'armor', 'bonusAttackSpeedPct', 'damageBlock']
+      .every(k => statDoc(k) && statDoc(k).formula && statDoc(k).formula.length > 20));
+}
+
+// ==================== 十一、模型全面重做（全部程序化，删 GLB）====================
+{
+  const fs3 = (await import('fs')).default;
+  const umf = srcOf('src/presentation/UnitMeshFactory.js');
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  const tr = srcOf('src/presentation/ThreeRenderer.js');
+
+  // ---- GLB 那条路整条删除 ----
+  T('模①-ModelLibrary.js 已删除', !fs3.existsSync('src/presentation/ModelLibrary.js'));
+  T('模①-GLB 资产已删除', !fs3.existsSync('assets/models'));
+  T('模①-渲染层不再有 GLB 分支',
+    !/ModelLibrary/.test(ul) && !/vis\.isModel/.test(ul) && !/ModelLibrary/.test(tr)
+    && !/setUseModels/.test(tr));
+  T('模①-CTX.__useModels 一并去掉（开关的对象没了）',
+    !/__useModels/.test(srcOf('src/main.js')));
+
+  // ---- 塔：造型由 (tier, faction) 决定 ----
+  T('模②-每档规模写在一张表里（层数/扶壁/悬浮晶/高度）',
+    /const TIER_SPEC = \{[\s\S]*outer:[\s\S]*inner:[\s\S]*base:[\s\S]*hq_tower:/.test(umf));
+  T('模②-规模随档次单调递增（这就是"等级越高越牛逼"）', (() => {
+    const m = umf.match(/const TIER_SPEC = \{([\s\S]*?)\n\};/);
+    if (!m) return false;
+    const spec = {};
+    for (const line of m[1].split('\n')) {
+      const g = line.match(/(\w+):\s*\{ tiers: (\d+), buttress: (\d+), orbs: (\d+), shaft: ([\d.]+)/);
+      if (g) spec[g[1]] = { tiers: +g[2], buttress: +g[3], orbs: +g[4], shaft: +g[5] };
+    }
+    const order = ['outer', 'inner', 'base', 'hq_tower'];
+    if (order.some(k => !spec[k])) return false;
+    for (let i = 1; i < order.length; i++) {
+      const a = spec[order[i - 1]], b = spec[order[i]];
+      if (!(b.shaft > a.shaft && b.tiers >= a.tiers && b.buttress >= a.buttress && b.orbs >= a.orbs)) return false;
+    }
+    return true;
+  })());
+  T('模③-阵营语言成对声明，且两边部件数量一致（观感不同，强弱对称）',
+    /const FACTION_STYLE = \{[\s\S]*blue:[\s\S]*red:[\s\S]*neutral:/.test(umf));
+  T('模③-towerMesh 收 tier 与 faction（原签名根本不知道 tier 是什么）',
+    /export function towerMesh\(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction\)/.test(umf));
+  T('模③-tier/faction 进了几何缓存 key（不进则四档共用第一个被缓存的几何）',
+    /\$\{vTier\}\|\$\{vFac\}/.test(ul));
+
+  // ---- 小兵：八个内置兵种都有专属 builder ----
+  const builders = [...umf.matchAll(/^  (\w+)\(color, S\) \{/gm)].map(m => m[1]);
+  const NEED = ['melee', 'ranged', 'siege', 'ram', 'super', 'totem', 'warlock', 'corrupt'];
+  T(`模④-八个内置兵种都有专属造型（此前 totem/warlock/corrupt 落在通用步兵模板上）`,
+    NEED.every(k => builders.includes(k)));
+  T('模④-模板里配置的兵种与有造型的兵种对得上',
+    NEED.every(k => !!CONFIG.templates[k]));
+  T('模⑤-有正面的兵种会转向（术士的法杖、蚀骨的镰爪都在固定一侧）', (() => {
+    const m = umf.match(/const FACING_TYPES = new Set\(\[([^\]]*)\]/);
+    if (!m) return false;
+    const set = m[1];
+    return /'warlock'/.test(set) && /'corrupt'/.test(set) && !/'totem'/.test(set);
+  })());
+
+  // ---- 真的能造出几何来（headless 下 three 可用）----
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { towerMesh, minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const tops = {};
+    for (const tier of ['outer', 'inner', 'base', 'hq_tower']) {
+      const m = towerMesh('t|' + tier, '#5b9bd5', 26, '', 'tower', false, false, tier, 'blue');
+      tops[tier] = m.topY;
+      T(`模⑥-${tier} 塔能造出几何且有炮口高度`, m.geo && m.topY > 0 && m.muzzleY > 0);
+    }
+    T(`模⑥-塔高随档次递增（${['outer','inner','base','hq_tower'].map(k=>Math.round(tops[k])).join(' < ')}）`,
+      tops.outer < tops.inner && tops.inner < tops.base && tops.base < tops.hq_tower);
+    // 同档不同阵营必须是**不同的几何**（否则"红蓝各有特色"就没做到）
+    const b = towerMesh('x|b', '#5b9bd5', 26, '', 'tower', false, false, 'inner', 'blue');
+    const r2 = towerMesh('x|r', '#e0473f', 26, '', 'tower', false, false, 'inner', 'red');
+    T('模⑦-同档的红蓝是两份不同的几何',
+      b.geo !== r2.geo
+      && b.geo.attributes.position.count !== r2.geo.attributes.position.count);
+    for (const t of NEED) {
+      const m = minionMesh('mm|' + t, '#5b9bd5', 17, t, 'blue');
+      T(`模⑧-${t} 能造出几何`, m.geo && m.topY > 0);
+    }
+    // 三个新兵种不能与通用步兵模板同形
+    const generic = minionMesh('mm|__custom__', '#5b9bd5', 17, '__custom__', 'blue');
+    for (const t of ['totem', 'warlock', 'corrupt']) {
+      const m = minionMesh('mm|' + t, '#5b9bd5', 17, t, 'blue');
+      T(`模⑨-${t} 不再落回通用步兵模板`,
+        m.geo.attributes.position.count !== generic.geo.attributes.position.count);
+    }
+  }
+}
+
+// ==================== 十二、废墟 / 顶栏 / 工具栏 / 速度倍率 ====================
+{
+  const fs4 = (await import('fs')).default;
+  const umf = srcOf('src/presentation/UnitMeshFactory.js');
+  const html = fs4.readFileSync('index.html', 'utf8');
+  const mj = srcOf('src/main.js');
+  const sd = srcOf('src/ui/SettingsDialog.js');
+  const um = srcOf('src/ui/UIManager.js');
+
+  // 废墟：碎片要**褪色**，不能只是暗一点
+  T('废①-有 desat（往灰里拉 + 压暗），不是只调亮度',
+    /const desat = \(hex, k = [\d.]+, g = [\d.]+\)/.test(umf) && /lerp\(new THREE\.Color\(lum, lum, lum\), g\)/.test(umf));
+  T('废②-水晶碎片用 desat（旧写法 shade(color, 0.92) 只暗了 8%，饱和度一点没掉）',
+    /desat\(color, 0\.\d+, 0\.\d+\)\)/.test(umf) && !/shade\(color, 0\.92\)/.test(umf));
+  T('废③-废墟有倒塌方向（不再是上下对称的断桩 + 四周随手撒的石头）',
+    /const LEAN = /.test(umf));
+
+  // 顶栏
+  T('顶①-击杀数不再上顶栏，只显示推塔数',
+    /this\._setText\('scoreBlue', `\$\{sc\.blue\.towers\}`\)/.test(um)
+    && !/sc\.blue\.kills\}\//.test(um));
+  T('顶①-击杀仍然照常统计（只是不显示，不是把统计删了）',
+    /__score\[scorer\]\.kills\+\+/.test(mj));
+  T('顶②-顶栏悬浮', /#topbar \{[^}]*position: absolute[^}]*\}/.test(html));
+  T('顶③-三块浮层用同一组玻璃参数（顶栏 / 右下角工具栏 / 右上角世界小窗）', (() => {
+    const grab = (sel) => {
+      const m = html.match(new RegExp(sel.replace(/[#]/g, '#') + ' \\{([^}]*)\\}'));
+      return m ? m[1] : '';
+    };
+    const blocks = ['#topbar', '#canvasControls', '#worldHud', '#selectionPanel'].map(grab);
+    return blocks.every(b => /blur\(14px\)/.test(b) && /var\(--surface\)/.test(b)
+                             && /var\(--glass-border\)/.test(b));
+  })());
+  T('顶④-世界小窗与属性面板都给悬浮顶栏让了位（否则被压在底下）',
+    /#worldHud \{[^}]*top: 66px/.test(html) && /#selectionPanel \{[^}]*top: 66px/.test(html));
+
+  // 速度 / 性能
+  T('速①-倍率是 1/2/4/8（用户定稿）', /\[1, 2, 4, 8\]\.map\(v =>/.test(sd));
+  T('速②-「快进 N 秒」已删除（它的作用被 8x 覆盖）',
+    !/data-ff=/.test(sd) && !/__ffRemain/.test(mj) && !/__ffRemain/.test(sd));
+  T('速③-每帧模拟预算改为**墙钟毫秒**（原来限步数，而单步耗时随单位数增长）',
+    /const budgetMs = \(CONFIG\.tuning\?\.simBudgetMs\)/.test(mj)
+    && /if \(performance\.now\(\) - tSim0 >= budgetMs\) break;/.test(mj));
+  T('速③-步数上限 MAX_SUBSTEPS / 240 的写死值已去掉',
+    !/MAX_SUBSTEPS/.test(mj) && !/maxSteps/.test(mj));
+  T('速④-预算软编码在 CONFIG', Number.isFinite(CONFIG.tuning.simBudgetMs));
+  T('速⑤-欠账有封顶（否则卡顿缓解后会突然补跑一大段，画面跳）',
+    /const maxDebt = SIM_DT \* Math\.max\(2, Math\.min\(8, speed\) \* 2\);/.test(mj));
+}
+
 done();

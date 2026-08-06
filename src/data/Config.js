@@ -223,29 +223,33 @@ export const CONFIG = {
     stat: {
       // 每条魂的常驻属性（在巨龙之力 4 层的基础上再加这一份）。
       // 键名即 statKey，直接进 EffectRegistry 的 stat 效果，不另写一套。
-      fire:    { attackDamagePct: 12, maxHPPct: 8 },
-      water:   { healShieldPowerPct: 20, healthRegen: 4 },
-      earth:   { armor: 12, magicResist: 12, maxHPPct: 10 },
-      thunder: { armorPenFlat: 10, magicPenFlat: 10, maxHPPct: 6 },
+      // ⚠️ v44 第一轮对照之后下调约 1/3：首版跑出来 fire 100%/+1.81、water 83%/+2.86、
+      // earth 100%/+2.36，全部越过 60~70% 的目标带（基线是 50%/+0.30）。
+      fire:    { attackDamagePct: 8, maxHPPct: 5 },
+      water:   { healShieldPowerPct: 12, healthRegen: 2 },
+      earth:   { armor: 8, magicResist: 8, maxHPPct: 6 },
+      thunder: { armorPenFlat: 7, magicPenFlat: 7, maxHPPct: 4 },
       // 风魂的生存分量给 damageReduction 而不是护甲/生命：主题是"难以捉摸"，
       // 而且这条魂的机制侧（塔 +射程）已经很"进攻"，配一点纯减伤刚好。
       // 数值给得比山魂（15%）小得多 —— 它是配角，不是第二个山魂。
-      wind:    { bonusAttackSpeedPct: 18, attackRange: 25, damageReduction: 5 },
-      dark:    { damageAmpPct: 10, lifeStealPct: 6 },
-      poison:  { onHitPercentDamage: 1.0, maxHPPct: 6 },
+      wind:    { bonusAttackSpeedPct: 12, attackRange: 16, damageReduction: 3 },
+      dark:    { damageAmpPct: 7, lifeStealPct: 4 },
+      poison:  { onHitPercentDamage: 0.7, maxHPPct: 4 },
     },
     // 🔥 炎魂：攻击附带溅射。
     // v44：冷却从 8s 去掉改为常驻但比例砍半 —— 8 秒一次的溅射在"机械攻击"的单位身上
     // 几乎感觉不到（塔每 1.2 秒一次攻击，命中率 1/7），而常驻低比例是稳定收益。
     fire:    { pct: 30, radius: 75, cooldown: 0 },
     // 🌊 潮魂：攻击后回复已损生命 + 治疗强度。回血**不无视**加固城防的节点封顶
-    water:   { healMissingPct: 8, powerPct: 25, buffSec: 5, cooldown: 8 },
+    // v44 第一轮对照：潮魂 +2.86 是最强的一档 —— 回血按【已损生命】百分比，
+    // 残血时回得最多，正好抵消了对手的集火收益。回血比例 8% → 5%。
+    water:   { healMissingPct: 5, powerPct: 25, buffSec: 5, cooldown: 8 },
     // 🗿 山魂：减伤 + 格挡。
     // ⚠️ damageBlock 是【每次命中扣固定值】，对小 AD 单位近乎免疫：
     // 近战兵 AD 9、远程兵 6.5 —— 给到 7 就等于把对手整条兵线的输出删掉。
     // v44：33% → 15%，格挡 2 → 1。对照里这条 6/6 全胜、推进度差 +3.65，远超其余六条。
     // 这个数不要再往上调。
-    earth:   { damageReduction: 15, damageBlock: 1 },
+    earth:   { damageReduction: 11, damageBlock: 1 },
     // ⚡ 雷魂：连锁真伤。
     // v44：取消**均摊**。均摊的意思是"打 1 个人和打 6 个人总伤一样"，
     // 于是它对单体（推塔时最常见的情形）等于什么都没有 —— 对照里推进度差 -0.38。
@@ -287,13 +291,17 @@ export const CONFIG = {
   // 键名即 statKey；percent 结尾的写在 *Pct 里，其余是固定值。
   dragonPower: {
     maxStacks: 4,
-    fire:    { attackDamagePct: 6 },
-    water:   { healShieldPowerPct: 8, healthRegen: 2 },
-    earth:   { maxHPPct: 5, armor: 8, magicResist: 8 },
-    thunder: { armorPenFlat: 5, magicPenFlat: 5 },
-    wind:    { bonusAttackSpeedPct: 6, attackRange: 10 },
-    dark:    { damageAmpPct: 5, lifeStealPct: 3 },
-    poison:  { onHitPercentDamage: 0.5 },
+    // ⚠️ v44 第一轮对照之后**整体砍半**。首版数值（fire 6%/层 = 满层 +24% 攻击力）
+    // 跑出来是：满 fire 之力 6/6 全胜、推进度差 +1.60，而 fire **魂**才 +1.81 ——
+    // 也就是"只拿力"几乎等于"拿到魂"，成魂这件事失去意义。
+    // 力是【过程奖励】，目标是推进度差落在基线 +0.3 之上的 +0.3~+0.8 一档，不是胜负手。
+    fire:    { attackDamagePct: 3 },
+    water:   { healShieldPowerPct: 4, healthRegen: 1 },
+    earth:   { maxHPPct: 2.5, armor: 4, magicResist: 4 },
+    thunder: { armorPenFlat: 2.5, magicPenFlat: 2.5 },
+    wind:    { bonusAttackSpeedPct: 3, attackRange: 5 },
+    dark:    { damageAmpPct: 2.5, lifeStealPct: 1.5 },
+    poison:  { onHitPercentDamage: 0.25 },
   },
 
   // v43：龙的两个独立开关（用户定稿："龙魂效果有独立开关（是否生成/效果）"）。
@@ -601,6 +609,11 @@ export const CONFIG = {
   // ==================== 对战调参表（技术债清偿：原散落在各系统源码里的硬编码） ====================
   // 改这里即可调平衡，各系统启动时读取；缺省值与系统内兜底一致。
   tuning: {
+
+    // v44 每帧留给【模拟】的墙钟预算（毫秒）。超过就把剩下的账留到下一帧。
+    // 这是「单位一多就特别卡」的解药：原来限的是步数，而单步耗时随单位数增长，
+    // 于是同样的步数在满场时就是几百毫秒的卡顿。调小 = 更跟手但快进更慢。
+    simBudgetMs: 12,
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
     chaseDropFactor: 1.2,         // 追击放弃距离 = 仇恨半径 × 此系数
     collisionOverlapAllow: 0.85,  // 碰撞：重叠容忍（×半径和）

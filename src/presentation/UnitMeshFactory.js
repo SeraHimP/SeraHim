@@ -71,6 +71,21 @@ function pack(parts) {
 
 const T = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
 const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+/**
+ * 褪色：把颜色往灰里拉再压暗。v44 用于**废墟**。
+ * 用户："召唤水晶/水晶枢纽被摧毁的模型，上面的水晶碎片没有更改材质，看起来不好看。"
+ * 说的就是这个 —— 活体水晶走的是 crystalMaterial（自发光、玻璃质感），
+ * 而废墟碎片只是把同一个队伍色 shade(color, 0.92) 一下，材质还是普通 Lambert：
+ * 于是它既没有活体那种通透感、颜色又几乎一样亮，看起来像"掉在地上的塑料块"。
+ * 死掉的东西应该**失去饱和度**，而不只是暗一点。
+ * @param {number} k 亮度系数    @param {number} g 灰度混合比例（1 = 全灰）
+ */
+const desat = (hex, k = 0.55, g = 0.6) => {
+  const c = new THREE.Color(hex);
+  const lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
+  c.lerp(new THREE.Color(lum, lum, lum), g).multiplyScalar(k);
+  return '#' + c.getHexString();
+};
 // 中性石色：塔身/底座用它，融入土色地形（用户 Q2）。队伍色只落在顶部/本体的小水晶上。
 const STONE = '#948b7c';
 
@@ -79,88 +94,231 @@ const STONE = '#948b7c';
  * 水晶（isNexus）走宝石造型，分路水晶走球体，与 2D 的 💎/🔮 语义对应。
  * 返回 { geo, mat, topY }；topY = 世界单位高度，血条据此上浮。
  */
-export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
+/**
+ * ==================== 防御塔 / 水晶（v44 全面重造）====================
+ * 用户："现有的所有模型都优化或者是重做（我更倾向于重做，因为目前的确实很烂）。
+ *        最好是红/蓝方的外/内/水晶/枢纽塔的模型都不同。蓝方有蓝方的特色，
+ *        红方有红方的特色，然后塔等级越高长得越牛逼。"
+ *
+ * ==================== 原实现错在哪 ====================
+ * 不是"造型丑"这么简单 —— 是**四个档次共用同一个几何**：
+ * 旧 towerMesh 只认 kind（tower / gem / orb），完全不知道 tier 是什么，
+ * 外塔和枢纽塔的差别只有 bSize 一个缩放系数。GLB 那条路同样：
+ * `_mapTier → tower.glb`，四档一个文件。所以"高地塔看起来更厉害"这件事
+ * 在这个项目里**从来没有存在过**。
+ *
+ * ==================== 现在怎么做 ====================
+ * 造型由 (tier, faction) 共同决定，两个维度各管一件事：
+ *
+ *   tier 管【规模】：层数、扶壁数、悬浮水晶数、总高度，全部随档次单调递增。
+ *     外塔   1 层 · 0 扶壁 · 0 悬浮晶      —— 最朴素的哨塔
+ *     内塔   2 层 · 2 扶壁 · 0 悬浮晶      —— 收分塔身 + 侧翼
+ *     水晶塔 3 层 · 4 扶壁 · 1 悬浮晶      —— 开始有"要塞"的样子
+ *     枢纽塔 3 层 · 4 扶壁 · 3 悬浮晶 + 底座光环 —— 最高、最繁复
+ *
+ *   faction 管【语言】：
+ *     🔵 蓝方（秩序）—— 左右对称、垂直收分、尖顶收束、棱柱冠、冷色石
+ *     🔴 红方（混乱）—— 冠顶偏斜、多一圈骨刺、构件参差、暖色暗铁
+ *   两边的部件数量与高度**保持一致**，只换形状与角度 —— 否则就成了强弱不对称。
+ *
+ * 参数化的好处在这里很直接：想让某一档更气派，改的是 TIER_SPEC 里的一行数字，
+ * 不是再画一个模型。
+ */
+
+// 每档的规模。数字是"相对 R（建筑显示半径）"的比例，改这里就能整体调气派程度。
+const TIER_SPEC = {
+  outer:      { tiers: 1, buttress: 0, orbs: 0, shaft: 1.35, crown: 0.30, halo: false },
+  inner:      { tiers: 2, buttress: 2, orbs: 0, shaft: 1.70, crown: 0.34, halo: false },
+  base:       { tiers: 3, buttress: 4, orbs: 1, shaft: 2.05, crown: 0.38, halo: false },
+  hq_tower:   { tiers: 3, buttress: 4, orbs: 3, shaft: 2.45, crown: 0.44, halo: true },
+};
+const TIER_FALLBACK = TIER_SPEC.outer;
+
+// 阵营语言。两边**部件数量一致**，只换形状/角度/配色 —— 不对称的是观感，不是强弱。
+const FACTION_STYLE = {
+  blue:    { stone: '#8e9aa8', trim: '#cfe3ff', lean: 0,     spikes: 0, crownSides: 6, pointy: true },
+  red:     { stone: '#9a8478', trim: '#ffd0c0', lean: 0.10,  spikes: 8, crownSides: 5, pointy: false },
+  neutral: { stone: STONE,     trim: '#d8dee8', lean: 0,     spikes: 0, crownSides: 8, pointy: true },
+};
+const facStyle = (f) => FACTION_STYLE[f] || FACTION_STYLE.neutral;
+
+export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const R = bSize, parts = [];
     let crystalGeo = null, crystalCy = 0, crystalR = 0;   // Q6：水晶单独成件，不并入石身
     let crystalMuzzleK = 0;   // v43 Q8：炮口相对水晶中心上移的比例（× crystalR），0 = 正中心
+    const F = facStyle(faction);
+    const add = (geo, m, c) => parts.push({ geo, matrix: m, color: c });
+
     if (ruin) {
-      // 损毁结构：矮塌的断桩 / 碎裂台座 + 倾倒散落的碎块，明显区别于活体（读作"废墟"）。
-      // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。topY 由 pack 从包围盒取真值。
+      // ==================== 废墟（v44 重做）====================
+      // 用户："塔被摧毁的模型也优化一下。然后召唤水晶/水晶枢纽被摧毁的模型，
+      //        上面的水晶碎片没有更改材质，看起来不好看。"
+      //
+      // 两处一起改：
+      //   ① 碎片改用 desat()：往灰里拉再压暗。旧写法是 shade(color, 0.92)——
+      //      只暗了 8%，饱和度一点没掉，配上普通 Lambert 就像"掉了一地的塑料"。
+      //   ② 造型从"断桩 + 几块石头"改成有**破坏方向**的废墟：主体沿一个固定方向
+      //      塌下去，断口是斜切的，碎石顺着倒塌方向散开。原来的版本上下对称、
+      //      石块随手撒在四周，读起来像"一堆材料"而不是"倒下来的建筑"。
+      // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。
+      const LEAN = 0.42;                 // 倒塌方向（固定，缓存友好）
+      const dead = desat(F.stone, 0.62, 0.45);
+      const char = desat(F.stone, 0.34, 0.7);   // 焦黑断口
       if (kind === 'gem' || kind === 'orb') {
-        // Q3：破损【石色】底座 + 碎裂的【队伍色】水晶碎片（散落贴地）。
-        const pedH = R * 0.30;
-        parts.push({ geo: new THREE.CylinderGeometry(R * 0.6, R * 0.9, pedH, 8),
-                     matrix: T(0, pedH / 2, 0), color: shade(STONE, 0.5) });
-        // 碎片一律用【八面体】切面（尖锐棱角，读作"碎裂的水晶"，与水晶枢纽废墟同款；
-        // 用户反馈：召唤水晶废墟原用球体=圆的太丑，改为切面碎片）。
-        // [x, 碎片半径比, z, 旋转]；cy≈半径 → 碎片贴地不悬空
+        // 水晶废墟：破损祭坛 + 折断的护柱 + 失去光泽的晶体碎片
+        const pedH = R * 0.34;
+        add(new THREE.CylinderGeometry(R * 0.66, R * 0.96, pedH, 7), T(0, pedH / 2, 0), dead);
+        // 折断的护柱：一根还立着（斜的）、一根横躺、一根只剩根部
+        add(new THREE.CylinderGeometry(R * 0.08, R * 0.13, R * 0.62, 5),
+            compose(T(-R * 0.62, pedH + R * 0.28, R * 0.18), R_Z(0.30)), dead);
+        add(new THREE.CylinderGeometry(R * 0.07, R * 0.12, R * 0.72, 5),
+            compose(T(R * 0.52, R * 0.12, -R * 0.42), R_Z(Math.PI / 2 - 0.16), R_Y(0.6)), dead);
+        add(new THREE.CylinderGeometry(R * 0.11, R * 0.14, R * 0.20, 5), T(R * 0.12, pedH + R * 0.10, R * 0.66), char);
+        // 晶体碎片：**褪色**的八面体，大小递减、贴地散开（不再是一圈亮闪闪的队伍色）
         const shards = [[-0.46, 0.30, 0.30, 0.5], [0.44, 0.24, -0.34, -0.7],
                         [0.08, 0.34, 0.55, 1.0], [-0.30, 0.22, -0.5, 0.3], [0.20, 0.20, 0.03, 1.4]];
         for (const [sx, sr, sz, rot] of shards) {
-          parts.push({ geo: new THREE.OctahedronGeometry(R * sr),
-                       matrix: compose(T(sx * R, R * sr * 0.95, sz * R), R_Z(rot), R_X(rot * 0.5)),
-                       color: shade(color, 0.92) });
+          add(new THREE.OctahedronGeometry(R * sr),
+              compose(T(sx * R, R * sr * 0.92, sz * R), R_Z(rot), R_X(rot * 0.5)),
+              desat(color, 0.50, 0.55));
         }
+        // 一块还嵌在祭坛上的大碎晶（暗示"这里原本有东西"）
+        add(new THREE.OctahedronGeometry(R * 0.30),
+            compose(T(0, pedH + R * 0.16, 0), R_Z(0.9), R_X(0.4)), desat(color, 0.42, 0.6));
       } else {
-        // Q2：全【石色】废墟——矮断桩 + 横躺断段 + 散落石块，全部贴地。
-        const stumpH = R * 0.5;
-        parts.push({ geo: new THREE.CylinderGeometry(R * 0.7, R * 0.94, stumpH, 8),
-                     matrix: T(0, stumpH / 2, 0), color: shade(STONE, 0.55) });
-        // 一截横躺的断裂塔身残段（近乎平放，bottom≈半径 → 贴地）
-        parts.push({ geo: new THREE.CylinderGeometry(R * 0.28, R * 0.4, R * 0.85, 8),
-                     matrix: compose(T(R * 0.5, R * 0.34, R * 0.05), R_Z(Math.PI / 2 - 0.12)),
-                     color: shade(STONE, 0.72) });
-        // 散落石块（cy≈半对角 → 贴地不悬空）
-        const chunks = [[-0.8, 0.26, 0.35, 0.6], [0.78, 0.26, -0.5, -0.8],
-                        [0.15, 0.26, 0.88, 0.3], [-0.5, 0.26, -0.72, 1.1]];
-        for (const [cx, cy, cz, rot] of chunks) {
-          parts.push({ geo: new THREE.BoxGeometry(R * 0.32, R * 0.3, R * 0.28),
-                       matrix: compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.35)),
-                       color: shade(STONE, 0.66) });
+        // 塔废墟：斜切断口 + 朝一个方向倒下的塔身残段 + 顺着倒塌方向散落的碎石
+        const stumpH = R * 0.62;
+        add(new THREE.CylinderGeometry(R * 0.66, R * 0.96, stumpH, F.crownSides + 4), T(0, stumpH / 2, 0), dead);
+        // 斜切断口：一块倾斜的薄盘盖在断桩上，读作"从这里断的"
+        add(new THREE.CylinderGeometry(R * 0.68, R * 0.68, R * 0.08, F.crownSides + 4),
+            compose(T(0, stumpH, 0), R_Z(LEAN * 0.5)), char);
+        // 倒下的塔身残段（沿 LEAN 方向躺着，一头搭在断桩上）
+        add(new THREE.CylinderGeometry(R * 0.26, R * 0.44, R * 1.15, F.crownSides + 2),
+            compose(T(R * 0.72, R * 0.30, R * 0.16), R_Z(Math.PI / 2 - 0.22), R_Y(0.18)), dead);
+        // 断段末端的冠（碎的一半），说明"那截是塔顶"
+        add(new THREE.CylinderGeometry(R * 0.34, R * 0.28, R * 0.22, F.crownSides),
+            compose(T(R * 1.28, R * 0.26, R * 0.22), R_Z(Math.PI / 2 - 0.22)), char);
+        // 碎石：顺着倒塌方向铺开，越远越小（不再是围一圈）
+        const chunks = [[0.42, 0.18, 0.10, 0.6, 0.34], [0.95, 0.15, -0.30, -0.8, 0.28],
+                        [1.45, 0.13, 0.42, 0.3, 0.24], [1.70, 0.10, -0.10, 1.1, 0.18],
+                        [-0.55, 0.14, 0.48, 0.9, 0.26]];
+        for (const [cx, cy, cz, rot, sz] of chunks) {
+          add(new THREE.BoxGeometry(R * sz, R * sz * 0.9, R * sz * 0.85),
+              compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.35)), dead);
         }
+        // 焦痕：贴地的一层暗色扁盘
+        add(new THREE.CylinderGeometry(R * 1.05, R * 1.15, R * 0.04, F.crownSides + 6),
+            T(R * 0.35, R * 0.02, R * 0.05), char);
       }
     } else if (kind === 'gem' || kind === 'orb') {
-      // 水晶：中性石座 + 队伍色宝石（八面体）/ 球体（用户 Q2：底座石色、宝石染队色）
-      const pedH = R * 0.45;
-      parts.push({ geo: new THREE.CylinderGeometry(R * 0.75, R * 0.95, pedH, 8),
-                   matrix: T(0, pedH / 2, 0), color: shade(STONE, 0.55) });
-      // Q6：宝石单独成件（会转/发光）。水晶枢纽=八面体；召唤水晶=二十面体（切面感，转起来好看）。
-      crystalR = R * 0.78; crystalCy = pedH + crystalR * 0.95;
-      crystalGeo = kind === 'gem' ? new THREE.OctahedronGeometry(crystalR)
-                                  : new THREE.IcosahedronGeometry(crystalR, 0);
-      // v43 Q8：水晶类建筑现在可以装武器开火了（索敌闸门已删）。
-      // 用户："那个子弹是从水晶中央射出来的" —— 普通塔的顶部小水晶半径只有 R*0.40，
-      // 中心与尖端差不多；可召唤水晶/水晶枢纽的宝石本体半径 R*0.78，是整座建筑最大的部件，
-      // 从它的**几何中心**出膛看起来就是"子弹从石头里面钻出来"。抬到接近尖端。
+      // ---- 两类水晶：祭坛底座 + 护柱 + 悬浮宝石 ----
+      // 水晶枢纽（gem）比召唤水晶（orb）多一圈环绕碎晶与更高的祭坛 —— 同样是"越核心越繁复"。
+      const isNexus = kind === 'gem';
+      const pedH = R * (isNexus ? 0.52 : 0.40);
+      add(new THREE.CylinderGeometry(R * 0.72, R * 0.98, pedH, F.crownSides + 2), T(0, pedH / 2, 0), shade(F.stone, 0.52));
+      // 护柱：orb 三根、gem 四根，围住宝石。红方的柱子外倾（混乱），蓝方笔直（秩序）。
+      const nCol = isNexus ? 4 : 3, colH = R * (isNexus ? 1.05 : 0.85);
+      for (let i = 0; i < nCol; i++) {
+        const a = (i / nCol) * Math.PI * 2 + (isNexus ? Math.PI / 4 : 0);
+        add(new THREE.CylinderGeometry(R * 0.09, R * 0.13, colH, 5),
+            compose(T(Math.cos(a) * R * 0.72, pedH + colH / 2, Math.sin(a) * R * 0.72), R_Z(F.lean * Math.cos(a)), R_X(-F.lean * Math.sin(a))),
+            shade(F.stone, 0.74));
+      }
+      // 环绕碎晶（仅枢纽）：读作"力量的核心"
+      if (isNexus) {
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          add(new THREE.OctahedronGeometry(R * 0.16),
+              compose(T(Math.cos(a) * R * 0.95, pedH + colH * 0.75, Math.sin(a) * R * 0.95), R_Z(a)), shade(color, 1.1));
+        }
+      }
+      crystalR = R * (isNexus ? 0.82 : 0.70);
+      crystalCy = pedH + colH * 0.55 + crystalR * 0.75;
+      crystalGeo = isNexus ? new THREE.OctahedronGeometry(crystalR)
+                           : new THREE.IcosahedronGeometry(crystalR, 0);
       crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
     } else {
-      // 塔身全部【中性石色】融入地形；队伍色只落在顶部小水晶（=武器，子弹由此射出，用户 Q2）
-      const baseH = R * 0.40, shaftH = R * 1.45, crownH = R * 0.32;
-      parts.push({ geo: new THREE.CylinderGeometry(R * 0.88, R * 1.0, baseH, 10),
-                   matrix: T(0, baseH / 2, 0), color: shade(STONE, 0.5) });
-      parts.push({ geo: new THREE.CylinderGeometry(R * 0.58, R * 0.68, shaftH, 10),
-                   matrix: T(0, baseH + shaftH / 2, 0), color: shade(STONE, 0.82) });
-      const crownY = baseH + shaftH;
-      parts.push({ geo: new THREE.CylinderGeometry(R * 0.78, R * 0.72, crownH, 10),
-                   matrix: T(0, crownY + crownH / 2, 0), color: shade(STONE, 0.68) });
-      // 雉堞：冠顶一圈小方块，是"塔楼"读感的关键
-      const mN = 8, mS = R * 0.20, mY = crownY + crownH + mS / 2;
-      for (let i = 0; i < mN; i++) {
-        const a = (i / mN) * Math.PI * 2, rr = R * 0.66;
-        parts.push({ geo: new THREE.BoxGeometry(mS, mS * 1.3, mS),
-                     matrix: T(Math.cos(a) * rr, mY + mS * 0.15, Math.sin(a) * rr),
-                     color: shade(STONE, 0.6) });
+      // ---- 防御塔：层数/扶壁/悬浮晶随 tier 递增 ----
+      const SP = TIER_SPEC[tier] || TIER_FALLBACK;
+      const baseH = R * 0.42;
+      add(new THREE.CylinderGeometry(R * 0.92, R * 1.06, baseH, F.crownSides + 4), T(0, baseH / 2, 0), shade(F.stone, 0.48));
+      // 台阶式基座（档次越高台阶越多，从下往上收）
+      let y = baseH;
+      for (let i = 1; i < SP.tiers; i++) {
+        const h = R * 0.22, rr = 0.92 - i * 0.10;
+        add(new THREE.CylinderGeometry(R * (rr - 0.04), R * rr, h, F.crownSides + 4), T(0, y + h / 2, 0), shade(F.stone, 0.56));
+        y += h;
       }
-      // 顶部队伍色小水晶（八面体）＝武器；单独成件（会转/发光/攻击辉光，见 UnitLayer），炮口=其中心。
-      crystalR = R * 0.40; crystalCy = mY + mS + crystalR * 0.65;
+      // 塔身：分成 tiers 段，每段更细 —— 收分是"高塔"读感的来源
+      const segH = R * SP.shaft / SP.tiers;
+      for (let i = 0; i < SP.tiers; i++) {
+        const rb = R * (0.62 - i * 0.07), rt = R * (0.62 - (i + 1) * 0.07);
+        add(new THREE.CylinderGeometry(rt, rb, segH, F.crownSides + 4), T(0, y + segH / 2, 0), shade(F.stone, 0.80 + i * 0.04));
+        // 段与段之间一道箍
+        if (i < SP.tiers - 1) {
+          add(new THREE.CylinderGeometry(R * (rb / R + 0.05), R * (rb / R + 0.05), R * 0.07, F.crownSides + 4),
+              T(0, y + segH, 0), shade(F.stone, 0.62));
+        }
+        y += segH;
+      }
+      // 扶壁：贴着塔身的斜撑，档次越高越多
+      for (let i = 0; i < SP.buttress; i++) {
+        const a = (i / Math.max(1, SP.buttress)) * Math.PI * 2 + Math.PI / 4;
+        const bh = R * SP.shaft * 0.55;
+        add(new THREE.BoxGeometry(R * 0.16, bh, R * 0.30),
+            compose(T(Math.cos(a) * R * 0.66, baseH + bh / 2, Math.sin(a) * R * 0.66), R_Z(Math.cos(a) * 0.12), R_X(-Math.sin(a) * 0.12)),
+            shade(F.stone, 0.66));
+      }
+      // 冠：蓝方尖顶收束、红方偏斜且带骨刺
+      const crownH = R * SP.crown;
+      add(new THREE.CylinderGeometry(R * 0.80, R * 0.70, crownH, F.crownSides),
+          compose(T(0, y + crownH / 2, 0), R_Z(F.lean)), shade(F.stone, 0.70));
+      y += crownH;
+      // 雉堞：一圈小方块，是"塔楼"读感的关键。档次越高越密。
+      const mN = 6 + SP.tiers * 2, mS = R * 0.19, rr = R * 0.68;
+      for (let i = 0; i < mN; i++) {
+        const a = (i / mN) * Math.PI * 2;
+        add(new THREE.BoxGeometry(mS, mS * (F.pointy ? 1.5 : 1.2), mS),
+            T(Math.cos(a) * rr, y + mS * 0.65, Math.sin(a) * rr), shade(F.stone, 0.60));
+      }
+      // 红方专属：冠上一圈骨刺（蓝方 spikes=0，这个循环不跑）
+      for (let i = 0; i < F.spikes; i++) {
+        const a = (i / Math.max(1, F.spikes)) * Math.PI * 2 + 0.3;
+        add(new THREE.ConeGeometry(R * 0.07, R * 0.34, 4),
+            compose(T(Math.cos(a) * R * 0.52, y + R * 0.30, Math.sin(a) * R * 0.52), R_Z(Math.cos(a) * 0.5), R_X(-Math.sin(a) * 0.5)),
+            shade(F.trim, 0.8));
+      }
+      y += mS * 1.3;
+      // 蓝方专属：尖顶（红方 pointy=false，改成一个偏斜的短柱）
+      if (F.pointy) {
+        add(new THREE.ConeGeometry(R * 0.42, R * 0.55, F.crownSides), T(0, y + R * 0.27, 0), shade(F.trim, 0.75));
+        y += R * 0.55;
+      } else {
+        add(new THREE.CylinderGeometry(R * 0.30, R * 0.44, R * 0.30, F.crownSides),
+            compose(T(0, y + R * 0.15, 0), R_Z(F.lean * 2)), shade(F.trim, 0.7));
+        y += R * 0.30;
+      }
+      // 悬浮晶（档次越高越多）：绕塔顶排开，纯装饰，读作"这座塔有分量"
+      for (let i = 0; i < SP.orbs; i++) {
+        const a = (i / Math.max(1, SP.orbs)) * Math.PI * 2;
+        add(new THREE.OctahedronGeometry(R * 0.17),
+            compose(T(Math.cos(a) * R * 0.62, y * 0.86, Math.sin(a) * R * 0.62), R_Z(0.6)), shade(color, 1.15));
+      }
+      // 底座光环（仅枢纽塔）
+      if (SP.halo) {
+        add(new THREE.TorusGeometry(R * 1.15, R * 0.05, 5, 16),
+            compose(T(0, baseH * 0.55, 0), R_X(Math.PI / 2)), shade(color, 1.1));
+      }
+      // 顶部队伍色小水晶＝武器；单独成件（会转/发光/攻击辉光，见 UnitLayer），炮口=其中心。
+      crystalR = R * (0.34 + SP.tiers * 0.035);
+      crystalCy = y + crystalR * 0.75;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
     }
     hit = pack(parts);
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
-    // topY/muzzleY 含水晶（血条浮顶、子弹出膛＝水晶中心）；废墟无水晶时退回石身顶。
     if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
@@ -173,6 +331,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin) {
 // 有"头尾"的单位（炮车/投石机/机甲/步兵）才转；图腾这类对称体不转，转了也看不出来。
 const R_X = (a) => new THREE.Matrix4().makeRotationX(a);
 const R_Z = (a) => new THREE.Matrix4().makeRotationZ(a);
+const R_Y = (a) => new THREE.Matrix4().makeRotationY(a);   // v44：图腾/术士的环绕件要绕 Y
 // 部件变换：T×R（先在原地绕自身旋转，再平移到目标位）。
 // 修正：之前用 premultiply 得到的是 R×T（先平移、再绕【原点】旋转）→ 部件被甩到地下，
 // pack() 再把整体抬起补偿 → 模型悬空、盾/弓/炮管错位。改 multiply 后部件落回本位、贴地。
@@ -285,10 +444,107 @@ const MINION_BUILDERS = {
                  matrix: T(-S * 0.18, headY + S * 0.48, 0), color: shade(color, 0.6) }); // 天线
     return parts;
   },
+
+  // ==================== v44 补齐：这三种此前**没有任何专属造型** ====================
+  // 用户："目前现有的小兵模型也是一团糟，甚至有些兵用的是通用的模板。每个兵应该有自己的模型。"
+  // 说的就是它们：MINION_BUILDERS 里原本只有 melee/ranged/siege/ram/super 五项，
+  // 图腾兵/术士兵/蚀骨兵三种落到 `infantryParts(...)` 这个**通用步兵模板** ——
+  // 场上三种功能完全不同的兵长着同一副身板，只有颜色能区分。
+  // （GLB 那条路更少：只有四种有模型，而且默认还是关的。）
+
+  // 图腾兵：无腿，一根悬浮的图腾柱 + 环绕小石 + 顶端符文眼。
+  // 它是**辅助单位**，造型上刻意不像"人" —— 一眼能从兵线里挑出来。
+  totem(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.62), lite = shade(color, 1.25);
+    const H = S * 1.5;
+    for (let i = 0; i < 3; i++) {
+      const w = S * (0.62 - i * 0.09), h = H / 3;
+      parts.push({ geo: new THREE.BoxGeometry(w, h, w),
+                   matrix: compose(T(0, S * 0.34 + h * (i + 0.5), 0), R_Y(i * 0.4)), color });
+      parts.push({ geo: new THREE.BoxGeometry(w * 1.22, S * 0.07, w * 1.22),
+                   matrix: T(0, S * 0.34 + h * (i + 1), 0), color: dark });
+    }
+    const topY = S * 0.34 + H;
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.50, S * 0.22, S * 0.10),
+                 matrix: T(0, topY + S * 0.16, 0), color: dark });
+    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.17),
+                 matrix: T(0, topY + S * 0.16, 0), color: lite });
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      parts.push({ geo: new THREE.TetrahedronGeometry(S * 0.20),
+                   matrix: compose(T(Math.cos(a) * S * 0.78, S * 0.95, Math.sin(a) * S * 0.78), R_Y(a), R_Z(0.5)),
+                   color: shade(color, 0.85) });
+    }
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.55, S * 0.72, S * 0.34, 6),
+                 matrix: T(0, S * 0.17, 0), color: dark });
+    return parts;
+  },
+
+  // 术士兵：兜帽长袍 + 法杖 + 悬浮符文环。没有明显的头肩，剪影是个"锥"。
+  warlock(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.58), lite = shade(color, 1.3);
+    const robeH = S * 1.35;
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.34, S * 0.74, robeH, 8),
+                 matrix: T(0, robeH / 2, 0), color });
+    parts.push({ geo: new THREE.ConeGeometry(S * 0.42, S * 0.62, 8),
+                 matrix: T(0, robeH + S * 0.24, 0), color: dark });
+    parts.push({ geo: new THREE.SphereGeometry(S * 0.20, 8, 6),
+                 matrix: T(0, robeH + S * 0.10, S * 0.16), color: '#1c1f26' });
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.05, S * 0.06, S * 1.75, 5),
+                 matrix: compose(T(S * 0.56, robeH * 0.72, 0), R_Z(-0.16)), color: '#8a6b4a' });
+    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.22),
+                 matrix: T(S * 0.70, robeH * 0.72 + S * 0.92, 0), color: lite });
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      parts.push({ geo: new THREE.BoxGeometry(S * 0.16, S * 0.05, S * 0.16),
+                   matrix: compose(T(S * 0.70 + Math.cos(a) * S * 0.34, robeH * 0.72 + S * 0.92, Math.sin(a) * S * 0.34), R_Y(a)),
+                   color: lite });
+    }
+    return parts;
+  },
+
+  // 蚀骨兵：佝偻的骨架 + 外露肋骨 + 镰爪。它是**减益单位**，造型走"病态"。
+  corrupt(color, S) {
+    const parts = [];
+    const bone = '#d9d3c4', dark = shade(color, 0.5);
+    const bodyH = S * 1.05;
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.30, S * 0.40, bodyH, 6),
+                 matrix: compose(T(0, bodyH * 0.55, S * 0.06), R_X(0.22)), color });
+    for (let i = 0; i < 4; i++) {
+      const yy = bodyH * (0.32 + i * 0.17);
+      parts.push({ geo: new THREE.BoxGeometry(S * 0.72 - i * S * 0.06, S * 0.055, S * 0.11),
+                   matrix: compose(T(0, yy, S * 0.14), R_Z(0.05 * (i % 2 ? 1 : -1))), color: bone });
+    }
+    const headY = bodyH + S * 0.30;
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.34, S * 0.34, S * 0.42),
+                 matrix: compose(T(0, headY, S * 0.16), R_X(0.35)), color: bone });
+    for (const sx of [-1, 1]) {
+      parts.push({ geo: new THREE.BoxGeometry(S * 0.07, S * 0.07, S * 0.05),
+                   matrix: T(sx * S * 0.09, headY + S * 0.03, S * 0.36), color: '#2a1a1a' });
+    }
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.09, S * 0.62, S * 0.05),
+                 matrix: compose(T(S * 0.52, bodyH * 0.72, 0), R_Z(-0.30)), color: bone });
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.08, S * 0.44, S * 0.05),
+                 matrix: compose(T(S * 0.74, bodyH * 1.06, 0), R_Z(-1.05)), color: bone });
+    for (let i = 0; i < 3; i++) {
+      parts.push({ geo: new THREE.BoxGeometry(S * 0.05, S * 0.26, S * 0.05),
+                   matrix: compose(T(-S * 0.46 - i * S * 0.06, bodyH * 0.46, (i - 1) * S * 0.09), R_Z(0.35 + i * 0.12)),
+                   color: bone });
+    }
+    for (const sx of [-1, 1]) {
+      parts.push({ geo: new THREE.CylinderGeometry(S * 0.075, S * 0.10, S * 0.42, 5),
+                   matrix: compose(T(sx * S * 0.20, S * 0.21, 0), R_Z(sx * 0.16)), color: dark });
+    }
+    return parts;
+  },
 };
 
 // 需要朝向的兵种（有明确头尾）。图腾/护盾/术士/蚀骨等对称造型不转。
-const FACING_TYPES = new Set(['melee', 'ranged', 'siege', 'ram', 'super']);
+// v44：术士与蚀骨也进来 —— 它们的新造型有明确的正面（法杖/镰爪在固定一侧），
+// 不转的话走反方向时会看到「背对着挥镰刀」。图腾是轴对称的，仍然不转。
+const FACING_TYPES = new Set(['melee', 'ranged', 'siege', 'ram', 'super', 'warlock', 'corrupt']);
 export function needsFacing(type) { return FACING_TYPES.has(type); }
 
 /**
@@ -296,10 +552,14 @@ export function needsFacing(type) { return FACING_TYPES.has(type); }
  * size 沿用 MINION_STYLE 的世界尺寸，视觉高度约 size×2.1——比贴图纸片人略高，
  * 因为立起来之后底面积变小，不加高会显得矮胖。
  */
-export function minionMesh(key, color, size, type) {
+export function minionMesh(key, color, size, type, faction) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const build = MINION_BUILDERS[type];
+    // v44：八个内置兵种现在**每一个都有自己的 builder**（图腾/术士/蚀骨是这一版补的）。
+    // 回退到通用步兵模板的只剩「玩家自制兵种」——那是合理的：自制兵种没有造型可言，
+    // 它靠颜色与图标区分。内置兵种再落到这条回退上就是漏做了，sim_v44 里有断言盯着。
+    void faction;   // 阵营差异目前只体现在颜色（由调用方传入 color），造型两边一致
     hit = pack(build ? build(color, size) : infantryParts(color, size, false).parts);
     _geoCache.set(key, hit);
   }

@@ -1,12 +1,12 @@
 /**
  * towerModels.js —— 建筑可用的模型角色清单（**唯一来源**）。
  *
- * 为什么单独放在 data/ 而不是 presentation/ModelLibrary.js：
- * ModelLibrary 里 import 了 three 与 GLTFLoader，是纯浏览器模块；
+ * 为什么放在 data/ 而不是 presentation/：
+ * 渲染层的模块 import 了 three，是纯浏览器模块；
  * 建塔面板（UI）与 headless 回归都要读这张表，从那边导入会把 three 拖进
  * 不需要它的调用链。清单本身只是数据，没有任何渲染依赖。
  *
- * 加了新的建筑 GLB 时**只改这里**：ModelLibrary 用它做角色校验、
+ * 新增建筑外观角色时**只改这里**：渲染层用它把 role 映射成 kind/tier、
  * 建塔面板用它生成选项。抄第二份的话，新模型在界面上看不见 = 等于没做。
  *
  * tier：勾选"同时套用该档位数值"时把塔的 _mapTier 设成它。
