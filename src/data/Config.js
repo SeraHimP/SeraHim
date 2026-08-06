@@ -722,7 +722,10 @@ export const CONFIG = {
     // arcDeg 是**半角**：目标必须落在 ±arcDeg 内才能开火。
     // 用户选的是"严苛"档：±35° / 220°每秒 → 掉头（180°）约 0.82 秒。
     // 每个模板可用同名字段 attackArcDeg / turnRateDeg 单独覆写（见 FacingSystem.facingParams）。
-    facing: { enabled: true, arcDeg: 35, turnRateDeg: 220 },
+    // velEmaAlpha / moveEpsPx：判断"这个兵在不在走"用的是位移的**指数滑动平均**，
+    // 不是单帧位移 —— 碰撞每帧会把兵推 0~2px 且方向近乎随机，按单帧判会让站桩的兵
+    // 朝随机方向乱转。EMA 让随机抖动互相抵消趋近 0，真实行军则稳定累积。
+    facing: { enabled: true, arcDeg: 35, turnRateDeg: 220, velEmaAlpha: 0.25, moveEpsPx: 0.6 },
 
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
     chaseDropFactor: 1.2,         // 追击放弃距离 = 仇恨半径 × 此系数

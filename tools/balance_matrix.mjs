@@ -53,6 +53,7 @@ const { MapSystem } = await import('../src/systems/MapSystem.js');
 const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
 const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
 const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
+const { FacingSystem } = await import('../src/systems/FacingSystem.js');
 const { DragonSystem, dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
 const { BuffSystem } = await import('../src/systems/BuffSystem.js');
@@ -102,6 +103,12 @@ function runOne(seed) {
   mapSys.setEffectRegistry(fx);
   const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, mapSys);
   const coll = new CollisionSystem(ents, mapSys);
+  // ⚠️ 朝向系统**必须**跑。它不跑的话 entity._facing 恒为 undefined，
+  // canFire 走"还没跑过一帧就不卡第一下"的兜底、一律返回 true ——
+  // 于是"必须转过来才能打"这条规则在**平衡测量里整个不存在**，测出来的数不是游戏里的数。
+  // 这正是 FacingSystem 头注里写的那件事：把规则留在渲染层的话，无头模式里规则会消失。
+  // 我把规则下沉到了模拟层，却忘了把系统接进这个工具 —— 绕一圈又踩回同一个坑。
+  const facing = new FacingSystem(ents);
   const waves = new LaneWaveSystem(ents, bus, mapSys);
   const world = new WorldState({ entities: ents, bus });
   // 熵档位：钉死在某个值扫曲线（此时三核不推进）。传 null 则由三核按对局事件自然演化。
@@ -198,6 +205,7 @@ function runOne(seed) {
     waves.update(SIM_DT);
     move.update(SIM_DT);
     coll.update(SIM_DT);
+    facing.update(SIM_DT);   // 顺序与 main.js 的 stepSimulation 一致：移动/碰撞之后
     combat.update(SIM_DT);
     proj.update(SIM_DT);
     buffs.update(SIM_DT);

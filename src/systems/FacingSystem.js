@@ -81,32 +81,53 @@ export class FacingSystem {
   /**
    * 每帧把所有非塔单位的 _facing 朝"期望方向"转 turnRate×dt。
    *
-   * 期望方向的优先级：
-   *   ① 有存活目标 → 朝目标（这才产生"必须转过来才能打"）
-   *   ② 否则朝这一帧的实际位移方向（走向即朝向）
-   *   ③ 都没有 → 保持不动（站着不该原地乱转）
-   * 位移阈值用平方比较，且刻意留了一个死区：模拟 30Hz、渲染 60Hz，
-   * 半数帧位移为 0，没有死区的话朝向会在"有位移/无位移"之间抖。
+   * ==================== 优先级：在走就朝着走的方向（v45b 修正）====================
+   * 第一版把**朝目标**排在第一位、朝移动方向排第二。用户实测："兵现在会出现
+   * 原地漂移/转圈的问题"，并指出就是加了转向之后才有的。
+   *
+   * 用无头探针量出来的结果很干脆：318 个兵里 **301 个**在某一刻"面朝方向与实际移动
+   * 方向夹角 > 60°"，最大 180° —— 也就是**倒着走**。原因就是那个优先级：
+   * 一个已经锁定目标、但还在移动的兵（追击、落位、被挤开、绕障）会一边朝着目标、
+   * 一边往别处走，看起来就是横着滑/倒着滑。混战团里几十个兵一起这么滑，
+   * 就是用户说的"原地漂移/转圈"。
+   *
+   * 现在反过来：**只要在移动就朝着移动方向**，只有站定时才朝目标。
+   * 这既符合直觉（人走路时脸朝前，停下来才转向对手），也保住了"必须转过来才能打"——
+   * 兵停下来打人的那一刻才开始转，转到位才开火。
+   *
+   * ⚠️ "在不在移动"**不能**用单帧位移判断：碰撞每帧会把兵推 0~2px，方向近乎随机，
+   * 按单帧判会让站桩的兵朝着随机方向乱转（换一种打转而已）。
+   * 所以用位移的**指数滑动平均**：随机抖动会互相抵消趋近 0，真实行军则稳定累积。
    */
   update(dt) {
     if (CONFIG.tuning?.facing?.enabled === false) return;
+    const g = CONFIG.tuning?.facing || {};
+    const alpha = g.velEmaAlpha ?? 0.25;      // EMA 系数：越小越平滑、响应越慢
+    const eps = g.moveEpsPx ?? 0.6;           // 平滑后每帧位移超过这么多 px 才算"在走"
+    const eps2 = eps * eps;
     for (const e of this.entities.getAll(true)) {
       if (facingExempt(e) || !e.pos) continue;
       const p = facingParams(e);
 
-      let want;
-      const tgt = e.targetId ? this.entities.get(e.targetId) : null;
-      if (tgt && tgt.alive && tgt.pos) {
-        want = angleTo(e.pos, tgt.pos);
-      } else if (e._faceLastX !== undefined) {
+      // ---- 平滑速度（像素/帧）----
+      if (e._faceLastX !== undefined) {
         const dx = e.pos.x - e._faceLastX, dz = e.pos.y - e._faceLastZ;
-        if (dx * dx + dz * dz > 0.25) want = Math.atan2(dx, dz);
+        e._faceVX = (e._faceVX || 0) * (1 - alpha) + dx * alpha;
+        e._faceVZ = (e._faceVZ || 0) * (1 - alpha) + dz * alpha;
       }
       e._faceLastX = e.pos.x; e._faceLastZ = e.pos.y;
-      // 记住最后一次算出来的期望方向，位移为 0 的帧继续朝它转。
-      // 不记的话会**转到一半冻住**：模拟 30Hz、渲染 60Hz，本来就有半数帧位移为 0；
-      // 而一个刚起步又立刻停下的单位（被挡、被锚定）会永远歪着。
-      // 是 sim_v46「朝⑧」抓到的 —— 那条用例只推了一次位置，于是只转了一帧。
+
+      let want;
+      const vx = e._faceVX || 0, vz = e._faceVZ || 0;
+      if (vx * vx + vz * vz > eps2) {
+        want = Math.atan2(vx, vz);                       // ① 在走 → 朝着走的方向
+      } else {
+        const tgt = e.targetId ? this.entities.get(e.targetId) : null;
+        if (tgt && tgt.alive && tgt.pos) want = angleTo(e.pos, tgt.pos);  // ② 站定 → 朝目标
+      }
+      // ③ 都没有 → 保持最后一次的期望方向继续转完。
+      // 不记的话会**转到一半冻住**：一个刚起步又立刻停下的单位（被挡、被锚定）会永远歪着。
+      // 是 sim_v46「朝⑧」抓到的。
       if (want !== undefined) e._faceWant = want;
       else want = e._faceWant;
 

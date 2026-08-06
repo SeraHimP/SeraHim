@@ -75,31 +75,75 @@ const mkE = (ents, type, x, y, extra = {}) => {
   T('朝⑧-没有目标时朝【移动方向】转（走向即朝向）',
     Math.abs(wrapPi(w._facing - Math.PI / 2)) < 0.2);
 
-  // 有目标时朝目标，而不是朝移动方向 —— 否则"绕后"就没有意义了
-  const k = mkE(ents, 'melee', 0, 0);
-  const kt = mkE(ents, 'melee', -100, 0);
-  k._facing = 0; k.targetId = kt.id;
-  for (let i = 0; i < 80; i++) { k.pos.x += 1; fs.update(0.02); }   // 一边朝 +X 走一边打 -X 的敌人
-  T('朝⑨-有目标时朝【目标】转（否则绕后毫无意义）',
-    Math.abs(wrapPi(k._facing - angleTo(k.pos, kt.pos))) < 0.2);
+  // ==================== 优先级：在走就朝着走的方向（v45b 推翻了第一版）====================
+  // 第一版这条断言写的是"有目标时朝目标，否则绕后就没意义了" —— 听起来有道理，
+  // **实际是错的**，而且直接造成了用户报的"兵原地漂移/转圈"：
+  // 一个已锁定目标但还在移动的兵（追击、落位、被挤开、绕障）会一边朝目标一边往别处走，
+  // 看起来就是横着滑/倒着滑。无头探针量出来：318 个兵里 **71 个**持续错向 > 0.9 秒。
+  // 改成"在走就朝着走的方向、站定才朝目标"之后降到 15 个（剩下的是站桩被碰撞推着走，
+  // 那种情况面朝目标本来就是对的）。
+  //
+  // "绕后有意义"这件事**并没有丢**：兵停下来打人的那一刻就会转向目标，转到位才开火，
+  // 被从背后贴脸时照样要先转过来。丢的只是"一边跑一边把脸拧向目标"那个不自然的姿态。
+  {
+    const k = mkE(ents, 'melee', 0, 0);
+    const kt = mkE(ents, 'melee', -100, 0);
+    k._facing = 0; k.targetId = kt.id;
+    for (let i = 0; i < 80; i++) { k.pos.x += 1; fs.update(0.02); }   // 一边朝 +X 走一边"打" -X 的敌人
+    T('朝⑨-在移动时朝【移动方向】，不朝目标（否则就是横着走 = 用户报的漂移）',
+      Math.abs(wrapPi(k._facing - Math.PI / 2)) < 0.25);
+
+    // 站定之后才转向目标 —— "必须转过来才能打"这条规则靠的是这一段
+    for (let i = 0; i < 200; i++) fs.update(0.02);                    // 不再推位置
+    T('朝⑩-站定后转向目标（转到位才开得了火）',
+      Math.abs(wrapPi(k._facing - angleTo(k.pos, kt.pos))) < 0.2);
+
+    // 碰撞抖动不该让站桩的兵乱转：每帧随机推 ±1px，平滑后应仍朝着目标
+    const j = mkE(ents, 'melee', 0, 0);
+    const jt = mkE(ents, 'melee', 0, 200, {});
+    j.targetId = jt.id; j._facing = 0;
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
+    for (let i = 0; i < 300; i++) { j.pos.x += rnd() * 2; j.pos.y += rnd() * 2; fs.update(0.02); }
+    T('朝⑪-碰撞抖动不会让站桩单位乱转（判"在不在走"用的是平滑速度，不是单帧位移）',
+      Math.abs(wrapPi(j._facing - angleTo(j.pos, jt.pos))) < 0.35);
+  }
 
   // 总开关
   const sav = CONFIG.tuning.facing.enabled;
   CONFIG.tuning.facing.enabled = false;
-  T('朝⑩-总开关关掉后不再限制（软编码，可退回旧行为）', canFire(m2, outFoe) === true);
+  T('朝⑫-总开关关掉后不再限制（软编码，可退回旧行为）', canFire(m2, outFoe) === true);
   CONFIG.tuning.facing.enabled = sav;
 
   // 两条攻击路径共用同一份实现 —— 攻城模式那次的教训
   const cs = srcOf('src/systems/CombatSystem.js');
   const lms = srcOf('src/systems/LaneMovementSystem.js');
-  T('朝⑪-两条攻击路径都调 canFire（规则只有一份实现）',
+  T('朝⑬-两条攻击路径都调 canFire（规则只有一份实现）',
     /canFire\(minion, nearestTower\)/.test(cs) && /canFire\(minion, target\)/.test(lms));
-  T('朝⑫-两条路径都不自己算角差（自己算就是第二份实现）',
+  T('朝⑭-两条路径都不自己算角差（自己算就是第二份实现）',
     !/Math\.atan2[^\n]*_facing/.test(cs) && !/Math\.atan2[^\n]*_facing/.test(lms));
+
+  // ==================== 平衡工具必须跑同一套系统 ====================
+  // 我之前跟用户说"朝向改成严苛档，v44 那轮 sweep 数据作废" —— **那句话是错的**：
+  // balance_matrix 压根没接 FacingSystem，_facing 恒为 undefined，
+  // canFire 走"没跑过一帧就不卡第一下"的兜底一律返回 true，
+  // 于是这条规则在平衡测量里**整个不存在**。数据没被作废，是工具没在量它。
+  //
+  // 这正是 FacingSystem 头注里写的那件事（规则留在渲染层 = 无头模式里规则消失），
+  // 我把规则下沉到模拟层却忘了接工具，绕一圈踩回同一个坑。已接上并钉住。
+  {
+    const bm = srcOf('tools/balance_matrix.mjs');
+    T('工①-平衡工具接了 FacingSystem（否则测的不是游戏里的规则）',
+      /new FacingSystem\(/.test(bm) && /facing\.update\(SIM_DT\)/.test(bm));
+    T('工②-更新顺序与 main.js 的 stepSimulation 一致（移动/碰撞之后）', (() => {
+      const i = ['coll.update', 'facing.update', 'combat.update'].map(n => bm.indexOf(n));
+      return i.every(x => x >= 0) && i[0] < i[1] && i[1] < i[2];
+    })());
+  }
 
   // 渲染层必须**读**模拟层的朝向，不能自己再算一份
   const ul = srcOf('src/presentation/UnitLayer.js');
-  T('朝⑬-渲染层读 e._facing，不再自己拿位置增量算朝向',
+  T('朝⑮-渲染层读 e._facing，不再自己拿位置增量算朝向',
     /en\.faceT = e\._facing/.test(ul) && !/en\.faceT = Math\.atan2/.test(ul));
 }
 
