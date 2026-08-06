@@ -147,17 +147,11 @@ export class LaneMovementSystem {
       // ===== v39（Q4）攻城车：锁定建筑后不再改目标 =====
       // 用户定稿："以某座防御塔为目标后就不会再改变目标，直至防御塔摧毁或攻城车死亡"，
       // 且"对所有建筑单位生效"。锁定只认【当前可选中】的建筑（受结构保护的不锁）。
-      if (getSiegeWeaponDef(minion, this.combat.skills)) {
-        const locked = minion._ramLockId ? this.entities.get(minion._ramLockId) : null;
-        if (locked && locked.alive) {
-          target = locked;               // 锁定期间无视一切其他目标
-          minion.targetId = locked.id;
-        } else {
-          minion._ramLockId = null;
-          if (target && target.type === 'tower' && !isStructureProtected(this.entities, target)) {
-            minion._ramLockId = target.id;   // 首次锁定
-          }
-        }
+      // v43 Q2：锁定维护搬进 CombatSystem.siegeAcquire —— 攻城武器只有一份实现，
+      // 沙盒路径（CombatSystem 的小兵循环）调的是同一个方法。理由见那边的头注释。
+      {
+        const locked = this.combat.siegeAcquire(minion, target);
+        if (locked !== target) { target = locked; minion.targetId = locked ? locked.id : null; }
       }
 
       const targetInRange = target && ((target.pos.x - minion.pos.x) ** 2 + (target.pos.y - minion.pos.y) ** 2) <= range * range;
@@ -201,20 +195,11 @@ export class LaneMovementSystem {
           minion._offPath = true; // 交战过（可能被位移/追击带离路径），脱战后需重投影
           if (minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))) {
             this.combat.performAttack(minion, target);
-            let finalAS = this.attrCalc.calcAttackSpeedOf(stats);   // v43 Q7：走属性表，不读原始模板值
-            // ===== v40 攻城武器被动：攻击建筑时 攻速-50% + 自损20%最大生命 =====
-            // 装备了被动才生效，倍率/百分比全部取自技能定义（拆掉被动即失效）。
-            const swDef = getSiegeWeaponDef(minion, this.combat.skills);
-            if (swDef && target.type === 'tower') {
-              finalAS *= swDef.TOWER_ATKSPD_MULT;
-              const selfDmg = (this.attrCalc.calc(minion, this.effects.getEffects(minion.id)).maxHP
-                || minion.baseStats.maxHP || 1) * swDef.SELF_DAMAGE_PCT;
-              minion.currentHP -= selfDmg;
-              if (minion.currentHP <= 0 && minion.alive) {
-                minion.currentHP = 0; minion.alive = false;
-                this.combat.eventBus?.emit?.('entity:death', { entityId: minion.id });
-              }
-            }
+            // v43 Q7：走属性表，不读原始模板值。
+            // v43 Q2：攻城副作用（攻速 -50% + 自损）搬进 CombatSystem.finishAttack，
+            // 与沙盒路径共用一份实现；没装攻城武器时它原样返回，这里不必再判断。
+            const finalAS = this.combat.finishAttack(
+              minion, target, this.attrCalc.calcAttackSpeedOf(stats));
             minion.attackCooldown = 1 / (finalAS || 0.5);
             minion._cdAS = finalAS;
           }

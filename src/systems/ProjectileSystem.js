@@ -115,11 +115,18 @@ export class ProjectileSystem {
     const target = this.entities.get(p.targetId);
     if (target && target.alive) {
       this.combat._resolveHit(p.pendingHit);            // 正常命中：直伤 + 溅射
+      return;
     }
-    // 目标已死：子弹已经飞到落点了，这里【什么都不做】——不结算直伤，也不炸。
-    // 上一版还会在落点走一次 _resolveHitSplashOnly（爆炸型/攻城车仍然溅射），
-    // 用户明确否掉了："这个子弹不造成任何伤害（包括爆炸型）"。
-    // 于是"目标死了还被残弹的溅射补刀"这种事不会再发生。
+    // ==================== v43 Q2b：目标已死 → 直伤不结算，溅射照常 ====================
+    // 用户："只要子弹存在就应该有伤害！其他单位也是一样！"
+    //      "落点结算一次完整命中，如果目标已经死亡那么这个子弹照常走完流程但是不造成伤害，
+    //        溅射给其他单位正常结算。"
+    //
+    // 这**推翻了上一版的定稿**。上一版的原话是"这个子弹不造成任何伤害（包括爆炸型）"，
+    // 当时为此把 CombatSystem 里的 splash-only 路径整个删掉了。现在按新定稿恢复。
+    // 为什么会推翻：攻城车的伤害有很大一部分在溅射上，主目标一死整发炮弹归零，
+    // 表现出来就是"打出去的炮没了"。
+    this.combat.resolveSplashOnlyAt?.(p.pendingHit, p.lastTx, p.lastTy);
   }
 
   getProjectiles() { return this.projectiles; }

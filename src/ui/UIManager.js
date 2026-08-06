@@ -521,9 +521,20 @@ export class UIManager {
       ? `🏰 #${e.id} 防御塔`
       : `${e.baseStats?.label || e.type} #${e.id}`;
     if (this.selBadge) {
+      // v43：徽标补上【中立】这一档。
+      // 用户："我新建了中立防御塔……属性框里显示的是红方塔。"
+      // 原写法是个**没有第三档的三元**：`fac === 'blue' ? 蓝方 : 红方` ——
+      // 于是凡是"有阵营但不是蓝"的一律显示红方，中立单位被贴上了敌方的标签。
+      // 阵营是三值的（blue/red/neutral），任何按它分叉的地方都必须有三个分支。
       const fac = e._mapFaction;
-      this.selBadge.innerHTML = fac
-        ? `<span class="type-tag" style="background:${fac === 'blue' ? 'rgba(74,158,255,0.18);color:#4a9eff' : 'rgba(255,90,90,0.18);color:#ff5a5a'};">${fac === 'blue' ? '🔵 蓝方' : '🔴 红方'}${e.type === 'tower' && e._mapTier ? ' · ' + (tierLabels[e._mapTier] || e._mapTier) : ''}</span>`
+      const FAC_BADGE = {
+        blue:    { text: '🔵 蓝方', bg: 'rgba(74,158,255,0.18)', fg: '#4a9eff' },
+        red:     { text: '🔴 红方', bg: 'rgba(255,90,90,0.18)',  fg: '#ff5a5a' },
+        neutral: { text: '⚪ 中立', bg: 'rgba(76,175,80,0.18)',  fg: '#4caf50' },
+      };
+      const fb = FAC_BADGE[fac];
+      this.selBadge.innerHTML = fb
+        ? `<span class="type-tag" style="background:${fb.bg};color:${fb.fg};">${fb.text}${e.type === 'tower' && e._mapTier ? ' · ' + (tierLabels[e._mapTier] || e._mapTier) : ''}</span>`
         : '';
     }
     if (this.selActions) {

@@ -65,6 +65,11 @@ export const CONFIG = {
     waveRamInterval: 15,       // v40：攻城车每几波生成一次
     ramMinWave: 5,             // v40：攻城车最早生成波次
     milestoneEveryWaves: 10,
+    // ==================== Q1：最大生命变化时当前生命同步跟随 ====================
+    // 用户："+500 最大生命值应该是对应的当前生命值也 +500，否则没意义。"
+    // lethal（用户定稿"对称扣且可致死"）：最大生命下降时当前生命同样扣，扣到 0 即死亡。
+    // 关掉 lethal 则最低留 1 点，增益到期不会直接猝死（更保守，但与「过载」的语义不一致）。
+    maxHPSync: { enabled: true, lethal: true },
     // ==================== 对战模式·每波出兵编排（软编码，模板编辑器可改）====================
     // 数组【顺序即出兵顺序】（越靠后出得越晚、位置越靠后）；每项一条规则：
     //   type   兵种；count 本波该兵种个数
@@ -459,6 +464,11 @@ export const CONFIG = {
     hdr: {
       auto: true,           // 自动探测（支持 + 显示器是 HDR 才开）
       force: null,          // true/false 强制覆盖 auto（调试用）
+      // HDR 传输函数。WebGL 真 HDR 输出靠它 —— 只把缓冲换成 RGBA16F 而不设色彩空间，
+      // 输出仍会被当成 sRGB 压回 SDR（"开了但看不出来"）。
+      // Chrome 141 上赋这个值会抛 TypeError，需要 chrome://flags 开
+      // 「Experimental Web Platform features」。可选 'rec2100-hlg' / 'rec2100-pq'。
+      colorSpace: 'rec2100-hlg',
       headroom: 2.0,        // 高光超出 SDR 白点的倍数。太大在 HDR 屏上会刺眼
       bloomThreshold: 1.0,  // Bloom 阈值。原 0.82 会把所有亮色都糊开（偏"脏"），
                             // 提到 1.0 只抓真正过曝的东西

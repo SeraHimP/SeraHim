@@ -393,13 +393,63 @@ export class ThreeRenderer {
    *
    * 任何一步不支持都静默降级回 SDR，绝不因为"想要 HDR"而把画面搞坏。
    */
-  hdrSupported() {
+  /**
+   * ==================== v43：HDR 检测查错了 API（我的 bug）====================
+   * 用户："设置中的 HDR 开启不了，提示浏览器不支持，但是我用 HDR 测试网站提示支持
+   *        HDR 啊，并且系统设置里我也打开 HDR 了。"
+   *
+   * 原实现第一句就是 `typeof this.canvas.configureHighDynamicRange !== 'function'`。
+   * 那是 Chrome **从未正式发布**的实验 API —— 现代 Chrome 上它是 undefined。
+   * 于是这个函数在任何浏览器上都返回 false，HDR 永远开不了，与显示器无关。
+   * 更糟的是上面那段注释里我自己写着"⚠️ 我无法验证 ②"，那是一个没验证就写死成
+   * "永远不支持"的猜测。猜错了就该按事实改，不是留着注释免责。
+   *
+   * 现在按【真的试一次】来判定：WebGL 的 HDR 输出需要两样，缺一不可 ——
+   *   ① gl.drawingBufferStorage（把绘制缓冲换成 RGBA16F）
+   *   ② gl.drawingBufferColorSpace 能被设成 rec2100-*（HDR 传输函数）
+   * ② 只能试、不能查：Chrome 141 上这个属性**存在**，但赋 'rec2100-hlg' 会抛
+   * TypeError（需要 chrome://flags 的实验性网页平台功能）。只看属性在不在，
+   * 又会得到一个反方向的错误答案。
+   *
+   * configureHighDynamicRange 降级为"存在就顺带调一下"的兼容分支，不再当闸门。
+   *
+   * 还要说清一件事：**HDR 测试网站说"支持"和这里不是一回事。** 那些网站测的是
+   * HDR 视频/图片播放（(dynamic-range: high) + HDR video/AVIF）。系统 HDR 和
+   * 显示器 HDR 保证的是那个；WebGL **画布**输出 HDR 是另一套能力，默认关着。
+   */
+  hdrSupported() { return this.hdrDiagnose().ok; }
+
+  /**
+   * 逐项诊断，供设置面板显示"到底卡在哪一关"。
+   * 返回 { ok, buffer, colorSpace, display, legacyApi, reason }。
+   * 有这个读数，下次再出问题一眼看得见，不用像这次一样靠猜。
+   */
+  hdrDiagnose() {
+    const out = { ok: false, buffer: false, colorSpace: false, display: false,
+                  legacyApi: false, reason: '' };
     try {
-      if (typeof this.canvas.configureHighDynamicRange !== 'function') return false;
-      const ctx = this.gl.getContext();
-      if (!ctx || typeof ctx.drawingBufferStorage !== 'function') return false;
-      return true;
-    } catch (e) { return false; }
+      out.display = this.hdrDisplay();
+      out.legacyApi = typeof this.canvas?.configureHighDynamicRange === 'function';
+      const ctx = this.gl?.getContext?.();
+      if (!ctx) { out.reason = 'no-gl'; return out; }
+      out.buffer = typeof ctx.drawingBufferStorage === 'function';
+      if (!out.buffer) { out.reason = 'no-drawingBufferStorage'; return out; }
+      if (!('drawingBufferColorSpace' in ctx)) { out.reason = 'no-colorSpace'; return out; }
+      // 真的试一次：设进去再读回来，读回来是它才算数（有的实现会静默忽略）。
+      const want = (CONFIG.ui?.hdr?.colorSpace) || 'rec2100-hlg';
+      const prev = ctx.drawingBufferColorSpace;
+      try {
+        ctx.drawingBufferColorSpace = want;
+        out.colorSpace = (ctx.drawingBufferColorSpace === want);
+      } catch (e) {
+        out.colorSpace = false;
+      } finally {
+        try { ctx.drawingBufferColorSpace = prev; } catch (e) { /* 还原失败不致命 */ }
+      }
+      if (!out.colorSpace) { out.reason = 'colorSpace-rejected'; return out; }
+      out.ok = true;
+      return out;
+    } catch (e) { out.reason = 'throw:' + (e?.name || 'Error'); return out; }
   }
 
   /** 显示器本身是不是 HDR（SDR 屏上开 HDR 只会更难看，所以这条是自动模式的闸门）。 */
@@ -418,16 +468,47 @@ export class ThreeRenderer {
     else if (c.force !== null && c.force !== undefined) want = !!c.force;
     else want = (c.auto !== false) && this.hdrDisplay();
 
-    if (want && !this.hdrSupported()) want = false;   // 静默降级
+    // v43：force === true 时**不做能力检查，直接试**。
+    // 用户："HDR 那里设置可以强制开启。"
+    // 理由：能力检测再准也只是"我们以为浏览器能不能做"，而真相只有试一次才知道 ——
+    // 这次的教训正是检测本身查错了 API、把所有人都挡在门外。强制开启是那道保险：
+    // 检测说不行、用户觉得行，就让它真去试。失败会被下面的 try/catch 接住并降级，
+    // 控制台留一条 warn，画面不会坏。
+    const forced = (on === null || on === undefined) ? (c.force === true) : (!!on && c.force === true);
+    if (want && !forced && !this.hdrSupported()) want = false;   // 非强制时静默降级
     this.hdrOn = want;
 
     try {
+      const ctx = this.gl.getContext();
       if (want) {
-        this.canvas.configureHighDynamicRange({ mode: c.mode || 'extended' });
+        // 老的实验 API 存在就顺带调（早期 Chrome 需要它），不存在也不影响现代路径。
+        if (typeof this.canvas.configureHighDynamicRange === 'function') {
+          this.canvas.configureHighDynamicRange({ mode: c.mode || 'extended' });
+        }
         this._applyHDRBuffer();
+        // 现代路径的关键一步：HDR 传输函数。缓冲换成 RGBA16F 只是给了精度，
+        // 不设色彩空间的话输出仍然被当成 sRGB 压回 SDR —— 那就是"开了但看不出来"。
+        //
+        // 强制开启时给一条退路：rec2100-*（真 HDR）被拒 → 退到 display-p3。
+        // display-p3 **不是 HDR**，它只是广色域 + 16F 精度，但它在默认 Chrome 上就能用，
+        // 画面确实会比 sRGB/8bit 好一点。这样"强制开启"至少能落到某个真实的东西上，
+        // 而不是点完什么也没发生。落到哪一档记在 this.hdrMode 上，面板照实说。
+        const want1 = c.colorSpace || 'rec2100-hlg';
+        this.hdrMode = null;
+        for (const cs of [want1, 'display-p3']) {
+          try {
+            ctx.drawingBufferColorSpace = cs;
+            if (ctx.drawingBufferColorSpace === cs) { this.hdrMode = cs; break; }
+          } catch (e) { /* 下一个候选 */ }
+        }
+        if (!this.hdrMode) throw new Error('浏览器拒绝了所有 HDR/广色域色彩空间');
       } else if (this._hdrConfigured) {
-        // 关回 SDR：把画布模式与曝光都还原，否则会留在半亮不亮的状态
-        this.canvas.configureHighDynamicRange({ mode: 'standard' });
+        // 关回 SDR：画布模式、色彩空间、曝光都要还原，否则会留在半亮不亮的状态
+        if (typeof this.canvas.configureHighDynamicRange === 'function') {
+          this.canvas.configureHighDynamicRange({ mode: 'standard' });
+        }
+        try { ctx.drawingBufferColorSpace = 'srgb'; } catch (e) { /* 还原失败不致命 */ }
+        this.hdrMode = null;
       }
       this._hdrConfigured = want;
     } catch (e) {
@@ -435,7 +516,10 @@ export class ThreeRenderer {
       this.hdrOn = false; this._hdrConfigured = false;
     }
     // 曝光：HDR 下把高光顶到 SDR 白点之上；SDR 下恢复 1.0
-    this.gl.toneMappingExposure = this.hdrOn ? (c.headroom ?? 2.0) : 1.0;
+    // 曝光只在**真 HDR**（rec2100-*）下顶高光。退到 display-p3 时顶上去只会过曝 ——
+    // 那一档没有 SDR 白点之上的余量可用。
+    const trueHDR = this.hdrOn && /^rec2100/.test(this.hdrMode || '');
+    this.gl.toneMappingExposure = trueHDR ? (c.headroom ?? 2.0) : 1.0;
     if (this.outputPass) { this.outputPass.material.needsUpdate = true; }
     return this.hdrOn;
   }

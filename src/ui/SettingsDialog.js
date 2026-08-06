@@ -33,6 +33,206 @@ function _ruleRow(kind, label, icon, defaultOn = false) {
 }
 
 export const SettingsDialog = {
+  /**
+   * ==================== v43：HDR 提示从"笼统"改成"说清卡在哪一关" ====================
+   * 用户："设置中的 HDR 开启不了，提示浏览器不支持，但是我用 HDR 测试网站提示支持 HDR。"
+   *
+   * 旧提示只有一句「🚫 浏览器不支持」—— 它既没说是哪一项不支持，也没说怎么办，
+   * 而且当时的检测本身就查错了 API（见 ThreeRenderer.hdrSupported 的头注释），
+   * 于是用户拿着一个"我的浏览器明明支持"的正确认知，对着一句错误的断言，无从下手。
+   *
+   * 现在四种情况分开说，每种都给出下一步动作；再配一块逐项 ✓✗ 的诊断读数。
+   */
+  _hdrLabel() {
+    const r = (typeof window !== 'undefined') && window.__three;
+    if (!r || !r.hdrDiagnose) return '—';
+    const d = r.hdrDiagnose();
+    if (!d.ok && !r.hdrOn) {
+      if (d.reason === 'no-gl' || d.reason === 'no-drawingBufferStorage') return '🚫 浏览器太旧（缺 WebGL2 HDR 缓冲）';
+      // 检测不过也可以点：强制开启会真去试一次，试不成会退到广色域。
+      if (d.reason === 'no-colorSpace' || d.reason === 'colorSpace-rejected') return '🔒 需开 Chrome 实验功能（可点击强制尝试）';
+      return '🚫 不可用（' + d.reason + '）';
+    }
+    if (r.hdrOn) {
+      // 强制开启可能只落到 display-p3（广色域，不是真 HDR）——照实说，不冒充。
+      return /^rec2100/.test(r.hdrMode || '') ? '🌈 已开启（点击关闭）'
+                                              : '🎨 广色域已开（非真 HDR，点击关闭）';
+    }
+    return d.display ? '⭕ 已关闭（点击开启）' : '⭕ 已关闭（未检测到 HDR 屏，可强制开）';
+  },
+
+  _hdrDiagHtml() {
+    const r = (typeof window !== 'undefined') && window.__three;
+    if (!r || !r.hdrDiagnose) return '';
+    const d = r.hdrDiagnose();
+    const m = (ok, s) => `<span style="color:${ok ? '#4caf50' : '#f85149'};">${ok ? '✓' : '✗'} ${s}</span>`;
+    let tip = '';
+    if (d.reason === 'colorSpace-rejected' || d.reason === 'no-colorSpace') {
+      tip = `<br><span style="color:var(--text-mute);">在地址栏打开 <b>chrome://flags/#enable-experimental-web-platform-features</b>
+             设为 Enabled 并重启浏览器。这是浏览器的门槛，不是本项目能绕过的。</span>`;
+    } else if (!d.display && d.ok) {
+      tip = `<br><span style="color:var(--text-mute);">显示器未报告 HDR：自动模式会跳过，点上面的按钮可强制开启。</span>`;
+    }
+    const modeTxt = r.hdrOn
+      ? `　<b style="color:#4caf50;">当前：${r.hdrMode || '?'}</b>`
+      : '';
+    return `${m(d.buffer, 'RGBA16F 绘制缓冲')}　${m(d.colorSpace, 'rec2100 色彩空间')}　${m(d.display, 'HDR 显示器')}${modeTxt}${tip}
+      <br><span style="color:var(--text-mute);">注：HDR 测试网站测的多是 HDR 视频/图片，与 WebGL 画布 HDR 输出是两套能力。</span>`;
+  },
+
+  /**
+   * ==================== v43：巨龙面板重做 ====================
+   * 用户："设置里的巨龙面板重做，目前的啥功能也没有。"
+   *
+   * 说得对。改版前整块只有两样东西：一个暂停按钮 + 一个"首条龙延迟"输入框，
+   * 而且那个输入框写的是 `dragonSystem.nextDragonTime`（**倒计时剩余值**，不是配置），
+   * 面板一重开数字就变了 —— 看起来像个设置项，其实是个会自己乱跳的只读量。
+   *
+   * 现在按"看得见 + 改得动 + 立刻能验"三件事重做：
+   *   ① 实时状态：下一条龙倒计时/类型、已刷数量、场上现存龙
+   *   ② 争夺进度：双方元素龙击杀数、离成魂还差几条、已成的魂
+   *   ③ 开关：生成 / 效果 两个独立开关（CONFIG.dragonToggles）+ 暂停
+   *   ④ 节奏：首条延迟、元素龙间隔、远古龙间隔（都写回 CONFIG，不是写倒计时）
+   *   ⑤ 即时操作：立刻刷一条（元素/远古）、把龙魂直接判给某方、清空巨龙进度
+   * 只读量与可写配置在版式上分开，不再混成一片。
+   */
+  _dragonPanelHtml(ds, ents) {
+    if (!ds) return '';
+    const st = ds.getState ? ds.getState() : {};
+    const D = (CONFIG.gameRules && CONFIG.gameRules.dragon) || {};
+    const tg = CONFIG.dragonToggles || {};
+    const spawnOn = tg.spawn !== false, fxOn = tg.effect !== false;
+    const alive = ents ? ents.getAll(true).filter(e => e.type === 'dragon') : [];
+    const nextIsAncient = !!st.soulResolved;
+    const soulTxt = (f) => {
+      const arr = (st.souls && st.souls[f]) || [];
+      return arr.length ? arr.map(id => (window.__app?.SkillLibrary?.[id]?.icon || '🐉')).join('') : '—';
+    };
+    const need = Math.max(0, (st.soulThreshold ?? 4) - (st.factionTotals?.blue ?? 0));
+    const needR = Math.max(0, (st.soulThreshold ?? 4) - (st.factionTotals?.red ?? 0));
+
+    return `<div class="editor-section">
+      <h4>🐉 巨龙</h4>
+
+      <div class="pick-desc-box" style="margin-bottom:8px;font-size:11px;line-height:1.8;">
+        下一条：<b>${ds.paused ? '⏸ 已暂停' : (spawnOn ? `${nextIsAncient ? '🐲 远古龙' : '🐉 元素龙'} · ${_fmtTime(ds.nextDragonTime || 0)}` : '⛔ 生成已关闭')}</b>
+        　｜　已刷：元素 <b>${st.elementDragonSpawned ?? 0}</b>/<b>${st.elementDragonTotal ?? 6}</b>　远古 <b>${ds.ancientSpawned ?? 0}</b>
+        　｜　场上：<b>${alive.length}</b> 条<br>
+        🔵 蓝方击杀 <b>${st.factionTotals?.blue ?? 0}</b>（还差 ${need} 条成魂）　魂：${soulTxt('blue')}<br>
+        🔴 红方击杀 <b>${st.factionTotals?.red ?? 0}</b>（还差 ${needR} 条成魂）　魂：${soulTxt('red')}<br>
+        <span style="color:var(--text-mute);">成魂规则：${st.elementDragonTotal ?? 6} 条元素龙打完结算一次，
+        ≥${st.soulThreshold ?? 4} 条者成魂；都不到则无魂。成魂后只刷远古龙。击杀数只算元素龙。</span>
+      </div>
+
+      <div class="slider-row"><label>巨龙生成</label>
+        <button id="setToggleDragonBtn" style="flex:1;">${ds.paused ? '▶ 恢复计时' : '⏸ 暂停计时'}</button>
+        <button id="setDragonSpawnBtn" style="flex:1;">${spawnOn ? '✅ 允许生成' : '⛔ 禁止生成'}</button>
+      </div>
+      <div class="slider-row"><label title="关掉后龙仍会刷，但击杀不再发放巨龙之力/龙魂">龙之奖励效果</label>
+        <button id="setDragonFxBtn" style="flex:1;">${fxOn ? '✅ 已开启' : '⭕ 已关闭'}</button>
+      </div>
+
+      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">节奏（写入 CONFIG，立即生效于下一次计时）</div>
+        <div class="slider-row"><label style="font-size:11px;">首条龙延迟(秒)</label>
+          <input type="number" class="dragon-cfg" data-k="firstDelay" step="10" min="0" value="${D.firstDelay ?? 60}" style="width:90px;"></div>
+        <div class="slider-row"><label style="font-size:11px;">元素龙间隔(秒)</label>
+          <input type="number" class="dragon-cfg" data-k="elementInterval" step="10" min="10" value="${(D.elementIntervals && D.elementIntervals[0]) ?? 300}" style="width:90px;"></div>
+        <div class="slider-row"><label style="font-size:11px;">远古龙间隔(秒)</label>
+          <input type="number" class="dragon-cfg" data-k="ancientInterval" step="10" min="10" value="${D.ancientInterval ?? 300}" style="width:90px;"></div>
+        <div class="slider-row"><label style="font-size:11px;">当前倒计时(秒)</label>
+          <input type="number" id="setDragonCountdown" step="5" min="0" value="${Math.round(ds.nextDragonTime || 0)}" style="width:90px;">
+          <span style="font-size:11px;color:var(--text-mute);">只改这一次，不改配置</span></div>
+      </div>
+
+      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">即时操作（不计入比分，日志标 [编辑器]）</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <button id="setDragonSpawnNowBtn" style="flex:1;">🐉 立刻刷一条</button>
+          <button id="setDragonKillAllBtn" style="flex:1;">💀 清掉场上的龙</button>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="setDragonSoulBlueBtn" style="flex:1;">🔵 直接判给蓝方</button>
+          <button id="setDragonSoulRedBtn" style="flex:1;">🔴 直接判给红方</button>
+          <button id="setDragonResetBtn" style="flex:1;">↺ 清空巨龙进度</button>
+        </div>
+      </div>
+    </div>` + `` ;
+  },
+
+  _bindDragonEvents(overlay, ds, ents, logFn, render) {
+    if (!ds) return;
+    const tag = '[编辑器]';
+    const $ = (id) => document.getElementById(id);
+    $('setToggleDragonBtn')?.addEventListener('click', () => {
+      ds.paused = !ds.paused;
+      logFn(ds.paused ? '⏸ 巨龙计时已暂停' : '▶ 巨龙计时已恢复', 'spawn');
+      render();
+    });
+    $('setDragonSpawnBtn')?.addEventListener('click', () => {
+      CONFIG.dragonToggles = CONFIG.dragonToggles || {};
+      CONFIG.dragonToggles.spawn = CONFIG.dragonToggles.spawn === false;
+      logFn(CONFIG.dragonToggles.spawn ? '✅ 巨龙生成已允许' : '⛔ 巨龙生成已禁止', 'spawn');
+      render();
+    });
+    $('setDragonFxBtn')?.addEventListener('click', () => {
+      CONFIG.dragonToggles = CONFIG.dragonToggles || {};
+      CONFIG.dragonToggles.effect = CONFIG.dragonToggles.effect === false;
+      logFn(CONFIG.dragonToggles.effect ? '✅ 龙之奖励已开启' : '⭕ 龙之奖励已关闭', 'spawn');
+      render();
+    });
+    overlay.querySelectorAll('.dragon-cfg').forEach(inp => inp.addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      if (!Number.isFinite(v)) return;
+      const k = e.target.dataset.k;
+      CONFIG.gameRules.dragon = CONFIG.gameRules.dragon || {};
+      // elementIntervals 是个数组（支持"每条龙间隔不同"），面板只暴露第一项 ——
+      // 想要逐条不同的节奏走模板编辑器的巨龙页，那里是完整数组。
+      if (k === 'elementInterval') CONFIG.gameRules.dragon.elementIntervals = [v];
+      else CONFIG.gameRules.dragon[k] = v;
+      logFn(`${tag} 🐉 ${k} → ${v}s`, 'spawn');
+    }));
+    $('setDragonCountdown')?.addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      if (Number.isFinite(v) && v >= 0) {
+        ds.nextDragonTime = v;
+        logFn(`${tag} ⏱ 下一条龙将在 ${v}s 后刷新（只改这一次）`, 'spawn');
+      }
+    });
+    $('setDragonSpawnNowBtn')?.addEventListener('click', () => {
+      ds.nextDragonTime = 0;
+      const before = (ds.elementDragonSpawned || 0) + (ds.ancientSpawned || 0);
+      ds.spawnDragon?.();
+      const after = (ds.elementDragonSpawned || 0) + (ds.ancientSpawned || 0);
+      logFn(after > before ? `${tag} 🐉 已立刻刷出一条龙` : `${tag} ⚠️ 刷龙失败（生成开关关着？）`, 'spawn');
+      render();
+    });
+    $('setDragonKillAllBtn')?.addEventListener('click', () => {
+      let n = 0;
+      for (const e of ents.getAll(true)) {
+        if (e.type !== 'dragon') continue;
+        e.alive = false; e.currentHP = 0; n++;
+        // 走 entity:death 而不是直接 remove：死亡归属/奖励发放都挂在那个事件上，
+        // 绕过去的话"编辑器杀的龙不给奖励"，与自然死亡两套行为。
+        ds.eventBus?.emit?.('entity:death', { entityId: e.id });
+      }
+      logFn(`${tag} 💀 清掉了场上 ${n} 条龙`, 'death');
+      render();
+    });
+    const grant = (fac) => {
+      ds._resolveSoul?.(fac);
+      logFn(`${tag} 🐉 龙魂已直接判给${fac === 'blue' ? '蓝方' : '红方'}`, 'spawn');
+      render();
+    };
+    $('setDragonSoulBlueBtn')?.addEventListener('click', () => grant('blue'));
+    $('setDragonSoulRedBtn')?.addEventListener('click', () => grant('red'));
+    $('setDragonResetBtn')?.addEventListener('click', () => {
+      ds.resetRun?.();
+      logFn(`${tag} ↺ 巨龙进度已清空（击杀数、龙魂、计时）`, 'spawn');
+      render();
+    });
+  },
+
   // 用户反馈"目前的设置界面太杂乱了，按TAB标签分类显示"：
   // 一屏 30+ 行全糊在一起，画质开关和波次参数混排。改为四个标签页，
   // 当前页记在 _tab 上，重开设置面板会停在上次那一页。
@@ -228,14 +428,10 @@ export const SettingsDialog = {
           <div class="slider-row"><label>电影级色调 ACES</label>
             <button id="setToneBtn" style="flex:1;">${window.__three?.toneMapOn ? '🎬 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label title="需要 HDR 显示器且系统已开启 HDR。SDR 屏上强开只会更难看，所以默认按显示器能力自动判定。">HDR 输出</label>
-            <button id="setHdrBtn" style="flex:1;">${
-              !window.__three ? '—'
-              : !window.__three.hdrSupported?.() ? '🚫 浏览器不支持'
-              : window.__three.hdrOn ? '🌈 已开启（点击关闭）'
-              : (window.__three.hdrDisplay?.() ? '⭕ 已关闭（点击开启）' : '⭕ 已关闭（未检测到 HDR 屏）')
-            }</button>
+          <div class="slider-row"><label title="WebGL 画布的 HDR 输出。注意它与「HDR 视频/图片能不能播」是两套不同的能力——测试网站说支持的通常是后者。">HDR 输出</label>
+            <button id="setHdrBtn" style="flex:1;">${SettingsDialog._hdrLabel()}</button>
           </div>
+          <div class="pick-desc-box" id="setHdrDiag" style="margin:-4px 0 8px;font-size:11px;line-height:1.7;">${SettingsDialog._hdrDiagHtml()}</div>
           <div class="slider-row"><label title="夜晚塔会照亮射程×1.2 的范围（真光源，能照到小兵）">塔夜间照明</label>
             <button id="setTowerLightBtn" style="flex:1;">${CONFIG.ui?.towerLight?.enabled !== false ? '🔦 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
@@ -310,15 +506,7 @@ export const SettingsDialog = {
             <button id="setResetWaveBtn" style="flex:1;">🔄 重置到第0波</button>
           </div>
         </div>`}
-        <div class="editor-section">
-          <h4>🐉 巨龙波次</h4>
-          <div class="slider-row"><label>巨龙波次生成</label>
-            <button id="setToggleDragonBtn" style="flex:1;">${dragonSystem.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
-          </div>
-          <div class="slider-row"><label>首条龙延迟（秒）</label>
-            <input type="number" id="setDragonFirstDelay" class="editor-number" value="${dragonSystem.nextDragonTime || 60}" min="5" step="5">
-          </div>
-        </div>` : ''}
+        ${SettingsDialog._dragonPanelHtml(dragonSystem, entityContainer)}` : ''}
 
         ${TAB === 'world' ? `
         <div class="editor-section">
@@ -413,13 +601,28 @@ export const SettingsDialog = {
       // HDR：手动切换要同时写 CONFIG.ui.hdr.force，否则下次自动判定会把它覆盖回去。
       document.getElementById('setHdrBtn')?.addEventListener('click', (ev) => {
         const r = window.__three;
-        if (!r || !r.hdrSupported?.()) return;
+        if (!r) return;
+        // v43：不再因为"检测说不支持"就静默 return。
+        // 用户："HDR 那里设置可以强制开启。" —— 检测再准也只是我们的判断，
+        // 而这次的教训正是检测本身查错了 API。所以按钮永远可点：
+        // 检测通过就正常开；检测不通过就走强制路径（setHDR 里 force===true 会跳过能力检查
+        // 直接试一次），真开不了会被 try/catch 接住降级，画面不会坏。
+        const supported = r.hdrSupported?.();
         const want = !r.hdrOn;
         CONFIG.ui.hdr.force = want;
         const applied = r.setHDR(want);
-        ev.target.textContent = applied ? '🌈 已开启（点击关闭）'
-          : (r.hdrDisplay?.() ? '⭕ 已关闭（点击开启）' : '⭕ 已关闭（未检测到 HDR 屏）');
-        if (want && !applied) logFn('⚠️ HDR 开启失败，已降级为 SDR（见控制台）', 'spawn');
+        // 文案与诊断读数都走同一份实现，避免"按钮说开了、读数说没开"这种自相矛盾
+        ev.target.textContent = SettingsDialog._hdrLabel();
+        const diag = document.getElementById('setHdrDiag');
+        if (diag) diag.innerHTML = SettingsDialog._hdrDiagHtml();
+        if (want && !applied) {
+          const d = r.hdrDiagnose?.();
+          logFn(d && (d.reason === 'colorSpace-rejected' || d.reason === 'no-colorSpace')
+            ? '⚠️ 强制开启失败：浏览器拒绝了 HDR 色彩空间。请在 chrome://flags 开启「Experimental Web Platform features」后重启浏览器'
+            : '⚠️ HDR 开启失败，已降级为 SDR（见控制台与上方诊断读数）', 'spawn');
+        } else if (want && applied && !supported) {
+          logFn('🌈 HDR 已强制开启（能力检测本判定为不支持，实际试成功了）', 'spawn');
+        }
       });
       document.getElementById('setTowerLightBtn')?.addEventListener('click', (ev) => {
         CONFIG.ui.towerLight.enabled = CONFIG.ui.towerLight.enabled === false;
@@ -542,18 +745,9 @@ export const SettingsDialog = {
           logFn('🔄 波次已重置', 'spawn');
         }
       });
-      document.getElementById('setToggleDragonBtn')?.addEventListener('click', () => {
-        dragonSystem.paused = !dragonSystem.paused;
-        logFn(dragonSystem.paused ? '⏸ 巨龙波次已暂停' : '▶ 巨龙波次已恢复', 'spawn');
-        render();
-      });
-      document.getElementById('setDragonFirstDelay')?.addEventListener('input', (e) => {
-        const v = parseFloat(e.target.value);
-        if (!isNaN(v) && v >= 0) {
-          dragonSystem.nextDragonTime = v;
-          logFn(`✅ 下一条龙将在 ${v}秒后刷新`, 'spawn');
-        }
-      });
+      // v43：巨龙面板整块重做，事件绑定收进 _bindDragonEvents（渲染与绑定一一对应，
+      // 不再散在这个几百行的大 handler 里）。
+      SettingsDialog._bindDragonEvents(overlay, dragonSystem, entityContainer, logFn, render);
       document.getElementById('setExportLogBtn')?.addEventListener('click', () => {
         const ok = DebugLogger.downloadAsFile();
         logFn(ok ? '💾 日志已导出' : '❌ 日志导出失败', ok ? 'spawn' : 'death');

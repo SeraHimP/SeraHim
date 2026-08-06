@@ -216,7 +216,8 @@ export const EDITOR_PAGES_ENTITY = {
     const isTower = entity.type === 'tower';
     const dead = !entity.alive;
     const fac = entity._mapFaction || entity.faction || '（无阵营）';
-    const facLabel = { blue: '🔵 蓝方', red: '🔴 红方' }[fac] || fac;
+    // v43：阵营是三值的（blue/red/neutral），标签表补上中立。
+    const facLabel = { blue: '🔵 蓝方', red: '🔴 红方', neutral: '⚪ 中立' }[fac] || fac;
     const state = dead ? (entity._respawnAt ? '💤 等待重生' : (entity._ruin ? '🪦 废墟' : '☠️ 已死亡')) : '✅ 存活';
 
     let html = `<div style="padding:4px 0;">`;
@@ -235,6 +236,7 @@ export const EDITOR_PAGES_ENTITY = {
       <div style="flex:1;display:flex;gap:6px;">
         <button class="editor-tab ${fac === 'blue' ? 'active' : ''}" data-op="fac" data-v="blue">🔵 蓝方</button>
         <button class="editor-tab ${fac === 'red' ? 'active' : ''}" data-op="fac" data-v="red">🔴 红方</button>
+        <button class="editor-tab ${fac === 'neutral' ? 'active' : ''}" data-op="fac" data-v="neutral">⚪ 中立</button>
       </div></div>`;
 
     if (isTower) {
@@ -328,11 +330,13 @@ export const EDITOR_PAGES_ENTITY = {
       logFn(`${tag} 💀 ${name} 已击杀（不计入比分）${extra}`, 'death');
 
     } else if (op === 'fac') {
-      if (v !== 'blue' && v !== 'red') return;
+      // v43：白名单补上 neutral。不补的话“中立”按钮点下去会静默失败，
+      // 比没有那个按钮更糟——控件摆在那儿却不起作用，会让人相信一件假事。
+      if (v !== 'blue' && v !== 'red' && v !== 'neutral') return;
       e._mapFaction = v; e.faction = v;
       e.targetId = null;          // 不清目标它会继续打原来的队友
       if (e._ramLockId) e._ramLockId = null;
-      logFn(`${tag} 🎌 ${name} 阵营 → ${v === 'blue' ? '蓝方' : '红方'}`, 'spawn');
+      logFn(`${tag} 🎌 ${name} 阵营 → ${{ blue: '蓝方', red: '红方', neutral: '中立' }[v]}`, 'spawn');
 
     } else if (op === 'tier') {
       if (e.type !== 'tower') return;

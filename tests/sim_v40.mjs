@@ -104,9 +104,21 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   T('伤害规则以被动为闸门（不再按 type==="ram" 硬编码）',
     csSrc.includes('getSiegeWeaponDef') && !csSrc.includes("const isRam = (e)"));
   const lmsSrc = fs.readFileSync(new URL('../src/systems/LaneMovementSystem.js', import.meta.url), 'utf8');
-  T('攻速/自损/锁定同样以被动为闸门',
-    lmsSrc.includes('getSiegeWeaponDef(minion, this.combat.skills)')
-    && lmsSrc.includes('swDef.TOWER_ATKSPD_MULT') && lmsSrc.includes('swDef.SELF_DAMAGE_PCT'));
+  // v43 Q2：攻城的锁定/攻速/自损从 LaneMovementSystem 搬进 CombatSystem，两条攻击路径共用。
+  // 这条断言原来钉的是"这些常量出现在 LaneMovementSystem 里"，那等于把
+  // **实现位置**写死进了测试；而这次的 bug 恰恰是"实现只在其中一条路径上"。
+  // 所以改成钉两件事：① 规则只有一份（只在 CombatSystem 里读那三个常量）；
+  // ② 两条路径都调那一份。
+  T('攻城规则只有一份（只在 CombatSystem 里读常量，LaneMovementSystem 不再自己抄）',
+    csSrc.includes('TOWER_ATKSPD_MULT') && csSrc.includes('SELF_DAMAGE_PCT')
+    && !lmsSrc.includes('TOWER_ATKSPD_MULT') && !lmsSrc.includes('SELF_DAMAGE_PCT'));
+  T('两条攻击路径都调同一份（对战 = LaneMovementSystem，沙盒 = CombatSystem 小兵循环）',
+    lmsSrc.includes('this.combat.siegeAcquire(') && lmsSrc.includes('this.combat.finishAttack(')
+    && csSrc.includes('this.siegeAcquire(minion, nearestTower)')
+    && csSrc.includes('this.finishAttack(minion, nearestTower'));
+  T('闸门仍然是被动（拆掉被动即退化为普通车）',
+    /siegeAcquire\(attacker, target\) \{\s*if \(!getSiegeWeaponDef/.test(csSrc)
+    && /finishAttack\(attacker, target, finalAS\) \{\s*const def = getSiegeWeaponDef/.test(csSrc));
 
   // 攻城模式状态：锁定建筑时出现，解除时消失
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);

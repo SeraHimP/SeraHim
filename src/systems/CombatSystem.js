@@ -197,6 +197,15 @@ export class CombatSystem {
 
       if (!nearestTower) continue;
 
+      // v43 Q2：沙盒路径同样走攻城锁定（此前这条路上一条攻城规则都没有 ——
+      // 手动添加的攻城车因此既不显示红线、也没有攻城模式状态、攻速也不降）。
+      // 锁定目标可能与"最近的塔"不同（锁死了就不换），所以下面一律用 nearestTower 这个变量。
+      const lockedTgt = this.siegeAcquire(minion, nearestTower);
+      if (lockedTgt && lockedTgt !== nearestTower) {
+        nearestTower = lockedTgt;
+        minDist = (nearestTower.pos.x - minion.pos.x) ** 2 + (nearestTower.pos.y - minion.pos.y) ** 2;
+      }
+
       const range = this.attrCalc.calc(minion, this.effects.getEffects(minion.id)).attackRange || 20;
       const dist = Math.sqrt(minDist);
 
@@ -207,8 +216,9 @@ export class CombatSystem {
       if (dist <= range && minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))) {
         minion.targetId = nearestTower.id;
         this.performAttack(minion, nearestTower);
-        const finalAS = this.attrCalc.calcAttackSpeedOf(
-          this.attrCalc.calc(minion, this.effects.getEffects(minion.id)));
+        // v43 Q2：与对战路径共用同一个攻城结算（攻速 -50% + 自损 20%）。
+        const finalAS = this.finishAttack(minion, nearestTower, this.attrCalc.calcAttackSpeedOf(
+          this.attrCalc.calc(minion, this.effects.getEffects(minion.id))));
         minion.attackCooldown = 1 / (finalAS || 0.5);
         minion._cdAS = finalAS;
       } else if (dist > range) {
@@ -342,6 +352,59 @@ export class CombatSystem {
       return da - db;
     });
     return inRange[0];
+  }
+
+  /**
+   * ==================== v43 Q2：攻城武器收归一份实现 ====================
+   * 用户："攻城车攻击塔时并不显示红线和状态栏的攻城模式，而且对应的攻速并没有下降。"
+   *
+   * 三个症状读的是三条不同的代码（红线与状态栏读 `_ramLockId`，攻速读
+   * LaneMovementSystem 里的 `target.type === 'tower'` 分支），却同时失效 ——
+   * 共同上游只有一个：**攻城武器的三条规则只写在 LaneMovementSystem 那一条路上**。
+   * 而 CombatSystem 的小兵循环开头有 `if (minion._laneId) continue;`：
+   * 沙盒里的、以及玩家在编辑器里手动添加的单位**没有** `_laneId`，走的是这条路，
+   * 那里一条攻城规则都没有。这也顺带解释了"攻城车优先攻击塔而不是小兵"——
+   * 沙盒那条路里小兵只认 `nearestTower`，压根不扫小兵。
+   *
+   * 「同一件事在两处各实现一半」是本仓库反复出事的形状（见 MapSystem.beginNexusRespawn
+   * 的头注释）。所以这次不在沙盒路径里再抄一份，而是把攻城的两件事收进下面两个方法，
+   * 两条攻击路径都调它们 —— 攻城武器从此只有一份实现。
+   */
+
+  /**
+   * 攻城锁定维护：装了攻城武器的单位锁定一座建筑后不再改目标。
+   * 返回**实际应当攻击的目标**（锁定生效时即锁定目标，否则原样返回调用方的选择）。
+   * `_ramLockId` 同时是红线（EffectsLayer）与「攻城模式」状态（被动 onFrame）的唯一依据，
+   * 所以只要这里维护对了，那两处自动就对了 —— 不需要它们各自再判一次。
+   */
+  siegeAcquire(attacker, target) {
+    if (!getSiegeWeaponDef(attacker, this.skills)) return target;
+    const locked = attacker._ramLockId ? this.entities.get(attacker._ramLockId) : null;
+    if (locked && locked.alive) return locked;         // 锁定期间无视一切其他目标
+    attacker._ramLockId = null;
+    if (target && isStructureUnit(target) && !isStructureProtected(this.entities, target)) {
+      attacker._ramLockId = target.id;                 // 首次锁定
+    }
+    return target;
+  }
+
+  /**
+   * 一次攻击**结算完之后**的攻城副作用：攻速倍率 + 自损。
+   * 传入调用方已算好的攻速，返回应当写进 attackCooldown 的最终攻速。
+   * 没装攻城武器、或打的不是建筑时，原样返回 —— 调用方不需要自己判断。
+   */
+  finishAttack(attacker, target, finalAS) {
+    const def = getSiegeWeaponDef(attacker, this.skills);
+    if (!def || !isStructureUnit(target)) return finalAS;
+    const out = finalAS * (def.TOWER_ATKSPD_MULT ?? 0.5);
+    const maxHP = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)).maxHP
+      || attacker.baseStats.maxHP || 1;
+    attacker.currentHP -= maxHP * (def.SELF_DAMAGE_PCT ?? 0.2);
+    if (attacker.currentHP <= 0 && attacker.alive) {
+      attacker.currentHP = 0; attacker.alive = false;
+      this.eventBus?.emit?.('entity:death', { entityId: attacker.id });
+    }
+    return out;
   }
 
   performAttack(attacker, target) {
@@ -664,11 +727,46 @@ export class CombatSystem {
     // v39（Q4）：攻城车普攻自带溅射（半径取模板 splashRadius=60，爆炸弹的一半左右）。
     // 注意传入的基数是 totalRaw——若主目标是建筑，totalRaw 已含 ×9；为满足用户定稿
     //「只对塔有+800%」，这里把倍率除回去，使溅射永远按普通伤害结算。
-    const ramSplashR = attacker.baseStats?.splashRadius || 0;
-    if (atkSiege && ramSplashR > 0) {
-      const base = isStructureUnit(target) ? totalRaw / atkSiege.TOWER_DAMAGE_MULT : totalRaw;
-      this._applyExplosion(attacker, target, base, attackType, ramSplashR);
+    // v43：闸门从 `atkSiege &&` 放宽到"模板里写了 splashRadius 就溅射"。
+    // 原来的写法把溅射和攻城武器被动绑死了 —— 于是**巨龙的溅射从来没生效过**：
+    // createDragon 按用户定稿给龙写了 baseStats.splashRadius = 90，
+    // 但龙没有 passive_siege_weapon，那一项就是个没人读的死配置。
+    // 攻城车的"只对塔有额外增幅"仍然成立：下面那行只在装了被动时把倍率除回去。
+    const splashR = attacker.baseStats?.splashRadius || 0;
+    if (splashR > 0) {
+      const base = (atkSiege && isStructureUnit(target)) ? totalRaw / atkSiege.TOWER_DAMAGE_MULT : totalRaw;
+      this._applyExplosion(attacker, target, base, attackType, splashR);
     }
+  }
+
+  /**
+   * ==================== v43 Q2b：残弹到达落点时的溅射结算 ====================
+   * 用户："攻城车单位目标死亡后，发射出去的子弹就没有伤害了！只要子弹存在就应该有伤害！
+   *        其他单位也是一样！""落点结算一次完整命中，如果目标已经死亡那么这个子弹照常
+   *        走完流程但是不造成伤害，溅射给其他单位正常结算。"
+   *
+   * 这**推翻了 v43 之前的定稿**（那一版的原话是"这个子弹不造成任何伤害（包括爆炸型）"，
+   * 当时还专门删掉了这条路径上的方法）。现在按新定稿恢复：主目标已死 → 直伤不结算，
+   * 溅射照常对落点范围内的其他单位结算一次。
+   *
+   * 与 performAttackDirect 里那段溅射的差别只有两点，都是"目标已经不在了"逼出来的：
+   *   ① onHitPct（攻击特效 %当前生命）按 0 算 —— 它的基数是目标当前生命，没有目标就没有基数；
+   *   ② 不做 TOWER_DAMAGE_MULT 的除回操作 —— 这里的 totalRaw 从来没乘过它。
+   */
+  resolveSplashOnlyAt(hitInfo, x, y) {
+    if (!hitInfo) return;
+    const attacker = this.entities.get(hitInfo.attackerId);
+    if (!attacker || !attacker.alive) return;
+    const weaponDef = hitInfo.weaponId ? this.skills[hitInfo.weaponId] : null;
+    const totalRaw = (hitInfo.baseDamage + hitInfo.onHitFixed)
+      * (1 + hitInfo.dmgAmp / 100) * (hitInfo.preDamageMult ?? 1);
+    if (!(totalRaw > 0)) return;
+    const type = hitInfo.attackType;
+    if (weaponDef && weaponDef.id === 'weapon_explosive') {
+      this._applyExplosionAt(attacker, x, y, totalRaw, type, undefined, null);
+    }
+    const splashR = attacker.baseStats?.splashRadius || 0;
+    if (splashR > 0) this._applyExplosionAt(attacker, x, y, totalRaw, type, splashR, null);
   }
 
   // 连锁伤害：从 origin 目标出发，向附近敌人依次弹射（供炎魂/雷魂等使用）
