@@ -986,10 +986,13 @@ export function minionMesh(key, color, size, type, faction) {
  * 这种"注释写着一致、其实相反"的东西最坑，所以不靠改注释解决：
  * 造完之后把整块几何绕 Y 转 180°，让它**真的**朝 +Z，与全项目同一个约定。
  */
-export function dragonMesh(key, color, ancient) {
+export function dragonMesh(key, color, ancient, size = null) {
   let hit = _geoCache.get(key);
   if (!hit) {
-    const S = ancient ? 30 : 24;
+    // 尺寸由调用方给（来自 CONFIG.dragonSizes）。省略时才回退到原来的写死值 ——
+    // 保留回退是为了让这个函数单独调用时仍然能用，但正常路径一律走配置。
+    const ds = CONFIG.dragonSizes || {};
+    const S = size ?? (ancient ? (ds.ancient ?? 30) : (ds.element ?? 24));
     const parts = [];
     const dark = shade(color, 0.62);      // 腹部/腿/翼膜
     const lite = shade(color, 1.22);      // 头/犄角/背板/尖端

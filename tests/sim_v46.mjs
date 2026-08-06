@@ -279,11 +279,44 @@ const mkE = (ents, type, x, y, extra = {}) => {
   })());
 
   // ==================== 建筑尺寸 ====================
-  T('尺①-四种塔一律 24、召唤水晶 28、水晶枢纽 40（用户定稿）',
-    ['outer', 'inner', 'base', 'hq_tower'].every(k => CONFIG.buildingSizes[k] === 24)
-    && CONFIG.buildingSizes.nexus_lane === 28 && CONFIG.buildingSizes.nexus_main === 40);
-  T('尺②-渲染不再额外乘系数（"写多少就画多大"）',
+  // v45：数值改过一轮。用户看图后："塔模型太小了，改为和之前差不多那种。32 左右。
+  // 召唤水晶也大一些。"——改动前的实际显示尺寸是 28×1.25 = 35，所以 32 落在"差不多"上。
+  // 断言钉的是**形状**（四种塔同尺寸、召唤水晶 < 水晶枢纽、都在合理区间），不钉死具体数字：
+  // 这几个值明摆着还会被调，钉死等于每调一次就要来改一次断言。
+  T('尺①-四种塔尺寸一致（层级差异靠造型不靠体积）', (() => {
+    const b = CONFIG.buildingSizes;
+    return new Set(['outer', 'inner', 'base', 'hq_tower'].map(k => b[k])).size === 1;
+  })());
+  T('尺②-塔在 30~36 之间（用户定稿"32 左右"）',
+    CONFIG.buildingSizes.outer >= 30 && CONFIG.buildingSizes.outer <= 36);
+  T('尺③-召唤水晶比塔大、又比水晶枢纽小',
+    CONFIG.buildingSizes.nexus_lane > CONFIG.buildingSizes.outer
+    && CONFIG.buildingSizes.nexus_lane < CONFIG.buildingSizes.nexus_main);
+  T('尺④-渲染不再额外乘系数（"写多少就画多大"）',
     /const rSize = bSize;/.test(ul2));
+
+  // 龙的尺寸：软编码，且**两处读同一个来源**（原来 UnitLayer 与 UnitMeshFactory 各写死一份，
+  // 不同步的话血条/选中圈会与模型对不上 —— 又是"同一个量两处各写一份"）。
+  T('尺⑤-龙的尺寸在 CONFIG.dragonSizes 里（不再写死）',
+    typeof CONFIG.dragonSizes === 'object'
+    && CONFIG.dragonSizes.element > 0 && CONFIG.dragonSizes.ancient > CONFIG.dragonSizes.element);
+  T('尺⑥-两处都读它，不再各写死一份 30/24',
+    !/const size = anc \? 30 : 24/.test(ul2)
+    && !/const S = ancient \? 30 : 24/.test(srcOf('src/presentation/UnitMeshFactory.js')));
+  T('尺⑦-龙比改动前大（用户："龙的模型大一些"）', CONFIG.dragonSizes.element > 24);
+  const THREE_SZ = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE_SZ) {
+    const { dragonMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const small = dragonMesh('sz|s', '#c0392b', false, 20);
+    const big = dragonMesh('sz|b', '#c0392b', false, 40);
+    T('尺⑧-尺寸真的驱动几何（不是只改了数字）', big.topY > small.topY * 1.5);
+  }
+
+  // 火炬：用户看到"光跟着视角走"后要求去掉。实现整套保留，只是默认关。
+  T('炬⑪-默认关闭（用户："这个莫名其妙的灯……不要这个"）',
+    CONFIG.ui.torch.enabled === false);
+  T('炬⑫-实现仍在（改 enabled 即可复现，不是把功能删了）',
+    /_syncTorchLights\(\)/.test(srcOf('src/presentation/ThreeRenderer.js')));
 
   // ==================== 分区贴图默认退回原有贴图 ====================
   const tr2 = srcOf('src/presentation/ThreeRenderer.js');

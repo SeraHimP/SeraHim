@@ -146,9 +146,12 @@ export class UnitLayer {
     if (e.type === 'dragon') {
       const color = e._dragonColor || '#c0392b';
       const anc = !!e._isAncient;
-      const size = anc ? 30 : 24;
-      const key = `d|${color}|${anc ? 1 : 0}`;
-      const m = dragonMesh(key, color, anc);
+      // v45：尺寸收到 CONFIG.dragonSizes（原来这里和 UnitMeshFactory 各写死一份 30/24，
+      // 两处一旦不同步，血条与选中圈就会和模型对不上）。key 带上尺寸，改了立刻重建几何。
+      const ds = CONFIG.dragonSizes || {};
+      const size = anc ? (ds.ancient ?? 30) : (ds.element ?? 24);
+      const key = `d|${color}|${anc ? 1 : 0}|${size}`;
+      const m = dragonMesh(key, color, anc, size);
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, size,
                // v44：pulse 关掉。用户："不要一会大一会小那种效果。"
                // 全场只有龙设了这一项，它每帧把整个模型缩放 1±12%（3rad/s）——
