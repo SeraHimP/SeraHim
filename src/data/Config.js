@@ -228,7 +228,7 @@ export const CONFIG = {
       fire:    { attackDamagePct: 8, maxHPPct: 5 },
       water:   { healShieldPowerPct: 12, healthRegen: 2 },
       earth:   { armor: 8, magicResist: 8, maxHPPct: 6 },
-      thunder: { armorPenFlat: 7, magicPenFlat: 7, maxHPPct: 4 },
+      thunder: { armorPenPercent: 12, magicPenPercent: 12, maxHPPct: 4 },
       // 风魂的生存分量给 damageReduction 而不是护甲/生命：主题是"难以捉摸"，
       // 而且这条魂的机制侧（塔 +射程）已经很"进攻"，配一点纯减伤刚好。
       // 数值给得比山魂（15%）小得多 —— 它是配角，不是第二个山魂。
@@ -259,7 +259,14 @@ export const CONFIG = {
     // v44：塔的部分从"攻速"改为"射程" —— 塔不会动，移速对它是废的；
     // 而射程是复利收益（更早开火 = 多打一轮 = 兵线更早崩）。
     // 小兵的移速保留但降幅度：对照里 +33% 移速把兵线推得脱离己方塔的保护，反被反打（-0.54）。
-    wind:    { moveSpeedPct: 15, moveSpeedOutPct: 30, towerAttackRangeFlat: 45 },
+    // ⚠️ v44 第一轮对照：风魂 50% / 推进度差 **−0.05**（基线 +0.30）—— 拿了等于没拿，
+    // 而同一元素的【力】却有 +1.36。差别就在移速那一半：力只给属性（攻速+射程），
+    // 魂额外给了小兵移速，而移速把兵线推得**脱离己方塔的保护**，反被反打。
+    // 这是 v43 那一轮就观察到的现象（当时 +33% 移速跑出 −0.54），我上一版只是把幅度
+    // 从 33 降到 15，没有解决方向问题 —— 判断错了。
+    // 现在：交战中不再加移速（0），只在**脱战**时给一点（追赶/回防用），
+    // 推进的收益全部交给塔的射程那一半。
+    wind:    { moveSpeedPct: 0, moveSpeedOutPct: 25, towerAttackRangeFlat: 45 },
     // 🌑 暗魂：命中削双抗，**全队共享层数**（友军攻击也叠）。
     // v44：改为"偷取" —— 削掉对方多少，自己就得到多少（上限同）。
     // 纯减抗在对照里是最差的一档（-0.90）：减抗只在自己有输出时才有价值，
@@ -298,10 +305,17 @@ export const CONFIG = {
     fire:    { attackDamagePct: 3 },
     water:   { healShieldPowerPct: 4, healthRegen: 1 },
     earth:   { maxHPPct: 2.5, armor: 4, magicResist: 4 },
-    thunder: { armorPenFlat: 2.5, magicPenFlat: 2.5 },
+    // ⚠️ v44 第一轮对照：雷之力 33% 胜率 / 推进度差 **−1.06**（基线 +0.30）——
+    // 七条里唯一的负收益。根因不是数值小，是**固定穿透打错了对象**：
+    // 穿透的收益 = min(穿透值, 目标抗性)，而兵线上绝大多数目标是小兵（护甲个位数），
+    // 固定穿 10 点里有八九点是浪费的；真正有护甲的是塔（40~70），可那是**百分比**才吃得到的。
+    // 换成百分比穿透 —— 仍然只属于雷（独占性不破），但收益终于落在有抗性的目标上。
+    thunder: { armorPenPercent: 5, magicPenPercent: 5 },
     wind:    { bonusAttackSpeedPct: 3, attackRange: 5 },
     dark:    { damageAmpPct: 2.5, lifeStealPct: 1.5 },
-    poison:  { onHitPercentDamage: 0.25 },
+    // ⚠️ 毒之力对照 100% / +2.81，是八档里最强的一条 —— %当前生命的攻击特效对
+    // 高血量目标（塔）收益极高，而推进度量的正是推塔。首版 0.5 已砍到 0.25，仍偏强，再砍一半。
+    poison:  { onHitPercentDamage: 0.12 },
   },
 
   // v43：龙的两个独立开关（用户定稿："龙魂效果有独立开关（是否生成/效果）"）。
