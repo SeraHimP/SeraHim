@@ -270,7 +270,10 @@ function mkWorld() {
 // ==================== 六、狙击型子弹已删除 ====================
 {
   T('技能库里没有 weapon_sniper', !SkillLibrary.weapon_sniper && !SkillLibrary.get?.('weapon_sniper'));
-  for (const f of ['src/core/skills/weapons.js', 'src/ui/AttributeEditor.js',
+  // v43 P1-4：编辑器已拆成 src/ui/editor/*，清单里要把整片列进来（否则残留会漏检）
+  const _edFiles = fs.readdirSync('src/ui/editor').sort()
+    .filter(f => f.endsWith('.js')).map(f => 'src/ui/editor/' + f);
+  for (const f of ['src/core/skills/weapons.js', 'src/ui/AttributeEditor.js', ..._edFiles,
                    'src/ui/UnitAddDialog.js', 'src/presentation/SpriteFactory.js']) {
     const src = fs.readFileSync(f, 'utf8').replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
     T(`${f} 里没有残留的狙击型条目`, !/weapon_sniper|sniper:/.test(src));

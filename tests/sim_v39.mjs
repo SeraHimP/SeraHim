@@ -270,7 +270,9 @@ function battle() {
   T('每波每路每方各 1 辆', spawned.filter(s => s.w === wF && s.type === 'ram').length === 6);
 
   // 成长：HP 正常、AD 极慢、双抗恒 0
-  const mainSrc = (await import('fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const _fs39 = (await import('fs')).default;
+  const mainSrc = ['../src/main.js','../src/core/factories.js']   // v43 P1-4: 工厂已搬走，读组合根两份
+    .map(f => _fs39.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   // Q2：成长表已从 main.js 的 BATTLE_GROWTH_FLAT 常量搬进 CONFIG.battleGrowth（软编码，
 // 模板编辑器可改、地图可按兵种覆写）。断言改为读【真值】而不是 main.js 的源码文本。
 T('成长表：ram = HP10/波、AD0.1/波、双抗0',
@@ -279,7 +281,9 @@ T('成长表：ram = HP10/波、AD0.1/波、双抗0',
 
 // ==================== Q5 镀层：内塔 → 水晶塔 ====================
 {
-  const mainSrc = (await import('fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const _fs39 = (await import('fs')).default;
+  const mainSrc = ['../src/main.js','../src/core/factories.js']   // v43 P1-4: 工厂已搬走，读组合根两份
+    .map(f => _fs39.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   const innerLine = mainSrc.split('\n').find(l => l.includes("tier === 'inner'") && l.includes('towerDefaults.push'));
   const baseLine = mainSrc.split('\n').find(l => l.includes("tier === 'base'") && l.includes('towerDefaults.push'));
   T('内塔不再默认装镀层', !innerLine.includes('passive_armor_plating'));
@@ -293,7 +297,9 @@ T('成长表：ram = HP10/波、AD0.1/波、双抗0',
   T('设置：速度 0.5/1/2x', src.includes('[0.5, 1, 2]') && src.includes('data-speed'));
   T('设置：快进 30s/300s', src.includes('data-ff="30"') && src.includes('data-ff="300"'));
   T('设置：波次概览（当前波次/下一波倒计时）', src.includes('当前波次') && src.includes('nextWaveTime'));
-  const mainSrc = (await import('fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const _fs39 = (await import('fs')).default;
+  const mainSrc = ['../src/main.js','../src/core/factories.js']   // v43 P1-4: 工厂已搬走，读组合根两份
+    .map(f => _fs39.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   // 同上：速度倍率读的是 CTX.__gameSpeed（会同步到 window），断言认 CTX 写法。
   T('主循环：速度倍率只放大投喂时间（SIM_DT 不变，判定一致）',
     /CTX\.__gameSpeed/.test(mainSrc) && mainSrc.includes('realDt * speed'));

@@ -59,7 +59,12 @@ T('召唤水晶/枢纽塔身存在', !!SkillLibrary.core_nexus_lane && !!SkillLi
 
 // 5. 对战成长复利与炮车减半(读 main.js 文本验证公式,运行时函数在 DOM 环境)
 import fs from 'fs';
-const mainSrc=fs.readFileSync(new URL('../src/main.js', import.meta.url),'utf8');
+// v43 P1-4: 4 个实体工厂搬去了 src/core/factories.js。下面这些断言钉的是
+// 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
+// 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
+// 本仓库栽过太多次的空断言，正是这个形状。
+const mainSrc=['../src/main.js','../src/core/factories.js']
+  .map(f=>fs.readFileSync(new URL(f, import.meta.url),'utf8')).join('\n');
 // Q2：成长表搬到 CONFIG.battleGrowth，断言改读真值（仍是纯固定值/波，无复利项）。
 T('成长为固定值表(Q2)',
   CONFIG.battleGrowth.melee.hp === 7 && CONFIG.battleGrowth.siege.hp === 10

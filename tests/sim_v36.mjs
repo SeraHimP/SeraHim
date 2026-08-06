@@ -115,7 +115,12 @@ function equip(e, skillId, ents, fx, bus) {
   T('core_tier_outer 等身份技能声明 mergedSkills（v37：加固城防+成长合并显示）', Array.isArray(SkillLibrary.core_tier_outer?.mergedSkills) && SkillLibrary.core_tier_outer.mergedSkills.includes('passive_outer_fortify'));
   T('core_nexus_lane 保持独立水晶再生（无 mergedSkills）', !SkillLibrary.core_nexus_lane.mergedSkills);
   const fs = await import('fs');
-  const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  // v43 P1-4: 4 个实体工厂搬去了 src/core/factories.js。下面这些断言钉的是
+  // 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
+  // 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
+  // 本仓库栽过太多次的空断言，正是这个形状。
+  const mainSrc = ['../src/main.js','../src/core/factories.js']
+    .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   T('main.js：nexus 装配bug已修（passive_nexus_regen 在 v36 分支装配）',
     mainSrc.includes("passive_nexus_regen'); // v36 Q4 修复"));
   T('main.js：身份技能按 tier 选择（identityByTier）', mainSrc.includes('identityByTier'));

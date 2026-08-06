@@ -92,7 +92,12 @@ function equip(e, skillId, ents, fx, bus) {
 
   // main.js 装配（源码断言）
   const fs = await import('fs');
-  const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  // v43 P1-4: 4 个实体工厂搬去了 src/core/factories.js。下面这些断言钉的是
+  // 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
+  // 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
+  // 本仓库栽过太多次的空断言，正是这个形状。
+  const mainSrc = ['../src/main.js','../src/core/factories.js']
+    .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   // Q3：水晶塔(tier base)不再默认装配钢铁烈阳护盾(passive_base_bulwark)——从 base 默认装配行移除。
   // 外/内 fortify 仍在；base 行现在只有 fortify + armor_plating（bulwark 仅保留定义，可手动装/内塔光环版不受影响）。
   const baseLine = (mainSrc.split('\n').find(l => l.includes("tier === 'base'") && l.includes('towerDefaults.push')) || '');

@@ -61,7 +61,12 @@ T('deepMerge 递归合并嵌套对象',
   JSON.stringify(deepMerge({ a: { b: 1, c: 2 } }, { a: { c: 3 } })) === '{"a":{"b":1,"c":3}}');
 
 // ---- ⑥ 编辑器重构：冲突/重合已消除 ----
-const src = fs.readFileSync(path.join(root, 'src', 'ui', 'AttributeEditor.js'), 'utf8');
+// v43 P1-4：编辑器已拆成 src/ui/editor/* 七块，断言要读整片 ——
+// 只读 AttributeEditor.js 会让否定断言因为「搬到隔壁文件」而假通过。
+const src = [root + '/src/ui/AttributeEditor.js',
+  ...fs.readdirSync(root + '/src/ui/editor').sort()
+    .filter(f => f.endsWith('.js')).map(f => root + '/src/ui/editor/' + f)]
+  .map(f => fs.readFileSync(f, 'utf8')).join('\n');
 T('已删除「生成规则」tab（它把出兵节奏/开关/成长/屠戮混在一起）',
   !/data-tpltab="spawnrule"/.test(src));
 // 页签不再写死在模板字符串里，改由 _TPL_PAGES 注册表 + _pagesOf 推导，

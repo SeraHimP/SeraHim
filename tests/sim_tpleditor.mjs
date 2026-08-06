@@ -23,7 +23,12 @@ const { MapSystem } = await import('../src/systems/MapSystem.js');
 
 let pass = 0, fail = 0;
 const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
-const AE_SRC = fs.readFileSync('src/ui/AttributeEditor.js', 'utf8');
+// v43 P1-4：编辑器已拆成 src/ui/editor/* 七块，断言要读整片 ——
+// 只读 AttributeEditor.js 会让否定断言因为「搬到隔壁文件」而假通过。
+const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
+  ...fs.readdirSync('.' + '/src/ui/editor').sort()
+    .filter(f => f.endsWith('.js')).map(f => '.' + '/src/ui/editor/' + f)]
+  .map(f => fs.readFileSync(f, 'utf8')).join('\n');
 
 // ==================== 一、页面注册表 = 面板结构的唯一来源 ====================
 {

@@ -72,7 +72,12 @@ writeField('minion.melee', 'maxHP', 500, { faction: 'shared' });   // 还原模�
 
 // ---- ⑤ Schema 与运行时同源：塔的解析顺序必须和 createBuilding 一致 ----
 import fs from 'fs';
-const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// v43 P1-4: 4 个实体工厂搬去了 src/core/factories.js。下面这些断言钉的是
+// 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
+// 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
+// 本仓库栽过太多次的空断言，正是这个形状。
+const mainSrc = ['../src/main.js','../src/core/factories.js']
+  .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
 T('createBuilding 的叠加顺序仍是 地图 → towerTierOverrides → factionOverrides',
   /towerTierOverrides\?\.\[tier\][\s\S]{0,120}factionOverrides\?\.\[faction\]\?\.\['tower_' \+ tier\]/.test(mainSrc));
 T('成长表读取点仍是 CONFIG.battleGrowth（Schema 的 growth.* 与之同源）',

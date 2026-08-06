@@ -9,7 +9,7 @@
 //   · 攻城车：索敌半径写死 200 < 自身射程 312；
 //   · 天气盒：轴对齐，完全没读方位角。
 // 每条都尽量钉"行为形状"而不是某个具体数字。
-import { setupWindow, scoreboard, srcOf, stripComments } from './_harness.mjs';
+import { setupWindow, scoreboard, srcOf, stripComments, editorSrc } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
 const { EventBus } = await import('../src/utils/EventBus.js');
@@ -23,6 +23,11 @@ const { isStructureProtected } = await import('../src/systems/FactionSystem.js')
 const { CONFIG } = await import('../src/data/Config.js');
 
 const board = scoreboard('v43验收');
+
+// v43 P1-4: 塔/建筑/小兵/巨龙四个工厂已搬去 src/core/factories.js。
+// 本套里凡是钉「组合根装配」的断言读的都是这个拼接，而不是单独的 main.js ——
+// 只读 main.js 会让 `!src.includes(X)` 因为「搬走了」而假通过（本仓库的经典空断言形状）。
+const ROOT_SRC = srcOf('src/main.js') + '\n' + srcOf('src/core/factories.js');
 const T = board.T;
 const attr = AttributeCalculator;
 // 源码断言统一走 harness 的 srcOf（**默认剥注释**）。
@@ -193,7 +198,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q5④ 反证：没有 stackKey 时确实只剩一条（改动前的 bug 形状）',
     fx2.getEffects(e2.id).filter(x => x.blueprint.name === '默认状态').length === 1);
 
-  const ae = srcOf(('../src/ui/AttributeEditor.js'));
+  const ae = editorSrc();
   T('Q5⑤ 三种手动状态（stat/dot/stun）都带 stackKey',
     (ae.match(/stackKey,/g) || []).length >= 3);
 }
@@ -300,7 +305,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // ==================== 八、Q9 塔默认魔法伤害 + 分层覆写贯通 ====================
 {
   T('Q9① 塔模板默认魔法伤害', CONFIG.templates.tower.attackType === 'magic');
-  const mainSrc = srcOf(('../src/main.js'));
+  const mainSrc = ROOT_SRC;
   T('Q9② createBuilding 不再用八字段白名单，改为"模板里有的键都能覆写"',
     /Object\.fromEntries\(Object\.entries\(s\)\.filter\(\(\[k, v\]\) => \(k in tpl\) && v !== undefined\)\)/.test(mainSrc));
   T('Q9③ 固定护盾保留"地图没写就当 0"的既有语义',
@@ -404,7 +409,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q5b⑬ 路页签按当前地图现生成（拿不到地图时退回三路）',
     JSON.stringify(AttributeEditor._mapLaneIds()) === JSON.stringify(['top', 'mid', 'bot']));
 
-  const ae = srcOf(('../src/ui/AttributeEditor.js'));
+  const ae = editorSrc();
   T('Q5b⑭ UI 上确实有路页签，且不是写死的三路',
     /data-wo-lane=/.test(ae) && /_mapLaneIds\(\)/.test(ae) && /m\?\.lanes \|\| \[\]/.test(ae));
 
@@ -536,7 +541,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   CONFIG.skillOverrides = bakGlobal; SkillLibrary._mapOverrides = bakMap;
 
   // ---- ④ 装备点必须全部走 equipSkill（手写 push+onEquip 就会绕开参数解析）----
-  const mainSrc = srcOf(('../src/main.js'));
+  const mainSrc = ROOT_SRC;
   T('P0②⑥ main.js 不再有手写的"push 实例 + 调 onEquip"',
     !/_skillInstances\.push\(\{ id: \+\+CTX\._uid/.test(mainSrc));
   T('P0②⑦ 装备一律走 equipSkill', (mainSrc.match(/equipSkill\(/g) || []).length >= 8);
@@ -655,7 +660,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 
 // ==================== 十六、重置本局 ====================
 {
-  const mainSrc = srcOf(('../src/main.js'));
+  const mainSrc = ROOT_SRC;
   T('重①-有一个统一入口 CTX.__resetRun', /CTX\.__resetRun = \(\) => \{/.test(mainSrc));
   T('重②-清掉非建筑实体（建筑交给 clearCurrentMap，避免两套清场逻辑）',
     /if \(e\.type === 'tower'\) continue;/.test(mainSrc));
@@ -710,7 +715,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     return c.maxHP.step > 0 && c.resist.step > 0 && c.attackDamage.step > 0;
   })());
 
-  const mainSrc = srcOf(('../src/main.js'));
+  const mainSrc = ROOT_SRC;
   T('龙⑦-中立阵营（两边都打它、它也打两边）', /_mapFaction: 'neutral'/.test(mainSrc));
   T('龙⑧-挂到兵线上，由 LaneMovementSystem 驱动（不另写一套寻路）',
     /_laneId: dragonLane/.test(mainSrc) && /_laneDirection: dragonDir/.test(mainSrc));
@@ -826,6 +831,73 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /DragonSystem\.SOUL_REWARD_OK\(e\)/.test(bm));
   T('对照⑤-走 equipSkill（手动 push 会漏掉 onEquip 里的常驻效果）',
     /equipSkill\(e, FORCE_SOUL/.test(bm));
+}
+
+// ==================== 二十、P1-4 拆大文件：实体工厂搬出组合根 ====================
+// main.js 曾经同时是四样东西：模块装配、实体工厂、按钮接线、游戏循环。
+// 这一节钉住"工厂确实搬出去了、而且只是搬"，不钉具体行数 ——
+// 行数是会变的，"组合根里不该再有工厂函数定义"才是形状。
+{
+  const mj = srcOf('src/main.js');
+  const fac = srcOf('src/core/factories.js');
+
+  T('拆①-四个工厂的定义已不在 main.js 里',
+    !/\nfunction createTower\(/.test(mj) && !/\nfunction createBuilding\(/.test(mj)
+    && !/\nfunction createMinion\(/.test(mj) && !/\nfunction createDragon\(/.test(mj));
+  T('拆②-四个工厂的定义在 factories.js 里',
+    /\nfunction createTower\(/.test(fac) && /\nfunction createBuilding\(/.test(fac)
+    && /\nfunction createMinion\(/.test(fac) && /\nfunction createDragon\(/.test(fac));
+  T('拆③-main.js 通过 createFactories 显式注入依赖（不是靠全局变量偷渡）',
+    /import \{ createFactories \} from '\.\/core\/factories\.js';/.test(mj)
+    && /const \{ createTower, createBuilding, createMinion, createDragon \} = createFactories\(\{/.test(mj));
+  T('拆④-依赖缺一个就当场抛错（否则场上会出现一堆 undefined 引发的天书报错）',
+    /throw new Error\('createFactories: 依赖缺失 ' \+ k\)/.test(fac));
+  T('拆⑤-四条接线仍在组合根里（谁给谁装工厂，这件事必须一眼看得见）',
+    /mapSystem\.setCreateBuildingFn\(createBuilding\);/.test(mj)
+    && /dragonSystem\.setCreateEntity\(createDragon\);/.test(mj)
+    && /waveSystem\.setCreateMinion\(createMinion\);/.test(mj)
+    && /CTX\.createTower = createTower;/.test(mj));
+  T('拆⑥-factories.js 不反向 import main.js（组合根是单向的，反过来就成环）',
+    !/from '\.\.\/main\.js'/.test(fac) && !/from '\.\/main\.js'/.test(fac));
+}
+
+// ==================== 二十一、P1-4 拆大文件：编辑器切成 src/ui/editor/* ====================
+// 2919 行、上百个方法的一个对象字面量，拆成 7 块 + 一份字段元数据。
+// 这一节钉的是"拆完还是同一个对象"，以及那个唯一真实的风险：**块间重复键**——
+// Object.assign 遇到重复键会静默让后者覆盖前者，拆错了不会报错，只会少一个方法。
+{
+  const fs2 = (await import('fs')).default;
+  const ae = srcOf('src/ui/AttributeEditor.js');
+  const blocks = ['open', 'shell', 'pagesConfig', 'pagesWave',
+                  'pagesEntity', 'pagesSkillEffect', 'events'];
+
+  T('编①-AttributeEditor.js 只剩装配（里面不再有方法定义）',
+    /Object\.assign\(/.test(ae) && !/^  _render[A-Za-z]*\(/m.test(ae) && ae.split('\n').length < 60);
+  T('编②-七块都在 src/ui/editor/ 下且被合并进来',
+    blocks.every(b => fs2.existsSync(`src/ui/editor/${b}.js`))
+    && blocks.every(b => ae.includes(`./editor/${b}.js`)));
+
+  // 重复键：把各块的导出对象取回来自己数一遍，不看源码文本。
+  const mods = await Promise.all(blocks.map(b => import(`../src/ui/editor/${b}.js`)));
+  const keyLists = mods.map(m => Object.keys(Object.values(m)[0]));
+  const total = keyLists.reduce((n, l) => n + l.length, 0);
+  const merged = new Set(keyLists.flat());
+  T('编③-块与块之间没有重复键（有的话 Object.assign 会静默吃掉一个方法）',
+    total === merged.size);
+  const { AttributeEditor: AE_MERGED } = await import('../src/ui/AttributeEditor.js');
+  // 只钉「各块的键都到了合并对象上」，不钉两边键数相等 ——
+  // 本套件前面的用例会往 AttributeEditor 上写运行期字段（如 _customEffectSeq），
+  // 拿键数比会因为测试自身的副作用而失败，那是断言写错了，不是产品坏了。
+  T('编④-合并后的方法一个不少（各块的键都在）',
+    [...merged].every(k => k in AE_MERGED));
+
+  // 反向 import 会成环：AttributeEditor.js → 块 → AttributeEditor.js。
+  // 拆分时真的踩到过一次（_newCustomStackKey 里按名字引用了 AttributeEditor）。
+  T('编⑤-各块不反向 import AttributeEditor（否则成环）',
+    blocks.every(b => !/from '\.\.\/AttributeEditor\.js'/
+      .test(fs2.readFileSync(`src/ui/editor/${b}.js`, 'utf8'))));
+  T('编⑥-没有哪一块又长回 1000 行以上（拆完还要防着它重新长回去）',
+    blocks.every(b => fs2.readFileSync(`src/ui/editor/${b}.js`, 'utf8').split('\n').length < 1000));
 }
 
 board.done();

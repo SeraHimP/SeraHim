@@ -106,3 +106,21 @@ export function mkEntity(ents, type, { faction = null, tier = null, lane = null,
   ents.add(e);
   return e;
 }
+
+/**
+ * 编辑器整片源码（AttributeEditor.js + src/ui/editor/*.js）。
+ *
+ * v43 P1-4 把 2919 行的 AttributeEditor 拆成了 src/ui/editor/ 下的 7 块。
+ * 断言必须读整片：只读 AttributeEditor.js 的话，`!src.includes(X)` 这种
+ * 否定断言会因为「X 搬到隔壁文件去了」而假通过 —— 又是那个形状。
+ * 默认剥注释，理由同 srcOf。
+ */
+export function editorSrcRaw() {
+  const dir = path.join(ROOT, 'src/ui/editor');
+  const parts = [srcRaw('src/ui/AttributeEditor.js')];
+  for (const f of fs.readdirSync(dir).sort()) {
+    if (f.endsWith('.js')) parts.push(fs.readFileSync(path.join(dir, f), 'utf8'));
+  }
+  return parts.join('\n');
+}
+export function editorSrc() { return stripComments(editorSrcRaw()); }

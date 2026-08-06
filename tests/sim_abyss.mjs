@@ -129,7 +129,12 @@ T('超级兵波仍保留近战/远程骨架',
 // ---- Q2/Q1/Q6/Q7/Q10/Q11/Q5 静态与逻辑断言 ----
 T('超级兵指挥官含自身(Q2)', fs.readFileSync(new URL('../src/core/skills/minionPassives.js', import.meta.url),'utf8').includes('includeSelf: true'));
 T('闪电充能duration=100(Q1)', fs.readFileSync(new URL('../src/core/skills/weapons.js', import.meta.url),'utf8').includes("kind: 'custom', duration: 100"));
-const mainSrc=fs.readFileSync(new URL('../src/main.js', import.meta.url),'utf8');
+// v43 P1-4: 4 个实体工厂搬去了 src/core/factories.js。下面这些断言钉的是
+// 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
+// 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
+// 本仓库栽过太多次的空断言，正是这个形状。
+const mainSrc=['../src/main.js','../src/core/factories.js']
+  .map(f=>fs.readFileSync(new URL(f, import.meta.url),'utf8')).join('\n');
 // 该分支现在还带一个"分层被动覆写生效时交给覆写清单决定"的守卫，
 // 故只断言其仍在 isNexus 门之外、按 tier 独立装配这一原始意图。
 // v43 P0-②：装备点统一走 equipSkill()，不再手写 `skillLibrary['xxx'].onEquip`。

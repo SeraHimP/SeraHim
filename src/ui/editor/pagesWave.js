@@ -1,0 +1,713 @@
+/**
+ * pagesWave.js —— AttributeEditor 的一块（v43 P1-4 从 src/ui/AttributeEditor.js 拆出）
+ *
+ * 模板页：小兵生成规则 / 巨龙刷新与强度 / 成长与屠戮 / 出兵编排
+ *
+ * 拆分性质：**纯位移**。整个 AttributeEditor 本来就是一个对象字面量，
+ * 任意一段连续的顶层条目本身就是合法的对象字面量体，所以这里的方法体
+ * 逐字未动、缩进未动。AttributeEditor.js 用 Object.assign 把各块合成同一个对象，
+ * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
+ */
+import { CONFIG } from '../../data/Config.js';
+import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
+import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../../data/dragonCurve.js';
+
+export const EDITOR_PAGES_WAVE = {
+  // ==================== 小兵生成规则 ====================
+  // ============================================================
+  //  SECTION 3: Spawn Rules + Building Size
+  // ============================================================
+
+  _spawnRuleMeta(type) {
+    // 每种小兵对应 CONFIG.gameRules 里控制其生成节奏的字段
+    const map = {
+      melee:   { countKey: 'waveMeleeCount', countLabel: '每波生成数量', countDefault: 3 },
+      ranged:  { countKey: 'waveRangedCount', countLabel: '每波生成数量', countDefault: 3 },
+      siege:   { intervalKey: 'waveSiegeSuperInterval', intervalLabel: '每几波生成一次', intervalDefault: 2,
+                 extraKey: 'waveSuperFromWave', extraLabel: '第几波起改为超级兵', extraDefault: 20 },
+      totem:   { intervalKey: 'waveTotemInterval', intervalLabel: '每几波生成一次（沙盒）', intervalDefault: 5,
+                 battleFromKey: 'battleTotemFromWave', battleFromLabel: '对战模式：第几波起生成', battleFromDefault: 10,
+                 battleIntvKey: 'battleTotemInterval', battleIntvLabel: '对战模式：每几波生成一次', battleIntvDefault: 3 },
+      warlock: { intervalKey: 'waveWarlockInterval', intervalLabel: '每几波生成一次', intervalDefault: 6,
+                 minWaveKey: 'warlockMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 12 },
+      corrupt: { intervalKey: 'waveCorruptInterval', intervalLabel: '每几波生成一次', intervalDefault: 7,
+                minWaveKey: 'corruptMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 15 },
+      ram:     { intervalKey: 'waveRamInterval', intervalLabel: '每几波生成一次', intervalDefault: 15,
+                 minWaveKey: 'ramMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 5 },
+      super:   { intervalKey: 'waveSiegeSuperInterval', intervalLabel: '每几波生成一次（与炮兵共用节奏）', intervalDefault: 2 },
+    };
+    return map[type] || {};
+  },
+
+  // P2：原「生成规则」tab 已拆掉。用户原话是"目前的生成顺序和生成规则就是冲突或者是重合的" ——
+  // 病根在于那一个 tab 里塞了四件互不相干的事：①沙盒出兵节奏 ②兵种总开关
+  // ③对战成长 ④屠戮。而【对战】的出兵完全由另一个 tab 的 laneWaveComposition 决定。
+  // 于是同一屏上"每波生成数量=3"和出兵编排里的"近战兵 ×3"看着是一回事，
+  // 改前者在对战里纹丝不动 —— 这不是排版乱，是两套规则在同一个名字下打架。
+  // 现在：成长/屠戮 → 独立的「成长与屠戮」tab（它们本来就跟生成无关，是战斗数值）；
+  //       出兵的一切（对战编排 + 兵种开关 + 沙盒节奏）→ 合并进唯一的「出兵编排」tab，
+  //       内部按模式分区并标明"这一段只管沙盒 / 这一段只管对战"。
+  // 结论：现在"哪里改出兵"只有一个答案。
+  _renderSandboxRuleRows(type) {
+    const meta = this._spawnRuleMeta(type);
+    const gr = CONFIG.gameRules;
+    let html = '';
+    if (meta.countKey) {
+      const v = gr[meta.countKey] ?? meta.countDefault;
+      html += `<div class="slider-row"><label>${meta.countLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.countKey}" min="0" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    if (meta.intervalKey) {
+      const v = gr[meta.intervalKey] ?? meta.intervalDefault;
+      html += `<div class="slider-row"><label>${meta.intervalLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.intervalKey}" min="1" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    if (meta.minWaveKey) {
+      const v = gr[meta.minWaveKey] ?? meta.minWaveDefault;
+      html += `<div class="slider-row"><label>${meta.minWaveLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.minWaveKey}" min="0" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    if (meta.extraKey) {
+      const v = gr[meta.extraKey] ?? meta.extraDefault;
+      html += `<div class="slider-row"><label>${meta.extraLabel}</label>
+        <input type="number" class="spawnrule-input" data-key="${meta.extraKey}" min="0" step="1" value="${v}" style="width:90px;">
+      </div>`;
+    }
+    // P2：这里原先还有两个标着"对战模式：第几波起生成 / 每几波生成一次"的框
+    // （battleTotemFromWave / battleTotemInterval）。它们是【死配置】——
+    // 全仓库除了 Config 的定义和一句过时注释，没有任何代码读取；对战出兵早已
+    // 全部改由 laneWaveComposition 驱动，默认编排里那条
+    // { type:'totem', count:1, fromWave:10, everyN:3 } 正是同一条规则的第二份表述。
+    // 用户改了这两个框会毫无反应 —— 这就是"生成顺序和生成规则重合"的原型。
+    // 已从面板移除；要调图腾兵的对战节奏请改上面②里那条规则。
+    if (meta.battleFromKey) {
+      // 「上面②」是旧版式的说法 —— 那时对战编排和沙盒节奏挤在同一页。
+      // 现在编排在左侧的独立节点上，指路要指对地方，否则用户会在本页上下找一个不存在的②。
+      html += `<div style="font-size:11px;color:var(--text-mute);padding:4px 0;">
+        ${this._labelOf('totem')}的<b>对战</b>节奏由左侧「🧬 出兵编排」里那条规则的
+        起始波/每几波决定，此处不再重复提供。</div>`;
+    }
+    if (!meta.countKey && !meta.intervalKey) {
+      html += `<div style="color:#8b949e;font-size:12px;padding:4px 0;">该兵种在沙盒模式下没有独立的节奏参数。</div>`;
+    }
+    return html;
+  },
+
+  // ==================== 巨龙：刷新节奏与强度曲线 ====================
+  // 这一页此前是**空的**（"巨龙暂无可编辑的固定模板"），而 DragonSystem 里刷新时间表
+  // 和三条属性曲线全是写死的魔数；CONFIG.gameRules 里倒是躺着七个 dragonXxx 键，
+  // 却没有任何一处代码读它们 —— 摆出来只会让人改了没反应。
+  // 现在那七个死键已删除，真正生效的参数搬进 CONFIG.gameRules.dragon，这一页是它的入口。
+  //
+  // 预览用的是 dragonStatsAt / dragonIntervalAt —— 和引擎**同一个函数**（data/dragonCurve.js），
+  // 所以"面板显示第 3 条龙 2400 血、实际刷出来不是"这种事在结构上就不可能发生。
+  _renderDragonRuleContent() {
+    const d = (CONFIG.gameRules.dragon = CONFIG.gameRules.dragon || {});
+    const c = dragonCfg();
+    const num = (k, label, v, step, hint) => `<div class="slider-row">
+      <label style="width:150px;" title="${hint || ''}">${label}</label>
+      <input type="number" class="dragonrule-input" data-dkey="${k}" step="${step}"
+             value="${v === null || v === undefined ? '' : v}" style="width:100px;"></div>`;
+
+    let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
+      🐲 巨龙的强度按<b>第几条龙</b>算，与游戏波次无关。<br>
+      早期版本是按 <code>window.waveNumber</code> 算的，而龙按固定时间表刷新 ——
+      7 分钟后刷第 2 条龙时波次可能已经到 10+，双抗直接飙到几百。这个口径不要改回去。
+    </div>`;
+
+    html += `<div style="font-size:12px;color:var(--text-dim);margin:10px 0 4px;">刷新节奏（秒）</div>`;
+    html += num('firstDelay', '首条元素龙', c.firstDelay, 5, '开局多久后刷第一条');
+    html += `<div class="slider-row"><label style="width:150px;" title="第 2/3/4… 条元素龙的间隔，逗号分隔；条数超出则沿用最后一项">元素龙后续间隔</label>
+      <input type="text" class="dragonrule-input" data-dkey="elementIntervals"
+             value="${c.elementIntervals.join(', ')}" style="flex:1;"></div>`;
+    html += num('ancientFirstDelay', '首条远古龙', c.ancientFirstDelay, 10, '成魂结算后到第一条远古龙');
+    html += num('ancientInterval', '远古龙间隔', c.ancientInterval, 10, '');
+
+    const CURVES = [['maxHP', '生命'], ['resist', '双抗（护甲=魔抗）'], ['attackDamage', '攻击力']];
+    html += `<div style="font-size:12px;color:var(--text-dim);margin:14px 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
+      强度曲线　<span style="font-size:10px;color:var(--text-mute);">
+      第 w 条 = w≤拐点 ? 起点+(w−1)×前段增量 : 起点+(拐点−1)×前段增量+(w−拐点)×后段增量，再按上限截顶</span></div>`;
+    for (const [key, label] of CURVES) {
+      const sp = c.curve[key];
+      html += `<div style="border:1px solid #2d3540;border-radius:4px;padding:8px;margin-bottom:8px;">
+        <div style="font-size:12px;margin-bottom:6px;">${label}</div>
+        ${num(`curve.${key}.base`, '第 1 条的值', sp.base, 1, '')}
+        ${num(`curve.${key}.step`, '拐点前每条 +', sp.step, 1, '')}
+        ${num(`curve.${key}.knee`, '拐点（第几条）', sp.knee, 1, '')}
+        ${num(`curve.${key}.lateStep`, '拐点后每条 +', sp.lateStep, 1, '')}
+        ${num(`curve.${key}.cap`, '上限（留空 = 不封顶）', sp.cap, 1, '留空表示不截顶')}
+      </div>`;
+    }
+
+    html += `<div style="font-size:12px;color:var(--text-dim);margin:10px 0 4px;">远古龙修正（同序号曲线之上）</div>`;
+    html += num('ancient.hpMult', '生命 ×', c.ancient.hpMult, 0.05, '');
+    html += num('ancient.resistAdd', '双抗 +', c.ancient.resistAdd, 5, '');
+    html += num('ancient.adMult', '攻击 ×', c.ancient.adMult, 0.05, '');
+
+    // ---- 预览：与引擎共用 dragonStatsAt/dragonIntervalAt ----
+    let t = c.firstDelay, rows = '';
+    for (let i = 1; i <= 6; i++) {
+      const st = dragonStatsAt(i, false);
+      const mm = `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}`;
+      rows += `<tr><td style="padding:2px 8px;">第 ${i} 条</td><td style="padding:2px 8px;">${mm}</td>
+        <td style="padding:2px 8px;">${st.maxHP}</td><td style="padding:2px 8px;">${st.armor}</td>
+        <td style="padding:2px 8px;">${st.attackDamage}</td></tr>`;
+      t += dragonIntervalAt({ soulUnlocked: false, elementSpawned: i });
+    }
+    const anc = dragonStatsAt(1, true);
+    html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">预览（按<b>已保存</b>的配置算，点【应用】后刷新）</div>
+      <table style="font-size:11px;width:100%;"><tr style="color:#8b949e;">
+        <td style="padding:2px 8px;">序号</td><td style="padding:2px 8px;">出现时刻</td>
+        <td style="padding:2px 8px;">生命</td><td style="padding:2px 8px;">双抗</td><td style="padding:2px 8px;">攻击</td></tr>
+        ${rows}</table>
+      <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">
+        首条远古龙：生命 ${anc.maxHP}／双抗 ${anc.armor}／攻击 ${anc.attackDamage}。
+        元素龙共 ${CONFIG.gameRules.elementDragonTotal ?? 6} 条，
+        某方击杀 ≥ ${CONFIG.gameRules.dragonSoulThreshold ?? 4} 条才成魂，都不到则无魂。</div>
+    </div>`;
+    return html;
+  },
+
+  _applyDragonRuleChanges(overlay, logFn) {
+    const d = (CONFIG.gameRules.dragon = CONFIG.gameRules.dragon || {});
+    d.curve = d.curve || {}; d.ancient = d.ancient || {};
+    let changed = 0, bad = 0;
+    overlay.querySelectorAll('.dragonrule-input').forEach(inp => {
+      const key = inp.dataset.dkey;
+      const raw = (inp.value || '').trim();
+      if (key === 'elementIntervals') {
+        const arr = raw.split(/[,，\s]+/).filter(Boolean).map(Number).filter(v => v > 0);
+        // 空数组会让 dragonIntervalAt 取到 undefined → nextDragonTime 变 NaN → 龙永远不刷、
+        // 且不报任何错。宁可退回出厂间隔，也不要把这种静默失效存进配置。
+        if (!arr.length) { bad++; return; }
+        d.elementIntervals = arr; changed++;
+        return;
+      }
+      const path = key.split('.');
+      // 上限留空 = 不封顶（null），这是合法取值，不能当"没填"跳过
+      const isCap = path[path.length - 1] === 'cap';
+      let v;
+      if (raw === '') { if (!isCap) return; v = null; }
+      else { v = parseFloat(raw); if (isNaN(v)) { bad++; return; } }
+      let node = d;
+      for (let i = 0; i < path.length - 1; i++) node = (node[path[i]] = node[path[i]] || {});
+      node[path[path.length - 1]] = v;
+      changed++;
+    });
+    logFn(`🐲 巨龙规则已更新（${changed} 项${bad ? `，${bad} 项填写无效已跳过` : ''}）。已在场上的龙不追溯`, 'spawn');
+  },
+
+  // ==================== 成长与屠戮（战斗数值，与"什么时候出兵"无关）====================
+  // Q2：这两组数值原先硬编码在 main.js / 技能文件里，改平衡要翻源码。现在住在 CONFIG，
+  // 面板改完立刻对【之后生成】的小兵生效（已出场的沿用出生时的成长快照）。
+  _renderGrowthContent(type) {
+    let html = `<div style="padding:4px 0;">`;
+    html += `<div class="pick-desc-box" style="margin-bottom:10px;">
+      📈 这里只管【单位有多强】，不管【什么时候出多少】—— 后者在「出兵编排」tab。<br>
+      成长按<b>波次</b>线性累加，单位出生时结算一次并写死；已经在场上的兵不会追溯。
+    </div>`;
+    const G = CONFIG.battleGrowth?.[type];
+    if (G) {
+      html += `<div style="border-top:1px solid #2d3540;padding-top:10px;">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">📈 对战成长（每波固定增量）</div>
+        <div class="slider-row"><label>最大生命 /波</label>
+          <input type="number" class="growth-input" data-gkey="hp" step="0.1" value="${G.hp}" style="width:90px;"></div>
+        <div class="slider-row"><label>攻击力 /波</label>
+          <input type="number" class="growth-input" data-gkey="ad" step="0.05" value="${G.ad}" style="width:90px;"></div>
+        <div class="slider-row"><label>双抗 /波</label>
+          <input type="number" class="growth-input" data-gkey="res" step="0.05" value="${G.res}" style="width:90px;"></div>
+        <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">
+          第 N 波的加值 = 上面三项 ×(N−1)。当前第 <b>${Math.max(1, window.waveNumber || 1)}</b> 波，
+          该兵种加值：生命 +${(G.hp * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
+          攻击 +${(G.ad * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
+          双抗 +${(G.res * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}。</div>
+      </div>`;
+    } else {
+      html += `<div style="color:#8b949e;font-size:12px;">该兵种未配置对战成长（每波数值恒定）。</div>`;
+    }
+    const R = CONFIG.rend?.[type];
+    if (R) {
+      html += `<div style="margin-top:12px;border-top:1px solid #2d3540;padding-top:10px;">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">🩸 屠戮</div>
+        <div class="slider-row"><label>百分比（%）</label>
+          <input type="number" class="rend-input" data-rkey="pct" step="0.5" value="${(R.pct * 100).toFixed(2)}" style="width:90px;"></div>
+        <div class="slider-row"><label>伤害基数</label>
+          <select class="rend-input" data-rkey="base" style="flex:1;">
+            <option value="template" ${R.base !== 'current' ? 'selected' : ''}>模板基础生命（不随成长膨胀）</option>
+            <option value="current" ${R.base === 'current' ? 'selected' : ''}>自身当前生命（旧行为）</option>
+          </select></div>
+        <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">
+          基数取"当前生命"时，屠戮会与生命同步膨胀，兵杀兵耗时永远恒定、两波兵永远互相清完聚不起来。
+          取"模板基础生命"则前期照样快速清线、后期自然稀释。</div>
+      </div>`;
+    }
+    html += `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">改完点【应用】写入，对之后生成的单位生效。</div>`;
+    html += `</div>`;
+    return html;
+  },
+
+  // ==================== 出兵顺序（对战模式，全局；用户："再加'出兵顺序'自定义"）====================
+  // 数据就是 CONFIG.gameRules.laneWaveComposition —— 数组顺序即出兵先后。
+  // 面板直接编排这个数组：上下移动 / 增删条目 / 改兵种·数量·起始波次·周期·触发条件，
+  // 再配一个"第 N 波会出什么"的实时预览（预览与真实出兵共用 buildWaveOrder，不会骗人）。
+  _waveOrderPreviewWave: 1,
+  _waveOrderPreviewNexusDown: false,
+  // 分路条件（外/内/水晶塔/召唤水晶）得指明看哪一路，否则"本路"没有着落
+  _waveOrderPreviewLane: 'mid',
+
+  // v43 Q5：编排的第二个维度 —— 路。'all' = 该阵营的全部路（原有行为）。
+  // 具体路 id 由**当前地图**决定（峡谷 top/mid/bot、扭曲丛林 top/bot、嚎哭深渊 mid），
+  // 所以页签是现生成的，不写死。
+  _waveLaneScope: 'all',
+
+  /** 当前地图的路列表（拿不到地图时退回三路，单测/沙盒下也有东西可显示）。 */
+  _mapLaneIds() {
+    const m = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
+    const ids = (m?.lanes || []).map(l => l.id).filter(Boolean);
+    return ids.length ? ids : ['top', 'mid', 'bot'];
+  },
+  _laneLabel(id) {
+    return ({ top: '⬆️ 上路', mid: '➡️ 中路', bot: '⬇️ 下路' })[id] || id;
+  },
+
+  /**
+   * 当前作用域下【要编辑哪一份编排】。作用域是二维的：阵营 × 路。
+   *   共享 + 全部路 → CONFIG.gameRules.laneWaveComposition            （最笼统，出厂基准）
+   *   共享 + 某一路 → CONFIG.gameRules.laneWaveCompositionByLane[路]
+   *   蓝/红 + 全部路 → CONFIG.factionOverrides[阵营].laneWaveComposition
+   *   蓝/红 + 某一路 → CONFIG.factionOverrides[阵营].laneWaveCompositionByLane[路]
+   * 读写共用这一个入口，避免"面板改 A、出兵读 B"。
+   * create=false（只读渲染）时，某一格还没有自己的编排就**显示它实际会生效的那一份**
+   *（顺序与 waveComposition.compositionFor 完全一致），一旦真的动手改才复制成本格专属。
+   */
+  _woList(create = false) {
+    const gr = CONFIG.gameRules;
+    gr.laneWaveComposition = gr.laneWaveComposition || [];
+    const f = this._factionScope, lane = this._waveLaneScope;
+    const isFac = f && f !== 'shared';
+    const isLane = lane && lane !== 'all';
+    const nonEmpty = (a) => (Array.isArray(a) && a.length) ? a : null;
+
+    // ---- 本格已经有自己的编排？直接用 ----
+    let box;
+    if (isFac) {
+      CONFIG.factionOverrides = CONFIG.factionOverrides || {};
+      CONFIG.factionOverrides[f] = CONFIG.factionOverrides[f] || {};
+      box = CONFIG.factionOverrides[f];
+    } else {
+      box = gr;
+    }
+    if (isLane) {
+      const own = nonEmpty(box.laneWaveCompositionByLane?.[lane]);
+      if (own) return own;
+    } else if (isFac) {
+      const own = nonEmpty(box.laneWaveComposition);
+      if (own) return own;
+    } else {
+      return gr.laneWaveComposition;   // 共享 + 全部路 = 出厂基准本身
+    }
+
+    // ---- 本格还没有：按 compositionFor 的顺序找出"实际生效的那一份" ----
+    const inherited =
+         (isLane && isFac && nonEmpty(CONFIG.factionOverrides?.[f]?.laneWaveComposition))
+      || (isLane && nonEmpty(gr.laneWaveCompositionByLane?.[lane]))
+      || gr.laneWaveComposition;
+    if (!create) return inherited;   // 只读时显示继承来的那份
+
+    // 首次编辑本格：从继承来的那份复制一份，之后各改各的
+    const copy = inherited.map(r => ({ ...r }));
+    if (isLane) {
+      box.laneWaveCompositionByLane = box.laneWaveCompositionByLane || {};
+      box.laneWaveCompositionByLane[lane] = copy;
+    } else {
+      box.laneWaveComposition = copy;
+    }
+    return copy;
+  },
+  _woSetList(arr) {
+    const f = this._factionScope, lane = this._waveLaneScope;
+    const isFac = f && f !== 'shared';
+    const box = isFac
+      ? ((CONFIG.factionOverrides = CONFIG.factionOverrides || {},
+          CONFIG.factionOverrides[f] = CONFIG.factionOverrides[f] || {}))
+      : CONFIG.gameRules;
+    if (lane && lane !== 'all') {
+      box.laneWaveCompositionByLane = box.laneWaveCompositionByLane || {};
+      box.laneWaveCompositionByLane[lane] = arr;
+    } else {
+      box.laneWaveComposition = arr;
+    }
+  },
+  /** 清掉当前这一格的专属编排（回到它继承的那一份）。 */
+  _woClearCell() {
+    const f = this._factionScope, lane = this._waveLaneScope;
+    const isFac = f && f !== 'shared';
+    const box = isFac ? CONFIG.factionOverrides?.[f] : CONFIG.gameRules;
+    if (!box) return;
+    if (lane && lane !== 'all') { if (box.laneWaveCompositionByLane) delete box.laneWaveCompositionByLane[lane]; }
+    else if (isFac) delete box.laneWaveComposition;
+  },
+  /** 当前格子有没有自己的编排（决定角标与"清除本格"按钮）。 */
+  _woCellOwned() {
+    const f = this._factionScope, lane = this._waveLaneScope;
+    if (lane && lane !== 'all') return hasLaneComposition(f, lane);
+    return f && f !== 'shared' ? hasFactionComposition(f) : false;
+  },
+
+  _renderWaveOrderContent() {
+    const gr = CONFIG.gameRules;
+    const list = this._woList(false);
+    const types = this._TPL_MINION_TYPES;
+    const EN = gr.spawnEnabled || {};
+
+    const cell = (rule, i, key, min, step) =>
+      `<input type="number" class="wo-field" data-idx="${i}" data-field="${key}" min="${min}" step="${step}"
+              value="${rule[key] ?? ''}" placeholder="${key === 'count' ? 1 : (key === 'everyN' ? 1 : 0)}">`;
+
+    // P2：出兵的一切都收在这一个 tab 里，但【必须】按模式分区并写明各自管谁 ——
+    // 两套规则同屏而不标注模式，正是用户说的"冲突或者是重合"。
+    let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
+      🧬 <b>对战模式</b>出什么兵、按什么顺序出，全在这一页。分两段：<br>
+      　<b>① 兵种总开关</b>　对<b>沙盒+对战</b>都生效，关掉的兵种下面怎么排都不会出。<br>
+      　<b>② 对战编排</b>　只管<b>对战模式</b>：数组顺序 = 出兵先后。<br>
+      沙盒模式的出兵节奏是<b>逐兵种</b>的，在左侧对应兵种的「🏖️ 沙盒节奏」页 ——
+      它和这里的编排是两套互不相干的规则，同屏摆着正是用户说的"生成顺序和生成规则冲突或者重合"。
+    </div>`;
+
+    // ---- ① 兵种总开关（原「生成规则」里逐个类型翻页才能看到，现在一屏全景）----
+    html += `<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">① 兵种总开关（沙盒 + 对战通用）</div>`;
+    html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:12px;">
+      ${types.map(t => {
+        const on = EN[t] !== false;
+        return `<button class="editor-tab ${on ? 'active' : ''}" data-spawn-toggle="${t}"
+                 title="${on ? '点击停用' : '点击启用'}" style="font-size:11px;">
+          ${on ? '✅' : '⛔'} ${this._iconOf(t)}${this._labelOf(t)}
+        </button>`;
+      }).join('')}
+    </div>`;
+
+    const _f = this._factionScope;
+    const _lane = this._waveLaneScope || 'all';
+    const _own = this._woCellOwned();
+    const _who = _f === 'blue' ? '🔵蓝方' : _f === 'red' ? '🔴红方' : '双方共享';
+    const _laneTxt = _lane === 'all' ? '全部路' : this._laneLabel(_lane);
+    // v43 Q5：路的页签。**按当前地图的 lanes 现生成** —— 峡谷 3 路、扭曲丛林 2 路、
+    // 嚎哭深渊 1 路，写死三路的话在后两张图上会摆出根本不存在的页签
+    //（用户："每个地图的路数不同，UI上记得做区分！"）。
+    const _laneIds = this._mapLaneIds();
+    const _mapLabel = ((window.CTX?.__app || window.__app)?.mapSystem?.currentMap?.label) || '当前地图';
+    html += `<div style="font-size:12px;color:var(--text-dim);margin:0 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
+      ② 对战编排（数组顺序 = 出兵先后）　
+      <span style="font-size:10px;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
+        作用域：${_who} × ${_laneTxt}${_own ? '（本格已有独立编排）' : '（当前显示继承来的那份，一改就会复制成本格专属）'}
+      </span>
+      ${_own ? `<button id="woClearFaction" style="float:right;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除本格编排</button>` : ''}
+      </div>`;
+    html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:6px;">
+      <span style="font-size:10px;color:var(--text-mute);align-self:center;margin-right:6px;">路（${_mapLabel}，${_laneIds.length} 条）：</span>
+      <button class="editor-tab ${_lane === 'all' ? 'active' : ''}" data-wo-lane="all" style="font-size:11px;">🌐 全部路</button>
+      ${_laneIds.map(id => `<button class="editor-tab ${_lane === id ? 'active' : ''}" data-wo-lane="${id}" style="font-size:11px;">${this._laneLabel(id)}${hasLaneComposition(_f, id) ? ' ●' : ''}</button>`).join('')}
+    </div>`;
+    html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+      解析顺序（先命中先用）：<b>本阵营·本路</b> → <b>本阵营·全部路</b> → <b>共享·本路</b> → <b>共享·基准</b>。
+      页签上的 ● 表示那一格有自己的编排。</div>`;
+    html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+      「起始波」之前不出；之后每「每几波」出一次；「生效条件」再叠一层门槛（三者是<b>与</b>的关系）。<br>
+      条件里的<b>本路</b>指这条规则当前正在为之出兵的那一路；枢纽塔/水晶枢纽不分路，按<b>全场</b>算。
+      条件不成立的规则本波直接跳过，不影响同一编排里的其它规则。</div>`;
+
+    // 表头与每一行走**同一套 grid 列宽**（--wo-cols）。原来两边各写一串固定 px，
+    // 表头 52/96/62/62/62 和行里的按钮/输入框实际宽度对不上，列标题整体左偏 ——
+    // 用户说的"UI 显示格式有些混乱"就是这个。现在列宽只有一处定义，不可能再错位。
+    html += `<div class="wo-row wo-head">
+      <span>顺序</span><span>兵种</span><span>数量</span><span>起始波</span>
+      <span>每几波</span><span>生效条件</span><span></span>
+    </div>`;
+
+    if (list.length === 0) {
+      html += `<div style="color:#8b949e;font-size:12px;padding:8px;">编排为空 —— 当前对战不会生成任何小兵。</div>`;
+    }
+    const groups = whenOptionGroups();
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const off = EN[r.type] === false;
+      const cond = WAVE_CONDITIONS[r.when || ''] || WAVE_CONDITIONS[''];
+      // 需要参数的条件（"游戏已进行 ≥ N 秒"）才显示那个数值框。
+      // 无条件显示的话，用户会对着一个"总是"规则旁边的空数字框琢磨半天它管什么。
+      const argBox = cond.arg
+        ? `<input type="number" class="wo-field wo-arg" data-idx="${i}" data-field="whenArg"
+                  min="${cond.arg.min ?? 0}" step="${cond.arg.step ?? 1}"
+                  value="${r.whenArg ?? ''}" placeholder="${cond.arg.def}"
+                  title="${cond.arg.label}">`
+        : '';
+      html += `<div class="wo-row${off ? ' wo-off' : ''}">
+        <span class="wo-move-cell">
+          <button class="wo-move" data-idx="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''}>▲</button>
+          <button class="wo-move" data-idx="${i}" data-dir="1" ${i === list.length - 1 ? 'disabled' : ''}>▼</button>
+        </span>
+        <select class="wo-field" data-idx="${i}" data-field="type">
+          ${types.map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${this._iconOf(t)} ${this._labelOf(t)}</option>`).join('')}
+        </select>
+        ${cell(r, i, 'count', 0, 1)}${cell(r, i, 'fromWave', 0, 1)}${cell(r, i, 'everyN', 1, 1)}
+        <span class="wo-when-cell">
+          <select class="wo-field" data-idx="${i}" data-field="when">
+            ${groups.map(g => `<optgroup label="${g.label}">${g.items.map(o =>
+              `<option value="${o.value}" ${(r.when || '') === o.value ? 'selected' : ''}>${o.label}</option>`).join('')}</optgroup>`).join('')}
+          </select>${argBox}
+        </span>
+        <button class="wo-del" data-idx="${i}" title="删除这条规则">✕</button>
+      </div>`;
+    }
+
+    html += `<div style="margin-top:8px;"><button id="woAddBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条</button>
+      <button id="woResetBtn" style="margin-left:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">↺ 恢复默认编排</button></div>`;
+
+    // ---- 实时预览 ----
+    const w = this._waveOrderPreviewWave, nd = this._waveOrderPreviewNexusDown;
+    // 预览必须带世界快照。不带的话，依赖建筑/时间的条件按"未知即放行"处理，
+    // 预览就会报出实战不会出现的兵 —— 正是这个面板当初要解决的"预览骗人"。
+    // 时间由波次推算：对战首波 firstWaveDelay 秒，之后每 waveInterval 秒一波，
+    // 与 LaneWaveSystem 读的是同两个键，所以推算口径和实战一致。
+    const _wi = window.CTX?.__app?.laneWaveSystem;
+    const _first = _wi?.firstWaveDelay ?? CONFIG.gameRules.firstWaveDelay ?? 20;
+    const _every = _wi?.waveInterval ?? CONFIG.gameRules.waveInterval ?? 45;
+    const _pvTime = Math.max(0, _first + Math.max(0, w - 1) * _every);
+    // 建筑普查取【场上真实状态】。没在对战里（没有地图）时给 null，
+    // 那些条件就退回"放行"，并在下面的说明里如实写出来，而不是假装算准了。
+    const _census = window.CTX?.__app?.mapSystem?.structureCensus?.() || null;
+    // 预览按【当前作用域的阵营】算 —— 不传 faction 的话，编了红方专属编排却预览共享的，
+    // 就又回到"预览骗人"那个老问题上了。
+    const _pf = (this._factionScope && this._factionScope !== 'shared') ? this._factionScope : null;
+    const order = buildWaveOrder(w, nd, gr, _pf, {
+      gameTime: _pvTime, laneId: this._waveOrderPreviewLane, census: _census,
+    });
+    html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+      <div class="slider-row" style="gap:8px;">
+        <label style="width:auto;">预览第</label>
+        <input type="number" id="woPreviewWave" min="0" step="1" value="${w}" style="width:70px;">
+        <label style="width:auto;">波，路</label>
+        <select id="woPreviewLane" style="width:80px;">
+          ${(window.CTX?.__app?.mapSystem?.currentMap?.lanes || [{ id: 'top' }, { id: 'mid' }, { id: 'bot' }])
+            .map(l => `<option value="${l.id}" ${l.id === this._waveOrderPreviewLane ? 'selected' : ''}>${l.id}</option>`).join('')}
+        </select>
+        <button id="woPreviewNexus" class="editor-tab ${nd ? 'active' : ''}" style="flex:1;font-size:11px;">
+          ${nd ? '💥 本路水晶已陷落' : '🔮 本路水晶完好'}
+        </button>
+      </div>
+      <div class="pick-desc-box" style="margin-top:6px;">
+        共 <b>${order.length}</b> 个单位：${order.length
+          ? order.map(t => `${this._iconOf(t)}${this._labelOf(t)}`).join(' → ')
+          : '（本波无兵）'}
+      </div>
+      <div style="font-size:10px;color:var(--text-mute);margin-top:4px;">
+        按第 ${w} 波 ≈ 开局 ${Math.floor(_pvTime / 60)}分${String(Math.round(_pvTime % 60)).padStart(2, '0')}秒 推算
+        （首波 ${_first}s，之后每 ${_every}s 一波）。
+        ${_census
+          ? `建筑条件按<b>当前场上</b>的存活情况判定（本路：${this._waveOrderPreviewLane}）。`
+          : `<b>当前不在对战中</b>，读不到建筑存活情况 —— 依赖建筑的条件在预览里一律按"成立"算，实战中会真判。`}
+      </div>
+    </div>`;
+    html += `<div style="margin-top:8px;font-size:11px;color:var(--text-mute);">
+      ①即点即生效；②改完点【应用】写入，下一波起生效。</div>`;
+    return html;
+  },
+
+  // 沙盒节奏：**逐兵种**，所以它住在该兵种的节点下，而不是和全局编排挤在同一页。
+  // 这两者曾经同屏，于是"每波生成数量=3"和编排里的"近战兵 ×3"看着是一回事，
+  // 改前者在对战里纹丝不动 —— 那不是排版乱，是两套规则顶着同一个名字打架。
+  _renderSandboxContent(type) {
+    return `<div class="pick-desc-box" style="margin-bottom:10px;">
+        🏖️ 这一页<b>只影响沙盒模式</b>。对战模式的出兵完全由左侧「🧬 出兵编排」决定，
+        改这里在对战里看不到任何变化。
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">
+        当前兵种：${this._iconOf(type)}${this._labelOf(type)}</div>
+      ${this._renderSandboxRuleRows(type)}
+      <div style="margin-top:10px;font-size:11px;color:var(--text-mute);">改完点【应用】写入。</div>`;
+  },
+
+  // 兵种总开关：即点即生效（它只是个布尔，没有"批量应用"的必要）。
+  _bindSpawnToggles(overlay, logFn, rerender) {
+    overlay.querySelectorAll('[data-spawn-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.spawnToggle;
+        CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
+        const now = CONFIG.gameRules.spawnEnabled[t] !== false;
+        CONFIG.gameRules.spawnEnabled[t] = !now;
+        logFn(`⚙️ 「${this._labelOf(t)}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
+        // 重绘：编排表里该兵种的行要跟着变灰/变亮，预览也要重算
+        if (rerender) rerender(); else {
+          btn.classList.toggle('active', !now);
+        }
+      });
+    });
+  },
+
+  _bindWaveOrderEvents(overlay, logFn) {
+    const gr = CONFIG.gameRules;
+    // 只重绘内容区，不整屏重绘 —— 整屏重绘会重建左树并让滚动位置跳回顶部，
+    // 而这一页的结构性操作（上移/下移/删/加）是连续动作，跳一次就得重新找位置。
+    const rerender = () => {
+      overlay.querySelector('#templateContent').innerHTML = this._renderWaveOrderContent();
+      this._bindWaveOrderEvents(overlay, logFn);
+    };
+    this._bindSpawnToggles(overlay, logFn, rerender);
+    // 结构性操作（上下移/删/加/恢复默认）即点即改数组并重绘；
+    // 重绘前先把当前所有输入框的值收回数组，否则移动一行会把没点应用的编辑丢掉。
+    const flush = () => this._readWaveOrderInputs(overlay);
+
+    overlay.querySelectorAll('.wo-move').forEach(b => b.addEventListener('click', () => {
+      flush();
+      const i = +b.dataset.idx, d = +b.dataset.dir, j = i + d;
+      const a = this._woList(true);
+      if (j < 0 || j >= a.length) return;
+      [a[i], a[j]] = [a[j], a[i]];
+      rerender();
+    }));
+    overlay.querySelectorAll('.wo-del').forEach(b => b.addEventListener('click', () => {
+      flush();
+      this._woList(true).splice(+b.dataset.idx, 1);
+      rerender();
+    }));
+    overlay.querySelector('#woAddBtn')?.addEventListener('click', () => {
+      flush();
+      this._woList(true).push({ type: 'melee', count: 1 });
+      rerender();
+    });
+    overlay.querySelectorAll('[data-wo-lane]').forEach(b => b.addEventListener('click', () => {
+      flush();
+      this._waveLaneScope = b.dataset.woLane;
+      // 预览也跟着切到这一路：否则会出现"在上路页签上看着中路的预览"
+      if (this._waveLaneScope !== 'all') this._waveOrderPreviewLane = this._waveLaneScope;
+      rerender();
+    }));
+    overlay.querySelector('#woClearFaction')?.addEventListener('click', () => {
+      const f = this._factionScope, lane = this._waveLaneScope || 'all';
+      this._woClearCell();
+      const who = f === 'blue' ? '蓝方' : f === 'red' ? '红方' : '共享';
+      const where = lane === 'all' ? '全部路' : this._laneLabel(lane);
+      logFn(`🧹 已清除【${who} × ${where}】的独立出兵编排（回到它继承的那一份）`, 'spawn');
+      rerender();
+    });
+    overlay.querySelector('#woResetBtn')?.addEventListener('click', () => {
+      this._woSetList(this._DEFAULT_WAVE_COMPOSITION.map(r => ({ ...r })));
+      logFn('↺ 出兵编排已恢复默认', 'spawn');
+      rerender();
+    });
+    // 字段改动即时反映到预览
+    overlay.querySelectorAll('.wo-field').forEach(el => el.addEventListener('change', () => { flush(); rerender(); }));
+
+    overlay.querySelector('#woPreviewWave')?.addEventListener('change', (e) => {
+      this._waveOrderPreviewWave = Math.max(0, parseInt(e.target.value, 10) || 0);
+      flush(); rerender();
+    });
+    overlay.querySelector('#woPreviewLane')?.addEventListener('change', (e) => {
+      this._waveOrderPreviewLane = e.target.value;
+      flush(); rerender();
+    });
+    overlay.querySelector('#woPreviewNexus')?.addEventListener('click', () => {
+      this._waveOrderPreviewNexusDown = !this._waveOrderPreviewNexusDown;
+      flush(); rerender();
+    });
+  },
+
+  // 默认编排（= Config.js 里的出厂值），供「恢复默认」使用
+  _DEFAULT_WAVE_COMPOSITION: [
+    { type: 'super',  count: 1, when: 'nexusDown' },
+    { type: 'melee',  count: 3 },
+    { type: 'siege',  count: 1, everyN: 3, when: '!nexusDown' },
+    { type: 'ranged', count: 3 },
+    { type: 'totem',  count: 1, fromWave: 10, everyN: 3 },
+    { type: 'ram',    count: 1, fromWave: 5,  everyN: 15 },
+  ],
+
+  // 把面板上所有 .wo-field 的当前值收回 laneWaveComposition。
+  // 留空的数值字段一律删除该键（回到规则默认：count=1 / fromWave=0 / everyN=1），
+  // 免得存下一堆 NaN 让 buildWaveOrder 静默漏兵。
+  _readWaveOrderInputs(overlay) {
+    // 走 _woList(true)：一旦在蓝/红作用域下动了输入框，就复制成该阵营专属编排。
+    // 写回共享基准的话，改红方会连蓝方一起改掉 —— 正是这条需求要避免的事。
+    const list = this._woList(true);
+    overlay.querySelectorAll('.wo-field').forEach(el => {
+      const r = list[+el.dataset.idx];
+      if (!r) return;
+      const f = el.dataset.field;
+      if (f === 'type') { r.type = el.value; return; }
+      if (f === 'when') {
+        if (el.value) r.when = el.value; else delete r.when;
+        const arg = WAVE_CONDITIONS[el.value]?.arg;
+        // 换成不吃参数的条件时把 whenArg 一并清掉 —— 留着它会在导出的 JSON 里
+        // 攒出一堆没人读的字段，下一个人看到会以为这条规则还带着时间门槛。
+        if (!arg) delete r.whenArg;
+        // 反过来：选了吃参数的条件就【把声明的默认值真的写进去】。
+        // 只把它当 placeholder 显示是个陷阱 —— 框里灰着 600、实际按 0 判定，
+        // 于是"游戏满 10 分钟才出的兵"第 1 波就出来了，而面板看着完全正常。
+        else if (r.whenArg == null) r.whenArg = arg.def;
+        return;
+      }
+      const raw = el.value.trim();
+      if (raw === '') {
+        // whenArg 清空 → 回到该条件声明的默认值，而不是变成"没有门槛"
+        // （"不要门槛"的表达方式是把条件本身换成「总是」）。
+        const arg = WAVE_CONDITIONS[r.when || '']?.arg;
+        if (f === 'whenArg' && arg) r.whenArg = arg.def; else delete r[f];
+        return;
+      }
+      const v = parseFloat(raw);
+      if (!isNaN(v)) r[f] = Math.max(f === 'everyN' ? 1 : 0, f === 'whenArg' ? v : Math.round(v));
+    });
+    return list;
+  },
+
+  _applyWaveOrderChanges(overlay, logFn) {
+    const list = this._readWaveOrderInputs(overlay);
+    const w = this._waveOrderPreviewWave;
+    // 按【当前作用域的阵营】算。不传 faction 的话，编的是红方专属编排、
+    // 回执里报的却是共享基准的条数 —— 又一处"面板说的和实际发生的不是一回事"。
+    const f = (this._factionScope && this._factionScope !== 'shared') ? this._factionScope : null;
+    const n = buildWaveOrder(w, this._waveOrderPreviewNexusDown, CONFIG.gameRules, f).length;
+    const who = f ? (f === 'blue' ? '🔵蓝方' : '🔴红方') : '双方共享';
+    logFn(`✅ 出兵编排已应用（${who}，${list.length} 条规则；第 ${w} 波将出 ${n} 个单位）`, 'spawn');
+  },
+
+  _applySpawnRuleChanges(overlay, type, logFn) {
+    const inputs = overlay.querySelectorAll('.spawnrule-input');
+    let changed = 0;
+    inputs.forEach(inp => {
+      const key = inp.dataset.key;
+      const val = parseFloat(inp.value);
+      if (!isNaN(val) && key) {
+        CONFIG.gameRules[key] = val;
+        changed++;
+      }
+    });
+    if (changed) logFn(`✅ 「${this._labelOf(type)}」沙盒节奏已更新（${changed}项）`, 'spawn');
+  },
+
+  // P2：成长/屠戮从原「生成规则」里拆出来单独应用。它们是战斗数值，
+  // 跟"什么时候出多少兵"没有任何关系，塞在一起是原编辑器最误导的一处。
+  _applyGrowthChanges(overlay, type, logFn) {
+    let changed = 0;
+    // Q2：对战成长表
+    if (CONFIG.battleGrowth?.[type]) {
+      overlay.querySelectorAll('.growth-input').forEach(inp => {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) { CONFIG.battleGrowth[type][inp.dataset.gkey] = v; changed++; }
+      });
+    }
+    // Q2：屠戮（百分比按 % 输入，存成小数）
+    if (CONFIG.rend?.[type]) {
+      overlay.querySelectorAll('.rend-input').forEach(inp => {
+        const k = inp.dataset.rkey;
+        if (k === 'base') { CONFIG.rend[type].base = inp.value; changed++; return; }
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) { CONFIG.rend[type].pct = v / 100; changed++; }
+      });
+    }
+    logFn(`✅ 「${this._labelOf(type)}」成长/屠戮已更新（${changed}项）`, 'spawn');
+  },
+};

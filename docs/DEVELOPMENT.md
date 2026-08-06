@@ -94,6 +94,8 @@ src/
     AttributeCalculator.js 属性合成（帧级缓存）
     EffectRegistry.js    效果/状态
     SkillLibrary.js      技能定义（含武器）
+    skillParams.js       技能参数三层解析 + equipSkill（**唯一**的装备入口）
+    factories.js         实体工厂：塔 / 对战建筑 / 小兵 / 巨龙
     behaviorVM.js        自制技能的声明式解释器
   systems/             玩法系统（**互相之间禁止 import**）
   presentation/        渲染层（**只读实体，禁止写实体**）
@@ -106,6 +108,16 @@ src/
     towerModels.js       建筑模型角色清单
     maps/                地图模块
   ui/                  编辑器与面板
+    AttributeEditor.js   编辑器的**装配点**：Object.assign 把下面七块合成一个对象
+    editor/              编辑器分块（见下方"编辑器怎么拆的"）
+      fields.js            属性字段元数据（标签/滑块范围/步长）
+      open.js              打开入口 + 技能数值页 + 导航树与页面注册表
+      shell.js             阵营/应用作用域 + 面板骨架与「渲染-绑定-应用」三条分发
+      pagesConfig.js       模板页：导入导出 / 建筑体积 / 默认武器 / 默认龙魂
+      pagesWave.js         模板页：生成规则 / 巨龙刷新与强度 / 成长与屠戮 / 出兵编排
+      pagesEntity.js       实体面板各页渲染：属性/武器/技能/状态/运维/龙魂
+      pagesSkillEffect.js  模板页：被动技能组 / 初始状态组
+      events.js            事件绑定 + 应用修改
 tools/
   balance_matrix.mjs   headless 批量对局模拟（--map 可指定地图）
   killrate.mjs         击杀率探针
@@ -249,6 +261,28 @@ CONFIG.templates.tower
 导出/导入/回归三边会自动跟上（**不要**在别处再抄一份键名列表）。
 
 ### 模板编辑器的页面注册表
+
+### 编辑器怎么拆的（v43 P1-4）
+
+编辑器本来是**一个 2919 行的对象字面量**。拆的时候用了它自身的一个性质：
+**任意一段连续的顶层条目本身就是合法的对象字面量体**。于是按文件里已有的分节
+切成七块，每块 `export const XXX = { ...原样... }`，方法体逐字未动、缩进未动，
+`AttributeEditor.js` 里 `Object.assign({}, ...七块)` 合回同一个对象。
+
+关键结论：**合并后仍然是一个对象**，所以跨块的 `this._renderPage(...)`、
+`this._applyScope` 与拆分前完全一致，没有引入任何模块边界。
+
+拆完之后有两条要守住的规矩：
+
+1. **块与块之间不能有重复键**。`Object.assign` 遇到重复键会让后者静默覆盖前者 ——
+   不报错，只是少一个方法。`sim_v43` 里"编③"钉住这件事。
+2. **块不能反向 `import` AttributeEditor.js**（会成环）。需要往编辑器对象上挂
+   运行期字段时一律用 `this.`。拆的时候真踩到过一次：`_newCustomStackKey`
+   原本按名字写 `AttributeEditor._customEffectSeq`。
+
+另外，凡是"读编辑器源码做断言"的测试都必须读**整片**（`_harness.mjs` 的
+`editorSrc()`）。只读 `AttributeEditor.js` 的话，`!src.includes(X)` 这种否定断言
+会因为"X 搬到隔壁文件去了"而假通过 —— 本仓库的经典空断言形状，见 §8.2。
 
 面板长什么样由 `AttributeEditor._TPL_PAGES` **单向推导**：左树条目、页签、
 作用域条出不出现、【应用】按钮写到哪。每页声明 `{ faction, apply, action, writes }`。

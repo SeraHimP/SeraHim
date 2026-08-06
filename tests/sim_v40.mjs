@@ -94,7 +94,9 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
     && def.SELF_DAMAGE_PCT === 0.20 && def.VS_MINION_MULT === 0.67 && def.MELEE_BONUS_MULT === 2.0);
   T('被动图标 🛠️', def.icon === '🛠️');
 
-  const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  // v43 P1-4：小兵工厂已搬到 src/core/factories.js，读组合根两份
+  const mainSrc = ['../src/main.js','../src/core/factories.js']
+    .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   T('main.js 已把被动装配给攻城车（此前遗漏 → 技能栏空白）',
     /'ram':\s*\['passive_siege_weapon'\]/.test(mainSrc));
 
@@ -199,7 +201,12 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
 
 // ==================== ⑥ 编辑器 ====================
 {
-  const ae = fs.readFileSync(new URL('../src/ui/AttributeEditor.js', import.meta.url), 'utf8');
+  // v43 P1-4：编辑器已拆成 src/ui/editor/* 七块，断言要读整片 ——
+  // 只读 AttributeEditor.js 会让否定断言因为「搬到隔壁文件」而假通过。
+  const ae = [process.cwd() + '/src/ui/AttributeEditor.js',
+    ...fs.readdirSync(process.cwd() + '/src/ui/editor').sort()
+      .filter(f => f.endsWith('.js')).map(f => process.cwd() + '/src/ui/editor/' + f)]
+    .map(f => fs.readFileSync(f, 'utf8')).join('\n');
   T('模板编辑器有攻城车', ae.includes("ram: '攻城车'"));
   const ua = fs.readFileSync(new URL('../src/ui/UnitAddDialog.js', import.meta.url), 'utf8');
   T('添加单位对话框有攻城车', /ram:\s*\{ label: '攻城车'/.test(ua));
