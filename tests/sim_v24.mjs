@@ -78,7 +78,6 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
 {
   const lws=fs.readFileSync(new URL('../src/systems/LaneWaveSystem.js', import.meta.url),'utf8');
   const map=fs.readFileSync(new URL('../src/systems/MapSystem.js', import.meta.url),'utf8');
-  const rend=fs.readFileSync(new URL('../src/presentation/CanvasRenderer.js', import.meta.url),'utf8');
   const cc=fs.readFileSync(new URL('../src/ui/CanvasController.js', import.meta.url),'utf8');
   const html=fs.readFileSync(new URL('../index.html', import.meta.url),'utf8');
   const settings=fs.readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url),'utf8');
@@ -87,12 +86,15 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
   T('Q2 重生前30秒停发超级兵', lws.includes('superMinionCutoffBeforeRespawn') && map.includes('getNexusRespawnRemain'));
   T('Q5 波次生成按阵营门控', lws.includes("__towerRuleFor('waveOn', faction)"));
   T('v33 设置面板波次间隔已去重（仅对战区一个控件）', settings.includes('setLaneWaveInterval') && !settings.includes('setWaveIntervalInput'));
-  T('Q10 画布调试文字已删除', !rend.includes('弹道: ${this.projectiles'));
-  T('Q11 LOD 相对于全图缩放（不再写死绝对值）', rend.includes('this._fitZoom') && rend.includes('const rel = this.viewZoom / fitZoom'));
+  // v43 P0-①：这三条原先钉的是 CanvasRenderer（旧 2D 渲染器，已作为死代码删除）。
+  // 其中两条是"某段代码已删除"型断言——目标文件本身都没了，断言自然恒真，删掉；
+  // LOD 那条在活的 ThreeRenderer 里有对应实现，改钉它。
+  const three=fs.readFileSync(new URL('../src/presentation/ThreeRenderer.js', import.meta.url),'utf8');
+  T('Q11 LOD 相对于全图缩放（不再写死绝对值）', three.includes('_fitZoom') && /rel\s*=\s*[^;]*fitZoom/.test(three));
   T('Q11 fitToWorld 记录并共享 fitZoom', cc.includes('this.renderer._fitZoom = this.zoom'));
   T('Q12 🎯 重置为全图视角', cc.includes('this.fitToWorld(map.world.w, map.world.h)'));
   T('Q12 性能面板移入设置（画布按钮已删）', !html.includes('id="perfBtn"') && settings.includes('setPerfBtn'));
-  T('Q6 重生进度条无倒计时数字', !rend.includes('_respawnRemain != null'));
+  T('Q6 重生进度条无倒计时数字', !three.includes('_respawnRemain != null'));
   // 天气条现在是右上角【世界状态小窗】里的一行（与时间/昼夜、熵同窗分段显示）。
   T('Q9 天气段在世界状态小窗内', html.includes('id="worldHud"') && html.includes('id="whWeatherRow"'));
   T('Q9 属性面板有天气行（塔+小兵各一）',

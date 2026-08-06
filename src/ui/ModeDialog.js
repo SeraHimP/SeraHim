@@ -2,6 +2,8 @@
  * ModeDialog.js
  * 模式切换窗口：沙盒模式（现有自由玩法）与对战模式（地图系统）二选一，互斥运行。
  */
+import { paneHtml } from './dialogShell.js';
+
 export const ModeDialog = {
   open(deps, logFn) {
     const { mapSystem } = deps;
@@ -17,12 +19,7 @@ export const ModeDialog = {
     const render = () => {
       const maps = mapSystem.getAvailableMaps();
       const sec = (k, inner) => `<div style="display:${k === this._sec ? '' : 'none'};">${inner}</div>`;
-      document.getElementById('modalBody').innerHTML = `
-        <div class="tpl-layout">
-        <div class="tpl-nav"><div class="tpl-nav-group">
-          ${SECS.map(x => `<button class="tpl-nav-item ${x.key === this._sec ? 'active' : ''}" data-modenav="${x.key}">${x.label}</button>`).join('')}
-        </div></div>
-        <div class="tpl-pane">
+      const body = `
         ${sec('mode', `
         <div class="editor-section">
           <h4>当前模式：${mapSystem.active ? '⚔️ 对战模式' : '🗺️ 沙盒模式'}</h4>
@@ -45,8 +42,10 @@ export const ModeDialog = {
           </div>
           <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">选择地图会重新加载对战模式（清空当前对战单位）。</div>
         </div>`)}
-        </div></div>
       `;
+      document.getElementById('modalBody').innerHTML = paneHtml({
+        groups: [{ items: SECS }], activeKey: this._sec, body, navAttr: 'modenav',
+      });
       document.querySelectorAll('[data-modenav]').forEach(b => b.addEventListener('click', () => {
         this._sec = b.dataset.modenav; render();
       }));

@@ -434,23 +434,29 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // 钉的是**结构**（左侧 .tpl-nav + 右侧 .tpl-pane），不钉具体像素/文案。
 {
   const shell = stripComments(readSrc('../src/ui/dialogShell.js'));
-  T('Q1① 有一份共用外壳模块', /export function shellHtml/.test(shell) && /export function bindNav/.test(shell));
+  T('Q1① 有一份共用外壳模块', /export function paneHtml/.test(shell) && /export function shellHtml/.test(shell));
   T('Q1② 外壳沿用模板编辑器已有的类名，不另起一套 CSS',
     /tpl-layout/.test(shell) && /tpl-nav/.test(shell) && /tpl-pane/.test(shell));
   T('Q1③ 没有分组时不摆只有一项的假侧栏', /const hasNav = groups\.length > 0;/.test(shell));
+  // ⚠️ 这条是本轮教训：外壳模块最初写出来之后，四个弹窗其实是**手写标记**的，
+  // 谁也没 import 它 —— 也就是说我造了一个死模块，还给它写了断言。
+  // 死代码守卫（sim_deadcode）当场抓到。现在钉"确实有人在调它"。
+  for (const f of ['SettingsDialog', 'UnitAddDialog', 'ModeDialog', 'DetailModal']) {
+    T(`Q1④ ${f} 真的调用了外壳模块（不是手写同款标记）`,
+      /from '\.\/dialogShell\.js'/.test(stripComments(readSrc(`../src/ui/${f}.js`))));
+  }
 
   const need = (name, src, checks) => {
     for (const [label, re] of checks) T(`Q1 ${name}：${label}`, re.test(src));
   };
   need('设置面板', stripComments(readSrc('../src/ui/SettingsDialog.js')), [
-    ['左侧栏结构', /<div class="tpl-layout">/],
-    ['导航项用 tpl-nav-item（不再是横排 editor-tab）', /tpl-nav-item \$\{t\.key === TAB/],
-    ['右侧是 tpl-pane + 面包屑', /<div class="tpl-pane">[\s\S]*?tpl-crumb/],
+    ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'settab'/],
+    ['_TABS 直接当导航源（页签定义只有一处）', /groups: \[\{ items: this\._TABS \}\]/],
   ]);
   need('添加单位', stripComments(readSrc('../src/ui/UnitAddDialog.js')), [
-    ['左侧栏结构', /<div class="tpl-layout">/],
-    ['兵种作为侧栏子项缩进（不再是第二排横页签）', /tpl-nav-item child \$\{m === st\.minionType/],
-    ['右侧面包屑标明"我在编辑谁"', /tpl-crumb">\$\{crumb\}/],
+    ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'uadnav'/],
+    ['兵种作为侧栏子项缩进（不再是第二排横页签）', /child: true/],
+    ['子项 key 与主分类 key 同一套（避免两层选中错位）', /k\.startsWith\('minion:'\)/],
   ]);
   need('天气面板', stripComments(readSrc('../src/ui/WeatherPanel.js')), [
     ['左侧栏结构', /<div class="tpl-layout">/],
@@ -458,14 +464,14 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     ['切页只切 display，不重建 DOM（保住既有绑定与逐帧重绘）', /d\.style\.display = d\.dataset\.wxsec === this\._cfgSec/],
   ]);
   need('模式选择', stripComments(readSrc('../src/ui/ModeDialog.js')), [
-    ['左侧栏结构', /<div class="tpl-layout">/],
+    ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'modenav'/],
     ['两段内容各自成页', /data-modenav/],
   ]);
   need('详情框', stripComments(readSrc('../src/ui/DetailModal.js')), [
-    ['同一套外框', /editor-container/],
-    ['单页 → 用 tpl-pane 但不摆侧栏', /<div class="tpl-pane">\$\{contentHtml\}<\/div>/],
+    ['走 shellHtml（它自带 overlay，要完整外框）', /shellHtml\(\{/],
+    ['单页 → 不传 groups', /body: contentHtml, crumb: ''/],
   ]);
-  T('Q1④ 详情框确实没有侧栏（一项的导航是纯装饰）',
+  T('Q1⑤ 详情框确实没有侧栏（一项的导航是纯装饰）',
     !/tpl-nav/.test(stripComments(readSrc('../src/ui/DetailModal.js'))));
 }
 

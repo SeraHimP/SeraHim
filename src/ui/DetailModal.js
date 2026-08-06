@@ -1,3 +1,4 @@
+import { shellHtml } from './dialogShell.js';
 import { CONFIG } from '../data/Config.js';
 import { renderSkillDescription } from '../core/SkillLibrary.js';
 
@@ -128,13 +129,10 @@ export const DetailModal = {
     // v43 Q1：与模板编辑器同一套外框（.editor-container + h4 + .tpl-pane）。
     // 这个框只有一页内容，所以**不摆侧边栏** —— 一个只有一项的导航是纯装饰，
     // 比没有更糟。统一的是外框、字号与滚动行为，不是"每个窗口都必须有侧栏"。
-    modal.innerHTML = `<div class="modal-box" style="max-width:880px;">
-      <div class="editor-container">
-        <h4>${title}</h4>
-        <div class="tpl-pane">${contentHtml}</div>
-        <div class="modal-actions"><button id="detailCloseBtn" class="primary">关闭</button></div>
-      </div>
-    </div>`;
+    modal.innerHTML = shellHtml({
+      title, body: contentHtml, crumb: '',
+      footer: '<div class="modal-actions"><button id="detailCloseBtn" class="primary">关闭</button></div>',
+    });
     document.body.appendChild(modal);
     modal.querySelector('#detailCloseBtn').addEventListener('click', () => modal.remove());
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });

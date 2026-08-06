@@ -177,24 +177,24 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
 {
   // v2.5D 第3步：MINION_STYLE 与 _minionSprite 抽到了 SpriteFactory.js（Billboard 复用同一套绘制）。
   // 断言意图不变（攻城车有样式条目 + 独立形状分支），改为在"渲染源码 = 两文件之和"里找。
-  const src = fs.readFileSync(new URL('../src/presentation/CanvasRenderer.js', import.meta.url), 'utf8')
-            + fs.readFileSync(new URL('../src/presentation/SpriteFactory.js', import.meta.url), 'utf8');
+  // v43 P0-①：CanvasRenderer.js 已删（零引用的旧 2D 渲染器）。
+  // 攻城车的样式与形状分支本来就在 SpriteFactory 里，断言意图不变，只是不再拼那个死文件。
+  const src = fs.readFileSync(new URL('../src/presentation/SpriteFactory.js', import.meta.url), 'utf8');
   T('攻城车有渲染样式（不再 fallback 到 ❓）', /ram:\s*\{ color: '#7f8c8d', icon: '🛠️'/.test(src));
   T('攻城车有独立形状分支（横向长方形）', src.includes("case 'ram':"));
-  // 断言里写死了 \n，而 CanvasRenderer.js 是 CRLF —— 代码一直是对的，是断言匹配不上（假阳性）。
-  // 顺带把"活的"渲染路径也纳入：2D 渲染器已摘除，真正在跑的是 UnitLayer 的盾牌 sprite，
-  // 它靠自绘不透明白色纹理 + 不参与深度来保证实色，这才是今天该守住的行为。
-  const srcN = src.replace(/\r\n/g, '\n');
-  const ulSrc = fs.readFileSync(new URL('../src/presentation/UnitLayer.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  // 盾牌只钉**活的**渲染路径（UnitLayer）：旧断言还拼着 CanvasRenderer 里那半，
+  // 而那个渲染器从 2.5D 迁移完成起就没人调了 —— 钉死代码的行为等于什么都没钉。
+  const ulSrc = fs.readFileSync(new URL('../src/presentation/UnitLayer.js', import.meta.url), 'utf8');
   T('结构保护盾牌显式锁定不透明实色（修"透明"问题）',
-    srcN.includes("ctx.globalAlpha = 1;\n        ctx.fillStyle = '#ffffff';")
-    && /fillStyle = '#ffffff'/.test(ulSrc) && /depthTest: false, depthWrite: false/.test(ulSrc));
+    /fillStyle = '#ffffff'/.test(ulSrc) && /depthTest: false, depthWrite: false/.test(ulSrc));
   // v43 Q4：红线样式收敛到 CONFIG.ui.aimLine，塔与攻城车共用同一份（用户要求两者一致）。
   // 原断言钉的是攻城车那条独有的 rgba(255,60,60,0.55)——那正是"两处各写各的"的痕迹，
   // 现在改为钉"两处都从 aimLine 取值"。
+  // 红线画在 EffectsLayer（活的渲染路径），不在 SpriteFactory 里 —— 分开读。
+  const fxSrc = fs.readFileSync(new URL('../src/presentation/EffectsLayer.js', import.meta.url), 'utf8');
   T('攻城模式攻击指示红线（与塔同款）',
-    src.includes('m._ramLockId') && src.includes('CONFIG.ui.aimLine')
-    && !src.includes('rgba(255,60,60,0.55)'));
+    fxSrc.includes('m._ramLockId') && fxSrc.includes('CONFIG.ui.aimLine')
+    && !fxSrc.includes('rgba(255,60,60,0.55)'));
 }
 
 // ==================== ⑥ 编辑器 ====================

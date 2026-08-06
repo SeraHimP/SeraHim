@@ -28,18 +28,23 @@
  */
 
 /**
- * 拼出弹窗外壳的 innerHTML。
- * @param {object}   o
- * @param {string}   o.title      标题（含 emoji）
- * @param {Array}    o.groups     [{ title, items: [{ key, label, badge? }] }]，空数组 = 不要左侧栏
- * @param {string}   o.activeKey  当前选中的条目 key
- * @param {string}   o.crumb      右侧面包屑（不传则按 activeKey 的 label 自动生成）
- * @param {string}   o.body       右侧正文 HTML
- * @param {string}   [o.footer]   右侧底部按钮区 HTML
- * @param {string}   [o.width]    modal-box 最大宽度，默认 880px
- * @param {string}   [o.note]     面包屑下面那行小字说明
+ * 只拼「左侧栏 + 右侧单页」这一块（.tpl-layout）。
+ *
+ * 为什么要单独有它：本项目的弹窗分两类 ——
+ *   · 有的自带 overlay（详情框、天气面板），需要完整外框；
+ *   · 有的是往 index.html 里那个共用的 `#modalBody` 里塞内容（设置、模式、添加单位），
+ *     外框已经存在，只需要这一块。
+ * 两类共用同一份导航渲染，样式才不会慢慢长歪。
+ *
+ * @param {Array}  o.groups     [{ title, items: [{ key, label, badge?, child? }] }]，空数组 = 不要左侧栏
+ * @param {string} o.activeKey  当前选中的条目 key
+ * @param {string} [o.crumb]    右侧面包屑（不传则取选中条目的 label）
+ * @param {string} o.body       右侧正文 HTML
+ * @param {string} [o.footer]   右侧底部区
+ * @param {string} [o.note]     面包屑下面那行小字
+ * @param {string} [o.navAttr]  导航按钮上的 data 属性名，默认 'shellnav'
  */
-export function shellHtml({ title, groups = [], activeKey, crumb, body, footer = '', width = '880px', note = '' }) {
+export function paneHtml({ groups = [], activeKey, crumb, body, footer = '', note = '', navAttr = 'shellnav' }) {
   let nav = '';
   let autoCrumb = '';
   for (const g of groups) {
@@ -47,24 +52,34 @@ export function shellHtml({ title, groups = [], activeKey, crumb, body, footer =
     for (const it of (g.items || [])) {
       const on = it.key === activeKey;
       if (on) autoCrumb = it.label;
-      nav += `<button class="tpl-nav-item ${on ? 'active' : ''}" data-shellnav="${it.key}">${it.label}${it.badge ? ` <span class="tpl-nav-badge">${it.badge}</span>` : ''}</button>`;
+      nav += `<button class="tpl-nav-item${it.child ? ' child' : ''}${on ? ' active' : ''}" data-${navAttr}="${it.key}">`
+           + `${it.label}${it.badge ? ` <span class="tpl-nav-badge">${it.badge}</span>` : ''}</button>`;
     }
     nav += `</div>`;
   }
-  // 没有分组 = 单页弹窗（详情框、模式选择）。只套用同一套外框与配色，不摆一个只有一项的
-  // 侧边栏 —— 那种侧边栏是纯装饰，反而比没有更糟。
+  // 没有分组 = 单页弹窗（详情框）。只套用同一套外框与配色，**不摆一个只有一项的侧边栏**
+  // —— 那种侧边栏是纯装饰，反而比没有更糟。
   const hasNav = groups.length > 0;
-  const head = `<div class="tpl-pane-head"><span class="tpl-crumb">${crumb || autoCrumb || ''}</span></div>`;
+  const shown = crumb !== undefined ? crumb : autoCrumb;
   const pane = `<div class="tpl-pane">
-      ${(crumb || autoCrumb) ? head : ''}
+      ${shown ? `<div class="tpl-pane-head"><span class="tpl-crumb">${shown}</span></div>` : ''}
       ${note ? `<div class="tpl-scope-note">${note}</div>` : ''}
       ${body}
       ${footer}
     </div>`;
+  return hasNav ? `<div class="tpl-layout"><div class="tpl-nav">${nav}</div>${pane}</div>` : pane;
+}
+
+/**
+ * 拼出**完整**弹窗外壳的 innerHTML（自带 overlay 的弹窗用）。
+ * 参数同 paneHtml，另加 title / width。
+ */
+export function shellHtml(o) {
+  const { title, width = '880px' } = o;
   return `<div class="modal-box" style="max-width:${width};">
       <div class="editor-container">
         <h4>${title}</h4>
-        ${hasNav ? `<div class="tpl-layout"><div class="tpl-nav">${nav}</div>${pane}</div>` : pane}
+        ${paneHtml(o)}
       </div>
     </div>`;
 }

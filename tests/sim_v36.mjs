@@ -103,8 +103,11 @@ function equip(e, skillId, ents, fx, bus) {
   const inner = mkTower(ents, 'inner', 'mid');
   T('非nexus内塔在外塔存活时也受结构保护', isStructureProtected(ents, inner));
   const fs = await import('fs');
-  const src = fs.readFileSync(new URL('../src/presentation/CanvasRenderer.js', import.meta.url), 'utf8');
-  T('渲染源码：盾牌条件不再限定 isNexus', src.includes('if (isStructureProtected(this.entities, t)) {') && !src.includes('if (isNexus && isStructureProtected'));
+  // v43 P0-①：原断言钉的是 CanvasRenderer（旧 2D 渲染器），它已作为死代码删除。
+  // 断言意图是"保护盾牌不再只画给水晶"，活的渲染路径是 UnitLayer —— 改钉它。
+  const src = fs.readFileSync(new URL('../src/presentation/UnitLayer.js', import.meta.url), 'utf8');
+  T('渲染源码：盾牌条件不再限定 isNexus',
+    /if \(isStructureProtected\(entities, e\)\) \{/.test(src) && !/isNexus && isStructureProtected/.test(src));
 }
 
 // ==================== ④ 水晶被动bug修复 + 身份技能容器 ====================
@@ -179,8 +182,12 @@ function equip(e, skillId, ents, fx, bus) {
 // ==================== ⑥ 地图收束段 ====================
 {
   const fs = await import('fs');
-  const src = fs.readFileSync(new URL('../src/presentation/CanvasRenderer.js', import.meta.url), 'utf8');
-  T('高地门槛线渲染代码已删除', !src.includes('drawThreshold'));
+  // v43 P0-①：原来只扫 CanvasRenderer（已删）。"门槛线不许再画"是**全渲染层**的约束，
+  // 改成扫整个 presentation/ 目录——比钉单个文件更贴断言本意，也不会因为换文件而失效。
+  const pdir = new URL('../src/presentation/', import.meta.url);
+  const rendererSrc = fs.readdirSync(pdir).filter(f => f.endsWith('.js'))
+    .map(f => fs.readFileSync(new URL(f, pdir), 'utf8')).join('\n');
+  T('高地门槛线渲染代码已删除', !rendererSrc.includes('drawThreshold'));
   // 期望常量更新：HA 788 → 460（见 src/data/maps/howling_abyss.js 里的说明）。
 // 基地圈（圆心+半径）是【走廊模型】专有的概念。嚎哭深渊/扭曲丛林已改成 navgrid
 // 逐像素地形，压根没有基地圈 —— 这几条只对走廊模型的地图成立。

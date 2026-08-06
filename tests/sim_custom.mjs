@@ -331,8 +331,10 @@ T('每个条件都声明了 arg 类型', Object.values(CONDITIONS).every(c => ['
   T('完全未知的类型也不返回问号（问号看着像 bug）',
     minionStyle('压根不存在的兵').icon !== '❓');
   T('各处不再直接下标访问 MINION_STYLE（统一走 minionStyle）', (() => {
-    const files = ['src/presentation/UnitLayer.js', 'src/presentation/CanvasRenderer.js',
-                   'src/presentation/UnitInfo.js'];
+    // v43 P0-①：CanvasRenderer.js（旧 2D 渲染器）已作为死代码删除，从清单里摘掉。
+    // v43 P0-①：CanvasRenderer.js（旧 2D 渲染器）已作为死代码删除，从清单里摘掉。
+    // SpriteFactory 不能进清单——MINION_STYLE 就定义在它里面，下标访问是它的本职。
+    const files = ['src/presentation/UnitLayer.js', 'src/presentation/UnitInfo.js'];
     return files.every(f => !/MINION_STYLE\[/.test(fs.readFileSync(f, 'utf8')));
   })());
   // 自制兵种要能真的建出实体来（模板展开是否完整）

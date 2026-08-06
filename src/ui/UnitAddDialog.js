@@ -1,4 +1,5 @@
 import { CONFIG } from '../data/Config.js';
+import { paneHtml } from './dialogShell.js';
 import { TOWER_MODEL_ROLES, towerModelTier } from '../data/towerModels.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 
@@ -75,23 +76,25 @@ export const UnitAddDialog = {
     else if (st.mainTab === 'dragon') detailHtml = this._renderDragonDetail();
     else detailHtml = this._renderMinionDetail(st.minionType) + this._renderBattleSelectors();
 
-    let nav = '';
+    // 侧栏条目：三个主分类；选中"小兵"时把兵种作为**子项缩进**列在它下面
+    //（学模板编辑器的导航树，而不是在右侧再摆一排横页签）。
+    const items = [];
     for (const t of mainTabs) {
       const open = t.key === 'minion' && st.mainTab === 'minion';
-      nav += `<button class="tpl-nav-item ${t.key === st.mainTab ? 'active' : ''}${open ? ' open' : ''}" data-maintab="${t.key}">${open ? '<span class="tpl-caret">▾</span>' : (t.key === 'minion' ? '<span class="tpl-caret">▸</span>' : '')}${t.label}</button>`;
+      const caret = open ? '<span class="tpl-caret">▾</span>'
+                  : (t.key === 'minion' ? '<span class="tpl-caret">▸</span>' : '');
+      items.push({ key: t.key, label: caret + t.label });
       if (!open) continue;
       for (const m of MINION_TYPES) {
-        nav += `<button class="tpl-nav-item child ${m === st.minionType ? 'active' : ''}" data-subtab="${m}">${TYPE_META[m].icon} ${TYPE_META[m].label}</button>`;
+        items.push({ key: 'minion:' + m, child: true,
+                     label: `${TYPE_META[m].icon} ${TYPE_META[m].label}` });
       }
     }
+    const activeKey = st.mainTab === 'minion' ? 'minion:' + st.minionType : st.mainTab;
     const crumb = st.mainTab === 'minion'
       ? `${TYPE_META[st.minionType].icon} ${TYPE_META[st.minionType].label}`
       : (mainTabs.find(t => t.key === st.mainTab) || {}).label;
-    document.getElementById('modalBody').innerHTML = `
-      <div class="tpl-layout">
-      <div class="tpl-nav"><div class="tpl-nav-group">${nav}</div></div>
-      <div class="tpl-pane">
-      <div class="tpl-pane-head"><span class="tpl-crumb">${crumb}</span></div>
+    const body = `
       ${subTabsHtml}
       <div id="uadDetailContent">${detailHtml}</div>
       ${st.mainTab !== 'tower' ? `
@@ -100,8 +103,10 @@ export const UnitAddDialog = {
           <div class="uad-queue-list">${this._renderQueueList()}</div>
         </div>
       ` : `<div style="margin-top:10px;font-size:11px;color:var(--text-mute);">防御塔单独建造：确认后请在画布上点击选择位置（不进入批量清单）</div>`}
-      </div></div>
     `;
+    document.getElementById('modalBody').innerHTML = paneHtml({
+      groups: [{ items }], activeKey, crumb, body, navAttr: 'uadnav',
+    });
 
     let actions = '';
     if (st.mainTab === 'tower') {
@@ -117,16 +122,19 @@ export const UnitAddDialog = {
   },
 
   _bindEvents(overlay) {
-    overlay.querySelectorAll('[data-maintab]').forEach(btn => {
+    // v43 Q1：侧栏导航统一走 dialogShell 的 data-uadnav。
+    // 主分类的 key 就是 mainTab；兵种子项的 key 是 'minion:<兵种>'（一套 key 两层含义，
+    // 免得再开第二个属性，也就不会出现"点了子项但主分类没跟着切"的错位）。
+    overlay.querySelectorAll('[data-uadnav]').forEach(btn => {
       btn.addEventListener('click', () => {
-        this._state.mainTab = btn.dataset.maintab;
-        if (this._state.mainTab === 'minion' && !this._state.minionType) this._state.minionType = 'melee';
-        this._render();
-      });
-    });
-    overlay.querySelectorAll('[data-subtab]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this._state.minionType = btn.dataset.subtab;
+        const k = btn.dataset.uadnav;
+        if (k.startsWith('minion:')) {
+          this._state.mainTab = 'minion';
+          this._state.minionType = k.slice(7);
+        } else {
+          this._state.mainTab = k;
+          if (k === 'minion' && !this._state.minionType) this._state.minionType = 'melee';
+        }
         this._render();
       });
     });

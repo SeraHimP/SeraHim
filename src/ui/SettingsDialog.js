@@ -1,3 +1,4 @@
+import { paneHtml } from './dialogShell.js';
 import { CONFIG } from '../data/Config.js';
 import { mountDialogFooter, makeSnapshotter } from './dialogFooter.js';
 import { DebugLogger } from '../utils/DebugLogger.js';
@@ -331,16 +332,9 @@ export const SettingsDialog = {
           </div>
         </div>` : ''}
       `;
-      document.getElementById('modalBody').innerHTML =
-        `<div class="tpl-layout">
-          <div class="tpl-nav"><div class="tpl-nav-group">
-            ${this._TABS.map(t => `<button class="tpl-nav-item ${t.key === TAB ? 'active' : ''}" data-settab="${t.key}">${t.label}</button>`).join('')}
-          </div></div>
-          <div class="tpl-pane">
-            <div class="tpl-pane-head"><span class="tpl-crumb">${(this._TABS.find(t => t.key === TAB) || {}).label || ''}</span></div>
-            ${body}
-          </div>
-        </div>`;
+      document.getElementById('modalBody').innerHTML = paneHtml({
+        groups: [{ items: this._TABS }], activeKey: TAB, body, navAttr: 'settab',
+      });
       bindEvents();
     };
 
