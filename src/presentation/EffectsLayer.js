@@ -360,7 +360,6 @@ class Batch {
 
 export class EffectsLayer {
   constructor(scene) {
-    this._muzzle = new WeakMap();     // 子弹 -> 出膛高度（解析一次，随子弹回收自动释放）
     this._beamPhase = new WeakMap();  // beam 对象 -> 流动相位（px，已对 period 取模）
     this._lastWall = 0;               // 上一帧墙钟秒数，用于求 dtWall
     this.scene = scene;
@@ -374,9 +373,13 @@ export class EffectsLayer {
     this._weaponCache = new WeakMap();   // 塔 → 当前武器技能 id（Q3 腐蚀判定用）
     this._seen = new Map();             // 子弹 → 上一帧尾迹快照（Q2 余烬用）
     this._fading = [];                  // 正在淡出的尾迹余烬
-    this._beamEndY = new WeakMap();     // Q1：光束 → 冻结的末端高度（目标死亡后不再重算）
-    this._beamStartY = new WeakMap();   // v43 Q2：光束 → 冻结的**起点**高度（塔死后不再重算）
-    this._projTgt = new WeakMap();      // Q1：子弹 → 目标位置与落点高度的快照
+    // v43 P0-③：高度快照的**唯一**存放处。
+    // 这里原本是三份几乎一样的 WeakMap（_beamEndY / _beamStartY / _projTgt），
+    // 各自实现"活着就刷新、死了用最后一次"的同一套逻辑。三份 = 三次机会写漏，
+    // 而"轨迹突然躺平"这个 bug 已经出现过四次（光束末端、子弹落点、废墟落点、光束起点）。
+    // 现在合成一份 owner → { key: value } 的快照表，取用一律走 this._snapH()。
+    this._snap = new WeakMap();
+    this._projTgt = new WeakMap();      // 子弹 → 目标**位置**快照（x/y，不是高度，另存）
     this._statDirty = true;
   }
 
@@ -467,18 +470,34 @@ export class EffectsLayer {
    */
   /**
    * @param view  { vx,vy,vz, ux,uy,uz } 摄像机视线与上方向（摄像机不偏航，故为常量）
-   * @param muzzleY(x, z) → 该处单位的炮口高度（无单位则 0）。由 ThreeRenderer 从 UnitLayer 取。
+   * @param muzzleOf(entityId) → 该实体的炮口高度；实体不在则 null（调用方用快照兜底）。
    */
-  update(deps, zoom, lodDots, view, muzzleY, muzzleOf) {
+  update(deps, zoom, lodDots, view, muzzleOf) {
     const V = view || { vx: 0, vy: -1, vz: 0, ux: 0, uy: 1, uz: 0, rx: 1, ry: 0, rz: 0 };
-    const MY = muzzleY || (() => 0);
-    // Q1：按【实体 id】取高度。坐标反查（MY）只作最后兜底 —— 它在目标死亡后返回 0、
-    // 或者搜到旁边另一个单位身上，正是"残留轨迹错位"的根因。
+    // v43 P0-③：只剩"按实体 id 取高度"这一条路，坐标反查（旧的 muzzleY(x,z)）已删。
     const MYOF = muzzleOf || (() => null);
-    const endHeightOf = (id, x, z) => {
-      const h = id != null ? MYOF(id) : null;
-      return (h != null ? h : MY(x, z)) * 0.6;
+    // ==================== v43 P0-③：高度只有一条取法 ====================
+    // 旧的 MY(x, z)（按【坐标】就近搜索炮口高度）已经删除。它是个错误的抽象：
+    // 单位一死就搜不到 → 返回 0 → 轨迹当场塌到地面；混战时还会搜到旁边另一个单位身上。
+    // 光是"轨迹突然躺平"这一个症状，它就制造了四次 bug，每次都是发现一处补一处。
+    //
+    // 现在只有 hOf(owner, key, entityId)：
+    //   · 实体还在 → 按 id 取真高度，顺手存进快照；
+    //   · 实体没了 → 用最后一次的快照（而不是 0）；
+    //   · 从来没见过 → 返回 0（新生成的特效第一帧就没有源实体，属异常，给个安全值）。
+    // owner 是这条特效对象本身（光束/子弹），key 区分它身上的多个高度（起点/落点）。
+    const hOf = (owner, key, entityId) => {
+      const live = entityId != null ? MYOF(entityId) : null;
+      let box = this._snap.get(owner);
+      if (live != null) {
+        if (!box) { box = {}; this._snap.set(owner, box); }
+        box[key] = live;
+        return live;
+      }
+      return (box && box[key] !== undefined) ? box[key] : 0;
     };
+    /** 落点高度 = 目标身高的六成（弹着点在躯干而非头顶）。 */
+    const endHeightOf = (owner, entityId) => hOf(owner, 'end', entityId) * 0.6;
     const { entities, projectiles, mapSystem } = deps;
     // D 组：切图或首帧重建
     if (this._statDirty || this._statMapId !== (mapSystem?.currentMap?.id ?? null)) {
@@ -506,8 +525,9 @@ export class EffectsLayer {
       if ((window.gameTime || 0) < (t._lockUntil || 0)) continue;
       const tgt = entities.get(t.targetId);
       if (!tgt || !tgt.alive || !tgt.pos) continue;
-      D.seg3(t.pos.x, MY(t.pos.x, t.pos.y), t.pos.y,
-              tgt.pos.x, MY(tgt.pos.x, tgt.pos.y) * 0.6, tgt.pos.y,
+      // 红线两端都是**活着的实体**（上面已判 alive），直接按 id 取高，无需快照
+      D.seg3(t.pos.x, MYOF(t.id) ?? 0, t.pos.y,
+              tgt.pos.x, (MYOF(tgt.id) ?? 0) * 0.6, tgt.pos.y,
               screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
     }
 
@@ -526,8 +546,8 @@ export class EffectsLayer {
         if (!m._ramLockId) continue;
         const tgt = entities.get(m._ramLockId);
         if (!tgt || !tgt.alive || !tgt.pos) continue;
-        D.seg3(m.pos.x, MY(m.pos.x, m.pos.y), m.pos.y,
-                tgt.pos.x, MY(tgt.pos.x, tgt.pos.y) * 0.6, tgt.pos.y,
+        D.seg3(m.pos.x, MYOF(m.id) ?? 0, m.pos.y,
+                tgt.pos.x, (MYOF(tgt.id) ?? 0) * 0.6, tgt.pos.y,
                 screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
       }
     }
@@ -546,19 +566,9 @@ export class EffectsLayer {
         const fade = fadeOut * fadeIn;
         if (fade <= 0) continue;
         const col = rgbOf(b.color || '#f1c40f');
-        // ==================== 起点高度：塔一死也【冻结】 ====================
-        // 用户："闪电杖塔死亡后，残余的弹道突然就到水平面上了。"
-        // 根因与末端那处**同一族**：这里原本是 `MY(b.startX, b.startY)` —— 按【坐标】
-        // 反查该处单位的炮口高度。塔一没，那个坐标上再也搜不到单位，返回 0，
-        // 于是整束光的起点当场塌到地面，看起来就是"弹道躺平了"。
-        // 末端早在上一版就改成了"按 id 查 + 快照兜底"，起点漏了 —— 现在补齐。
-        let sy;
-        const liveS = b.attackerId != null ? MYOF(b.attackerId) : null;
-        if (liveS != null) { sy = liveS; this._beamStartY.set(b, sy); }
-        else {
-          const snapS = this._beamStartY.get(b);
-          sy = snapS !== undefined ? snapS : MY(b.startX, b.startY);
-        }
+        // 起点（塔的炮口）与末端（目标身上）都走统一快照：实体在就刷新、没了用最后一次。
+        // 这两处历史上各自栽过一次"死了之后塌到地面"，现在共用同一份实现。
+        const sy = hOf(b, 'start', b.attackerId);
         // ==================== 末端高度：目标一死就【冻结】 ====================
         // 用户："闪电杖攻击该目标死亡后会瞬间往下移动（就像是目标突然跳到了下面一样）。"
         // 上一版的冻结条件是 `b.fadeT === undefined`，也就是【等光束的 ttl 走完 0.4s
@@ -567,15 +577,10 @@ export class EffectsLayer {
         // 于是退化成按坐标反查（≈0），末端**当场塌到地面**。冻结晚了整整 0.4 秒。
         // 现在改成：只要这一帧还能按 id 查到高度就刷新快照，查不到（死亡/移除）
         // 或已进入淡出，就一律用最后一次的快照值。
-        let ey;
-        const liveH = b.targetId != null ? MYOF(b.targetId) : null;
-        if (liveH != null && b.fadeT === undefined) {
-          ey = liveH * 0.6;
-          this._beamEndY.set(b, ey);
-        } else {
-          const snap = this._beamEndY.get(b);
-          ey = snap !== undefined ? snap : endHeightOf(b.targetId, b.endX, b.endY);
-        }
+        // 进入淡出后就不再刷新末端（目标已死，位置不该再跟着走）
+        const ey = b.fadeT === undefined
+          ? endHeightOf(b, b.targetId)
+          : (this._snap.get(b)?.end ?? 0) * 0.6;
         // 宽度：细 → 粗。charge 走一点点缓入，让"越充越粗"的手感集中在后半段。
         const k = charge * charge * (3 - 2 * charge);          // smoothstep
         const w = BEAM_W_MIN + k * (BEAM_W_MAX - BEAM_W_MIN);
@@ -635,35 +640,11 @@ export class EffectsLayer {
       }
     }
 
-    // ---- B3 闪电链电弧：种子确定性锯齿（存活期内形状不变），双层描边，按 ttl 淡出 ----
-    if (projectiles?.getArcs) {
-      for (const a of projectiles.getArcs()) {
-        const alpha = Math.max(0, a.ttl / a.maxTtl);
-        if (alpha <= 0) continue;
-        const dx = a.endX - a.startX, dy = a.endY - a.startY;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = -dy / len, ny = dx / len;
-        const segs = Math.max(3, Math.min(6, Math.round(len / 30)));
-        let seed = a.seed;
-        const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 - 0.5; };
-        // 与 2D 完全相同的折点生成（同种子同序列 → 同形状）
-        const px = [a.startX], py = [a.startY];
-        for (let i = 1; i < segs; i++) {
-          const t = i / segs;
-          const off = rnd() * Math.min(16, len * 0.18);
-          px.push(a.startX + dx * t + nx * off); py.push(a.startY + dy * t + ny * off);
-        }
-        px.push(a.endX); py.push(a.endY);
-        const col = rgbOf(a.color);
-        // 电弧两端各自抬到炮口高度，中间锯齿按沿线比例插值
-        const ay0 = MY(a.startX, a.startY), ay1 = MY(a.endX, a.endY) * 0.6;
-        const hy = (i) => ay0 + (ay1 - ay0) * (i / (px.length - 1));
-        for (let i = 1; i < px.length; i++)
-          D.seg3(px[i - 1], hy(i - 1), py[i - 1], px[i], hy(i), py[i], 3.5, col, alpha * 0.55, V.vx, V.vy, V.vz);
-        for (let i = 1; i < px.length; i++)
-          D.seg3(px[i - 1], hy(i - 1), py[i - 1], px[i], hy(i), py[i], 1.2, rgbOf('#ffffff'), alpha, V.vx, V.vy, V.vz);
-      }
-    }
+    // ---- B3 闪电链电弧：已删除（v43 P0-③）----
+    // 闪电链本身在 v35 就按用户定稿去掉了（"满充闪电链弹射已按方案B删除——纯单体，无 AOE"），
+    // 但渲染这一段和 ProjectileSystem 的 arcs/fireArc/getArcs 一起留了下来。
+    // fireArc **没有任何调用者**，也就是说这段代码从 v35 起就没画过一个像素。
+    // 它是本文件最后一个 MY(x, z)（按坐标查高度）的用户 —— 删掉它，那个错误抽象才能真正下线。
 
     // ---- B1 子弹：光晕四边形（贴图）+ 核心亮点 ----
     // Q2：本帧还活着的塔弹尾迹收集在 live 里，帧末与上一帧对比，
@@ -677,10 +658,11 @@ export class EffectsLayer {
         const col = rgbOf(p.color || '#e8563f');
         const gsz = p.size || 20;        // v2.5D（Q1）：小兵/巨龙弹丸 12，塔弹 20
         // 高度：出膛时在炮口，飞行中线性降到目标身高的六成（弹着点在躯干而非头顶）。
-        // 炮口高度只在【首次见到这发子弹】时解析一次并缓存——攻击者可能移动，
-        // 每帧按起点重查会查到别人身上。缓存挂 WeakMap，不写进逻辑对象。
-        let my = this._muzzle.get(p);
-        if (my === undefined) { my = MY(p.startX, p.startY); this._muzzle.set(p, my); }
+        // v43 P0-③：炮口高度按【攻击者 id】取（走统一快照）。
+        // 旧实现是 MY(p.startX, p.startY) —— 按坐标就近搜，攻击者一死就返回 0，
+        // 于是残余子弹从地面射出。攻击者移动时还会搜到旁边另一个单位身上。
+        // hOf 会在攻击者还活着的每一帧刷新快照，死后沿用最后一次。
+        const my = hOf(p, 'muzzle', p.attackerId);
         // 飞行进度必须拿【目标当前位置】算全程距离。首版误用了子弹自己的当前位置
         // 兜底（p.targetX 根本不存在），于是分子分母相同、进度恒等于 1，
         // 子弹永远取"终点高度"= 空地 0 → 全程贴地飞。这就是"红线对了子弹没对"的原因。
@@ -698,7 +680,7 @@ export class EffectsLayer {
         if (tgtE?.pos && tgtE.alive) {
           snap = snap || {};
           snap.x = tgtE.pos.x; snap.y = tgtE.pos.y;
-          snap.h = endHeightOf(p.targetId, tgtE.pos.x, tgtE.pos.y);
+          snap.h = endHeightOf(p, p.targetId);
           this._projTgt.set(p, snap);
         } else if (!snap && p.lastTx != null) {
           // 目标在【这发子弹被画出来之前】就已经死了 —— 一次快照都没取到。
@@ -709,9 +691,9 @@ export class EffectsLayer {
           // 补法：用 ProjectileSystem 已经冻结好的最后落点（p.lastTx/lastTy）现补一张快照
           // —— 那正是这发子弹实际要飞到的地方（见 ProjectileSystem.update 的 B2 段），
           // 弹道于是照常从炮口斜落到那一点，而不是平飞。
-          // 高度用 endHeightOf 查：目标实体已经没了，会退化成按坐标查（≈地面），
+          // 高度：目标实体已经没了，hOf 也没有它的快照 → 返回 0，
           // 也就是"落到它倒下的那块地上"，正是想要的观感。
-          snap = { x: p.lastTx, y: p.lastTy, h: endHeightOf(p.targetId, p.lastTx, p.lastTy) };
+          snap = { x: p.lastTx, y: p.lastTy, h: endHeightOf(p, p.targetId) };
           this._projTgt.set(p, snap);
         }
         let by = my;

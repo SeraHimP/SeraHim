@@ -290,9 +290,11 @@ function mkWorld() {
   // 一次快照都取不到 → by 退化成常量炮口高度 → 子弹平着飞出去
   //（用户："塔在攻速快的时候…射出去的子弹就是不变的高度射直至消失"）。
   // 高攻速塔常见：开火与目标死亡落在同一个逻辑帧，中间没有渲染帧。
+  // v43 P0-③：endHeightOf 的签名从 (id, x, z) 改成 (owner, entityId)——坐标参数没用了，
+  // 因为按坐标查高度那条路整个删掉了。断言意图不变，只换匹配式。
   T('没有快照时用 ProjectileSystem 冻结的最后落点补一张（否则子弹平飞）',
     /else if \(!snap && p\.lastTx != null\) \{/.test(src)
-    && /snap = \{ x: p\.lastTx, y: p\.lastTy, h: endHeightOf\(p\.targetId, p\.lastTx, p\.lastTy\) \};/.test(src));
+    && /snap = \{ x: p\.lastTx, y: p\.lastTy, h: endHeightOf\(p, p\.targetId\) \};/.test(src));
   T('注释写清了为什么"目标活着时先记一笔"这条路走不通', /中间根本没轮到一次渲染帧/.test(src));
 }
 

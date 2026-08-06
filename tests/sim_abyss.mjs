@@ -122,7 +122,11 @@ T('闪电充能duration=100(Q1)', fs.readFileSync(new URL('../src/core/skills/we
 const mainSrc=fs.readFileSync(new URL('../src/main.js', import.meta.url),'utf8');
 // 该分支现在还带一个"分层被动覆写生效时交给覆写清单决定"的守卫，
 // 故只断言其仍在 isNexus 门之外、按 tier 独立装配这一原始意图。
-T('光环装配移出isNexus门(Q5)', /if \(tier === 'nexus_main'/.test(mainSrc) && mainSrc.includes("skillLibrary['passive_home_aura']"));
+// v43 P0-②：装备点统一走 equipSkill()，不再手写 `skillLibrary['xxx'].onEquip`。
+// 断言意图不变（基地光环装在水晶枢纽上、不再被 isNexus 门挡住），只换匹配式。
+T('光环装配移出isNexus门(Q5)',
+  /if \(tier === 'nexus_main'/.test(mainSrc)
+  && /equipSkill\(entity, 'passive_home_aura'/.test(mainSrc));
 T('Q5 无敌/停火改为按阵营分管', fs.readFileSync(new URL('../src/systems/CombatSystem.js', import.meta.url),'utf8').includes("__towerRuleFor?.('invincible'") && fs.readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url),'utf8').includes('data-rule'));
 // Q2：成长表搬到 CONFIG.battleGrowth，断言改读真值。
 T('小兵成长表(近战 ad0.3)', CONFIG.battleGrowth.melee.ad === 0.3);

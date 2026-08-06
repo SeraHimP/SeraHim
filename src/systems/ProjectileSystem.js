@@ -10,18 +10,11 @@ export class ProjectileSystem {
     this.combat = combatSystem;
     this.projectiles = []; // 普通飞行子弹（会移动，到达目标时结算伤害）
     this.beams = new Map(); // 持久光束：attackerId -> beam（不移动，随攻击刷新，无攻击则淡出）
-    this.arcs = [];         // 闪电链电弧：短寿命纯视觉线段（v33，渲染器画锯齿闪电）
-  }
-
-  // 闪电链电弧（纯视觉，无伤害逻辑——伤害在武器层已结算）
-  fireArc(arc) {
-    // 上限保护：极端兵堆下每 0.25s 最多 6 条 × 多塔，封顶 120 条防渲染压力
-    if (this.arcs.length > 120) this.arcs.shift();
-    this.arcs.push({
-      startX: arc.startX, startY: arc.startY, endX: arc.endX, endY: arc.endY,
-      ttl: arc.life || 0.12, maxTtl: arc.life || 0.12, color: arc.color || '#f1c40f',
-      seed: (Math.random() * 1e6) | 0, // 锯齿形状的随机种子（生成一次，存活期内不变——闪电不抖）
-    });
+    // v43 P0-③：闪电链电弧（arcs / fireArc / getArcs）已整个删除。
+    // 闪电链本身在 v35 就按用户定稿去掉了（"纯单体，无 AOE"），但这套数据结构、
+    // fireArc 与渲染层那 30 行锯齿绘制一起留了下来 —— fireArc **没有任何调用者**，
+    // 也就是说它从 v35 起就没画过一个像素。删掉它，渲染层最后一个"按坐标查高度"的
+    // 用户也一并消失了。
   }
 
   fire(projectile) {
@@ -115,11 +108,6 @@ export class ProjectileSystem {
       }
     }
 
-    // 电弧：短寿命，到期移除
-    for (let i = this.arcs.length - 1; i >= 0; i--) {
-      this.arcs[i].ttl -= dt;
-      if (this.arcs[i].ttl <= 0) this.arcs.splice(i, 1);
-    }
   }
 
   _hit(p) {
@@ -136,5 +124,4 @@ export class ProjectileSystem {
 
   getProjectiles() { return this.projectiles; }
   getBeams() { return Array.from(this.beams.values()); }
-  getArcs() { return this.arcs; }
 }

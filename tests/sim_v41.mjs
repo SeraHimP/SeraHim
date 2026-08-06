@@ -372,11 +372,14 @@ function unit(ents, o = {}) {
 // 用户："闪电杖的轨迹在目标死后会漂移，如果目标在高地上，攻击该目标死亡后会瞬间往下移动。"
 {
   const src = fs.readFileSync('src/presentation/EffectsLayer.js', 'utf8');
+  // v43 P0-③：三份几乎一样的快照 WeakMap（_beamEndY / _beamStartY / _projTgt）
+  // 合并成一份 this._snap + 一个 hOf(owner, key, entityId)。断言意图不变，改钉新口径。
   T('末端高度按【实体是否还查得到】冻结，而不是等淡出才冻',
-    /const liveH = b\.targetId != null \? MYOF\(b\.targetId\) : null;/.test(src));
+    /const ey = b\.fadeT === undefined/.test(src) && /endHeightOf\(b, b\.targetId\)/.test(src));
   T('查不到就用最后一次的快照（不再退化成按坐标反查 → 塌到地面）',
-    /const snap = this\._beamEndY\.get\(b\);/.test(src));
-  T('注释写清了"晚冻 0.4 秒"这个真因', /冻结晚了整整 0\.4 秒/.test(src));
+    /return \(box && box\[key\] !== undefined\) \? box\[key\] : 0;/.test(src));
+  T('按坐标查高度的那条路已经整个删掉（四次"轨迹躺平"的共同根因）',
+    !/\bMY\(/.test(src.replace(/^\s*\/\/.*$/gm, '')));
   // 流动效果：用户明确否掉了虚线，要"光里有东西在跑"
   T('有流动脉冲实现', /F\.pulses/.test(src) && /this\._beamPhase\.set\(b, ph\)/.test(src));
   T('脉冲两端用 sin(πt) 开窗（硬边就是"虚线感"的来源）', /Math\.sin\(Math\.PI \* t\)/.test(src));

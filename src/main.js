@@ -21,6 +21,7 @@ import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
 import { dayNightAt, DAY_PERIOD, resolveDayPhase } from './presentation/DayNight.js';
 import { EventBus } from './utils/EventBus.js';
+import { equipSkill } from './core/skillParams.js';
 import { CONFIG } from './data/Config.js';
 import { UIManager } from './ui/UIManager.js';
 import { CanvasController } from './ui/CanvasController.js';
@@ -232,26 +233,19 @@ function createTower(x, y) {
   const ctx = { entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber || 0, attrCalc };
 
   // 装备核心
-  entity._skillInstances.push({ id: ++CTX._uid, skillId: 'core_normal', state: {} });
+  // v43 P0-②：所有装备点统一走 equipSkill —— 它在 onEquip 之前解析 _params。
+  equipSkill(entity, 'core_normal', ctx, skillLibrary);
 
   // 默认武器：读取模板设置的默认武器（模板编辑器"武器"tab），否则用穿透型
   // （v33：增幅型武器已删除，其"升温"被并入穿透型）
   const defaultWeapon = tpl._templateWeapon || 'piercing';
   if (defaultWeapon !== 'none') {
-    const wInst = { id: ++CTX._uid, skillId: 'weapon_' + defaultWeapon, state: {} };
-    entity._skillInstances.push(wInst);
-    const wDef = skillLibrary[wInst.skillId];
-    if (wDef?.onEquip) wDef.onEquip(entity.id, wInst, ctx);
+    equipSkill(entity, 'weapon_' + defaultWeapon, ctx, skillLibrary);
   }
 
   // 默认被动（模板编辑器"被动技能"tab 里勾选的）
   if (Array.isArray(tpl._templateSkills)) {
-    for (const key of tpl._templateSkills) {
-      const inst = { id: ++CTX._uid, skillId: key, state: {} };
-      entity._skillInstances.push(inst);
-      const def = skillLibrary[key];
-      if (def?.onEquip) def.onEquip(entity.id, inst, ctx);
-    }
+    for (const key of tpl._templateSkills) equipSkill(entity, key, ctx, skillLibrary);
   }
 
   entityContainer.add(entity);
@@ -340,7 +334,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     hq_tower: 'core_tier_hq', nexus_lane: 'core_nexus_lane', nexus_main: 'core_nexus_main',
   };
   const coreSkill = identityByTier[tier] || 'core_normal';
-  entity._skillInstances.push({ id: ++CTX._uid, skillId: coreSkill, state: {} });
+  equipSkill(entity, coreSkill, ctx, skillLibrary);
 
   // 武器装配（Q4 定稿：**所有建筑都可以装武器**，含召唤水晶/水晶枢纽，
   // 只是后两者默认 'none'）。解析顺序：模板编辑器的分层覆写 → 地图给该建筑配的武器。
@@ -350,10 +344,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   const tierW = CONFIG.towerTierWeapon?.[tier];
   const wKey = tierW !== undefined ? tierW : (isNexus ? 'none' : weapon);
   if (wKey && wKey !== 'none') {
-    const wInst = { id: ++CTX._uid, skillId: 'weapon_' + wKey, state: {} };
-    entity._skillInstances.push(wInst);
-    const wDef = skillLibrary[wInst.skillId];
-    if (wDef?.onEquip) wDef.onEquip(entity.id, wInst, ctx);
+    equipSkill(entity, 'weapon_' + wKey, ctx, skillLibrary);
     // 水晶类的 tierStats 里 攻击力/攻速 是 0（它们本来不打人）。装了武器却是 0 就等于
     // 装了个哑炮：攻速 0 → 冷却算出 Infinity，永远开不了火。所以只要真装了武器，
     // 这两项为 0 时回落到塔模板值 —— "装上武器就能打"。想调具体数值走分层属性覆写。
@@ -415,22 +406,14 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     // 放在排除表之后：玩家在编辑器里的显式选择优先于地图排除规则。
     const tierSkillOverride = CONFIG.towerTierSkills?.[tier];
     if (Array.isArray(tierSkillOverride)) towerDefaults = [...tierSkillOverride];
-    for (const key of towerDefaults) {
-      const inst = { id: ++CTX._uid, skillId: key, state: {} };
-      entity._skillInstances.push(inst);
-      const def = skillLibrary[key];
-      if (def?.onEquip) def.onEquip(entity.id, inst, ctx);
-    }
+    for (const key of towerDefaults) equipSkill(entity, key, ctx, skillLibrary);
   }
 
   // Q5 修复：基地光环装在水晶枢纽上——原先写在 if(!isNexus) 块内，枢纽是 nexus 永远装不上，
   // 这就是"基地加成没生效"的根因。移到门外独立装配。
   // 分层被动覆写生效时，基地光环是否装备由那份清单说了算（否则会与清单里的同一项重复装配）。
   if (tier === 'nexus_main' && !Array.isArray(CONFIG.towerTierSkills?.nexus_main)) {
-    const inst = { id: ++CTX._uid, skillId: 'passive_home_aura', state: {} };
-    entity._skillInstances.push(inst);
-    const def = skillLibrary['passive_home_aura'];
-    if (def?.onEquip) def.onEquip(entity.id, inst, ctx);
+    equipSkill(entity, 'passive_home_aura', ctx, skillLibrary);
   }
 
   entityContainer.add(entity);
@@ -541,14 +524,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   //   用户本轮定稿"所有地图小兵默认装备屠戮"，那条开关与它的整条传参链一起删掉了：
   //   留着一个没有任何地图会设的字段，只会让下一个人以为"屠戮还能按图关"。）
   for (const key of passives) {
-    const inst = { id: ++CTX._uid, skillId: key, state: {} };
-    entity._skillInstances.push(inst);
-    const def = skillLibrary[key];
-    if (def?.onEquip) {
-      def.onEquip(entity.id, inst, {
-        entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber, attrCalc
-      });
-    }
+    equipSkill(entity, key, {
+      entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber, attrCalc
+    }, skillLibrary);
   }
 
   // 波次里程碑成长：每 milestoneEveryWaves 波，普通小兵获得额外增益。
@@ -804,13 +782,10 @@ function _processNextTowerPlacement() {
       });
       tower._skillInstances = tower._skillInstances.filter(s => s !== oldWeapon);
     }
-    const newWeapon = weaponType !== 'none' ? { id: ++CTX._uid, skillId: 'weapon_' + weaponType, state: {} } : null;
-    if (newWeapon) {
-      tower._skillInstances.push(newWeapon);
-      const newDef = skillLibrary['weapon_' + weaponType];
-      if (newDef?.onEquip) newDef.onEquip(tower.id, newWeapon, {
+    if (weaponType !== 'none') {
+      equipSkill(tower, 'weapon_' + weaponType, {
         entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber || 0, attrCalc
-      });
+      }, skillLibrary);
     }
     const allPassives = ['passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating', 'passive_overheat', 'passive_vampire', 'passive_phase'];
     const toRemove = tower._skillInstances.filter(s => allPassives.includes(s.skillId));
@@ -822,12 +797,9 @@ function _processNextTowerPlacement() {
       tower._skillInstances = tower._skillInstances.filter(s => s !== inst);
     }
     for (const key of passiveKeys) {
-      const inst = { id: ++CTX._uid, skillId: key, state: {} };
-      tower._skillInstances.push(inst);
-      const def = skillLibrary[key];
-      if (def?.onEquip) def.onEquip(tower.id, inst, {
+      equipSkill(tower, key, {
         entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber || 0, attrCalc
-      });
+      }, skillLibrary);
     }
     // Q7：建筑模型（用户定稿：**默认只换外观**；勾了"套用该档位数值"才连带数值与层级）。
     // 只写 _modelRole 的话，渲染层会用对应 GLB / 程序化几何，玩法完全不受影响。

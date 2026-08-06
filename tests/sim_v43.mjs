@@ -117,10 +117,11 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 
   // 渲染层：起点高度必须按 attackerId 查 + 快照兜底（塔死后不塌到地面）
   const fxSrc = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  // v43 P0-③ 之后：起点、末端、炮口全部走同一个 hOf(owner, key, entityId)。
   T('Q2⑧ 起点高度按实体 id 查并做快照（塔死后不塌到水平面）',
-    /_beamStartY/.test(fxSrc) && /MYOF\(b\.attackerId\)/.test(fxSrc));
-  T('Q2⑨ 起点不再是无条件的坐标反查',
-    !/const sy = MY\(b\.startX, b\.startY\);/.test(fxSrc));
+    /const sy = hOf\(b, 'start', b\.attackerId\);/.test(fxSrc));
+  T('Q2⑨ 按坐标反查高度的那条路已整个删除',
+    !/\bMY\(/.test(stripComments(fxSrc)));
   T('Q2⑩ 透明度 = 淡出 × 淡入', /fadeOut \* fadeIn/.test(fxSrc));
 }
 
@@ -473,6 +474,108 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   ]);
   T('Q1⑤ 详情框确实没有侧栏（一项的导航是纯装饰）',
     !/tpl-nav/.test(stripComments(readSrc('../src/ui/DetailModal.js'))));
+}
+
+// ==================== 十三、P0-② 技能参数必须在【装备时】就解析好 ====================
+// 旧实现是在 CombatSystem 的 onFrame 循环里第一次灌参数，于是：
+//   · 在 onEquip 里读参数的技能拿到的是出厂值（加固城防的生命恢复栽在这里）；
+//   · 压根没有 onFrame 的技能永远拿不到覆写（屠戮栽在这里，用户报"技能介绍还是没变"）。
+{
+  const { equipSkill, resolveSkillParams, mapOverrideKey } =
+    await import('../src/core/skillParams.js');
+
+  const bakGlobal = CONFIG.skillOverrides;
+  const bakMap = SkillLibrary._mapOverrides;
+
+  // ---- ① onEquip 里就能读到 _params ----
+  let seenAtEquip = 'NO_PARAMS';
+  const lib = { ...SkillLibrary, weapon_lightning: {
+    ...SkillLibrary.weapon_lightning,
+    onEquip: (id, inst) => { seenAtEquip = inst._params ? inst._params.maxPenPct : 'NO_PARAMS'; },
+  } };
+  const e1 = { id: 9001, type: 'tower', _mapTier: 'outer', _skillInstances: [] };
+  equipSkill(e1, 'weapon_lightning', {}, lib);
+  T(`P0②① onEquip 里已能读到 _params（实际 ${seenAtEquip}）`, seenAtEquip !== 'NO_PARAMS');
+
+  // ---- ② 三层叠加顺序：出厂 → 全局 → 地图，且【装备那一刻】就已经叠好 ----
+  CONFIG.skillOverrides = { weapon_lightning: { maxPenPct: 11 } };
+  SkillLibrary._mapOverrides = { 'tower:outer': { weapon_lightning: { maxPenPct: 22 } } };
+  let atEquip = null;
+  const lib2 = { ...SkillLibrary, weapon_lightning: {
+    ...SkillLibrary.weapon_lightning,
+    onEquip: (id, inst) => { atEquip = inst._params.maxPenPct; },
+  } };
+  const e2 = { id: 9002, type: 'tower', _mapTier: 'outer', _skillInstances: [] };
+  equipSkill(e2, 'weapon_lightning', {}, lib2);
+  T('P0②② 地图级覆写压过全局，且装备时就生效（22 而不是 11、更不是出厂值）', atEquip === 22);
+
+  // 换个层级 → 地图覆写不命中，落到全局
+  const e3 = { id: 9003, type: 'tower', _mapTier: 'base', _skillInstances: [] };
+  let atEquip3 = null;
+  const lib3 = { ...SkillLibrary, weapon_lightning: {
+    ...SkillLibrary.weapon_lightning,
+    onEquip: (id, inst) => { atEquip3 = inst._params.maxPenPct; },
+  } };
+  equipSkill(e3, 'weapon_lightning', {}, lib3);
+  T('P0②③ 不匹配的层级落回全局覆写', atEquip3 === 11);
+  T('P0②④ 地图覆写的键：建筑按层级、其余按类型',
+    mapOverrideKey({ type: 'tower', _mapTier: 'base' }) === 'tower:base'
+    && mapOverrideKey({ type: 'melee' }) === 'melee');
+
+  // ---- ③ 没声明 defaultParams 的技能也要拿得到覆写 ----
+  // （旧实现只在 def.defaultParams 存在时才建 _params → 这类技能"改了没反应"）
+  CONFIG.skillOverrides = { passive_overload: { foo: 7 } };
+  const inst = { skillId: 'passive_overload', state: {} };
+  resolveSkillParams(inst, { type: 'tower', _mapTier: 'outer' });
+  T('P0②⑤ 没有 defaultParams 的技能同样能拿到覆写', inst._params && inst._params.foo === 7);
+
+  CONFIG.skillOverrides = bakGlobal; SkillLibrary._mapOverrides = bakMap;
+
+  // ---- ④ 装备点必须全部走 equipSkill（手写 push+onEquip 就会绕开参数解析）----
+  const mainSrc = stripComments(readSrc('../src/main.js'));
+  T('P0②⑥ main.js 不再有手写的"push 实例 + 调 onEquip"',
+    !/_skillInstances\.push\(\{ id: \+\+CTX\._uid/.test(mainSrc));
+  T('P0②⑦ 装备一律走 equipSkill', (mainSrc.match(/equipSkill\(/g) || []).length >= 8);
+  const csSrc = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  T('P0②⑧ CombatSystem 只保留"覆写变了就刷新"，不再自己拼解析逻辑',
+    /resolveSkillParams\(inst, entity, this\.skills\)/.test(csSrc)
+    && !/CONFIG\.skillOverrides\[inst\.skillId\]/.test(csSrc));
+}
+
+// ==================== 十四、P0-③ 渲染层只剩一条取高度的路 ====================
+// muzzleY(x, z)（按坐标就近搜索炮口高度）是个错误抽象：单位一死就返回 0 →
+// 轨迹当场塌到地面；混战时还会搜到旁边另一个单位身上。
+// 它一个人制造了四次"轨迹突然躺平"：光束末端、子弹落点、废墟落点、光束起点。
+{
+  const ul = stripComments(readSrc('../src/presentation/UnitLayer.js'));
+  T('P0③① UnitLayer 的 muzzleY(x,z) 已删除', !/\bmuzzleY\s*\(x, z/.test(ul));
+  T('P0③② muzzleYOf(entityId) 保留（唯一取高入口）', /muzzleYOf\(entityId\)/.test(ul));
+
+  const tr = stripComments(readSrc('../src/presentation/ThreeRenderer.js'));
+  T('P0③③ 渲染器不再把坐标查函数传下去', !/units\.muzzleY\(x, z\)/.test(tr));
+
+  const fx = stripComments(readSrc('../src/presentation/EffectsLayer.js'));
+  T('P0③④ 特效层没有任何 MY(x, z) 调用', !/\bMY\(/.test(fx));
+  T('P0③⑤ 三份重复的快照 WeakMap 合并成一份 + 一个 hOf()',
+    /this\._snap = new WeakMap\(\)/.test(fx)
+    && /const hOf = \(owner, key, entityId\)/.test(fx)
+    && !/_beamEndY/.test(fx) && !/_beamStartY/.test(fx));
+  T('P0③⑥ 光束起点/末端/子弹炮口三处都走 hOf',
+    /hOf\(b, 'start', b\.attackerId\)/.test(fx)
+    && /endHeightOf\(b, b\.targetId\)/.test(fx)
+    && /hOf\(p, 'muzzle', p\.attackerId\)/.test(fx));
+  T('P0③⑦ 快照查不到时返回 0（而不是回退到坐标反查）',
+    /return \(box && box\[key\] !== undefined\) \? box\[key\] : 0;/.test(fx));
+
+  // 子弹必须带 attackerId，否则炮口高度查不到
+  const cs = stripComments(readSrc('../src/systems/CombatSystem.js'));
+  T('P0③⑧ 开火时把 attackerId 一并交给子弹', /attackerId: attacker\.id/.test(cs));
+
+  // 死电弧：闪电链 v35 就删了，fireArc 从此没有调用者
+  const ps = stripComments(readSrc('../src/systems/ProjectileSystem.js'));
+  T('P0③⑨ 电弧系统（arcs/fireArc/getArcs）已整个删除',
+    !/fireArc/.test(ps) && !/getArcs/.test(ps) && !/this\.arcs/.test(ps));
+  T('P0③⑩ 特效层的锯齿电弧绘制也一并删除', !/getArcs/.test(fx));
 }
 
 console.log(`v43验收: ${pass} 通过 / ${fail} 失败`);

@@ -745,8 +745,7 @@ export class ThreeRenderer {
       this.fx.update(this.deps, controller ? controller.zoom : 1, rel < 1.02,
                      { vx: -cp * sa, vy: -sp, vz: -cp * ca, ux: -sp * sa, uy: cp, uz: -sp * ca,
                        rx: ca, ry: 0, rz: -sa },
-                     (x, z) => this.units.muzzleY(x, z),
-                     (id) => this.units.muzzleYOf(id));   // Q1：按实体查高度（坐标查是错误抽象）
+                     (id) => this.units.muzzleYOf(id));   // v43 P0-③：只按实体 id 查（坐标查已删）
       // v43 Q8：腐蚀雾。复用 EffectsLayer 的武器缓存（同一份 WeakMap，别再查第二遍），
       // dt 走**墙钟**——暂停时雾该继续飘，与 WeatherLayer 同口径。
       if (this.corrosionFx) {

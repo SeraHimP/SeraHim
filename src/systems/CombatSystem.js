@@ -1,8 +1,8 @@
 import { AttributeCalculator } from '../core/AttributeCalculator.js';
-import { SkillLibrary } from '../core/SkillLibrary.js';
 import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
 import { canTarget, isStructureProtected } from './FactionSystem.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
+import { resolveSkillParams } from '../core/skillParams.js';
 
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
@@ -234,32 +234,11 @@ export class CombatSystem {
         // 地图覆写。屠戮只有 onHit，它读的 instance._params.pct 因此永远是 undefined ——
         // "同一技能在不同地图上数值/机制不同"这条能力对它形同虚设。现在提到门外，
         // 任何技能（onHit/onBeingAttacked/…）都能被地图按 tier/type 覆写参数。
-        if (def) {
-          // 技能参数的叠加顺序（后者覆盖前者），三层都可缺省：
-          //   ① def.defaultParams          技能出厂值
-          //   ② CONFIG.skillOverrides[id]  **全局**用户覆写（编辑器可改、可存档）
-          //   ③ 地图 skillOverrides[键][id] 地图级覆写（最具体，压过全局）
-          // ②③ 的分工正是用户提的那条："同一技能在不同地图上可能表现为
-          // 数值/机制不同" —— 全局定基准，地图按需改写。
-          const globalOv = CONFIG.skillOverrides && CONFIG.skillOverrides[inst.skillId];
-          // 注意：原来只在 def.defaultParams 存在时才建 _params。那样一来
-          // 没声明 defaultParams 的技能永远拿不到覆写（改了没反应）。
-          // 只要任一覆写层有东西，就得把 _params 建出来。
-          if (!inst._params && (def.defaultParams || globalOv)) {
-            inst._params = { ...(def.defaultParams || {}) };
-          }
-          if (inst._params) {
-            if (globalOv) Object.assign(inst._params, globalOv);
-            if (SkillLibrary._mapOverrides) {
-              const e2 = this.entities.get(entity.id);
-              if (e2) {
-                const tk = e2._mapTier ? 'tower:' + e2._mapTier : e2.type;
-                const ov = SkillLibrary._mapOverrides[tk]?.[inst.skillId];
-                if (ov) Object.assign(inst._params, ov);
-              }
-            }
-          }
-        }
+        // v43 P0-②：解析逻辑搬到 core/skillParams.js，装备那一刻就跑过一次了。
+        // 这里每帧再跑一次，只为让**运行中改覆写**（编辑器调参、换地图）能立刻跟上；
+        // 不再承担"第一次把参数灌进去"的职责 —— 那个时序已经咬过两次
+        //（屠戮、加固城防的生命恢复），见 skillParams.js 的头注。
+        if (def) resolveSkillParams(inst, entity, this.skills);
         if (def && def.onFrame) {
           // 兜底（框架体检 P2）：技能是可扩展点，单个技能 onFrame 抛错只记日志跳过，
           // 不能打死整个模拟步（否则一个坏技能会冻结全场战斗）。
@@ -452,6 +431,7 @@ export class CombatSystem {
       this.projectiles.fire({
         startX: attacker.pos.x,
         startY: attacker.pos.y,
+        attackerId: attacker.id,   // v43 P0-③：渲染层按 id 取炮口高度（坐标反查已删）
         targetId: target.id,
         speed: atkStats.bulletSpeed || DEFAULT_BULLET_SPEED,
         color: bulletColor,

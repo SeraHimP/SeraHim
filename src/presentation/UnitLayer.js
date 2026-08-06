@@ -388,26 +388,16 @@ export class UnitLayer {
    */
   /**
    * Q1：按【实体 id】取炮口高度 —— 这才是调用方真正想问的问题。
-   * muzzleY(x,z) 是坐标就近搜索，目标一死就返回 0（末端塌到地面），
-   * 或者搜到 26 单位内的另一个单位身上（末端歪到别人的高度）—— 混战时后者是常态。
+   * v43 P0-③：这里曾经还有一个 muzzleY(x, z) —— 按【坐标】就近搜索（半径 26）最近单位的
+   * 炮口高度。那是个错误的抽象，光"轨迹突然躺平"一个症状就制造了四次 bug：
+   * 目标一死就搜不到 → 返回 0 → 末端塌到地面；混战时还会搜到旁边另一个单位身上。
+   * 已整个删除，渲染层只剩这一条按 id 取高的路。
    * 查不到返回 null，由调用方决定回落策略（用死亡瞬间的快照，而不是 0）。
    */
   muzzleYOf(entityId) {
     const en = this.map.get(entityId);
     if (!en) return null;
     return (en.groundY || 0) + (en.muzzleY || en.topY || 0);
-  }
-
-  muzzleY(x, z, r = 26) {
-    let best = 0, bestD = r * r;
-    for (const [id, en] of this.map) {
-      const dx = en.unit.position.x - x, dz = en.unit.position.z - z;
-      const d = dx * dx + dz * dz;
-      // A：塔的炮口取模型挂点高度（Buffbone_Glb_Weapon_1，≈水晶处）；程序化回退取塔冠顶端。
-      // 债c：叠上单位所在地面高度（高地/河床），子弹从正确世界高度出膛。
-      if (d < bestD) { bestD = d; best = (en.groundY || 0) + (en.muzzleY || en.topY || 0); }
-    }
-    return best;
   }
 
   setShadowLevel(level) {
