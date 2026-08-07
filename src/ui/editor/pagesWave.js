@@ -9,6 +9,7 @@
  * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
  */
 import { CONFIG } from '../../data/Config.js';
+import { mapLaneIds, laneLabel } from '../laneLabels.js';
 import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../../data/dragonCurve.js';
 
@@ -265,14 +266,11 @@ export const EDITOR_PAGES_WAVE = {
   _waveLaneScope: 'all',
 
   /** 当前地图的路列表（拿不到地图时退回三路，单测/沙盒下也有东西可显示）。 */
-  _mapLaneIds() {
-    const m = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
-    const ids = (m?.lanes || []).map(l => l.id).filter(Boolean);
-    return ids.length ? ids : ['top', 'mid', 'bot'];
-  },
-  _laneLabel(id) {
-    return ({ top: '⬆️ 上路', mid: '➡️ 中路', bot: '⬇️ 下路' })[id] || id;
-  },
+  // v46：这两个方法搬到 ui/laneLabels.js 了 —— 添加单位窗口也要用同一套判据，
+  // 而它原来把 top/mid/bot 写死在模板字符串里（扭曲丛林没有中路，照样显示三条）。
+  // 抄一份过去就是第三份实现，所以抽成共用的，两边都调它。
+  _mapLaneIds() { return mapLaneIds(); },
+  _laneLabel(id) { return laneLabel(id); },
 
   /**
    * 当前作用域下【要编辑哪一份编排】。作用域是二维的：阵营 × 路。

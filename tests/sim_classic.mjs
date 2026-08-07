@@ -219,4 +219,54 @@ ms.loadMap(CID);
     ds.mapAllowsDragon() === true);
 }
 
+// ==================== 七、分路选择要跟着地图走 ====================
+// 用户："添加单位窗口中，由于不同地图有不同的路数，所以窗口元素也要跟着修改。
+//        现在进入扭曲丛林也会显示上/中/下路。"
+{
+  const { mapLaneIds, laneLabel, laneShort, clampLaneId } = await import('../src/ui/laneLabels.js');
+  const app = { mapSystem: { currentMap: null } };
+  window.__app = app;
+
+  const setMap = (id) => { app.mapSystem.currentMap = MAPS[id]; };
+
+  setMap('summoners_rift_v1');
+  T('路①-召唤师峡谷三路', mapLaneIds().join(',') === 'top,mid,bot');
+  setMap('twisted_treeline_v1');
+  T('路②-扭曲丛林只有两路，**没有中路**（用户报的就是这个）',
+    mapLaneIds().join(',') === 'top,bot' && !mapLaneIds().includes('mid'));
+  setMap('howling_abyss_v1');
+  T('路③-嚎哭深渊只有一路', mapLaneIds().join(',') === 'mid');
+  setMap(CID);
+  T('路④-经典模式三路（沿用召唤师峡谷布局）', mapLaneIds().join(',') === 'top,mid,bot');
+
+  app.mapSystem.currentMap = null;
+  T('路⑤-取不到地图时退回三路（沙盒/未载入，与改动前默认一致）',
+    mapLaneIds().join(',') === 'top,mid,bot');
+
+  // clampLaneId：这是这个 bug **看不见的那一半**
+  setMap('twisted_treeline_v1');
+  T('路⑥-在峡谷选了"中路"再切扭曲丛林 → 夹回该图第一条路', clampLaneId('mid') === 'top');
+  T('路⑦-本图有的路原样保留', clampLaneId('bot') === 'bot');
+  setMap('howling_abyss_v1');
+  T('路⑧-嚎哭深渊把 top/bot 都夹到 mid',
+    clampLaneId('top') === 'mid' && clampLaneId('bot') === 'mid');
+
+  T('路⑨-标签认得出三条路，未登记的自制路 id 原样显示',
+    laneLabel('top').includes('上路') && laneShort('mid') === '中路' && laneLabel('jungle') === 'jungle');
+
+  // 两处界面共用同一份实现（原来添加单位窗口写死、出兵编排面板读地图 —— 一处对一处错）
+  const uad = srcOf('src/ui/UnitAddDialog.js');
+  const pw = srcOf('src/ui/editor/pagesWave.js');
+  T('路⑩-添加单位窗口按地图渲染分路，不再写死 top/mid/bot',
+    /mapLaneIds\(\)/.test(uad)
+    && !/lBtn\('top', '上路'\)/.test(uad)
+    && !/\{ top: '上', mid: '中', bot: '下' \}/.test(uad));
+  T('路⑪-两处界面都调同一份实现（不是各抄一份）',
+    /from '\.\/laneLabels\.js'/.test(uad) && /from '\.\.\/laneLabels\.js'/.test(pw));
+  T('路⑫-添加单位窗口在入队时也夹一次（否则会带着不存在的 laneId 生成兵）',
+    /clampLaneId\(st\.laneId\)/.test(uad));
+
+  delete window.__app;
+}
+
 done();

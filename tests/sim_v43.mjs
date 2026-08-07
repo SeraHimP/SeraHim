@@ -410,8 +410,15 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     JSON.stringify(AttributeEditor._mapLaneIds()) === JSON.stringify(['top', 'mid', 'bot']));
 
   const ae = editorSrc();
+  // v46：`m?.lanes || []` 那一句搬到 src/ui/laneLabels.js 了 —— 添加单位窗口也要用同一套判据，
+  // 而它原来把 top/mid/bot 写死在模板里（扭曲丛林没有中路，照样显示三条）。
+  // 抄一份过去就是第三份实现，所以抽成共用的。
+  // 这条断言因此要**跨文件**看：页签还在编辑器里，"路从哪来"在 laneLabels 里。
+  // 顺带一提，它是被"代码搬家"照出来的 —— 正是 editorSrc 头注里写的那种情形，
+  // 只不过这次是正向断言变红（好事），而不是否定断言假通过。
   T('Q5b⑭ UI 上确实有路页签，且不是写死的三路',
-    /data-wo-lane=/.test(ae) && /_mapLaneIds\(\)/.test(ae) && /m\?\.lanes \|\| \[\]/.test(ae));
+    /data-wo-lane=/.test(ae) && /_mapLaneIds\(\)/.test(ae)
+    && /m\?\.lanes \|\| \[\]/.test(srcOf('src/ui/laneLabels.js')));
 
   gr.laneWaveCompositionByLane = bakLane; CONFIG.factionOverrides = bakFO;
   AttributeEditor._factionScope = 'shared'; AttributeEditor._waveLaneScope = 'all';

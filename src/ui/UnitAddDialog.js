@@ -1,4 +1,5 @@
 import { CONFIG } from '../data/Config.js';
+import { mapLaneIds, laneLabel, laneShort, clampLaneId } from './laneLabels.js';
 import { paneHtml } from './dialogShell.js';
 import { TOWER_MODEL_ROLES, towerModelTier } from '../data/towerModels.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
@@ -211,13 +212,22 @@ export const UnitAddDialog = {
   _renderBattleSelectors() {
     if (!this._callbacks?.isBattle?.()) return '';
     const f = this._state.faction || 'blue';
-    const l = this._state.laneId || 'mid';
+    // ==================== 分路按钮按**当前地图**生成 ====================
+    // 用户："不同地图有不同的路数……现在进入扭曲丛林也会显示上/中/下路。"
+    // 扭曲丛林只有 top/bot（没有中路），嚎哭深渊只有 mid。
+    // clampLaneId 还负责把"上一张图选的、这张图没有"的那条路夹回来 ——
+    // 不夹的话按钮不会高亮（看起来像没选），而生成出来的兵会带一个不存在的 laneId，
+    // LaneMovementSystem 找不到那条路，兵就站在原地不动（不报错，只是不走）。
+    const lanes = mapLaneIds();
+    const l = this._state.laneId = clampLaneId(this._state.laneId);
     const fBtn = (k, txt) => `<button class="editor-tab ${f === k ? 'active' : ''}" data-uadfaction="${k}">${txt}</button>`;
-    const lBtn = (k, txt) => `<button class="editor-tab ${l === k ? 'active' : ''}" data-uadlane="${k}">${txt}</button>`;
+    const lBtn = (k) => `<button class="editor-tab ${l === k ? 'active' : ''}" data-uadlane="${k}">${laneLabel(k)}</button>`;
     return `<div style="margin-top:10px;">
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">⚔️ 对战模式：出生点为所选阵营的水晶枢纽，沿所选分路推线</div>
       <div class="editor-tabs">${fBtn('blue', '🔵 蓝方')}${fBtn('red', '🔴 红方')}</div>
-      <div class="editor-tabs" style="margin-top:4px;">${lBtn('top', '上路')}${lBtn('mid', '中路')}${lBtn('bot', '下路')}</div>
+      ${lanes.length > 1
+        ? `<div class="editor-tabs" style="margin-top:4px;">${lanes.map(lBtn).join('')}</div>`
+        : `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;">本图只有一条路（${laneLabel(lanes[0])}）</div>`}
     </div>`;
   },
 
@@ -235,8 +245,8 @@ export const UnitAddDialog = {
       const meta = TYPE_META[st.minionType] || {};
       const battle = this._callbacks?.isBattle?.();
       const faction = battle ? (st.faction || 'blue') : null;
-      const laneId = battle ? (st.laneId || 'mid') : null;
-      const fTag = faction ? (faction === 'blue' ? '🔵' : '🔴') + `→${{ top: '上', mid: '中', bot: '下' }[laneId]}路 ` : '';
+      const laneId = battle ? clampLaneId(st.laneId) : null;
+      const fTag = faction ? (faction === 'blue' ? '🔵' : '🔴') + `→${laneShort(laneId)} ` : '';
       this._queue.push({
         category: 'minion', unitType: st.minionType, label: meta.label || st.minionType, icon: meta.icon || '❓',
         summary: `${fTag}数量×${count}${growth ? '（波次成长）' : ''}`, config: { count, growth, faction, laneId },
