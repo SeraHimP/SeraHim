@@ -161,7 +161,10 @@ export class ThreeRenderer {
    */
   /** 地图 id → 主题名。同一峡谷的快速版共用一套材质，不必各存一份。 */
   static themeOf(map) {
-    return map?.theme || String(map?.id || '').replace(/_quick/, '').replace(/_v\d+$/, '') || 'default';
+    // v45：`_quick` 那条剥离规则随 Quick Mode 一起删掉，换成 `_classic`——
+    // 经典模式与召唤师峡谷共用同一套地形材质，剥掉后缀即可落到同一个主题目录。
+    // 留着已删模式的规则是死代码，而死代码会让下一个人以为那个模式还在。
+    return map?.theme || String(map?.id || '').replace(/_classic/, '').replace(/_v\d+$/, '') || 'default';
   }
 
   async _loadMaterials(theme = 'default') {

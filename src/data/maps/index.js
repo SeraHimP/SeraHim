@@ -1,5 +1,5 @@
 import { summoners_rift } from './summoners_rift.js';
-import { summoners_rift_quick } from './summoners_rift_quick.js';
+import { summoners_rift_classic } from './summoners_rift_classic.js';
 import { howling_abyss } from './howling_abyss.js';
 import { twisted_treeline } from './twisted_treeline.js';
 
@@ -14,7 +14,7 @@ import { twisted_treeline } from './twisted_treeline.js';
  * （外塔取 55% 弧长导致双方外塔越过中线互换半区），已被真实坐标缩放方案取代。
  */
 export const MAPS = {
-  [summoners_rift_quick.id]: summoners_rift_quick,
+  [summoners_rift_classic.id]: summoners_rift_classic,
   [summoners_rift.id]: summoners_rift,
   [howling_abyss.id]: howling_abyss,       // 嚎哭深渊（单路窄桥）
   [twisted_treeline.id]: twisted_treeline, // 扭曲丛林（双路）

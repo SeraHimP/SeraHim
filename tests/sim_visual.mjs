@@ -59,8 +59,14 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   // 出兵系统真的按阵营取
   const src = fs.readFileSync('src/systems/LaneWaveSystem.js', 'utf8');
   // 调用现在是多行的（第 5 个参数是条件判定用的世界快照），不能再用 [^)]* 匹配
+  // v45：第三个参数从 `CONFIG.gameRules` 换成了 `rules` —— 地图可以覆写 spawnEnabled
+  //（经典模式只出 近战/远程/炮兵/超级兵）。没有覆写时 rules 就是 CONFIG.gameRules 本身。
+  // 这条断言要守的是**faction 有没有传下去**（编排是按阵营解析的），
+  // 不是"第三个参数长什么样"，所以只钉 faction 那一位。
   T('LaneWaveSystem 把 faction 传进 buildWaveOrder',
-    /buildWaveOrder\(this\.waveNumber, nexusDown, CONFIG\.gameRules, faction/.test(src));
+    /buildWaveOrder\(this\.waveNumber, nexusDown, \w+, faction/.test(src));
+  T('地图可以覆写 spawnEnabled（没覆写时逐位退回 CONFIG.gameRules）',
+    /currentMap\?\.spawnEnabled/.test(src) && /: CONFIG\.gameRules;/.test(src));
   // v43 P1-4：编辑器已拆成 src/ui/editor/* 七块，断言要读整片 ——
   // 只读 AttributeEditor.js 会让否定断言因为「搬到隔壁文件」而假通过。
   const ui = ['.' + '/src/ui/AttributeEditor.js',

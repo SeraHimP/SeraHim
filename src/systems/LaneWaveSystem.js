@@ -41,11 +41,13 @@ export class LaneWaveSystem {
   setCreateMinion(fn) { this.createMinion = fn; }
 
   update(dt) {
-    // Apply quickMode settings on first update (after map is loaded)
-    if (this._quickApplied === undefined) {
+    // 首帧应用**地图自带的波次设置**（地图载入之后才读得到）。
+    // 变量名历史上叫 _quickApplied，是因为当初只有 Quick Mode 用这条路；
+    // Quick Mode 已删，但这条路是通用的（任何地图都能写 waveInterval 等），所以保留并改名。
+    if (this._mapWaveApplied === undefined) {
       const m = this.mapSystem.currentMap;
       if (m) {
-        this._quickApplied = true;
+        this._mapWaveApplied = true;
         if (m.waveInterval) this.waveInterval = m.waveInterval;
         if (m.firstWaveDelay) { this.nextWaveTime = m.firstWaveDelay; this.firstWaveDelay = m.firstWaveDelay; }
         if (m.spawnGap) this.spawnGap = m.spawnGap;
@@ -120,7 +122,15 @@ export class LaneWaveSystem {
     // 条件判定的世界快照：出兵编排里"敌方内塔全灭""游戏满 10 分钟"这类条件读它。
     // gameTime 用**对局时钟**（这一局跑了多久），不是 window.gameTime 那个会被
     // 暂停/倍速影响的挂钟 —— 编排是玩法规则，必须跟着游戏时间走。
-    const order = buildWaveOrder(this.waveNumber, nexusDown, CONFIG.gameRules, faction, {
+    // v45：地图可以关掉某些兵种（经典模式只出 近战/远程/炮兵/超级兵）。
+    // 走 spawnEnabled 这个既有闸门而不是让地图重写一份编排 ——
+    // 编排是用户在编辑器里会调的东西，地图重写一份等于把他的调整覆盖掉。
+    // 没有覆写时 rules 就是 CONFIG.gameRules 本身，行为逐位不变。
+    const _mapSE = this.mapSystem.currentMap?.spawnEnabled;
+    const rules = _mapSE
+      ? { ...CONFIG.gameRules, spawnEnabled: { ...(CONFIG.gameRules.spawnEnabled || {}), ..._mapSE } }
+      : CONFIG.gameRules;
+    const order = buildWaveOrder(this.waveNumber, nexusDown, rules, faction, {
       laneId: lane.id, gameTime: this._clock, census: this._census,
     });
 
