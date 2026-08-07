@@ -23,7 +23,7 @@ import { ThreeCameraController } from './presentation/ThreeCameraController.js';
 import { dayNightAt, DAY_PERIOD, resolveDayPhase } from './presentation/DayNight.js';
 import { EventBus } from './utils/EventBus.js';
 import { equipSkill } from './core/skillParams.js';
-import { createFactories } from './core/factories.js';
+import { createFactories, effectiveMaxHP } from './core/factories.js';
 import { CONFIG } from './data/Config.js';
 import { UIManager } from './ui/UIManager.js';
 import { CanvasController } from './ui/CanvasController.js';
@@ -436,7 +436,11 @@ function _processNextTowerPlacement() {
         };
         if (Object.keys(merged).length) {
           Object.assign(tower.baseStats, merged);
-          if (tower.baseStats.maxHP > 0) tower.currentHP = tower.baseStats.maxHP;
+          // v47：补满到**叠完增益之后**的最大生命（与出生/重生同一口径，
+          // 见 factories.js spawnAtFullHP 头注）。原来取 baseStats.maxHP，
+          // 这座塔身上若挂着带 maxHPPct 的龙之奖励/状态，套完档位就成了残血。
+          const fullHP = effectiveMaxHP(tower);
+          if (fullHP > 0) tower.currentHP = fullHP;
           tower.shieldFixedCurrent = tower.baseStats.shieldFixedMax || 0;
         }
         // 层级也一并设上：不设的话它在结构保护/推进度统计里仍算"沙盒塔"，
@@ -513,11 +517,12 @@ document.getElementById('templateEditorBtn').addEventListener('click', () => {
   AttributeEditor.openTemplateEditorRoot(uiManager.log.bind(uiManager));
 });
 
-// 日志显示开关（默认隐藏）
-document.getElementById('toggleLogBtn').addEventListener('click', () => {
-  const logArea = document.getElementById('logArea');
-  logArea.classList.toggle('show');
-});
+// v47：日志开关已从顶栏移进【设置 → 调试】（用户："删除右侧的日志按钮，移动到设置里"）。
+// 这里原本是 `document.getElementById('toggleLogBtn').addEventListener(...)`——
+// 顶栏那个按钮删掉之后这一句会在 null 上取 addEventListener 直接抛异常，
+// 而它位于 main.js 的接线段中间，抛了之后**后面所有按钮都不会接上**。
+// 删元素时必须连着把它的接线一起删，这是"删一半"最典型的塌方方式。
+// 开关本身搬到 SettingsDialog（同一个 #logArea，行为一字未改）。
 
 // 设置窗口（整合此前的跳过等待/暂停波次/清屏/暂停/重置波次，新增小兵/龙独立控制）
 document.getElementById('settingsBtn').addEventListener('click', () => {

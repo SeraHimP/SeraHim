@@ -485,9 +485,20 @@ const mkE = (ents, type, x, y, extra = {}) => {
   T('损⑱-角楼架在冠顶（crownTopY），不是架在雉堞推进后的高度上（那样会悬空）',
     /const crownTopY = y;/.test(umf2) && /T\(tx, crownTopY \+ th \/ 2, tz\)/.test(umf2));
 
+  // v47：清零改走 core/reviveState.clearDamageMarks 这一份唯一清单。
+  // 用户："我手动恢复损毁的塔，但是模型还是重度损毁的模型。"
+  // 根因是**复活有两条路**（重生队列 / 编辑器的【设为存活】），v45 只在前一条里
+  // 写了 `delete corpse._dmgStage`，后一条只清了 _ruin。断言随之从"某处有那句 delete"
+  // 改成"两条路都调同一份清单"——钉的是那条会漏的**链接**，不是某一处的写法。
   const ms = srcOf('src/systems/MapSystem.js');
-  T('损⑨-重生时清零（用户："塔手动重生时要恢复零损毁的模型"）',
-    /delete corpse\._dmgStage/.test(ms));
+  const pe = srcOf('src/ui/editor/pagesEntity.js');
+  const rs = srcOf('src/core/reviveState.js');
+  T('损⑨-复活时清零（用户："塔手动重生时要恢复零损毁的模型"）',
+    /delete e\._dmgStage;/.test(rs) && /delete e\._ruin;/.test(rs));
+  T('损⑨-两条复活路径都调同一份清单（重生队列 + 编辑器的「设为存活」）',
+    /clearDamageMarks\(corpse\)/.test(ms) && /clearDamageMarks\(e\)/.test(pe));
+  T('损⑨-两处都不再各自 delete（各清各的就是当年漏掉一处的原因）',
+    !/delete corpse\._dmgStage/.test(ms) && !/delete e\._ruin;/.test(pe));
   const ul = srcOf('src/presentation/UnitLayer.js');
   T('损⑩-损毁档进了几何缓存 key（不进则三档共用第一个被缓存的几何）',
     /\$\{dmg\}/.test(ul));
@@ -705,6 +716,70 @@ const mkE = (ents, type, x, y, extra = {}) => {
   // ⑦ 非对战单位不定向
   T('向⑩-中立/沙盒塔（没有阵营）不定向',
     towerFacingRad({ pos: { x: 0, y: 0 }, _mapFaction: null }, map) === null);
+
+  // ==================== ⑧ 回环路：切线指反时必须退回"朝敌方枢纽" ====================
+  // 用户："扭曲丛林的朝向不对，另一阵营同理。"
+  //
+  // 扭曲丛林两条路的起点和终点是**同一个点**（都是 (584,676)→(2424,676)），
+  // 路是绕出去再绕回来的回环。靠近自家基地那几座塔，切线指的是"路在此处的走向"
+  // （上/下），跟"敌人在哪边"（右）差了近 90°，屏幕上就是一排塔集体扭着头。
+  //
+  // 断言钉的是**行为形状**（每座塔都朝敌方半场），不是具体角度 ——
+  // 角度会随地图微调而变，"朝向敌人"这条不会。
+  for (const mid of ['twisted_treeline_v1', 'howling_abyss_v1', 'summoners_rift_classic_v1']) {
+    const mm = M3[mid];
+    if (!mm) { T(`向⑧-${mid} 地图存在`, false); continue; }
+    let bad = 0, n = 0;
+    for (const b of mm.buildings || []) {
+      if (b.tier === 'nexus_main' || !b.pos) continue;
+      const foe2 = (mm.buildings || []).find(x => x.tier === 'nexus_main' && x.faction !== b.faction && x.pos);
+      if (!foe2) continue;
+      const a = towerFacingRad(
+        { pos: b.pos, _mapFaction: b.faction, _laneId: b.laneId, _mapTier: b.tier }, mm);
+      if (a === null) continue;
+      n++;
+      const dot = Math.sin(a) * (foe2.pos.x - b.pos.x) + Math.cos(a) * (foe2.pos.y - b.pos.y);
+      if (!(dot > 0)) bad++;
+    }
+    T(`向⑧-${mid}：全部 ${n} 座塔都朝敌方半场（回环路不再扭头）`, n > 0 && bad === 0);
+  }
+  // ⑨ 红蓝镜像：扭曲丛林是左右对称图，同路同档两方的角度应互为镜像（x 取反 → 角度取反）
+  {
+    const tt = M3.twisted_treeline_v1;
+    const fa = (b) => towerFacingRad(
+      { pos: b.pos, _mapFaction: b.faction, _laneId: b.laneId, _mapTier: b.tier }, tt);
+    let checked = 0, ok = true;
+    for (const lane of ['top', 'bot']) {
+      for (const tier of ['outer', 'base', 'nexus_lane']) {
+        const bb = (tt.buildings || []).find(b => b.faction === 'blue' && b.laneId === lane && b.tier === tier);
+        const rb = (tt.buildings || []).find(b => b.faction === 'red' && b.laneId === lane && b.tier === tier);
+        if (!bb || !rb) continue;
+        checked++;
+        // 镜像轴是竖直的（x 翻转），朝向角 = atan2(dx, dy) → dx 取反即角度取反
+        const d = Math.abs(deg(fa(bb)) + deg(fa(rb)));
+        if (d > 1) ok = false;
+      }
+    }
+    T(`向⑨-扭曲丛林红蓝朝向互为镜像（"另一阵营同理"，${checked} 对）`, checked >= 4 && ok);
+  }
+  // ⑩ 每方只有一座枢纽塔时不张开（对着孤零零一座塔偏 25°，看上去只是"这塔歪了"）
+  T('向⑩-单座枢纽塔不张开（张开的意义是两座别摆成一模一样）', (() => {
+    const tt = M3.twisted_treeline_v1;
+    const hq = (tt.buildings || []).find(b => b.tier === 'hq_tower' && b.faction === 'blue');
+    if (!hq) return false;
+    const cnt = (tt.buildings || []).filter(b => b.tier === 'hq_tower' && b.faction === 'blue').length;
+    if (cnt !== 1) return false;   // 前提变了就该重看这条，而不是让它默默通过
+    const foe2 = (tt.buildings || []).find(b => b.tier === 'nexus_main' && b.faction === 'red');
+    const want = deg(Math.atan2(foe2.pos.x - hq.pos.x, foe2.pos.y - hq.pos.y));
+    const got = deg(towerFacingRad(
+      { pos: hq.pos, _mapFaction: 'blue', _laneId: hq.laneId, _mapTier: 'hq_tower' }, tt));
+    return Math.abs(got - want) <= 1;
+  })());
+  // ⑪ 召唤师峡谷**一个角度都不能变**（切线判据只该拦回环路，不该动正常路）
+  T('向⑪-召唤师峡谷三路角度不受回环判据影响（top/mid/bot 仍各不相同）', (() => {
+    const a = ['top', 'mid', 'bot'].map(l => of(pick('blue', l, 'outer')));
+    return new Set(a).size === 3 && a.every(x => x !== null);
+  })());
 
   // 渲染层接线：换模型时必须重赋，否则塔一掉血就转回正北
   const ul3 = srcOf('src/presentation/UnitLayer.js');

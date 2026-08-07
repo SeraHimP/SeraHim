@@ -56,19 +56,45 @@ body {
    与右下角工具栏、右上角世界小窗共用同一套玻璃面板参数（surface + blur + 圆角 + 边框 + 阴影），
    三块浮层这才看起来是同一套东西 —— 这就是"UI 要统一"落到具体处的样子。
    贴边的 border-bottom 换成整圈 border，否则悬浮起来之后底边那道线会很突兀。 */
-#topbar {
-  position: absolute; top: 10px; left: 12px; right: 12px;
-  display: flex; align-items: center; gap: 16px; padding: 8px 14px;
+/* ==================== v47：浮层面板的**唯一**一套外观 ====================
+   顶栏左 / 顶栏右 / 右下工具栏 / 右上世界小窗，四块浮层共用 .hud-panel。
+   改动前它们各自把 surface + blur + 圆角 + 边框 + 阴影抄了一遍（#topbar 一份、
+   #canvasControls 一份、#worldHud 一份），于是"统一设计"这件事每次都只统一了两块。
+   现在只有这一处定义，改一次四块一起变 —— 与本仓库对逻辑的要求同一个道理。 */
+.hud-panel {
+  position: absolute; z-index: 20;
+  display: flex; align-items: center; gap: var(--gap-sm);
+  padding: 7px 12px;
   background: var(--surface);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
-  flex-shrink: 0; flex-wrap: wrap; z-index: 20;
   box-shadow: var(--shadow-sm);
 }
-#topbar .stat { color: var(--text-dim); font-size: 12.5px; letter-spacing: 0.2px; }
-#topbar .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
-#topbar .sep { color: var(--glass-border); }
-#topbar .spacer { flex: 1; }
+/* 面板内的分组竖线。用元素而不是 border-left，是为了让它跟着 flex 的 gap 走，
+   换行（窄屏 flex-wrap）时不会挂在行首。 */
+.hud-sep { width: 1px; height: 16px; background: var(--glass-border); flex: none; }
+.hud-panel .stat {
+  color: var(--text-dim); font-size: 12.5px; letter-spacing: 0.2px;
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.hud-panel .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* 左上角那一块现在装两样东西（局势读数 + 世界状态条），所以它是**竖**排的；
+   右上角只有按钮，保持横排。 */
+#topbarLeft  {
+  top: 10px; left: 12px; flex-direction: column; align-items: stretch; gap: 7px;
+  max-width: calc(50% - 18px);
+}
+#topbarLeft .tl-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#topbarRight { top: 10px; right: 12px; }
+
+/* 图标方钮：顶栏右侧与右下工具栏共用同一个尺寸/形状，两块浮层这才像一套东西。 */
+.icon-btn {
+  width: 30px; height: 30px; padding: 0; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; line-height: 1; border-radius: var(--radius-xs);
+}
+
 .btn-group { display: flex; gap: var(--gap-sm); flex-wrap: wrap; align-items: center; }
 
 button {
@@ -109,8 +135,14 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* v44：顶栏改悬浮之后要给它让位（原来 top:12px 会盖住顶栏左半边的波次/塔数）。
    玻璃参数也与另外三块浮层统一 —— 四块浮层同一套 surface + blur(14) + 圆角 + 边框。 */
 #selectionPanel {
-  position: absolute; top: 66px; left: 12px; width: 320px; max-width: 82vw;
-  max-height: calc(100% - 78px); overflow-y: auto; z-index: 30;
+  /* v47：世界状态条并进左上角之后那块面板变高了，属性面板要给它让位。
+     这里的 81px 只是**静态兜底**（读数一行 + 状态胶囊一行的常见高度）——
+     真正的值由 UIManager._bindPanelOffset 用 ResizeObserver 量出来后逐帧修正。
+     用户："别忘了点开单位属性栏可能出现遮挡的情况。"
+     写死一个数只能挡住我当时想到的那一种情形：熵段一显示、或者窗口一窄导致读数换行，
+     左上角就变高，属性面板又被压在底下。量出来才是与布局无关的做法。 */
+  position: absolute; top: 81px; left: 12px; width: 352px; max-width: 82vw;
+  max-height: calc(100% - 93px); overflow-y: auto; z-index: 30;
   background: var(--surface); border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); display: none;
@@ -212,34 +244,37 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* v44：顶栏改成悬浮之后要给它让位（原来 top:12px 会被压在顶栏底下）。
    玻璃参数也与顶栏/右下角工具栏统一 —— 三块浮层同一套 surface + blur(14) + 圆角 + 边框。
    之前三块各写各的（0.90 实心底 / blur10 / 8px 圆角），并排看得出来不是一套。 */
-#worldHud {
-  position: absolute; top: 66px; right: 12px;
-  z-index: 25;
-  display: flex; flex-direction: column; gap: 3px;
-  padding: 8px 14px; border-radius: var(--radius-sm);
-  background: var(--surface);
-  border: 1px solid var(--glass-border);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  box-shadow: var(--shadow-sm);
+/* v47：世界状态条并进左上角那块面板并重做成一行胶囊（见那段 HTML 的注释）。
+   横排而不是竖排：三段并成一行之后左上角这一块只有两行高，
+   属性面板能从更靠上的位置开始 —— 竖排时它要往下让近 60px。 */
+#worldHud { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.wh-chip {
+  position: relative; display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px 6px; border-radius: var(--radius-xs);
+  background: rgba(255,255,255,0.045); border: 1px solid transparent;
+  white-space: nowrap; line-height: 1;
 }
-#worldHud .wh-row {
-  display: flex; align-items: center; gap: 6px;
-  height: 18px;
+/* 可点的那两段（天气 / 熵）给手型与 hover 反馈。时间段不可点，所以排除它 ——
+   这一条是老 bug 的遗产：并排那一版把天气裹进了 #whTimeRow，于是它被这条选择器
+   一起排除掉，"天气可点"没有任何视觉提示（用户当时报的"天气那个无法点击"）。 */
+.wh-chip[title]:not(#whTimeRow) { cursor: pointer; }
+.wh-chip:not(#whTimeRow):hover { background: rgba(255,255,255,0.09); border-color: var(--glass-border); }
+.wh-chip .wh-label {
+  font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 3px;
 }
-#worldHud .wh-row[title]:not(#whTimeRow) { cursor: pointer; }
-#worldHud .wh-row:not(#whTimeRow):hover .wh-bar { outline: 1px solid rgba(255,255,255,0.28); }
-/* 固定宽度 + 左对齐：标签长短不一时，色带不会跟着左右跳动 */
-#worldHud .wh-label {
-  font-size: 11px; font-weight: 600; flex-shrink: 0;
-  display: flex; align-items: center; gap: 3px;
-  width: 62px; overflow: hidden; white-space: nowrap;
+.wh-chip .wh-val {
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-dim);
 }
-#worldHud .wh-bar { width: 150px; height: 14px; display: block; flex-shrink: 0; border-radius: 2px; }
-#worldHud .wh-val {
-  font-size: 10px; font-variant-numeric: tabular-nums; flex-shrink: 0;
-  width: 58px; text-align: right; color: var(--text-dim, #8b949e);
-  overflow: hidden; white-space: nowrap;
+/* 色带：胶囊底边一条 3px 细线。宽度跟着胶囊走（不再是写死的 150px），
+   画布像素尺寸取自 clientWidth（WorldHud._ctx），所以这里改就够了。 */
+/* ⚠️ canvas 是**替换元素**：绝对定位时 `left + right + width:auto` 不会像普通元素那样
+   拉伸，而是取内在宽度（300px），right 被当作过约束丢弃 —— 结果是画布伸到胶囊外面，
+   只能看见最左边那一小截。所以宽度必须显式算出来，不能靠 left/right 撑。 */
+.wh-chip .wh-bar {
+  position: absolute; left: 7px; bottom: 2px;
+  width: calc(100% - 14px); height: 3px; display: block; border-radius: 2px;
 }
+
 .panel-header {
   padding: 11px 16px; border-bottom: 1px solid var(--glass-border);
   font-size: 13px; font-weight: 700; flex-shrink: 0;
@@ -269,15 +304,60 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 #glCanvas { background: #0a0d12; }
 /* 右下角工具栏。v44：blur/padding 与顶栏对齐（原来是 10px/6px，顶栏是 14px/8px，
    两块浮层的玻璃厚度肉眼能看出差别）。三块浮层现在用同一组参数。 */
+/* ==================== v47：右下工具栏重做 ====================
+   用户："主界面右上角，右下角的栏不好看。……右下角工具栏重做。"
+
+   上一版（同样是本轮做的）把 8 个控件从一长条拆成了三行，但**没解决真正难看的那一处**：
+   两个 `input[type=range]` 用的是浏览器默认外观 —— Chrome 的蓝色轨道 + 白色圆钮，
+   与整套深色玻璃 UI 完全不是一个东西。旁边再配上"俯仰""方位"两个中文标签，
+   一块 190px 宽的板子里塞了两种视觉语言。诊断错了就会一直重排版而不解决问题，
+   这里如实记一下：上一版我以为是排布问题，其实是控件外观问题。
+
+   这一版三件事：
+     ① 滑杆**完全自绘**（轨道 3px、已填充段用主题青、拇指 11px 圆点带描边），
+        与面板同一套配色；
+     ② 文字标签换成图标（⛰ 俯仰 / 🧭 方位），一列 18px，两行天然对齐；
+     ③ 整体收窄到 168px：滑杆 84px，读数 30px。
+   缩放那一行保持 [−] 值 [+] ｜ 🎯 的三段式，与顶栏右侧同一套 .icon-btn。 */
 #canvasControls {
-  position: absolute; bottom: 12px; right: 12px; z-index: 10;
-  display: flex; gap: var(--gap-sm); align-items: center;
-  background: var(--surface); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  padding: 8px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--glass-border); box-shadow: var(--shadow-sm);
+  bottom: 12px; right: 12px; z-index: 10;
+  flex-direction: column; align-items: stretch; gap: 5px;
+  padding: 7px 10px;
 }
-#canvasControls button { background: var(--surface-3); padding: 3px 11px; font-size: 14px; }
-#canvasControls .zoom-label { font-size: 12px; color: var(--text-dim); min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+#canvasControls .ctl-row { display: flex; align-items: center; gap: var(--gap-sm); }
+#canvasControls .ctl-grp { display: flex; align-items: center; gap: 3px; }
+#canvasControls button { background: var(--surface-3); }
+#canvasControls .zoom-label {
+  font-size: 11px; color: var(--text-dim); min-width: 34px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* 图标标签位：固定宽度，两行的滑杆因此左对齐，不会一行一个起点 */
+#canvasControls .ctl-name { font-size: 12px; width: 18px; flex: none; text-align: center; }
+
+/* 滑杆自绘。Chrome/Edge 走 ::-webkit-slider-*，Firefox 走 ::-moz-range-*；
+   两套选择器不能合并写（任何一个不认识的选择器会让整条规则被丢弃）。 */
+#canvasControls input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  width: 84px; height: 14px; flex: none; background: transparent; cursor: pointer;
+}
+#canvasControls input[type=range]::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px;
+  background: rgba(255,255,255,0.14);
+}
+#canvasControls input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; margin-top: -4px; border-radius: 50%;
+  background: var(--accent); border: 1px solid rgba(0,0,0,0.45);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+#canvasControls input[type=range]:hover::-webkit-slider-thumb { background: #7fe3d9; }
+#canvasControls input[type=range]::-moz-range-track {
+  height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14);
+}
+#canvasControls input[type=range]::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--accent); border: 1px solid rgba(0,0,0,0.45);
+}
 
 /* ==================== 日志 ==================== */
 #logArea {
@@ -357,7 +437,12 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 
 .bar-row { display: flex; align-items: stretch; height: 18px; margin-bottom: 3px; }
 .bar-track { position: relative; flex: 1; height: 100%; background: var(--bg-deep); border: 1px solid var(--glass-border); border-radius: 4px; overflow: hidden; }
-.bar-hp-trail { position: absolute; top: 0; left: 0; height: 100%; background: #a68a2e; transition: width 0.45s ease-out; pointer-events: none; }
+/* v47：与画面中的拖尾统一（用户："统一为画面中的拖尾特效"）。
+   ① 颜色改成画面里那条的 rgba(255,150,150,0.6)（原来是暗黄 #a68a2e）；
+   ② **去掉 transition** —— 宽度已经由 JS 每帧缓动（barTrail.stepTrail），
+      再套一层 0.45s 的 CSS 缓动等于把两层缓动串起来，
+      面板里的残段会比画面里的慢三四倍才收完。 */
+.bar-hp-trail { position: absolute; top: 0; left: 0; height: 100%; background: rgba(255,150,150,0.6); pointer-events: none; }
 .bar-hp { position: absolute; top: 0; left: 0; height: 100%; background: linear-gradient(180deg, #5cc85f, #43a047); transition: width 0.08s linear; }
 .tower-bar .bar-hp { background: linear-gradient(180deg, #6bb8f0, #3d8fd1); }
 /* 阵营血条颜色：统一 2D 画布与卡片UI的配色，取代此前的"低血量变红" */
@@ -366,14 +451,31 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }
+/* ==================== v47：血条上的读数 ====================
+   用户："进度条上的 HP XX/XXX 居中显示为 XX/XX（没有 HP 了），护盾那个靠右
+          （还是显示图标+文字）。注意文字也要上下居中，目前就有些靠下了。"
+
+   三点各自的做法：
+     · 居中 + 靠右 —— 从 `flex + space-between`（两端对齐）改成 **三列网格**
+       `1fr auto 1fr`：血量放第 2 列 → 相对整条**真正居中**，
+       护盾放第 3 列右对齐。用 space-between 是做不到的：那样血量的位置
+       会随护盾读数的字宽左右漂。
+     · 去掉 "HP " 前缀 —— 在 UIManager 里改文本（血条上写 HP 属于冗余，
+       条本身就是血条）。
+     · 上下居中 —— 原来靠 `margin: -17px` 把一行 11px 的文字**估**到 18px 高的
+       条上，差的那 1px 就是用户看到的"有些靠下"。现在给读数行一个与条**等高**
+       的行盒（height: 18px）+ align-items: center，上移量也改成整 18px，
+       于是垂直居中是算出来的、不是估出来的：条的高度改多少，这里跟着改多少。 */
 .bar-text {
-  display: flex; justify-content: space-between; font-size: 11px;
-  color: #f2f6fa; margin: -17px 0 6px; padding: 0 7px;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  height: 18px; line-height: 1; font-size: 11px;
+  color: #f2f6fa; margin: -18px 0 6px; padding: 0 7px;
   position: relative; z-index: 1; pointer-events: none;
   font-variant-numeric: tabular-nums; font-weight: 600;
   text-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
-.bar-text .shield-total { color: #cfd6dd; }
+.bar-text > :first-child { grid-column: 2; justify-self: center; }
+.bar-text .shield-total { grid-column: 3; justify-self: end; color: #cfd6dd; }
 
 /* 属性 */
 /* 属性 chip：标签在上、数值在下。两列网格，行距按 8px 节奏。 */
@@ -394,6 +496,19 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 }
 .a.stat-doc:hover { background: rgba(255,255,255,0.07); border-color: var(--glass-border); }
 
+/* v47：展开更多按"方面"分组。标题占整行；组内条目为奇数时最后一格横跨两列，
+   否则下一组的第一格会被塞进上一组留下的空位里，分组就白做了。 */
+.attrs-ext .attr-group {
+  grid-column: 1 / -1; margin: 6px 0 0;
+  font-size: 10px; color: var(--text-mute); letter-spacing: 1px;
+  display: flex; align-items: center; gap: 7px;
+}
+.attrs-ext .attr-group::after {
+  content: ''; flex: 1; height: 1px; background: var(--glass-border);
+}
+.attrs-ext .attr-group:first-child { margin-top: 0; }
+.attrs-ext .a.span2 { grid-column: 1 / -1; }
+
 .toggle-ext {
   width: 100%; margin-top: 8px; font-size: 11px; color: var(--text-dim);
   cursor: pointer; background: rgba(255,255,255,0.03);
@@ -402,7 +517,25 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .toggle-ext:hover { color: var(--text); background: rgba(255,255,255,0.07); }
 
 /* 技能栏 */
-.skill-slot-row { display: flex; gap: var(--gap-sm); flex-wrap: wrap; margin: 5px 0 4px; padding: 2px 0; }
+/* ==================== v47：图标行铺满整宽，不留死角 ====================
+   用户："属性栏宽度优化，画红圈那里都是空着的，然后就跑到下一行了。"
+
+   算一遍就知道那块空白是必然的：面板 320 − 边框 2 − #selectionCard 内边距 16
+   − .unit-card 边框 2 − .unit-card 内边距 28 = **可用 272px**；
+   图标 34 + 间距 6 → 一行放得下 ⌊(272+6)/40⌋ = 6 个，用掉 234，
+   **剩下 38px 永远空着**（差 2px 就够第 7 个），第 7 个图标只能换行。
+   flex + 固定 gap 的排版必然如此：多出来的零头没有任何东西去消化它。
+
+   改法两条，缺一不可：
+     ① 面板加宽到 352 → 可用 304px，一行放得下 7 个（多一个，正好覆盖常见的状态数）；
+     ② 排版换成 grid：列宽仍固定 34px（图标必须是正方/正圆，用 1fr 会被拉成长方形），
+        auto-fill 铺满整行，**零头由 justify-content: space-between 摊进列间距**。
+   于是无论面板多宽、图标多少，行尾都不会再出现那一块空白。 */
+.skill-slot-row {
+  display: grid; grid-template-columns: repeat(auto-fill, 34px);
+  gap: var(--gap-sm); justify-content: space-between;
+  margin: 5px 0 4px; padding: 2px 0;
+}
 .skill-slot {
   width: 34px; height: 34px; border-radius: 50%; background: var(--surface-3);
   border: 2px solid var(--glass-border); display: flex; align-items: center; justify-content: center;
@@ -417,7 +550,11 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .skill-placeholder { width: 34px; height: 34px; border-radius: 50%; background: var(--surface-3); border: 2px dashed var(--glass-border); opacity: 0.3; flex-shrink: 0; }
 
 /* 效果栏 */
-.effect-row { display: flex; flex-wrap: wrap; gap: var(--gap-sm); margin: 5px 0 4px; align-items: center; padding: 2px 0; }
+.effect-row {
+  display: grid; grid-template-columns: repeat(auto-fill, 34px);
+  gap: var(--gap-sm); justify-content: space-between;
+  margin: 5px 0 4px; align-items: center; padding: 2px 0;
+}
 .effect-icon {
   width: 34px; height: 34px; border-radius: var(--radius-xs); background: var(--surface-3);
   border: 1.5px solid var(--glass-border); display: flex; align-items: center; justify-content: center;
@@ -620,27 +757,70 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 </style>
 </head>
 <body>
-<div id="topbar">
-  <span class="stat">波次 <b id="waveNum">0</b></span>
-  <span class="sep">|</span>
-  <span class="stat">下一波 <b id="waveTimer">0.0s</b></span>
-  <span class="sep">|</span>
-  <span class="stat">塔数 <b id="towerCount">0</b></span>
-  <span class="sep">|</span>
-  <span class="stat">小兵 <b id="minionCount">0</b></span>
-  <span class="sep">|</span>
-  <!-- v44：击杀数不再上顶栏（用户："杀了多少个兵就不要显示了，只显示塔数就行"）。
-       击杀仍然照常统计（CTX.__score.*.kills），只是不占顶栏这一格 —— 那是最贵的一块地方。 -->
-  <span class="stat" id="scoreBoard" title="推塔数">🔵 <b id="scoreBlue">0</b> ⚔ 🔴 <b id="scoreRed">0</b></span>
+<!-- ==================== v47：顶边栏拆成左右两块 ====================
+     用户："顶边栏分成两部分。要不然中间空那一块不好看。顶边栏两侧都进行简化，
+            删除右侧的日志按钮，移动到设置里。"
 
-  <span class="spacer"></span>
-  <div class="btn-group">
-    <button id="modeBtn" class="dragon">🗺️ 沙盒模式</button>
-    <button class="primary" id="addUnitBtn">➕ 添加单位</button>
-    <button id="templateEditorBtn" class="primary">📐 模板编辑器</button>
-    <button id="settingsBtn">⚙️ 设置</button>
-    <button id="toggleLogBtn">📜 日志</button>
+     改动前是一条**横贯全屏**的玻璃条，中间靠 `.spacer{flex:1}` 撑开 ——
+     于是 1920 宽的屏幕上有一大片什么都没有的毛玻璃横在画面正上方，
+     既挡住地图顶边，又让"左边是数据、右边是操作"这件事读不出来。
+     现在是两块各自贴边的独立面板，中间露出画布本身。
+
+     简化的口径是**去掉装饰、不去掉信息**：
+       · 竖线分隔符 `|` 全删，改用图标前缀（🌊波次 ⏱倒计时 🏯塔数 ⚔小兵）区分；
+       · 文字标签"波次/下一波/塔数/小兵"删掉，图标本身就是标签，鼠标悬停有 title；
+       · 右侧四个按钮统一成图标方钮（.icon-btn），只有模式钮保留文字——
+         它显示的是**当前状态**（沙盒/对战），图标化会让人不知道点了会变成什么。
+     日志按钮已删，改由【设置 → 调试】里的开关控制（同一个 #logArea）。 -->
+<div id="topbarLeft" class="hud-panel">
+  <!-- 第一行：局势读数 -->
+  <div class="tl-row">
+    <span class="stat" title="当前波次">🌊 <b id="waveNum">0</b></span>
+    <span class="stat" title="下一波倒计时">⏱ <b id="waveTimer">0.0s</b></span>
+    <span class="stat" title="场上防御塔数">🏯 <b id="towerCount">0</b></span>
+    <span class="stat" title="场上小兵数">⚔ <b id="minionCount">0</b></span>
+    <span class="hud-sep"></span>
+    <!-- v44：击杀数不再上顶栏（用户："杀了多少个兵就不要显示了，只显示塔数就行"）。
+         击杀仍然照常统计（CTX.__score.*.kills），只是不占顶栏这一格 —— 那是最贵的一块地方。 -->
+    <span class="stat" id="scoreBoard" title="推塔数">🔵 <b id="scoreBlue">0</b> · 🔴 <b id="scoreRed">0</b></span>
   </div>
+  <!-- ==================== v47：世界状态条搬到左上角并重做 ====================
+       用户："主界面右上角，右下角的栏不好看。不行把天气时间条移动到左上角，宽度也降低一些。"
+       追加："你自己看看左上角那个条好看吗？？？不行就重做。"
+
+       第一版我只是把它整块搬了过来 —— 位置对了，难看的地方一点没动，被打回是应该的。
+       难看在哪，说清楚：三条 150×14 的彩色色带竖着摞在读数行下面，每条自带边框、
+       刻度线、夜段压暗和一个白三角游标。那是**调试控件**的信息密度，
+       放在主界面上就是三条花花绿绿的横杠，跟旁边那排干净的读数完全不是一套东西。
+
+       重做成与读数同一套语言：一行**胶囊**，每个胶囊 = [图标] [名字] [读数]，
+       色带缩成胶囊底边一条 3px 的细线（渐变仍在、游标仍在，信息一条没少，
+       但它现在是"进度提示"而不是画面主体）。三段从三行并成一行，
+       左上角这一块因此矮了一半 —— 这也顺带缓解了属性面板的遮挡问题。 -->
+  <div id="worldHud">
+    <div class="wh-chip" id="whTimeRow" title="游戏时间 · 昼夜相位">
+      <span class="wh-label" id="whPhaseIcon">☀️</span>
+      <span class="wh-val" id="whClock">0:00</span>
+      <canvas id="whTimeBar" class="wh-bar"></canvas>
+    </div>
+    <div class="wh-chip" id="whWeatherRow" style="display:none;" title="当前天气 · 点击打开天气配置">
+      <span class="wh-label" id="weatherNow"></span>
+      <span class="wh-val" id="whWeatherVal"></span>
+      <canvas id="weatherBar" class="wh-bar"></canvas>
+    </div>
+    <div class="wh-chip" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
+      <span class="wh-label" id="whEntIcon">🌀</span>
+      <span class="wh-val" id="whEntVal"></span>
+      <canvas id="whEntBar" class="wh-bar"></canvas>
+    </div>
+  </div>
+</div>
+<div id="topbarRight" class="hud-panel">
+  <button id="modeBtn" class="dragon">🗺️ 沙盒模式</button>
+  <span class="hud-sep"></span>
+  <button class="icon-btn primary" id="addUnitBtn" title="添加单位">➕</button>
+  <button class="icon-btn primary" id="templateEditorBtn" title="模板编辑器">📐</button>
+  <button class="icon-btn" id="settingsBtn" title="设置">⚙️</button>
 </div>
 
 <div id="dragonBanner">
@@ -656,44 +836,33 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
     <!-- 世界状态小窗（右上角）：时间/昼夜 · 天气 · 熵 三段合并在一个窗口里分开显示。
          统一设计语言：同一块玻璃面板、同样的行高与字号，每段一行、左侧固定宽度的标签位。
          点天气段开天气配置，点熵段开世界设置。 -->
-    <div id="worldHud">
-      <!-- 布局（v44 用户定稿）：**三条竖排**，每条独占一行。
-           用户："主窗口右上角的天气条，时间条，熵条应该是竖着排列的。"
-           这**推翻了上一版**（时间与天气并成一行）—— 上一版的注释还写着
-           "上一版我把三者做成了三行，那是理解错了"，现在又回到三行。
-           如实记在这里：这一处我来回改过两次，最终以本次为准。
-           并排那一版还有个副作用：天气段被裹在 #whTimeRow 里，
-           而 CSS 的 `.wh-row[title]:not(#whTimeRow) { cursor:pointer }` 恰好把它排除了，
-           于是"天气可点"这件事没有任何视觉提示 —— 用户报的"天气那个无法点击"就是这个。
-           拆成独立一行之后它自然拿回 pointer 光标与 hover 描边。 -->
-      <div class="wh-row" id="whTimeRow" title="游戏时间 · 昼夜相位">
-        <span class="wh-label" id="whPhaseIcon">☀️</span>
-        <canvas id="whTimeBar" class="wh-bar"></canvas>
-        <span class="wh-val" id="whClock">0:00</span>
-      </div>
-      <div class="wh-row" id="whWeatherRow" style="display:none;" title="当前天气 · 点击打开天气配置">
-        <span class="wh-label" id="weatherNow"></span>
-        <canvas id="weatherBar" class="wh-bar"></canvas>
-        <span class="wh-val" id="whWeatherVal"></span>
-      </div>
-      <div class="wh-row" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
-        <span class="wh-label" id="whEntIcon">🌀</span>
-        <canvas id="whEntBar" class="wh-bar"></canvas>
-        <span class="wh-val" id="whEntVal"></span>
-      </div>
     </div>
 
     <div id="canvasWrap">
       <canvas id="glCanvas"></canvas>
-      <div id="canvasControls">
-        <span class="zoom-label" id="zoomLabel">100%</span>
-        <button id="zoomInBtn">+</button>
-        <button id="zoomOutBtn">−</button>
-        <button id="resetViewBtn" title="重置视角（全图）">🎯</button>
-        <span class="zoom-label" id="elevLabel" title="视角俯仰角">45°</span>
-        <input id="elevSlider" type="range" min="20" max="85" step="1" value="45" title="视角俯仰角（20°=贴地平视，85°=近俯视）" style="width:96px;vertical-align:middle;">
-        <span class="zoom-label" id="azimLabel" title="视角方位（东南西北）">北</span>
-        <input id="azimSlider" type="range" min="0" max="360" step="1" value="0" title="视角方位角（0北 / 90东 / 180南 / 270西）· 靠近四方向自动吸附" style="width:96px;vertical-align:middle;">
+      <!-- v47：右下工具栏与顶栏右侧统一为同一套（.hud-panel + .icon-btn），
+           并按"缩放 / 复位 / 角度"分成两行三组。控件 id 一个没变 ——
+           main.js 与 CanvasController 按 id 接线，改 id 会静默断掉一批按钮。 -->
+      <div id="canvasControls" class="hud-panel">
+        <div class="ctl-row">
+          <div class="ctl-grp">
+            <button class="icon-btn" id="zoomOutBtn" title="缩小">−</button>
+            <span class="zoom-label" id="zoomLabel">100%</span>
+            <button class="icon-btn" id="zoomInBtn" title="放大">+</button>
+          </div>
+          <span class="hud-sep"></span>
+          <button class="icon-btn" id="resetViewBtn" title="重置视角（全图）">🎯</button>
+        </div>
+        <div class="ctl-row">
+          <span class="ctl-name" title="视角俯仰角">⛰</span>
+          <input id="elevSlider" type="range" min="20" max="85" step="1" value="45" title="视角俯仰角（20°=贴地平视，85°=近俯视）">
+          <span class="zoom-label" id="elevLabel" title="视角俯仰角">45°</span>
+        </div>
+        <div class="ctl-row">
+          <span class="ctl-name" title="视角方位">🧭</span>
+          <input id="azimSlider" type="range" min="0" max="360" step="1" value="0" title="视角方位角（0北 / 90东 / 180南 / 270西）· 靠近四方向自动吸附">
+          <span class="zoom-label" id="azimLabel" title="视角方位（东南西北）">北</span>
+        </div>
       </div>
       <div id="selectionPanel">
         <!-- v33（Q11）：✕ 关闭按钮已删（点击画布空白处即取消选中）。

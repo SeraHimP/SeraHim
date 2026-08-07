@@ -63,8 +63,41 @@ export function dayNightAt(gameTime, period = DAY_PERIOD) {
     exposure: a.exp + (b.exp - a.exp) * t,
     ambientShare: a.amb + (b.amb - a.amb) * t,
     background: _lerpHex(a.bg, b.bg, t),
+    unitTint: unitTintOf(_lerpHex(a.sky, b.sky, t), a.exp + (b.exp - a.exp) * t),
     normalize: true,
   };
+}
+
+/**
+ * ==================== v47：单位也要融入环境光 ====================
+ * 用户："兵并不会融入地形的光照，就是黑暗中很突兀的有着兵。"
+ *        "任何单位，兵/塔/龙等都要融入地形光照。"
+ *
+ * 先说清楚**它不是灯光没接上** —— 单位用的是 MeshLambertMaterial，与地形同一组灯，
+ * 光照本来就一视同仁。真正的成因是**反照率**：地形的漫反射来自地图贴图（暗绿/暗褐），
+ * 而单位的顶点色是石灰白（蓝方 #8e9aa8、红方 #9a8478）与队伍色。
+ * 同样的照度下，反照率高三四倍的东西当然会跳出来 —— 夜里画面整体压暗之后尤其明显，
+ * 于是就成了"黑地图上一堆发白的小人"。
+ *
+ * 所以补的不是灯，是**色调**：给单位材质一个随昼夜变化的乘性染色
+ * （MeshLambert 的 material.color 会与顶点色相乘），越黑的时段压得越狠、
+ * 并且往当时的天空色偏一点，单位于是和环境同一个色温。
+ *
+ * 强度由曝光反推：`k = (1 − exposure) × strength`。
+ *   · 正午 exposure = 1.00 → k = 0 → **纯白，一点不改**（白天的观感与改动前逐位一致）
+ *   · 黎明 0.86 → k ≈ 0.22    · 黄昏 0.84 → k ≈ 0.26    · 午夜 0.66 → k ≈ 0.54
+ * 这个反推是刻意的：曝光本来就是这张表里"这个时段有多暗"的度量，
+ * 单独再写一列夜色强度，等于同一件事写两遍，下次调表必然只改一处。
+ *
+ * 关掉 CONFIG.ui.unitLighting.enabled 即完全恢复改动前的样子（tint 恒为白）。
+ */
+export function unitTintOf(skyHex, exposure) {
+  const c = (CONFIG.ui && CONFIG.ui.unitLighting) || {};
+  if (c.enabled === false) return '#ffffff';
+  const strength = c.strength ?? 1.6;
+  const k = Math.max(0, Math.min(c.maxMix ?? 0.62, (1 - (exposure ?? 1)) * strength));
+  if (k <= 0) return '#ffffff';
+  return _lerpHex('#ffffff', skyHex, k);
 }
 
 /** 相位（0..1）对应的一天时刻标签，供 UI/调试显示。 */

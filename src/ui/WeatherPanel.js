@@ -59,7 +59,7 @@ export const WeatherPanel = {
     const ctx = ctxOverride || this._ctx, cv = cvOverride || this._canvas;
     if (!ctx || !cv) return;
     const dpr = window.devicePixelRatio || 1;
-    const cssW = cv.clientWidth || 260, cssH = cv.clientHeight || 26;
+    const cssW = cv.clientWidth || 104, cssH = cv.clientHeight || 3;
     if (cv.width !== cssW * dpr || cv.height !== cssH * dpr) {
       cv.width = cssW * dpr; cv.height = cssH * dpr;
     }
@@ -73,8 +73,15 @@ export const WeatherPanel = {
     const xOf = (t) => cssW * (CURSOR_RATIO + (t - now) / WINDOW_SECONDS);
 
     ctx.save();
+    // ==================== v47：细条模式 ====================
+    // 世界状态条重做成"胶囊底边的一条 3px 细线"（见 index.html 那段注释）。
+    // 这条预报带原来是 26px 高的：里面有 4 条刻度、极端天气的图标与边界高亮。
+    // 在 3px 上照画，12px 的图标会盖住整条、刻度把色带戳成虚线、
+    // 圆角半径 4 比条本身还高 —— 结果是一条看不出任何信息的糊线。
+    // 细条只保留**堆叠色带本身**（那才是"现在是什么天气"这条信息），其余全部跳过。
+    const thin = cssH <= 6;
     // 圆角裁剪：色带不会溢出边框，边缘干净
-    const r = 4;
+    const r = thin ? Math.min(1.5, cssH / 2) : 4;
     ctx.beginPath();
     ctx.moveTo(r, 0); ctx.lineTo(cssW - r, 0);
     ctx.quadraticCurveTo(cssW, 0, cssW, r); ctx.lineTo(cssW, cssH - r);
@@ -150,6 +157,7 @@ export const WeatherPanel = {
       ctx.globalAlpha = 0.45 + 0.45 * seg.peak;
       ctx.fillRect(x0, 0, Math.max(2, x1 - x0), cssH);
       ctx.globalAlpha = 1;
+      if (thin) continue;   // 见上：3px 上再描边界线就只剩线了
       // 边界高亮
       ctx.strokeStyle = def.color;
       ctx.lineWidth = 1;
@@ -160,13 +168,15 @@ export const WeatherPanel = {
     }
 
     // ---- 刻度：只画 4 条（20/40/60/80%），锚定画布不动，加粗以便看清 ----
-    ctx.strokeStyle = 'rgba(255,255,255,0.30)';
-    ctx.lineWidth = 2;
-    for (const pct of [0.2, 0.4, 0.6, 0.8]) {
-      const x = Math.round(pct * cssW);
-      ctx.beginPath();
-      ctx.moveTo(x, 0); ctx.lineTo(x, cssH);
-      ctx.stroke();
+    if (!thin) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+      ctx.lineWidth = 2;
+      for (const pct of [0.2, 0.4, 0.6, 0.8]) {
+        const x = Math.round(pct * cssW);
+        ctx.beginPath();
+        ctx.moveTo(x, 0); ctx.lineTo(x, cssH);
+        ctx.stroke();
+      }
     }
     ctx.restore();
 
@@ -183,7 +193,7 @@ export const WeatherPanel = {
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const seg of segments) {
+    for (const seg of (thin ? [] : segments)) {   // 细条不画图标：12px 的字比条本身高四倍
       const def = EXTREME_WEATHERS[seg.id];
       if (!def) continue;
       if (seg.tEnd - seg.tStart < MIN_SEG_SECONDS) continue; // ①：按时长判断，稳定
@@ -203,15 +213,17 @@ export const WeatherPanel = {
     // ---- "现在"游标（20% 处，比刻度更粗更亮） ----
     const cx = Math.round(CURSOR_RATIO * cssW);
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = thin ? 2 : 3;
     ctx.beginPath();
     ctx.moveTo(cx, 0); ctx.lineTo(cx, cssH);
     ctx.stroke();
-    // 顶部小三角，标示"现在"
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(cx, 4); ctx.lineTo(cx - 3.5, 0); ctx.lineTo(cx + 3.5, 0);
-    ctx.closePath(); ctx.fill();
+    if (!thin) {
+      // 顶部小三角，标示"现在"。细条上它会盖住整条，所以只留竖线（见细条模式的注释）
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(cx, 4); ctx.lineTo(cx - 3.5, 0); ctx.lineTo(cx + 3.5, 0);
+      ctx.closePath(); ctx.fill();
+    }
 
     // 外框
     ctx.strokeStyle = 'rgba(255,255,255,0.14)';

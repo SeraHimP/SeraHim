@@ -59,6 +59,7 @@ import { UnrealBloomPass } from '../../vendor/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from '../../vendor/postprocessing/OutputPass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
+import { setUnitTint } from './UnitMeshFactory.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
@@ -222,7 +223,14 @@ export class ThreeRenderer {
    * fog 传数值即启用线性雾（世界单位），传 null 关闭。
    */
   setLighting(opt = {}) {
-    const { sunColor, ambientSky, ambientGround, sunElevation, ambientShare, exposure, fog, background, normalize = true } = opt;
+    const { sunColor, ambientSky, ambientGround, sunElevation, ambientShare, exposure, fog, background, unitTint, normalize = true } = opt;
+    // v47：单位（塔/兵/龙）跟着环境一起变色，否则夜里满地图发白的小人（见 DayNight.unitTintOf）。
+    // 走 setLighting 是因为**这里已经是光照的唯一入口** —— 再开一条并行的通道，
+    // 就会出现"改了灯没改单位"的半截状态。
+    if (unitTint !== undefined) {
+      setUnitTint(unitTint);
+      if (this.veg?.setTint) this.veg.setTint(unitTint);   // 野区植被同理，见 VegetationLayer.setTint 的注释
+    }
     if (background !== undefined && this.scene.background) this.scene.background.set(background); // C 组·天空：昼夜给天穹/边界底色染色
     if (sunColor !== undefined) this.sun.color.set(sunColor);
     if (ambientSky !== undefined) this.hemi.color.set(ambientSky);

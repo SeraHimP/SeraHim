@@ -299,17 +299,20 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   const iWx = html.indexOf('id="whWeatherRow"');
   const iEnt = html.indexOf('id="whEntropyRow"');
   T('三段都在', iTime > 0 && iWx > 0 && iEnt > 0);
-  T('三段各自独占一行（都是 .wh-row，天气不再嵌在时间行里）',
-    /<div class="wh-row" id="whTimeRow"/.test(html)
-    && /<div class="wh-row" id="whWeatherRow"/.test(html)
-    && /<div class="wh-row" id="whEntropyRow"/.test(html));
+  // v47：三段从"各占一行的色带"改成"一行三个胶囊"（用户："你自己看看左上角那个条好看吗"）。
+  // 竖排/横排属于版式，会随观感反复；不能丢的是**三段各自是独立元素**——
+  // 一旦谁被裹进谁，被裹的那个就会丢掉自己的 hover/pointer（下面那条断言就是为此存在的）。
+  T('三段各自是独立元素（天气不再嵌在时间那一段里）',
+    /<div class="wh-chip" id="whTimeRow"/.test(html)
+    && /<div class="wh-chip" id="whWeatherRow"/.test(html)
+    && /<div class="wh-chip" id="whEntropyRow"/.test(html));
   T('顺序 时间 → 天气 → 熵', iTime < iWx && iWx < iEnt);
   T('熵默认隐藏（关闭时整行不显示）', /id="whEntropyRow" style="display:none;"/.test(html));
   T('天气默认隐藏（天气系统关时不占位）', /id="whWeatherRow" style="display:none;"/.test(html));
-  T('并排布局的样式与标记已删干净（留着就是死样式）',
-    !/wh-row-split/.test(html) && !/wh-seg/.test(html) && !/wh-sep/.test(html));
-  T('天气行能拿到 pointer 光标（它不再是 #whTimeRow）',
-    /#worldHud \.wh-row\[title\]:not\(#whTimeRow\) \{ cursor: pointer; \}/.test(html)
+  T('旧版式的样式与标记已删干净（留着就是死样式）',
+    !/wh-row-split/.test(html) && !/wh-seg/.test(html) && !/\.wh-row/.test(html));
+  T('天气段能拿到 pointer 光标（它不再是 #whTimeRow）',
+    /\.wh-chip\[title\]:not\(#whTimeRow\) \{ cursor: pointer; \}/.test(html)
     && /id="whWeatherRow"[^>]*title=/.test(html));
 }
 

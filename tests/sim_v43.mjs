@@ -713,8 +713,13 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     && D.combat.baseAttackSpeed > 0 && D.combat.splashRadius > 0);
   T('龙③-移速比近战兵慢（压迫感来自躲不掉，不是追得快）',
     D.combat.moveSpeed < CONFIG.templates.melee.moveSpeed);
-  T('龙④-射程比塔远（能站在塔的射程边缘拆塔）',
-    D.combat.attackRange > CONFIG.templates.tower.attackRange);
+  // v47（用户定稿）："龙的射程改为80。" 原来是 200 > 塔 180，龙能站在塔的射程边缘白嫖拆塔。
+  // 现在必须走进塔的射程里才够得着塔 —— 拆塔要挨完整的对射。
+  // 断言随之从"比塔远"翻成"比塔近"：这是**规则本身变了**，不是实现退化。
+  // 仍然守住"够得着"那一半（> 0 且大于近战兵射程，否则它跟一个近战小兵没区别）。
+  T('龙④-射程比塔近（v47：必须走进塔的射程里才能拆塔）',
+    D.combat.attackRange < CONFIG.templates.tower.attackRange
+    && D.combat.attackRange > CONFIG.templates.melee.attackRange);
   T('龙⑤-低攻速（用户定稿：单发重、间隔长）',
     D.combat.baseAttackSpeed < CONFIG.templates.melee.baseAttackSpeed);
   T('龙⑥-成长曲线仍是"低→高"（血/双抗/攻击）', (() => {
@@ -857,7 +862,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /\nfunction createTower\(/.test(fac) && /\nfunction createBuilding\(/.test(fac)
     && /\nfunction createMinion\(/.test(fac) && /\nfunction createDragon\(/.test(fac));
   T('拆③-main.js 通过 createFactories 显式注入依赖（不是靠全局变量偷渡）',
-    /import \{ createFactories \} from '\.\/core\/factories\.js';/.test(mj)
+    /import \{ createFactories(, \w+)* \} from '\.\/core\/factories\.js';/.test(mj)
     && /const \{ createTower, createBuilding, createMinion, createDragon \} = createFactories\(\{/.test(mj));
   T('拆④-依赖缺一个就当场抛错（否则场上会出现一堆 undefined 引发的天书报错）',
     /throw new Error\('createFactories: 依赖缺失 ' \+ k\)/.test(fac));

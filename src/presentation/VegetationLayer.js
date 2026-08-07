@@ -88,5 +88,23 @@ export class VegetationLayer {
     place(treeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true }), trees, null);
     place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: 0xffffff }), rocks, { h: 0.08, s: 0.12, l: 0.52, dh: 0.03, dl: 0.10 });
     place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.55, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), bushes, { h: 0.27, s: 0.45, l: 0.40, dh: 0.05, dl: 0.08 });
+    if (this._tint) this.setTint(this._tint);   // 重建时把当前昼夜染色补回去（否则重建那一帧会闪回白天的颜色）
+  }
+
+  /**
+   * v47：野区植被跟着昼夜一起变色，与单位走同一个染色值。
+   *
+   * 用户报的是"兵在黑暗中很突兀"，根因是反照率差（见 DayNight.unitTintOf）。
+   * 植被里的石头与灌木用的是同一套高反照率白底 + instanceColor（石头 l=0.52），
+   * **是同一个毛病的同一个位置** —— 夜里满野区发白的小点就是它们。
+   * 只染单位不染植被的话，画面里仍然有一半东西不融入环境，
+   * 而这两件事的成因、修法、参数完全一致，没有理由分开处理。
+   *
+   * ⚠️ 石头/灌木的 material.color 是白色**乘数**（真实颜色在 instanceColor 里），
+   * 树是 vertexColors —— 三者都吃 material.color 的乘法，所以一句话全覆盖。
+   */
+  setTint(hex) {
+    this._tint = hex;
+    for (const m of this.meshes) if (m.material?.color) m.material.color.set(hex);
   }
 }

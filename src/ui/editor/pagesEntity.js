@@ -12,6 +12,7 @@ import { CONFIG } from '../../data/Config.js';
 import { SkillLibrary, renderSkillDescription } from '../../core/SkillLibrary.js';
 import { towerTierSource } from '../../data/schema/index.js';
 import { FIELD_META, fieldLabel } from './fields.js';
+import { clearDamageMarks } from '../../core/reviveState.js';
 
 export const EDITOR_PAGES_ENTITY = {
   // ==================== 渲染方法 ====================
@@ -293,7 +294,11 @@ export const EDITOR_PAGES_ENTITY = {
       e.tempShield = 0;
       e.attackCooldown = 0;
       e.targetId = null;
-      delete e._ruin;
+      // v47：这里原来只 `delete e._ruin`，**漏了损毁档** ——
+      // 用户："我手动恢复损毁的塔，但是模型还是重度损毁的模型。"
+      // 损毁档是单向的，唯一的归零时机就是"这座塔重新活过来"，
+      // 而"重新活过来"有两条路（重生队列 / 这里）。走同一份清单，别再各清各的。
+      clearDamageMarks(e);
       // 撤销重生：队列项 + _respawnAt 标记 + ⏳「重生中」状态**三样一起清**。
       // 这里原来是编辑器自己写的一小段，只清了前两样，于是复活之后那颗
       // ⏳ 状态还挂在水晶上、描述里的秒数继续往下走 —— 用户看到的

@@ -519,6 +519,11 @@ export const SettingsDialog = {
           <div class="slider-row"><label>性能面板</label>
             <button id="setPerfBtn" style="flex:1;">${document.getElementById('perfHud')?.classList.contains('show') ? '📊 已显示（点击隐藏）' : '📊 显示性能面板'}</button>
           </div>
+          <!-- v47：顶栏的【📜 日志】按钮删掉之后搬到这里（用户定稿"移动到设置里"）。
+               操作的仍是同一个 #logArea，行为一字未改，只是换了个入口。 -->
+          <div class="slider-row"><label title="屏幕底部的事件日志条">事件日志</label>
+            <button id="setLogAreaBtn" style="flex:1;">${document.getElementById('logArea')?.classList.contains('show') ? '📜 已显示（点击隐藏）' : '📜 显示事件日志'}</button>
+          </div>
           <div class="slider-row"><label>调试日志（${DebugLogger.entries.length}条）</label>
             <button id="setExportLogBtn" style="flex:1;">💾 导出日志文件</button>
           </div>
@@ -571,6 +576,14 @@ export const SettingsDialog = {
         if (!hud) return;
         hud.classList.toggle('show');
         perfBtn.textContent = hud.classList.contains('show') ? '📊 已显示（点击隐藏）' : '📊 显示性能面板';
+      });
+      // v47：事件日志开关（原顶栏 #toggleLogBtn）。
+      const logAreaBtn = document.getElementById('setLogAreaBtn');
+      if (logAreaBtn) logAreaBtn.addEventListener('click', () => {
+        const la = document.getElementById('logArea');
+        if (!la) return;
+        la.classList.toggle('show');
+        logAreaBtn.textContent = la.classList.contains('show') ? '📜 已显示（点击隐藏）' : '📜 显示事件日志';
       });
 
       // 第 6.1 步：阴影三档循环切换（全部 → 仅建筑 → 关闭）。小兵是同屏数量最大的一类，

@@ -448,15 +448,18 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   const html = fs2.readFileSync('index.html', 'utf8');
   const um = srcOf('src/ui/UIManager.js');
 
-  // ① 右上角三条竖排（这一处推翻了上一版的"时间与天气并成一行"）
-  T('界①-三条各占一行（whTimeRow / whWeatherRow / whEntropyRow 都是 .wh-row）',
-    /<div class="wh-row" id="whTimeRow"/.test(html)
-    && /<div class="wh-row" id="whWeatherRow"/.test(html)
-    && /<div class="wh-row" id="whEntropyRow"/.test(html));
+  // ① 三段各自独立成一个可点单元。
+  // v44 定的是"三条竖排"，v47 改成**一行三个胶囊**（用户："你自己看看左上角那个条好看吗"）——
+  // 竖排/横排是版式，会随观感反复；真正不能丢的是**三段各自独立**这条：
+  // 上一版把天气裹进 #whTimeRow，天气就丢了 pointer 光标（用户报的"天气那个无法点击"）。
+  // 所以断言从"是不是 .wh-row"改成"三个 id 各自是独立元素"，钉规则不钉版式。
+  T('界①-三段各自独立成一个可点单元（不是把谁裹进谁）',
+    /id="whTimeRow"/.test(html) && /id="whWeatherRow"/.test(html) && /id="whEntropyRow"/.test(html)
+    && !/id="whTimeRow"[\s\S]{0,400}id="whWeatherRow"[^>]*>[\s\S]{0,80}<\/div>\s*<\/div>\s*<\/div>/.test(html));
   T('界①-并排布局的残留样式已删干净（留着就是死样式）',
-    !/wh-row-split/.test(html) && !/wh-seg/.test(html) && !/wh-sep/.test(html));
-  T('界②-天气行拿回了 pointer 光标（此前被裹在 #whTimeRow 里，正好被 :not(#whTimeRow) 排除）',
-    /#worldHud \.wh-row\[title\]:not\(#whTimeRow\) \{ cursor: pointer; \}/.test(html));
+    !/wh-row-split/.test(html) && !/wh-seg/.test(html) && !/\.wh-row/.test(html));
+  T('界②-天气段拿回了 pointer 光标（此前被裹在 #whTimeRow 里，正好被 :not(#whTimeRow) 排除）',
+    /\.wh-chip\[title\]:not\(#whTimeRow\) \{ cursor: pointer; \}/.test(html));
 
   // ② 属性栏：天气行与世界行合并成一栏
   T('界③-两行被同一个 .state-row 包住（合的是版式，不是刷新逻辑）',
@@ -475,7 +478,14 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 
   // ④ 属性可点击
   const { STAT_DOCS, statDoc } = await import('../src/data/statDocs.js');
-  T('界⑤-属性行带 data-stat 且可点击', (um.match(/class="a stat-doc" data-stat="/g) || []).length >= 20);
+  // v47：布局从"两段模板字符串"改成一张可 import 的表（src/ui/statPanelLayout.js），
+  // 断言随之从"正则数源码里有几个 data-stat"改成**读那张表**。
+  // 数源码钉的是"源码长什么样"—— 换个写法就红，真出问题反而不红。
+  const { extAttrGroups, BASE_ATTR_ROWS, allPanelStatKeys } = await import('../src/ui/statPanelLayout.js');
+  T('界⑤-属性行带 data-stat 且可点击（常驻区 4 格 + 展开区整张表）',
+    /class="a stat-doc" data-stat="\$\{key\}"/.test(um)
+    && BASE_ATTR_ROWS.length === 4
+    && allPanelStatKeys('tower').length >= 18);
   T('界⑤-点击走**事件委托**绑在容器上（属性行是重建的，逐行绑会连同旧节点被丢掉）',
     /this\.selCard\.addEventListener\('click'/.test(um)
     && /closest\?\.\('\.stat-doc\[data-stat\]'\)/.test(um));
@@ -614,18 +624,47 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     && !/sc\.blue\.kills\}\//.test(um));
   T('顶①-击杀仍然照常统计（只是不显示，不是把统计删了）',
     /__score\[scorer\]\.kills\+\+/.test(mj));
-  T('顶②-顶栏悬浮', /#topbar \{[^}]*position: absolute[^}]*\}/.test(html));
-  T('顶③-三块浮层用同一组玻璃参数（顶栏 / 右下角工具栏 / 右上角世界小窗）', (() => {
-    const grab = (sel) => {
-      const m = html.match(new RegExp(sel.replace(/[#]/g, '#') + ' \\{([^}]*)\\}'));
-      return m ? m[1] : '';
-    };
-    const blocks = ['#topbar', '#canvasControls', '#worldHud', '#selectionPanel'].map(grab);
-    return blocks.every(b => /blur\(14px\)/.test(b) && /var\(--surface\)/.test(b)
-                             && /var\(--glass-border\)/.test(b));
+  // v47：顶栏拆成 #topbarLeft / #topbarRight 两块独立浮层（用户："顶边栏分成两部分"），
+  // 玻璃参数从"每块各抄一遍"收敛到唯一的 .hud-panel。
+  // 断言随之改成"这几块都挂着 .hud-panel"+"那一处定义里有那组参数" ——
+  // 逐块正则各自的 CSS 块，正是它们当年会长歪的原因（改一块忘一块，断言还全绿）。
+  T('顶②-顶栏悬浮（左右两块都是）',
+    /#topbarLeft {2}\{[^}]*top: 10px[^}]*\}/.test(html)
+    && /#topbarRight \{[^}]*top: 10px[^}]*\}/.test(html)
+    && /\.hud-panel \{[^}]*position: absolute/.test(html));
+  T('顶③-浮层共用唯一一份玻璃参数（.hud-panel），不再各抄一份', (() => {
+    const m = html.match(/\.hud-panel \{([^}]*)\}/);
+    if (!m) return false;
+    const b = m[1];
+    const okDef = /blur\(14px\)/.test(b) && /var\(--surface\)/.test(b) && /var\(--glass-border\)/.test(b);
+    // v47：世界状态条并进了左上角那一块，所以浮层从四块减到三块。
+    // 属性面板保持自己的一份 —— 它不是工具栏，尺寸与滚动行为都差太多。
+    const users = ['topbarLeft', 'topbarRight', 'canvasControls'];
+    return okDef && users.every(id => new RegExp(`id="${id}" class="hud-panel"`).test(html));
   })());
-  T('顶④-世界小窗与属性面板都给悬浮顶栏让了位（否则被压在底下）',
-    /#worldHud \{[^}]*top: 66px/.test(html) && /#selectionPanel \{[^}]*top: 66px/.test(html));
+  T('顶③-属性面板仍然自带同一组玻璃参数（它不走 .hud-panel）', (() => {
+    const m = html.match(/#selectionPanel \{([^}]*)\}/);
+    return !!m && /blur\(14px\)/.test(m[1]) && /var\(--surface\)/.test(m[1]);
+  })());
+  // v47：世界小窗不再是浮层（并进左上角那块面板），所以"让位"只剩属性面板要做。
+  // 而左上角那块因此变高了，属性面板的 top 也跟着从 66 抬到 104 ——
+  // 断言改成"属性面板的 top 高于左上角面板的最坏高度"，钉的是**不重叠**这件事本身。
+  // v47：遮挡不再靠"调一个够大的 top"来躲，而是**量出来**（UIManager._bindPanelOffset
+  // 用 ResizeObserver 盯 #topbarLeft 的实际高度）。CSS 里那个数只是首帧兜底。
+  T('顶④-属性面板的位置由左上角那块的实测高度决定，不是写死的数',
+    /_bindPanelOffset\(\)/.test(um) && /new ResizeObserver\(apply\)/.test(um)
+    && /bar\.offsetHeight/.test(um));
+  T('顶④-CSS 里仍留了一个兜底 top（ResizeObserver 生效前的第一帧要有位置）',
+    +((html.match(/#selectionPanel \{[^}]*top: (\d+)px/) || [])[1] || 0) >= 60);
+  T('顶④-世界状态条已并进左上角，不再自己占一块浮层',
+    /<div id="worldHud">/.test(html) && !/id="worldHud" class="hud-panel"/.test(html));
+  // v47：日志按钮从顶栏移进设置（用户定稿）。**删元素必须连着删接线** ——
+  // main.js 那句 getElementById('toggleLogBtn').addEventListener 在 null 上会直接抛，
+  // 而它在接线段中间，抛了之后后面所有按钮都接不上（"删一半"的典型塌方）。
+  T('顶⑤-顶栏不再有日志按钮，main.js 也不再对它接线',
+    !/id="toggleLogBtn"/.test(html) && !/getElementById\('toggleLogBtn'\)/.test(mj));
+  T('顶⑤-日志开关搬进了设置（操作的还是同一个 #logArea）',
+    /id="setLogAreaBtn"/.test(sd) && /getElementById\('logArea'\)/.test(sd));
 
   // 速度 / 性能
   T('速①-倍率是 1/2/4/8（用户定稿）', /\[1, 2, 4, 8\]\.map\(v =>/.test(sd));
@@ -689,11 +728,22 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('板②-每组有小标题（属性/技能/状态/世界影响）',
     /class="panel-sec">属性</.test(um) && /class="panel-sec">技能</.test(um)
     && /class="panel-sec">状态</.test(um) && /class="panel-sec">世界影响</.test(um));
-  T('板③-血条数值压在条上（一行解决，不再另起一行）',
-    /\.bar-text \{[^}]*margin: -17px/.test(html));
+  // v47：上移量从"估的 -17px"改成与血条**等高**的 -18px（用户："文字也要上下居中，
+  // 目前就有些靠下了"）。断言随之改成"上移量 = 血条高度"，不再钉那个具体数字 ——
+  // 钉 17 的话，血条高度一改这条就会拦下正确的实现。
+  T('板③-血条数值压在条上，且上移量恰好等于血条高度（居中是算出来的，不是估的）', (() => {
+    const br = (html.match(/\.bar-row \{([^}]*)\}/) || [])[1] || '';
+    const bt = (html.match(/\.bar-text \{([^}]*)\}/) || [])[1] || '';
+    const h = (br.match(/height: (\d+)px/) || [])[1];
+    return !!h && new RegExp(`margin: -${h}px`).test(bt);
+  })());
   T('板④-展开按钮做成整宽分隔条', /\.toggle-ext \{[^}]*width: 100%/.test(html));
+  // v47：塔与兵**共用同一张表**（改动前是两份几乎相同的模板字符串，
+  // 于是塔那份没有攻击距离、兵那份没有子弹速度，谁也没发现）。
+  // 所以这里不再数"源码里出现了几次"，而是查两种单位的表里都有它。
+  const { allPanelStatKeys } = await import('../src/ui/statPanelLayout.js');
   T('板⑤-「展开更多」里有伤害增幅（此前漏了）',
-    (um.match(/data-stat="damageAmpPct"/g) || []).length === 2);
+    ['tower', 'minion'].every(k => allPanelStatKeys(k).includes('damageAmpPct')));
 
   // ---- 攻击力弹窗写伤害类型 ----
   T('板⑥-攻击力弹窗写明伤害类型，且从**实体**读而不是查模板表',
@@ -714,7 +764,7 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 
   // 每个可点击 statKey 仍然都有说明（新增的 damageAmpPct 也要有）
   const { statDoc } = await import('../src/data/statDocs.js');
-  const keys = [...um.matchAll(/data-stat="(\w+)"/g)].map(m => m[1]);
+  const keys = [...new Set([...allPanelStatKeys('tower'), ...allPanelStatKeys('minion')])];
   T('板⑨-新增的属性行也有说明（点了弹空窗比不能点更糟）',
     keys.includes('damageAmpPct') && keys.every(k => !!statDoc(k)));
 }

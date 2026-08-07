@@ -449,7 +449,18 @@ export function soulStatBlueprints(el) {
     // 静默丢弃。暗魂的两项常驻数值、风魂的攻速加成、潮魂的治疗强度都因此一直空转。
     const m = statMod(k, v);
     return {
-      name: `${def.name || el}·加持`, icon: def.icon || '🐉', color: def.color, kind: 'stat',
+      // ==================== v47：状态栏合并 ====================
+      // 用户："龙魂/巨龙之力在状态栏显示的乱七八糟……龙魂还是技能+状态显示。"
+      //
+      // 名字原来是 `山魂·加持`，与龙魂本体的 `山魂` **不同名** ——
+      // 而状态栏是**按 blueprint.name 聚合成图标**的（UIManager._updateEffectIcons），
+      // 于是一条龙魂在状态栏占了两格：一格【山魂】（本体 display + 机制那几项 stat），
+      // 一格【山魂·加持】（常驻属性）。玩家看到的就是同一个东西列了两遍。
+      //
+      // 改成与本体同名之后自动并进同一个图标，点开的详情里两部分的属性行都在
+      //（showEffectGroup 按组把所有 stat 成员逐条列出），信息一条没少。
+      // 用户要的"技能 + 状态"两处显示，正是现在的样子：技能栏一格、状态栏一格。
+      name: def.name || el, icon: def.icon || '🐉', color: def.color, kind: 'stat',
       statKey: m.statKey,
       flatValue: m.flat, percentValue: m.percent,
       duration: Infinity, permanent: true,

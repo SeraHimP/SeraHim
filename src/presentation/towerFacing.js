@@ -48,8 +48,25 @@ function wrap(a) {
  *   ① 塔在某条路上 → 取该路在塔位置处的**切线方向**，蓝方朝路点前进方向、红方反向。
  *      兵线的 waypoints 一律是【蓝方基地 → 红方基地】的顺序，这是全项目的既有约定
  *      （LaneMovementSystem 的 forward/reverse 就建立在它上面），这里沿用同一条约定。
- *   ② 不在任何路上（水晶枢纽、手动建的塔）→ 朝**敌方主基地**。
+ *      —— 但切线**只在它确实指着敌方半场时才用**，见下面「回环路」那一段。
+ *   ② 不在任何路上（水晶枢纽、手动建的塔），或切线不可信 → 朝**敌方主基地**。
  *      这是个总能算出来的方向，比"保持默认朝北"有意义。
+ *
+ * ==================== 回环路：切线为什么会指反 ====================
+ * 用户："扭曲丛林的朝向不对，另一阵营同理。"
+ *
+ * 我一开始默认了"兵线大体是从自家基地单调走向敌家基地"，所以切线方向 ≈ 敌人方向。
+ * **召唤师峡谷成立，扭曲丛林不成立** —— 那张图两条路的起点和终点是同一个点
+ * （都是 (584,676) → (2424,676)），路本身是**绕出去再绕回来**的回环。
+ * 于是靠近自家基地的那几座塔，切线指的是"这条路在此处的走向"（上/下），
+ * 跟"敌人在哪边"（右）差了将近 90°，甚至更多。屏幕上就是一排塔集体扭着头。
+ *
+ * 修法不是给扭曲丛林写特例，而是**给切线加一个可信度判据**：
+ * 切线与"此处指向敌方水晶枢纽"的方向点积 > 0 才用它（即至少大方向没搞反），
+ * 否则退回规则②。召唤师峡谷三条路全程满足这个判据，所以那张图一个角度都不变；
+ * 扭曲丛林只有回环段被拦下，路中段仍然吃切线、保留各路的性格。
+ *
+ * 换个说法：切线负责"这一路的味道"，敌方枢纽方向负责"底线正确"。
  */
 export function towerFacingRad(entity, map, cfg = null) {
   const c = cfg || (CONFIG.ui && CONFIG.ui.towerFacing) || {};
@@ -58,7 +75,14 @@ export function towerFacingRad(entity, map, cfg = null) {
   const fac = entity._mapFaction || entity.faction;
   if (fac !== 'blue' && fac !== 'red') return null;
 
-  // ---- ① 有兵线：取切线 ----
+  const nexusOf = (f) => (map.buildings || []).find(b =>
+    b.tier === 'nexus_main' && b.faction === f && b.pos);
+  const foe = nexusOf(fac === 'blue' ? 'red' : 'blue');
+  // 指向敌方水晶枢纽的向量：既是规则②本身，也是规则①的可信度判据。
+  const fx = foe ? foe.pos.x - entity.pos.x : 0;
+  const fy = foe ? foe.pos.y - entity.pos.y : 0;
+
+  // ---- ① 有兵线：取切线（且切线得指着敌方半场） ----
   const lane = (map.lanes || []).find(l => l.id === entity._laneId);
   const wps = lane && lane.waypoints;
   if (wps && wps.length >= 2) {
@@ -76,19 +100,20 @@ export function towerFacingRad(entity, map, cfg = null) {
     if (dx === 0 && dy === 0) return null;
     // 蓝方朝路点前进方向（指向红方），红方反过来 —— 即"每座塔面朝敌人来向"。
     if (fac === 'red') { dx = -dx; dy = -dy; }
-    if (c.flip) { dx = -dx; dy = -dy; }   // 见下面 flip 的说明
-    return wrap(Math.atan2(dx, dy));
+    // 可信度判据。没有敌方枢纽可参照时（自制图可能没写）就无条件信切线 ——
+    // 那是改动前的行为，不能因为拿不到参照物就把整条规则①废掉。
+    //
+    // ⚠️ 判据必须在 **flip 之前**算。flip 的语义是"整份结果翻 180°"，
+    // 要是先 flip 再判据，flip 就会把切线判成不可信、从而改走规则② ——
+    // 那时 flip 不再是纯翻转，而是**换了一条规则**，两次调用的差值也不再是 180°。
+    // 所以 flip 统一挪到函数末尾，作为最后一步施加。
+    if (!foe || dx * fx + dy * fy > 0) return applyFlip(wrap(Math.atan2(dx, dy)), c);
   }
 
-  // ---- ② 没有兵线：朝敌方主基地 ----
-  const nexusOf = (f) => (map.buildings || []).find(b =>
-    b.tier === 'nexus_main' && b.faction === f && b.pos);
-  const foe = nexusOf(fac === 'blue' ? 'red' : 'blue');
+  // ---- ② 没有兵线 / 切线不可信：朝敌方主基地 ----
   if (!foe) return null;
-  let dx = foe.pos.x - entity.pos.x, dy = foe.pos.y - entity.pos.y;
-  if (c.flip) { dx = -dx; dy = -dy; }
-  if (dx === 0 && dy === 0) return null;
-  let ang = wrap(Math.atan2(dx, dy));
+  if (fx === 0 && fy === 0) return null;
+  let ang = wrap(Math.atan2(fx, fy));
 
   // ==================== 枢纽塔：对角线上再各自向外张开一点 ====================
   // 用户："枢纽塔那里注意看一下，两侧的看向对角线但是略微朝两侧一些。"
@@ -100,12 +125,23 @@ export function towerFacingRad(entity, map, cfg = null) {
   // 取它相对自家水晶的方位角与对角线的夹角，往那个符号的方向偏。
   // 这样红蓝天然镜像，以后挪塔的位置也不用回来改这里；
   // 写死左右的话，红方那两座（坐标是镜像的）必然要单独特判，那就是两份规则了。
+  //
+  // ⚠️ 只有**这一方确实有两座及以上枢纽塔**时才张开。张开这件事的全部意义是
+  // "两座别摆成一模一样"，扭曲丛林每方只有一座枢纽塔 —— 对着孤零零一座塔偏 25°，
+  // 没有任何东西与它形成对称，看上去就只是"这塔歪了"。用户报的正是这个。
   const own = nexusOf(fac);
-  if (entity._mapTier === 'hq_tower' && own) {
+  const hqCount = (map.buildings || []).filter(b =>
+    b.tier === 'hq_tower' && b.faction === fac).length;
+  if (entity._mapTier === 'hq_tower' && own && hqCount >= 2) {
     const spread = (c.hqSpreadDeg ?? 25) * Math.PI / 180;
     const bearing = Math.atan2(entity.pos.x - own.pos.x, entity.pos.y - own.pos.y);
     const side = wrap(bearing - ang);
     if (side !== 0) ang = wrap(ang + Math.sign(side) * spread);
   }
-  return ang;
+  return applyFlip(ang, c);
+}
+
+/** flip 的唯一施加点（见规则①里那段说明：它必须是最后一步、且是纯 180° 翻转）。 */
+function applyFlip(ang, c) {
+  return c.flip ? wrap(ang + Math.PI) : ang;
 }

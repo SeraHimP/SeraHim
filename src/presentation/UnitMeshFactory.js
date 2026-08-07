@@ -176,8 +176,10 @@ const facStyle = (f) => FACTION_STYLE[f] || FACTION_STYLE.neutral;
  *
  * **不可逆**这条让实现变简单而不是变难：不需要向下的滞回（血量在阈值附近抖动时
  * 模型来回重建是这类功能最典型的坑），只需要 `stage = max(已有, 按血量算出的)`。
- * 复位由重生流程显式 `delete e._dmgStage` 完成 —— 写在 MapSystem 的复活分支里，
- * 与 `delete e._ruin` 挨着，这样"复活要清哪些标记"永远在同一处看得全。
+ * 复位由复活流程显式清掉 `_dmgStage` 完成 —— **唯一清单在 core/reviveState.js**。
+ * v47 之前它是写在 MapSystem 复活分支里的一句 `delete`，而复活其实有两条路
+ *（重生队列 + 编辑器的【设为存活】），第二条没跟上，手动复活的塔模型停在重度损毁。
+ * 新增复活入口时改那一份清单即可，不要在自己这边再 delete 一次。
  */
 export function towerDamageStage(e, hpFrac) {
   const c = CONFIG.ui?.towerDamage || {};
@@ -237,29 +239,127 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         add(new THREE.OctahedronGeometry(R * 0.30),
             compose(T(0, pedH + R * 0.16, 0), R_Z(0.9), R_X(0.4)), desat(color, 0.42, 0.6));
       } else {
-        // 塔废墟：斜切断口 + 朝一个方向倒下的塔身残段 + 顺着倒塌方向散落的碎石
-        const stumpH = R * 0.62;
-        add(new THREE.CylinderGeometry(R * 0.66, R * 0.96, stumpH, F.crownSides + 4), T(0, stumpH / 2, 0), dead);
-        // 斜切断口：一块倾斜的薄盘盖在断桩上，读作"从这里断的"
-        add(new THREE.CylinderGeometry(R * 0.68, R * 0.68, R * 0.08, F.crownSides + 4),
-            compose(T(0, stumpH, 0), R_Z(LEAN * 0.5)), char);
-        // 倒下的塔身残段（沿 LEAN 方向躺着，一头搭在断桩上）
-        add(new THREE.CylinderGeometry(R * 0.26, R * 0.44, R * 1.15, F.crownSides + 2),
-            compose(T(R * 0.72, R * 0.30, R * 0.16), R_Z(Math.PI / 2 - 0.22), R_Y(0.18)), dead);
-        // 断段末端的冠（碎的一半），说明"那截是塔顶"
-        add(new THREE.CylinderGeometry(R * 0.34, R * 0.28, R * 0.22, F.crownSides),
-            compose(T(R * 1.28, R * 0.26, R * 0.22), R_Z(Math.PI / 2 - 0.22)), char);
-        // 碎石：顺着倒塌方向铺开，越远越小（不再是围一圈）
+        // ==================== 防御塔废墟（v47 随塔身重做而重做）====================
+        // 用户："由于防御塔模型的重做，对应的防御塔废墟模型也需要重做。"
+        //
+        // v44 那版废墟是照着**当时的塔**做的：一根圆断桩 + 一截圆塔身 + 几块石头。
+        // v45 把活塔彻底换掉之后（蓝方方基座/方柱/四角立柱，红方岩台/六棱柱/外露骨架肋，
+        // 而且四个档次的层数、扶壁数、总高度各不相同），废墟就再也对不上了 ——
+        // 蓝方的方塔倒下来变成圆柱，四个档次的废墟还是同一坨。
+        //
+        // 重做的判据只有一条：**玩家要能认出"这是刚才那座塔倒了"**。
+        // 所以废墟不再自成一套形状，而是复用活塔的同一套词汇：
+        //   ① 基座**原样保留**（红方三块岩台 / 蓝方方台 + 窄边）——
+        //      基座是最贴地、最不容易被打飞的部分，也是认塔的锚点；
+        //   ② 断桩 = 活塔第一段塔身的**下半截**，形状随阵营（蓝方方柱 / 红方六棱柱），
+        //      粗细直接沿用活塔那一段的 rb（0.62R），不再另取 0.66/0.96；
+        //   ③ 倒下的残段沿 LEAN 方向躺着，横截面同样按阵营分（方/圆），
+        //      长度随 SP.shaft ——**档次越高的塔，倒下来的那一截越长**；
+        //   ④ 扶壁多的档次（内塔起）留下几根折断的扶壁根部，
+        //      角楼档（水晶塔起）在废墟里多两块碎角楼 —— 四档的废墟因此也各不相同；
+        //   ⑤ 碎石量随档次递增，焦痕铺在倒塌方向上。
+        // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。
+        const SPr = TIER_SPEC[tier] || TIER_FALLBACK;
+        const redR = faction === 'red';
+        const baseHr = R * 0.42;
+
+        // ① 基座：与活塔逐件同形，只换成 dead 色
+        if (redR) {
+          const rocks = [[0.00, 0.00, 1.06, 1.00], [0.26, -0.16, 0.62, 0.72], [-0.30, 0.20, 0.54, 0.58]];
+          for (const [rx, rz, rr, rh] of rocks) {
+            add(new THREE.CylinderGeometry(R * rr * 0.86, R * rr, baseHr * rh, 5),
+                compose(T(rx * R, baseHr * rh / 2, rz * R), R_Z(0.06 * rx), R_X(-0.06 * rz)), shade(dead, 0.86));
+          }
+        } else {
+          add(new THREE.BoxGeometry(R * 1.78, baseHr, R * 1.78), T(0, baseHr / 2, 0), shade(dead, 0.88));
+          add(new THREE.BoxGeometry(R * 1.96, baseHr * 0.22, R * 1.96), T(0, baseHr * 0.11, 0), shade(dead, 0.78));
+        }
+
+        // ② 断桩：活塔第一段塔身的下半截。高度随档次（层数越多、塔身越高，留下的桩也越高）
+        const segHr = R * SPr.shaft / SPr.tiers;
+        const stumpH = segHr * 0.46;
+        const rb0 = R * 0.62;
+        if (redR) {
+          add(new THREE.CylinderGeometry(rb0 * 0.95, rb0, stumpH, 6), T(0, baseHr + stumpH / 2, 0), dead);
+          // 折断的骨架肋：活塔有 5 根，废墟留 3 根参差不齐的根部
+          for (const [k, hK] of [[0, 0.9], [2, 0.45], [3, 0.66]]) {
+            const a = (k / 5) * Math.PI * 2;
+            add(new THREE.BoxGeometry(R * 0.075, stumpH * hK, R * 0.11),
+                compose(T(Math.cos(a) * rb0 * 1.02, baseHr + stumpH * hK / 2, Math.sin(a) * rb0 * 1.02),
+                        R_Z(Math.cos(a) * 0.16), R_X(-Math.sin(a) * 0.16)), char);
+          }
+        } else {
+          const w0 = rb0 * 1.62;
+          add(new THREE.BoxGeometry(w0, stumpH, w0), T(0, baseHr + stumpH / 2, 0), dead);
+          // 四角立柱只剩两根（对角），高低不同 —— 蓝方"秩序"被打破的样子
+          for (const [sx, sz, hK] of [[-1, -1, 0.82], [1, 1, 0.5]]) {
+            add(new THREE.BoxGeometry(R * 0.10, stumpH * hK, R * 0.10),
+                T(sx * w0 * 0.5, baseHr + stumpH * hK / 2, sz * w0 * 0.5), char);
+          }
+        }
+        // 斜切断口：盖在断桩上的一块倾斜薄板，读作"从这里断的"。形状随阵营（方/圆）
+        const capY = baseHr + stumpH;
+        if (redR) {
+          add(new THREE.CylinderGeometry(rb0 * 1.02, rb0 * 1.02, R * 0.08, 6),
+              compose(T(0, capY, 0), R_Z(LEAN * 0.5)), char);
+        } else {
+          add(new THREE.BoxGeometry(rb0 * 1.68, R * 0.08, rb0 * 1.68),
+              compose(T(0, capY, 0), R_Z(LEAN * 0.5)), char);
+        }
+
+        // ③ 倒下的塔身残段。三件事让它读作"倒下来的"而不是"堆在旁边的一块"：
+        //   · **比断桩细**（0.72×）—— 塔身本来就是往上收分的，倒下来的是上半截；
+        //   · **一头搭在断桩上、一头落地**（沿 −0.34rad 倾斜），不是平放；
+        //   · 横截面随阵营（蓝方方柱 / 红方六棱柱），与活塔的塔身同形。
+        // 长度按活塔塔身减去断桩、再打 0.55 折（碎掉的那部分变成脚下的瓦砾）。
+        const fallLen = (R * SPr.shaft - stumpH) * 0.55;
+        const fallR = rb0 * 0.72;
+        const tiltF = -0.34;
+        const fx = R * 0.60 + fallLen * 0.44;      // 重心落在断桩外侧
+        const fyy = capY * 0.52;                    // 高的一头搭在断口上，低的一头触地
+        if (redR) {
+          add(new THREE.CylinderGeometry(fallR * 0.72, fallR, fallLen, 6),
+              compose(T(fx, fyy, R * 0.14), R_Z(Math.PI / 2 + tiltF), R_Y(0.18)), dead);
+        } else {
+          add(new THREE.BoxGeometry(fallLen, fallR * 1.5, fallR * 1.5),
+              compose(T(fx, fyy, R * 0.14), R_Z(tiltF), R_Y(0.18)), dead);
+        }
+        // ④ 断段末端的冠（碎的一半），说明"那截是塔顶"。棱数用阵营的 crownSides，与活塔一致。
+        // 它贴地放：塔倒下来，顶自然是离基座最远、砸在地上的那一端。
+        add(new THREE.CylinderGeometry(R * SPr.crown * 0.9, R * SPr.crown * 0.72, R * 0.26, F.crownSides),
+            compose(T(fx + Math.cos(tiltF) * fallLen * 0.54,
+                      Math.max(R * 0.16, fyy + Math.sin(tiltF) * fallLen * 0.54),
+                      R * 0.20),
+                    R_Z(Math.PI / 2 + tiltF)), char);
+
+        // ⑤ 扶壁根部：只有装了扶壁的档次才有（内塔 2 根、水晶/枢纽 4 根）
+        for (let i = 0; i < SPr.buttress; i++) {
+          const a = (i / Math.max(1, SPr.buttress)) * Math.PI * 2 + 0.5;
+          const hK = i % 2 ? 0.42 : 0.68;
+          add(new THREE.BoxGeometry(R * 0.16, stumpH * hK, R * 0.30),
+              compose(T(Math.cos(a) * R * 0.86, baseHr + stumpH * hK / 2, Math.sin(a) * R * 0.86), R_Y(-a)),
+              shade(dead, 0.72));
+        }
+        // 碎角楼：只有带角楼的档次（水晶塔起）才会在废墟里出现
+        for (let i = 0; i < (SPr.turrets ? 2 : 0); i++) {
+          const sgn = i ? 1 : -1;
+          add(new THREE.CylinderGeometry(R * 0.20, R * 0.24, R * 0.26, F.crownSides),
+              compose(T(R * (0.95 + i * 0.55), R * 0.13, R * 0.62 * sgn), R_Z(1.2 * sgn), R_X(0.35)), char);
+        }
+
+        // 碎石：顺着倒塌方向铺开，越远越小；档次越高瓦砾越多（tiers 1→3 对应 5→9 块）
         const chunks = [[0.42, 0.18, 0.10, 0.6, 0.34], [0.95, 0.15, -0.30, -0.8, 0.28],
                         [1.45, 0.13, 0.42, 0.3, 0.24], [1.70, 0.10, -0.10, 1.1, 0.18],
-                        [-0.55, 0.14, 0.48, 0.9, 0.26]];
-        for (const [cx, cy, cz, rot, sz] of chunks) {
+                        [-0.55, 0.14, 0.48, 0.9, 0.26], [2.05, 0.09, 0.30, -0.4, 0.16],
+                        [1.15, 0.11, 0.72, 0.8, 0.20], [-0.30, 0.12, -0.66, 1.3, 0.22],
+                        [0.66, 0.10, -0.74, -1.0, 0.18]];
+        for (const [cx, cy, cz, rot, sz] of chunks.slice(0, 3 + SPr.tiers * 2)) {
           add(new THREE.BoxGeometry(R * sz, R * sz * 0.9, R * sz * 0.85),
               compose(T(cx * R, cy * R, cz * R), R_Z(rot), R_X(rot * 0.35)), dead);
         }
-        // 焦痕：贴地的一层暗色扁盘
-        add(new THREE.CylinderGeometry(R * 1.05, R * 1.15, R * 0.04, F.crownSides + 6),
-            T(R * 0.35, R * 0.02, R * 0.05), char);
+        // 焦痕：贴地的一层暗色扁盘，摊在倒塌方向上
+        add(new THREE.CylinderGeometry(R * 1.05, R * 1.25, R * 0.04, F.crownSides + 6),
+            T(R * 0.45, R * 0.02, R * 0.05), char);
       }
     } else if (kind === 'gem' || kind === 'orb') {
       // ==================== 召唤水晶 / 水晶枢纽（v45 分家重做）====================
@@ -1115,10 +1215,31 @@ export function unitMaterial(ghost) {
       transparent: !!ghost,
       opacity: ghost ? 0.35 : 1,
       depthWrite: !ghost,
+      // v47：昼夜染色的落点。MeshLambert 的 color 与顶点色**相乘**，
+      // 所以白色 = 完全不改（改动前的行为），越暗越往当时的天空色压。
+      // 初值必须是白：材质是共享缓存的，第一帧在 setUnitTint 之前就会被用到。
+      color: 0xffffff,
     });
     _matCache.set(k, m);
   }
   return m;
+}
+
+/**
+ * 给**所有**单位（塔 / 小兵 / 龙 / 幽灵）统一施加昼夜染色。
+ *
+ * 用户："任何单位，兵/塔/龙等都要融入地形光照。"—— 三种单位走的都是 unitMaterial()
+ * 这一份共享材质，所以只要染这一处就全覆盖，不需要逐实体去改（也不该：
+ * 逐实体改就等于每种单位各写一份，正是本仓库反复出现的那类问题）。
+ * 色值怎么来的见 DayNight.unitTintOf 的头注。
+ *
+ * 水晶（crystalMaterial）**不在此列**：它是自发光的，"夜里发亮"就是它的设定。
+ */
+export function setUnitTint(hex) {
+  for (const k of ['solid', 'ghost']) {
+    const m = _matCache.get(k);
+    if (m) m.color.set(hex);
+  }
 }
 
 // Q6：水晶材质——玻璃/切面质感 + 自发光（队伍色）。每座塔【独立一份】（攻击辉光要逐塔调

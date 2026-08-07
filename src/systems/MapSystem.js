@@ -4,6 +4,10 @@ import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
+// 重生血量与出生血量必须用同一个"最大生命"口径，见 factories.js spawnAtFullHP 头注。
+import { effectiveMaxHP } from '../core/factories.js';
+// 复活要清哪些标记：唯一清单，两条复活路径共用（见该文件头注）。
+import { clearDamageMarks } from '../core/reviveState.js';
 
 /**
  * MapSystem.js
@@ -528,21 +532,25 @@ export class MapSystem {
       if (corpse) {
         corpse.alive = true;
         // 血量按队列项的 hpPct（召唤水晶 100%，光魂 外/内 33%、枢纽 40%）。
-        // 取 baseStats.maxHP 而不是 tierStats 的原始值：这座塔身上可能带着成长/覆写，
-        // 用原始表会把它打回"刚开局的样子"，"重生 33% 生命"就成了别的意思。
-        const maxHP = corpse.baseStats?.maxHP ?? stats.maxHP;
+        // 取这座塔**此刻真正的**最大生命而不是 tierStats 的原始值：它身上可能带着
+        // 成长/覆写/龙之奖励，用原始表会把它打回"刚开局的样子"，
+        // "重生 33% 生命"就成了别的意思。
+        // v47：从 baseStats.maxHP 再进一步到 effectiveMaxHP —— 前者不含 maxHPPct 一类的
+        // 百分比加成，持魂方的水晶按 100% 重生时会少那几个百分点（与出生那处同一个取错，
+        // 见 factories.js spawnAtFullHP 头注）。
+        const maxHP = effectiveMaxHP(corpse) || stats.maxHP;
         corpse.currentHP = Math.max(1, Math.round(maxHP * (hpPct / 100)));
         corpse.shieldFixedCurrent = stats.shieldFixedMax || 0;
         corpse.tempShield = 0;
         delete corpse._respawnAt;
         delete corpse._respawnProgress;
         delete corpse._respawnRemain;
-        delete corpse._ruin;   // 复活后不再是损毁幽灵
-        // v45：损毁档一并清零（用户定稿："塔手动重生时要恢复零损毁的模型"）。
-        // 放在这里而不是渲染层：损毁档是**单向**的，渲染层只会往上抬、永远不会自己归零，
-        // 所以"什么时候可以清"这件事必须由知道"这是一次重生"的这一处来说。
-        // 与上面 delete _ruin 挨着，是为了让"复活要清哪些标记"永远在同一处看得全。
-        delete corpse._dmgStage;
+        // 复活后不再是损毁幽灵、损毁档一并清零（用户定稿："塔手动重生时要恢复零损毁的模型"）。
+        // 清在这里而不是渲染层：损毁档是**单向**的，渲染层只会往上抬、永远不会自己归零，
+        // 所以"什么时候可以清"这件事必须由知道"这是一次复活"的地方来说。
+        // v47：改调 clearDamageMarks —— 编辑器的【设为存活】是**第二条**复活路径，
+        // 它当年没跟着清 _dmgStage，于是手动复活的塔模型停在重度损毁（用户报的就是这个）。
+        clearDamageMarks(corpse);
         this.entities.markDirty?.();
       } else if (b && this.createBuildingFn) {
         const entity = this.createBuildingFn({

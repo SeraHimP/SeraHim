@@ -50,6 +50,53 @@ export function createFactories(deps) {
   return { createTower, createBuilding, createMinion, createDragon, applyMilestoneGrowth };
 }
 
+/**
+ * ==================== v47：出生血量必须按"叠完增益之后"的最大生命算 ====================
+ * 用户："第二波龙开始生成的不是满血的龙。"（截图：山龙 HP 1800/1953）
+ *
+ * 根因不在龙，也不在数值曲线，而在**顺序**：四个工厂都写着
+ *   `currentHP = <某个 baseStats 上的 maxHP>`
+ * 而这一句在**装备技能 / 补发龙之奖励 / 应用模板状态之前**执行。
+ * 那些东西里有一批带 maxHPPct（山之力 +2.5%/层、炎/山/雷/毒魂的 maxHPPct、
+ * 里程碑·强化的 allStatsPct……），于是最大生命在出生那一瞬间被抬高，
+ * 而当前生命还停在抬高前的数 —— 出场即残血。
+ *
+ * 龙最明显是因为它**自带**魂 + 力（applyDragonSelfBuffs），层数还随已死数递增：
+ * 第 1 条 1 层、第 2 条 2 层……所以"从第二条开始越来越明显"，与用户观察到的完全一致。
+ * 但这不是龙的专属 bug：成魂之后新出的塔与大型小兵走 equipExistingSoul，形状一模一样。
+ *
+ * 所以修在**一处共用函数**、四个工厂都调它，而不是只给龙打个补丁 ——
+ * 只修被报告的那一个，另外三处必然复发（本仓库"同一条规则实现了两遍"已经栽过好几次）。
+ *
+ * ⚠️ 这是一处**会影响平衡**的行为改动，不是纯显示修正：持魂方的塔与大型小兵
+ * 从此按含 maxHPPct 的血量出生，等于多出那几个百分点的有效生命。
+ * 但"单位出生时是满血的"本来就是这一句想表达的意思（它写的就是 maxHP），
+ * 之前只是取错了那个 maxHP。按残血出生没有任何设计意图，纯属顺序错误。
+ */
+function spawnAtFullHP(entity) {
+  const m = effectiveMaxHP(entity);
+  if (m > 0) entity.currentHP = m;
+}
+
+/**
+ * 「这个单位此刻真正的最大生命」—— 叠完技能/状态/龙之奖励/世界修正之后的那个数。
+ *
+ * 导出是给 MapSystem 的重生路径用的：那边算"重生到 hpPct%"时读的也是
+ * `baseStats.maxHP`，与出生那处**同一个取错**。它旁边的注释甚至已经推敲过
+ * "该取哪个 maxHP"（从 tierStats 改成了 baseStats），只是还差最后一层。
+ * 持魂方的水晶按 100% 重生时会少那几个百分点，看起来就是"重生完不是满血"。
+ *
+ * 拿不到注入的单例时（理论上只会发生在 createFactories 之前）退回 baseStats.maxHP，
+ * 与改动前逐位一致 —— 这个兜底不该被触发，但它保证最坏情况是"回到旧行为"而不是崩。
+ */
+export function effectiveMaxHP(entity) {
+  if (!entity) return 0;
+  const base = entity.baseStats?.maxHP;
+  if (!attrCalc || !effectRegistry) return Number.isFinite(base) ? base : 0;
+  const s = attrCalc.calc(entity, effectRegistry.getEffects(entity.id));
+  return Number.isFinite(s.maxHP) && s.maxHP > 0 ? s.maxHP : (Number.isFinite(base) ? base : 0);
+}
+
 function createTower(x, y) {
   const tpl = CONFIG.templates.tower;
   const entity = {
@@ -106,6 +153,7 @@ function createTower(x, y) {
     dragonSystem._toggleSoul(entity, tpl._templateSoul);
   }
 
+  spawnAtFullHP(entity);   // 见 spawnAtFullHP 头注：模板状态/龙魂里有 maxHPPct，必须在它们之后补满
   eventBus.emit('entity:spawn', { entityId: entity.id });
   uiManager.log(`🏰 塔 #${entity.id} 建造在 (${Math.round(x)}, ${Math.round(y)})`, 'spawn');
   return entity;
@@ -267,6 +315,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   // v43：补发本阵营已有的龙之奖励（巨龙之力各层 + 龙魂）。
   // 不补的话，成魂之后新建/重生的建筑全是裸的 —— 奖励等于几十秒后自动失效。
   dragonSystem.equipExistingSoul(entity);
+  spawnAtFullHP(entity);   // 同上：成魂之后新建/重生的建筑吃到 maxHPPct，出生血量要跟上
   eventBus.emit('entity:spawn', { entityId: entity.id });
   uiManager.log(`${isNexus ? '💎 水晶' : '🏯 ' + tier + '塔'}（${faction === FACTIONS.BLUE ? '蓝方' : '红方'}）已生成`, 'spawn');
   return entity;
@@ -387,6 +436,7 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   // v43：新出的大型小兵也要拿到本阵营已有的龙之奖励（见 createBuilding 那条同样的注释）。
   // equipExistingSoul 内部按 SOUL_REWARD_OK 过滤，近战/远程会被自然排除。
   dragonSystem.equipExistingSoul(entity);
+  spawnAtFullHP(entity);   // 同上：里程碑·强化(allStatsPct) 与龙之奖励都会抬高最大生命
   eventBus.emit('entity:spawn', { entityId: entity.id });
   return entity;
 }
@@ -534,8 +584,10 @@ function createDragon(type, opts = {}) {
   // 挂在 ① 上就等于只覆盖了一半，手动生成出来的龙是裸的。
   // 本仓库这个形状已经犯过好几次（攻城模式、重生规则都是"一件事写了半份在两处"）。
   // 正确的挂点是**实体真正诞生的这一处**，只有一个，任何新的生成入口都自动覆盖。
+  // 用户报的那一条就在这里：自带的魂 + 力（层数 = 该元素已死数 + 1）带 maxHPPct，
+  // 而 currentHP 是在函数顶部按 abs.maxHP 定的，所以龙一出场就是残的，且越往后越明显。
   dragonSystem.applyDragonSelfBuffs(entity);
-  eventBus.emit('entity:spawn', { entityId: entity.id });
+  spawnAtFullHP(entity);
   const label = isAncient ? '🐲 远古巨龙' : `${entity._dragonIcon} ${entity.baseStats.label}`;
   uiManager.log(`${label} 降临！击败它获得龙之增益`, 'spawn');
   return entity;

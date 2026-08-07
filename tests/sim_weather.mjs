@@ -349,8 +349,10 @@ import fs from 'fs';
   const panel=fs.readFileSync(new URL('../src/ui/WeatherPanel.js', import.meta.url),'utf8');
   T('v27 游标在 20% 处（左侧显示过去、右侧未来）', panel.includes('CURSOR_RATIO = 0.20'));
   T('v27 刻度只有 4 条（20/40/60/80%）', panel.includes('[0.2, 0.4, 0.6, 0.8]'));
-  T('v27 刻度加粗（2px）、游标更粗（3px）',
-    panel.includes('ctx.lineWidth = 2;') && panel.includes('ctx.lineWidth = 3;'));
+  // v47：条被缩成 3px 的细线之后，刻度/游标的线宽改成按高度分支
+  //（细条上 3px 的游标会把条整个盖住）。断言随之钉"粗细两档都在"，不再钉字面量。
+  T('v27 刻度加粗（2px）、游标更粗（3px，细条模式下降为 2px）',
+    panel.includes('ctx.lineWidth = 2;') && panel.includes('ctx.lineWidth = thin ? 2 : 3;'));
   T('v27 密集的层间分隔线已移除', !panel.includes('层间分隔线'));
   const wsSrc=fs.readFileSync(new URL('../src/systems/WeatherSystem.js', import.meta.url),'utf8');
   T('v27 预报覆盖过去（游标左侧不露白）', wsSrc.includes('const PAST = 40;'));
@@ -393,10 +395,15 @@ import fs from 'fs';
     panel.includes('每层画成【一条连续路径】'));
   // 天气条已并入右上角的【世界状态小窗】（时间/昼夜 · 天气 · 熵 三段一窗），
   // 不再是独立浮窗 #weatherWrap。这里改为钉住"天气是小窗里的一行"。
-  T('天气段在世界状态小窗内（画布层，非顶栏）',
-    html.indexOf('id="worldHud"') > html.indexOf('<div id="canvasWrapper">')
+  // v47：世界状态小窗搬到了左上角、并进 #topbarLeft（用户："把天气时间条移动到左上角"）。
+  // 所以判据从"在画布层之后"改成"在 #topbarLeft 里"——钉的仍是"天气是小窗里的一段"。
+  T('天气段在世界状态小窗内，而小窗在左上角那块面板里',
+    html.indexOf('id="worldHud"') > html.indexOf('id="topbarLeft"')
     && html.indexOf('id="whWeatherRow"') > html.indexOf('id="worldHud"'));
-  T('天气名固定宽度（色带不左右跳）', html.includes('width: 62px; overflow: hidden'));
+  // 天气名不再靠写死宽度稳住 —— 胶囊里名字与读数各自按内容排，
+  // 色带是胶囊底边的绝对定位细线，本来就不受名字长短影响（这是比定宽更强的保证）。
+  T('色带不随天气名长短左右跳（绝对定位，不参与胶囊内的横向排布）',
+    /\.wh-chip \.wh-bar \{[^}]*position: absolute/.test(html));
   T('游标在 20%（左=过去，右=未来）', panel.includes('CURSOR_RATIO = 0.20'));
   T('刻度只有 4 条', panel.includes('[0.2, 0.4, 0.6, 0.8]'));
   T('极端天气图标按【时长】判断绘制（不随滚动抖动）',

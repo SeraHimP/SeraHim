@@ -6,6 +6,8 @@ import * as WEATHER_DEFS from '../data/Weather.js';
 import { DetailModal, STAT_LABELS } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
+import { extAttrGroups } from './statPanelLayout.js';
+import { stepTrail } from '../presentation/barTrail.js';
 
 export class UIManager {
   constructor(entityContainer, effectRegistry, attrCalc) {
@@ -15,6 +17,7 @@ export class UIManager {
     // 常驻双侧卡片列表已移除（每帧 O(单位数) DOM 读写是主线程头号杀手之一）。
     // LoL 式点选：CanvasController 点击命中单位 → selectEntity → 左上角面板单卡实时刷新。
     this.selPanel = document.getElementById('selectionPanel');
+    this._bindPanelOffset();
     this.selCard = document.getElementById('selectionCard');
     this.selTitle = document.getElementById('selectionTitle');
     this.logArea = document.getElementById('logArea');
@@ -37,6 +40,36 @@ export class UIManager {
     // v33（Q11）：✕ 关闭按钮已移除——点击画布空白处取消选中（CanvasController 负责）
     // v45：selectionBadge 已删（阵营与单位类型合并到 selectionTitle 左上角）。
     this.selActions = document.getElementById('selectionActions');
+  }
+
+  /**
+   * ==================== v47：属性面板永远贴在左上角那块面板的正下方 ====================
+   * 用户："别忘了点开单位属性栏可能出现遮挡的情况。"
+   *
+   * 左上角那一块的高度**不是常数**：世界状态里的天气段与熵段各自会显隐，
+   * 窄窗口下读数那一行还会换行。CSS 里写一个 `top: 104px` 只能挡住我当时想到的那一种情形 ——
+   * 熵一开、或者窗口一窄，属性面板就被压在它底下（而且是"平时看不出来"的那种，最难查）。
+   *
+   * 所以改成**量出来**：ResizeObserver 盯着 #topbarLeft 的实际高度，
+   * 高度一变就把属性面板的 top 与 max-height 一起推下去。
+   * 这样将来往左上角再加一行东西，也不需要回来改这里的数字。
+   *
+   * 拿不到 ResizeObserver（老环境/headless）时什么都不做 —— CSS 里的 top 仍在，
+   * 退化成改动前的固定值，不会崩。
+   */
+  _bindPanelOffset() {
+    const bar = document.getElementById('topbarLeft');
+    if (!this.selPanel || !bar || typeof ResizeObserver === 'undefined') return;
+    const GAP = 8;      // 面板与顶栏之间的呼吸位
+    const TOP = 10;     // #topbarLeft 自己距屏幕顶的距离（与 CSS 里那份一致）
+    const apply = () => {
+      const top = TOP + bar.offsetHeight + GAP;
+      this.selPanel.style.top = top + 'px';
+      this.selPanel.style.maxHeight = `calc(100% - ${top + 12}px)`;
+    };
+    apply();
+    this._panelRO = new ResizeObserver(apply);
+    this._panelRO.observe(bar);
   }
 
   bindCardEvents() {
@@ -95,6 +128,28 @@ export class UIManager {
 
     // （小兵卡片监听器已并入上方选中卡监听器）
 
+  }
+
+  /**
+   * 属性面板血条的掉血拖尾。
+   *
+   * 用户："画面中进度条的拖尾特效和属性栏进度条的拖尾特效并不统一，
+   *        统一为画面中的拖尾特效。"
+   * 缓动与贴齐一律走 barTrail.stepTrail（画面里那条用的就是它），参数不再各写一份。
+   * 颜色与 CSS 里那层多余的 transition 也一并对齐了，见 barTrail.js 里的逐项对照表。
+   *
+   * 贴齐阈值取 1/300：面板里的条约 300px 宽，差不到一个像素就直接贴齐 ——
+   * 与画面里取 1/BAR_W 是同一条理由。
+   */
+  _stepTrailBar(el, hpFrac) {
+    if (!el) return;
+    const nowTs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (el._frac === undefined) { el._frac = hpFrac; el._lastTs = nowTs; }
+    const dt = Math.min(0.05, (nowTs - (el._lastTs || nowTs)) / 1000);
+    el._lastTs = nowTs;
+    const tr = stepTrail(el._frac, hpFrac, dt, 1 / 300);
+    el._frac = tr.disp;
+    el.style.width = (Math.max(0, Math.min(1, el._frac)) * 100) + '%';
   }
 
   _toggleAttrs(card) {
@@ -430,6 +485,75 @@ export class UIManager {
   }
 
   /**
+   * ==================== v47：攻速这一行为什么要单独算 ====================
+   * 用户："攻速加成为负的时候，攻速并没有显示为红色。其他属性显示也可能存在这个bug，自行排查。"
+   *
+   * 排查结果：面板上**有三个格子根本没走 `_statValueHtml`**，
+   * 它们直接把数字塞进模板字符串，因此永远是默认色 —— 不是"负值判错了"，
+   * 而是这三格从来就没有着色这回事：
+   *   · 攻速（塔卡片 + 兵卡片）    `calcAttackSpeedOf(stats).toFixed(2)`
+   *   · 移速（兵卡片）             `Math.round(stats.moveSpeed)`
+   *   · 攻击距离（兵卡片）         `Math.round(stats.attackRange)`
+   * 后两个改起来只是换成 `_statValueHtml`；攻速不行 ——
+   * 面板显示的 0.62 **不是任何一个属性字段**，它是 baseAttackSpeed / bonusAttackSpeedPct /
+   * attackSpeedRatio 三者算出来的派生量，`_statParts('bonusAttackSpeedPct')` 拿到的
+   * 是 −42 这个加成值，不是 0.62。所以这里按同一口径**重算一次基础攻速**：
+   *   基础 = calcAttackSpeedOf(entity.baseStats)，最终 = calcAttackSpeedOf(stats)
+   * 差值即"各渠道修正之和"，与其它属性完全同一套语义（正橙 / 负红 / 无修正默认色）。
+   *
+   * 顺带说明为什么不能图省事直接给 `bonusAttackSpeedPct` 的颜色抄过来：
+   * 攻速还会被 allStatsPct 经由 baseAttackSpeed 放大（见 calcAttackSpeedOf 的头注），
+   * 那条通路里 bonusAttackSpeedPct 一动不动。抄颜色的话"全属性加成拉满"时
+   * 攻速明明涨了却是默认色 —— 又一个"面板与实际不一致"。
+   */
+  _attackSpeedHtml(entity, stats) {
+    const now = this.attrCalc.calcAttackSpeedOf(stats);
+    const bs = entity && entity.baseStats;
+    const txt = now.toFixed(2);
+    if (!bs || !Number.isFinite(bs.baseAttackSpeed)) return txt;
+    const base = this.attrCalc.calcAttackSpeedOf(bs);
+    const d = now - base;
+    // 攻速的量级只有个位数，沿用 _statParts 的 0.005 噪声门槛会把 0.01 的差判成有修正；
+    // 这里按显示精度（两位小数）定门槛：显示出来看不出差别的就不该染色。
+    const cls = d > 0.005 ? 'stat-up' : d < -0.005 ? 'stat-down' : '';
+    return `<span class="${cls}">${txt}</span>`;
+  }
+
+  /**
+   * ==================== v47：塔/兵"展开更多"的**唯一**一份布局 ====================
+   * 用户："塔展开更多里新增射程显示。然后塔/兵的展开更多里面的属性顺序进行排列，
+   *        就是一个方面放在一块。兵的移速那里显示塔的子弹速度。"
+   *
+   * 改动前塔和兵各写了一份 14 行的模板字符串，除了最后两格以外**逐字相同** ——
+   * 又是本仓库那条老毛病"同一件事实现了两遍"：塔那份少了攻击距离，
+   * 兵那份少了子弹速度，谁也没发现，因为没人会把两段几乎一样的字符串并排读。
+   * 现在合成一份，差异只剩下最后一格（兵=移速 / 塔=子弹速度），由 kind 决定。
+   *
+   * 分组：按"一个方面放在一块"。每组一个小标题（整行），组内两列。
+   * 组内条目为奇数时，最后一格自动横跨两列 —— 否则下一组的第一格会被顶到上一组
+   * 的空位里，"分组"就白做了。
+   */
+  _extAttrsHtml(E, stats) {
+    let html = '';
+    for (const g of extAttrGroups(E.type === 'tower' ? 'tower' : 'minion')) {
+      // 该组一个格子都渲染不出来时（属性表里没有这些键）连标题一起省掉，
+      // 免得留下一个空标题。自制单位模板可能确实没有某一整组属性。
+      const cells = g.rows.map(({ key, label, suffix }) => {
+        const v = this._statValueHtml(key, E, stats, suffix);
+        return v === '' ? '' :
+          `<div class="a stat-doc" data-stat="${key}" title="点击查看说明"><label>${label}</label><span>${v}</span></div>`;
+      }).filter(Boolean);
+      if (!cells.length) continue;
+      // 奇数格 → 最后一格横跨两列，否则下一组的第一格会被塞进这一组留下的空位里。
+      if (cells.length % 2 === 1) {
+        cells[cells.length - 1] = cells[cells.length - 1].replace('class="a stat-doc"', 'class="a stat-doc span2"');
+      }
+      html += `<div class="attr-group">${g.title}</div>` + cells.join('');
+    }
+    return html;
+  }
+
+  /**
    * 属性说明弹窗（点属性面板上任意一行）。
    * 用户："属性（攻击力，攻速等都可以点击）描述这个属性。"
    *
@@ -760,21 +884,9 @@ export class UIManager {
     const maxHP = stats.maxHP || 1;
     const hpFrac = Math.max(0, Math.min(1, tower.currentHP / maxHP));
 
-    // 拖尾（血条宽度由下方比例逻辑统一设置）——用真实时间差插值，不受 UI 刷新频率影响
-    const nowTs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    const trailBar = card.querySelector(`#tower-trail-${id}`);
-    if (trailBar) {
-      if (trailBar._frac === undefined) { trailBar._frac = hpFrac; trailBar._lastTs = nowTs; }
-      const dtSec = Math.min(0.5, (nowTs - (trailBar._lastTs || nowTs)) / 1000);
-      trailBar._lastTs = nowTs;
-      if (hpFrac < trailBar._frac) {
-        const rate = 1 - Math.pow(0.05, dtSec); // 时间越长追得越多，帧率无关
-        trailBar._frac += (hpFrac - trailBar._frac) * rate;
-      } else {
-        trailBar._frac = hpFrac;
-      }
-      trailBar.style.width = (Math.max(0, Math.min(1, trailBar._frac)) * 100) + '%';
-    }
+    // 拖尾（血条宽度由下方比例逻辑统一设置）。v47：缓动/贴齐/配色与画面里那条统一，
+    // 实现只剩 barTrail.stepTrail 一处（见 _stepTrailBar 与 barTrail.js 的对照表）。
+    this._stepTrailBar(card.querySelector(`#tower-trail-${id}`), hpFrac);
 
     const sfCur = tower.shieldFixedCurrent || 0, stCur = tower.tempShield || 0;
     const shieldTotal = sfCur + stCur;
@@ -797,7 +909,7 @@ export class UIManager {
     if (stBar) { stBar.style.left = ((hpDraw + sfDraw) * 100) + '%'; stBar.style.width = (stDraw * 100) + '%'; }
 
     const hpText = card.querySelector(`#tower-hptext-${id}`);
-    if (hpText) hpText.textContent = `HP ${Math.round(tower.currentHP)}/${Math.round(maxHP)}`;
+    if (hpText) hpText.textContent = `${Math.round(tower.currentHP)}/${Math.round(maxHP)}`;   // v47：去掉 HP 前缀（条本身就是血条），并居中显示
 
     // v33（Q16）：装备"防御塔镀层"的塔，属性条上用 | 标出下一个镀层节点（与画布血条一致）
     const barTrack = card.querySelector(`#tower-bar-${id}`);
@@ -831,35 +943,15 @@ export class UIManager {
     if (attrsContainer) {
       this._setAttrs(attrsContainer, `
         <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${this._statValueHtml('attackDamage', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this._attackSpeedHtml(E, stats)}</span></div>
         <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${this._statValueHtml('armor', E, stats)}</span></div>
         <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${this._statValueHtml('magicResist', E, stats)}</span></div>
       `);
     }
 
-    // 扩展属性（默认折叠）
+    // 扩展属性（默认折叠）。布局与兵卡片共用同一份（见 _extAttrsHtml 头注）。
     const attrsExtContainer = card.querySelector(`#tower-attrs-ext-${id}`);
-    if (attrsExtContainer) {
-      // v33（Q17）：穿透一类一行——固定值在左列、百分比在右列（网格两列，顺序即位置）。
-      // 顺带修正旧版的标签张冠李戴（"魔抗削减"标着 magicPenFlat、"固定法穿%"标着百分比）。
-      this._setAttrs(attrsExtContainer, `
-        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${this._statValueHtml('armorPenFlat', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${this._statValueHtml('armorPenPercent', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${this._statValueHtml('magicPenFlat', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${this._statValueHtml('magicPenPercent', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${this._statValueHtml('damageReduction', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${this._statValueHtml('damageBlock', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${this._statValueHtml('damageConvertPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${this._statValueHtml('lifeStealPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${this._statValueHtml('onHitDamage', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${this._statValueHtml('onHitPercentDamage', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${this._statValueHtml('healShieldPowerPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${this._statValueHtml('bonusAttackSpeedPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="damageAmpPct" title="点击查看说明"><label>伤害增幅%</label><span>${this._statValueHtml('damageAmpPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${this._statValueHtml('allStatsPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="bulletSpeed" title="点击查看说明"><label>子弹速度</label><span>${this._statValueHtml('bulletSpeed', E, stats)}</span></div>
-      `);
-    }
+    if (attrsExtContainer) this._setAttrs(attrsExtContainer, this._extAttrsHtml(E, stats));
 
     // 技能栏（diff式渲染，避免每帧重建导致点击失效）
     const skillContainer = card.querySelector(`#tower-skills-${id}`);
@@ -917,20 +1009,7 @@ export class UIManager {
     const sfCur = minion.shieldFixedCurrent || 0, stCur = minion.tempShield || 0;
     const shieldTotal = sfCur + stCur;
 
-    const trailBar = card.querySelector(`#minion-trail-${id}`);
-    if (trailBar) {
-      const nowTs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      if (trailBar._frac === undefined) { trailBar._frac = hpFrac; trailBar._lastTs = nowTs; }
-      const dtSec = Math.min(0.5, (nowTs - (trailBar._lastTs || nowTs)) / 1000);
-      trailBar._lastTs = nowTs;
-      if (hpFrac < trailBar._frac) {
-        const rate = 1 - Math.pow(0.05, dtSec);
-        trailBar._frac += (hpFrac - trailBar._frac) * rate;
-      } else {
-        trailBar._frac = hpFrac;
-      }
-      trailBar.style.width = (Math.max(0, Math.min(1, trailBar._frac)) * 100) + '%';
-    }
+    this._stepTrailBar(card.querySelector(`#minion-trail-${id}`), hpFrac);
 
     // 与 2D 画板一致：HP+护盾同条，超过最大值整体按比例压缩
     const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP;
@@ -951,7 +1030,7 @@ export class UIManager {
     if (stBar) { stBar.style.left = ((hpDraw + sfDraw) * 100) + '%'; stBar.style.width = (stDraw * 100) + '%'; }
 
     const hpText = card.querySelector(`#minion-hptext-${id}`);
-    if (hpText) hpText.textContent = `HP ${Math.round(minion.currentHP)}/${Math.round(maxHP)}`;
+    if (hpText) hpText.textContent = `${Math.round(minion.currentHP)}/${Math.round(maxHP)}`;   // 同上
     const shieldText = card.querySelector(`#minion-shieldtext-${id}`);
     if (shieldText) shieldText.textContent = `🛡 ${Math.round(shieldTotal)}`;
 
@@ -960,34 +1039,14 @@ export class UIManager {
     if (attrsContainer) {
       this._setAttrs(attrsContainer, `
         <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${this._statValueHtml('attackDamage', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this.attrCalc.calcAttackSpeedOf(stats).toFixed(2)}</span></div>
+        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this._attackSpeedHtml(E, stats)}</span></div>
         <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${this._statValueHtml('armor', E, stats)}</span></div>
         <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${this._statValueHtml('magicResist', E, stats)}</span></div>
       `);
     }
 
     const attrsExtContainer = card.querySelector(`#minion-attrs-ext-${id}`);
-    if (attrsExtContainer) {
-      // v33（Q17）：与塔卡片同款列布局（固定值左列、百分比右列，一类一行）
-      this._setAttrs(attrsExtContainer, `
-        <div class="a stat-doc" data-stat="armorPenFlat" title="点击查看说明"><label>固定穿甲</label><span>${this._statValueHtml('armorPenFlat', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="armorPenPercent" title="点击查看说明"><label>护甲穿透%</label><span>${this._statValueHtml('armorPenPercent', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="magicPenFlat" title="点击查看说明"><label>固定法穿</label><span>${this._statValueHtml('magicPenFlat', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="magicPenPercent" title="点击查看说明"><label>法术穿透%</label><span>${this._statValueHtml('magicPenPercent', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="damageReduction" title="点击查看说明"><label>伤害减免</label><span>${this._statValueHtml('damageReduction', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="damageBlock" title="点击查看说明"><label>伤害格挡</label><span>${this._statValueHtml('damageBlock', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="damageConvertPct" title="点击查看说明"><label>伤害转化%</label><span>${this._statValueHtml('damageConvertPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="lifeStealPct" title="点击查看说明"><label>生命偷取%</label><span>${this._statValueHtml('lifeStealPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="onHitDamage" title="点击查看说明"><label>攻击特效(固定)</label><span>${this._statValueHtml('onHitDamage', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="onHitPercentDamage" title="点击查看说明"><label>攻击特效(%当前生命)</label><span>${this._statValueHtml('onHitPercentDamage', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="healShieldPowerPct" title="点击查看说明"><label>治疗与护盾强度%</label><span>${this._statValueHtml('healShieldPowerPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速加成%</label><span>${this._statValueHtml('bonusAttackSpeedPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="damageAmpPct" title="点击查看说明"><label>伤害增幅%</label><span>${this._statValueHtml('damageAmpPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="allStatsPct" title="点击查看说明"><label>全属性加成%</label><span>${this._statValueHtml('allStatsPct', E, stats, '%')}</span></div>
-        <div class="a stat-doc" data-stat="moveSpeed" title="点击查看说明"><label>移速</label><span>${Math.round(stats.moveSpeed)}</span></div>
-        <div class="a stat-doc" data-stat="attackRange" title="点击查看说明"><label>攻击距离</label><span>${Math.round(stats.attackRange)}</span></div>
-      `);
-    }
+    if (attrsExtContainer) this._setAttrs(attrsExtContainer, this._extAttrsHtml(E, stats));
 
     // 技能栏（diff式渲染）
     const skillContainer = card.querySelector(`#minion-skills-${id}`);

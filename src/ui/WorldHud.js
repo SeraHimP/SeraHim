@@ -107,16 +107,32 @@ export const WorldHud = {
 
     // 关键时刻刻度（正午/黄昏/午夜）：细竖线，给"现在大概几点"一个参照。
     // 没有刻度的话游标停在哪都看不出意义。
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
-    ctx.lineWidth = 1;
-    for (const p of [0.25, 0.5, 0.75]) {
-      const tx = Math.round(w * p) + 0.5;
-      ctx.beginPath(); ctx.moveTo(tx, 0); ctx.lineTo(tx, h); ctx.stroke();
+    // ⚠️ 细条模式（v47 的胶囊底边，3px 高）不画刻度：3px 高的竖线只会把渐变戳成虚线。
+    if (!this._thin(h)) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+      ctx.lineWidth = 1;
+      for (const p of [0.25, 0.5, 0.75]) {
+        const tx = Math.round(w * p) + 0.5;
+        ctx.beginPath(); ctx.moveTo(tx, 0); ctx.lineTo(tx, h); ctx.stroke();
+      }
     }
 
     this._cursor(ctx, w, h, phase);
     this._frame(ctx, w, h);
   },
+
+  /**
+   * ==================== v47：细条模式 ====================
+   * 世界状态条重做成"胶囊底边的一条 3px 细线"（用户："你自己看看左上角那个条好看吗"）。
+   * 原来那套画法是为 14px 高的色带设计的：外边框、三条刻度、顶部小三角游标。
+   * 在 3px 上照画，三角会盖满整条、边框吃掉 2/3 的高度、刻度把渐变戳成虚线 ——
+   * 结果是一条看不出任何信息的糊线。
+   *
+   * 所以按高度分支，而不是给调用方加一个"薄不薄"的参数：
+   * 高度本来就是唯一的判据，多一个参数就多一处会与 CSS 对不上的地方
+   *（CSS 把条改矮了、参数忘了改 → 又回到糊线）。
+   */
+  _thin(h) { return h <= 6; },
 
   /**
    * 当前位置游标：顶部小三角 + 全高细线，并且**先描一层深色再描白色**。
@@ -130,8 +146,9 @@ export const WorldHud = {
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(xr, 0); ctx.lineTo(xr, h); ctx.stroke();
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = this._thin(h) ? 2 : 1.4;   // 细条上 1.4px 的白线在渐变里几乎看不见
     ctx.beginPath(); ctx.moveTo(xr, 0); ctx.lineTo(xr, h); ctx.stroke();
+    if (this._thin(h)) return;   // 见 _thin：3px 上画三角会把整条盖住
     // 顶部三角：小窗只有 14px 高，纯竖线不够抓眼，三角给一个明确的"就是这里"
     ctx.fillStyle = '#fff';
     ctx.beginPath();
@@ -141,6 +158,7 @@ export const WorldHud = {
 
   /** 统一的内描边：让三条色带看起来是同一个组件（否则各自像贴上去的图片）。 */
   _frame(ctx, w, h) {
+    if (this._thin(h)) return;   // 3px 高的条，边框会吃掉三分之二的高度
     ctx.strokeStyle = 'rgba(255,255,255,0.14)';
     ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
@@ -223,7 +241,7 @@ export const WorldHud = {
   _ctx(cv) {
     if (!cv._c2d) cv._c2d = cv.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    const w = cv.clientWidth || 150, h = cv.clientHeight || 14;
+    const w = cv.clientWidth || 104, h = cv.clientHeight || 3;
     const nw = Math.round(w * dpr), nh = Math.round(h * dpr);
     if (cv.width !== nw || cv.height !== nh) {
       cv.width = nw; cv.height = nh;
@@ -233,6 +251,6 @@ export const WorldHud = {
     return cv._c2d;
   },
   _size(cv) {
-    return { w: cv.clientWidth || 150, h: cv.clientHeight || 14 };
+    return { w: cv.clientWidth || 104, h: cv.clientHeight || 3 };
   },
 };

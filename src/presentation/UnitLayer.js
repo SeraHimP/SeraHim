@@ -37,6 +37,7 @@ import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
 import { towerFacingRad } from './towerFacing.js';
+import { stepTrail, TRAIL_COLOR } from './barTrail.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -700,7 +701,7 @@ export class UnitLayer {
     // 掉血拖尾：真实血量→显示血量之间的淡红残段（有界动画，追平即消失）。护盾在其后绘制会覆盖。
     if (trailFrac > hpFrac) {
       const tEnd = Math.min(1, trailFrac) * scale;
-      g.fillStyle = 'rgba(255,150,150,0.6)';
+      g.fillStyle = TRAIL_COLOR;
       g.fillRect(BAR_W * hpDraw, 0, BAR_W * (tEnd - hpDraw), BAR_H);
     }
     if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * sfW, BAR_H); }
@@ -893,14 +894,11 @@ export class UnitLayer {
         const realFrac = Math.max(0, Math.min(1, e.currentHP / maxHP));
         // 掉血拖尾：显示血量 dispFrac 向真实血量插值。仅掉血启动；回血/首帧直接贴齐。
         // 动画期内 dispFrac 量化值入 barKey → 每帧重绘；追平后去掉该项 → 停重绘（有界，非每帧）。
+        // v47：缓动/贴齐搬进 barTrail.stepTrail —— 属性面板那条拖尾要用**同一份**参数
+        // （用户："统一为画面中的拖尾特效"）。行为与改动前逐位一致：同样的 dt*7、同样的 1/BAR_W。
         const dt = Math.max(0, Math.min(0.05, tNow - (en._lastT || tNow))); en._lastT = tNow;
-        if (en.dispFrac < 0 || realFrac >= en.dispFrac) {
-          en.dispFrac = realFrac; en.trailing = false;
-        } else {
-          en.dispFrac += (realFrac - en.dispFrac) * Math.min(1, dt * 7);   // 时间常数 ~0.14s
-          if (en.dispFrac - realFrac < 1 / BAR_W) { en.dispFrac = realFrac; en.trailing = false; }
-          else en.trailing = true;
-        }
+        const tr = stepTrail(en.dispFrac, realFrac, dt, 1 / BAR_W);
+        en.dispFrac = tr.disp; en.trailing = tr.trailing;
         const q = (v) => Math.round(Math.max(0, Math.min(1, v)) * BAR_W);
         barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
                + q((e.tempShield || 0) / maxHP) + '|' + (e._mapFaction || e.faction || '')
