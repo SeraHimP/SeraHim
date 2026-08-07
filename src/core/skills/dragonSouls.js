@@ -25,6 +25,7 @@
  * 判定走 DragonSystem.SOUL_REWARD_OK，**不直接读 isLargeMinion** ——
  * 那个标记还被别处用着（渲染体积等），两件事不该绑死在一个字段上。
  */
+import { statMod } from '../statMod.js';
 import { applyHeal, healPowerFor } from '../healing.js';
 import { CONFIG } from '../../data/Config.js';
 
@@ -442,11 +443,15 @@ export function soulStatBlueprints(el) {
   if (!tbl) return [];
   const def = dragonSouls['dragonsoul_' + el] || {};
   return Object.entries(tbl).map(([k, v]) => {
-    const pct = k.endsWith('Pct');
+    // v45：与 dragonPowerBuffs 共用 statMod（原来两处各写了一份同样的错约定）。
+    // 无条件剥 Pct 后缀对 damageAmpPct / bonusAttackSpeedPct / healShieldPowerPct
+    // 这类**本身就以 Pct 结尾的属性**是错的 —— 剥完不存在，被 AttributeCalculator
+    // 静默丢弃。暗魂的两项常驻数值、风魂的攻速加成、潮魂的治疗强度都因此一直空转。
+    const m = statMod(k, v);
     return {
       name: `${def.name || el}·加持`, icon: def.icon || '🐉', color: def.color, kind: 'stat',
-      statKey: pct ? k.slice(0, -3) : k,
-      flatValue: pct ? 0 : v, percentValue: pct ? v : 0,
+      statKey: m.statKey,
+      flatValue: m.flat, percentValue: m.percent,
       duration: Infinity, permanent: true,
       stackable: false, stackPolicy: 'refresh', uniquePassive: true,
       stackKey: `soul_stat_${el}_${k}`,

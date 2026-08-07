@@ -1,5 +1,6 @@
 import { CONFIG } from '../data/Config.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../data/dragonCurve.js';
+import { statMod } from '../core/statMod.js';
 
 /**
  * DragonSystem.js
@@ -37,17 +38,21 @@ export const DRAGON_ELEMENTS = {
 /**
  * 某元素的【巨龙之力】属性表（每层）。数值住在 CONFIG.dragonPower，可在编辑器里改。
  * 返回 [{ statKey, flat, percent }]；空数组表示该元素没有配置（不该发生，但不炸）。
- * 约定：键名以 `Pct` 结尾的算百分比，其余算固定值 —— 这样配置里只写一层对象，
- * 不必给每一项都套 { flat } / { percent } 的壳。
+ *
+ * ⚠️ 「固定值还是百分比」的判据**不是看后缀**（那条旧约定错了，见 core/statMod.js），
+ * 而是看这个键本身是不是一个真属性：是 → 固定值；去掉 Pct 之后才是 → 百分比。
  */
 export function dragonPowerBuffs(el) {
   const tbl = (CONFIG.dragonPower && CONFIG.dragonPower[el]) || null;
   if (!tbl) return [];
-  return Object.entries(tbl).map(([k, v]) => (
-    k.endsWith('Pct')
-      ? { statKey: k.slice(0, -3), percent: v }
-      : { statKey: k, flat: v }
-  ));
+  // v45：翻译交给 core/statMod.js。原来这里写的是"键名以 Pct 结尾就剥掉后缀按百分比"，
+  // 对 damageAmpPct / lifeStealPct 这种**本身就以 Pct 结尾的属性**是错的 ——
+  // 剥完变成不存在的属性，被 AttributeCalculator 静默丢弃，**暗之力整档因此完全没效果**
+  //（平衡对照里那一档与基线逐字相同）。详见 statMod.js 的头注。
+  return Object.entries(tbl).map(([k, v]) => {
+    const m = statMod(k, v);
+    return { statKey: m.statKey, flat: m.flat, percent: m.percent };
+  });
 }
 
 export class DragonSystem {

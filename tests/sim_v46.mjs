@@ -714,4 +714,76 @@ const mkE = (ents, type, x, y, extra = {}) => {
     /en\.faceFixed = towerFacingRad/.test(ul3));
 }
 
+// ==================== 十三、Pct 后缀把四个属性静默丢掉了 ====================
+// 平衡对照里"蓝方满 dark 之力"那一档与基线**逐字相同**（胜率/时长/推塔/推进度/熵
+// 一个字都不差）—— 与当年光魂那个死功能一模一样的形状，于是顺着查了下去。
+//
+// 根因：dragonPowerBuffs 与 soulStatBlueprints **各写了一份**同样的约定
+//「键名以 Pct 结尾 → 剥掉后缀、按百分比」。这对 attackDamagePct / maxHPPct 是对的，
+// 但对**本身就以 Pct 结尾的属性**是灾难：
+//     damageAmpPct → damageAmp，lifeStealPct → lifeSteal，
+//     bonusAttackSpeedPct → bonusAttackSpeed，healShieldPowerPct → healShieldPower
+// 全都不存在，而 AttributeCalculator 对未知键是**静默丢弃**的。
+// 后果：暗之力/暗魂的常驻数值整个没生效、风魂的攻速加成没生效、潮龙的治疗强度没生效。
+// 尤其讽刺的是我上一轮正是围绕"攻速"重做的风 —— 难怪测不出改善。
+{
+  const { dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
+  const { soulStatBlueprints } = await import('../src/core/skills/dragonSouls.js');
+  const { statMod, resetStatKeyCache } = await import('../src/core/statMod.js');
+  resetStatKeyCache();
+
+  // 全部模板属性名的并集 —— 判"这个 statKey 到底存不存在"的权威来源
+  const known = new Set();
+  for (const tpl of Object.values(CONFIG.templates || {})) {
+    if (tpl && typeof tpl === 'object') for (const k of Object.keys(tpl)) known.add(k);
+  }
+  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+
+  T('Pct①-每个元素的【力】里没有一项 statKey 是不存在的属性', (() => {
+    const bad = [];
+    for (const el of ELS) for (const b of dragonPowerBuffs(el)) if (!known.has(b.statKey)) bad.push(el + '/' + b.statKey);
+    if (bad.length) console.log('    未知属性：', bad.join(', '));
+    return bad.length === 0;
+  })());
+  T('Pct②-每个元素的【魂常驻数值】里也没有', (() => {
+    const bad = [];
+    for (const el of ELS) for (const b of soulStatBlueprints(el)) if (!known.has(b.statKey)) bad.push(el + '/' + b.statKey);
+    if (bad.length) console.log('    未知属性：', bad.join(', '));
+    return bad.length === 0;
+  })());
+
+  // 判据本身：键是真属性 → 固定值；去掉 Pct 才是真属性 → 百分比
+  T('Pct③-本身就是属性的键按【固定值】走（damageAmpPct 是个"百分比数值的属性"）',
+    statMod('damageAmpPct', 2.5).statKey === 'damageAmpPct'
+    && statMod('damageAmpPct', 2.5).flat === 2.5
+    && statMod('damageAmpPct', 2.5).percent === 0);
+  T('Pct④-去掉 Pct 之后才是属性的键按【百分比】走（attackDamagePct = 攻击力 +x%）',
+    statMod('attackDamagePct', 3).statKey === 'attackDamage'
+    && statMod('attackDamagePct', 3).percent === 3
+    && statMod('attackDamagePct', 3).flat === 0);
+  T('Pct⑤-两处共用同一份翻译（原来各写一份，于是同一个错犯了两遍）',
+    /statMod\(/.test(srcOf('src/systems/DragonSystem.js'))
+    && /statMod\(/.test(srcOf('src/core/skills/dragonSouls.js')));
+
+  // 行为：暗之力装上去之后，伤害增幅**真的**变了（这正是此前一点效果都没有的那一项）
+  {
+    const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+    const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+    const bus2 = new EventBus(), ents2 = new EntityContainer(bus2), fx2 = new EffectRegistry(bus2);
+    const t = mkE(ents2, 'tower', 0, 0, { _mapFaction: 'blue', faction: 'blue' });
+    const before = AttributeCalculator.calc(t, fx2.getEffects(t.id));
+    for (const b of dragonPowerBuffs('dark')) {
+      fx2.apply(t.id, { name: '暗之力', icon: '🌑', kind: 'stat', statKey: b.statKey,
+        flatValue: b.flat || 0, percentValue: b.percent || 0,
+        duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh',
+        stackKey: 'test_dark_' + b.statKey }, 'test_dark_' + b.statKey);
+    }
+    const after = AttributeCalculator.calc(t, fx2.getEffects(t.id));
+    T('Pct⑥-暗之力装上后【伤害增幅】真的变了（此前整档与基线逐字相同 = 完全没生效）',
+      after.damageAmpPct > before.damageAmpPct);
+    T('Pct⑦-暗之力的【生命偷取】同样真的变了',
+      after.lifeStealPct > before.lifeStealPct);
+  }
+}
+
 done();
