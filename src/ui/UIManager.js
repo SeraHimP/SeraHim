@@ -751,7 +751,22 @@ export class UIManager {
 
       // 倒计时环：直接用缓存的引用更新，不查 DOM
       let bg;
-      if (e.permanent || e.remainingTime === Infinity || e.blueprint.duration <= 0) {
+      // ==================== v49b：进度型状态（充能）====================
+      // 用户："攻城车状态栏里应该有个带进度的状态表示充能进度，目前没有。"
+      //
+      // 这个环原本只表达"还剩多少时间"（按 remainingTime/duration 算）。
+      // 充能不是倒计时，是**从 0 涨到 1** 的进度，而且它的值不在效果自己身上 ——
+      // 所以蓝图里加一个 progressOf(entity)：谁想画进度就自己说进度是多少。
+      // 复用同一个环而不是新做一个部件：状态栏里再多一种视觉语言只会更乱，
+      // 而"这一格里有个环在动"玩家已经认识了。
+      const progFn = e.blueprint.progressOf;
+      if (typeof progFn === 'function') {
+        const unit = this.entities.get(this.selectedId);
+        const frac = Math.max(0, Math.min(1, progFn(unit) || 0));
+        const deg = Math.round(frac * 360);
+        // 与倒计时相反：充能是**亮起来**的（画已完成的那一段），倒计时是压暗剩余。
+        bg = `conic-gradient(rgba(246,201,74,0.55) ${deg}deg, transparent ${deg}deg 360deg)`;
+      } else if (e.permanent || e.remainingTime === Infinity || e.blueprint.duration <= 0) {
         bg = 'none';
       } else {
         const elapsedFrac = Math.max(0, Math.min(1, 1 - (e.remainingTime / e.blueprint.duration)));

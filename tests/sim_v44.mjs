@@ -194,8 +194,19 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   const foe = mk(ents, 'melee', { faction: 'red', x: 10 });
   T('Q2⑧-充能是独立的技能类别（category=attackmode），谁都能装',
     SkillLibrary.atkmode_charge.category === 'attackmode');
-  T('Q2⑧-只对 onlyVs 指定的目标充能（攻城车=只对塔）',
-    !!combat.chargeNeedOf(ram, tw) && !combat.chargeNeedOf(ram, foe));
+  // v49b：用户改稿"攻城车所有状态下都是充能攻击" → onlyVs 'any'。
+  // onlyVs 这个参数仍然存在（别的武器可以只对某类目标充能），只是攻城车不再用它筛。
+  T('Q2⑧-onlyVs=any 时对谁都充能（用户："所有状态下都是充能攻击"）',
+    !!combat.chargeNeedOf(ram, tw) && !!combat.chargeNeedOf(ram, foe));
+  T('Q2⑧-onlyVs 仍然能筛目标类型（换个参数就只对塔充能）', (() => {
+    // 这个 mk 不走 equipSkill，实例上没有 _params（读取时会回落 defaultParams）。
+    // 这里显式给一份覆写，验证"参数改了行为就跟着变"。
+    const inst = ram._skillInstances.find(i => i.skillId === 'atkmode_charge');
+    inst._params = { ...SkillLibrary.atkmode_charge.defaultParams, onlyVs: 'tower' };
+    const ok = !!combat.chargeNeedOf(ram, tw) && !combat.chargeNeedOf(ram, foe);
+    delete inst._params;
+    return ok;
+  })());
   T('Q2⑧-没充满不许开火，充满才行', (() => {
     ram._charge = 0;
     const notReady = combat.chargeReady(ram, tw) === false;
@@ -214,7 +225,10 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     return Math.abs(t - CH.chargeSecAt1AS / as) < 0.2;
   })());
   T('Q2⑧-打断后每秒等比衰减当前充能（用户："每秒减少10%当前充能"）', (() => {
-    ram._charge = 1; ram.targetId = foe.id;   // 切到小兵 = 不再需要充能 = 打断
+    // v49b：onlyVs=any 之后"切到小兵"不再是打断（对谁都充能）。
+    // 真正的打断是**没有目标**（目标死了 / 脱离），这才是用户说的那种情形。
+    ram._charge = 1; ram.targetId = null;
+    ram._chargeDecay = CONFIG.tuning.charge.decayPctPerSec;   // 与充能中记下的那份一致
     const st = attr.calc(ram, fx.getEffects(ram.id));
     for (let i = 0; i < 10; i++) combat._tickCharge(ram, st, 1.0);
     const want = Math.pow(1 - (CONFIG.tuning.charge.decayPctPerSec / 100), 10);
@@ -227,7 +241,7 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 // ==================== 三、Q2b 残弹：目标已死仍结算溅射 ====================
 {
   const { ents, combat } = world();
-  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'],
+  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_ram_cannon'],
                                 stats: { splashRadius: 80 } });
   const bystander = mk(ents, 'melee', { faction: 'red', x: 30, y: 0 });
   const far = mk(ents, 'melee', { faction: 'red', x: 900, y: 0 });
@@ -264,8 +278,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 龙那一半仍然靠模板的 splashRadius —— 这条断言原本就是为龙的溅射守的，继续守住。
   T('Q2b④-溅射闸门仍认"模板写了 splashRadius"（巨龙的溅射靠这条才生效）',
     /Math\.max\(attacker\.baseStats\?\.splashRadius \|\| 0, ramR\)/.test(cs));
-  T('Q2b④-"额外增幅只对主目标"仍成立（溅射把充能倍率除回去）',
-    /const siegeMult = chargeP \? chargeP\.damageMult : 1;/.test(cs)
+  // v49b：要除回去的倍率变成两档（对建筑 siegeDamagePct / 对其余 normalDamageAmpPct），
+  // 充能自己的 damagePct 也仍然要除。断言钉"两者都参与了 siegeMult"这件事。
+  T('Q2b④-"额外增幅只对主目标"仍成立（溅射把倍率除回去）',
+    /const siegeMult = \(chargeP \? chargeP\.damageMult : 1\)/.test(cs)
+    && /siegeDamagePct/.test(cs) && /normalDamageAmpPct/.test(cs)
     && /totalRaw \/ siegeMult/.test(cs));
 }
 

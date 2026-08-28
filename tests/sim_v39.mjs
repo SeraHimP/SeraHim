@@ -198,8 +198,8 @@ function battle() {
   // v49 攻城车重做（用户定稿）：溅射 60 → **0**（半径改由【攻城炮】按模式给出）；
   // 基础攻速 0.25 → **1.2**、攻速收益率 0.667 → **0.05**
   //（攻速直接决定充能速度 12/攻速，0.25 时一发要 48 秒，完全打不动塔）。
-  T('攻城车模板：HP800 / AD60 / AS1.2 / 收益率0.05 / 射程312 / 双抗0 / 溅射0',
-    ram.maxHP === 800 && ram.attackDamage === 60 && ram.baseAttackSpeed === 1.2
+  T('攻城车模板：HP800 / AD70 / AS1.2 / 收益率0.05 / 射程312 / 双抗0 / 溅射0',
+    ram.maxHP === 800 && ram.attackDamage === 70 && ram.baseAttackSpeed === 1.2
     && ram.attackSpeedRatio === 0.05
     && ram.attackRange === 312 && ram.armor === 0 && ram.magicResist === 0 && ram.splashRadius === 0);
   T('攻城车射程 > 防御塔射程（可越塔输出）', ram.attackRange > CONFIG.templates.tower.attackRange);
@@ -230,8 +230,9 @@ function battle() {
   const T0 = mkTower(ents2, 'red', 100, 0, 'outer');
   attr.tick();
   let h0 = T0.currentHP; combat.performAttack(Rplain, T0);
-  T(`未装被动 = 普通单位（打塔 ${Math.round(h0 - T0.currentHP)} ≈ 60×100/140 = 43，无 +270%）`,
-    Math.abs((h0 - T0.currentHP) - 43) < 3);
+  const _AD = CONFIG.templates.ram.attackDamage;
+  T(`未装被动 = 普通单位（打塔 ${Math.round(h0 - T0.currentHP)} ≈ ${Math.round(_AD * 100 / 140)}，无额外增幅）`,
+    Math.abs((h0 - T0.currentHP) - _AD * 100 / 140) < 3);
 
   // 装上被动后各规则生效
   const R = mkUnit(ents2, 'ram', 'blue', 0, 0);
@@ -245,16 +246,17 @@ function battle() {
   const dmgTower = h0 - T1.currentHP;
   // v49：对建筑的倍率由旧的 ×3.7 改成 CONFIG.gameRules.ram.siegeDamagePct（375%）。
   // 断言按配置算期望值，不再钉字面量 —— 这个数用户还会调。
-  // 倍率来源：v49 起在【充能攻击】这件攻击方式技能的参数里，不再是 gameRules.ram
-  const _sp = SkillLibrary.atkmode_charge.defaultParams.damagePct / 100;
-  const _expTower = 60 * _sp * 100 / 140;
+  // v49b：充能的 damagePct 回归中性 100（充能是节奏，不是倍率），
+  // 对建筑的倍率回到攻城车自己的 gameRules.ram.siegeDamagePct。
+  const _sp = CONFIG.gameRules.ram.siegeDamagePct / 100;
+  const _expTower = _AD * _sp * 100 / 140;
   T(`① 打建筑 ×${_sp}（${Math.round(dmgTower)} ≈ ${Math.round(_expTower)}）`,
     Math.abs(dmgTower - _expTower) < 3);
   const mn = mkUnit(ents2, 'melee', 'red', 30, 0);
   attr.tick(); h0 = mn.currentHP; combat.performAttack(R, mn);
   const dmgMinion = h0 - mn.currentHP;
   const _np = 1 + CONFIG.gameRules.ram.normalDamageAmpPct / 100;
-  const _expMinion = 60 * _np * 100 / 115;
+  const _expMinion = _AD * _np * 100 / 115;
   T(`② 打小兵 ${CONFIG.gameRules.ram.normalDamageAmpPct}%（${Math.round(dmgMinion)} ≈ ${Math.round(_expMinion)}）`,
     Math.abs(dmgMinion - _expMinion) < 3);
   // v49：「近战单位打攻城车 +100%」已按用户定稿**删除**（"不留"）。

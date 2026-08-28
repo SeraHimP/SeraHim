@@ -1,4 +1,5 @@
 import { CONFIG } from '../../data/Config.js';
+import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
 
 // ==================== 闪电杖的数值全部搬进 defaultParams（软编码）====================
 // 原来这几个是模块级 const（写死在源码里），编辑器改不了；而 weapon_lightning 的
@@ -370,8 +371,10 @@ export const weapons = {
       st.timer -= interval;
 
       const range = stats.attackRange || 250;
-      const enemies = ctx.entityContainer.findInRadius(entity.pos.x, entity.pos.y, range,
-        ['melee', 'ranged', 'siege', 'super', 'totem', 'dragon', 'shield', 'warlock', 'corrupt'], true);
+      // v49：改走 enemyUnitsInRadius —— 原来这行直接用 findInRadius 的结果，
+      // 既不认阵营（自己人也中毒）、白名单里又漏了 'ram'（攻城车对腐蚀免疫）。
+      // 用户同时报了这两个症状，它们是同一行代码造成的。详见该函数的头注。
+      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range);
       if (enemies.length > 0) { entity._inCombat = true; entity._combatTimer = 4; }
 
       const perStackDmg = Math.max(0.5, (stats.attackDamage || 0) * 0.01); // 每层每秒 = 攻击力1%

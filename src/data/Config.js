@@ -147,8 +147,15 @@ export const CONFIG = {
     ram: {
       siegeSplash: 75,          // 攻城模式的溅射半径（模板 splashRadius 已改 0，半径完全由模式决定）
       normalSplash: 25,         // 普通模式的溅射半径
-      // chargeSecAt1AS / siegeDamagePct 已搬进【充能攻击】这件攻击方式技能的 defaultParams
-      // （用户："单独做成技能……里面各种参数"）。留在这里会变成同一个数写两处。
+      // v49b 用户改稿："对建筑的伤害改为700%"。
+      // 这是攻城车**自己**的性格，不是"充能"这件武器的（充能的 damagePct 是中性 100）——
+      // 分开放的理由：换一件别的充能武器时，攻城车的对建筑倍率不该跟着变。
+      siegeDamagePct: 700,
+      // v49b："普通模式下获得33%攻速"。
+      // ⚠️ 走 **baseAttackSpeed 的百分比**而不是 bonusAttackSpeedPct：
+      // 攻城车的攻速收益率是 0.05，正向加成要打 5% 的折（33% 只剩 1.65%），
+      // 那样这条加成基本等于没有。而 baseAttackSpeed 不过收益率，+33% 就是实打实的 +33%。
+      normalAtkSpeedPct: 33,
       fatiguePerAttack: 7,      // 每次攻城攻击叠几层（用户定稿：7% = 7 层 × 1%）
       fatigueLayerPct: -1,      // 每层攻速 %
       recoverSec: 3,            // 普通模式下每隔几秒恢复
@@ -1053,7 +1060,7 @@ export const CONFIG = {
       // 攻速直接决定充能速度（12/攻速），0.25 时一发要 48 秒，实测下来完全打不动塔。
       // 收益率 0.05 = 外来的正攻速加成对它几乎无效（充能不该被别的加速手段带飞），
       // 而【攻城疲惫】是负值、不吃收益率，所以减速照样满额生效 —— 这正是想要的不对称。
-      attackDamage: 60, baseAttackSpeed: 1.2,
+      attackDamage: 70, baseAttackSpeed: 1.2,   // v49b：攻击力 60 → 70（用户定稿）
       bonusAttackSpeedPct: 0, attackSpeedRatio: 0.05,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 0, magicResist: 0,

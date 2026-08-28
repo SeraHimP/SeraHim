@@ -587,7 +587,7 @@ const ramPassive = {
       if (e) { e._ramLockId = null; e._ramMode = null; e._charge = 0; }
       for (const eff of ctx.effectRegistry.getEffects(entityId)) {
         const n = eff.blueprint.name;
-        if (n === '攻城模式' || n === '普通模式' || n === '攻城疲惫') ctx.effectRegistry.remove(eff.id);
+        if (n === '攻城模式' || n === '普通模式' || n === '攻城疲惫' || n === '轻装行军' || n === '充能') ctx.effectRegistry.remove(eff.id);
       }
     },
     /**
@@ -629,6 +629,26 @@ const ramPassive = {
         }, 'passive_ram_cannon_mode');
       }
 
+      // ---- 充能进度状态（用户："状态栏里应该有个带进度的状态表示充能进度"）----
+      // 装了任何【攻击方式】技能（目前只有充能）才挂这一格；
+      // 进度由 progressOf 现算，不往效果里写数 —— 效果系统没有"每帧刷新一个数值"的通道，
+      // 硬写会变成每帧 apply 一次（图标闪烁 + 点不中，本项目踩过）。
+      const charging = (e._skillInstances || []).some(i => i.skillId === 'atkmode_charge' && !i._disabled);
+      const hasChg = ctx.effectRegistry.getEffects(entityId).some(x => x.blueprint.name === '充能');
+      if (charging && !hasChg) {
+        ctx.effectRegistry.apply(entityId, {
+          name: '充能', icon: '🔋', kind: 'display', type: 'buff', color: '#f6c94a',
+          duration: Infinity, permanent: true, stackPolicy: 'refresh', uniquePassive: true,
+          description: '蓄力中：充满才打出一发；被打断时逐秒衰减',
+          // 状态栏的进度环读它（UIManager._updateEffectIcons）。
+          progressOf: (u) => (u && u._charge) || 0,
+        }, 'passive_ram_cannon_charge');
+      } else if (!charging && hasChg) {
+        for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+          if (eff.blueprint.name === '充能') ctx.effectRegistry.remove(eff.id);
+        }
+      }
+
       // ---- 攻速恢复：**只在普通模式下**（用户特别强调过）----
       if (siege) { instance.state = instance.state || {}; instance.state.recT = 0; return; }
       instance.state = instance.state || {};
@@ -651,8 +671,8 @@ const ramPassive = {
     applicableTypes: ['ram'], color: '#e67e22',
     get description() {
       const R = CONFIG.gameRules?.ram || {};
-      return `唯一被动——攻城模式：对防御塔改为**充能攻击**（1.0 攻速下 ${R.chargeSecAt1AS ?? 12} 秒充满，`
-        + `充满才打出一发，造成 ${R.siegeDamagePct ?? 375}% 伤害）。每次攻击叠 ${R.fatiguePerAttack ?? 7} 层`
+      return `唯一被动——攻城模式：对防御塔造成 ${R.siegeDamagePct ?? 700}% 伤害。`
+        + `每次攻击叠 ${R.fatiguePerAttack ?? 7} 层`
         + `【攻城疲惫】（每层攻速 ${R.fatigueLayerPct ?? -1}%，无上限叠加），攻城模式下**不恢复**。`
         + `充能被打断时每秒衰减当前充能的 ${CONFIG.tuning?.charge?.decayPctPerSec ?? 10}%。`;
     },
@@ -667,10 +687,44 @@ const ramPassive = {
     get description() {
       const R = CONFIG.gameRules?.ram || {};
       return `唯一被动——普通模式：攻击非建筑目标时溅射半径 ${R.normalSplash ?? 25}、`
-        + `伤害增幅 ${R.normalDamageAmpPct ?? -33}%；每 ${R.recoverSec ?? 3} 秒恢复 ${R.recoverLayers ?? 1} 层【攻城疲惫】。`;
+        + `伤害增幅 ${R.normalDamageAmpPct ?? -33}%、攻速 +${R.normalAtkSpeedPct ?? 33}%；`
+        + `每 ${R.recoverSec ?? 3} 秒恢复 ${R.recoverLayers ?? 1} 层【攻城疲惫】。`;
     },
     get descTemplate() { return this.description; },
     effects: [],
+    /**
+     * 普通模式的 +33% 攻速。挂在**本条被动自己**身上而不是【攻城炮】里：
+     * sim_skilldesc 的规矩是"状态里出现的数字必须能在**本技能**的文案里找到"，
+     * 而 33 属于这一条 —— 写在攻城炮里就成了"别人的效果挂着我的数字"。
+     * 模式由攻城炮判定并写在 e._ramMode 上，这里只读不判，避免两处各判一次。
+     *
+     * ⚠️ 走 baseAttackSpeed 的百分比而不是 bonusAttackSpeedPct：攻城车的攻速收益率是 0.05，
+     * 正向加成要打 5% 的折（33% 只剩 1.65%），那样这条加成基本等于没有。
+     * baseAttackSpeed 不过收益率，+33% 就是实打实的 +33%。
+     */
+    onFrame: (entityId, dt, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive) return;
+      const R = CONFIG.gameRules?.ram || {};
+      const normal = (e._ramMode || 'normal') !== 'siege';
+      const cur = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === '轻装行军');
+      if (normal && !cur) {
+        ctx.effectRegistry.apply(entityId, {
+          name: '轻装行军', icon: '💨', kind: 'stat', color: '#7f8c8d', type: 'buff',
+          statKey: 'baseAttackSpeed', percentValue: R.normalAtkSpeedPct ?? 33,
+          duration: Infinity, permanent: true,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `普通模式：攻速 +${R.normalAtkSpeedPct ?? 33}%`,
+        }, 'passive_ram_normal_as');
+      } else if (!normal && cur) {
+        ctx.effectRegistry.remove(cur.id);
+      }
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '轻装行军') ctx.effectRegistry.remove(eff.id);
+      }
+    },
   },
 };
 

@@ -61,6 +61,43 @@ export function canTarget(attackerFaction, targetFaction) {
 
 
 /**
+ * ==================== v49：半径内的**敌方单位**（唯一实现）====================
+ * 用户："腐蚀型武器的塔竟然会对友军也造成伤害，攻城车安然无恙？"
+ *
+ * 两句话各自对应一个 bug，而且是同一行代码造成的：
+ *   ① `findInRadius` **不认阵营**（它只是个空间网格查询）。腐蚀把返回值直接命名为
+ *      `enemies` 就拿去叠毒了 —— 于是自己人也中毒。溅射那处刚犯过一模一样的错
+ *      （见 CombatSystem._applyExplosionAt 的头注），这是同一个坑的第三次。
+ *   ② 那行还带着一张**写死的兵种白名单**
+ *      `['melee','ranged','siege','super','totem','dragon','shield','warlock','corrupt']`——
+ *      里面**没有 'ram'**，所以攻城车对腐蚀完全免疫。这类白名单每加一个新兵种就得
+ *      记得回来补一次，漏了没有任何报错，只会表现成"某个兵莫名其妙不吃某个效果"。
+ *
+ * 所以这里一次解决两件事：按阵营过滤 + 用"不是建筑"代替白名单。
+ * 以后再加兵种自动包含在内，不需要回来改这张表。
+ *
+ * @param entities 实体容器
+ * @param self     施法者（永远排除自己）
+ * @param radius   半径
+ * @param opts.includeBuildings 是否也返回敌方建筑（默认 false = 只要单位）
+ */
+export function enemyUnitsInRadius(entities, self, radius, opts = {}) {
+  if (!self || !self.pos) return [];
+  const sf = self._mapFaction || self.faction || null;
+  const out = [];
+  for (const e of entities.findInRadius(self.pos.x, self.pos.y, radius, null, true)) {
+    if (!e || !e.alive || e.id === self.id) continue;
+    if (!opts.includeBuildings && e.type === 'tower') continue;
+    // 沙盒模式（双方都没有阵营）维持"都算敌人"的旧行为 —— 那里本来就只有一伙人，
+    // 一律过滤掉的话沙盒里所有范围技能都会变成哑的。
+    const ef = e._mapFaction || e.faction || null;
+    if (sf && ef && !canTarget(sf, ef)) continue;
+    out.push(e);
+  }
+  return out;
+}
+
+/**
  * 结构保护（"不可选中"，LoL 规则）：
  * - 分路召唤水晶：该路己方水晶塔（高地塔，tier='base'）存活时不可被攻击/索敌。
  * - 水晶枢纽：己方任一枢纽塔（tier='hq_tower'）存活时不可被攻击/索敌（双塔全灭才解除）。

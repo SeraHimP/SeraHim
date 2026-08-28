@@ -109,10 +109,12 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
     && RAM.fatiguePerAttack > 0 && RAM.fatigueLayerPct < 0
     && RAM.recoverSec > 0 && RAM.normalDamageAmpPct < 0
     && def.TOWER_DAMAGE_MULT === undefined && def.SIEGE_FATIGUE_AS_PCT === undefined);
+  // v49b：充能对**所有目标**生效（用户："攻城车所有状态下都是充能攻击"），
+  // 且 damagePct 回归中性 100 —— 倍率是攻城车自己的性格（RAM.siegeDamagePct），不是充能的。
   T('充能参数在【充能攻击】技能里，走 defaultParams（编辑器可改、可换装）',
     SkillLibrary.atkmode_charge.category === 'attackmode'
-    && CH.chargeSecAt1AS > 0 && CH.damagePct > 100 && CH.onlyVs === 'tower'
-    && RAM.chargeSecAt1AS === undefined && RAM.siegeDamagePct === undefined);
+    && CH.chargeSecAt1AS > 0 && CH.damagePct === 100 && CH.onlyVs === 'any'
+    && RAM.chargeSecAt1AS === undefined && RAM.siegeDamagePct > 100);
   T('被动图标：攻城炮 🎯', def.icon === '🎯');
 
   // v43 P1-4：小兵工厂已搬到 src/core/factories.js，读组合根两份
@@ -175,7 +177,8 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
 // ==================== ③ 数值调整 ====================
 {
   const ram = CONFIG.templates.ram;
-  T('AD 60（远高于炮兵 17.5）', ram.attackDamage === 60 && ram.attackDamage > CONFIG.templates.siege.attackDamage);
+  // v49b 用户定稿：攻击力 60 → 70
+  T('AD 70（远高于炮兵 17.5）', ram.attackDamage === 70 && ram.attackDamage > CONFIG.templates.siege.attackDamage);
   T('射程 312（260 +20%，仍远超塔的 180）', ram.attackRange === 312 && ram.attackRange > CONFIG.templates.tower.attackRange);
   const perHit = 60 * 3.7 * (100 / 140);
   T(`打外塔单发 ≈ ${perHit.toFixed(0)}，五发自毁前共 ${(perHit * 5).toFixed(0)}（外塔 4000 的 ${(perHit * 5 / 40).toFixed(0)}%）`,

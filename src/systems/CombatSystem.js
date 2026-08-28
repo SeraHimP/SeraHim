@@ -1,6 +1,6 @@
 import { AttributeCalculator } from '../core/AttributeCalculator.js';
 import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
-import { canTarget, isStructureProtected } from './FactionSystem.js';
+import { canTarget, isStructureProtected, enemyUnitsInRadius } from './FactionSystem.js';
 import { chargeParamsFor } from '../core/skills/attackModes.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
@@ -694,10 +694,14 @@ export class CombatSystem {
     // 低倍率那一半仍是攻城车【普通模式】自己的性格（normalDamageAmpPct）。
     // 两件事分开：换一件别的攻击方式时，普通模式的减伤不该跟着变。
     const chargeP = chargeParamsFor(attacker, target, this.skills);
-    if (chargeP) totalRaw *= chargeP.damageMult;
-    else if (hasRamCannon(attacker)) {
+    if (chargeP) totalRaw *= chargeP.damageMult;   // 充能武器自带的倍率（攻城车用中性 100）
+    // 攻城车自己的两档：对建筑 siegeDamagePct%，对其余目标 normalDamageAmpPct。
+    // v49b 起充能对所有目标生效，所以这两档不再与"要不要充能"绑在一起判 —— 只看目标是不是建筑。
+    if (hasRamCannon(attacker)) {
       const R = CONFIG.gameRules?.ram || {};
-      totalRaw *= (1 + (R.normalDamageAmpPct ?? -33) / 100);
+      totalRaw *= isStructureUnit(target)
+        ? (R.siegeDamagePct ?? 700) / 100
+        : (1 + (R.normalDamageAmpPct ?? -33) / 100);
     }
 
     // ---- 防御计算（支持护甲穿透和魔法穿透） ----
@@ -857,7 +861,12 @@ export class CombatSystem {
     const ramR = ramSplashRadius(attacker, target);
     const splashR = Math.max(attacker.baseStats?.splashRadius || 0, ramR);
     if (splashR > 0) {
-      const siegeMult = chargeP ? chargeP.damageMult : 1;
+      // 溅射把"只对主目标生效"的那两档增幅除回去（口径一直是：额外增幅只作用于主目标）
+      const siegeMult = (chargeP ? chargeP.damageMult : 1)
+        * (hasRamCannon(attacker)
+            ? (isStructureUnit(target) ? (R49.siegeDamagePct ?? 700) / 100
+                                       : (1 + (R49.normalDamageAmpPct ?? -33) / 100))
+            : 1);
       this._applyExplosion(attacker, target, totalRaw / siegeMult, attackType, splashR);
     }
   }
@@ -900,8 +909,15 @@ export class CombatSystem {
     const hit = new Set([originTarget.id]);
     let current = originTarget;
     for (let i = 0; i < bounces; i++) {
-      const nearby = this.entities.findInRadius(current.pos.x, current.pos.y, radius,
-        ['melee', 'ranged', 'siege', 'super', 'totem', 'dragon', 'shield', 'warlock', 'corrupt'], true);
+      // v49：连锁同样走 enemyUnitsInRadius（与腐蚀是同一个坑：不认阵营 + 白名单漏 'ram'）。
+      // 起点是 current，但"友军"要按**发起者**的阵营算 —— 连锁弹到谁身上，
+      // 判敌我的都该是放技能的那一方，而不是被弹到的那个单位。
+      // 查询点是 current（上一跳），但敌我要按**发起者 attacker** 的阵营算 ——
+      // 连锁弹到谁身上，判敌我的都该是放技能的那一方。造一个只带位置与阵营的探针对象，
+      // id 给 -1 保证 "排除自己" 这条不会误伤真实体。
+      const probe = { id: -1, pos: current.pos, alive: true,
+        _mapFaction: attacker._mapFaction || attacker.faction, faction: attacker.faction };
+      const nearby = enemyUnitsInRadius(this.entities, probe, radius);
       let next = null, bestD = Infinity;
       for (const e of nearby) {
         if (hit.has(e.id) || !e.alive) continue;

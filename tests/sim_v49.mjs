@@ -148,8 +148,14 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
     const t = mk(ents, 'tower', 0, 'blue');           // 给一座**塔**装充能
     equipSkill(t, 'atkmode_charge', ctx, SkillLibrary);
     const tw = mk(ents, 'tower', 100, 'red');
-    const mn = mk(ents, 'melee', 50, 'red');
-    return !!combat.chargeNeedOf(t, tw) && !combat.chargeNeedOf(t, mn) && !hasRamCannon(t);
+    // 默认 onlyVs='any' → 对谁都充能；关键是它**不是攻城车**也照样能充。
+    return !!combat.chargeNeedOf(t, tw) && !hasRamCannon(t);
+  })());
+  T('式④-没有目标 = 打断（对着空气不会一直充着）', (() => {
+    const { ents, combat, ctx } = world();
+    const t = mk(ents, 'tower', 0, 'blue');
+    equipSkill(t, 'atkmode_charge', ctx, SkillLibrary);
+    return combat.chargeNeedOf(t, null) === null;
   })());
   T('式⑤-打断衰减率有全局缺省，技能可自带（"以后所有充能型武器都这样，但数可能会改"）',
     typeof CONFIG.tuning.charge.decayPctPerSec === 'number'
@@ -227,8 +233,9 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
   h = m2.currentHP; c2.performAttack(r2, m2); drain(p2);
   const dMinion = h - m2.currentHP;
   const AD = CONFIG.templates.ram.attackDamage;
-  T(`城⑦-对塔 = 充能技能的 damagePct（${Math.round(dTower)} ≈ ${Math.round(AD * CH.damagePct / 100)}）`,
-    Math.abs(dTower - AD * CH.damagePct / 100) < 2);
+  // v49b：对建筑的倍率回到攻城车自己的 siegeDamagePct（充能的 damagePct 是中性 100）
+  T(`城⑦-对塔 = 攻城车的 siegeDamagePct（${Math.round(dTower)} ≈ ${Math.round(AD * R.siegeDamagePct / 100)}）`,
+    Math.abs(dTower - AD * R.siegeDamagePct / 100) < 2);
   T(`城⑦-对兵 = 普通模式的伤害增幅（${Math.round(dMinion)} ≈ ${Math.round(AD * (1 + R.normalDamageAmpPct / 100))}）`,
     Math.abs(dMinion - AD * (1 + R.normalDamageAmpPct / 100)) < 2);
   T('城⑧-「近战对攻城车 +100%」已按用户定稿删除', (() => {
@@ -240,6 +247,89 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
     const b2 = plain.currentHP;
     c2.performAttack(mel, plain); drain(p2);
     return Math.abs((before - r2.currentHP) - (b2 - plain.currentHP)) < 1e-6;
+  })());
+}
+
+// ==================== 六、v49b 追加 ====================
+{
+  const R = CONFIG.gameRules.ram;
+  const CH = SkillLibrary.atkmode_charge.defaultParams;
+  T('补①-攻城车所有状态下都充能（用户改稿），充能自身的倍率回归中性 100',
+    CH.onlyVs === 'any' && CH.damagePct === 100);
+  T('补②-攻击力 70 / 对建筑 700%（用户定稿）',
+    CONFIG.templates.ram.attackDamage === 70 && R.siegeDamagePct === 700);
+  T('补③-普通模式 +33% 攻速走 baseAttackSpeed 的百分比，不走 bonusAttackSpeedPct', (() => {
+    // 攻城车的攻速收益率是 0.05：正向加成要打 5% 的折，33% 只剩 1.65%，等于没有。
+    // baseAttackSpeed 不过收益率 —— 这是选它的全部理由，钉住免得被"顺手改回去"。
+    const src = srcOf('src/core/skills/minionPassives.js');
+    return R.normalAtkSpeedPct === 33
+      && /name: '轻装行军'[\s\S]{0,200}statKey: 'baseAttackSpeed'/.test(src);
+  })());
+
+  const { ents, fx, ctx, combat } = world();
+  const ram = mk(ents, 'ram', 0, 'blue');
+  for (const k of ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge']) {
+    equipSkill(ram, k, ctx, SkillLibrary);
+  }
+  const tw = mk(ents, 'tower', 100, 'red');
+  const mn = mk(ents, 'melee', 60, 'red');
+  const cannon = ram._skillInstances.find(i => i.skillId === 'passive_ram_cannon');
+  const normal = ram._skillInstances.find(i => i.skillId === 'passive_ram_normal');
+  const frame = () => {
+    SkillLibrary.passive_ram_cannon.onFrame(ram.id, 0.1, cannon, ctx);
+    SkillLibrary.passive_ram_normal.onFrame(ram.id, 0.1, normal, ctx);
+  };
+  const asOf = () => A.calcAttackSpeedOf(A.calc(ram, fx.getEffects(ram.id)));
+
+  ram.targetId = mn.id; frame();
+  const asNormal = asOf();
+  ram.targetId = tw.id; frame();
+  const asSiege = asOf();
+  T(`补③-普通模式确实快 ${R.normalAtkSpeedPct}%（普通 ${asNormal.toFixed(2)} vs 攻城 ${asSiege.toFixed(2)}）`,
+    Math.abs(asNormal - asSiege * (1 + R.normalAtkSpeedPct / 100)) < 1e-6);
+  T('补③-切回攻城模式时那份加成会被摘掉（不会两个模式同时享受）',
+    !fx.getEffects(ram.id).some(e => e.blueprint.name === '轻装行军'));
+
+  // 充能进度状态
+  ram.targetId = tw.id; frame();
+  const chg = fx.getEffects(ram.id).find(e => e.blueprint.name === '充能');
+  T('补④-状态栏有【充能】这一格（用户："应该有个带进度的状态表示充能进度"）', !!chg);
+  T('补④-进度由 progressOf 现算，不往效果里写数（写数=每帧 apply=图标闪烁+点不中）',
+    !!chg && typeof chg.blueprint.progressOf === 'function');
+  T('补④-进度读的就是实体的充能值', (() => {
+    ram._charge = 0.42;
+    return Math.abs(chg.blueprint.progressOf(ram) - 0.42) < 1e-9;
+  })());
+  T('补④-界面把 progressOf 接上了环（钉调用点，不钉定义）', (() => {
+    const um = srcOf('src/ui/UIManager.js');
+    return /const progFn = e\.blueprint\.progressOf;/.test(um)
+      && /conic-gradient\(rgba\(246,201,74/.test(um);
+  })());
+}
+
+// ==================== 七、腐蚀/连锁：不打友军、也不再漏掉攻城车 ====================
+// 用户："腐蚀型武器的塔竟然会对友军也造成伤害，攻城车安然无恙？"
+{
+  const { ents, fx, ctx } = world();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower._skillInstances.push({ id: ++window._uid, skillId: 'weapon_corrosion', state: { timer: 999 } });
+  const foe = mk(ents, 'melee', 50, 'red');
+  const mate = mk(ents, 'melee', 60, 'blue');
+  const foeRam = mk(ents, 'ram', 70, 'red');
+  const inst = tower._skillInstances[0];
+  SkillLibrary.weapon_corrosion.onFrame(tower.id, 1.0, inst, ctx);
+  const poisoned = (e) => fx.getEffects(e.id).some(x => x.blueprint.name === '腐蚀·毒素');
+  T('腐①-敌方单位中毒', poisoned(foe));
+  T('腐②-**友军不中毒**（用户报的第一个症状）', !poisoned(mate));
+  T('腐③-攻城车也会中毒（用户报的第二个症状：白名单里漏了 ram）', poisoned(foeRam));
+  T('腐④-判据不再是写死的兵种白名单（以后加兵种不用回来补）', (() => {
+    const w = srcOf('src/core/skills/weapons.js');
+    return /enemyUnitsInRadius\(ctx\.entityContainer, entity, range\)/.test(w)
+      && !/'melee', 'ranged', 'siege', 'super', 'totem', 'dragon', 'shield', 'warlock', 'corrupt'/.test(w);
+  })());
+  T('腐⑤-连锁伤害走同一份实现（同一个坑的另一半）', (() => {
+    const cs = srcOf('src/systems/CombatSystem.js');
+    return /enemyUnitsInRadius\(this\.entities, probe, radius\)/.test(cs);
   })());
 }
 
