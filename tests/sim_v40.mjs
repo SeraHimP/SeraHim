@@ -141,9 +141,11 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
     lmsSrc.includes('this.combat.siegeAcquire(') && lmsSrc.includes('this.combat.finishAttack(')
     && csSrc.includes('this.siegeAcquire(minion, nearestTower)')
     && csSrc.includes('this.finishAttack(minion, nearestTower'));
+  // v50：finishAttack 开头多了一段"清零充能"（那件事与是不是攻城车无关，见该处注释），
+  // 所以闸门不再是函数的**第一句**。断言改成"函数体里有这道闸"，别钉它在第几行。
   T('闸门仍然是被动（拆掉【攻城炮】即退化为普通车）',
     /siegeAcquire\(attacker, target\) \{\s*if \(!hasRamCannon/.test(csSrc)
-    && /finishAttack\(attacker, target, finalAS\) \{\s*if \(!hasRamCannon/.test(csSrc));
+    && /finishAttack\(attacker, target, finalAS\) \{[\s\S]{0,900}if \(!hasRamCannon\(attacker\) \|\| !isStructureUnit\(target\)\) return finalAS;/.test(csSrc));
 
   // 攻城模式状态：锁定建筑时出现，解除时消失
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);

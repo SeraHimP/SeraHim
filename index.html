@@ -609,6 +609,60 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .gp-matrix th, .gp-matrix td { padding: 4px 8px; text-align: center; border-bottom: 1px solid var(--glass-border); }
 .gp-matrix th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-dim); font-weight: 400; }
 .gp-row-label { text-align: left !important; color: var(--text-dim); white-space: nowrap; }
+
+/* ==================== v50：批量选择组件（技能页 / 状态页共用）====================
+   用户："复选框按照分类显示，弄成那种一二级菜单，右侧列添加全选的按钮。
+          共有的显示选中（实线），有的没有的显示半选中（虚线），都没有的显示未选中。"
+
+   三态用**一个 span** 自绘而不是原生 <input type=checkbox>：
+   原生复选框的 indeterminate 只能用 JS 设、没法用 CSS 表达，而且各浏览器画法不一 ——
+   这里三种状态要有明确的视觉差（实线勾 / 虚线框 / 空框），自绘反而更简单也更可控。 */
+.gp-chk {
+  display: inline-block; width: 14px; height: 14px; flex: none;
+  border: 1.5px solid var(--text-mute); border-radius: 3px;
+  cursor: pointer; position: relative; vertical-align: middle;
+  transition: border-color 0.12s, background 0.12s;
+}
+.gp-chk:hover { border-color: var(--accent); }
+.gp-chk.on { background: var(--accent); border-color: var(--accent); }
+.gp-chk.on::after {
+  content: ''; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px;
+  border: solid #0b0e13; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* 半选 = **虚线**框 + 中间一条横杠（用户明确要求虚线） */
+.gp-chk.partial { border-style: dashed; border-color: var(--accent); }
+.gp-chk.partial::after {
+  content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px;
+  background: var(--accent); border-radius: 1px;
+}
+.gp-matrix tr.gp-group td {
+  text-align: left; background: rgba(255,255,255,0.04);
+  color: var(--text); font-size: 11px; letter-spacing: 0.5px;
+}
+.gp-fold {
+  background: none; border: none; color: var(--text-dim); padding: 0 6px 0 0;
+  font-size: 11px; cursor: pointer;
+}
+.gp-all {
+  background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border);
+  color: var(--text-dim); font-size: 10px; padding: 1px 6px; margin-left: 8px;
+  border-radius: 4px; cursor: pointer;
+}
+.gp-all:hover { color: var(--text); border-color: var(--accent); }
+
+.gp-pool { max-height: 300px; overflow-y: auto; margin-top: 8px; }
+.gp-pool-group {
+  display: flex; align-items: center; gap: 4px; margin: 8px 0 4px;
+  font-size: 11px; color: var(--text-mute); letter-spacing: 0.5px;
+}
+.gp-pool-item {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border-radius: var(--radius-xs); cursor: pointer; font-size: 12px;
+}
+.gp-pool-item:hover { background: rgba(255,255,255,0.05); }
+.gp-pool-ic { font-size: 14px; width: 18px; text-align: center; }
+.gp-pool-name { flex: 1; }
+.gp-pool-cnt { font-size: 10px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
 .gp-matrix tr:hover td { background: rgba(255,255,255,0.03); }
 .uad-section-label { color: var(--text-dim); font-size: 12px; display: block; margin-bottom: 6px; }
 .uad-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }

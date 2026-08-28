@@ -64,6 +64,18 @@ const DEFAULT_BULLET_SPEED = 400;
  * 中立击杀就没有屠龙者，这是对的）；而 `_lastHitFaction`（决定阵营奖励归属）
  * **只由红蓝双方更新** —— 中立的伤害不清空、也不覆盖上一位红/蓝攻击者。
  */
+/**
+ * ==================== v50：真实伤害的唯一判据 ====================
+ * 用户："真实伤害会跳过护盾以及所有防御手段直接对生命值造成伤害。"
+ *
+ * 抽成一个函数是因为两条伤害路径改动前的口径**不一样**（本仓库的老毛病）：
+ *   · performAttackDirect：真伤跳过双抗/减伤/格挡，但**仍然被护盾吸收**；
+ *   · _resolveHit：根本没有真伤分支 —— 只是因为 resist 取不到值而乘子恰好是 1，
+ *     减伤、格挡、护盾统统照吃。
+ * 现在两条都问这一个函数，跳过的东西也完全一致（含护盾）。
+ */
+function isTrueDamage(attackType) { return attackType === 'true'; }
+
 function recordLastHit(target, attacker) {
   if (!target || !attacker) return;
   target._lastHitBy = attacker.id;
@@ -521,6 +533,17 @@ export class CombatSystem {
   }
 
   finishAttack(attacker, target, finalAS) {
+    // ==================== v50：清零充能与叠攻城疲惫是两件事 ====================
+    // 用户："攻城车在攻击小兵时，充能满了之后不会清零，而是满充能后持续攻击。"
+    // 根因是我上一版把"打出去 → 充能清零"写在了这个函数**里面**，而函数第一行是
+    // `if (!hasRamCannon || !isStructureUnit(target)) return` —— 打小兵直接 return，
+    // 清零那句根本走不到。充能改成 onlyVs:'any' 之后这个洞才暴露出来。
+    //
+    // 所以拆开：**任何充能攻击打出去都清零**（与打的是谁无关），
+    // 攻城疲惫仍然只在打建筑时叠。
+    if (attacker && (attacker._charge || 0) > 0 && this.chargeNeedOf(attacker, target)) {
+      attacker._charge = 0;
+    }
     if (!hasRamCannon(attacker) || !isStructureUnit(target)) return finalAS;
     const R = CONFIG.gameRules?.ram || {};
     // 攻城疲惫：每次**攻城**攻击叠 fatiguePerAttack 层，每层 fatigueLayerPct%。
@@ -544,7 +567,6 @@ export class CombatSystem {
       this.effects._recalcEffectValues(eff);
       this.effects._updateDescription(eff);
     }
-    attacker._charge = 0;   // 打出去了 → 充能清零，重新攒
     return finalAS;   // 攻城模式不再额外乘攻速倍率（旧的 -50% 已随旧被动删除）
   }
 
@@ -717,16 +739,21 @@ export class CombatSystem {
       penFlat = hitInfo.magicPenFlat ?? (atkStats.magicPenFlat || 0);
     }
 
+    // v50：真伤跳过一切防御手段（见 isTrueDamage 的头注）。两条路径共用同一个判据。
+    const trueDmg = isTrueDamage(attackType);
     const effectiveResist = this.attrCalc.calcEffectiveArmor(resist, penPercent, penFlat);
-    const multiplier = this.attrCalc.calcDamageMultiplier(effectiveResist);
+    const multiplier = trueDmg ? 1 : this.attrCalc.calcDamageMultiplier(effectiveResist);
     let damage = totalRaw * multiplier;
 
     // 结构保护（LoL"不可选中"）：受保护的水晶不吃任何伤害。
     // 正常流程索敌层已过滤，这里兜底（溅射/连锁/光束等间接伤害路径）。
     if (isStructureProtected(this.entities, target)) return 0;
 
-    // 伤害减免 & 格挡
-    const dmgReduction = defStats.damageReduction || 0;
+    // 伤害减免 & 格挡。真伤全部跳过。
+    // ⚠️ 减伤**为负时是增伤**（用户："伤害减免等（不包括双抗）为负时叠加额外伤害"）——
+    // `1 − (−20)/100 = 1.2` 这条乘法天然就是这个行为，不用特判；
+    // 写下来是因为它看起来像"只会削减"，改的时候别顺手夹成 Math.min(1, …)。
+    const dmgReduction = trueDmg ? 0 : (defStats.damageReduction || 0);
     damage *= (1 - dmgReduction / 100);
     // ==================== v43：巨龙被动「宿怨」 ====================
     // 用户定稿："龙对某阵营所有单位获得 7%×该阵营击杀龙数量（不含远古龙）伤害减免
@@ -752,28 +779,12 @@ export class CombatSystem {
     // 哀兵（条件加成，用户定稿）：每层 +4% 对敌方小兵伤害、+10% 减免来自敌方小兵的伤害。
     // 与防御护盾同理——依赖攻击来源类型，stat 管线拿不到，必须在结算处判断。
     damage = this._applyAvenger(damage, attacker, target, atkStats, defStats);
-    const block = defStats.damageBlock || 0;
+    // 格挡同样：真伤跳过；为负时是加伤（damage − (−5) = damage + 5）。
+    const block = trueDmg ? 0 : (defStats.damageBlock || 0);
     damage = Math.max(0, damage - block);
 
     // ---- 护盾吸收 ----
-    const shieldFactor = this.attrCalc.calcShieldAbsorbFactor(defStats.armor || 0, defStats.magicResist || 0);
-    let tempShield = target.tempShield || 0;
-    let fixedShield = target.shieldFixedCurrent || 0;
-    let remainingDamage = damage;
-
-    const effectiveTempShield = tempShield * shieldFactor;
-    const absorbedByTemp = Math.min(remainingDamage, effectiveTempShield);
-    const tempShieldConsumed = absorbedByTemp / shieldFactor;
-    target.tempShield = Math.max(0, tempShield - tempShieldConsumed);
-    remainingDamage -= absorbedByTemp;
-
-    if (remainingDamage > 0 && fixedShield > 0) {
-      const effectiveFixedShield = fixedShield * shieldFactor;
-      const absorbedByFixed = Math.min(remainingDamage, effectiveFixedShield);
-      const fixedShieldConsumed = absorbedByFixed / shieldFactor;
-      target.shieldFixedCurrent = Math.max(0, fixedShield - fixedShieldConsumed);
-      remainingDamage -= absorbedByFixed;
-    }
+    let remainingDamage = this._absorbByShields(target, damage, defStats, trueDmg);
 
     const finalDamage = Math.min(remainingDamage, target.currentHP);
     target.currentHP -= finalDamage;
@@ -809,6 +820,7 @@ export class CombatSystem {
     // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份代码，
     // 不再各写一份（武器与其余被动过去分两段实现，现在统一走同一个 _skillInstances 循环）。
     this._fireOnDealtDamage(attacker, target, 1, { totalRaw, finalDamage, attackType });
+    this._fireOnDamaged(target, attacker, finalDamage);   // 受击方的防御型被动（钢魂反弹等）
 
     // ---- 触发目标的 onBeingAttacked ----
     for (const inst of target._skillInstances || []) {
@@ -842,7 +854,9 @@ export class CombatSystem {
       type: attackType,
       raw: totalRaw,
       absorbed: totalAbsorbed,
-      shieldFactor: shieldFactor,
+      // v50：护盾吸收合并进 _absorbByShields 之后这里不再有局部的 shieldFactor 变量。
+      // 事件里保留这一项是为了不改监听方的形状，现算一次（与吸收时同一个公式）。
+      shieldFactor: this.attrCalc.calcShieldAbsorbFactor(defStats.armor || 0, defStats.magicResist || 0),
     });
 
     // ---- 爆炸溅射 ----
@@ -1075,6 +1089,101 @@ export class CombatSystem {
   }
 
   /**
+   * ==================== v50：分裂弹（星魂）====================
+   * 从 origin 目标出发，向半径内最近的 N 个**其他**敌人各发一枚小弹。
+   *
+   * 用户定稿："分裂子弹不触发任何技能/被动等，但是攻击特效%/攻击特效固定
+   *            以 55% 的效率工作。"
+   * 这两条正好对应 performAttackDirect 已有的两个开关：
+   *   · `_noProc: true`        → 一个被动都不触发（否则毒/暗/蚀的叠层速度直接翻三倍）
+   *   · `applyOnHitBonus` + `attackShare: 0.55` → 攻击特效按 55% 效率并入
+   * 不需要为它新造任何机制。
+   *
+   * 走真实弹道而不是瞬时结算，是为了**看得见**（用户问"分裂后的小弹道怎么显示"）：
+   * 小弹用比主弹更小的 size 与该元素的颜色，渲染层照原样画，不用改渲染代码。
+   */
+  splitShot(attacker, origin, damage, attackType, opt = {}) {
+    if (!attacker || !origin || !this.projectiles) return 0;
+    const radius = opt.radius ?? 260;
+    const want = Math.max(0, opt.splits ?? 2);
+    if (want === 0 || !(damage > 0)) return 0;
+    const probe = { id: origin.id, pos: origin.pos, alive: true,
+      _mapFaction: attacker._mapFaction || attacker.faction, faction: attacker.faction };
+    const cands = enemyUnitsInRadius(this.entities, probe, radius, { includeBuildings: true })
+      .filter(e => e.id !== origin.id && e.id !== attacker.id)
+      .map(e => ({ e, d: Math.hypot(e.pos.x - origin.pos.x, e.pos.y - origin.pos.y) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, want);
+    for (const { e } of cands) {
+      this.projectiles.fire({
+        attackerId: attacker.id, targetId: e.id,
+        startX: origin.pos.x, startY: origin.pos.y,
+        currentX: origin.pos.x, currentY: origin.pos.y,
+        progress: 0, speed: 520,
+        size: 7,                       // 比塔弹(20)/兵弹(12)都小 —— 一眼看出是分裂出来的
+        color: opt.color || '#7c6cf5',
+        directHit: {
+          attackerId: attacker.id, damage, type: attackType,
+          options: { _noProc: true, applyOnHitBonus: true,
+                     attackShare: Math.max(0, Math.min(1, (opt.onHitEffPct ?? 55) / 100)) },
+        },
+      });
+    }
+    return cands.length;
+  }
+
+  /**
+   * ==================== v50：受击回调（防御向被动的唯一入口）====================
+   * 与 _fireOnDealtDamage 互为镜像 —— 那个是"我打了别人"，这个是"我被打了"。
+   * 引擎此前**没有**这个钩子，所以防御型被动（钢魂的反弹）无处可挂。
+   * 同样只实现一次，两条伤害路径都调它。
+   */
+  _fireOnDamaged(target, attacker, amount) {
+    if (!target || !attacker || !(amount > 0) || this._dmgGuard) return;
+    this._dmgGuard = true;   // 反弹本身也是伤害，不加锁会无限互反
+    try {
+      for (const inst of target._skillInstances || []) {
+        if (inst._disabled) continue;
+        const def = this.skills[inst.skillId];
+        if (!def || !def.onDamaged) continue;
+        def.onDamaged(target.id, attacker.id, amount, {
+          entityContainer: this.entities, effectRegistry: this.effects, eventBus: this.eventBus,
+          attrCalc: this.attrCalc, combat: this, waveNumber: window.waveNumber || 0,
+        });
+      }
+    } finally { this._dmgGuard = false; }
+  }
+
+  /**
+   * ==================== v50：护盾吸收（唯一实现）====================
+   * 这 18 行原来在 _resolveHit 与 performAttackDirect 里**逐字各写了一份**。
+   * 本轮要给它加"真伤不吃护盾"这条，两份就得改两处 —— 而本仓库这个形状
+   * 已经出过太多次事（改一处忘一处，症状只在其中一条路径上出现，极难查）。
+   * 所以趁改动合成一份。
+   *
+   * @param trueDmg 真伤：完全不进护盾，直接返回原始伤害（用户 v50 定稿）。
+   * @returns 穿过护盾之后**要打在生命值上**的伤害
+   */
+  _absorbByShields(target, damage, defStats, trueDmg) {
+    if (trueDmg) return damage;
+    const shieldFactor = this.attrCalc.calcShieldAbsorbFactor(defStats.armor || 0, defStats.magicResist || 0);
+    const tempShield = target.tempShield || 0;
+    const fixedShield = target.shieldFixedCurrent || 0;
+    let remaining = damage;
+
+    const absorbedByTemp = Math.min(remaining, tempShield * shieldFactor);
+    target.tempShield = Math.max(0, tempShield - absorbedByTemp / shieldFactor);
+    remaining -= absorbedByTemp;
+
+    if (remaining > 0 && fixedShield > 0) {
+      const absorbedByFixed = Math.min(remaining, fixedShield * shieldFactor);
+      target.shieldFixedCurrent = Math.max(0, fixedShield - absorbedByFixed / shieldFactor);
+      remaining -= absorbedByFixed;
+    }
+    return remaining;
+  }
+
+  /**
    * ==================== 被动触发的唯一入口：_fireOnDealtDamage ====================
    * performAttack（普通攻击）与 performAttackDirect（真伤/溅射/DOT/特殊攻击方式）
    * 两条伤害路径，"造成伤害后触发被动"这件事【只在这一个函数里实现一次】。
@@ -1196,9 +1305,12 @@ export class CombatSystem {
       damage *= (1 + options.bonusVsShieldPct / 100);
     }
 
-    // 真实伤害：完全无视双抗/减伤/格挡，直接进入护盾吸收结算
-    if (attackType === 'true') {
-      // damage 保持不变（已含伤害增幅/破盾加成），直接跳到护盾吸收
+    // 真实伤害：无视双抗/减伤/格挡，**也不被护盾吸收**
+    //（v50 用户定稿："跳过护盾以及所有防御手段直接对生命值造成伤害"）。
+    // 护盾那一段由 _absorbByShields 按 trueDmg 直接放行。
+    const trueDmg = isTrueDamage(attackType);
+    if (trueDmg) {
+      // damage 保持不变（已含伤害增幅/破盾加成），直接打生命值
     } else {
       let resist = 0, penPercent = 0, penFlat = 0;
       if (attackType === 'physical') {
@@ -1269,24 +1381,7 @@ export class CombatSystem {
     }
 
     // 护盾吸收
-    const shieldFactor = this.attrCalc.calcShieldAbsorbFactor(defStats.armor || 0, defStats.magicResist || 0);
-    let tempShield = target.tempShield || 0;
-    let fixedShield = target.shieldFixedCurrent || 0;
-    let remainingDamage = damage;
-
-    const effectiveTempShield = tempShield * shieldFactor;
-    const absorbedByTemp = Math.min(remainingDamage, effectiveTempShield);
-    const tempShieldConsumed = absorbedByTemp / shieldFactor;
-    target.tempShield = Math.max(0, tempShield - tempShieldConsumed);
-    remainingDamage -= absorbedByTemp;
-
-    if (remainingDamage > 0 && fixedShield > 0) {
-      const effectiveFixedShield = fixedShield * shieldFactor;
-      const absorbedByFixed = Math.min(remainingDamage, effectiveFixedShield);
-      const fixedShieldConsumed = absorbedByFixed / shieldFactor;
-      target.shieldFixedCurrent = Math.max(0, fixedShield - fixedShieldConsumed);
-      remainingDamage -= absorbedByFixed;
-    }
+    let remainingDamage = this._absorbByShields(target, damage, defStats, trueDmg);
 
     const finalDamage = Math.min(remainingDamage, target.currentHP);
     target.currentHP -= finalDamage;
@@ -1303,6 +1398,7 @@ export class CombatSystem {
     // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份。
     this._fireOnDealtDamage(attacker, target, attackShare,
       { totalRaw: baseDamage, finalDamage, attackType }, options._noProc);
+    if (!options._noProc) this._fireOnDamaged(target, attacker, finalDamage);
 
     // v39 修复（历史 bug）：死亡判定必须带 alive 守卫。原来只看 currentHP<=0，
     // 已死单位在同帧再吃一次伤害（溅射/多攻击者/自损致死后的排队攻击）就会【重复发死亡事件】，

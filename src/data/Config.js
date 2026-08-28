@@ -269,6 +269,14 @@ export const CONFIG = {
       wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06, damageReduction: 3 },
       dark:    { damageAmpPct: 7, lifeStealPct: 4 },
       poison:  { onHitPercentDamage: 0.7, maxHPPct: 4 },
+      // v50 六条新魂。每条都含一份**生存分量** —— v43 的对照数据摆在那里：
+      // 纯输出的三条魂推进度差全为负，纯减伤的山魂 6/6 全胜。这不是口味，是这个引擎的结构。
+      frost:   { damageBlock: 2, damageReduction: 4 },
+      steel:   { shieldFixedMax: 260, healShieldPowerPct: 8 },
+      blood:   { lifeStealPct: 3, maxHPPct: 4 },
+      magma:   { armorPenFlat: 6, magicPenFlat: 6, damageReduction: 4 },
+      astral:  { attackRange: 45, damageReduction: 3 },
+      rift:    { damageReduction: 5, attackDamagePct: 5 },
     },
     // 🔥 炎魂：攻击附带溅射。
     // v44：冷却从 8s 去掉改为常驻但比例砍半 —— 8 秒一次的溅射在"机械攻击"的单位身上
@@ -316,6 +324,30 @@ export const CONFIG = {
     // 对建筑打 25 折：百分比最大生命的 DoT 天然反建筑，不打折的话一波兵十秒推平一座塔。
     // v44：0.4 → 0.3（对照里 +1.96，偏强）。
     poison:  { pctPerStack: 0.3, duration: 4, vsBuildingPct: 25, maxStacks: 999 },
+    // ==================== v50：六条新魂的机制参数 ====================
+    // 🧊 霜魂：命中叠【霜冻】，满层冻结；**对建筑改为减攻速**（用户定稿："塔做减攻速的"）。
+    //    冻结后目标获得 immuneSec 秒的冻结免疫（用户定稿），状态栏显示剩余时间。
+    //    免疫是必须的：没有它，多个持魂单位轮流冻能把一个目标永久锁死。
+    frost:   { stacksToFreeze: 5, freezeSec: 1.2, immuneSec: 15, stackDuration: 4,
+               towerAtkSpeedPct: -6, towerDebuffSec: 4, towerMaxStacks: 8 },
+    // 🛡 铁魂：周期性给自己套护盾；护盾在场时反弹近战伤害（真伤，绕过对方防御）。
+    //    四档护盾来源都预留（用户定稿："预留固定值 + 最大生命% + 已损生命% + 当前生命%"），
+    //    具体数值以后再调 —— 先给一版能跑的。
+    steel:   { everySec: 8, flat: 120, maxHPPct: 3, missingHPPct: 6, currentHPPct: 0,
+               reflectPct: 30 },
+    // 🩸 血魂：越残血越强，**33% 生命时增益最大**（用户定稿），低于 33% 维持峰值不再回落
+    //    —— 越接近死亡收益反而下降会很怪。加的是攻击力/攻速/生命偷取三项。
+    blood:   { peakAtHPPct: 33, attackDamagePct: 30, bonusAttackSpeedPct: 25, lifeStealPct: 10 },
+    // 🌋 熔魂：命中施加【灼烧】，灼烧**有半径且跟着目标走**（用户定稿），
+    //    每秒对半径内的敌人造成真伤。等于一个会走的伤害圈，对密集兵线最强。
+    magma:   { duration: 4, radius: 70, tickDamagePct: 0.6, slowPct: 20 },
+    // 🌌 星魂：命中后分裂两枚小弹打向最近的敌人。
+    //    分裂弹**不触发任何技能/被动**，但攻击特效（固定/%当前生命）按 onHitEffPct 效率工作
+    //    （用户定稿：55%）。不这么限的话毒魂/暗魂/蚀魂的叠层速度会直接翻三倍。
+    astral:  { splits: 2, damagePct: 40, radius: 260, onHitEffPct: 55 },
+    // ☄️ 蚀魂：命中削目标的【伤害减免】，**可以削成负数** —— 负减伤 = 受到的伤害被放大。
+    //    这条与 v50 的真伤规则是配套的：真伤跳过一切防御手段，所以**真伤不吃这个放大**。
+    rift:    { perStack: 4, maxStacks: 5, duration: 6 },
     // 🐲 远古之力：唯一**限时**的一条（其余七条全部永久）
     ancient: { executeAtPct: 20, executePct: 20, durationSec: 240 },
     // ☀️ 光魂已随【光龙】一并删除（用户定稿："光龙直接删除吧"）。
@@ -360,6 +392,17 @@ export const CONFIG = {
     // ⚠️ 毒之力对照 100% / +2.81，是八档里最强的一条 —— %当前生命的攻击特效对
     // 高血量目标（塔）收益极高，而推进度量的正是推塔。首版 0.5 已砍到 0.25，仍偏强，再砍一半。
     poison:  { onHitPercentDamage: 0.12 },
+    // ==================== v50：六条新元素的【力】====================
+    // 仍然守"每个属性只属于一个元素"（用户定稿）。这六条用的都是此前没人用过的属性：
+    //   霜 格挡 ｜ 铁 固定护盾 ｜ 血 伤害转化 ｜ 熔 固定双穿 ｜ 星 射程+弹速 ｜ 蚀 减伤
+    // 数值是**首版猜测**，等 balance_matrix 的 power 对照跑完再定
+    //（目标：推进度差落在基线 +0.3~+0.8，力是过程奖励不是胜负手）。
+    frost:   { damageBlock: 0.6 },
+    steel:   { shieldFixedMax: 45 },
+    blood:   { damageConvertPct: 2 },
+    magma:   { armorPenFlat: 3, magicPenFlat: 3 },
+    astral:  { attackRange: 8, bulletSpeed: 20 },
+    rift:    { damageReduction: 1.5 },
   },
 
   // v43：龙的两个独立开关（用户定稿："龙魂效果有独立开关（是否生成/效果）"）。
@@ -574,6 +617,10 @@ export const CONFIG = {
     //   maxMix   —— 染色上限，防止把单位压成看不清的黑块
     // enabled: false 时 tint 恒为白，画面与本次改动前逐位一致。
     unitLighting: { enabled: true, strength: 2.2, maxMix: 0.80 },
+    // v50：小兵/龙的弹丸补一条**短**拖尾（用户："小兵/龙就是非常粗糙的点"）。
+    // 塔弹不走这里（它自己那条长尾 + 白芯不变）。lenK 是"尾长 = 弹径 × 本系数"，
+    // 塔弹是 2.2，这里给 0.9 —— 短到不会在上百条兵弹同屏时连成一片。
+    bulletTrail: { enabled: true, lenK: 0.9, widthK: 0.55, alpha: 0.75 },
     towerLight: {
       enabled: true,
       poolSize: 20,         // 真光源数量（恒定！数量一变全场材质重编译，见实现注释）
@@ -918,7 +965,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 40, magicResist: 40,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0  , shieldRegenRate: 8, tempShieldDecayPct: 5,
+      shieldFixedMax: 0  , tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -939,7 +986,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 15, magicResist: 15,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -954,7 +1001,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: 5,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -974,7 +1021,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 34, magicResist: 34,                               // v43：40/40 → 34/34
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -992,7 +1039,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: -10,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 600, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 600, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -1008,7 +1055,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 100, magicResist: -30,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -1023,7 +1070,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 20, magicPenPercent: 0,
       armor: 25, magicResist: 25,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -1038,7 +1085,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 25, magicResist: 25,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -1065,7 +1112,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 0, magicResist: 0,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
@@ -1083,7 +1130,7 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 40, magicResist: 40,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, shieldRegenRate: 5, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5,
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,

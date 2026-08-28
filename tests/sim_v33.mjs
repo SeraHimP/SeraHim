@@ -95,13 +95,25 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
     Math.abs(dealt - 200) < 1 && Math.abs(victim.tempShield - 100) < 1);
   // 攻击方不再回盾
   T('攻击方不再从造成伤害回盾（旧机制已废）', (attacker.tempShield || 0) === 0);
-  // 仅扣血部分：护盾吸收的不转化
+  // 仅扣血部分：护盾吸收的不转化。
+  // ⚠️ v50 起**真伤不再进护盾吸收**（用户定稿："跳过护盾以及所有防御手段"），
+  // 所以这条不能再拿真伤来测 —— 真伤会直接打生命值，护盾一分不掉，测的就不是原来那件事了。
+  // 换成物理伤害（双抗为 0，数值口径不变），要守的规则本身没变。
   const v2 = mkTower(ents, fx, { weapon: null, faction: 'red' });
   v2.baseStats.damageConvertPct = 50; v2.baseStats.armor = 0; v2.baseStats.magicResist = 0;
   v2.tempShield = 1000;
   attr.tick();
-  combat.performAttackDirect(attacker.id, v2.id, 200, 'true');
+  combat.performAttackDirect(attacker.id, v2.id, 200, 'physical');
   T('护盾吸收部分不转化（仅扣血计算）', Math.abs(v2.tempShield - (1000 - 200)) < 2);
+  T('v50：真伤完全绕过护盾，直接打生命值', (() => {
+    const v3 = mkTower(ents, fx, { weapon: null, faction: 'red' });
+    v3.baseStats.armor = 0; v3.baseStats.magicResist = 0;
+    v3.tempShield = 1000;
+    const hp0 = v3.currentHP;
+    attr.tick();
+    combat.performAttackDirect(attacker.id, v3.id, 200, 'true');
+    return Math.abs(v3.tempShield - 1000) < 1e-6 && Math.abs((hp0 - v3.currentHP) - 200) < 1;
+  })());
 }
 
 // ==================== ③ 闪电杖：2.2 倍率 / 闪电链 / 麻痹光环 ====================

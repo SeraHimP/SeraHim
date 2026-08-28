@@ -250,7 +250,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
       'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
       'onHitDamage', 'onHitPercentDamage',
-      'shieldFixedMax', 'shieldRegenRate', 'tempShieldDecayPct',
+      'shieldFixedMax', 'tempShieldDecayPct',
       'splashRadius', 'bulletSpeed',
       'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
     ];

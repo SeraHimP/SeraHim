@@ -1,5 +1,6 @@
 import { AttributeCalculator } from '../core/AttributeCalculator.js';
 import { CONFIG } from '../data/Config.js';
+import { enemyUnitsInRadius } from './FactionSystem.js';
 
 export class BuffSystem {
   constructor(effectRegistry, entityContainer, eventBus, combatSystem) {
@@ -72,6 +73,24 @@ export class BuffSystem {
             // 的实体 id（见 EffectRegistry.apply 的 casterId 选项）；没有的话（比如
             // 老存档、或者哪天真出现无来源的环境 DOT）才退回 0，保留原来的兜底。
             this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type);
+            // ==================== v50：带半径的 DOT（灼烧圈）====================
+            // 用户（熔魂定稿）："灼烧效果是有半径的，可以对其他单位造成伤害"
+            //                  + "跟着中毒目标走"。
+            // 做成 **DOT 蓝图的一个通用字段**而不是熔魂专属代码：这里本来就是
+            // "每 interval 秒结算一次这条 DOT"的唯一地方，圈的中心天然就是持有者的
+            // 当前位置 —— "跟着目标走"不需要额外维护任何东西。
+            // 以后任何 DOT 想变成范围 DOT，加一个 auraRadius 就行。
+            const R = eff.blueprint.auraRadius || 0;
+            if (R > 0 && entity.pos) {
+              const caster = this.entities.get(eff.casterId);
+              // 敌我按**施加者**算：圈是他放的，不该因为附着在谁身上而改变敌我。
+              const probe = { id: entity.id, pos: entity.pos, alive: true,
+                _mapFaction: caster?._mapFaction || caster?.faction || null,
+                faction: caster?.faction || null };
+              for (const other of enemyUnitsInRadius(this.entities, probe, R)) {
+                this.combat.performAttackDirect(eff.casterId ?? 0, other.id, dmg, type);
+              }
+            }
           }
         } else {
           if (this.timers.has(eff.id) && eff.remainingTime <= 0) {

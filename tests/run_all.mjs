@@ -26,7 +26,7 @@ const suites = [
   'sim_v24.mjs', 'sim_v33.mjs', 'sim_v34.mjs', 'sim_v35.mjs', 'sim_v36.mjs', 'sim_v37.mjs',
   'sim_v39.mjs', 'sim_v40.mjs', 'sim_v41.mjs', 'sim_v42.mjs', 'sim_v43.mjs',
   'sim_deadcode.mjs', 'sim_v44.mjs', 'sim_v45.mjs', 'sim_v46.mjs', 'sim_classic.mjs',
-  'sim_v47.mjs', 'sim_v49.mjs',
+  'sim_v47.mjs', 'sim_v49.mjs', 'sim_v50.mjs',
 ];
 
 const args = process.argv.slice(2);

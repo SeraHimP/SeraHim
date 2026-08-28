@@ -122,6 +122,17 @@ export class ProjectileSystem {
   }
 
   _hit(p) {
+    // ==================== v50：轻量"直伤子弹" ====================
+    // 星魂的分裂弹只需要"飞过去、到了造成一份伤害"，没有完整的 hitInfo 快照，
+    // 也不该走命中被动那条链（用户定稿：分裂弹不触发任何技能/被动）。
+    // 给它一条独立的落点处理，而不是硬凑一个 pendingHit —— 凑出来的假快照
+    // 迟早会被下游当成真攻击处理。
+    if (p.directHit) {
+      const d = p.directHit;
+      const t = this.entities.get(p.targetId);
+      if (t && t.alive) this.combat.performAttackDirect(d.attackerId, p.targetId, d.damage, d.type, d.options);
+      return;
+    }
     if (!p.pendingHit) return;
     const target = this.entities.get(p.targetId);
     if (target && target.alive) {

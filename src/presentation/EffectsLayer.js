@@ -744,6 +744,33 @@ export class EffectsLayer {
           }
           if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.4 + heat * 0.4), dcol, 0.07 + heat * 0.08, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕（压淡）
         }
+        // ==================== v50：兵弹/龙弹不再是"一个点" ====================
+        // 用户："目前的可视化弹道也过时了，塔的可以不用改，小兵/龙就是非常粗糙的点。"
+        //
+        // 这一版之前非塔弹只画两层同心光晕 —— 静止看是个圆点，飞起来也看不出方向。
+        // 当年不给它们加拖尾的理由写在上面："同屏兵弹上百，给它们加拖尾只会糊成一片"。
+        // 那个担心是对的，但结论下重了：塔弹的尾巴长 2.2 倍弹径又带白芯，
+        // 上百条确实会糊；而**一小截短streak**只多一个四边形、长度不到塔弹尾巴的三分之一，
+        // 既看得出速度方向，也不会连成一片。所以这里给非塔弹补一条**短**尾，
+        // 长度/开关都在 CONFIG.ui.bulletTrail 里（不想要就关掉，塔弹不受影响）。
+        if (!isTower) {
+          const bt = (CONFIG.ui && CONFIG.ui.bulletTrail) || {};
+          if (bt.enabled !== false) {
+            const dx2 = x - p.startX, dz2 = y - p.startY;
+            const d2 = Math.hypot(dx2, dz2);
+            if (d2 > 1) {
+              const tail = Math.min(d2, hsz * (bt.lenK ?? 0.9));
+              const tx2 = x - (dx2 / d2) * tail, tz2 = y - (dz2 / d2) * tail;
+              let ty2 = by;
+              if (snap) {
+                const tot2 = Math.hypot(snap.x - p.startX, snap.y - p.startY) || 1;
+                const dn = Math.min(1, Math.max(0, Math.hypot(tx2 - p.startX, tz2 - p.startY) / tot2));
+                ty2 = my + (snap.h - my) * dn;
+              }
+              this._trail(D, V, tx2, ty2, tz2, x, by, y, hsz * (bt.widthK ?? 0.55), 0, dcol, bt.alpha ?? 0.75);
+            }
+          }
+        }
         Q.sprite3(x, by, y, hsz, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);          // 光晕
         Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);    // 核心
         if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.10), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯

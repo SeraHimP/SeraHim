@@ -15,71 +15,132 @@
  */
 import { CONFIG } from '../../data/Config.js';
 import { WeatherPanel } from '../WeatherPanel.js';
+import { DRAGON_ELEMENTS } from '../../systems/DragonSystem.js';
+import { SkillLibrary } from '../../core/SkillLibrary.js';
 
 export const EDITOR_PAGES_GAMEPLAY_WORLD = {
   // ==================== 巨龙与龙魂 ====================
+  /**
+   * ==================== v50：巨龙与龙魂页重做 ====================
+   * 用户："新做的龙魂窗口不好，套用现有的单位属性编辑窗口中的样式比较好。
+   *        并且龙魂窗口上红蓝方都拿了多少条龙，下一条龙啥时候等等等。
+   *        并且你原有的窗口只写了龙魂，没写巨龙之力！"
+   *
+   * 三处改动：
+   *   ① **补上巨龙之力** —— 这是最大的缺口：之前整页没有任何入口能看到/改层数，
+   *      而力是每杀一条龙就给的过程奖励，比魂出现得早得多。
+   *   ② 顶部一条**对局态势**：双方各拿了几条、还差几条成魂、下一条龙的倒计时、当前魂。
+   *   ③ 样式套用单位属性面板那套（.attrs 的 chip 网格 + .panel-sec 小标题），
+   *      不再是一排排 slider-row 的数字输入框。
+   *
+   * 元素表从 DRAGON_ELEMENTS 现取而不是写死 —— v50 一次加了六个元素，
+   * 写死的话每加一个都要回来补一次（而且漏了不会报错，只会"这个元素在界面上不存在"）。
+   */
   _renderGameplayDragonContent() {
     const app = window.CTX?.__app;
     const ds = app?.dragonSystem;
     if (!ds) return `<div class="pick-desc-box">（巨龙系统未接入，进入对局后显示）</div>`;
 
     const st = ds.getState ? ds.getState() : ds;
-    const soulNames = { fire: '炎魂', water: '潮魂', earth: '山魂', thunder: '雷魂',
-      wind: '风魂', dark: '暗魂', poison: '毒魂', ancient: '远古之力' };
+    const ELS = Object.entries(DRAGON_ELEMENTS);
+    const soulName = (id) => {
+      const hit = ELS.find(([, d]) => d.soul === id);
+      return hit ? `${hit[1].icon} ${SkillLibrary[id]?.name || hit[1].label}` : (id === 'dragonsoul_ancient' ? '🐲 远古之力' : '（无）');
+    };
+    const fmt = (sec) => {
+      const s2 = Math.max(0, Math.ceil(sec || 0));
+      return `${Math.floor(s2 / 60)}:${String(s2 % 60).padStart(2, '0')}`;
+    };
 
-    const factionBlock = (fac, label) => {
-      const kills = st.factionKills?.[fac] || {};
+    // ---- 顶部：对局态势 ----
+    const nextIn = Math.max(0, (ds.nextDragonTime ?? 0));
+    const thr = st.soulThreshold ?? 4;
+    const situation = ['blue', 'red'].map((fac) => {
       const total = st.factionTotals?.[fac] ?? 0;
       const soul = st.souls?.[fac]?.[0] || null;
-      const need = Math.max(0, (st.soulThreshold ?? 4) - total);
-      const killRows = Object.entries(soulNames).filter(([k]) => k !== 'ancient').map(([k, name]) => `
-        <div class="slider-row"><label style="font-size:11px;">${name}击杀</label>
-          <input type="number" class="dg-kill-field" data-fac="${fac}" data-el="${k}" value="${kills[k] || 0}" min="0" style="width:60px;">
-        </div>`).join('');
-      return `<div class="editor-section">
-        <h4>${label}</h4>
-        <div class="pick-desc-box" style="font-size:11px;">
-          击杀 ${total} 条${st.soulResolved ? '' : `（还差 ${need} 条成魂）`}　龙魂：${soul ? soulNames[soul] : '（无）'}
-        </div>
-        ${killRows}
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <button class="dg-set-kills" data-fac="${fac}">✅ 应用击杀数</button>
+      const need = Math.max(0, thr - total);
+      return `<div class="a">
+        <label>${fac === 'blue' ? '🔵 蓝方' : '🔴 红方'}</label>
+        <span>${total} 条${st.soulResolved ? '' : `<span style="font-size:10px;color:var(--text-mute);"> / 还差 ${need}</span>`}</span>
+      </div>
+      <div class="a"><label>${fac === 'blue' ? '蓝方龙魂' : '红方龙魂'}</label>
+        <span style="font-size:12px;">${soul ? soulName(soul) : '（无）'}</span></div>`;
+    }).join('');
+
+    // ---- 每个元素一行：击杀数 + 双方的巨龙之力层数 ----
+    const cap = CONFIG.dragonPower?.maxStacks ?? 4;
+    const powerOf = (fac, el) => (ds.powerStacks?.[fac]?.[el] ?? ds._powerStacks?.[fac]?.[el] ?? null);
+    const rows = ELS.map(([el, def]) => {
+      const bk = st.factionKills?.blue?.[el] || 0;
+      const rk = st.factionKills?.red?.[el] || 0;
+      const bp = powerOf('blue', el), rp = powerOf('red', el);
+      return `<tr>
+        <td style="padding:3px 6px;white-space:nowrap;color:${def.color};">${def.icon} ${def.label}</td>
+        <td style="padding:3px 4px;"><input type="number" class="dg-kill-field" data-fac="blue" data-el="${el}"
+             value="${bk}" min="0" style="width:52px;"></td>
+        <td style="padding:3px 4px;"><input type="number" class="dg-kill-field" data-fac="red" data-el="${el}"
+             value="${rk}" min="0" style="width:52px;"></td>
+        <td style="padding:3px 6px;font-size:11px;color:var(--text-dim);white-space:nowrap;">
+          ${bp === null && rp === null ? '按击杀数发放' : `🔵${bp ?? 0} / 🔴${rp ?? 0}`} · 上限 ${cap}
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div class="panel-sec">对局态势</div>
+      <div class="attrs">
+        <div class="a"><label>下一条龙</label><span>${st.soulResolved ? '🐲 远古龙' : '🐉 元素龙'} ${fmt(nextIn)}</span></div>
+        <div class="a"><label>成魂门槛</label><span>${thr} 条</span></div>
+        ${situation}
+      </div>
+      <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
+        成魂规则：**任意元素**的龙先攒到 <b>${thr}</b> 条即刻成魂（先到先得），
+        魂的元素取该阵营**击杀最多**的那一种，并列时随机。
+        每杀一条龙先给一层对应元素的【巨龙之力】（纯属性，上限 ${cap} 层，作用于**全部单位**）；
+        成魂后额外解锁该元素的机制（作用于**塔与大型小兵**）。
+        远古之力限时 <b>${CONFIG.dragonSouls?.ancient?.durationSec ?? 240}</b> 秒，其余永久。
+      </div>
+
+      <div class="panel-sec">击杀数 · 巨龙之力</div>
+      <div style="max-height:280px;overflow-y:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <tr style="color:var(--text-mute);font-size:10px;">
+            <td style="padding:2px 6px;">元素</td><td style="padding:2px 4px;">🔵击杀</td>
+            <td style="padding:2px 4px;">🔴击杀</td><td style="padding:2px 6px;">巨龙之力层数</td>
+          </tr>
+          ${rows}
+        </table>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+        <button class="dg-set-kills" data-fac="blue">✅ 应用蓝方击杀</button>
+        <button class="dg-set-kills" data-fac="red">✅ 应用红方击杀</button>
+      </div>
+
+      <div class="panel-sec">直接指定龙魂</div>
+      ${['blue', 'red'].map(fac => `
+        <div class="slider-row"><label>${fac === 'blue' ? '🔵 蓝方' : '🔴 红方'}</label>
           <select class="dg-soul-select" data-fac="${fac}" style="flex:1;">
-            <option value="">－ 直接指定龙魂 －</option>
-            ${Object.entries(soulNames).map(([k, n]) => `<option value="${k}" ${soul === k ? 'selected' : ''}>${n}</option>`).join('')}
+            <option value="">－ 选择 －</option>
+            ${ELS.map(([el, d]) => `<option value="${el}" ${st.souls?.[fac]?.[0] === d.soul ? 'selected' : ''}>${d.icon} ${SkillLibrary[d.soul]?.name || d.label}</option>`).join('')}
           </select>
           <button class="dg-set-soul" data-fac="${fac}">装上</button>
           <button class="dg-clear-soul" data-fac="${fac}">卸下</button>
-        </div>
-      </div>`;
-    };
+        </div>`).join('')}
 
-    return `
-      <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
-        成魂规则：任意一方先攒到 <b>${st.soulThreshold ?? 4}</b> 条元素龙击杀即刻成魂
-        （先到先得，不是所有元素龙打完才统一结算）；并列时取击杀最多的元素类型，
-        全部只有 1 层则随机选一个。远古之力限时 <b>${CONFIG.dragonSouls?.ancient?.durationSec ?? 240}</b> 秒，
-        其余 7 条永久。
+      <div class="panel-sec">开关</div>
+      <div class="slider-row"><label>巨龙生成</label>
+        <button id="dgToggleSpawn" style="flex:1;">${CONFIG.dragonToggles?.spawn !== false ? '✅ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
       </div>
-      ${factionBlock('blue', '🔵 蓝方')}
-      ${factionBlock('red', '🔴 红方')}
-      <div class="editor-section">
-        <h4>⚙️ 生成 / 效果开关</h4>
-        <div class="slider-row"><label>巨龙生成</label>
-          <button id="dgToggleSpawn" style="flex:1;">${CONFIG.dragonToggles?.spawn !== false ? '✅ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
-        </div>
-        <div class="slider-row"><label title="关掉后龙仍会刷，但不再造成/享受任何龙魂加成、宿怨、斩杀等效果">巨龙效果</label>
-          <button id="dgToggleEffect" style="flex:1;">${CONFIG.dragonToggles?.effect !== false ? '✅ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
-        </div>
+      <div class="slider-row"><label title="关掉后龙仍会刷，但不再造成/享受任何龙魂加成、宿怨、斩杀等效果">巨龙效果</label>
+        <button id="dgToggleEffect" style="flex:1;">${CONFIG.dragonToggles?.effect !== false ? '✅ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
       </div>
-      <div class="editor-section">
-        <h4>⚙️ 快捷操作</h4>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button id="dgForceElement">🐲 立刻刷一条元素龙</button>
-          <button id="dgForceAncient">🐉 立刻刷一条远古龙</button>
-          <button id="dgKillAll" class="danger">💀 清场（走正常死亡结算，照常发奖励）</button>
-          <button id="dgResetProgress" class="danger">↺ 清空巨龙进度（击杀数/龙魂/计时）</button>
-        </div>
+
+      <div class="panel-sec">快捷操作</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button id="dgForceElement">🐉 立刻刷一条元素龙</button>
+        <button id="dgForceAncient">🐲 立刻刷一条远古龙</button>
+        <button id="dgKillAll" class="danger">💀 清场（走正常死亡结算，照常发奖励）</button>
+        <button id="dgResetProgress" class="danger">↺ 清空巨龙进度</button>
       </div>`;
   },
 
@@ -116,10 +177,19 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         const sel = overlay.querySelector(`.dg-soul-select[data-fac="${fac}"]`);
         const el = sel?.value;
         if (!el) { logFn('⚠️ 先选一个龙魂', 'error'); return; }
-        ds.souls[fac] = [el];
+        // ==================== v50：这里原来存的是**元素 key**，不是技能 id ====================
+        // `ds.souls[fac]` 的语义是"这一方的龙魂**技能 id**"（_resolveSoul 存进去的是
+        // DRAGON_ELEMENTS[el].soul）。而这个下拉框存的是 'fire' 这种元素 key，
+        // 于是 equipExistingSoul 去查 this.skills['fire'] —— 查不到，
+        // **手动指定龙魂从来没有真正生效过**：状态栏没有魂、属性也不变。
+        // 而且原来只改了字段、没有发给场上已有的单位，得等下一波新兵才可能生效。
+        const soulId = DRAGON_ELEMENTS[el]?.soul;
+        if (!soulId) { logFn('⚠️ 未知元素', 'error'); return; }
+        ds.souls[fac] = [soulId];
         ds.soulOwner = fac;
         ds.soulResolved = true;
-        logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂已手动指定`, 'spawn');
+        ds._grantAll(fac, (e) => ds._equipSoul(e, soulId));   // 立刻发给场上全体
+        logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂已手动指定：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
         refresh();
       });
     });
@@ -128,6 +198,7 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         const fac = btn.dataset.fac;
         ds.souls[fac] = [];
         if (ds.soulOwner === fac) { ds.soulOwner = null; ds.soulResolved = false; }
+        ds._grantAll(fac, (e) => ds._equipSoul(e, null));   // 同上：卸下也要作用到场上已有的单位
         logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂已卸下`, 'spawn');
         refresh();
       });

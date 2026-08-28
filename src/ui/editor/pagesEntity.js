@@ -42,7 +42,7 @@ export const EDITOR_PAGES_ENTITY = {
 
     const coreKeys = ['maxHP', 'currentHP', 'healthRegen', 'baseHealthRegenMod'];
     const attackKeys = ['attackDamage', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio', 'attackRange', 'attackType', 'bulletSpeed'];
-    const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax', 'shieldRegenRate', 'tempShieldDecayPct'];
+    const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax', 'tempShieldDecayPct'];
     const penKeys = ['armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent'];
     const effectKeys = ['onHitDamage', 'onHitPercentDamage', 'damageConvertPct', 'lifeStealPct', 'healShieldPowerPct', 'allStatsPct'];
     const allDefinedKeys = [...coreKeys, ...attackKeys, ...defenseKeys, ...penKeys, ...effectKeys];

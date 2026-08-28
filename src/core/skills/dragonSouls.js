@@ -26,7 +26,8 @@
  * 那个标记还被别处用着（渲染体积等），两件事不该绑死在一个字段上。
  */
 import { statMod } from '../statMod.js';
-import { applyHeal, healPowerFor } from '../healing.js';
+import { applyHeal, healPowerFor, grantTempShield } from '../healing.js';
+import { MELEE_RANGE_THRESHOLD } from '../../data/Config.js';
 import { CONFIG } from '../../data/Config.js';
 
 /** 取某条龙魂的参数（缺省回落到出厂值，编辑器改 CONFIG 即时生效）。 */
@@ -386,6 +387,282 @@ export const dragonSouls = {
     },
   },
 
+  // ==================== 🧊 霜魂：控制（对建筑改为减攻速）====================
+  // 用户定稿："霜龙魂的冻结也太超标了吧。冻结目标后该目标 15 秒内免疫冻结
+  //（显示在被冻结目标的状态栏里）。塔的话可以（做减攻速的）。"
+  //
+  // 免疫是这条魂能不能存在的前提：没有它，一条兵线上多个持魂单位轮流冻，
+  // 一个目标可以被**永久锁死**，那就不是控制而是删除。
+  dragonsoul_frost: {
+    id: 'dragonsoul_frost', name: '霜魂', icon: '🧊', color: '#7fd3f7', category: 'dragonsoul',
+    applicableTypes: ['tower'],
+    get description() {
+      const p = P('frost');
+      return `攻击叠一层【霜冻】，满 ${p.stacksToFreeze ?? 5} 层冻结目标 ${p.freezeSec ?? 1.2} 秒；`
+        + `被冻结的目标随后 ${p.immuneSec ?? 15} 秒内免疫冻结。`
+        + `对**建筑**不冻结，改为每层攻速 ${p.towerAtkSpeedPct ?? -6}%（最多 ${p.towerMaxStacks ?? 8} 层）。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const p = P('frost');
+      const target = ctx.entityContainer.get(targetId);
+      if (!target || !target.alive) return;
+
+      // ---- 建筑：不冻结，改叠攻速衰减 ----
+      if (target.type === 'tower') {
+        ctx.effectRegistry.apply(targetId, {
+          name: '霜蚀', icon: '🧊', kind: 'stat', color: '#7fd3f7', type: 'debuff',
+          statKey: 'bonusAttackSpeedPct',
+          flatValue: p.towerAtkSpeedPct ?? -6, perStackFlat: p.towerAtkSpeedPct ?? -6,
+          duration: p.towerDebuffSec ?? 4,
+          stackable: true, maxStacks: p.towerMaxStacks ?? 8, stackPolicy: 'stack', uniquePassive: true,
+          description: `霜蚀（{stacks}层，每层攻速${p.towerAtkSpeedPct ?? -6}%）`,
+        }, 'dragonsoul_frost_tower', { casterId: attackerId });
+        return;
+      }
+
+      // ---- 单位：叠层 → 满层冻结 → 进入免疫 ----
+      const effs = ctx.effectRegistry.getEffects(targetId);
+      // 免疫期内连层都不叠：否则免疫一结束就立刻二次冻结，等于免疫没起作用。
+      if (effs.some(e => e.blueprint.name === '冻结免疫')) return;
+
+      const need = p.stacksToFreeze ?? 5;
+      const id = ctx.effectRegistry.apply(targetId, {
+        name: '霜冻', icon: '❄️', kind: 'stat', color: '#7fd3f7', type: 'debuff',
+        statKey: 'moveSpeed', flatValue: -2, perStackFlat: -2,
+        duration: p.stackDuration ?? 4,
+        stackable: true, maxStacks: need, stackPolicy: 'stack', uniquePassive: true,
+        description: `霜冻（{stacks}/${need}层，满层冻结）`,
+      }, 'dragonsoul_frost', { casterId: attackerId });
+      const eff = ctx.effectRegistry.getEffect(id);
+      if (!eff || eff.stacks < need) return;
+
+      ctx.effectRegistry.remove(eff.id);                 // 触发即清空层数
+      ctx.effectRegistry.apply(targetId, {
+        name: '冻结', icon: '🧊', kind: 'stun', color: '#7fd3f7', type: 'debuff',
+        duration: p.freezeSec ?? 1.2,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: '被冻结：无法行动',
+      }, 'dragonsoul_frost_freeze', { casterId: attackerId });
+      // 用户明确要求这一格要能在被冻目标的状态栏里看到，且写清楚"这段时间内不会再被冻"。
+      ctx.effectRegistry.apply(targetId, {
+        name: '冻结免疫', icon: '🛡', kind: 'display', color: '#aee7ff', type: 'buff',
+        duration: p.immuneSec ?? 15,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `该时间内不会受到冻结（${p.immuneSec ?? 15} 秒）`,
+      }, 'dragonsoul_frost_immune');
+    },
+  },
+
+  // ==================== 🛡 铁魂：周期护盾 + 近战反弹 ====================
+  // 用户定稿："铁龙可以改为获得固定护盾 + 百分比生命值/已损/最大的护盾。"
+  // 四档来源全部预留成参数（具体数值以后再定），护盾在场时反弹近战伤害。
+  dragonsoul_steel: {
+    id: 'dragonsoul_steel', name: '钢魂', icon: '🛡', color: '#b0bec5', category: 'dragonsoul',
+    applicableTypes: ['tower'],
+    get description() {
+      const p = P('steel');
+      return `每 ${p.everySec ?? 8} 秒获得一层护盾（固定 ${p.flat ?? 120}`
+        + ` + 最大生命 ${p.maxHPPct ?? 3}% + 已损生命 ${p.missingHPPct ?? 6}% + 当前生命 ${p.currentHPPct ?? 0}%）；`
+        + `护盾存在期间，受到的近战伤害反弹 ${p.reflectPct ?? 30}%（真实伤害）。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const p = P('steel');
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive) return;
+      const st = instance.state || (instance.state = { t: 0 });
+      st.t = (st.t || 0) + dt;
+      const per = Math.max(0.1, p.everySec ?? 8);
+      if (st.t < per) return;
+      st.t -= per;
+      const stats = ctx.attrCalc.calc(e, ctx.effectRegistry.getEffects(entityId));
+      const maxHP = stats.maxHP || 0;
+      const cur = Math.max(0, e.currentHP || 0);
+      const missing = Math.max(0, maxHP - cur);
+      const amount = (p.flat ?? 120)
+        + maxHP * ((p.maxHPPct ?? 3) / 100)
+        + missing * ((p.missingHPPct ?? 6) / 100)
+        + cur * ((p.currentHPPct ?? 0) / 100);
+      if (amount <= 0) return;
+      // 走临时护盾：固定护盾是"脱战回满"的那一套，套在它上面会与自身回复打架。
+      grantTempShield(e, amount, healPowerFor(e, ctx));
+    },
+    /** 受击时反弹：只反弹**近战**来源，且是真伤（绕过对方防御）。 */
+    onDamaged: (entityId, attackerId, amount, ctx) => {
+      const p = P('steel');
+      const self = ctx.entityContainer.get(entityId);
+      const atk = ctx.entityContainer.get(attackerId);
+      if (!self || !atk || !atk.alive) return;
+      if ((self.tempShield || 0) + (self.shieldFixedCurrent || 0) <= 0) return;   // 没盾不反弹
+      if ((atk.baseStats?.attackRange ?? 999) > MELEE_RANGE_THRESHOLD) return;     // 只反近战
+      const back = amount * ((p.reflectPct ?? 30) / 100);
+      if (back > 0) ctx.combat?.performAttackDirect?.(entityId, attackerId, back, 'true', { _noProc: true });
+    },
+  },
+
+  // ==================== 🩸 血魂：越残血越强（33% 时峰值）====================
+  // 用户定稿："血龙龙魂可以改为损失生命值百分比越多，获得某属性越多。……
+  //           +攻击力 +攻速 +生命偷取。生命值在 33% 时增益最大。"
+  // 33% 以下**维持峰值不再回落** —— 越接近死亡收益反而下降会很怪。
+  // 这条天然自限（满血时收益为 0），不会滚雪球，正好是"落后方的翻盘工具"。
+  dragonsoul_blood: {
+    id: 'dragonsoul_blood', name: '血魂', icon: '🩸', color: '#c0392b', category: 'dragonsoul',
+    applicableTypes: ['tower'],
+    get description() {
+      const p = P('blood');
+      return `生命值越低增益越高，在 ${p.peakAtHPPct ?? 33}% 生命时达到峰值并保持：`
+        + `攻击力 +${p.attackDamagePct ?? 30}%、攻速 +${p.bonusAttackSpeedPct ?? 25}%、`
+        + `生命偷取 +${p.lifeStealPct ?? 10}%。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const p = P('blood');
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive) return;
+      const stats = ctx.attrCalc.calc(e, ctx.effectRegistry.getEffects(entityId));
+      const maxHP = stats.maxHP || 1;
+      const frac = Math.max(0, Math.min(1, (e.currentHP || 0) / maxHP));
+      const peak = Math.max(1, Math.min(99, p.peakAtHPPct ?? 33)) / 100;
+      // 100% 生命 → 0；peak 生命 → 1；低于 peak 维持 1。
+      const k = frac >= 1 ? 0 : Math.max(0, Math.min(1, (1 - frac) / (1 - peak)));
+      // 每帧改数值会让状态图标每帧重建（闪烁+点不中，本项目踩过），
+      // 所以按"量化到整数百分点"节流：只有 k 变了一个百分点才动效果。
+      const q = Math.round(k * 100);
+      if (instance.state?.q === q) return;
+      instance.state = instance.state || {};
+      instance.state.q = q;
+      const cur = ctx.effectRegistry.getEffects(entityId).filter(x => x.blueprint.name === '狂血');
+      for (const c of cur) ctx.effectRegistry.remove(c.id);
+      if (q <= 0) return;
+      for (const [statKey, base] of [
+        ['attackDamage', p.attackDamagePct ?? 30],
+        ['bonusAttackSpeedPct', p.bonusAttackSpeedPct ?? 25],
+        ['lifeStealPct', p.lifeStealPct ?? 10],
+      ]) {
+        // attackDamage 走百分比，另两项本身就是百分比属性 → 走固定值加成
+        const isPct = statKey === 'attackDamage';
+        ctx.effectRegistry.apply(entityId, {
+          name: '狂血', icon: '🩸', kind: 'stat', color: '#c0392b', type: 'buff',
+          statKey,
+          flatValue: isPct ? 0 : base * k,
+          percentValue: isPct ? base * k : 0,
+          duration: Infinity, permanent: true,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `狂血：残血强化（当前 ${q}%）`,
+        }, `dragonsoul_blood_${statKey}`);
+      }
+    },
+  },
+
+  // ==================== 🌋 熔魂：跟着目标走的灼烧圈 ====================
+  // 用户定稿："熔龙改为对目标施加灼烧效果，灼烧效果是有半径的，可以对其他单位造成伤害。"
+  // 追加定稿："跟着中毒目标走。"—— 所以它是一个**会移动的伤害圈**，对密集兵线最强，
+  // 与毒魂（百分比最大生命、天然反建筑）正好是相反的定位。
+  dragonsoul_magma: {
+    id: 'dragonsoul_magma', name: '熔魂', icon: '🌋', color: '#d35400', category: 'dragonsoul',
+    applicableTypes: ['tower'],
+    get description() {
+      const p = P('magma');
+      return `攻击对目标施加【灼烧】${p.duration ?? 4} 秒：以该目标为中心 ${p.radius ?? 70} 半径内的敌人`
+        + `每秒受到其最大生命 ${p.tickDamagePct ?? 0.6}% 的真实伤害并减速 ${p.slowPct ?? 20}%（灼烧圈跟着目标移动）。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const p = P('magma');
+      const target = ctx.entityContainer.get(targetId);
+      if (!target || !target.alive) return;
+      const stats = ctx.attrCalc.calc(target, ctx.effectRegistry.getEffects(targetId));
+      const perTick = (stats.maxHP || 0) * ((p.tickDamagePct ?? 0.6) / 100);
+      // 两条效果**同名**，状态栏因此合成一格（按 blueprint.name 聚合）。
+      //   ① dot + auraRadius —— 伤害本体。半径那一半由 BuffSystem 通用处理，
+      //      圈的中心天然是持有者的当前位置，"跟着目标走"不需要额外维护任何东西。
+      //   ② stat —— 减速。
+      ctx.effectRegistry.apply(targetId, {
+        name: '灼烧', icon: '🌋', kind: 'dot', color: '#d35400', type: 'debuff',
+        damageType: 'true',
+        flatValue: perTick, perStackFlat: perTick,
+        tickInterval: 1, duration: p.duration ?? 4,
+        auraRadius: p.radius ?? 70,       // ← 通用字段：带半径的 DOT（见 BuffSystem）
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `灼烧：半径 ${p.radius ?? 70} 内每秒真实伤害`,
+      }, 'dragonsoul_magma', { casterId: attackerId });
+      ctx.effectRegistry.apply(targetId, {
+        name: '灼烧', icon: '🌋', kind: 'stat', color: '#d35400', type: 'debuff',
+        statKey: 'moveSpeed', percentValue: -(p.slowPct ?? 20),
+        duration: p.duration ?? 4,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `灼烧：减速 ${p.slowPct ?? 20}%`,
+      }, 'dragonsoul_magma_slow', { casterId: attackerId });
+    },
+  },
+
+  // ==================== 🌌 星魂：命中后分裂 ====================
+  // 用户定稿："分裂子弹不触发任何技能/被动等，但是攻击特效%/攻击特效固定以 55% 的效率工作。"
+  // 不这么限的话，毒魂/暗魂/蚀魂的叠层速度会因为"一发变三发"直接翻三倍。
+  dragonsoul_astral: {
+    id: 'dragonsoul_astral', name: '星魂', icon: '🌌', color: '#7c6cf5', category: 'dragonsoul',
+    applicableTypes: ['tower'],
+    get description() {
+      const p = P('astral');
+      return `命中后分裂出 ${p.splits ?? 2} 枚星弹，飞向 ${p.radius ?? 260} 内最近的其他敌人，`
+        + `各造成 ${p.damagePct ?? 40}% 伤害。分裂弹不触发任何技能与被动，`
+        + `攻击特效按 ${p.onHitEffPct ?? 55}% 效率结算。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const p = P('astral');
+      const atk = ctx.entityContainer.get(attackerId);
+      const origin = ctx.entityContainer.get(targetId);
+      if (!atk || !origin || !ctx.combat) return;
+      const base = (ctx.totalRaw || 0) * ((p.damagePct ?? 40) / 100);
+      if (base <= 0) return;
+      ctx.combat.splitShot(atk, origin, base, ctx.attackType || 'physical', {
+        splits: p.splits ?? 2,
+        radius: p.radius ?? 260,
+        onHitEffPct: p.onHitEffPct ?? 55,
+      });
+    },
+  },
+
+  // ==================== ☄️ 蚀魂：把减伤削成负数 ====================
+  // 与暗魂的区别要说清楚：暗魂削的是**双抗**（只影响对应伤害类型，且被穿透规则牵制），
+  // 蚀魂削的是**伤害减免**（影响一切非真伤伤害，而且能进负数 = 放大）。
+  // ⚠️ 按 v50 的定稿，真伤跳过一切防御手段，所以**真伤不吃这个放大** —— 这是自洽的。
+  dragonsoul_rift: {
+    id: 'dragonsoul_rift', name: '蚀魂', icon: '☄️', color: '#5d6d7e', category: 'dragonsoul',
+    applicableTypes: ['tower'],
+    get description() {
+      const p = P('rift');
+      return `命中使目标伤害减免降低 ${p.perStack ?? 4}%/层（最多 ${p.maxStacks ?? 5} 层，`
+        + `${p.duration ?? 6} 秒）。减免被削成负数时，目标受到的伤害会被**放大**（真实伤害除外）。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const p = P('rift');
+      const target = ctx.entityContainer.get(targetId);
+      if (!target || !target.alive) return;
+      ctx.effectRegistry.apply(targetId, {
+        name: '侵蚀', icon: '☄️', kind: 'stat', color: '#5d6d7e', type: 'debuff',
+        statKey: 'damageReduction',
+        flatValue: -(p.perStack ?? 4), perStackFlat: -(p.perStack ?? 4),
+        duration: p.duration ?? 6,
+        stackable: true, maxStacks: p.maxStacks ?? 5, stackPolicy: 'stack', uniquePassive: true,
+        description: `侵蚀（{stacks}层，每层减免 −${p.perStack ?? 4}%）`,
+      }, 'dragonsoul_rift', { casterId: attackerId });
+    },
+  },
+
   // ==================== 🐲 远古之力（限时 240s 的处决）====================
   // 用户定稿：八条龙魂全部**永久**，只有这一条限时。
   // 它是龙魂之外的独立奖励 —— 成魂后元素龙停刷、只出远古龙，**双方都能抢**。
@@ -447,7 +724,9 @@ export const dragonSouls = {
  * 独占性的要求落在【巨龙之力】上（每种元素的属性互不重复），
  * 平衡的要求落在【魂】上，两边不打架。
  */
-const SOUL_STAT_KEYS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+const SOUL_STAT_KEYS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
+  // v50 新增六条
+  'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
 
 // 属性中文名。只覆盖龙魂用得到的那几项 —— 面板那份完整表在 UI 层（editor/fields.js），
 // core 不该反向依赖 UI，所以这里留一份小的。多出来的键会原样显示，不会漏说。

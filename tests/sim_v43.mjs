@@ -469,8 +469,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
       /from '\.\/dialogShell\.js'/.test(srcOf((`../src/ui/${f}.js`))));
   }
 
+  // v50：checks 里现在既有正则、也有"给源码返回真假"的函数
+  //（有些规则是"**不许**出现某个东西"，正则表达不了否定 + 多条件）。
   const need = (name, src, checks) => {
-    for (const [label, re] of checks) T(`Q1 ${name}：${label}`, re.test(src));
+    for (const [label, chk] of checks) {
+      T(`Q1 ${name}：${label}`, typeof chk === 'function' ? chk(src) : chk.test(src));
+    }
   };
   need('设置面板', srcOf(('../src/ui/SettingsDialog.js')), [
     ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'settab'/],
@@ -482,13 +486,23 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     ['子项 key 与主分类 key 同一套（避免两层选中错位）', /k\.startsWith\('minion:'\)/],
   ]);
   need('天气面板', srcOf(('../src/ui/WeatherPanel.js')), [
-    ['左侧栏结构', /<div class="tpl-layout">/],
+    // v50 用户定稿："天气界面你是直接给我套用了，有两列 tab 菜单，我要的是完全重构。"
+    // 这一条原来钉的正是那个内层 .tpl-layout —— 它塞进模板编辑器的页面容器之后，
+    // 就成了"导航列套导航列"。现在整块删掉、四段并成一页，所以断言**翻过来**：
+    // 天气页**不许**再自己起一套侧栏结构。
+    ['不再自己套一层侧栏（导航列套导航列正是"两列 tab"的成因）',
+      (src) => !/<div class="tpl-layout">/.test(src) && !/tpl-nav-item/.test(src)],
+    ['四段并成一页，用 .panel-sec 分隔（与单位属性面板同一套语言）',
+      /class="panel-sec">实时与预报</],
     // 2026-08 用户定稿："设置窗口只留系统设置，游戏性设置整合到模板编辑器里"——
     // 天气配置不再自己开 modal-box，_renderConfigBody/_bindConfigBody 只出内容，
     // 外框（含关闭按钮）由模板编辑器的页面容器统一提供，不再是"第三套壳"。
     ['拆成 render/bind 两半供模板编辑器页面调用（不再自己起 overlay）',
       /_renderConfigBody\(\)[\s\S]*?_bindConfigBody\(container, logFn\)/],
-    ['切页只切 display，不重建 DOM（保住既有绑定与逐帧重绘）', /d\.style\.display = d\.dataset\.wxsec === this\._cfgSec/],
+    // 切页那条随内层导航一并作废：没有页可切了。原来它守的是"别每次切页重建 DOM"，
+    // 而现在四段常驻同一页、逐帧重绘的画布与绑定天然不会被重建 —— 规则被结构本身保证了。
+    ['内层切页状态与它的绑定一并删干净（留着就是死状态）',
+      (src) => !/data-wxsec/.test(src) && !/data-wxnav/.test(src)],
   ]);
   need('模式选择', srcOf(('../src/ui/ModeDialog.js')), [
     ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'modenav'/],
@@ -819,8 +833,24 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison']
         .every(k => S[k].durationSec === undefined));
   const src = srcOf(('../src/core/skills/dragonSouls.js'));
-  T('魂⑤-所有触发点都不需要判断（onDealtDamage/onFrame/onEquip）',
-    !/优先攻击|选择目标|残血/.test(src));
+  // v50：这条原来是关键词黑名单 `!/优先攻击|选择目标|残血/`，属于**钉词不钉规则**。
+  // 血魂的文案里出现"残血"说的是**持有者自己的血量**（越残血越强），
+  // 与"要不要去集火残血的敌人"完全是两回事，却会被这条误判。
+  // 改成结构性判据：每条魂的触发钩子必须全在自动那一档里。
+  // 领受者是塔与大型小兵、不会做任何决策，所以真正要守的就是这件事。
+  T('魂⑤-所有触发点都不需要判断（只用 onDealtDamage/onFrame/onEquip/onUnequip/onDamaged）', (() => {
+    const AUTO = new Set(['onDealtDamage', 'onFrame', 'onEquip', 'onUnequip', 'onDamaged']);
+    for (const [id, def] of Object.entries(SkillLibrary)) {
+      if (!id.startsWith('dragonsoul_')) continue;
+      for (const k of Object.keys(def)) {
+        if (typeof def[k] !== 'function') continue;
+        // 文案与显示用的几个函数不是触发点
+        if (['computeCurrent', 'description', 'descTemplate'].includes(k)) continue;
+        if (!AUTO.has(k)) return false;
+      }
+    }
+    return true;
+  })());
   T('魂⑥-冷却型用 gameTime 绝对时间戳（onDealtDamage 拿不到 dt）',
     /function offCooldown\(instance, seconds\)/.test(src) && /instance\.state\.nextAt/.test(src));
   T('魂⑦-暗魂全队共享层数（固定 sourceId + uniquePassive）',

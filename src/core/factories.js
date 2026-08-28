@@ -184,7 +184,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
       //（maxHP/armor/magicResist/attackDamage/baseAttackSpeed/shieldFixedMax/healthRegen/attackRange），
       // 白名单以外的一切覆写在建塔那一刻就被丢掉了。被丢掉的包括：
       //   attackType（本次报的）、bulletSpeed、attackSpeedRatio、bonusAttackSpeedPct、
-      //   四个穿透字段、damageReduction/damageBlock、shieldRegenRate、tempShieldDecayPct、
+      //   四个穿透字段、damageReduction/damageBlock、tempShieldDecayPct、
       //   onHitDamage/onHitPercentDamage、damageConvertPct/lifeStealPct/damageAmpPct、
       //   allStatsPct、healShieldPowerPct……
       // 编辑器面板读的是 towerTierEffective（叠加链算出来的值），所以面板上改了会"显示成功"，

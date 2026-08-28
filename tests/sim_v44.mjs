@@ -351,8 +351,19 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     && /dg-set-soul/.test(gw) && /dgResetProgress/.test(gw));
   T('巨龙⑥-清场走 entity:death（绕过去的话"编辑器杀的龙不给奖励"，两套行为）',
     /app\?\.eventBus\?\.emit\?\.\('entity:death'/.test(gw));
-  T('巨龙⑦-展示双方争夺进度（旧面板完全没有这一层信息）',
-    /还差 \$\{need\} 条成魂/.test(gw));
+  // v50 重做：进度那一块从一句文字扩成"对局态势"网格（双方条数 / 还差几条 /
+  // 下一条龙倒计时 / 当前魂）。断言随之钉这几项都在，而不是钉那一句文案。
+  T('巨龙⑦-展示双方争夺进度（双方条数 + 还差几条 + 下一条龙倒计时）',
+    /还差 \$\{need\}/.test(gw) && /下一条龙/.test(gw) && /对局态势/.test(gw));
+  // 用户："你原有的窗口只写了龙魂，没写巨龙之力！"—— 这是这一页最大的缺口。
+  T('巨龙⑦-补上了【巨龙之力】的展示（层数 + 上限）',
+    /巨龙之力层数/.test(gw) && /dragonPower\?\.maxStacks/.test(gw));
+  T('巨龙⑦-元素表从 DRAGON_ELEMENTS 现取，不写死（v50 一次加了六个元素）',
+    /Object\.entries\(DRAGON_ELEMENTS\)/.test(gw));
+  // 手动指定龙魂原来存的是**元素 key** 而不是技能 id，equipExistingSoul 查不到 →
+  // 手动指定从来没真正生效过。修好之后这条断言守住它不再退化。
+  T('巨龙⑦-手动指定龙魂存的是技能 id，并且立刻发给场上全体',
+    /DRAGON_ELEMENTS\[el\]\?\.soul/.test(gw) && /_grantAll\(fac, \(e\) => ds\._equipSoul\(e, soulId\)\)/.test(gw));
   T('巨龙⑧-文案跟真实规则一致：先到先得，不是"打完一批统一结算"',
     /先到先得/.test(gw) && !/都不到则无魂/.test(gw));
 }
@@ -409,13 +420,16 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 // ==================== 八、龙魂 / 巨龙之力重做 ====================
 {
   const { DRAGON_ELEMENTS, dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
-  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+  // v50：六条新元素（霜/铁/血/熔/星/蚀）。这一节的规矩对全部元素成立，
+  // 所以列表直接从 DRAGON_ELEMENTS 取 —— 写死七个的话，以后每加一个元素
+  // 这里都会漏测（而"每个属性只属于一个元素"恰恰是元素越多越容易破的规矩）。
+  const ELS = Object.keys(DRAGON_ELEMENTS);
 
   T('龙①-光龙与光魂一并删除（用户定稿"光龙直接删除吧"）',
     !DRAGON_ELEMENTS.light && !SkillLibrary.dragonsoul_light
     && !CONFIG.dragonSouls.light && !CONFIG.dragonPower.light);
-  T('龙②-剩七个元素，每个都能查到自己的魂',
-    Object.keys(DRAGON_ELEMENTS).length === 7
+  T('龙②-每个元素都能查到自己的魂（v50 起 13 个元素）',
+    Object.keys(DRAGON_ELEMENTS).length === 13
     && ELS.every(k => !!SkillLibrary[DRAGON_ELEMENTS[k].soul]));
 
   // ---- 巨龙之力：纯数值，且**每一项只属于一个元素** ----

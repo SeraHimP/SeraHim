@@ -100,7 +100,6 @@ export const STAT_DOCS = {
     desc: '可再生的护盾上限。护盾先于生命被消耗。',
     formula: '按【护盾回复速率】再生，受【治疗与护盾强度】加成。',
   },
-  shieldRegenRate: { label: '护盾回复速率', desc: '固定护盾每秒回复量。', formula: '受【治疗与护盾强度】加成。' },
   tempShieldDecayPct: { label: '临时护盾衰减%', desc: '临时护盾每秒自然衰减的比例。', formula: '临时护盾先于固定护盾被消耗。' },
   armorPenFlat: {
     label: '固定护甲穿透',

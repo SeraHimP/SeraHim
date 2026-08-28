@@ -33,6 +33,15 @@ export const DRAGON_ELEMENTS = {
   wind:    { key: 'wind',    label: '风龙', icon: '🌪', color: '#1abc9c', soul: 'dragonsoul_wind' },
   dark:    { key: 'dark',    label: '暗龙', icon: '🌑', color: '#8e44ad', soul: 'dragonsoul_dark' },
   poison:  { key: 'poison',  label: '毒龙', icon: '☠️', color: '#27ae60', soul: 'dragonsoul_poison' },
+  // ==================== v50：六条新元素（用户定稿）====================
+  // 加元素**不需要改成魂规则**：门槛数的是"任意 4 条龙"，成魂时取该阵营击杀最多的元素
+  //（并列随机）。这正是用户选的那条口径，代码本来就是这么写的。
+  frost:   { key: 'frost',   label: '霜龙', icon: '🧊', color: '#7fd3f7', soul: 'dragonsoul_frost' },
+  steel:   { key: 'steel',   label: '铁龙', icon: '🛡', color: '#b0bec5', soul: 'dragonsoul_steel' },
+  blood:   { key: 'blood',   label: '血龙', icon: '🩸', color: '#c0392b', soul: 'dragonsoul_blood' },
+  magma:   { key: 'magma',   label: '熔龙', icon: '🌋', color: '#d35400', soul: 'dragonsoul_magma' },
+  astral:  { key: 'astral',  label: '星龙', icon: '🌌', color: '#7c6cf5', soul: 'dragonsoul_astral' },
+  rift:    { key: 'rift',    label: '蚀龙', icon: '☄️', color: '#5d6d7e', soul: 'dragonsoul_rift' },
 };
 
 /**

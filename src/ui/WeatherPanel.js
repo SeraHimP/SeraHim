@@ -306,46 +306,40 @@ export const WeatherPanel = {
   _renderConfigBody() {
     const ws = this._weather;
     if (!ws) return '';
-    const SECS = [
-      { key: 'live', label: '📊 实时与预报' },
-      { key: 'tpl',  label: '🌍 气候模板' },
-      { key: 'base', label: '🌤 基础天气' },
-      { key: 'ex',   label: '⚡ 极端天气' },
-    ];
-    if (!this._cfgSec) this._cfgSec = 'live';
-    const sec = (k, inner) => `<div data-wxsec="${k}" style="display:${k === this._cfgSec ? '' : 'none'};">${inner}</div>`;
+    // ==================== v50：天气配置页重构 ====================
+    // 用户："天气界面你是直接给我套用了，有两列 tab 菜单，我要的是天气界面的完全重构，
+    //        现有的样式不要！不好看！！！！"
+    //
+    // "两列 tab" 的直接原因就在这里：这个函数自己又渲染了一整套 `.tpl-layout + .tpl-nav`，
+    // 而它本身已经被塞进模板编辑器的页面容器里 —— **导航列套导航列**。
+    // 现在整块去掉内层导航，四段并成**一页**，用 .panel-sec 小标题分隔
+    //（与单位属性面板同一套语言）。
+    // this._cfgSec 连同它的切页事件一并删除：没有内层导航了，那个状态没有意义。
     return `
-      <div class="tpl-layout">
-        <div class="tpl-nav"><div class="tpl-nav-group">
-          ${SECS.map(x => `<button class="tpl-nav-item ${x.key === this._cfgSec ? 'active' : ''}" data-wxnav="${x.key}">${x.label}</button>`).join('')}
-        </div></div>
-        <div class="tpl-pane">
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-            <button id="wxToggle" style="flex:1;">${ws.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
-            <button id="wxReroll" style="flex:1;">🎲 重新随机本局天气</button>
-          </div>
-          ${sec('live', `
-          <canvas id="wxBigBar" style="width:100%;height:64px;display:block;margin-bottom:12px;"></canvas>
-          <div id="wxLive" style="font-size:12px;line-height:1.8;font-variant-numeric:tabular-nums;background:rgba(0,0,0,0.25);
-            border-radius:8px;padding:8px 10px;margin-bottom:12px;"></div>`)}
-          ${sec('tpl', `<div id="wxTemplates" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;"></div>`)}
-          ${sec('base', `<div id="wxBase"></div>`)}
-          ${sec('ex', `<div id="wxExtreme"></div>`)}
-        </div>
-      </div>`;
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+        <button id="wxToggle" style="flex:1;">${ws.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+        <button id="wxReroll" style="flex:1;">🎲 重新随机本局天气</button>
+      </div>
+
+      <div class="panel-sec">实时与预报</div>
+      <canvas id="wxBigBar" style="width:100%;height:64px;display:block;margin-bottom:10px;border-radius:6px;"></canvas>
+      <div id="wxLive" style="font-size:12px;line-height:1.8;font-variant-numeric:tabular-nums;
+        background:rgba(0,0,0,0.25);border-radius:8px;padding:8px 10px;"></div>
+
+      <div class="panel-sec">气候模板</div>
+      <div id="wxTemplates" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+
+      <div class="panel-sec">基础天气</div>
+      <div id="wxBase"></div>
+
+      <div class="panel-sec">极端天气</div>
+      <div id="wxExtreme"></div>`;
   },
 
   _bindConfigBody(container, logFn) {
     const ws = this._weather;
     if (!ws) return;
-    container.querySelectorAll('[data-wxnav]').forEach(b => b.addEventListener('click', () => {
-      this._cfgSec = b.dataset.wxnav;
-      container.querySelectorAll('[data-wxsec]').forEach(d => {
-        d.style.display = d.dataset.wxsec === this._cfgSec ? '' : 'none';
-      });
-      container.querySelectorAll('[data-wxnav]').forEach(x =>
-        x.classList.toggle('active', x.dataset.wxnav === this._cfgSec));
-    }));
+    // v50：内层导航已删除（四段并成一页），这里原来那段切页绑定一并去掉。
 
     const renderRows = () => {
       const baseBox = container.querySelector('#wxBase');
