@@ -460,11 +460,18 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* 具体颜色按资源类型（法力/升温/闪电充能/通用充能）由 JS 现读 RESOURCE_COLORS 写 background，
    这里只给一个兜底色，防止 JS 还没跑到时是空白色块。 */
 .bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: width 0.12s linear, background 0.2s; }
+/* v51.2：这段文字之前完全看不见——用的是 --text-mute（#5a6472，接近深色面板底色），
+   又没有 text-shadow，叠在条上跟叠在深色底上都没对比度。改成跟 .bar-text（血条读数）
+   同一套做法：亮色文字 + 投影 + position/z-index 保证画在条的上层，
+   margin 也改成与 .bar-res-row 自身高度（18px）一致，不再是拍脑袋的 -16px。 */
 .bar-res-text {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 10px; color: var(--text-mute); margin: -16px 0 5px; line-height: 1; pointer-events: none;
+  height: 18px; line-height: 1; font-size: 10px; color: var(--text);
+  margin: -18px 0 6px; padding: 0 7px; position: relative; z-index: 1;
+  pointer-events: none; font-variant-numeric: tabular-nums; font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
-.bar-res-regen { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.bar-res-regen { color: var(--text); opacity: 0.82; font-variant-numeric: tabular-nums; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }

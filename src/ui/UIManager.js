@@ -7,7 +7,7 @@ import { DetailModal, STAT_LABELS } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS } from './statPanelLayout.js';
-import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
+import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES } from '../core/resourceBar.js';
 import { stepTrail } from '../presentation/barTrail.js';
 
 export class UIManager {
@@ -185,7 +185,11 @@ export class UIManager {
       const def = SkillLibrary[inst.skillId];
       if (def?.mergedSkills) for (const k of resolveMergedIds(def, pseudo)) merged.add(k);
     }
-    const visible = instances.filter(i => !merged.has(i.skillId));
+    // v51.2（Q2）："充能攻击这类不要显示，这个应该是和塔武器/小兵类型相绑定的"——
+    // 上一版只把它从批量加技能池里排除了，技能栏这里漏了。攻击方式（category:'attackmode'）
+    // 本来就不是玩家会主动查看/替换的"技能"，是武器的一个内置属性，这里统一按分类排除，
+    // 不用逐个技能 id 写死（以后再加别的攻击方式也自动盖住）。
+    const visible = instances.filter(i => !merged.has(i.skillId) && SkillLibrary[i.skillId]?.category !== 'attackmode');
     const sig = visible.map(i => i.id + (i._disabled ? 'd' : '')).join(',');
     if (container.dataset.sig === sig) return;
     container.dataset.sig = sig;
@@ -1080,9 +1084,10 @@ export class UIManager {
     const skillContainer = card.querySelector(`#tower-skills-${id}`);
     this._updateSkillSlots(skillContainer, tower._skillInstances || [], tower);
 
-    // 效果栏（diff式渲染）
+    // 效果栏（diff式渲染）。v51.2（Q3）：升温/闪电充能/充能已经有专属资源条了，
+    // 状态栏这里不再重复显示（见 resourceBar.js 的 HIDDEN_STATUS_EFFECT_NAMES 头注）。
     const effectsContainer = card.querySelector(`#tower-effects-${id}`);
-    this._updateEffectIcons(effectsContainer, this.effects.getEffects(id));
+    this._updateEffectIcons(effectsContainer, this.effects.getEffects(id).filter(e => !HIDDEN_STATUS_EFFECT_NAMES.has(e.blueprint.name)));
     this._updateWeatherRow(card, tower);
     this._updateWorldRow(card, tower);
   }
@@ -1178,9 +1183,9 @@ export class UIManager {
     const skillContainer = card.querySelector(`#minion-skills-${id}`);
     this._updateSkillSlots(skillContainer, minion._skillInstances || [], minion);
 
-    // 效果栏（diff式渲染）
+    // 效果栏（diff式渲染）。v51.2（Q3）：同上，已有资源条的三种展示效果不重复显示。
     const effectsContainer = card.querySelector(`#minion-effects-${id}`);
-    this._updateEffectIcons(effectsContainer, this.effects.getEffects(id));
+    this._updateEffectIcons(effectsContainer, this.effects.getEffects(id).filter(e => !HIDDEN_STATUS_EFFECT_NAMES.has(e.blueprint.name)));
     this._updateWeatherRow(card, minion);
     this._updateWorldRow(card, minion);
   }

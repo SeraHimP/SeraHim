@@ -359,12 +359,15 @@ async function world() {
   mageLike._mana = 20;
   const info1 = resourceInfoOf(mageLike, ctx);
   T('资①-法力显示 XX/XX（当前/上限），不是只写一个词', info1 && info1.label === '20/50');
-  T('资②-法力条右侧带每秒回复数', info1 && info1.regenText === '+3/s');
-  T('资③-法力的颜色 kind 是 mana，且和其它类型颜色不同',
+  // v51.2：右侧回复数格式改成用户定稿的 💧X（原来的 "+X/s" 已作废）。
+  T('资②-法力条右侧带每秒回复数（💧X 格式）', info1 && info1.regenText === '💧3');
+  // v51.2：用户纠正——不是"四种颜色两两不同"，而是"法力单独一色，其余非法力
+  // 资源（升温/闪电充能/通用充能）统一同一种灰白色"，只需要 mana 与非 mana 有区分。
+  T('资③-法力的颜色 kind 是 mana，且与非法力类资源颜色不同（非法力三者统一同色）',
     info1 && info1.kind === 'mana'
     && RESOURCE_COLORS.mana !== RESOURCE_COLORS.heat
-    && RESOURCE_COLORS.heat !== RESOURCE_COLORS.lightning
-    && RESOURCE_COLORS.lightning !== RESOURCE_COLORS.charge);
+    && RESOURCE_COLORS.heat === RESOURCE_COLORS.lightning
+    && RESOURCE_COLORS.lightning === RESOURCE_COLORS.charge);
 
   // 升温：装了穿透型子弹的塔，连续命中同一目标应该叠层，且显示 XX/4
   const atk = mkEntity(ents, 'tower', {
@@ -494,6 +497,59 @@ async function world() {
   T('类③-新增属性按语义分类，不再全部堆进"其他"（法力单独成组）',
     /const manaKeys = \['maxMana', 'manaRegen', 'manaStart', 'manaFloor'\];/.test(entitySrc)
     && /'法力': manaKeys/.test(entitySrc));
+}
+
+// ==================== 十九、v51.2：资源条继续修（文字看不见/配色/闪电格式/隐藏重复状态）====================
+// 用户反馈三点：① 法力条文字（含右侧回复值圆圈）还是不显示；② 除法力外的资源条不该
+// 各配一色，统一灰白；③ 已经有资源条的三种展示效果（升温/闪电充能/充能）不该在
+// 状态栏里再出现一遍；顺带闪电杖格式从 XX% 改成 XX/100。
+{
+  const { ents, fx, CONFIG } = await world();
+  const { resourceInfoOf, HIDDEN_STATUS_EFFECT_NAMES } = await import('../src/core/resourceBar.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const ctx = { skillLibrary: SkillLibrary, attrCalc: AttributeCalculator, effects: fx };
+
+  const ltg = mkEntity(ents, 'tower', { skills: ['weapon_lightning'] }, CONFIG);
+  ltg._skillInstances[0].state.charge = 0.42;
+  const infoL = resourceInfoOf(ltg, ctx);
+  T('资⑦-闪电杖充能格式改成 XX/100（不再是 XX%）', infoL && infoL.label === '42/100');
+
+  T('资⑧-三个已有专属资源条的展示效果名单：升温/闪电充能/充能',
+    HIDDEN_STATUS_EFFECT_NAMES.has('升温') && HIDDEN_STATUS_EFFECT_NAMES.has('闪电充能')
+    && HIDDEN_STATUS_EFFECT_NAMES.has('充能') && HIDDEN_STATUS_EFFECT_NAMES.size === 3);
+
+  const uiSrc = srcOf('src/ui/UIManager.js');
+  const effectRowCalls = (uiSrc.match(/this\._updateEffectIcons\(effectsContainer, this\.effects\.getEffects\(id\)\.filter\(e => !HIDDEN_STATUS_EFFECT_NAMES\.has\(e\.blueprint\.name\)\)\)/g) || []);
+  T('资⑨-塔卡片与兵卡片两处状态栏渲染都过滤了这三个效果名（不是只改了一处）',
+    effectRowCalls.length === 2);
+
+  T('资⑩-技能栏渲染排除 category 为 attackmode 的技能实例（充能攻击不该占一格）',
+    /SkillLibrary\[i\.skillId\]\?\.category !== 'attackmode'/.test(uiSrc));
+
+  const html = srcOf('index.html');
+  T('资⑪-资源条文字改用亮色 + 投影，不再用几乎看不见的 --text-mute',
+    /\.bar-res-text\s*\{[^}]*color:\s*var\(--text\)/.test(html)
+    && /\.bar-res-text\s*\{[^}]*text-shadow:/.test(html));
+}
+
+// FakeEl 技能栏渲染验证：真正跑一遍 _updateSkillSlots，确认 attackmode 技能实例
+// 不会出现在渲染出的 DOM 里（不是只查了源码里写没写这个判断）。
+{
+  class FakeEl { constructor() { this.dataset = {}; this._html = ''; } set innerHTML(v) { this._html = v; } get innerHTML() { return this._html; } }
+  globalThis.document = globalThis.document || { createElement: () => ({ getContext: () => null }), addEventListener() {} };
+  globalThis.window.addEventListener = globalThis.window.addEventListener || (() => {});
+  const { UIManager } = await import('../src/ui/UIManager.js');
+  const ui = Object.create(UIManager.prototype);
+  const c = new FakeEl();
+  ui._updateSkillSlots(c, [
+    { id: 101, skillId: 'weapon_piercing' },
+    { id: 102, skillId: 'atkmode_charge' },
+  ]);
+  const h = c.innerHTML;
+  T('资⑫-充能攻击（atkmode_charge）实际渲染时被排除，武器技能仍正常显示',
+    h.includes('data-skill-id="101"') && !h.includes('data-skill-id="102"')
+    && (h.match(/skill-slot has-skill/g) || []).length === 1);
 }
 
 done();

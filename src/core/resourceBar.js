@@ -20,15 +20,35 @@
  *     "界面上升温图标已经消失、下一下命中却仍按旧层数结算"的错位（见
  *     CombatSystem.performAttack 里同一个 bug 的头注）。这里直接读效果本身的
  *     层数，天然不会比展示效果更"新鲜"或更"过时"。
+ *
+ * v51.2 追加（用户纠正）：
+ *   · 上一版颜色方案错了——用户原话"法力/充能/能量等的颜色都不一样"是在说
+ *     "法力 vs 非法力"要分开，不是"每种非法力资源各配一色"。这次改成两档：
+ *     法力＝蓝；升温/闪电充能/通用充能（武器类充能）统一一种灰白色（`NON_MANA_COLOR`），
+ *     不刺眼、也不会把叠在条上面的文字糊掉。
+ *   · 闪电杖充能格式从 XX% 改成 XX/100（与升温的 X/4 同一种"当前/上限"口径）。
+ *   · 法力条右侧不再写"+X/s"，改成 💧X（用户定稿的图标+数字格式）。
  */
+
+/** 非法力类资源（升温/闪电充能/通用充能）统一用这一种灰白色，避免"太白盖住文字"。 */
+const NON_MANA_COLOR = '#b7bec8';
 
 /** 四种资源类型的颜色（面板资源条 + 世界空间血条贴图共用同一份，不再各写一份）。 */
 export const RESOURCE_COLORS = {
-  mana: '#6c8cf5',       // 法力：蓝紫
-  heat: '#e8643a',       // 穿透型升温：橙红（呼应"热"这个主题）
-  lightning: '#f1c40f',  // 闪电杖充能：黄
-  charge: '#9b59b6',     // 通用充能型攻击方式（攻城车等）：紫
+  mana: '#6c8cf5',            // 法力：蓝紫，唯一独立配色
+  heat: NON_MANA_COLOR,       // 穿透型升温
+  lightning: NON_MANA_COLOR,  // 闪电杖充能
+  charge: NON_MANA_COLOR,     // 通用充能型攻击方式（攻城车等）
 };
+
+/**
+ * v51.2（Q3）：这几个"展示效果"已经有专属资源条了，状态栏（效果图标行）里
+ * 再显示一遍是重复信息——用户原话"因为已经有充能条了"。
+ * 三者与各自的资源条一一对应、且从不与法力条同时出现在同一单位身上
+ * （见 minionPassives.js/weapons.js 的装配表：装了这些武器/攻击方式的单位
+ * 都没有 category:'active' 技能），所以可以无条件从状态栏隐藏，不用按单位再判一次。
+ */
+export const HIDDEN_STATUS_EFFECT_NAMES = new Set(['升温', '闪电充能', '充能']);
 
 /**
  * @param entity 实体
@@ -49,8 +69,9 @@ export function resourceInfoOf(entity, ctx) {
     return {
       frac: max > 0 ? cur / max : 0, kind: 'mana',
       label: `${Math.round(cur)}/${Math.round(max)}`,
-      // 用户："法力条右侧显示每秒被动获得法力的值，如果没有就显示为0。"
-      regenText: `+${Math.round(regen * 10) / 10}/s`,
+      // 用户："法力条右侧显示每秒被动获得法力的值，如果没有就显示为0"，
+      // 格式定稿为 💧X（v51.2 从 "+X/s" 改过来）。
+      regenText: `💧${Math.round(regen * 10) / 10}`,
     };
   }
   const pierce = insts.find(i => i.skillId === 'weapon_piercing');
@@ -64,7 +85,8 @@ export function resourceInfoOf(entity, ctx) {
   const lightning = insts.find(i => i.skillId === 'weapon_lightning');
   if (lightning && lightning.state) {
     const c = Math.max(0, Math.min(1, lightning.state.charge || 0));
-    return { frac: c, kind: 'lightning', label: `${Math.round(c * 100)}%` };
+    // v51.2：格式从 XX% 改成 XX/100，与升温的 X/4 同一种"当前/上限"口径。
+    return { frac: c, kind: 'lightning', label: `${Math.round(c * 100)}/100` };
   }
   const chargeAtk = insts.find(i => skillLibrary[i.skillId]?.category === 'attackmode');
   if (chargeAtk) {
