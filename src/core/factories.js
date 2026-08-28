@@ -374,6 +374,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     entity.baseStats.attackDamage += g.ad;
     entity.baseStats.armor += g.res;
     entity.baseStats.magicResist += g.res;
+    // v51.3：大型小兵的法术强度随波次成长（用户定稿）。g.ap 对没写 ap 成长表的
+    // 类型恒为 0（battleGrowthFlat 已经用 `|| 0` 兜过），这里不用再判一次类型。
+    entity.baseStats.abilityPower = (entity.baseStats.abilityPower || 0) + (g.ap || 0);
   }
   entity.baseStats.shieldFixedMax = (tpl.shieldFixedMax || 0) * hpScale;
   entity.baseStats.healthRegen = tpl.healthRegen * attrScale;

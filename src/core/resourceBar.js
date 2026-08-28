@@ -9,7 +9,8 @@
  * 追加："塔/攻城车的话那个条就显示穿透型子弹的升温（1/4）/闪电杖的闪电充能/
  *        攻城车的攻击充能进度。"
  * 所以不是单纯的"法力条"：没有装 category:'active' 技能的单位改显示自己已有的
- * 充能类进度（穿透升温/闪电杖充能/充能型攻击方式），都没有就不显示（返回 null）。
+ * 充能类进度（穿透升温/闪电杖充能/充能型攻击方式）；v51.3 起，连这些都没有的
+ * 单位也不再隐藏整行，退化显示一条空法力条（0/0）——只有 entity 本身为空才返回 null。
  *
  * v51.1 追加（用户）：
  *   · 法力显示 XX/XX（当前/上限），充能类显示 XX%，不再只写一个词。
@@ -28,10 +29,22 @@
  *     不刺眼、也不会把叠在条上面的文字糊掉。
  *   · 闪电杖充能格式从 XX% 改成 XX/100（与升温的 X/4 同一种"当前/上限"口径）。
  *   · 法力条右侧不再写"+X/s"，改成 💧X（用户定稿的图标+数字格式）。
+ *
+ * v51.3 追加（用户再纠正，附截图）：
+ *   · v51.2 选的灰白色（#b7bec8）太浅——文字用近白色叠加投影去压它时，
+ *     浅灰底 + 近白字 + 淡投影三者亮度太接近，投影撑不开对比度，实际截图里
+ *     "85%" 几乎读不出来。这次换成更深的石板灰（依旧是"灰"这个中性色系，
+ *     但亮度拉开到能撑住白字+投影的组合，参照法力蓝底下白字读得清的同一个道理）。
+ *   · 用户："单位无论有没有法力等都要显示法力条"——不再有"这个单位什么资源都
+ *     没有就整行隐藏"的分支。没有任何资源系统的单位现在退化显示一条空的法力条
+ *     （0/0，法力蓝），视觉语言统一，也不会出现"点开某些单位面板一截找不到条"
+ *     的不一致感。
+ *   · 通用充能型攻击方式（攻城车等）的格式补齐成 XX/100——之前只改了闪电杖，
+ *     这个分支被漏掉，仍是 XX%（用户这轮指出"原有的XX%也改为XX/100"）。
  */
 
-/** 非法力类资源（升温/闪电充能/通用充能）统一用这一种灰白色，避免"太白盖住文字"。 */
-const NON_MANA_COLOR = '#b7bec8';
+/** 非法力类资源（升温/闪电充能/通用充能）统一用这一种石板灰，比 v51.2 的浅灰更深、更压得住白字投影。 */
+const NON_MANA_COLOR = '#6b7280';
 
 /** 四种资源类型的颜色（面板资源条 + 世界空间血条贴图共用同一份，不再各写一份）。 */
 export const RESOURCE_COLORS = {
@@ -53,7 +66,8 @@ export const HIDDEN_STATUS_EFFECT_NAMES = new Set(['升温', '闪电充能', '�
 /**
  * @param entity 实体
  * @param ctx { skillLibrary, attrCalc, effects }
- * @returns {{frac:number, kind:string, label:string, regenText?:string}|null}
+ * @returns {{frac:number, kind:string, label:string, regenText?:string}|null} —
+ *   仅 entity 为空时返回 null；否则永远有值（v51.3：无资源系统的单位退化成空法力条）。
  */
 export function resourceInfoOf(entity, ctx) {
   if (!entity) return null;
@@ -91,7 +105,10 @@ export function resourceInfoOf(entity, ctx) {
   const chargeAtk = insts.find(i => skillLibrary[i.skillId]?.category === 'attackmode');
   if (chargeAtk) {
     const c = Math.max(0, Math.min(1, entity._charge || 0));
-    return { frac: c, kind: 'charge', label: `${Math.round(c * 100)}%` };
+    // v51.3：格式补齐成 XX/100，之前只改了闪电杖那一支，这支漏改了。
+    return { frac: c, kind: 'charge', label: `${Math.round(c * 100)}/100` };
   }
-  return null;
+  // v51.3：用户定稿"单位无论有没有法力等都要显示法力条"——不再对"什么资源都
+  // 没有的单位"整行隐藏，退化成一条空的法力条，视觉语言统一。
+  return { frac: 0, kind: 'mana', label: '0/0', regenText: '💧0' };
 }

@@ -249,7 +249,9 @@ function battleGrowthFlat(type) {
   // 地图覆写：同一兵种在不同地图上可以有完全不同的成长曲线（用户要求预留）
   const mapG = mapSystem.currentMap?.minionGrowth?.[type] || {};
   const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
-  return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n };
+  // v51.3：新增 ap（法术强度）成长——只有显式写了 ap 字段的类型（大型小兵）才非零，
+  // melee/ranged/_default 没写这个键，(f.ap || 0) 天然是 0，不用另外按类型分支。
+  return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n, ap: (f.ap || 0) * n };
 }
 laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
   // 对战模式小兵按 laneWaveSystem 自己的独立波次计数成长（不能用沙盒的 window.CTX.waveNumber，

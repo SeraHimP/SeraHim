@@ -222,11 +222,14 @@ export const EDITOR_PAGES_WAVE = {
           <input type="number" class="growth-input" data-gkey="ad" step="0.05" value="${G.ad}" style="width:90px;"></div>
         <div class="slider-row"><label>双抗 /波</label>
           <input type="number" class="growth-input" data-gkey="res" step="0.05" value="${G.res}" style="width:90px;"></div>
+        <div class="slider-row"><label>法术强度 /波</label>
+          <input type="number" class="growth-input" data-gkey="ap" step="0.1" value="${G.ap ?? 0}" style="width:90px;"></div>
         <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">
-          第 N 波的加值 = 上面三项 ×(N−1)。当前第 <b>${Math.max(1, window.waveNumber || 1)}</b> 波，
+          第 N 波的加值 = 上面四项 ×(N−1)。当前第 <b>${Math.max(1, window.waveNumber || 1)}</b> 波，
           该兵种加值：生命 +${(G.hp * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
           攻击 +${(G.ad * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
-          双抗 +${(G.res * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}。</div>
+          双抗 +${(G.res * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}、
+          法术强度 +${((G.ap ?? 0) * Math.max(0, (window.waveNumber || 1) - 1)).toFixed(1)}。</div>
       </div>`;
     } else {
       html += `<div style="color:#8b949e;font-size:12px;">该兵种未配置对战成长（每波数值恒定）。</div>`;

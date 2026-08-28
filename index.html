@@ -460,18 +460,6 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* 具体颜色按资源类型（法力/升温/闪电充能/通用充能）由 JS 现读 RESOURCE_COLORS 写 background，
    这里只给一个兜底色，防止 JS 还没跑到时是空白色块。 */
 .bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: width 0.12s linear, background 0.2s; }
-/* v51.2：这段文字之前完全看不见——用的是 --text-mute（#5a6472，接近深色面板底色），
-   又没有 text-shadow，叠在条上跟叠在深色底上都没对比度。改成跟 .bar-text（血条读数）
-   同一套做法：亮色文字 + 投影 + position/z-index 保证画在条的上层，
-   margin 也改成与 .bar-res-row 自身高度（18px）一致，不再是拍脑袋的 -16px。 */
-.bar-res-text {
-  display: flex; justify-content: space-between; align-items: center;
-  height: 18px; line-height: 1; font-size: 10px; color: var(--text);
-  margin: -18px 0 6px; padding: 0 7px; position: relative; z-index: 1;
-  pointer-events: none; font-variant-numeric: tabular-nums; font-weight: 600;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
-}
-.bar-res-regen { color: var(--text); opacity: 0.82; font-variant-numeric: tabular-nums; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }
@@ -490,7 +478,13 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
        条上，差的那 1px 就是用户看到的"有些靠下"。现在给读数行一个与条**等高**
        的行盒（height: 18px）+ align-items: center，上移量也改成整 18px，
        于是垂直居中是算出来的、不是估出来的：条的高度改多少，这里跟着改多少。 */
-.bar-text {
+/* v51.3：血条读数（.bar-text）与资源条读数（.bar-res-text）合并成同一套规则——
+   用户："血条还有技能条的文字，位置/样式/大小都不统一。都改为居中+右侧。"
+   之前 .bar-res-text 是另起的 flex + space-between（主值贴左），跟血条这套
+   "网格居中主值 + 右列副值"的做法根本不是一回事，字号（10px vs 11px）、颜色
+   （--text vs #f2f6fa）也各写各的。现在两个选择器完全共用一份声明，字号/颜色/
+   位置/投影全部同源，以后只会漂移出一份。 */
+.bar-text, .bar-res-text {
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   height: 18px; line-height: 1; font-size: 11px;
   color: #f2f6fa; margin: -18px 0 6px; padding: 0 7px;
@@ -498,8 +492,8 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   font-variant-numeric: tabular-nums; font-weight: 600;
   text-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
-.bar-text > :first-child { grid-column: 2; justify-self: center; }
-.bar-text .shield-total { grid-column: 3; justify-self: end; color: #cfd6dd; }
+.bar-text > :first-child, .bar-res-text > :first-child { grid-column: 2; justify-self: center; }
+.bar-text .shield-total, .bar-res-text .bar-res-regen { grid-column: 3; justify-self: end; color: #cfd6dd; }
 
 /* 属性 */
 /* 属性 chip：标签在上、数值在下。两列网格，行距按 8px 节奏。 */

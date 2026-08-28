@@ -828,7 +828,9 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 钉 17 的话，血条高度一改这条就会拦下正确的实现。
   T('板③-血条数值压在条上，且上移量恰好等于血条高度（居中是算出来的，不是估的）', (() => {
     const br = (html.match(/\.bar-row \{([^}]*)\}/) || [])[1] || '';
-    const bt = (html.match(/\.bar-text \{([^}]*)\}/) || [])[1] || '';
+    // v51.3：.bar-text 与 .bar-res-text（资源条读数）合并成同一个选择器了
+    // （见资源条那批"位置/样式/大小都不统一"的改动），选择器不再是单独的 `.bar-text {`。
+    const bt = (html.match(/\.bar-text,\s*\.bar-res-text\s*\{([^}]*)\}/) || [])[1] || '';
     const h = (br.match(/height: (\d+)px/) || [])[1];
     return !!h && new RegExp(`margin: -${h}px`).test(bt);
   })());

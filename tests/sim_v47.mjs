@@ -206,12 +206,15 @@ function world() {
 
   // 血条读数
   T('板⑩-血条读数去掉了 HP 前缀（条本身就是血条）', !/textContent = `HP \$\{Math\.round\(tower/.test(um));
+  // v51.3：.bar-text 与 .bar-res-text（资源条读数）合并成同一份规则了——"血条还有
+  // 技能条的文字，位置/样式/大小都不统一，都改为居中+右侧"，选择器不再是单独的
+  // `.bar-text {`，下面几条正则跟着改成认这个合并后的选择器。
   T('板⑩-血量居中、护盾靠右：三列网格，不是 space-between（后者会随护盾字宽左右漂）',
-    /\.bar-text \{[^}]*grid-template-columns: 1fr auto 1fr/.test(html)
-    && /\.bar-text > :first-child \{ grid-column: 2; justify-self: center; \}/.test(html)
-    && /\.bar-text \.shield-total \{ grid-column: 3; justify-self: end;/.test(html));
+    /\.bar-text,\s*\.bar-res-text\s*\{[^}]*grid-template-columns: 1fr auto 1fr/.test(html)
+    && /\.bar-text > :first-child,\s*\.bar-res-text > :first-child \{ grid-column: 2; justify-self: center; \}/.test(html)
+    && /\.bar-text \.shield-total,\s*\.bar-res-text \.bar-res-regen \{ grid-column: 3; justify-self: end;/.test(html));
   T('板⑩-上下居中是算出来的：读数行与血条**等高** + align-items:center', (() => {
-    const bt = (html.match(/\.bar-text \{([^}]*)\}/) || [])[1] || '';
+    const bt = (html.match(/\.bar-text,\s*\.bar-res-text\s*\{([^}]*)\}/) || [])[1] || '';
     const br = (html.match(/\.bar-row \{([^}]*)\}/) || [])[1] || '';
     const h = (br.match(/height: (\d+)px/) || [])[1];
     return !!h && new RegExp(`height: ${h}px`).test(bt)

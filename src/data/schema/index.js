@@ -150,6 +150,8 @@ const GROWTH_FIELDS = [
   NUM('hp', '最大生命 /波', 0, 200, 0.1),
   NUM('ad', '攻击力 /波', 0, 50, 0.05),
   NUM('res', '双抗 /波', 0, 20, 0.05),
+  // v51.3：大型小兵的法术强度成长（见 CONFIG.battleGrowth 头注）。
+  NUM('ap', '法术强度 /波', 0, 50, 0.1),
 ];
 
 const TOWER_TIERS = [

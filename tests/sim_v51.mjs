@@ -528,9 +528,11 @@ async function world() {
     /SkillLibrary\[i\.skillId\]\?\.category !== 'attackmode'/.test(uiSrc));
 
   const html = srcOf('index.html');
-  T('资⑪-资源条文字改用亮色 + 投影，不再用几乎看不见的 --text-mute',
-    /\.bar-res-text\s*\{[^}]*color:\s*var\(--text\)/.test(html)
-    && /\.bar-res-text\s*\{[^}]*text-shadow:/.test(html));
+  // v51.3：这条规则后来跟 .bar-text 合并成同一个选择器了（见资⑯），这里只钉
+  // "不再是几乎看不见的 --text-mute" 这个核心诉求——具体选择器怎么写留给资⑯管。
+  T('资⑪-资源条文字不再用几乎看不见的 --text-mute（已经改用亮色+投影）',
+    !/\.bar-res-text\s*\{[^}]*--text-mute/.test(html)
+    && /text-shadow:\s*0 1px 2px rgba\(0,0,0,0\.85\)/.test(html));
 }
 
 // FakeEl 技能栏渲染验证：真正跑一遍 _updateSkillSlots，确认 attackmode 技能实例
@@ -550,6 +552,77 @@ async function world() {
   T('资⑫-充能攻击（atkmode_charge）实际渲染时被排除，武器技能仍正常显示',
     h.includes('data-skill-id="101"') && !h.includes('data-skill-id="102"')
     && (h.match(/skill-slot has-skill/g) || []).length === 1);
+}
+
+// ==================== 二十、v51.3：资源条再修（配色/居中统一/永远显示）+ 大型小兵法术强度随波次成长 ====================
+{
+  const { ents, fx, CONFIG } = await world();
+  const { resourceInfoOf, RESOURCE_COLORS } = await import('../src/core/resourceBar.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const ctx = { skillLibrary: SkillLibrary, attrCalc: AttributeCalculator, effects: fx };
+
+  // 换色：非法力那一档不再是 v51.2 的浅灰（#b7bec8，读不清），且仍然与法力不同色
+  T('资⑬-非法力资源换了更深的颜色（不再是读不清的浅灰），且仍与法力不同色',
+    RESOURCE_COLORS.heat !== '#b7bec8' && RESOURCE_COLORS.heat !== RESOURCE_COLORS.mana);
+
+  // 通用充能（攻击方式，如攻城车）格式也补齐成 XX/100
+  const ramLike = mkEntity(ents, 'ram', { skills: ['atkmode_charge'] }, CONFIG);
+  ramLike._charge = 0.73;
+  const infoRam = resourceInfoOf(ramLike, ctx);
+  T('资⑭-通用充能型攻击方式格式也改成 XX/100（之前漏了这一支，还是 XX%）',
+    infoRam && infoRam.label === '73/100');
+
+  // 什么资源系统都没有的单位（近战兵）——不再隐藏整行，退化成空法力条
+  const plainMelee = mkEntity(ents, 'melee', {}, CONFIG);
+  const infoPlain = resourceInfoOf(plainMelee, ctx);
+  T('资⑮-没有任何资源系统的单位也必须显示资源条（退化成 0/0 法力条，不再整行隐藏）',
+    infoPlain && infoPlain.kind === 'mana' && infoPlain.label === '0/0' && infoPlain.frac === 0);
+
+  const html = srcOf('index.html');
+  T('资⑯-血条读数与资源条读数的 CSS 合并成同一份规则（位置/字号/颜色统一）',
+    /\.bar-text,\s*\.bar-res-text\s*\{/.test(html));
+}
+
+// 大型小兵法术强度随波次成长
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { createFactories } = await import('../src/core/factories.js');
+
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  const mapSystem = { active: false, currentMap: null };
+  const F = createFactories({
+    entityContainer: ents, effectRegistry: fx, eventBus: bus,
+    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
+    mapSystem, dragonSystem: ds, uiManager: { log() {} },
+  });
+
+  T('长①-大型小兵成长表配了 ap 字段（炮兵/图腾兵/术士兵/蚀骨兵/超级兵/攻城车）',
+    ['siege', 'totem', 'warlock', 'corrupt', 'super', 'ram'].every(t =>
+      typeof CONFIG.battleGrowth[t].ap === 'number' && CONFIG.battleGrowth[t].ap > 0));
+  T('长②-普通兵（近战/远程）没有法术强度成长', !CONFIG.battleGrowth.melee.ap && !CONFIG.battleGrowth.ranged.ap);
+
+  const noGrowth = F.createMinion('siege', 0, 0, 1, 1, { growthFlat: { hp: 0, ad: 0, res: 0, ap: 0 } });
+  const withGrowth = F.createMinion('siege', 0, 0, 1, 1, { growthFlat: { hp: 0, ad: 0, res: 0, ap: 20 } });
+  T('长③-growthFlat.ap 真的加到了 abilityPower 上（不是只在配置表里存在没接线）',
+    Math.abs((withGrowth.baseStats.abilityPower - noGrowth.baseStats.abilityPower) - 20) < 1e-9);
+
+  const mainSrc = srcOf('src/main.js');
+  T('长④-main.js 的成长取值函数把 ap 也算进去了（不是只有 hp/ad/res 三项）',
+    /ap:\s*\(f\.ap \|\| 0\) \* n/.test(mainSrc));
+
+  const schemaSrc = srcOf('src/data/schema/index.js');
+  T('长⑤-模板编辑器 Schema 也补了 ap 这个成长字段（不是只在 Config 里加了个死数）',
+    /NUM\('ap', '法术强度 \/波'/.test(schemaSrc));
 }
 
 done();
