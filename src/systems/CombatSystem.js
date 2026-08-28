@@ -20,6 +20,38 @@ const isMeleeUnit = (e) => !!e && (e.baseStats?.attackRange ?? 999) <= MELEE_RAN
 // 想给某兵种单独手感，在 Config 模板里补 bulletSpeed 即可覆盖，此处无需再改。
 const DEFAULT_BULLET_SPEED = 400;
 
+/**
+ * ==================== v48：最后一击归属 ====================
+ * 用户："依旧存在龙死了但是没有记上数的。"
+ *
+ * 两条伤害路径（_resolveHit / performAttackDirect）都要记"谁打的最后一下"，
+ * 原来各写一行一模一样的赋值 —— 本仓库最常见的那种"同一条规则实现了两遍"。
+ * 合成一处，顺带修掉一个真实的丢分原因。
+ *
+ * ==================== 中立的一击不该抹掉红蓝的归属 ====================
+ * 归属字段原来是**无条件覆盖**的：谁最后打了一下就记谁的阵营。
+ * 而龙是 neutral，于是只要最后一下来自中立方，owner 就变成 'neutral'，
+ * DragonSystem._onDragonKilled 里 `owner === 'blue' || owner === 'red'` 判不过，
+ * 表现就是用户说的"龙死了但是没有记上数"。
+ *
+ * 中立方能打到龙的两条路（都真实存在）：
+ *   ① 龙自己的溅射打到自己 —— v48 已修（见 _applyExplosionAt 的头注）。
+ *      龙的溅射半径 90 > 射程 80，每次攻击都必然波及自己，这是最高频的一条。
+ *   ② 一条龙的溅射打到另一条龙 —— 用户明确要求保留这个交互。
+ * ② 保留着，就必须让归属**不被中立方顶掉**：否则一条龙可以把另一条龙的奖励
+ * 从两个阵营手里一起抢走，而两边都没做错任何事。
+ *
+ * 所以：`_lastHitBy` 仍然如实记录**字面意义上的最后一击者**（屠龙者要用它，
+ * 中立击杀就没有屠龙者，这是对的）；而 `_lastHitFaction`（决定阵营奖励归属）
+ * **只由红蓝双方更新** —— 中立的伤害不清空、也不覆盖上一位红/蓝攻击者。
+ */
+function recordLastHit(target, attacker) {
+  if (!target || !attacker) return;
+  target._lastHitBy = attacker.id;
+  const fac = attacker._mapFaction || attacker.faction || null;
+  if (fac === 'blue' || fac === 'red') target._lastHitFaction = fac;
+}
+
 export class CombatSystem {
   constructor(entityContainer, effectRegistry, eventBus, skillLibrary) {
     this.entities = entityContainer;
@@ -658,7 +690,7 @@ export class CombatSystem {
       }
       // v43：龙的奖励按【最后一击】归属（用户定稿），不再按参与者投票。
       // 记谁打的、以及它的阵营 —— 阵营要当场记下来：结算时那个单位可能已经死了。
-      if (atk) { target._lastHitBy = atk.id; target._lastHitFaction = atk._mapFaction || atk.faction || null; }
+      if (atk) recordLastHit(target, atk);
     }
     const totalAbsorbed = damage - remainingDamage;
 
@@ -848,11 +880,46 @@ export class CombatSystem {
   }
 
   // B2：溅射【依赖坐标】而非目标对象——目标中途死亡后子弹仍飞到原落点，在此结算溅射。
+  /**
+   * ==================== v48：溅射不再打到自己 ====================
+   * 用户："暗龙的那个龙魂技能会对自己造成伤害，并且也会对其他龙造成伤害。
+   *        现统一：无法对自己造成伤害，但是会对其他龙造成伤害。"
+   *
+   * 排查结论与用户的猜测不同，如实记下：**跟暗魂没有关系**。暗魂只叠抗性 debuff /
+   * 自身 buff，全项目没有第三处引用，代码层面不可能直接造成伤害。
+   * 真正的来源是**溅射**：这个函数拿 findInRadius 的结果直接开打，
+   * 既不认阵营、也不认查询者自己 —— 而 findInRadius 一定会把站在圆心附近的
+   * 攻击者本人返回回来。
+   *
+   * 为什么现在才暴露出来：龙的 splashRadius 是 90，而它的射程在 v47 从 200 改成了 80。
+   * 200 > 90 时龙站在自己爆点之外，几乎不会波及自己；80 < 90 之后，
+   * **龙每一次攻击都必然站在自己的爆炸范围里**。
+   * 也就是说这是个一直存在的老 bug，被我上一轮的射程改动变成了每次必现 ——
+   * 这一点要写清楚，免得后来的人以为是 v48 引入的。
+   *
+   * 修法与本项目既有的光环过滤同源（见 _helpers.js 那段"findInRadius 不认阵营
+   * 也不认查询者"的注释）：那边早就踩过并修过同一个坑，这里补上。
+   *
+   * 打到**别的龙**是用户明确要保留的（"会对其他龙造成伤害"），所以这里
+   * 只排除攻击者本人，不做任何阵营过滤。
+   * 是否应当连友军一起排除，是另一个尚未定稿的问题 —— 留成 CONFIG 开关
+   * `tuning.splash.hitAllies`，默认 true = 与改动前逐位一致，等用户拍板再翻。
+   */
   _applyExplosionAt(attacker, centerX, centerY, baseDamage, attackType, radiusOverride, excludeId) {
     const radius = radiusOverride || 75;
+    const cfg = CONFIG.tuning?.splash || {};
+    const atkFac = attacker ? (attacker._mapFaction || attacker.faction || null) : null;
     const targets = this.entities.findInRadius(centerX, centerY, radius, null, true);
     for (const t of targets) {
       if (excludeId != null && t.id === excludeId) continue;
+      // 自己永远不吃自己的溅射（用户定稿）。
+      if (attacker && t.id === attacker.id && cfg.hitSelf !== true) continue;
+      // 友军是否吃溅射：默认吃（改动前的行为），开关见上面的头注。
+      // 中立（龙）之间**不算友军**：龙互相是敌人，用户明确要求要能互相打到。
+      if (cfg.hitAllies === false && attacker && atkFac && atkFac !== 'neutral') {
+        const tf = t._mapFaction || t.faction || null;
+        if (tf && tf === atkFac) continue;
+      }
       const dist = Math.hypot(t.pos.x - centerX, t.pos.y - centerY);
       if (dist > radius) continue;
       const splashFactor = 0.6 * Math.exp(-0.033 * dist);
@@ -1119,8 +1186,7 @@ export class CombatSystem {
     if (target.type === 'dragon' && finalDamage > 0 && attacker) {
       if (attacker.type === 'tower') (target._damagers = target._damagers || new Set()).add(attacker.id);
       // v43：最后一击归属（见 _resolveHit 里那条同样的注释）
-      target._lastHitBy = attacker.id;
-      target._lastHitFaction = attacker._mapFaction || attacker.faction || null;
+      recordLastHit(target, attacker);
     }
     // 使闪电杖、腐蚀型等通过 performAttackDirect 造成的伤害也能触发被动——
     // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份。

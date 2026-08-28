@@ -738,6 +738,16 @@ export const CONFIG = {
     // velEmaAlpha / moveEpsPx：判断"这个兵在不在走"用的是位移的**指数滑动平均**，
     // 不是单帧位移 —— 碰撞每帧会把兵推 0~2px 且方向近乎随机，按单帧判会让站桩的兵
     // 朝随机方向乱转。EMA 让随机抖动互相抵消趋近 0，真实行军则稳定累积。
+    // ==================== v48：溅射的两条开关 ====================
+    // 用户："暗龙的那个龙魂技能会对自己造成伤害……现统一：无法对自己造成伤害，
+    //        但是会对其他龙造成伤害。"
+    // 排查发现根因是溅射（_applyExplosionAt）既不认阵营、也不认查询者自己，
+    // 与暗魂无关；详见 CombatSystem._applyExplosionAt 的头注。
+    //   hitSelf   —— 攻击者是否吃自己的溅射。默认 false（用户定稿）。
+    //   hitAllies —— 友军是否吃溅射。默认 true = **与改动前逐位一致**；
+    //                这一条用户还没定稿，先留开关不改行为。
+    //                中立（龙）之间不算友军，无论此开关如何都能互相打到。
+    splash: { hitSelf: false, hitAllies: true },
     facing: { enabled: true, arcDeg: 35, turnRateDeg: 220, velEmaAlpha: 0.25, moveEpsPx: 0.6 },
 
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）

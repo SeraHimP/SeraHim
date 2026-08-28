@@ -37,6 +37,13 @@ const MAX_MIN = parseFloat(arg('minutes', '45'));
 // 我自己临时写的简易脚手架量出来"塔零掉血"，连峡谷也是零，说明那种脚手架说明不了任何事。
 const MAP_ID = arg('map', 'summoners_rift_v1');
 const SWEEP = arg('sweep', 'none');
+// v48：--pick 只跑名字含某个关键字的档位（逗号分隔多个）。
+// 加它的唯一理由是**并行**：一轮 soul 对照是 8 档 × N 局，单进程要跑几个小时，
+// 而各档之间完全独立（每档跑完都 restore，档与档不共享状态）。
+// 拆成几个进程各跑几档，墙钟时间按核数除下去。
+// ⚠️ 只用于分批跑，**下结论前必须确认基线档也跑过** —— 所有判读都是相对基线的差值，
+// 没有基线的那几档数字单独看没有任何意义。
+const PICK = arg('pick', '');
 // v43：--sweep soul 用。非 null 时给**蓝方**的全部领受者（塔 + 大型小兵）装上这条龙魂。
 let FORCE_SOUL = null;
 let FORCE_POWER = null;   // v44：巨龙之力对照档（元素 key），给蓝方叠满层
@@ -56,6 +63,8 @@ const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
 const { FacingSystem } = await import('../src/systems/FacingSystem.js');
 const { DragonSystem, dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
+// v48：工具改用与 main.js 同一批实体工厂（见 runOne 里那段长注释）。
+const { createFactories, effectiveMaxHP } = await import('../src/core/factories.js');
 const { BuffSystem } = await import('../src/systems/BuffSystem.js');
 const { WorldState } = await import('../src/systems/WorldState.js');
 const { CONFIG } = await import('../src/data/Config.js');
@@ -117,67 +126,70 @@ function runOne(seed) {
 
   const score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
 
+  // ==================== v48：改用**真实工厂**建实体 ====================
+  // 这里原来自己手搓塔与小兵的实体字面量 —— 那是 createBuilding / createMinion 之外的
+  // **第三份**实现，而且早就长歪了。逐条列出它与游戏的差别（每一条都直接影响本工具要量的东西）：
+  //
+  //   ① `currentHP = baseStats.maxHP` 写在装龙魂**之前**。带 maxHPPct 的四条魂
+  //      （炎5% / 山6% / 雷4% / 毒4%）因此在出生那一刻就少了自己那份血 ——
+  //      **正好把要测的增益扣掉一部分**，而且给得越多扣得越多。
+  //      这与用户报的"第二波龙不是满血"是同一个 bug，v47 已在 factories 里修掉，
+  //      工具这一份没跟上。
+  //   ② 塔的属性走一张**八字段白名单**（v43 Q9 在 createBuilding 里删掉的那张），
+  //      attackType / bulletSpeed / damageReduction / 四个穿透字段全被丢掉。
+  //   ③ 塔**只装武器**：没有身份技能、没有【加固城防】、没有塔成长、没有镀层。
+  //      山魂给的是减伤与格挡、潮魂给的是回血，而加固城防正是"回血与生命节点封顶"那条 ——
+  //      少了它，量的是另一个游戏里的山魂/潮魂。
+  //   ④ 小兵**只装屠戮**：攻城车护盾、炮兵指挥官、超级兵指挥官全没有。
+  //      v48 的攻城车改动（攻城疲惫 + 破甲重击）整个挂在 passive_siege_weapon 上，
+  //      不装它就等于那批改动在平衡测量里不存在。
+  //   ⑤ 小兵成长漏了地图级 minionGrowth 覆写，换地图跑时曲线是错的。
+  //
+  // 这正是本文件上面那段 FacingSystem 注释里写过的同一个坑：
+  // "把规则留在别处，无头模式里规则就会消失"。当时我修的是朝向那一条，
+  // 没意识到**整个实体构造**都是这个形状。现在直接调 createFactories，
+  // 与 main.js 用的是同一批函数，工具与游戏之间不再有"第二套实体"。
+  //
+  // ⚠️ 因此**历史数值不可与本轮直接比较**：塔从此带加固城防与成长、小兵带全部默认被动，
+  // 基线本身就换了一把尺子。本轮所有结论都基于重新跑出来的基线。
+  const dragons = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  dragons.setMapLookup((id) => mapSys.getMapById?.(id) || null);
+  dragons.setCombatSystem(combat);
+  const F = createFactories({
+    entityContainer: ents, effectRegistry: fx, eventBus: bus,
+    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
+    mapSystem: mapSys, dragonSystem: dragons,
+    // 工具不需要界面，但工厂会往日志里写字 —— 给个空实现，别让它去碰 DOM。
+    uiManager: { log() {} },
+  });
+  dragons.setCreateEntity(F.createDragon);
+  // 注：DragonSystem **不进主循环**（下面没有 dragons.update）。对照要量的是
+  // "拿到魂之后的强度差"，不是"抢龙的难易"—— 两件事混在一起的话，
+  // 抢龙成功率会把魂本身的强度整个掩盖掉。这与 equipForcedSoul 的设计是同一条理由。
+
   // ---- 建筑 ----
-  mapSys.setCreateBuildingFn(({ faction, tier, laneId, isNexus, pos, weapon, stats }) => {
-    const tpl = CONFIG.templates.tower;
-    const s = { ...(stats || {}),
-                ...(CONFIG.towerTierOverrides?.[tier] || {}),
-                ...(CONFIG.factionOverrides?.[faction]?.['tower_' + tier] || {}) };
-    const e = {
-      id: ++window._uid, type: 'tower', alive: true, pos: { x: pos.x, y: pos.y },
-      baseStats: {
-        ...tpl,
-        maxHP: s.maxHP ?? tpl.maxHP, armor: s.armor ?? tpl.armor,
-        magicResist: s.magicResist ?? tpl.magicResist,
-        attackDamage: s.attackDamage ?? tpl.attackDamage,
-        baseAttackSpeed: s.baseAttackSpeed ?? tpl.baseAttackSpeed,
-        healthRegen: s.healthRegen ?? tpl.healthRegen,
-        attackRange: s.attackRange ?? tpl.attackRange,
-        shieldFixedMax: s.shieldFixedMax ?? 0,
-      },
-      currentHP: 0, shieldFixedCurrent: s.shieldFixedMax ?? 0, tempShield: 0,
-      lastDamageTime: -Infinity, attackCooldown: 0, targetId: null,
-      _skillInstances: [], _inCombat: false, _attackerCount: 0,
-      _mapFaction: faction, _mapTier: tier, _laneId: laneId || null, faction,
-    };
-    e.currentHP = e.baseStats.maxHP;
-    const wKey = CONFIG.towerTierWeapon?.[tier] !== undefined
-      ? CONFIG.towerTierWeapon[tier] : (isNexus ? 'none' : weapon);
-    if (wKey && wKey !== 'none') e._skillInstances.push({ id: ++window._uid, skillId: 'weapon_' + wKey, state: {} });
-    equipForcedSoul(e, fx, ents, bus);   // v43：龙魂对照档
-    ents.add(e);
+  mapSys.setCreateBuildingFn((opt) => {
+    const e = F.createBuilding(opt);
+    if (e) forceAndRefill(e, fx, ents, bus);   // 龙魂 / 巨龙之力对照档
     return e;
   });
 
   // ---- 小兵 ----
+  // 成长口径与 main.js 的 battleGrowthFlat 完全一致（含地图级 minionGrowth 覆写）。
   const growth = (type) => {
     const n = Math.max(0, (waves.waveNumber || 1) - 1);
     const G = CONFIG.battleGrowth || {};
-    const f = { ...(G._default || {}), ...(G[type] || {}) };
+    const mapG = mapSys.currentMap?.minionGrowth?.[type] || {};
+    const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
     return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n };
   };
   waves.setCreateMinion((type, x, y, faction, laneId, direction) => {
-    const tpl = CONFIG.templates[type];
-    if (!tpl) return null;
-    const g = growth(type);
-    const e = {
-      id: ++window._uid, type, alive: true, pos: { x, y },
-      baseStats: {
-        ...tpl,
-        maxHP: tpl.maxHP + g.hp,
-        attackDamage: tpl.attackDamage + g.ad,
-        armor: tpl.armor + g.res, magicResist: tpl.magicResist + g.res,
-      },
-      currentHP: tpl.maxHP + g.hp, shieldFixedCurrent: 0, tempShield: 0,
-      lastDamageTime: -Infinity, attackCooldown: 0, targetId: null,
-      _skillInstances: [], _mapFaction: faction, _laneId: laneId,
-      _laneDirection: direction, faction,
-    };
-    // 屠戮（对战节奏的主导项，必须带上，否则模拟结果没有参考价值）
-    const rend = { melee: 'passive_melee_rend', ranged: 'passive_ranged_rend', siege: 'passive_siege_rend' }[type];
-    if (rend) e._skillInstances.push({ id: ++window._uid, skillId: rend, state: {} });
-    equipForcedSoul(e, fx, ents, bus);   // v43：龙魂对照档
-    ents.add(e);
+    const e = F.createMinion(type, x, y, 1, 1, {
+      faction, laneId, direction,
+      growthFlat: growth(type),
+      templateOverride: mapSys.currentMap?.minionTemplates?.[type],
+    });
+    if (e) forceAndRefill(e, fx, ents, bus);
     return e;
   });
 
@@ -281,6 +293,21 @@ function runCell(label, apply, restore) {
     entropy: avg(r => r.entropy),
     rows,
   };
+}
+
+/**
+ * 对照档的增益是在工厂返回**之后**才装上去的，所以必须再补一次血。
+ *
+ * 这正是 v47 修掉的那个 bug 的同一个形状：带 maxHPPct 的魂/力（炎5% 山6% 雷4% 毒4%、
+ * 山之力 2.5%/层）会把最大生命抬高，而 currentHP 已经按抬高前的数填好了 ——
+ * 于是持魂方**全军出生即残血**，恰好把要测的那份增益扣掉一部分。
+ * 不补的话这几条魂会被系统性地测低，而低多少取决于它给了多少 maxHPPct，
+ * 也就是"给得越多、被扣得越多"—— 一条会让人把数值越调越大的负反馈。
+ */
+function forceAndRefill(e, fx, ents, bus) {
+  equipForcedSoul(e, fx, ents, bus);
+  const m = effectiveMaxHP(e);
+  if (m > 0) e.currentHP = m;
 }
 
 /**
@@ -396,6 +423,16 @@ if (SWEEP === 'dayNight') {
 }
 
 // ==================== 跑 ====================
+if (PICK) {
+  const keys = PICK.split(',').map(k => k.trim()).filter(Boolean);
+  const kept = cells.filter(([label]) => keys.some(k => label.includes(k)));
+  if (!kept.length) {
+    console.log(`\u274c --pick "${PICK}" \u6ca1\u5339\u914d\u5230\u4efb\u4f55\u6863\u4f4d\u3002\u53ef\u7528\uff1a\n  ` + cells.map(c => c[0]).join('\n  '));
+    process.exit(1);
+  }
+  cells.length = 0;
+  cells.push(...kept);
+}
 console.log(`批量对局模拟：地图 ${MAP_ID}，每档 ${RUNS} 局，单局上限 ${MAX_MIN} 分钟，档位 ${cells.length} 个`);
 console.log('（纯 headless，使用真实的 MapSystem/LaneWaveSystem/CombatSystem，非简化模型）\n');
 

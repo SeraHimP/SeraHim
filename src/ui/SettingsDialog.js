@@ -80,6 +80,25 @@ export const SettingsDialog = {
       <br><span style="color:var(--text-mute);">注：HDR 测试网站测的多是 HDR 视频/图片，与 WebGL 画布 HDR 输出是两套能力。</span>`;
   },
 
+  // ==================== v48：这两项在并入的构建里丢了，设置窗口因此整页空白 ====================
+  // 用户："原有的设置窗口变成空白了。"
+  //
+  // 根因很直接：`render()` 里读 `this._tab` 决定渲染哪一页、读 `this._TABS` 渲染左侧导航，
+  // 而这两个字段的**定义**在把「波次 / 世界」两页搬进游戏性编辑器那一轮被一起删掉了，
+  // 只剩下两处引用。于是：
+  //   · `this._tab` === undefined → 三个 `TAB === 'xxx'` 全不成立 → **正文是空字符串**；
+  //   · `this._TABS` === undefined → paneHtml 的 groups[0].items 为 undefined → 左侧导航也空。
+  // 两件事叠在一起就是"打开设置什么都没有"。
+  //
+  // 这里按**现在真正还渲染着的三页**重建（flow / quality / debug）——
+  // 不要照抄旧版那四页：wave 与 world 的正文确实已经搬走了，写回去会得到两个空页签。
+  _TABS: [
+    { key: 'flow',    label: '⏱ 流程' },
+    { key: 'quality', label: '🎨 画质' },
+    { key: 'debug',   label: '🛠 调试' },
+  ],
+  _tab: 'flow',
+
   open(deps, logFn) {
     const { waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem } = deps;
     const overlay = document.getElementById('modalOverlay');
