@@ -7,6 +7,7 @@ import { CombatSystem } from './systems/CombatSystem.js';
 import { WaveSystem } from './systems/WaveSystem.js';
 import { ProjectileSystem } from './systems/ProjectileSystem.js';
 import { BuffSystem } from './systems/BuffSystem.js';
+import { ManaSystem } from './systems/ManaSystem.js';
 import { DragonSystem, DRAGON_ELEMENTS } from './systems/DragonSystem.js';
 import { MapSystem } from './systems/MapSystem.js';
 import { WeatherSystem } from './systems/WeatherSystem.js';
@@ -77,7 +78,13 @@ const projectileSystem = new ProjectileSystem(entityContainer, eventBus, combatS
 combatSystem.setProjectileSystem(projectileSystem);
 const waveSystem = new WaveSystem(entityContainer, eventBus);
 const buffSystem = new BuffSystem(effectRegistry, entityContainer, eventBus, combatSystem);
+// v51：技能增幅（自动生效）与韧性（缩短控制/减速）都要在 EffectRegistry.apply() 里
+// 现读施法者/受术者的属性表，所以注入实体表 + 属性计算器——不注入时两条新逻辑整段短路。
+effectRegistry.setStatSource(entityContainer, attrCalc);
 const dragonSystem = new DragonSystem(entityContainer, eventBus, effectRegistry, skillLibrary, attrCalc);
+// v51：单位资源条（法力/能量/充能）+ 主动技能施放。没有装备"主动"类技能的单位，
+// 法力恒为 0（用户定稿），maxMana 填多少都不生效——见 ManaSystem 头注。
+const manaSystem = new ManaSystem(entityContainer, effectRegistry, eventBus, skillLibrary, attrCalc, combatSystem);
 
 // v2.5D 第5步：2D 渲染器已摘除，Three 是唯一渲染器。
 // glCanvas 现在既是画面也是输入面（事件绑在它的父元素 #canvasWrap 上）。
@@ -607,6 +614,7 @@ function stepSimulation(dt) {
   if (!mapSystem.active) waveSystem.update(dt);
   dragonSystem.update(dt);
   combatSystem.update(dt);
+  manaSystem.update(dt);      // v51：资源条推进 + 满了就施放主动技能
   weatherSystem.update(dt);   // 天气演化（权重场，enabled=false 时零开销）
   worldState.update(dt, CTX.gameTime);   // P3：昼夜相位 / 熵 / 龙魂统计（耦合默认全关）
   mapSystem.update(dt);       // 召唤水晶重生计时（仅对战模式内部生效）

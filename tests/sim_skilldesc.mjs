@@ -84,8 +84,11 @@ for (const id of ids) {
   const desc = def.description || '', tmpl = def.descTemplate || '';
   const text = tmpl || desc;
 
-  // ① 格式
-  if (!/^唯一被动——/.test(text) || !/^唯一被动——/.test(desc || text)) {
+  // ① 格式。v51：主动技能（category:'active'）不是"唯一被动"——它们由玩家/单位
+  // 自己攒满法力触发，前缀改成"主动技能——"，判据用 category 不用名字（见
+  // SkillLibrary.js 里 _prefixFor 的头注）。
+  const expectPrefix = def.category === 'active' ? /^主动技能——/ : /^唯一被动——/;
+  if (!expectPrefix.test(text) || !expectPrefix.test(desc || text)) {
     badFormat.push(`${id}（${def.name}）: ${(text || '(空)').slice(0, 60)}`);
   }
 

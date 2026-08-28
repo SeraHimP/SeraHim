@@ -771,9 +771,19 @@ export class EffectsLayer {
             }
           }
         }
-        Q.sprite3(x, by, y, hsz, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);          // 光晕
+        // ==================== v51：兵弹/龙弹重做（参照塔弹的分层，不是另起一套）====================
+        // 用户："新版的小兵/龙的弹道不好看……这两个玩意叠加到一块太难看了。"
+        // "这两个玩意"指 v50 补的那条短拖尾（_trail，宽度 hsz*widthK）与紧挨着画的
+        // 光晕（同一个 hsz）——两个大小相近的色块贴在一起，读出来是一坨糊在一起的团，
+        // 不是"弹头 + 一截尾巴"。塔弹之所以不糊，是因为它多一层**白亮弹芯**把视觉焦点
+        // 收回一个点，光晕退成背景光晕；兵弹/龙弹此前没有这一层，光晕和拖尾谁都不让谁。
+        // 所以不是重新发明一套，是把塔弹已经在用的"光晕退到底、白芯收焦点"这条规则
+        // 原样搬过来，兵弹只是整体尺度更小（isTower 已经在管这件事，不用再分叉）。
+        const haloSz = isTower ? hsz : hsz * 0.82;   // 兵弹光晕收窄一圈，给拖尾让出空间
+        Q.sprite3(x, by, y, haloSz, dcol, isTower ? 1 : 0.85, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);   // 光晕
         Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);    // 核心
-        if (isTower) Q.sprite3(x, by, y, hsz * (0.18 + heat * 0.10), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯
+        Q.sprite3(x, by, y, hsz * (isTower ? (0.18 + heat * 0.10) : 0.24), rgbOf('#ffffff'), 1,
+          V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯——兵弹/龙弹现在也有，收拢视觉焦点
       }
     }
 

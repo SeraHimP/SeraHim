@@ -6,7 +6,8 @@ import * as WEATHER_DEFS from '../data/Weather.js';
 import { DetailModal, STAT_LABELS } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
-import { extAttrGroups } from './statPanelLayout.js';
+import { extAttrGroups, BASE_ATTR_ROWS } from './statPanelLayout.js';
+import { resourceInfoOf } from '../core/resourceBar.js';
 import { stepTrail } from '../presentation/barTrail.js';
 
 export class UIManager {
@@ -551,6 +552,46 @@ export class UIManager {
    * 那条通路里 bonusAttackSpeedPct 一动不动。抄颜色的话"全属性加成拉满"时
    * 攻速明明涨了却是默认色 —— 又一个"面板与实际不一致"。
    */
+  /**
+   * ==================== v51：常驻属性区（塔/兵共用同一份，不再各写一遍）====================
+   * 用户："属性的显示也需要重排一下，默认显示攻击力，法强，护甲，魔法抗性，攻速，暴击率。"
+   * 顺序/字段唯一来源是 statPanelLayout.js 的 BASE_ATTR_ROWS——之前塔卡片和兵卡片
+   * 各写了一份四格的模板字符串，这次顺手把它们并成一份，不然改一处又会漏另一处
+   * （本仓库的老毛病，扩展属性区那份 _extAttrsHtml 当年就是被这个坑改成了共用）。
+   */
+  /**
+   * ==================== v51：单位属性窗口的资源条 ====================
+   * 用户："每个单位新增法力条/能量条/充能条等（为一个，但是类型可能不同）……
+   *        显示在单位属性窗口的血条下面。"
+   * 再补充："塔/攻城车的话那个条就显示穿透型子弹的升温（1/4）/闪电杖的闪电充能/
+   *        攻城车的攻击充能进度。"
+   * 所以这不是单纯的"法力条"——是同一个槽位，按单位实际持有的资源类型显示不同东西：
+   *   ① 装了 category:'active' 技能 → 显示法力（ManaSystem 驱动）；
+   *   ② 没有主动技能、但装了穿透型/闪电杖/充能型攻击方式 → 显示各自的进度；
+   *   ③ 都没有 → 整行隐藏（不是"显示恒为0的空条"，那是噪音）。
+   * 返回 null = 不显示；否则 { frac, label }。
+   */
+  _updateResourceBar(card, prefix, id, entity) {
+    const row = card.querySelector(`#${prefix}-resrow-${id}`);
+    const textEl = card.querySelector(`#${prefix}-restext-${id}`);
+    if (!row) return;
+    const info = resourceInfoOf(entity, { skillLibrary: SkillLibrary, attrCalc: this.attrCalc, effects: this.effects });
+    row.classList.toggle('show', !!info);
+    if (!info) return;
+    const fill = row.querySelector('.bar-res');
+    if (fill) fill.style.width = (info.frac * 100) + '%';
+    if (textEl) textEl.textContent = info.label;
+  }
+
+  _baseAttrsHtml(E, stats) {
+    return BASE_ATTR_ROWS.map(({ key, label }) => {
+      const val = key === 'bonusAttackSpeedPct' ? this._attackSpeedHtml(E, stats)
+        : key === 'critChance' ? this._statValueHtml(key, E, stats, '%')
+        : this._statValueHtml(key, E, stats);
+      return `<div class="a stat-doc" data-stat="${key}" title="点击查看说明"><label>${label}</label><span>${val}</span></div>`;
+    }).join('');
+  }
+
   _attackSpeedHtml(entity, stats) {
     const now = this.attrCalc.calcAttackSpeedOf(stats);
     const bs = entity && entity.baseStats;
@@ -612,8 +653,12 @@ export class UIManager {
     if (old) old.remove();
 
     let live = '';
+    // v51：desc 支持传函数（护甲/魔抗/伤害减免等要按当前数值写出具体文案），
+    // 提到外层作用域，好让下面渲染 body 时也能拿到同一份实时属性表。
+    let liveStats = null;
     if (entity) {
       const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
+      liveStats = stats;
       const p = this._statParts(key, entity, stats);
       if (p) {
         // 用户定稿的格式：攻击力：182（152+30）。没有修正就不显示括号。
@@ -650,8 +695,9 @@ export class UIManager {
         </p>`;
     }
 
+    const descText = typeof doc.desc === 'function' ? doc.desc(liveStats) : doc.desc;
     const body = `${live}${dmgType}
-      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${doc.desc}</p>
+      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${descText}</p>
       ${doc.formula ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">结算规则</div>
         <p style="font-size:11px;color:var(--text-dim);line-height:1.8;margin:0 0 10px;">${doc.formula}</p>` : ''}
       ${doc.tip ? `<p style="font-size:11px;color:var(--text-mute,#6b7480);line-height:1.7;margin:0;">${doc.tip}</p>` : ''}`;
@@ -920,6 +966,10 @@ export class UIManager {
         <span id="tower-hptext-${tower.id}"></span>
         <span class="shield-total" id="tower-shieldtext-${tower.id}"></span>
       </div>
+      <div class="bar-row bar-res-row" id="tower-resrow-${tower.id}">
+        <div class="bar-track"><div class="bar-res" id="tower-res-${tower.id}"></div></div>
+      </div>
+      <div class="bar-res-text" id="tower-restext-${tower.id}"></div>
       <div class="panel-sec">属性</div>
       <div class="attrs" id="tower-attrs-${tower.id}"></div>
       <div class="attrs-ext" id="tower-attrs-ext-${tower.id}"></div>
@@ -970,6 +1020,7 @@ export class UIManager {
 
     const hpText = card.querySelector(`#tower-hptext-${id}`);
     if (hpText) hpText.textContent = `${Math.round(tower.currentHP)}/${Math.round(maxHP)}`;   // v47：去掉 HP 前缀（条本身就是血条），并居中显示
+    this._updateResourceBar(card, 'tower', id, tower);
 
     // v33（Q16）：装备"防御塔镀层"的塔，属性条上用 | 标出下一个镀层节点（与画布血条一致）
     const barTrack = card.querySelector(`#tower-bar-${id}`);
@@ -1001,12 +1052,7 @@ export class UIManager {
     const E = tower;   // v44：属性值统一走 _statValueHtml（基础/修正着色），需要实体本身
     const attrsContainer = card.querySelector(`#tower-attrs-${id}`);
     if (attrsContainer) {
-      this._setAttrs(attrsContainer, `
-        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${this._statValueHtml('attackDamage', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this._attackSpeedHtml(E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${this._statValueHtml('armor', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${this._statValueHtml('magicResist', E, stats)}</span></div>
-      `);
+      this._setAttrs(attrsContainer, this._baseAttrsHtml(E, stats));
     }
 
     // 扩展属性（默认折叠）。布局与兵卡片共用同一份（见 _extAttrsHtml 头注）。
@@ -1043,6 +1089,10 @@ export class UIManager {
         <span id="minion-hptext-${minion.id}"></span>
         <span class="shield-total" id="minion-shieldtext-${minion.id}"></span>
       </div>
+      <div class="bar-row bar-res-row" id="minion-resrow-${minion.id}">
+        <div class="bar-track"><div class="bar-res" id="minion-res-${minion.id}"></div></div>
+      </div>
+      <div class="bar-res-text" id="minion-restext-${minion.id}"></div>
       <div class="panel-sec">属性</div>
       <div class="attrs" id="minion-attrs-${minion.id}"></div>
       <div class="attrs-ext" id="minion-attrs-ext-${minion.id}"></div>
@@ -1091,18 +1141,14 @@ export class UIManager {
 
     const hpText = card.querySelector(`#minion-hptext-${id}`);
     if (hpText) hpText.textContent = `${Math.round(minion.currentHP)}/${Math.round(maxHP)}`;   // 同上
+    this._updateResourceBar(card, 'minion', id, minion);
     const shieldText = card.querySelector(`#minion-shieldtext-${id}`);
     if (shieldText) shieldText.textContent = `🛡 ${Math.round(shieldTotal)}`;
 
     const E = minion;   // 同上
     const attrsContainer = card.querySelector(`#minion-attrs-${id}`);
     if (attrsContainer) {
-      this._setAttrs(attrsContainer, `
-        <div class="a stat-doc" data-stat="attackDamage" title="点击查看说明"><label>攻击力</label><span>${this._statValueHtml('attackDamage', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="bonusAttackSpeedPct" title="点击查看说明"><label>攻速</label><span>${this._attackSpeedHtml(E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="armor" title="点击查看说明"><label>护甲</label><span>${this._statValueHtml('armor', E, stats)}</span></div>
-        <div class="a stat-doc" data-stat="magicResist" title="点击查看说明"><label>魔抗</label><span>${this._statValueHtml('magicResist', E, stats)}</span></div>
-      `);
+      this._setAttrs(attrsContainer, this._baseAttrsHtml(E, stats));
     }
 
     const attrsExtContainer = card.querySelector(`#minion-attrs-ext-${id}`);

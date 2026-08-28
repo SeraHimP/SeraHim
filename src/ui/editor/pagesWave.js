@@ -289,9 +289,23 @@ export const EDITOR_PAGES_WAVE = {
     const f = this._factionScope, lane = this._waveLaneScope;
     const isFac = f && f !== 'shared';
     const isLane = lane && lane !== 'all';
-    const nonEmpty = (a) => (Array.isArray(a) && a.length) ? a : null;
+    // ==================== v51 bug 修复："删光所有兵种后突然恢复默认编排" ====================
+    // 用户："出兵排版……要是把所有兵删除之后就突然恢复默认值了，要求也可以没有
+    //       （相当于不出兵）。"
+    //
+    // 根因在这里原来的 `nonEmpty`：它用 **length** 判"这一格有没有自己的编排"——
+    // `(Array.isArray(a) && a.length) ? a : null`。用户把某一格的编排逐条删空之后，
+    // `box.laneWaveComposition` 变成了一个**长度为 0 的真实数组**（不是没有），
+    // 但 `nonEmpty([])` 因为 `a.length` 是 0（假值）而判它"不算有"，于是 `_woList`
+    // 掉进"本格还没有 → 用继承来的那份"分支，界面立刻弹回默认编排——
+    // 用户删的操作看起来像是"没生效，自动还原了"。
+    //
+    // 治本：改成只认**这个键是不是数组**（存不存在），不看长度。空数组本身就是
+    // 一个合法的、用户主动选择的"这一格不出兵"状态，与"从没编辑过、该看继承值"
+    // 是两件事，必须用两个不同的判据区分——不能用同一个"数组是否非空"去猜。
+    const owned = (a) => Array.isArray(a) ? a : null;
 
-    // ---- 本格已经有自己的编排？直接用 ----
+    // ---- 本格已经有自己的编排？直接用（哪怕是空数组）----
     let box;
     if (isFac) {
       CONFIG.factionOverrides = CONFIG.factionOverrides || {};
@@ -301,19 +315,19 @@ export const EDITOR_PAGES_WAVE = {
       box = gr;
     }
     if (isLane) {
-      const own = nonEmpty(box.laneWaveCompositionByLane?.[lane]);
+      const own = owned(box.laneWaveCompositionByLane?.[lane]);
       if (own) return own;
     } else if (isFac) {
-      const own = nonEmpty(box.laneWaveComposition);
+      const own = owned(box.laneWaveComposition);
       if (own) return own;
     } else {
-      return gr.laneWaveComposition;   // 共享 + 全部路 = 出厂基准本身
+      return gr.laneWaveComposition;   // 共享 + 全部路 = 出厂基准本身（这一格向来就是"数组本身"，不受这条 bug 影响）
     }
 
-    // ---- 本格还没有：按 compositionFor 的顺序找出"实际生效的那一份" ----
+    // ---- 本格从没被编辑过：按 compositionFor 的顺序找出"实际生效的那一份"作为继承基准 ----
     const inherited =
-         (isLane && isFac && nonEmpty(CONFIG.factionOverrides?.[f]?.laneWaveComposition))
-      || (isLane && nonEmpty(gr.laneWaveCompositionByLane?.[lane]))
+         (isLane && isFac && owned(CONFIG.factionOverrides?.[f]?.laneWaveComposition))
+      || (isLane && owned(gr.laneWaveCompositionByLane?.[lane]))
       || gr.laneWaveComposition;
     if (!create) return inherited;   // 只读时显示继承来的那份
 
@@ -397,6 +411,13 @@ export const EDITOR_PAGES_WAVE = {
         </div>
       </div>`;
 
+    // ==================== v51：整页按 .editor-section 分卡片（用户："出兵排版的界面
+    // 我觉得好乱"）====================
+    // 排查结论：CSS 本身（.wo-row 的列宽）v43 就已经统一过、没有错位；"乱"来自
+    // ①兵种总开关 / ②对战编排 / 预览 这几大块此前只用内联样式的小标题分隔，视觉上
+    // 是一整面墙。这里改成与上面"运行时控制"（runtime 变量）同一套 .editor-section
+    // + <h4> 卡片，读起来是几张边界清楚的卡片，不是一整页平铺的控件。
+    //
     // P2：出兵的一切都收在这一个 tab 里，但【必须】按模式分区并写明各自管谁 ——
     // 两套规则同屏而不标注模式，正是用户说的"冲突或者是重合"。
     let html = runtime + `<div class="pick-desc-box" style="margin-bottom:10px;">
@@ -408,8 +429,8 @@ export const EDITOR_PAGES_WAVE = {
     </div>`;
 
     // ---- ① 兵种总开关（原「生成规则」里逐个类型翻页才能看到，现在一屏全景）----
-    html += `<div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">① 兵种总开关（沙盒 + 对战通用）</div>`;
-    html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:12px;">
+    html += `<div class="editor-section"><h4>① 兵种总开关（沙盒 + 对战通用）</h4>
+    <div class="editor-tabs" style="flex-wrap:wrap;">
       ${types.map(t => {
         const on = EN[t] !== false;
         return `<button class="editor-tab ${on ? 'active' : ''}" data-spawn-toggle="${t}"
@@ -417,7 +438,7 @@ export const EDITOR_PAGES_WAVE = {
           ${on ? '✅' : '⛔'} ${this._iconOf(t)}${this._labelOf(t)}
         </button>`;
       }).join('')}
-    </div>`;
+    </div></div>`;
 
     const _f = this._factionScope;
     const _lane = this._waveLaneScope || 'all';
@@ -429,13 +450,13 @@ export const EDITOR_PAGES_WAVE = {
     //（用户："每个地图的路数不同，UI上记得做区分！"）。
     const _laneIds = this._mapLaneIds();
     const _mapLabel = ((window.CTX?.__app || window.__app)?.mapSystem?.currentMap?.label) || '当前地图';
-    html += `<div style="font-size:12px;color:var(--text-dim);margin:0 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
-      ② 对战编排（数组顺序 = 出兵先后）　
-      <span style="font-size:10px;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
+    html += `<div class="editor-section"><h4 style="display:flex;align-items:center;gap:8px;">
+      <span>② 对战编排（数组顺序 = 出兵先后）</span>
+      <span style="font-size:10px;font-weight:400;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
         作用域：${_who} × ${_laneTxt}${_own ? '（本格已有独立编排）' : '（当前显示继承来的那份，一改就会复制成本格专属）'}
       </span>
-      ${_own ? `<button id="woClearFaction" style="float:right;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除本格编排</button>` : ''}
-      </div>`;
+      ${_own ? `<button id="woClearFaction" style="margin-left:auto;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除本格编排</button>` : ''}
+      </h4>`;
     html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:6px;">
       <span style="font-size:10px;color:var(--text-mute);align-self:center;margin-right:6px;">路（${_mapLabel}，${_laneIds.length} 条）：</span>
       <button class="editor-tab ${_lane === 'all' ? 'active' : ''}" data-wo-lane="all" style="font-size:11px;">🌐 全部路</button>
@@ -493,7 +514,8 @@ export const EDITOR_PAGES_WAVE = {
     }
 
     html += `<div style="margin-top:8px;"><button id="woAddBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条</button>
-      <button id="woResetBtn" style="margin-left:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">↺ 恢复默认编排</button></div>`;
+      <button id="woResetBtn" style="margin-left:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">↺ 恢复默认编排</button></div>
+      </div>`; // 关闭 ② 对战编排 的 .editor-section
 
     // ---- 实时预览 ----
     const w = this._waveOrderPreviewWave, nd = this._waveOrderPreviewNexusDown;
@@ -514,7 +536,7 @@ export const EDITOR_PAGES_WAVE = {
     const order = buildWaveOrder(w, nd, gr, _pf, {
       gameTime: _pvTime, laneId: this._waveOrderPreviewLane, census: _census,
     });
-    html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
+    html += `<div class="editor-section"><h4>🔍 出兵预览</h4>
       <div class="slider-row" style="gap:8px;">
         <label style="width:auto;">预览第</label>
         <input type="number" id="woPreviewWave" min="0" step="1" value="${w}" style="width:70px;">

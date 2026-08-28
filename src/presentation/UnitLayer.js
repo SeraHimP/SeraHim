@@ -38,6 +38,8 @@ import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
 import { towerFacingRad } from './towerFacing.js';
 import { stepTrail, TRAIL_COLOR } from './barTrail.js';
+import { SkillLibrary } from '../core/SkillLibrary.js';
+import { resourceInfoOf } from '../core/resourceBar.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -664,7 +666,9 @@ export class UnitLayer {
 
   // ============ 血条重绘（复刻 drawHealthBar 的配色与布局 + 掉血拖尾） ============
   // trailFrac = 显示血量（>真实血量时画一段淡红拖尾）；0 表示无拖尾。
-  _redrawBar(g, e, ghost, maxHP, trailFrac = 0) {
+  // resInfo = { frac, label } | null（v51）——世界空间的资源条，画在血条正下方那一细条；
+  // 没有资源可显示时（大多数单位）整个条高度都归 HP，行为与改动前逐位一致。
+  _redrawBar(g, e, ghost, maxHP, trailFrac = 0, resInfo = null) {
     g.clearRect(0, 0, BAR_W, BAR_H);
     if (ghost) {
       const prog = Math.max(0, Math.min(1, e._respawnProgress || 0));
@@ -674,6 +678,10 @@ export class UnitLayer {
       return;
     }
     if (maxHP <= 0) return;
+    // 资源条占底部 2px，HP 条让出这 2px——BAR_H 只有 8px，硬加一整条会让贴图翻倍、
+    // 世界尺寸也要跟着改（vis.barH 是按 BAR_W/BAR_H 比例算的），blast radius 太大；
+    // 用现成的高度里挤出一细条是最小改动，且没有资源时（绝大多数单位）行为逐位不变。
+    const hpH = resInfo ? BAR_H - 2 : BAR_H;
     const hpFrac = Math.max(0, Math.min(1, e.currentHP / maxHP));
     const faction = e._mapFaction || e.faction;
     // v43：血条颜色只看**阵营**，不再按 type 分叉。
@@ -696,25 +704,31 @@ export class UnitLayer {
     const sfW = shieldFrac * scale * fixedShare;
     const stW = shieldFrac * scale * tempShare;
 
-    g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, BAR_H);
-    g.fillStyle = hpColor; g.fillRect(0, 0, BAR_W * hpDraw, BAR_H);
+    g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, hpH);
+    g.fillStyle = hpColor; g.fillRect(0, 0, BAR_W * hpDraw, hpH);
     // 掉血拖尾：真实血量→显示血量之间的淡红残段（有界动画，追平即消失）。护盾在其后绘制会覆盖。
     if (trailFrac > hpFrac) {
       const tEnd = Math.min(1, trailFrac) * scale;
       g.fillStyle = TRAIL_COLOR;
-      g.fillRect(BAR_W * hpDraw, 0, BAR_W * (tEnd - hpDraw), BAR_H);
+      g.fillRect(BAR_W * hpDraw, 0, BAR_W * (tEnd - hpDraw), hpH);
     }
-    if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * sfW, BAR_H); }
-    if (stW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(BAR_W * (hpDraw + sfW), 0, BAR_W * stW, BAR_H); }
+    if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * sfW, hpH); }
+    if (stW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(BAR_W * (hpDraw + sfW), 0, BAR_W * stW, hpH); }
     g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
-    g.strokeRect(0.5, 0.5, BAR_W - 1, BAR_H - 1);
+    g.strokeRect(0.5, 0.5, BAR_W - 1, hpH - 1);
+
+    // v51：资源条——紧贴在 HP 条下方的 2px 细条，颜色与面板资源条同一色系。
+    if (resInfo) {
+      g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, hpH, BAR_W, BAR_H - hpH);
+      g.fillStyle = '#6c8cf5'; g.fillRect(0, hpH, BAR_W * resInfo.frac, BAR_H - hpH);
+    }
 
     // E1 镀层节点线：2D 是 1.5px 白线上下各溢出 1.5px；纹理内画 2px 竖线不出条（头注记档）
     if (e.type === 'tower') {
       const node = nextPlatingNode(e);
       if (node !== null) {
         g.fillStyle = '#ffffff';
-        g.fillRect(Math.round(BAR_W * node) - 1, 0, 2, BAR_H);
+        g.fillRect(Math.round(BAR_W * node) - 1, 0, 2, hpH);
       }
     }
   }
@@ -900,14 +914,18 @@ export class UnitLayer {
         const tr = stepTrail(en.dispFrac, realFrac, dt, 1 / BAR_W);
         en.dispFrac = tr.disp; en.trailing = tr.trailing;
         const q = (v) => Math.round(Math.max(0, Math.min(1, v)) * BAR_W);
+        // v51：资源条（法力/升温/闪电充能/攻城充能）跟着血条同一张纹理画——脏 key 必须
+        // 把资源分数也算进去，否则只有资源在变、血量不变时永远不会触发重绘（见下面 _redrawBar）。
+        var resInfo = resourceInfoOf(e, { skillLibrary: SkillLibrary, attrCalc, effects });
         barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
                + q((e.tempShield || 0) / maxHP) + '|' + (e._mapFaction || e.faction || '')
                + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
-               + (en.trailing ? '|t' + q(en.dispFrac) : '');
+               + (en.trailing ? '|t' + q(en.dispFrac) : '')
+               + (resInfo ? '|r' + q(resInfo.frac) : '');
       }
       if (en.barKey !== barKey) {
         en.barKey = barKey;
-        this._redrawBar(en.barCanvas.getContext('2d'), e, ghost, maxHP, (!ghost && en.trailing) ? en.dispFrac : 0);
+        this._redrawBar(en.barCanvas.getContext('2d'), e, ghost, maxHP, (!ghost && en.trailing) ? en.dispFrac : 0, resInfo);
         en.barTex.needsUpdate = true;   // 脏标记：只有走到这里才触发纹理上传
       }
     }

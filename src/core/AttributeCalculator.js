@@ -138,6 +138,21 @@ export const AttributeCalculator = {
       stats[key] = value;
     }
 
+    // ==================== v51：适应之力（严格按 LoL 规则，不留过渡带）====================
+    // 用户："根据攻击/法强的大小选一个加（哪个更好加哪个）。"
+    // 查证的 LoL 规则：比较的是【总法术强度】与【总攻击力】，没有中间地带——
+    // 打平时按角色声明的默认方向（这里是模板字段 adaptiveDefault）。
+    // 换算比例沿用 LoL 现行值：1 点适应之力 = 0.6 攻击力，或 1 点法术强度。
+    // 放在 allStatsPct 之前：适应之力转化出来的这一份，和"天生"的 AD/AP 同等对待，
+    // 也会被全属性加成放大——它转化完之后就是一份普通的 AD/AP，不再有特殊身份。
+    if (stats.adaptiveForce) {
+      const af = stats.adaptiveForce;
+      const ap = stats.abilityPower || 0, ad = stats.attackDamage || 0;
+      const goToAP = ap === ad ? stats.adaptiveDefault === 'ap' : ap > ad;
+      if (goToAP) stats.abilityPower = ap + af;
+      else stats.attackDamage = ad + af * 0.6;
+    }
+
     if (includeAllStats && allStatsPctMod !== 0) {
       // 全属性加成不应作用于"百分比上限型"属性（减伤、伤害转化、生命偷取等），
       // 否则会把已经封顶的属性二次放大、突破设计上限。这类属性只吃自身的加成。
@@ -261,6 +276,20 @@ export const AttributeCalculator = {
   /**
    * 计算伤害乘数（基于抗性）
    */
+  /**
+   * v51：把 `attackType === 'adaptive'` 解析成 'physical' / 'magic'。
+   * 与适应之力用同一条 LoL 规则（AP 高就走魔法，打平按 adaptiveDefault），
+   * 但这里比较的是【结算那一刻】已经算好的属性表（含适应之力转化后的 AD/AP），
+   * 不是另开一套判据——"哪种伤害类型"与"适应之力加到哪"必须用同一个比较结果，
+   * 否则会出现"适应之力都加进了法强，却按物理伤害结算"这种自相矛盾。
+   */
+  resolveAttackType(stats) {
+    if (!stats || stats.attackType !== 'adaptive') return stats ? stats.attackType : 'physical';
+    const ap = stats.abilityPower || 0, ad = stats.attackDamage || 0;
+    const goToAP = ap === ad ? stats.adaptiveDefault === 'ap' : ap > ad;
+    return goToAP ? 'magic' : 'physical';
+  },
+
   calcDamageMultiplier(resist) {
     if (resist >= 0) {
       return 100 / (100 + resist);

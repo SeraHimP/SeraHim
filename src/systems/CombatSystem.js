@@ -76,6 +76,45 @@ const DEFAULT_BULLET_SPEED = 400;
  */
 function isTrueDamage(attackType) { return attackType === 'true'; }
 
+/**
+ * v51：一次攻击命中了几个目标——决定吸血按哪个效率算。
+ * 用户："主单位+其他单位的溅射伤害，主单位吸血按100%算，其他单位的溅射伤害按20%算。
+ *        如果是连锁，没有主目标，是直接的群体伤害，就全部按20%算。"
+ * 不按"这次行动一共打了几个人"现算（那需要跨调用聚合，麻烦且脆弱），而是按【调用点的性质】
+ * 分类：主命中路径（_resolveHit、大多数 performAttackDirect 调用）恒为主目标，溅射
+ * （_applyExplosionAt）与连锁（connectChain）在各自的调用处显式标记 options.vampGroup。
+ */
+function vampEfficiency(options) {
+  if (!options || !options.vampGroup) return 1;
+  return Math.max(0, Math.min(1, (CONFIG.tuning?.vamp?.groupEffPct ?? 20) / 100));
+}
+
+/**
+ * v51：统一吸血结算——物理/法术/全能三件套，两条伤害路径（_resolveHit/performAttackDirect）
+ * 共用一份（本仓库"同一条规则两处各写一份"的教训，这次一开始就避开）。
+ * 全能吸血（lifeStealPct）计入一切伤害类型（含真实伤害）；物理/法术只计入对应类型。
+ * `vampEff`：群体命中（溅射/连锁）按 CONFIG.tuning.vamp.groupEffPct 打折，主目标 100%。
+ */
+function applyVamp(combat, attacker, damage, attackType, vampEff) {
+  if (!attacker || !(damage > 0)) return;
+  const atkStats = combat.attrCalc.calc(attacker, combat.effects.getEffects(attacker.id));
+  let pct = atkStats.lifeStealPct || 0; // 全能吸血：什么类型的伤害都算
+  if (attackType === 'physical') pct += atkStats.physicalVampPct || 0;
+  else if (attackType === 'magic') pct += atkStats.spellVampPct || 0;
+  if (pct <= 0) return;
+  const power = healPowerOf(atkStats);
+  const steal = damage * (pct / 100) * vampEff;
+  const maxHP = atkStats.maxHP || 1;
+  // ⚠️ 这两个比例原来在 _resolveHit 里是写死的 0.5/0.5——CONFIG.gameRules 里其实
+  // 一直有 lifeStealToHealth/lifeStealToShield 这两个"死配置"（存在但没人读），
+  // 默认值恰好都是 50，所以行为不变；现在把它们真正接上，以后想调回血/加盾的比例
+  // 就不用再改代码了。
+  const toHealth = (CONFIG.gameRules?.lifeStealToHealth ?? 50) / 100;
+  const toShield = (CONFIG.gameRules?.lifeStealToShield ?? 50) / 100;
+  applyHeal(attacker, steal * toHealth, power, maxHP);
+  grantTempShield(attacker, steal * toShield, power);
+}
+
 function recordLastHit(target, attacker) {
   if (!target || !attacker) return;
   target._lastHitBy = attacker.id;
@@ -240,7 +279,9 @@ export class CombatSystem {
         tower.targetId = target.id;
         const dx = target.pos.x - tower.pos.x;
         const dy = target.pos.y - tower.pos.y;
-        if (dx * dx + dy * dy <= range * range && tower.attackCooldown <= 0 && !((window.gameTime || 0) < (tower._lockUntil || 0))) {
+        // v51：缴械——能索敌、能瞄准，但打不出去（与眩晕的区别是眩晕连目标都不选）。
+        if (dx * dx + dy * dy <= range * range && tower.attackCooldown <= 0
+            && !((window.gameTime || 0) < (tower._lockUntil || 0)) && !this.effects.isDisarmed(tower.id)) {
           this.performAttack(tower, target);
           const finalAS = this.attrCalc.calcAttackSpeedOf(
             this.attrCalc.calc(tower, this.effects.getEffects(tower.id)));
@@ -297,7 +338,7 @@ export class CombatSystem {
       // v45：朝向门（与对战路径共用 canFire 这一份实现，不在这里再判一次角差）。
       // v49：充能型攻击（攻城车的攻城模式）没充满就不开火，见 chargeReady/_tickCharge。
       if (dist <= range && minion.attackCooldown <= 0 && this.chargeReady(minion, nearestTower)
-          && !((window.gameTime || 0) < (minion._lockUntil || 0))
+          && !((window.gameTime || 0) < (minion._lockUntil || 0)) && !this.effects.isDisarmed(minion.id)
           && canFire(minion, nearestTower)) {
         minion.targetId = nearestTower.id;
         this.performAttack(minion, nearestTower);
@@ -630,7 +671,13 @@ export class CombatSystem {
       onHitPctBase: (atkStats.onHitPercentDamage || 0) / 100,
       dmgAmp: atkStats.damageAmpPct || 0,
       preDamageMult,
-      attackType: atkStats.attackType || 'physical',
+      // v51：'adaptive' 在开火那一刻就解析成 physical/magic 并快照——与其它攻击方数值
+      // 同一个时序（见下面那段关于四项穿透"完全不需要活着的攻击者"的注释）。
+      attackType: this.attrCalc.resolveAttackType(atkStats) || 'physical',
+      // v51：普攻默认能暴击（暴击率默认0，没有来源加成时恒不触发），在开火那一刻掷骰
+      // 并快照——与其余攻击方数值同一时序，命中结算时不会因为攻击者已死而判不出来。
+      isCrit: Math.random() * 100 < (atkStats.critChance || 0),
+      critMult: (CONFIG.tuning?.crit?.baseCritDamagePct ?? 200) + (atkStats.critDamagePct || 0),
       // v49：穿透四项也在开火那一刻快照。
       // 用户："无论攻击单位是否死亡，只要发出去的子弹就造成伤害。"
       // 命中结算原来要拿**攻击者此刻的属性表**去读穿透，攻击者死了就读不到 ——
@@ -702,9 +749,22 @@ export class CombatSystem {
       : null;
     const weaponDef = hitInfo.weaponId ? this.skills[hitInfo.weaponId] : null;
 
+    // v51：闪避——只对普通攻击生效（技能不可被闪避，这是本项目对"技能"与"普攻"
+    // 唯一有意义的边界之一：普攻能被躲开，技能是判定命中之后的数值结算，不走这里）。
+    // 掷骰放在命中结算这一刻（用目标此刻的闪避率），不在开火时快照——闪避是防御方属性，
+    // 应该用命中那一刻的实时数值，与护甲/护盾同一口径。
+    if (Math.random() * 100 < (defStats.evasionPct || 0)) {
+      this.eventBus.emit('damage:evaded', { sourceId: attacker.id, targetId: target.id });
+      return;
+    }
+
     const onHitPct = hitInfo.onHitPctBase * target.currentHP;
     const preMult = hitInfo.preDamageMult ?? 1;
     let totalRaw = ((hitInfo.baseDamage + hitInfo.onHitFixed + onHitPct) * (1 + hitInfo.dmgAmp / 100)) * preMult;
+    // v51：暴击——开火那一刻已经掷过骰、算好倍率（见 performAttack 里 hitInfo.isCrit
+    // 的头注），这里只管乘。放在最前面，后续的攻城/巨龙/哀兵等乘子都在这个基础上叠加，
+    // 与伤害增幅（dmgAmp）同一层级——暴击本来就该是"这一下打多疼"的一部分，不是特例。
+    if (hitInfo.isCrit) totalRaw *= (hitInfo.critMult || 200) / 100;
 
     // ===== v40 攻城武器被动：伤害侧修正（装备了被动才生效，数值取自技能定义）=====
     // ① 打建筑 ×(1+TOWER_DAMAGE_MULT_PCT)——仅走这条主命中路径；溅射由 performAttackDirect
@@ -806,15 +866,9 @@ export class CombatSystem {
     // 原实现挂在攻击方（打人回盾）——方向整个是反的，等于这条属性从没按设计工作过。
     this._applyDamageConversion(target, defStats, finalDamage);
 
-    // ---- 生命偷取 ----
-    const lifesteal = atkStats.lifeStealPct || 0;
-    if (lifesteal > 0 && damage > 0) {
-      const power = healPowerOf(atkStats);   // 被治疗方 = 攻击者本人
-      const steal = damage * (lifesteal / 100);
-      const maxHP = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)).maxHP || 1;
-      applyHeal(attacker, steal * 0.5, power, maxHP);
-      grantTempShield(attacker, steal * 0.5, power);
-    }
+    // ---- 生命偷取（v51：物理/法术/全能三件套统一实现，见 applyVamp）----
+    // 这是主命中路径，vampEff 恒为 1（100%）——溅射/连锁走各自调用点的 vampGroup 标记。
+    applyVamp(this, attacker, damage, attackType, 1);
 
     // ---- 触发被动（普通攻击恒为一次完整攻击，attackShare=1）----
     // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份代码，
@@ -948,7 +1002,8 @@ export class CombatSystem {
           charge: 1, life: 0.12, color,
         });
       }
-      this.performAttackDirect(attackerId, next.id, damage, attackType);
+      // v51：连锁没有"主目标"（用户定稿），吸血按 vampGroup 折扣统一走 20%。
+      this.performAttackDirect(attackerId, next.id, damage, attackType, { vampGroup: true });
       current = next;
     }
   }
@@ -999,9 +1054,9 @@ export class CombatSystem {
   /** DragonSystem 每次结算完击杀就灌一次：{ blue: n, red: n }（只数元素龙）。 */
   setDragonKillCounts(counts) { this._dragonKills = counts; }
 
-  _applyExplosion(attacker, target, baseDamage, attackType, radiusOverride) {
+  _applyExplosion(attacker, target, baseDamage, attackType, radiusOverride, opts) {
     // 兼容旧调用：中心取目标坐标、排除主目标（主目标已单独结算直伤）。
-    this._applyExplosionAt(attacker, target.pos.x, target.pos.y, baseDamage, attackType, radiusOverride, target.id);
+    this._applyExplosionAt(attacker, target.pos.x, target.pos.y, baseDamage, attackType, radiusOverride, target.id, opts);
   }
 
   // B2：溅射【依赖坐标】而非目标对象——目标中途死亡后子弹仍飞到原落点，在此结算溅射。
@@ -1029,8 +1084,17 @@ export class CombatSystem {
    * 只排除攻击者本人，不做任何阵营过滤。
    * 是否应当连友军一起排除，是另一个尚未定稿的问题 —— 留成 CONFIG 开关
    * `tuning.splash.hitAllies`，默认 true = 与改动前逐位一致，等用户拍板再翻。
+   *
+   * ==================== v51：这里溅射到的每一下算不算"技能增幅/技能暴击" ====================
+   * 这个函数被两类完全不同的调用方共用：① 普攻自带的溅射（龙/攻城车，模板
+   * splashRadius 或【攻城炮】给的半径）——这其实是普攻，只是多了一圈溅射；
+   * ② 龙魂的主动溅射（炎魂，onDealtDamage 里显式调 combat._applyExplosion）——
+   * 这是真正的技能效果。两者共用一份实现，但"算不算技能"必须分开标记，
+   * 默认按①（更常见的调用方）算普攻，炎魂在自己的调用点显式传 { basicAttack:false }
+   * 覆盖。溅射天然是【群体命中】，吸血固定按 vampGroup 的折扣走。
    */
-  _applyExplosionAt(attacker, centerX, centerY, baseDamage, attackType, radiusOverride, excludeId) {
+  _applyExplosionAt(attacker, centerX, centerY, baseDamage, attackType, radiusOverride, excludeId, opts = {}) {
+    const basicAttack = opts.basicAttack !== false; // 默认 true：普攻自带溅射
     const radius = radiusOverride || 75;
     const cfg = CONFIG.tuning?.splash || {};
     const atkFac = attacker ? (attacker._mapFaction || attacker.faction || null) : null;
@@ -1049,7 +1113,8 @@ export class CombatSystem {
       if (dist > radius) continue;
       const splashFactor = 0.6 * Math.exp(-0.033 * dist);
       const splashDmg = baseDamage * splashFactor * 0.8;
-      this.performAttackDirect(attacker.id, t.id, splashDmg, attackType);
+      this.performAttackDirect(attacker.id, t.id, splashDmg, attackType,
+        { basicAttack, vampGroup: true });
     }
   }
 
@@ -1124,7 +1189,8 @@ export class CombatSystem {
         color: opt.color || '#7c6cf5',
         directHit: {
           attackerId: attacker.id, damage, type: attackType,
-          options: { _noProc: true, applyOnHitBonus: true,
+          // v51：分裂弹是"次要目标"，吸血按 vampGroup 折扣（与溅射/连锁同口径）。
+          options: { _noProc: true, applyOnHitBonus: true, vampGroup: true,
                      attackShare: Math.max(0, Math.min(1, (opt.onHitEffPct ?? 55) / 100)) },
         },
       });
@@ -1261,6 +1327,9 @@ export class CombatSystem {
 
     const atkStats = attacker ? this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)) : {};
     const defStats = this.attrCalc.calc(target, this.effects.getEffects(target.id));
+    // v51：'adaptive' 解析——这条路径的调用方（技能/DOT/溅射）比普攻路径更可能显式传
+    // 'adaptive' 字面量（普攻路径在 performAttack 里已经在开火时解析过了）。
+    if (attackType === 'adaptive') attackType = this.attrCalc.resolveAttackType(atkStats) || 'physical';
 
     // ==================== v45：攻击特效的"每跳修正" ====================
     // 用户定稿："由于闪电杖是固定每秒四次伤害，所以遇到攻击特效时应该每次伤害造成的
@@ -1288,6 +1357,27 @@ export class CombatSystem {
     }
     const dmgAmp = atkStats.damageAmpPct || 0;
     damage *= (1 + dmgAmp / 100);
+
+    // ==================== v51：技能增幅（自动生效）====================
+    // 用户："技能增幅就是自动的。" 默认套用；`options.basicAttack` 是仅有的例外开关——
+    // 只给引擎自己"这其实是普攻，只是技术上必须走这条路径"的那两三处用
+    // （穿透型升温之外，闪电杖每跳伤害、攻城疲惫回收都属于这类），技能作者不需要
+    // 知道这个字段的存在。真实伤害同样吃这一层——与伤害增幅（damageAmpPct）同口径。
+    if (!options.basicAttack) {
+      const skillAmp = atkStats.skillAmpPct || 0;
+      if (skillAmp) damage *= (1 + skillAmp / 100);
+    }
+
+    // ==================== v51：技能暴击 ====================
+    // 用户："拥有状态【技能暴击】的单位技能可以暴击，但暴击伤害降低，只适用于伤害性技能。"
+    // "伤害性技能"＝这一次调用本身就是在造成伤害（走的正是这个函数），所以判据只需要
+    // "不是普攻"（同一个 options.basicAttack）+ "持有【技能暴击】状态"，不需要额外的
+    // "这个技能算不算伤害性"标记——凡是调了 performAttackDirect 就已经是在造成伤害了。
+    if (!options.basicAttack && attacker && this.effects.isSkillCrit(attacker.id)) {
+      if (Math.random() * 100 < (atkStats.critChance || 0)) {
+        damage *= (CONFIG.tuning?.crit?.skillCritDamagePct ?? 150) / 100;
+      }
+    }
     // ==================== v43 巨龙宿怨：增伤那一半 ====================
     // 拆开放置是有讲究的（见 _dragonGrudge 的注释）：
     //   · **增伤**（龙打向某阵营）是**攻击方**属性，与 damageAmpPct 同类 →
@@ -1388,6 +1478,12 @@ export class CombatSystem {
     if (damage > 0) target.lastDamageTime = window.gameTime || 0;
     // 伤害转化（v33 Q10）：防御向，两条伤害路径（performAttack/Direct）行为一致
     this._applyDamageConversion(target, defStats, finalDamage);
+    // v51：吸血——这条路径此前完全没有（生命偷取只接在 _resolveHit 上），现在补齐，
+    // 与主命中路径共用同一份 applyVamp。基数用 damage（护盾吸收前的已结算伤害）而不是
+    // finalDamage（HP 实扣量），与 _resolveHit 原有的口径一致——护盾扛住了这一下，
+    // 攻击方依然按"打出去多少"回血，这是改动前就有的行为，不是这次新定的。
+    // options.vampGroup 由调用点标记（溅射/连锁）。
+    applyVamp(this, attacker, damage, attackType, vampEfficiency(options));
     // 记录巨龙的伤害来源塔
     if (target.type === 'dragon' && finalDamage > 0 && attacker) {
       if (attacker.type === 'tower') (target._damagers = target._damagers || new Set()).add(attacker.id);

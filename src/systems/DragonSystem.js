@@ -499,6 +499,15 @@ export class DragonSystem {
     if (DragonSystem.SOUL_REWARD_OK(entity) && this.soulOwner === fac && this.souls[fac]?.[0]) {
       this._equipSoul(entity, this.souls[fac][0]); any = true;
     }
+    // ③ v51 修复：远古之力是限时的，广播那一刻不在场的单位（大型小兵频繁死亡重生，
+    // 塔几乎不会）会漏掉——这里补上，窗口期内新入场的塔/大型小兵按剩余时间补发。
+    // 顺序放在②之后：与"广播那一刻正好在场"的单位一致（远古之力会顶掉常驻魂，
+    // 这是 _grantAncientTo 内部 _equipSoul 早就有的行为，不是这次新引入的）。
+    const until = this._ancientUntilByFaction?.[fac];
+    if (DragonSystem.SOUL_REWARD_OK(entity) && until
+        && until > ((typeof window !== 'undefined' && window.gameTime) || 0)) {
+      this._grantAncientTo(entity, until); any = true;
+    }
     return any;
   }
 
@@ -590,21 +599,54 @@ export class DragonSystem {
    * 于是它成了落后方唯一的翻盘工具。处决专治"最后 20% 特别难啃"，
    * 恰好克制山魂/光魂/潮魂这三条防守型龙魂 —— 这是防止"一方成魂另一方不用玩了"的关键。
    */
+  /**
+   * 给单个单位授予远古之力（限时到 untilTime）。抽出来是因为它现在有**两处**调用：
+   * ① 击杀远古龙那一刻，广播给当时在场的全部塔+大型小兵；
+   * ② 见下面 equipExistingSoul 里新补的那段——240 秒窗口期内新出生的塔/大型小兵。
+   * 两处若各写一份，"新兵没有远古之力"这种"同一条规则实现了两遍"的坑迟早复发。
+   */
+  _grantAncientTo(e, untilTime) {
+    const p = (CONFIG.dragonSouls && CONFIG.dragonSouls.ancient) || {};
+    const remain = untilTime - ((typeof window !== 'undefined' && window.gameTime) || 0);
+    if (remain <= 0) return;
+    this._equipSoul(e, 'dragonsoul_ancient');
+    this.effects.apply(e.id, {
+      name: '远古之力', icon: '🐲', kind: 'display', type: 'buff', color: '#e67e22',
+      duration: remain, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+      stackKey: 'dragon_ancient',
+      description: `处决：对生命低于 ${p.executeAtPct ?? 20}% 的敌人额外造成 ${p.executePct ?? 20}% 最大生命真实伤害`,
+    }, 'dragon_ancient_buff');
+    e._ancientUntil = untilTime;
+  }
+
+  /**
+   * v43：远古龙奖励 = **限时 240 秒的处决**（用户定稿：八条龙魂全部永久，只有它限时）。
+   *
+   * 旧实现是"给参与的塔永久 +10% 全属性、每条叠一层"——纯数值、永久、只给塔。
+   * 现在改成阵营级的限时技能：成魂后元素龙停刷、只出远古龙，**双方都能抢**，
+   * 于是它成了落后方唯一的翻盘工具。处决专治"最后 20% 特别难啃"，
+   * 恰好克制山魂/光魂/潮魂这三条防守型龙魂 —— 这是防止"一方成魂另一方不用玩了"的关键。
+   *
+   * ==================== v51 bug 修复：大型小兵拿不到远古之力 ====================
+   * 用户报告："远古龙魂对大型小兵目前不生效，只对塔生效。"
+   * 排查结论与用户的猜测不同：**不是装备时按单位类型过滤掉了**——`dragonsoul_ancient`
+   * 的 onDealtDamage 完全不看攻击者类型，`_grantAll` 用的 SOUL_REWARD_OK 也同样
+   * 包含大型小兵，这次广播本身对塔和大型小兵一视同仁。
+   * 真正的缺口在**新单位入场**那条路：`equipExistingSoul()` 只会给新兵补发【永久】
+   * 的龙魂（this.souls[fac]），远古之力是限时的、走的是这里的一次性广播，从没有人
+   * 告诉 equipExistingSoul "现在阵营 X 正顶着一份远古之力，窗口到几点"。塔几乎不会
+   * 中途"重新出生"（对局里数量恒定），而大型小兵每隔几十秒就整批死亡再刷新——
+   * 240 秒窗口期内，旧的那一批很快死绝，新出生的一批全都拿不到，观感上就是
+   * "远古之力只对塔有效"。修法：把这份窗口期状态记成阵营级的 `_ancientUntilByFaction`，
+   * equipExistingSoul 里补发时一并检查、按剩余时间补上。
+   */
   _grantAncient(faction) {
     const p = (CONFIG.dragonSouls && CONFIG.dragonSouls.ancient) || {};
     const dur = p.durationSec ?? 240;
-    const n = this._grantAll(faction, (e) => {
-      this._equipSoul(e, 'dragonsoul_ancient');
-      // 限时：到点由 EffectRegistry 移除显示状态，同时把技能实例摘掉。
-      // 这里用一个 display 效果做"倒计时可见"，真正的到期回收在 update 里按 _ancientUntil 走。
-      this.effects.apply(e.id, {
-        name: '远古之力', icon: '🐲', kind: 'display', type: 'buff', color: '#e67e22',
-        duration: dur, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        stackKey: 'dragon_ancient',
-        description: `处决：对生命低于 ${p.executeAtPct ?? 20}% 的敌人额外造成 ${p.executePct ?? 20}% 最大生命真实伤害`,
-      }, 'dragon_ancient_buff');
-      e._ancientUntil = ((typeof window !== 'undefined' && window.gameTime) || 0) + dur;
-    });
+    const until = ((typeof window !== 'undefined' && window.gameTime) || 0) + dur;
+    this._ancientUntilByFaction = this._ancientUntilByFaction || {};
+    this._ancientUntilByFaction[faction] = until;
+    const n = this._grantAll(faction, (e) => this._grantAncientTo(e, until));
     this._ancientFaction = faction;
     return n;
   }

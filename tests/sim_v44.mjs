@@ -558,8 +558,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('界④-天气详情弹窗改用 shellHtml（v43 统一弹窗那轮漏了它，它藏在 UIManager 里）',
     /_showWeatherDetail\(row\) \{[\s\S]{0,3000}shellHtml\(\{/.test(um)
     && !/<div class="modal" style="max-width:380px;">/.test(um));
+  // v51：这个方法里加了 desc 支持传函数（护甲/魔抗等按当前数值给具体描述）的解析逻辑，
+  // shellHtml 调用点被推远了一些——窗口跟着放宽，钉的还是"这个方法最终确实用了统一外壳"
+  // 这条规则，不是method具体多少字符。
   T('界④-属性说明弹窗也走同一个外壳',
-    /_showStatDoc\(key, entity\) \{[\s\S]{0,2500}shellHtml\(\{/.test(um));
+    /_showStatDoc\(key, entity\) \{[\s\S]{0,3500}shellHtml\(\{/.test(um));
 
   // ④ 属性可点击
   const { STAT_DOCS, statDoc } = await import('../src/data/statDocs.js');
@@ -567,9 +570,12 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 断言随之从"正则数源码里有几个 data-stat"改成**读那张表**。
   // 数源码钉的是"源码长什么样"—— 换个写法就红，真出问题反而不红。
   const { extAttrGroups, BASE_ATTR_ROWS, allPanelStatKeys } = await import('../src/ui/statPanelLayout.js');
-  T('界⑤-属性行带 data-stat 且可点击（常驻区 4 格 + 展开区整张表）',
+  // v51：常驻区从 4 格扩到 6 格（用户定稿"默认显示攻击力，法强，护甲，魔法抗性，
+  // 攻速，暴击率"）。这条钉的是"确实是 BASE_ATTR_ROWS 说了算"，不是钉一个具体数字，
+  // 但当前状态就是 6，一并写清楚免得下次又要来改。
+  T('界⑤-属性行带 data-stat 且可点击（常驻区 6 格 + 展开区整张表）',
     /class="a stat-doc" data-stat="\$\{key\}"/.test(um)
-    && BASE_ATTR_ROWS.length === 4
+    && BASE_ATTR_ROWS.length === 6
     && allPanelStatKeys('tower').length >= 18);
   T('界⑤-点击走**事件委托**绑在容器上（属性行是重建的，逐行绑会连同旧节点被丢掉）',
     /this\.selCard\.addEventListener\('click'/.test(um)
@@ -578,9 +584,13 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     /_setAttrs\(el, html\)/.test(um) && /el\._lastHtml === html/.test(um));
   T('界⑥-说明文字住在 data 层（与公式同源，不是嵌在渲染函数里的模板字符串）',
     typeof STAT_DOCS === 'object' && Object.keys(STAT_DOCS).length >= 20);
+  // v51：base 六格改走 _baseAttrsHtml 之后 data-stat 全部是 `${key}` 动态插值，
+  // 正则扫源码抓不到字面量了（这正是本仓库反复强调的"钉源码长什么样，不钉行为"
+  // 会栽的坑——换个写法就假阴性）。改成直接读 allPanelStatKeys() + BASE_ATTR_ROWS
+  // 这两张**真正驱动渲染**的表，钉的是"面板上会出现的每一个 statKey"这个行为本身。
   T('界⑥-面板上每一个可点击的 statKey 都有对应说明（点了弹空窗比不能点更糟）', (() => {
-    const keys = [...um.matchAll(/data-stat="(\w+)"/g)].map(m => m[1]);
-    return keys.length > 0 && keys.every(k => !!statDoc(k));
+    const keys = new Set([...allPanelStatKeys('tower'), ...allPanelStatKeys('minion')]);
+    return keys.size > 0 && [...keys].every(k => !!statDoc(k));
   })());
   T('界⑥-说明里写了结算规则而不只是名词解释',
     ['attackDamage', 'armor', 'bonusAttackSpeedPct', 'damageBlock']

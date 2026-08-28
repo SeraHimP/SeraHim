@@ -72,7 +72,10 @@ export class BuffSystem {
             // DOT 杀死巨龙时算不进任何一方的击杀数。casterId 才是真正施加这份 DOT
             // 的实体 id（见 EffectRegistry.apply 的 casterId 选项）；没有的话（比如
             // 老存档、或者哪天真出现无来源的环境 DOT）才退回 0，保留原来的兜底。
-            this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type);
+            // v51：basicAttack:true——这份 DOT 的数值在 EffectRegistry.apply() 那一刻
+            // 就已经吃过一次技能增幅了（casterId 触发的那条自动缩放），这里只是把
+            // 预先算好的伤害逐帧兑现，不能再让 performAttackDirect 重复缩放一次。
+            this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type, { basicAttack: true });
             // ==================== v50：带半径的 DOT（灼烧圈）====================
             // 用户（熔魂定稿）："灼烧效果是有半径的，可以对其他单位造成伤害"
             //                  + "跟着中毒目标走"。
@@ -88,7 +91,9 @@ export class BuffSystem {
                 _mapFaction: caster?._mapFaction || caster?.faction || null,
                 faction: caster?.faction || null };
               for (const other of enemyUnitsInRadius(this.entities, probe, R)) {
-                this.combat.performAttackDirect(eff.casterId ?? 0, other.id, dmg, type);
+                // v51：半径 DOT 打到的"其他人"是群体命中，吸血按 vampGroup 折扣。
+                this.combat.performAttackDirect(eff.casterId ?? 0, other.id, dmg, type,
+                  { basicAttack: true, vampGroup: true });
               }
             }
           }

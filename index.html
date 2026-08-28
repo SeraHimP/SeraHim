@@ -453,6 +453,12 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* 阵营血条颜色：统一 2D 画布与卡片UI的配色，取代此前的"低血量变红" */
 .bar-hp.faction-blue { background: linear-gradient(180deg, #6bb8f0, #3d8fd1); }
 .bar-hp.faction-red { background: linear-gradient(180deg, #ff8a7a, #d0453b); }
+/* v51：资源条（法力/能量/充能，统一叫"资源条"）。用户要求"高度做成和血条一样"——
+   直接复用 .bar-row/.bar-track，不新起一套尺寸，天然一样高。*/
+.bar-res-row { display: none; }
+.bar-res-row.show { display: flex; }
+.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: linear-gradient(180deg, #6c8cf5, #3d54c9); transition: width 0.12s linear; }
+.bar-res-text { font-size: 10px; color: var(--text-mute); text-align: center; margin: -16px 0 5px; line-height: 1; pointer-events: none; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }
@@ -655,14 +661,20 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   display: flex; align-items: center; gap: 4px; margin: 8px 0 4px;
   font-size: 11px; color: var(--text-mute); letter-spacing: 0.5px;
 }
+/* v51：技能/状态改成横向排布的一个个块（用户："上下两个都是列表就看不过来了，
+   要横向排班的一个个块"）——从纵向 label 列表改成 flex-wrap 的卡片墙，
+   每张卡片固定住自己的尺寸，不再占满一整行。 */
+.gp-pool-body { display: flex; flex-wrap: wrap; gap: 6px; }
 .gp-pool-item {
-  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
   border-radius: var(--radius-xs); cursor: pointer; font-size: 12px;
+  flex: 0 0 auto; width: 152px; box-sizing: border-box;
+  border: 1px solid var(--glass-border); background: rgba(255,255,255,0.02);
 }
 .gp-pool-item:hover { background: rgba(255,255,255,0.05); }
-.gp-pool-ic { font-size: 14px; width: 18px; text-align: center; }
-.gp-pool-name { flex: 1; }
-.gp-pool-cnt { font-size: 10px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
+.gp-pool-ic { font-size: 14px; width: 18px; text-align: center; flex: 0 0 auto; }
+.gp-pool-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-pool-cnt { font-size: 10px; color: var(--text-mute); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
 .gp-matrix tr:hover td { background: rgba(255,255,255,0.03); }
 .uad-section-label { color: var(--text-dim); font-size: 12px; display: block; margin-bottom: 6px; }
 .uad-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }

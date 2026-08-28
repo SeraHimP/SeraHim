@@ -268,6 +268,8 @@ export const weapons = {
           bonusVsShieldPct: P.bonusVsShieldPct,
           attackShare: P.attackShare ?? (1 / Math.max(1, P.tickPerSec || 4)),
           applyOnHitBonus: true,
+          // v51：闪电杖是【武器】——这是普攻，只是拆成了每秒 4 跳，不该吃技能增幅/技能暴击。
+          basicAttack: true,
         });
         // （v35：满充闪电链弹射已按方案B删除——纯单体，无 AOE）
       }
@@ -384,9 +386,11 @@ export const weapons = {
         if (!enemy.alive) continue;
 
         // 中毒A：可选伤害类型（默认魔法），最多50层
+        // v51：basicAttack:true——腐蚀是【武器】，这是普攻的一部分（只是拆成了 DOT 结算），
+        // 不该吃技能增幅/技能暴击。见 BuffSystem 里对这个字段的转发。
         ctx.effectRegistry.apply(enemy.id, {
           name: '腐蚀·毒素', icon: '🧪', kind: 'dot', color: '#7bc96f', type: 'debuff',
-          damageType: chosenType,
+          damageType: chosenType, basicAttack: true,
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
           stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
@@ -397,7 +401,7 @@ export const weapons = {
         // 中毒B：固定真实伤害，最多50层
         ctx.effectRegistry.apply(enemy.id, {
           name: '腐蚀·剧毒', icon: '☠️', kind: 'dot', color: '#8e6b2a', type: 'debuff',
-          damageType: 'true',
+          damageType: 'true', basicAttack: true,
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
           stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,

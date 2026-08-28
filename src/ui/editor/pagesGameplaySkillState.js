@@ -80,6 +80,32 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
     });
   },
 
+  /**
+   * ==================== v51 bug 修复：点一下就滚回最顶上 ====================
+   * 用户："还有状态上面的单位选择框，往下滑点一下就有回到最顶上了，需要修复。"
+   *
+   * 排查结论：跟"点的是哪个控件"无关——两页的 rerender() 都是整段
+   * `#templateContent.innerHTML = 重新渲染的整页字符串`，这会把 .gp-matrix-wrap
+   * 和 .gp-pool 这两个各自独立 overflow-y:auto 的滚动容器**连同旧节点一起销毁重建**，
+   * 新节点的 scrollTop 天然是 0。矩阵格子勾选/技能三态点击/折叠按钮……只要走的是
+   * 这条 rerender，无论点哪里都会把两个框都弹回顶部——不是某个按钮独有的毛病。
+   *
+   * 修法：重新渲染前记下这两个滚动容器的 scrollTop，渲染完立刻按 id 找回同名容器
+   * 写回去。用类名找而不是记住具体是哪个 DOM 节点——反正是全量重建，节点本身
+   * 不可能复用，只有"这一类容器该停在哪个滚动位置"这件事需要跨重建保留。
+   */
+  _gpRerenderPreserveScroll(overlay, doRender) {
+    const wrap = overlay.querySelector('.gp-matrix-wrap');
+    const pool = overlay.querySelector('.gp-pool');
+    const wrapTop = wrap ? wrap.scrollTop : 0;
+    const poolTop = pool ? pool.scrollTop : 0;
+    doRender();
+    const wrap2 = overlay.querySelector('.gp-matrix-wrap');
+    const pool2 = overlay.querySelector('.gp-pool');
+    if (wrap2) wrap2.scrollTop = wrapTop;
+    if (pool2) pool2.scrollTop = poolTop;
+  },
+
   _gpSelectedApplicableSet(cellSet) {
     // 从勾中的格子反推出涉及了哪些"applicable"标签（tower/dragon/melee/...），
     // 用于过滤技能/给应用范围里的"模板"分支定位该写哪个 CONFIG 位置。
@@ -133,10 +159,10 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
 
   _bindGameplaySkillGrantEvents(overlay, logFn) {
     const st = this._gpSkillGrant;
-    const rerender = () => {
+    const rerender = () => this._gpRerenderPreserveScroll(overlay, () => {
       overlay.querySelector('#templateContent').innerHTML = this._renderGameplaySkillGrantContent();
       this._bindGameplaySkillGrantEvents(overlay, logFn);
-    };
+    });
     this._gpBindMatrix(overlay, 'gpskill', st.cells, rerender);
 
     overlay.querySelectorAll('[data-gpskillpoolfold]').forEach(btn => {
@@ -256,7 +282,8 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
             + '实线 = 全都有，虚线 = 只有一部分有；点一下把整批摘掉。'
           : '先在上面勾至少一格目标。'}
       </div>
-      <div class="gp-pool">${rows || `<div class="transfer-active-empty">${targets.length ? '这批单位身上没有任何状态' : ''}</div>`}</div>
+      <div class="gp-pool">${rows ? `<div class="gp-pool-body">${rows}</div>`
+        : `<div class="transfer-active-empty">${targets.length ? '这批单位身上没有任何状态' : ''}</div>`}</div>
       <div style="margin-top:10px;">
         <button id="gpAddStateBtn" class="primary">+ 添加状态</button>
         <div id="gpStatePickerBox" style="display:none;margin-top:8px;padding:12px;background:var(--surface-2);border-radius:6px;"></div>
@@ -266,10 +293,10 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
 
   _bindGameplayStateGrantEvents(overlay, logFn) {
     const st = this._gpStateGrant;
-    const rerender = () => {
+    const rerender = () => this._gpRerenderPreserveScroll(overlay, () => {
       overlay.querySelector('#templateContent').innerHTML = this._renderGameplayStateGrantContent();
       this._bindGameplayStateGrantEvents(overlay, logFn);
-    };
+    });
     this._gpBindMatrix(overlay, 'gpstate', st.cells, rerender);
 
     // 三态：点一下把这个状态从整批身上摘掉（新增走下面的选择器）

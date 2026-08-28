@@ -34,5 +34,21 @@ export const FIELD_META = {
   allStatsPct:        { label: '全属性加成%', min: -100, max: 300, step: 5 },
   damageAmpPct:       { label: '伤害增幅%', min: -100, max: 300, step: 5 },
   moveSpeed:          { label: '移动速度', min: 0, max: 300, step: 5 },
+  // ==================== v51：新增属性 ====================
+  abilityPower:       { label: '法强', min: 0, max: 1000, step: 5 },
+  skillAmpPct:        { label: '技能增幅%', min: -100, max: 300, step: 5 },
+  critChance:         { label: '暴击率%', min: 0, max: 100, step: 1 },
+  critDamagePct:      { label: '暴击伤害加成%', min: 0, max: 300, step: 5 },
+  adaptiveForce:       { label: '适应之力', min: 0, max: 500, step: 5 },
+  physicalVampPct:    { label: '物理吸血%', min: 0, max: 100, step: 1 },
+  spellVampPct:       { label: '法术吸血%', min: 0, max: 100, step: 1 },
+  evasionPct:         { label: '闪避率%', min: 0, max: 100, step: 1 },
+  tenacityPct:        { label: '韧性%', min: 0, max: 100, step: 1 },
+  maxMana:            { label: '最大法力', min: 0, max: 2000, step: 10 },
+  manaRegen:          { label: '法力回复/秒', min: 0, max: 200, step: 1 },
+  manaStart:          { label: '出场法力', min: 0, max: 2000, step: 10 },
+  manaFloor:          { label: '法力下限', min: 0, max: 2000, step: 10 },
+  manaOnAttack:       { label: '攻击回复法力', min: 0, max: 200, step: 1 },
+  manaOnHitTaken:     { label: '受击回复法力', min: 0, max: 200, step: 1 },
 };
 export const fieldLabel = (k) => FIELD_META[k]?.label || k;

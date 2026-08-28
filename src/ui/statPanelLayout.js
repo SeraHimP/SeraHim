@@ -71,14 +71,20 @@ export function extAttrGroups(kind) {
   ];
 }
 
-/** 常驻属性区（折叠区之上）的四格。data-stat 用于点开说明弹窗。 */
+/**
+ * 常驻属性区（折叠区之上）的六格。data-stat 用于点开说明弹窗。
+ * v51：用户定稿"默认显示攻击力，法强，护甲，魔法抗性，攻速，暴击率"——从四格
+ * 扩到六格，顺序按这句原话来，不是随手排的。
+ */
 export const BASE_ATTR_ROWS = [
   { key: 'attackDamage', label: '攻击力' },
+  { key: 'abilityPower', label: '法强' },
+  { key: 'armor', label: '护甲' },
+  { key: 'magicResist', label: '魔抗' },
   // 攻速这一格的 data-stat 指向 bonusAttackSpeedPct —— 面板显示的是算完的攻速，
   // 而"这个数是怎么来的"那份说明写在攻速加成里。
   { key: 'bonusAttackSpeedPct', label: '攻速' },
-  { key: 'armor', label: '护甲' },
-  { key: 'magicResist', label: '魔抗' },
+  { key: 'critChance', label: '暴击率' },
 ];
 
 /** 这张表里出现的全部 statKey（含常驻区），供断言逐个查说明文案。 */

@@ -387,7 +387,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
 
     'melee': ['passive_melee_rend'],
     'ranged': ['passive_ranged_rend'],
-    'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'],
+    // v51：炮兵默认带一个主动技能（active_siege_barrage），用来验证"资源条→满了就放
+    // 主动→数值和法术强度联动"整条链路（用户："给大型小兵/龙写一些简单的主动技能"）。
+    'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend', 'active_siege_barrage'],
     'super': ['passive_super_commander'],
     // v49 攻城车重做：一条被动拆成三条（攻城炮=常驻闸门，另两条是两个模式）。
     // atkmode_charge 是**攻击方式**技能（与塔的武器同一形状），充能的全部参数在它身上。
@@ -395,7 +397,8 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     // 三个支援兵种（用户定稿重做）。旧的 totem_guardian/awaken/nourish/sacrifice
     // 仍在 SkillLibrary 里（编辑器可手动装备），但不再默认装配 —— 它们的效果
     // 与新的三件套重叠，同时装上会双份减伤、双份护盾。
-    'totem': ['passive_totem_aura', 'passive_totem_mend', 'passive_totem_bulwark'],
+    // v51：图腾兵默认带主动技能 active_totem_pulse（群体治疗，法强+治疗强度联动）。
+    'totem': ['passive_totem_aura', 'passive_totem_mend', 'passive_totem_bulwark', 'active_totem_pulse'],
     'warlock': ['passive_warlock_aura', 'passive_warlock_attune'],
     'corrupt': ['passive_corrupt_strike'],
   };
@@ -580,6 +583,12 @@ function createDragon(type, opts = {}) {
     entity._dragonColor = def ? def.color : '#c0392b';
     entity._dragonIcon = def ? def.icon : '🐉';
   }
+
+  // v51：龙默认带一个主动技能（active_dragon_nova，AOE 法术伤害，法强联动）。
+  // 走 equipSkill 而不是直接 push（与其余三个工厂一致的唯一装备入口，_params 解析
+  // 时机才对，见 skillParams.js 的头注）。
+  equipSkill(entity, 'active_dragon_nova',
+    { entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber || 0, attrCalc }, skillLibrary);
 
   entityContainer.add(entity);
   // v45：元素龙自带对应的龙魂（1 层）+ 巨龙之力（该元素已死数 + 1 层）。

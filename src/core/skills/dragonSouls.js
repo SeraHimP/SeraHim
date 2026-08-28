@@ -80,9 +80,11 @@ export const dragonSouls = {
       const attacker = ctx.entityContainer.get(attackerId);
       if (!target || !attacker || !ctx.combat) return;
       // 走引擎既有的溅射结算：中心取目标坐标、排除主目标（主伤害已单独结算）。
+      // v51：这是龙魂自己的溅射（技能效果），不是普攻自带的那圈——basicAttack:false
+      // 让它吃到技能增幅/技能暴击。见 CombatSystem._applyExplosionAt 的头注。
       ctx.combat._applyExplosion(attacker, target,
         (ctx.totalRaw || 0) * ((p.pct ?? 30) / 100),
-        ctx.attackType || 'physical', p.radius ?? 75);
+        ctx.attackType || 'physical', p.radius ?? 75, { basicAttack: false });
     },
   },
 

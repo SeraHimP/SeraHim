@@ -18,6 +18,82 @@ export class EffectRegistry {
   }
 
   /**
+   * ==================== v51：注入实体表 + 属性计算器（技能增幅 / 韧性都要用）====================
+   * 用法与 AttributeCalculator.setWeatherSystem 同理：不注入时两条新逻辑整段短路，
+   * 行为与接入前逐位一致（老单测/老存档不受影响）。
+   */
+  setStatSource(entities, attrCalc) { this._entities = entities; this._attrCalc = attrCalc; }
+
+  /** 施加者当前的【技能增幅】（读不到就是 0 = 不生效）。 */
+  _skillAmpOf(casterId) {
+    if (!casterId || !this._entities || !this._attrCalc) return 0;
+    const caster = this._entities.get(casterId);
+    if (!caster || !caster.alive) return 0;
+    const stats = this._attrCalc.calc(caster, this.getEffects(caster.id));
+    return stats.skillAmpPct || 0;
+  }
+
+  /** 目标当前的【韧性】（读不到就是 0 = 不生效）。 */
+  _tenacityOf(entityId) {
+    if (!this._entities || !this._attrCalc) return 0;
+    const target = this._entities.get(entityId);
+    if (!target || !target.alive) return 0;
+    const stats = this._attrCalc.calc(target, this.getEffects(target.id));
+    return stats.tenacityPct || 0;
+  }
+
+  /**
+   * 这条效果算不算"控制/减速"（韧性只缩短这一类的持续时间）。
+   * 判据尽量宽——眩晕/沉默/缴械三种控制 kind，以及【任何】把移速调低的 stat 效果（减速）。
+   * 后者不需要技能作者特意标记：凡是"降低移速"的效果，语义上就是减速，天然该吃韧性。
+   */
+  static _isCC(bp) {
+    if (bp.kind === 'stun' || bp.kind === 'silence' || bp.kind === 'disarm') return true;
+    if (bp.kind === 'stat' && bp.statKey === 'moveSpeed') {
+      return (bp.percentValue || 0) < 0 || (bp.flatValue || 0) < 0;
+    }
+    return false;
+  }
+
+  /** 目标是否处于沉默（无法施放主动技能）。与 isStunned 同规格。 */
+  isSilenced(entityId) {
+    const ids = this._entityEffects.get(entityId);
+    if (!ids) return false;
+    for (const id of ids) {
+      const eff = this._effects.get(id);
+      if (eff && eff.blueprint.kind === 'silence' && eff.remainingTime > 0) return true;
+    }
+    return false;
+  }
+
+  /** 目标是否被缴械（无法发起普通攻击）。与 isStunned 同规格。 */
+  isDisarmed(entityId) {
+    const ids = this._entityEffects.get(entityId);
+    if (!ids) return false;
+    for (const id of ids) {
+      const eff = this._effects.get(id);
+      if (eff && eff.blueprint.kind === 'disarm' && eff.remainingTime > 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * v51：单位是否持有【技能暴击】状态——技能默认不能暴击，持有这条状态才能，
+   * 且暴击伤害单独给一档更低的倍率（CONFIG.tuning.crit.skillCritDamagePct）。
+   * 判据是 `blueprint.kind === 'skillCrit'`，与 stun/silence/disarm 同规格，
+   * 不需要按名字匹配（名字是给面板看的，判定只认 kind）。
+   */
+  isSkillCrit(entityId) {
+    const ids = this._entityEffects.get(entityId);
+    if (!ids) return false;
+    for (const id of ids) {
+      const eff = this._effects.get(id);
+      if (eff && eff.blueprint.kind === 'skillCrit' && eff.remainingTime > 0) return true;
+    }
+    return false;
+  }
+
+  /**
    * 为实体应用效果
    * @param {number} entityId - 目标实体ID
    * @param {object} blueprint - 效果蓝图
@@ -30,24 +106,50 @@ export class EffectRegistry {
    * @returns {number} 效果实例ID
    */
   apply(entityId, blueprint, sourceId, options = {}) {
-    const stackPolicy = blueprint.stackPolicy || 'refresh';
+    // ==================== v51：技能增幅自动生效（用户："技能增幅就是自动的"）====================
+    // 判据复用 v43 就有的 casterId：那个字段本来就是"谁施放/触发了这份效果"的唯一标记
+    // （DOT 攻击归属靠它区分），凡是带了 casterId 的效果，天然就是"某个施法者造成的"——
+    // 不需要技能作者再手动传一个新开关，这正是用户要的"自动"。
+    // 唯一没有走这条路的**引擎内部**调用点是"这其实是普通攻击"的两三处（穿透型升温、
+    // 攻城疲惫等）——它们本来就不传 casterId，天然被排除，不需要额外开关。
+    // basicAttack:true 的蓝图（腐蚀等"武器"的 DOT）不吃技能增幅——与
+    // CombatSystem.performAttackDirect 的 options.basicAttack 同一个概念、同一个例外。
+    let bp = blueprint;
+    if (options.casterId && !blueprint.basicAttack) {
+      const amp = 1 + this._skillAmpOf(options.casterId) / 100;
+      if (amp !== 1) {
+        bp = { ...blueprint };
+        if (typeof bp.flatValue === 'number') bp.flatValue *= amp;
+        if (typeof bp.percentValue === 'number') bp.percentValue *= amp;
+        if (typeof bp.perStackFlat === 'number') bp.perStackFlat *= amp;
+        if (typeof bp.perStackPercent === 'number') bp.perStackPercent *= amp;
+      }
+    }
+    const stackPolicy = bp.stackPolicy || 'refresh';
     // ==================== 光环机制（v33 Q12） ====================
     // blueprint.aura === true 的效果是"存在型"而非"倒计时型"：
     //   · 显示为常驻（remainingTime=Infinity）——没有倒计时环，根治"极短时长反复刷新"的闪烁；
     //   · 施加方按节奏反复 apply（光环 onFrame / 闪电杖 tick），每次 apply 只更新宽限期时间戳；
     //   · update() 里检查：超过宽限期（默认 0.6s）没被刷新 → 自动移除。
     //     语义 = "在光环单位附近时常驻，离开或光环单位死亡后消失"。
-    const isAura = blueprint.aura === true;
-    const duration = isAura ? Infinity : (options.duration ?? blueprint.duration);
-    const permanent = isAura ? true : (options.permanent ?? blueprint.permanent ?? false);
+    const isAura = bp.aura === true;
+    let duration = isAura ? Infinity : (options.duration ?? bp.duration);
+    const permanent = isAura ? true : (options.permanent ?? bp.permanent ?? false);
+    // ==================== v51：韧性缩短控制/减速类效果 ====================
+    // 判据见 _isCC 的头注——眩晕/沉默/缴械三种 kind，以及任何"降低移速"的 stat 效果。
+    // 不缩短光环/永久效果：光环靠宽限期自然维持，永久效果不该被"缩短"这个概念覆盖。
+    if (!isAura && !permanent && Number.isFinite(duration) && EffectRegistry._isCC(bp)) {
+      const ten = this._tenacityOf(entityId);
+      if (ten > 0) duration = Math.max(0, duration * (1 - Math.min(100, ten) / 100));
+    }
     // 合并键：优先使用显式 stackKey；否则对 stat 类效果按 name+statKey 区分，
     // 避免同一来源、同一效果名下的不同属性（如护甲+魔抗）互相顶替。
-    const stackKey = blueprint.stackKey || (blueprint.statKey ? `${blueprint.name}::${blueprint.statKey}` : blueprint.name);
+    const stackKey = bp.stackKey || (bp.statKey ? `${bp.name}::${bp.statKey}` : bp.name);
 
     let existing = null;
     // 唯一被动（uniquePassive）：同一 stackKey 在实体上全局只保留一个实例，
     // 忽略 sourceId —— 多个来源施加只刷新同一个（如镀层破裂、蚀骨腐蚀、多塔同名debuff）。
-    const isUnique = blueprint.uniquePassive === true;
+    const isUnique = bp.uniquePassive === true;
     if (stackPolicy !== 'independent') {
       const entityEffects = this._entityEffects.get(entityId);
       if (entityEffects) {
@@ -73,13 +175,13 @@ export class EffectRegistry {
         // 刷新：重置层数，刷新时间，并更新数值字段（条件持续效果每帧变化的数值）
         existing._auraStamp = this._clock;
         const initStacks = options.initialStacks ?? 1;
-        existing.stacks = Math.min(initStacks, blueprint.maxStacks || 1);
+        existing.stacks = Math.min(initStacks, bp.maxStacks || 1);
         existing.remainingTime = permanent ? Infinity : duration;
         // 同步可能变化的数值与标记
-        existing.blueprint.flatValue = blueprint.flatValue;
-        existing.blueprint.percentValue = blueprint.percentValue;
-        existing.blueprint.permanent = blueprint.permanent;
-        existing.blueprint.conditional = blueprint.conditional;
+        existing.blueprint.flatValue = bp.flatValue;
+        existing.blueprint.percentValue = bp.percentValue;
+        existing.blueprint.permanent = bp.permanent;
+        existing.blueprint.conditional = bp.conditional;
         existing.permanent = permanent;
         this._recalcEffectValues(existing);
         this._updateDescription(existing);
@@ -87,7 +189,7 @@ export class EffectRegistry {
       } else if (stackPolicy === 'stack') {
         // 堆叠：增加层数，不超过maxStacks，刷新时间
         existing._auraStamp = this._clock;
-        const maxStacks = blueprint.maxStacks || 1;
+        const maxStacks = bp.maxStacks || 1;
         existing.stacks = Math.min(existing.stacks + 1, maxStacks);
         existing.remainingTime = permanent ? Infinity : duration;
         this._recalcEffectValues(existing);
@@ -103,7 +205,7 @@ export class EffectRegistry {
     const instance = {
       id,
       entityId,
-      blueprint: { ...blueprint },
+      blueprint: { ...bp },
       sourceId,
       // Bug 修复（用户定稿）："某方单位杀死龙后没有正确计入该阵营的击杀数"。
       // 根因：DOT（毒魂/腐蚀等）的伤害由 BuffSystem 逐帧 tick 结算，之前直接把
@@ -116,7 +218,7 @@ export class EffectRegistry {
       // 治本方法：谁施加的 DOT，就把那个真实实体 id 单独存一份 casterId，
       // 不复用 sourceId（sourceId 的"标签"语义继续只服务堆叠判定，两件事分开存）。
       casterId: options.casterId ?? null,
-      stacks: Math.min(initStacks, blueprint.maxStacks || 1),
+      stacks: Math.min(initStacks, bp.maxStacks || 1),
       remainingTime: permanent ? Infinity : duration,
       maxDuration: permanent ? Infinity : duration,
       totalFlat: 0,
@@ -140,7 +242,7 @@ export class EffectRegistry {
       this._eventBus.emit('effect:applied', {
         entityId,
         effectId: id,
-        blueprint: blueprint,
+        blueprint: bp,
         instance: instance,
       });
     }

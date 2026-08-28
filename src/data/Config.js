@@ -1,3 +1,16 @@
+// ==================== v51：新增属性的统一出厂值 ====================
+// 十份模板（tower/melee/ranged/siege/totem/super/warlock/corrupt/ram/dragon）各 `...` 这一份，
+// 不再各写一遍同样的 13 个零值——那样改一个新字段就要记得改十处，必然漏一处。
+// 逐项说明见 CONFIG.templates 里的头注。
+const UNIT_STAT_DEFAULTS = {
+  abilityPower: 0, skillAmpPct: 0,
+  critChance: 0, critDamagePct: 0,
+  adaptiveForce: 0, adaptiveDefault: 'physical',
+  physicalVampPct: 0, spellVampPct: 0,
+  evasionPct: 0, tenacityPct: 0,
+  maxMana: 0, manaRegen: 0, manaStart: 0, manaFloor: 0, manaOnAttack: 0, manaOnHitTaken: 0,
+};
+
 export const CONFIG = {
   gameRules: {
     waveInterval: 45,
@@ -832,6 +845,15 @@ export const CONFIG = {
     // 不是按满值的百分比 —— 用户原话就是"减少 10% 当前充能"。
     charge: { decayPctPerSec: 10 },
     facing: { enabled: true, arcDeg: 35, turnRateDeg: 220, velEmaAlpha: 0.25, moveEpsPx: 0.6 },
+    // ==================== v51：暴击（用户定稿）====================
+    // 普攻默认能暴击（暴击率默认0，等于不生效，直到有来源给它加值）；
+    // 技能默认不能暴击，只有持有【技能暴击】状态时才能暴击、且暴击伤害单独给一档更低的倍率
+    // （用户："拥有状态【技能暴击】的单位技能可以暴击，但暴击伤害降低"）。
+    crit: { baseCritDamagePct: 200, skillCritDamagePct: 150 },
+    // ==================== v51：吸血分流的群体折扣（用户定稿）====================
+    // "主单位+其他单位的溅射伤害，主单位吸血100%，溅射20%。连锁没有主目标，全部20%。"
+    // 三种吸血属性（全能/物理/法术）共用同一个折扣系数——面板上分三个数、三种折扣的话没人算得清。
+    vamp: { groupEffPct: 20 },
 
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
     chaseDropFactor: 1.2,         // 追击放弃距离 = 仇恨半径 × 此系数
@@ -955,6 +977,23 @@ export const CONFIG = {
   dragonSizes: { element: 34, ancient: 44 },
 
   templates: {
+    // ==================== v51：新增属性的统一出厂值 ====================
+    // 用户："先做这个系统…剩下的没有问题就可以开工了。"
+    // 每个模板都 `...UNIT_STAT_DEFAULTS`，理由与本文件其余"共用一份"的做法一致：
+    // 十份模板各写一遍同样的 13 个零值，改一个新字段就要记得改十处，必然漏。
+    //
+    //   abilityPower/skillAmpPct  法术强度 / 技能增幅（技能增幅怎么自动生效见
+    //     CombatSystem.performAttackDirect 与 EffectRegistry.apply 的头注）
+    //   critChance/critDamagePct  暴击率（默认0，未装备任何来源就是纯机械单位，
+    //     与用户当前"先别做等级"一致——不给白送的变数）/ 暴击伤害加成（叠在
+    //     tuning.crit.baseCritDamagePct 之上）
+    //   adaptiveForce/adaptiveDefault  适应之力（按 AD/AP 哪个高转化）与"打平时"的默认方向
+    //   physicalVampPct/spellVampPct  物理/法术吸血（与既有的 lifeStealPct=全能吸血 三件套）
+    //   evasionPct  闪避率（仅对普通攻击生效，技能不可被闪避）
+    //   tenacityPct 韧性（缩短硬控/减速类负面效果的持续时间）
+    //   maxMana/manaRegen/manaStart/manaFloor/manaOnAttack/manaOnHitTaken
+    //     资源条五件套。全部为 0 时资源系统对这个模板完全不生效（见 ManaSystem 头注：
+    //     没有装备"主动"类技能的单位，法力恒为 0，这几个数字填多少都没用）。
     tower: {
       label: '防御塔', type: 'tower',
       // v35（Q5）：所有防御塔默认 生命恢复/固定护盾 = 0（用户定稿，沙盒塔模板同样适用；
@@ -969,11 +1008,11 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      // v43 Q9：**所有塔的默认伤害类型改为魔法**（用户定稿："所有塔的默认伤害改为魔法伤害，
-      // 依旧可以在编辑界面改"）。原为 'physical'。
-      // 注意：光改这里还不够——分层/阵营覆写此前根本进不到塔的 baseStats（见 main.js
-      // createBuilding 的白名单注释），所以编辑器改了也没反应。那处一并修了。
-      attackType: 'magic', bulletSpeed: 400,
+      // ==================== v51：塔的默认伤害类型改回物理（推翻 v43 Q9）====================
+      // 用户明确定稿要求推翻上面 v43 那条注释记录的决定。v43 当时的理由（"更贴近魔法建筑"
+      // 之类的口味判断）没有新的机制依据支撑它，用户这次直接拍板改回来，如实记录、不再展开。
+      attackType: 'physical', bulletSpeed: 400,
+      ...UNIT_STAT_DEFAULTS,
     },
     melee: {
       label: '近战兵', type: 'melee',
@@ -991,6 +1030,7 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
     },
     ranged: {
       label: '远程兵', type: 'ranged',
@@ -1006,6 +1046,7 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'magic', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
     },
     siege: {
       label: '炮兵', type: 'siege',
@@ -1026,6 +1067,10 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 320, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
+      // v51：炮兵默认带一个主动技能（见 src/core/skills/actives.js 的 active_siege_barrage），
+      // 用来验证"资源条→满了就放主动→数值和法术强度联动"这整条链路。
+      abilityPower: 30, maxMana: 100, manaRegen: 4, manaOnAttack: 6,
     },
     totem: {
       label: '图腾兵', type: 'totem',
@@ -1044,6 +1089,9 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'magic', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
+      // v51：图腾兵默认带一个主动技能（active_totem_pulse，群体治疗，与法强/治疗强度联动）。
+      abilityPower: 25, maxMana: 100, manaRegen: 5, manaOnHitTaken: 10,
     },
     super: {
       label: '超级兵', type: 'super',
@@ -1060,6 +1108,7 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
     },
     warlock: {
       label: '术士兵', type: 'warlock',
@@ -1075,6 +1124,7 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'magic', spawnDistance: 300, queueSpacing: 20, bulletSpeed: 320,
+      ...UNIT_STAT_DEFAULTS,
     },
     corrupt: {
       label: '蚀骨兵', type: 'corrupt',
@@ -1090,6 +1140,7 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
     },
     // v39（Q4 节奏）：攻城车——专职破塔的攻城单位。用户定稿数值。
     // 血 800（远高于远程兵，但双抗 0 且被近战克制）、AD 35、攻速 0.25（4秒一发）、
@@ -1120,6 +1171,7 @@ export const CONFIG = {
       // v49：用户定稿"模板改为0" —— 溅射半径完全由【攻城炮】按模式给出
       // （攻城 gameRules.ram.siegeSplash / 普通 normalSplash），模板不再自带底数。
       splashRadius: 0,
+      ...UNIT_STAT_DEFAULTS,
     },
     dragon: {
       label: '巨龙', type: 'dragon',
@@ -1135,8 +1187,19 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 0, queueSpacing: 0,
+      ...UNIT_STAT_DEFAULTS,
+      // v51：龙默认带一个主动技能（active_dragon_nova，AOE 法术伤害，与法强联动）。
+      abilityPower: 40, maxMana: 100, manaRegen: 3, manaOnAttack: 10,
     }
   }
+};
+
+// ==================== v51：主动技能资源系统的独立调参表（ManaSystem 读取）====================
+// 与 tuning 里的其它调参同理——放在源码里就是待改的债。
+export const ACTIVE_TUNING = {
+  // 施放成功后法力的去向：'toFloor' = 清到 manaFloor（默认0，即清空）。
+  // 先只实现这一种（用户原话"以后再说数值"），字段留着给以后的"逐渐减少/减少到某个值"扩位。
+  consumeMode: 'toFloor',
 };
 
 // 小兵在画布上的显示半径——CanvasRenderer（视觉）与 CollisionSystem（碰撞半径）

@@ -12,6 +12,11 @@ export const STAT_LABELS = {
   magicPenFlat: '固定法穿', magicPenPercent: '法术穿透',
   healthRegen: '生命回复', onHitPercentDamage: '攻击特效',
   shieldFixedMax: '固定护盾', baseAttackSpeed: '基础攻速',
+  // v51：新增属性
+  abilityPower: '法强', skillAmpPct: '技能增幅', critChance: '暴击率', critDamagePct: '暴击伤害加成',
+  adaptiveForce: '适应之力', physicalVampPct: '物理吸血', spellVampPct: '法术吸血',
+  evasionPct: '闪避率', tenacityPct: '韧性',
+  maxMana: '最大法力', manaRegen: '法力回复', manaOnAttack: '攻击回复法力', manaOnHitTaken: '受击回复法力',
 };
 
 

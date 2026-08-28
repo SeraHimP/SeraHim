@@ -75,18 +75,43 @@ export const STAT_DOCS = {
   },
   armor: {
     label: '护甲',
-    desc: '减免【物理伤害】。',
+    // v51：用户要求描述要具体——"护甲就写减免50%即将到来的物理伤害"。desc 支持传函数
+    // (stats) => 文案，_showStatDoc 会用命中那一刻的实时属性表调它；不传 stats（极端情况）
+    // 就退回静态描述，不会崩。
+    desc: (stats) => {
+      const armor = stats ? (stats.armor || 0) : null;
+      if (armor === null) return '减免【物理伤害】。';
+      const mult = armor >= 0 ? 100 / (100 + armor) : (2 - 100 / (100 - armor));
+      const pct = Math.round((1 - mult) * 100);
+      return armor >= 0
+        ? `减免约 ${pct}% 即将到来的物理伤害。`
+        : `护甲为负：即将到来的物理伤害会被放大约 ${Math.abs(pct)}%。`;
+    },
     formula: '护甲 ≥ 0：伤害 × 100/(100+护甲)。护甲 < 0：伤害 × (2 − 100/(100−护甲))，'
            + '也就是**负护甲本身就是增伤**（−50 护甲 ≈ 承受 1.33 倍）。',
   },
   magicResist: {
     label: '魔抗',
-    desc: '减免【魔法伤害】。',
+    desc: (stats) => {
+      const mr = stats ? (stats.magicResist || 0) : null;
+      if (mr === null) return '减免【魔法伤害】。';
+      const mult = mr >= 0 ? 100 / (100 + mr) : (2 - 100 / (100 - mr));
+      const pct = Math.round((1 - mult) * 100);
+      return mr >= 0
+        ? `减免约 ${pct}% 即将到来的魔法伤害。真实伤害不受任何抗性影响。`
+        : `魔抗为负：即将到来的魔法伤害会被放大约 ${Math.abs(pct)}%。真实伤害不受任何抗性影响。`;
+    },
     formula: '与护甲同一套公式，只是作用于魔法伤害。真实伤害不受任何抗性影响。',
   },
   damageReduction: {
     label: '伤害减免%',
-    desc: '在抗性之后再乘一次的百分比减伤。',
+    desc: (stats) => {
+      const dr = stats ? (stats.damageReduction || 0) : null;
+      if (dr === null) return '在抗性之后再乘一次的百分比减伤。';
+      return dr >= 0
+        ? `在抗性结算之后，再减免约 ${Math.round(dr)}% 即将到来的伤害（真实伤害除外）。`
+        : `为负：在抗性结算之后，即将到来的伤害会再被放大约 ${Math.round(-dr)}%（真实伤害除外）。`;
+    },
     formula: '伤害 × (1 − 减免%)。**真实伤害不吃这一层**（与抗性同理）。',
   },
   damageBlock: {
@@ -131,6 +156,57 @@ export const STAT_DOCS = {
   },
   moveSpeed: { label: '移动速度', desc: '每秒移动的世界单位数。', formula: '建筑恒为 0。脱战时部分增益会更高（如风魂）。' },
   baseHealthRegenMod: { label: '生命回复系数', desc: '生命回复的额外乘数。', formula: '与【治疗与护盾强度】相乘。' },
+
+  // ==================== v51：新增属性 ====================
+  abilityPower: {
+    label: '法强',
+    desc: '法术强度。具体每个主动技能怎么用它，由技能自己的公式决定，不是统一换算。',
+    formula: '引擎只把这个数暴露成一个可读的属性；伤害/治疗强度公式写在各个主动技能的源码里'
+           + '（src/core/skills/actives.js）。',
+  },
+  skillAmpPct: {
+    label: '技能增幅%',
+    desc: '放大【技能】造成的一切数值——伤害、持续伤害、治疗都算，普通攻击不算。',
+    formula: '自动生效：只要一次伤害/效果能追溯到某个施法者（casterId），就会被这个数放大，'
+           + '不需要技能作者手动接。普通攻击、以及"技术上走技能路径但其实是普攻"的两三处'
+           + '（闪电杖分帧伤害、腐蚀 DoT）不吃这一层。真实伤害同样吃这一层。',
+  },
+  critChance: {
+    label: '暴击率%',
+    desc: '普通攻击的暴击概率。默认 0（纯机械单位，没有来源加成就不会暴击）。',
+    formula: '暴击伤害 = 基础暴击倍率(默认200%) + 暴击伤害加成。持有【技能暴击】状态时，'
+           + '技能也能按这个概率暴击，但暴击倍率改用单独更低的一档。',
+  },
+  critDamagePct: {
+    label: '暴击伤害加成%',
+    desc: '叠加在基础暴击倍率（200%）之上的额外暴击伤害。',
+    formula: '最终暴击倍率 = 200% + 本属性。只对普通攻击的暴击生效——技能暴击用固定的'
+           + '「技能暴击伤害」档位，不叠这个加成。',
+  },
+  adaptiveForce: {
+    label: '适应之力',
+    desc: '按【攻击力】和【法术强度】哪个更高，自动转化成那一个（持平时按适应方向）。',
+    formula: '1 点适应之力 = 0.6 攻击力，或 1 点法术强度（与 LoL 现行比例一致）。'
+           + '判据是【总法强】vs【总攻击力】，没有过渡带，打平时看 adaptiveDefault 字段。',
+  },
+  physicalVampPct: { label: '物理吸血%', desc: '按造成的【物理伤害】百分比回复自身生命/护盾。', formula: '与全能吸血叠加；命中群体目标（溅射/连锁/分裂）时按 20% 效率结算。' },
+  spellVampPct: { label: '法术吸血%', desc: '按造成的【魔法伤害】百分比回复自身生命/护盾。', formula: '与全能吸血叠加；命中群体目标时同样打 20% 效率折扣。' },
+  evasionPct: {
+    label: '闪避率%',
+    desc: '完全躲开一次普通攻击的概率（伤害归零，不触发任何后续结算）。',
+    formula: '只对普通攻击生效——技能是判定命中之后的数值结算，不会被闪避。',
+  },
+  tenacityPct: {
+    label: '韧性%',
+    desc: '缩短受到的控制（眩晕/沉默/缴械）与减速效果的持续时间。',
+    formula: '新持续时间 = 原持续时间 × (1 − 韧性%)。对光环型/永久型效果不生效。',
+  },
+  maxMana: { label: '最大法力', desc: '资源条（法力/能量/充能，统称法力）的上限。', formula: '没有装备任何"主动"类技能的单位，法力恒为 0，这个数填多少都不生效。' },
+  manaRegen: { label: '法力回复/秒', desc: '每秒自动回复的法力。', formula: '同样受"没装主动技能就恒为0"这条规则约束。' },
+  manaStart: { label: '出场法力', desc: '单位出场时的初始法力。', formula: '不超过最大法力。' },
+  manaFloor: { label: '法力下限', desc: '释放主动技能后法力回落到的值。', formula: '默认 0（清空）。' },
+  manaOnAttack: { label: '攻击回复法力', desc: '每次命中普通攻击获得的法力。', formula: '只在命中【普通攻击】时触发，技能/DoT 不触发。' },
+  manaOnHitTaken: { label: '受击回复法力', desc: '每次被普通攻击命中获得的法力。', formula: '只在被【普通攻击】命中时触发。' },
 };
 
 /** 取某个属性的说明；没有登记过就返回 null（调用方据此决定要不要做成可点击）。 */

@@ -153,6 +153,28 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       this._bindGameplayDragonEvents(overlay, logFn);
     };
 
+    // ==================== v51 bug 修复：打开这页之后数据不刷新 ====================
+    // 用户："打开这个界面里面的数据根本不刷新（非实时情况）。"
+    // 排查结论：这一页此前和面板里其它"即点即生效"的页一样，只在**用户自己点了
+    // 某个按钮**（改击杀数/指定龙魂/切换开关）之后才会重绘——而这一页展示的
+    // "下一条龙倒计时"、"击杀数"、"巨龙之力层数"是随游戏时钟持续变化的**只读态势**，
+    // 光坐在那不点任何东西，界面就会停在打开那一刻的快照上，一直不动，看起来像坏了。
+    // 修法：这一页开着的时候每秒自重绘一次；用户正在某个击杀数输入框里打字时跳过
+    // 那一次，免得输入到一半被刷掉。计时器挂在 this（不是 overlay）上，每次重新
+    // 绑定时先清掉上一个——刷新本身会重新调用这个函数、重新起一个计时器，
+    // 天然自我延续；page 切走或窗口关掉（overlay 从 DOM 摘除）时自己停。
+    if (this._dgLiveTimer) clearInterval(this._dgLiveTimer);
+    this._dgLiveTimer = setInterval(() => {
+      if (!overlay.isConnected || this._tplState?.tab !== 'dragonstate') {
+        clearInterval(this._dgLiveTimer);
+        this._dgLiveTimer = null;
+        return;
+      }
+      const active = document.activeElement;
+      if (active && active.tagName === 'INPUT' && overlay.contains(active)) return;
+      refresh();
+    }, 1000);
+
     overlay.querySelectorAll('.dg-set-kills').forEach(btn => {
       btn.addEventListener('click', () => {
         const fac = btn.dataset.fac;
