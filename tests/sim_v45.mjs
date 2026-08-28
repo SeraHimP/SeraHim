@@ -253,7 +253,8 @@ const instOf = (e, id) => (e._skillInstances || []).find(s => s.skillId === id);
     baseStats: { ...CONFIG.templates.ram }, currentHP: 99999, shieldFixedCurrent: 0, tempShield: 0,
     lastDamageTime: -Infinity, attackCooldown: 99, targetId: null, _inCombat: false, _attackerCount: 0,
     _mapFaction: 'blue', faction: 'blue', _laneId: 'mid', _laneDirection: 'forward',
-    _skillInstances: [{ id: ++window._uid, skillId: 'passive_siege_weapon', state: {} }] };
+    // v49：闸门改成【攻城炮】（旧的 passive_siege_weapon 已整个删除）
+    _skillInstances: [{ id: ++window._uid, skillId: 'passive_ram_cannon', state: {} }] };
   const tw = { id: ++window._uid, type: 'tower', alive: true, pos: { x: dist, y: 0 },
     baseStats: { ...CONFIG.templates.tower }, currentHP: 99999, shieldFixedCurrent: 0, tempShield: 0,
     lastDamageTime: -Infinity, attackCooldown: 99, targetId: null, _inCombat: false, _attackerCount: 0,

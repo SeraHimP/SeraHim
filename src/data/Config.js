@@ -136,6 +136,25 @@ export const CONFIG = {
     // 于是编辑器一旦把它们摆出来，用户改多少都没反应 —— 正是本项目反复出事的那类"死配置"。
     // 现在删掉那七个键，换成 DragonSystem **真正读取**的这一份：
     // 原先写死在 DragonSystem 源码里的每一个魔数都搬到了这里，数值逐个保持不变。
+    // ==================== v49：攻城车重做（用户定稿，旧被动全部删除）====================
+    // 三条被动：
+    //   【攻城炮】溅射（两个模式各一个半径）+ 模式判定（打塔=攻城，打别的=普通）
+    //   【攻城模式】对塔改为充能攻击；每次攻击叠攻速衰减，**攻城模式下不恢复**
+    //   【普通模式】溅射较小、伤害增幅 -33%；只有这个模式下才按 recoverSec 恢复攻速
+    //
+    // 数值全部放这里而不是技能定义里 —— 旧的 passive_siege_weapon 把 5 个常量挂在
+    // 技能对象上，违反"所有数值都要软编码进 Config、编辑器可改"这条硬约束。
+    ram: {
+      siegeSplash: 75,          // 攻城模式的溅射半径（模板 splashRadius 已改 0，半径完全由模式决定）
+      normalSplash: 25,         // 普通模式的溅射半径
+      // chargeSecAt1AS / siegeDamagePct 已搬进【充能攻击】这件攻击方式技能的 defaultParams
+      // （用户："单独做成技能……里面各种参数"）。留在这里会变成同一个数写两处。
+      fatiguePerAttack: 7,      // 每次攻城攻击叠几层（用户定稿：7% = 7 层 × 1%）
+      fatigueLayerPct: -1,      // 每层攻速 %
+      recoverSec: 3,            // 普通模式下每隔几秒恢复
+      recoverLayers: 1,         // 每次恢复几层
+      normalDamageAmpPct: -33,  // 普通模式的伤害增幅
+    },
     dragon: {
       // v43（用户定稿）："龙改为每5分钟一条。第一条龙1分钟就刷。"
       // 且"改为龙死亡后下一条龙的倒计时才开始计时"—— 这条在 DragonSystem.update 里
@@ -747,7 +766,17 @@ export const CONFIG = {
     //   hitAllies —— 友军是否吃溅射。默认 true = **与改动前逐位一致**；
     //                这一条用户还没定稿，先留开关不改行为。
     //                中立（龙）之间不算友军，无论此开关如何都能互相打到。
-    splash: { hitSelf: false, hitAllies: true },
+    // hitAllies 已按用户定稿改为 false（"打不到友军。但是中立单位的可以打到两方"）。
+    // 中立（龙）不受这条约束 —— 龙对红蓝都是敌人，这在 _applyExplosionAt 里单独写着。
+    splash: { hitSelf: false, hitAllies: false },
+    // ==================== v49：充能型攻击的通用规则 ====================
+    // 用户："充能如果被打断了，每秒减少 10% 当前充能，**以后所有的充能型武器都是这样**，
+    //        但是数可能会改。"
+    // 所以这条写在 tuning 里而不是攻城车自己的技能定义里 —— 它是全局规则，
+    // 将来任何一件充能型武器直接读这里，改数只改一处。
+    // 衰减是**按当前充能的百分比**（等比衰减，越接近满衰减越快、末端越慢），
+    // 不是按满值的百分比 —— 用户原话就是"减少 10% 当前充能"。
+    charge: { decayPctPerSec: 10 },
     facing: { enabled: true, arcDeg: 35, turnRateDeg: 220, velEmaAlpha: 0.25, moveEpsPx: 0.6 },
 
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
@@ -1020,8 +1049,12 @@ export const CONFIG = {
       // v43 Q4：这一行原本是 `attackDamage: 60, baseAttackSpeed: 0.25,   // 注释… bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,`
       // —— 后两个键被吞进了行尾注释里，攻城车模板实际**没有**这两个字段。
       // 运行时靠 `|| 0.667` 兜住了没出事，但那是巧合不是设计；拆行修正。
-      attackDamage: 60, baseAttackSpeed: 0.25,
-      bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // v49 用户定稿：基础攻速 0.25 → **1.2**，攻速收益率 0.667 → **0.05**。
+      // 攻速直接决定充能速度（12/攻速），0.25 时一发要 48 秒，实测下来完全打不动塔。
+      // 收益率 0.05 = 外来的正攻速加成对它几乎无效（充能不该被别的加速手段带飞），
+      // 而【攻城疲惫】是负值、不吃收益率，所以减速照样满额生效 —— 这正是想要的不对称。
+      attackDamage: 60, baseAttackSpeed: 1.2,
+      bonusAttackSpeedPct: 0, attackSpeedRatio: 0.05,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 0, magicResist: 0,
       damageReduction: 0, damageBlock: 0,
@@ -1030,7 +1063,9 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
-      splashRadius: 60,  // v39：普攻溅射（爆炸型子弹的一半左右）
+      // v49：用户定稿"模板改为0" —— 溅射半径完全由【攻城炮】按模式给出
+      // （攻城 gameRules.ram.siegeSplash / 普通 normalSplash），模板不再自带底数。
+      splashRadius: 0,
     },
     dragon: {
       label: '巨龙', type: 'dragon',

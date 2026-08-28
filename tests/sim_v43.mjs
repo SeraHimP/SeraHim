@@ -143,14 +143,20 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   const ram = CONFIG.templates.ram;
   T('Q4② 攻城车射程确实大于默认仇恨半径（否则这条修复没有意义）',
     ram.attackRange > (CONFIG.tuning?.acquisitionRange ?? 200));
-  T('Q4③ 攻城车模板补回了被注释吞掉的两个键',
-    ram.bonusAttackSpeedPct === 0 && ram.attackSpeedRatio === 0.667);
-  // 攻城模式的机制常量仍由被动定义（拆掉被动即退化为普通车）
-  const sw = SkillLibrary.passive_siege_weapon;
-  T('Q4④ 攻城模式的全部数值仍在被动里', !!sw
-    && sw.TOWER_ATKSPD_MULT > 0 && sw.SIEGE_FATIGUE_AS_PCT < 0 && sw.TOWER_DAMAGE_MULT > 1);
-  T('Q4⑤ 攻城模式状态由被动 onFrame 维护（状态栏可见）',
-    typeof sw.onFrame === 'function' && /攻城模式/.test(String(sw.onFrame)));
+  // v49：收益率由 0.667 改为 0.05（用户定稿）。这条断言原本钉的是
+  // "两个键没有被行尾注释吞掉"，那件事本身仍然要守 —— 所以只放宽取值、保留存在性判断。
+  T('Q4③ 攻城车模板这两个键存在且是数字（当年被行尾注释吞掉过）',
+    ram.bonusAttackSpeedPct === 0 && typeof ram.attackSpeedRatio === 'number'
+    && ram.attackSpeedRatio === 0.05);
+  // v49 攻城车重做：旧 passive_siege_weapon 整个删除，一条拆三条 + 一件攻击方式技能。
+  // 数值不再挂在技能对象上（搬进 CONFIG.gameRules.ram 与充能技能的 defaultParams）。
+  const sw = SkillLibrary.passive_ram_cannon;
+  T('Q4④ 攻城车的三条被动齐全，旧的那条已删除',
+    !!sw && !!SkillLibrary.passive_ram_siege && !!SkillLibrary.passive_ram_normal
+    && !SkillLibrary.passive_siege_weapon);
+  T('Q4⑤ 攻城/普通模式状态由【攻城炮】的 onFrame 维护（状态栏可见）',
+    typeof sw.onFrame === 'function' && /攻城模式/.test(String(sw.onFrame))
+    && /普通模式/.test(String(sw.onFrame)));
   // 红线：塔与攻城车共用同一份样式
   const fxSrc = srcOf(('../src/presentation/EffectsLayer.js'));
   T('Q4⑥ 红线样式集中到 CONFIG.ui.aimLine，塔与攻城车共用',

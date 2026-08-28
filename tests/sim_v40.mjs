@@ -88,41 +88,64 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
 
 // ==================== ② 攻城车机制全部由被动驱动 ====================
 {
-  const def = SkillLibrary.passive_siege_weapon;
-  T('攻城武器被动存在且持有全部数值',
-    !!def && def.TOWER_DAMAGE_MULT === 3.7 && def.TOWER_ATKSPD_MULT === 0.5
-    && def.SIEGE_FATIGUE_AS_PCT === -25 && def.VS_MINION_MULT === 0.67 && def.MELEE_BONUS_MULT === 2.0);
-  T('被动图标 🛠️', def.icon === '🛠️');
+  // ==================== v49：攻城车重做，这一整段的前提变了 ====================
+  // 旧的 passive_siege_weapon 把 5 个常量挂在**技能对象**上，本条断言钉的就是那件事。
+  // 用户定稿"攻城车原有的全部删除"之后：一条被动拆成三条，
+  // 而且所有数值按 CLAUDE.md 的硬约束搬进了 CONFIG.gameRules.ram（编辑器可改）。
+  // 所以断言从"被动上有这些字段"翻成"**数值在 Config 里、技能上不再挂数值**" ——
+  // 后者才是那条硬约束本身，前者恰好是它的反面。
+  const def = SkillLibrary.passive_ram_cannon;
+  const RAM = CONFIG.gameRules.ram;
+  T('攻城车三条被动齐全（攻城炮 / 攻城模式 / 普通模式）',
+    !!SkillLibrary.passive_ram_cannon && !!SkillLibrary.passive_ram_siege
+    && !!SkillLibrary.passive_ram_normal);
+  // 数值分两处，各自有明确归属（不是散落）：
+  //   · 攻城车自己的性格（溅射/疲惫/恢复/普通模式减伤）→ CONFIG.gameRules.ram
+  //   · 充能这件**攻击方式**的参数（充能时间/倍率/衰减/对谁充）→ 技能的 defaultParams
+  //     （用户："单独做成技能……里面各种参数"；与塔的武器同一套 skillParams 管线）
+  const CH = SkillLibrary.atkmode_charge.defaultParams;
+  T('攻城车自身数值软编码在 CONFIG.gameRules.ram，技能对象上不再挂数值',
+    RAM.siegeSplash > 0 && RAM.normalSplash > 0
+    && RAM.fatiguePerAttack > 0 && RAM.fatigueLayerPct < 0
+    && RAM.recoverSec > 0 && RAM.normalDamageAmpPct < 0
+    && def.TOWER_DAMAGE_MULT === undefined && def.SIEGE_FATIGUE_AS_PCT === undefined);
+  T('充能参数在【充能攻击】技能里，走 defaultParams（编辑器可改、可换装）',
+    SkillLibrary.atkmode_charge.category === 'attackmode'
+    && CH.chargeSecAt1AS > 0 && CH.damagePct > 100 && CH.onlyVs === 'tower'
+    && RAM.chargeSecAt1AS === undefined && RAM.siegeDamagePct === undefined);
+  T('被动图标：攻城炮 🎯', def.icon === '🎯');
 
   // v43 P1-4：小兵工厂已搬到 src/core/factories.js，读组合根两份
   const mainSrc = ['../src/main.js','../src/core/factories.js']
     .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
-  T('main.js 已把被动装配给攻城车（此前遗漏 → 技能栏空白）',
-    /'ram':\s*\['passive_siege_weapon'\]/.test(mainSrc));
+  T('工厂已把三条被动 + 充能攻击都装配给攻城车（此前遗漏 → 技能栏空白）',
+    /'ram':\s*\['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'\]/.test(mainSrc));
 
   const csSrc = fs.readFileSync(new URL('../src/systems/CombatSystem.js', import.meta.url), 'utf8');
   T('伤害规则以被动为闸门（不再按 type==="ram" 硬编码）',
-    csSrc.includes('getSiegeWeaponDef') && !csSrc.includes("const isRam = (e)"));
+    csSrc.includes('hasRamCannon') && !csSrc.includes("const isRam = (e)"));
   const lmsSrc = fs.readFileSync(new URL('../src/systems/LaneMovementSystem.js', import.meta.url), 'utf8');
   // v43 Q2：攻城的锁定/攻速/自损从 LaneMovementSystem 搬进 CombatSystem，两条攻击路径共用。
   // 这条断言原来钉的是"这些常量出现在 LaneMovementSystem 里"，那等于把
   // **实现位置**写死进了测试；而这次的 bug 恰恰是"实现只在其中一条路径上"。
   // 所以改成钉两件事：① 规则只有一份（只在 CombatSystem 里读那三个常量）；
   // ② 两条路径都调那一份。
-  T('攻城规则只有一份（只在 CombatSystem 里读常量，LaneMovementSystem 不再自己抄）',
-    csSrc.includes('TOWER_ATKSPD_MULT') && csSrc.includes('SIEGE_FATIGUE_AS_PCT')
-    && !lmsSrc.includes('TOWER_ATKSPD_MULT') && !lmsSrc.includes('SIEGE_FATIGUE_AS_PCT'));
+  // v49：常量已从技能对象搬进 CONFIG.gameRules.ram（CLAUDE.md 的软编码硬约束）。
+  // "只有一份"这条不变，钉的对象换成 Config：CombatSystem 读它，LaneMovementSystem 不读。
+  T('攻城规则只有一份（数值只在 Config，LaneMovementSystem 不自己抄）',
+    csSrc.includes('CONFIG.gameRules?.ram') && !lmsSrc.includes('gameRules?.ram')
+    && !lmsSrc.includes('siegeDamagePct') && !lmsSrc.includes('fatiguePerAttack'));
   T('两条攻击路径都调同一份（对战 = LaneMovementSystem，沙盒 = CombatSystem 小兵循环）',
     lmsSrc.includes('this.combat.siegeAcquire(') && lmsSrc.includes('this.combat.finishAttack(')
     && csSrc.includes('this.siegeAcquire(minion, nearestTower)')
     && csSrc.includes('this.finishAttack(minion, nearestTower'));
-  T('闸门仍然是被动（拆掉被动即退化为普通车）',
-    /siegeAcquire\(attacker, target\) \{\s*if \(!getSiegeWeaponDef/.test(csSrc)
-    && /finishAttack\(attacker, target, finalAS\) \{\s*const def = getSiegeWeaponDef/.test(csSrc));
+  T('闸门仍然是被动（拆掉【攻城炮】即退化为普通车）',
+    /siegeAcquire\(attacker, target\) \{\s*if \(!hasRamCannon/.test(csSrc)
+    && /finishAttack\(attacker, target, finalAS\) \{\s*if \(!hasRamCannon/.test(csSrc));
 
   // 攻城模式状态：锁定建筑时出现，解除时消失
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
-  const ram = mkUnit(ents, 'ram', 'blue', 0, 0, ['passive_siege_weapon']);
+  const ram = mkUnit(ents, 'ram', 'blue', 0, 0, ['passive_ram_cannon']);
   const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr, eventBus: bus };
   const inst = ram._skillInstances[0];
   def.onFrame(ram.id, DT, inst, ctx);
@@ -134,7 +157,9 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   ram._ramLockId = tw.id;
   def.onFrame(ram.id, DT, inst, ctx);
   const mode = fx.getEffectByName(ram.id, '攻城模式');
-  T('锁定建筑 → 状态栏出现【攻城模式】', !!mode && mode.blueprint.description.includes('攻速-50%'));
+  // v49：攻城模式的描述换了（-50% 攻速已删，改成充能攻击 + 疲惫不恢复）。
+  // 断言钉"状态存在且描述里写了充能"，不再钉那句已经不存在的文案。
+  T('锁定建筑 → 状态栏出现【攻城模式】', !!mode && /充能/.test(mode.blueprint.description));
   tw.alive = false;
   def.onFrame(ram.id, DT, inst, ctx);
   T('目标摧毁 → 攻城模式消失', !fx.getEffectByName(ram.id, '攻城模式'));

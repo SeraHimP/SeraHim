@@ -556,67 +556,121 @@ export const minionPassives = {
 // ============================================================================
 
 const ramPassive = {
-  passive_siege_weapon: {
-    id: 'passive_siege_weapon', name: '攻城武器', icon: '🛠️', category: 'passive',
-    applicableTypes: ['ram'],
-    color: '#7f8c8d',
-    // v40：全部机制的【唯一】数值来源。CombatSystem / LaneMovementSystem 只在
-    // 「单位装备了本被动」时才启用这些规则，并从这里读数——拆掉被动即退化为普通单位。
-    TOWER_DAMAGE_MULT: 3.7,   // v40：对建筑 +270%（原 +800%）
-    TOWER_ATKSPD_MULT: 0.5,   // 攻击建筑时攻速 -50%
-    VS_MINION_MULT: 0.67,     // 对小兵 -33%
-    MELEE_BONUS_MULT: 2.0,    // 近战单位对它 +100%
-    // 2026-08 用户定稿改动①：自损（原 SELF_DAMAGE_PCT=20% 最大生命/次）
-    // 换成永久叠加的攻速衰减，不会再出现"打塔打到自爆"。数值来源见
-    // CombatSystem.finishAttack；SELF_DAMAGE_PCT 已删除，别再引用。
-    SIEGE_FATIGUE_AS_PCT: -25,  // 每次攻击建筑叠一层，每层攻速 -25%，永久不消退、无上限叠加
-    // 2026-08 用户定稿改动②：破甲重击——每座塔独立 900 秒冷却（记在塔身上，
-    // 不管哪辆车打中都共用），冷却好时额外造成目标当前生命 10%（一半真实伤害、
-    // 一半攻城车自身伤害类型的物理伤害）。数值同样在 finishAttack 里读取。
-    SLAM_COOLDOWN_SEC: 900,
-    SLAM_CURRENT_HP_PCT: 10,
-    description: '唯一被动——攻城武器：锁定一座建筑后不再改变目标（直至其被摧毁或自身死亡），'
-      + '锁定期间进入【攻城模式】；攻击建筑时攻速-50%、伤害+270%，每次攻击叠一层"攻城疲惫"'
-      + '（攻速-25%，永久叠加不消退）。每座塔独立900秒冷却，冷却好时额外造成其当前生命10%伤害'
-      + '（一半真实伤害+一半自身伤害类型物理伤害）。对小兵伤害-33%，普攻带溅射。'
-      + '近战单位对攻城车的伤害+100%。',
-    descTemplate: '唯一被动——攻城武器：锁定建筑后进入攻城模式（攻速-50%/对建筑伤害+270%/'
-      + '每次攻击叠一层攻速-25%的"攻城疲惫"，永久不消退）；每座塔独立900秒冷却，冷却好时'
-      + '额外造成其当前生命10%伤害（一半真实+一半物理）；对小兵-33%；普攻溅射；'
-      + '受近战单位伤害+100%。',
+  // ==================== v49：攻城车重做（旧 passive_siege_weapon 已整个删除）====================
+  // 用户定稿："攻城车原有的全部删除，按照我新的来做。"
+  //
+  // 删掉的是：对建筑 +270% / 攻速 -50% / 对小兵 -33%（旧写法）/ 近战对它 +100% /
+  //          攻城疲惫 -25% 每层 / 破甲重击 10% 当前生命 900 秒冷却。
+  // 一条都不保留 —— 这几项的常量原来还挂在技能对象上，违反"数值必须软编码进 Config"，
+  // 新的三条被动全部从 CONFIG.gameRules.ram 读数。
+  //
+  // 保留的只有**接线**（用户单独确认过）：锁定一座建筑后不改目标、索敌优先塔。
+  // 那两件事是红线与状态栏显示的唯一依据，删了会连带把显示一起弄没。
+  //
+  // 为什么拆成三个技能而不是一个：用户就是按三条描述的，技能栏也该显示三格。
+  // 【攻城炮】是常驻闸门（判模式、给溅射半径），另外两条是两个模式各自的效果。
+
+  // ---- 被动 1：攻城炮 ----
+  passive_ram_cannon: {
+    id: 'passive_ram_cannon', name: '攻城炮', icon: '🎯', category: 'passive',
+    applicableTypes: ['ram'], color: '#7f8c8d',
+    get description() {
+      const R = CONFIG.gameRules?.ram || {};
+      return `唯一被动——攻城炮：攻击带溅射（攻城模式半径 ${R.siegeSplash ?? 75}，普通模式半径 ${R.normalSplash ?? 25}）。`
+        + '攻击防御塔时进入【攻城模式】，攻击其他单位时进入【普通模式】；锁定一座建筑后不再改变目标，索敌优先防御塔。';
+    },
+    get descTemplate() { return this.description; },
     effects: [],
-    onEquip: () => {},
     onUnequip: (entityId, instance, ctx) => {
-      // 拆下被动：清掉攻城模式状态与锁定，单位立即退化为普通车
+      // 拆下闸门 = 退化成普通车：锁定、模式状态、充能、疲惫层全部清掉
       const e = ctx.entityContainer.get(entityId);
-      if (e) e._ramLockId = null;
+      if (e) { e._ramLockId = null; e._ramMode = null; e._charge = 0; }
       for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-        if (eff.blueprint.name === '攻城模式') ctx.effectRegistry.remove(eff.id);
+        const n = eff.blueprint.name;
+        if (n === '攻城模式' || n === '普通模式' || n === '攻城疲惫') ctx.effectRegistry.remove(eff.id);
       }
     },
     /**
-     * 每帧维护【攻城模式】状态效果：锁定建筑期间常驻显示，脱离/死亡即消失。
-     * 状态本身不改数值（数值在 CombatSystem 结算时按本被动的常量计算），
-     * 它的职责是把"当前处于攻城模式、有哪些增减益"显式呈现在状态栏里。
+     * 每帧维护三件事：模式判定 → 状态栏显示 → 普通模式下的攻速恢复。
+     *
+     * 模式的唯一判据是【当前锁定/攻击的目标是不是防御塔】。
+     * 用户定稿："攻城车在攻击防御塔时进入攻城模式。攻击其他单位时进入普通模式。"
      */
     onFrame: (entityId, dt, instance, ctx) => {
       const e = ctx.entityContainer.get(entityId);
       if (!e || !e.alive) return;
+      const R = CONFIG.gameRules?.ram || {};
       const locked = e._ramLockId ? ctx.entityContainer.get(e._ramLockId) : null;
-      const active = !!(locked && locked.alive);
-      const has = ctx.effectRegistry.getEffects(entityId).some(x => x.blueprint.name === '攻城模式');
-      if (active && !has) {
-        ctx.effectRegistry.apply(entityId, {
-          name: '攻城模式', icon: '🛠️', kind: 'display', type: 'buff',
-          duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: '已锁定建筑：攻速-50%、对建筑伤害+270%、每次攻击自损20%最大生命（目标不可更换）',
-        }, 'passive_siege_weapon_mode');
-      } else if (!active && has) {
-        for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-          if (eff.blueprint.name === '攻城模式') ctx.effectRegistry.remove(eff.id);
-        }
+      const tgt = (locked && locked.alive) ? locked
+                : (e.targetId ? ctx.entityContainer.get(e.targetId) : null);
+      const siege = !!(tgt && tgt.alive && tgt.type === 'tower');
+      e._ramMode = siege ? 'siege' : 'normal';
+
+      // ---- 状态栏：两个模式都要显示（用户："别忘了在状态栏里要显示攻城模式/普通模式"）----
+      const want = siege ? '攻城模式' : '普通模式';
+      const gone = siege ? '普通模式' : '攻城模式';
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === gone) ctx.effectRegistry.remove(eff.id);
+      }
+      const has = ctx.effectRegistry.getEffects(entityId).some(x => x.blueprint.name === want);
+      if (!has) {
+        ctx.effectRegistry.apply(entityId, siege ? {
+          name: '攻城模式', icon: '🏰', kind: 'display', type: 'buff', color: '#e67e22',
+          duration: Infinity, permanent: true, stackPolicy: 'refresh', uniquePassive: true,
+          // ⚠️ 这里**不重复具体数值**。数值写在【攻城模式】那条被动的描述里（技能栏可见），
+          // 状态栏这一格只说"现在处于哪个模式、会发生什么"。
+          // 状态描述里出现的每个数字都要能在**本技能**的文案里找到（sim_skilldesc 的规矩），
+          // 而这些数字属于另外两条被动 —— 写在这儿只会让那条断言红，且信息是重复的。
+          description: '正在攻击防御塔：对塔改为充能攻击、溅射范围更大；攻城疲惫持续累积且本模式下不恢复',
+        } : {
+          name: '普通模式', icon: '🚚', kind: 'display', type: 'buff', color: '#7f8c8d',
+          duration: Infinity, permanent: true, stackPolicy: 'refresh', uniquePassive: true,
+          description: '正在攻击非建筑目标：普通攻击、溅射范围较小、伤害降低；攻城疲惫逐步恢复',
+        }, 'passive_ram_cannon_mode');
+      }
+
+      // ---- 攻速恢复：**只在普通模式下**（用户特别强调过）----
+      if (siege) { instance.state = instance.state || {}; instance.state.recT = 0; return; }
+      instance.state = instance.state || {};
+      instance.state.recT = (instance.state.recT || 0) + dt;
+      const per = R.recoverSec ?? 3;
+      while (instance.state.recT >= per) {
+        instance.state.recT -= per;
+        const eff = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === '攻城疲惫');
+        if (!eff) { instance.state.recT = 0; break; }
+        eff.stacks -= (R.recoverLayers ?? 1);
+        if (eff.stacks <= 0) ctx.effectRegistry.remove(eff.id);
+        else { ctx.effectRegistry._recalcEffectValues(eff); ctx.effectRegistry._updateDescription(eff); }
       }
     },
+  },
+
+  // ---- 被动 2：攻城模式 ----
+  passive_ram_siege: {
+    id: 'passive_ram_siege', name: '攻城模式', icon: '🏰', category: 'passive',
+    applicableTypes: ['ram'], color: '#e67e22',
+    get description() {
+      const R = CONFIG.gameRules?.ram || {};
+      return `唯一被动——攻城模式：对防御塔改为**充能攻击**（1.0 攻速下 ${R.chargeSecAt1AS ?? 12} 秒充满，`
+        + `充满才打出一发，造成 ${R.siegeDamagePct ?? 375}% 伤害）。每次攻击叠 ${R.fatiguePerAttack ?? 7} 层`
+        + `【攻城疲惫】（每层攻速 ${R.fatigueLayerPct ?? -1}%，无上限叠加），攻城模式下**不恢复**。`
+        + `充能被打断时每秒衰减当前充能的 ${CONFIG.tuning?.charge?.decayPctPerSec ?? 10}%。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+  },
+
+  // ---- 被动 3：普通模式 ----
+  passive_ram_normal: {
+    id: 'passive_ram_normal', name: '普通模式', icon: '🚚', category: 'passive',
+    applicableTypes: ['ram'], color: '#7f8c8d',
+    get description() {
+      const R = CONFIG.gameRules?.ram || {};
+      return `唯一被动——普通模式：攻击非建筑目标时溅射半径 ${R.normalSplash ?? 25}、`
+        + `伤害增幅 ${R.normalDamageAmpPct ?? -33}%；每 ${R.recoverSec ?? 3} 秒恢复 ${R.recoverLayers ?? 1} 层【攻城疲惫】。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
   },
 };
 

@@ -193,9 +193,15 @@ function battle() {
 
   // 攻城车模板
   const ram = CONFIG.templates.ram;
-  T('攻城车模板：HP800 / AD60 / AS0.25 / 射程312 / 双抗0 / 溅射60（v40 调整）',
-    ram.maxHP === 800 && ram.attackDamage === 60 && ram.baseAttackSpeed === 0.25
-    && ram.attackRange === 312 && ram.armor === 0 && ram.magicResist === 0 && ram.splashRadius === 60);
+  // v49 攻城车重做：模板 splashRadius 60 → **0**（用户定稿"模板改为0"）——
+  // 溅射半径完全由【攻城炮】按模式给出，模板不再自带底数。其余模板项不变。
+  // v49 攻城车重做（用户定稿）：溅射 60 → **0**（半径改由【攻城炮】按模式给出）；
+  // 基础攻速 0.25 → **1.2**、攻速收益率 0.667 → **0.05**
+  //（攻速直接决定充能速度 12/攻速，0.25 时一发要 48 秒，完全打不动塔）。
+  T('攻城车模板：HP800 / AD60 / AS1.2 / 收益率0.05 / 射程312 / 双抗0 / 溅射0',
+    ram.maxHP === 800 && ram.attackDamage === 60 && ram.baseAttackSpeed === 1.2
+    && ram.attackSpeedRatio === 0.05
+    && ram.attackRange === 312 && ram.armor === 0 && ram.magicResist === 0 && ram.splashRadius === 0);
   T('攻城车射程 > 防御塔射程（可越塔输出）', ram.attackRange > CONFIG.templates.tower.attackRange);
   T('近战阈值 60：命中近战/超级兵/蚀骨兵，排除炮车/远程/术士/图腾/塔/攻城车',
     CONFIG.templates.melee.attackRange <= MELEE_RANGE_THRESHOLD
@@ -211,7 +217,10 @@ function battle() {
   // （它没有 GLB 模型，会回退到程序化几何；能玩，只是不好看）。
   T('攻城车有体积，且默认生成（用户定稿）',
     MINION_SIZES.ram === 14 && CONFIG.gameRules.spawnEnabled.ram === true);
-  T('攻城武器被动已定义', !!SkillLibrary.passive_siege_weapon);
+  // v49：旧的 passive_siege_weapon 已整个删除，拆成三条（用户："攻城车原有的全部删除"）。
+  T('攻城车三条被动都已定义（攻城炮/攻城模式/普通模式）',
+    !!SkillLibrary.passive_ram_cannon && !!SkillLibrary.passive_ram_siege
+    && !!SkillLibrary.passive_ram_normal && !SkillLibrary.passive_siege_weapon);
 
   // 伤害四规则（精确数值）
   const bus2 = new EventBus(), ents2 = new EntityContainer(bus2), fx2 = new EffectRegistry(bus2);
@@ -226,19 +235,34 @@ function battle() {
 
   // 装上被动后各规则生效
   const R = mkUnit(ents2, 'ram', 'blue', 0, 0);
-  R._skillInstances.push({ id: ++window._uid, skillId: 'passive_siege_weapon', state: {} });
+  R._skillInstances.push({ id: ++window._uid, skillId: 'passive_ram_cannon', state: {} });
+  // v49：对塔的高倍率来自【充能攻击】（攻击方式技能），必须一并装上才量得到
+  R._skillInstances.push({ id: ++window._uid, skillId: 'atkmode_charge', state: {},
+    _params: { ...SkillLibrary.atkmode_charge.defaultParams } });
   const T1 = mkTower(ents2, 'red', 100, 0, 'outer');
   attr.tick();
   h0 = T1.currentHP; combat.performAttack(R, T1);
   const dmgTower = h0 - T1.currentHP;
-  T(`① 打建筑 +270%（${Math.round(dmgTower)} ≈ 60×3.7×100/140 = 159）`, Math.abs(dmgTower - 159) < 3);
+  // v49：对建筑的倍率由旧的 ×3.7 改成 CONFIG.gameRules.ram.siegeDamagePct（375%）。
+  // 断言按配置算期望值，不再钉字面量 —— 这个数用户还会调。
+  // 倍率来源：v49 起在【充能攻击】这件攻击方式技能的参数里，不再是 gameRules.ram
+  const _sp = SkillLibrary.atkmode_charge.defaultParams.damagePct / 100;
+  const _expTower = 60 * _sp * 100 / 140;
+  T(`① 打建筑 ×${_sp}（${Math.round(dmgTower)} ≈ ${Math.round(_expTower)}）`,
+    Math.abs(dmgTower - _expTower) < 3);
   const mn = mkUnit(ents2, 'melee', 'red', 30, 0);
   attr.tick(); h0 = mn.currentHP; combat.performAttack(R, mn);
   const dmgMinion = h0 - mn.currentHP;
-  T(`② 打小兵 -33%（${Math.round(dmgMinion)} ≈ 60×0.67×100/115 = 35）`, Math.abs(dmgMinion - 35) < 3);
+  const _np = 1 + CONFIG.gameRules.ram.normalDamageAmpPct / 100;
+  const _expMinion = 60 * _np * 100 / 115;
+  T(`② 打小兵 ${CONFIG.gameRules.ram.normalDamageAmpPct}%（${Math.round(dmgMinion)} ≈ ${Math.round(_expMinion)}）`,
+    Math.abs(dmgMinion - _expMinion) < 3);
+  // v49：「近战单位打攻城车 +100%」已按用户定稿**删除**（"不留"）。
+  // 断言翻成"近战不再有加成"——规则本身变了，不是实现退化。
   const mel = mkUnit(ents2, 'melee', 'red', 20, 0);
   attr.tick(); h0 = R.currentHP; combat.performAttack(mel, R);
-  T(`③ 近战单位打它 +100%（${Math.round(h0 - R.currentHP)} = 9×2 = 18）`, Math.abs((h0 - R.currentHP) - 18) < 1);
+  T(`③ 近战单位对攻城车不再有 +100%（${Math.round(h0 - R.currentHP)} ≈ 9）`,
+    Math.abs((h0 - R.currentHP) - 9) < 1.5);
   const rng = mkUnit(ents2, 'ranged', 'red', 40, 0);
   attr.tick(); h0 = R.currentHP; combat.performAttack(rng, R);
   T(`③b 远程单位无加成（${Math.round(h0 - R.currentHP)} ≈ 6.5）`, Math.abs((h0 - R.currentHP) - 6.5) < 1.5);

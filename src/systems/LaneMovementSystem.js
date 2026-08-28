@@ -1,6 +1,6 @@
 import { canTarget, isStructureProtected } from './FactionSystem.js';
 import { AISystem } from './AISystem.js';
-import { getSiegeWeaponDef } from './CombatSystem.js';
+import { hasRamCannon } from './CombatSystem.js';
 import { canFire } from './FacingSystem.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
 
@@ -210,7 +210,9 @@ export class LaneMovementSystem {
           // v45：朝向门。目标不在正面扇形内 → 这一下打不出去，等 FacingSystem 转到位。
           // 冷却**不重置**（只是"这一帧没开火"），否则转身会顺带清空攻击节奏，
           // 变成"每次换目标都白等一个完整攻击间隔"，那是双重惩罚。
-          if (minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))
+          // v49：充能没满不开火（对战路径同样要判，否则攻城车在对战里绕过了充能）
+          if (minion.attackCooldown <= 0 && this.combat.chargeReady(minion, target)
+              && !((window.gameTime || 0) < (minion._lockUntil || 0))
               && canFire(minion, target)) {
             this.combat.performAttack(minion, target);
             // v43 Q7：走属性表，不读原始模板值。
@@ -218,7 +220,7 @@ export class LaneMovementSystem {
             // 与沙盒路径共用一份实现；没装攻城武器时它原样返回，这里不必再判断。
             const finalAS = this.combat.finishAttack(
               minion, target, this.attrCalc.calcAttackSpeedOf(stats));
-            minion.attackCooldown = 1 / (finalAS || 0.5);
+            minion.attackCooldown = this.attrCalc.attackIntervalOf(finalAS);
             minion._cdAS = finalAS;
           }
           // ---- v34（Q3 重做）：落位一次、之后冻结 ----

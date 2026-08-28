@@ -207,7 +207,31 @@ export const AttributeCalculator = {
     const negative = Math.min(0, bonusAttackSpeedPct);
     const effectiveBonusPct = positive * attackSpeedRatio + negative; // 负值不乘收益率
     const raw = baseAttackSpeed * (1 + effectiveBonusPct / 100);
-    return Math.max(0.05, Math.min(raw, cap));
+    // ==================== v49：下限 0.05 → 0 ====================
+    // 用户："这个攻速最低只显示 0.05，要显示正确的（最低显示 0.01）。
+    //        如果攻速为 0 的话就显示 0。"
+    //
+    // 只改显示是不行的：面板写 0.01、实际按 0.05 打，正是本仓库反复出现的
+    // "面板与实际不一致"。而且"攻速为 0 就显示 0"这句只有在 0 真的能达到时才成立 ——
+    // 所以下限本身要降到 0，把这个状态**变成可达的**。
+    //
+    // ⚠️ 攻速 0 = 永不攻击。三处算冷却的地方原来写的是 `1 / (finalAS || 0.5)`，
+    // 那个 `|| 0.5` 是给 undefined 兜底的，**会把 0 当成假值吃掉** ——
+    // 下限一降，攻速 0 的单位不是停手而是每 2 秒打一下，行为正好相反。
+    // 所以那三处统一改走 attackIntervalOf()（见下），别再各写各的。
+    return Math.max(0, Math.min(raw, cap));
+  },
+
+  /**
+   * 攻速 → 攻击间隔（秒）。攻速 ≤ 0 时返回 Infinity = 永不攻击。
+   *
+   * 抽出来的唯一理由：`1 / (finalAS || 0.5)` 这一句原样抄在三处
+   *（CombatSystem 的塔与小兵两条、LaneMovementSystem 一条）。
+   * 下限降到 0 之后那个 `|| 0.5` 从"无害兜底"变成"把停手改成每 2 秒一下"的 bug，
+   * 三处都得改 —— 抄三遍的东西改三遍必然漏一处，所以合成一份。
+   */
+  attackIntervalOf(attackSpeed) {
+    return (Number.isFinite(attackSpeed) && attackSpeed > 0) ? 1 / attackSpeed : Infinity;
   },
 
   /**

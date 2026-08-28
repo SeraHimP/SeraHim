@@ -23,7 +23,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     totem: ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura'],
     warlock: ['passive_warlock_aura'],
     corrupt: ['passive_corrupt_strike'],
-    ram:     ['passive_siege_weapon'],
+    ram:     ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
   },
 
   // 防御塔按【层级】取技能清单与默认装配（塔模板本身不再是一个整体）；

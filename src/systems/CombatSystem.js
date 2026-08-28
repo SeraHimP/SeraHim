@@ -1,6 +1,7 @@
 import { AttributeCalculator } from '../core/AttributeCalculator.js';
 import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
 import { canTarget, isStructureProtected } from './FactionSystem.js';
+import { chargeParamsFor } from '../core/skills/attackModes.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
 import { canFire } from './FacingSystem.js';
@@ -8,11 +9,29 @@ import { canFire } from './FacingSystem.js';
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
 const isStructureUnit = (e) => !!e && e.type === 'tower';   // 防御塔与水晶在本项目里都是 type='tower'
-/** 取单位身上的攻城武器被动定义；没装备则返回 null */
-export function getSiegeWeaponDef(e, skillLibrary) {
-  if (!e || !e._skillInstances) return null;
-  const has = e._skillInstances.some(i => i.skillId === 'passive_siege_weapon' && !i._disabled);
-  return has ? (skillLibrary?.passive_siege_weapon || null) : null;
+/**
+ * ==================== v49：攻城车重做后的闸门 ====================
+ * 旧的 passive_siege_weapon 已整个删除（用户："攻城车原有的全部删除"）。
+ * 现在的闸门是【攻城炮】—— 三条被动里常驻的那一条；数值全部读 CONFIG.gameRules.ram，
+ * 不再挂在技能对象上（那违反"所有数值软编码进 Config"这条硬约束）。
+ */
+export function hasRamCannon(e) {
+  return !!e && !!e._skillInstances
+    && e._skillInstances.some(i => i.skillId === 'passive_ram_cannon' && !i._disabled);
+}
+/** 攻城车当前模式：打防御塔 = 'siege'，打别的 = 'normal'；没装攻城炮则 null。 */
+export function ramModeOf(e, target) {
+  if (!hasRamCannon(e)) return null;
+  // 优先按**这一次攻击的目标**判，没有传目标时退回被动 onFrame 记下的 _ramMode。
+  if (target) return isStructureUnit(target) ? 'siege' : 'normal';
+  return e._ramMode || 'normal';
+}
+/** 攻城车该用多大的溅射半径（模板 splashRadius 已改 0，半径完全由模式给出）。 */
+export function ramSplashRadius(e, target) {
+  const mode = ramModeOf(e, target);
+  if (!mode) return 0;
+  const R = CONFIG.gameRules?.ram || {};
+  return mode === 'siege' ? (R.siegeSplash ?? 75) : (R.normalSplash ?? 25);
 }
 /** 近战单位 = 攻击距离 ≤ 阈值（近战30/超级兵/蚀骨兵 命中；炮车127.5/远程150/塔180 排除） */
 const isMeleeUnit = (e) => !!e && (e.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD;
@@ -79,12 +98,29 @@ export class CombatSystem {
       // 每帧减去 (当前攻速 × dt)。攻速中途变化（如减攻速）立即反映到冷却推进速度。
       if (entity.attackCooldown > 0) {
         const curAS = this.attrCalc.calcAttackSpeedOf(stats);
-        // attackCooldown 存"剩余秒数"，但按当前攻速等比缩放推进：
-        // 剩余秒数 -= dt × (当前攻速 / 设定冷却时的攻速)。用 _cdAS 记录设定时攻速。
-        const refAS = entity._cdAS || curAS || 0.5;
-        entity.attackCooldown -= dt * (curAS / (refAS || 0.5));
+        // ==================== v49：攻速可以为 0 之后的解冻 ====================
+        // 攻速 0 时 attackIntervalOf 给的是 Infinity（= 永不攻击，这是对的）。
+        // 但 Infinity 减多少还是 Infinity，**攻速恢复之后也永远打不出来**了 ——
+        // 攻城车在普通模式下会 1%/3s 地回攻速，回来了却是一辆永久哑火的车。
+        // 所以这里补一条解冻：冷却是 Infinity 而当前攻速已经 > 0 → 按当前攻速重设。
+        if (!Number.isFinite(entity.attackCooldown)) {
+          if (curAS > 0) { entity.attackCooldown = 1 / curAS; entity._cdAS = curAS; }
+        } else {
+          // attackCooldown 存"剩余秒数"，但按当前攻速等比缩放推进：
+          // 剩余秒数 -= dt × (当前攻速 / 设定冷却时的攻速)。用 _cdAS 记录设定时攻速。
+          // curAS = 0 时这一项恰好是 0 —— 冷却原地冻住，语义正确，不用特判。
+          const refAS = entity._cdAS || curAS || 0.5;
+          entity.attackCooldown -= dt * (curAS / (refAS || 0.5));
+        }
       }
       if (entity.attackCooldown < 0) entity.attackCooldown = 0;
+
+      // ==================== v49：充能型攻击的通用推进 ====================
+      // 用户："充能如果被打断了，每秒减少 10% 当前充能，
+      //        **以后所有的充能型武器都是这样**，但是数可能会改。"
+      // 所以这一段写成与"谁在充能"无关的通用逻辑：任何单位只要 chargeNeedOf() 说
+      // 它此刻处于充能状态，就在这里推进/衰减。将来新增充能型武器只要接上那个判据。
+      this._tickCharge(entity, stats, dt);
 
       // 战斗计时器（持久化 _inCombat）
       if (entity._combatTimer !== undefined && entity._combatTimer > 0) {
@@ -196,7 +232,7 @@ export class CombatSystem {
           this.performAttack(tower, target);
           const finalAS = this.attrCalc.calcAttackSpeedOf(
             this.attrCalc.calc(tower, this.effects.getEffects(tower.id)));
-          tower.attackCooldown = 1 / (finalAS || 0.5);
+          tower.attackCooldown = this.attrCalc.attackIntervalOf(finalAS);
           tower._cdAS = finalAS;
         }
       } else {
@@ -247,14 +283,16 @@ export class CombatSystem {
         minion._lockUntil = (window.gameTime || 0) + (CONFIG.tuning?.lockOnWindup ?? 0.3); // v33（Q14）：小兵同样有锁定前摇
       }
       // v45：朝向门（与对战路径共用 canFire 这一份实现，不在这里再判一次角差）。
-      if (dist <= range && minion.attackCooldown <= 0 && !((window.gameTime || 0) < (minion._lockUntil || 0))
+      // v49：充能型攻击（攻城车的攻城模式）没充满就不开火，见 chargeReady/_tickCharge。
+      if (dist <= range && minion.attackCooldown <= 0 && this.chargeReady(minion, nearestTower)
+          && !((window.gameTime || 0) < (minion._lockUntil || 0))
           && canFire(minion, nearestTower)) {
         minion.targetId = nearestTower.id;
         this.performAttack(minion, nearestTower);
         // v43 Q2：与对战路径共用同一个攻城结算（攻速 -50% + 自损 20%）。
         const finalAS = this.finishAttack(minion, nearestTower, this.attrCalc.calcAttackSpeedOf(
           this.attrCalc.calc(minion, this.effects.getEffects(minion.id))));
-        minion.attackCooldown = 1 / (finalAS || 0.5);
+        minion.attackCooldown = this.attrCalc.attackIntervalOf(finalAS);
         minion._cdAS = finalAS;
       } else if (dist > range) {
         const angle = Math.atan2(nearestTower.pos.y - minion.pos.y, nearestTower.pos.x - minion.pos.x);
@@ -413,7 +451,7 @@ export class CombatSystem {
    * 所以只要这里维护对了，那两处自动就对了 —— 不需要它们各自再判一次。
    */
   siegeAcquire(attacker, target) {
-    if (!getSiegeWeaponDef(attacker, this.skills)) return target;
+    if (!hasRamCannon(attacker)) return target;
     const locked = attacker._ramLockId ? this.entities.get(attacker._ramLockId) : null;
     if (locked && locked.alive) return locked;         // 锁定期间无视一切其他目标
     attacker._ramLockId = null;
@@ -437,43 +475,77 @@ export class CombatSystem {
    *     随后把这座塔的冷却单独钉住 900 秒——冷却记在【塔]身上，不管哪辆攻城车
    *     打中都共用同一个冷却；但塔与塔之间完全独立，不会互相占用彼此的冷却。
    */
-  finishAttack(attacker, target, finalAS) {
-    const def = getSiegeWeaponDef(attacker, this.skills);
-    if (!def || !isStructureUnit(target)) return finalAS;
-    const out = finalAS * (def.TOWER_ATKSPD_MULT ?? 0.5);
+  /**
+   * 这个单位此刻是否需要充能才能攻击 —— 返回 { need:true, secAt1AS } 或 null。
+   *
+   * 目前只有攻城车的【攻城模式】用到（对防御塔充能攻击）。
+   * 独立成一个判据而不是把 ram 的逻辑散在各处，是为了让"以后所有的充能型武器"
+   * 都只需要在这里加一个分支，推进/衰减/清零那套通用代码一行都不用动。
+   */
+  chargeNeedOf(entity, target) {
+    // v49：不再认"是不是攻城车"，只认**装没装攻击方式技能**（用户："单独做成技能"）。
+    // 目标类型的过滤在 chargeParamsFor 里按技能自己的 onlyVs 参数做。
+    // 没传 target 时用当前目标 —— 每帧推进充能时调用方拿不到"这一次攻击的目标"。
+    const tgt = target || (entity && entity.targetId ? this.entities.get(entity.targetId) : null);
+    return chargeParamsFor(entity, tgt, this.skills);
+  }
 
-    // ① 自损 → 永久叠加的攻速衰减（无限叠层，用 maxStacks 给一个极大值，
-    //    与本项目"无限叠加"的既有写法一致，如 dragonSouls.js 的腐毒）
-    this.effects.apply(attacker.id, {
-      name: '攻城疲惫', icon: '🐌', kind: 'stat', color: '#8d6e63', type: 'debuff',
-      statKey: 'bonusAttackSpeedPct', flatValue: def.SIEGE_FATIGUE_AS_PCT ?? -25,
-      perStackFlat: def.SIEGE_FATIGUE_AS_PCT ?? -25,
-      duration: Infinity, permanent: true,
-      stackable: true, maxStacks: 999, stackPolicy: 'stack', uniquePassive: true,
-      // EffectRegistry 只认 description 里的 {stacks}（见 EffectRegistry.js 的
-      // updateDescription），descTemplate/{val} 是 SkillLibrary 那条完全独立的
-      // 渲染管线，这里不适用——别抄错管线，写了也不会生效。
-      description: `攻城疲惫（{stacks}层，每层攻速${def.SIEGE_FATIGUE_AS_PCT ?? -25}%）`,
-    }, 'passive_siege_weapon_fatigue');
-
-    // ② 破甲重击：per-tower 900 秒冷却，冷却状态钉在【塔】身上（不是攻城车身上）
-    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
-    const cd = def.SLAM_COOLDOWN_SEC ?? 900;
-    if (!target._ramSlamCooldownUntil || now >= target._ramSlamCooldownUntil) {
-      target._ramSlamCooldownUntil = now + cd;
-      const pct = (def.SLAM_CURRENT_HP_PCT ?? 10) / 100;
-      const total = (target.currentHP || 0) * pct;
-      if (total > 0) {
-        const half = total / 2;
-        // _noProc：这次额外伤害本身不应该再触发一次"破甲重击"或其它 onHit 递归
-        this.performAttackDirect(attacker.id, target.id, half, 'true', { _noProc: true });
-        if (target.alive) {
-          this.performAttackDirect(attacker.id, target.id, half, attacker.baseStats?.attackType || 'physical', { _noProc: true });
-        }
-      }
+  /**
+   * 充能推进 / 打断衰减。每帧对每个实体调一次（在冷却推进旁边）。
+   *
+   *   · 处于充能状态 → 按**当前攻速**充：1.0 攻速下用满 secAt1AS 秒，
+   *     所以每秒推进 attackSpeed / secAt1AS。攻速被【攻城疲惫】压低时充能自然变慢，
+   *     "攻速影响充能速度"这条就是这么落地的，不需要另写一份缩放。
+   *   · 不在充能状态（被打断：切了目标 / 目标没了 / 退出攻城模式）
+   *     → 每秒衰减**当前充能**的 decayPctPerSec%（等比，用户原话是"减少10%当前充能"）。
+   */
+  _tickCharge(entity, stats, dt) {
+    const need = this.chargeNeedOf(entity);
+    if (need) {
+      const as = this.attrCalc.calcAttackSpeedOf(stats);
+      const per = Math.max(0.01, need.secAt1AS);
+      entity._charge = Math.min(1, (entity._charge || 0) + dt * as / per);
+      entity._chargeDecay = need.decayPctPerSec;   // 记下来：打断之后按**这件武器**的衰减率走
+      return;
     }
+    const c = entity._charge || 0;
+    if (c <= 0) { if (c !== 0) entity._charge = 0; return; }
+    const pct = (entity._chargeDecay ?? CONFIG.tuning?.charge?.decayPctPerSec ?? 10) / 100;
+    const next = c * Math.pow(1 - pct, dt);
+    entity._charge = next < 1e-4 ? 0 : next;
+  }
 
-    return out;
+  /** 充能没满就不许开火（没有充能需求的单位恒为 true）。 */
+  chargeReady(entity, target) {
+    return !this.chargeNeedOf(entity, target) || (entity._charge || 0) >= 1;
+  }
+
+  finishAttack(attacker, target, finalAS) {
+    if (!hasRamCannon(attacker) || !isStructureUnit(target)) return finalAS;
+    const R = CONFIG.gameRules?.ram || {};
+    // 攻城疲惫：每次**攻城**攻击叠 fatiguePerAttack 层，每层 fatigueLayerPct%。
+    // 无上限（用户定稿 Q5："不用"封顶）；恢复只在普通模式下发生，
+    // 由 passive_ram_cannon.onFrame 负责 —— 这里只管叠，别在两处各写一半。
+    const layers = R.fatiguePerAttack ?? 7;
+    const per = R.fatigueLayerPct ?? -1;
+    const id = this.effects.apply(attacker.id, {
+      name: '攻城疲惫', icon: '🐌', kind: 'stat', color: '#8d6e63', type: 'debuff',
+      statKey: 'bonusAttackSpeedPct', flatValue: per, perStackFlat: per,
+      duration: Infinity, permanent: true,
+      stackable: true, maxStacks: 99999, stackPolicy: 'stack', uniquePassive: true,
+      // EffectRegistry 只认 description 里的 {stacks}（descTemplate/{val} 是 SkillLibrary
+      // 那条完全独立的渲染管线，这里不适用）——别抄错管线，写了也不会生效。
+      description: `攻城疲惫（{stacks}层，每层攻速${per}%）`,
+    }, 'passive_ram_fatigue');
+    // apply 只叠 1 层，这里补足到 layers 层（7% = 7 层 × 1%，用户指定的做法）
+    const eff = this.effects.getEffect(id);
+    if (eff && layers > 1) {
+      eff.stacks += (layers - 1);
+      this.effects._recalcEffectValues(eff);
+      this.effects._updateDescription(eff);
+    }
+    attacker._charge = 0;   // 打出去了 → 充能清零，重新攒
+    return finalAS;   // 攻城模式不再额外乘攻速倍率（旧的 -50% 已随旧被动删除）
   }
 
   performAttack(attacker, target) {
@@ -537,6 +609,16 @@ export class CombatSystem {
       dmgAmp: atkStats.damageAmpPct || 0,
       preDamageMult,
       attackType: atkStats.attackType || 'physical',
+      // v49：穿透四项也在开火那一刻快照。
+      // 用户："无论攻击单位是否死亡，只要发出去的子弹就造成伤害。"
+      // 命中结算原来要拿**攻击者此刻的属性表**去读穿透，攻击者死了就读不到 ——
+      // 那正是 _resolveHit 里 `!attacker.alive → return` 的理由之一。
+      // 攻击侧的其余数值（攻击力/攻击特效/伤害增幅/伤害类型）本来就已经快照在这里了，
+      // 补上这四项之后，命中结算**完全不需要活着的攻击者**。
+      armorPenPercent: atkStats.armorPenPercent || 0,
+      armorPenFlat: atkStats.armorPenFlat || 0,
+      magicPenPercent: atkStats.magicPenPercent || 0,
+      magicPenFlat: atkStats.magicPenFlat || 0,
       weaponId: weaponDef ? weaponDef.id : null,
       weaponInstId: weaponInst ? weaponInst.id : null,
     };
@@ -582,7 +664,12 @@ export class CombatSystem {
   _resolveHit(hitInfo) {
     const attacker = this.entities.get(hitInfo.attackerId);
     const target = this.entities.get(hitInfo.targetId);
-    if (!attacker || !attacker.alive || !target || !target.alive) return;
+    // v49：**攻击者死了不影响已经发出去的这一发**（用户定稿）。
+    // 原来这里是 `!attacker || !attacker.alive || ...` —— 塔在自己的炮弹飞行途中被推掉，
+    // 那一发就整个消失，哪怕目标还活得好好的。这就是用户报的"子弹没伤害"。
+    // 攻击侧要用的数值全部在开火时快照进 hitInfo 了（含四项穿透），
+    // 所以这里只需要攻击者**存在**（拿它的 id/阵营记归属、拿技能实例触发被动），不需要它活着。
+    if (!attacker || !target || !target.alive) return;
     // Q7：全塔无敌开关（设置窗口）——建筑不再受到任何伤害
     if (target.type === 'tower' && window.__towerRuleFor?.('invincible', target._mapFaction)) return; // Q5：按阵营无敌
 
@@ -601,24 +688,29 @@ export class CombatSystem {
     // ① 打建筑 ×(1+TOWER_DAMAGE_MULT_PCT)——仅走这条主命中路径；溅射由 performAttackDirect
     //    结算，天然不含增幅（用户定稿："有溅射，不过只对塔有额外伤害增幅"）。
     // ② 打小兵 ×0.67（-33%）　③ 近战单位打它 ×2（+100%）
-    const atkSiege = getSiegeWeaponDef(attacker, this.skills);
-    if (atkSiege) {
-      totalRaw *= isStructureUnit(target) ? atkSiege.TOWER_DAMAGE_MULT : atkSiege.VS_MINION_MULT;
+    // v49 攻城车：攻城模式对塔 ×siegeDamagePct%，普通模式对其余目标吃 normalDamageAmpPct。
+    // 旧的"近战单位打攻城车 +100%"已按用户定稿删除，不再有 tgtSiege 这一段。
+    // v49：高倍率那一半由**充能攻击技能**给（damagePct，可换武器/可编辑），
+    // 低倍率那一半仍是攻城车【普通模式】自己的性格（normalDamageAmpPct）。
+    // 两件事分开：换一件别的攻击方式时，普通模式的减伤不该跟着变。
+    const chargeP = chargeParamsFor(attacker, target, this.skills);
+    if (chargeP) totalRaw *= chargeP.damageMult;
+    else if (hasRamCannon(attacker)) {
+      const R = CONFIG.gameRules?.ram || {};
+      totalRaw *= (1 + (R.normalDamageAmpPct ?? -33) / 100);
     }
-    const tgtSiege = getSiegeWeaponDef(target, this.skills);
-    if (tgtSiege && isMeleeUnit(attacker)) totalRaw *= tgtSiege.MELEE_BONUS_MULT;
 
     // ---- 防御计算（支持护甲穿透和魔法穿透） ----
     const attackType = hitInfo.attackType;
     let resist = 0, penPercent = 0, penFlat = 0;
     if (attackType === 'physical') {
       resist = defStats.armor || 0;
-      penPercent = atkStats.armorPenPercent || 0;
-      penFlat = atkStats.armorPenFlat || 0;
+      penPercent = hitInfo.armorPenPercent ?? (atkStats.armorPenPercent || 0);
+      penFlat = hitInfo.armorPenFlat ?? (atkStats.armorPenFlat || 0);
     } else if (attackType === 'magic') {
       resist = defStats.magicResist || 0;
-      penPercent = atkStats.magicPenPercent || 0;
-      penFlat = atkStats.magicPenFlat || 0;
+      penPercent = hitInfo.magicPenPercent ?? (atkStats.magicPenPercent || 0);
+      penFlat = hitInfo.magicPenFlat ?? (atkStats.magicPenFlat || 0);
     }
 
     const effectiveResist = this.attrCalc.calcEffectiveArmor(resist, penPercent, penFlat);
@@ -753,18 +845,20 @@ export class CombatSystem {
     if (weaponDef && weaponDef.id === 'weapon_explosive') {
       this._applyExplosion(attacker, target, totalRaw, attackType);
     }
-    // v39（Q4）：攻城车普攻自带溅射（半径取模板 splashRadius=60，爆炸弹的一半左右）。
-    // 注意传入的基数是 totalRaw——若主目标是建筑，totalRaw 已含 ×9；为满足用户定稿
-    //「只对塔有+800%」，这里把倍率除回去，使溅射永远按普通伤害结算。
-    // v43：闸门从 `atkSiege &&` 放宽到"模板里写了 splashRadius 就溅射"。
-    // 原来的写法把溅射和攻城武器被动绑死了 —— 于是**巨龙的溅射从来没生效过**：
-    // createDragon 按用户定稿给龙写了 baseStats.splashRadius = 90，
-    // 但龙没有 passive_siege_weapon，那一项就是个没人读的死配置。
-    // 攻城车的"只对塔有额外增幅"仍然成立：下面那行只在装了被动时把倍率除回去。
-    const splashR = attacker.baseStats?.splashRadius || 0;
+    // 普攻自带溅射。闸门是"模板里写了 splashRadius 就溅射"（v43 放宽的）——
+    // 原来它与攻城武器被动绑死，于是**巨龙的溅射从来没生效过**：
+    // createDragon 按用户定稿给龙写了 baseStats.splashRadius = 90，但龙没有那条被动。
+    //
+    // v49 攻城车：模板 splashRadius 已改 0，半径改由【攻城炮】按模式给出
+    // （攻城 siegeSplash / 普通 normalSplash），所以这里要把两个来源取大的那个。
+    // 溅射的基数把攻城模式那份增幅**除回去**：用户定稿的口径一直是
+    // "额外增幅只对塔生效"，溅射打的是塔周围的别的单位，不该跟着吃。
+    const R49 = CONFIG.gameRules?.ram || {};
+    const ramR = ramSplashRadius(attacker, target);
+    const splashR = Math.max(attacker.baseStats?.splashRadius || 0, ramR);
     if (splashR > 0) {
-      const base = (atkSiege && isStructureUnit(target)) ? totalRaw / atkSiege.TOWER_DAMAGE_MULT : totalRaw;
-      this._applyExplosion(attacker, target, base, attackType, splashR);
+      const siegeMult = chargeP ? chargeP.damageMult : 1;
+      this._applyExplosion(attacker, target, totalRaw / siegeMult, attackType, splashR);
     }
   }
 
@@ -784,8 +878,9 @@ export class CombatSystem {
    */
   resolveSplashOnlyAt(hitInfo, x, y) {
     if (!hitInfo) return;
+    // v49：同 _resolveHit —— 攻击者死了，已经发出去的这一发照样结算（用户定稿）。
     const attacker = this.entities.get(hitInfo.attackerId);
-    if (!attacker || !attacker.alive) return;
+    if (!attacker) return;
     const weaponDef = hitInfo.weaponId ? this.skills[hitInfo.weaponId] : null;
     const totalRaw = (hitInfo.baseDamage + hitInfo.onHitFixed)
       * (1 + hitInfo.dmgAmp / 100) * (hitInfo.preDamageMult ?? 1);

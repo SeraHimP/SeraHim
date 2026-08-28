@@ -114,10 +114,18 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     && 'enabled' in CONFIG.gameRules.maxHPSync && 'lethal' in CONFIG.gameRules.maxHPSync);
 }
 
-// ==================== 二、Q2 攻城武器：一份实现，两条路径 ====================
+// ==================== 二、Q2 攻城车：一份实现，两条路径（v49 重做后） ====================
+// v49：用户定稿"攻城车原有的全部删除，按照我新的来做"。
+// 删掉的旧规则（本节原来逐条钉过它们，现在一并作废）：
+//   对建筑 ×3.7 / 打建筑攻速 ×0.5 / 对小兵 ×0.67（旧写法）/ 近战对它 ×2 /
+//   攻城疲惫 -25%每层且永不恢复 / 破甲重击 10%当前生命·每塔 900 秒冷却。
+// 新规则见 CONFIG.gameRules.ram 与【充能攻击】技能的 defaultParams。
+//
+// **保留并继续钉住的只有接线**（用户单独确认过"留"）：锁定建筑后不改目标、索敌优先塔。
+// 那两件事是红线与状态栏显示的唯一依据。
 {
   const { ents, combat } = world();
-  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
+  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_ram_cannon'] });
   const tw = mk(ents, 'tower', { faction: 'red', tier: 'outer', x: 100, stats: { maxHP: 4000 } });
   const foe = mk(ents, 'melee', { faction: 'red', x: 10 });
 
@@ -129,27 +137,30 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('Q2③-锁定目标死亡后解除锁定', combat.siegeAcquire(ram, foe) === foe && !ram._ramLockId);
 }
 {
+  // 攻城疲惫：每次**攻城**攻击叠 fatiguePerAttack 层，攻城模式下不恢复。
   const { ents, combat, fx } = world();
-  const def = SkillLibrary.passive_siege_weapon;
-  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
+  const R = CONFIG.gameRules.ram;
+  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_ram_cannon'] });
   const tw = mk(ents, 'tower', { faction: 'red', x: 100 });
   const foe = mk(ents, 'melee', { faction: 'red', x: 10 });
   const hp0 = ram.currentHP;
 
   const asVsTower = combat.finishAttack(ram, tw, 1.0);
-  T('Q2④-打建筑时攻速按被动的倍率下降', Math.abs(asVsTower - def.TOWER_ATKSPD_MULT) < 1e-9);
-  // 2026-08 用户定稿改动：自损（扣血）换成永久叠加的攻速衰减，血量不再受影响。
-  T('Q2④-打建筑时不再自损血量（改成攻速衰减debuff，见下）', ram.currentHP === hp0);
-  T('Q2④-打建筑叠一层"攻城疲惫"（攻速-25%，见 def.SIEGE_FATIGUE_AS_PCT）', (() => {
+  T('Q2④-打建筑不再额外乘攻速倍率（旧的 -50% 已随旧被动删除）', asVsTower === 1.0);
+  T('Q2④-打建筑不自损血量（自损那一版早就废了）', ram.currentHP === hp0);
+  T('Q2④-打建筑叠 fatiguePerAttack 层"攻城疲惫"，每层 fatigueLayerPct%', (() => {
     const eff = fx.getEffects(ram.id).find(e => e.blueprint.name === '攻城疲惫');
-    return !!eff && eff.stacks === 1 && eff.blueprint.perStackFlat === def.SIEGE_FATIGUE_AS_PCT;
+    return !!eff && eff.stacks === R.fatiguePerAttack && eff.blueprint.perStackFlat === R.fatigueLayerPct;
   })());
 
   const hp1 = ram.currentHP;
   const asVsMinion = combat.finishAttack(ram, foe, 1.0);
-  T('Q2⑤-打小兵时攻速不变、不自损', asVsMinion === 1.0 && ram.currentHP === hp1);
+  T('Q2⑤-打小兵不叠疲惫、不自损', asVsMinion === 1.0 && ram.currentHP === hp1 && (() => {
+    const eff = fx.getEffects(ram.id).find(e => e.blueprint.name === '攻城疲惫');
+    return eff.stacks === R.fatiguePerAttack;   // 还是刚才那几层，没有再涨
+  })());
 
-  // 闸门仍是被动：没装的车什么都不该发生
+  // 闸门仍是被动：没装【攻城炮】的车什么都不该发生
   const plain = mk(ents, 'ram', { faction: 'blue' });
   const hp2 = plain.currentHP;
   T('Q2⑥-没装被动 → 攻速不变、不自损、不锁定',
@@ -157,63 +168,60 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     && combat.siegeAcquire(plain, tw) === tw && !plain._ramLockId);
 }
 {
-  // 2026-08 用户定稿改动：自损换成永久叠加的攻速衰减，不会再出现"打到自尽"。
-  // 验证：打很多次，车始终存活、层数一直累加、攻速被压到下限附近但从不致死。
+  // 攻速下限：v49 从 0.05 降到 **0**（用户："要显示正确的……如果攻速为0就显示0"）。
+  // 攻城疲惫无上限叠加，所以攻速真的能被压到 0 —— 这是用户明确选择的（Q5"不用"封顶）。
   const { ents, combat, bus, fx } = world();
-  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
+  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_ram_cannon'] });
   const tw = mk(ents, 'tower', { faction: 'red', x: 100 });
   let died = null;
   bus.on('entity:death', ({ entityId }) => { died = entityId; });
   for (let i = 0; i < 50; i++) combat.finishAttack(ram, tw, 1.0);
   const eff = fx.getEffects(ram.id).find(e => e.blueprint.name === '攻城疲惫');
-  T('Q2⑦-永久叠层：打 50 次车不会死、层数封顶在 maxStacks',
-    ram.alive === true && died === null && !!eff && eff.stacks === Math.min(50, eff.blueprint.maxStacks || 999));
-  T('Q2⑦-攻速被压到引擎下限附近（calcAttackSpeed 有 0.05 的硬下限，不会变成负数/清零）',
-    attr.calcAttackSpeedOf(attr.calc(ram, fx.getEffects(ram.id))) >= 0.05);
+  T('Q2⑦-无上限叠层：打 50 次车不会死，层数一路累加',
+    ram.alive === true && died === null && !!eff
+    && eff.stacks === 50 * CONFIG.gameRules.ram.fatiguePerAttack);
+  T('Q2⑦-攻速可以被压到 0（下限已从 0.05 改为 0），且不会变成负数',
+    attr.calcAttackSpeedOf(attr.calc(ram, fx.getEffects(ram.id))) === 0);
+  T('Q2⑦-攻速 0 → 攻击间隔为 Infinity（永不攻击），而不是被 `|| 0.5` 兜成每 2 秒一下',
+    attr.attackIntervalOf(0) === Infinity && attr.attackIntervalOf(2) === 0.5);
 }
 {
-  // 破甲重击：每座塔独立 900 秒冷却（冷却状态钉在塔身上，不是车身上）
+  // 充能攻击：做成**攻击方式技能**（用户："单独做成技能……以后再用的话就很方便了"）
   const { ents, combat, fx } = world();
-  const def = SkillLibrary.passive_siege_weapon;
-  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
-  const tw1 = mk(ents, 'tower', { faction: 'red', x: 100, stats: { maxHP: 4000 } });
-  tw1.currentHP = 2000; // 当前生命 2000，10% = 200，一半真伤一半物理
-  const tw2 = mk(ents, 'tower', { faction: 'red', x: 200, stats: { maxHP: 4000 } });
-  tw2.currentHP = 1000;
-
-  window.gameTime = 0;
-  const hpBefore = tw1.currentHP;
-  combat.finishAttack(ram, tw1, 1.0);
-  const dealt = hpBefore - tw1.currentHP;
-  T('Q2⑨-破甲重击：冷却好时命中额外造成当前生命 10%（物理那一半还要过双抗，取个宽松下限校验）',
-    dealt > 0 && dealt <= hpBefore * (def.SLAM_CURRENT_HP_PCT / 100) + 1e-6);
-  T('Q2⑨-命中后把这座塔的冷却钉到 900 秒后', tw1._ramSlamCooldownUntil === 900);
-
-  const hpAfter1 = tw1.currentHP;
-  combat.finishAttack(ram, tw1, 1.0); // 冷却内再打一次
-  T('Q2⑨-冷却内再打同一座塔，不再重复触发', tw1.currentHP === hpAfter1);
-
-  const hpBefore2 = tw2.currentHP;
-  combat.finishAttack(ram, tw2, 1.0); // 另一座塔独立冷却，应正常触发
-  T('Q2⑨-换一座塔（独立冷却，不共享）照样触发', tw2.currentHP < hpBefore2);
-
-  window.gameTime = 900;
-  const hpAfter3 = tw1.currentHP;
-  combat.finishAttack(ram, tw1, 1.0); // 900 秒后冷却结束，应再次触发
-  T('Q2⑨-900 秒后冷却结束，同一座塔可以再次触发', tw1.currentHP < hpAfter3);
-}
-{
-  // 两条攻击路径都调同一份（这条是本次 bug 的形状：实现只在其中一条路上）
-  const cs = srcOf('src/systems/CombatSystem.js');
-  const lms = srcOf('src/systems/LaneMovementSystem.js');
-  T('Q2⑧-规则只有一份：常量只在 CombatSystem 里读',
-    cs.includes('TOWER_ATKSPD_MULT') && cs.includes('SIEGE_FATIGUE_AS_PCT')
-    && !lms.includes('TOWER_ATKSPD_MULT') && !lms.includes('SIEGE_FATIGUE_AS_PCT'));
-  T('Q2⑧-对战路径（LaneMovementSystem）调它',
-    lms.includes('this.combat.siegeAcquire(') && lms.includes('this.combat.finishAttack('));
-  T('Q2⑧-沙盒路径（CombatSystem 小兵循环）也调它',
-    cs.includes('this.siegeAcquire(minion, nearestTower)')
-    && cs.includes('this.finishAttack(minion, nearestTower'));
+  const CH = SkillLibrary.atkmode_charge.defaultParams;
+  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_ram_cannon', 'atkmode_charge'] });
+  const tw = mk(ents, 'tower', { faction: 'red', x: 100 });
+  const foe = mk(ents, 'melee', { faction: 'red', x: 10 });
+  T('Q2⑧-充能是独立的技能类别（category=attackmode），谁都能装',
+    SkillLibrary.atkmode_charge.category === 'attackmode');
+  T('Q2⑧-只对 onlyVs 指定的目标充能（攻城车=只对塔）',
+    !!combat.chargeNeedOf(ram, tw) && !combat.chargeNeedOf(ram, foe));
+  T('Q2⑧-没充满不许开火，充满才行', (() => {
+    ram._charge = 0;
+    const notReady = combat.chargeReady(ram, tw) === false;
+    ram._charge = 1;
+    return notReady && combat.chargeReady(ram, tw) === true;
+  })());
+  T('Q2⑧-充能速度 = 攻速 / chargeSecAt1AS（1.0 攻速下正好用满 chargeSecAt1AS 秒）', (() => {
+    // _tickCharge 判"要不要充能"时会去看**当前目标**（每帧推进拿不到"这一击的目标"），
+    // 所以这里必须把目标设成塔，否则它走的是"打断衰减"那条分支。
+    ram.targetId = tw.id;
+    ram._charge = 0;
+    const st = attr.calc(ram, fx.getEffects(ram.id));
+    const as = attr.calcAttackSpeedOf(st);
+    let t = 0;
+    while ((ram._charge || 0) < 1 && t < 1000) { combat._tickCharge(ram, st, 0.05); t += 0.05; }
+    return Math.abs(t - CH.chargeSecAt1AS / as) < 0.2;
+  })());
+  T('Q2⑧-打断后每秒等比衰减当前充能（用户："每秒减少10%当前充能"）', (() => {
+    ram._charge = 1; ram.targetId = foe.id;   // 切到小兵 = 不再需要充能 = 打断
+    const st = attr.calc(ram, fx.getEffects(ram.id));
+    for (let i = 0; i < 10; i++) combat._tickCharge(ram, st, 1.0);
+    const want = Math.pow(1 - (CONFIG.tuning.charge.decayPctPerSec / 100), 10);
+    return Math.abs(ram._charge - want) < 1e-6;
+  })());
+  T('Q2⑧-衰减率是全局规则、软编码（"以后所有的充能型武器都是这样"）',
+    typeof CONFIG.tuning.charge.decayPctPerSec === 'number');
 }
 
 // ==================== 三、Q2b 残弹：目标已死仍结算溅射 ====================
@@ -252,10 +260,13 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 {
   // 顺带修好的：龙的溅射此前从没生效过（闸门与攻城武器被动绑死）
   const cs = srcOf('src/systems/CombatSystem.js');
-  T('Q2b④-溅射闸门改为"模板写了 splashRadius 就溅射"（巨龙的溅射因此才真正生效）',
-    /const splashR = attacker\.baseStats\?\.splashRadius \|\| 0;\s*if \(splashR > 0\)/.test(cs));
-  T('Q2b④-攻城车"只对塔有额外增幅"仍成立（倍率只在装了被动时除回）',
-    /\(atkSiege && isStructureUnit\(target\)\) \? totalRaw \/ atkSiege\.TOWER_DAMAGE_MULT/.test(cs));
+  // v49：攻城车模板的 splashRadius 改成 0、半径改由模式给出，所以闸门取两者的较大值。
+  // 龙那一半仍然靠模板的 splashRadius —— 这条断言原本就是为龙的溅射守的，继续守住。
+  T('Q2b④-溅射闸门仍认"模板写了 splashRadius"（巨龙的溅射靠这条才生效）',
+    /Math\.max\(attacker\.baseStats\?\.splashRadius \|\| 0, ramR\)/.test(cs));
+  T('Q2b④-"额外增幅只对主目标"仍成立（溅射把充能倍率除回去）',
+    /const siegeMult = chargeP \? chargeP\.damageMult : 1;/.test(cs)
+    && /totalRaw \/ siegeMult/.test(cs));
 }
 
 // ==================== 四、中立单位 ====================

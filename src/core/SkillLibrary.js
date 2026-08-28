@@ -14,6 +14,8 @@ import { core } from './skills/core.js';
 import { weapons } from './skills/weapons.js';
 import { towerPassives, TowerGrowthSkills, HomeAuraSkill } from './skills/towerPassives.js';
 import { minionPassives } from './skills/minionPassives.js';
+// v49：攻击方式（充能等）自成一类，与塔的武器同一个形状 —— 见 attackModes.js 头注。
+import { attackModes } from './skills/attackModes.js';
 import { dragonSouls } from './skills/dragonSouls.js';
 import { dragonPassives } from './skills/dragonPassives.js';
 
@@ -37,7 +39,7 @@ export const SkillLibrary = {
 };
 
 // Register all built-in skills
-const allSkills = { ...core, ...weapons, ...towerPassives, ...TowerGrowthSkills,
+const allSkills = { ...core, ...weapons, ...attackModes, ...towerPassives, ...TowerGrowthSkills,
   ...HomeAuraSkill, ...minionPassives, ...dragonSouls, ...dragonPassives };
 for (const [id, def] of Object.entries(allSkills)) {
   SkillLibrary.register(id, def);

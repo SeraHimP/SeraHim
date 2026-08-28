@@ -18,6 +18,17 @@ export class ProjectileSystem {
   }
 
   fire(projectile) {
+    // ==================== v49：落点在**开火那一刻**就先记一份 ====================
+    // 用户："无论攻击单位是否死亡，只要发出去的子弹就造成伤害。"
+    //
+    // lastTx/lastTy 原来只在 update 里、且只在"目标还活着"的那一帧才写。
+    // 于是目标在**同一帧内**死掉时它从没被写过，下面的循环会走
+    // `if (p.lastTx == null) → 丢弃`，整发子弹凭空消失 —— 与"发出去就算数"直接冲突。
+    // 开火时目标必然还活着（不然打不出这一发），此刻的位置就是最合理的兜底落点。
+    const t0 = projectile.targetId != null ? this.entities.get(projectile.targetId) : null;
+    if (t0 && t0.pos && projectile.lastTx == null) {
+      projectile.lastTx = t0.pos.x; projectile.lastTy = t0.pos.y;
+    }
     this.projectiles.push(projectile);
   }
 

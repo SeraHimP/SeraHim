@@ -389,7 +389,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     'ranged': ['passive_ranged_rend'],
     'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'],
     'super': ['passive_super_commander'],
-    'ram': ['passive_siege_weapon'],   // v40：攻城车的全部特殊机制都由这条被动驱动
+    // v49 攻城车重做：一条被动拆成三条（攻城炮=常驻闸门，另两条是两个模式）。
+    // atkmode_charge 是**攻击方式**技能（与塔的武器同一形状），充能的全部参数在它身上。
+    'ram': ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
     // 三个支援兵种（用户定稿重做）。旧的 totem_guardian/awaken/nourish/sacrifice
     // 仍在 SkillLibrary 里（编辑器可手动装备），但不再默认装配 —— 它们的效果
     // 与新的三件套重叠，同时装上会双份减伤、双份护盾。
