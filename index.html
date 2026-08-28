@@ -457,8 +457,14 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    直接复用 .bar-row/.bar-track，不新起一套尺寸，天然一样高。*/
 .bar-res-row { display: none; }
 .bar-res-row.show { display: flex; }
-.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: linear-gradient(180deg, #6c8cf5, #3d54c9); transition: width 0.12s linear; }
-.bar-res-text { font-size: 10px; color: var(--text-mute); text-align: center; margin: -16px 0 5px; line-height: 1; pointer-events: none; }
+/* 具体颜色按资源类型（法力/升温/闪电充能/通用充能）由 JS 现读 RESOURCE_COLORS 写 background，
+   这里只给一个兜底色，防止 JS 还没跑到时是空白色块。 */
+.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: width 0.12s linear, background 0.2s; }
+.bar-res-text {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px; color: var(--text-mute); margin: -16px 0 5px; line-height: 1; pointer-events: none;
+}
+.bar-res-regen { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }
@@ -758,6 +764,15 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   border-radius: 3px; padding: 0 4px; white-space: nowrap;
 }
 .tpl-scope-note { font-size: 11px; color: var(--text-mute); margin: 6px 0 4px; }
+/* v51.1：作用域条（阵营/应用范围）单独包一层浅色卡片，与上面的页签、下面内容自己的
+   分类 tab 拉开视觉权重——三排本来长得一模一样，读起来是一整墙同款按钮。 */
+.tpl-scope-bars {
+  background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xs); padding: 8px 10px; margin-bottom: 10px;
+}
+.tpl-scope-bars .editor-tabs { margin: 0; border-bottom: none; padding-bottom: 0; }
+.tpl-scope-bars .editor-tabs + .editor-tabs { margin-top: 6px; }
+.tpl-scope-bars .editor-tab { font-size: 11px; padding: 4px 10px; }
 
 
 /* 出兵编排表：表头与数据行共用同一套列宽，两边各写一串 px 必然错位 */

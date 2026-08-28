@@ -392,12 +392,25 @@ export class DragonSystem {
     this._slayerWatch = this._slayerWatch || new Set();
     this._slayerWatch.add(killer.id);
 
-    this.effects.apply(killer.id, {
-      name: '屠龙者', icon: '🗡', kind: 'display', type: 'buff', color: '#f0a03c',
-      duration: sec, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-      description: `击杀${dragon._isAncient ? '远古巨龙' : (DRAGON_ELEMENTS[dragon._element] || {}).label || '巨龙'}`
-                 + `：获得 ${this.skills[soulId].name} ${sec} 秒`,
-    }, 'dragon_slayer');
+    // ==================== v51.1：不再另起一个"屠龙者"徽标 ====================
+    // 用户："不要杀死龙后获得屠龙者，直接获得XX秒的临时龙魂，在临时龙魂状态上显示
+    //        倒计时。" 原来这里另外 apply 了一条独立的"屠龙者"展示效果，专门用来
+    //        显示倒计时——因为 _toggleSoul() 给龙魂本体挂的那个展示效果永远是
+    //        duration:Infinity（永久魂用的），没有倒计时环。于是同一个人身上挂两个
+    //        图标：龙魂本体（没有倒计时）+"屠龙者"（有倒计时但看着像另一条独立效果）。
+    // 现在反过来：直接把龙魂本体那个展示效果的剩余时间改成真实的 sec 秒——
+    // 倒计时环长在龙魂图标自己身上，不再需要一个多余的"屠龙者"标签。
+    // 只在【本来没有这条魂】时才改（!existing）：已经是阵营永久魂的情况完全不碰，
+    // 否则会把玩家辛苦拿到的永久魂在界面上显示成"会过期"。
+    if (!existing) {
+      const disp = this.effects.getEffects(killer.id).find(e => e.sourceId === `soul_display_${soulId}`);
+      if (disp) {
+        disp.remainingTime = sec;
+        disp.maxDuration = sec;
+        disp.permanent = false;
+        disp.blueprint.permanent = false;
+      }
+    }
     this.eventBus.emit('dragon:slayer', { entityId: killer.id, soulId, sec });
     return killer.id;
   }

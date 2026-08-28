@@ -159,7 +159,7 @@ export const STAT_DOCS = {
 
   // ==================== v51：新增属性 ====================
   abilityPower: {
-    label: '法强',
+    label: '法术强度',
     desc: '法术强度。具体每个主动技能怎么用它，由技能自己的公式决定，不是统一换算。',
     formula: '引擎只把这个数暴露成一个可读的属性；伤害/治疗强度公式写在各个主动技能的源码里'
            + '（src/core/skills/actives.js）。',
@@ -187,7 +187,7 @@ export const STAT_DOCS = {
     label: '适应之力',
     desc: '按【攻击力】和【法术强度】哪个更高，自动转化成那一个（持平时按适应方向）。',
     formula: '1 点适应之力 = 0.6 攻击力，或 1 点法术强度（与 LoL 现行比例一致）。'
-           + '判据是【总法强】vs【总攻击力】，没有过渡带，打平时看 adaptiveDefault 字段。',
+           + '判据是【总法术强度】vs【总攻击力】，没有过渡带，打平时看 adaptiveDefault 字段。',
   },
   physicalVampPct: { label: '物理吸血%', desc: '按造成的【物理伤害】百分比回复自身生命/护盾。', formula: '与全能吸血叠加；命中群体目标（溅射/连锁/分裂）时按 20% 效率结算。' },
   spellVampPct: { label: '法术吸血%', desc: '按造成的【魔法伤害】百分比回复自身生命/护盾。', formula: '与全能吸血叠加；命中群体目标时同样打 20% 效率折扣。' },
@@ -205,8 +205,9 @@ export const STAT_DOCS = {
   manaRegen: { label: '法力回复/秒', desc: '每秒自动回复的法力。', formula: '同样受"没装主动技能就恒为0"这条规则约束。' },
   manaStart: { label: '出场法力', desc: '单位出场时的初始法力。', formula: '不超过最大法力。' },
   manaFloor: { label: '法力下限', desc: '释放主动技能后法力回落到的值。', formula: '默认 0（清空）。' },
-  manaOnAttack: { label: '攻击回复法力', desc: '每次命中普通攻击获得的法力。', formula: '只在命中【普通攻击】时触发，技能/DoT 不触发。' },
-  manaOnHitTaken: { label: '受击回复法力', desc: '每次被普通攻击命中获得的法力。', formula: '只在被【普通攻击】命中时触发。' },
+  // v51.1：manaOnAttack/manaOnHitTaken 已改成全局值（CONFIG.tuning.mana），
+  // 不再是每个模板各自的字段，这里的说明条目随之删除——不然会有一条"点了却查
+  // 无此 statKey"的说明，正是本仓库反复强调要避免的死配置。
 };
 
 /** 取某个属性的说明；没有登记过就返回 null（调用方据此决定要不要做成可点击）。 */

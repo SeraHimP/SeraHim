@@ -19,13 +19,23 @@
  * 命中时发出（_resolveHit），技能/DOT/溅射不发。用普通攻击而不是"任意一次伤害"来触发
  * 法力增长，是刻意的：与 LoL 里"技能本身不回蓝、只有普攻回蓝"是同一个道理，
  * 否则主动技能会自己给自己充能，节奏会失控。
+ * v51.1：这两个数改成**全局**一份（CONFIG.tuning.mana.onAttack/onHitTaken），
+ * 不再是每个模板各存一份——用户："全局生效，每个单位每次受击获得2，每次攻击获得1
+ * （每张地图/每个单位可能不一样，先都按这个写，可修改）"。
  *
  * ==================== 法力满了之后 ====================
  * 找该单位装备的第一个 category:'active' 技能实例，调用它的 onCast(entityId, instance, ctx)。
  * onCast 自己负责索敌/找目标——找不到目标就返回 falsy，本帧不消耗法力、下一帧再试
  * （法力停在满格，不会绷在那里"漏掉"这次施放）。施放成功后法力按
- * CONFIG.templates... 不对，按 ACTIVE_TUNING.consumeMode 处理（目前只有 'toFloor'：
- * 清到 manaFloor，默认 0）。
+ * ACTIVE_TUNING.consumeMode 处理（目前只有 'toFloor'：清到 manaFloor，默认 0）。
+ *
+ * ==================== 延迟消耗（用户："只有攻击了法力值才清零重新计算"）====================
+ * 少数技能（术士兵的蓄能打击）不是"放出去立刻清零"，而是"蓄势待发，等下一次普通
+ * 攻击命中才真正清零"——法力条在待发期间必须一直显示满格。这类技能在自己的定义里
+ * 声明 `deferredConsume: true`，onCast 成功后自己把 `instance.state._armed = true`。
+ * 见到这个标记后本系统：①不清空法力（技能自己决定什么时候清）；②本帧起不再重复
+ * 调用 onCast（`_armed` 还在就跳过），直到别处（目前是 CombatSystem 消耗
+ * entity._empowerNextAttack 时）把 `_armed` 改回 false。
  *
  * ==================== 沉默 ====================
  * 持有【沉默】状态（EffectRegistry.isSilenced）的单位法力照常回复、照常封顶，
@@ -57,15 +67,16 @@ export class ManaSystem {
 
   _onDamageDealt({ sourceId, targetId, amount }) {
     if (!(amount > 0)) return;
+    const m = CONFIG.tuning?.mana || {};
     const attacker = this.entities.get(sourceId);
     const target = this.entities.get(targetId);
-    if (attacker && this.hasActiveSkill(attacker)) {
+    if (attacker && this.hasActiveSkill(attacker) && m.onAttack) {
       const stats = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id));
-      if (stats.manaOnAttack) this._addMana(attacker, stats, stats.manaOnAttack);
+      this._addMana(attacker, stats, m.onAttack);
     }
-    if (target && target.alive && this.hasActiveSkill(target)) {
+    if (target && target.alive && this.hasActiveSkill(target) && m.onHitTaken) {
       const stats = this.attrCalc.calc(target, this.effects.getEffects(target.id));
-      if (stats.manaOnHitTaken) this._addMana(target, stats, stats.manaOnHitTaken);
+      this._addMana(target, stats, m.onHitTaken);
     }
   }
 
@@ -94,6 +105,8 @@ export class ManaSystem {
 
       const inst = this._firstActiveInst(entity);
       if (!inst) continue;
+      // 延迟消耗：已经放过一次、正等着被消耗（见术士兵蓄能打击），本帧不再重复施放。
+      if (inst.state?._armed) continue;
       const def = this.skills[inst.skillId];
       if (!def || !def.onCast) continue;
       const ok = def.onCast(entity.id, inst, {
@@ -101,6 +114,9 @@ export class ManaSystem {
         attrCalc: this.attrCalc, combat: this.combat, waveNumber: window.waveNumber || 0,
       });
       if (!ok) continue; // 没找到目标：法力保持满格，下一帧再试
+      // 延迟消耗型技能自己把 _armed 置真之后，法力不在这里清——法力条要一直显示满格，
+      // 直到消耗方（目前是 CombatSystem 的 _empowerNextAttack 检查）自己把它清掉。
+      if (def.deferredConsume && inst.state?._armed) continue;
 
       const floor = Math.min(max, Math.max(0, stats.manaFloor || 0));
       entity._mana = ACTIVE_TUNING.consumeMode === 'toFloor' ? floor : entity._mana;

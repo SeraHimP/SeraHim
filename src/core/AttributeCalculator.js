@@ -281,7 +281,7 @@ export const AttributeCalculator = {
    * 与适应之力用同一条 LoL 规则（AP 高就走魔法，打平按 adaptiveDefault），
    * 但这里比较的是【结算那一刻】已经算好的属性表（含适应之力转化后的 AD/AP），
    * 不是另开一套判据——"哪种伤害类型"与"适应之力加到哪"必须用同一个比较结果，
-   * 否则会出现"适应之力都加进了法强，却按物理伤害结算"这种自相矛盾。
+   * 否则会出现"适应之力都加进了法术强度，却按物理伤害结算"这种自相矛盾。
    */
   resolveAttackType(stats) {
     if (!stats || stats.attackType !== 'adaptive') return stats ? stats.attackType : 'physical';

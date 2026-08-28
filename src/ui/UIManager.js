@@ -7,7 +7,7 @@ import { DetailModal, STAT_LABELS } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS } from './statPanelLayout.js';
-import { resourceInfoOf } from '../core/resourceBar.js';
+import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
 import { stepTrail } from '../presentation/barTrail.js';
 
 export class UIManager {
@@ -574,13 +574,20 @@ export class UIManager {
   _updateResourceBar(card, prefix, id, entity) {
     const row = card.querySelector(`#${prefix}-resrow-${id}`);
     const textEl = card.querySelector(`#${prefix}-restext-${id}`);
+    const regenEl = card.querySelector(`#${prefix}-resregen-${id}`);
     if (!row) return;
     const info = resourceInfoOf(entity, { skillLibrary: SkillLibrary, attrCalc: this.attrCalc, effects: this.effects });
     row.classList.toggle('show', !!info);
     if (!info) return;
     const fill = row.querySelector('.bar-res');
-    if (fill) fill.style.width = (info.frac * 100) + '%';
+    if (fill) {
+      fill.style.width = (info.frac * 100) + '%';
+      fill.style.background = RESOURCE_COLORS[info.kind] || RESOURCE_COLORS.mana;
+    }
     if (textEl) textEl.textContent = info.label;
+    // 用户："法力条右侧显示每秒被动获得法力的值，如果没有就显示为0。"——只有法力
+    // 类型才有这个概念（充能/升温/闪电充能都是"进度"而不是"每秒获得多少"）。
+    if (regenEl) regenEl.textContent = info.regenText || '';
   }
 
   _baseAttrsHtml(E, stats) {
@@ -679,8 +686,15 @@ export class UIManager {
     // 而不是从模板表里查 —— 查模板的话手动改过伤害类型的单位会显示错的。
     let dmgType = '';
     if (key === 'attackDamage' && entity) {
+      // v51.1：补上 'adaptive'——用户新增的攻击类型逻辑，这个弹窗原来只认
+      // physical/magic/true 三种，'adaptive' 落进 else 分支被误判成物理伤害。
+      // 自适应要显示的是【这一刻】真实解析出来的类型（按当前法术强度 vs 攻击力），
+      // 不是"自适应"这四个字本身——那样看不出它现在到底在打什么伤害。
       const TYPE_LABEL = { physical: '⚔️ 物理伤害', magic: '✨ 魔法伤害', true: '💠 真实伤害' };
-      const base = TYPE_LABEL[entity.baseStats?.attackType] || TYPE_LABEL.physical;
+      const rawType = entity.baseStats?.attackType;
+      const base = rawType === 'adaptive'
+        ? `🔄 自适应（当前：${TYPE_LABEL[this.attrCalc.resolveAttackType(liveStats || {})] || '物理伤害'}）`
+        : (TYPE_LABEL[rawType] || TYPE_LABEL.physical);
       const extras = [];
       for (const inst of (entity._skillInstances || [])) {
         const def = SkillLibrary[inst.skillId];
@@ -969,7 +983,10 @@ export class UIManager {
       <div class="bar-row bar-res-row" id="tower-resrow-${tower.id}">
         <div class="bar-track"><div class="bar-res" id="tower-res-${tower.id}"></div></div>
       </div>
-      <div class="bar-res-text" id="tower-restext-${tower.id}"></div>
+      <div class="bar-res-text">
+        <span id="tower-restext-${tower.id}"></span>
+        <span class="bar-res-regen" id="tower-resregen-${tower.id}"></span>
+      </div>
       <div class="panel-sec">属性</div>
       <div class="attrs" id="tower-attrs-${tower.id}"></div>
       <div class="attrs-ext" id="tower-attrs-ext-${tower.id}"></div>
@@ -1092,7 +1109,10 @@ export class UIManager {
       <div class="bar-row bar-res-row" id="minion-resrow-${minion.id}">
         <div class="bar-track"><div class="bar-res" id="minion-res-${minion.id}"></div></div>
       </div>
-      <div class="bar-res-text" id="minion-restext-${minion.id}"></div>
+      <div class="bar-res-text">
+        <span id="minion-restext-${minion.id}"></span>
+        <span class="bar-res-regen" id="minion-resregen-${minion.id}"></span>
+      </div>
       <div class="panel-sec">属性</div>
       <div class="attrs" id="minion-attrs-${minion.id}"></div>
       <div class="attrs-ext" id="minion-attrs-ext-${minion.id}"></div>

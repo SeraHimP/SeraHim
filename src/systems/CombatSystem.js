@@ -626,6 +626,29 @@ export class CombatSystem {
 
     const atkStats = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id));
 
+    // ==================== v51.1：蓄力攻击的消耗点（通用机制，不是术士兵专属）====================
+    // 用户（术士兵蓄能打击）："下次攻击额外造成（XX=10%法术强度）真实伤害……只有攻击了
+    // 法力值才清零重新计算。"任何技能都能把 `entity._empowerNextAttack = { bonusApPct,
+    // skillInstId }` 挂在自己身上来复用这一段——不用各写一份"等下一次攻击"的判定。
+    // 这里的时机必须是"确认要真的打出这一下"（target 已经是这次攻击的目标），不能放在
+    // 索敌阶段：不然还没真正攻击、法力就先被清了。伤害基数用【命中这一刻】的法术强度
+    // （atkStats 已经含了施法瞬间获得的那份 +5 法术强度自增益），不是施放那一刻的快照。
+    if (attacker._empowerNextAttack) {
+      const emp = attacker._empowerNextAttack;
+      attacker._empowerNextAttack = null;
+      const bonusDmg = (atkStats.abilityPower || 0) * ((emp.bonusApPct || 0) / 100);
+      if (bonusDmg > 0) {
+        // 默认（不传 basicAttack）走技能增幅自动生效——这份加成来自技能，不是普攻本身。
+        this.performAttackDirect(attacker.id, target.id, bonusDmg, 'true');
+      }
+      const inst = (attacker._skillInstances || []).find(i => i.id === emp.skillInstId);
+      if (inst) { inst.state = inst.state || {}; inst.state._armed = false; }
+      // 现在才真正清空法力（用户："只有攻击了法力值才清零重新计算"）。
+      attacker._mana = Math.max(0, Math.min(atkStats.maxMana || 0, atkStats.manaFloor || 0));
+      const dispEff = this.effects.getEffects(attacker.id).find(e => e.blueprint.name === '蓄势待发');
+      if (dispEff) this.effects.remove(dispEff.id);
+    }
+
     // ---- 攻击方数值快照（开火时刻结算，防御方数值在命中时刻结算）----
     // （原"攻城武器"固定加伤已随该技能删除。）
 
@@ -639,11 +662,18 @@ export class CombatSystem {
     // 第1下打某目标 = 100%（0层），第2下 = 130%（1层）… 每层 +30%。切目标/目标变化时重置。
     if (weaponDef && weaponDef.id === 'weapon_piercing') {
       const st = weaponInst.state || (weaponInst.state = { heatTarget: null, heatStacks: 0 });
-      if (st.heatTarget !== target.id) {
-        // 换目标：本次是对新目标的第 1 下 → 倍率 100%，层数清 0（命中后 onHit 会置 1）
+      // v51.1 bug 修复：用户："防御塔的升温条应该随着升温状态结束后清零。"
+      // "升温" 展示效果自己带 6 秒倒计时（会因为塔停手一阵子而自然过期），但
+      // st.heatStacks 只在【换目标】时才清零——两件事此前各管各的。塔停火超过
+      // 6 秒后又打回同一个目标：heatTarget 没变，st.heatStacks 却还停在过期前的层数，
+      // 于是状态栏上"升温"图标已经消失了，下一下命中却仍按旧层数算倍率——
+      // 界面看着是 0 层，实际按了 N 层结算，UI 与真实伤害对不上。
+      // 治本方法是把这个展示效果当成【权威】：它没了，层数就必须是 0，不只是显示层清零。
+      const liveHeat = this.effects.getEffectByName(attacker.id, '升温');
+      if (st.heatTarget !== target.id || !liveHeat) {
+        // 换目标，或者升温已经因超时自然过期（哪怕还是同一个目标）：都要清零
         st.heatTarget = null; st.heatStacks = 0;
-        const old = this.effects.getEffectByName(attacker.id, '升温');
-        if (old) this.effects.remove(old.id);
+        if (liveHeat) this.effects.remove(liveHeat.id);
       }
       const per = weaponDef.HEAT_PER_STACK ?? 0.30;
       preDamageMult *= 1 + (st.heatStacks || 0) * per;

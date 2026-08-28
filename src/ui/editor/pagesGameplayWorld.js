@@ -298,6 +298,14 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     { path: 'entropy.volatilityPct', label: '红核·波动放大(%)', step: 1 },
     { path: 'entropy.nightStretchPct', label: '熵·夜晚延长(%)', step: 5 },
   ],
+  // v51.1：全局法力回复（用户："全局生效，每个单位每次受击获得2，每次攻击获得1……
+  // 先都按这个写，可修改"）。放在这一页是因为它和上面的世界数值一样，都是
+  // 直接改 CONFIG 上某条路径的全局调参，复用同一套 _getPath/_setPath 逻辑，
+  // 不用为了两个数字再建一整个新页面。
+  _MANA_TUNING_FIELDS: [
+    { path: 'tuning.mana.onAttack', label: '全局·每次攻击回复法力', step: 0.5 },
+    { path: 'tuning.mana.onHitTaken', label: '全局·每次受击回复法力', step: 0.5 },
+  ],
   _getPath(obj, path) {
     return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
   },
@@ -332,6 +340,12 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       return `<div class="slider-row"><label style="font-size:11px;">${f.label}</label>
         <input type="number" class="world-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
     }).join('');
+    const manaFields = this._MANA_TUNING_FIELDS.map(f => {
+      const v = this._getPath(CONFIG, f.path);
+      if (v === undefined) return '';
+      return `<div class="slider-row"><label style="font-size:11px;">${f.label}</label>
+        <input type="number" class="mana-tuning-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
+    }).join('');
 
     // 用户定稿：不用再有言语描述——原来这里有一段"每条耦合独立开关…
     // 熵：0=绝对秩序 0.5=中性 1=绝对混乱"的说明段落，含义已经在 _COUPLINGS 各条
@@ -345,6 +359,11 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
           <button id="setWorldApplyBtn" style="flex:1;">✅ 应用世界数值</button>
           <button id="setWorldResetEntropyBtn" style="flex:1;">↺ 三核归零</button>
         </div>
+      </div>
+      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">法力（全局，用户定稿"先都按这个写，可修改"）</div>
+        ${manaFields}
+        <button id="setManaTuningApplyBtn" style="margin-top:6px;width:100%;">✅ 应用法力回复数值</button>
       </div>`;
   },
 
@@ -371,6 +390,15 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     overlay.querySelector('#setWorldResetEntropyBtn')?.addEventListener('click', () => {
       window.CTX?.__world?.entropySystem?.reset();
       logFn('↺ 三核已归零（熵回到中性）', 'spawn');
+      render();
+    });
+    overlay.querySelector('#setManaTuningApplyBtn')?.addEventListener('click', () => {
+      let n = 0;
+      overlay.querySelectorAll('.mana-tuning-field').forEach(inp => {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v) && v >= 0) { this._setPath(CONFIG, inp.dataset.path, v); n++; }
+      });
+      logFn(`⚡ 全局法力回复数值已更新（${n} 项）`, 'spawn');
       render();
     });
   },

@@ -1,6 +1,9 @@
 /**
- * sim_v51.mjs —— v51 验收（资源条+主动技能 / 法强+技能增幅 / 适应之力 / 暴击 /
+ * sim_v51.mjs —— v51 验收（资源条+主动技能 / 法术强度+技能增幅 / 适应之力 / 暴击 /
  *                 统一吸血 / 闪避+韧性+沉默+缴械 / 远古龙魂大型小兵漏发 bug 修复）
+ *                 + v51.1 追补（资源条 UI 细化 / 升温状态清零 / 4 条主动技能改按用户
+ *                 精确规格重写 / 屠龙者并入龙魂本体倒计时 / 批量技能池排除攻击方式 /
+ *                 模板编辑器分区与自适应伤害类型显示）
  *
  * 每条断言钉"行为形状"，不钉具体数字（见 docs/DEVELOPMENT.md §8.2）。
  * 本轮不考虑平衡（用户原话："目前不需要考虑任何平衡方面的问题"），所以数值本身
@@ -229,11 +232,13 @@ async function world() {
   for (let i = 0; i < 5; i++) mana.update(1);
   T('法①-没装主动技能的单位法力恒为0（哪怕模板给了maxMana/manaRegen）', (passive._mana || 0) === 0);
 
-  // 装了主动技能：法力应当按 manaRegen 累积到满
-  const active = mkEntity(ents, 'siege', {
+  // 装了主动技能：法力应当按 manaRegen 累积到满。用 active_corrupt_poison（需要
+  // 半径内有敌人才能真正施放）而不是自增益的 active_siege_haste——后者不挑目标，
+  // 测不出"没有目标就不清零"这条规则。
+  const active = mkEntity(ents, 'corrupt', {
     pos: { x: 5000, y: 5000 }, // 远离一切敌人，确保满了也施放不出去（找不到目标）
     stats: { maxMana: 10, manaRegen: 5, manaStart: 0 },
-    skills: ['active_siege_barrage'],
+    skills: ['active_corrupt_poison'],
   }, CONFIG);
   mana.update(1);
   T('法②-装了主动技能的单位会按 manaRegen 攒法力', (active._mana || 0) > 0);
@@ -245,24 +250,23 @@ async function world() {
   const foe = mkEntity(ents, 'melee', { pos: { x: 5030, y: 5000 }, stats: { maxHP: 100000, armor: 0, magicResist: 0 } }, CONFIG);
   foe._mapFaction = 'red'; foe.faction = 'red';
   active._mapFaction = 'blue'; active.faction = 'blue';
-  const hpBefore = foe.currentHP;
-  mana.update(0.01);
-  T('法④-满法力+有目标 → 施放主动技能并造成伤害', foe.currentHP < hpBefore);
+  mana.update(0.01); // 现在半径内有目标了，这一次 tick 应该真正触发施放
+  T('法④-满法力+有目标 → 施放主动技能并施加了中毒效果', fx.getEffects(foe.id).some(e => e.blueprint.name === '环刃毒雾'));
   T('法⑤-施放后法力回落（默认清到0）', (active._mana || 0) < 10);
 
   // 沉默：法力照常攒满待命，但不会尝试施放
-  const silenced = mkEntity(ents, 'siege', {
+  const silenced = mkEntity(ents, 'corrupt', {
     pos: { x: 9000, y: 9000 },
     stats: { maxMana: 10, manaRegen: 999, manaStart: 0 },
-    skills: ['active_siege_barrage'],
+    skills: ['active_corrupt_poison'],
   }, CONFIG);
   fx.apply(silenced.id, { name: '沉默测试', kind: 'silence', duration: 10 }, 'test_silence');
   const foe2 = mkEntity(ents, 'melee', { pos: { x: 9010, y: 9000 }, stats: { maxHP: 100000, armor: 0, magicResist: 0 } }, CONFIG);
   foe2._mapFaction = 'red'; foe2.faction = 'red';
   silenced._mapFaction = 'blue'; silenced.faction = 'blue';
-  const hp2Before = foe2.currentHP;
   mana.update(1);
-  T('法⑥-沉默期间法力照常攒满但不尝试施放', silenced._mana >= 10 && foe2.currentHP === hp2Before);
+  T('法⑥-沉默期间法力照常攒满但不尝试施放',
+    silenced._mana >= 10 && !fx.getEffects(foe2.id).some(e => e.blueprint.name === '环刃毒雾'));
 }
 
 // ==================== 九、Q1 bug 修复：远古龙魂对大型小兵漏发 ====================
@@ -332,12 +336,164 @@ async function world() {
 // ==================== 十一、主动技能类别 + 技能库前缀规范化 ====================
 {
   const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-  const def = SkillLibrary.get('active_siege_barrage');
+  const def = SkillLibrary.get('active_siege_haste');
   T('主①-主动技能确实注册进了技能库', !!def && def.category === 'active');
   T('主②-主动技能的文案前缀是"主动技能——"而不是"唯一被动——"',
     /^主动技能——/.test(def.description));
   const passiveDef = SkillLibrary.get('dragonsoul_fire');
   T('主③-被动技能前缀不受影响，仍是"唯一被动——"', /^唯一被动——/.test(passiveDef.description));
+}
+
+// ==================== 十二、v51.1：资源条 UI（格式/颜色/升温清零）====================
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const { resourceInfoOf, RESOURCE_COLORS } = await import('../src/core/resourceBar.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const ctx = { skillLibrary: SkillLibrary, attrCalc: (await world()).attr, effects: fx };
+  // 换一份真正共享的 attrCalc（上面临时开的 world() 只是为了拿类型引用，不要用它的 ents）
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  ctx.attrCalc = AttributeCalculator;
+
+  // 法力：XX/XX 格式 + 右侧回复速度
+  const mageLike = mkEntity(ents, 'corrupt', { stats: { maxMana: 50, manaRegen: 3 }, skills: ['active_corrupt_poison'] }, CONFIG);
+  mageLike._mana = 20;
+  const info1 = resourceInfoOf(mageLike, ctx);
+  T('资①-法力显示 XX/XX（当前/上限），不是只写一个词', info1 && info1.label === '20/50');
+  T('资②-法力条右侧带每秒回复数', info1 && info1.regenText === '+3/s');
+  T('资③-法力的颜色 kind 是 mana，且和其它类型颜色不同',
+    info1 && info1.kind === 'mana'
+    && RESOURCE_COLORS.mana !== RESOURCE_COLORS.heat
+    && RESOURCE_COLORS.heat !== RESOURCE_COLORS.lightning
+    && RESOURCE_COLORS.lightning !== RESOURCE_COLORS.charge);
+
+  // 升温：装了穿透型子弹的塔，连续命中同一目标应该叠层，且显示 XX/4
+  const atk = mkEntity(ents, 'tower', {
+    stats: { attackDamage: 100, armor: 0, magicResist: 0, baseAttackSpeed: 1 },
+    skills: ['weapon_piercing'],
+  }, CONFIG);
+  const tgt = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 1000000 } }, CONFIG);
+  combat.performAttack(atk, tgt);
+  combat.performAttack(atk, tgt);
+  const info2 = resourceInfoOf(atk, ctx);
+  T('资④-升温层数显示 XX/4', info2 && info2.kind === 'heat' && /^\d\/4$/.test(info2.label) && info2.frac > 0);
+
+  // v51.1 bug 修复：升温效果因超时过期后（哪怕还是同一个目标），资源条应该清零，
+  // 而不是停在过期前的层数。
+  fx.update(10); // 远超"升温"效果的 6 秒时长
+  const info3 = resourceInfoOf(atk, ctx);
+  T('资⑤-升温效果超时过期后，资源条清零（不再显示旧层数）', !info3 || info3.frac === 0);
+
+  // 同时验证：不只是 UI 清零，实际伤害倍率也真的清零了——用真实伤害验证不是"看起来清了"。
+  const tgt2 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 1000000 } }, CONFIG);
+  const before = tgt2.currentHP;
+  combat.performAttack(atk, tgt2);
+  const dealt = before - tgt2.currentHP;
+  T('资⑥-升温过期后再次命中同一目标，伤害按基础值算（没有偷偷继承旧层数的倍率）',
+    dealt > 90 && dealt < 110);
+}
+
+// ==================== 十三、v51.1：蚀骨兵主动技能——按【当前生命】百分比的真实伤害 DOT ====================
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const atk = mkEntity(ents, 'corrupt', { stats: { maxMana: 1, manaRegen: 999 }, skills: ['active_corrupt_poison'] }, CONFIG);
+  const tgt = mkEntity(ents, 'tower', { pos: { x: 10, y: 0 }, stats: { armor: 0, magicResist: 0, maxHP: 1000 } }, CONFIG);
+  atk._mapFaction = 'blue'; atk.faction = 'blue';
+  tgt._mapFaction = 'red'; tgt.faction = 'red';
+  const { ManaSystem } = await import('../src/systems/ManaSystem.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const bus = { on() {}, emit() {} };
+  const mana = new ManaSystem(ents, fx, bus, SkillLibrary, AttributeCalculator, combat);
+  mana.update(1); // 满法力 + 有目标 → 应该施放
+  const eff = fx.getEffects(tgt.id).find(e => e.blueprint.name === '环刃毒雾');
+  T('毒①-施放后目标身上挂了环刃毒雾', !!eff);
+  T('毒②-DOT 走 dotBasis:currentHP（不是固定 flatValue）', eff && eff.blueprint.dotBasis === 'currentHP');
+
+  const { BuffSystem } = await import('../src/systems/BuffSystem.js');
+  const buffSys = new BuffSystem(fx, ents, { emit() {} }, combat);
+  const hp1 = tgt.currentHP;
+  buffSys.update(1); // 走一个 tick（1秒）
+  const dealt1 = hp1 - tgt.currentHP;
+  T('毒③-第一跳按当前生命1%扣血（1000 血 → 约 10 点）', Math.abs(dealt1 - hp1 * 0.01) < 1);
+  const hp2 = tgt.currentHP;
+  buffSys.update(1);
+  const dealt2 = hp2 - tgt.currentHP;
+  T('毒④-第二跳的基数是【已经掉过血的】当前生命，跳伤会自然变小（不是固定值）',
+    dealt2 < dealt1 && Math.abs(dealt2 - hp2 * 0.01) < 1);
+}
+
+// ==================== 十四、v51.1：术士兵主动技能——延迟消耗 + 法术强度联动 ====================
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const { ManaSystem } = await import('../src/systems/ManaSystem.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const bus = { on() {}, emit() {} };
+  const mana = new ManaSystem(ents, fx, bus, SkillLibrary, AttributeCalculator, combat);
+
+  const atk = mkEntity(ents, 'warlock', {
+    stats: { maxMana: 1, manaRegen: 999, attackDamage: 1, armor: 0, magicResist: 0 },
+    skills: ['active_warlock_empower'],
+  }, CONFIG);
+  const tgt = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 1000000 } }, CONFIG);
+
+  mana.update(1); // 满法力 → onCast，应该是"武装"状态，不清零法力
+  T('蓄①-施放后法力不立即清零（延迟消耗，等真正命中才清）', (atk._mana || 0) >= 1);
+  const inst = atk._skillInstances.find(i => i.skillId === 'active_warlock_empower');
+  T('蓄②-技能实例被标记为"已武装"', inst && inst.state && inst.state._armed === true);
+  T('蓄③-获得了永久叠加的法术强度自增益', fx.getEffects(atk.id).some(e => e.blueprint.name === '蓄能强化'));
+
+  mana.update(1); // 已经武装：这一帧不应该再次触发施放（不会再叠一层"蓄能强化"）
+  const apStacksAfterSecondTick = fx.getEffects(atk.id).find(e => e.blueprint.name === '蓄能强化')?.stacks;
+  T('蓄④-已武装期间不会重复施放（法术强度不会莫名其妙再涨一层）', apStacksAfterSecondTick === 1);
+
+  const before = tgt.currentHP;
+  combat.performAttack(atk, tgt); // 真正打出这一下，应该消耗"蓄势待发"、额外造成真实伤害
+  const totalDealt = before - tgt.currentHP;
+  T('蓄⑤-命中时额外造成了明显超过基础攻击力的伤害（真实伤害加成生效）', totalDealt > 1);
+  T('蓄⑥-命中后法力才真正清零', (atk._mana || 0) < 1);
+  const inst2 = atk._skillInstances.find(i => i.skillId === 'active_warlock_empower');
+  T('蓄⑦-命中后"已武装"标记被清掉', inst2 && inst2.state && inst2.state._armed === false);
+  T('蓄⑧-"蓄势待发"展示状态被移除（不会在命中之后还挂着）',
+    !fx.getEffects(atk.id).some(e => e.blueprint.name === '蓄势待发'));
+}
+
+// ==================== 十五、v51.1：全局法力回复（不再是每单位各存一份） ====================
+{
+  const { CONFIG } = await world();
+  T('全①-CONFIG.tuning.mana 是全局唯一来源', CONFIG.tuning?.mana
+    && typeof CONFIG.tuning.mana.onAttack === 'number' && typeof CONFIG.tuning.mana.onHitTaken === 'number');
+  T('全②-用户定稿的默认值：攻击+1、受击+2', CONFIG.tuning.mana.onAttack === 1 && CONFIG.tuning.mana.onHitTaken === 2);
+  T('全③-模板不再各自带 manaOnAttack/manaOnHitTaken 字段（已改为全局）',
+    CONFIG.templates.siege.manaOnAttack === undefined && CONFIG.templates.totem.manaOnHitTaken === undefined);
+}
+
+// ==================== 十六、v51.1：屠龙者并入龙魂本体倒计时（不再另起一个徽标）====================
+{
+  const src = srcOf('src/systems/DragonSystem.js');
+  T('屠①-源码里不再有独立的"屠龙者"效果 apply（并入了龙魂本体的展示效果）',
+    !/name: '屠龙者'/.test(src));
+  T('屠②-改成直接把龙魂本体展示效果的剩余时间设成限时', /soul_display_\$\{soulId\}/.test(src) && /disp\.remainingTime = sec/.test(src));
+}
+
+// ==================== 十七、v51.1：批量加技能池排除"攻击方式" ====================
+{
+  const src = srcOf('src/ui/editor/pagesGameplaySkillState.js');
+  T('批①-批量加技能的技能池过滤掉了 attackmode 分类',
+    /category !== 'attackmode'/.test(src));
+}
+
+// ==================== 十八、v51.1：attackType 编辑器下拉 + 自适应伤害类型提示 ====================
+{
+  const entitySrc = srcOf('src/ui/editor/pagesEntity.js');
+  T('类①-实体编辑器的伤害类型下拉里加了"自适应"选项',
+    /\['adaptive','自适应'\]/.test(entitySrc));
+  const uiSrc = srcOf('src/ui/UIManager.js');
+  T('类②-攻击力详情弹窗对 adaptive 类型现读实时解析结果，不再一律显示物理伤害',
+    /rawType === 'adaptive'/.test(uiSrc) && /resolveAttackType/.test(uiSrc));
+  T('类③-新增属性按语义分类，不再全部堆进"其他"（法力单独成组）',
+    /const manaKeys = \['maxMana', 'manaRegen', 'manaStart', 'manaFloor'\];/.test(entitySrc)
+    && /'法力': manaKeys/.test(entitySrc));
 }
 
 done();

@@ -128,8 +128,14 @@ export const EDITOR_SHELL = {
         }).join('')}</div>`
       : '';
     // 作用域条【只在该页真读它时】才画 —— 见 _TPL_PAGES 顶部那段。
-    const scopeBars = (P.faction ? this._renderFactionScopeBar(page !== 'wave') : '')
+    // v51.1：用户"模板编辑器上面这块逻辑很混乱，优化"——排查结论：页签（属性/武器/…）、
+    // 作用域条（阵营/应用范围）、内容自己的分类 tab（核心/攻击/…）三层控件此前共用同一个
+    // .editor-tabs 胶囊按钮样式，视觉上完全无法区分"这一排是切页面"还是"这一排是切范围"，
+    // 于是读起来是一整墙同款按钮。现在把作用域条包进 .tpl-scope-bars（独立的浅色卡片、
+    // 更小的字号），与上面的页签、下面内容自己的分类 tab 在视觉权重上分出层次。
+    const scopeBarsInner = (P.faction ? this._renderFactionScopeBar(page !== 'wave') : '')
                     + (P.apply ? this._renderApplyScopeBar() : '');
+    const scopeBars = scopeBarsInner ? `<div class="tpl-scope-bars">${scopeBarsInner}</div>` : '';
     const head = `<div class="tpl-pane-head">
       <span class="tpl-crumb">${this._nodeLabel()} · ${P.icon} ${P.label}</span>
       ${P.action === 'instant' ? '<span class="tpl-instant">⚡ 即点即生效</span>' : ''}

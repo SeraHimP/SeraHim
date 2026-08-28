@@ -41,11 +41,24 @@ export const EDITOR_PAGES_ENTITY = {
     const allKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
 
     const coreKeys = ['maxHP', 'currentHP', 'healthRegen', 'baseHealthRegenMod'];
-    const attackKeys = ['attackDamage', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio', 'attackRange', 'attackType', 'bulletSpeed'];
-    const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax', 'tempShieldDecayPct'];
+    // v51.1：用户"新增那些属性之类的都要和对应的类别进行匹配"——之前全部落进"其他"，
+    // 这里按属性的真实语义分类，不再让"其他"变成一个新属性的堆放场。
+    //   攻击：法术强度/暴击/适应之力——都是"打出去更狠"这条线上的东西，跟攻击力同组。
+    //   防御：闪避/韧性——"少挨打/少受控"，跟护甲/格挡同组。
+    //   特效：技能增幅/物理吸血/法术吸血——"命中之后再算一层"的修正，跟现有的
+    //         攻击特效/生命偷取/治疗护盾强度同一挂。
+    //   法力：新开一组——这四项是一整套新概念（资源条），硬塞进上面任何一组
+    //         都会让那一组变得答非所问，值得单独一个标签页。
+    const attackKeys = ['attackDamage', 'abilityPower', 'baseAttackSpeed', 'bonusAttackSpeedPct',
+      'attackSpeedRatio', 'attackRange', 'attackType', 'bulletSpeed',
+      'critChance', 'critDamagePct', 'adaptiveForce'];
+    const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax',
+      'tempShieldDecayPct', 'evasionPct', 'tenacityPct'];
     const penKeys = ['armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent'];
-    const effectKeys = ['onHitDamage', 'onHitPercentDamage', 'damageConvertPct', 'lifeStealPct', 'healShieldPowerPct', 'allStatsPct'];
-    const allDefinedKeys = [...coreKeys, ...attackKeys, ...defenseKeys, ...penKeys, ...effectKeys];
+    const effectKeys = ['onHitDamage', 'onHitPercentDamage', 'damageConvertPct', 'lifeStealPct',
+      'physicalVampPct', 'spellVampPct', 'healShieldPowerPct', 'allStatsPct', 'skillAmpPct'];
+    const manaKeys = ['maxMana', 'manaRegen', 'manaStart', 'manaFloor'];
+    const allDefinedKeys = [...coreKeys, ...attackKeys, ...defenseKeys, ...penKeys, ...effectKeys, ...manaKeys];
 
     const groups = {
       '核心': coreKeys,
@@ -53,6 +66,7 @@ export const EDITOR_PAGES_ENTITY = {
       '防御': defenseKeys,
       '穿透': penKeys,
       '特效': effectKeys,
+      '法力': manaKeys,
       '其他': allKeys.filter(k => !allDefinedKeys.includes(k))
     };
 
@@ -73,7 +87,9 @@ export const EDITOR_PAGES_ENTITY = {
         const label = fieldLabel(key);
         if (key === 'attackType') {
           html += `<div class="slider-row"><label title="${key}">${label}</label><select data-key="${key}" data-orig="${value}" class="editor-select">`;
-          for (const opt of [['physical','物理'],['magic','魔法'],['true','真实']]) {
+          // v51.1：补上 'adaptive'（自适应）——用户新增的伤害类型逻辑，忘了同步到这个
+          // 下拉框，选不了就等于这条规则在编辑器里"不存在"。
+          for (const opt of [['physical','物理'],['magic','魔法'],['true','真实'],['adaptive','自适应']]) {
             html += `<option value="${opt[0]}" ${value === opt[0] ? 'selected' : ''}>${opt[1]}</option>`;
           }
           html += `</select></div>`;

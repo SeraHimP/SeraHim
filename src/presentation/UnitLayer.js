@@ -39,7 +39,7 @@ import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, cryst
 import { towerFacingRad } from './towerFacing.js';
 import { stepTrail, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
-import { resourceInfoOf } from '../core/resourceBar.js';
+import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -720,7 +720,8 @@ export class UnitLayer {
     // v51：资源条——紧贴在 HP 条下方的 2px 细条，颜色与面板资源条同一色系。
     if (resInfo) {
       g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, hpH, BAR_W, BAR_H - hpH);
-      g.fillStyle = '#6c8cf5'; g.fillRect(0, hpH, BAR_W * resInfo.frac, BAR_H - hpH);
+      g.fillStyle = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.mana;
+      g.fillRect(0, hpH, BAR_W * resInfo.frac, BAR_H - hpH);
     }
 
     // E1 镀层节点线：2D 是 1.5px 白线上下各溢出 1.5px；纹理内画 2px 竖线不出条（头注记档）
@@ -921,7 +922,7 @@ export class UnitLayer {
                + q((e.tempShield || 0) / maxHP) + '|' + (e._mapFaction || e.faction || '')
                + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
                + (en.trailing ? '|t' + q(en.dispFrac) : '')
-               + (resInfo ? '|r' + q(resInfo.frac) : '');
+               + (resInfo ? '|r' + q(resInfo.frac) + resInfo.kind : '');
       }
       if (en.barKey !== barKey) {
         en.barKey = barKey;

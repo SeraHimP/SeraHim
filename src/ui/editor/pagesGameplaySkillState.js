@@ -140,9 +140,13 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
     const targets = entitiesOfCells(st.cells, ec);
 
     // 技能池：按 category 排除身份技能与龙魂奖励（那两类各有专门的装备入口）。
+    // v51.1：'attackmode'（充能攻击等）也排除——用户："这个里面不要显示充能攻击，
+    // 这个应该是和塔武器/小兵类型相绑定的。"充能型攻击方式跟着兵种/武器的默认配置
+    // 走（factories.js 的 defaultPassiveMap），不该在这个通用批量装配窗口里被单独
+    // 勾选/取消，那样很容易把"这个兵种天生就是充能攻击"的设定意外拆散。
     const pool = Object.entries(SkillLibrary).filter(([, def]) =>
       def && typeof def === 'object' && Array.isArray(def.applicableTypes)
-      && def.category !== 'core' && def.category !== 'dragonsoul');
+      && def.category !== 'core' && def.category !== 'dragonsoul' && def.category !== 'attackmode');
     const visible = applicable.size === 0 ? pool
       : pool.filter(([, def]) => def.applicableTypes.some(t => applicable.has(t)));
 

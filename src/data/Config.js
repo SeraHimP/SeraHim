@@ -8,7 +8,11 @@ const UNIT_STAT_DEFAULTS = {
   adaptiveForce: 0, adaptiveDefault: 'physical',
   physicalVampPct: 0, spellVampPct: 0,
   evasionPct: 0, tenacityPct: 0,
-  maxMana: 0, manaRegen: 0, manaStart: 0, manaFloor: 0, manaOnAttack: 0, manaOnHitTaken: 0,
+  maxMana: 0, manaRegen: 0, manaStart: 0, manaFloor: 0,
+  // v51.1：攻击/受击回复法力改成【全局】一份数值（用户："全局生效，每个单位每次
+  // 受击获得2，每次攻击获得1"），不再是每个模板各存一份 —— 见 CONFIG.tuning.mana。
+  // 用户原话"每张地图/每个单位可能不一样，先都按这个写，可修改"：先只做全局这一层，
+  // 分单位/分地图覆写等真的要用到再加，不预先造一套没人读的覆写层。
 };
 
 export const CONFIG = {
@@ -51,6 +55,9 @@ export const CONFIG = {
         // 而它自己只有 520 血 —— 收益与风险完全不成比例。
         auraPenPct: 8,         // 光环：护甲穿透% / 魔法穿透%（双穿）。v43：13 → 8
         auraDamageAmpPct: 4,   // 光环：伤害增幅（%）。v43：7 → 4
+        // v51.1：用户定稿"周围150码友军获得20法术强度"——挂在术士兵已有的
+        // 术法共鸣光环上（半径正好是共用的 AURA_RANGE=150，不用另开一条光环）。
+        auraAbilityPower: 20,
         selfPenPct: 70,        // 自身双穿（%）。只作用于自己，不动
       },
       // 蚀骨兵：近战，血量高于普通近战，小范围内所有敌人双抗【逐秒递减】。
@@ -854,6 +861,12 @@ export const CONFIG = {
     // "主单位+其他单位的溅射伤害，主单位吸血100%，溅射20%。连锁没有主目标，全部20%。"
     // 三种吸血属性（全能/物理/法术）共用同一个折扣系数——面板上分三个数、三种折扣的话没人算得清。
     vamp: { groupEffPct: 20 },
+    // ==================== v51.1：攻击/受击回复法力（全局，用户定稿）====================
+    // 用户："全局生效，每个单位每次受击获得2，每次攻击获得1（每张地图/每个单位
+    //        可能不一样，先都按这个写，可修改）。"
+    // ManaSystem 监听 CombatSystem 已有的 damage:dealt 事件（只有普通攻击命中会发，
+    // 技能/DOT/溅射不发——见 ManaSystem 头注），按这两个数给攻击方/受击方各自加法力。
+    mana: { onAttack: 1, onHitTaken: 2 },
 
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
     chaseDropFactor: 1.2,         // 追击放弃距离 = 仇恨半径 × 此系数
@@ -991,9 +1004,10 @@ export const CONFIG = {
     //   physicalVampPct/spellVampPct  物理/法术吸血（与既有的 lifeStealPct=全能吸血 三件套）
     //   evasionPct  闪避率（仅对普通攻击生效，技能不可被闪避）
     //   tenacityPct 韧性（缩短硬控/减速类负面效果的持续时间）
-    //   maxMana/manaRegen/manaStart/manaFloor/manaOnAttack/manaOnHitTaken
-    //     资源条五件套。全部为 0 时资源系统对这个模板完全不生效（见 ManaSystem 头注：
+    //   maxMana/manaRegen/manaStart/manaFloor
+    //     资源条四件套。全部为 0 时资源系统对这个模板完全不生效（见 ManaSystem 头注：
     //     没有装备"主动"类技能的单位，法力恒为 0，这几个数字填多少都没用）。
+    //     攻击/受击回复法力已改成全局一份（CONFIG.tuning.mana），不在这四件套里。
     tower: {
       label: '防御塔', type: 'tower',
       // v35（Q5）：所有防御塔默认 生命恢复/固定护盾 = 0（用户定稿，沙盒塔模板同样适用；
@@ -1068,9 +1082,13 @@ export const CONFIG = {
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 320, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
-      // v51：炮兵默认带一个主动技能（见 src/core/skills/actives.js 的 active_siege_barrage），
-      // 用来验证"资源条→满了就放主动→数值和法术强度联动"这整条链路。
-      abilityPower: 30, maxMana: 100, manaRegen: 4, manaOnAttack: 6,
+      // ==================== v51.1：主动技能数值改按用户给定的精确值（推翻 v51 占位值）====================
+      // 用户："你写的所有临时主动技能都删了重新按我的写。炮兵法力值上限50，
+      //        被动获得法力值1/s，主动技能……获得30%攻速，持续6秒，可叠加。"
+      // v51 那版 abilityPower/maxMana/manaOnAttack 是我自己拍的占位值（配合已删除的
+      // active_siege_barrage），这次全部替换成用户给的数。见 src/core/skills/actives.js
+      // 的 active_siege_haste。
+      maxMana: 50, manaRegen: 1,
     },
     totem: {
       label: '图腾兵', type: 'totem',
@@ -1090,8 +1108,8 @@ export const CONFIG = {
       healShieldPowerPct: 0,
       attackType: 'magic', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
-      // v51：图腾兵默认带一个主动技能（active_totem_pulse，群体治疗，与法强/治疗强度联动）。
-      abilityPower: 25, maxMana: 100, manaRegen: 5, manaOnHitTaken: 10,
+      // v51.1：用户定稿"图腾兵法力值上限120，2/s"，见 actives.js 的 active_totem_shield。
+      maxMana: 120, manaRegen: 2,
     },
     super: {
       label: '超级兵', type: 'super',
@@ -1125,6 +1143,8 @@ export const CONFIG = {
       healShieldPowerPct: 0,
       attackType: 'magic', spawnDistance: 300, queueSpacing: 20, bulletSpeed: 320,
       ...UNIT_STAT_DEFAULTS,
+      // v51.1：用户定稿"术士兵上限65，3/s"，见 actives.js 的 active_warlock_empower。
+      maxMana: 65, manaRegen: 3,
     },
     corrupt: {
       label: '蚀骨兵', type: 'corrupt',
@@ -1141,6 +1161,9 @@ export const CONFIG = {
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
+      // v51.1：用户定稿"蚀骨兵上限25，被动获得法力值0/s"（只靠攻击/受击的全局法力
+      // 回复），见 actives.js 的 active_corrupt_poison。
+      maxMana: 25, manaRegen: 0,
     },
     // v39（Q4 节奏）：攻城车——专职破塔的攻城单位。用户定稿数值。
     // 血 800（远高于远程兵，但双抗 0 且被近战克制）、AD 35、攻速 0.25（4秒一发）、
@@ -1187,9 +1210,10 @@ export const CONFIG = {
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 0, queueSpacing: 0,
+      // v51.1：用户"你写的所有临时主动技能都删了重新按我的写"，本轮没有给龙的主动
+      // 技能规格——先摘掉 v51 那版占位的主动技能与法力字段，龙暂时回到没有主动技能
+      // 的状态（UNIT_STAT_DEFAULTS 的 maxMana:0 已经保证它不会攒法力）。
       ...UNIT_STAT_DEFAULTS,
-      // v51：龙默认带一个主动技能（active_dragon_nova，AOE 法术伤害，与法强联动）。
-      abilityPower: 40, maxMana: 100, manaRegen: 3, manaOnAttack: 10,
     }
   }
 };

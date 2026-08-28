@@ -78,7 +78,8 @@ export function extAttrGroups(kind) {
  */
 export const BASE_ATTR_ROWS = [
   { key: 'attackDamage', label: '攻击力' },
-  { key: 'abilityPower', label: '法强' },
+  // 用户 Q7 定稿："不要写法强，要写法术强度！"——面板寸土寸金但必须用全称，不再缩写。
+  { key: 'abilityPower', label: '法术强度' },
   { key: 'armor', label: '护甲' },
   { key: 'magicResist', label: '魔抗' },
   // 攻速这一格的 data-stat 指向 bonusAttackSpeedPct —— 面板显示的是算完的攻速，

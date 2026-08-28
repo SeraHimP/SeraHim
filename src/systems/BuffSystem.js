@@ -65,7 +65,14 @@ export class BuffSystem {
           timer.timer += dt;
           if (timer.timer >= interval) {
             timer.timer -= interval;
-            const dmg = eff.totalFlat || 0;
+            // v51.1：dotBasis:'currentHP' 的 DOT（蚀骨兵的环刃毒雾）按目标【当前】生命的
+            // 百分比结算，不是固定数值——basisValue 逐帧读、随目标掉血自然衰减，这与
+            // "每层攻击力1%"那类固定值 DOT（走 totalFlat）是两条不同的公式，谁也不该
+            // 冒充谁。totalPercent 已经在 EffectRegistry.apply() 那一刻吃过一次技能增幅，
+            // 这里只是把它套到"当前生命"这个每帧都在变的基数上，不是重新缩放。
+            const dmg = eff.blueprint.dotBasis === 'currentHP'
+              ? entity.currentHP * (eff.totalPercent || 0) / 100
+              : (eff.totalFlat || 0);
             const type = eff.blueprint.damageType || 'magic';
             // Bug 修复：这里以前直接传 eff.sourceId ——sourceId 是 'dragonsoul_poison'
             // 这种字符串标签，从来查不到实体，效果等同于"这一下没有攻击者"，会让

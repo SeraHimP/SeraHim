@@ -1,38 +1,35 @@
 /**
  * actives.js —— 主动技能（category:'active'）。
  *
+ * ==================== v51.1：推翻重写（两轮）====================
+ * 用户："你写的所有临时主动技能都删了重新按我的写。" v51 那三条（炮兵轰炸/图腾治疗波/
+ * 龙新星）是我自己拍的占位数值，只用来验证"法力条→满了就放主动"这条链路走不走得通。
+ * 第一版按用户精确规格重写；用户随后又补了一版法术强度联动，这里是第二版（最终）。
+ *
  * 与"被动"（category 不是 'active' 的那些）的区别只有一件事：谁来决定什么时候触发。
  * 被动由引擎的战斗时序（onHit/onDealtDamage/onFrame）驱动；主动由 ManaSystem 驱动——
  * 法力条攒满就调用这里的 onCast，找不到目标就返回 false（法力保持满格，下一帧再试）。
  *
- * ==================== 数值怎么写 ====================
- * 用户明确要求："技能的法强相关的数值我自己写！！！不要弄成你说的那种。"
- * 所以引擎只往外暴露一个只读的 `abilityPower` 属性，具体每个技能的伤害/治疗公式
- * 全部在各自的 onCast 里手写——不存在共享的 `skillValue()` 之类的换算函数。
- * 下面这三条是**示例/测试用**（用户："为了测试，给大型小兵/龙写一些简单的主动技能，
- * 每种类型单位都不同，要和法术强度能联动的"），数值公式仅供验证整条链路，
- * 以后要精调直接改这个文件、或者把系数挪进 defaultParams 走地图/全局覆写。
+ * ==================== "延迟消耗"这个特殊约定（术士兵用）====================
+ * 大多数主动技能：onCast 一旦返回 true，ManaSystem 立刻把法力清到 manaFloor。
+ * 但术士兵的技能是"下次攻击才生效"——用户明确要求"只有攻击了法力值才清零重新计算"，
+ * 也就是法力条在"已经蓄好、等待触发"期间必须一直显示满格，不能一放技能就先扣掉。
+ * 约定：onCast 里把 `instance.state._armed = true`，ManaSystem 看到这个标记就知道
+ * "这次调用已经生效了，但消耗法力这件事我不管，技能自己负责"，之后不会再重复调用
+ * onCast（不会每帧重复施放），也不会主动清空法力。真正的消耗发生在
+ * CombatSystem.performAttack 里检测到 `attacker._empowerNextAttack` 时——那里会把
+ * `_armed` 清掉、法力清到 manaFloor、并按【消耗那一刻】的法术强度结算伤害（不是
+ * 施放那一刻），这是通用机制，不是只服务这一个技能。
  *
- * ==================== 技能增幅/技能暴击怎么接上的 ====================
- * onCast 里造成伤害一律走 `ctx.combat.performAttackDirect(...)`，**不传** `basicAttack`——
- * 默认值就是"这是技能"，技能增幅与【技能暴击】状态自动生效，不需要这里操心。
+ * ==================== 数值怎么写 ====================
+ * 用户明确要求："技能的法术强度相关的数值我自己写！！！不要弄成你说的那种。"
+ * 引擎只往外暴露一个只读的 `abilityPower` 属性，具体每条技能怎么用它由这里手写的
+ * 公式决定，不存在共享的换算函数。
  */
 import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
-import { healPowerOf, applyHeal } from '../healing.js';
+import { healPowerOf, grantTempShield } from '../healing.js';
 
-/** 找 self 附近最近的一个敌人（复用引擎既有的阵营感知半径查询，不再另写一份）。 */
-function nearestEnemy(ctx, self, range) {
-  const cands = enemyUnitsInRadius(ctx.entityContainer, self, range, { includeBuildings: true });
-  let best = null, bestD = Infinity;
-  for (const e of cands) {
-    if (!e.alive) continue;
-    const d = Math.hypot(e.pos.x - self.pos.x, e.pos.y - self.pos.y);
-    if (d < bestD) { bestD = d; best = e; }
-  }
-  return best;
-}
-
-/** self 半径内的存活友军（含自己）——群体治疗用，阵营判据与其它系统一致。 */
+/** self 半径内的存活友军（含自己）——阵营判据与其它系统一致。 */
 function alliesInRadius(ctx, self, range) {
   const fac = self._mapFaction || self.faction || null;
   return ctx.entityContainer.findInRadius(self.pos.x, self.pos.y, range, null, true)
@@ -40,84 +37,139 @@ function alliesInRadius(ctx, self, range) {
 }
 
 export const actives = {
-  // ==================== 炮兵：轰炸（AP + AD 联动的单体爆发）====================
-  active_siege_barrage: {
-    id: 'active_siege_barrage', name: '轰炸', icon: '💥', color: '#e67e22', category: 'active',
+  // ==================== 炮兵：急速装填（自增益，攻速）====================
+  // 用户："炮兵……主动技能，获得（XX%=30%+50%法术强度）攻速，持续6秒，可叠加。"
+  active_siege_haste: {
+    id: 'active_siege_haste', name: '急速装填', icon: '⚡', color: '#e8a23a', category: 'active',
     applicableTypes: ['siege'],
-    defaultParams: { range: 300, baseDamage: 40, apScale: 0.8, adScale: 0.3 },
+    defaultParams: { basePct: 30, apScale: 0.5, durationSec: 6 },
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后，对射程内最近的敌人造成 ${p.baseDamage} + ${p.apScale}×法术强度 `
-           + `+ ${p.adScale}×攻击力 的魔法伤害。`;
+      return `法力攒满后，获得 (${p.basePct}% + ${p.apScale * 100}%×法术强度) 攻速，`
+           + `持续 ${p.durationSec} 秒，可叠加。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return false;
-      const target = nearestEnemy(ctx, self, instance._params?.range ?? 300);
-      if (!target) return false;
+      const p = instance._params || actives.active_siege_haste.defaultParams;
       const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
-      const p = instance._params || actives.active_siege_barrage.defaultParams;
-      const dmg = (p.baseDamage ?? 40)
-        + (p.apScale ?? 0.8) * (stats.abilityPower || 0)
-        + (p.adScale ?? 0.3) * (stats.attackDamage || 0);
-      if (!(dmg > 0) || !ctx.combat) return false;
-      ctx.combat.performAttackDirect(entityId, target.id, dmg, 'magic');
+      const pct = (p.basePct ?? 30) + (p.apScale ?? 0.5) * (stats.abilityPower || 0);
+      ctx.effectRegistry.apply(entityId, {
+        name: '急速装填', icon: '⚡', kind: 'stat', statKey: 'bonusAttackSpeedPct',
+        flatValue: pct, perStackFlat: pct,
+        duration: p.durationSec, stackable: true, maxStacks: 99, stackPolicy: 'stack',
+        description: `急速装填（{stacks}层，每层+${Math.round(pct)}%攻速）`,
+      }, 'active_siege_haste', { casterId: entityId });
       return true;
     },
   },
 
-  // ==================== 图腾兵：治疗波（AP 联动的群体治疗）====================
-  active_totem_pulse: {
-    id: 'active_totem_pulse', name: '治疗波', icon: '💚', color: '#2ecc71', category: 'active',
+  // ==================== 图腾兵：庇护波（群体临时护盾，法术强度联动）====================
+  // 用户："图腾兵……主动技能，对150范围内友军施加（XX=50+3%法术强度）临时护盾。"
+  active_totem_shield: {
+    id: 'active_totem_shield', name: '庇护波', icon: '🛡', color: '#2ecc71', category: 'active',
     applicableTypes: ['totem'],
-    defaultParams: { range: 220, baseHeal: 60, apScale: 1.0 },
+    defaultParams: { range: 150, baseShield: 50, apScale: 0.03 },
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后，为半径 ${p.range} 内的全部友军回复 ${p.baseHeal} + ${p.apScale}×法术强度 `
-           + `生命（受治疗与护盾强度加成）。`;
+      return `法力攒满后，为半径 ${p.range} 内的全部友军各施加 (${p.baseShield} + `
+           + `${p.apScale * 100}%×法术强度) 点临时护盾。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return false;
-      const p = instance._params || actives.active_totem_pulse.defaultParams;
-      const allies = alliesInRadius(ctx, self, p.range ?? 220);
+      const p = instance._params || actives.active_totem_shield.defaultParams;
+      const allies = alliesInRadius(ctx, self, p.range ?? 150);
       if (!allies.length) return false;
       const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
-      const heal = (p.baseHeal ?? 60) + (p.apScale ?? 1.0) * (stats.abilityPower || 0);
-      if (!(heal > 0)) return false;
-      const power = healPowerOf(stats);
+      const shieldAmt = (p.baseShield ?? 50) + (p.apScale ?? 0.03) * (stats.abilityPower || 0);
+      if (!(shieldAmt > 0)) return false;
       for (const a of allies) {
         const aStats = ctx.attrCalc.calc(a, ctx.effectRegistry.getEffects(a.id));
-        applyHeal(a, heal, power, aStats.maxHP || a.currentHP);
+        grantTempShield(a, shieldAmt, healPowerOf(aStats));
       }
       return true;
     },
   },
 
-  // ==================== 龙：新星（AP 联动的范围法术伤害）====================
-  active_dragon_nova: {
-    id: 'active_dragon_nova', name: '新星', icon: '🌌', color: '#8e44ad', category: 'active',
-    applicableTypes: ['dragon'],
-    defaultParams: { radius: 160, baseDamage: 80, apScale: 1.2 },
+  // ==================== 术士兵：蓄能打击（延迟消耗 + 自身叠法术强度）====================
+  // 用户："术士兵……主动技能：下次攻击额外造成（XX=10%法术强度）真实伤害且获得5法术
+  //        强度（只有攻击了法力值才清零重新计算），被动技能：周围150码友军获得20
+  //        法术强度。" 被动那半句挂在已有的 passive_warlock_aura 上（见 minionPassives.js），
+  //        这里只实现主动的一半。
+  active_warlock_empower: {
+    id: 'active_warlock_empower', name: '蓄能打击', icon: '💥', color: '#9b59b6', category: 'active',
+    applicableTypes: ['warlock'],
+    defaultParams: { bonusApPct: 10, apGainPerCast: 5 },
+    // ManaSystem 认这个标记：法力攒满时只调一次 onCast，之后即使法力仍然满格也不再重复
+    // 施放，直到 instance.state._armed 被下面这条效果的消耗方（CombatSystem）清掉。
+    deferredConsume: true,
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后，对周身半径 ${p.radius} 内的全部敌人各造成 ${p.baseDamage} + `
-           + `${p.apScale}×法术强度 的魔法伤害。`;
+      return `法力攒满后蓄势待发并立即获得 ${p.apGainPerCast} 点法术强度（永久叠加）：`
+           + `下一次普通攻击命中额外造成 (${p.bonusApPct}%×法术强度) 的真实伤害，`
+           + `命中后法力才清零重新计算。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
       const self = ctx.entityContainer.get(entityId);
-      if (!self || !self.alive || !ctx.combat) return false;
-      const p = instance._params || actives.active_dragon_nova.defaultParams;
-      const foes = enemyUnitsInRadius(ctx.entityContainer, self, p.radius ?? 160, { includeBuildings: true })
+      if (!self || !self.alive) return false;
+      const p = instance._params || actives.active_warlock_empower.defaultParams;
+      self._empowerNextAttack = { bonusApPct: p.bonusApPct ?? 10, skillInstId: instance.id };
+      // 立即获得法术强度（永久叠加，每次施放都加一层）——与"下次攻击触发"是两件事，
+      // 这个是施放那一刻就生效的自增益，不需要等攻击命中。
+      const apGain = p.apGainPerCast ?? 5;
+      ctx.effectRegistry.apply(entityId, {
+        name: '蓄能强化', icon: '✨', kind: 'stat', statKey: 'abilityPower',
+        flatValue: apGain, perStackFlat: apGain,
+        duration: Infinity, permanent: true, stackable: true, maxStacks: 999, stackPolicy: 'stack',
+        description: `蓄能强化（{stacks}层，每层+${apGain}法术强度）`,
+      }, 'active_warlock_empower_apgain', { casterId: entityId });
+      // 一次性标记："下一次普通攻击会触发"，命中后由 CombatSystem 移除。
+      ctx.effectRegistry.apply(entityId, {
+        name: '蓄势待发', icon: '💥', kind: 'display', type: 'buff', color: '#9b59b6',
+        duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `下一次普通攻击额外造成 ${p.bonusApPct ?? 10}%×法术强度 的真实伤害`,
+      }, 'active_warlock_empower_buff');
+      instance.state = instance.state || {};
+      instance.state._armed = true;
+      return true;
+    },
+  },
+
+  // ==================== 蚀骨兵：环刃毒雾（AOE 中毒，按当前生命%的真实伤害）====================
+  // 用户："蚀骨兵……主动技能：对周围所有敌人施加中毒效果，持续4秒。每秒造成1%当前
+  //        生命值的真实伤害。" ——注意基数是【当前】生命，不是最大生命，会随中毒推进
+  //        自然衰减（BuffSystem 按 blueprint.dotBasis==='currentHP' 识别，见其头注）。
+  //        这一条没有法术强度联动——用户给的规格里没提，不强行加。
+  active_corrupt_poison: {
+    id: 'active_corrupt_poison', name: '环刃毒雾', icon: '☠️', color: '#7bc96f', category: 'active',
+    applicableTypes: ['corrupt'],
+    defaultParams: { radius: 150, pctPerSec: 1, durationSec: 4 },
+    get description() {
+      const p = this.defaultParams;
+      return `法力攒满后，对半径 ${p.radius} 内的全部敌人施加中毒，持续 ${p.durationSec} 秒，`
+           + `每秒损失其当前生命 ${p.pctPerSec}%（真实伤害）。`;
+    },
+    effects: [],
+    onCast: (entityId, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return false;
+      const p = instance._params || actives.active_corrupt_poison.defaultParams;
+      const foes = enemyUnitsInRadius(ctx.entityContainer, self, p.radius ?? 150, { includeBuildings: true })
         .filter(e => e.alive);
       if (!foes.length) return false;
-      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
-      const dmg = (p.baseDamage ?? 80) + (p.apScale ?? 1.2) * (stats.abilityPower || 0);
-      if (!(dmg > 0)) return false;
-      for (const f of foes) ctx.combat.performAttackDirect(entityId, f.id, dmg, 'magic', { vampGroup: true });
+      for (const f of foes) {
+        ctx.effectRegistry.apply(f.id, {
+          name: '环刃毒雾', icon: '☠️', kind: 'dot', color: '#7bc96f', type: 'debuff',
+          damageType: 'true', dotBasis: 'currentHP',
+          percentValue: p.pctPerSec ?? 1, tickInterval: 1, duration: p.durationSec ?? 4,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `环刃毒雾：每秒损失当前生命 ${p.pctPerSec ?? 1}%（真实伤害）`,
+        }, 'active_corrupt_poison', { casterId: entityId });
+      }
       return true;
     },
   },

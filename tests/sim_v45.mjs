@@ -64,9 +64,13 @@ const instOf = (e, id) => (e._skillInstances || []).find(s => s.skillId === id);
     hasSoul(tower, DRAGON_ELEMENTS.thunder.soul));
   T('屠②-限时标记按配置的秒数打（不是写死的 60）',
     instOf(tower, 'dragonsoul_thunder').state.slayerUntil === 100 + sec);
-  // 注：EffectRegistry 存的是 { id, sourceId, stacks, blueprint }，name/statKey 在 blueprint 里。
-  T('屠③-身上挂了可见的【屠龙者】状态',
-    fx.getEffects(tower.id).some(e => e.blueprint?.name === '屠龙者'));
+  // v51.1 改稿（用户："不要杀死龙后获得屠龙者，直接获得XX秒的临时龙魂，在临时龙魂
+  // 状态上显示倒计时"）：不再另起一个独立的"屠龙者"徽标，倒计时直接长在龙魂本体
+  // 那个展示效果（soul_display_<soulId>，name = 该魂自己的名字）上。
+  T('屠③-龙魂本体的展示状态带着真实倒计时（不是另一个独立的"屠龙者"徽标）',
+    fx.getEffects(tower.id).some(e =>
+      e.sourceId === `soul_display_${DRAGON_ELEMENTS.thunder.soul}`
+      && e.remainingTime > 0 && e.remainingTime <= sec));
 
   // 到期：时间推过去，跑一帧 update
   window.gameTime = 100 + sec + 1;

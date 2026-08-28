@@ -419,12 +419,15 @@ export const minionPassives = {
   // 而不是固定穿透（armorPenFlat / magicPenFlat）—— 后者的单位是点数、不带 %。
   // 若本意是固定点数，改 CONFIG.gameRules.supportUnits.warlock 的 statKey 即可，
   // 数值本身已软编码。
+  // v51.1：补上术士兵的主动技能被动伴侣——用户："被动技能：周围150码友军获得20法术强度。"
+  // 这不是一个独立的新光环，是术士兵已有的光环（术法共鸣）多给一项属性——它本来就是
+  // "周围友军"的光环，半径也正好是 AURA_RANGE=150，不用另起一条技能重复同一套判定。
   passive_warlock_aura: makeAuraPassive({
     id: 'passive_warlock_aura', name: '术法共鸣', icon: '🧙',
     casterType: 'warlock', targetTypes: null, minionsOnly: true,
     effectsFn: () => {
       const c = CONFIG.gameRules.supportUnits?.warlock || {};
-      const pen = c.auraPenPct ?? 13, amp = c.auraDamageAmpPct ?? 7;
+      const pen = c.auraPenPct ?? 13, amp = c.auraDamageAmpPct ?? 7, ap = c.auraAbilityPower ?? 20;
       return [
         { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'armorPenPercent',
           flatValue: pen, description: `护甲穿透+${pen}%` },
@@ -432,6 +435,8 @@ export const minionPassives = {
           flatValue: pen, description: `法术穿透+${pen}%` },
         { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'damageAmpPct',
           flatValue: amp, description: `伤害增幅+${amp}%` },
+        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'abilityPower',
+          flatValue: ap, description: `法术强度+${ap}` },
       ];
     },
   }),
