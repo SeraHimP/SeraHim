@@ -8,6 +8,7 @@ import { mergedDescription } from './_helpers.js';
 export const core = {
   core_normal: {
     id: 'core_normal', name: '普通塔身', icon: '🏰', category: 'core',
+    applicableTypes: ['tower'],
     description: '基础塔身，无额外效果。',
     descTemplate: '基础塔身，无额外效果。',
     effects: [], onEquip: () => {},
@@ -15,6 +16,7 @@ export const core = {
 
   core_tier_outer: {
     id: 'core_tier_outer', name: '外侧防御塔', icon: '🗼', category: 'core',
+    applicableTypes: ['tower'],
     mergedSkills: ['passive_outer_fortify', 'passive_growth_outer'],
     // 文案从子技能现取现拼（见 _helpers.mergedDescription）——手抄过就出过
     // "技能里写5、状态里是3"的事故，这里用 getter 保证永远同步。
@@ -24,6 +26,7 @@ export const core = {
   },
   core_tier_inner: {
     id: 'core_tier_inner', name: '内侧防御塔', icon: '🏯', category: 'core',
+    applicableTypes: ['tower'],
     mergedSkills: ['passive_inner_fortify', 'passive_growth_inner'],
     // 文案从子技能现取现拼（见 _helpers.mergedDescription）——手抄过就出过
     // "技能里写5、状态里是3"的事故，这里用 getter 保证永远同步。
@@ -33,6 +36,7 @@ export const core = {
   },
   core_tier_base: {
     id: 'core_tier_base', name: '水晶防御塔', icon: '🏛️', category: 'core',
+    applicableTypes: ['tower'],
     mergedSkills: ['passive_base_fortify', 'passive_growth_base'],
     // 文案从子技能现取现拼（见 _helpers.mergedDescription）——手抄过就出过
     // "技能里写5、状态里是3"的事故，这里用 getter 保证永远同步。
@@ -42,6 +46,7 @@ export const core = {
   },
   core_tier_hq: {
     id: 'core_tier_hq', name: '枢纽防御塔', icon: '🏰', category: 'core',
+    applicableTypes: ['tower'],
     mergedSkills: ['passive_hq_fortify', 'passive_growth_hq'],
     // 文案从子技能现取现拼（见 _helpers.mergedDescription）——手抄过就出过
     // "技能里写5、状态里是3"的事故，这里用 getter 保证永远同步。
@@ -52,12 +57,14 @@ export const core = {
 
   core_nexus_lane: {
     id: 'core_nexus_lane', name: '召唤水晶', icon: '🔮', category: 'core',
+    applicableTypes: ['tower'],
     description: '分路召唤水晶：无武器；本路水晶塔存活时不可被选中；被摧毁后敌方在本路追加超级兵；5分钟后重生。',
     descTemplate: '召唤水晶：无武器。本路水晶塔存活时受保护；被摧毁后敌方追加超级兵；5分钟后重生。',
     effects: [], onEquip: () => {},
   },
   core_nexus_main: {
     id: 'core_nexus_main', name: '水晶枢纽', icon: '💎', category: 'core',
+    applicableTypes: ['tower'],
     description: '主基地水晶：无武器；双枢纽塔全灭前不可被选中。',
     descTemplate: '水晶枢纽：无武器。双枢纽塔全部存活期间受保护。',
     effects: [], onEquip: () => {},

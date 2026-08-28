@@ -532,7 +532,12 @@ function createDragon(type, opts = {}) {
     lastDamageTime: -Infinity,
     attackCooldown: 0,
     targetId: null,
-    _skillInstances: [],
+    _skillInstances: [
+      // 用户定稿："巨龙的宿怨应该作为一个技能显示在技能栏。"
+      // 纯展示：真正的增伤/减伤判定仍在 CombatSystem._dragonGrudge()，这个实例
+      // 只是让技能栏（读 _skillInstances 查 SkillLibrary）能找到对应的图标/描述。
+      { id: ++CTX._uid, skillId: 'dragon_grudge', state: {} },
+    ],
     _inCombat: false,
     _attackerCount: 0,
     _element: element,

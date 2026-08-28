@@ -392,21 +392,55 @@ export class CombatSystem {
   }
 
   /**
-   * 一次攻击**结算完之后**的攻城副作用：攻速倍率 + 自损。
+   * 一次攻击**结算完之后**的攻城副作用：攻速倍率 + 自损衰减 + 破甲重击。
    * 传入调用方已算好的攻速，返回应当写进 attackCooldown 的最终攻速。
    * 没装攻城武器、或打的不是建筑时，原样返回 —— 调用方不需要自己判断。
+   *
+   * 用户定稿（2026-08）改动两处：
+   *  ① 自损从"每次攻击扣 20% 最大生命"改成"每次攻击叠一层 -25% 当前攻速，
+   *     永久不衰减、无上限叠加"——不再是打塔打到自爆，而是打得越久车越慢，
+   *     逼玩家取舍"继续磨这座塔"还是"换个目标/撤退"，不会自己把自己打死。
+   *  ② 新增【破甲重击】：每次攻击命中某座塔，若这座塔不在自己的 900 秒冷却里，
+   *     额外造成其当前生命 10%（50% 真实伤害 + 50% 攻城车自身伤害类型物理伤害）、
+   *     随后把这座塔的冷却单独钉住 900 秒——冷却记在【塔]身上，不管哪辆攻城车
+   *     打中都共用同一个冷却；但塔与塔之间完全独立，不会互相占用彼此的冷却。
    */
   finishAttack(attacker, target, finalAS) {
     const def = getSiegeWeaponDef(attacker, this.skills);
     if (!def || !isStructureUnit(target)) return finalAS;
     const out = finalAS * (def.TOWER_ATKSPD_MULT ?? 0.5);
-    const maxHP = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)).maxHP
-      || attacker.baseStats.maxHP || 1;
-    attacker.currentHP -= maxHP * (def.SELF_DAMAGE_PCT ?? 0.2);
-    if (attacker.currentHP <= 0 && attacker.alive) {
-      attacker.currentHP = 0; attacker.alive = false;
-      this.eventBus?.emit?.('entity:death', { entityId: attacker.id });
+
+    // ① 自损 → 永久叠加的攻速衰减（无限叠层，用 maxStacks 给一个极大值，
+    //    与本项目"无限叠加"的既有写法一致，如 dragonSouls.js 的腐毒）
+    this.effects.apply(attacker.id, {
+      name: '攻城疲惫', icon: '🐌', kind: 'stat', color: '#8d6e63', type: 'debuff',
+      statKey: 'bonusAttackSpeedPct', flatValue: def.SIEGE_FATIGUE_AS_PCT ?? -25,
+      perStackFlat: def.SIEGE_FATIGUE_AS_PCT ?? -25,
+      duration: Infinity, permanent: true,
+      stackable: true, maxStacks: 999, stackPolicy: 'stack', uniquePassive: true,
+      // EffectRegistry 只认 description 里的 {stacks}（见 EffectRegistry.js 的
+      // updateDescription），descTemplate/{val} 是 SkillLibrary 那条完全独立的
+      // 渲染管线，这里不适用——别抄错管线，写了也不会生效。
+      description: `攻城疲惫（{stacks}层，每层攻速${def.SIEGE_FATIGUE_AS_PCT ?? -25}%）`,
+    }, 'passive_siege_weapon_fatigue');
+
+    // ② 破甲重击：per-tower 900 秒冷却，冷却状态钉在【塔】身上（不是攻城车身上）
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    const cd = def.SLAM_COOLDOWN_SEC ?? 900;
+    if (!target._ramSlamCooldownUntil || now >= target._ramSlamCooldownUntil) {
+      target._ramSlamCooldownUntil = now + cd;
+      const pct = (def.SLAM_CURRENT_HP_PCT ?? 10) / 100;
+      const total = (target.currentHP || 0) * pct;
+      if (total > 0) {
+        const half = total / 2;
+        // _noProc：这次额外伤害本身不应该再触发一次"破甲重击"或其它 onHit 递归
+        this.performAttackDirect(attacker.id, target.id, half, 'true', { _noProc: true });
+        if (target.alive) {
+          this.performAttackDirect(attacker.id, target.id, half, attacker.baseStats?.attackType || 'physical', { _noProc: true });
+        }
+      }
     }
+
     return out;
   }
 
@@ -577,6 +611,7 @@ export class CombatSystem {
     // 这里已经过了双抗结算、正要进减免段，所以放这一句同时覆盖两个方向即可
     //（这条路径没有"无视防御"的分股，也没有真伤旁路 —— 真伤走的是 performAttackDirect）。
     damage *= this._dragonGrudge(attacker, target).k;
+    damage *= this._dragonVsMinionBonus(attacker, target);
     // 防御护盾（唯一被动）：来自【防御塔】的伤害降低 30%。
     // v43（用户定稿："炮兵的被动防御护盾改为只对塔减伤30%"）：来源从
     // 塔 / 炮兵 / 超级兵 收窄到**只有塔**。
@@ -642,33 +677,10 @@ export class CombatSystem {
       grantTempShield(attacker, steal * 0.5, power);
     }
 
-    // ---- 触发武器 onHit ----
-    if (weaponDef && weaponDef.onHit && weaponInst) {
-      weaponDef.onHit(attacker.id, target.id, weaponInst, {
-        entityContainer: this.entities,
-        effectRegistry: this.effects,
-        eventBus: this.eventBus,
-        waveNumber: window.waveNumber || 0,
-        attrCalc: this.attrCalc,
-        combat: this,
-      });
-    }
-
-    // ---- 触发其他 onHit 被动 ----
-    for (const inst of attacker._skillInstances || []) {
-      if (inst === weaponInst) continue;
-      const def = this.skills[inst.skillId];
-      if (def && def.onHit) {
-        def.onHit(attacker.id, target.id, inst, {
-          entityContainer: this.entities,
-          effectRegistry: this.effects,
-          eventBus: this.eventBus,
-          waveNumber: window.waveNumber || 0,
-          attrCalc: this.attrCalc,
-          combat: this,
-        });
-      }
-    }
+    // ---- 触发被动（普通攻击恒为一次完整攻击，attackShare=1）----
+    // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份代码，
+    // 不再各写一份（武器与其余被动过去分两段实现，现在统一走同一个 _skillInstances 循环）。
+    this._fireOnDealtDamage(attacker, target, 1, { totalRaw, finalDamage, attackType });
 
     // ---- 触发目标的 onBeingAttacked ----
     for (const inst of target._skillInstances || []) {
@@ -681,24 +693,6 @@ export class CombatSystem {
           waveNumber: window.waveNumber || 0,
           attrCalc: this.attrCalc,
           combat: this,
-        });
-      }
-    }
-
-    // ---- 触发攻击方 onDealtDamage（造成伤害后，龙魂/过热/相位等使用） ----
-    for (const inst of attacker._skillInstances || []) {
-      const def = this.skills[inst.skillId];
-      if (def && def.onDealtDamage && !inst._disabled) {
-        def.onDealtDamage(attacker.id, target.id, inst, {
-          entityContainer: this.entities,
-          effectRegistry: this.effects,
-          eventBus: this.eventBus,
-          waveNumber: window.waveNumber || 0,
-          attrCalc: this.attrCalc,
-          combat: this,
-          totalRaw,
-          finalDamage,
-          attackType,
         });
       }
     }
@@ -803,6 +797,19 @@ export class CombatSystem {
   }
 
   /**
+   * 巨龙新增被动：对小兵单位造成额外 100% 伤害（用户定稿）。"小兵"= 除塔、龙之外的
+   * 全部单位（近战/远程/炮兵/图腾/超级/术士/蚀骨/攻城车都算）。
+   * 与"宿怨"同一挂载方式：纯攻击方增伤，不分保护/非保护，两个消耗真伤旁路的
+   * 调用点都要吃到（_resolveHit 单点乘、performAttackDirect 拆开成
+   * mitigated/ignored 两股都要乘）。
+   */
+  _dragonVsMinionBonus(attacker, target) {
+    if (attacker?.type !== 'dragon' || !target) return 1;
+    if (target.type === 'tower' || target.type === 'dragon') return 1;
+    return 2; // +100%
+  }
+
+  /**
    * 巨龙被动「宿怨」：龙对某阵营的减伤/增伤，随该阵营已击杀的**元素龙**数量增长。
    * 两个方向都走这一个函数：
    *   · 龙**受到**某阵营的伤害 → 按该阵营的击杀数减伤；
@@ -889,6 +896,69 @@ export class CombatSystem {
     grantTempShield(target, finalDamage * Math.min(pct / 100, 1), healPowerOf(defStats));
   }
 
+  /**
+   * ==================== 被动触发的唯一入口：_fireOnDealtDamage ====================
+   * performAttack（普通攻击）与 performAttackDirect（真伤/溅射/DOT/特殊攻击方式）
+   * 两条伤害路径，"造成伤害后触发被动"这件事【只在这一个函数里实现一次】。
+   * 历史上这里两条路径各写一份，先后出过至少 4 次同类 bug（远古之力/暗魂/毒魂
+   * 在闪电杖上完全不生效——因为它们挂在只有 performAttack 认的 onHit 上；
+   * 雷魂在闪电杖上被削弱到约 1/4——因为触发时只拿到最后一跳的伤害；炎魂在
+   * 闪电杖上节奏被错误节流）。根子都是"两条路径独立实现、迟早漏改一处"，
+   * 这次统一成一处，以后新增攻击方式不会再重犯。
+   *
+   * attackShare：这次伤害相当于【几分之几次标准攻击】。普通攻击恒为 1；
+   * 特殊攻击方式（闪电杖每跳 0.25 等）按自己的节奏传分数；一次伤害不会
+   * 代表超过一次攻击，调用方保证 attackShare ≤ 1（本函数会夹到这个范围内）。
+   *
+   * 每个技能/被动通过 def.procMode 声明自己怎么应对分数攻击（不声明 = 'always'）：
+   *   'always'    —— 每次伤害都触发，用【这一下】自己的数值直接算。
+   *                   适合"跟手"型效果（炎魂的溅射）：分数攻击各自独立结算，
+   *                   累计起来自然等于一次完整攻击的量，天然正确、不用特殊处理。
+   *   'perAttack' —— 攒够 attackShare 总和 = 1（相当于一次完整攻击）才触发一次，
+   *                   且传给它的伤害基数是【这期间累计的总和】，不是某一跳的零头。
+   *                   适合"有冷却 / 会叠层 / 一次性判定"型效果
+   *                   （雷魂、潮魂、暗魂、毒魂、远古之力、穿透型的升温）：
+   *                   频率上"当成攻速为 1 的武器"，数值上"按累计的一整次攻击算"。
+   *
+   * 累加状态记在【技能实例】自己身上（inst._procCredit 等），不记在攻击者身上：
+   * 一座塔同时装着好几个 procMode='perAttack' 的被动时各自独立计数、互不干扰；
+   * 换武器/换被动实例也不会背上别的技能攒了一半的信用。
+   */
+  _fireOnDealtDamage(attacker, target, attackShare, damageCtx, noProc = false) {
+    if (!attacker || !target || noProc || this._procGuard) return;
+    const share = Math.max(0, Math.min(1, attackShare)); // 单次调用按"不超过一次完整攻击"设计，见函数头注释
+    this._procGuard = true;
+    try {
+      for (const inst of attacker._skillInstances || []) {
+        if (inst._disabled) continue;
+        const def = this.skills[inst.skillId];
+        if (!def || !def.onDealtDamage) continue;
+        const ctxBase = {
+          entityContainer: this.entities, effectRegistry: this.effects, eventBus: this.eventBus,
+          waveNumber: window.waveNumber || 0, attrCalc: this.attrCalc, combat: this,
+        };
+        const mode = def.procMode || 'always';
+        if (mode !== 'perAttack' || share >= 1) {
+          def.onDealtDamage(attacker.id, target.id, inst, { ...ctxBase, ...damageCtx, attackShare: share });
+          continue;
+        }
+        // perAttack 且是分数攻击：攒份额，攒满 1 份再触发一次，伤害基数用累计总和
+        inst._procCredit = (inst._procCredit || 0) + share;
+        inst._procRawSum = (inst._procRawSum || 0) + (damageCtx.totalRaw || 0);
+        inst._procFinalSum = (inst._procFinalSum || 0) + (damageCtx.finalDamage || 0);
+        if (inst._procCredit >= 1) {
+          inst._procCredit -= 1;
+          const accCtx = {
+            ...ctxBase, ...damageCtx,
+            totalRaw: inst._procRawSum, finalDamage: inst._procFinalSum, attackShare: 1,
+          };
+          inst._procRawSum = 0; inst._procFinalSum = 0;
+          def.onDealtDamage(attacker.id, target.id, inst, accCtx);
+        }
+      }
+    } finally { this._procGuard = false; }
+  }
+
   performAttackDirect(attackerId, targetId, baseDamage, attackType, options = {}) {
     { const _t = this.entities.get(targetId); if (_t && _t.type === 'tower' && window.__towerRuleFor?.('invincible', _t._mapFaction)) return 0; } // Q5：按阵营无敌
     const attacker = this.entities.get(attackerId);
@@ -915,16 +985,19 @@ export class CombatSystem {
     //      这条路径压根不读那两项属性；
     //   ② 攻击特效的【被动部分】（onDealtDamage）却**每秒触发 4 次**，
     //      是 1.0 攻速单位的 4 倍（叠层类被动因此快 4 倍、自损类被动因此痛 4 倍）。
-    // onHitScale 一次修正两头：数值按比例并入，被动按比例限流（见下面的 credit 累加器）。
+    // attackShare 只负责标记"这次伤害算几分之几次标准攻击"，用于下面
+    // _fireOnDealtDamage 的节奏判定；攻击特效的数值部分是【另一件事】，
+    // 由 options.applyOnHitBonus 单独开关——两者以前共用 onHitScale 一个开关，
+    // 正是"改一个动两个、谁都说不清对方会不会被连带影响"的设计缺陷，这次分开。
     //
-    // 默认 0：其余调用方（溅射、DOT、龙魂、环境伤害）行为**逐位不变** ——
+    // 默认不叠攻击特效数值：其余调用方（溅射、DOT、龙魂、环境伤害）行为逐位不变——
     // 它们本来就不该带攻击特效，溅射带的话等于一次攻击结算两遍。
-    const onHitScale = options.onHitScale || 0;
+    const attackShare = Math.max(0, options.attackShare ?? 1);
     let damage = baseDamage;
-    if (onHitScale > 0 && attacker) {
+    if (options.applyOnHitBonus && attacker) {
       const flat = atkStats.onHitDamage || 0;
       const pct = (atkStats.onHitPercentDamage || 0) / 100 * (target.currentHP || 0);
-      damage += (flat + pct) * onHitScale;
+      damage += (flat + pct) * attackShare;
     }
     const dmgAmp = atkStats.damageAmpPct || 0;
     damage *= (1 + dmgAmp / 100);
@@ -937,6 +1010,7 @@ export class CombatSystem {
     // 第一版我把两半都塞进减免块，结果龙的增伤对真伤完全不生效 —— 方向错了。
     const grudgeAmp = this._dragonGrudge(attacker, target);
     if (!grudgeAmp.protective && grudgeAmp.k !== 1) damage *= grudgeAmp.k;
+    damage *= this._dragonVsMinionBonus(attacker, target);
 
     // 若目标当前持有护盾，额外造成一定比例伤害（如闪电杖破盾+7%）
     const shieldBeforeHit = (target.tempShield || 0) + (target.shieldFixedCurrent || 0);
@@ -1048,37 +1122,10 @@ export class CombatSystem {
       target._lastHitBy = attacker.id;
       target._lastHitFaction = attacker._mapFaction || attacker.faction || null;
     }
-    // 使闪电杖、腐蚀型等通过 performAttackDirect 造成的伤害也能触发这些被动。
-    // ==================== 被动的限流：分数累加器 ====================
-    // 为什么不是"给每个被动传一个系数、让它们各自乘 0.25"：
-    // 这些被动里有一半是**计数**型的（叠一层、消耗一发充能、自损 2% 生命），
-    // "叠 0.25 层"没有意义；而且那要求 7 个被动逐个改对，改漏一个就是隐性 bug。
-    //
-    // 改成在**唯一的触发点**上限流：每次伤害给攻击者攒 onHitScale 点信用，
-    // 攒满 1 点才真正触发一次全部被动。0.25 → 每 4 跳触发一次 = 每秒 1 次，
-    // 恰好等于一个 1.0 攻速单位的节奏。确定性的，不掺随机。
-    // 于是**所有被动自动正确**，一个都不用改。
-    let _proc = true;
-    if (attacker && onHitScale > 0 && onHitScale < 1) {
-      attacker._onHitCredit = (attacker._onHitCredit || 0) + onHitScale;
-      if (attacker._onHitCredit >= 1) attacker._onHitCredit -= 1;
-      else _proc = false;
-    }
-    if (attacker && _proc && !options._noProc && !this._procGuard) {
-      this._procGuard = true;
-      try {
-        for (const inst of attacker._skillInstances || []) {
-          const def = this.skills[inst.skillId];
-          if (def && def.onDealtDamage && !inst._disabled) {
-            def.onDealtDamage(attacker.id, target.id, inst, {
-              entityContainer: this.entities, effectRegistry: this.effects, eventBus: this.eventBus,
-              waveNumber: window.waveNumber || 0, attrCalc: this.attrCalc, combat: this,
-              totalRaw: baseDamage, finalDamage, attackType, onHitScale: onHitScale || 1,
-            });
-          }
-        }
-      } finally { this._procGuard = false; }
-    }
+    // 使闪电杖、腐蚀型等通过 performAttackDirect 造成的伤害也能触发被动——
+    // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份。
+    this._fireOnDealtDamage(attacker, target, attackShare,
+      { totalRaw: baseDamage, finalDamage, attackType }, options._noProc);
 
     // v39 修复（历史 bug）：死亡判定必须带 alive 守卫。原来只看 currentHP<=0，
     // 已死单位在同帧再吃一次伤害（溅射/多攻击者/自损致死后的排队攻击）就会【重复发死亡事件】，

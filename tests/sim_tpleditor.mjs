@@ -104,12 +104,14 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
 
 // ==================== 三、巨龙：软编码且与旧写死值逐位一致 ====================
 {
-  // 旧实现（从 DragonSystem 改版前的源码原样抄来）
+  // 旧实现（从 DragonSystem 改版前的源码原样抄来，base 三项按 2026-08 用户定稿的
+  // "上调前期龙强度"改到位：maxHP 1200→1600、resist -40→-15、
+  // attackDamage 按 3 个校准点(第1/4/8条=102/270/500)反解 base=102/step=56/lateStep=57.5）
   const oldStats = (w, anc) => {
     let hp, res, ad;
-    if (w <= 4) hp = 1200 + (w - 1) * 600; else hp = 3000 + (w - 4) * 500;
-    if (w <= 4) res = -40 + (w - 1) * (240 / 3); else res = Math.min(200 + (w - 4) * 30, 500);
-    if (w <= 4) ad = 23 + (w - 1) * (229 / 3); else ad = 252 + (w - 4) * 60;
+    if (w <= 4) hp = 1600 + (w - 1) * 600; else hp = 3400 + (w - 4) * 500;
+    if (w <= 4) res = -15 + (w - 1) * (240 / 3); else res = Math.min(225 + (w - 4) * 30, 500);
+    if (w <= 4) ad = 102 + (w - 1) * 56; else ad = 270 + (w - 4) * 57.5;
     if (anc) { hp *= 1.15; res += 40; ad *= 1.1; }
     return { maxHP: Math.round(hp), armor: Math.round(res), magicResist: Math.round(res), attackDamage: Math.round(ad) };
   };
@@ -142,7 +144,7 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
   CONFIG.gameRules.dragon.curve.resist.cap = 100;
   T('上限生效', DC.dragonStatsAt(20, false).armor === 100);
   CONFIG.gameRules.dragon = bak;
-  T('恢复后回到出厂值', DC.dragonStatsAt(1, false).maxHP === 1200);
+  T('恢复后回到出厂值', DC.dragonStatsAt(1, false).maxHP === 1600);
 
   // 那七个死键必须真的没了 —— 留着它们就等于在编辑器里摆一排"改了没反应"的框
   for (const dead of ['dragonFirstDelay', 'dragonInterval', 'dragonHpScale',

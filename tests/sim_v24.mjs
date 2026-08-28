@@ -83,9 +83,13 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
   const settings=fs.readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url),'utf8');
   const ui=fs.readFileSync(new URL('../src/ui/UIManager.js', import.meta.url),'utf8');
 
+  const wo = fs.readFileSync(new URL('../src/ui/editor/pagesWave.js', import.meta.url), 'utf8');
   T('Q2 重生前30秒停发超级兵', lws.includes('superMinionCutoffBeforeRespawn') && map.includes('getNexusRespawnRemain'));
   T('Q5 波次生成按阵营门控', lws.includes("__towerRuleFor('waveOn', faction)"));
-  T('v33 设置面板波次间隔已去重（仅对战区一个控件）', settings.includes('setLaneWaveInterval') && !settings.includes('setWaveIntervalInput'));
+  // 2026-08 用户定稿："设置窗口只留系统设置"——波次运行时控制（含这个去重过的
+  // 间隔输入框）整体搬到"游戏性→出兵编排"（pagesWave.js），SettingsDialog 不再有它。
+  T('v33 设置面板波次间隔已去重（现搬到"游戏性→出兵编排"，仅对战区一个控件）',
+    wo.includes('woLaneWaveInterval') && !settings.includes('setWaveIntervalInput') && !settings.includes('setLaneWaveInterval'));
   // v43 P0-①：这三条原先钉的是 CanvasRenderer（旧 2D 渲染器，已作为死代码删除）。
   // 其中两条是"某段代码已删除"型断言——目标文件本身都没了，断言自然恒真，删掉；
   // LOD 那条在活的 ThreeRenderer 里有对应实现，改钉它。

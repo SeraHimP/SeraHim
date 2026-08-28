@@ -15,6 +15,7 @@ import { weapons } from './skills/weapons.js';
 import { towerPassives, TowerGrowthSkills, HomeAuraSkill } from './skills/towerPassives.js';
 import { minionPassives } from './skills/minionPassives.js';
 import { dragonSouls } from './skills/dragonSouls.js';
+import { dragonPassives } from './skills/dragonPassives.js';
 
 export const SkillLibrary = {
   _registry: new Map(),
@@ -37,7 +38,7 @@ export const SkillLibrary = {
 
 // Register all built-in skills
 const allSkills = { ...core, ...weapons, ...towerPassives, ...TowerGrowthSkills,
-  ...HomeAuraSkill, ...minionPassives, ...dragonSouls };
+  ...HomeAuraSkill, ...minionPassives, ...dragonSouls, ...dragonPassives };
 for (const [id, def] of Object.entries(allSkills)) {
   SkillLibrary.register(id, def);
 }

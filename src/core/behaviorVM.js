@@ -346,7 +346,13 @@ export function compileSpec(spec, onError = null) {
   };
 
   if (byTrigger.hit) {
-    def.onHit = (selfId, targetId, instance, ctx) => {
+    // 引擎侧钩子统一改名为 onDealtDamage（原 onHit 已完全废弃，performAttackDirect
+    // 那条路径从来不认 onHit——特殊攻击方式的武器/被动全靠这条路径接伤害，旧钩子名
+    // 一直是"命中时"技能在这些武器上不生效的根因）。这里只改编译产物的属性名，
+    // 编辑器里"命中时"这个触发时机的用户可见文案不用跟着改。
+    // procMode 不开放给自定义技能选择，统一走默认的 'always'——和这条触发器原来
+    // 挂在 onHit 上的行为完全一致（无节流、每次命中都跑），零行为变化。
+    def.onDealtDamage = (selfId, targetId, instance, ctx) => {
       const c = mkCtx(spec, selfId, targetId, instance, ctx);
       for (const r of byTrigger.hit) {
         if (evalConditions(r.when, c)) runActions(r.do, c, spec.id);

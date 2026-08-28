@@ -91,7 +91,7 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   const def = SkillLibrary.passive_siege_weapon;
   T('攻城武器被动存在且持有全部数值',
     !!def && def.TOWER_DAMAGE_MULT === 3.7 && def.TOWER_ATKSPD_MULT === 0.5
-    && def.SELF_DAMAGE_PCT === 0.20 && def.VS_MINION_MULT === 0.67 && def.MELEE_BONUS_MULT === 2.0);
+    && def.SIEGE_FATIGUE_AS_PCT === -25 && def.VS_MINION_MULT === 0.67 && def.MELEE_BONUS_MULT === 2.0);
   T('被动图标 🛠️', def.icon === '🛠️');
 
   // v43 P1-4：小兵工厂已搬到 src/core/factories.js，读组合根两份
@@ -110,8 +110,8 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   // 所以改成钉两件事：① 规则只有一份（只在 CombatSystem 里读那三个常量）；
   // ② 两条路径都调那一份。
   T('攻城规则只有一份（只在 CombatSystem 里读常量，LaneMovementSystem 不再自己抄）',
-    csSrc.includes('TOWER_ATKSPD_MULT') && csSrc.includes('SELF_DAMAGE_PCT')
-    && !lmsSrc.includes('TOWER_ATKSPD_MULT') && !lmsSrc.includes('SELF_DAMAGE_PCT'));
+    csSrc.includes('TOWER_ATKSPD_MULT') && csSrc.includes('SIEGE_FATIGUE_AS_PCT')
+    && !lmsSrc.includes('TOWER_ATKSPD_MULT') && !lmsSrc.includes('SIEGE_FATIGUE_AS_PCT'));
   T('两条攻击路径都调同一份（对战 = LaneMovementSystem，沙盒 = CombatSystem 小兵循环）',
     lmsSrc.includes('this.combat.siegeAcquire(') && lmsSrc.includes('this.combat.finishAttack(')
     && csSrc.includes('this.siegeAcquire(minion, nearestTower)')

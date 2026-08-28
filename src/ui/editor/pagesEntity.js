@@ -133,33 +133,34 @@ export const EDITOR_PAGES_ENTITY = {
     return html;
   },
 
-  // 统一的"每类型可用技能"清单——实体编辑器与模板编辑器共用同一份，
-  // 避免此前两处列表各写一份、又漏掉新增类型/新增技能的问题（Q3）。
-  _SKILLS_BY_TYPE: {
-    tower: {
-      weapons: ['weapon_piercing', 'weapon_lightning', 'weapon_explosive', 'weapon_corrosion'],
-      // 沙盒通用被动 + 对战实战塔被动。此前这里只有前 7 个沙盒被动，对战里塔真正装的那批
-      // （加固城防/成长/过载/钢铁防线/镀层/烈阳护盾/水晶再生/基地光环）一个都没列 —— 这正是
-      // 用户反馈"技能清单已经过时"的根因。现按 main.js 的实际装配逐条补齐。
-      passives: [
-        'passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating',
-        'passive_overheat', 'passive_vampire', 'passive_phase',
-        'passive_overload', 'passive_iron_line',
-        'passive_outer_fortify', 'passive_inner_fortify', 'passive_base_fortify', 'passive_hq_fortify',
-        'passive_growth_outer', 'passive_growth_inner', 'passive_growth_base', 'passive_growth_hq',
-        'passive_inner_bulwark', 'passive_base_bulwark',
-        'passive_nexus_regen', 'passive_home_aura',
-      ],
-    },
-    // 近战/远程此前是空列表，但它们默认就带屠戮被动（main.js defaultPassiveMap）—— 补上。
-    melee:  { weapons: [], passives: ['passive_melee_rend'] },
-    ranged: { weapons: [], passives: ['passive_ranged_rend'] },
-    siege: { weapons: [], passives: ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'] },
-    super: { weapons: [], passives: ['passive_super_commander'] },
-    totem: { weapons: [], passives: ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura', 'passive_totem_sacrifice'] },
-    warlock: { weapons: [], passives: ['passive_warlock_aura'] },
-    corrupt: { weapons: [], passives: ['passive_corrupt_strike'] },
-    ram:     { weapons: [], passives: ['passive_siege_weapon'] },
+  // 统一的"每类型可用技能"清单——实体编辑器与模板编辑器共用同一份。
+  // 用户定稿（"游戏性·批量加技能"落地时提出）：这份清单不再手工维护，改成从
+  // 每个技能自己声明的 applicableTypes 现算——之前是两份手工清单（这里 + 后来给
+  // 批量赋予页新增的 applicableTypes）并存，迟早会出现"新增/改一个技能，
+  // 只改了一边"的漂移（Q3 那次的教训就是两份手工清单对不上）。现在
+  // applicableTypes 是唯一数据源，这里只是按 type 分组、按 category==='weapon'
+  // 拆成 weapons/passives 两桶，纯读取、不再手写。
+  get _SKILLS_BY_TYPE() {
+    const out = {};
+    for (const [id, def] of Object.entries(SkillLibrary)) {
+      if (!def || typeof def !== 'object' || !Array.isArray(def.applicableTypes)) continue;
+      // core（身份技能，按塔层自动分配，不是"手动装备"的东西）和 dragonsoul（龙魂，
+      // 走击杀奖励/游戏性批量赋予两条独立机制装备）不进这个"常规技能选择器"的池子——
+      // 否则单位编辑器的"技能"tab 里会突然多出"外侧防御塔""炎魂"这种不该被手动
+      // 随便勾选的条目。这两类的装备入口分别是：core 由 createBuilding 按层自动挂，
+      // dragonsoul 由 DragonSystem._equipSoul/_grantAncient 或"游戏性·批量加技能"页装。
+      if (def.category === 'core' || def.category === 'dragonsoul') continue;
+      for (const t of def.applicableTypes) {
+        if (!out[t]) out[t] = { weapons: [], passives: [] };
+        (def.category === 'weapon' ? out[t].weapons : out[t].passives).push(id);
+      }
+    }
+    // 保证每个已知类型都有一个条目（哪怕暂时没有技能挂在它名下），
+    // 避免调用方 `this._SKILLS_BY_TYPE[type].passives` 在新类型上直接报错。
+    for (const t of ['tower','melee','ranged','siege','super','totem','warlock','corrupt','ram','dragon']) {
+      if (!out[t]) out[t] = { weapons: [], passives: [] };
+    }
+    return out;
   },
 
   // 分层塔的技能清单：★ = main.js 里该层级的【默认装配】，其余为该层级可选。

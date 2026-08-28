@@ -46,14 +46,47 @@ export class CanvasController {
     this.canvas.parentElement.style.cursor = 'grab';
   }
 
+  // 两指间距（用于捏合缩放的相对倍率），不足两指返回 0
+  _pinchDist() {
+    const pts = [...this._pointers.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+
   setupEvents() {
     const wrap = this.canvas.parentElement;
 
-    wrap.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
+    // 平板适配：改用 Pointer Events（鼠标/触摸/触控笔统一走同一套事件），
+    // 不再需要区分 mouse/touch 写两份逻辑。拖拽/点选/放置模式核心逻辑不变，
+    // 只是坐标来源从 mousedown/mousemove/mouseup 换成 pointerdown/move/up，
+    // 且用 setPointerCapture 代替"监听 window"来接住画布外的移动/抬起。
+    this._pointers = new Map(); // pointerId -> {x, y}，用于识别双指捏合
+    this._pinch = null;         // {startDist, startZoom}
+
+    // Safari 的双指缩放走独立的 GestureEvent（非标准，仅 WebKit），不经过
+    // touch/pointer 事件流，touch-action:none 管不到它——必须单独拦截，
+    // 否则 iPad Safari 上仍会缩放整个网页而不是画布内容。
+    wrap.addEventListener('gesturestart', (e) => e.preventDefault());
+    wrap.addEventListener('gesturechange', (e) => e.preventDefault());
+    wrap.addEventListener('gestureend', (e) => e.preventDefault());
+
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return; // 触摸/触控笔的 button 恒为 0，与鼠标左键判断天然兼容
       // 事件来自悬浮层（选中面板/缩放按钮/性能HUD）时完全忽略：
-      // 否则 mousedown 启动拖拽、mouseup 触发点选命中，点面板按钮会被画布逻辑抢先处理
+      // 否则 pointerdown 启动拖拽、pointerup 触发点选命中，点面板按钮会被画布逻辑抢先处理
       if (e.target !== this.canvas) return;
+      wrap.setPointerCapture(e.pointerId);
+      this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (this._pointers.size === 2) {
+        // 第二根手指落下：从单指拖拽切到双指捏合缩放，记录初始指距与起始 zoom
+        this.isDragging = false;
+        this.dragMoved = true; // 已进入多指手势，抬指时绝不能再当作点选
+        this._pinch = { startDist: this._pinchDist(), startZoom: this.zoom };
+        return;
+      }
+      if (this._pointers.size > 2) return; // 三指及以上不处理，忽略即可
+
       this.isDragging = true;
       this.dragMoved = false;
       this.dragStartX = e.clientX;
@@ -63,7 +96,20 @@ export class CanvasController {
       if (!this._placeMode) wrap.style.cursor = 'grabbing';
     });
 
-    window.addEventListener('mousemove', (e) => {
+    wrap.addEventListener('pointermove', (e) => {
+      if (!this._pointers.has(e.pointerId)) return;
+      this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (this._pointers.size === 2 && this._pinch) {
+        const dist = this._pinchDist();
+        if (dist > 0 && this._pinch.startDist > 0) {
+          const scale = dist / this._pinch.startDist;
+          this.zoom = Math.max(0.15, Math.min(3.0, this._pinch.startZoom * scale));
+          this.updateView();
+        }
+        return;
+      }
+
       if (!this.isDragging) return;
       const dx = e.clientX - this.dragStartX;
       const dy = e.clientY - this.dragStartY;
@@ -81,8 +127,25 @@ export class CanvasController {
       this.updateView();
     });
 
-    window.addEventListener('mouseup', (e) => {
-      if (this.isDragging) {
+    const endPointer = (e) => {
+      if (!this._pointers.has(e.pointerId)) return;
+      this._pointers.delete(e.pointerId);
+      if (this._pointers.size < 2) this._pinch = null;
+
+      if (this._pointers.size === 1) {
+        // 双指捏合中松开一根：用剩下那根手指的当前位置重新起算单指拖拽，
+        // 避免因起点还停留在松开的那根手指位置上而发生画面跳变
+        const p = [...this._pointers.values()][0];
+        this.isDragging = true;
+        this.dragMoved = true; // 前面已经是手势操作，抬起剩余手指不应触发点选
+        this.dragStartX = p.x;
+        this.dragStartY = p.y;
+        this.dragStartOffsetX = this.offsetX;
+        this.dragStartOffsetY = this.offsetY;
+        return;
+      }
+
+      if (this._pointers.size === 0 && this.isDragging) {
         this.isDragging = false;
         // 放置模式下：视为一次点击（未明显拖动）则放置
         if (this._placeMode && !this.dragMoved) {
@@ -98,7 +161,9 @@ export class CanvasController {
           wrap.style.cursor = this._placeMode ? 'crosshair' : 'grab';
         }
       }
-    });
+    };
+    wrap.addEventListener('pointerup', endPointer);
+    wrap.addEventListener('pointercancel', endPointer);
 
     wrap.addEventListener('wheel', (e) => {
       if (e.target !== this.canvas) return; // 面板内滚动是滚面板，不是缩放画布
@@ -127,6 +192,27 @@ export class CanvasController {
       this.zoom = Math.max(0.15, this.zoom - 0.1);
       this.updateView();
     });
+
+    // 全屏按钮：浏览器出于安全策略要求“用户手势”才能进全屏，无法在页面加载时
+    // 自动触发——这也是没装 PWA 时唯一能收起地址栏的办法。按钮态跟随实际全屏状态，
+    // 同时监听 fullscreenchange（系统手势退出全屏时，比如安卓返回键，图标要跟着变回来）。
+    const fsBtn = document.getElementById('fullscreenBtn');
+    if (fsBtn) {
+      const syncFsIcon = () => {
+        fsBtn.textContent = document.fullscreenElement ? '🗗' : '⛶';
+        fsBtn.title = document.fullscreenElement ? '退出全屏' : '全屏（收起浏览器地址栏）';
+      };
+      fsBtn.addEventListener('click', () => {
+        if (document.fullscreenElement) {
+          document.exitFullscreen?.();
+        } else {
+          (document.documentElement.requestFullscreen?.() || Promise.reject())
+            .catch(() => { /* 部分浏览器不支持或被拒绝，静默失败即可，不影响其它功能 */ });
+        }
+      });
+      document.addEventListener('fullscreenchange', syncFsIcon);
+      syncFsIcon();
+    }
   }
 
   // 相机自适应：把 worldW×worldH 的世界完整装进当前画布（留 5% 边距）。

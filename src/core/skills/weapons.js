@@ -11,6 +11,7 @@ import { CONFIG } from '../../data/Config.js';
 export const weapons = {
   weapon_piercing: {
     id: 'weapon_piercing',
+    applicableTypes: ['tower'],
     name: '穿透型子弹',
     icon: '🔷',
     category: 'weapon',
@@ -45,7 +46,11 @@ export const weapons = {
         if (eff.blueprint.name === '穿透' || eff.blueprint.name === '升温') ctx.effectRegistry.remove(eff.id);
       }
     },
-    onHit: (attackerId, targetId, instance, ctx) => {
+    // procMode：'perAttack'——升温本该按"完整一次攻击"叠层，不该按分数攻击的
+    // 每一小份都叠。穿透型自己没有特殊攻击节奏（attackShare 恒为1），这里声明
+    // 只是为了语义正确、以防以后有人给它接上特殊攻击方式。
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive) return;
 
@@ -87,9 +92,11 @@ export const weapons = {
       chargeTimeAtAS1: 12,    // 攻速 1.0 时充满需要几秒（实际 = 本值 / 最终攻速）
       tickPct: 20,            // 每跳伤害 = 攻击力 × 本值%
       tickPerSec: 4,          // 每秒跳几次（独立于攻速）
-      // 攻击特效的每跳修正系数。留空(null)时自动取 1/tickPerSec —— 见 onFrame 里的说明。
-      // 显式填一个数可以让攻击特效相对普通攻击更强/更弱（软编码，编辑器里可改）。
-      onHitScale: null,
+      // 攻击特效的每跳修正系数（现在叫 attackShare——见 CombatSystem._fireOnDealtDamage
+      // 的说明：这个值同时决定"这一下算几分之几次标准攻击"）。
+      // 留空(null)时自动取 1/tickPerSec；显式填一个数可以让攻击特效相对普通攻击
+      // 更强/更弱（软编码，编辑器里可改）。
+      attackShare: null,
       maxMult: 180,           // 满充能伤害倍率（%）
       // v43 Q10：90 → 67（用户定稿："闪电杖改为满充能无视67%防御，剩下不改"）。
       // 与穿透型的削弱同批，避免穿透被砍之后闪电杖独大。
@@ -101,6 +108,7 @@ export const weapons = {
       grievousPct: 40,        // 重伤：满充能时减少目标治疗与护盾强度 −%
     },
     id: 'weapon_lightning',
+    applicableTypes: ['tower'],
     name: '闪电杖 (魔法)',
     icon: '⚡',
     category: 'weapon',
@@ -246,14 +254,19 @@ export const weapons = {
         // ⚠️ "无视防御"只无视【保护性】的那部分：目标双抗/减伤/格挡若是负值，
         // 那是给攻击方的增伤，不能被一起抹掉 —— 这条在 CombatSystem 里实现，
         // 见 performAttackDirect 里 `keepAmp` 那段（用户指出的坑）。
-        // v45：攻击特效按"每跳 × onHitScale"修正（用户定稿）。
+        // v45：攻击特效按"每跳 × attackShare"修正（用户定稿）。
         // 默认 0.25 = 1 / tickPerSec：4 跳合起来正好等于一个 1.0 攻速单位打一下。
         // 写成 `1 / tickPerSec` 而不是写死 0.25 —— 以后谁调了跳数，修正系数自动跟上；
         // 写死的话改跳数就会**静默**把攻击特效放大或缩小，而且没人会想到来改这里。
+        // applyOnHitBonus:true —— 闪电杖是目前唯一需要"攻击特效数值部分按份额并入"
+        // 的调用方（溅射/DOT/龙魂等都不该带，见 CombatSystem.performAttackDirect
+        // 里 applyOnHitBonus 那段说明）。attackShare 同时决定被动判定的节奏，
+        // 两件事分开在 CombatSystem 里处理，这里只管传值，不用关心内部怎么拆。
         ctx.combat.performAttackDirect(entity.id, target.id, tickDamage, 'magic', {
           ignoreDefenseRatio: charge * P.maxPen,
           bonusVsShieldPct: P.bonusVsShieldPct,
-          onHitScale: P.onHitScale ?? (1 / Math.max(1, P.tickPerSec || 4)),
+          attackShare: P.attackShare ?? (1 / Math.max(1, P.tickPerSec || 4)),
+          applyOnHitBonus: true,
         });
         // （v35：满充闪电链弹射已按方案B删除——纯单体，无 AOE）
       }
@@ -298,6 +311,7 @@ export const weapons = {
   weapon_explosive: {
     defaultParams: { splashDmg: 80, radius: 50 },
     id: 'weapon_explosive',
+    applicableTypes: ['tower'],
     name: '爆炸型子弹',
     icon: '💥',
     category: 'weapon',
@@ -316,7 +330,6 @@ export const weapons = {
         entity.baseStats.attackDamage = CONFIG.templates.tower.attackDamage;
       }
     },
-    onHit: () => {},
   },
 
   // （原 weapon_sniper「狙击型」已按用户定稿删除：攻速-33%、伤害随距离 ×0.6~×1.6、
@@ -326,6 +339,7 @@ export const weapons = {
   weapon_corrosion: {
     defaultParams: { tickDamage: 5, tickInterval: 1, maxStacks: 5 },
     id: 'weapon_corrosion',
+    applicableTypes: ['tower'],
     name: '腐蚀型',
     icon: '🌿',
     color: '#7bc96f',
@@ -375,7 +389,7 @@ export const weapons = {
           stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
           descTemplate: `唯一被动——腐蚀·毒素：每秒（【{val}】=攻击力1%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多50层。`,
           description: '毒素（{stacks}/50层）',
-        }, 'weapon_corrosion_poisonA');
+        }, 'weapon_corrosion_poisonA', { casterId: entityId });
 
         // 中毒B：固定真实伤害，最多50层
         ctx.effectRegistry.apply(enemy.id, {
@@ -386,7 +400,7 @@ export const weapons = {
           stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
           descTemplate: '唯一被动——腐蚀·剧毒：每秒（【{val}】=攻击力1%×层数）真实伤害，最多50层。',
           description: '剧毒（{stacks}/50层）',
-        }, 'weapon_corrosion_poisonB');
+        }, 'weapon_corrosion_poisonB', { casterId: entityId });
 
         // 减速（每层7%，上限35% = 5层）—— 独立效果
         ctx.effectRegistry.apply(enemy.id, {
@@ -407,6 +421,5 @@ export const weapons = {
         }, 'weapon_corrosion_atkslow');
       }
     },
-    onHit: () => {},
   },
 };

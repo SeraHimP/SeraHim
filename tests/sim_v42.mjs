@@ -241,7 +241,7 @@ function mkWorld() {
     const A = { id: 1, type: 'melee', alive: true, pos: { x: 0, y: 0 },
                 baseStats: { ...CONFIG.templates.melee, maxHP }, currentHP: curHP, _skillInstances: [] };
     const B = { ...A, id: 2 };
-    def.onHit(1, 2, { state: {}, _params: params }, {
+    def.onDealtDamage(1, 2, { state: {}, _params: params }, {
       entityContainer: { get: (i) => (i === 1 ? A : B) },
       combat: { performAttackDirect: (a, b, d) => dealt.push(d) },
     });

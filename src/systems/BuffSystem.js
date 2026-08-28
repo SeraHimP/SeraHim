@@ -66,7 +66,12 @@ export class BuffSystem {
             timer.timer -= interval;
             const dmg = eff.totalFlat || 0;
             const type = eff.blueprint.damageType || 'magic';
-            this.combat.performAttackDirect(eff.sourceId || 0, entity.id, dmg, type);
+            // Bug 修复：这里以前直接传 eff.sourceId ——sourceId 是 'dragonsoul_poison'
+            // 这种字符串标签，从来查不到实体，效果等同于"这一下没有攻击者"，会让
+            // DOT 杀死巨龙时算不进任何一方的击杀数。casterId 才是真正施加这份 DOT
+            // 的实体 id（见 EffectRegistry.apply 的 casterId 选项）；没有的话（比如
+            // 老存档、或者哪天真出现无来源的环境 DOT）才退回 0，保留原来的兜底。
+            this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type);
           }
         } else {
           if (this.timers.has(eff.id) && eff.remainingTime <= 0) {

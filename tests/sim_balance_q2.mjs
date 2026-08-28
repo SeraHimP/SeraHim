@@ -42,7 +42,7 @@ function rendDamage(attackerHP, params) {
   const B = { ...A, id: 2 };
   const ctx = { entityContainer: { get: (i) => (i === 1 ? A : B) },
                 combat: { performAttackDirect: (a, b, dmg) => dealt.push(dmg) } };
-  def.onHit(1, 2, { state: {}, _params: params }, ctx);
+  def.onDealtDamage(1, 2, { state: {}, _params: params }, ctx);
   return dealt[0] || 0;
 }
 // 与 rendDamage 同一条路径，但当前生命可以与 maxHP 不同（测"残血打得软"）
@@ -53,7 +53,7 @@ function rendDamageAtHP(maxHP, curHP, params) {
   const B = { ...A, id: 2 };
   const ctx = { entityContainer: { get: (i) => (i === 1 ? A : B) },
                 combat: { performAttackDirect: (a, b, dmg) => dealt.push(dmg) } };
-  def.onHit(1, 2, { state: {}, _params: params }, ctx);
+  def.onDealtDamage(1, 2, { state: {}, _params: params }, ctx);
   return dealt[0] || 0;
 }
 const base = CONFIG.templates.melee.maxHP;
@@ -68,7 +68,7 @@ T('地图可把基数机制切回 current（同一技能在不同地图上机制
   Math.abs(rendDamage(base * 3, { pct: 0.04, base: 'current' }) - base * 3 * 0.04) < 1e-6);
 T('屠戮声明了 defaultParams（否则 CombatSystem 不会注入地图覆写）', !!def.defaultParams);
 const combatSrc = fs.readFileSync(new URL('../src/systems/CombatSystem.js', import.meta.url), 'utf8');
-T('地图覆写注入不再局限于 onFrame 技能（屠戮只有 onHit）',
+T('地图覆写注入不再局限于 onFrame 技能（屠戮只有 onDealtDamage）',
   combatSrc.indexOf('_mapOverrides') < combatSrc.indexOf('if (def && def.onFrame)'));
 
 // ---- ⑤ 文案跟着基数走 ----

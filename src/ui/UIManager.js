@@ -268,7 +268,7 @@ export class UIManager {
 
     const fac = entity._mapFaction || entity.faction;
     const ICONS = { 昼夜: '🕓', 熵: '🌀', 龙魂: '🐉' };
-    box.innerHTML = rows.map(r => {
+    box.innerHTML = rows.map((r, i) => {
       const head = r.source.replace(/[ ·].*$/, '').slice(0, 2);
       const icon = ICONS[head] || (r.source.startsWith('熵') ? '🌀' : '🌍');
       // 边框点亮格数 = 这条修正的强弱（0~3）。熵按偏离中性的程度，其余给满。
@@ -291,7 +291,7 @@ export class UIManager {
       // title 里放完整明细：三核构成 + 本方最终加成，"为什么我的属性变了"当场能答
       const tip = `${r.source} — ${r.detail}`.replace(/"/g, '&quot;');
       return `
-        <div class="wx-tri${cls}" title="${tip}">
+        <div class="wx-tri${cls}" data-worldidx="${i}" title="${tip}">
           <svg viewBox="0 0 34 30" class="wx-tri-svg">
             <polygon points="17,3 32,27 2,27" fill="${col}22" stroke="none"/>
             ${edgeHtml}
@@ -299,6 +299,51 @@ export class UIManager {
           <span class="wx-tri-ic">${icon}</span>
         </div>`;
     }).join('');
+
+    // 点击弹窗（用户定稿：应该像天气行一样可点，且窗口 UI 与其它详情窗统一，
+    // 走同一个 shellHtml 外壳，不是另起一套样式）——绑定一次，不随每帧重建
+    box.querySelectorAll('[data-worldidx]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const row = rows[Number(el.dataset.worldidx)];
+        if (row) this._showWorldDetail(row);
+      });
+    });
+  }
+
+  /**
+   * 世界效应详情窗（昼夜/熵/龙魂）——点击 .world-row 里的三角图标弹出。
+   * 用户定稿："窗口 UI 必须统一"：与 _showWeatherDetail 走同一个 shellHtml 外壳，
+   * 只是正文按 WorldState.getBreakdown() 返回的 {source, detail} 简化展示
+   * （World 侧目前没有像天气那样逐项 stat 的 mods 明细，只有一句话总结）。
+   */
+  _showWorldDetail(row) {
+    const old = document.getElementById('worldDetailOverlay');
+    if (old) old.remove();
+
+    const head = row.source.replace(/[ ·].*$/, '').slice(0, 2);
+    const ICONS = { 昼夜: '🕓', 熵: '🌀', 龙魂: '🐉' };
+    const icon = ICONS[head] || '🌍';
+
+    const body = `
+      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${row.detail}</p>
+      <p style="font-size:10px;color:var(--text-mute,#6b7480);line-height:1.6;margin:10px 0 0;">
+        世界效应随昼夜/熵/龙魂的当前状态实时变化，具体数值取决于本方阵营与当前世界状态——
+        点开这个窗口看到的是【当前选中单位】此刻实际吃到的那一份。
+      </p>`;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'worldDetailOverlay';
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = shellHtml({
+      title: `${icon} ${row.source}`,
+      body, crumb: '', width: '480px',
+      footer: '<div class="modal-actions"><button class="wd-detail-close primary">关闭</button></div>',
+    });
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.wd-detail-close').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
   _updateWeatherRow(card, entity) {
@@ -955,7 +1000,7 @@ export class UIManager {
 
     // 技能栏（diff式渲染，避免每帧重建导致点击失效）
     const skillContainer = card.querySelector(`#tower-skills-${id}`);
-    this._updateSkillSlots(skillContainer, tower._skillInstances || []);
+    this._updateSkillSlots(skillContainer, tower._skillInstances || [], tower);
 
     // 效果栏（diff式渲染）
     const effectsContainer = card.querySelector(`#tower-effects-${id}`);
@@ -1050,7 +1095,7 @@ export class UIManager {
 
     // 技能栏（diff式渲染）
     const skillContainer = card.querySelector(`#minion-skills-${id}`);
-    this._updateSkillSlots(skillContainer, minion._skillInstances || []);
+    this._updateSkillSlots(skillContainer, minion._skillInstances || [], minion);
 
     // 效果栏（diff式渲染）
     const effectsContainer = card.querySelector(`#minion-effects-${id}`);

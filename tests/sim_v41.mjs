@@ -351,8 +351,10 @@ function unit(ents, o = {}) {
     Math.abs(resolveDayPhase(240, {}, true).phase - 0.5) < 1e-9);
   T('DayNight.js 里不再有写死的 360',
     !/DAY_PERIOD = 360/.test(fs.readFileSync('src/presentation/DayNight.js', 'utf8')));
-  T('设置面板里有入口（软编码必须可改）',
-    /dayPeriodSec/.test(fs.readFileSync('src/ui/SettingsDialog.js', 'utf8')));
+  // 2026-08 用户定稿："设置窗口只留系统设置"——dayPeriodSec 的入口搬到
+  // "游戏性→熵"页（pagesGameplayWorld.js），设置面板不再管这个。
+  T('入口搬到"游戏性→熵"（软编码必须可改，不是这条入口本身消失了）',
+    /dayPeriodSec/.test(fs.readFileSync('src/ui/editor/pagesGameplayWorld.js', 'utf8')));
 }
 
 // ==================== 八、植被：摆在墙顶，不是埋在墙里 ====================

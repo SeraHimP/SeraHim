@@ -92,6 +92,8 @@ export const EDITOR_OPEN = {
     if (type === 'tower') return 'tower';
     if (type === 'dragon') return 'dragon';
     if (type === 'skill' || type === 'skillparam') return 'skillparam';
+    if (type === 'bsize' || type === 'wave' || type === 'skillgrant' || type === 'stategrant'
+      || type === 'dragonstate' || type === 'weather' || type === 'entropy') return type;
     return 'minion';
   },
 
@@ -240,6 +242,16 @@ export const EDITOR_OPEN = {
     param:      { label: '技能数值',   icon: '✨', faction: false, apply: false, action: 'apply',   writes: '技能全局覆写' },
     bsize:      { label: '建筑体积',   icon: '🏗️', faction: false, apply: false, action: 'apply',   writes: '建筑体积' },
     dragonrule: { label: '刷新与强度', icon: '🐲', faction: false, apply: false, action: 'apply',   writes: '巨龙节奏与曲线' },
+    // ==================== 游戏性（用户定稿：设置窗口只留系统设置，
+    // 影响对局数值/规则的全部集中到这里）====================
+    // skillgrant/stategrant 自己画阵营×类型矩阵，不复用顶部那条通用的阵营筛选条
+    // （矩阵本身就是更细的阵营选择，画两套会打架），faction 因此是 false；
+    // apply 复用现成的模板/场上/两者三态，不用再造一套。
+    skillgrant: { label: '批量加技能', icon: '⚔️', faction: false, apply: true,  action: 'apply',   writes: '技能装配' },
+    stategrant: { label: '批量加状态', icon: '🧪', faction: false, apply: true,  action: 'apply',   writes: '状态效果' },
+    dragonstate:{ label: '巨龙与龙魂', icon: '🐲', faction: false, apply: false, action: 'instant', writes: '' },
+    weather:    { label: '天气',       icon: '🌦️', faction: false, apply: false, action: 'instant', writes: '' },
+    entropy:    { label: '熵',         icon: '🌀', faction: false, apply: false, action: 'instant', writes: '' },
   },
 
   // 每个大类有哪几页（数组顺序 = 页签顺序）。
@@ -251,9 +263,14 @@ export const EDITOR_OPEN = {
       case 'tower':      return ['attr', 'weapon', 'skill', 'effect', 'soul'];
       case 'minion':     return ['attr', 'skill', 'effect', 'growth', 'sandbox'];
       case 'dragon':     return ['attr', 'dragonrule'];
-      case 'wave':       return ['wave'];
       case 'skillparam': return ['param'];
       case 'bsize':      return ['bsize'];
+      case 'skillgrant': return ['skillgrant'];
+      case 'stategrant': return ['stategrant'];
+      case 'dragonstate':return ['dragonstate'];
+      case 'weather':    return ['weather'];
+      case 'entropy':    return ['entropy'];
+      case 'wave':       return ['wave'];
       default:           return ['attr'];
     }
   },
@@ -269,9 +286,19 @@ export const EDITOR_OPEN = {
         { key: 'dragon', label: '🐉 巨龙' },
       ] },
       { title: '全局规则', items: [
-        { key: 'wave',       label: '🧬 出兵编排' },
         { key: 'skillparam', label: '✨ 技能数值' },
         { key: 'bsize',      label: '🏗️ 建筑体积' },
+      ] },
+      // 用户定稿："设置窗口里应该只包含对该系统的设置，而不包含游戏性的设置。
+      // 所有游戏性的设置都整合到这里。" ——出兵编排从"全局规则"移过来，
+      // 巨龙状态/龙魂管理、天气、熵三块原来散在设置面板里，现在也收进来。
+      { title: '游戏性', items: [
+        { key: 'wave',        label: '🧬 出兵编排' },
+        { key: 'skillgrant',  label: '⚔️ 批量加技能' },
+        { key: 'stategrant',  label: '🧪 批量加状态' },
+        { key: 'dragonstate', label: '🐲 巨龙与龙魂' },
+        { key: 'weather',     label: '🌦️ 天气' },
+        { key: 'entropy',     label: '🌀 熵' },
       ] },
     ];
   },

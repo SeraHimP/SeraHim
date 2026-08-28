@@ -229,6 +229,11 @@ export const EDITOR_SHELL = {
       case 'param':      return this._renderSkillParamsContent();
       case 'bsize':      return this._renderBuildingSizeContent();
       case 'dragonrule': return this._renderDragonRuleContent();
+      case 'skillgrant': return this._renderGameplaySkillGrantContent();
+      case 'stategrant': return this._renderGameplayStateGrantContent();
+      case 'dragonstate':return this._renderGameplayDragonContent();
+      case 'weather':    return this._renderGameplayWeatherContent();
+      case 'entropy':    return this._renderGameplayEntropyContent();
       default:           return '';
     }
   },
@@ -246,6 +251,11 @@ export const EDITOR_SHELL = {
       case 'soul':   this._bindTemplateSoulEvents(overlay, type, logFn); break;
       case 'wave':   this._bindWaveOrderEvents(overlay, logFn); break;
       case 'param':  this._bindSkillParamsEvents(overlay, logFn, returnCallback); break;
+      case 'skillgrant': this._bindGameplaySkillGrantEvents(overlay, logFn); break;
+      case 'stategrant': this._bindGameplayStateGrantEvents(overlay, logFn); break;
+      case 'dragonstate': this._bindGameplayDragonEvents(overlay, logFn); break;
+      case 'weather': this._bindGameplayWeatherEvents(overlay, logFn); break;
+      case 'entropy': this._bindGameplayEntropyEvents(overlay, logFn); break;
       default: break;   // growth / sandbox / bsize / dragonrule 只有输入框，点应用时统一读
     }
   },
@@ -262,6 +272,10 @@ export const EDITOR_SHELL = {
       case 'param':      this._applySkillParamsChanges(overlay, logFn); break;
       case 'bsize':      this._applyBuildingSizeChanges(overlay, logFn); break;
       case 'dragonrule': this._applyDragonRuleChanges(overlay, logFn); break;
+      case 'skillgrant': this._applyGameplaySkillGrantChanges(overlay, logFn); break;
+      case 'stategrant': this._applyGameplayStateGrantChanges(overlay, logFn); break;
+      case 'weather':    this._applyGameplayWeatherChanges(overlay, logFn); break;
+      case 'entropy':    this._applyGameplayEntropyChanges(overlay, logFn); break;
       default: break;
     }
   },

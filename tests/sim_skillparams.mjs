@@ -91,7 +91,7 @@ T(`目标技能声明了 defaultParams（${Object.keys(DEF).join(',')}）`, Obje
 {
   reset();
   const bare = Object.entries(SkillLibrary).find(([id, d]) =>
-    d && typeof d === 'object' && d.id && !d.defaultParams && (d.onFrame || d.onHit));
+    d && typeof d === 'object' && d.id && !d.defaultParams && (d.onFrame || d.onDealtDamage));
   if (bare) {
     const [bid] = bare;
     CONFIG.skillOverrides[bid] = { __probe: 7 };
@@ -107,7 +107,7 @@ T(`目标技能声明了 defaultParams（${Object.keys(DEF).join(',')}）`, Obje
 {
   reset();
   const noParam = Object.entries(SkillLibrary).find(([id, d]) =>
-    d && typeof d === 'object' && d.id && !d.defaultParams && (d.onFrame || d.onHit));
+    d && typeof d === 'object' && d.id && !d.defaultParams && (d.onFrame || d.onDealtDamage));
   if (noParam) {
     const { combat, inst } = mk(noParam[0]);
     combat.update(1 / 30);

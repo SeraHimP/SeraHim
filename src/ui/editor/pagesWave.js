@@ -167,8 +167,9 @@ export const EDITOR_PAGES_WAVE = {
         ${rows}</table>
       <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">
         首条远古龙：生命 ${anc.maxHP}／双抗 ${anc.armor}／攻击 ${anc.attackDamage}。
-        元素龙共 ${CONFIG.gameRules.elementDragonTotal ?? 6} 条，
-        某方击杀 ≥ ${CONFIG.gameRules.dragonSoulThreshold ?? 4} 条才成魂，都不到则无魂。</div>
+        成魂规则：任意一方先攒到 ${CONFIG.gameRules.dragonSoulThreshold ?? 4} 条元素龙击杀
+        即刻成魂（先到先得），并列时取击杀最多的元素——不是"打完一批统一结算"。
+        更细的双方进度/龙魂管理见「游戏性→巨龙与龙魂」页。</div>
     </div>`;
     return html;
   },
@@ -361,14 +362,44 @@ export const EDITOR_PAGES_WAVE = {
     const list = this._woList(false);
     const types = this._TPL_MINION_TYPES;
     const EN = gr.spawnEnabled || {};
+    const app = window.CTX?.__app || window.__app;
+    const mapSystem = app?.mapSystem, waveSystem = app?.waveSystem, laneWaveSystem = app?.laneWaveSystem;
 
     const cell = (rule, i, key, min, step) =>
       `<input type="number" class="wo-field" data-idx="${i}" data-field="${key}" min="${min}" step="${step}"
               value="${rule[key] ?? ''}" placeholder="${key === 'count' ? 1 : (key === 'everyN' ? 1 : 0)}">`;
 
+    // 用户定稿："设置窗口只留系统设置，游戏性设置整合到模板编辑器里"——
+    // 小兵波次的运行时控制（暂停/立即下一波/间隔秒数）原来在设置面板的"波次"tab，
+    // 现在搬到这里，紧挨着它管的这份编排数据，不再和流程/画质那些纯系统设置混在一起。
+    const runtime = mapSystem?.active ? `
+      <div class="editor-section">
+        <h4>⚔️ 对战模式 · 运行时控制</h4>
+        <div class="slider-row"><label>双方波次生成</label>
+          <button id="woToggleLaneWaveBtn" style="flex:1;">${laneWaveSystem?.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
+          <button id="woSkipLaneWaveBtn" style="flex:1;">⏭ 立即下一波</button>
+        </div>
+        <div class="slider-row"><label>波次生成间隔（秒）</label>
+          <input type="number" id="woLaneWaveInterval" class="editor-number" value="${laneWaveSystem?.waveInterval || 30}" min="5" step="1">
+        </div>
+      </div>` : `
+      <div class="editor-section">
+        <h4>🗺️ 沙盒模式 · 运行时控制</h4>
+        <div class="slider-row"><label>小兵波次生成</label>
+          <button id="woToggleWaveBtn" style="flex:1;">${waveSystem?.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
+          <button id="woSkipWaveBtn" style="flex:1;">⏭ 立即下一波</button>
+        </div>
+        <div class="slider-row"><label>波次间隔（秒）</label>
+          <input type="number" id="woWaveInterval" class="editor-number" value="${CONFIG.gameRules.waveInterval || 45}" min="5" step="1">
+        </div>
+        <div class="slider-row"><label>重置波次</label>
+          <button id="woResetWaveBtn" style="flex:1;">🔄 重置到第0波</button>
+        </div>
+      </div>`;
+
     // P2：出兵的一切都收在这一个 tab 里，但【必须】按模式分区并写明各自管谁 ——
     // 两套规则同屏而不标注模式，正是用户说的"冲突或者是重合"。
-    let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
+    let html = runtime + `<div class="pick-desc-box" style="margin-bottom:10px;">
       🧬 <b>对战模式</b>出什么兵、按什么顺序出，全在这一页。分两段：<br>
       　<b>① 兵种总开关</b>　对<b>沙盒+对战</b>都生效，关掉的兵种下面怎么排都不会出。<br>
       　<b>② 对战编排</b>　只管<b>对战模式</b>：数组顺序 = 出兵先后。<br>
@@ -554,6 +585,51 @@ export const EDITOR_PAGES_WAVE = {
       this._bindWaveOrderEvents(overlay, logFn);
     };
     this._bindSpawnToggles(overlay, logFn, rerender);
+    // 运行时控制（暂停/立即下一波/间隔）：从设置面板搬过来，行为逐位不变。
+    const app = window.CTX?.__app || window.__app;
+    const waveSystem = app?.waveSystem, laneWaveSystem = app?.laneWaveSystem;
+    overlay.querySelector('#woToggleWaveBtn')?.addEventListener('click', () => {
+      waveSystem.paused = !waveSystem.paused;
+      logFn(waveSystem.paused ? '⏸ 小兵波次已暂停' : '▶ 小兵波次已恢复', 'spawn');
+      rerender();
+    });
+    overlay.querySelector('#woSkipWaveBtn')?.addEventListener('click', () => {
+      waveSystem.skipToNextWave();
+      logFn('⏭ 跳过等待', 'spawn');
+    });
+    overlay.querySelector('#woWaveInterval')?.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      if (!isNaN(v) && v > 0) {
+        CONFIG.gameRules.waveInterval = v;
+        if (waveSystem.nextWaveTime > v) waveSystem.nextWaveTime = v;
+        logFn(`✅ 小兵波次间隔已设为 ${v}秒`, 'spawn');
+      }
+    });
+    overlay.querySelector('#woResetWaveBtn')?.addEventListener('click', () => {
+      if (confirm('重置波次到第0波？')) {
+        window.waveNumber = 0;
+        waveSystem.waveNumber = 0;
+        waveSystem.nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
+        logFn('🔄 波次已重置', 'spawn');
+        rerender();
+      }
+    });
+    overlay.querySelector('#woToggleLaneWaveBtn')?.addEventListener('click', () => {
+      laneWaveSystem.paused = !laneWaveSystem.paused;
+      logFn(laneWaveSystem.paused ? '⏸ 对战模式波次已暂停' : '▶ 对战模式波次已恢复', 'spawn');
+      rerender();
+    });
+    overlay.querySelector('#woSkipLaneWaveBtn')?.addEventListener('click', () => {
+      if (laneWaveSystem) { laneWaveSystem.nextWaveTime = 0; logFn('⏭ 对战模式：立即生成下一波', 'spawn'); }
+    });
+    overlay.querySelector('#woLaneWaveInterval')?.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      if (!isNaN(v) && v > 0 && laneWaveSystem) {
+        laneWaveSystem.waveInterval = v;
+        if (laneWaveSystem.nextWaveTime > v) laneWaveSystem.nextWaveTime = v;
+        logFn(`✅ 对战模式波次间隔已设为 ${v}秒`, 'spawn');
+      }
+    });
     // 结构性操作（上下移/删/加/恢复默认）即点即改数组并重绘；
     // 重绘前先把当前所有输入框的值收回数组，否则移动一行会把没点应用的编辑丢掉。
     const flush = () => this._readWaveOrderInputs(overlay);

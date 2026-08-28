@@ -50,6 +50,7 @@ export const dragonSouls = {
   // ==================== 🔥 炎魂：攻击附带溅射（8s CD）====================
   dragonsoul_fire: {
     id: 'dragonsoul_fire', name: '炎魂', icon: '🔥', color: '#e74c3c', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('fire');
       const cd = p.cooldown ?? 0;
@@ -62,6 +63,10 @@ export const dragonSouls = {
     },
     computeCurrent: () => `${P('fire').pct ?? 30}%`,
     effects: [],
+    // procMode 用默认的 'always'（不声明）——用户定稿：炎魂的溅射要"跟手"，
+    // 闪电杖每 0.25 秒一跳就该溅射一次、每次按那一跳自己的 totalRaw 算 pct%。
+    // 这天然就是对的：不节流、不累加，4 跳各自结算，累计起来正好等于一次
+    // 完整攻击的溅射总量，不需要额外处理——这正是 'always' 存在的意义。
     onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('fire');
       // v44：cooldown 为 0 时**不走冷却门**（常驻溅射）。
@@ -83,6 +88,7 @@ export const dragonSouls = {
   // ==================== 🌊 潮魂：攻击后回复 + 治疗强度（8s CD）====================
   dragonsoul_water: {
     id: 'dragonsoul_water', name: '潮魂', icon: '🌊', color: '#3498db', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('water');
       return `攻击后回复自身【已损生命】的 ${p.healMissingPct ?? 8}%，并获得 ${p.powerPct ?? 25}% 治疗与护盾强度（持续 ${p.buffSec ?? 5} 秒），冷却 ${p.cooldown ?? 8} 秒。`;
@@ -97,6 +103,11 @@ export const dragonSouls = {
       return Math.round(missing * ((P('water').healMissingPct ?? 8) / 100));
     },
     effects: [],
+    // procMode：'perAttack'——回血/冷却检查按"完整一次攻击"判定一次，不是分帧
+    // 攻击的每一小份都各查一次冷却。这条本身不读 ctx.totalRaw（回血基数是自己的
+    // 已损生命，不是伤害值），声明这个只是为了跟雷魂/暗魂/毒魂那一类保持同一套
+    // 频率语义，不是因为它本身会被数值上的累加影响。
+    procMode: 'perAttack',
     onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('water');
       if (!offCooldown(instance, p.cooldown ?? 8)) return;
@@ -124,6 +135,7 @@ export const dragonSouls = {
   //（我第一版方案写的就是 7，用户选了方案 A 砍到 2）。这个数不要再往上调。
   dragonsoul_earth: {
     id: 'dragonsoul_earth', name: '山魂', icon: '🗿', color: '#95a5a6', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('earth');
       return `获得 ${p.damageReduction ?? 33}% 伤害减免与 ${p.damageBlock ?? 2} 点伤害格挡。`;
@@ -160,6 +172,7 @@ export const dragonSouls = {
   // ==================== ⚡ 雷魂：连锁真实伤害，最多 6 个敌人均摊（8s CD）====================
   dragonsoul_thunder: {
     id: 'dragonsoul_thunder', name: '雷魂', icon: '⚡', color: '#f1c40f', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('thunder');
       return `攻击附带连锁：对附近最多 ${p.targets ?? 6} 个敌人**各**造成 ${p.perTargetPct ?? 35}% 真实伤害，冷却 ${p.cooldown ?? 8} 秒。`;
@@ -170,6 +183,13 @@ export const dragonSouls = {
     },
     computeCurrent: () => `${P('thunder').perTargetPct ?? 35}%`,
     effects: [],
+    // procMode：'perAttack'——关键修复点。这条**依赖 ctx.totalRaw** 算连锁伤害
+    // （per = totalRaw × pct%）。闪电杖每跳只有约 1/4 攻击的伤害，之前这里没声明
+    // procMode 时走的是旧的"每次伤害都判、伤害基数用当次"，冷却虽然对（8秒真实
+    // 冷却兜底），但触发那一下的 totalRaw 只是某一跳的量，威力被削到约四分之一。
+    // 声明 'perAttack' 后，触发时 ctx.totalRaw 会是"攒够一次完整攻击"期间的
+    // 累计伤害，威力恢复正常；普通攻击（attackShare 恒为1）不受影响，逐位不变。
+    procMode: 'perAttack',
     onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('thunder');
       if (!offCooldown(instance, p.cooldown ?? 8)) return;
@@ -191,6 +211,7 @@ export const dragonSouls = {
   // ==================== 🌪 风魂：全体移速；塔攻速 ====================
   dragonsoul_wind: {
     id: 'dragonsoul_wind', name: '风魂', icon: '🌪', color: '#1abc9c', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('wind');
       const mv = p.moveSpeedPct ?? 0;
@@ -255,6 +276,7 @@ export const dragonSouls = {
   // ==================== 🌑 暗魂：命中削双抗（全队共享层数）====================
   dragonsoul_dark: {
     id: 'dragonsoul_dark', name: '暗魂', icon: '🌑', color: '#8e44ad', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('dark');
       const st = p.steal !== false ? '，并为自己**偷取等量**双抗' : '';
@@ -267,7 +289,10 @@ export const dragonSouls = {
     },
     computeCurrent: () => `-${P('dark').maxFlat ?? 30} / -${P('dark').maxPct ?? 15}%`,
     effects: [],
-    onHit: (attackerId, targetId, instance, ctx) => {
+    // procMode：'perAttack'——按"完整一次攻击"叠一层（用户定稿："当成攻速为1的
+    // 武器，每1秒叠一次层"），不是特殊攻击方式的每一小份伤害都叠一次。
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('dark');
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive) return;
@@ -318,6 +343,7 @@ export const dragonSouls = {
   // ==================== ☠️ 毒魂：命中叠中毒，无限叠加 ====================
   dragonsoul_poison: {
     id: 'dragonsoul_poison', name: '毒魂', icon: '☠️', color: '#27ae60', category: 'dragonsoul',
+    applicableTypes: ['tower'],
     get description() {
       const p = P('poison');
       return `攻击对敌方施加一层中毒：每层每秒造成目标 ${p.pctPerStack ?? 0.4}% 最大生命的魔法伤害，`
@@ -330,7 +356,9 @@ export const dragonSouls = {
     },
     computeCurrent: () => `${P('poison').pctPerStack ?? 0.4}%`,
     effects: [],
-    onHit: (attackerId, targetId, instance, ctx) => {
+    // procMode：'perAttack'——同上，命中叠层按"完整一次攻击"算一次。
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('poison');
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive) return;
@@ -354,7 +382,7 @@ export const dragonSouls = {
         stackKey: 'dragonsoul_poison',
         descTemplate: '唯一被动——腐毒：每秒（【{val}】）魔法伤害，{stacks} 层。',
         description: '腐毒（{stacks}层）',
-      }, 'dragonsoul_poison');
+      }, 'dragonsoul_poison', { casterId: attackerId });
     },
   },
 
@@ -365,6 +393,7 @@ export const dragonSouls = {
   // 恰好克制山魂/光魂/潮魂这三条防守型龙魂。
   dragonsoul_ancient: {
     id: 'dragonsoul_ancient', name: '远古之力', icon: '🐲', color: '#e67e22', category: 'dragonsoul',
+    applicableTypes: ['tower', 'dragon'],
     get description() {
       const p = P('ancient');
       return `对生命低于最大值 ${p.executeAtPct ?? 20}% 的敌方单位额外造成其 ${p.executePct ?? 20}% 最大生命的真实伤害（处决）。持续 ${p.durationSec ?? 240} 秒。`;
@@ -375,7 +404,16 @@ export const dragonSouls = {
     },
     computeCurrent: () => `${P('ancient').executePct ?? 20}%`,
     effects: [],
-    onHit: (attackerId, targetId, instance, ctx) => {
+    // Bug 修复：原来挂在 onHit 上。CombatSystem 里 onHit 只在 performAttack（普攻）
+    // 路径触发；闪电杖/腐蚀等武器的伤害走 performAttackDirect，那条路径只触发
+    // onDealtDamage，从来不碰 onHit —— 所以远古之力的斩杀对闪电杖等于完全没接上，
+    // 不是"判定不准"，是这个 tick 里代码从没跑过。
+    // 改成 onDealtDamage 后两条路径都能触发。procMode 用默认的 'always'（不声明）：
+    // 每次伤害都直接用当次数值判定是否够斩杀线——这本来就该"这一下伤害结算完就
+    // 立刻查"，不需要等攒够一次完整攻击（那是 'perAttack' 的语义，给雷魂/暗魂/
+    // 毒魂那类"计次/叠层"型被动用的，见 CombatSystem._fireOnDealtDamage 的说明）。
+    // 闪电杖的分帧攻击因此每跳都会各自检定一次，比等一整秒才判一次更贴近直觉。
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('ancient');
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive || !ctx.combat) return;
@@ -383,7 +421,7 @@ export const dragonSouls = {
       const maxHP = stats.maxHP || 0;
       if (maxHP <= 0) return;
       if ((target.currentHP || 0) > maxHP * ((p.executeAtPct ?? 20) / 100)) return;
-      // _noProc：处决伤害不再触发 onHit，否则会与自己递归
+      // _noProc：处决伤害不再触发 onDealtDamage，否则会与自己递归
       ctx.combat.performAttackDirect(attackerId, targetId,
         maxHP * ((p.executePct ?? 20) / 100), 'true', { _noProc: true });
     },

@@ -15,9 +15,16 @@ export const DRAGON_DEFAULTS = {
   ancientFirstDelay: 300,
   ancientInterval: 600,
   curve: {
-    maxHP:        { base: 1200, step: 600,     knee: 4, lateStep: 500, cap: null },
-    resist:       { base: -40,  step: 80,      knee: 4, lateStep: 30,  cap: 500 },
-    attackDamage: { base: 23,   step: 229 / 3, knee: 4, lateStep: 60,  cap: null },
+    // 用户定稿：上调前期龙强度——起始值(base)整体调高。
+    // 攻击力这次单独给了 3 个校准点（第1/4/8条=102/270/500），按这三点反解
+    // 出 step/lateStep：knee=4 时 step=(270-102)/3=56，lateStep=(500-270)/4=57.5——
+    // 两段增幅接近持平（56→57.5），不是明显收窄的"上升幅度下降"，因为这条曲线
+    // 引擎只支持两段折线（base+step 到 knee，之后换 lateStep），三个点里只要
+    // 中间那个不在正中央，两段斜率就很难差很多；如果要更明显的减速增长需要
+    // 三段式或非线性曲线，那是另一次改动，这次先按给定的三个校准点原样实现。
+    maxHP:        { base: 1600, step: 600,     knee: 4, lateStep: 500, cap: null },
+    resist:       { base: -15,  step: 80,      knee: 4, lateStep: 30,  cap: 500 },
+    attackDamage: { base: 102,  step: 56,      knee: 4, lateStep: 57.5, cap: null },
   },
   ancient: { hpMult: 1.15, resistAdd: 40, adMult: 1.1 },
 };

@@ -129,7 +129,7 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('Q2③-锁定目标死亡后解除锁定', combat.siegeAcquire(ram, foe) === foe && !ram._ramLockId);
 }
 {
-  const { ents, combat } = world();
+  const { ents, combat, fx } = world();
   const def = SkillLibrary.passive_siege_weapon;
   const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
   const tw = mk(ents, 'tower', { faction: 'red', x: 100 });
@@ -138,8 +138,12 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 
   const asVsTower = combat.finishAttack(ram, tw, 1.0);
   T('Q2④-打建筑时攻速按被动的倍率下降', Math.abs(asVsTower - def.TOWER_ATKSPD_MULT) < 1e-9);
-  T('Q2④-打建筑时自损（比例取自被动定义）',
-    Math.abs((hp0 - ram.currentHP) - ram.baseStats.maxHP * def.SELF_DAMAGE_PCT) < 1);
+  // 2026-08 用户定稿改动：自损（扣血）换成永久叠加的攻速衰减，血量不再受影响。
+  T('Q2④-打建筑时不再自损血量（改成攻速衰减debuff，见下）', ram.currentHP === hp0);
+  T('Q2④-打建筑叠一层"攻城疲惫"（攻速-25%，见 def.SIEGE_FATIGUE_AS_PCT）', (() => {
+    const eff = fx.getEffects(ram.id).find(e => e.blueprint.name === '攻城疲惫');
+    return !!eff && eff.stacks === 1 && eff.blueprint.perStackFlat === def.SIEGE_FATIGUE_AS_PCT;
+  })());
 
   const hp1 = ram.currentHP;
   const asVsMinion = combat.finishAttack(ram, foe, 1.0);
@@ -153,25 +157,58 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     && combat.siegeAcquire(plain, tw) === tw && !plain._ramLockId);
 }
 {
-  // 自损致死：用户定稿"照常生效，接受自杀"
-  const { ents, combat, bus } = world();
+  // 2026-08 用户定稿改动：自损换成永久叠加的攻速衰减，不会再出现"打到自尽"。
+  // 验证：打很多次，车始终存活、层数一直累加、攻速被压到下限附近但从不致死。
+  const { ents, combat, bus, fx } = world();
   const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
   const tw = mk(ents, 'tower', { faction: 'red', x: 100 });
   let died = null;
   bus.on('entity:death', ({ entityId }) => { died = entityId; });
+  for (let i = 0; i < 50; i++) combat.finishAttack(ram, tw, 1.0);
+  const eff = fx.getEffects(ram.id).find(e => e.blueprint.name === '攻城疲惫');
+  T('Q2⑦-永久叠层：打 50 次车不会死、层数封顶在 maxStacks',
+    ram.alive === true && died === null && !!eff && eff.stacks === Math.min(50, eff.blueprint.maxStacks || 999));
+  T('Q2⑦-攻速被压到引擎下限附近（calcAttackSpeed 有 0.05 的硬下限，不会变成负数/清零）',
+    attr.calcAttackSpeedOf(attr.calc(ram, fx.getEffects(ram.id))) >= 0.05);
+}
+{
+  // 破甲重击：每座塔独立 900 秒冷却（冷却状态钉在塔身上，不是车身上）
+  const { ents, combat, fx } = world();
   const def = SkillLibrary.passive_siege_weapon;
-  const hits = Math.ceil(1 / def.SELF_DAMAGE_PCT);
-  for (let i = 0; i < hits && ram.alive; i++) combat.finishAttack(ram, tw, 1.0);
-  T(`Q2⑦-自损 ${(def.SELF_DAMAGE_PCT * 100)}%/次 → ${hits} 下自尽（用户定稿：接受自杀）`,
-    ram.alive === false && died === ram.id);
+  const ram = mk(ents, 'ram', { faction: 'blue', skills: ['passive_siege_weapon'] });
+  const tw1 = mk(ents, 'tower', { faction: 'red', x: 100, stats: { maxHP: 4000 } });
+  tw1.currentHP = 2000; // 当前生命 2000，10% = 200，一半真伤一半物理
+  const tw2 = mk(ents, 'tower', { faction: 'red', x: 200, stats: { maxHP: 4000 } });
+  tw2.currentHP = 1000;
+
+  window.gameTime = 0;
+  const hpBefore = tw1.currentHP;
+  combat.finishAttack(ram, tw1, 1.0);
+  const dealt = hpBefore - tw1.currentHP;
+  T('Q2⑨-破甲重击：冷却好时命中额外造成当前生命 10%（物理那一半还要过双抗，取个宽松下限校验）',
+    dealt > 0 && dealt <= hpBefore * (def.SLAM_CURRENT_HP_PCT / 100) + 1e-6);
+  T('Q2⑨-命中后把这座塔的冷却钉到 900 秒后', tw1._ramSlamCooldownUntil === 900);
+
+  const hpAfter1 = tw1.currentHP;
+  combat.finishAttack(ram, tw1, 1.0); // 冷却内再打一次
+  T('Q2⑨-冷却内再打同一座塔，不再重复触发', tw1.currentHP === hpAfter1);
+
+  const hpBefore2 = tw2.currentHP;
+  combat.finishAttack(ram, tw2, 1.0); // 另一座塔独立冷却，应正常触发
+  T('Q2⑨-换一座塔（独立冷却，不共享）照样触发', tw2.currentHP < hpBefore2);
+
+  window.gameTime = 900;
+  const hpAfter3 = tw1.currentHP;
+  combat.finishAttack(ram, tw1, 1.0); // 900 秒后冷却结束，应再次触发
+  T('Q2⑨-900 秒后冷却结束，同一座塔可以再次触发', tw1.currentHP < hpAfter3);
 }
 {
   // 两条攻击路径都调同一份（这条是本次 bug 的形状：实现只在其中一条路上）
   const cs = srcOf('src/systems/CombatSystem.js');
   const lms = srcOf('src/systems/LaneMovementSystem.js');
   T('Q2⑧-规则只有一份：常量只在 CombatSystem 里读',
-    cs.includes('TOWER_ATKSPD_MULT') && cs.includes('SELF_DAMAGE_PCT')
-    && !lms.includes('TOWER_ATKSPD_MULT') && !lms.includes('SELF_DAMAGE_PCT'));
+    cs.includes('TOWER_ATKSPD_MULT') && cs.includes('SIEGE_FATIGUE_AS_PCT')
+    && !lms.includes('TOWER_ATKSPD_MULT') && !lms.includes('SIEGE_FATIGUE_AS_PCT'));
   T('Q2⑧-对战路径（LaneMovementSystem）调它',
     lms.includes('this.combat.siegeAcquire(') && lms.includes('this.combat.finishAttack('));
   T('Q2⑧-沙盒路径（CombatSystem 小兵循环）也调它',
@@ -265,25 +302,31 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 }
 
 // ==================== 六、巨龙设置面板 ====================
+// 2026-08 用户定稿："设置窗口只留系统设置，游戏性设置整合到模板编辑器里"——
+// 整块搬到 pagesGameplayWorld.js（游戏性→巨龙与龙魂），方法名/按钮 id 跟着变了，
+// 但下面 7 条断言各自对应的能力都还在，逐条改成查新文件。
 {
-  const sd = srcOf('src/ui/SettingsDialog.js');
+  const gw = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  const wr = srcOf('src/ui/editor/pagesWave.js'); // 刷新节奏/强度曲线仍在"巨龙→刷新与强度"页
   T('巨龙①-面板渲染与事件绑定成对存在',
-    /_dragonPanelHtml\(ds, ents\)/.test(sd) && /_bindDragonEvents\(overlay, ds, ents, logFn, render\)/.test(sd));
-  T('巨龙②-面板真的被调用（不是写了个没人用的方法）',
-    /SettingsDialog\._dragonPanelHtml\(dragonSystem, entityContainer\)/.test(sd)
-    && /SettingsDialog\._bindDragonEvents\(overlay, dragonSystem, entityContainer, logFn, render\)/.test(sd));
-  T('巨龙③-节奏输入写回 CONFIG，不再是写倒计时剩余值',
-    /CONFIG\.gameRules\.dragon\.elementIntervals = \[v\]/.test(sd)
-    && /CONFIG\.gameRules\.dragon\[k\] = v/.test(sd));
+    /_renderGameplayDragonContent\(\)/.test(gw) && /_bindGameplayDragonEvents\(overlay, logFn\)/.test(gw));
+  T('巨龙②-面板真的被接到模板编辑器的分发上（不是写了个没人用的方法）',
+    /case 'dragonstate':return this\._renderGameplayDragonContent\(\);/.test(srcOf('src/ui/editor/shell.js'))
+    && /case 'dragonstate': this\._bindGameplayDragonEvents\(overlay, logFn\); break;/.test(srcOf('src/ui/editor/shell.js')));
+  T('巨龙③-刷新节奏输入写回 CONFIG（在"巨龙→刷新与强度"页，与本面板分开但同样可编辑）',
+    /_applyDragonRuleChanges/.test(wr) && /CONFIG\.gameRules\.dragon = CONFIG\.gameRules\.dragon/.test(wr));
   T('巨龙④-有生成/效果两个独立开关（对应 CONFIG.dragonToggles 的两项）',
-    /CONFIG\.dragonToggles\.spawn/.test(sd) && /CONFIG\.dragonToggles\.effect/.test(sd));
+    /CONFIG\.dragonToggles\.spawn = CONFIG\.dragonToggles\.spawn === false/.test(gw)
+    && /CONFIG\.dragonToggles\.effect = CONFIG\.dragonToggles\.effect === false/.test(gw));
   T('巨龙⑤-即时操作齐备：刷一条 / 清场 / 判魂 / 清进度',
-    /setDragonSpawnNowBtn/.test(sd) && /setDragonKillAllBtn/.test(sd)
-    && /setDragonSoulBlueBtn/.test(sd) && /setDragonResetBtn/.test(sd));
+    /dgForceElement/.test(gw) && /dgKillAll/.test(gw)
+    && /dg-set-soul/.test(gw) && /dgResetProgress/.test(gw));
   T('巨龙⑥-清场走 entity:death（绕过去的话"编辑器杀的龙不给奖励"，两套行为）',
-    /ds\.eventBus\?\.emit\?\.\('entity:death'/.test(sd));
+    /app\?\.eventBus\?\.emit\?\.\('entity:death'/.test(gw));
   T('巨龙⑦-展示双方争夺进度（旧面板完全没有这一层信息）',
-    /还差 \$\{need\} 条成魂/.test(sd));
+    /还差 \$\{need\} 条成魂/.test(gw));
+  T('巨龙⑧-文案跟真实规则一致：先到先得，不是"打完一批统一结算"',
+    /先到先得/.test(gw) && !/都不到则无魂/.test(gw));
 }
 
 // ==================== 七、Q3 龙坑位置 ====================

@@ -171,6 +171,9 @@ export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range
   return {
     id, name, icon,
     category: 'passive',
+    // 光环技能按 casterType 走，applicableTypes 直接用它——覆盖炮兵指挥官/
+    // 图腾守护/术法共鸣等全部由这个工厂生成的技能，不用逐个手写。
+    applicableTypes: [casterType],
     // minWave 现在是【默认装配的波次门槛】（由 main.js 装备逻辑读取），不再在光环层拦截——
     // 一旦装备（含玩家手动装备）光环即生效，波次门槛只决定"默认何时把技能装上"（炮兵指挥官第20波起默认装配）。
     minWave,

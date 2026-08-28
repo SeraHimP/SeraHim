@@ -148,7 +148,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   // 攻城模式的机制常量仍由被动定义（拆掉被动即退化为普通车）
   const sw = SkillLibrary.passive_siege_weapon;
   T('Q4④ 攻城模式的全部数值仍在被动里', !!sw
-    && sw.TOWER_ATKSPD_MULT > 0 && sw.SELF_DAMAGE_PCT > 0 && sw.TOWER_DAMAGE_MULT > 1);
+    && sw.TOWER_ATKSPD_MULT > 0 && sw.SIEGE_FATIGUE_AS_PCT < 0 && sw.TOWER_DAMAGE_MULT > 1);
   T('Q4⑤ 攻城模式状态由被动 onFrame 维护（状态栏可见）',
     typeof sw.onFrame === 'function' && /攻城模式/.test(String(sw.onFrame)));
   // 红线：塔与攻城车共用同一份样式
@@ -331,8 +331,8 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   const wp = SkillLibrary.weapon_piercing;
   T('Q10① 穿透型保留固定 30% 双穿', /flatValue: 30/.test(String(wp.onEquip)));
   T('Q10② 穿透型保留升温', wp.HEAT_MAX_STACKS === 4 && wp.HEAT_PER_STACK === 0.30);
-  // 同样要先剥注释：onHit 里留着一段"破甲为什么被删"的说明，直接匹配会打到自己。
-  T('Q10③ 穿透型不再叠破甲', !/破甲/.test(stripComments(String(wp.onHit))));
+  // 同样要先剥注释：onDealtDamage 里留着一段"破甲为什么被删"的说明，直接匹配会打到自己。
+  T('Q10③ 穿透型不再叠破甲', !/破甲/.test(stripComments(String(wp.onDealtDamage))));
   T('Q10④ 技能说明也去掉了破甲', !/削.*双抗|破甲/.test(wp.description + wp.descTemplate));
   const P = SkillLibrary.weapon_lightning.defaultParams;
   T('Q10⑤ 闪电杖满充无视 67% 防御（原 90%）', P.maxPenPct === 67);
@@ -477,7 +477,11 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   ]);
   need('天气面板', srcOf(('../src/ui/WeatherPanel.js')), [
     ['左侧栏结构', /<div class="tpl-layout">/],
-    ['外框换成 modal-box + editor-container（原来是第三套 .modal 壳）', /<div class="modal-box"[\s\S]*?editor-container/],
+    // 2026-08 用户定稿："设置窗口只留系统设置，游戏性设置整合到模板编辑器里"——
+    // 天气配置不再自己开 modal-box，_renderConfigBody/_bindConfigBody 只出内容，
+    // 外框（含关闭按钮）由模板编辑器的页面容器统一提供，不再是"第三套壳"。
+    ['拆成 render/bind 两半供模板编辑器页面调用（不再自己起 overlay）',
+      /_renderConfigBody\(\)[\s\S]*?_bindConfigBody\(container, logFn\)/],
     ['切页只切 display，不重建 DOM（保住既有绑定与逐帧重绘）', /d\.style\.display = d\.dataset\.wxsec === this\._cfgSec/],
   ]);
   need('模式选择', srcOf(('../src/ui/ModeDialog.js')), [
@@ -809,9 +813,9 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison']
         .every(k => S[k].durationSec === undefined));
   const src = srcOf(('../src/core/skills/dragonSouls.js'));
-  T('魂⑤-所有触发点都不需要判断（onHit/onDealtDamage/onFrame/onEquip）',
+  T('魂⑤-所有触发点都不需要判断（onDealtDamage/onFrame/onEquip）',
     !/优先攻击|选择目标|残血/.test(src));
-  T('魂⑥-冷却型用 gameTime 绝对时间戳（onHit 拿不到 dt）',
+  T('魂⑥-冷却型用 gameTime 绝对时间戳（onDealtDamage 拿不到 dt）',
     /function offCooldown\(instance, seconds\)/.test(src) && /instance\.state\.nextAt/.test(src));
   T('魂⑦-暗魂全队共享层数（固定 sourceId + uniquePassive）',
     /}, 'dragonsoul_dark'\);/.test(src) && /uniquePassive: true/.test(src));

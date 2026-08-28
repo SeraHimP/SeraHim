@@ -31,6 +31,9 @@ function _makeRendPassive(casterType, name, pct) {
   return {
     [id]: {
       id, name, icon: '🩸', category: 'passive',
+      // 屠戮技能是按施法者类型动态生成的（melee/ranged/siege 各一份），
+      // applicableTypes 直接用 casterType——不用像别处那样手写三次。
+      applicableTypes: [casterType],
       // 有 defaultParams 才会被 CombatSystem 注入 map.skillOverrides —— 数值与机制都能按地图改。
       //
       // ⚠️ 必须是 **getter**，从 CONFIG.rend 现取，不能写死一份副本。
@@ -72,7 +75,10 @@ function _makeRendPassive(casterType, name, pct) {
       effects: [],
       // v42: dynamic descTemplate for per-map override（地图改了 pct/base，文案立刻跟着改）
       getDescTemplate: function(entity, instance) { return this._text(instance); },
-      onHit: (attackerId, targetId, instance, ctx) => {
+      // procMode 用默认 'always'：屠戮自己独立算伤害基数（模板生命/当前生命），
+      // 不读 ctx.totalRaw，且施放者都是普通兵种、恒为一次完整攻击，'always' 与
+      // 'perAttack' 在这里表现完全相同——用默认值，不需要专门声明。
+      onDealtDamage: (attackerId, targetId, instance, ctx) => {
         const attacker = ctx.entityContainer.get(attackerId);
         const target = ctx.entityContainer.get(targetId);
         if (!attacker || !target || !target.alive) return;
@@ -112,6 +118,7 @@ export const minionPassives = {
 
   passive_super_commander: makeAuraPassive({
     id: 'passive_super_commander', name: '超级兵指挥官', icon: '📯',
+    applicableTypes: ['super'],
     casterType: 'super', targetTypes: ['melee', 'ranged', 'siege', 'super', 'totem'],
     // v43：改为**也对自己生效**（用户："所有光环类的效果也对自己生效，要不然太乱了逻辑"）。
     // 这里此前显式写了 includeSelf:false —— 那是更早一轮的定稿（"指挥官光环只惠及周围的小兵"）。
@@ -124,6 +131,7 @@ export const minionPassives = {
 
   passive_siege_shield: {
     id: 'passive_siege_shield',
+    applicableTypes: ['siege'],
     name: '防御护盾',
     icon: '🛡️',
     category: 'passive',
@@ -147,6 +155,7 @@ export const minionPassives = {
 
   passive_totem_guardian: {
     id: 'passive_totem_guardian',
+    applicableTypes: ['totem'],
     name: '图腾守护',
     icon: '🗿',
     category: 'passive',
@@ -184,6 +193,7 @@ export const minionPassives = {
 
   passive_totem_awaken: {
     id: 'passive_totem_awaken',
+    applicableTypes: ['totem'],
     name: '图腾觉醒',
     icon: '✨',
     category: 'passive',
@@ -212,6 +222,7 @@ export const minionPassives = {
 
   passive_totem_nourish: {
     id: 'passive_totem_nourish',
+    applicableTypes: ['totem'],
     name: '图腾滋养',
     icon: '🌿',
     category: 'passive',
@@ -270,6 +281,7 @@ export const minionPassives = {
   // 残血单位越危险回得越多 —— 与 LoL 同类效果同口径。
   passive_totem_mend: {
     id: 'passive_totem_mend',
+    applicableTypes: ['totem'],
     name: '图腾涌泉',
     icon: '💧',
     color: '#bb86fc',
@@ -332,6 +344,7 @@ export const minionPassives = {
   // 混进一条永久状态，还会被治疗强化之类的百分比修正二次缩放。
   passive_totem_bulwark: {
     id: 'passive_totem_bulwark',
+    applicableTypes: ['totem'],
     name: '图腾壁垒',
     icon: '🛡️',
     color: '#bb86fc',
@@ -364,6 +377,7 @@ export const minionPassives = {
 
   passive_totem_sacrifice: {
     id: 'passive_totem_sacrifice',
+    applicableTypes: ['totem'],
     name: '图腾献祭',
     icon: '🩸',
     category: 'passive',
@@ -426,6 +440,7 @@ export const minionPassives = {
   // 而且做成状态后在属性面板里看得见，符合"所有修正都要可解释"这条。
   passive_warlock_attune: {
     id: 'passive_warlock_attune',
+    applicableTypes: ['warlock'],
     name: '术法贯通',
     icon: '🔮',
     color: '#8e44ad',
@@ -465,6 +480,7 @@ export const minionPassives = {
   // 与"打到才叠"完全不同（原实现是 onHit 且只对塔生效）。
   passive_corrupt_strike: {
     id: 'passive_corrupt_strike',
+    applicableTypes: ['corrupt'],
     name: '蚀骨',
     icon: '🦇',
     color: '#6b8e23',
@@ -542,19 +558,32 @@ export const minionPassives = {
 const ramPassive = {
   passive_siege_weapon: {
     id: 'passive_siege_weapon', name: '攻城武器', icon: '🛠️', category: 'passive',
+    applicableTypes: ['ram'],
     color: '#7f8c8d',
     // v40：全部机制的【唯一】数值来源。CombatSystem / LaneMovementSystem 只在
     // 「单位装备了本被动」时才启用这些规则，并从这里读数——拆掉被动即退化为普通单位。
     TOWER_DAMAGE_MULT: 3.7,   // v40：对建筑 +270%（原 +800%）
     TOWER_ATKSPD_MULT: 0.5,   // 攻击建筑时攻速 -50%
-    SELF_DAMAGE_PCT: 0.20,    // 每次攻击建筑自损 20% 最大生命
     VS_MINION_MULT: 0.67,     // 对小兵 -33%
     MELEE_BONUS_MULT: 2.0,    // 近战单位对它 +100%
+    // 2026-08 用户定稿改动①：自损（原 SELF_DAMAGE_PCT=20% 最大生命/次）
+    // 换成永久叠加的攻速衰减，不会再出现"打塔打到自爆"。数值来源见
+    // CombatSystem.finishAttack；SELF_DAMAGE_PCT 已删除，别再引用。
+    SIEGE_FATIGUE_AS_PCT: -25,  // 每次攻击建筑叠一层，每层攻速 -25%，永久不消退、无上限叠加
+    // 2026-08 用户定稿改动②：破甲重击——每座塔独立 900 秒冷却（记在塔身上，
+    // 不管哪辆车打中都共用），冷却好时额外造成目标当前生命 10%（一半真实伤害、
+    // 一半攻城车自身伤害类型的物理伤害）。数值同样在 finishAttack 里读取。
+    SLAM_COOLDOWN_SEC: 900,
+    SLAM_CURRENT_HP_PCT: 10,
     description: '唯一被动——攻城武器：锁定一座建筑后不再改变目标（直至其被摧毁或自身死亡），'
-      + '锁定期间进入【攻城模式】；攻击建筑时攻速-50%、伤害+270%，但每次攻击自损20%最大生命。'
-      + '对小兵伤害-33%，普攻带溅射。近战单位对攻城车的伤害+100%。',
+      + '锁定期间进入【攻城模式】；攻击建筑时攻速-50%、伤害+270%，每次攻击叠一层"攻城疲惫"'
+      + '（攻速-25%，永久叠加不消退）。每座塔独立900秒冷却，冷却好时额外造成其当前生命10%伤害'
+      + '（一半真实伤害+一半自身伤害类型物理伤害）。对小兵伤害-33%，普攻带溅射。'
+      + '近战单位对攻城车的伤害+100%。',
     descTemplate: '唯一被动——攻城武器：锁定建筑后进入攻城模式（攻速-50%/对建筑伤害+270%/'
-      + '每次攻击自损20%最大生命）；对小兵-33%；普攻溅射；受近战单位伤害+100%。',
+      + '每次攻击叠一层攻速-25%的"攻城疲惫"，永久不消退）；每座塔独立900秒冷却，冷却好时'
+      + '额外造成其当前生命10%伤害（一半真实+一半物理）；对小兵-33%；普攻溅射；'
+      + '受近战单位伤害+100%。',
     effects: [],
     onEquip: () => {},
     onUnequip: (entityId, instance, ctx) => {

@@ -70,7 +70,7 @@ T('技能：规格通过校验', validateSpec(SPEC).ok);
 T('技能：保存并注册进 SkillLibrary',
   CC.saveSkill(SPEC).ok && SkillLibrary.has('weapon_custom_frost'));
 const def = SkillLibrary.get('weapon_custom_frost');
-T('技能：编译出 onHit / onEquip', typeof def.onHit === 'function' && typeof def.onEquip === 'function');
+T('技能：编译出 onDealtDamage / onEquip', typeof def.onDealtDamage === 'function' && typeof def.onEquip === 'function');
 T('技能：params 变成 defaultParams（因此能被全局/地图覆写）',
   def.defaultParams.dmg === 40 && def.defaultParams.splashR === 70);
 T('技能：保留 _vmSpec 供编辑器读回表单继续改', !!def._vmSpec);
@@ -134,7 +134,7 @@ T('技能：校验失败时不注册半个坏技能',
   // onHit：伤害 + 状态
   const hp0 = victim.currentHP;
   AttributeCalculator.tick();
-  def.onHit(tower.id, victim.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
+  def.onDealtDamage(tower.id, victim.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
   T(`端到端：命中造成了伤害（${hp0} → ${victim.currentHP}）`, victim.currentHP < hp0);
   const effs = fx.getEffects(victim.id);
   T('端到端：目标真的中了自制状态', effs.some(e => e.blueprint?.id === 'custom_frostbite'));
@@ -148,7 +148,7 @@ T('技能：校验失败时不注册半个坏技能',
   const bystander = mkEnemy(45, 0);
   const bhp = bystander.currentHP;
   AttributeCalculator.tick();
-  def.onHit(tower.id, victim.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
+  def.onDealtDamage(tower.id, victim.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
   T('端到端：条件不满足时该规则不触发（目标非建筑 → 无溅射）', bystander.currentHP === bhp);
 
   // 条件满足时 splash 要真的打到旁边的人
@@ -162,7 +162,7 @@ T('技能：校验失败时不注册半个坏技能',
   ents.add(enemyTower);
   const b2 = bystander.currentHP;
   AttributeCalculator.tick();
-  def.onHit(tower.id, enemyTower.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
+  def.onDealtDamage(tower.id, enemyTower.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
   T('端到端：条件满足时溅射打到范围内的敌人', bystander.currentHP < b2);
 
   // 溅射不能打到自己人
@@ -176,7 +176,7 @@ T('技能：校验失败时不注册半个坏技能',
   ents.add(ally);
   const a0 = ally.currentHP;
   AttributeCalculator.tick();
-  def.onHit(tower.id, enemyTower.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
+  def.onDealtDamage(tower.id, enemyTower.id, inst, { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat });
   T('端到端：溅射不打自己人', ally.currentHP === a0);
 
   // onUnequip 必须还原 modifyStat，否则换来换去越换越弱
@@ -287,7 +287,7 @@ T('删除：技能没了之后状态就能删了', CC.deleteEffect('custom_frost
   T(`存档：导入 + syncAll 后全部复活（技能 ${r.skills} / 兵种 ${r.minions} / 状态 ${r.effects}）`,
     r.errors.length === 0 && SkillLibrary.has('weapon_custom_fire')
     && CONFIG.templates.emberling?.maxHP === 300 && !!CONFIG.customEffects.custom_burn);
-  T('存档：复活的技能行为完整（onHit 在）', typeof SkillLibrary.get('weapon_custom_fire').onHit === 'function');
+  T('存档：复活的技能行为完整（onDealtDamage 在）', typeof SkillLibrary.get('weapon_custom_fire').onDealtDamage === 'function');
   const r2 = CC.syncAll();
   T('syncAll 幂等（导入存档会重复调用）', r2.errors.length === 0 && r2.skills === r.skills);
   T('往返后内容逐位一致',

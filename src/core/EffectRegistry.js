@@ -66,6 +66,9 @@ export class EffectRegistry {
 
     // 如果找到已存在的实例，根据策略更新
     if (existing) {
+      // 每次 apply 都刷新施加者归属（同一份 DOT 被不同单位打过，攻击判定跟"最后
+      // 一次实际生效的那次"走，和最后一击的语义一致；不传 casterId 时保持原值）。
+      if (options.casterId !== undefined) existing.casterId = options.casterId;
       if (stackPolicy === 'refresh') {
         // 刷新：重置层数，刷新时间，并更新数值字段（条件持续效果每帧变化的数值）
         existing._auraStamp = this._clock;
@@ -102,6 +105,17 @@ export class EffectRegistry {
       entityId,
       blueprint: { ...blueprint },
       sourceId,
+      // Bug 修复（用户定稿）："某方单位杀死龙后没有正确计入该阵营的击杀数"。
+      // 根因：DOT（毒魂/腐蚀等）的伤害由 BuffSystem 逐帧 tick 结算，之前直接把
+      // sourceId 当 attackerId 传给 performAttackDirect —— 但 sourceId 从来都是
+      // 'dragonsoul_poison' 这种**字符串标签**（用来判断堆叠/刷新，不是实体 id），
+      // entityContainer.get('dragonsoul_poison') 永远查不到东西，attacker 恒为
+      // undefined。performAttackDirect 对"无攻击者"是特意放行的（环境伤害/无来源
+      // 伤害不该被 attacker 缺失卡住），代价是这一下永远不会更新 _lastHitFaction——
+      // 如果一条龙恰好是被 DOT 打死的最后一下，击杀就没了归属，算不到任何一方头上。
+      // 治本方法：谁施加的 DOT，就把那个真实实体 id 单独存一份 casterId，
+      // 不复用 sourceId（sourceId 的"标签"语义继续只服务堆叠判定，两件事分开存）。
+      casterId: options.casterId ?? null,
       stacks: Math.min(initStacks, blueprint.maxStacks || 1),
       remainingTime: permanent ? Infinity : duration,
       maxDuration: permanent ? Infinity : duration,

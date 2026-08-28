@@ -597,16 +597,17 @@ const mkE = (ents, type, x, y, extra = {}) => {
   {
     const w = mkWorld(); const { a, t } = mkPair(w.ents, 100);
     const hp0 = t.currentHP;
-    w.combat.performAttackDirect(a.id, t.id, 0, 'magic', { onHitScale: 0.25 });
+    w.combat.performAttackDirect(a.id, t.id, 0, 'magic', { attackShare: 0.25, applyOnHitBonus: true });
     const dealt = hp0 - t.currentHP;
     T('特①-攻击特效的固定伤害按 ×0.25 并入（100 → 25）', Math.abs(dealt - 25) < 0.5);
   }
-  // ② 不传系数时**逐位不变**：溅射/DOT 那些调用方不该带攻击特效
+  // ② 不传 applyOnHitBonus 时**逐位不变**：溅射/DOT 那些调用方不该带攻击特效
+  //   （即使传了 attackShare，没开 applyOnHitBonus 也不会叠数值——两件事已经分开）
   {
     const w = mkWorld(); const { a, t } = mkPair(w.ents, 100);
     const hp0 = t.currentHP;
     w.combat.performAttackDirect(a.id, t.id, 0, 'magic');
-    T('特②-不传系数的调用方一点攻击特效都不带（溅射不该结算两遍）',
+    T('特②-不开 applyOnHitBonus 的调用方一点攻击特效都不带（溅射不该结算两遍）',
       Math.abs(hp0 - t.currentHP) < 1e-9);
   }
   // ③ 百分比攻击特效同样按系数走
@@ -614,31 +615,31 @@ const mkE = (ents, type, x, y, extra = {}) => {
     const w = mkWorld(); const { a, t } = mkPair(w.ents, 0);
     a.baseStats.onHitPercentDamage = 1;      // 1% 当前生命
     const hp0 = t.currentHP;
-    w.combat.performAttackDirect(a.id, t.id, 0, 'magic', { onHitScale: 0.25 });
+    w.combat.performAttackDirect(a.id, t.id, 0, 'magic', { attackShare: 0.25, applyOnHitBonus: true });
     T('特③-百分比攻击特效同样 ×0.25（1% × 0.25 = 0.25%）',
       Math.abs((hp0 - t.currentHP) - hp0 * 0.0025) < hp0 * 1e-6);
   }
-  // ④ 被动限流：4 跳只触发 1 次
+  // ④ 被动限流：procMode='perAttack' 的被动，4 跳只触发 1 次
   {
     const w = mkWorld(); const { a, t } = mkPair(w.ents, 0);
     let procs = 0;
     SkillLibrary.__test_proc = { id: '__test_proc', name: 'T', category: 'passive',
-      onDealtDamage: () => { procs++; } };
+      procMode: 'perAttack', onDealtDamage: () => { procs++; } };
     a._skillInstances.push({ id: ++window._uid, skillId: '__test_proc', state: {} });
-    for (let i = 0; i < 12; i++) w.combat.performAttackDirect(a.id, t.id, 1, 'magic', { onHitScale: 0.25 });
+    for (let i = 0; i < 12; i++) w.combat.performAttackDirect(a.id, t.id, 1, 'magic', { attackShare: 0.25 });
     T('特④-被动限流：12 跳只触发 3 次（= 每秒 1 次，与 1.0 攻速同节奏）', procs === 3);
 
     procs = 0;
     for (let i = 0; i < 5; i++) w.combat.performAttackDirect(a.id, t.id, 1, 'magic');
-    T('特⑤-不传系数时被动每次都触发（其余路径行为不变）', procs === 5);
+    T('特⑤-不传 attackShare 时视为一次完整攻击，每次都触发（其余路径行为不变）', procs === 5);
     delete SkillLibrary.__test_proc;
   }
   // ⑤ 系数由跳数派生，不写死
   {
     const wp = srcOf('src/core/skills/weapons.js');
     T('特⑥-系数默认取 1/tickPerSec，不是写死的 0.25（改跳数时自动跟上）',
-      /onHitScale: P\.onHitScale \?\? \(1 \/ Math\.max\(1, P\.tickPerSec \|\| 4\)\)/.test(wp));
-    T('特⑦-系数是软编码的，编辑器里可改', 'onHitScale' in SkillLibrary.weapon_lightning.defaultParams);
+      /attackShare: P\.attackShare \?\? \(1 \/ Math\.max\(1, P\.tickPerSec \|\| 4\)\)/.test(wp));
+    T('特⑦-系数是软编码的，编辑器里可改', 'attackShare' in SkillLibrary.weapon_lightning.defaultParams);
   }
 }
 

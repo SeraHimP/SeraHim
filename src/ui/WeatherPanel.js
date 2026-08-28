@@ -20,14 +20,19 @@ export const WeatherPanel = {
   _ctx: null,
   _weather: null,
 
-  init(weatherSystem) {
+  init(weatherSystem, onOpenConfig) {
     this._weather = weatherSystem;
     this._canvas = document.getElementById('weatherBar');
     if (this._canvas) this._ctx = this._canvas.getContext('2d');
     // 整条天气带都是配置入口（原来是条上的一个小按钮，太隐蔽）。
     // 天气段现在是世界状态小窗里的一行，不再是独立浮窗。
+    // Bug 修复（用户定稿）："设置窗口只留系统设置，游戏性的设置整合到模板编辑器里"——
+    // 天气配置原来自己开一个 modal-overlay（第三套窗口壳），现在改成打开模板编辑器
+    // 的"游戏性→天气"页。打开动作交给调用方传入的回调（main.js 那边接
+    // AttributeEditor.openTemplateEditor），WeatherPanel 自己不反向 import
+    // AttributeEditor——两个 UI 模块不该互相依赖，main.js 才是接线的地方。
     const wrap = document.getElementById('whWeatherRow');
-    if (wrap) wrap.addEventListener('click', () => this.openConfig());
+    if (wrap && onOpenConfig) wrap.addEventListener('click', onOpenConfig);
   },
 
   /** 每帧调用：渲染滚动预报条（天气关闭时隐藏整条） */
@@ -280,21 +285,27 @@ export const WeatherPanel = {
   },
 
   // ==================== 配置面板 ====================
-  openConfig() {
+  // ==================== 配置面板内容（v43 Q1 统一到模板编辑器壳，现在整块搬进
+  // "游戏性→天气"页，不再自己开一个 modal-overlay）====================
+  // 拆成"渲染内容 _renderConfigBody"+"绑定事件 _bindConfigBody"两半，供
+  // pagesGameplayWorld.js 直接调用；原来 openConfig() 自己起的那层
+  // .modal-box/.modal-close 外壳交给模板编辑器统一的页面容器负责，这里不再重复。
+  //
+  // 用户定稿："预报图不需要精简；其余的一堆滑块条进行简化，不用再有言语描述"——
+  // 原来在【基础天气】【气候模板】两段上方各有一段说明文字，现在都拿掉，
+  // 含义搬进这里的注释：
+  //   · 基础天气的滑条 = 该天气的"出现倾向"（-1~+1，越高越常见）；调整后立即
+  //     重算未来的演化，当下天气不跳变，预报条会跟着重画。
+  //   · 气候模板按真实世界的地貌一次性替换全部天气的出现倾向（并做随机扰动，
+  //     同一个模板每局不完全一样）。
+  //   · 顶部原来那段"天气是连续演化的权重场…充能档位…组合10种+单基础5种=15种"
+  //     的说明同样只留在这里：占比驱动【充能】，充能档位决定效果强度
+  //     （轻微25%/有限50%/中等75%/严重100%），极端天气由两种基础天气充能同时
+  //     达标、或单一基础天气独自充到严重档附近涌现，共 15 种，均独享第5档
+  //     【极端150%】（充能≥88%，重辉光）。
+  _renderConfigBody() {
     const ws = this._weather;
-    if (!ws) return;
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay open';
-    // ==================== v43 Q1：统一到模板编辑器那套外壳 ====================
-    // 用户："所有窗口UI都统一为新版的模板编辑器样式（左侧栏那种的）。"
-    // 这里原本是第三套壳（.modal / .modal-header / .modal-body），与设置面板的横排页签、
-    // 模板编辑器的纵向导航三种语言并存。
-    //
-    // 关键实现选择：各段内容【全部留在 DOM 里】，切页只切 display。
-    // 为什么不按当前页只渲染一段：本面板的行是 renderRows() 在挂载**之后**塞进
-    // #wxBase / #wxExtreme / #wxTemplates 的，还有两个 canvas 每帧在画（#wxBigBar / #wxLive）。
-    // 按页重建 DOM 就得把那一整套绑定和重绘时机全部改一遍 —— 那是"顺手统一个样式"
-    // 变成"重写一个面板"的典型路径。切 display 则一行绑定都不用动。
+    if (!ws) return '';
     const SECS = [
       { key: 'live', label: '📊 实时与预报' },
       { key: 'tpl',  label: '🌍 气候模板' },
@@ -303,76 +314,46 @@ export const WeatherPanel = {
     ];
     if (!this._cfgSec) this._cfgSec = 'live';
     const sec = (k, inner) => `<div data-wxsec="${k}" style="display:${k === this._cfgSec ? '' : 'none'};">${inner}</div>`;
-    overlay.innerHTML = `
-      <div class="modal-box" style="max-width:880px;">
-        <div class="editor-container">
-          <h4>🌦️ 天气系统 <button class="modal-close" style="float:right;font-size:12px;padding:1px 8px;border-radius:4px;cursor:pointer;">✕</button></h4>
-          <div class="tpl-layout">
-            <div class="tpl-nav"><div class="tpl-nav-group">
-              ${SECS.map(x => `<button class="tpl-nav-item ${x.key === this._cfgSec ? 'active' : ''}" data-wxnav="${x.key}">${x.label}</button>`).join('')}
-            </div></div>
-            <div class="tpl-pane" id="weatherCfgBody">
+    return `
+      <div class="tpl-layout">
+        <div class="tpl-nav"><div class="tpl-nav-group">
+          ${SECS.map(x => `<button class="tpl-nav-item ${x.key === this._cfgSec ? 'active' : ''}" data-wxnav="${x.key}">${x.label}</button>`).join('')}
+        </div></div>
+        <div class="tpl-pane">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
             <button id="wxToggle" style="flex:1;">${ws.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
             <button id="wxReroll" style="flex:1;">🎲 重新随机本局天气</button>
           </div>
-          <p style="color:var(--text-dim);font-size:11px;line-height:1.7;margin:6px 0 12px;">
-            天气是<b>连续演化的权重场</b>：占比驱动【充能】，充能档位决定效果强度
-            （轻微25% / 有限50% / 中等75% / 严重100%）。<b>极端天气</b> = 两种基础天气充能同时达标时涌现
-            或【单一基础天气独自极端化】（充能达严重档附近）时涌现——
-            组合极端 10 种 + 单基础极端 5 种（烈日/洪涝/浓雾/飓风/寒潮），共 15 种；
-            均独享第 5 档【极端 150%】（充能≥88%，重辉光）。<br>
-            本局天气性格：平均主导时长约 <b>${ws.averageDuration}s</b>（每次载入地图重新随机）。
-          </p>
           ${sec('live', `
-          <h4 style="margin:2px 0 6px;font-size:13px;">📊 天气预报（堆叠图）</h4>
           <canvas id="wxBigBar" style="width:100%;height:64px;display:block;margin-bottom:12px;"></canvas>
           <div id="wxLive" style="font-size:12px;line-height:1.8;font-variant-numeric:tabular-nums;background:rgba(0,0,0,0.25);
             border-radius:8px;padding:8px 10px;margin-bottom:12px;"></div>`)}
-          ${sec('tpl', `
-          <h4 style="margin:10px 0 6px;font-size:13px;">🌍 气候模板</h4>
-          <p style="color:var(--text-dim);font-size:10px;margin:0 0 6px;">
-            按真实世界的地貌选择气候。套用后各天气的出现倾向一次性替换（并做随机扰动，
-            所以同一个"沙漠"每局也不完全一样）。默认「全随机」。
-          </p>
-          <div id="wxTemplates" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;"></div>`)}
-          ${sec('base', `
-          <h4 style="margin:10px 0 6px;font-size:13px;">基础天气（参与演化）</h4>
-          <p style="color:var(--text-dim);font-size:10px;margin:0 0 6px;">
-            滑条 = 该天气的<b>出现倾向</b>（-1 ~ +1，越高越常见）。调整后<b>立即重算未来</b>——
-            当下的天气不跳变，但往后的走向会按新规则演化（预报条右侧会重画一次）。
-          </p>
-          <div id="wxBase"></div>`)}
-          ${sec('ex', `
-          <h4 style="margin:14px 0 6px;font-size:13px;">极端天气（阈值涌现）</h4>
-          <div id="wxExtreme"></div>`)}
-            </div>
-          </div>
+          ${sec('tpl', `<div id="wxTemplates" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;"></div>`)}
+          ${sec('base', `<div id="wxBase"></div>`)}
+          ${sec('ex', `<div id="wxExtreme"></div>`)}
         </div>
       </div>`;
-    document.body.appendChild(overlay);
+  },
 
-    const close = () => overlay.remove();
-    overlay.querySelector('.modal-close').addEventListener('click', close);
-    // 左侧栏切页：只切 display，不动任何已有绑定（见上面那段说明）
-    overlay.querySelectorAll('[data-wxnav]').forEach(b => b.addEventListener('click', () => {
+  _bindConfigBody(container, logFn) {
+    const ws = this._weather;
+    if (!ws) return;
+    container.querySelectorAll('[data-wxnav]').forEach(b => b.addEventListener('click', () => {
       this._cfgSec = b.dataset.wxnav;
-      overlay.querySelectorAll('[data-wxsec]').forEach(d => {
+      container.querySelectorAll('[data-wxsec]').forEach(d => {
         d.style.display = d.dataset.wxsec === this._cfgSec ? '' : 'none';
       });
-      overlay.querySelectorAll('[data-wxnav]').forEach(x =>
+      container.querySelectorAll('[data-wxnav]').forEach(x =>
         x.classList.toggle('active', x.dataset.wxnav === this._cfgSec));
     }));
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
     const renderRows = () => {
-      const baseBox = overlay.querySelector('#wxBase');
-      const exBox = overlay.querySelector('#wxExtreme');
+      const baseBox = container.querySelector('#wxBase');
+      const exBox = container.querySelector('#wxExtreme');
       const w = ws.getWeights();
       const activeEx = new Map(ws.getActiveExtremes().map(e => [e.id, e.intensity]));
 
-      // 气候模板
-      const tplBox = overlay.querySelector('#wxTemplates');
+      const tplBox = container.querySelector('#wxTemplates');
       if (tplBox) {
         tplBox.innerHTML = Object.values(CLIMATE_TEMPLATES).map(t => `
           <button data-tpl="${t.id}" class="editor-tab ${ws.template === t.id ? 'active' : ''}"
@@ -393,12 +374,10 @@ export const WeatherPanel = {
           <div style="flex:1;min-width:0;">
             <div style="font-size:12px;color:${def.color};font-weight:600;">${def.name}
               <span style="color:var(--text-dim);font-weight:400;">${off ? '（已禁用）' : ' · 当前 ' + pct + '%'}</span></div>
-            <div style="font-size:10px;color:var(--text-dim);">${def.desc}</div>
             <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin:3px 0;">
               <div style="width:${off ? 0 : pct}%;height:100%;background:${def.color};border-radius:2px;"></div>
             </div>
             <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
-              <span style="font-size:9px;color:var(--text-dim);white-space:nowrap;">出现倾向</span>
               <input type="range" data-mu="${def.id}" min="-1" max="1" step="0.05" value="${mu.toFixed(2)}"
                 style="flex:1;height:3px;" ${off ? 'disabled' : ''} />
               <span data-muval="${def.id}" style="font-size:9px;color:${def.color};width:32px;text-align:right;
@@ -439,10 +418,8 @@ export const WeatherPanel = {
           <div style="flex:1;min-width:0;">
             <div style="font-size:12px;color:${def.color};font-weight:600;">${def.name}
               ${on ? `<span style="color:#ffd75e;font-size:10px;${tier.isExtremeTier ? 'text-shadow:0 0 6px rgba(255,215,94,0.9);font-weight:700;' : ''}"> · ${tier.name}档（${Math.round(tier.scale * 100)}%）</span>` : ''}</div>
-            <div style="font-size:10px;color:var(--text-dim);">${def.desc}</div>
             <div style="font-size:9px;color:var(--text-mute,#6b7480);margin-top:2px;">触发：${cond}</div>
             <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
-              <span style="font-size:9px;color:var(--text-dim);white-space:nowrap;">出现倾向</span>
               <input type="range" data-exw="${def.id}" min="-1" max="1" step="0.05" value="${wt.toFixed(2)}"
                 style="flex:1;height:3px;" ${off ? 'disabled' : ''} />
               <span data-exwval="${def.id}" style="font-size:9px;color:${def.color};width:32px;text-align:right;
@@ -465,7 +442,7 @@ export const WeatherPanel = {
         });
       });
 
-      overlay.querySelectorAll('[data-wx]').forEach(b => {
+      container.querySelectorAll('[data-wx]').forEach(b => {
         b.addEventListener('click', () => {
           const id = b.dataset.wx;
           ws.setWeatherDisabled(id, !ws.isWeatherDisabled(id));
@@ -474,12 +451,12 @@ export const WeatherPanel = {
       });
     };
 
-    const bigBar = overlay.querySelector('#wxBigBar');
+    const bigBar = container.querySelector('#wxBigBar');
     const bigCtx = bigBar ? bigBar.getContext('2d') : null;
     const tick = () => {
-      if (!document.body.contains(overlay)) return;
-      if (bigCtx && ws.enabled) this._renderBar(bigBar, bigCtx); // v33：详细堆叠预报图在配置面板里
-      const live = overlay.querySelector('#wxLive');
+      if (!document.body.contains(container)) return; // 容器被移除（页面切走/窗口关闭）就停
+      if (bigCtx && ws.enabled) this._renderBar(bigBar, bigCtx); // 预报图原样保留，不精简
+      const live = container.querySelector('#wxLive');
       if (live) {
         const w = ws.getWeights();
         const rows = Object.entries(w).sort((a, b) => b[1] - a[1])
@@ -496,13 +473,14 @@ export const WeatherPanel = {
       requestAnimationFrame(tick);
     };
 
-    overlay.querySelector('#wxToggle').addEventListener('click', (e) => {
+    container.querySelector('#wxToggle').addEventListener('click', (e) => {
       ws.setEnabled(!ws.enabled);
       e.target.textContent = ws.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）';
     });
-    overlay.querySelector('#wxReroll').addEventListener('click', () => {
+    container.querySelector('#wxReroll').addEventListener('click', () => {
       ws.reset();
       renderRows();
+      logFn?.('🎲 本局天气已重新随机', 'spawn');
     });
 
     renderRows();

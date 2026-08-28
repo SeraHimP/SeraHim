@@ -254,9 +254,11 @@ export class DragonSystem {
   spawnDragon() {
     const isAncient = this.soulUnlocked;
 
-    // 元素龙用"第几条龙"（elementDragonSpawned+1）；远古龙用"第几条远古龙"，
-    // 均与游戏波次解耦，避免龙按固定时间表刷新导致数值随波次失控增长。
-    const dragonIndex = isAncient ? (this.ancientSpawned + 1) : (this.elementDragonSpawned + 1);
+    // 元素龙与远古龙**共用同一条连续序号**（第几条龙，不分类型），只与游戏波次解耦——
+    // 这是 dragonCurveAt 曲线本身的设计前提（见 dragonCurve.js 顶部注释）。
+    // 之前这里给远古龙单独起了一份"第几条远古龙"的序号（从 1 开始），后果是龙魂解锁后
+    // 刷的第一条远古龙必然拿到曲线起点的数值——表现为"远古龙比之前的元素龙还弱"。
+    const dragonIndex = this.elementDragonSpawned + this.ancientSpawned + 1;
     const dstats = this._dragonStats(dragonIndex, isAncient);
 
     let element = null;
@@ -506,10 +508,14 @@ export class DragonSystem {
     this.soulResolved = true;
     if (owner) {
       const kills = this.factionKills[owner];
-      let best = null, bestCount = -1;
+      // 用户定稿：并列时随机决定，不再固定偏向 Object.entries 的遍历顺序
+      // （改之前永远是 DRAGON_ELEMENTS 里排最前的那个元素赢，等于没随机过）。
+      let best = null, bestCount = -1, ties = [];
       for (const [el, cnt] of Object.entries(kills)) {
-        if (cnt > bestCount) { bestCount = cnt; best = el; }
+        if (cnt > bestCount) { bestCount = cnt; best = el; ties = [el]; }
+        else if (cnt === bestCount && cnt > 0) { ties.push(el); }
       }
+      if (ties.length > 1) best = ties[Math.floor(Math.random() * ties.length)];
       if (best) {
         const soulId = DRAGON_ELEMENTS[best].soul;
         this.soulOwner = owner;
@@ -626,7 +632,16 @@ export class DragonSystem {
     tower._skillInstances.push(inst);
     const def = this.skills[soulId];
     if (def?.onEquip) def.onEquip(tower.id, inst, this._ctx());
-    if (def) {
+    // Bug 修复（用户定稿）："远古之力的倒计时圆环没显示，状态栏（效果栏）里看不到"。
+    // 根因：这里对**所有**龙魂都无条件补一份 duration:Infinity/permanent:true 的展示效果，
+    // 而 dragonsoul_ancient 的调用方 _grantAncient 紧接着**又**单独 apply 了一份同名
+    // （都叫"远古之力"）、duration:240 的展示效果。UI 按效果名分组合并同名效果时
+    // remainingTime 取组内最大值——Infinity 和 240 取最大还是 Infinity，等于把限时的
+    // 那份直接盖成了永久，圆环因此从不出现（表现为"图标在、圆环没有"）。
+    // 8 条龙魂里只有这条是限时的，其余 7 条确实应该走这条通用的永久展示；
+    // 跳过的不是"给这条魂开小灶"，是不再对它重复 apply 同名效果——展示本身
+    // 仍然统一走 EffectRegistry 的同一套倒计时机制，由 _grantAncient 那份负责。
+    if (def && soulId !== 'dragonsoul_ancient') {
       this.effects.apply(tower.id, {
         name: def.name, icon: def.icon, color: def.color, kind: 'display',
         duration: Infinity, permanent: true, stackPolicy: 'refresh', uniquePassive: true,

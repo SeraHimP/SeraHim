@@ -551,7 +551,9 @@ document.getElementById('modeBtn').addEventListener('click', () => {
 updateModeBtnLabel();
 
 // ---------- 点选面板接线 ----------
-WeatherPanel.init(weatherSystem);
+WeatherPanel.init(weatherSystem, () => {
+  AttributeEditor.openTemplateEditor('weather', uiManager.log.bind(uiManager), null);
+});
 // 世界状态小窗（时间/昼夜 · 天气 · 熵 三段合并在右上角一个窗口里）。
 // 点熵那一段直接跳设置面板的「🌍 世界」页 —— 用户看到熵在变，第一反应就是想调它。
 WorldHud.init(worldState, {

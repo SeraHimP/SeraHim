@@ -63,6 +63,8 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
   return {
     id, name, icon,
     category: 'passive',
+    // 加固城防固定四个塔层各一份变体，永远只装在塔身上。
+    applicableTypes: ['tower'],
     // 恢复数值可按地图覆写（map.skillOverrides['tower:base'].passive_base_fortify = { regen: 1.5 }）。
     // 声明 defaultParams 才会被 CombatSystem 注入覆写 —— 见 _fortifyRecalc 里那段说明。
     defaultParams: { regen },
@@ -116,6 +118,7 @@ export const towerPassives = {
   // 水晶枢纽/召唤水晶：+10 恢复（名字"水晶再生"为实现补充，效果按用户字面）
   passive_nexus_regen: {
     id: 'passive_nexus_regen', name: '水晶再生', icon: '💠',
+    applicableTypes: ['tower'],
     category: 'passive',
     description: '水晶枢纽/召唤水晶获得10生命恢复。',
     descTemplate: '唯一被动——水晶再生：水晶枢纽/召唤水晶获得10生命恢复。',
@@ -161,6 +164,7 @@ export const towerPassives = {
   // 从"水晶防御塔加固城防"里拆出（用户定稿：加固城防只管节点+恢复，护盾单列）。
   passive_base_bulwark: {
     id: 'passive_base_bulwark', name: '钢铁烈阳护盾', icon: '☀️',
+    applicableTypes: ['tower'],
     category: 'passive',
     description: '唯一被动——钢铁烈阳护盾：+800固定护盾。',
     descTemplate: '唯一被动——钢铁烈阳护盾：+800固定护盾（仅自身，无光环）。',
@@ -182,6 +186,7 @@ export const towerPassives = {
   // 内塔：钢铁烈阳护盾——300 范围光环，自己及友军 +50 固定护盾，离开范围脱落
   passive_inner_bulwark: {
     id: 'passive_inner_bulwark', name: '钢铁烈阳护盾', icon: '☀️',
+    applicableTypes: ['tower'],
     category: 'passive',
     description: '对自己及附近（300范围）友军提供50护盾，友军离开防御塔过远护盾消失。',
     descTemplate: '唯一被动——钢铁烈阳护盾：对自己及附近（300范围）友军提供50固定护盾，离开范围后护盾消失。',
@@ -208,6 +213,7 @@ export const towerPassives = {
 
   passive_heavy_defense: {
     id: 'passive_heavy_defense',
+    applicableTypes: ['tower'],
     name: '重甲联防',
     icon: '🤝',
     category: 'passive',
@@ -265,6 +271,7 @@ export const towerPassives = {
 
   passive_thorns: {
     id: 'passive_thorns',
+    applicableTypes: ['tower'],
     name: '荆棘反击',
     icon: '⚔️',
     category: 'passive',
@@ -289,6 +296,7 @@ export const towerPassives = {
 
   passive_frost_plating: {
     id: 'passive_frost_plating',
+    applicableTypes: ['tower'],
     name: '冰霜镀层',
     icon: '❄️',
     category: 'passive',
@@ -372,6 +380,7 @@ export const towerPassives = {
 
   passive_armor_plating: {
     id: 'passive_armor_plating',
+    applicableTypes: ['tower'],
     name: '防御塔镀层',
     icon: '🛡️',
     category: 'passive',
@@ -475,6 +484,7 @@ export const towerPassives = {
 
   passive_overheat: {
     id: 'passive_overheat',
+    applicableTypes: ['tower'],
     name: '过热核心',
     icon: '💢',
     color: '#e67e22',
@@ -510,6 +520,7 @@ export const towerPassives = {
 
   passive_vampire: {
     id: 'passive_vampire',
+    applicableTypes: ['tower'],
     name: '吸血鬼',
     icon: '🩸',
     color: '#c0392b',
@@ -532,6 +543,7 @@ export const towerPassives = {
 
   passive_phase: {
     id: 'passive_phase',
+    applicableTypes: ['tower'],
     name: '相位领域',
     icon: '🌀',
     color: '#9b59b6',
@@ -584,6 +596,7 @@ export const towerPassives = {
   // Q9：嚎哭深渊水晶塔专属——永久版钢铁防线（30% 减伤，不过期）
   passive_iron_line_ha: {
     id: 'passive_iron_line_ha',
+    applicableTypes: ['tower'],
     name: '钢铁防线·永久',
     icon: '🛡️',
     category: 'passive',
@@ -602,6 +615,7 @@ export const towerPassives = {
 
   passive_iron_line: {
     id: 'passive_iron_line',
+    applicableTypes: ['tower'],
     name: '钢铁防线',
     icon: '🛡️',
     category: 'passive',
@@ -633,6 +647,7 @@ export const towerPassives = {
   // 未过载时只在技能栏显示本条被动。
   passive_overload: {
     id: 'passive_overload', name: '过载', icon: '💣',
+    applicableTypes: ['tower'],
     category: 'passive',
     description: '唯一被动——过载：达到时限后每30秒损失固定双抗（外3/内2.5/水晶2/枢纽1.5）；再过5分钟后额外每30秒损失最大生命值（该项逐次递增）。越外侧的塔损失越多。',
     descTemplate: '唯一被动——过载：外塔20/内塔30/水晶塔45/枢纽塔60分钟起，每30秒损失双抗；再5分钟后额外损失最大生命值。当前 【{val}】。',
@@ -771,6 +786,8 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
   return {
     id, name,
     icon: '📈',
+    // 塔的成长曲线只按 id 分层（外/内/水晶/枢纽/深渊变体），永远只装在塔身上。
+    applicableTypes: ['tower'],
     // v42: defaultParams enables CombatSystem to inject per-map overrides into inst._params
     defaultParams: { adStartT: adStartT, stepAD: 9, totalSteps: totalSteps, armorPerStep: armorPerStep ?? 0, resistGrowthStartT: resistGrowthStartT ?? 0 },
     category: 'passive',
@@ -906,6 +923,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
 export const HomeAuraSkill = {
   passive_home_aura: {
     id: 'passive_home_aura',
+    applicableTypes: ['tower'],
     name: '基地光环',
     icon: '🏠',
     category: 'passive',

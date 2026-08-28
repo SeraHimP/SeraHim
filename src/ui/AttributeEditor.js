@@ -24,6 +24,8 @@ import { EDITOR_PAGES_CONFIG } from './editor/pagesConfig.js';
 import { EDITOR_PAGES_WAVE } from './editor/pagesWave.js';
 import { EDITOR_PAGES_ENTITY } from './editor/pagesEntity.js';
 import { EDITOR_PAGES_SKILLEFFECT } from './editor/pagesSkillEffect.js';
+import { EDITOR_PAGES_GAMEPLAY_SKILLSTATE } from './editor/pagesGameplaySkillState.js';
+import { EDITOR_PAGES_GAMEPLAY_WORLD } from './editor/pagesGameplayWorld.js';
 import { EDITOR_EVENTS } from './editor/events.js';
 
 export const AttributeEditor = Object.assign(
@@ -34,5 +36,7 @@ export const AttributeEditor = Object.assign(
   EDITOR_PAGES_WAVE,
   EDITOR_PAGES_ENTITY,
   EDITOR_PAGES_SKILLEFFECT,
+  EDITOR_PAGES_GAMEPLAY_SKILLSTATE,
+  EDITOR_PAGES_GAMEPLAY_WORLD,
   EDITOR_EVENTS,
 );

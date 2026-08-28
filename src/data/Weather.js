@@ -31,7 +31,12 @@ export const TARGET_MATCHERS = {
   tower_hq: (e) => e.type === 'tower' && e._mapTier === 'hq_tower',
 
   // 小兵
-  minions: (e) => e.type !== 'tower' && e.type !== 'dragon',
+  // Bug 修复（用户定稿："天气效果应该也对巨龙生效，目前并未生效"）：原来这里排除了
+  // dragon，而下面几乎所有天气效果条目的 targets 都写的是 'minions'/'towers'
+  // 二选一，没有单独的 'dragon' 分类——巨龙排除在 minions 之外，就意味着它只吃得到
+  // 少数几条 targets:'all' 的极端天气效果，普通天气（雨/雪/雾…）对它完全没作用。
+  // 巨龙是会动的中立单位，语义上更接近"小兵"而非"塔"，直接把它并入 minions。
+  minions: (e) => e.type !== 'tower',
   minion_melee: (e) => e.type === 'melee',
   minion_ranged: (e) => e.type === 'ranged',
   minion_siege: (e) => e.type === 'siege',

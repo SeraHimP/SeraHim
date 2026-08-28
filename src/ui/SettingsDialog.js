@@ -80,277 +80,6 @@ export const SettingsDialog = {
       <br><span style="color:var(--text-mute);">注：HDR 测试网站测的多是 HDR 视频/图片，与 WebGL 画布 HDR 输出是两套能力。</span>`;
   },
 
-  /**
-   * ==================== v43：巨龙面板重做 ====================
-   * 用户："设置里的巨龙面板重做，目前的啥功能也没有。"
-   *
-   * 说得对。改版前整块只有两样东西：一个暂停按钮 + 一个"首条龙延迟"输入框，
-   * 而且那个输入框写的是 `dragonSystem.nextDragonTime`（**倒计时剩余值**，不是配置），
-   * 面板一重开数字就变了 —— 看起来像个设置项，其实是个会自己乱跳的只读量。
-   *
-   * 现在按"看得见 + 改得动 + 立刻能验"三件事重做：
-   *   ① 实时状态：下一条龙倒计时/类型、已刷数量、场上现存龙
-   *   ② 争夺进度：双方元素龙击杀数、离成魂还差几条、已成的魂
-   *   ③ 开关：生成 / 效果 两个独立开关（CONFIG.dragonToggles）+ 暂停
-   *   ④ 节奏：首条延迟、元素龙间隔、远古龙间隔（都写回 CONFIG，不是写倒计时）
-   *   ⑤ 即时操作：立刻刷一条（元素/远古）、把龙魂直接判给某方、清空巨龙进度
-   * 只读量与可写配置在版式上分开，不再混成一片。
-   */
-  _dragonPanelHtml(ds, ents) {
-    if (!ds) return '';
-    const st = ds.getState ? ds.getState() : {};
-    const D = (CONFIG.gameRules && CONFIG.gameRules.dragon) || {};
-    const tg = CONFIG.dragonToggles || {};
-    const spawnOn = tg.spawn !== false, fxOn = tg.effect !== false;
-    const alive = ents ? ents.getAll(true).filter(e => e.type === 'dragon') : [];
-    const nextIsAncient = !!st.soulResolved;
-    const soulTxt = (f) => {
-      const arr = (st.souls && st.souls[f]) || [];
-      return arr.length ? arr.map(id => (window.__app?.SkillLibrary?.[id]?.icon || '🐉')).join('') : '—';
-    };
-    const need = Math.max(0, (st.soulThreshold ?? 4) - (st.factionTotals?.blue ?? 0));
-    const needR = Math.max(0, (st.soulThreshold ?? 4) - (st.factionTotals?.red ?? 0));
-
-    return `<div class="editor-section">
-      <h4>🐉 巨龙</h4>
-
-      <div class="pick-desc-box" style="margin-bottom:8px;font-size:11px;line-height:1.8;">
-        下一条：<b>${ds.paused ? '⏸ 已暂停' : (spawnOn ? `${nextIsAncient ? '🐲 远古龙' : '🐉 元素龙'} · ${_fmtTime(ds.nextDragonTime || 0)}` : '⛔ 生成已关闭')}</b>
-        　｜　已刷：元素 <b>${st.elementDragonSpawned ?? 0}</b>/<b>${st.elementDragonTotal ?? 6}</b>　远古 <b>${ds.ancientSpawned ?? 0}</b>
-        　｜　场上：<b>${alive.length}</b> 条<br>
-        🔵 蓝方击杀 <b>${st.factionTotals?.blue ?? 0}</b>（还差 ${need} 条成魂）　魂：${soulTxt('blue')}<br>
-        🔴 红方击杀 <b>${st.factionTotals?.red ?? 0}</b>（还差 ${needR} 条成魂）　魂：${soulTxt('red')}<br>
-        <span style="color:var(--text-mute);">成魂规则：${st.elementDragonTotal ?? 6} 条元素龙打完结算一次，
-        ≥${st.soulThreshold ?? 4} 条者成魂；都不到则无魂。成魂后只刷远古龙。击杀数只算元素龙。</span>
-      </div>
-
-      <div class="slider-row"><label>巨龙生成</label>
-        <button id="setToggleDragonBtn" style="flex:1;">${ds.paused ? '▶ 恢复计时' : '⏸ 暂停计时'}</button>
-        <button id="setDragonSpawnBtn" style="flex:1;">${spawnOn ? '✅ 允许生成' : '⛔ 禁止生成'}</button>
-      </div>
-      <div class="slider-row"><label title="关掉后龙仍会刷，但击杀不再发放巨龙之力/龙魂">龙之奖励效果</label>
-        <button id="setDragonFxBtn" style="flex:1;">${fxOn ? '✅ 已开启' : '⭕ 已关闭'}</button>
-      </div>
-
-      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">节奏（写入 CONFIG，立即生效于下一次计时）</div>
-        <div class="slider-row"><label style="font-size:11px;">首条龙延迟(秒)</label>
-          <input type="number" class="dragon-cfg" data-k="firstDelay" step="10" min="0" value="${D.firstDelay ?? 60}" style="width:90px;"></div>
-        <div class="slider-row"><label style="font-size:11px;">元素龙间隔(秒)</label>
-          <input type="number" class="dragon-cfg" data-k="elementInterval" step="10" min="10" value="${(D.elementIntervals && D.elementIntervals[0]) ?? 300}" style="width:90px;"></div>
-        <div class="slider-row"><label style="font-size:11px;">远古龙间隔(秒)</label>
-          <input type="number" class="dragon-cfg" data-k="ancientInterval" step="10" min="10" value="${D.ancientInterval ?? 300}" style="width:90px;"></div>
-        <div class="slider-row"><label style="font-size:11px;">当前倒计时(秒)</label>
-          <input type="number" id="setDragonCountdown" step="5" min="0" value="${Math.round(ds.nextDragonTime || 0)}" style="width:90px;">
-          <span style="font-size:11px;color:var(--text-mute);">只改这一次，不改配置</span></div>
-      </div>
-
-      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">即时操作（不计入比分，日志标 [编辑器]）</div>
-        <div style="display:flex;gap:6px;margin-bottom:6px;">
-          <button id="setDragonSpawnNowBtn" style="flex:1;">🐉 立刻刷一条</button>
-          <button id="setDragonKillAllBtn" style="flex:1;">💀 清掉场上的龙</button>
-        </div>
-        <div style="display:flex;gap:6px;">
-          <button id="setDragonSoulBlueBtn" style="flex:1;">🔵 直接判给蓝方</button>
-          <button id="setDragonSoulRedBtn" style="flex:1;">🔴 直接判给红方</button>
-          <button id="setDragonResetBtn" style="flex:1;">↺ 清空巨龙进度</button>
-        </div>
-      </div>
-    </div>` + `` ;
-  },
-
-  _bindDragonEvents(overlay, ds, ents, logFn, render) {
-    if (!ds) return;
-    const tag = '[编辑器]';
-    const $ = (id) => document.getElementById(id);
-    $('setToggleDragonBtn')?.addEventListener('click', () => {
-      ds.paused = !ds.paused;
-      logFn(ds.paused ? '⏸ 巨龙计时已暂停' : '▶ 巨龙计时已恢复', 'spawn');
-      render();
-    });
-    $('setDragonSpawnBtn')?.addEventListener('click', () => {
-      CONFIG.dragonToggles = CONFIG.dragonToggles || {};
-      CONFIG.dragonToggles.spawn = CONFIG.dragonToggles.spawn === false;
-      logFn(CONFIG.dragonToggles.spawn ? '✅ 巨龙生成已允许' : '⛔ 巨龙生成已禁止', 'spawn');
-      render();
-    });
-    $('setDragonFxBtn')?.addEventListener('click', () => {
-      CONFIG.dragonToggles = CONFIG.dragonToggles || {};
-      CONFIG.dragonToggles.effect = CONFIG.dragonToggles.effect === false;
-      logFn(CONFIG.dragonToggles.effect ? '✅ 龙之奖励已开启' : '⭕ 龙之奖励已关闭', 'spawn');
-      render();
-    });
-    overlay.querySelectorAll('.dragon-cfg').forEach(inp => inp.addEventListener('change', (e) => {
-      const v = parseFloat(e.target.value);
-      if (!Number.isFinite(v)) return;
-      const k = e.target.dataset.k;
-      CONFIG.gameRules.dragon = CONFIG.gameRules.dragon || {};
-      // elementIntervals 是个数组（支持"每条龙间隔不同"），面板只暴露第一项 ——
-      // 想要逐条不同的节奏走模板编辑器的巨龙页，那里是完整数组。
-      if (k === 'elementInterval') CONFIG.gameRules.dragon.elementIntervals = [v];
-      else CONFIG.gameRules.dragon[k] = v;
-      logFn(`${tag} 🐉 ${k} → ${v}s`, 'spawn');
-    }));
-    $('setDragonCountdown')?.addEventListener('change', (e) => {
-      const v = parseFloat(e.target.value);
-      if (Number.isFinite(v) && v >= 0) {
-        ds.nextDragonTime = v;
-        logFn(`${tag} ⏱ 下一条龙将在 ${v}s 后刷新（只改这一次）`, 'spawn');
-      }
-    });
-    $('setDragonSpawnNowBtn')?.addEventListener('click', () => {
-      ds.nextDragonTime = 0;
-      const before = (ds.elementDragonSpawned || 0) + (ds.ancientSpawned || 0);
-      ds.spawnDragon?.();
-      const after = (ds.elementDragonSpawned || 0) + (ds.ancientSpawned || 0);
-      logFn(after > before ? `${tag} 🐉 已立刻刷出一条龙` : `${tag} ⚠️ 刷龙失败（生成开关关着？）`, 'spawn');
-      render();
-    });
-    $('setDragonKillAllBtn')?.addEventListener('click', () => {
-      let n = 0;
-      for (const e of ents.getAll(true)) {
-        if (e.type !== 'dragon') continue;
-        e.alive = false; e.currentHP = 0; n++;
-        // 走 entity:death 而不是直接 remove：死亡归属/奖励发放都挂在那个事件上，
-        // 绕过去的话"编辑器杀的龙不给奖励"，与自然死亡两套行为。
-        ds.eventBus?.emit?.('entity:death', { entityId: e.id });
-      }
-      logFn(`${tag} 💀 清掉了场上 ${n} 条龙`, 'death');
-      render();
-    });
-    const grant = (fac) => {
-      ds._resolveSoul?.(fac);
-      logFn(`${tag} 🐉 龙魂已直接判给${fac === 'blue' ? '蓝方' : '红方'}`, 'spawn');
-      render();
-    };
-    $('setDragonSoulBlueBtn')?.addEventListener('click', () => grant('blue'));
-    $('setDragonSoulRedBtn')?.addEventListener('click', () => grant('red'));
-    $('setDragonResetBtn')?.addEventListener('click', () => {
-      ds.resetRun?.();
-      logFn(`${tag} ↺ 巨龙进度已清空（击杀数、龙魂、计时）`, 'spawn');
-      render();
-    });
-  },
-
-  // 用户反馈"目前的设置界面太杂乱了，按TAB标签分类显示"：
-  // 一屏 30+ 行全糊在一起，画质开关和波次参数混排。改为四个标签页，
-  // 当前页记在 _tab 上，重开设置面板会停在上次那一页。
-  _TABS: [
-    { key: 'flow',    label: '⏱ 流程' },
-    { key: 'quality', label: '🎨 画质' },
-    { key: 'wave',    label: '🌊 波次' },
-    { key: 'world',   label: '🌍 世界 · 调试' },
-  ],
-  _tab: 'flow',
-
-  // ==================== 🌍 世界耦合 · 熵（P5）====================
-  // 这几项此前【只能改源码】。用户的规矩是"所有的都不要硬编码，都应该是可编辑的软编码"，
-  // 而熵是全局非对称机制，调它的频率只会比别的更高，没有面板等于没法用。
-  //
-  // 每条耦合独立开关、默认全关；全关时世界层不产生任何修正，行为与接入前逐位一致。
-  _COUPLINGS: [
-    { key: 'dayNight',          label: '昼夜 → 攻守', hint: '白天小兵占优 / 夜晚防御塔占优（双方对称）' },
-    { key: 'entropyToUnits',    label: '熵 → 单位',   hint: '高熵利红（混乱）、低熵利蓝（秩序）' },
-    { key: 'entropyToWeather',  label: '熵 → 天气',   hint: '熵越高极端天气越频繁' },
-    { key: 'entropyToDayNight', label: '熵 → 昼夜',   hint: '熵越高夜晚越长' },
-  ],
-  // 数值项集中在这里声明，渲染与回写共用同一份，不会出现"面板改 A、运行时读 B"。
-  _WORLD_FIELDS: [
-    { path: 'dayPeriodSec', label: '一天时长(秒)', step: 30 },
-    { path: 'dayNightBonus.day.moveSpeedPct',    label: '白天·小兵移速(%)', step: 1 },
-    { path: 'dayNightBonus.day.attackDamagePct', label: '白天·小兵攻击(%)', step: 1 },
-    { path: 'dayNightBonus.night.attackDamagePct', label: '夜晚·塔攻击(%)', step: 1 },
-    { path: 'dayNightBonus.night.attackRangeFlat', label: '夜晚·塔射程', step: 5 },
-    { path: 'entropyBonus.attackDamagePct', label: '熵·攻击幅度(%)', step: 1 },
-    { path: 'entropyBonus.armorFlat',       label: '熵·护甲幅度',     step: 1 },
-    { path: 'entropy.coreTotal',    label: '核总数（恒定）', step: 1 },
-    { path: 'entropy.chargePerCore', label: '夺一核所需充能', step: 10 },
-    { path: 'entropy.chargeDecayPerSec', label: '充能每秒衰减', step: 0.1 },
-    { path: 'entropy.coreReturnSec', label: '归还一核间隔(秒)', step: 10 },
-    { path: 'entropy.gainMinion',   label: '充能·击杀小兵', step: 1 },
-    { path: 'entropy.gainTower',    label: '充能·摧毁建筑', step: 5 },
-    { path: 'entropy.volatilityPct', label: '红核·波动放大(%)', step: 1 },
-    { path: 'entropy.nightStretchPct', label: '熵·夜晚延长(%)', step: 5 },
-  ],
-  _getPath(obj, path) {
-    return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
-  },
-  _setPath(obj, path, v) {
-    const ks = path.split('.');
-    const last = ks.pop();
-    const t = ks.reduce((o, k) => (o[k] = o[k] || {}), obj);
-    t[last] = v;
-  },
-
-  _renderWorldSection() {
-    const W = CONFIG.world || {};
-    const cp = W.couplings || {};
-    const ws = window.CTX?.__world;
-    // 实时快照：调这些数值时最需要的就是"现在到底是多少"，否则纯盲调。
-    const live = ws
-      ? `<div class="pick-desc-box" style="margin-bottom:8px;font-size:11px;">
-           ${ws.entropySystem ? ws.entropySystem.describe() : ''}<br>
-           昼夜：${ws.daynight.label}（相位 ${ws.daynight.phase.toFixed(2)}）
-         </div>`
-      : `<div class="pick-desc-box" style="margin-bottom:8px;font-size:11px;">（世界状态未接入，进入对战后显示实时值）</div>`;
-
-    const toggles = this._COUPLINGS.map(c => {
-      const on = cp[c.key] === true;
-      return `<div class="slider-row"><label title="${c.hint}">${c.label}</label>
-        <button class="editor-tab ${on ? 'active' : ''}" data-coupling="${c.key}" style="flex:1;font-size:11px;">
-          ${on ? '✅ 已开启' : '⭕ 已关闭'}</button></div>`;
-    }).join('');
-
-    const fields = this._WORLD_FIELDS.map(f => {
-      const v = this._getPath(W, f.path);
-      if (v === undefined) return '';
-      return `<div class="slider-row"><label style="font-size:11px;">${f.label}</label>
-        <input type="number" class="world-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
-    }).join('');
-
-    return `<div class="editor-section">
-      <h4>🌍 世界耦合 · 熵</h4>
-      ${live}
-      <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
-        每条耦合独立开关，默认全关；全关时世界层不产生任何修正。
-        熵：0=绝对秩序（利蓝） 0.5=中性 1=绝对混乱（利红）。
-      </div>
-      ${toggles}
-      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">数值（改完点下方【应用世界数值】）</div>
-        ${fields}
-        <div style="display:flex;gap:6px;margin-top:8px;">
-          <button id="setWorldApplyBtn" style="flex:1;">✅ 应用世界数值</button>
-          <button id="setWorldResetEntropyBtn" style="flex:1;">↺ 三核归零</button>
-        </div>
-      </div>
-    </div>`;
-  },
-
-  _bindWorldEvents(overlay, logFn, render) {
-    overlay.querySelectorAll('[data-coupling]').forEach(b => b.addEventListener('click', () => {
-      const k = b.dataset.coupling;
-      CONFIG.world.couplings[k] = !CONFIG.world.couplings[k];
-      logFn(`🌍 耦合「${k}」：${CONFIG.world.couplings[k] ? '开' : '关'}`, 'spawn');
-      render();
-    }));
-    document.getElementById('setWorldApplyBtn')?.addEventListener('click', () => {
-      let n = 0;
-      overlay.querySelectorAll('.world-field').forEach(inp => {
-        const v = parseFloat(inp.value);
-        if (!isNaN(v)) { this._setPath(CONFIG.world, inp.dataset.path, v); n++; }
-      });
-      logFn(`🌍 世界数值已更新（${n} 项）`, 'spawn');
-      render();
-    });
-    document.getElementById('setWorldResetEntropyBtn')?.addEventListener('click', () => {
-      window.CTX?.__world?.entropySystem?.reset();
-      logFn('↺ 三核已归零（熵回到中性）', 'spawn');
-      render();
-    });
-  },
-
   open(deps, logFn) {
     const { waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem } = deps;
     const overlay = document.getElementById('modalOverlay');
@@ -477,43 +206,7 @@ export const SettingsDialog = {
           </div>
         </div>` : ''}
 
-        ${TAB === 'wave' ? `
-        ${mapSystem?.active ? `
-        <div class="editor-section">
-          <h4>⚔️ 对战模式 · 小兵波次</h4>
-          <div class="slider-row"><label>双方波次生成</label>
-            <button id="setToggleLaneWaveBtn" style="flex:1;">${laneWaveSystem?.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
-            <button id="setSkipLaneWaveBtn" style="flex:1;">⏭ 立即下一波</button>
-          </div>
-          ${_ruleRow('waveOn', '小兵随波次生成', '🌊', true)}
-          <div class="slider-row"><label>波次生成间隔（秒）</label>
-            <input type="number" id="setLaneWaveInterval" class="editor-number" value="${laneWaveSystem?.waveInterval || 30}" min="5" step="1">
-          </div>
-        </div>` : `
-        <div class="editor-section">
-          <h4>🗺️ 沙盒模式 · 小兵波次</h4>
-          <div class="slider-row"><label>小兵波次生成</label>
-            <button id="setToggleWaveBtn" style="flex:1;">${waveSystem.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
-            <button id="setSkipWaveBtn" style="flex:1;">⏭ 立即下一波</button>
-          </div>
-          <div class="slider-row"><label>波次间隔（秒）</label>
-            <input type="number" id="setWaveInterval" class="editor-number" value="${CONFIG.gameRules.waveInterval || 45}" min="5" step="1">
-          </div>
-          <div class="slider-row"><label>重置波次</label>
-            <button id="setResetWaveBtn" style="flex:1;">🔄 重置到第0波</button>
-          </div>
-        </div>`}
-        ${SettingsDialog._dragonPanelHtml(dragonSystem, entityContainer)}` : ''}
-
-        ${TAB === 'world' ? `
-        <div class="editor-section">
-          <h4>🌦️ 天气 · 昼夜</h4>
-          <div class="slider-row"><label>天气系统（昼夜随其开关）</label>
-            <button id="setWeatherToggleBtn" style="flex:1;">${window.__weather?.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
-            <button id="setWeatherCfgBtn" style="flex:1;">⚙️ 天气配置…</button>
-          </div>
-        </div>
-        ${this._renderWorldSection()}
+        ${TAB === 'debug' ? `
         <div class="editor-section">
           <h4>🛠 调试</h4>
           <div class="slider-row"><label>性能面板</label>
@@ -540,7 +233,7 @@ export const SettingsDialog = {
       overlay.querySelectorAll('[data-settab]').forEach(btn => {
         btn.addEventListener('click', () => { this._tab = btn.dataset.settab; render(); });
       });
-      if (this._tab === 'world') this._bindWorldEvents(overlay, logFn, render);
+      // 熵/世界耦合/天气/波次运行控制已搬到"游戏性"（模板编辑器），这里不再绑定。
 
       // 游戏暂停：此前这个按钮只有外观、没有任何监听器，点了毫无反应。
       document.getElementById('setGamePauseBtn')?.addEventListener('click', () => {
@@ -665,18 +358,8 @@ export const SettingsDialog = {
         shadowBtn.textContent = labels[applied];
       });
 
-      const wxToggle = document.getElementById('setWeatherToggleBtn');
-      if (wxToggle) wxToggle.addEventListener('click', () => {
-        const ws = window.__weather;
-        if (!ws) return;
-        ws.setEnabled(!ws.enabled);
-        wxToggle.textContent = ws.enabled ? '🌦️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）';
-        logFn(ws.enabled ? `🌦️ 天气系统已开启（本局平均主导时长约 ${ws.averageDuration}s）` : '⭕ 天气系统已关闭', 'spawn');
-      });
-      const wxCfg = document.getElementById('setWeatherCfgBtn');
-      if (wxCfg) wxCfg.addEventListener('click', () => {
-        window.__weatherPanel?.openConfig();
-      });
+      // 熵/天气/波次相关的运行时控制与巨龙面板已整体搬到"游戏性"（模板编辑器），
+      // 这里不再绑定 setWeatherToggleBtn / setWeatherCfgBtn / setToggleWaveBtn 等。
 
       // v39（Q6）：游戏速度 0.5x / 1x / 2x
       overlay.querySelectorAll('[data-speed]').forEach(btn => {
@@ -719,43 +402,11 @@ export const SettingsDialog = {
         entityContainer.purgeDead();
         logFn(`💀 清屏: 移除 ${minions.length} 个小兵`, 'death');
       });
-      document.getElementById('setToggleWaveBtn')?.addEventListener('click', () => {
-        waveSystem.paused = !waveSystem.paused;
-        logFn(waveSystem.paused ? '⏸ 小兵波次已暂停' : '▶ 小兵波次已恢复', 'spawn');
-        render();
-      });
-      document.getElementById('setSkipWaveBtn')?.addEventListener('click', () => {
-        waveSystem.skipToNextWave();
-        logFn('⏭ 跳过等待', 'spawn');
-      });
-      document.getElementById('setWaveInterval')?.addEventListener('input', (e) => {
-        const v = parseFloat(e.target.value);
-        if (!isNaN(v) && v > 0) {
-          CONFIG.gameRules.waveInterval = v;
-          // 若当前剩余等待时间比新设置的间隔还长，直接收紧到新间隔，让修改立刻感知到效果
-          if (waveSystem.nextWaveTime > v) waveSystem.nextWaveTime = v;
-          logFn(`✅ 小兵波次间隔已设为 ${v}秒`, 'spawn');
-        }
-      });
-      document.getElementById('setResetWaveBtn')?.addEventListener('click', () => {
-        if (confirm('重置波次到第0波？')) {
-          window.waveNumber = 0;
-          waveSystem.waveNumber = 0;
-          waveSystem.nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
-          logFn('🔄 波次已重置', 'spawn');
-        }
-      });
-      // v43：巨龙面板整块重做，事件绑定收进 _bindDragonEvents（渲染与绑定一一对应，
-      // 不再散在这个几百行的大 handler 里）。
-      SettingsDialog._bindDragonEvents(overlay, dragonSystem, entityContainer, logFn, render);
       document.getElementById('setExportLogBtn')?.addEventListener('click', () => {
         const ok = DebugLogger.downloadAsFile();
         logFn(ok ? '💾 日志已导出' : '❌ 日志导出失败', ok ? 'spawn' : 'death');
       });
       // v33（Q14）：日志精简为"一键导出文件"——复制按钮删除（导出文件覆盖同一用途且更可靠）
-      document.getElementById('setSkipLaneWaveBtn')?.addEventListener('click', () => {
-        if (laneWaveSystem) { laneWaveSystem.nextWaveTime = 0; logFn('⏭ 对战模式：立即生成下一波', 'spawn'); }
-      });
       document.getElementById('setLanePathBtn')?.addEventListener('click', () => {
         window.__showLanePaths = !window.__showLanePaths;
         logFn(window.__showLanePaths ? '👁 小兵轨迹已显示' : '🙈 小兵轨迹已隐藏', 'spawn');
@@ -767,21 +418,6 @@ export const SettingsDialog = {
         logFn(CONFIG.tuning.showBaseCircle ? '👁 基地圈已显示（光环效果不受影响）' : '🙈 基地圈已隐藏（光环效果照常）', 'spawn');
         render();
       });
-      const toggleLaneWaveBtn = document.getElementById('setToggleLaneWaveBtn');
-      if (toggleLaneWaveBtn) toggleLaneWaveBtn.addEventListener('click', () => {
-        laneWaveSystem.paused = !laneWaveSystem.paused;
-        logFn(laneWaveSystem.paused ? '⏸ 对战模式波次已暂停' : '▶ 对战模式波次已恢复', 'spawn');
-        render();
-      });
-      const laneWaveIntervalInput = document.getElementById('setLaneWaveInterval');
-      if (laneWaveIntervalInput) laneWaveIntervalInput.addEventListener('input', (e) => {
-        const v = parseFloat(e.target.value);
-        if (!isNaN(v) && v > 0) {
-          laneWaveSystem.waveInterval = v;
-          if (laneWaveSystem.nextWaveTime > v) laneWaveSystem.nextWaveTime = v;
-          logFn(`✅ 对战模式波次间隔已设为 ${v}秒`, 'spawn');
-        }
-      });
     };
 
     // 渲染器侧开关的回推口。取消回滚时必须调它 —— 那些开关的权威值在渲染器实例上，
@@ -792,6 +428,26 @@ export const SettingsDialog = {
     };
 
     render();
+
+    // Bug 修复（用户定稿）：这个面板的击杀计数只在"点了面板里的按钮"时才会重画，
+    // 龙魂的实际结算（DragonSystem._resolveSoul）本身是杀龙的当帧立即生效的、没有延迟——
+    // 面板显示跟不上是纯粹的"没人告诉它该重画"，不是计数漏加。之前只要杀龙时这个面板正开着
+    // 又没点任何按钮，看到的数字就是打开那一刻的旧值，直到用户凑巧点了点别的才刷新，
+    // 表现成"杀满第4条没反应，多杀几条后忽然跳上去"。
+    // 现在订阅 dragon:killed / dragon:soulResolved，面板开着的时候杀龙会实时刷新。
+    // 用 overlay 上挂一份"当前钩子"引用，每次 open() 都先解绑旧的再绑新的，避免设置面板
+    // 反复打开导致监听器越叠越多（同一条击杀最终触发好几次 render）。
+    const bus = dragonSystem.eventBus;
+    if (bus) {
+      if (overlay._dragonRenderHook) {
+        bus.off('dragon:killed', overlay._dragonRenderHook);
+        bus.off('dragon:soulResolved', overlay._dragonRenderHook);
+      }
+      const hook = () => { if (overlay.classList.contains('open')) render(); };
+      overlay._dragonRenderHook = hook;
+      bus.on('dragon:killed', hook);
+      bus.on('dragon:soulResolved', hook);
+    }
 
     // ==================== 统一页脚：应用 / 确定 / 取消（用户定稿）====================
     // 本窗口的开关是**即时预览**的（阴影/泛光/水面点一下就能看到效果），那是它们的价值，

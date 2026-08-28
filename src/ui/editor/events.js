@@ -55,7 +55,10 @@ export const EDITOR_EVENTS = {
     this._bindAttrEvents(overlay, entity, logFn);
 
     overlay.querySelector('#editorApplyBtn').addEventListener('click', () => {
-      const activeTab = overlay.querySelector('.editor-tab[data-tab].active');
+      // v44 外壳改造把导航按钮的 class 从 .editor-tab 换成了 .tpl-nav-item（见本文件顶部说明），
+      // 这里当时漏改，选择器还锁着旧 class，导致查不到 .active 元素、这个按钮点了永远没反应
+      // ——不只是武器，attr/weapon/skill/effect 全部 tab 都受影响。
+      const activeTab = overlay.querySelector('[data-tab].active');
       if (!activeTab) return;
       const tabName = activeTab.dataset.tab;
       if (tabName === 'attr') this._applyAttrChanges(overlay, entity, logFn);
@@ -116,10 +119,10 @@ export const EDITOR_EVENTS = {
       el.addEventListener('click', () => {
         overlay.querySelectorAll('.pick-card[data-weapon]').forEach(e => e.classList.remove('selected'));
         el.classList.add('selected');
-        const key = el.dataset.weapon;
+        const key = el.dataset.weapon; // 已经是完整 skillId（如 weapon_piercing / none），不需要再拼前缀
         const descBox = overlay.querySelector('#weaponDescBox');
         if (descBox) {
-          const def = SkillLibrary['weapon_' + key];
+          const def = SkillLibrary[key];
           descBox.textContent = key === 'none' ? '无武器：塔不会攻击。' : (def?.description || def?.descTemplate || '');
         }
       });
