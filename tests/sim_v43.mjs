@@ -630,8 +630,22 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // ==================== 十五、兵种调整批（用户定稿）====================
 {
   const S = CONFIG.gameRules.supportUnits;
-  T('兵①-图腾治疗改为每 4 秒回已损 2%（这是加强 2.5 倍，与光环削弱配套）',
-    S.totem.healIntervalSec === 4 && S.totem.healMissingPct === 2);
+  // v51.6：这条"每4秒回已损2%"的周期被动（healIntervalSec/healMissingPct）已经
+  // 整个删除，图腾兵的被动"图腾涌泉"改成了主动技能 active_totem_mend——法力攒满后
+  // 一次性为150码内友军回复固定量+法强加成，数值搬到了 actives.js 的 defaultParams
+  // 里（不再是 CONFIG.gameRules.supportUnits.totem 的字段）。这里改成验证：
+  // 旧字段已经不在，新主动技能已经注册好。
+  T('兵①-图腾"每4秒回已损2%"的周期被动字段已删除（v51.6 改成主动技能）',
+    S.totem.healIntervalSec === undefined && S.totem.healMissingPct === undefined);
+  {
+    const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+    const mend = SkillLibrary.active_totem_mend;
+    T('兵①附-图腾涌泉已改为主动技能 active_totem_mend（150码，70+15%法强）',
+      !!mend && mend.category === 'active'
+      && mend.defaultParams.range === 150
+      && mend.defaultParams.baseHeal === 70
+      && mend.defaultParams.apScale === 0.15);
+  }
   T('兵②-图腾光环削弱：减伤 10→6、固定护盾 25→15',
     S.totem.auraDamageReduction === 6 && S.totem.auraShieldFlat === 15);
   T('兵③-图腾自身 900 护盾不动（那是它的存在意义）', S.totem.selfShieldFlat === 900);

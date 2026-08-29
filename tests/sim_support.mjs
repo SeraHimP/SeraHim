@@ -58,18 +58,18 @@ function world() {
 }
 
 // ==================== 图腾兵 ====================
-// 规格：对自己和附近友军周期性（15s）提供已损生命值百分比（3%）治疗，
-//       施加 10% 伤害减免 / 25 固定护盾的光环，自身拥有高额固定护盾。
+// 规格：施加 10% 伤害减免 / 25 固定护盾的光环，自身拥有高额固定护盾；
+// v51.6：主动技能"图腾涌泉"——法力攒满后为150码内友军各回复(70+15%法强)生命
+//（原来的被动"周期性回已损生命百分比"与旧主动"庇护波"一并删除，见 actives.js）。
 {
   const W = world();
   const c = SU().totem;
   const totem = W.mk('totem', 'blue', 0);
-  W.eq(totem, ['passive_totem_aura', 'passive_totem_mend', 'passive_totem_bulwark']);
+  W.eq(totem, ['passive_totem_aura', 'passive_totem_bulwark']);
   const ally = W.mk('melee', 'blue', 50);
   const foe = W.mk('melee', 'red', 60);
   const allyMax = ally.baseStats.maxHP;
   ally.currentHP = Math.round(allyMax * 0.2);
-  const hp0 = ally.currentHP;
 
   T(`图腾·自身高额固定护盾（模板 ${CONFIG.templates.totem.shieldFixedMax} + ${c.selfShieldFlat}）`,
     totem.baseStats.shieldFixedMax === CONFIG.templates.totem.shieldFixedMax + c.selfShieldFlat);
@@ -85,32 +85,36 @@ function world() {
   T('图腾光环·不会加到敌方身上',
     fs.damageReduction === CONFIG.templates.melee.damageReduction);
 
-  T(`治疗周期未到不回血（1s < ${c.healIntervalSec}s）`, ally.currentHP === hp0);
-  W.run(c.healIntervalSec, [totem]);
-  const expect = hp0 + (allyMax - hp0) * (c.healMissingPct / 100);
-  T(`图腾涌泉·每 ${c.healIntervalSec}s 回【已损生命】的 ${c.healMissingPct}%（${hp0} → ${ally.currentHP.toFixed(1)}，期望 ${expect.toFixed(1)}）`,
-    Math.abs(ally.currentHP - expect) < 0.01);
+  // 图腾涌泉（主动）：法力系统驱动 onCast，这里直接调用同一份实现（与 ManaSystem
+  // 何时触发它是两件事，这里只验证"法力攒满时打这一下"的结算本身对不对）。
+  const mendDef = SkillLibrary.active_totem_mend;
+  T('图腾涌泉·已注册为主动技能', !!mendDef && mendDef.category === 'active');
+  const p = mendDef.defaultParams;
+  const mendInst = { id: ++window._uid, skillId: 'active_totem_mend', state: {} };
+  const hp0 = ally.currentHP;
+  const ok = mendDef.onCast(totem.id, mendInst, W.ctx);
+  const tStats = W.stats(totem);
+  const expect = (p.baseHeal ?? 70) + (p.apScale ?? 0.15) * (tStats.abilityPower || 0);
+  T('图腾涌泉·施放成功（范围内有友军）', ok === true);
+  T(`图腾涌泉·友军回复 (${p.baseHeal}+${p.apScale * 100}%法强)（${hp0} → ${ally.currentHP.toFixed(1)}，期望 ${(hp0 + expect).toFixed(1)}）`,
+    Math.abs(ally.currentHP - (hp0 + expect)) < 0.01);
   T('图腾涌泉·不治疗敌方', foe.currentHP === foe.baseStats.maxHP);
 
-  // 自身也要被治疗（"对自己和附近友军"）
+  // 自身也要被治疗（"友军"含自己，alliesInRadius 的 findInRadius 默认含查询者本身）
   const W2 = world();
   const t2 = W2.mk('totem', 'blue', 0);
-  W2.eq(t2, ['passive_totem_mend']);
   t2.currentHP = 10;
   const tMax = t2.baseStats.maxHP;
-  W2.run(SU().totem.healIntervalSec, [t2]);
-  const tExp = 10 + (tMax - 10) * (SU().totem.healMissingPct / 100);
-  T(`图腾涌泉·也治疗自己（10 → ${t2.currentHP.toFixed(1)}，期望 ${tExp.toFixed(1)}）`,
-    Math.abs(t2.currentHP - tExp) < 0.01);
-  T('图腾涌泉·自己只被治疗一次（不会因为同时在范围内而双份）',
-    t2.currentHP < 10 + (tMax - 10) * (SU().totem.healMissingPct / 100) * 1.5);
+  const mendInst2 = { id: ++window._uid, skillId: 'active_totem_mend', state: {} };
+  SkillLibrary.active_totem_mend.onCast(t2.id, mendInst2, W2.ctx);
+  T(`图腾涌泉·也治疗自己（10 → ${t2.currentHP.toFixed(1)}，高于原血量）`, t2.currentHP > 10);
 
-  // 满血单位不该浪费一次治疗
+  // 满血单位不该浪费一次治疗（不会超出上限）
   const W3 = world();
   const t3 = W3.mk('totem', 'blue', 0);
-  W3.eq(t3, ['passive_totem_mend']);
   const full = W3.mk('melee', 'blue', 30);
-  W3.run(SU().totem.healIntervalSec, [t3]);
+  const mendInst3 = { id: ++window._uid, skillId: 'active_totem_mend', state: {} };
+  SkillLibrary.active_totem_mend.onCast(t3.id, mendInst3, W3.ctx);
   T('图腾涌泉·满血单位不会超出上限', full.currentHP === full.baseStats.maxHP);
 }
 

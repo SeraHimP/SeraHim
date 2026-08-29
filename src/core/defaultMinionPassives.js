@@ -5,8 +5,9 @@
  * 和 ui/editor/pagesSkillEffect.js（编辑器"模板技能面板首次打开"的回填用）
  * 里各写了一份，且早就漂移了——v51/v51.1 加的四条主动技能（active_siege_haste/
  * active_totem_shield/active_warlock_empower/active_corrupt_poison）以及
- * warlock 的 passive_warlock_attune、图腾兵重做后的 passive_totem_mend/
- * passive_totem_bulwark，都只进了 factories.js 那份，编辑器那份从未跟上。
+ * warlock 的 passive_warlock_attune、图腾兵重做后的 passive_totem_mend（v51.6
+ * 已改成主动技能 active_totem_mend，见下方）/passive_totem_bulwark，都只进了
+ * factories.js 那份，编辑器那份从未跟上。
  * 症状：模板编辑器第一次打开图腾兵的"被动技能"页时，勾选框显示的默认装配
  * 是重做前的老三件套（guardian/awaken/nourish），而游戏里实际生成的图腾兵
  * 装的是新三件套 + 主动技能——面板显示的"默认值"与游戏里的真实默认值对不上。
@@ -26,7 +27,9 @@ export const DEFAULT_MINION_PASSIVES = {
   'ram': ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
   // 三个支援兵种（用户定稿重做）。v51.5：旧的 totem_guardian/awaken/nourish/sacrifice
   // 已经从 SkillLibrary 里整个删除（不再是"可手动装但不默认装"，是真的不存在了）。
-  'totem': ['passive_totem_aura', 'passive_totem_mend', 'passive_totem_bulwark', 'active_totem_shield'],
+  // v51.6：passive_totem_mend（被动"图腾涌泉"）与原主动"庇护波"（active_totem_shield）
+  // 一并删除，合并成新的主动技能 active_totem_mend（同名"图腾涌泉"，改成主动施放）。
+  'totem': ['passive_totem_aura', 'passive_totem_bulwark', 'active_totem_mend'],
   'warlock': ['passive_warlock_aura', 'passive_warlock_attune', 'active_warlock_empower'],
   'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison'],
 };

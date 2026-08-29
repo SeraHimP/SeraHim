@@ -1049,11 +1049,14 @@ async function world() {
   const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
   T('统①-编辑器默认被动回填表与 factories.js 真正消费的清单是同一个对象（不再是两份手抄副本）',
     EDITOR_PAGES_SKILLEFFECT._DEFAULT_PASSIVE_MAP === DEFAULT_MINION_PASSIVES);
-  T('统②-图腾兵默认清单是重做后的新三件套+主动技能，不是老三件套',
+  // v51.6：passive_totem_mend（被动"图腾涌泉"）与旧主动 active_totem_shield（庇护波）
+  // 一并删除，合并成新主动技能 active_totem_mend（同名"图腾涌泉"）。
+  T('统②-图腾兵默认清单是重做后的两条被动+主动技能，不是老三件套/旧主动',
     DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_aura')
-    && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_mend')
     && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_bulwark')
-    && DEFAULT_MINION_PASSIVES.totem.includes('active_totem_shield')
+    && DEFAULT_MINION_PASSIVES.totem.includes('active_totem_mend')
+    && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_mend')
+    && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_shield')
     && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_guardian'));
   T('统③-warlock/siege/corrupt 的默认清单也补上了此前漏掉的主动技能',
     DEFAULT_MINION_PASSIVES.warlock.includes('active_warlock_empower')

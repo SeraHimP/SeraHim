@@ -1,5 +1,4 @@
-import { makeAuraPassive, AURA_THROTTLE, AURA_RANGE } from './_helpers.js';
-import { applyHeal, healPowerFor } from '../healing.js';
+import { makeAuraPassive, AURA_THROTTLE } from './_helpers.js';
 import { CONFIG } from '../../data/Config.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵等大型兵）都算。
@@ -160,10 +159,13 @@ export const minionPassives = {
   // 但代码一直没删，编辑器里还能选到，选了会跟新三件套双份减伤/双份护盾叠加）。
 
   // ==================== 图腾兵（用户定稿重做）====================
-  // 定位：续航 + 减伤。三件事拆成三个技能，各自单一职责：
+  // 定位：续航 + 减伤。拆成各自单一职责的技能：
   //   passive_totem_aura     减伤 + 固定护盾光环（自身也吃）
-  //   passive_totem_mend     每 15 秒治疗自身与附近友军【已损生命】的 3%
   //   passive_totem_bulwark  自身高额固定护盾
+  //   active_totem_mend      主动技能，法力攒满后群体治疗（见 actives.js）——
+  //                          v51.6 从被动"每15秒按已损生命百分比回血"改成主动，
+  //                          原来的被动 passive_totem_mend 与原主动"庇护波"
+  //                          （临时护盾）一并删除，见 actives.js 头注。
   // targetTypes 传 null + minionsOnly：写死的类型数组【收不到自制兵种】，
   // 用户做出来的兵会拿不到光环，而这不报错、只是静默变弱。
   passive_totem_aura: makeAuraPassive({
@@ -182,67 +184,8 @@ export const minionPassives = {
     },
   }),
 
-  // 治疗【已损生命】而不是最大生命：满血单位不会浪费掉一次治疗，
-  // 残血单位越危险回得越多 —— 与 LoL 同类效果同口径。
-  passive_totem_mend: {
-    id: 'passive_totem_mend',
-    applicableTypes: ['totem'],
-    name: '图腾涌泉',
-    icon: '💧',
-    color: '#bb86fc',
-    category: 'passive',
-    _cfg: () => CONFIG.gameRules.supportUnits?.totem || {},
-    _text() {
-      const c = this._cfg();
-      return `唯一被动——图腾涌泉：每 ${c.healIntervalSec ?? 15} 秒，为自身与 ${AURA_RANGE} 范围内的友军`
-           + `恢复（【{val}】=各自【已损生命】×${c.healMissingPct ?? 3}%）生命。`;
-    },
-    get description() { return this._text(); },
-    get descTemplate() { return this._text(); },
-    computeCurrent(entity) {
-      const c = this._cfg();
-      const max = entity?.baseStats?.maxHP || 0;
-      const missing = Math.max(0, max - (entity?.currentHP || 0));
-      return Math.round(missing * (c.healMissingPct ?? 3) / 100);
-    },
-    effects: [],
-    onFrame: (entityId, dt, instance, ctx) => {
-      const e = ctx.entityContainer.get(entityId);
-      if (!e || !e.alive || e.type !== 'totem') return;
-      const c = CONFIG.gameRules.supportUnits?.totem || {};
-      const every = c.healIntervalSec ?? 15;
-      if (typeof instance.state?.mendT !== 'number') instance.state = { ...(instance.state || {}), mendT: 0 };
-      instance.state.mendT += dt;
-      // 容差 + 减掉一个周期保留余量：dt 是 1/30 这种二进制不精确的数，
-      // 朴素的 `< every` 每个周期都会少触发一次，清 0 又会持续漂移（behaviorVM 里踩过）。
-      if (instance.state.mendT < every - 1e-9) return;
-      instance.state.mendT -= every;
-
-      const pct = (c.healMissingPct ?? 3) / 100;
-      const targets = ctx.entityContainer.findInRadius(e.pos.x, e.pos.y, AURA_RANGE, null, true);
-      const ef = e._mapFaction || e.faction;
-      let selfHealed = false;
-      for (const a of targets) {
-        if (a.type === 'tower' || a.type === 'dragon') continue;
-        const af = a._mapFaction || a.faction;
-        if (af !== ef) continue;
-        const max = a.baseStats?.maxHP || 0;
-        const missing = Math.max(0, max - (a.currentHP || 0));
-        if (missing <= 0) continue;             // 满血的不浪费
-        // 强度取【被治疗方】的（见 core/healing.js 头注）：奶量不该由奶妈的属性决定，
-        // 而且这样重伤才压得住"别人给我的治疗"。
-        applyHeal(a, missing * pct, healPowerFor(a, ctx), max);
-        if (a.id === e.id) selfHealed = true;
-      }
-      // 自身单独补一次：findInRadius 是否返回半径 0 处的查询者本身不该被依赖。
-      // 用 selfHealed 去重，避免自己被治疗两次。
-      if (!selfHealed) {
-        const selfMax = e.baseStats?.maxHP || 0;
-        const selfMissing = Math.max(0, selfMax - (e.currentHP || 0));
-        applyHeal(e, selfMissing * pct, healPowerFor(e, ctx), selfMax);
-      }
-    },
-  },
+  // passive_totem_mend（"图腾涌泉"，每15秒按已损生命百分比回血）已在 v51.6
+  // 改成主动技能 active_totem_mend（见 actives.js），这里删除。
 
   // 自身高额固定护盾。走 onEquip 改 baseStats.shieldFixedMax 而不是挂一个 stat 效果：
   // 护盾上限是"这个单位有多厚"的固有属性，不是临时 buff；挂效果会在面板上

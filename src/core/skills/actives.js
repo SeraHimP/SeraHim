@@ -27,7 +27,7 @@
  * 公式决定，不存在共享的换算函数。
  */
 import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
-import { healPowerOf, grantTempShield } from '../healing.js';
+import { applyHeal, healPowerFor } from '../healing.js';
 
 /** self 半径内的存活友军（含自己）——阵营判据与其它系统一致。 */
 function alliesInRadius(ctx, self, range) {
@@ -130,30 +130,33 @@ export const actives = {
     },
   },
 
-  // ==================== 图腾兵：庇护波（群体临时护盾，法术强度联动）====================
-  // 用户："图腾兵……主动技能，对150范围内友军施加（XX=50+3%法术强度）临时护盾。"
-  active_totem_shield: {
-    id: 'active_totem_shield', name: '庇护波', icon: '🛡', color: '#2ecc71', category: 'active',
+  // ==================== 图腾兵：图腾涌泉（群体治疗，法术强度联动）====================
+  // v51.6 用户定稿："图腾兵原有的被动技能图腾涌泉改成主动技能替换现有的主动技能
+  // （现有的直接删除），效果为：治疗150码范围内友军（XX=70+15%法强）生命值。"
+  // 原来的主动【庇护波】（临时护盾）整个删除；原来的被动【图腾涌泉】（每15秒按
+  // 已损生命百分比回血，见 minionPassives.js 的历史实现）也整个删除，两者合并成
+  // 这一个主动技能——法力攒满就打一次固定量+法强加成的治疗，不再按已损生命算。
+  active_totem_mend: {
+    id: 'active_totem_mend', name: '图腾涌泉', icon: '💧', color: '#bb86fc', category: 'active',
     applicableTypes: ['totem'],
-    defaultParams: { range: 150, baseShield: 50, apScale: 0.03 },
+    defaultParams: { range: 150, baseHeal: 70, apScale: 0.15 },
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后，为半径 ${p.range} 内的全部友军各施加 (${p.baseShield} + `
-           + `${p.apScale * 100}%×法术强度) 点临时护盾。`;
+      return `法力攒满后，为半径 ${p.range} 内的全部友军各回复 (${p.baseHeal} + `
+           + `${p.apScale * 100}%×法术强度) 点生命值。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return false;
-      const p = instance._params || actives.active_totem_shield.defaultParams;
+      const p = instance._params || actives.active_totem_mend.defaultParams;
       const allies = alliesInRadius(ctx, self, p.range ?? 150);
       if (!allies.length) return false;
       const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
-      const shieldAmt = (p.baseShield ?? 50) + (p.apScale ?? 0.03) * (stats.abilityPower || 0);
-      if (!(shieldAmt > 0)) return false;
+      const healAmt = (p.baseHeal ?? 70) + (p.apScale ?? 0.15) * (stats.abilityPower || 0);
+      if (!(healAmt > 0)) return false;
       for (const a of allies) {
-        const aStats = ctx.attrCalc.calc(a, ctx.effectRegistry.getEffects(a.id));
-        grantTempShield(a, shieldAmt, healPowerOf(aStats));
+        applyHeal(a, healAmt, healPowerFor(a, ctx), a.baseStats?.maxHP ?? a.currentHP);
       }
       return true;
     },

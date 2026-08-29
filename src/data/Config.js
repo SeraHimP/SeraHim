@@ -41,14 +41,13 @@ export const CONFIG = {
     // 三个兵种的定位：图腾=续航/减伤、术士=增伤/破防、蚀骨=近战破甲。
     // 全部软编码，源码里不留魔数。
     supportUnits: {
-      // 图腾兵：周期性治疗【已损生命】百分比 + 减伤/护盾光环 + 自身高额固定护盾
+      // 图腾兵：主动治疗（active_totem_mend，见 actives.js） + 减伤/护盾光环 + 自身高额固定护盾
       totem: {
-        // v43（用户定稿）：治疗节奏从"每 15 秒回已损 3%"改成"每 4 秒回已损 2%"。
-        // 注意这是**加强**：0.2%/秒 → 0.5%/秒，强了 2.5 倍。手感也完全不同——
-        // 旧版是每 15 秒一次的大跳，新版是几乎连续的滴血回复，前排更难被磨死。
-        // 与之配套，下面两条光环数值同批**削弱**（用户："图腾兵光环效果太强了，削数值"）。
-        healIntervalSec: 4,    // 治疗周期（秒）。v43：15 → 4
-        healMissingPct: 2,     // 每次治疗量 = 目标【已损生命】的百分比。v43：3 → 2
+        // v51.6：周期性被动治疗（healIntervalSec/healMissingPct）已改成主动技能
+        // active_totem_mend，这两个字段随 passive_totem_mend 一起删除——数值现在
+        // 在 actives.js 的 active_totem_mend.defaultParams 里（baseHeal/apScale）。
+        // 与之配套，下面两条光环数值当时是同批**削弱**（用户："图腾兵光环效果太强了，
+        // 削数值"），数值本身不受这次改动影响。
         auraDamageReduction: 6,  // 光环：伤害减免（%）。v43：10 → 6
         auraShieldFlat: 15,      // 光环：固定护盾。v43：25 → 15
         selfShieldFlat: 900,     // 自身固定护盾（"高额"）。这是图腾兵的存在意义，不动
@@ -1198,10 +1197,11 @@ export const CONFIG = {
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
-      // v51.1：用户定稿"图腾兵法力值上限120，2/s"，见 actives.js 的 active_totem_shield。
+      // v51.1：用户定稿"图腾兵法力值上限120，2/s"，见 actives.js 的 active_totem_mend
+      // （v51.6 前叫 active_totem_shield，效果从护盾改成了治疗，法力池数值不变）。
       maxMana: 120, manaRegen: 2,
       // v51.6：用户"图腾兵……会自带一些法强，数值自己定但是不要太多"——给 8，
-      // 配 active_totem_shield 的 3% 系数只多约 +0.24 护盾，量级不大，是基础值，
+      // 配 active_totem_mend 的 15% 系数只多约 +1.2 点治疗，量级不大，是基础值，
       // 不是这条技能的主要强度来源。
       abilityPower: 8,
     },
