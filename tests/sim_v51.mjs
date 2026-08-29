@@ -1411,4 +1411,14 @@ async function world() {
   T('改④-展开面板行标签已改名', /label:\s*'全能吸血%'/.test(layoutSrc));
 }
 
+// ==================== v51.6 Q4：带导航的窗口固定高度，不再随页面跳变 ====================
+{
+  const htmlSrc = srcOf('index.html');
+  T('固①-侧边导航列固定高度（不再是 max-height 封顶）', /\.tpl-nav\s*\{[^}]*height:\s*58vh/.test(htmlSrc));
+  T('固②-带导航窗口的内容区固定高度', /\.tpl-layout \.tpl-pane\s*\{\s*height:\s*58vh/.test(htmlSrc));
+  // 不带导航的单页信息弹窗（详情框/属性说明）不受影响，仍按内容自适应封顶
+  T('固③-不带导航的单页弹窗仍是 max-height 封顶（未被强行撑大）',
+    /\.tpl-pane\s*\{[^}]*max-height:\s*58vh/.test(htmlSrc));
+}
+
 done();

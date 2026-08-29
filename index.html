@@ -737,7 +737,7 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    位置感由纵向层级承担，右侧只剩"当前页在编辑什么"这一件事。 */
 .tpl-layout { display: flex; gap: 14px; align-items: flex-start; }
 .tpl-nav {
-  width: 168px; flex-shrink: 0; max-height: 58vh; overflow-y: auto;
+  width: 168px; flex-shrink: 0; height: 58vh; overflow-y: auto;
   border-right: 1px solid var(--glass-border); padding-right: 10px;
 }
 .tpl-nav-group { margin-bottom: 10px; }
@@ -760,6 +760,13 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .tpl-nav-item.open { color: var(--text); font-weight: 600; }
 .tpl-caret { display: inline-block; width: 10px; font-size: 9px; color: var(--text-mute); }
 .tpl-pane { flex: 1; min-width: 0; max-height: 58vh; overflow-y: auto; padding-right: 4px; }
+/* v51.6 Q4：用户"所有窗口都改为固定大小，因为目前都是窗口大小动态变化的"——
+   之前 .tpl-pane 用 max-height 只是封顶，短页面会让整个弹窗跟着缩小，切页/切 tab
+   时弹窗肉眼可见地一跳一跳。只对"带左侧导航"的窗口（.tpl-layout 内）改成固定
+   height——右侧内容区从此不管这一页内容多短都占满同样的高度，长内容仍在内部滚动。
+   不带导航的单页信息弹窗（详情框/属性说明等，.tpl-pane 单独出现，没有 .tpl-layout
+   包着）本来就没有"切页跳变"这个问题，维持随内容长短自适应，强行撑大反而难看。 */
+.tpl-layout .tpl-pane { height: 58vh; }
 .tpl-pane-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .tpl-pane-head .tpl-crumb { font-size: 13px; font-weight: 600; }
 .tpl-pane-head .tpl-crumb-sub { font-size: 11px; color: var(--text-mute); }
