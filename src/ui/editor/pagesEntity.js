@@ -474,6 +474,14 @@ export const EDITOR_PAGES_ENTITY = {
     const app = window.__app;
     const DRAGON_ELEMENTS = app?.DRAGON_ELEMENTS || {};
     const SkillLibrary = app?.SkillLibrary || {};
+    // v51.5 修复：下面 mouseenter 里一直写的是 renderSkillDescription(def, entity, ctx)，
+    // 而这个函数的参数叫 tower，从没声明过 entity/ctx —— 这两个是未声明标识符，
+    // 鼠标移上龙魂池卡片时会直接抛 ReferenceError（严格模式下模块顶层皆是如此），
+    // 悬浮说明文字因此从来没真正显示过。这里补上正确的 ctx，entity 用真正的持有者。
+    const ctx = {
+      entityContainer: app?.entityContainer, effectRegistry: app?.effectRegistry,
+      attrCalc: app?.attrCalc,
+    };
     const rerender = () => {
       overlay.querySelector('#editorContent').innerHTML = this._renderSoulContent(tower);
       this._bindSoulEvents(overlay, tower, logFn);
@@ -497,7 +505,10 @@ export const EDITOR_PAGES_ENTITY = {
         const key = card.dataset.poolKey;
         const el = DRAGON_ELEMENTS[key];
         if (!el) return;
-        app.dragonSystem._applyElementBuffToTower(tower, key);
+        // v51.5 修复：DragonSystem 上根本没有 _applyElementBuffToTower 这个方法
+        // （真正的方法叫 _applyElementBuff(entity, el)），点巨龙增益池的卡片
+        // 之前会直接抛 TypeError，整块"巨龙增益池"从未真正工作过。
+        app.dragonSystem._applyElementBuff(tower, key);
         logFn(`✨ 塔 #${tower.id} ${el.label}之力 +1 层`, 'spawn');
         rerender();
       });
@@ -522,7 +533,7 @@ export const EDITOR_PAGES_ENTITY = {
         const el = DRAGON_ELEMENTS[card.dataset.poolKey];
         const def = el ? SkillLibrary[el.soul] : null;
         const descBox = overlay.querySelector('#soulDescBox');
-        if (descBox) descBox.textContent = renderSkillDescription(def, entity, ctx) || def?.description || '';
+        if (descBox) descBox.textContent = renderSkillDescription(def, tower, ctx) || def?.description || '';
       });
     });
 

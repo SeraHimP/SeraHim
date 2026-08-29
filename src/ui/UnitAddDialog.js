@@ -41,7 +41,7 @@ const WEAPONS = {
 
 const TOWER_PASSIVES = [
   'passive_heavy_defense', 'passive_thorns', 'passive_frost_plating',
-  'passive_armor_plating', 'passive_overheat', 'passive_vampire', 'passive_phase',
+  'passive_armor_plating',
 ];
 
 export const UnitAddDialog = {

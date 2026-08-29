@@ -830,10 +830,20 @@ export class UIManager {
         const deg = Math.round(frac * 360);
         // 与倒计时相反：充能是**亮起来**的（画已完成的那一段），倒计时是压暗剩余。
         bg = `conic-gradient(rgba(246,201,74,0.55) ${deg}deg, transparent ${deg}deg 360deg)`;
-      } else if (e.permanent || e.remainingTime === Infinity || e.blueprint.duration <= 0) {
+      } else if (e.permanent || e.remainingTime === Infinity || e.maxDuration <= 0) {
         bg = 'none';
       } else {
-        const elapsedFrac = Math.max(0, Math.min(1, 1 - (e.remainingTime / e.blueprint.duration)));
+        // v51.5（Q1 修复）：这里原来除的是 e.blueprint.duration —— 那是蓝图上的
+        // 【出厂设计值】，不是这个实例真正的总时长。DragonSystem._grantSlayer 把
+        // 临时龙魂从"永久"改成"限时 N 秒"时，只改了 remainingTime/maxDuration，
+        // 没有（也不该）去改 blueprint.duration——那是共享对象，改了会连累同一个
+        // 龙魂的其它实例。于是这里除的分母一直是 Infinity（龙魂展示效果出厂就是永久），
+        // remainingTime / Infinity 恒为 0，环永远画成"已耗尽的满环"，玩家看起来就是
+        // "没有进度条"。EffectRegistry 创建每个效果实例时本来就同步写了 maxDuration
+        // （EffectRegistry.js 头注就写着"圆形进度条所需的 remainingTime/maxDuration
+        // 数据"——这里却一直没用它），改用这个【实例级】字段就是这条环真正该读的值，
+        // 且不需要 DragonSystem 那边再做任何改动。
+        const elapsedFrac = Math.max(0, Math.min(1, 1 - (e.remainingTime / e.maxDuration)));
         const deg = Math.round(elapsedFrac * 360);
         bg = `conic-gradient(rgba(0,0,0,0.72) ${deg}deg, transparent ${deg}deg 360deg)`;
       }

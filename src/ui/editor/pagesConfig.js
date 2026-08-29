@@ -400,7 +400,10 @@ export const EDITOR_PAGES_CONFIG = {
       card.addEventListener('mouseenter', () => {
         const def = SkillLibrary[card.dataset.tplsoul];
         const descBox = overlay.querySelector('#tplSoulDescBox');
-        if (descBox) descBox.textContent = renderSkillDescription(def, entity, ctx) || def?.description || '';
+        // v51.5 修复：同一处 ReferenceError（entity/ctx 从未声明过，见
+        // pagesEntity.js._bindSoulEvents 的对照修复）。模板编辑没有具体持有者，
+        // entity 传 null——renderSkillDescription 对 entity 缺失有安全回退。
+        if (descBox) descBox.textContent = renderSkillDescription(def, null, {}) || def?.description || '';
       });
     });
     overlay.querySelectorAll('[data-tplsoul-remove]').forEach(chip => {

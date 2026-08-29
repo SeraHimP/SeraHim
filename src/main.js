@@ -412,7 +412,7 @@ function _processNextTowerPlacement() {
         entityContainer, effectRegistry, eventBus, waveNumber: CTX.waveNumber || 0, attrCalc
       }, skillLibrary);
     }
-    const allPassives = ['passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating', 'passive_overheat', 'passive_vampire', 'passive_phase'];
+    const allPassives = ['passive_heavy_defense', 'passive_thorns', 'passive_frost_plating', 'passive_armor_plating'];
     const toRemove = tower._skillInstances.filter(s => allPassives.includes(s.skillId));
     for (const inst of toRemove) {
       const def = skillLibrary[inst.skillId];

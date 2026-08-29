@@ -108,8 +108,6 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
   };
 }
 
-import { applyHeal, healPowerFor } from '../healing.js';
-
 export const towerPassives = {
   // ==================== v35（Q5）：建筑默认被动 ====================
   // 背景：所有塔的地图默认 固定护盾/生命恢复 清零，改由下列可卸被动提供——
@@ -464,159 +462,53 @@ export const towerPassives = {
     },
   },
 
-  passive_overheat: {
-    id: 'passive_overheat',
-    applicableTypes: ['tower'],
-    name: '过热核心',
-    icon: '💢',
-    color: '#e67e22',
-    category: 'passive',
-    description: '连续攻击同一目标，每次+3%伤害，换目标清零，最多+30%（10层）。',
-    descTemplate: '唯一被动——过热核心：连续攻击同一目标，每次获得（【{val}%】=3%×层数）伤害提升，换目标清零，最多+30%。',
-    computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '过热核心'); return (3 * (e ? e.stacks : 0)); },
-    incompatibleWithSpecial: true,
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      instance.state = instance.state || {};
-      instance.state.lastTargetId = null;
-      instance.state.stacks = 0;
-    },
-    onDealtDamage: (attackerId, targetId, instance, ctx) => {
-      const state = instance.state || (instance.state = { lastTargetId: null, stacks: 0 });
-      if (state.lastTargetId !== targetId) {
-        state.lastTargetId = targetId;
-        state.stacks = 0;
-      }
-      state.stacks = Math.min(state.stacks + 1, 10);
-      ctx.effectRegistry.apply(attackerId, {
-        name: '过热核心', icon: '💢', kind: 'stat', statKey: 'damageAmpPct',
-        flatValue: (inst._params?.perStackDamage ?? 3), perStackFlat: (inst._params?.perStackDamage ?? 3), duration: (inst._params?.effectDuration ?? 3),
-        stackable: true, maxStacks: (inst._params?.maxStacks ?? 10), stackPolicy: 'stack',
-        description: '伤害提升（{stacks}/10层）',
-      }, 'passive_overheat');
-      // 手动同步层数（换目标时清零）
-      const eff = ctx.effectRegistry.getEffectByName(attackerId, '过热核心');
-      if (eff) { eff.stacks = state.stacks; }
-    },
-  },
+  // v51.5：passive_overheat（过热核心）/passive_vampire（吸血鬼）/passive_phase
+  // （相位领域）已删除——用户："过热核心删除。吸血鬼删除。相位领域删除。"
+  // 这三条都是纯硬编码数值、完全没接入 v51 系列的属性框架（法术强度/技能增幅/
+  // 暴击/统一吸血等），已经过时；结合现在的框架重新设计的新技能后续再补。
 
-  passive_vampire: {
-    id: 'passive_vampire',
-    applicableTypes: ['tower'],
-    name: '吸血鬼',
-    icon: '🩸',
-    color: '#c0392b',
-    category: 'passive',
-    description: '攻击回复等于8%造成伤害的生命值。',
-    descTemplate: '唯一被动——吸血鬼：攻击回复等于（【{val}】=8%造成伤害）的生命值。',
-    computeCurrent: (entity, ctx) => '8%',
-    effects: [],
-    onDealtDamage: (attackerId, targetId, instance, ctx) => {
-      const attacker = ctx.entityContainer.get(attackerId);
-      if (!attacker || !attacker.alive) return;
-      const heal = (ctx.finalDamage || 0) * 0.08;
-      if (heal > 0) {
-        const maxHP = ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attackerId)).maxHP || 1;
-        // 治疗与护盾强度：走统一入口（见 core/healing.js），因而也受重伤压制
-        applyHeal(attacker, heal, healPowerFor(attacker, ctx), maxHP);
-      }
-    },
-  },
-
-  passive_phase: {
-    id: 'passive_phase',
-    applicableTypes: ['tower'],
-    name: '相位领域',
-    icon: '🌀',
-    color: '#9b59b6',
-    category: 'passive',
-    description: '每8秒获得一层“相位”（最多3层），攻击命中消耗一层造成1.5倍额外伤害。',
-    descTemplate: '唯一被动——相位领域：每8秒获得一层相位（最多3层），攻击命中消耗一层造成1.5倍额外伤害。当前（【{val}】=充能层数）。',
-    computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '相位'); return e ? e.stacks : 0; },
-    incompatibleWithSpecial: true,
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      instance.state = instance.state || {};
-      instance.state.timer = 0;
-      instance.state.charges = 0;
-    },
-    onFrame: (entityId, dt, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (!entity || !entity.alive) return;
-      const state = instance.state || (instance.state = { timer: 0, charges: 0 });
-      state.timer += dt;
-      if (state.timer >= 8) {
-        state.timer -= 8;
-        state.charges = Math.min((state.charges || 0) + 1, 3);
-        ctx.effectRegistry.apply(entityId, {
-          name: '相位', icon: '🌀', kind: 'custom', color: '#9b59b6',
-          duration: Infinity, permanent: true, stackable: true, maxStacks: 3,
-          stackPolicy: 'stack', description: '相位充能（{stacks}/3）',
-          customData: { charges: state.charges },
-        }, 'passive_phase');
-        const eff = ctx.effectRegistry.getEffectByName(entityId, '相位');
-        if (eff) eff.stacks = state.charges;
-      }
-    },
-    onDealtDamage: (attackerId, targetId, instance, ctx) => {
-      const state = instance.state;
-      if (!state || (state.charges || 0) <= 0) return;
-      state.charges -= 1;
-      const eff = ctx.effectRegistry.getEffectByName(attackerId, '相位');
-      if (eff) {
-        eff.stacks = Math.max(0, state.charges);
-        if (state.charges <= 0) ctx.effectRegistry.remove(eff.id);
-      }
-      // 造成 1.5 倍额外伤害
-      const bonus = (ctx.totalRaw || 0) * 1.5;
-      if (bonus > 0 && ctx.combat) {
-        ctx.combat.performAttackDirect(attackerId, targetId, bonus, ctx.attackType || 'physical');
-      }
-    },
-  },
-
-  // Q9：嚎哭深渊水晶塔专属——永久版钢铁防线（30% 减伤，不过期）
-  passive_iron_line_ha: {
-    id: 'passive_iron_line_ha',
-    applicableTypes: ['tower'],
-    name: '钢铁防线·永久',
-    icon: '🛡️',
-    category: 'passive',
-    description: '唯一被动——钢铁防线（永久）：格挡30%即将到来的伤害，永不失效。',
-    descTemplate: '唯一被动——钢铁防线（永久）：+30%伤害减免（常驻状态）。',
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      ctx.effectRegistry.apply(entityId, {
-        name: '钢铁防线', icon: '🛡️', kind: 'stat', statKey: 'damageReduction', flatValue: 30,
-        duration: 0, permanent: true,
-        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: '格挡30%即将到来的伤害（永久）',
-      }, 'passive_iron_line_ha');
-    },
-  },
-
+  // ==================== v51.5：钢铁防线（限时/永久二合一）====================
+  // 用户："钢铁防线这种的，有永久的有持续多少秒的。都进行合并。就是技能的量化
+  // （可视化）是在状态栏上显示的，可以设置这个技能持续多久或者是永久持续（类似
+  // 直接添加状态那种）。"
+  // 原来是两条几乎一样的技能：passive_iron_line（开局300秒内+33%减伤，到期自动
+  // 脱落）与 passive_iron_line_ha（嚎哭深渊水晶塔专属，同样+33%但改成永久不过期，
+  // 唯一区别就是"限时 vs 永久"这一个开关）。现在合并成一条，靠 defaultParams 里的
+  // durationSec 决定——<=0 表示永久，正数表示限时秒数。durationSec 声明在
+  // defaultParams 里，天然被"技能数值编辑器"（src/ui/editor/open.js 的
+  // _skillsWithParams，逐条扫 SkillLibrary 里声明了 defaultParams 的技能）自动收录，
+  // 不用再单独接一次 UI；地图想要"这张图上这条魂是永久的"，跟加固城防的 regen
+  // 走同一套 map.skillOverrides 覆写机制即可（嚎哭深渊的水晶塔就是这么接的，
+  // 见 src/data/maps/howling_abyss.js）。
   passive_iron_line: {
     id: 'passive_iron_line',
     applicableTypes: ['tower'],
     name: '钢铁防线',
     icon: '🛡️',
     category: 'passive',
-    description: '唯一被动——钢铁防线：开局5分钟内格挡33%即将到来的伤害（+33%伤害减免状态，走效果系统，到期自动消失）。',
+    defaultParams: { durationSec: 300 },   // v39（节奏）：420→300s；<=0 表示永久
+    getDescTemplate: (entity, instance) => {
+      const sec = (instance && instance._params && typeof instance._params.durationSec === 'number')
+        ? instance._params.durationSec : 300;
+      return sec > 0
+        ? `唯一被动——钢铁防线：开局${sec}秒内+33%伤害减免（效果面板显示剩余时间）。`
+        : '唯一被动——钢铁防线：永久+33%伤害减免（常驻状态，不会过期）。';
+    },
+    description: '唯一被动——钢铁防线：开局300秒内格挡33%即将到来的伤害（+33%伤害减免状态，走效果系统，到期自动消失）。',
     descTemplate: '唯一被动——钢铁防线：开局300秒内+33%伤害减免（效果面板显示剩余时间）。',
     effects: [],
+    // equipSkill()（core/skillParams.js）保证 onEquip 跑之前 instance._params 已经
+    // 按"出厂值→全局覆写→地图覆写"三层解析完毕，这里可以直接读，不需要像老版
+    // 加固城防那样再等一次 onFrame。
     onEquip: (entityId, instance, ctx) => {
-      // 通过效果系统添加限时状态：效果面板自带剩余时间进度条，到期自动脱落。
+      const sec = (instance._params && typeof instance._params.durationSec === 'number')
+        ? instance._params.durationSec : 300;
+      const permanent = sec <= 0;
       ctx.effectRegistry.apply(entityId, {
-        name: '钢铁防线',
-        icon: '🛡️',
-        kind: 'stat',
-        statKey: 'damageReduction',
-        flatValue: 33,   // v39（节奏）：50→33
-        duration: 300,   // v39（节奏）：420→300s（拆掉前期最大一道闸）
-        stackable: false,
-        stackPolicy: 'refresh',
-        uniquePassive: true,
-        description: '格挡33%即将到来的伤害（开局保护期）',
+        name: '钢铁防线', icon: '🛡️', kind: 'stat', statKey: 'damageReduction', flatValue: 33,
+        duration: permanent ? Infinity : sec, permanent,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: permanent ? '格挡33%即将到来的伤害（永久）' : '格挡33%即将到来的伤害（开局保护期）',
       }, 'passive_iron_line');
     },
   },

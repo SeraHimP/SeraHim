@@ -47,7 +47,11 @@ T('HA外塔数值覆写', outer && outer.stats.maxHP===2250 && outer.stats.attac
 T('HA外塔技能=深渊成长', outer && Array.isArray(outer.skills) && outer.skills.includes('passive_growth_ha'));
 const base=captured.find(c=>c.tier==='base'&&c.faction==='blue');
 // 期望常量更新：水晶塔 maxHP 3750 -> 5100（用户本轮定稿）
-T('HA水晶塔穿透+永久钢铁防线', base && base.weapon==='piercing' && base.skills.includes('passive_iron_line_ha') && base.stats.maxHP===5100);
+// v51.5：passive_iron_line_ha（永久版）与 passive_iron_line（限时版）合并成一条
+// 技能，本图靠 skillOverrides 把 durationSec 覆写成 0（=永久）拿到同样的效果。
+T('HA水晶塔穿透+永久钢铁防线', base && base.weapon==='piercing' && base.skills.includes('passive_iron_line')
+  && base.stats.maxHP===5100
+  && mapSys.currentMap.skillOverrides['tower:base'].passive_iron_line.durationSec === 0);
 const hqs=captured.filter(c=>c.tier==='hq_tower'&&c.faction==='blue');
 // 期望常量更新：枢纽塔 maxHP 2750 -> 4750（用户本轮定稿）
 T('HA枢纽塔×2穿透(最新确认)', hqs.length===2 && hqs.every(h=>h.weapon==='piercing'&&h.stats.maxHP===4750));

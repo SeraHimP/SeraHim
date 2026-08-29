@@ -12,6 +12,7 @@ import { CONFIG } from '../../data/Config.js';
 import { shellHtml } from '../dialogShell.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
 import { allMinionTypes, minionLabel, minionIcon } from '../../data/customContent.js';
+import { DragonSystem } from '../../systems/DragonSystem.js';
 
 export const EDITOR_OPEN = {
   // ==================== 实体编辑器 ====================
@@ -27,12 +28,21 @@ export const EDITOR_OPEN = {
     // 它当时保留着顶部横排的 .editor-tab 按钮条，而设置/添加单位/模板编辑器都已经改完了，
     // 于是同一个应用里还剩这一处是另一种导航语言。
     // 正文渲染函数（_renderAttrContent 等）一行没动，换的只是它被摆进哪个容器。
+    //
+    // v51.5：龙魂 tab 原来跟"武器"tab 共用 isTower 这个开关，用户发现"编辑塔的界面
+    // 有龙魂，编辑其他界面就没有龙魂了"——根子是这里把"是不是塔"和"够不够格拿龙魂"
+    // 绑在了一个字段上。够不够格拿龙魂的**唯一权威判据**是 DragonSystem.SOUL_REWARD_OK
+    // （塔 + 除近战/远程外的全部大型小兵），_renderSoulContent/_bindSoulEvents 本来就
+    // 是通用实现（参数叫 tower 只是历史命名，内部只读 entity.id/_skillInstances，
+    // 从来没有依赖过 entity.type==='tower'），只是这里的 tab 开关一直卡在 isTower，
+    // 现在改成读同一份判据，武器 tab 仍然只给塔（武器是塔专属概念，与这次的问题无关）。
+    const soulEligible = DragonSystem.SOUL_REWARD_OK(entity);
     const NAV = [
       { key: 'attr',   label: '📊 属性' },
       ...(isTower ? [{ key: 'weapon', label: '🔫 武器' }] : []),
       { key: 'skill',  label: '🌀 被动技能' },
       { key: 'effect', label: '🧪 状态' },
-      ...(isTower ? [{ key: 'soul', label: '🐉 龙魂' }] : []),
+      ...(soulEligible ? [{ key: 'soul', label: '🐉 龙魂' }] : []),
       { key: 'ops',    label: '🛠 运维' },
     ];
     const overlay = document.createElement('div');

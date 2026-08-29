@@ -84,13 +84,16 @@ function unit(ents, o = {}) {
     /取\*\*接受治疗\/护盾的那一方\*\*/.test(fs.readFileSync('src/core/healing.js', 'utf8')));
 
   // 覆盖面：所有回血/给盾的地方都必须走统一入口，不许再出现裸的 currentHP += / tempShield +=
+  // v51.5：towerPassives.js 里唯一用到 healing.js 的是"吸血鬼"（passive_vampire），
+  // 那条已经被删除（用户："吸血鬼删除"），文件里不再有任何回血逻辑，也就不再需要
+  // 这个 import 了——从名单里去掉它，其余四处仍然要求走统一入口。
   {
-    const files = ['src/systems/CombatSystem.js', 'src/core/skills/towerPassives.js',
+    const files = ['src/systems/CombatSystem.js',
                    'src/core/skills/dragonSouls.js', 'src/core/skills/minionPassives.js',
                    'src/core/behaviorVM.js'];
     let routed = 0;
     for (const f of files) if (/from '.*healing\.js'/.test(fs.readFileSync(f, 'utf8'))) routed++;
-    T(`五处治疗/护盾来源全部改走 core/healing.js（${routed}/5）`, routed === 5);
+    T(`四处治疗/护盾来源全部改走 core/healing.js（${routed}/4）`, routed === files.length);
   }
 }
 

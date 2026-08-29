@@ -378,7 +378,11 @@ async function world() {
   combat.performAttack(atk, tgt);
   combat.performAttack(atk, tgt);
   const info2 = resourceInfoOf(atk, ctx);
-  T('资④-升温层数显示 XX/4', info2 && info2.kind === 'heat' && /^\d\/4$/.test(info2.label) && info2.frac > 0);
+  // v51.5：第一次命中不再计入资源条显示（用户："第一下攻击不计入"），分母从
+  // maxS 变成 maxS-1（4 层封顶 → 显示 X/3）；两次攻击后内部 raw stacks=2，
+  // 显示层数 = 2-1 = 1。
+  T('资④-升温层数显示 XX/3（第一次命中不计入显示层数）',
+    info2 && info2.kind === 'heat' && info2.label === '1/3' && info2.frac > 0);
 
   // v51.1 bug 修复：升温效果因超时过期后（哪怕还是同一个目标），资源条应该清零，
   // 而不是停在过期前的层数。
@@ -690,6 +694,150 @@ async function world() {
   const { dragonCfg } = await import('../src/data/dragonCurve.js');
   T('龙时①-首条元素龙不再单独抢跑，与后续元素龙同一个 300s 节奏',
     dragonCfg().firstDelay === 300 && dragonCfg().firstDelay === dragonCfg().elementIntervals[0]);
+}
+
+// ==================== 二十二、v51.5：临时龙魂倒计时环不显示的 bug + 升温资源条第一击不计入 ====================
+// 用户 Q1："某单位杀死龙后获得的临时龙魂，在状态栏并未显示进度条。"
+{
+  const { ents, fx } = await world();
+  const { UIManager } = await import('../src/ui/UIManager.js');
+  globalThis.document = globalThis.document || { createElement: () => ({ getContext: () => null }), addEventListener() {} };
+  globalThis.window.addEventListener = globalThis.window.addEventListener || (() => {});
+  const ui = Object.create(UIManager.prototype);
+
+  // 一份最小可用的 FakeEl：支持 _updateEffectIcons 实际会用到的那几个操作
+  // （className/dataset/innerHTML/querySelector('.effect-cd-ring')/appendChild/remove）。
+  class FakeRing { constructor() { this.style = {}; } }
+  class FakeEl {
+    constructor() { this.className = ''; this.dataset = {}; this._html = ''; this._ring = new FakeRing(); this._children = []; }
+    set innerHTML(v) { this._html = v; }
+    get innerHTML() { return this._html; }
+    querySelector(sel) { return sel === '.effect-cd-ring' ? this._ring : null; }
+    appendChild(c) { this._children.push(c); }
+    remove() {}
+  }
+  const fakeDoc = { createElement: () => new FakeEl() };
+  const realDoc = globalThis.document;
+  globalThis.document = fakeDoc;
+  const container = { appendChild() {} };
+
+  // 模拟"永久龙魂展示效果"→ DragonSystem._grantSlayer 那段改成限时的同一套字段变更
+  // （remainingTime/maxDuration/permanent 都改，blueprint.duration 不动——那是
+  // 蓝图上的出厂设计值，DragonSystem 那段代码本来就不该去碰它）。
+  const soulId = fx.apply(1, {
+    name: '雷魂', icon: '⚡', kind: 'stat', statKey: 'armor', flatValue: 1,
+    duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+    description: '常驻',
+  }, 'soul_display_dragonsoul_thunder');
+  const disp = fx.getEffect(soulId);
+  disp.remainingTime = 30; disp.maxDuration = 60; disp.permanent = false; disp.blueprint.permanent = false;
+
+  ui._updateEffectIcons(container, fx.getEffects(1));
+  const ring1 = container._iconMap.get('雷魂').ring;
+  globalThis.document = realDoc;
+
+  T('龙时②-临时龙魂（限时后的展示效果）不再被判成"永久"而不画环',
+    ring1.style.background !== 'none' && ring1.style.background !== undefined);
+  // 用旧公式（除 blueprint.duration=Infinity）算出来的结果是 elapsedFrac=0（deg=0）
+  // 且【不随 remainingTime 变化】；用正确的 maxDuration 算，remainingTime=30/60
+  // 应该是半程（deg=180），这里直接抠出 deg 数值验证不是巧合碰对了 0 这个特例。
+  const deg1 = Number((ring1.style.background.match(/rgba\(0,0,0,0\.72\) (\d+)deg/) || [])[1]);
+  T('龙时③-剩余时间过半时，倒计时环确实画到了半程（deg≈180），不是死数字',
+    Math.abs(deg1 - 180) <= 2);
+}
+
+// 升温资源条第一击不计入（用户："第一下攻击不计入……在充能条上显示X/3"）
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const { resourceInfoOf } = await import('../src/core/resourceBar.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const ctx = { skillLibrary: SkillLibrary, attrCalc: AttributeCalculator, effects: fx };
+  const atk = mkEntity(ents, 'tower', {
+    stats: { attackDamage: 100, armor: 0, magicResist: 0, baseAttackSpeed: 1 },
+    skills: ['weapon_piercing'],
+  }, CONFIG);
+  const tgt = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 1000000 } }, CONFIG);
+
+  combat.performAttack(atk, tgt); // 第一击：100%基础伤害，不该在资源条上显示任何层数
+  const infoAfter1 = resourceInfoOf(atk, ctx);
+  T('龙时④-第一次命中后资源条显示 0（不把"预判层数"当成已生效的加成）',
+    infoAfter1 && infoAfter1.kind === 'heat' && infoAfter1.label === '0/3' && infoAfter1.frac === 0);
+
+  combat.performAttack(atk, tgt); // 第二击：这一下才吃到 +30%，资源条该显示 1
+  const infoAfter2 = resourceInfoOf(atk, ctx);
+  T('龙时⑤-第二次命中后资源条显示 1/3（分母也从 4 变成 3）',
+    infoAfter2 && infoAfter2.label === '1/3');
+}
+
+// ==================== 二十三、v51.5：删除过时塔被动 + 钢铁防线限时/永久合并 ====================
+// 用户："过热核心删除。吸血鬼删除。相位领域删除。钢铁防线这种的，有永久的有
+// 持续多少秒的。都进行合并……可以设置这个技能持续多久或者是永久持续。"
+{
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  T('删①-过热核心/吸血鬼/相位领域三条技能已从技能库删除',
+    !SkillLibrary.passive_overheat && !SkillLibrary.passive_vampire && !SkillLibrary.passive_phase);
+
+  T('删②-钢铁防线的永久版（passive_iron_line_ha）已删除，只剩一条合并后的技能',
+    !SkillLibrary.passive_iron_line_ha && !!SkillLibrary.passive_iron_line);
+
+  const { ents, fx, attr, CONFIG } = await world();
+  const t1 = mkEntity(ents, 'tower', {}, CONFIG);
+  // 默认（无覆写）：限时 300 秒，行为与合并前的 passive_iron_line 逐位一致
+  const { equipSkill } = await import('../src/core/skillParams.js');
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr };
+  equipSkill(t1, 'passive_iron_line', ctx, SkillLibrary);
+  const eff1 = fx.getEffectByName(t1.id, '钢铁防线');
+  T('合①-默认（无覆写）走限时 300 秒，不是永久', eff1 && !eff1.permanent && Math.abs(eff1.remainingTime - 300) < 1);
+
+  // 用 CONFIG.skillOverrides（全局覆写层）模拟"这条技能被设成永久"——与地图级覆写
+  // 走同一套 resolveSkillParams 三层叠加，模拟全局层即可验证 durationSec<=0 的分支。
+  CONFIG.skillOverrides = CONFIG.skillOverrides || {};
+  CONFIG.skillOverrides.passive_iron_line = { durationSec: 0 };
+  const t2 = mkEntity(ents, 'tower', {}, CONFIG);
+  equipSkill(t2, 'passive_iron_line', ctx, SkillLibrary);
+  const eff2 = fx.getEffectByName(t2.id, '钢铁防线');
+  // 注意：新建的效果实例本身不会在创建时写 instance.permanent 这个字段（只有
+  // "刷新已有实例"那条路径才会写），永久与否的权威判据是 remainingTime===Infinity
+  // + blueprint.permanent，不是 instance.permanent——这也是 Q1 那个环形进度条
+  // bug 顺带暴露出来的同一个坑，这里避免重蹈覆辙。
+  T('合②-durationSec<=0 时走永久（不会过期）',
+    eff2 && eff2.blueprint.permanent === true && eff2.remainingTime === Infinity);
+  delete CONFIG.skillOverrides.passive_iron_line;
+
+  T('合③-defaultParams 声明了 durationSec，会被"技能数值编辑器"自动收录（不需要额外接 UI）',
+    SkillLibrary.passive_iron_line.defaultParams
+    && typeof SkillLibrary.passive_iron_line.defaultParams.durationSec === 'number');
+}
+
+// ==================== 二十四、v51.5：单位编辑窗口统一龙魂 tab + 顺带修的三个 bug ====================
+// 用户："编辑塔的界面有龙魂，编辑其他界面就没有龙魂了？这是怎么回事，统一一下。"
+{
+  const openSrc = srcOf('src/ui/editor/open.js');
+  T('编①-龙魂 tab 的开关从"是不是塔"改成"够不够格拿龙魂"（SOUL_REWARD_OK）',
+    /const soulEligible = DragonSystem\.SOUL_REWARD_OK\(entity\)/.test(openSrc)
+    && /soulEligible \? \[\{ key: 'soul'/.test(openSrc));
+  T('编①-武器 tab 仍然只给塔（武器是塔专属概念，不受这次改动影响）',
+    /isTower \? \[\{ key: 'weapon'/.test(openSrc));
+
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  T('编①-实测：图腾兵（大型小兵）满足 soul 资格，近战兵不满足',
+    DragonSystem.SOUL_REWARD_OK({ type: 'totem' }) && !DragonSystem.SOUL_REWARD_OK({ type: 'melee' }));
+
+  // 顺带修的三个 bug：都在这次被解锁给小兵用的同一块龙魂 UI 代码里，之前只有塔能
+  // 打开这个 tab，所以从来没人点到过。
+  const pagesEntitySrc = srcOf('src/ui/editor/pagesEntity.js');
+  T('修①-单位龙魂 tab 的悬浮说明不再引用未声明的 entity/ctx（会抛 ReferenceError）',
+    /renderSkillDescription\(def, tower, ctx\)/.test(pagesEntitySrc)
+    && !/renderSkillDescription\(def, entity, ctx\)/.test(pagesEntitySrc));
+  T('修②-巨龙增益池调用的是真实存在的 _applyElementBuff（不是已改名的 _applyElementBuffToTower）',
+    /app\.dragonSystem\._applyElementBuff\(tower, key\)/.test(pagesEntitySrc)
+    && !/_applyElementBuffToTower/.test(pagesEntitySrc));
+
+  const pagesConfigSrc = srcOf('src/ui/editor/pagesConfig.js');
+  T('修③-模板编辑器的龙魂悬浮说明同样修了（同一个 ReferenceError 的另一处拷贝）',
+    /renderSkillDescription\(def, null, \{\}\)/.test(pagesConfigSrc)
+    && !/renderSkillDescription\(def, entity, ctx\)/.test(pagesConfigSrc));
 }
 
 done();

@@ -93,8 +93,17 @@ export function resourceInfoOf(entity, ctx) {
     const def = skillLibrary.weapon_piercing;
     const maxS = def?.HEAT_MAX_STACKS || 4;
     const eff = effects.getEffectByName(entity.id, '升温');
-    const st = eff ? Math.min(maxS, eff.stacks || 0) : 0;
-    return { frac: st / maxS, kind: 'heat', label: `${st}/${maxS}` };
+    const raw = eff ? Math.min(maxS, eff.stacks || 0) : 0;
+    // v51.5：用户："穿透型子弹的第一次攻击是不算在升温层数的，因为造成100%正常
+    // 伤害……第一下攻击不计入。" weapon_piercing 命中后立刻把 heatStacks 设成 1
+    // （这个 1 是给【下一击】预判用的，第一击本身按 0 层结算，逻辑没问题），但资源条
+    // 直接显示这个"预判层数"就等于"打完第一发正常伤害，条上却已经亮了一格"——
+    // 资源条要展示的是"已经吃到手的加成层数"，不是内部为下一击准备的原始计数，
+    // 所以这里统一减 1（下限 0），分母也跟着从 maxS 变成 maxS-1（4 层封顶时显示 X/3）。
+    // weapon_piercing 自己的叠层/伤害倍率计算完全不动，只改这里的展示口径。
+    const st = Math.max(0, raw - 1);
+    const dispMax = Math.max(1, maxS - 1);
+    return { frac: st / dispMax, kind: 'heat', label: `${st}/${dispMax}` };
   }
   const lightning = insts.find(i => i.skillId === 'weapon_lightning');
   if (lightning && lightning.state) {

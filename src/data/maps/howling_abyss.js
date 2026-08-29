@@ -111,8 +111,11 @@ export const howling_abyss = {
   // 召唤水晶/水晶枢纽仍由"水晶再生"给 10（用户确认："不包括，水晶仍然 10"）。
   // 加固城防的出厂恢复（水晶塔 1、枢纽塔 3）在这里按图覆写为 0；
   // 外塔/内塔版出厂就是 0，无需写。
+  // v51.5：钢铁防线的限时/永久版合并成一条技能（passive_iron_line），
+  // 这张图原来靠单独一条 passive_iron_line_ha 拿永久版，现在改成对同一条技能
+  // 覆写 durationSec（<=0 = 永久），与下面 fortify 的 regen 覆写走同一套机制。
   skillOverrides: {
-    'tower:base':     { passive_base_fortify: { regen: 0 } },
+    'tower:base':     { passive_base_fortify: { regen: 0 }, passive_iron_line: { durationSec: 0 } },
     'tower:hq_tower': { passive_hq_fortify:   { regen: 0 } },
   },
 
@@ -137,14 +140,14 @@ export const howling_abyss = {
   buildings: [
     // ========== 蓝方（左下） ==========
     { faction: FACTIONS.BLUE, tier: 'outer',      laneId: 'mid', pos: B.outer,      weapon: 'piercing', skills: ['passive_growth_ha'] },
-    { faction: FACTIONS.BLUE, tier: 'base',       laneId: 'mid', pos: B.base,       weapon: 'piercing', skills: ['passive_growth_ha', 'passive_iron_line_ha'] },
+    { faction: FACTIONS.BLUE, tier: 'base',       laneId: 'mid', pos: B.base,       weapon: 'piercing', skills: ['passive_growth_ha', 'passive_iron_line'] },
     { faction: FACTIONS.BLUE, tier: 'nexus_lane', laneId: 'mid', pos: B.nexus_lane, weapon: null },
     { faction: FACTIONS.BLUE, tier: 'hq_tower',   laneId: 'mid', pos: B.hq_a,       weapon: 'piercing', skills: ['passive_growth_ha'] },
     { faction: FACTIONS.BLUE, tier: 'hq_tower',   laneId: 'mid', pos: B.hq_b,       weapon: 'piercing', skills: ['passive_growth_ha'] },
     { faction: FACTIONS.BLUE, tier: 'nexus_main', laneId: 'mid', pos: BLUE_NEXUS,   weapon: null },
     // ========== 红方（右上，中心对称） ==========
     { faction: FACTIONS.RED, tier: 'outer',      laneId: 'mid', pos: R(B.outer),      weapon: 'piercing', skills: ['passive_growth_ha'] },
-    { faction: FACTIONS.RED, tier: 'base',       laneId: 'mid', pos: R(B.base),       weapon: 'piercing', skills: ['passive_growth_ha', 'passive_iron_line_ha'] },
+    { faction: FACTIONS.RED, tier: 'base',       laneId: 'mid', pos: R(B.base),       weapon: 'piercing', skills: ['passive_growth_ha', 'passive_iron_line'] },
     { faction: FACTIONS.RED, tier: 'nexus_lane', laneId: 'mid', pos: R(B.nexus_lane), weapon: null },
     { faction: FACTIONS.RED, tier: 'hq_tower',   laneId: 'mid', pos: R(B.hq_a),       weapon: 'piercing', skills: ['passive_growth_ha'] },
     { faction: FACTIONS.RED, tier: 'hq_tower',   laneId: 'mid', pos: R(B.hq_b),       weapon: 'piercing', skills: ['passive_growth_ha'] },
