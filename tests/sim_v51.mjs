@@ -1232,4 +1232,23 @@ async function world() {
     (await import('../src/core/defaultMinionPassives.js')).DEFAULT_MINION_PASSIVES.ram.includes('atkmode_charge'));
 }
 
+// ==================== 三十一、v51.6：炮车主动技能改成恒定30%、不叠加 ====================
+// 用户："炮车主动技能的数值修改为恒定30%，持续6秒。" 推翻 v51.1 那版"30%+50%×法强、
+// 可叠加"的设计。
+{
+  const { ents, fx, attr, SkillLibrary, CONFIG } = await world();
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr };
+  const siege = mkEntity(ents, 'siege', { faction: 'blue' }, CONFIG);
+  siege.baseStats.abilityPower = 100; // 给它法强，确认恒定值真的不受法强影响
+  const inst = { id: ++window._uid, skillId: 'active_siege_haste', state: {} };
+  siege._skillInstances.push(inst);
+  SkillLibrary.active_siege_haste.onCast(siege.id, inst, ctx);
+  const eff1 = fx.getEffects(siege.id).find(e => e.sourceId === 'active_siege_haste');
+  T('炮①-急速装填是固定30%攻速，不随法术强度缩放', eff1 && eff1.blueprint.flatValue === 30 && !eff1.blueprint.perStackFlat);
+  T('炮②-不可叠加，到点刷新（stackable:false）', eff1 && eff1.blueprint.stackable === false);
+  SkillLibrary.active_siege_haste.onCast(siege.id, inst, ctx); // 再施放一次
+  const stillOne = fx.getEffects(siege.id).filter(e => e.sourceId === 'active_siege_haste').length;
+  T('炮③-连续两次施放不会叠成两份效果', stillOne === 1);
+}
+
 done();

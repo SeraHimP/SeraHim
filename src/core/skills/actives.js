@@ -101,27 +101,30 @@ export const actives = {
 
   // ==================== 炮兵：急速装填（自增益，攻速）====================
   // 用户："炮兵……主动技能，获得（XX%=30%+50%法术强度）攻速，持续6秒，可叠加。"
+  // v51.6：用户改稿"炮车主动技能的数值修改为恒定30%，持续6秒"——推翻 v51.1 那版
+  // "30% + 50%×法术强度、可叠加"的设计。炮兵本来就没有稳定的法强来源，AP 联动
+  // 那部分形同虚设；"可叠加"叠到 99 层也和"恒定"这个词矛盾——改成与
+  // active_melee_block/passive_armor_plating 爆发同一形状：固定数值、不叠加、
+  // 到点刷新，简单直接。
   active_siege_haste: {
     id: 'active_siege_haste', name: '急速装填', icon: '⚡', color: '#e8a23a', category: 'active',
     applicableTypes: ['siege'],
-    defaultParams: { basePct: 30, apScale: 0.5, durationSec: 6 },
+    defaultParams: { pct: 30, durationSec: 6 },
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后，获得 (${p.basePct}% + ${p.apScale * 100}%×法术强度) 攻速，`
-           + `持续 ${p.durationSec} 秒，可叠加。`;
+      return `法力攒满后，获得 ${p.pct}% 攻速，持续 ${p.durationSec} 秒（固定数值，不可叠加）。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return false;
       const p = instance._params || actives.active_siege_haste.defaultParams;
-      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
-      const pct = (p.basePct ?? 30) + (p.apScale ?? 0.5) * (stats.abilityPower || 0);
+      const pct = p.pct ?? 30;
       ctx.effectRegistry.apply(entityId, {
         name: '急速装填', icon: '⚡', kind: 'stat', statKey: 'bonusAttackSpeedPct',
-        flatValue: pct, perStackFlat: pct,
-        duration: p.durationSec, stackable: true, maxStacks: 99, stackPolicy: 'stack',
-        description: `急速装填（{stacks}层，每层+${Math.round(pct)}%攻速）`,
+        flatValue: pct,
+        duration: p.durationSec ?? 6, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `急速装填：攻速 +${pct}%`,
       }, 'active_siege_haste', { casterId: entityId });
       return true;
     },
