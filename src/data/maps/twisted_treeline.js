@@ -150,6 +150,11 @@ export const twisted_treeline = {
       { statKey: 'armorPenFlat', flat: 18, label: '固定护甲穿透' },
       { statKey: 'magicPenFlat', flat: 18, label: '固定法术穿透' },
       { statKey: 'bonusAttackSpeedPct', perMinute: 0.5, max: 15, label: '攻速' },
+      // v51.6 用户新增定稿："扭曲丛林光环新增：所有单位被动法力值+1/s，
+      // 所有单位法术强度+10。" manaRegen 只对已装备主动技能的单位有意义——
+      // ManaSystem 对没装主动的单位法力恒为0，这是既有设计，不是这条光环要绕开的。
+      { statKey: 'manaRegen', flat: 1, label: '法力回复' },
+      { statKey: 'abilityPower', flat: 10, label: '法术强度' },
     ],
   },
 

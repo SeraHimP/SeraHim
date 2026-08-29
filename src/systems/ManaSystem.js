@@ -83,7 +83,10 @@ export class ManaSystem {
   _addMana(entity, stats, amount) {
     const max = stats.maxMana || 0;
     if (max <= 0) return;
-    entity._mana = Math.min(max, (entity._mana || 0) + amount);
+    // v51.6：地图光环（嚎哭深渊"所有单位获取的法力值减少50%"）等来源统一走
+    // manaGainPct 这个倍率修正，攻击/受击/被动回复三条来源都吃这一层。
+    const gain = amount * Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+    entity._mana = Math.min(max, (entity._mana || 0) + gain);
   }
 
   update(dt) {
@@ -97,7 +100,11 @@ export class ManaSystem {
       const max = stats.maxMana || 0;
       if (max <= 0) { entity._mana = 0; continue; }
       if (entity._mana === undefined) entity._mana = Math.min(max, stats.manaStart || 0);
-      if (stats.manaRegen) entity._mana = Math.min(max, entity._mana + stats.manaRegen * dt);
+      // v51.6：被动回复同样吃 manaGainPct（见 _addMana 里那段说明）。
+      if (stats.manaRegen) {
+        const gainPct = Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+        entity._mana = Math.min(max, entity._mana + stats.manaRegen * gainPct * dt);
+      }
       if (entity._mana < max) continue;
 
       // 沉默：法力照常封顶待命，只是不尝试施放。

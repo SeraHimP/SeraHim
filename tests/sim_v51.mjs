@@ -1605,4 +1605,40 @@ async function world() {
     R.recoverLayers === 1 && R.recoverSec === 4 && Math.abs((1 / 4) / (1 / 3) - 0.75) < 1e-9);
 }
 
+// ==================== v51.6：地图光环新增（扭曲丛林法力+法强 / 嚎哭深渊法力获取-50%）====================
+{
+  const { ents, fx, attr, CONFIG } = await world();
+  const { MapSystem } = await import('../src/systems/MapSystem.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const bus2 = new EventBus();
+  const ms = new MapSystem(ents, bus2);
+  ms.setEffectRegistry(fx);
+
+  ms.loadMap('twisted_treeline_v1');
+  const tt = mkEntity(ents, 'siege', { stats: { maxMana: 100, manaRegen: 0, abilityPower: 0 }, skills: ['active_siege_haste'] }, CONFIG);
+  ms.update(1);
+  const ttStats = attr.calc(tt, fx.getEffects(tt.id));
+  T('光①-扭曲丛林光环：所有单位被动法力值+1/s', Math.abs(ttStats.manaRegen - 1) < 1e-6);
+  T('光②-扭曲丛林光环：所有单位法术强度+10', Math.abs(ttStats.abilityPower - 10) < 1e-6);
+
+  ms.loadMap('howling_abyss_v1');
+  const ha = mkEntity(ents, 'siege', { stats: { maxMana: 100, manaGainPct: 0 }, skills: ['active_siege_haste'] }, CONFIG);
+  ms.update(1);
+  const haStats = attr.calc(ha, fx.getEffects(ha.id));
+  T('光③-嚎哭深渊光环：所有单位法力获取-50%', Math.abs(haStats.manaGainPct - (-50)) < 1e-6);
+  T('光④-嚎哭深渊光环：治疗与护盾强度-80%仍然生效（没被这次改动挤掉）',
+    Math.abs(haStats.healShieldPowerPct - (-80)) < 1e-6);
+}
+{
+  // ManaSystem 真的按 manaGainPct 打折：攻击/受击获得的法力、被动回复都吃这一层。
+  const { ManaSystem } = await import('../src/systems/ManaSystem.js');
+  const mana = new ManaSystem(null, null, null, null, null, null);
+  const e1 = { _mana: 0 };
+  mana._addMana(e1, { maxMana: 100, manaGainPct: -50 }, 10);
+  T('法⑫-manaGainPct=-50% 时 _addMana 只到账一半（10→5）', Math.abs(e1._mana - 5) < 1e-6);
+  const e2 = { _mana: 0 };
+  mana._addMana(e2, { maxMana: 100, manaGainPct: 0 }, 10);
+  T('法⑬-manaGainPct=0 时 _addMana 照常到账全部（10→10）', Math.abs(e2._mana - 10) < 1e-6);
+}
+
 done();

@@ -129,6 +129,10 @@ export const howling_abyss = {
     name: '嚎哭深渊光环', icon: '❄️',
     effects: [
       { statKey: 'healShieldPowerPct', flat: -80, label: '治疗与护盾强度' },
+      // v51.6 用户新增定稿："嚎哭深渊光环新增：所有单位获取的法力值减少50%。"
+      // 见 ManaSystem._addMana / update() 里 manaGainPct 的说明——这个倍率同时
+      // 压低攻击/受击的即时法力获取与被动回复。
+      { statKey: 'manaGainPct', flat: -50, label: '法力获取' },
     ],
   },
 
