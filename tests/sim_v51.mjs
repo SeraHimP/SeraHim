@@ -1641,4 +1641,28 @@ async function world() {
   T('法⑬-manaGainPct=0 时 _addMana 照常到账全部（10→10）', Math.abs(e2._mana - 10) < 1e-6);
 }
 
+// ==================== v51.6：水晶枢纽基地光环重做 ====================
+// 用户定稿："水晶枢纽的基地光环修改为：+2生命恢复，+2法力恢复，+5%移速，+20%伤害转化。"
+{
+  const { ents, fx, combat, attr, SkillLibrary, CONFIG } = await world();
+  const nexus = mkEntity(ents, 'tower', { faction: 'blue', tier: 'nexus_main', pos: { x: 0, y: 0 } }, CONFIG);
+  const ctx = { entityContainer: ents, effectRegistry: fx, eventBus: { emit() {}, on() {} }, mapSystem: null, attrCalc: attr };
+  const inst = { id: ++window._uid, skillId: 'passive_home_aura', state: {} };
+  nexus._skillInstances.push(inst);
+  const def = SkillLibrary.passive_home_aura;
+  def.onEquip(nexus.id, inst, ctx);
+
+  const minion = mkEntity(ents, 'melee', { faction: 'blue', lane: 'mid', pos: { x: 10, y: 0 },
+    stats: { maxMana: 100 } }, CONFIG);
+  // onFrame 内部按 0.5s 节流、半径首次计算时 mapSystem 不可用会退回 (maxD||180)+180 兜底，
+  // 兜底半径远大于 minion 与 nexus 之间的 10 单位距离，圈内命中没有问题。
+  def.onFrame(nexus.id, 1.0, inst, ctx);
+
+  const s = attr.calc(minion, fx.getEffects(minion.id));
+  T('基①-基地光环：+2生命恢复', Math.abs((s.healthRegen - CONFIG.templates.melee.healthRegen) - 2) < 1e-6);
+  T('基②-基地光环：+2法力恢复', Math.abs(s.manaRegen - 2) < 1e-6);
+  T('基③-基地光环：+5%移速', Math.abs(s.moveSpeed / CONFIG.templates.melee.moveSpeed - 1.05) < 1e-6);
+  T('基④-基地光环：+20%伤害转化', Math.abs(s.damageConvertPct - 20) < 1e-6);
+}
+
 done();

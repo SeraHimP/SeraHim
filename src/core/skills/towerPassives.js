@@ -795,8 +795,11 @@ export const HomeAuraSkill = {
     name: '基地光环',
     icon: '🏠',
     category: 'passive',
-    description: '唯一被动——基地光环：防守圈内的己方小兵获得+5%移速/+3生命恢复。',
-    descTemplate: '唯一被动——基地光环：防守圈内己方小兵 +5%移速/+3生命恢复（离圈自动失效）。',
+    // v51.6 用户定稿："水晶枢纽的基地光环修改为：+2生命恢复，+2法力恢复，+5%移速，
+    // +20%伤害转化。"（原 +5%移速/+3生命恢复 被取代，移速数值不变、生命恢复从
+    // +3 降到 +2，新增法力恢复与伤害转化两项）。
+    description: '唯一被动——基地光环：防守圈内的己方小兵获得+2生命恢复/+2法力恢复/+5%移速/+20%伤害转化。',
+    descTemplate: '唯一被动——基地光环：防守圈内己方小兵 +2生命恢复/+2法力恢复/+5%移速/+20%伤害转化（离圈自动失效）。',
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       instance.state = instance.state || {};
@@ -838,17 +841,28 @@ export const HomeAuraSkill = {
         if (ally.id === entityId || ally.type === 'tower') continue;
         if ((ally._mapFaction || ally.faction) !== self._mapFaction) continue;
         if (!ally._laneId) continue;
-        // 用户定稿：基地光环 = +5% 移速 / +3 生命恢复（原 +7%攻速/+3%移速/+1%增幅 已取消）
+        // v51.6 用户定稿：基地光环 = +2生命恢复 / +2法力恢复 / +5%移速 / +20%伤害转化
+        // （原 +5%移速/+3生命恢复 已取代；+7%攻速/+3%移速/+1%增幅 那版更早就取消了）。
         ctx.effectRegistry.apply(ally.id, {
           name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'moveSpeed', percentValue: 5,
           aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
           description: '移速+5%（基地防守圈）',
         }, 'home_aura_ms_' + entityId);
         ctx.effectRegistry.apply(ally.id, {
-          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'healthRegen', flatValue: 3,
+          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'healthRegen', flatValue: 2,
           aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: '生命恢复+3（基地防守圈）',
+          description: '生命恢复+2（基地防守圈）',
         }, 'home_aura_hp5_' + entityId);
+        ctx.effectRegistry.apply(ally.id, {
+          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'manaRegen', flatValue: 2,
+          aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: '法力恢复+2（基地防守圈）',
+        }, 'home_aura_mana_' + entityId);
+        ctx.effectRegistry.apply(ally.id, {
+          name: '基地光环', icon: '🏠', kind: 'stat', statKey: 'damageConvertPct', flatValue: 20,
+          aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: '伤害转化+20%（基地防守圈）',
+        }, 'home_aura_dmgconv_' + entityId);
       }
     },
   },
