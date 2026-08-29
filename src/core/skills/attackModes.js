@@ -76,7 +76,7 @@ export function chargeParamsFor(entity, target, skillLibrary) {
     return {
       secAt1AS: p.chargeSecAt1AS ?? 12,
       damageMult: (p.damagePct ?? 100) / 100,
-      decayPctPerSec: p.decayPctPerSec ?? (CONFIG.tuning?.charge?.decayPctPerSec ?? 10),
+      decayPctPerSec: p.decayPctPerSec ?? (CONFIG.tuning?.charge?.decayPctPerSec ?? 40),
     };
   }
   return null;

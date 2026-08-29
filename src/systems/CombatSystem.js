@@ -550,7 +550,7 @@ export class CombatSystem {
    *     所以每秒推进 attackSpeed / secAt1AS。攻速被【攻城疲惫】压低时充能自然变慢，
    *     "攻速影响充能速度"这条就是这么落地的，不需要另写一份缩放。
    *   · 不在充能状态（被打断：切了目标 / 目标没了 / 退出攻城模式）
-   *     → 每秒衰减**当前充能**的 decayPctPerSec%（等比，用户原话是"减少10%当前充能"）。
+   *     → 每秒衰减**当前充能**的 decayPctPerSec%（等比，用户原话是"每秒损失40%当前充能进度"）。
    */
   _tickCharge(entity, stats, dt) {
     const need = this.chargeNeedOf(entity);
@@ -563,7 +563,7 @@ export class CombatSystem {
     }
     const c = entity._charge || 0;
     if (c <= 0) { if (c !== 0) entity._charge = 0; return; }
-    const pct = (entity._chargeDecay ?? CONFIG.tuning?.charge?.decayPctPerSec ?? 10) / 100;
+    const pct = (entity._chargeDecay ?? CONFIG.tuning?.charge?.decayPctPerSec ?? 40) / 100;
     const next = c * Math.pow(1 - pct, dt);
     entity._charge = next < 1e-4 ? 0 : next;
   }
