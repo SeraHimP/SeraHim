@@ -691,19 +691,41 @@ export class UIManager {
       const rows = relatedKeys.map((rk) => {
         const rdoc = statDoc(rk);
         if (!rdoc) return '';
+        const rowHtml = (valueHtml) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
+          <span style="color:var(--text-dim);">${rdoc.label}</span><span>${valueHtml}</span>
+        </div>`;
         if (entity && liveStats) {
+          // v51.6：暴击伤害——用户"直接显示当前暴击造成的总伤害（假设暴击初始伤害
+          // 200%），就写230%（相当于+30%暴击伤害），150%（暴击伤害减少50%）"。
+          // critDamagePct 本身存的是【相对 200% 基准的加成】（见 CombatSystem 的
+          // critMult = baseCritDamagePct + atkStats.critDamagePct），不是总值，
+          // 这里单独换算成总倍率再显示，不能走下面那套"基础值+修正"的通用格式。
+          if (rk === 'critDamagePct') {
+            const base = CONFIG.tuning?.crit?.baseCritDamagePct ?? 200;
+            const bonus = Math.round((liveStats.critDamagePct || 0) * 10) / 10;
+            const total = base + bonus;
+            const note = bonus === 0 ? ''
+              : bonus > 0 ? `（相当于+${bonus}%暴击伤害）` : `（暴击伤害减少${Math.abs(bonus)}%）`;
+            return rowHtml(`<b>${total}%</b><span style="color:var(--text-mute);font-size:11px;"> ${note}</span>`);
+          }
+          // v51.6：生命恢复——用户"写经过所有修正后的实际每秒生命恢复值。比如默认
+          // 生命恢复2，治疗与护盾强度-60%，所以就实际显示0.8"。真实生效速率见
+          // CombatSystem 的 regen×regenMod×healPowerOf 那一段，这里照抄同一个公式，
+          // 不能只显示 baseHealthRegenMod 这个系数本身（那不是玩家关心的"每秒回多少"）。
+          if (rk === 'baseHealthRegenMod') {
+            const regen = liveStats.healthRegen || 0;
+            const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
+            const healPower = Math.max(0, 1 + (liveStats.healShieldPowerPct || 0) / 100);
+            const effective = Math.round(regen * regenMod * healPower * 100) / 100;
+            return rowHtml(`<b>${effective}</b><span style="color:var(--text-mute);font-size:11px;"> /秒（实际生效值）</span>`);
+          }
           const rp = this._statParts(rk, entity, liveStats);
           if (rp) {
             const rParen = rp.delta === 0 ? '' : ` <span class="stat-break">（${rp.base}${rp.delta > 0 ? '+' : '−'}${Math.abs(rp.delta)}）</span>`;
-            return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
-              <span style="color:var(--text-dim);">${rdoc.label}</span>
-              <span><b class="${rp.cls}">${rp.now}</b>${rParen}</span>
-            </div>`;
+            return rowHtml(`<b class="${rp.cls}">${rp.now}</b>${rParen}`);
           }
         }
-        return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
-          <span style="color:var(--text-dim);">${rdoc.label}</span><span style="color:var(--text-mute);">—</span>
-        </div>`;
+        return rowHtml(`<span style="color:var(--text-mute);">—</span>`);
       }).filter(Boolean).join('');
       if (rows) {
         relatedHtml = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">关联属性</div>
@@ -741,12 +763,12 @@ export class UIManager {
         </p>`;
     }
 
+    // v51.6：用户"所有属性点开的窗口描述里去除无用的描述，比如结算规则等，就保留
+    // 最基础的描述就可以"——结算规则（doc.formula）与补充说明（doc.tip）都去掉，
+    // 弹窗只留 doc.desc 这一句最基础的描述。
     const descText = typeof doc.desc === 'function' ? doc.desc(liveStats) : doc.desc;
     const body = `${live}${relatedHtml}${dmgType}
-      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${descText}</p>
-      ${doc.formula ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">结算规则</div>
-        <p style="font-size:11px;color:var(--text-dim);line-height:1.8;margin:0 0 10px;">${doc.formula}</p>` : ''}
-      ${doc.tip ? `<p style="font-size:11px;color:var(--text-mute,#6b7480);line-height:1.7;margin:0;">${doc.tip}</p>` : ''}`;
+      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${descText}</p>`;
 
     const overlay = document.createElement('div');
     overlay.id = 'statDocOverlay';

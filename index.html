@@ -501,30 +501,33 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .bar-text .shield-total, .bar-res-text .bar-res-regen { grid-column: 3; justify-self: end; color: #cfd6dd; }
 
 /* 属性 */
-/* 属性 chip：标签在上、数值在下。两列网格，行距按 8px 节奏。 */
-.attrs, .attrs-ext { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 4px 0; }
-.attrs-ext { display: none; margin-top: 6px; }
+/* 属性 chip：标签在上、数值在下。两列网格。
+   v51.6：用户"属性面板每个属性占的空间太大了，优化一下，缩小一下空间"——
+   格子间距/内边距/字号整体收紧一档（gap 6→4、padding 5px8px→3px6px、
+   数值字号 14→12），同一屏能放下更多属性，不用来回滚动才能看全。 */
+.attrs, .attrs-ext { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 3px 0; }
+.attrs-ext { display: none; margin-top: 4px; }
 .attrs-ext.open { display: grid; }
 .attrs .a, .attrs-ext .a {
   display: flex; flex-direction: column; gap: 1px;
-  padding: 5px 8px; border-radius: var(--radius-xs);
+  padding: 3px 6px; border-radius: var(--radius-xs);
   background: rgba(255,255,255,0.028); border: 1px solid transparent;
 }
 .attrs .a label, .attrs-ext .a label {
-  font-size: 10px; color: var(--text-mute); letter-spacing: 0.2px; line-height: 1.2;
+  font-size: 9px; color: var(--text-mute); letter-spacing: 0.2px; line-height: 1.15;
 }
 .attrs .a > span:last-child, .attrs-ext .a > span:last-child {
-  font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums;
-  font-weight: 600; line-height: 1.2;
+  font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums;
+  font-weight: 600; line-height: 1.15;
 }
 .a.stat-doc:hover { background: rgba(255,255,255,0.07); border-color: var(--glass-border); }
 
 /* v47：展开更多按"方面"分组。标题占整行；组内条目为奇数时最后一格横跨两列，
    否则下一组的第一格会被塞进上一组留下的空位里，分组就白做了。 */
 .attrs-ext .attr-group {
-  grid-column: 1 / -1; margin: 6px 0 0;
-  font-size: 10px; color: var(--text-mute); letter-spacing: 1px;
-  display: flex; align-items: center; gap: 7px;
+  grid-column: 1 / -1; margin: 4px 0 0;
+  font-size: 9px; color: var(--text-mute); letter-spacing: 1px;
+  display: flex; align-items: center; gap: 6px;
 }
 .attrs-ext .attr-group::after {
   content: ''; flex: 1; height: 1px; background: var(--glass-border);

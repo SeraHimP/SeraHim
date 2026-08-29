@@ -128,7 +128,10 @@ export const RELATED_STATS = {
   lifeStealPct: ['physicalVampPct', 'spellVampPct'],
   healthRegen: ['baseHealthRegenMod'],
   abilityPower: ['skillAmpPct'],
-  attackDamage: ['adaptiveForce'],
+  // v51.6：用户"子弹速度是写到攻击力点开的窗口里的"——bulletSpeed 本身已经在
+  // extAttrGroups 的"进攻"组里有自己的格子（塔专属），这里额外把它也带进攻击力
+  // 的关联属性区块，方便点开攻击力时一并看到。
+  attackDamage: ['adaptiveForce', 'bulletSpeed'],
   armor: ['evasionPct'],
   magicResist: ['tenacityPct'],
 };

@@ -1544,4 +1544,53 @@ async function world() {
     && !/this\.zoom = Math\.(max|min)\(0\.15, this\.zoom/.test(src));
 }
 
+// ==================== v51.6：属性弹窗再打磨 ====================
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  T('磨①-子弹速度加入"攻击力"的关联属性', RELATED_STATS.attackDamage?.includes('bulletSpeed'));
+
+  const uiSrc = srcOf('src/ui/UIManager.js');
+  // 用户："所有属性点开的窗口描述里去除无用的描述，比如结算规则等，就保留最基础的
+  // 描述就可以。" —— doc.formula（结算规则）与 doc.tip 两块都不再拼进弹窗正文。
+  T('磨②-弹窗正文不再拼 doc.formula（结算规则）', !/doc\.formula \?/.test(uiSrc));
+  T('磨③-弹窗正文不再拼 doc.tip', !/doc\.tip \?/.test(uiSrc));
+  T('磨④-弹窗正文只剩 desc 这一句基础描述',
+    /const body = `\$\{live\}\$\{relatedHtml\}\$\{dmgType\}\n\s*<p[^>]*>\$\{descText\}<\/p>`;/.test(uiSrc));
+
+  // 暴击伤害：显示"当前总倍率"而不是加成量本身。用户举例：基准200%，+30% → 显示230%；
+  // -50% → 显示150%。crit 那一档基准取的是 CombatSystem 结算时用的同一个
+  // CONFIG.tuning.crit.baseCritDamagePct（默认200），不能另起一个写死的 200。
+  T('磨⑤-暴击伤害换算成总倍率，基准取自 CONFIG.tuning.crit.baseCritDamagePct',
+    /CONFIG\.tuning\?\.crit\?\.baseCritDamagePct \?\? 200/.test(uiSrc)
+    && /const total = base \+ bonus;/.test(uiSrc));
+
+  // 用实际数值验证磨⑤这条公式确实按用户给的例子走：基准200%，+30% → 230%；
+  // 换个角度再钉一次 -50% → 150%，两个方向都要对。
+  const critTotal = (bonus) => (CONFIG.tuning?.crit?.baseCritDamagePct ?? 200) + bonus;
+  T('磨⑥-暴击伤害总倍率算对：基准200%+30% = 230%，基准200%-50% = 150%',
+    critTotal(30) === 230 && critTotal(-50) === 150);
+
+  // 生命恢复：显示经过所有修正后的实际每秒回复值，公式与 CombatSystem 结算生命恢复
+  // 时用的 regen×regenMod×healPowerOf 必须是同一条，不能另写一份（否则面板和实际
+  // 生效值对不上，是本仓库反复出过的那类事故）。
+  T('磨⑦-生命恢复关联行走 regen×regenMod×healPowerOf 同一条公式',
+    /const regenMod = entity\.baseStats\?\.baseHealthRegenMod \?\? 1;/.test(uiSrc)
+    && /const healPower = Math\.max\(0, 1 \+ \(liveStats\.healShieldPowerPct \|\| 0\) \/ 100\);/.test(uiSrc)
+    && /const effective = Math\.round\(regen \* regenMod \* healPower \* 100\) \/ 100;/.test(uiSrc));
+
+  // 用实际数值验证磨⑦这条公式确实按用户给的例子走：基础生命恢复2，
+  // 治疗与护盾强度-60% → healPower=0.4 → 实际 0.8/秒。
+  const effRegen = (regen, regenMod, healShieldPowerPct) =>
+    Math.round(regen * regenMod * Math.max(0, 1 + healShieldPowerPct / 100) * 100) / 100;
+  T('磨⑧-生命恢复实际值算对：2×1×(1-60%) = 0.8', effRegen(2, 1, -60) === 0.8);
+
+  // 用户："属性面板每个属性占的空间太大了，优化一下，缩小一下空间。"
+  const htmlSrc = srcOf('index.html');
+  T('磨⑨-属性格子间距收紧（gap 6→4，padding 5px8px→3px6px）',
+    /\.attrs, \.attrs-ext \{[^}]*gap: 4px/.test(htmlSrc)
+    && /\.attrs \.a, \.attrs-ext \.a \{[\s\S]{0,80}padding: 3px 6px/.test(htmlSrc));
+  T('磨⑩-属性数值字号收紧（14→12）',
+    /\.attrs \.a > span:last-child, \.attrs-ext \.a > span:last-child \{[\s\S]{0,20}font-size: 12px/.test(htmlSrc));
+}
+
 done();
