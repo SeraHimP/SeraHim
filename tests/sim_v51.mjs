@@ -1593,4 +1593,16 @@ async function world() {
     /\.attrs \.a > span:last-child, \.attrs-ext \.a > span:last-child \{[\s\S]{0,20}font-size: 12px/.test(htmlSrc));
 }
 
+// ==================== v51.6：攻城车攻城疲惫平衡调整 ====================
+// 用户定稿："攻城车的攻城模式下每次攻击减少的攻速由7%调整为13%。并且恢复速率
+// 降低至原先的75%。" 恢复速率 = recoverLayers/recoverSec，保持 recoverLayers=1
+// 整数层不变，用 recoverSec 承担这个折扣（3÷0.75=4）。
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  const R = CONFIG.gameRules.ram;
+  T('城⑦-每次攻城攻击的攻速惩罚从 7% 调到 13%', R.fatiguePerAttack === 13 && R.fatigueLayerPct === -1);
+  T('城⑧-恢复速率降到原先的75%（1层/3秒 → 1层/4秒）',
+    R.recoverLayers === 1 && R.recoverSec === 4 && Math.abs((1 / 4) / (1 / 3) - 0.75) < 1e-9);
+}
+
 done();

@@ -175,9 +175,13 @@ export const CONFIG = {
       // 攻城车的攻速收益率是 0.05，正向加成要打 5% 的折（33% 只剩 1.65%），
       // 那样这条加成基本等于没有。而 baseAttackSpeed 不过收益率，+33% 就是实打实的 +33%。
       normalAtkSpeedPct: 33,
-      fatiguePerAttack: 7,      // 每次攻城攻击叠几层（用户定稿：7% = 7 层 × 1%）
+      // v51.6 用户定稿："攻城车攻城模式下每次攻击减少的攻速由7%调整为13%。
+      // 并且恢复速率降低至原先的75%。"
+      fatiguePerAttack: 13,     // 每次攻城攻击叠几层（13% = 13 层 × 1%）
       fatigueLayerPct: -1,      // 每层攻速 %
-      recoverSec: 3,            // 普通模式下每隔几秒恢复
+      // 恢复速率 = recoverLayers/recoverSec（层/秒）。原 1层/3秒，降到75%即
+      // 1层/4秒（recoverLayers 保持整数层，用 recoverSec 承担这个折扣：3÷0.75=4）。
+      recoverSec: 4,            // 普通模式下每隔几秒恢复
       recoverLayers: 1,         // 每次恢复几层
       normalDamageAmpPct: -33,  // 普通模式的伤害增幅
     },
