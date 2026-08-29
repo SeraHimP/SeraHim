@@ -1468,6 +1468,29 @@ export class CombatSystem {
       { totalRaw: baseDamage, finalDamage, attackType }, options._noProc);
     if (!options._noProc) this._fireOnDamaged(target, attacker, finalDamage);
 
+    // ==================== 法力：闪电杖/腐蚀型等"武器拆成 DOT/多跳结算"的伤害也要算数 ====================
+    // bug：用户报"闪电杖攻击目标不会使目标的法力值增长"。根因——ManaSystem 只监听
+    // _resolveHit 发的 damage:dealt 事件（那是唯一真正的"普通攻击"路径），而闪电杖的
+    // 每跳伤害、腐蚀型的中毒 DOT 全部走这条 performAttackDirect，从不发这个事件，
+    // 于是这两种武器打人/挨打永远不涨法力。
+    //
+    // 不能拿 options.basicAttack 当判据：那个字段在这个函数里已经被 BuffSystem 的
+    // DOT 计时循环挪用去表示"这一跳的数值已经在 EffectRegistry.apply() 时缩放过一次
+    // 技能增幅，这里不要再缩放"——凡是走 casterId 的 DOT（毒药、灼烧圈等技能/龙魂效果）
+    // 都会带着 basicAttack:true 走到这里，如果拿它来发法力，等于技能 DOT 也能回蓝，
+    // 正撞上 ManaSystem 头注明确写的"技能不该给自己充能"那条设计。
+    // 所以这里用一个专门、含义单一的开关 options.grantsMana——只有真正"武器拆成多跳
+    // 结算"的两处（闪电杖 tick、腐蚀型的中毒 DOT）会传它。
+    if (options.grantsMana && finalDamage > 0) {
+      this.eventBus.emit('damage:dealt', {
+        sourceId: attacker?.id ?? null,
+        targetId: target.id,
+        amount: finalDamage,
+        type: attackType,
+        raw: baseDamage,
+      });
+    }
+
     // v39 修复（历史 bug）：死亡判定必须带 alive 守卫。原来只看 currentHP<=0，
     // 已死单位在同帧再吃一次伤害（溅射/多攻击者/自损致死后的排队攻击）就会【重复发死亡事件】，
     // 污染复仇系统、超级兵触发、击杀计数等一切监听方（v39 冒烟实测：12 辆攻城车发出 20 次死亡）。

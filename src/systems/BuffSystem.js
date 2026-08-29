@@ -82,7 +82,11 @@ export class BuffSystem {
             // v51：basicAttack:true——这份 DOT 的数值在 EffectRegistry.apply() 那一刻
             // 就已经吃过一次技能增幅了（casterId 触发的那条自动缩放），这里只是把
             // 预先算好的伤害逐帧兑现，不能再让 performAttackDirect 重复缩放一次。
-            this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type, { basicAttack: true });
+            // grantsMana：只有真正的【武器】DOT（如腐蚀型的中毒，blueprint 上标了
+            // basicAttack:true）才该给法力系统计数——技能/龙魂的 DOT（毒药、灼烧圈等）
+            // 不该让持有者靠"被自己的技能打"给自己充能，见 CombatSystem 里那段说明。
+            this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type,
+              { basicAttack: true, grantsMana: eff.blueprint.basicAttack === true });
             // ==================== v50：带半径的 DOT（灼烧圈）====================
             // 用户（熔魂定稿）："灼烧效果是有半径的，可以对其他单位造成伤害"
             //                  + "跟着中毒目标走"。
@@ -100,7 +104,7 @@ export class BuffSystem {
               for (const other of enemyUnitsInRadius(this.entities, probe, R)) {
                 // v51：半径 DOT 打到的"其他人"是群体命中，吸血按 vampGroup 折扣。
                 this.combat.performAttackDirect(eff.casterId ?? 0, other.id, dmg, type,
-                  { basicAttack: true, vampGroup: true });
+                  { basicAttack: true, vampGroup: true, grantsMana: eff.blueprint.basicAttack === true });
               }
             }
           }

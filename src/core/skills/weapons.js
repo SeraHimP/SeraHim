@@ -270,6 +270,9 @@ export const weapons = {
           applyOnHitBonus: true,
           // v51：闪电杖是【武器】——这是普攻，只是拆成了每秒 4 跳，不该吃技能增幅/技能暴击。
           basicAttack: true,
+          // bug 修复：闪电杖打人/挨打不涨法力——这里补上 grantsMana（见
+          // CombatSystem.performAttackDirect 里那段说明，为什么不能直接用 basicAttack）。
+          grantsMana: true,
         });
         // （v35：满充闪电链弹射已按方案B删除——纯单体，无 AOE）
       }

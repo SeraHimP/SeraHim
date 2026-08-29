@@ -1421,4 +1421,58 @@ async function world() {
     /\.tpl-pane\s*\{[^}]*max-height:\s*58vh/.test(htmlSrc));
 }
 
+// ==================== v51.6：bug 修复——闪电杖/腐蚀型打人挨打不涨法力 ====================
+// 用户："闪电杖攻击目标不会使目标的法力值增长。"根因：ManaSystem 只监听 _resolveHit
+// （真正的"普通攻击"）发的 damage:dealt，闪电杖每跳、腐蚀型中毒 DOT 全部走
+// performAttackDirect，从不发这个事件。不能直接用 options.basicAttack 判断——那个
+// 字段被 BuffSystem 的 DOT 计时循环挪用表示"这一跳已经缩放过技能增幅，别再缩放"，
+// 技能/龙魂的 DOT（毒药、灼烧圈）同样会带着 basicAttack:true 走到这里，如果拿它发
+// 法力就等于技能能给自己回蓝，撞上"技能不该回蓝"的既有设计。所以新增一个含义单一
+// 的 options.grantsMana，只有真正的【武器】拆分伤害（闪电杖 tick、腐蚀型中毒）才传。
+{
+  const { ents, fx, combat, bus, attr, SkillLibrary, CONFIG } = await world();
+  const { ManaSystem } = await import('../src/systems/ManaSystem.js');
+  const mana = new ManaSystem(ents, fx, bus, SkillLibrary, attr, combat);
+  const bak = CONFIG.tuning?.mana ? { ...CONFIG.tuning.mana } : null;
+  CONFIG.tuning = CONFIG.tuning || {};
+  CONFIG.tuning.mana = { onAttack: 1, onHitTaken: 2 };
+
+  const atk = mkEntity(ents, 'tower', {
+    stats: { maxMana: 100, manaRegen: 0, manaStart: 0, attackDamage: 100, armor: 0, magicResist: 0 },
+    skills: ['active_siege_haste'],   // 随便一个 category:'active' 的技能，让法力系统对它"真的生效"
+  }, CONFIG);
+  const tgt = mkEntity(ents, 'tower', {
+    stats: { maxMana: 100, manaRegen: 0, manaStart: 0, maxHP: 100000, armor: 0, magicResist: 0 },
+    skills: ['active_siege_haste'],
+  }, CONFIG);
+
+  T('法⑦-前提：普通伤害路径本来就会涨法力（_resolveHit 发的事件）', (() => {
+    combat.performAttack(atk, tgt);
+    return (atk._mana || 0) > 0 && (tgt._mana || 0) > 0;
+  })());
+
+  // 不传 grantsMana（等价于技能 DOT）：伤害照常结算，但不该涨法力
+  atk._mana = 0; tgt._mana = 0;
+  combat.performAttackDirect(atk.id, tgt.id, 50, 'magic', { basicAttack: true });
+  T('法⑧-performAttackDirect 不传 grantsMana 时不涨法力（技能/龙魂 DOT 的口径）',
+    (atk._mana || 0) === 0 && (tgt._mana || 0) === 0);
+
+  // 传 grantsMana:true（闪电杖 tick / 腐蚀型中毒的口径）：双方都该涨法力
+  atk._mana = 0; tgt._mana = 0;
+  combat.performAttackDirect(atk.id, tgt.id, 50, 'magic', { basicAttack: true, grantsMana: true });
+  T('法⑨-grantsMana:true 时攻守双方都涨法力（闪电杖/腐蚀型修复生效）',
+    (atk._mana || 0) > 0 && (tgt._mana || 0) > 0);
+
+  if (bak) CONFIG.tuning.mana = bak;
+}
+{
+  const lw = srcOf('src/core/skills/weapons.js');
+  T('法⑩-闪电杖每跳伤害传了 grantsMana:true',
+    /basicAttack: true,\s*\n\s*\/\/[^\n]*\n\s*grantsMana: true,/.test(lw)
+    || /grantsMana: true/.test(lw));
+  const bs = srcOf('src/systems/BuffSystem.js');
+  T('法⑪-DOT 计时循环按 blueprint.basicAttack 转发 grantsMana（不是无脑传 true）',
+    (bs.match(/grantsMana: eff\.blueprint\.basicAttack === true/g) || []).length >= 2);
+}
+
 done();
