@@ -64,13 +64,12 @@ export class WeatherSystem {
     // 于是天气的影响有了"积累—爆发—消退"的节奏，而不是跟着占比瞬时抖动。
     this._charge = {};             // { weatherId: 0~1 }
     this._extremeCharge = {};      // 极端天气的充能条（同一套机制）
-    this._extremeWeight = {};      // 极端天气的出现倾向（-1~+1）：权重越高，触发阈值越低
     this._mu = {};                 // 各天气的均值倾向（-1~+1）：出现概率的旋钮，可实时调
     this._template = 'random';     // 当前气候模板
     this._x = {};                  // 当前潜在分数（从时间线采样得到）
     this._timeline = null;         // 预生成的整条时间线（开局即确定的未来）
     this._extremeHistory = [];     // v34 Q4：过去的极端充能快照（预报条左侧用）
-    this._fcVersion = 0;           // v34 Q4：预报缓存版本（时间线/开关/权重变更时++）
+    this._fcVersion = 0;           // v34 Q4：预报缓存版本（时间线/开关变更时++）
     this._fcCache = null;
     this._clock = 0;
 
@@ -117,10 +116,7 @@ export class WeatherSystem {
     // 这也符合"天气预报"的物理直觉：预报之所以能报，正因大气演化是确定性的。
     this._initOscillation();
     for (const id of this.baseIds) this._charge[id] = 0;
-    for (const id of Object.keys(EXTREME_WEATHERS)) {
-      this._extremeCharge[id] = 0;
-      if (this._extremeWeight[id] === undefined) this._extremeWeight[id] = EXTREME_WEATHERS[id].weight ?? 0;
-    }
+    for (const id of Object.keys(EXTREME_WEATHERS)) this._extremeCharge[id] = 0;
     this._timeline = this._generateTimeline();
     this._x = { ...this._timeline[0].x };
   }
@@ -298,26 +294,24 @@ export class WeatherSystem {
     return map;
   }
 
-  /** 预报缓存失效：时间线重算 / 天气开关 / 极端权重变化时调用 */
+  /** 预报缓存失效：时间线重算 / 天气开关变化时调用 */
   _invalidateForecast() { this._fcVersion = (this._fcVersion || 0) + 1; }
 
   /**
-   * 极端天气的实际触发阈值：权重越高 → 阈值越低 → 越容易触发。
+   * 极端天气的实际触发阈值：固定条件 × 全局难度旋钮，不再有逐条可调的权重
+   *（v51.6 删除，见 data/Weather.js 头注）。
    *
    * weatherExtremeThresholdScale 是整体难度旋钮（用户："可以适当增加进入极端天气的门槛"）。
    * 它乘在【原始阈值】上，所以各极端天气之间的相对难易不变，只是整条线一起抬高。
-   * 下限从 0.05 抬到 0.15：0.05 的意思是"基础天气充能 5% 就能进极端"，
-   * 那等于权重一拉满就必进，门槛形同虚设。
+   * 下限维持 0.15：低于这个值意味着"基础天气充能一点点就能进极端"，门槛形同虚设。
    *
    * ⚠️ 这里【没有冷却】，也不打算加 —— 用户定稿："极端天气不要冷却，随即成啥样就是啥样"。
    * 排查过了：改动前也从来没有过冷却机制，极端天气纯粹由充能与阈值决定。
    */
   _extremeThreshold(id, rawThreshold) {
     const T = CONFIG.tuning || {};
-    const infl = T.weatherExtremeWeightInfluence ?? 0.35;
     const scale = T.weatherExtremeThresholdScale ?? 1;
-    const wt = this._extremeWeight[id] ?? 0;
-    return Math.max(0.15, Math.min(0.98, rawThreshold * scale * (1 - wt * infl)));
+    return Math.max(0.15, Math.min(0.98, rawThreshold * scale));
   }
 
   /** 某天气的当前充能值（0~1） */
@@ -391,12 +385,15 @@ export class WeatherSystem {
    * 越过充能门槛照样能积累到"中等/严重"。滑条拉到底 ≠ 关掉，这不符合直觉。
    * 现在：mu ≤ muOff（默认 −0.995，即滑条拉到最左端）= **从 softmax 的候选集里剔除**，
    * 占比严格 0，充能目标恒 0 —— 拉到底就是真的没有。
-   * 极端天气的权重滑条同理（拉到最左端 = 这种极端天气不会出现）。
+   *
+   * v51.6：极端天气不再有权重滑条这条"拉到底=关闭"的旁路了（见 data/Weather.js
+   * 头注），关闭极端天气只剩 disabledWeathers 那一条唯一入口（配置面板的"启用/禁用"
+   * 按钮），上面那句已经处理过了，这里对极端天气直接返回 false。
    */
   _isOff(id) {
     if (this.disabledWeathers.has(id)) return true;
+    if (EXTREME_WEATHERS[id]) return false;
     const off = CONFIG.tuning?.weatherOffAt ?? -0.995;
-    if (EXTREME_WEATHERS[id]) return (this._extremeWeight[id] ?? EXTREME_WEATHERS[id].weight ?? 0) <= off;
     return (this._mu[id] ?? BASE_WEATHERS[id]?.mu ?? 0) <= off;
   }
 
@@ -632,14 +629,9 @@ export class WeatherSystem {
   get clock() { return this._clock; }
 
   // ==================== 配置面板接口 ====================
-  /** 极端天气的出现倾向（-1~+1）：权重越高，触发阈值越低 → 越容易出现 */
-  getExtremeWeight(id) { return this._extremeWeight[id] ?? EXTREME_WEATHERS[id]?.weight ?? 0; }
-  setExtremeWeight(id, value) {
-    this._extremeWeight[id] = Math.max(-1, Math.min(1, value));
-    // 拉到最左端 = 彻底关闭（见 _isOff）。这条不需要重算时间线，只影响触发判定。
-    this._invalidateForecast(); // v34 Q4：权重改触发阈值 → 前向模拟结果变
-    // 不需要重算时间线——权重只影响触发阈值的判定，不影响底层的天气演化
-  }
+  // v51.6：extreme 权重（getExtremeWeight/setExtremeWeight）整个删掉了——
+  // 见 data/Weather.js 头注，用户确认极端天气不需要这条可调项，只按固定 trigger
+  // 条件 + 全局难度旋钮判定，启用/禁用走 disabledWeathers（下面 setWeatherDisabled）。
 
   /** 某天气的 mu（出现概率倾向，-1~+1） */
   getMu(id) { return this._mu[id] ?? BASE_WEATHERS[id]?.mu ?? 0; }

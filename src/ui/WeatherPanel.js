@@ -341,11 +341,47 @@ export const WeatherPanel = {
     if (!ws) return;
     // v50：内层导航已删除（四段并成一页），这里原来那段切页绑定一并去掉。
 
+    // v51.6：极端天气行拆成独立函数，供 tick() 每帧调用——它现在是纯只读展示
+    // （没有滑条/输入框了，见下方 renderExtreme 里的说明），每帧整体重绘不会像
+    // baseBox 那样打断正在拖动的 mu 滑条，充能进度条才能看起来是"实时"的。
+    const renderExtreme = () => {
+      const exBox = container.querySelector('#wxExtreme');
+      if (!exBox) return;
+      const activeEx = new Map(ws.getActiveExtremes().map(e => [e.id, e.intensity]));
+      exBox.innerHTML = Object.values(EXTREME_WEATHERS).map(def => {
+        const on = activeEx.has(def.id);
+        const tier = ws.getTier(def.id);
+        const off = ws.isWeatherDisabled(def.id);
+        const chargePct = Math.round(ws.getCharge(def.id) * 100);
+        const cond = Object.entries(def.trigger)
+          .map(([b, t]) => `${BASE_WEATHERS[b].icon}充能≥${Math.round(ws._extremeThreshold(def.id, t) * 100)}%`).join(' 且 ');
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+          background:${on ? 'rgba(255,215,94,0.10)' : 'rgba(255,255,255,0.03)'};margin-bottom:4px;${off ? 'opacity:0.4;' : ''}">
+          <span style="font-size:16px;">${def.icon}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;color:${def.color};font-weight:600;">${def.name}
+              ${on ? `<span style="color:#ffd75e;font-size:10px;${tier.isExtremeTier ? 'text-shadow:0 0 6px rgba(255,215,94,0.9);font-weight:700;' : ''}"> · ${tier.name}档（${Math.round(tier.scale * 100)}%）</span>`
+                   : `<span style="color:var(--text-dim);font-weight:400;">${off ? '（已禁用）' : ' · 充能 ' + chargePct + '%'}</span>`}</div>
+            <div style="font-size:9px;color:var(--text-mute,#6b7480);margin-top:2px;">触发：${cond}</div>
+            <div style="height:5px;background:rgba(255,255,255,0.07);border-radius:3px;margin-top:4px;overflow:hidden;">
+              <div style="width:${off ? 0 : chargePct}%;height:100%;border-radius:3px;background:${def.color};
+                box-shadow:0 0 6px ${def.color}80;transition:width 0.3s ease;"></div>
+            </div>
+          </div>
+          <button data-wx="${def.id}" style="font-size:11px;padding:3px 8px;">${off ? '启用' : '禁用'}</button>
+        </div>`;
+      }).join('');
+      exBox.querySelectorAll('[data-wx]').forEach(b => {
+        b.addEventListener('click', () => {
+          ws.setWeatherDisabled(b.dataset.wx, !ws.isWeatherDisabled(b.dataset.wx));
+          renderExtreme();
+        });
+      });
+    };
+
     const renderRows = () => {
       const baseBox = container.querySelector('#wxBase');
-      const exBox = container.querySelector('#wxExtreme');
       const w = ws.getWeights();
-      const activeEx = new Map(ws.getActiveExtremes().map(e => [e.id, e.intensity]));
 
       const tplBox = container.querySelector('#wxTemplates');
       if (tplBox) {
@@ -358,6 +394,9 @@ export const WeatherPanel = {
         }));
       }
 
+      // v51.6（Q5美化）：占比条从 3px 细线改成 6px 圆角 + 内发光，当前占比越高条本身
+      // 越亮——不再是一条干巴巴的纯色细条。基础天气的 mu 出现倾向滑条本身不受影响
+      // （用户定稿"基础天气的权重不受影响"），只改视觉。
       baseBox.innerHTML = Object.values(BASE_WEATHERS).map(def => {
         const pct = Math.round((w[def.id] || 0) * 100);
         const off = ws.isWeatherDisabled(def.id);
@@ -368,8 +407,9 @@ export const WeatherPanel = {
           <div style="flex:1;min-width:0;">
             <div style="font-size:12px;color:${def.color};font-weight:600;">${def.name}
               <span style="color:var(--text-dim);font-weight:400;">${off ? '（已禁用）' : ' · 当前 ' + pct + '%'}</span></div>
-            <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin:3px 0;">
-              <div style="width:${off ? 0 : pct}%;height:100%;background:${def.color};border-radius:2px;"></div>
+            <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:4px;margin:4px 0;overflow:hidden;">
+              <div style="width:${off ? 0 : pct}%;height:100%;border-radius:4px;background:${def.color};
+                box-shadow:0 0 6px ${def.color}80;transition:width 0.3s ease;"></div>
             </div>
             <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
               <input type="range" data-mu="${def.id}" min="-1" max="1" step="0.05" value="${mu.toFixed(2)}"
@@ -399,56 +439,32 @@ export const WeatherPanel = {
         });
       });
 
-      exBox.innerHTML = Object.values(EXTREME_WEATHERS).map(def => {
-        const on = activeEx.has(def.id);
-        const tier = ws.getTier(def.id);
-        const off = ws.isWeatherDisabled(def.id);
-        const wt = ws.getExtremeWeight(def.id);
-        const cond = Object.entries(def.trigger)
-          .map(([b, t]) => `${BASE_WEATHERS[b].icon}充能≥${Math.round(ws._extremeThreshold(def.id, t) * 100)}%`).join(' 且 ');
-        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
-          background:${on ? 'rgba(255,215,94,0.10)' : 'rgba(255,255,255,0.03)'};margin-bottom:4px;${off ? 'opacity:0.4;' : ''}">
-          <span style="font-size:16px;">${def.icon}</span>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:12px;color:${def.color};font-weight:600;">${def.name}
-              ${on ? `<span style="color:#ffd75e;font-size:10px;${tier.isExtremeTier ? 'text-shadow:0 0 6px rgba(255,215,94,0.9);font-weight:700;' : ''}"> · ${tier.name}档（${Math.round(tier.scale * 100)}%）</span>` : ''}</div>
-            <div style="font-size:9px;color:var(--text-mute,#6b7480);margin-top:2px;">触发：${cond}</div>
-            <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
-              <input type="range" data-exw="${def.id}" min="-1" max="1" step="0.05" value="${wt.toFixed(2)}"
-                style="flex:1;height:3px;" ${off ? 'disabled' : ''} />
-              <span data-exwval="${def.id}" style="font-size:9px;color:${def.color};width:32px;text-align:right;
-                font-variant-numeric:tabular-nums;">${wt >= 0 ? '+' : ''}${wt.toFixed(2)}</span>
-            </div>
-          </div>
-          <button data-wx="${def.id}" style="font-size:11px;padding:3px 8px;">${off ? '启用' : '禁用'}</button>
-        </div>`;
-      }).join('');
-
-      // 极端天气出现倾向：权重越高 → 触发阈值越低 → 越容易出现。
-      // 不需要防抖（不重算时间线，只影响阈值判定）。
-      exBox.querySelectorAll('[data-exw]').forEach(sl => {
-        sl.addEventListener('input', () => {
-          const id = sl.dataset.exw;
-          const v = parseFloat(sl.value);
-          const lab = exBox.querySelector(`[data-exwval="${id}"]`);
-          if (lab) lab.textContent = (v >= 0 ? '+' : '') + v.toFixed(2);
-          ws.setExtremeWeight(id, v);
-        });
-      });
-
-      container.querySelectorAll('[data-wx]').forEach(b => {
+      // 基础天气的启用/禁用按钮——极端天气那部分现在完全归 renderExtreme() 管
+      // （它是纯只读展示，见上面那个函数头的说明），这里只需要管 baseBox 自己这些按钮。
+      baseBox.querySelectorAll('[data-wx]').forEach(b => {
         b.addEventListener('click', () => {
           const id = b.dataset.wx;
           ws.setWeatherDisabled(id, !ws.isWeatherDisabled(id));
           renderRows();
         });
       });
+
+      renderExtreme();
     };
 
     const bigBar = container.querySelector('#wxBigBar');
     const bigCtx = bigBar ? bigBar.getContext('2d') : null;
+    // v51.6：极端天气充能条要"看起来实时"，但没必要真的按 60fps 重建 15 行 HTML——
+    // 节流到约 3 次/秒，肉眼分不出差别，且是纯只读展示（没有输入框），不用担心
+    // 像 baseBox 那样打断正在拖动的滑条。
+    let exTickAccum = 0, lastTickTime = null;
     const tick = () => {
       if (!document.body.contains(container)) return; // 容器被移除（页面切走/窗口关闭）就停
+      const now = performance.now();
+      const dt = lastTickTime === null ? 0 : (now - lastTickTime) / 1000;
+      lastTickTime = now;
+      exTickAccum += dt;
+      if (exTickAccum >= 0.33) { exTickAccum = 0; renderExtreme(); }
       if (bigCtx && ws.enabled) this._renderBar(bigBar, bigCtx); // 预报图原样保留，不精简
       const live = container.querySelector('#wxLive');
       if (live) {

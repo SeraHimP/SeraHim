@@ -172,18 +172,29 @@ T('包含全部5种基础天气', Object.keys(w).length===Object.keys(BASE_WEATH
   T('晴雨均分 → 单基础极端不误触发（两边都到不了0.62）', wsB.getCharge('flood')<0.05 && wsB.getCharge('scorch')<0.05);
 }
 
-// ==================== Q3：极端天气权重（权重高 → 更容易触发） ====================
+// ==================== Q3（v51.6 改写）：极端天气不再有逐条可调权重 ====================
+// 用户："极端天气不是有固定生成条件吗？极端天气的权重到底有没有实际意义？如果没有的话
+// 可以直接删除极端天气的权重。" —— getExtremeWeight/setExtremeWeight 整个删掉了，
+// 极端天气现在只由固定 trigger + 全局难度旋钮 weatherExtremeThresholdScale 决定，
+// 关闭走 setWeatherDisabled。这里把原来那三条"权重可调"的断言换成验证新形状：
+// 方法真的不存在了、全局旋钮仍然生效、EXTREME_WEATHERS 数据里也没有残留的 weight 字段。
 {
   const wq=new WeatherSystem(null); wq.setEnabled(true); wq.reset(31);
-  const base=wq.getExtremeWeight('thunderstorm');
-  T('Q3 极端天气有出现倾向权重', typeof base === 'number');
-  wq.setExtremeWeight('thunderstorm', 1.0);
-  T('Q3 权重可调且被钳制', wq.getExtremeWeight('thunderstorm')===1.0);
-  // 权重高 → 触发阈值降低
-  const thLow=wq._extremeThreshold('thunderstorm', 0.5);
-  wq.setExtremeWeight('thunderstorm', -1.0);
-  const thHigh=wq._extremeThreshold('thunderstorm', 0.5);
-  T('Q3 权重越高 → 触发阈值越低（更容易出现）', thLow < thHigh);
+  T('Q3① getExtremeWeight/setExtremeWeight 已整体删除，不再是可调项',
+    typeof wq.getExtremeWeight === 'undefined' && typeof wq.setExtremeWeight === 'undefined');
+  T('Q3② EXTREME_WEATHERS 数据里不再有 weight 字段（曾经的逐条权重来源）',
+    Object.values(EXTREME_WEATHERS).every(def => !('weight' in def)));
+  // 全局难度旋钮仍然生效：scale 越大，阈值越高（越难触发）——这条没变，只是不再叠加权重项。
+  const T1 = CONFIG.tuning || (CONFIG.tuning = {});
+  const origScale = T1.weatherExtremeThresholdScale;
+  T1.weatherExtremeThresholdScale = 1;
+  const thAt1 = wq._extremeThreshold('thunderstorm', 0.5);
+  T1.weatherExtremeThresholdScale = 2;
+  const thAt2 = wq._extremeThreshold('thunderstorm', 0.5);
+  T1.weatherExtremeThresholdScale = origScale;
+  T('Q3③ 全局难度旋钮仍然生效（scale 越大阈值越高，越难触发）', thAt2 > thAt1);
+  T('Q3④ 关闭极端天气只剩 setWeatherDisabled 这一条真开关',
+    typeof wq.setWeatherDisabled === 'function' && typeof wq.isWeatherDisabled === 'function');
 }
 
 // ---- 缓存随天气失效 + 禁用天气 ----
@@ -427,6 +438,17 @@ import fs from 'fs';
   T('Q2 脏检查只看档位（防止 hover/点击被每帧重建打断）',
     ui.includes("const key = rows.map(r => r.def.id + ':' + r.tier.id).join('|');"));
   T('Q2 天气行节流 0.5s', ui.includes('box._nextAt = nowMs + 500;'));
+}
+
+// ==================== v51.6：极端天气 UI 简化（Q3+Q5）====================
+// 用户："极端天气的权重到底有没有实际意义？如果没有的话可以直接删除。并且把
+// 极端天气的UI简化并且美化一下。"——面板里的权重滑条（data-exw）整个删掉，
+// 换成只读的实时充能进度条；基础天气那边的滑条（data-mu）不受影响。
+{
+  const panel = fs.readFileSync(new URL('../src/ui/WeatherPanel.js', import.meta.url), 'utf8');
+  T('UI① 极端天气权重滑条（data-exw）已删除', !panel.includes('data-exw'));
+  T('UI② 基础天气的出现倾向滑条（data-mu）不受影响，仍然存在', panel.includes('data-mu='));
+  T('UI③ 极端天气行改用只读的实时充能进度条（ws.getCharge）', /getCharge\(def\.id\)/.test(panel));
 }
 
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);

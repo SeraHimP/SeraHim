@@ -142,14 +142,23 @@ export const BASE_WEATHERS = {
 };
 
 // ==================== 第二层：极端天气（v33：10 组合 + 5 单基础 = 15 种） ====================
-// trigger：{ 基础天气id: 最低充能值 }（两成分都要达标）。
-// weight：出现倾向（-1~+1，配置面板可调）——权重越高实际触发阈值越低。
+// trigger：{ 基础天气id: 最低充能值 }（两成分都要达标——触发条件是固定的，不随机）。
 // 极端天气可达第 5 档"极端"（充能≥88%，效果 150%），显示自带辉光。
+//
+// v51.6：这里原来每条还有一个 weight（出现倾向，-1~+1，配置面板可调，权重越高
+// 触发阈值越低）字段，整个删掉了。用户："极端天气的产生不是有固定条件吗？极端
+// 天气的权重到底有没有实际意义？如果没有的话可以直接删除。"——权重机制本身没
+// 问题（WeatherSystem._extremeThreshold 确实拿它去压低阈值），但它和"触发条件
+// 已经写死"这件事叠在一起，面板上一个滑块 + 一段固定条件文字同时存在，反而让人
+// 分不清"到底是固定的还是可调的"，用户也确认这条不需要保留。极端天气现在只由
+// 固定的 trigger 条件 + 全局难度旋钮 CONFIG.tuning.weatherExtremeThresholdScale
+// 决定，不再有逐条可调的权重。基础天气的 mu（出现倾向）不受影响，那是完全独立
+// 的另一套、用户明确说"不受影响"。
 export const EXTREME_WEATHERS = {
   // 晴+雨 → 太阳雨：塔优势放大 + 全员滋养
   sunshower: {
     id: 'sunshower', name: '太阳雨', icon: '🌦️', color: '#8fd0a8',
-    trigger: { clear: 0.26, rain: 0.26 }, weight: 0.1,
+    trigger: { clear: 0.26, rain: 0.26 },
     desc: '晴空落雨，万物疯长。塔的火力与恢复暴涨，兵线也被雨水滋养。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: 35 },
@@ -162,7 +171,7 @@ export const EXTREME_WEATHERS = {
   // 晴+雾 → 蜃景：兵优势极化
   mirage: {
     id: 'mirage', name: '蜃景', icon: '🌫', color: '#c9b37e',
-    trigger: { clear: 0.26, fog: 0.26 }, weight: 0.1,
+    trigger: { clear: 0.26, fog: 0.26 },
     desc: '烈日蒸腾出扭曲的幻象。塔的弹道被折射带偏，兵线借幻影长驱直入。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: -45 },
@@ -174,7 +183,7 @@ export const EXTREME_WEATHERS = {
   // 晴+风 → 沙暴（保留）
   sandstorm: {
     id: 'sandstorm', name: '沙暴', icon: '🏜️', color: '#d4a05a',
-    trigger: { clear: 0.26, wind: 0.26 }, weight: 0.15,
+    trigger: { clear: 0.26, wind: 0.26 },
     desc: '干燥狂风卷起黄沙。弹头磨损、塔穿甲被废，沙尘成为兵线的掩护与顺风。',
     effects: [
       { targets: 'towers', statKey: 'armorPenPercent', flat: -50 },
@@ -186,7 +195,7 @@ export const EXTREME_WEATHERS = {
   // 晴+雪 → 雪盲：雪地反光刺眼，双方都打折的慢局
   snowblind: {
     id: 'snowblind', name: '雪盲', icon: '🕶️', color: '#e8f0f8',
-    trigger: { clear: 0.26, snow: 0.26 }, weight: 0.05,
+    trigger: { clear: 0.26, snow: 0.26 },
     desc: '烈日照雪，反光刺目。塔与兵都睁不开眼，攻势全面萎靡。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: -30 },
@@ -198,7 +207,7 @@ export const EXTREME_WEATHERS = {
   // 雨+雾 → 暴雨（保留）
   downpour: {
     id: 'downpour', name: '暴雨', icon: '🌧', color: '#3d7ea6',
-    trigger: { rain: 0.26, fog: 0.26 }, weight: 0.15,
+    trigger: { rain: 0.26, fog: 0.26 },
     desc: '倾盆大雨裹着水雾。塔在雨中愈发迅捷，兵线浑身湿透、寸步难行。',
     effects: [
       { targets: 'towers', statKey: 'bonusAttackSpeedPct', flat: 35 },
@@ -212,7 +221,7 @@ export const EXTREME_WEATHERS = {
   // 雨+风 → 雷暴（吞并旧"雷雨交加"；闪电杖特供改为通用双穿——雷电击穿，谁都吃）
   thunderstorm: {
     id: 'thunderstorm', name: '雷暴', icon: '⛈️', color: '#7c5cff',
-    trigger: { rain: 0.26, wind: 0.26 }, weight: 0.2,
+    trigger: { rain: 0.26, wind: 0.26 },
     desc: '电闪雷鸣、狂风怒号。塔的射速与火力双双暴涨，雷电击穿一切防御。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: 40 },
@@ -227,7 +236,7 @@ export const EXTREME_WEATHERS = {
   // 雨+雪 → 冻雨：冰壳裹身，兵线又慢又脆
   freezing_rain: {
     id: 'freezing_rain', name: '冻雨', icon: '🧊', color: '#7fb8d8',
-    trigger: { rain: 0.26, snow: 0.26 }, weight: 0.1,
+    trigger: { rain: 0.26, snow: 0.26 },
     desc: '雨落成冰。兵线被冰壳裹住，行动僵硬、护甲冻裂；塔趁势提速收割。',
     effects: [
       { targets: 'minions', statKey: 'moveSpeed', percent: -50 },
@@ -239,7 +248,7 @@ export const EXTREME_WEATHERS = {
   // 雾+风 → 霾潮：快节奏的兵优势——最危险的推进天气
   haze_surge: {
     id: 'haze_surge', name: '霾潮', icon: '🌪️', color: '#8a9a6b',
-    trigger: { fog: 0.26, wind: 0.26 }, weight: 0.1,
+    trigger: { fog: 0.26, wind: 0.26 },
     desc: '狂风卷着浓霾扑向防线。塔看不清也拦不住，兵线在霾中高速推进。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: -30 },
@@ -252,7 +261,7 @@ export const EXTREME_WEATHERS = {
   // 雾+雪 → 白茫（whiteout）：全场最慢+塔最瞎——铁王八局之王
   whiteout: {
     id: 'whiteout', name: '白茫', icon: '🌨️', color: '#cfd8e0',
-    trigger: { fog: 0.26, snow: 0.26 }, weight: 0.05,
+    trigger: { fog: 0.26, snow: 0.26 },
     desc: '白茫茫一片，天地不分。塔近乎失明，兵线在深雪中蠕行。铁王八局之王。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: -40 },
@@ -265,7 +274,7 @@ export const EXTREME_WEATHERS = {
   // 风+雪 → 暴风雪（保留）
   blizzard: {
     id: 'blizzard', name: '暴风雪', icon: '🌨', color: '#c3dbf0',
-    trigger: { wind: 0.26, snow: 0.26 }, weight: 0.1,
+    trigger: { wind: 0.26, snow: 0.26 },
     desc: '白毛风横扫战场。全线冻结，最慢的消耗局。',
     effects: [
       { targets: 'towers', statKey: 'bonusAttackSpeedPct', flat: -40 },
@@ -280,7 +289,7 @@ export const EXTREME_WEATHERS = {
   // 晴 → 烈日：全员轻微加成 → 极化为"晒得亢奋但脱水"——全员输出大涨、恢复转负
   scorch: {
     id: 'scorch', name: '烈日', icon: '🔥', color: '#f2a13c',
-    trigger: { clear: 0.62 }, weight: 0.1,
+    trigger: { clear: 0.62 },
     desc: '万里无云，烈日当空。全场晒得亢奋——火力与手速大涨，但恢复被高温蒸干。',
     effects: [
       { targets: 'all', statKey: 'attackDamage', percent: 25 },
@@ -291,7 +300,7 @@ export const EXTREME_WEATHERS = {
   // 雨 → 洪涝：塔优势 → 极化为"兵线泡在水里挣扎"
   flood: {
     id: 'flood', name: '洪涝', icon: '🌊', color: '#4a8fbf',
-    trigger: { rain: 0.62 }, weight: 0.1,
+    trigger: { rain: 0.62 },
     desc: '雨势失控，峡谷成河。兵线在水中寸步难行，高处的塔稳坐钓鱼台。',
     effects: [
       { targets: 'minions', statKey: 'moveSpeed', percent: -35 },
@@ -304,7 +313,7 @@ export const EXTREME_WEATHERS = {
   // 雾 → 浓雾：兵优势 → 极化为"塔近乎失明"
   densefog: {
     id: 'densefog', name: '浓雾', icon: '🌁', color: '#9aa7b5',
-    trigger: { fog: 0.62 }, weight: 0.1,
+    trigger: { fog: 0.62 },
     desc: '伸手不见五指。塔的索敌近乎瘫痪，兵线在雾中放开手脚。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: -50 },
@@ -316,7 +325,7 @@ export const EXTREME_WEATHERS = {
   // 风 → 飓风：节奏加快 → 极化为"全场狂飙但站不稳"
   hurricane: {
     id: 'hurricane', name: '飓风', icon: '🌀', color: '#6fc7c0',
-    trigger: { wind: 0.62 }, weight: 0.1,
+    trigger: { wind: 0.62 },
     desc: '狂风撕扯战场。所有单位被吹得飞快——出手快、跑得快、也站不稳。',
     effects: [
       { targets: 'all', statKey: 'moveSpeed', percent: 45 },
@@ -328,7 +337,7 @@ export const EXTREME_WEATHERS = {
   // 雪 → 寒潮：节奏减慢 → 极化为"全场冻结"（一切都慢，包括死亡）
   coldsnap: {
     id: 'coldsnap', name: '寒潮', icon: '🥶', color: '#a8c8e8',
-    trigger: { snow: 0.62 }, weight: 0.1,
+    trigger: { snow: 0.62 },
     desc: '气温骤降，万物冻僵。全场动作迟滞，但寒冷也让伤口凝住——死亡同样变慢。',
     effects: [
       { targets: 'all', statKey: 'moveSpeed', percent: -40 },

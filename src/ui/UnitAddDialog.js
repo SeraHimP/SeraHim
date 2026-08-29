@@ -244,6 +244,13 @@ export const UnitAddDialog = {
     } else {
       const count = Math.max(1, Math.round(parseFloat(document.getElementById('uadMinionCount')?.value) || 1));
       const growth = document.getElementById('uadMinionGrowth')?.checked || false;
+      // v51.6 修复：用户"添加单位窗口中点击加入清单后，原有的数量就会变成1，改为
+      // 保留原先的数"——_addCurrentToQueue 末尾会调 this._render() 整体重绘，
+      // 而 _renderMinionDetail 的输入框模板原来是硬编码 value="1"/checked，等于
+      // 每次加入清单都把这两个输入框重置回出厂默认值。这里把用户刚输入的值存回
+      // this._state，_renderMinionDetail 改成从这两个字段回填，不再是写死的常量。
+      st.minionCount = count;
+      st.minionGrowth = growth;
       const meta = TYPE_META[st.minionType] || {};
       const battle = this._callbacks?.isBattle?.();
       const faction = battle ? (st.faction || 'blue') : null;
@@ -321,6 +328,11 @@ export const UnitAddDialog = {
 
   _renderMinionDetail(type) {
     const meta = TYPE_META[type] || {};
+    // v51.6 修复：数量/波次成长回填上次用户输入的值（默认数量1、默认勾选成长），
+    // 不再是模板里硬编码的 value="1"/checked——见 _addCurrentToQueue 里的说明。
+    const st = this._state;
+    const count = st.minionCount ?? 1;
+    const growthChecked = st.minionGrowth !== false;
     return `
       <div class="option-group">
         <div class="pick-desc-box">${meta.icon || ''} ${meta.label || type} — ${meta.info || ''}</div>
@@ -328,10 +340,10 @@ export const UnitAddDialog = {
       <div class="option-group" style="margin-top:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:8px;">
           <label style="color:var(--text-dim);font-size:12px;">📊 数量</label>
-          <input type="number" id="uadMinionCount" value="1" min="1" step="1" class="editor-number" style="width:70px;">
+          <input type="number" id="uadMinionCount" value="${count}" min="1" step="1" class="editor-number" style="width:70px;">
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
-          <input type="checkbox" id="uadMinionGrowth" checked style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
+          <input type="checkbox" id="uadMinionGrowth" ${growthChecked ? 'checked' : ''} style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
           <label style="color:var(--text-dim);font-size:12px;cursor:pointer;">应用波次成长</label>
         </div>
       </div>

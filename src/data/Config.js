@@ -1003,8 +1003,9 @@ export const CONFIG = {
     weatherChargeRefRatio: 0.5,    // 参考占比：占比等于它时按 weatherChargeFullSec 充满
     weatherChargeFullSec: 20,      // 参考占比下充满需要的秒数
     weatherDrainSec: 35,           // 从满充放空需要的秒数（> 充满秒数 → 消散比积累慢）
-    weatherExtremeWeightInfluence: 0.65, // 极端天气权重对触发阈值的影响力
-    // 天气/极端天气的权重滑条拉到【这个值或更低】= 彻底关闭（占比严格 0）。
+    // v51.6：weatherExtremeWeightInfluence（极端天气权重对触发阈值的影响力）整个删掉了，
+    // 极端天气的权重滑条本身已经删除，见 data/Weather.js 头注。
+    // 基础天气的权重滑条拉到【这个值或更低】= 彻底关闭（占比严格 0）。
     // 为什么需要：占比走 softmax，而 softmax 的值域是开区间 (0,1)，**永远给不出 0**——
     // 用户把除晴以外全拉到 −1，雪照样有 49% 的占比。滑条拉到底就该是"没有"。
     // 取 −0.995 而不是 −1：滑条步进/浮点误差可能停在 −0.999999，−1 的严格相等会漏。

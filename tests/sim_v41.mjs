@@ -297,15 +297,17 @@ function unit(ents, o = {}) {
     T(`全部拉到底时仍保留一个天气（占比和 ${sum.toFixed(3)} = 1）`, Math.abs(sum - 1) < 1e-9);
   }
 
-  // 极端天气的权重滑条同样是真开关
+  // v51.6：极端天气的权重滑条整个删掉了（用户："极端天气的权重到底有没有实际意义？
+  // 如果没有的话可以直接删除"），关闭极端天气现在只剩 setWeatherDisabled 这一条
+  // 入口——这条断言跟着改成验它，同一件事"真的能彻底关掉"，换了实现方式。
   {
     const w3 = new WeatherSystem(new EventBus());
     w3.reset(99);
     const exIds = Object.keys(EXTREME_WEATHERS);
-    for (const id of exIds) w3.setExtremeWeight(id, -1);
+    for (const id of exIds) w3.setWeatherDisabled(id, true);
     let maxEx = 0;
     for (let i = 0; i < 4000; i++) { w3.update(0.1); for (const id of exIds) maxEx = Math.max(maxEx, w3.getCharge(id)); }
-    T(`极端天气权重拉到 −1 = 彻底不出现（实测最大充能 ${(maxEx * 100).toFixed(2)}%）`, maxEx === 0);
+    T(`极端天气禁用开关 = 彻底不出现（实测最大充能 ${(maxEx * 100).toFixed(2)}%）`, maxEx === 0);
   }
 
   // 门槛：抬高之后极端天气占时间必须明显下降（用户："后期的极端天气特别多"）
