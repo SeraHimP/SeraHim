@@ -1491,4 +1491,57 @@ async function world() {
   }
 }
 
+// ==================== v51.6：bug 修复——缩放应以画面中心为锚点 ====================
+// 用户："目前视角放大是聚焦于左上角进行放大的。正确放大应该是聚焦于窗口中心。"
+// 从产品源码里把 _viewSize/_zoomAt 这两个纯逻辑方法借出来单独调用（同 sim_lightring
+// 借出 _rangeRingStrength 的做法）——测的是产品代码本身，不是抄一份公式。
+{
+  const src = srcOf('src/ui/CanvasController.js');
+  const mView = src.match(/_viewSize\(\) \{[\s\S]*?\n  \}/);
+  const mZoom = src.match(/_zoomAt\(newZoom\) \{[\s\S]*?\n  \}/);
+  T('能定位到 _viewSize/_zoomAt 实现', !!mView && !!mZoom);
+
+  const makeCC = (W, H, zoom, offsetX, offsetY) => {
+    const obj = { zoom, offsetX, offsetY, renderer: { width: W, height: H }, canvas: {} };
+    obj._viewSize = new Function(`return function ${mView[0]}`)();
+    obj._zoomAt = new Function(`return function ${mZoom[0]}`)();
+    return obj;
+  };
+
+  // 画布中心对应的世界坐标：缩放前后必须是【同一个点】——这就是"以画面中心为锚点"。
+  const cc = makeCC(1000, 800, 1.0, 0, 0);
+  const worldAtCenter = (o) => ({
+    x: (o.renderer.width / 2 - o.offsetX) / o.zoom,
+    y: (o.renderer.height / 2 - o.offsetY) / o.zoom,
+  });
+  const before = worldAtCenter(cc);
+  cc._zoomAt.call(cc, 2.0);
+  const after = worldAtCenter(cc);
+  T('缩①-放大后画面中心对应的世界坐标不变（不再朝左上角聚焦）',
+    Math.abs(before.x - after.x) < 1e-9 && Math.abs(before.y - after.y) < 1e-9);
+  T('缩②-zoom 确实变了（不是锚点算对了但缩放没生效）', cc.zoom === 2.0);
+
+  // 已经平移过（offset 不为 0）之后再缩放，同一条不变量仍然成立
+  const cc2 = makeCC(1200, 700, 1.5, 340, -180);
+  const before2 = worldAtCenter(cc2);
+  cc2._zoomAt.call(cc2, 0.6);
+  const after2 = worldAtCenter(cc2);
+  T('缩③-平移过之后再缩放，画面中心对应的世界坐标依旧不变',
+    Math.abs(before2.x - after2.x) < 1e-9 && Math.abs(before2.y - after2.y) < 1e-9);
+
+  T('缩④-缩放范围仍然钉在 0.15~3.0（没有被新逻辑放宽）', (() => {
+    const cc3 = makeCC(800, 600, 1.0, 0, 0);
+    cc3._zoomAt.call(cc3, 99);
+    const cc4 = makeCC(800, 600, 1.0, 0, 0);
+    cc4._zoomAt.call(cc4, -5);
+    return cc3.zoom === 3.0 && cc4.zoom === 0.15;
+  })());
+
+  // 五个入口（滚轮/±按钮两个/滑杆/双指捏合）都要走 _zoomAt，不能有漏网的
+  // "直接改 this.zoom、不配平 offset"的旧写法。
+  T('缩⑤-滚轮/±按钮/滑杆/捏合五个入口都改走 _zoomAt',
+    (src.match(/this\._zoomAt\(/g) || []).length === 5
+    && !/this\.zoom = Math\.(max|min)\(0\.15, this\.zoom/.test(src));
+}
+
 done();

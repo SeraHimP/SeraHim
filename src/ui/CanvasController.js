@@ -53,6 +53,35 @@ export class CanvasController {
     return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
   }
 
+  // 画布可视区域的 CSS 像素尺寸——与 offsetX/offsetY 同一套坐标系
+  // （ThreeRenderer.resize 按父容器 getBoundingClientRect 算，这里保持同口径；
+  // renderer 不存在时——无 WebGL 的降级路径——退回自己量一次）。
+  _viewSize() {
+    if (this.renderer?.width && this.renderer?.height) {
+      return { w: this.renderer.width, h: this.renderer.height };
+    }
+    const rect = this.canvas.parentElement?.getBoundingClientRect();
+    return { w: rect?.width || window.innerWidth, h: rect?.height || window.innerHeight };
+  }
+
+  // 用户："目前视角放大是聚焦于左上角进行放大的。正确放大应该是聚焦于窗口中心。"
+  // 根因：所有缩放入口（滚轮/±按钮/滑杆/双指捏合）过去只改 this.zoom，offsetX/offsetY
+  // 原地不动——而 screen = offset + world*zoom 这套变换里，offsetX/offsetY 对应的正是
+  // 世界坐标原点在屏幕上的落点，缩放不改它就等于"永远绕世界原点缩放"，画面看起来就是
+  // 死死地朝左上角（或当前 pan 到的那个点）聚焦，跟画布中心毫无关系。
+  // 做法：缩放前先反算"当前画布中心对应哪个世界坐标"（syncCameraFrom 用的就是这同一个
+  // 公式，见 ThreeRenderer 头注），缩放后把 offsetX/offsetY 重新配平，让那个世界坐标
+  // 仍然落在画布中心——视觉上就是"以画面中心为锚点缩放"。
+  _zoomAt(newZoom) {
+    const { w: W, h: H } = this._viewSize();
+    const z0 = this.zoom || 1;
+    const wx = (W / 2 - this.offsetX) / z0;
+    const wy = (H / 2 - this.offsetY) / z0;
+    this.zoom = Math.max(0.15, Math.min(3.0, newZoom));
+    this.offsetX = W / 2 - wx * this.zoom;
+    this.offsetY = H / 2 - wy * this.zoom;
+  }
+
   setupEvents() {
     const wrap = this.canvas.parentElement;
 
@@ -104,7 +133,7 @@ export class CanvasController {
         const dist = this._pinchDist();
         if (dist > 0 && this._pinch.startDist > 0) {
           const scale = dist / this._pinch.startDist;
-          this.zoom = Math.max(0.15, Math.min(3.0, this._pinch.startZoom * scale));
+          this._zoomAt(this._pinch.startZoom * scale);
           this.updateView();
         }
         return;
@@ -183,7 +212,7 @@ export class CanvasController {
       if (e.target !== this.canvas) return; // 面板内滚动是滚面板，不是缩放画布
       e.preventDefault();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      this.zoom = Math.max(0.15, Math.min(3.0, this.zoom + delta));
+      this._zoomAt(this.zoom + delta);
       this.updateView();
     }, { passive: false });
 
@@ -199,11 +228,11 @@ export class CanvasController {
     });
 
     document.getElementById('zoomInBtn').addEventListener('click', () => {
-      this.zoom = Math.min(3.0, this.zoom + 0.1);
+      this._zoomAt(this.zoom + 0.1);
       this.updateView();
     });
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
-      this.zoom = Math.max(0.15, this.zoom - 0.1);
+      this._zoomAt(this.zoom - 0.1);
       this.updateView();
     });
     // v51.6：缩放行统一成【图标】【−】【滑杆】【+】【🎯】的形状，缩放原来只有
@@ -212,7 +241,7 @@ export class CanvasController {
     const zoomSl = document.getElementById('zoomSlider');
     if (zoomSl) {
       zoomSl.addEventListener('input', () => {
-        this.zoom = Math.max(0.15, Math.min(3.0, Number(zoomSl.value) || 1));
+        this._zoomAt(Number(zoomSl.value) || 1);
         this.updateView();
       });
     }
