@@ -840,4 +840,48 @@ async function world() {
     && !/renderSkillDescription\(def, entity, ctx\)/.test(pagesConfigSrc));
 }
 
+// ==================== 二十五、v51.5：冰霜镀层加法术强度 + 批量龙魂改卡片池 ====================
+{
+  const { ents, fx, attr, CONFIG } = await world();
+  const { equipSkill } = await import('../src/core/skillParams.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr };
+  const t = mkEntity(ents, 'tower', {}, CONFIG);
+  const inst = equipSkill(t, 'passive_frost_plating', ctx, SkillLibrary);
+  // 直接调用 onFrame 三次（每次跨越 60s 阈值）模拟叠 3 层，不必真等 180 秒。
+  for (let i = 0; i < 3; i++) SkillLibrary.passive_frost_plating.onFrame(t.id, 60, inst, ctx);
+  const stats = attr.calc(t, fx.getEffects(t.id));
+  // 用户："+3法术强度……注意不是百分比，是数值"——3 层应该是 +9（固定值，
+  // 不随任何百分比缩放），与攻击力/护甲/魔抗那三项的【百分比】性质不同。
+  T('冰①-冰霜镀层新增法术强度，且是固定数值不是百分比（3层=+9）',
+    Math.abs(stats.abilityPower - (t.baseStats.abilityPower || 0) - 9) < 1e-6);
+}
+
+{
+  const { EDITOR_PAGES_GAMEPLAY_WORLD } = await import('../src/ui/editor/pagesGameplayWorld.js');
+  const { ents, fx, CONFIG } = await world();
+  window.CTX = window.CTX || {};
+  window.CTX.__app = { entityContainer: ents };
+  const t1 = mkEntity(ents, 'totem', { faction: 'blue' }, CONFIG);
+  t1._mapFaction = 'blue';
+  const t2 = mkEntity(ents, 'siege', { faction: 'blue' }, CONFIG);
+  t2._mapFaction = 'blue';
+  t1._skillInstances.push({ id: 999, skillId: 'dragonsoul_thunder', state: {} });
+
+  const counts = EDITOR_PAGES_GAMEPLAY_WORLD._dgFactionActiveSouls({ }, 'blue');
+  T('批①-_dgFactionActiveSouls 正确统计该阵营每条魂被多少单位持有',
+    counts.dragonsoul_thunder === 1 && !counts.dragonsoul_fire);
+  T('批①-排除 dragonsoul_ancient（限时的远古之力不算进"常驻龙魂"统计）', (() => {
+    t2._skillInstances.push({ id: 998, skillId: 'dragonsoul_ancient', state: {} });
+    const c2 = EDITOR_PAGES_GAMEPLAY_WORLD._dgFactionActiveSouls({}, 'blue');
+    return !c2.dragonsoul_ancient;
+  })());
+
+  const gwSrc = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  T('批②-点击卡片走"全场统一开/关"（按点击前是否为0决定方向），不是逐单位各自反转',
+    /const turnOn = before === 0;/.test(gwSrc) && /if \(turnOn === !has\)/.test(gwSrc));
+  T('批③-清空按钮把该方所有非远古龙魂实例一次性卸干净',
+    /dg-clear-all-soul/.test(gwSrc) && /inst\.skillId !== 'dragonsoul_ancient'/.test(gwSrc));
+}
+
 done();

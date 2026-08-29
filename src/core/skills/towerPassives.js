@@ -280,8 +280,10 @@ export const towerPassives = {
     name: '冰霜镀层',
     icon: '❄️',
     category: 'passive',
-    description: '每60秒叠1层，最多18层。每层+5%攻击、+2%双抗、+1.5%生命恢复。',
-    descTemplate: '唯一被动——冰霜镀层：防御塔每分钟获得额外属性（当前【{val}】层，最多18层），每层+5%攻击、+2%双抗、+1.5%生命恢复。',
+    // v51.5：新增法术强度——用户定稿"+3法术强度……注意不是百分比，是数值"，
+    // 与其余四项（%攻击/护甲/魔抗/生命恢复）不同，是每层固定加 3 点，不是百分比。
+    description: '每60秒叠1层，最多18层。每层+5%攻击、+2%双抗、+1.5%生命恢复、+3法术强度。',
+    descTemplate: '唯一被动——冰霜镀层：防御塔每分钟获得额外属性（当前【{val}】层，最多18层），每层+5%攻击、+2%双抗、+1.5%生命恢复、+3法术强度。',
     computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '冰霜镀层'); return e ? e.stacks : 0; },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -353,6 +355,20 @@ export const towerPassives = {
           stackPolicy: 'stack',
           permanent: true,
           description: `生命恢复+${(s*1.5).toFixed(1)}%`,
+        }, 'passive_frost_plating');
+        ctx.effectRegistry.apply(entityId, {
+          name: '冰霜镀层',
+          icon: '❄️',
+          kind: 'stat',
+          statKey: 'abilityPower',
+          flatValue: 3,
+          duration: Infinity,
+          stackable: true,
+          maxStacks: 18,
+          perStackFlat: 3,
+          stackPolicy: 'stack',
+          permanent: true,
+          description: `法术强度+${s*3}`,
         }, 'passive_frost_plating');
       }
     },

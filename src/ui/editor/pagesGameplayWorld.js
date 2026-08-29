@@ -16,7 +16,7 @@
 import { CONFIG } from '../../data/Config.js';
 import { WeatherPanel } from '../WeatherPanel.js';
 import { DRAGON_ELEMENTS } from '../../systems/DragonSystem.js';
-import { SkillLibrary } from '../../core/SkillLibrary.js';
+import { SkillLibrary, renderSkillDescription } from '../../core/SkillLibrary.js';
 
 export const EDITOR_PAGES_GAMEPLAY_WORLD = {
   // ==================== 巨龙与龙魂 ====================
@@ -116,16 +116,7 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <button class="dg-set-kills" data-fac="red">✅ 应用红方击杀</button>
       </div>
 
-      <div class="panel-sec">直接指定龙魂</div>
-      ${['blue', 'red'].map(fac => `
-        <div class="slider-row"><label>${fac === 'blue' ? '🔵 蓝方' : '🔴 红方'}</label>
-          <select class="dg-soul-select" data-fac="${fac}" style="flex:1;">
-            <option value="">－ 选择 －</option>
-            ${ELS.map(([el, d]) => `<option value="${el}" ${st.souls?.[fac]?.[0] === d.soul ? 'selected' : ''}>${d.icon} ${SkillLibrary[d.soul]?.name || d.label}</option>`).join('')}
-          </select>
-          <button class="dg-set-soul" data-fac="${fac}">装上</button>
-          <button class="dg-clear-soul" data-fac="${fac}">卸下</button>
-        </div>`).join('')}
+      ${this._renderGameplayDragonSoulPool(ds)}
 
       <div class="panel-sec">开关</div>
       <div class="slider-row"><label>巨龙生成</label>
@@ -142,6 +133,70 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <button id="dgKillAll" class="danger">💀 清场（走正常死亡结算，照常发奖励）</button>
         <button id="dgResetProgress" class="danger">↺ 清空巨龙进度</button>
       </div>`;
+  },
+
+  /**
+   * ==================== v51.5：批量指定龙魂改成卡片池样式 ====================
+   * 用户："批量添加龙魂的界面我想要的是这种的（截图：单位编辑窗口的龙魂 tab—
+   *        已生效效果 + 巨龙增益池 + 龙魂池，卡片网格，可同时装备多个）。"
+   *
+   * 原来是下拉框 + 装上/卸下按钮，且语义上"单一替换"（ds.souls[fac] = [soulId]，
+   * 一次只能有一条）——现在改成卡片池 + 点击切换，与单位编辑窗口那个 tab
+   * 视觉/交互统一，并且真正支持"同时给一方装备多个不同龙魂"：
+   *   · 装备走 DragonSystem._toggleSoul（"多选叠加版"，装备/卸下某个龙魂不影响
+   *     其它已装备的龙魂——这个方法本来就是为单位编辑窗口那个多选穿梭框写的，
+   *     这里换成对**全场该阵营的每个符合条件的单位**都调一遍）；
+   *   · 不再用 _equipSoul（"单一替换版"，本来是给"击杀 4 条龙自动成魂"这条
+   *     真实规则用的，语义上就是"一次只能有一条"，用在这里天然限制成单选）。
+   *
+   * 针对性优化（用户："然后你再针对性优化"）：
+   *   ① 每张卡片显示"该方当前有多少个单位持有这条魂"的计数——多选之后"点了到底
+   *      生不生效"不再需要靠猜；
+   *   ② 悬浮显示这条魂的真实说明文案（复用 renderSkillDescription，与单位编辑
+   *      窗口那个 tab 同一个数据源，不会各写各的漂出去）；
+   *   ③ 新增"清空该方全部龙魂"按钮——原来只能一条条卸，多选之后一条条卸太慢。
+   *
+   * ⚠️ 这是手动测试工具，不是真实的"击杀 4 条龙自动成魂"那条规则：广播只覆盖
+   * 【当前在场】的单位，不写 ds.souls[fac]/ds.soulOwner（那两个字段是自动成魂
+   * 规则的状态，手动多选覆盖它们会把"真实进度"污染成假数据）。所以后续新出生的
+   * 单位不会自动继承手动点的这些魂——如果需要"这一局从此都有这条魂"，那是
+   * 上面"击杀数"那栏该做的事（改到位后会真正触发 _resolveSoul，进正规状态）。
+   */
+  _dgFactionActiveSouls(ds, fac) {
+    const ec = window.CTX?.__app?.entityContainer;
+    const counts = {};
+    if (!ec?.getAll) return counts;
+    for (const e of ec.getAll(true)) {
+      if ((e._mapFaction || e.faction) !== fac) continue;
+      for (const inst of (e._skillInstances || [])) {
+        if (!inst.skillId.startsWith('dragonsoul_') || inst.skillId === 'dragonsoul_ancient') continue;
+        counts[inst.skillId] = (counts[inst.skillId] || 0) + 1;
+      }
+    }
+    return counts;
+  },
+
+  _renderGameplayDragonSoulPool(ds) {
+    const ELS = Object.entries(DRAGON_ELEMENTS);
+    const pools = ['blue', 'red'].map(fac => {
+      const counts = this._dgFactionActiveSouls(ds, fac);
+      const cards = ELS.map(([el, d]) => {
+        const def = SkillLibrary[d.soul];
+        const n = counts[d.soul] || 0;
+        return `<div class="pick-card ${n > 0 ? 'selected' : ''}" data-dgsoul-fac="${fac}" data-dgsoul-id="${d.soul}">
+          <div class="pick-icon">${def?.icon || d.icon}</div>
+          <div class="pick-label">${def?.name || d.label}${n > 0 ? `（${n}）` : ''}</div>
+        </div>`;
+      }).join('');
+      return `
+        <div class="panel-sec" style="margin-top:10px;">${fac === 'blue' ? '🔵 蓝方龙魂池' : '🔴 红方龙魂池'}</div>
+        <div class="pick-grid">${cards}</div>
+        <button class="dg-clear-all-soul" data-fac="${fac}" style="margin-top:4px;">🚫 清空${fac === 'blue' ? '蓝方' : '红方'}全部龙魂</button>`;
+    }).join('');
+    return `
+      <div class="panel-sec">批量指定龙魂（点击切换，双方各自可同时装备多个不同龙魂）</div>
+      ${pools}
+      <div class="pick-desc-box" id="dgSoulDescBox">点击某项对全场该阵营广播装备/卸下；括号里的数字是该方当前持有这条魂的单位数。</div>`;
   },
 
   _bindGameplayDragonEvents(overlay, logFn) {
@@ -193,35 +248,48 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         refresh();
       });
     });
-    overlay.querySelectorAll('.dg-set-soul').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const fac = btn.dataset.fac;
-        const sel = overlay.querySelector(`.dg-soul-select[data-fac="${fac}"]`);
-        const el = sel?.value;
-        if (!el) { logFn('⚠️ 先选一个龙魂', 'error'); return; }
-        // ==================== v50：这里原来存的是**元素 key**，不是技能 id ====================
-        // `ds.souls[fac]` 的语义是"这一方的龙魂**技能 id**"（_resolveSoul 存进去的是
-        // DRAGON_ELEMENTS[el].soul）。而这个下拉框存的是 'fire' 这种元素 key，
-        // 于是 equipExistingSoul 去查 this.skills['fire'] —— 查不到，
-        // **手动指定龙魂从来没有真正生效过**：状态栏没有魂、属性也不变。
-        // 而且原来只改了字段、没有发给场上已有的单位，得等下一波新兵才可能生效。
-        const soulId = DRAGON_ELEMENTS[el]?.soul;
-        if (!soulId) { logFn('⚠️ 未知元素', 'error'); return; }
-        ds.souls[fac] = [soulId];
-        ds.soulOwner = fac;
-        ds.soulResolved = true;
-        ds._grantAll(fac, (e) => ds._equipSoul(e, soulId));   // 立刻发给场上全体
-        logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂已手动指定：${SkillLibrary[soulId]?.name || soulId}`, 'spawn');
+    // v51.5：卡片池点击切换（多选叠加，走 _toggleSoul，与单位编辑窗口那个 tab
+    // 同一套语义），悬浮显示真实说明文案，外加"清空该方全部龙魂"快捷按钮。
+    overlay.querySelectorAll('[data-dgsoul-id]').forEach(card => {
+      card.addEventListener('click', () => {
+        const fac = card.dataset.dgsoulFac;
+        const soulId = card.dataset.dgsoulId;
+        const def = ds.skills[soulId];
+        // _toggleSoul 是【逐个单位】各自翻转自己的状态——如果直接对全场广播调用，
+        // 场上原本"有的有、没的没"（比如之前单独在某个单位身上手动装过）会被
+        // 各自反着翻一次，点一下卡片却出现"有人装上、有人卸下"的混乱结果。
+        // 按钮该有的是干净的"全场统一开/关"：先看这条魂当前是不是【一个都没有】，
+        // 没有就统一装上；只要有任何一个单位持有，就统一卸给它清空——不看单个
+        // 单位自己的状态，只看这次点击该把全场带向哪个方向。
+        const before = this._dgFactionActiveSouls(ds, fac)[soulId] || 0;
+        const turnOn = before === 0;
+        let changed = 0, total = 0;
+        ds._grantAll(fac, (e) => {
+          total++;
+          const has = (e._skillInstances || []).some(i => i.skillId === soulId);
+          if (turnOn === !has) { ds._toggleSoul(e, soulId); changed++; }
+        });
+        logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂【${def?.name || soulId}】已${turnOn ? '装备' : '卸下'}：影响 ${changed}/${total} 个单位`, 'spawn');
         refresh();
       });
+      card.addEventListener('mouseenter', () => {
+        const def = ds.skills[card.dataset.dgsoulId];
+        const descBox = overlay.querySelector('#dgSoulDescBox');
+        if (descBox && def) descBox.textContent = renderSkillDescription(def, null, {}) || def.description || '';
+      });
     });
-    overlay.querySelectorAll('.dg-clear-soul').forEach(btn => {
+    overlay.querySelectorAll('.dg-clear-all-soul').forEach(btn => {
       btn.addEventListener('click', () => {
         const fac = btn.dataset.fac;
-        ds.souls[fac] = [];
-        if (ds.soulOwner === fac) { ds.soulOwner = null; ds.soulResolved = false; }
-        ds._grantAll(fac, (e) => ds._equipSoul(e, null));   // 同上：卸下也要作用到场上已有的单位
-        logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂已卸下`, 'spawn');
+        let n = 0;
+        ds._grantAll(fac, (e) => {
+          for (const inst of [...(e._skillInstances || [])]) {
+            if (inst.skillId.startsWith('dragonsoul_') && inst.skillId !== 'dragonsoul_ancient') {
+              ds._toggleSoul(e, inst.skillId); n++;
+            }
+          }
+        });
+        logFn(`🚫 ${fac === 'blue' ? '蓝方' : '红方'}全部龙魂已清空（卸下 ${n} 个实例）`, 'spawn');
         refresh();
       });
     });

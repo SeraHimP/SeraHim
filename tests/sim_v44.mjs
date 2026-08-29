@@ -346,9 +346,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('巨龙④-有生成/效果两个独立开关（对应 CONFIG.dragonToggles 的两项）',
     /CONFIG\.dragonToggles\.spawn = CONFIG\.dragonToggles\.spawn === false/.test(gw)
     && /CONFIG\.dragonToggles\.effect = CONFIG\.dragonToggles\.effect === false/.test(gw));
-  T('巨龙⑤-即时操作齐备：刷一条 / 清场 / 判魂 / 清进度',
+  // v51.5：手动指定龙魂从下拉框+按钮改成了卡片池（data-dgsoul-id），
+  // 断言跟着改成认新的标记。
+  T('巨龙⑤-即时操作齐备：刷一条 / 清场 / 指定龙魂 / 清进度',
     /dgForceElement/.test(gw) && /dgKillAll/.test(gw)
-    && /dg-set-soul/.test(gw) && /dgResetProgress/.test(gw));
+    && /data-dgsoul-id/.test(gw) && /dgResetProgress/.test(gw));
   T('巨龙⑥-清场走 entity:death（绕过去的话"编辑器杀的龙不给奖励"，两套行为）',
     /app\?\.eventBus\?\.emit\?\.\('entity:death'/.test(gw));
   // v50 重做：进度那一块从一句文字扩成"对局态势"网格（双方条数 / 还差几条 /
@@ -362,8 +364,13 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     /Object\.entries\(DRAGON_ELEMENTS\)/.test(gw));
   // 手动指定龙魂原来存的是**元素 key** 而不是技能 id，equipExistingSoul 查不到 →
   // 手动指定从来没真正生效过。修好之后这条断言守住它不再退化。
-  T('巨龙⑦-手动指定龙魂存的是技能 id，并且立刻发给场上全体',
-    /DRAGON_ELEMENTS\[el\]\?\.soul/.test(gw) && /_grantAll\(fac, \(e\) => ds\._equipSoul\(e, soulId\)\)/.test(gw));
+  // v51.5：手动指定从下拉框+单一替换（_equipSoul）改成了卡片池+多选叠加
+  // （_toggleSoul，用户："我想要的是这种的……可同时装备多个不同龙魂"），
+  // 断言跟着改成认新实现：卡片直接用技能 id（d.soul，来自 DRAGON_ELEMENTS 的
+  // entries，不再有元素 key→技能 id 的转换步骤），并且立刻广播给场上全体。
+  T('巨龙⑦-手动指定龙魂用的是技能 id，并且立刻广播给场上全体（走多选叠加）',
+    /data-dgsoul-id="\$\{d\.soul\}"/.test(gw) && /ds\._grantAll\(fac, \(e\) => \{/.test(gw)
+    && /ds\._toggleSoul\(e, soulId\)/.test(gw));
   T('巨龙⑧-文案跟真实规则一致：先到先得，不是"打完一批统一结算"',
     /先到先得/.test(gw) && !/都不到则无魂/.test(gw));
 }
