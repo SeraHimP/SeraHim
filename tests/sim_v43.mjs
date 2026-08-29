@@ -837,8 +837,9 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     S.earth.damageBlock <= 3 && S.earth.damageBlock < CONFIG.templates.ranged.attackDamage);
   T('魂③-毒魂对建筑打折（百分比最大生命的 DoT 天然反建筑）',
     S.poison.vsBuildingPct > 0 && S.poison.vsBuildingPct < 100);
-  T('魂④-只有远古之力是限时的，其余八条永久',
-    S.ancient.durationSec === 240
+  // v51.6：durationSec 240→300（用户定稿"远古龙魂还是限时的，时长改为300s"）。
+  T('魂④-只有远古龙魂是限时的，其余八条永久',
+    S.ancient.durationSec === 300
     && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison']
         .every(k => S[k].durationSec === undefined));
   const src = srcOf(('../src/core/skills/dragonSouls.js'));

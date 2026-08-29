@@ -90,6 +90,10 @@ export class DragonSystem {
     this.totalKills = 0;
     this.soulUnlocked = false;
     this.ancientKills = 0;
+    // v51.6：远古之力——每杀一条远古龙，该阵营全体单位永久 +5%全属性（逐层叠加）。
+    // 与元素之力不同，远古龙没有元素归属，层数按阵营单独计数，不走 DRAGON_ELEMENTS
+    // 那套按元素查表的通路。见 _applyAncientPower / _grantAncient。
+    this.ancientPowerStacks = {};
 
     // ==================== 阵营龙魂规则（用户定稿）====================
     // 「6 条龙 + ≥4 击杀才成魂、都不到 4 则无魂、之后出远古龙」
@@ -153,6 +157,7 @@ export class DragonSystem {
     this.totalKills = 0;
     this.soulUnlocked = false;
     this.ancientKills = 0;
+    this.ancientPowerStacks = {};
     this.factionKills = { blue: {}, red: {} };
     this.factionTotals = { blue: 0, red: 0 };
     this.souls = { blue: [], red: [] };
@@ -507,6 +512,11 @@ export class DragonSystem {
       for (const [el, cnt] of Object.entries(this.factionKills[fac] || {})) {
         for (let i = 0; i < cnt; i++) { this._applyElementBuff(entity, el); any = true; }
       }
+      // v51.6：远古之力同样要给新出生的单位补层，否则和元素之力一样会出现
+      // "旧的一批死绝，新出生的一批全都拿不到"（equipExistingSoul 本来就是为了
+      // 修这一类问题才存在的，见上面 factionKills 那段的注释）。
+      const ancientStacks = this.ancientPowerStacks[fac] || 0;
+      for (let i = 0; i < ancientStacks; i++) { this._applyAncientPower(entity); any = true; }
     }
     // ② 龙魂本体：仍然只给塔 + 大型小兵
     if (DragonSystem.SOUL_REWARD_OK(entity) && this.soulOwner === fac && this.souls[fac]?.[0]) {
@@ -623,8 +633,12 @@ export class DragonSystem {
     const remain = untilTime - ((typeof window !== 'undefined' && window.gameTime) || 0);
     if (remain <= 0) return;
     this._equipSoul(e, 'dragonsoul_ancient');
+    // v51.6：这条限时处决效果的展示名从"远古之力"改成"远古处决"——新增的永久
+    // 全属性加成（_applyAncientPower）现在才是真正叫"远古之力"的那个东西（用户
+    // 明确要求区分"龙魂"与"力"这两个概念），两个效果如果同名会在同一个单位的
+    // 状态栏里混在一起，没法区分哪个是限时的哪个是永久的。
     this.effects.apply(e.id, {
-      name: '远古之力', icon: '🐲', kind: 'display', type: 'buff', color: '#e67e22',
+      name: '远古处决', icon: '🐲', kind: 'display', type: 'buff', color: '#e67e22',
       duration: remain, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
       stackKey: 'dragon_ancient',
       description: `处决：对生命低于 ${p.executeAtPct ?? 20}% 的敌人额外造成 ${p.executePct ?? 20}% 最大生命真实伤害`,
@@ -649,19 +663,43 @@ export class DragonSystem {
    * 的龙魂（this.souls[fac]），远古之力是限时的、走的是这里的一次性广播，从没有人
    * 告诉 equipExistingSoul "现在阵营 X 正顶着一份远古之力，窗口到几点"。塔几乎不会
    * 中途"重新出生"（对局里数量恒定），而大型小兵每隔几十秒就整批死亡再刷新——
-   * 240 秒窗口期内，旧的那一批很快死绝，新出生的一批全都拿不到，观感上就是
-   * "远古之力只对塔有效"。修法：把这份窗口期状态记成阵营级的 `_ancientUntilByFaction`，
+   * 限时窗口期内，旧的那一批很快死绝，新出生的一批全都拿不到，观感上就是
+   * "远古龙魂只对塔有效"。修法：把这份窗口期状态记成阵营级的 `_ancientUntilByFaction`，
    * equipExistingSoul 里补发时一并检查、按剩余时间补上。
    */
   _grantAncient(faction) {
     const p = (CONFIG.dragonSouls && CONFIG.dragonSouls.ancient) || {};
-    const dur = p.durationSec ?? 240;
+    const dur = p.durationSec ?? 300;
     const until = ((typeof window !== 'undefined' && window.gameTime) || 0) + dur;
     this._ancientUntilByFaction = this._ancientUntilByFaction || {};
     this._ancientUntilByFaction[faction] = until;
     const n = this._grantAll(faction, (e) => this._grantAncientTo(e, until));
     this._ancientFaction = faction;
+    // v51.6：远古之力——与龙魂那份限时执行效果分开广播，永久、覆盖全部单位
+    // （POWER_REWARD_OK，不是 SOUL_REWARD_OK 那条窄范围），逐层叠加不设上限
+    // （远古龙可以反复刷、反复杀，层数天然随"这一路谁一直在赢远古龙"增长）。
+    this.ancientPowerStacks[faction] = (this.ancientPowerStacks[faction] || 0) + 1;
+    this._grantAll(faction, (e) => this._applyAncientPower(e), DragonSystem.POWER_REWARD_OK);
     return n;
+  }
+
+  /**
+   * 给单个单位叠一层远古之力（永久 +CONFIG.dragonPower.ancient.allStatsPct% 全属性）。
+   * 单独成一条 stat 效果、独立 sourceId，不与 _grantAncientTo 的限时处决效果混在一起——
+   * 一个永久叠层、一个到点回收，生命周期完全不同，合在一条效果里没法同时满足两边。
+   * 数值放在 CONFIG.dragonPower（不是 CONFIG.dragonSouls）——这是"力"不是"魂"，
+   * 与其余七个元素的力同一张表，只是没有元素归属，单独存一个 'ancient' 键。
+   */
+  _applyAncientPower(entity) {
+    const p = (CONFIG.dragonPower && CONFIG.dragonPower.ancient) || {};
+    const pct = p.allStatsPct ?? 5;
+    this.effects.apply(entity.id, {
+      name: '远古之力', icon: '🐲', kind: 'stat', color: '#e67e22',
+      statKey: 'allStatsPct', flatValue: pct, perStackFlat: pct,
+      duration: Infinity, permanent: true, stackable: true, maxStacks: 999, stackPolicy: 'stack',
+      descTemplate: `唯一被动——远古之力：击杀远古巨龙获得的永久全属性加成（{stacks}层，每层+${pct}%）。`,
+      description: `远古之力（{stacks}层，每层+${pct}%全属性）`,
+    }, 'dragon_ancient_power_0');
   }
 
   /** 远古之力到期回收：把技能实例摘掉（显示状态由 EffectRegistry 自己过期）。 */

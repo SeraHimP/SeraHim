@@ -173,20 +173,23 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     freshTower._skillInstances.filter(s => s.skillId.startsWith('dragonsoul_')).length === 1);
 }
 
-// ==================== ⑥ 远古之力：限时 240s 的处决，双方都能抢 ====================
+// ==================== ⑥ 远古龙魂（远古处决）：限时 300s 的处决，双方都能抢 ====================
+// v51.6：展示名从"远古之力"改成"远古处决"——那个名字现在专指新增的永久全属性
+// 加成（见下面新增的"远古之力（力）"那一节），不再和限时的处决效果撞名。
 {
   const { ds, fx, units, killBy } = mk();
   for (let i = 0; i < 4; i++) killBy('blue', 'fire');   // 蓝方成魂
   window.gameTime = 100;
   killBy('red', null, true);                            // 红方拿下一条远古龙
   const redOk = units.red.filter(u => DragonSystem.SOUL_REWARD_OK(u));
-  T('⑥-远古之力发给最后一击方的全体领受者',
+  T('⑥-远古龙魂发给最后一击方的全体领受者',
     redOk.every(u => hasSoul(u, 'dragonsoul_ancient')));
   T('⑥-未成魂的一方照样能拿远古（这是落后方的翻盘工具）', ds.soulOwner === 'blue');
-  T('⑥-状态栏可见且是限时的',
-    fx.getEffects(redOk[0].id).some(x => x.blueprint.name === '远古之力' && x.remainingTime > 0));
+  T('⑥-状态栏可见、限时（不是永久）',
+    fx.getEffects(redOk[0].id).some(x => x.blueprint.name === '远古处决'
+      && x.remainingTime > 0 && x.remainingTime !== Infinity));
   const dur = CONFIG.dragonSouls.ancient.durationSec;
-  T('⑥-限时 240 秒（八条龙魂里唯一限时的一条）', dur === 240);
+  T('⑥-限时 300 秒（八条龙魂里唯一限时的一条；v51.6 从 240 改稿为 300）', dur === 300);
   // 到点回收
   window.gameTime = 100 + dur + 1;
   ds.update(0.1);
@@ -194,6 +197,41 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   T('⑥-龙魂本体不受影响（永久）',
     units.blue.filter(u => DragonSystem.SOUL_REWARD_OK(u)).every(u => anySoul(u)));
   window.gameTime = 0;
+}
+
+// ==================== ⑥b 远古之力（新增，v51.6）：永久全属性加成，覆盖全部单位 ====================
+// 用户："远古巨龙目前只有龙魂，没有远古之力，远古之力（作用在某阵营所有单位）的效果
+//        每层：+5%全属性加成（永久生效）。"——与限时的"远古处决"（上面⑥那节）是两件
+//        独立的事：一个永久叠层覆盖全部单位（含近战/远程），一个限时只给塔+大型小兵。
+{
+  const { ds, fx, units, killBy } = mk();
+  const findPower = (e) => fx.getEffects(e.id).find(x => x.sourceId === 'dragon_ancient_power_0');
+
+  killBy('red', null, true); // 第一条远古龙
+  const meleeRed = units.red.find(u => u.type === 'melee');
+  const towerRed = units.red.find(u => u.type === 'tower');
+  T('⑥b-近战兵也拿到远古之力（POWER_REWARD_OK 范围，不是龙魂那条窄范围）',
+    !!findPower(meleeRed) && findPower(meleeRed).stacks === 1);
+  T('⑥b-塔同样拿到，且每层 +5%全属性（与 CONFIG.dragonPower.ancient.allStatsPct 一致）',
+    findPower(towerRed).blueprint.flatValue === CONFIG.dragonPower.ancient.allStatsPct
+    && CONFIG.dragonPower.ancient.allStatsPct === 5);
+  T('⑥b-是永久效果，不受"远古处决"限时窗口影响',
+    findPower(towerRed).blueprint.duration === Infinity && findPower(towerRed).blueprint.permanent === true);
+
+  killBy('red', null, true); // 第二条远古龙，同一阵营再下一条
+  T('⑥b-再杀一条远古龙，层数叠加到2层（不是刷新成1层）', findPower(towerRed).stacks === 2);
+
+  // 窗口期内新出生的单位（含近战/远程）也要补到当前层数——与元素之力的 factionKills
+  // 补发同一个道理，否则"旧的一批死绝、新出生的一批没有"。
+  const newMelee = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 0, y: 500 },
+    baseStats: { ...CONFIG.templates.melee }, currentHP: 500, _skillInstances: [],
+    _mapFaction: 'red', faction: 'red' };
+  ds.entities.add(newMelee);
+  ds.equipExistingSoul(newMelee);
+  T('⑥b-新出生的近战兵补到2层（不是只对开局在场的单位生效）',
+    !!findPower(newMelee) && findPower(newMelee).stacks === 2);
+
+  T('⑥b-未拿到远古龙的一方没有这个效果', !findPower(units.blue.find(u => u.type === 'tower')));
 }
 
 // ==================== ⑦ 两个独立开关 ====================
