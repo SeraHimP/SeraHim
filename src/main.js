@@ -162,15 +162,23 @@ CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); render
 // 和缩放同类，藏进二级面板反而不好用。
 {
   const sl = document.getElementById('elevSlider'), lb = document.getElementById('elevLabel');
+  const applyElev = (deg) => {
+    const d = renderer3d.setElevation(deg);
+    sl.value = String(d);
+    if (lb) lb.textContent = d + '°';
+    return d;
+  };
   if (sl && renderer3d) {
-    sl.value = String(renderer3d.elevationDeg);
-    if (lb) lb.textContent = renderer3d.elevationDeg + '°';
-    sl.addEventListener('input', () => {
-      const d = renderer3d.setElevation(Number(sl.value));
-      if (lb) lb.textContent = d + '°';
-    });
+    applyElev(renderer3d.elevationDeg);
+    sl.addEventListener('input', () => applyElev(Number(sl.value)));
+    // v51.6：三行控件统一成【名称】【−】【滑杆】【+】【数值】——俯仰/方位原来只有
+    // 滑杆没有步进按钮，这里补上；步长 1° 与滑杆的 step 保持一致。
+    document.getElementById('elevDownBtn')?.addEventListener('click', () => applyElev(renderer3d.elevationDeg - 1));
+    document.getElementById('elevUpBtn')?.addEventListener('click', () => applyElev(renderer3d.elevationDeg + 1));
   } else if (sl) {
     sl.disabled = true;   // 无 WebGL：控件留着但禁用，避免调了没反应
+    document.getElementById('elevDownBtn')?.setAttribute('disabled', '');
+    document.getElementById('elevUpBtn')?.setAttribute('disabled', '');
   }
 }
 // Q5：视角方位角（东南西北）工具条——滑块 0~360° + 靠近四方向自动吸附。与仰角同栏。
@@ -178,17 +186,24 @@ CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); render
   const sl = document.getElementById('azimSlider'), lb = document.getElementById('azimLabel');
   const NAME = (d) => ['北', '东', '南', '西'][Math.round((((d % 360) + 360) % 360) / 90) % 4];
   const SNAP = 8; // 度：靠近 0/90/180/270 吸附
+  const applyAzim = (raw) => {
+    let d = ((raw % 360) + 360) % 360;
+    for (const s of [0, 90, 180, 270, 360]) if (Math.abs(d - s) <= SNAP) { d = s % 360; break; }
+    renderer3d.setAzimuth(d);
+    sl.value = String(d);
+    if (lb) lb.textContent = NAME(d);
+    return d;
+  };
   if (sl && renderer3d) {
-    sl.value = String(renderer3d.azimuthDeg || 0);
-    if (lb) lb.textContent = NAME(Number(sl.value));
-    sl.addEventListener('input', () => {
-      let d = Number(sl.value);
-      for (const s of [0, 90, 180, 270, 360]) if (Math.abs(d - s) <= SNAP) { d = s % 360; sl.value = String(d); break; }
-      renderer3d.setAzimuth(d);
-      if (lb) lb.textContent = NAME(d);
-    });
+    applyAzim(renderer3d.azimuthDeg || 0);
+    sl.addEventListener('input', () => applyAzim(Number(sl.value)));
+    // v51.6：同俯仰角，补上 −/+ 步进按钮，统一三行控件的形状。
+    document.getElementById('azimDownBtn')?.addEventListener('click', () => applyAzim((renderer3d.azimuthDeg || 0) - 1));
+    document.getElementById('azimUpBtn')?.addEventListener('click', () => applyAzim((renderer3d.azimuthDeg || 0) + 1));
   } else if (sl) {
     sl.disabled = true;
+    document.getElementById('azimDownBtn')?.setAttribute('disabled', '');
+    document.getElementById('azimUpBtn')?.setAttribute('disabled', '');
   }
 }
 // 第 6.1 步：阴影档位。'all' 全投影 / 'static' 仅塔与墙 / 'off' 关闭。

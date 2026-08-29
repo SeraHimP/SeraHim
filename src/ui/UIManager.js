@@ -1235,6 +1235,41 @@ export class UIManager {
 
     // 龙魂提示条
     const ds = app?.dragonSystem;
+
+    // ==================== v51.6：左上角"推塔数"格在有龙的地图上换成巨龙信息 ====================
+    // 用户："左上角UI……改为巨龙下次刷新时间和红蓝方巨龙之力数量统计（如果某一方获得了
+    // 龙魂旧显示某一方都获得了什么龙魂），如果该地图中不主动刷新巨龙旧还是显示原来的。"
+    // mapAllowsDragon() 是地图自己声明的开关（目前只有召唤师峡谷 dragon.enabled:true），
+    // 不满足就完全不碰这两个元素，保留原来的推塔数显示——两块面板互斥显隐。
+    {
+      const scoreBoard = document.getElementById('scoreBoard');
+      const dragonBoard = document.getElementById('dragonStatBoard');
+      const hasDragonMap = !!(ds && ds.mapAllowsDragon());
+      if (scoreBoard && this._txtCache._dragonMapMode !== hasDragonMap) {
+        this._txtCache._dragonMapMode = hasDragonMap;
+        scoreBoard.style.display = hasDragonMap ? 'none' : '';
+        if (dragonBoard) dragonBoard.style.display = hasDragonMap ? '' : 'none';
+      }
+      if (hasDragonMap) {
+        const fmt = (sec) => {
+          const s2 = Math.max(0, Math.ceil(sec || 0));
+          return `${Math.floor(s2 / 60)}:${String(s2 % 60).padStart(2, '0')}`;
+        };
+        this._setText('dragonNextTimer', fmt(ds.nextDragonTime));
+        const souls = ds.getSouls ? ds.getSouls() : { blue: [], red: [] };
+        const powerOf = (fac) => Object.values(ds.factionKills?.[fac] || {}).reduce((a, b) => a + b, 0);
+        const sideText = (fac) => {
+          const soulIds = souls[fac] || [];
+          if (soulIds.length) {
+            // 已成魂：改显示龙魂本身（可能不止一条——远古龙魂与常驻元素龙魂可以并存）。
+            return soulIds.map(id => `${SkillLibrary[id]?.icon || '🐉'}${SkillLibrary[id]?.name || id}`).join(' ');
+          }
+          return String(powerOf(fac)); // 未成魂：显示巨龙之力层数（已击杀的元素龙条数）
+        };
+        this._setText('dragonPowerBlue', sideText('blue'));
+        this._setText('dragonPowerRed', sideText('red'));
+      }
+    }
     // Q4：巨龙横幅隐藏（巨龙系统默认暂停、待大改，横幅先不显示；恢复时删掉这个 return 即可）
     { const b = document.getElementById('dragonBanner'); if (b) b.classList.remove('show'); }
     if (true) return;

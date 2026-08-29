@@ -308,9 +308,12 @@ function world() {
     !/id="toggleLogBtn"/.test(html) && !/getElementById\('toggleLogBtn'\)/.test(mj));
   T('栏④-日志开关搬进设置，操作的还是同一个 #logArea',
     /id="setLogAreaBtn"/.test(sd) && /setLogAreaBtn.*\n(?:.*\n){0,4}.*getElementById\('logArea'\)/.test(sd));
+  // v51.6：缩放行原来单独用 .ctl-grp 包一层（[−]值[+]和🎯分两段），三行统一样式
+  // 之后这层包装已经不需要了——缩放现在和俯仰/方位同一种【图标−滑杆+读数】结构，
+  // 不用再分两段。这条断言改成钉"确实还是三行分组"这件事本身，不再钉 .ctl-grp
+  // 这个已经被统一掉的实现细节。
   T('栏⑤-右下工具栏按"缩放 / 复位 / 角度"分行分组（原来 8 个控件平铺一长条）',
-    (html.match(/class="ctl-row"/g) || []).length >= 3
-    && /class="ctl-grp"/.test(html));
+    (html.match(/class="ctl-row"/g) || []).length >= 3);
   // 用户："右下角工具栏重做。"—— 上一版只是重排了版式，真正难看的是**默认外观的滑杆**
   //（Chrome 蓝轨白钮），与整套深色玻璃 UI 完全不是一套。这一版把滑杆自绘了。
   T('栏⑤-滑杆自绘（两套厂商前缀都要有：少一套那个浏览器就退回默认外观）',
@@ -322,9 +325,14 @@ function world() {
   T('栏⑤-角度那两行改用图标标签（中文标签 + 默认滑杆是上一版难看的根源）',
     /<span class="ctl-name" title="视角俯仰角">⛰<\/span>/.test(html)
     && /<span class="ctl-name" title="视角方位">🧭<\/span>/.test(html));
+  // v51.6：三行控件统一样式后，#zoomLabel（百分比读数）被删除了（用户定稿"视角
+  // 大小不需要数值，放重置视角按钮"），换成 #zoomSlider；俯仰/方位两行新增了
+  // −/+ 步进按钮。控件 id 列表跟着改，其余没变的 id（缩放/复位/俯仰/方位滑杆与
+  // 读数）依旧一个没动。
   T('栏⑤-工具栏的控件 id 一个都没改（main.js 与 CanvasController 按 id 接线）',
-    ['zoomInBtn', 'zoomOutBtn', 'resetViewBtn', 'zoomLabel', 'elevSlider', 'elevLabel',
-     'azimSlider', 'azimLabel'].every(id => new RegExp(`id="${id}"`).test(html)));
+    ['zoomInBtn', 'zoomOutBtn', 'resetViewBtn', 'zoomSlider', 'elevSlider', 'elevLabel',
+     'elevDownBtn', 'elevUpBtn', 'azimSlider', 'azimLabel', 'azimDownBtn', 'azimUpBtn']
+      .every(id => new RegExp(`id="${id}"`).test(html)));
   T('栏⑥-顶栏左侧的读数 id 一个都没改（UIManager 按 id 刷新）',
     ['waveNum', 'waveTimer', 'towerCount', 'minionCount', 'scoreBlue', 'scoreRed']
       .every(id => new RegExp(`id="${id}"`).test(html)));

@@ -600,7 +600,10 @@ export class ThreeRenderer {
   setWater(on) { const v = this.water.setEnabled(on); if (v) this.water.build(this.mapSystem); return v; }
 
   setElevation(deg) {
-    this.elevationDeg = Math.max(1, Math.min(90, Number(deg) || 0));
+    // v51.6：下限从 1 改成 0（用户定稿"俯仰角调节改为0-90"）。0° 本身是安全的——
+    // panScaleY()/等处理近似水平视角除零的地方早就有 Math.sin<=1e-3 时退回 1 的
+    // 兜底（见 ThreeCameraController.panScaleY），不需要靠这里的下限去规避除零。
+    this.elevationDeg = Math.max(0, Math.min(90, Number(deg) || 0));
     return this.elevationDeg;
   }
 

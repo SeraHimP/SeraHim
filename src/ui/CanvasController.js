@@ -119,11 +119,25 @@ export class CanvasController {
       const ky = this.view3d?.active() ? this.view3d.panScaleY() : 1;
       // C 组·方位角：偏航后把屏幕拖拽量按方位角旋转到世界对齐的 offset 增量，拖拽仍跟手。
       // az=0 时 ca=1/sa=0 → 退化为原来的直接赋值，无偏航行为逐像素不变。
+      //
+      // v51.6 修复：用户报"改变方位后，视角的拖拽乱了，不是按照当前的视角进行拖拽
+      // 计算的，还是按照原先的视角"。旧公式 (mdx*ca − mdy*sa, mdx*sa + mdy*ca) 的
+      // 旋转方向和 ThreeRenderer.syncCameraFrom 里相机绕目标的站位方向正好相反
+      // ——两处各自实现了一份"方位角怎么转"，方向没对上，是本仓库常见的"同一件事
+      // 两处实现"那类坑。按 syncCameraFrom 的真实几何重新推一遍：
+      //   相机相对目标的站位 ∝ (sin(az), cos(az))（该函数里 cam.position 那行），
+      //   于是屏幕右方向在世界 XZ 里是 (cos(az), −sin(az))，屏幕下方向是
+      //   (sin(az), cos(az))（az=0 时分别退化为 +X / +Z，与旧公式的退化基准一致，
+      //   已用 0°/90°/180°/270° 四个整角逐一手工验证过，见 sim_visual.mjs）。
+      //   世界坐标平移量 = −(screen方向) × 拖拽量（"抓住地面拖"的直觉：鼠标右移，
+      //   目标点要往屏幕右方向的反方向挪，画面内容才会跟着鼠标往右走）。
+      //   换算成 offsetX/offsetY（tx=(W/2−offsetX)/zoom 是线性反比关系）之后就是
+      //   下面这两行——与旧公式相比，两个交叉项的符号都翻了过来。
       const az = ((this.renderer?.azimuthDeg || 0) * Math.PI) / 180;
       const ca = Math.cos(az), sa = Math.sin(az);
       const mdx = dx, mdy = dy * ky;
-      this.offsetX = this.dragStartOffsetX + (mdx * ca - mdy * sa);
-      this.offsetY = this.dragStartOffsetY + (mdx * sa + mdy * ca);
+      this.offsetX = this.dragStartOffsetX + (mdx * ca + mdy * sa);
+      this.offsetY = this.dragStartOffsetY + (mdy * ca - mdx * sa);
       this.updateView();
     });
 
@@ -192,6 +206,16 @@ export class CanvasController {
       this.zoom = Math.max(0.15, this.zoom - 0.1);
       this.updateView();
     });
+    // v51.6：缩放行统一成【图标】【−】【滑杆】【+】【🎯】的形状，缩放原来只有
+    // −/+ 两个按钮、没有滑杆——现在补上，updateView() 里一并把滑杆值同步回去，
+    // 不管是拖滑杆、点 −/+、滚轮还是双指捏合，四条路径最终都收敛到这一处同步。
+    const zoomSl = document.getElementById('zoomSlider');
+    if (zoomSl) {
+      zoomSl.addEventListener('input', () => {
+        this.zoom = Math.max(0.15, Math.min(3.0, Number(zoomSl.value) || 1));
+        this.updateView();
+      });
+    }
 
     // 全屏按钮：浏览器出于安全策略要求“用户手势”才能进全屏，无法在页面加载时
     // 自动触发——这也是没装 PWA 时唯一能收起地址栏的办法。按钮态跟随实际全屏状态，
@@ -219,6 +243,13 @@ export class CanvasController {
   // 对战模式加载地图时调用——世界 3552×3552，默认 zoom=1 只能看到左上角一小块，
   // 必须自动缩放到全图，否则每次进对战模式都要手动缩放拖拽。
   fitToWorld(worldW, worldH) {
+    // v51.6 修复：用户报"点完重置视角按钮后，实际显示的大小还是很小，应该根据当前
+    // 窗口自适应"。renderer.width/height 平时靠 window resize 事件被动更新——如果
+    // 画布容器尺寸是因为别的原因变化的（比如某个面板开关改变了布局，而不是浏览器
+    // 窗口本身缩放），resize 事件根本不会触发，这两个字段就停在旧值上，"重置视角"
+    // 算出来的缩放于是照着一个过时的、可能偏小的画布尺寸走。这里先主动 resize()
+    // 一次拿到当前真实尺寸，"重置视角"这种不追求高频的操作调一次没有性能顾虑。
+    this.renderer?.resize?.();
     const w = this.renderer?.width, h = this.renderer?.height;
     if (!w || !h || !worldW || !worldH) return;
     this.zoom = Math.min(w / worldW, h / worldH) * 0.95;
@@ -265,7 +296,12 @@ export class CanvasController {
       this.renderer.viewOffsetX = this.offsetX;
       this.renderer.viewOffsetY = this.offsetY;
     }
-    document.getElementById('zoomLabel').textContent = Math.round(this.zoom * 100) + '%';
+    // v51.6：#zoomLabel（百分比读数）已删除，用户定稿"视角大小不需要数值，放重置
+    // 视角按钮"。缩放滑杆本身要跟着 this.zoom 同步——不只是拖滑杆自己触发的那次
+    // input 事件，−/+按钮、滚轮、双指捏合、fitToWorld() 改的 zoom 都要能反映到
+    // 滑杆位置上，不然滑杆会停在原地不跟手。
+    const zoomSl = document.getElementById('zoomSlider');
+    if (zoomSl && Number(zoomSl.value) !== this.zoom) zoomSl.value = String(this.zoom);
   }
 
   screenToWorld(screenX, screenY) {

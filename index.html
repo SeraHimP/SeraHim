@@ -323,14 +323,19 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
         与面板同一套配色；
      ② 文字标签换成图标（⛰ 俯仰 / 🧭 方位），一列 18px，两行天然对齐；
      ③ 整体收窄到 168px：滑杆 84px，读数 30px。
-   缩放那一行保持 [−] 值 [+] ｜ 🎯 的三段式，与顶栏右侧同一套 .icon-btn。 */
+
+   ==================== v51.6：三行控件样式统一 ====================
+   用户："三个调节的样式统一，都为：【名称】【-】【滑块条】【+】【当前数值（视角大小
+   不需要数值，放重置视角按钮）】。"——缩放那一行原来是 [−] 值 [+] ｜ 🎯 的独立形状，
+   和俯仰/方位两行（图标+滑杆+读数，没有 −/+ 步进按钮）根本不是同一种控件，只是碰巧
+   都在这块板子里。现在三行统一成【图标】【−】【滑杆】【+】【读数】，缩放行的读数位
+   换成 🎯 重置视角按钮（缩放本身不需要精确数值，看画面大小就够）。 */
 #canvasControls {
   bottom: 12px; right: 12px; z-index: 10;
   flex-direction: column; align-items: stretch; gap: 5px;
   padding: 7px 10px;
 }
 #canvasControls .ctl-row { display: flex; align-items: center; gap: var(--gap-sm); }
-#canvasControls .ctl-grp { display: flex; align-items: center; gap: 3px; }
 #canvasControls button { background: var(--surface-3); }
 #canvasControls .zoom-label {
   font-size: 11px; color: var(--text-dim); min-width: 34px; text-align: center;
@@ -878,8 +883,20 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
     <span class="stat" title="场上小兵数">⚔ <b id="minionCount">0</b></span>
     <span class="hud-sep"></span>
     <!-- v44：击杀数不再上顶栏（用户："杀了多少个兵就不要显示了，只显示塔数就行"）。
-         击杀仍然照常统计（CTX.__score.*.kills），只是不占顶栏这一格 —— 那是最贵的一块地方。 -->
+         击杀仍然照常统计（CTX.__score.*.kills），只是不占顶栏这一格 —— 那是最贵的一块地方。
+         v51.6：这一格在【有龙的地图】上改显示巨龙信息（用户定稿），见下面 dragonStatBoard——
+         两块各管一种地图，updateTopBar() 按 mapAllowsDragon() 切换显隐，不会同时出现。 -->
     <span class="stat" id="scoreBoard" title="推塔数">🔵 <b id="scoreBlue">0</b> · 🔴 <b id="scoreRed">0</b></span>
+    <!-- v51.6：巨龙下次刷新倒计时 + 红蓝双方巨龙之力层数；某方已成魂则改显示该方
+         龙魂名称（用户："左上角UI，画圈的地方改为巨龙下次刷新时间和红蓝方巨龙之力
+         数量统计（如果某一方获得了龙魂旧显示某一方都获得了什么龙魂），如果该地图中
+         不主动刷新巨龙旧还是显示原来的"）。默认隐藏，只有 mapAllowsDragon() 为真的
+         地图（目前只有召唤师峡谷）才会显示出来，见 UIManager.updateTopBar()。 -->
+    <span class="stat" id="dragonStatBoard" title="巨龙" style="display:none;">
+      🐉 <b id="dragonNextTimer">--</b>
+      <span class="hud-sep"></span>
+      🔵 <b id="dragonPowerBlue">0</b> · 🔴 <b id="dragonPowerRed">0</b>
+    </span>
   </div>
   <!-- ==================== v47：世界状态条搬到左上角并重做 ====================
        用户："主界面右上角，右下角的栏不好看。不行把天气时间条移动到左上角，宽度也降低一些。"
@@ -941,24 +958,30 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
       <!-- v47：右下工具栏与顶栏右侧统一为同一套（.hud-panel + .icon-btn），
            并按"缩放 / 复位 / 角度"分成两行三组。控件 id 一个没变 ——
            main.js 与 CanvasController 按 id 接线，改 id 会静默断掉一批按钮。 -->
+      <!-- v51.6：三行控件统一成同一种形状——【名称】【-】【滑块】【+】【当前数值】，
+           唯独缩放那一行的"当前数值"位换成重置视角按钮（用户定稿："视角大小不需要
+           数值，放重置视角按钮"）。缩放原来只有 −/+ 两个按钮、没有滑杆，这次给它也
+           配一条滑杆，三行才是真的同一种控件反复三次，不是"看起来像"而已。 -->
       <div id="canvasControls" class="hud-panel">
         <div class="ctl-row">
-          <div class="ctl-grp">
-            <button class="icon-btn" id="zoomOutBtn" title="缩小">−</button>
-            <span class="zoom-label" id="zoomLabel">100%</span>
-            <button class="icon-btn" id="zoomInBtn" title="放大">+</button>
-          </div>
-          <span class="hud-sep"></span>
+          <span class="ctl-name" title="缩放">🔍</span>
+          <button class="icon-btn" id="zoomOutBtn" title="缩小">−</button>
+          <input id="zoomSlider" type="range" min="0.15" max="3" step="0.05" value="1" title="缩放">
+          <button class="icon-btn" id="zoomInBtn" title="放大">+</button>
           <button class="icon-btn" id="resetViewBtn" title="重置视角（全图）">🎯</button>
         </div>
         <div class="ctl-row">
           <span class="ctl-name" title="视角俯仰角">⛰</span>
-          <input id="elevSlider" type="range" min="20" max="85" step="1" value="45" title="视角俯仰角（20°=贴地平视，85°=近俯视）">
+          <button class="icon-btn" id="elevDownBtn" title="降低俯仰角">−</button>
+          <input id="elevSlider" type="range" min="0" max="90" step="1" value="45" title="视角俯仰角（0°=贴地平视，90°=正俯视）">
+          <button class="icon-btn" id="elevUpBtn" title="提高俯仰角">+</button>
           <span class="zoom-label" id="elevLabel" title="视角俯仰角">45°</span>
         </div>
         <div class="ctl-row">
           <span class="ctl-name" title="视角方位">🧭</span>
+          <button class="icon-btn" id="azimDownBtn" title="逆时针转">−</button>
           <input id="azimSlider" type="range" min="0" max="360" step="1" value="0" title="视角方位角（0北 / 90东 / 180南 / 270西）· 靠近四方向自动吸附">
+          <button class="icon-btn" id="azimUpBtn" title="顺时针转">+</button>
           <span class="zoom-label" id="azimLabel" title="视角方位（东南西北）">北</span>
         </div>
       </div>

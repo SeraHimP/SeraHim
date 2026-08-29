@@ -146,5 +146,78 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   T('HDR 任何一步不支持都静默降级', /hdrSupported\(\)/.test(tr) && /降级/.test(tr));
 }
 
+// ==================== 四、v51.6：拖拽平移与方位角的旋转方向必须一致 ====================
+// 用户："右下角工具栏在我改变方位后，视角的拖拽乱了，就是不是按照当前的视角进行
+//        拖拽计算的，还是按照原先的视角。"
+// 根因：CanvasController 的拖拽平移公式与 ThreeRenderer.syncCameraFrom 的相机站位
+// 公式各自实现了一份"方位角怎么转"，两处的旋转方向没对上——旧公式在方位角非 0 时
+// 会把拖拽方向转反。这里不重新实例化真实的 CanvasController/ThreeRenderer（需要
+// DOM/WebGL），改成用同样的公式在纯数学层面验证两者自洽：屏幕拖拽应当让"鼠标当前
+// 指着的那个世界点"始终跟着鼠标走，在四个整角（0°/90°/180°/270°）上手工可核验。
+{
+  const W = 800, H = 600, zoom = 1;
+  // 复刻 syncCameraFrom 的相机站位几何：camera 相对 target 的水平站位 ∝ (sin(az), cos(az))，
+  // 由此推出屏幕右方向＝(cos(az), -sin(az))、屏幕下方向＝(sin(az), cos(az))（世界 x,z）。
+  const screenRight = (azDeg) => { const a = azDeg * Math.PI / 180; return [Math.cos(a), -Math.sin(a)]; };
+  const screenDown = (azDeg) => { const a = azDeg * Math.PI / 180; return [Math.sin(a), Math.cos(a)]; };
+  // 复刻本次修好之后的拖拽公式（CanvasController pointermove 那两行）。
+  const panOffset = (azDeg, mdx, mdy) => {
+    const a = azDeg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    return { dOffsetX: mdx * ca + mdy * sa, dOffsetY: mdy * ca - mdx * sa };
+  };
+  // offsetX/offsetY → 世界 target(tx,tz) 是线性反比：tx=(W/2-offsetX)/zoom，
+  // 所以 offset 的变化量换算成 target 的变化量要取负、除以 zoom。
+  const targetDelta = (dOffsetX, dOffsetY) => [-dOffsetX / zoom, -dOffsetY / zoom];
+
+  for (const az of [0, 90, 180, 270]) {
+    const { dOffsetX, dOffsetY } = panOffset(az, 100, 0); // 只沿屏幕横向拖 100px
+    const [dtx, dtz] = targetDelta(dOffsetX, dOffsetY);
+    const [rx, rz] = screenRight(az);
+    // 目标应当精确沿着"屏幕右方向的反方向"移动（抓地拖拽：鼠标右移，画面内容跟着
+    // 鼠标右移 = 目标点往屏幕右方向的反方向挪），且横向拖拽不应带出屏幕下方向的分量。
+    const [dx2, dz2] = screenDown(az);
+    const alongRight = dtx * rx + dtz * rz;   // 投影到屏幕右方向：应为 -100（負号=反向）
+    const alongDown = dtx * dx2 + dtz * dz2;  // 投影到屏幕下方向：应为 0（纯横向拖拽不应有此分量）
+    T(`拖①-方位${az}°时，横向拖拽的目标位移精确落在"屏幕右方向"的反方向上（不掺屏幕下方向分量）`,
+      Math.abs(alongRight - (-100)) < 1e-9 && Math.abs(alongDown) < 1e-9);
+  }
+  T('拖②-方位0°时（未偏航）退化为原始逐像素拖拽，不受本次修复影响',
+    JSON.stringify(panOffset(0, 37, -19)) === JSON.stringify({ dOffsetX: 37, dOffsetY: -19 }));
+}
+
+// ==================== 五、v51.6：俯仰角范围 0-90、重置视角自适应窗口、左上角巨龙HUD ====================
+{
+  const tr = fs.readFileSync('src/presentation/ThreeRenderer.js', 'utf8');
+  T('俯①-俯仰角下限从1改成0（用户定稿"俯仰角调节改为0-90"）',
+    /this\.elevationDeg = Math\.max\(0, Math\.min\(90, Number\(deg\) \|\| 0\)\)/.test(tr));
+
+  const cc = fs.readFileSync('src/ui/CanvasController.js', 'utf8');
+  T('重①-重置视角前先 resize() 拿当前真实画布尺寸（不是用可能过时的旧尺寸）',
+    /this\.renderer\?\.resize\?\.\(\);\s*\n\s*const w = this\.renderer\?\.width/.test(cc));
+  T('缩①-缩放行新增滑杆并双向同步（拖滑杆改zoom、zoom变了滑杆跟着动）',
+    /zoomSl\.addEventListener\('input'/.test(cc) && /zoomSl\.value = String\(this\.zoom\)/.test(cc));
+  T('缩②-#zoomLabel（百分比读数）已删除，不再往这个不存在的元素写字', !/getElementById\('zoomLabel'\)/.test(cc));
+
+  const html = fs.readFileSync('index.html', 'utf8');
+  T('缩③-三行控件统一形状：缩放/俯仰/方位都有 −/+ 步进按钮',
+    /id="zoomOutBtn"/.test(html) && /id="zoomInBtn"/.test(html)
+    && /id="elevDownBtn"/.test(html) && /id="elevUpBtn"/.test(html)
+    && /id="azimDownBtn"/.test(html) && /id="azimUpBtn"/.test(html));
+  T('缩④-俯仰角滑杆的 min 属性同步改成 0', /id="elevSlider"[^>]*min="0"/.test(html));
+  T('缩⑤-缩放行的读数位换成重置视角按钮（同一个 ctl-row 里）',
+    /<input id="zoomSlider"[^>]*>\s*\n\s*<button class="icon-btn" id="zoomInBtn"[^>]*>\+<\/button>\s*\n\s*<button class="icon-btn" id="resetViewBtn"/.test(html));
+
+  T('龙①-左上角新增巨龙信息格（次要于原有推塔数格，默认隐藏）',
+    /id="dragonStatBoard"[^>]*style="display:none;"/.test(html)
+    && /id="dragonNextTimer"/.test(html) && /id="dragonPowerBlue"/.test(html) && /id="dragonPowerRed"/.test(html));
+
+  const um = fs.readFileSync('src/ui/UIManager.js', 'utf8');
+  T('龙②-按地图是否有龙（mapAllowsDragon）切换两块面板的显隐，不是常驻显示',
+    /const hasDragonMap = !!\(ds && ds\.mapAllowsDragon\(\)\)/.test(um));
+  T('龙③-已成魂的一方改显示龙魂本身（图标+名字），未成魂显示巨龙之力层数',
+    /soulIds\.map\(id => `\$\{SkillLibrary\[id\]\?\.icon/.test(um)
+    && /Object\.values\(ds\.factionKills\?\.\[fac\] \|\| \{\}\)\.reduce/.test(um));
+}
+
 console.log(`视觉/编排验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
