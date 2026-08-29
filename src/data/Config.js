@@ -304,12 +304,17 @@ export const CONFIG = {
       // 具体数字不是这次要锁死的，用户放宽了平衡要求，先保证"方向对"，
       // 强弱留给下一轮 --sweep soul 数据说话。
       fire:    { attackDamagePct: 8 },
-      water:   { healShieldPowerPct: 12, healthRegen: 2 },
+      // 潮=支援：治疗之外加一点法力回复（用户定稿的"方案A"——法力对塔天生空转
+      // 【ManaSystem 会把没装主动技能的单位法力钉死在 0】，所以只当次要项，
+      // 不是潮魂的主方向；对恰好装了主动技能的炮兵/图腾兵/术士兵/蚀骨兵，
+      // +3/s 能明显缩短它们主动技能的施放周期，算是"支援"主题的延伸）。
+      water:   { healShieldPowerPct: 12, healthRegen: 2, manaRegen: 3 },
       // 山魂主题本来就是防御，这三项**就是**它的方向，不是塞进来的生存分量。
       earth:   { armor: 8, magicResist: 8, maxHPPct: 6 },
-      // 雷=精准打击：穿透之外加一份暴击率（此前没有魂用过 critChance）。
-      thunder: { armorPenPercent: 12, magicPenPercent: 12, critChance: 15 },
-      wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06 },
+      // 雷=精准打击：穿透 + 暴击率 + 暴击伤害，凑成完整的"会心一击"组合。
+      thunder: { armorPenPercent: 12, magicPenPercent: 12, critChance: 15, critDamagePct: 25 },
+      // 风=难以捉摸：速度三件套之外加闪避率，呼应"抓不住"这个主题。
+      wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06, evasionPct: 10 },
       dark:    { damageAmpPct: 7, lifeStealPct: 4 },
       // 毒=法术侵蚀：DOT 本身是魔法伤害，加一份法术吸血呼应"用毒液汲取生命"。
       poison:  { onHitPercentDamage: 0.7, spellVampPct: 4 },
@@ -319,7 +324,9 @@ export const CONFIG = {
       // 血=物理汲取：把原来撞车 dark 的 lifeStealPct 换成物理吸血，两条魂不再抢
       // 同一个属性；damageConvertPct 才是 blood 在【力】里就已经独占的方向。
       blood:   { damageConvertPct: 8, physicalVampPct: 5 },
-      magma:   { armorPenFlat: 6, magicPenFlat: 6 },
+      // 熔=灼烧强化：熔魂自己的灼烧 DOT 在 onDealtDamage 里已经标了 casterId
+      // （会吃技能增幅），加技能增幅是实打实放大自己的伤害，不是摆设。
+      magma:   { armorPenFlat: 6, magicPenFlat: 6, skillAmpPct: 15 },
       // 星=星辰之力：射程+弹速之外加法术强度，呼应"星魂"这个名字里的"魔法"意味。
       astral:  { attackRange: 45, bulletSpeed: 80, abilityPower: 20 },
       // 蚀=吞噬万物之力：减伤（侵蚀对方的伤害）之外加适应之力（不挑食，吸收任何

@@ -678,6 +678,14 @@ async function world() {
     !('maxHPPct' in stat.fire) && !('maxHPPct' in stat.thunder) && !('maxHPPct' in stat.poison)
     && 'maxHPPct' in stat.earth);
 
+  // 补齐剩下四个还没用上的新框架属性（用户确认的方案A）：法力回复→潮魂（次要项，
+  // 对塔空转但强化装了主动技能的小兵）、技能增幅→熔魂（自己的灼烧DOT已标casterId，
+  // 吃得到）、暴击伤害→雷魂（配暴击率凑成"会心一击"）、闪避率→风魂（呼应难以捉摸）。
+  T('魂框⑧-四个此前没用上的新框架属性各自分给了一条魂，且不撞车',
+    stat.water.manaRegen > 0 && stat.magma.skillAmpPct > 0
+    && stat.thunder.critDamagePct > 0 && stat.wind.evasionPct > 0
+    && !('manaRegen' in stat.fire) && !('skillAmpPct' in stat.astral));
+
   // 首条龙延后（用户："第一波龙生成的太快了，导致龙的倾向就偏向于红方了"）
   const { dragonCfg } = await import('../src/data/dragonCurve.js');
   T('龙时①-首条元素龙不再单独抢跑，与后续元素龙同一个 300s 节奏',

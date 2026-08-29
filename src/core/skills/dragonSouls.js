@@ -744,6 +744,8 @@ const STAT_LABEL = {
   critChance: '暴击率', spellVampPct: '法术吸血', physicalVampPct: '物理吸血',
   tenacityPct: '韧性', abilityPower: '法术强度', adaptiveForce: '适应之力',
   damageConvertPct: '伤害转化', bulletSpeed: '子弹速度',
+  critDamagePct: '暴击伤害', evasionPct: '闪避率', skillAmpPct: '技能增幅',
+  manaRegen: '法力回复',
 };
 
 /** 把某条魂的常驻属性拼成一句人话，追加到面板文案里。 */
