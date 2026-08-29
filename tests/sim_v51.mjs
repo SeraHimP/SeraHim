@@ -1668,4 +1668,64 @@ async function world() {
   T('基④-基地光环：+20%伤害转化', Math.abs(s.damageConvertPct - 20) < 1e-6);
 }
 
+// ==================== bug 修复：模板编辑器"龙魂"tab 对大型小兵/地图塔不生效 ====================
+// 用户报告："模板编辑器-龙魂设置窗口中设置的龙魂，在大型小兵中不生效，塔是正常生效的"。
+// 根因：应用 tpl._templateSouls（"龙魂"tab 存的默认装备清单）这一步只在
+// factories.js 的 createTower()（手动放置的单座塔）里实现了一次，createMinion()
+// （小兵，含大型小兵）与 createBuilding()（真正用于对局的地图塔）两条创建路径
+// 都没有对应的读取——尽管三者读的是同一个 CONFIG.templates[type] 对象。
+// 用户能看到"塔正常生效"，大概率是通过 createTower 这条手动放置路径测试的；
+// 大型小兵与地图上真正在打的塔，从始至终没读过这份配置。
+{
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { createFactories } = await import('../src/core/factories.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  const mapSystem = { active: false, currentMap: null };
+  const F = createFactories({
+    entityContainer: ents, effectRegistry: fx, eventBus: bus,
+    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
+    mapSystem, dragonSystem: ds, uiManager: { log() {} },
+  });
+
+  const hasSoul = (e, id) => (e._skillInstances || []).some(s => s.skillId === id);
+
+  // ①大型小兵（炮车）：createMinion 之前完全不读 _templateSouls。
+  CONFIG.templates.siege._templateSouls = ['dragonsoul_fire'];
+  const siege = F.createMinion('siege', 0, 0, 1, 1, { faction: 'blue', laneId: 'mid' });
+  T('龙魂①-大型小兵（createMinion）现在能读到模板"龙魂"tab 的默认装备',
+    hasSoul(siege, 'dragonsoul_fire'));
+  delete CONFIG.templates.siege._templateSouls;
+
+  // ②手动放置的塔（createTower）：修复前就能读到，这里钉住不回归。
+  CONFIG.templates.tower._templateSouls = ['dragonsoul_water'];
+  const placedTower = F.createTower(0, 0);
+  T('龙魂②-手动放置的塔（createTower）仍然正常装备（不回归）',
+    hasSoul(placedTower, 'dragonsoul_water'));
+
+  // ③地图上真正的对局塔（createBuilding）：之前同样完全不读 _templateSouls。
+  const mapTower = F.createBuilding({ faction: 'blue', tier: 'outer', laneId: 'mid', pos: { x: 100, y: 100 } });
+  T('龙魂③-对局地图塔（createBuilding）现在也能读到模板"龙魂"tab 的默认装备',
+    hasSoul(mapTower, 'dragonsoul_water'));
+  delete CONFIG.templates.tower._templateSouls;
+
+  // ④近战/远程小兵不在 SOUL_REWARD_OK 范围内，但 _templateSouls 是"模板编辑器显式指定"，
+  // 不经过 SOUL_REWARD_OK 那道口子（与 createTower 对普通塔一视同仁同理）——
+  // 这里确认修复没有意外收紧成"只对大型小兵生效"，近战兵一样能被模板配置装上。
+  CONFIG.templates.melee._templateSouls = ['dragonsoul_earth'];
+  const melee = F.createMinion('melee', 0, 0, 1, 1, { faction: 'blue', laneId: 'mid' });
+  T('龙魂④-模板显式装备不受 SOUL_REWARD_OK 限制（近战兵也能被模板配置装上）',
+    hasSoul(melee, 'dragonsoul_earth'));
+  delete CONFIG.templates.melee._templateSouls;
+}
+
 done();

@@ -313,6 +313,22 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
     for (const bp of tierEffects) effectRegistry.apply(entity.id, { ...bp }, 'template_effect_tier');
   }
 
+  // ==================== 同一处 bug：地图上真正的塔（对局用的那份）也漏了这一步 ====================
+  // 顺着"龙魂对大型小兵不生效"往下查，发现 createTower()（手动放置的单座塔）读了
+  // tpl._templateSouls，但真正用于对局的地图塔——这里的 createBuilding()——从来
+  // 没读过它，尽管两者读的是**同一个** CONFIG.templates.tower 对象。也就是说，
+  // 玩家在模板编辑器"龙魂"tab 里配的默认龙魂，只有手动放置测试塔时能看到效果，
+  // 对局开局时地图上生成的那些塔（真正在打的塔）从始至终是裸的——这是与小兵那处
+  // 同一个根因（"应用模板默认龙魂"这一步只在 createTower 里实现了一次，
+  // 另外两个创建入口都没抄）的第三个漏洞，一并补上，不留着等下一次被单独报出来。
+  if (Array.isArray(tpl._templateSouls)) {
+    for (const soulId of tpl._templateSouls) {
+      dragonSystem._toggleSoul(entity, soulId);
+    }
+  } else if (tpl._templateSoul) {
+    dragonSystem._toggleSoul(entity, tpl._templateSoul);
+  }
+
   // v43：补发本阵营已有的龙之奖励（巨龙之力各层 + 龙魂）。
   // 不补的话，成魂之后新建/重生的建筑全是裸的 —— 奖励等于几十秒后自动失效。
   dragonSystem.equipExistingSoul(entity);
@@ -416,6 +432,23 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts) {
   }
 
   entityContainer.add(entity);
+
+  // ==================== bug 修复：模板编辑器"龙魂"tab 对大型小兵不生效 ====================
+  // 用户报告："模板编辑器-龙魂设置窗口中设置的龙魂，在大型小兵中不生效，塔是正常生效的"。
+  // 排查结论：不是装备逻辑本身按单位类型过滤掉了大型小兵——_toggleSoul/SOUL_REWARD_OK
+  // 对塔和大型小兵一视同仁。真正的缺口是**这里从来没有读过 tpl._templateSouls**：
+  // createTower()（手动放置的塔）第147行那段读了模板"龙魂"tab 存的默认装备清单，
+  // 而 createMinion()（小兵，含大型小兵）从建这个函数起就没有对应的一段——等于
+  // 塔和小兵两条创建路径各实现了一遍"应用模板默认状态/被动"，唯独龙魂那一步只抄了
+  // 一半。下面这段完全照抄 createTower() 的同一段逻辑（含兼容旧单一字段 _templateSoul）。
+  if (Array.isArray(tpl._templateSouls)) {
+    for (const soulId of tpl._templateSouls) {
+      dragonSystem._toggleSoul(entity, soulId);
+    }
+  } else if (tpl._templateSoul) {
+    dragonSystem._toggleSoul(entity, tpl._templateSoul);
+  }
+
   // v43：新出的大型小兵也要拿到本阵营已有的龙之奖励（见 createBuilding 那条同样的注释）。
   // equipExistingSoul 内部按 SOUL_REWARD_OK 过滤，近战/远程会被自然排除。
   dragonSystem.equipExistingSoul(entity);
