@@ -942,7 +942,10 @@ export class UIManager {
            <button data-action="minionKill" data-id="${e.id}" title="击杀">✕</button>`;
     }
     this.selPanel.classList.add('show');
-    if (window.__app?.renderer) window.__app.renderer.selectedId = id;
+    // v51.6 修复：window.__app 从未被赋值过（全仓库只有 window.CTX.__app 是真的），
+    // 之前这两处裸用它导致选中/取消选中单位时，3D 场景里的高亮框从未真正同步过。
+    const _appSel = window.CTX?.__app || window.__app;
+    if (_appSel?.renderer) _appSel.renderer.selectedId = id;
   }
 
   clearSelection() {
@@ -950,7 +953,8 @@ export class UIManager {
     this._selCardEl = null;
     this.selCard.innerHTML = '';
     this.selPanel.classList.remove('show');
-    if (window.__app?.renderer) window.__app.renderer.selectedId = null;
+    const _appSel = window.CTX?.__app || window.__app;
+    if (_appSel?.renderer) _appSel.renderer.selectedId = null;
   }
 
   updateSelection() {
@@ -1204,8 +1208,13 @@ export class UIManager {
     // 波次显示按当前模式选择数据源：之前永远读 window.waveNumber（沙盒专属全局变量），
     // 对战模式下这个变量不再更新（沙盒的 WaveSystem 被暂停），导致左上角波次显示冻结。
     // 现在对战模式下改读 laneWaveSystem 自己的独立波次计数与倒计时。
-    const mapSystem = window.__app?.mapSystem;
-    const laneWaveSystem = window.__app?.laneWaveSystem;
+    // v51.6 修复：window.__app 从未被赋值过（全仓库只有 window.CTX.__app 是真的）——
+    // 上面注释说"对战模式下改读 laneWaveSystem"，但因为这个 bug，mapSystem/
+    // laneWaveSystem 恒为 undefined，条件永远走不到 if 分支，实际上对战模式下
+    // 顶栏波次显示从来没有真正切换过，一直在读沙盒的冻结变量。
+    const app = window.CTX?.__app || window.__app;
+    const mapSystem = app?.mapSystem;
+    const laneWaveSystem = app?.laneWaveSystem;
     if (mapSystem?.active && laneWaveSystem) {
       this._setText('waveNum', String(laneWaveSystem.waveNumber || 0));
       this._setText('waveTimer', Math.max(0, laneWaveSystem.nextWaveTime || 0).toFixed(1) + 's');
@@ -1225,7 +1234,7 @@ export class UIManager {
     }
 
     // 龙魂提示条
-    const ds = window.__app?.dragonSystem;
+    const ds = app?.dragonSystem;
     // Q4：巨龙横幅隐藏（巨龙系统默认暂停、待大改，横幅先不显示；恢复时删掉这个 return 即可）
     { const b = document.getElementById('dragonBanner'); if (b) b.classList.remove('show'); }
     if (true) return;

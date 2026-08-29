@@ -334,7 +334,10 @@ export const EDITOR_PAGES_CONFIG = {
   // 模板"龙魂"tab：设置该模板（塔）新建单位默认装备的龙魂
   _renderTemplateSoulContent(type) {
     const tpl = CONFIG.templates[type];
-    const DRAGON_ELEMENTS = window.__app?.DRAGON_ELEMENTS || {};
+    // v51.6 修复：同 pagesEntity.js 那处一样，window.__app 从未被赋值过（全仓库只有
+    // window.CTX.__app 是真的），裸用它会让 DRAGON_ELEMENTS 恒为 {}——这个模板默认
+    // 龙魂选择器的卡片池因此一直是空的，一张卡都点不到。
+    const DRAGON_ELEMENTS = (window.CTX?.__app || window.__app)?.DRAGON_ELEMENTS || {};
     // 迁移旧的单一 _templateSoul 字段为数组 _templateSouls（支持多选叠加，与实体编辑器一致）
     if (!Array.isArray(tpl._templateSouls)) {
       tpl._templateSouls = tpl._templateSoul ? [tpl._templateSoul] : [];

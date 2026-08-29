@@ -639,7 +639,9 @@ export class CombatSystem {
       const bonusDmg = (atkStats.abilityPower || 0) * ((emp.bonusApPct || 0) / 100);
       if (bonusDmg > 0) {
         // 默认（不传 basicAttack）走技能增幅自动生效——这份加成来自技能，不是普攻本身。
-        this.performAttackDirect(attacker.id, target.id, bonusDmg, 'true');
+        // v51.6：damageType 可由调用方指定（远程兵的强化射击是魔法伤害，不是真实伤害）；
+        // 不传时默认 'true'，与术士兵蓄能打击原有行为逐位一致。
+        this.performAttackDirect(attacker.id, target.id, bonusDmg, emp.damageType || 'true');
       }
       const inst = (attacker._skillInstances || []).find(i => i.id === emp.skillInstId);
       if (inst) { inst.state = inst.state || {}; inst.state._armed = false; }

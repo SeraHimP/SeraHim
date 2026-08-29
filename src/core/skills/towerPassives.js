@@ -814,7 +814,7 @@ export const HomeAuraSkill = {
       if (instance.state.radius === null) {
         // v33（Q9）：半径 = 画布上红/蓝基地圈（高地区域）的半径——两处共用 MapSystem
         // 的同一数据源，图上看到多大圈，光环就罩多大。MapSystem 不可用时退回旧算法。
-        const mapSys = ctx.mapSystem || window.__app?.mapSystem;
+        const mapSys = ctx.mapSystem || (window.CTX?.__app || window.__app)?.mapSystem;
         const r = mapSys?.getBaseCircleRadius?.(self._mapFaction);
         if (r) {
           instance.state.radius = r;

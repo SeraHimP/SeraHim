@@ -15,7 +15,7 @@
  */
 import { CONFIG } from '../../data/Config.js';
 import { WeatherPanel } from '../WeatherPanel.js';
-import { DRAGON_ELEMENTS } from '../../systems/DragonSystem.js';
+import { DRAGON_ELEMENTS, DragonSystem } from '../../systems/DragonSystem.js';
 import { SkillLibrary, renderSkillDescription } from '../../core/SkillLibrary.js';
 
 export const EDITOR_PAGES_GAMEPLAY_WORLD = {
@@ -67,53 +67,12 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <span style="font-size:12px;">${soul ? soulName(soul) : '（无）'}</span></div>`;
     }).join('');
 
-    // ---- 每个元素一行：击杀数 + 双方的巨龙之力层数 ----
-    const cap = CONFIG.dragonPower?.maxStacks ?? 4;
-    const powerOf = (fac, el) => (ds.powerStacks?.[fac]?.[el] ?? ds._powerStacks?.[fac]?.[el] ?? null);
-    const rows = ELS.map(([el, def]) => {
-      const bk = st.factionKills?.blue?.[el] || 0;
-      const rk = st.factionKills?.red?.[el] || 0;
-      const bp = powerOf('blue', el), rp = powerOf('red', el);
-      return `<tr>
-        <td style="padding:3px 6px;white-space:nowrap;color:${def.color};">${def.icon} ${def.label}</td>
-        <td style="padding:3px 4px;"><input type="number" class="dg-kill-field" data-fac="blue" data-el="${el}"
-             value="${bk}" min="0" style="width:52px;"></td>
-        <td style="padding:3px 4px;"><input type="number" class="dg-kill-field" data-fac="red" data-el="${el}"
-             value="${rk}" min="0" style="width:52px;"></td>
-        <td style="padding:3px 6px;font-size:11px;color:var(--text-dim);white-space:nowrap;">
-          ${bp === null && rp === null ? '按击杀数发放' : `🔵${bp ?? 0} / 🔴${rp ?? 0}`} · 上限 ${cap}
-        </td>
-      </tr>`;
-    }).join('');
-
     return `
       <div class="panel-sec">对局态势</div>
       <div class="attrs">
         <div class="a"><label>下一条龙</label><span>${st.soulResolved ? '🐲 远古龙' : '🐉 元素龙'} ${fmt(nextIn)}</span></div>
         <div class="a"><label>成魂门槛</label><span>${thr} 条</span></div>
         ${situation}
-      </div>
-      <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
-        成魂规则：**任意元素**的龙先攒到 <b>${thr}</b> 条即刻成魂（先到先得），
-        魂的元素取该阵营**击杀最多**的那一种，并列时随机。
-        每杀一条龙先给一层对应元素的【巨龙之力】（纯属性，上限 ${cap} 层，作用于**全部单位**）；
-        成魂后额外解锁该元素的机制（作用于**塔与大型小兵**）。
-        远古之力限时 <b>${CONFIG.dragonSouls?.ancient?.durationSec ?? 240}</b> 秒，其余永久。
-      </div>
-
-      <div class="panel-sec">击杀数 · 巨龙之力</div>
-      <div style="max-height:280px;overflow-y:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <tr style="color:var(--text-mute);font-size:10px;">
-            <td style="padding:2px 6px;">元素</td><td style="padding:2px 4px;">🔵击杀</td>
-            <td style="padding:2px 4px;">🔴击杀</td><td style="padding:2px 6px;">巨龙之力层数</td>
-          </tr>
-          ${rows}
-        </table>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-        <button class="dg-set-kills" data-fac="blue">✅ 应用蓝方击杀</button>
-        <button class="dg-set-kills" data-fac="red">✅ 应用红方击杀</button>
       </div>
 
       ${this._renderGameplayDragonSoulPool(ds)}
@@ -136,32 +95,38 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
   },
 
   /**
-   * ==================== v51.5：批量指定龙魂改成卡片池样式 ====================
-   * 用户："批量添加龙魂的界面我想要的是这种的（截图：单位编辑窗口的龙魂 tab—
-   *        已生效效果 + 巨龙增益池 + 龙魂池，卡片网格，可同时装备多个）。"
+   * ==================== v51.6：批量龙魂重做——完全对齐单位编辑窗口那套 ====================
+   * 用户第一版反馈（v51.5）："我想要的是这种的（截图）"——那版做的是卡片池，
+   * 但用户第二版反馈依旧不满意："模板编辑器里龙魂编辑页面依旧乱七八糟。我要求
+   * 你参考现有的界面……如图片所示。把我画圈中没用的文字和乱七八糟的UI删除，
+   * 就按照我说的这么做：【蓝方龙魂池】（里面显示蓝方正在生效的）【红方龙魂池】
+   * 【全部生效/蓝方/红方（复选框，因为可能以后涉及其他阵营）】【巨龙之力池】
+   * 【龙魂池】。【巨龙之力池】【龙魂池】点击之后就加到【红蓝方龙魂池中】，
+   * 在红蓝方龙魂池中减少某个龙魂等。"
    *
-   * 原来是下拉框 + 装上/卸下按钮，且语义上"单一替换"（ds.souls[fac] = [soulId]，
-   * 一次只能有一条）——现在改成卡片池 + 点击切换，与单位编辑窗口那个 tab
-   * 视觉/交互统一，并且真正支持"同时给一方装备多个不同龙魂"：
-   *   · 装备走 DragonSystem._toggleSoul（"多选叠加版"，装备/卸下某个龙魂不影响
-   *     其它已装备的龙魂——这个方法本来就是为单位编辑窗口那个多选穿梭框写的，
-   *     这里换成对**全场该阵营的每个符合条件的单位**都调一遍）；
-   *   · 不再用 _equipSoul（"单一替换版"，本来是给"击杀 4 条龙自动成魂"这条
-   *     真实规则用的，语义上就是"一次只能有一条"，用在这里天然限制成单选）。
-   *
-   * 针对性优化（用户："然后你再针对性优化"）：
-   *   ① 每张卡片显示"该方当前有多少个单位持有这条魂"的计数——多选之后"点了到底
-   *      生不生效"不再需要靠猜；
-   *   ② 悬浮显示这条魂的真实说明文案（复用 renderSkillDescription，与单位编辑
-   *      窗口那个 tab 同一个数据源，不会各写各的漂出去）；
-   *   ③ 新增"清空该方全部龙魂"按钮——原来只能一条条卸，多选之后一条条卸太慢。
+   * 与 v51.5 那版的关键差异：
+   *   ① 巨龙之力池/龙魂池不再各自按阵营复制一份（v51.5 是蓝/红各一套 13 张卡，
+   *      共 26 张）——现在只有**一份共享池**，点哪个阵营生效由下面的复选框决定，
+   *      卡片数量减半，也更贴近"先选目标、再选要素"的操作顺序。
+   *   ② "已生效"从"卡片右上角数字"改回真正的**已生效 chip 条**（与单位编辑
+   *      窗口的"✨已生效效果"完全同构），点 chip 上的 ✕ 直接移除，不用再去
+   *      对应的池子里反着点一次。
+   *   ③ 删掉了"击杀数"表格和成魂规则说明文字（用户画圈标记的"没用的文字和
+   *      乱七八糟的UI"）——巨龙之力池点击即可直接叠层，不需要靠手填击杀数
+   *      再点应用去间接触发。
    *
    * ⚠️ 这是手动测试工具，不是真实的"击杀 4 条龙自动成魂"那条规则：广播只覆盖
    * 【当前在场】的单位，不写 ds.souls[fac]/ds.soulOwner（那两个字段是自动成魂
-   * 规则的状态，手动多选覆盖它们会把"真实进度"污染成假数据）。所以后续新出生的
-   * 单位不会自动继承手动点的这些魂——如果需要"这一局从此都有这条魂"，那是
-   * 上面"击杀数"那栏该做的事（改到位后会真正触发 _resolveSoul，进正规状态）。
+   * 规则的状态，手动操作覆盖它们会把"真实进度"污染成假数据）。所以后续新出生的
+   * 单位不会自动继承手动点的这些效果——真实的"这一局从此都有这条魂"要靠正常的
+   * 击杀积累触发 _resolveSoul。
    */
+  // 当前所有可对战阵营——复选框组"全部生效"依赖这份列表。用户点名"以后可能涉及
+  // 其他阵营"：这里单独列成一个数组而不是散着写 ['blue','red']，以后加阵营
+  // （目前引擎其它地方，比如 FactionSystem.FACTIONS，也还只声明了这两个）
+  // 只需要改这一处。
+  _DG_FACTIONS: ['blue', 'red'],
+
   _dgFactionActiveSouls(ds, fac) {
     const ec = window.CTX?.__app?.entityContainer;
     const counts = {};
@@ -176,27 +141,89 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     return counts;
   },
 
+  // 巨龙之力是【逐个单位】各自积累的（新单位入场时按 factionKills 补发，不保证
+  // 每个单位层数一致）——这里取"当前存活单位里出现过的最高层数"当代表值，
+  // 只是给这个手动测试工具一个参考，不是精确的"全队统一层数"。
+  _dgFactionActivePower(fac) {
+    const ec = window.CTX?.__app?.entityContainer;
+    const fx = window.CTX?.__app?.effectRegistry;
+    const out = {};
+    if (!ec?.getAll || !fx) return out;
+    for (const e of ec.getAll(true)) {
+      if ((e._mapFaction || e.faction) !== fac) continue;
+      for (const [el] of Object.entries(DRAGON_ELEMENTS)) {
+        const eff = fx.getEffects(e.id).find(x => x.sourceId === `dragon_buff_${el}_0`);
+        if (eff && eff.stacks > (out[el] || 0)) out[el] = eff.stacks;
+      }
+    }
+    return out;
+  },
+
+  _dgActiveChipsHtml(ds, fac) {
+    const powerCounts = this._dgFactionActivePower(fac);
+    const soulCounts = this._dgFactionActiveSouls(ds, fac);
+    const chips = [];
+    for (const [el, d] of Object.entries(DRAGON_ELEMENTS)) {
+      const n = powerCounts[el] || 0;
+      if (n > 0) {
+        chips.push(`<div class="transfer-chip" data-dg-remove-kind="power" data-dg-remove-fac="${fac}" data-dg-remove-el="${el}">
+          <span class="chip-icon">${d.icon}</span><span>${d.label}之力（${n}层）</span><span class="chip-remove">✕</span>
+        </div>`);
+      }
+    }
+    for (const [el, d] of Object.entries(DRAGON_ELEMENTS)) {
+      if ((soulCounts[d.soul] || 0) > 0) {
+        const def = SkillLibrary[d.soul];
+        chips.push(`<div class="transfer-chip" data-dg-remove-kind="soul" data-dg-remove-fac="${fac}" data-dg-remove-el="${el}">
+          <span class="chip-icon">${def?.icon || d.icon}</span><span>${def?.name || d.label}</span><span class="chip-remove">✕</span>
+        </div>`);
+      }
+    }
+    return chips.length ? chips.join('') : `<div class="transfer-active-empty">尚未生效任何巨龙之力或龙魂。</div>`;
+  },
+
   _renderGameplayDragonSoulPool(ds) {
     const ELS = Object.entries(DRAGON_ELEMENTS);
-    const pools = ['blue', 'red'].map(fac => {
-      const counts = this._dgFactionActiveSouls(ds, fac);
-      const cards = ELS.map(([el, d]) => {
-        const def = SkillLibrary[d.soul];
-        const n = counts[d.soul] || 0;
-        return `<div class="pick-card ${n > 0 ? 'selected' : ''}" data-dgsoul-fac="${fac}" data-dgsoul-id="${d.soul}">
-          <div class="pick-icon">${def?.icon || d.icon}</div>
-          <div class="pick-label">${def?.name || d.label}${n > 0 ? `（${n}）` : ''}</div>
-        </div>`;
-      }).join('');
-      return `
-        <div class="panel-sec" style="margin-top:10px;">${fac === 'blue' ? '🔵 蓝方龙魂池' : '🔴 红方龙魂池'}</div>
-        <div class="pick-grid">${cards}</div>
-        <button class="dg-clear-all-soul" data-fac="${fac}" style="margin-top:4px;">🚫 清空${fac === 'blue' ? '蓝方' : '红方'}全部龙魂</button>`;
+    const factionRows = this._DG_FACTIONS.map(fac => `
+      <div class="panel-sec" style="margin-top:10px;">${fac === 'blue' ? '🔵 蓝方龙魂池（当前生效）' : '🔴 红方龙魂池（当前生效）'}</div>
+      <div class="transfer-active-list">${this._dgActiveChipsHtml(ds, fac)}</div>`).join('');
+
+    const scopeRow = `
+      <div class="panel-sec">广播目标</div>
+      <div style="display:flex;gap:16px;padding:2px 2px 8px;">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" class="dg-scope" value="all" checked>全部生效</label>
+        ${this._DG_FACTIONS.map(fac => `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" class="dg-scope" value="${fac}">${fac === 'blue' ? '蓝方' : '红方'}</label>`).join('')}
+      </div>`;
+
+    const powerPoolHtml = ELS.map(([el, d]) => `<div class="pick-card" data-dgp-kind="power" data-dgp-el="${el}">
+        <div class="pick-icon">${d.icon}</div><div class="pick-label">${d.label}之力</div>
+      </div>`).join('');
+    const soulPoolHtml = ELS.map(([el, d]) => {
+      const def = SkillLibrary[d.soul];
+      return `<div class="pick-card" data-dgp-kind="soul" data-dgp-el="${el}" data-dgp-soulid="${d.soul}">
+        <div class="pick-icon">${def?.icon || d.icon}</div><div class="pick-label">${def?.name || d.label}</div>
+      </div>`;
     }).join('');
+
     return `
-      <div class="panel-sec">批量指定龙魂（点击切换，双方各自可同时装备多个不同龙魂）</div>
-      ${pools}
-      <div class="pick-desc-box" id="dgSoulDescBox">点击某项对全场该阵营广播装备/卸下；括号里的数字是该方当前持有这条魂的单位数。</div>`;
+      ${factionRows}
+      ${scopeRow}
+      <div class="panel-sec">巨龙之力池（点击 +1 层）</div>
+      <div class="pick-grid">${powerPoolHtml}</div>
+      <div class="panel-sec">龙魂池（点击切换）</div>
+      <div class="pick-grid">${soulPoolHtml}</div>
+      <div class="pick-desc-box" id="dgSoulDescBox">点击巨龙之力/龙魂池，对勾选的阵营广播；点击上方"当前生效"里的条目可以移除。</div>`;
+  },
+
+  /** 读取"广播目标"复选框当前勾选的阵营集合。 */
+  _dgScopeFactions(overlay) {
+    const boxes = [...overlay.querySelectorAll('.dg-scope')];
+    const allBox = boxes.find(b => b.value === 'all');
+    if (allBox?.checked) return [...this._DG_FACTIONS];
+    const picked = boxes.filter(b => b.value !== 'all' && b.checked).map(b => b.value);
+    return picked;
   },
 
   _bindGameplayDragonEvents(overlay, logFn) {
@@ -230,66 +257,100 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       refresh();
     }, 1000);
 
-    overlay.querySelectorAll('.dg-set-kills').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const fac = btn.dataset.fac;
-        ds.factionKills[fac] = ds.factionKills[fac] || {};
-        let total = 0;
-        overlay.querySelectorAll(`.dg-kill-field[data-fac="${fac}"]`).forEach(inp => {
-          const v = Math.max(0, parseInt(inp.value, 10) || 0);
-          ds.factionKills[fac][inp.dataset.el] = v;
-          total += v;
-        });
-        ds.factionTotals[fac] = total;
-        // 手动改完数值后，按真实规则重新判定一次是否该立即成魂——
-        // 不然会出现"手动改到4条了，但要等下一次真实击杀才触发结算"的错觉。
-        if (!ds.soulResolved && total >= (ds._soulRule?.threshold ?? 4)) ds._resolveSoul(fac);
-        logFn(`🐲 ${fac === 'blue' ? '蓝方' : '红方'}击杀数已手动设置（合计 ${total}）`, 'spawn');
-        refresh();
-      });
+    // v51.6：广播目标复选框——"全部生效"与单独的阵营勾选没有互斥逻辑（不强制
+    // 只能选一个），读取时 _dgScopeFactions 统一处理："全部生效"打钩就直接算全部
+    // 阵营，不看其它框；没打钩就取单独勾了的那些。改动本身不需要重绘，下次点池子
+    // 卡片时现读。
+    overlay.querySelectorAll('.dg-scope').forEach(box => {
+      box.addEventListener('change', () => {});
     });
-    // v51.5：卡片池点击切换（多选叠加，走 _toggleSoul，与单位编辑窗口那个 tab
-    // 同一套语义），悬浮显示真实说明文案，外加"清空该方全部龙魂"快捷按钮。
-    overlay.querySelectorAll('[data-dgsoul-id]').forEach(card => {
+
+    // 巨龙之力池 / 龙魂池：点击对"广播目标"里勾选的每个阵营生效。
+    overlay.querySelectorAll('[data-dgp-kind]').forEach(card => {
       card.addEventListener('click', () => {
-        const fac = card.dataset.dgsoulFac;
-        const soulId = card.dataset.dgsoulId;
-        const def = ds.skills[soulId];
-        // _toggleSoul 是【逐个单位】各自翻转自己的状态——如果直接对全场广播调用，
-        // 场上原本"有的有、没的没"（比如之前单独在某个单位身上手动装过）会被
-        // 各自反着翻一次，点一下卡片却出现"有人装上、有人卸下"的混乱结果。
-        // 按钮该有的是干净的"全场统一开/关"：先看这条魂当前是不是【一个都没有】，
-        // 没有就统一装上；只要有任何一个单位持有，就统一卸给它清空——不看单个
-        // 单位自己的状态，只看这次点击该把全场带向哪个方向。
-        const before = this._dgFactionActiveSouls(ds, fac)[soulId] || 0;
-        const turnOn = before === 0;
-        let changed = 0, total = 0;
-        ds._grantAll(fac, (e) => {
-          total++;
-          const has = (e._skillInstances || []).some(i => i.skillId === soulId);
-          if (turnOn === !has) { ds._toggleSoul(e, soulId); changed++; }
-        });
-        logFn(`🐉 ${fac === 'blue' ? '蓝方' : '红方'}龙魂【${def?.name || soulId}】已${turnOn ? '装备' : '卸下'}：影响 ${changed}/${total} 个单位`, 'spawn');
+        const facs = this._dgScopeFactions(overlay);
+        if (!facs.length) { logFn('⚠️ 先在"广播目标"里勾选至少一个阵营', 'error'); return; }
+        const kind = card.dataset.dgpKind;
+        const el = card.dataset.dgpEl;
+        const def = DRAGON_ELEMENTS[el];
+        if (!def) return;
+        if (kind === 'power') {
+          // 力发给全部单位（POWER_REWARD_OK），不是只给塔+大型小兵那条 SOUL_REWARD_OK——
+          // 与 _grantSlayer 里真实击杀走的广播范围（DragonSystem.js:330）保持一致。
+          let total = 0;
+          for (const fac of facs) total += ds._grantAll(fac, (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+          logFn(`🔥 ${def.label}之力 +1 层：已广播给 ${facs.map(f => f === 'blue' ? '蓝方' : '红方').join('/')}（共 ${total} 个单位）`, 'spawn');
+        } else if (kind === 'soul') {
+          const soulId = card.dataset.dgpSoulid;
+          // 与 v51.5 那版同样的道理：每个阵营各自按"当前是不是一个都没有"决定
+          // 这次点击是统一装上还是统一卸下，不逐单位各自反转——否则场上"有的有
+          // 有的没有"时点一下会出现更混乱的中间态。两个阵营的开关方向各自独立判断
+          // （比如同时勾了蓝红两方广播，蓝方可能是"装上"、红方可能是"卸下"）。
+          let changedTotal = 0, unitsTotal = 0;
+          const dirs = [];
+          for (const fac of facs) {
+            const before = this._dgFactionActiveSouls(ds, fac)[soulId] || 0;
+            const turnOn = before === 0;
+            let changed = 0, total = 0;
+            ds._grantAll(fac, (e) => {
+              total++;
+              const has = (e._skillInstances || []).some(i => i.skillId === soulId);
+              if (turnOn === !has) { ds._toggleSoul(e, soulId); changed++; }
+            });
+            changedTotal += changed; unitsTotal += total;
+            dirs.push(`${fac === 'blue' ? '蓝方' : '红方'}${turnOn ? '装备' : '卸下'}`);
+          }
+          const def2 = ds.skills[soulId];
+          logFn(`🐉 龙魂【${def2?.name || soulId}】：${dirs.join('、')}（影响 ${changedTotal}/${unitsTotal} 个单位）`, 'spawn');
+        }
         refresh();
       });
       card.addEventListener('mouseenter', () => {
-        const def = ds.skills[card.dataset.dgsoulId];
         const descBox = overlay.querySelector('#dgSoulDescBox');
-        if (descBox && def) descBox.textContent = renderSkillDescription(def, null, {}) || def.description || '';
+        if (!descBox) return;
+        if (card.dataset.dgpKind === 'soul') {
+          const def = ds.skills[card.dataset.dgpSoulid];
+          if (def) descBox.textContent = renderSkillDescription(def, null, {}) || def.description || '';
+        } else {
+          const def = DRAGON_ELEMENTS[card.dataset.dgpEl];
+          if (def) descBox.textContent = `${def.label}之力：击杀获得的永久元素增益，点击可叠加层数（每层独立生效，作用于全部单位）。`;
+        }
       });
     });
-    overlay.querySelectorAll('.dg-clear-all-soul').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const fac = btn.dataset.fac;
-        let n = 0;
-        ds._grantAll(fac, (e) => {
-          for (const inst of [...(e._skillInstances || [])]) {
-            if (inst.skillId.startsWith('dragonsoul_') && inst.skillId !== 'dragonsoul_ancient') {
-              ds._toggleSoul(e, inst.skillId); n++;
+
+    // 已生效 chip：点击移除（power 扣 1 层/整条移除，soul 直接卸下），只作用于
+    // chip 所在的那一个阵营，不受"广播目标"复选框影响——这是"针对性移除"，不是广播。
+    overlay.querySelectorAll('[data-dg-remove-kind]').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const kind = chip.dataset.dgRemoveKind;
+        const fac = chip.dataset.dgRemoveFac;
+        const el = chip.dataset.dgRemoveEl;
+        const def = DRAGON_ELEMENTS[el];
+        if (!def) return;
+        if (kind === 'power') {
+          // 一个元素的巨龙之力可能同时挂着不止一条属性（_applyElementBuff 按
+          // dragonPowerBuffs(el) 的每一项各开一条 dragon_buff_${el}_${i}，层数
+          // 永远同步增减）——只扣 _0 那一条会把其余索引的层数甩在后面，扣几次
+          // 之后就会出现"某条属性还剩层数、另一条已经归零"的不一致态。这里改成
+          // 一次性把**同一元素的全部索引**都扣 1 层/清空。
+          let n = 0;
+          ds._grantAll(fac, (e) => {
+            const effs = ds.effects.getEffects(e.id).filter(x => x.sourceId && x.sourceId.startsWith(`dragon_buff_${el}_`));
+            if (!effs.length) return;
+            for (const eff of effs) {
+              if (eff.stacks > 1) { eff.stacks -= 1; ds.effects._recalcEffectValues(eff); ds.effects._updateDescription(eff); }
+              else ds.effects.remove(eff.id);
             }
-          }
-        });
-        logFn(`🚫 ${fac === 'blue' ? '蓝方' : '红方'}全部龙魂已清空（卸下 ${n} 个实例）`, 'spawn');
+            n++;
+          }, DragonSystem.POWER_REWARD_OK);
+          logFn(`🔻 ${fac === 'blue' ? '蓝方' : '红方'} ${def.label}之力 -1 层（${n} 个单位）`, 'spawn');
+        } else if (kind === 'soul') {
+          let n = 0;
+          ds._grantAll(fac, (e) => {
+            if ((e._skillInstances || []).some(i => i.skillId === def.soul)) { ds._toggleSoul(e, def.soul); n++; }
+          });
+          logFn(`🚫 ${fac === 'blue' ? '蓝方' : '红方'} 已卸下龙魂【${SkillLibrary[def.soul]?.name || def.soul}】（${n} 个单位）`, 'spawn');
+        }
         refresh();
       });
     });

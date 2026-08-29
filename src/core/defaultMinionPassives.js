@@ -13,8 +13,9 @@
  * 现在两处改成读同一份。
  */
 export const DEFAULT_MINION_PASSIVES = {
-  'melee': ['passive_melee_rend'],
-  'ranged': ['passive_ranged_rend'],
+  // v51.6：近战兵/远程兵首次拥有主动技能（用户定稿具体数值，见 actives.js 头注）。
+  'melee': ['passive_melee_rend', 'active_melee_block'],
+  'ranged': ['passive_ranged_rend', 'active_ranged_snipe'],
   // v51.1：主动技能改成用户给的精确规格（active_siege_haste 等，见 actives.js 头注），
   // 推翻 v51 那版占位的 active_siege_barrage。
   'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend', 'active_siege_haste'],

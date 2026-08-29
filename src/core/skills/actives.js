@@ -37,6 +37,68 @@ function alliesInRadius(ctx, self, range) {
 }
 
 export const actives = {
+  // ==================== v51.6：近战兵/远程兵首次拥有主动技能 ====================
+  // 用户："近战兵，最大法力值25，0/s，主动技能：获得2伤害格挡，持续2秒。
+  //        远程兵，最大70，0.5/s，主动技能：下次攻击附带（XX%=25%法强）魔法伤害。"
+  // 这两种是场上数量最多的兵种，量级必须压得很低（近战是纯固定值格挡，
+  // 远程是延迟消耗但没有额外增益/叠层），不能照搬四条大型小兵那一档的强度。
+
+  // ==================== 近战兵：本能格挡（自增益，固定格挡）====================
+  active_melee_block: {
+    id: 'active_melee_block', name: '本能格挡', icon: '🛡️', color: '#95a5a6', category: 'active',
+    applicableTypes: ['melee'],
+    defaultParams: { block: 2, durationSec: 2 },
+    get description() {
+      const p = this.defaultParams;
+      return `法力攒满后，获得 ${p.block} 点伤害格挡，持续 ${p.durationSec} 秒。`;
+    },
+    effects: [],
+    onCast: (entityId, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return false;
+      const p = instance._params || actives.active_melee_block.defaultParams;
+      ctx.effectRegistry.apply(entityId, {
+        name: '本能格挡', icon: '🛡️', kind: 'stat', statKey: 'damageBlock',
+        flatValue: p.block ?? 2, duration: p.durationSec ?? 2,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `伤害格挡+${p.block ?? 2}`,
+      }, 'active_melee_block', { casterId: entityId });
+      return true;
+    },
+  },
+
+  // ==================== 远程兵：强化射击（延迟消耗，魔法伤害）====================
+  // 与术士兵的蓄能打击共用同一套"延迟消耗"机制（CombatSystem.performAttack 里的
+  // _empowerNextAttack 消耗点），区别只有 damageType：这条是魔法伤害，不是真实
+  // 伤害，也没有术士兵那样"施放即永久叠法术强度"的额外自增益——纯粹是下一击
+  // 强化，故意做得比大型小兵那档弱。
+  active_ranged_snipe: {
+    id: 'active_ranged_snipe', name: '强化射击', icon: '🎯', color: '#3498db', category: 'active',
+    applicableTypes: ['ranged'],
+    defaultParams: { bonusApPct: 25 },
+    deferredConsume: true,
+    get description() {
+      const p = this.defaultParams;
+      return `法力攒满后蓄势待发：下一次普通攻击命中额外造成 (${p.bonusApPct}%×法术强度) 的`
+           + `魔法伤害，命中后法力才清零重新计算。`;
+    },
+    effects: [],
+    onCast: (entityId, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return false;
+      const p = instance._params || actives.active_ranged_snipe.defaultParams;
+      self._empowerNextAttack = { bonusApPct: p.bonusApPct ?? 25, skillInstId: instance.id, damageType: 'magic' };
+      ctx.effectRegistry.apply(entityId, {
+        name: '蓄势待发', icon: '🎯', kind: 'display', type: 'buff', color: '#3498db',
+        duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `下一次普通攻击额外造成 ${p.bonusApPct ?? 25}%×法术强度 的魔法伤害`,
+      }, 'active_ranged_snipe_buff');
+      instance.state = instance.state || {};
+      instance.state._armed = true;
+      return true;
+    },
+  },
+
   // ==================== 炮兵：急速装填（自增益，攻速）====================
   // 用户："炮兵……主动技能，获得（XX%=30%+50%法术强度）攻速，持续6秒，可叠加。"
   active_siege_haste: {

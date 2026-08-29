@@ -330,8 +330,10 @@ const mk = (ents, t, x, f, hp = 100000) => {
   const wp = srcOf('src/ui/WeatherPanel.js');
   const html = srcOf('index.html');
 
+  // v51.6：展示位置从"对局态势里一句层数/上限文字"改成了"已生效龙魂池里按元素
+  // 显示层数的 chip"，见 tests/sim_v44.mjs 巨龙⑦ 同一处更新的说明。
   T('窗①-龙魂窗补上了【巨龙之力】（用户："你原有的窗口只写了龙魂，没写巨龙之力"）',
-    /巨龙之力层数/.test(gw));
+    /之力（\$\{n\}层）/.test(gw) && /_dgFactionActivePower/.test(gw));
   T('窗①-顶部有对局态势：双方条数 / 下一条龙倒计时 / 当前魂',
     /对局态势/.test(gw) && /下一条龙/.test(gw));
   T('窗①-套用单位属性面板的样式（.panel-sec + .attrs 网格），不再是一排 slider-row',

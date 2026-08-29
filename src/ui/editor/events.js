@@ -145,11 +145,15 @@ export const EDITOR_EVENTS = {
   },
 
   _bindEffectEvents(overlay, entity, logFn) {
+    // v51.6 修复：window.__app 从未被赋值过（全仓库只有 window.CTX.__app 是真的），
+    // 这里之前裸用它——"添加状态"和"移除状态"两个按钮实际上从来没真正生效过
+    // （effectRegistry 恒为 undefined，apply/remove 调用直接被 ?. 短路成空操作）。
+    const app = window.CTX?.__app || window.__app;
     overlay.querySelectorAll('.remove-effect-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = parseInt(btn.dataset.effectId);
-        if (!isNaN(id) && window.__app?.effectRegistry) {
-          window.__app.effectRegistry.remove(id);
+        if (!isNaN(id) && app?.effectRegistry) {
+          app.effectRegistry.remove(id);
           const content = overlay.querySelector('#editorContent');
           if (content) content.innerHTML = this._renderEffectContent(entity);
           this._bindEffectEvents(overlay, entity, logFn);
@@ -171,7 +175,7 @@ export const EDITOR_EVENTS = {
       });
       box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
         const effect = this._buildEffectBlueprintFromPicker(box);
-        window.__app?.effectRegistry.apply(entity.id, effect, 'custom_' + Date.now());
+        app?.effectRegistry.apply(entity.id, effect, 'custom_' + Date.now());
         logFn(`✅ 已添加自定义状态到 #${entity.id}`, 'spawn');
         const content = overlay.querySelector('#editorContent');
         if (content) content.innerHTML = this._renderEffectContent(entity);
@@ -219,6 +223,11 @@ export const EDITOR_EVENTS = {
   },
 
   _applyWeaponChanges(overlay, entity, logFn) {
+    // v51.6 修复：同 _bindEffectEvents 那处一样，window.__app 恒为 undefined——
+    // 换武器时 onUnequip/onEquip 拿到的 ctx 里 entityContainer/effectRegistry/
+    // eventBus/attrCalc 全是 undefined，凡是依赖这几个字段的武器换装逻辑
+    // （比如清理旧武器挂的效果、给新武器初始化状态）都悄悄没有真正执行。
+    const app = window.CTX?.__app || window.__app;
     const selected = overlay.querySelector('.pick-card.selected[data-weapon]');
     if (!selected) return;
     const weaponId = selected.dataset.weapon;
@@ -226,8 +235,8 @@ export const EDITOR_EVENTS = {
     if (oldInst) {
       const oldDef = SkillLibrary[oldInst.skillId];
       if (oldDef?.onUnequip) oldDef.onUnequip(entity.id, oldInst, {
-        entityContainer: window.__app?.entityContainer,
-        effectRegistry: window.__app?.effectRegistry,
+        entityContainer: app?.entityContainer,
+        effectRegistry: app?.effectRegistry,
       });
       entity._skillInstances = entity._skillInstances.filter(s => s !== oldInst);
     }
@@ -236,11 +245,11 @@ export const EDITOR_EVENTS = {
       entity._skillInstances.push(newInst);
       const newDef = SkillLibrary[weaponId];
       if (newDef?.onEquip) newDef.onEquip(entity.id, newInst, {
-        entityContainer: window.__app?.entityContainer,
-        effectRegistry: window.__app?.effectRegistry,
-        eventBus: window.__app?.eventBus,
+        entityContainer: app?.entityContainer,
+        effectRegistry: app?.effectRegistry,
+        eventBus: app?.eventBus,
         waveNumber: window.waveNumber || 0,
-        attrCalc: window.__app?.attrCalc,
+        attrCalc: app?.attrCalc,
       });
       entity.weaponType = weaponId.replace('weapon_', '');
     } else {
@@ -252,6 +261,8 @@ export const EDITOR_EVENTS = {
   },
 
   _applySkillChanges(overlay, entity, logFn) {
+    // v51.6 修复：同上，window.__app 恒为 undefined 的问题。
+    const app = window.CTX?.__app || window.__app;
     const selected = overlay.querySelectorAll('.pick-card.selected[data-skill]');
     const selectedSkills = new Set();
     selected.forEach(el => selectedSkills.add(el.dataset.skill));
@@ -265,8 +276,8 @@ export const EDITOR_EVENTS = {
     for (const inst of toRemove) {
       const def = SkillLibrary[inst.skillId];
       if (def?.onUnequip) def.onUnequip(entity.id, inst, {
-        entityContainer: window.__app?.entityContainer,
-        effectRegistry: window.__app?.effectRegistry,
+        entityContainer: app?.entityContainer,
+        effectRegistry: app?.effectRegistry,
       });
       entity._skillInstances = entity._skillInstances.filter(s => s !== inst);
     }
@@ -275,11 +286,11 @@ export const EDITOR_EVENTS = {
       entity._skillInstances.push(inst);
       const def = SkillLibrary[key];
       if (def?.onEquip) def.onEquip(entity.id, inst, {
-        entityContainer: window.__app?.entityContainer,
-        effectRegistry: window.__app?.effectRegistry,
-        eventBus: window.__app?.eventBus,
+        entityContainer: app?.entityContainer,
+        effectRegistry: app?.effectRegistry,
+        eventBus: app?.eventBus,
         waveNumber: window.waveNumber || 0,
-        attrCalc: window.__app?.attrCalc,
+        attrCalc: app?.attrCalc,
       });
     }
     logFn(`🛡️ 塔 #${entity.id} 被动技能已更新`, 'spawn');

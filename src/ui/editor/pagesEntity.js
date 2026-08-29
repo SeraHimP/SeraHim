@@ -377,7 +377,7 @@ export const EDITOR_PAGES_ENTITY = {
   },
 
   _renderEffectContent(entity) {
-    const effs = window.__app?.effectRegistry?.getEffects(entity.id) || [];
+    const effs = (window.CTX?.__app || window.__app)?.effectRegistry?.getEffects(entity.id) || [];
     let html = `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
     if (effs.length === 0) {
       html += `<div style="color:#8b949e;font-size:12px;padding:8px;">暂无状态效果</div>`;
@@ -402,7 +402,12 @@ export const EDITOR_PAGES_ENTITY = {
 
   // ==================== 龙魂（每塔独立） ====================
   _renderSoulContent(tower) {
-    const app = window.__app;
+    // v51.6 修复：window.__app 从来没被赋值过（全仓库只有 window.CTX.__app 是真的，
+    // 见 main.js:54/221），这里之前直接用裸的 window.__app 导致 app 恒为 undefined——
+    // 龙魂池整个是空的，点"已生效" chip 上的 ✕ 时 app.dragonSystem 直接抛
+    // TypeError（被事件处理器悄悄吞掉，界面上"看起来毫无反应"）。这正是用户报的
+    // "单位编辑界面中想删除某个龙魂点X没反应"那个隐藏 bug 的根因。
+    const app = window.CTX?.__app || window.__app;
     const DRAGON_ELEMENTS = app?.DRAGON_ELEMENTS || {};
     const SkillLibrary = app?.SkillLibrary || {};
     const effReg = app?.effectRegistry;
@@ -471,7 +476,7 @@ export const EDITOR_PAGES_ENTITY = {
   },
 
   _bindSoulEvents(overlay, tower, logFn) {
-    const app = window.__app;
+    const app = window.CTX?.__app || window.__app;  // v51.6：同上一处的 window.__app 恒 undefined 修复
     const DRAGON_ELEMENTS = app?.DRAGON_ELEMENTS || {};
     const SkillLibrary = app?.SkillLibrary || {};
     // v51.5 修复：下面 mouseenter 里一直写的是 renderSkillDescription(def, entity, ctx)，
@@ -488,11 +493,15 @@ export const EDITOR_PAGES_ENTITY = {
     };
 
     // 减少某元素增益 1 层（层数减到 0 时彻底移除该效果）
-    const decrementBuff = (key, el) => {
+    // v51.6 修复：v44 把"某元素的力有几条属性"从写死的 DRAGON_ELEMENTS[key].buff 数组
+    // 改成了可编辑的 CONFIG.dragonPower（见 DragonSystem.js dragonPowerBuffs 的头注），
+    // DRAGON_ELEMENTS 对象上早就没有 .buff 字段了——这里还在读 el.buff.length，
+    // 点"-1层"必定抛 TypeError（undefined.length），是这个 tab 另一处"点了没反应"的根因。
+    // 改成直接按 sourceId 前缀扫该塔身上这个元素挂的全部效果，不再依赖那个已经不存在的字段。
+    const decrementBuff = (key) => {
       let stillHasLayers = false;
-      for (let i = 0; i < el.buff.length; i++) {
-        const eff = app.effectRegistry.getEffects(tower.id).find(e => e.sourceId === `dragon_buff_${key}_${i}`);
-        if (!eff) continue;
+      const effs = app.effectRegistry.getEffects(tower.id).filter(e => e.sourceId && e.sourceId.startsWith(`dragon_buff_${key}_`));
+      for (const eff of effs) {
         if (eff.stacks > 1) { eff.stacks -= 1; app.effectRegistry._recalcEffectValues(eff); app.effectRegistry._updateDescription(eff); stillHasLayers = true; }
         else app.effectRegistry.remove(eff.id);
       }
@@ -545,7 +554,7 @@ export const EDITOR_PAGES_ENTITY = {
         const el = DRAGON_ELEMENTS[key];
         if (!el) return;
         if (kind === 'buff') {
-          decrementBuff(key, el);
+          decrementBuff(key);
           logFn(`🔻 塔 #${tower.id} ${el.label}之力 -1 层`, 'spawn');
         } else if (kind === 'soul') {
           app.dragonSystem._toggleSoul(tower, el.soul);

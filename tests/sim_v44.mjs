@@ -346,11 +346,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('巨龙④-有生成/效果两个独立开关（对应 CONFIG.dragonToggles 的两项）',
     /CONFIG\.dragonToggles\.spawn = CONFIG\.dragonToggles\.spawn === false/.test(gw)
     && /CONFIG\.dragonToggles\.effect = CONFIG\.dragonToggles\.effect === false/.test(gw));
-  // v51.5：手动指定龙魂从下拉框+按钮改成了卡片池（data-dgsoul-id），
-  // 断言跟着改成认新的标记。
+  // v51.6：卡片池从"按阵营各复制一份，卡片带 data-dgsoul-id"改成了"一份共享池
+  // + 广播目标复选框"，标记跟着改成新的 data-dgp-kind。
   T('巨龙⑤-即时操作齐备：刷一条 / 清场 / 指定龙魂 / 清进度',
     /dgForceElement/.test(gw) && /dgKillAll/.test(gw)
-    && /data-dgsoul-id/.test(gw) && /dgResetProgress/.test(gw));
+    && /data-dgp-kind="soul"/.test(gw) && /dgResetProgress/.test(gw));
   T('巨龙⑥-清场走 entity:death（绕过去的话"编辑器杀的龙不给奖励"，两套行为）',
     /app\?\.eventBus\?\.emit\?\.\('entity:death'/.test(gw));
   // v50 重做：进度那一块从一句文字扩成"对局态势"网格（双方条数 / 还差几条 /
@@ -358,8 +358,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('巨龙⑦-展示双方争夺进度（双方条数 + 还差几条 + 下一条龙倒计时）',
     /还差 \$\{need\}/.test(gw) && /下一条龙/.test(gw) && /对局态势/.test(gw));
   // 用户："你原有的窗口只写了龙魂，没写巨龙之力！"—— 这是这一页最大的缺口。
-  T('巨龙⑦-补上了【巨龙之力】的展示（层数 + 上限）',
-    /巨龙之力层数/.test(gw) && /dragonPower\?\.maxStacks/.test(gw));
+  // v51.6：巨龙之力的展示从"对局态势里一句层数/上限文字"改成了"已生效龙魂池里的
+  // 逐元素 chip（XX之力（N层）），点 chip 上的 ✕ 还能直接移除"——信息量比原来更细，
+  // 断言跟着改成认新位置（_dgActiveChipsHtml 里拼 chip 的那一行）。
+  T('巨龙⑦-补上了【巨龙之力】的展示（已生效池按元素显示层数，可点 ✕ 移除）',
+    /之力（\$\{n\}层）/.test(gw) && /_dgFactionActivePower/.test(gw) && /data-dg-remove-kind="power"/.test(gw));
   T('巨龙⑦-元素表从 DRAGON_ELEMENTS 现取，不写死（v50 一次加了六个元素）',
     /Object\.entries\(DRAGON_ELEMENTS\)/.test(gw));
   // 手动指定龙魂原来存的是**元素 key** 而不是技能 id，equipExistingSoul 查不到 →
@@ -369,10 +372,15 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 断言跟着改成认新实现：卡片直接用技能 id（d.soul，来自 DRAGON_ELEMENTS 的
   // entries，不再有元素 key→技能 id 的转换步骤），并且立刻广播给场上全体。
   T('巨龙⑦-手动指定龙魂用的是技能 id，并且立刻广播给场上全体（走多选叠加）',
-    /data-dgsoul-id="\$\{d\.soul\}"/.test(gw) && /ds\._grantAll\(fac, \(e\) => \{/.test(gw)
+    /data-dgp-soulid="\$\{d\.soul\}"/.test(gw) && /ds\._grantAll\(fac, \(e\) => \{/.test(gw)
     && /ds\._toggleSoul\(e, soulId\)/.test(gw));
-  T('巨龙⑧-文案跟真实规则一致：先到先得，不是"打完一批统一结算"',
-    /先到先得/.test(gw) && !/都不到则无魂/.test(gw));
+  // v51.6：用户第二版反馈点名"把我画圈中没用的文字...删除"，那段"先到先得，不是
+  // 打完一批统一结算"的规则说明文字本身就是被删除对象之一——不是文案又写错了，
+  // 是这页从"要解释规则"改成了"信息只给操作入口，不重复文档"。真实的成魂时机
+  // 判断逻辑（DragonSystem._resolveSoul 当帧结算）不受影响，由 sim_dragonsoul.mjs
+  // 那边的行为断言守着，这里只确认"打完一批统一结算"那句过时错误文案没有借尸还魂。
+  T('巨龙⑧-旧的"打完一批统一结算"错误规则文案没有借尸还魂（成魂规则说明已按用户要求整段删除）',
+    !/都不到则无魂/.test(gw) && !/打完一批统一结算/.test(gw));
 }
 
 // ==================== 七、Q3 龙坑位置 ====================

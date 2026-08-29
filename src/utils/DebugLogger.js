@@ -59,9 +59,9 @@ class DebugLoggerImpl {
       `=== 调试日志导出 ===`,
       `导出时间: ${new Date().toLocaleString()}`,
       `游戏内时间: ${(window.gameTime || 0).toFixed(1)}s`,
-      `当前模式: ${window.__app?.mapSystem?.active ? '对战模式' : '沙盒模式'}`,
-      `塔数: ${window.__app?.entityContainer?.getAllTowers?.(true)?.length ?? '?'}`,
-      `小兵数: ${window.__app?.entityContainer?.getAllMinions?.(true)?.length ?? '?'}`,
+      `当前模式: ${(window.CTX?.__app || window.__app)?.mapSystem?.active ? '对战模式' : '沙盒模式'}`,
+      `塔数: ${(window.CTX?.__app || window.__app)?.entityContainer?.getAllTowers?.(true)?.length ?? '?'}`,
+      `小兵数: ${(window.CTX?.__app || window.__app)?.entityContainer?.getAllMinions?.(true)?.length ?? '?'}`,
       `====================`,
       '',
     ].join('\n');

@@ -1084,6 +1084,9 @@ export const CONFIG = {
       healShieldPowerPct: 0,
       attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
+      // v51.6：用户定稿"近战兵，最大法力值25，0/s，主动技能：获得2伤害格挡，
+      // 持续2秒"，见 actives.js 的 active_melee_block。
+      maxMana: 25, manaRegen: 0,
     },
     ranged: {
       label: '远程兵', type: 'ranged',
@@ -1100,6 +1103,12 @@ export const CONFIG = {
       healShieldPowerPct: 0,
       attackType: 'magic', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
+      // v51.6：用户定稿"远程兵，最大70，0.5/s，主动技能：下次攻击附带
+      // （XX%=25%法强）魔法伤害"，见 actives.js 的 active_ranged_snipe。
+      // abilityPower：用户"远程兵……会自带一些法强，数值自己定但是不要太多"，
+      // 给 10（配 25% 系数，满蓄势时约 +2.5 魔法伤害，量级不大，主要靠后续
+      // 法术强度成长/龙魂叠加才会明显）。
+      maxMana: 70, manaRegen: 0.5, abilityPower: 10,
     },
     siege: {
       label: '炮兵', type: 'siege',
@@ -1149,6 +1158,10 @@ export const CONFIG = {
       ...UNIT_STAT_DEFAULTS,
       // v51.1：用户定稿"图腾兵法力值上限120，2/s"，见 actives.js 的 active_totem_shield。
       maxMana: 120, manaRegen: 2,
+      // v51.6：用户"图腾兵……会自带一些法强，数值自己定但是不要太多"——给 8，
+      // 配 active_totem_shield 的 3% 系数只多约 +0.24 护盾，量级不大，是基础值，
+      // 不是这条技能的主要强度来源。
+      abilityPower: 8,
     },
     super: {
       label: '超级兵', type: 'super',
@@ -1184,6 +1197,10 @@ export const CONFIG = {
       ...UNIT_STAT_DEFAULTS,
       // v51.1：用户定稿"术士兵上限65，3/s"，见 actives.js 的 active_warlock_empower。
       maxMana: 65, manaRegen: 3,
+      // v51.6：用户"术士兵……会自带一些法强，数值自己定但是不要太多"——给 15，
+      // 是它自己独立于 active_warlock_empower 每次施放+5（永久叠加）之外的基础值，
+      // 术士兵本身就是"法系"定位，基础值给得比图腾兵/远程兵略高说得通。
+      abilityPower: 15,
     },
     corrupt: {
       label: '蚀骨兵', type: 'corrupt',

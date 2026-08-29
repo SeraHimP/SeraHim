@@ -876,12 +876,155 @@ async function world() {
     const c2 = EDITOR_PAGES_GAMEPLAY_WORLD._dgFactionActiveSouls({}, 'blue');
     return !c2.dragonsoul_ancient;
   })());
+}
+
+// ==================== 二十五(b)、v51.6：批量龙魂改成"共享池+广播目标复选框+已生效chip移除" ====================
+// 用户第二版反馈："模板编辑器里龙魂编辑页面依旧乱七八糟……【蓝方龙魂池】【红方龙魂池】
+// 【全部生效/蓝方/红方（复选框）】【巨龙之力池】【龙魂池】。点击之后就加到红蓝方龙魂池中，
+// 在池中减少某个龙魂等。" —— 卡片池从"蓝/红各一份"改成一份共享池，点哪个阵营生效由
+// 复选框决定；"已生效"从卡片角标数字改回真正的 chip 条，chip 上点 ✕ 移除。
+{
+  const { ents, fx, bus, attr, SkillLibrary, CONFIG } = await world();
+  const { DragonSystem, DRAGON_ELEMENTS } = await import('../src/systems/DragonSystem.js');
+  const { EDITOR_PAGES_GAMEPLAY_WORLD } = await import('../src/ui/editor/pagesGameplayWorld.js');
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, attr);
+  window.CTX = window.CTX || {};
+  window.CTX.__app = { entityContainer: ents, effectRegistry: fx, dragonSystem: ds };
+
+  const siege = mkEntity(ents, 'siege', { faction: 'blue' }, CONFIG); // 塔+大型小兵：SOUL 和 POWER 都该收到
+  const melee = mkEntity(ents, 'melee', { faction: 'blue' }, CONFIG); // 普通小兵：只有 POWER 该收到
+
+  const el0 = Object.keys(DRAGON_ELEMENTS)[0];
+  const soulId0 = DRAGON_ELEMENTS[el0].soul;
+
+  // 够 _bindGameplayDragonEvents 用的最小 DOM 桩：dataset/addEventListener/click，
+  // 不需要真的渲染 HTML——测的是点击之后 ds/entity 的真实状态变化，不是字符串。
+  // addEventListener 用「覆盖」不用「累加」：真实 DOM 里 refresh() 靠重写 innerHTML
+  // 换出全新节点，旧节点连同它绑的监听器一起被丢弃；这里的桩子是长期复用的同一个
+  // 对象，每次 refresh 触发的重新绑定如果用累加，同一张卡片会越攒越多个监听器，
+  // 点一下实际触发 N 次——这是桩子和真实 DOM 生命周期不一致造成的假象，不是被测代码的 bug。
+  class FakeEl {
+    constructor() { this.dataset = {}; this.checked = false; this.value = ''; this._html = ''; this._listeners = {}; }
+    set innerHTML(v) { this._html = v; }
+    get innerHTML() { return this._html; }
+    addEventListener(evt, cb) { this._listeners[evt] = [cb]; }
+    click() { (this._listeners.click || []).forEach(cb => cb()); }
+  }
+  const scopeAll = new FakeEl(); scopeAll.value = 'all'; scopeAll.checked = true;
+  const powerCard = new FakeEl(); powerCard.dataset = { dgpKind: 'power', dgpEl: el0 };
+  const soulCard = new FakeEl(); soulCard.dataset = { dgpKind: 'soul', dgpEl: el0, dgpSoulid: soulId0 };
+  const templateContentStub = new FakeEl();
+  const descBoxStub = new FakeEl();
+  let removeChips = [];
+  const overlay = {
+    isConnected: false,
+    querySelector(sel) {
+      if (sel === '#templateContent') return templateContentStub;
+      if (sel === '#dgSoulDescBox') return descBoxStub;
+      return null;
+    },
+    querySelectorAll(sel) {
+      if (sel === '.dg-scope') return [scopeAll];
+      if (sel === '[data-dgp-kind]') return [powerCard, soulCard];
+      if (sel === '[data-dg-remove-kind]') return removeChips;
+      return [];
+    },
+    contains() { return false; },
+  };
+  const logs = [];
+  EDITOR_PAGES_GAMEPLAY_WORLD._bindGameplayDragonEvents(overlay, (m) => logs.push(m));
+
+  powerCard.click();
+  T('批池①-点巨龙之力卡片：POWER_REWARD_OK 范围广播，连普通近战兵都收到（不是龙魂那条窄范围）',
+    fx.getEffects(melee.id).some(e => e.sourceId === `dragon_buff_${el0}_0`)
+    && fx.getEffects(siege.id).some(e => e.sourceId === `dragon_buff_${el0}_0`));
+
+  soulCard.click();
+  T('批池②-点龙魂卡片：只广播给 SOUL_REWARD_OK 范围（普通近战兵不该装上，攻城车该装上）',
+    !(melee._skillInstances || []).some(i => i.skillId === soulId0)
+    && (siege._skillInstances || []).some(i => i.skillId === soulId0));
+
+  soulCard.click();
+  T('批池③-同一张龙魂卡片再点一次：整场按"点击前是否为空"统一卸下，不是逐单位各自反转',
+    !(siege._skillInstances || []).some(i => i.skillId === soulId0));
+
+  const removeChip = new FakeEl();
+  removeChip.dataset = { dgRemoveKind: 'power', dgRemoveFac: 'blue', dgRemoveEl: el0 };
+  removeChips = [removeChip];
+  EDITOR_PAGES_GAMEPLAY_WORLD._bindGameplayDragonEvents(overlay, (m) => logs.push(m)); // 重新绑定，拿到新的 removeChips
+  removeChip.click();
+  T('批池④-已生效 chip 点 ✕：巨龙之力 -1 层清零后效果被移除（该阵营内两种单位都要移干净）',
+    !fx.getEffects(melee.id).some(e => e.sourceId === `dragon_buff_${el0}_0`)
+    && !fx.getEffects(siege.id).some(e => e.sourceId === `dragon_buff_${el0}_0`));
+
+  if (EDITOR_PAGES_GAMEPLAY_WORLD._dgLiveTimer) {
+    clearInterval(EDITOR_PAGES_GAMEPLAY_WORLD._dgLiveTimer);
+    EDITOR_PAGES_GAMEPLAY_WORLD._dgLiveTimer = null;
+  }
 
   const gwSrc = srcOf('src/ui/editor/pagesGameplayWorld.js');
-  T('批②-点击卡片走"全场统一开/关"（按点击前是否为0决定方向），不是逐单位各自反转',
-    /const turnOn = before === 0;/.test(gwSrc) && /if \(turnOn === !has\)/.test(gwSrc));
-  T('批③-清空按钮把该方所有非远古龙魂实例一次性卸干净',
-    /dg-clear-all-soul/.test(gwSrc) && /inst\.skillId !== 'dragonsoul_ancient'/.test(gwSrc));
+  T('批池⑤-旧版"按阵营各复制一份池子/清空按钮/击杀数表格"的死代码已经删除',
+    !/dg-clear-all-soul/.test(gwSrc) && !/data-dgsoul-id/.test(gwSrc) && !/dg-set-kills/.test(gwSrc) && !/dg-kill-field/.test(gwSrc));
+  T('批池⑥-巨龙之力的广播/移除都显式指定 POWER_REWARD_OK（不能落到 _grantAll 默认的 SOUL 那条窄范围）',
+    (gwSrc.match(/DragonSystem\.POWER_REWARD_OK/g) || []).length >= 2);
+}
+
+// ==================== 二十五(c)、v51.6：修单位编辑器"龙魂 tab 点 X 没反应"的真根因 ====================
+// 用户报的隐藏 bug："单位编辑界面中想删除某个龙魂点X没反应"。排查结论：pagesEntity.js
+// 的 _renderSoulContent/_bindSoulEvents 读的是裸 window.__app —— 全仓库只有
+// window.CTX.__app 是真的被赋值过的（main.js:54/221），window.__app 从未被赋值过，
+// app 恒为 undefined，点按钮时 app.dragonSystem.xxx 直接抛 TypeError，被事件处理器
+// 悄悄吞掉，界面上看起来"点了没反应"。顺带发现同一个 tab 里"巨龙增益 -1 层"还有第二个
+// 独立 bug：decrementBuff 读的是 el.buff.length，而 DRAGON_ELEMENTS 从 v44 起就没有
+// .buff 字段了（属性表改成从 CONFIG.dragonPower 读，见 DragonSystem.js dragonPowerBuffs
+// 头注），点了同样会抛 TypeError。
+{
+  const { ents, fx, bus, attr, SkillLibrary, CONFIG } = await world();
+  const { DragonSystem, DRAGON_ELEMENTS } = await import('../src/systems/DragonSystem.js');
+  const { EDITOR_PAGES_ENTITY } = await import('../src/ui/editor/pagesEntity.js');
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, attr);
+  window.CTX = window.CTX || {};
+  window.CTX.__app = { entityContainer: ents, effectRegistry: fx, dragonSystem: ds, DRAGON_ELEMENTS, SkillLibrary };
+  window.__app = undefined; // 显式清空——确保这个测试真的在验证 window.CTX.__app 那条路径，不是巧合靠旧全局变量测过
+
+  const tower = mkEntity(ents, 'tower', { faction: 'blue' }, CONFIG);
+  const el0 = Object.keys(DRAGON_ELEMENTS)[0];
+  const soulId0 = DRAGON_ELEMENTS[el0].soul;
+  ds._applyElementBuff(tower, el0); // 先叠 1 层力
+  ds._toggleSoul(tower, soulId0);   // 先装 1 条魂
+
+  class FakeEl {
+    constructor() { this.dataset = {}; this._html = ''; this._listeners = {}; }
+    set innerHTML(v) { this._html = v; }
+    get innerHTML() { return this._html; }
+    addEventListener(evt, cb) { (this._listeners[evt] = this._listeners[evt] || []).push(cb); }
+    click() { (this._listeners.click || []).forEach(cb => cb()); }
+  }
+  const removeBuffChip = new FakeEl(); removeBuffChip.dataset = { removeKind: 'buff', removeKey: el0 };
+  const removeSoulChip = new FakeEl(); removeSoulChip.dataset = { removeKind: 'soul', removeKey: el0 };
+  const editorContentStub = new FakeEl();
+  const overlay = {
+    querySelector(sel) { return sel === '#editorContent' ? editorContentStub : null; },
+    querySelectorAll(sel) {
+      if (sel === '[data-pool-kind="buff"]') return [];
+      if (sel === '[data-pool-kind="soul"]') return [];
+      if (sel === '[data-remove-kind]') return [removeBuffChip, removeSoulChip];
+      return [];
+    },
+  };
+  let threw = null;
+  try {
+    EDITOR_PAGES_ENTITY._bindSoulEvents(overlay, tower, () => {});
+    removeSoulChip.click();
+    removeBuffChip.click();
+  } catch (e) { threw = e; }
+
+  T('实体龙魂 tab①-window.__app 恒 undefined 的根因修好后，点 chip 移除不再抛异常',
+    !threw);
+  T('实体龙魂 tab②-点龙魂 chip 真的卸下了那条魂（不是"看起来点了但没生效"）',
+    !(tower._skillInstances || []).some(i => i.skillId === soulId0));
+  T('实体龙魂 tab③-decrementBuff 改成按 sourceId 前缀扫描后，-1层 真的清空了力（不再依赖已不存在的 el.buff 字段）',
+    !fx.getEffects(tower.id).some(e => e.sourceId === `dragon_buff_${el0}_0`));
 }
 
 // ==================== 二十六、v51.5：删图腾兵僵尸技能+统一默认被动清单+塔被动新联动 ====================
@@ -954,6 +1097,51 @@ async function world() {
   const burstCountAfter = fx.getEffects(plating.id).filter(e => e.blueprint.name === '镀层爆发').length;
   T('爆②-再次破裂只刷新同一份效果，不会叠出第二份（旧版四份数值各自独立累加的问题不再出现）',
     burstCountBefore === 1 && burstCountAfter === 1);
+}
+
+// ==================== 二十七、v51.6：近战兵/远程兵首次拥有主动技能 ====================
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const { ManaSystem } = await import('../src/systems/ManaSystem.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const bus = { on() {}, emit() {} };
+  const mana = new ManaSystem(ents, fx, bus, SkillLibrary, AttributeCalculator, combat);
+
+  T('主动①-近战兵/远程兵的法力上限与回复按用户定稿写入模板',
+    CONFIG.templates.melee.maxMana === 25 && CONFIG.templates.melee.manaRegen === 0
+    && CONFIG.templates.ranged.maxMana === 70 && CONFIG.templates.ranged.manaRegen === 0.5);
+
+  // 近战兵：本能格挡
+  const m = mkEntity(ents, 'melee', { skills: ['active_melee_block'] }, CONFIG);
+  m._mana = 25;
+  mana.update(1);
+  const blockEff = fx.getEffects(m.id).find(e => e.blueprint.name === '本能格挡');
+  T('主动②-近战兵满蓝后获得2点伤害格挡，持续2秒', blockEff && blockEff.blueprint.flatValue === 2 && Math.abs(blockEff.remainingTime - 2) < 1e-6);
+  T('主动③-施放后法力清零（普通主动技能，不是延迟消耗）', m._mana === 0);
+
+  // 远程兵：强化射击（延迟消耗 + 魔法伤害，复用 _empowerNextAttack 通用机制）
+  const r = mkEntity(ents, 'ranged', { stats: { armor: 0, magicResist: 0, attackDamage: 10, abilityPower: 40 },
+    skills: ['active_ranged_snipe'] }, CONFIG);
+  r._mana = 70;
+  mana.update(1);
+  T('主动④-远程兵满蓝后蓄势待发（延迟消耗，法力不立刻清零）', r._mana === 70 && !!r._empowerNextAttack);
+  const tgt = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 1000000 } }, CONFIG);
+  const before = tgt.currentHP;
+  combat.performAttack(r, tgt);
+  const dealt = before - tgt.currentHP;
+  // 10 基础攻击 + 40 法术强度×25% = 10 的额外魔法伤害 = 20 总量（真实伤害那条路径
+  // 已经在术士兵测试里验证过，这里换成验证 damageType 参数确实传成了 'magic'）
+  T('主动⑤-下一次攻击命中后额外造成 25%×法术强度 的伤害，且法力才真正清零',
+    dealt > 15 && dealt < 25 && r._mana === 0 && !r._empowerNextAttack);
+
+  T('主动⑥-CombatSystem 的延迟消耗点支持自定义伤害类型（不再永远是真实伤害）',
+    /emp\.damageType \|\| 'true'/.test(srcOf('src/systems/CombatSystem.js')));
+
+  T('主动⑦-术士兵/远程兵/图腾兵自带基础法术强度（用户："不要太多"）',
+    CONFIG.templates.warlock.abilityPower > 0 && CONFIG.templates.warlock.abilityPower <= 20
+    && CONFIG.templates.ranged.abilityPower > 0 && CONFIG.templates.ranged.abilityPower <= 20
+    && CONFIG.templates.totem.abilityPower > 0 && CONFIG.templates.totem.abilityPower <= 20);
 }
 
 done();

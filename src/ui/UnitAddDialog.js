@@ -236,7 +236,9 @@ export const UnitAddDialog = {
     if (st.mainTab === 'dragon') {
       const element = document.getElementById('uadDragonElement')?.value || null;
       const ancient = document.getElementById('uadDragonAncient')?.checked || false;
-      const els = window.__app?.DRAGON_ELEMENTS || {};
+      // v51.6 修复：window.__app 从未被赋值过（全仓库只有 window.CTX.__app 是真的），
+      // 之前这里恒为空对象，元素龙的标签一直显示不出来。
+      const els = (window.CTX?.__app || window.__app)?.DRAGON_ELEMENTS || {};
       const label = ancient ? '远古巨龙' : (element ? els[element]?.label : '随机元素龙');
       this._queue.push({ category: 'dragon', label: '巨龙', icon: '🐉', summary: label, config: { element, ancient } });
     } else {
@@ -342,7 +344,7 @@ export const UnitAddDialog = {
   },
 
   _renderDragonDetail() {
-    const els = window.__app?.DRAGON_ELEMENTS || {};
+    const els = (window.CTX?.__app || window.__app)?.DRAGON_ELEMENTS || {};
     const keys = Object.keys(els);
     return `
       <div class="option-group">
