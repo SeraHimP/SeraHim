@@ -10,21 +10,18 @@
  */
 import { CONFIG } from '../../data/Config.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
+import { DEFAULT_MINION_PASSIVES } from '../../core/defaultMinionPassives.js';
 
 export const EDITOR_PAGES_SKILLEFFECT = {
   // ==================== 模板技能/状态渲染 ====================
-  // 各类型的"硬编码默认被动"——与 main.js 里的 defaultPassiveMap 保持一致。
+  // 各类型的"硬编码默认被动"——与 factories.js 里 createMinion 消费的那份
+  // 是**同一份**（v51.5 之前这里手抄了一份副本，早就漂移过：v51 系列加的
+  // 四条主动技能、图腾兵重做后的新三件套都只进了 factories.js 那份，这里
+  // 从未跟上，导致模板编辑器首次打开时回填的"默认装配"是过时数据）。
   // 模板技能面板首次打开时（tpl._templateSkills 尚未被显式设置过），
   // 需要用这份默认值回填勾选状态，否则界面显示"全部未装备"，
   // 点击应用后会把空配置写回 _templateSkills，导致以后生成的单位真的丢失默认被动（Q2 bug）。
-  _DEFAULT_PASSIVE_MAP: {
-    siege: ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend'],
-    super: ['passive_super_commander'],
-    totem: ['passive_totem_guardian', 'passive_totem_awaken', 'passive_totem_nourish', 'passive_totem_aura'],
-    warlock: ['passive_warlock_aura'],
-    corrupt: ['passive_corrupt_strike'],
-    ram:     ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
-  },
+  _DEFAULT_PASSIVE_MAP: DEFAULT_MINION_PASSIVES,
 
   // 防御塔按【层级】取技能清单与默认装配（塔模板本身不再是一个整体）；
   // 小兵仍按类型。返回 { pool, equipped, defaults, title }。

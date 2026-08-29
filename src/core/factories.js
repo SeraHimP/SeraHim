@@ -30,6 +30,7 @@ import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
 // 这里照原样 import 一份，是为了让搬过来的函数体一个字符都不用改 —— 这次搬迁的
 // 唯一保证就是"没改逻辑"，任何顺手的重命名都会让审查失去这个保证。
 import { SkillLibrary } from './SkillLibrary.js';
+import { DEFAULT_MINION_PASSIVES } from './defaultMinionPassives.js';
 
 // 由 createFactories 注入的引擎单例。搬迁前它们是 main.js 的模块级 const，
 // 现在是这里的模块级 let —— 对四个函数体而言完全等价。
@@ -386,27 +387,12 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   // 小兵被动自动装备：模板编辑器中若已自定义 _templateSkills（哪怕是空数组），
   // 优先按用户设置生效；未做过任何自定义时才回退到默认硬编码被动。
   // v42: base default passive map; merged with map-level minionDefaultPassives below
-  const defaultPassiveMap = {
-
-    'melee': ['passive_melee_rend'],
-    'ranged': ['passive_ranged_rend'],
-    // v51.1：主动技能改成用户给的精确规格（active_siege_haste 等，见 actives.js 头注），
-    // 推翻 v51 那版占位的 active_siege_barrage。
-    'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend', 'active_siege_haste'],
-    'super': ['passive_super_commander'],
-    // v49 攻城车重做：一条被动拆成三条（攻城炮=常驻闸门，另两条是两个模式）。
-    // atkmode_charge 是**攻击方式**技能（与塔的武器同一形状），充能的全部参数在它身上。
-    'ram': ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
-    // 三个支援兵种（用户定稿重做）。旧的 totem_guardian/awaken/nourish/sacrifice
-    // 仍在 SkillLibrary 里（编辑器可手动装备），但不再默认装配 —— 它们的效果
-    // 与新的三件套重叠，同时装上会双份减伤、双份护盾。
-    'totem': ['passive_totem_aura', 'passive_totem_mend', 'passive_totem_bulwark', 'active_totem_shield'],
-    'warlock': ['passive_warlock_aura', 'passive_warlock_attune', 'active_warlock_empower'],
-    'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison'],
-  };
+  // v51.5：这份表本来在这里就地写死，同时 ui/editor/pagesSkillEffect.js 里还有一份
+  // 手抄的副本给"模板编辑器首次打开"当默认值回填——两份早就漂移了（编辑器那份
+  // 一直没跟上 v51 系列加的主动技能）。现在搬进 defaultMinionPassives.js 统一源。
   // v42: merge map-level minionDefaultPassives overrides
   const mapMinionPassives = (mapOpts && mapSystem.currentMap?.minionDefaultPassives) || {};
-  const effectivePassiveMap = { ...defaultPassiveMap, ...mapMinionPassives };
+  const effectivePassiveMap = { ...DEFAULT_MINION_PASSIVES, ...mapMinionPassives };
   let passives = Array.isArray(tpl._templateSkills) ? tpl._templateSkills : (effectivePassiveMap[type] || []);
 
   // Q2：技能的 minWave = 【默认装配波次门槛】。默认装配（非模板编辑器 _templateSkills）下，

@@ -197,11 +197,15 @@ export const towerPassives = {
     name: '重甲联防',
     icon: '🤝',
     category: 'passive',
-    descTemplate: '唯一被动——重甲联防：每个正在攻击本塔的敌人提供（【{val}】=+5×攻击者数）双抗，上限100。',
+    // v51.5：新增韧性联动（用户："重甲联防加韧性"，"可以"）——被围攻时不只扛得住
+    // 输出，也该更扛得住控制（否则双抗再高也架不住一个眩晕连招）。系数与双抗那条
+    // 同一个"×攻击者数"节奏，但封顶低得多（40% 而不是 100%）：韧性是按比例
+    // 缩短控制时长，拉到 100% 就等于控制免疫，太强；具体数字后续按对局观感再调。
+    descTemplate: '唯一被动——重甲联防：每个正在攻击本塔的敌人提供（【{val}】=+5×攻击者数）双抗，上限100；同时获得（+2×攻击者数）韧性，上限40%。',
     computeCurrent: (entity, ctx) => {
       return Math.min(_countTowerAttackers(entity, ctx) * 5, 100);
     },
-    description: '每个正在攻击本塔的敌人+5双抗，上限100（Q6：仅统计以本塔为目标且已进入其攻击射程的敌人）。',
+    description: '每个正在攻击本塔的敌人+5双抗（上限100）、+2%韧性（上限40%）（Q6：仅统计以本塔为目标且已进入其攻击射程的敌人）。',
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
@@ -239,9 +243,19 @@ export const towerPassives = {
         }, 'passive_heavy_defense_mr');
         const mrEff = ctx.effectRegistry.getEffect(mrId);
         if (mrEff) mrEff.stacks = enemyCount;
+
+        const tenBonus = Math.min(attackers * 2, 40);
+        const tenId = ctx.effectRegistry.apply(entityId, {
+          name: '重甲联防', icon: '🤝', kind: 'stat', statKey: 'tenacityPct',
+          flatValue: tenBonus, duration: Infinity, permanent: true, conditional: true,
+          stackable: true, maxStacks: 20, stackPolicy: 'refresh', uniquePassive: true,
+          description: `韧性+${tenBonus}%`,
+        }, 'passive_heavy_defense_tenacity');
+        const tenEff = ctx.effectRegistry.getEffect(tenId);
+        if (tenEff) tenEff.stacks = enemyCount;
       } else {
         // 条件不满足（没有敌人）→ 移除效果
-        for (const src of ['passive_heavy_defense_armor', 'passive_heavy_defense_mr']) {
+        for (const src of ['passive_heavy_defense_armor', 'passive_heavy_defense_mr', 'passive_heavy_defense_tenacity']) {
           const eff = ctx.effectRegistry.getEffects(entityId).find(e => e.sourceId === src);
           if (eff) ctx.effectRegistry.remove(eff.id);
         }
@@ -255,19 +269,23 @@ export const towerPassives = {
     name: '荆棘反击',
     icon: '⚔️',
     category: 'passive',
-    descTemplate: '唯一被动——荆棘反击：被攻击时反弹（【{val}】=3+护甲×7%）魔法伤害。',
+    // v51.5：新增法术强度联动（用户："荆棘反击加法术强度联动"，"可以"）——
+    // 反弹伤害本身是魔法伤害，让法术强度这条以前对塔完全没用武之地的属性
+    // （只能靠龙魂/冰霜镀层拿到）也能在这条被动上体现出来。系数 0.5 取中庸值：
+    // 具体数字不是这次要锁死的，后续按对局观感再调。
+    descTemplate: '唯一被动——荆棘反击：被攻击时反弹（【{val}】=3+护甲×7%+法术强度×50%）魔法伤害。',
     computeCurrent: (entity, ctx) => {
       const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
-      return Math.round(3 + (s.armor || 0) * 0.07);
+      return Math.round(3 + (s.armor || 0) * 0.07 + (s.abilityPower || 0) * 0.5);
     },
-    description: '被攻击时反弹（3+护甲×7%）魔法伤害。',
+    description: '被攻击时反弹（3+护甲×7%+法术强度×50%）魔法伤害。',
     effects: [],
     onBeingAttacked: (targetId, attackerId, instance, ctx) => {
       const target = ctx.entityContainer.get(targetId);
       const attacker = ctx.entityContainer.get(attackerId);
       if (!target || !attacker || !target.alive || !attacker.alive) return;
       const atkStats = ctx.attrCalc.calc(target, ctx.effectRegistry.getEffects(target.id));
-      const reflectDmg = 3 + (atkStats.armor || 0) * 0.07;
+      const reflectDmg = 3 + (atkStats.armor || 0) * 0.07 + (atkStats.abilityPower || 0) * 0.5;
       if (ctx.combat) {
         ctx.combat.performAttackDirect(targetId, attackerId, reflectDmg, 'magic', { _noProc: true });
       }
@@ -380,12 +398,17 @@ export const towerPassives = {
     name: '防御塔镀层',
     icon: '🛡️',
     category: 'passive',
-    description: 'HP跌破80%/60%/40%/20%时破裂，永久+25双抗，并获20秒爆发（+70双抗、+100%攻速、远程减伤17%）。',
+    // v51.5：爆发重做（用户："防御塔镀层爆发重做，改为+33%伤害减免，持续10秒，
+    // 不可叠加"）。原来是四项数值各自 20 秒、且四次破裂各开一份互相叠加
+    // （最多同时挂 4 份 +70双抗/+70魔抗/+100%攻速/远程减伤17%），越到后期越离谱。
+    // 现在收成一条纯粹的伤害减免、10 秒、不可叠加——用同一个 sourceId + refresh
+    // 策略实现"不可叠加"：再破一层只是把剩余时间刷新回 10 秒，数值不会累加。
+    // 永久那部分（生命跌破阈值各 +25 双抗，最多4层）不受影响，逐位保留。
+    description: 'HP跌破80%/60%/40%/20%时破裂，永久+25双抗；同时触发10秒的+33%伤害减免（不可叠加，再次触发只刷新剩余时间）。',
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       instance.state = instance.state || {};
       instance.state.broken = [false, false, false, false];
-      instance.state.burstCounter = 0;
     },
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
@@ -420,59 +443,14 @@ export const towerPassives = {
           }, 'passive_armor_plating_perm_mr');
           const me = ctx.effectRegistry.getEffect(mrEff);
           if (me) { me.stacks = brokenCount; ctx.effectRegistry._recalcEffectValues(me); ctx.effectRegistry._updateDescription(me); }
-          
-          const bid = state.burstCounter++;
+
+          // v51.5：爆发重做为单一效果，固定 sourceId + refresh 策略 = 不可叠加，
+          // 再次破裂只刷新剩余时间到 10 秒，不会像旧版四项数值那样越破越离谱。
           ctx.effectRegistry.apply(entityId, {
-            name: '镀层爆发',
-            icon: '💥',
-            kind: 'stat',
-            statKey: 'armor',
-            flatValue: 70,
-            duration: 20,
-            stackable: true,
-            maxStacks: 4,
-            perStackFlat: 70,
-            stackPolicy: 'stack',
-            description: `护甲+70（${bid+1}/4层爆发）`,
-          }, `passive_armor_plating_burst_${bid}`);
-          ctx.effectRegistry.apply(entityId, {
-            name: '镀层爆发',
-            icon: '💥',
-            kind: 'stat',
-            statKey: 'magicResist',
-            flatValue: 70,
-            duration: 20,
-            stackable: true,
-            maxStacks: 4,
-            perStackFlat: 70,
-            stackPolicy: 'stack',
-            description: `魔抗+70（${bid+1}/4层爆发）`,
-          }, `passive_armor_plating_burst_${bid}`);
-          ctx.effectRegistry.apply(entityId, {
-            name: '镀层爆发',
-            icon: '💥',
-            kind: 'stat',
-            statKey: 'bonusAttackSpeedPct',
-            flatValue: 100,
-            duration: 20,
-            stackable: true,
-            maxStacks: 4,
-            perStackFlat: 100,
-            stackPolicy: 'stack',
-            description: `攻速+100%（${bid+1}/4层爆发）`,
-          }, `passive_armor_plating_burst_${bid}`);
-          ctx.effectRegistry.apply(entityId, {
-            name: '镀层爆发',
-            icon: '💥',
-            kind: 'custom',
-            duration: 20,
-            stackable: true,
-            maxStacks: 4,
-            perStackFlat: 17,
-            stackPolicy: 'stack',
-            customData: { rangedDmgReduction: 17 },
-            description: `远程伤害-17%（${bid+1}/4层爆发）`,
-          }, `passive_armor_plating_burst_${bid}`);
+            name: '镀层爆发', icon: '💥', kind: 'stat', statKey: 'damageReduction',
+            flatValue: 33, duration: 10, stackable: false, stackPolicy: 'refresh',
+            uniquePassive: true, description: '伤害减免+33%（10秒）',
+          }, 'passive_armor_plating_burst');
         }
       }
     },

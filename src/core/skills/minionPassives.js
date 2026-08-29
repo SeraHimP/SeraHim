@@ -1,4 +1,4 @@
-import { makeAuraPassive, AURA_THROTTLE, AURA_DURATION, AURA_RANGE } from './_helpers.js';
+import { makeAuraPassive, AURA_THROTTLE, AURA_RANGE } from './_helpers.js';
 import { applyHeal, healPowerFor } from '../healing.js';
 import { CONFIG } from '../../data/Config.js';
 
@@ -153,106 +153,11 @@ export const minionPassives = {
   ..._makeRendPassive('ranged', '远程屠戮', 0.06),  // 用户定稿：6%
   ..._makeRendPassive('siege',  '炮火屠戮', 0.07), // 用户定稿：7%
 
-  passive_totem_guardian: {
-    id: 'passive_totem_guardian',
-    applicableTypes: ['totem'],
-    name: '图腾守护',
-    icon: '🗿',
-    category: 'passive',
-    description: '每10秒对75内友军施加300临时护盾。',
-    descTemplate: '唯一被动——图腾守护：每10秒对75范围内友军施加300临时护盾。',
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      instance.state = instance.state || {};
-      instance.state.cooldown = 0;
-    },
-    onFrame: (entityId, dt, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (!entity || !entity.alive || entity.type !== 'totem') return;
-      const state = instance.state;
-      state.cooldown -= dt;
-      if (state.cooldown <= 0) {
-        state.cooldown = 10;
-        const allies = ctx.entityContainer.findInRadius(entity.pos.x, entity.pos.y, 75,
-          ['melee', 'ranged', 'siege', 'super', 'totem'], true);
-        for (const ally of allies) {
-          ctx.effectRegistry.apply(ally.id, {
-            name: '图腾守护',
-            icon: '🗿',
-            kind: 'custom',
-            duration: 10,
-            stackable: false,
-            stackPolicy: 'refresh',
-            customData: { shieldAmount: 300 },
-            description: '获得300临时护盾',
-          }, `totem_guardian_${entityId}`);
-        }
-      }
-    },
-  },
-
-  passive_totem_awaken: {
-    id: 'passive_totem_awaken',
-    applicableTypes: ['totem'],
-    name: '图腾觉醒',
-    icon: '✨',
-    category: 'passive',
-    description: '第15波觉醒，获得觉醒状态。',
-    descTemplate: '唯一被动——图腾觉醒：登场时永久强化自身。',
-    effects: [],
-    onFrame: (entityId, dt, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (!entity || !entity.alive || entity.type !== 'totem') return;
-      if (ctx.waveNumber >= 15 && !instance.state?.awakened) {
-        instance.state = instance.state || {};
-        instance.state.awakened = true;
-        ctx.effectRegistry.apply(entityId, {
-          name: '图腾觉醒',
-          icon: '✨',
-          kind: 'custom',
-          duration: Infinity,
-          permanent: true,
-          stackable: false,
-          customData: { awakened: true },
-          description: '已觉醒',
-        }, 'passive_totem_awaken');
-      }
-    },
-  },
-
-  passive_totem_nourish: {
-    id: 'passive_totem_nourish',
-    applicableTypes: ['totem'],
-    name: '图腾滋养',
-    icon: '🌿',
-    category: 'passive',
-    description: '获得（2%×波数）治疗与护盾强度，上限100%。',
-    descTemplate: '唯一被动——图腾滋养：为周围友军提供治疗与护盾强度光环。',
-    effects: [],
-    onFrame: (entityId, dt, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (!entity || !entity.alive || entity.type !== 'totem') return;
-      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
-      instance.state.timer += dt;
-      if (instance.state.timer < AURA_THROTTLE) return;
-      instance.state.timer = 0;
-      const bonus = Math.min((ctx.waveNumber || 0) * 2, 100);
-      if (bonus > 0) {
-        ctx.effectRegistry.apply(entityId, {
-          name: '图腾滋养',
-          icon: '🌿',
-          kind: 'stat',
-          statKey: 'healShieldPowerPct',
-          flatValue: bonus,
-          duration: AURA_DURATION,
-          stackable: false,
-          stackPolicy: 'refresh',
-          uniquePassive: true,
-          description: `治疗护盾强度+${bonus}%`,
-        }, 'passive_totem_nourish');
-      }
-    },
-  },
+  // v51.5：passive_totem_guardian（图腾守护，老版：每10秒给附近友军300临时护盾）/
+  // passive_totem_awaken（图腾觉醒，第15波强化自身）/passive_totem_nourish（图腾滋养，
+  // 2%×波数治疗强度）三条已删除——用户："把过时的图腾兵技能删除。"
+  // 这三条是图腾兵重做前的老设计，早就被下面这三件套取代（不再默认装配，
+  // 但代码一直没删，编辑器里还能选到，选了会跟新三件套双份减伤/双份护盾叠加）。
 
   // ==================== 图腾兵（用户定稿重做）====================
   // 定位：续航 + 减伤。三件事拆成三个技能，各自单一职责：
@@ -375,40 +280,10 @@ export const minionPassives = {
     },
   },
 
-  passive_totem_sacrifice: {
-    id: 'passive_totem_sacrifice',
-    applicableTypes: ['totem'],
-    name: '图腾献祭',
-    icon: '🩸',
-    category: 'passive',
-    description: '每次攻击消耗2%当前生命值；每秒额外损失已损生命值（最大生命-当前生命）的1%。',
-    descTemplate: '唯一被动——图腾献祭：攻击消耗（【{val}】=当前生命×2%），每秒损失已损生命值×1%（残血越多掉血越快）。',
-    computeCurrent: (entity, ctx) => Math.round((entity.currentHP || 0) * 0.02),
-    effects: [],
-    onEquip: (entityId, instance, ctx) => { if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 }; },
-    onDealtDamage: (attackerId, targetId, instance, ctx) => {
-      const entity = ctx.entityContainer.get(attackerId);
-      if (!entity || !entity.alive) return;
-      const cost = entity.currentHP * 0.02;
-      entity.currentHP = Math.max(0, entity.currentHP - cost);
-      if (entity.currentHP <= 0) { entity.alive = false; ctx.eventBus.emit('entity:death', { entityId: attackerId }); }
-    },
-    onFrame: (entityId, dt, instance, ctx) => {
-      const entity = ctx.entityContainer.get(entityId);
-      if (!entity || !entity.alive) return;
-      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
-      instance.state.timer += dt;
-      if (instance.state.timer < 1) return;
-      instance.state.timer -= 1;
-      const maxHP = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId)).maxHP || 1;
-      const lostHP = Math.max(0, maxHP - entity.currentHP);
-      const drain = lostHP * 0.01;
-      if (drain > 0) {
-        entity.currentHP = Math.max(0, entity.currentHP - drain);
-        if (entity.currentHP <= 0) { entity.alive = false; ctx.eventBus.emit('entity:death', { entityId }); }
-      }
-    },
-  },
+  // v51.5：passive_totem_sacrifice（图腾献祭：每次攻击扣自己2%当前生命、每秒再扣
+  // 已损生命1%）已删除——用户："把过时的图腾兵技能删除。"审查时发现这条纯粹是
+  // 自残：通篇没有任何补偿（不给伤害加成、不给友军增益），像是没写完的半成品，
+  // 一起清掉。
 
   // ==================== 新大型小兵光环/被动 ====================
   // ==================== 术士兵（用户定稿重做）====================

@@ -118,7 +118,10 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   T('被动图标：攻城炮 🎯', def.icon === '🎯');
 
   // v43 P1-4：小兵工厂已搬到 src/core/factories.js，读组合根两份
-  const mainSrc = ['../src/main.js','../src/core/factories.js']
+  // v51.5：默认被动清单本身又从 factories.js 搬进了 defaultMinionPassives.js
+  // （与编辑器"模板技能面板首次打开"回填用的那份合并成唯一来源，此前两份手抄
+  // 副本漂移过），这条断言跟着改成读新文件。
+  const mainSrc = ['../src/main.js', '../src/core/factories.js', '../src/core/defaultMinionPassives.js']
     .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   T('工厂已把三条被动 + 充能攻击都装配给攻城车（此前遗漏 → 技能栏空白）',
     /'ram':\s*\['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'\]/.test(mainSrc));

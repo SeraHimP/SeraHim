@@ -884,4 +884,76 @@ async function world() {
     /dg-clear-all-soul/.test(gwSrc) && /inst\.skillId !== 'dragonsoul_ancient'/.test(gwSrc));
 }
 
+// ==================== 二十六、v51.5：删图腾兵僵尸技能+统一默认被动清单+塔被动新联动 ====================
+// 用户："把过时的图腾兵技能删除。你说的那前两个可以（荆棘反击加法术强度/重甲联防
+// 加韧性）。防御塔镀层爆发重做，改为+33%伤害减免，持续10秒，不可叠加。"
+{
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  T('删③-图腾兵四条僵尸技能（守护/觉醒/滋养/献祭）已从技能库删除',
+    !SkillLibrary.passive_totem_guardian && !SkillLibrary.passive_totem_awaken
+    && !SkillLibrary.passive_totem_nourish && !SkillLibrary.passive_totem_sacrifice);
+
+  // 顺带发现并修的 bug：编辑器的"默认被动"回填表与 factories.js 真正消费的那份
+  // 早就漂移了（totem 一直显示重做前的老三件套，warlock/siege/corrupt 缺主动技能）。
+  // 现在两处读同一个模块，这里直接比对，逐位相同才算真的统一。
+  const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
+  const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
+  T('统①-编辑器默认被动回填表与 factories.js 真正消费的清单是同一个对象（不再是两份手抄副本）',
+    EDITOR_PAGES_SKILLEFFECT._DEFAULT_PASSIVE_MAP === DEFAULT_MINION_PASSIVES);
+  T('统②-图腾兵默认清单是重做后的新三件套+主动技能，不是老三件套',
+    DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_aura')
+    && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_mend')
+    && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_bulwark')
+    && DEFAULT_MINION_PASSIVES.totem.includes('active_totem_shield')
+    && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_guardian'));
+  T('统③-warlock/siege/corrupt 的默认清单也补上了此前漏掉的主动技能',
+    DEFAULT_MINION_PASSIVES.warlock.includes('active_warlock_empower')
+    && DEFAULT_MINION_PASSIVES.siege.includes('active_siege_haste')
+    && DEFAULT_MINION_PASSIVES.corrupt.includes('active_corrupt_poison'));
+
+  // 荆棘反击：新增法术强度联动
+  const { ents, fx, combat, CONFIG } = await world();
+  const t1 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000, abilityPower: 0 }, skills: ['passive_thorns'] }, CONFIG);
+  const atk1 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, attackDamage: 50, maxHP: 100000 } }, CONFIG);
+  const before1 = atk1.currentHP;
+  SkillLibrary.passive_thorns.onBeingAttacked(t1.id, atk1.id, null, { entityContainer: ents, effectRegistry: fx, attrCalc: (await world()).attr, combat });
+  const reflectNoAP = before1 - atk1.currentHP;
+  const t2 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000, abilityPower: 40 }, skills: ['passive_thorns'] }, CONFIG);
+  const atk2 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, attackDamage: 50, maxHP: 100000 } }, CONFIG);
+  const before2 = atk2.currentHP;
+  SkillLibrary.passive_thorns.onBeingAttacked(t2.id, atk2.id, null, { entityContainer: ents, effectRegistry: fx, attrCalc: (await world()).attr, combat });
+  const reflectWithAP = before2 - atk2.currentHP;
+  T('联①-荆棘反击的法术强度联动生效：40 法术强度多反弹约 20（40×50%）',
+    Math.abs((reflectWithAP - reflectNoAP) - 20) < 1);
+
+  // 重甲联防：新增韧性联动
+  const towerHD = mkEntity(ents, 'tower', { stats: { attackRange: 260, maxHP: 100000 }, skills: ['passive_heavy_defense'] }, CONFIG);
+  const foeHD = mkEntity(ents, 'melee', { pos: { x: 20, y: 0 } }, CONFIG);
+  foeHD.targetId = towerHD.id; foeHD.baseStats.attackRange = 30;
+  towerHD.pos = { x: 0, y: 0 };
+  const hdInst = towerHD._skillInstances.find(i => i.skillId === 'passive_heavy_defense');
+  SkillLibrary.passive_heavy_defense.onFrame(towerHD.id, 1, hdInst, { entityContainer: ents, effectRegistry: fx });
+  const hdStats = (await world()).attr.calc(towerHD, fx.getEffects(towerHD.id));
+  T('联②-重甲联防新增韧性：1个攻击者时 tenacityPct 应为 +2%',
+    Math.abs((hdStats.tenacityPct || 0) - (towerHD.baseStats.tenacityPct || 0) - 2) < 1e-6);
+
+  // 防御塔镀层爆发重做
+  const plating = mkEntity(ents, 'tower', { stats: { maxHP: 1000 }, skills: ['passive_armor_plating'] }, CONFIG);
+  const pInst = plating._skillInstances.find(i => i.skillId === 'passive_armor_plating');
+  const pCtx = { entityContainer: ents, effectRegistry: fx, attrCalc: (await world()).attr };
+  SkillLibrary.passive_armor_plating.onEquip(plating.id, pInst, pCtx);
+  plating.currentHP = 700; // 跌破 80% 阈值
+  SkillLibrary.passive_armor_plating.onFrame(plating.id, 0.1, pInst, pCtx);
+  const burstEff = fx.getEffects(plating.id).find(e => e.blueprint.name === '镀层爆发');
+  T('爆①-镀层爆发重做为单一效果：+33%伤害减免、10秒、不可叠加',
+    burstEff && burstEff.blueprint.statKey === 'damageReduction' && burstEff.blueprint.flatValue === 33
+    && Math.abs(burstEff.remainingTime - 10) < 1 && burstEff.blueprint.stackable === false);
+  const burstCountBefore = fx.getEffects(plating.id).filter(e => e.blueprint.name === '镀层爆发').length;
+  plating.currentHP = 500; // 再跌破 60% 阈值，第二次触发
+  SkillLibrary.passive_armor_plating.onFrame(plating.id, 0.1, pInst, pCtx);
+  const burstCountAfter = fx.getEffects(plating.id).filter(e => e.blueprint.name === '镀层爆发').length;
+  T('爆②-再次破裂只刷新同一份效果，不会叠出第二份（旧版四份数值各自独立累加的问题不再出现）',
+    burstCountBefore === 1 && burstCountAfter === 1);
+}
+
 done();
