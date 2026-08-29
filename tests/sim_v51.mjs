@@ -1344,4 +1344,20 @@ async function world() {
   T('状态⑫-dot 蓝图正确读取新 tab 结构写回的伤害类型', dotBp.kind === 'dot' && dotBp.damageType === 'physical' && dotBp.flatValue === 20);
 }
 
+// ==================== 三十三、v51.6：召唤师峡谷塔属性修正 ====================
+// 用户："属性修正，召唤师峡谷。外塔HP5000，双抗40。内塔HP4000，双抗70。水晶塔HP3500，
+// 双抗55。"——"水晶塔"＝tier:'base'，这是 FactionSystem.js 里已经钉死的口径
+// （"水晶塔（高地塔，tier='base'）"、"外塔→内塔→水晶塔→召唤水晶"分路链），不是
+// nexus_main（召唤水晶本体）也不是 hq_tower（枢纽塔）。
+{
+  const { summoners_rift } = await import('../src/data/maps/summoners_rift.js');
+  const ts = summoners_rift.tierStats;
+  T('峡①-外塔：HP 5000，双抗40（双抗本来就是40，只改了HP）',
+    ts.outer.maxHP === 5000 && ts.outer.armor === 40 && ts.outer.magicResist === 40);
+  T('峡②-内塔：HP 4000，双抗70', ts.inner.maxHP === 4000 && ts.inner.armor === 70 && ts.inner.magicResist === 70);
+  T('峡③-水晶塔（tier:base）：HP 3500，双抗55', ts.base.maxHP === 3500 && ts.base.armor === 55 && ts.base.magicResist === 55);
+  T('峡④-枢纽塔/召唤水晶本体（hq_tower/nexus_main）不在本次修正范围内，维持原值',
+    ts.hq_tower.maxHP === 4750 && ts.nexus_main.maxHP === 5500);
+}
+
 done();

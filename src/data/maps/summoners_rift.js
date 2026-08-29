@@ -41,10 +41,17 @@ export const summoners_rift = {
   world: { w: WORLD_SIZE, h: WORLD_SIZE },
 
   // === Building tier stats (classic defaults, self-contained) ===
+  // v51.6：用户定稿属性修正——"外塔HP5000，双抗40。内塔HP4000，双抗70。水晶塔HP3500，
+  // 双抗55。"（"水晶塔"= tier:'base'，见 FactionSystem.js 的既定口径："水晶塔（高地塔，
+  // tier='base'）"、"外塔→内塔→水晶塔→召唤水晶"分路链，两处都明确把水晶塔钉在 base 这一档，
+  // 不是 nexus_main/hq_tower 那几档）。三档改动：
+  //   outer：4000→5000（双抗40不变，本来就是40）
+  //   inner：3500→4000，双抗 55→70
+  //   base（水晶塔）：3300→3500，双抗 70→55
   tierStats: {
-    outer:      { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 40, magicResist: 40, attackDamage: 152, baseAttackSpeed: 0.833 },
-    inner:      { maxHP: 3500, shieldFixedMax: 0, healthRegen: 0, armor: 55, magicResist: 55, attackDamage: 170, baseAttackSpeed: 0.833 },
-    base:       { maxHP: 3300, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 2.50 },
+    outer:      { maxHP: 5000, shieldFixedMax: 0, healthRegen: 0, armor: 40, magicResist: 40, attackDamage: 152, baseAttackSpeed: 0.833 },
+    inner:      { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
+    base:       { maxHP: 3500, shieldFixedMax: 0, healthRegen: 0, armor: 55, magicResist: 55, attackDamage: 170, baseAttackSpeed: 2.50 },
     nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
     hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 110, attackDamage: 150, baseAttackSpeed: 4.00 },
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
