@@ -5,6 +5,13 @@
  *        就是一个方面放在一块。兵的移速那里显示塔的子弹速度。"
  *        "不要在展开更多里显示攻速加成了，用生命恢复代替。"
  *
+ * v51.6：用户改稿——"子弹速度放在攻击力里，所有单位统一展开更多的最后一个格为
+ * 移速（目前的塔为子弹速度）。"推翻了上面那条"塔看子弹速度、兵看移速各显示各的"
+ * 的旧规则：子弹速度搬进【进攻】组（塔的攻击方式本来就属于"怎么打出去"，和攻击距离/
+ * 伤害增幅放一块更合理），最后一格（原来的 mobilityRow）统一固定显示移速——塔的
+ * moveSpeed 恒为 0（模板里就是 0），这一格对塔而言就是"确认塔不会动"，信息量不大
+ * 但至少三种单位类型的面板形状完全一致，不用再记"塔这里显示的是另一种东西"。
+ *
  * ==================== 为什么单独一个文件 ====================
  * 改动前塔卡片和兵卡片各写了一份 14 行的模板字符串，除了最后两格以外**逐字相同**。
  * 后果不是"多打了几行字"，而是两份悄悄长歪了：塔那份没有攻击距离、兵那份没有子弹速度，
@@ -24,15 +31,10 @@
  * 注：攻击力/攻速/护甲/魔抗四项在**折叠区之上**的常驻属性区，不在这张表里。
  */
 
-/** 兵看移速、塔看子弹速度：塔的 moveSpeed 恒为 0（模板里就是 0），显示它毫无信息量。 */
-function mobilityRow(kind) {
-  return kind === 'tower'
-    ? { key: 'bulletSpeed', label: '子弹速度', suffix: '' }
-    : { key: 'moveSpeed', label: '移速', suffix: '' };
-}
-
 /**
- * @param kind 'tower' | 其它（小兵/龙等）
+ * @param kind 'tower' | 其它（小兵/龙等）——v51.6 起 kind 只影响是否显示子弹速度这一格
+ *        （只有塔真正会用到弹道飞行速度，小兵/龙目前都是近身或瞬时结算），
+ *        不再决定"最后一格显示什么"——那一格现在固定是移速。
  * @returns [{ title, rows: [{ key, label, suffix }] }]
  */
 export function extAttrGroups(kind) {
@@ -45,6 +47,9 @@ export function extAttrGroups(kind) {
       { key: 'damageAmpPct', label: '伤害增幅%', suffix: '%' },
       { key: 'onHitDamage', label: '攻击特效(固定)', suffix: '' },
       { key: 'onHitPercentDamage', label: '攻击特效(%当前生命)', suffix: '%' },
+      // v51.6：子弹速度从"机动"那一组搬过来（用户定稿"子弹速度放在攻击力里"）——
+      // 塔的攻击方式本来就属于"怎么打出去"，归进攻这一组比归机动更贴切。
+      ...(kind === 'tower' ? [{ key: 'bulletSpeed', label: '子弹速度', suffix: '' }] : []),
     ] },
     { title: '穿透', rows: [
       { key: 'armorPenFlat', label: '固定穿甲', suffix: '' },
@@ -66,7 +71,9 @@ export function extAttrGroups(kind) {
     ] },
     { title: '增益与机动', rows: [
       { key: 'allStatsPct', label: '全属性加成%', suffix: '%' },
-      mobilityRow(kind),
+      // v51.6：最后一格统一固定显示移速（用户定稿），子弹速度已经搬进上面的【进攻】组，
+      // 不再由 kind 决定"这一格显示什么"——三种单位类型的面板形状因此完全一致。
+      { key: 'moveSpeed', label: '移速', suffix: '' },
     ] },
   ];
 }

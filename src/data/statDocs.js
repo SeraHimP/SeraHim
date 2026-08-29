@@ -141,7 +141,12 @@ export const STAT_DOCS = {
     desc: '每次命中额外造成【目标当前生命】百分比的伤害。',
     formula: '基数是目标**当前**生命而非最大生命 —— 越是满血的目标吃得越多，残血目标反而少。',
   },
-  damageConvertPct: { label: '伤害转化%', desc: '把一部分伤害转成另一种类型结算。', formula: '转化的那部分按新类型走对应抗性。' },
+  // v51.6 修复：这条描述文案与真实实现早就对不上了（曾经描述的是"转成另一种伤害
+  // 类型结算"，但 CombatSystem._applyDamageConversion 从 v33 Q10 起就是防御向的
+  // "把受到的伤害转一部分回临时护盾"，两回事）。用户："伤害转化的描述有问题，应该
+  // 为：将受到的实际伤害按百分比转化为临时护盾。"——按真实实现（finalDamage ×
+  // damageConvertPct% → grantTempShield）改成准确的文案。
+  damageConvertPct: { label: '伤害转化%', desc: '将受到的实际伤害按百分比转化为临时护盾。', formula: '基数是【实际扣血部分】（finalDamage，护盾吸收掉的不算），转化出的护盾量受【治疗与护盾强度】加成。' },
   lifeStealPct: { label: '生命偷取%', desc: '按造成伤害的百分比回复自身生命。', formula: '受【治疗与护盾强度】加成；同样受建筑的回复节点上限约束。' },
   healShieldPowerPct: {
     label: '治疗与护盾强度%',

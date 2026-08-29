@@ -1360,4 +1360,23 @@ async function world() {
     ts.hq_tower.maxHP === 4750 && ts.nexus_main.maxHP === 5500);
 }
 
+// ==================== 三十四、v51.6：伤害转化描述文案纠正 + 子弹速度分组调整 ====================
+// 用户："伤害转化的描述有问题，应该为：将受到的实际伤害按百分比转化为临时护盾。
+//        子弹速度放在攻击力里，所有单位统一展开更多的最后一个格为移速（目前的塔为
+//        子弹速度）。"
+{
+  const { statDoc } = await import('../src/data/statDocs.js');
+  const doc = statDoc('damageConvertPct');
+  T('转①-伤害转化的说明文案改成了跟真实实现一致的版本（不是"转成另一种类型结算"那个旧说法）',
+    doc.desc === '将受到的实际伤害按百分比转化为临时护盾。'
+    && !/另一种类型/.test(doc.desc) && !/另一种类型/.test(doc.formula || ''));
+
+  const { extAttrGroups } = await import('../src/ui/statPanelLayout.js');
+  const keysOf = (kind) => extAttrGroups(kind).flatMap(g => g.rows.map(r => r.key));
+  const groupOf = (kind, key) => extAttrGroups(kind).find(g => g.rows.some(r => r.key === key))?.title;
+  T('转②-子弹速度搬进了【进攻】组（塔）', groupOf('tower', 'bulletSpeed') === '进攻');
+  T('转③-所有单位类型"展开更多"的最后一格统一是移速',
+    keysOf('tower').includes('moveSpeed') && keysOf('minion').includes('moveSpeed') && keysOf('dragon').includes('moveSpeed'));
+}
+
 done();
