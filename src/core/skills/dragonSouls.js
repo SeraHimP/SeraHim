@@ -627,10 +627,18 @@ export const dragonSouls = {
       if (!atk || !origin || !ctx.combat) return;
       const base = (ctx.totalRaw || 0) * ((p.damagePct ?? 40) / 100);
       if (base <= 0) return;
+      // v51.6 修复：星魂的主题就是"射程+弹速"（见上面的 CONFIG.dragonSouls.stat.astral
+      // 头注），但分裂出来的星弹速度原来是硬编码 520，跟攻击者自己的 bulletSpeed
+      // 完全脱钩——一座叠满星魂+星力的塔自身普攻弹速能到 560（400 基础 +80 魂 +80
+      // 满层力），自己的招牌分裂弹反而比普攻还慢，正是用户报的"星龙的子弹速度特别慢"。
+      // 现在改成分裂弹速度＝攻击者当前弹速（与主武器完全同步），不再是一个和弹速
+      // 属性无关的写死数字。
+      const atkStats = ctx.attrCalc.calc(atk, ctx.effectRegistry.getEffects(atk.id));
       ctx.combat.splitShot(atk, origin, base, ctx.attackType || 'physical', {
         splits: p.splits ?? 2,
         radius: p.radius ?? 260,
         onHitEffPct: p.onHitEffPct ?? 55,
+        speed: atkStats.bulletSpeed,
       });
     },
   },

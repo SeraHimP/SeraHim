@@ -1216,7 +1216,12 @@ export class CombatSystem {
         attackerId: attacker.id, targetId: e.id,
         startX: origin.pos.x, startY: origin.pos.y,
         currentX: origin.pos.x, currentY: origin.pos.y,
-        progress: 0, speed: 520,
+        // v51.6 修复：分裂弹速度原来写死 520，与攻击者自己的弹速完全脱钩——星魂
+        // 的招牌能力"分裂"反而不吃星魂自己主打的弹速加成，叠满弹速的塔反而觉得
+        // "自己的分裂弹比普攻还慢"。改成调用方传什么速度就用什么（dragonsoul_astral
+        // 传的是攻击者当前 bulletSpeed），没传时兜底 400（塔弹默认速度，与普通攻击
+        // 同一基准，不再是一个孤立的数字）。
+        progress: 0, speed: opt.speed || 400,
         size: 7,                       // 比塔弹(20)/兵弹(12)都小 —— 一眼看出是分裂出来的
         color: opt.color || '#7c6cf5',
         directHit: {

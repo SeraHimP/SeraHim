@@ -286,6 +286,40 @@ const mk = (ents, t, x, f, hp = 100000) => {
     })());
   }
 
+  // v51.6 修复：星魂的分裂弹速度原来写死 520，跟攻击者自己的弹速完全脱钩——
+  // 星魂自己的主题就是"射程+弹速"（CONFIG.dragonSouls.stat.astral），叠满弹速的
+  // 塔反而会觉得"自己的分裂弹比普攻还慢"，这正是用户报的"星龙的子弹速度特别慢"。
+  // 现在分裂弹速度＝攻击者当前 bulletSpeed，这里验证一高一低两个弹速都能跟上，
+  // 不再是与弹速属性无关的固定 520。
+  {
+    const { ents, fx, combat, proj, ctx } = W();
+    const t = mk(ents, 'tower', 0, 'blue'); equipSkill(t, 'dragonsoul_astral', ctx, SkillLibrary);
+    const inst = t._skillInstances.find(i => i.skillId === 'dragonsoul_astral');
+    const origin = mk(ents, 'melee', 100, 'red', 5000);
+    mk(ents, 'melee', 140, 'red', 5000);
+
+    // AttributeCalculator.calc() 按 frame 缓存结果，改完 baseStats 之后要 A.tick()
+    // 一下才会在下一次 calc() 里重新算，不然读到的是改之前那份缓存。
+    // 期望值不能直接拿改的那个 baseStats 字面量比——这座塔本身还装着星魂，
+    // CONFIG.dragonSouls.stat.astral 会再给弹速 +80，实际生效值是 calc() 算出来的
+    // 那个数（base + 星魂加成），不是 baseStats 上的原始值，这才是这条修复真正要
+    // 验证的东西："分裂弹速度＝这座塔当前真实弹速"，包含它自己的一切加成来源。
+    t.baseStats.bulletSpeed = 999; // 远高于旧的硬编码 520
+    A.tick();
+    let expected = A.calc(t, fx.getEffects(t.id)).bulletSpeed;
+    SkillLibrary.dragonsoul_astral.onDealtDamage(t.id, origin.id, inst, { ...ctx, totalRaw: 200, attackType: 'physical' });
+    T('星④-分裂弹速度跟着攻击者【当前真实弹速】走（含星魂自身+80加成），不是硬编码520',
+      expected !== 520 && proj.getProjectiles().every(pr => pr.speed === expected));
+    for (let i = 0; i < 400 && proj.getProjectiles().length; i++) proj.update(0.05);
+
+    t.baseStats.bulletSpeed = 50; // 远低于旧的硬编码 520，确认不是"取更大值"之类的另一种硬编码
+    A.tick();
+    expected = A.calc(t, fx.getEffects(t.id)).bulletSpeed;
+    SkillLibrary.dragonsoul_astral.onDealtDamage(t.id, origin.id, inst, { ...ctx, totalRaw: 200, attackType: 'physical' });
+    T('星⑤-弹速调低时分裂弹同步变慢（不是只在弹速很高时才生效，也不是取二者较大值）',
+      expected < 520 && proj.getProjectiles().every(pr => pr.speed === expected));
+  }
+
   // ☄️ 蚀魂
   {
     const { ents, fx, ctx } = W();
