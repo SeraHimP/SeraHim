@@ -898,7 +898,7 @@ export class CombatSystem {
     // 原实现挂在攻击方（打人回盾）——方向整个是反的，等于这条属性从没按设计工作过。
     this._applyDamageConversion(target, defStats, finalDamage);
 
-    // ---- 生命偷取（v51：物理/法术/全能三件套统一实现，见 applyVamp）----
+    // ---- 全能吸血（v51：物理/法术/全能三件套统一实现，见 applyVamp）----
     // 这是主命中路径，vampEff 恒为 1（100%）——溅射/连锁走各自调用点的 vampGroup 标记。
     applyVamp(this, attacker, damage, attackType, 1);
 
@@ -1515,7 +1515,7 @@ export class CombatSystem {
     if (damage > 0) target.lastDamageTime = window.gameTime || 0;
     // 伤害转化（v33 Q10）：防御向，两条伤害路径（performAttack/Direct）行为一致
     this._applyDamageConversion(target, defStats, finalDamage);
-    // v51：吸血——这条路径此前完全没有（生命偷取只接在 _resolveHit 上），现在补齐，
+    // v51：吸血——这条路径此前完全没有（全能吸血只接在 _resolveHit 上），现在补齐，
     // 与主命中路径共用同一份 applyVamp。基数用 damage（护盾吸收前的已结算伤害）而不是
     // finalDamage（HP 实扣量），与 _resolveHit 原有的口径一致——护盾扛住了这一下，
     // 攻击方依然按"打出去多少"回血，这是改动前就有的行为，不是这次新定的。

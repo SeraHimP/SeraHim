@@ -10,6 +10,9 @@
  * 不是验收对象，"这条规则生不生效/生效的方向对不对"才是。
  */
 import { setupWindow, scoreboard, srcOf, makeWorld, mkEntity } from './_harness.mjs';
+import { RELATED_STATS } from '../src/ui/statPanelLayout.js';
+import { fieldLabel } from '../src/ui/editor/fields.js';
+import { statDoc } from '../src/data/statDocs.js';
 setupWindow({ waveNumber: 1 });
 
 const { T, done } = scoreboard('v51验收');
@@ -1377,6 +1380,35 @@ async function world() {
   T('转②-子弹速度搬进了【进攻】组（塔）', groupOf('tower', 'bulletSpeed') === '进攻');
   T('转③-所有单位类型"展开更多"的最后一格统一是移速',
     keysOf('tower').includes('moveSpeed') && keysOf('minion').includes('moveSpeed') && keysOf('dragon').includes('moveSpeed'));
+}
+
+// ==================== v51.6：关联属性弹窗 + 全能吸血改名 ====================
+{
+  // 用户原话给出的 3 组关联属性，逐一钉死
+  T('关①-暴击率关联暴击伤害', RELATED_STATS.critChance?.includes('critDamagePct'));
+  T('关②-全能吸血关联物理/法术吸血',
+    RELATED_STATS.lifeStealPct?.includes('physicalVampPct') &&
+    RELATED_STATS.lifeStealPct?.includes('spellVampPct'));
+  T('关③-生命恢复关联基础生命恢复', RELATED_STATS.healthRegen?.includes('baseHealthRegenMod'));
+
+  // 补充的 4 组也要有内容，且不能跟自己关联
+  for (const k of ['abilityPower', 'attackDamage', 'armor', 'magicResist']) {
+    const arr = RELATED_STATS[k];
+    T(`关④-补充关联组「${k}」非空且不自指`, Array.isArray(arr) && arr.length > 0 && !arr.includes(k));
+  }
+
+  // _showStatDoc 要真正读取并渲染 RELATED_STATS
+  const uiSrc = srcOf('src/ui/UIManager.js');
+  T('关⑤-属性说明弹窗读取 RELATED_STATS[key]', /RELATED_STATS\[key\]/.test(uiSrc));
+  T('关⑥-关联属性区块拼进弹窗正文', /\$\{live\}\$\{relatedHtml\}\$\{dmgType\}/.test(uiSrc));
+
+  // 全能吸血改名：跨 4 处标签同步，且旧名不再作为「显示用」标签出现
+  T('改①-fieldLabel 已改名', fieldLabel('lifeStealPct') === '全能吸血%');
+  T('改②-statDoc 标签已改名', statDoc('lifeStealPct')?.label === '全能吸血%');
+  const detailSrc = srcOf('src/ui/DetailModal.js');
+  T('改③-DetailModal 标签表已改名', /lifeStealPct:\s*'全能吸血'/.test(detailSrc));
+  const layoutSrc = srcOf('src/ui/statPanelLayout.js');
+  T('改④-展开面板行标签已改名', /label:\s*'全能吸血%'/.test(layoutSrc));
 }
 
 done();

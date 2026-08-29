@@ -587,8 +587,10 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // v51：这个方法里加了 desc 支持传函数（护甲/魔抗等按当前数值给具体描述）的解析逻辑，
   // shellHtml 调用点被推远了一些——窗口跟着放宽，钉的还是"这个方法最终确实用了统一外壳"
   // 这条规则，不是method具体多少字符。
+  // v51.6：又加了一段"关联属性"渲染（RELATED_STATS，见 statPanelLayout.js），窗口
+  // 再次放宽——同样的道理，这条只钉"最终确实调了 shellHtml"，不钉方法体多长。
   T('界④-属性说明弹窗也走同一个外壳',
-    /_showStatDoc\(key, entity\) \{[\s\S]{0,3500}shellHtml\(\{/.test(um));
+    /_showStatDoc\(key, entity\) \{[\s\S]{0,6000}shellHtml\(\{/.test(um));
 
   // ④ 属性可点击
   const { STAT_DOCS, statDoc } = await import('../src/data/statDocs.js');

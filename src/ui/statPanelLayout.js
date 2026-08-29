@@ -65,7 +65,7 @@ export function extAttrGroups(kind) {
     // 而加固城防（水晶 1、枢纽 3）与潮之力这一路改的正是它 —— 看不见就等于没有。
     { title: '续航', rows: [
       { key: 'healthRegen', label: '生命恢复', suffix: '' },
-      { key: 'lifeStealPct', label: '生命偷取%', suffix: '%' },
+      { key: 'lifeStealPct', label: '全能吸血%', suffix: '%' },
       { key: 'damageConvertPct', label: '伤害转化%', suffix: '%' },
       { key: 'healShieldPowerPct', label: '治疗与护盾强度%', suffix: '%' },
     ] },
@@ -101,3 +101,34 @@ export function allPanelStatKeys(kind = 'tower') {
   for (const g of extAttrGroups(kind)) for (const r of g.rows) ks.push(r.key);
   return ks;
 }
+
+/**
+ * ==================== v51.6：关联属性弹窗 ====================
+ * 用户："由于目前单位的各种属性特别多，很难显示全，所以未显示的属性在相关联属性的
+ * 单位属性窗口点某属性弹出的窗口中显示。比如点开暴击窗口，里面额外显示暴击伤害。
+ * 生命偷取里额外显示物理吸血和法术吸血……生命恢复里额外显示基础生命值恢复。等等。"
+ *
+ * 面板格子数量有限（两列网格，塞不下所有属性），有些属性因此从来没有自己的格子——
+ * 玩家只能去编辑器里翻才知道它们存在。这张表不新增格子，而是把"没有自己格子"的
+ * 属性挂到主题相近的**已有**格子的说明弹窗里，点开就能看到，不占面板空间。
+ *
+ * 前三条是用户点名的例子，原样落地；后四条（法强/攻击力/护甲/魔抗那几条）是同一个
+ * 思路下我按主题就近安排的："等等"没有给出穷举名单，这几个是当前唯一还完全没有
+ * 任何展示入口的属性（critDamagePct/physicalVampPct/spellVampPct/baseHealthRegenMod
+ * 之外，还有 skillAmpPct/adaptiveForce/evasionPct/tenacityPct），不安排的话它们还是
+ * "编辑器里能改、面板上永远看不到"——分组理由：
+ *   法术强度 → 技能增幅（都是"魔法输出"范畴）
+ *   攻击力   → 适应之力（适应之力两边都能转，攻击力这边正好没有别的关联项）
+ *   护甲     → 闪避率（都是"减少受到的伤害"范畴，闪避是完全避免这一下）
+ *   魔抗     → 韧性（都是"抵御控制/负面效果的生存类"范畴，护甲那边已经放了闪避）
+ * 每条独立展示一次，不重复安排到两个宿主格子里。
+ */
+export const RELATED_STATS = {
+  critChance: ['critDamagePct'],
+  lifeStealPct: ['physicalVampPct', 'spellVampPct'],
+  healthRegen: ['baseHealthRegenMod'],
+  abilityPower: ['skillAmpPct'],
+  attackDamage: ['adaptiveForce'],
+  armor: ['evasionPct'],
+  magicResist: ['tenacityPct'],
+};

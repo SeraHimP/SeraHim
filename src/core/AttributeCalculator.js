@@ -154,7 +154,7 @@ export const AttributeCalculator = {
     }
 
     if (includeAllStats && allStatsPctMod !== 0) {
-      // 全属性加成不应作用于"百分比上限型"属性（减伤、伤害转化、生命偷取等），
+      // 全属性加成不应作用于"百分比上限型"属性（减伤、伤害转化、全能吸血等），
       // 否则会把已经封顶的属性二次放大、突破设计上限。这类属性只吃自身的加成。
       const allStatsExclude = new Set([
         'allStatsPct', 'damageReduction', 'lifeStealPct', 'damageConvertPct',

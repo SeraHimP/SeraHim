@@ -518,7 +518,7 @@ export const dragonSouls = {
       const p = P('blood');
       return `生命值越低增益越高，在 ${p.peakAtHPPct ?? 33}% 生命时达到峰值并保持：`
         + `攻击力 +${p.attackDamagePct ?? 30}%、攻速 +${p.bonusAttackSpeedPct ?? 25}%、`
-        + `生命偷取 +${p.lifeStealPct ?? 10}%。`;
+        + `全能吸血 +${p.lifeStealPct ?? 10}%。`;
     },
     get descTemplate() { return this.description; },
     effects: [],
@@ -745,7 +745,7 @@ const STAT_LABEL = {
   healShieldPowerPct: '治疗与护盾强度', healthRegen: '生命回复',
   armorPenFlat: '固定护甲穿透', magicPenFlat: '固定法术穿透',
   bonusAttackSpeedPct: '攻速', attackRange: '攻击距离',
-  damageAmpPct: '伤害增幅', lifeStealPct: '生命偷取',
+  damageAmpPct: '伤害增幅', lifeStealPct: '全能吸血',
   onHitPercentDamage: '攻击特效%当前生命',
   // v51.4：龙魂改回纯主题方向后新用上的几个属性（此前这份表没覆盖到，
   // 缺了的话会原样显示英文键名，不算错但不好看）。

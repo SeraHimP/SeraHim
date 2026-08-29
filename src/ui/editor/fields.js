@@ -29,7 +29,7 @@ export const FIELD_META = {
   onHitDamage:        { label: '攻击特效固定伤害', min: 0, max: 1000, step: 5 },
   onHitPercentDamage: { label: '攻击特效%当前生命', min: 0, max: 50, step: 0.5 },
   damageConvertPct:   { label: '伤害转化%', min: 0, max: 100, step: 1 },
-  lifeStealPct:       { label: '生命偷取%', min: 0, max: 100, step: 1 },
+  lifeStealPct:       { label: '全能吸血%', min: 0, max: 100, step: 1 },
   healShieldPowerPct: { label: '治疗护盾强度%', min: -100, max: 200, step: 5 },
   allStatsPct:        { label: '全属性加成%', min: -100, max: 300, step: 5 },
   damageAmpPct:       { label: '伤害增幅%', min: -100, max: 300, step: 5 },

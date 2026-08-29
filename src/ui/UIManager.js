@@ -6,7 +6,7 @@ import * as WEATHER_DEFS from '../data/Weather.js';
 import { DetailModal, STAT_LABELS } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
-import { extAttrGroups, BASE_ATTR_ROWS } from './statPanelLayout.js';
+import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
 import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES } from '../core/resourceBar.js';
 import { stepTrail } from '../presentation/barTrail.js';
 
@@ -683,6 +683,36 @@ export class UIManager {
       }
     }
 
+    // ==================== v51.6：关联属性 ====================
+    // 用户："属性特别多，很难显示全，所以未显示的属性在相关联属性的……窗口中显示。
+    // 比如点开暴击窗口，里面额外显示暴击伤害。" ——RELATED_STATS 定义了每个格子
+    // 该额外带出哪些没有自己格子的属性，这里统一渲染，不用每个 key 各写一段。
+    let relatedHtml = '';
+    const relatedKeys = RELATED_STATS[key] || [];
+    if (relatedKeys.length) {
+      const rows = relatedKeys.map((rk) => {
+        const rdoc = statDoc(rk);
+        if (!rdoc) return '';
+        if (entity && liveStats) {
+          const rp = this._statParts(rk, entity, liveStats);
+          if (rp) {
+            const rParen = rp.delta === 0 ? '' : ` <span class="stat-break">（${rp.base}${rp.delta > 0 ? '+' : '−'}${Math.abs(rp.delta)}）</span>`;
+            return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
+              <span style="color:var(--text-dim);">${rdoc.label}</span>
+              <span><b class="${rp.cls}">${rp.now}</b>${rParen}</span>
+            </div>`;
+          }
+        }
+        return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
+          <span style="color:var(--text-dim);">${rdoc.label}</span><span style="color:var(--text-mute);">—</span>
+        </div>`;
+      }).filter(Boolean).join('');
+      if (rows) {
+        relatedHtml = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">关联属性</div>
+          <div style="font-size:12px;margin-bottom:10px;">${rows}</div>`;
+      }
+    }
+
     // v44：攻击力这一条额外写清**这个单位打出来是什么伤害类型**。
     // 用户："攻击力详细窗口里也写上伤害类型（物理/魔法/真实/魔法+真实/等等）。"
     // 类型不是一个常量：模板给基准（v43 起塔默认魔法），武器技能可以再改或再加一股
@@ -714,7 +744,7 @@ export class UIManager {
     }
 
     const descText = typeof doc.desc === 'function' ? doc.desc(liveStats) : doc.desc;
-    const body = `${live}${dmgType}
+    const body = `${live}${relatedHtml}${dmgType}
       <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${descText}</p>
       ${doc.formula ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">结算规则</div>
         <p style="font-size:11px;color:var(--text-dim);line-height:1.8;margin:0 0 10px;">${doc.formula}</p>` : ''}

@@ -147,11 +147,14 @@ export const STAT_DOCS = {
   // 为：将受到的实际伤害按百分比转化为临时护盾。"——按真实实现（finalDamage ×
   // damageConvertPct% → grantTempShield）改成准确的文案。
   damageConvertPct: { label: '伤害转化%', desc: '将受到的实际伤害按百分比转化为临时护盾。', formula: '基数是【实际扣血部分】（finalDamage，护盾吸收掉的不算），转化出的护盾量受【治疗与护盾强度】加成。' },
-  lifeStealPct: { label: '生命偷取%', desc: '按造成伤害的百分比回复自身生命。', formula: '受【治疗与护盾强度】加成；同样受建筑的回复节点上限约束。' },
+  // v51.6：生命偷取全局改名为"全能吸血"（用户定稿）——字段 lifeStealPct 不变，
+  // 只改中文标签；与 physicalVampPct/spellVampPct 并列时，"全能"准确表达了
+  // "不挑伤害类型，物理魔法真实都算"这个语义，比"生命偷取"更贴切。
+  lifeStealPct: { label: '全能吸血%', desc: '按造成伤害的百分比回复自身生命。', formula: '受【治疗与护盾强度】加成；同样受建筑的回复节点上限约束。' },
   healShieldPowerPct: {
     label: '治疗与护盾强度%',
     desc: '放大自身产生的一切治疗与护盾。',
-    formula: '贯通全部来源：生命回复、生命偷取、护盾再生、技能治疗、龙魂回血都吃这一项。',
+    formula: '贯通全部来源：生命回复、全能吸血、护盾再生、技能治疗、龙魂回血都吃这一项。',
   },
   allStatsPct: { label: '全属性加成%', desc: '同时放大多项基础属性。', formula: '作用在基础属性上，与各属性自己的百分比加成相乘。' },
   damageAmpPct: {

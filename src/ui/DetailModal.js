@@ -7,7 +7,10 @@ export const STAT_LABELS = {
   attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔抗',
   moveSpeed: '移速', attackRange: '攻击距离', bonusAttackSpeedPct: '攻速',
   damageReduction: '伤害减免', damageAmpPct: '伤害增幅', allStatsPct: '全属性',
-  lifeStealPct: '生命偷取', healShieldPowerPct: '治疗护盾强度',
+  // v51.6：生命偷取全局改名为"全能吸血"（用户定稿）——lifeStealPct 这个字段名不变，
+  // 只改中文显示标签，物理/法术/全能三件套里它一直就是"全部伤害类型都算"的那一档，
+  // 改名之后名字才真正对上语义。
+  lifeStealPct: '全能吸血', healShieldPowerPct: '治疗护盾强度',
   armorPenFlat: '固定护甲穿透', armorPenPercent: '护甲穿透',
   magicPenFlat: '固定法穿', magicPenPercent: '法术穿透',
   healthRegen: '生命回复', onHitPercentDamage: '攻击特效',
@@ -108,7 +111,7 @@ export const DetailModal = {
       `护甲: ${Math.round(stats.armor)}  |  魔抗: ${Math.round(stats.magicResist)}`,
       `穿透: ${Math.round(stats.armorPenPercent)}% + ${Math.round(stats.armorPenFlat)}  |  法穿: ${Math.round(stats.magicPenPercent)}% + ${Math.round(stats.magicPenFlat)}`,
       `伤害减免: ${Math.round(stats.damageReduction)}%  |  格挡: ${Math.round(stats.damageBlock)}`,
-      `伤害转化: ${Math.round(stats.damageConvertPct)}%  |  生命偷取: ${Math.round(stats.lifeStealPct)}%`,
+      `伤害转化: ${Math.round(stats.damageConvertPct)}%  |  全能吸血: ${Math.round(stats.lifeStealPct)}%`,
       `攻击特效: 固定 ${Math.round(stats.onHitDamage)}  |  %当前生命 ${Math.round(stats.onHitPercentDamage)}%`,
       `治疗护盾强度: ${Math.round(stats.healShieldPowerPct)}%  |  全属性加成: ${Math.round(stats.allStatsPct)}%`,
       `移速: ${Math.round(stats.moveSpeed)}  |  攻击距离: ${Math.round(stats.attackRange)}`,
