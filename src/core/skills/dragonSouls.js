@@ -739,6 +739,11 @@ const STAT_LABEL = {
   bonusAttackSpeedPct: '攻速', attackRange: '攻击距离',
   damageAmpPct: '伤害增幅', lifeStealPct: '生命偷取',
   onHitPercentDamage: '攻击特效%当前生命',
+  // v51.4：龙魂改回纯主题方向后新用上的几个属性（此前这份表没覆盖到，
+  // 缺了的话会原样显示英文键名，不算错但不好看）。
+  critChance: '暴击率', spellVampPct: '法术吸血', physicalVampPct: '物理吸血',
+  tenacityPct: '韧性', abilityPower: '法术强度', adaptiveForce: '适应之力',
+  damageConvertPct: '伤害转化', bulletSpeed: '子弹速度',
 };
 
 /** 把某条魂的常驻属性拼成一句人话，追加到面板文案里。 */

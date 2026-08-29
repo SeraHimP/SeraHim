@@ -145,11 +145,13 @@ const mk = (ents, t, x, f, hp = 100000) => {
     }
     return true;
   })());
-  T('魂③-每条新魂的属性半边都含一份生存分量（引擎结构：生存复利、输出封顶）', (() => {
-    const SURV = ['damageReduction', 'damageBlock', 'maxHPPct', 'shieldFixedMax',
-      'healShieldPowerPct', 'lifeStealPct', 'healthRegen'];
-    return NEW.every(k => Object.keys(CONFIG.dragonSouls.stat[k]).some(s => SURV.includes(s)));
-  })());
+  // v51.4：推翻了。"每条魂都要有生存分量"这条 v44 规则被用户否掉，改成与
+  // dragonPower 同一套纪律——"哪种类型的巨龙之力/龙魂就加哪种类型的属性/方向"，
+  // 常驻数值不再靠塞跟主题无关的防御/生存属性来平衡。sim_v44.mjs「龙⑩」已经把
+  // 这条改成了跨全部十三条魂的"元素独占"检查，这里不用重复断言，只确认这六条
+  // 新魂本身也在那份独占表里（不是被漏掉、stat 是空对象）。
+  T('魂③-六条新魂都有非空的常驻数值（方向对不对由龙⑩的独占检查守）',
+    NEW.every(k => Object.keys(CONFIG.dragonSouls.stat[k]).length > 0));
 
   // 🧊 霜魂
   {

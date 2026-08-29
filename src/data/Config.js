@@ -187,7 +187,15 @@ export const CONFIG = {
       // 且"改为龙死亡后下一条龙的倒计时才开始计时"—— 这条在 DragonSystem.update 里
       // 本来就成立（场上有龙时直接 return，计时器冻结），不需要额外改代码。
       // 于是场上**最多同时存在一条龙**，不会堆积。
-      firstDelay: 60,                    // 首条元素龙的出现时间（秒）
+      //
+      // v51.4：v43 那版"1分钟就刷"被推翻。用户反馈"第一波龙生成的太快了，导致龙的
+      // 倾向就偏向于红方了"——这轮 --sweep soul 量出来的基线（无魂）就有 25%/70%、
+      // 推进度差 -0.82 的红方倾向，本来以为是地图本身的不对称，现在看根子在这：
+      // 60 秒时两条兵线都还没打出真正的强度差，第一条龙落谁手基本看地图几何/出生点
+      // 这种"谁先摸到"的偶然因素，而不是真实的战局。改成与后续元素龙同一个 300 秒
+      // 节奏——不再单独给第一条龙"抢跑"，届时双方已经有几波兵线的真实较量支撑，
+      // 抢龙结果才更多由玩法本身决定。
+      firstDelay: 300,                   // 首条元素龙的出现时间（秒）v51.4：60 → 300
       elementIntervals: [300],           // v43：[420,480,540] → 统一 300（越界沿用最后一项）
       ancientFirstDelay: 300,            // v43：成魂后首条远古龙也是 300（原 300，未变）
       ancientInterval: 300,              // v43：600 → 300。理由见下。
@@ -255,8 +263,10 @@ export const CONFIG = {
   //（命中就触发 / 受击就触发 / 每隔 N 秒就触发），机械单位也能吃满。
   // 设计背景详见 src/core/skills/dragonSouls.js 的头注。
   //
-  // ⚠️ 平衡验收：用 `node tools/balance_matrix.mjs --soul <id>` 跑"持魂方 vs 无魂方"，
-  // 目标胜率 **60~70%**。超过 70% 就砍数值 —— 龙魂该是胜负手，不该是终局宣告。
+  // ⚠️ 平衡验收：用 `node tools/balance_matrix.mjs --sweep soul` 跑"持魂方 vs 无魂方"。
+  // v51.4 起用户放宽了要求："龙魂的平衡不需要做的太严格，只要不是差的太远就行。
+  // 因为有强有弱。"—— 不再死守 60~70% 这个窄带，只要别出现 poison 那种"均局20分钟、
+  // 对面被打到推进度 <1"级别的离谱结果就行。
   dragonSouls: {
     // ==================== v44 重做：数值部分 + 机制部分 ====================
     // 用户定稿："巨龙之力做成简单的数值调整。龙魂做成数值+机制的。"
@@ -266,37 +276,55 @@ export const CONFIG = {
     //   满 4 条成魂    → 同方向属性拉到满档 **并且** 解锁该元素的机制
     // 力和魂不再是两套不相干的东西。
     //
-    // ⚠️ 数值来源：`node tools/balance_matrix.mjs --sweep soul` / `--sweep power`。
-    // 目标是每一档的推进度差落在基线附近的一个带里；胜率在 30 分钟上限下几乎全是平局，
-    // **不能**拿它当主指标（v43 那一轮就是被这个坑了，九档里八档 0% 胜率）。
+    // ==================== v51.4：推翻"生存分量"设计，改回纯主题方向 ====================
+    // 用户明确否掉了 v44 定下的这条规则："巨龙之力/龙魂的方向就是只加某方向的属性，
+    // 而不要因为平衡加一些别的（比如加双抗/生命值等）。哪种类型的巨龙之力/龙魂就
+    // 加哪种类型的属性/方向。"
     //
-    // ⚠️ v43 对照跑出来的结构性结论（不是口味，是数据）：
-    // **这个引擎里生存收益是复利的，输出收益是封顶的。** 塔和大型小兵机械攻击，
-    // 输出增益只是把本来就杀得掉的东西杀快一点；减伤让塔多活一秒就多打一轮。
-    // 当时纯输出的炎/雷/暗三条魂推进度差全为负（比不拿还差），而纯减伤的山魂 6/6 全胜。
-    // 所以每条魂的【数值部分】都含一份生存分量 —— 独占性归"力"，平衡归"魂"。
+    // v44 那一轮的原始理由是：对照数据显示纯输出的魂（炎/雷/暗）推进度差全为负，
+    // 纯减伤的山魂 6/6 全胜，于是给每条魂都塞了一份跟主题无关的"生存分量"
+    // （常见的是 maxHPPct/damageReduction，甚至让 blood/steel 两条魂的常驻属性
+    // 撞上了 dark/water 已经独占的 lifeStealPct/healShieldPowerPct——"每个属性只
+    // 属于一个元素"这条早就在 dragonPower 那边定成规矩了，龙魂这一层却违反了它）。
+    // 现在恢复成 dragonPower 那份"元素独占属性表"同一套纪律：每条魂的常驻数值
+    // 只能用**这个元素自己的方向**，不借用别的元素已占用的属性；
+    // 主题本来就是防御的（山/霜/蚀）照样给防御向属性——那不是"平衡填充"，是它的方向。
+    // 用户同时放宽了平衡要求（见上面 dragonSouls 头注），弱一点强一点都可以接受，
+    // 不需要再靠塞生存分量去补，也就不需要那条规则了。
+    //
+    // 附带：把新增的属性框架（法术强度/暴击率/适应之力/物理与法术吸血/韧性）
+    // 分给还没有第二个方向、或原本就单薄的几条魂，让 13 条元素的方向更立体、
+    // 也不再互相撞属性（雷=暴击【精准打击】、毒=法术吸血【中毒侵蚀生命】、
+    // 霜=韧性【坚冰不动摇】、血=物理吸血【替换掉撞车的 lifeStealPct】、
+    // 星=法术强度【星辰之力】、蚀=适应之力【侵蚀吸收万物之力】）。
     stat: {
       // 每条魂的常驻属性（在巨龙之力 4 层的基础上再加这一份）。
       // 键名即 statKey，直接进 EffectRegistry 的 stat 效果，不另写一套。
-      // ⚠️ v44 第一轮对照之后下调约 1/3：首版跑出来 fire 100%/+1.81、water 83%/+2.86、
-      // earth 100%/+2.36，全部越过 60~70% 的目标带（基线是 50%/+0.30）。
-      fire:    { attackDamagePct: 8, maxHPPct: 5 },
+      // 数值沿用各自机制里已经在用的量级，只是把"跟主题无关的那一项"摘掉——
+      // 具体数字不是这次要锁死的，用户放宽了平衡要求，先保证"方向对"，
+      // 强弱留给下一轮 --sweep soul 数据说话。
+      fire:    { attackDamagePct: 8 },
       water:   { healShieldPowerPct: 12, healthRegen: 2 },
+      // 山魂主题本来就是防御，这三项**就是**它的方向，不是塞进来的生存分量。
       earth:   { armor: 8, magicResist: 8, maxHPPct: 6 },
-      thunder: { armorPenPercent: 12, magicPenPercent: 12, maxHPPct: 4 },
-      // 风魂的生存分量给 damageReduction：主题是"难以捉摸"，而且数值给得比山魂小得多
-      // —— 它是配角，不是第二个山魂。
-      wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06, damageReduction: 3 },
+      // 雷=精准打击：穿透之外加一份暴击率（此前没有魂用过 critChance）。
+      thunder: { armorPenPercent: 12, magicPenPercent: 12, critChance: 15 },
+      wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06 },
       dark:    { damageAmpPct: 7, lifeStealPct: 4 },
-      poison:  { onHitPercentDamage: 0.7, maxHPPct: 4 },
-      // v50 六条新魂。每条都含一份**生存分量** —— v43 的对照数据摆在那里：
-      // 纯输出的三条魂推进度差全为负，纯减伤的山魂 6/6 全胜。这不是口味，是这个引擎的结构。
-      frost:   { damageBlock: 2, damageReduction: 4 },
-      steel:   { shieldFixedMax: 260, healShieldPowerPct: 8 },
-      blood:   { lifeStealPct: 3, maxHPPct: 4 },
-      magma:   { armorPenFlat: 6, magicPenFlat: 6, damageReduction: 4 },
-      astral:  { attackRange: 45, damageReduction: 3 },
-      rift:    { damageReduction: 5, attackDamagePct: 5 },
+      // 毒=法术侵蚀：DOT 本身是魔法伤害，加一份法术吸血呼应"用毒液汲取生命"。
+      poison:  { onHitPercentDamage: 0.7, spellVampPct: 4 },
+      // 霜=坚冰不动摇：格挡之外加韧性（抗控），呼应它自己是控制系但也扛得住控制。
+      frost:   { damageBlock: 2, tenacityPct: 15 },
+      steel:   { shieldFixedMax: 260 },
+      // 血=物理汲取：把原来撞车 dark 的 lifeStealPct 换成物理吸血，两条魂不再抢
+      // 同一个属性；damageConvertPct 才是 blood 在【力】里就已经独占的方向。
+      blood:   { damageConvertPct: 8, physicalVampPct: 5 },
+      magma:   { armorPenFlat: 6, magicPenFlat: 6 },
+      // 星=星辰之力：射程+弹速之外加法术强度，呼应"星魂"这个名字里的"魔法"意味。
+      astral:  { attackRange: 45, bulletSpeed: 80, abilityPower: 20 },
+      // 蚀=吞噬万物之力：减伤（侵蚀对方的伤害）之外加适应之力（不挑食，吸收任何
+      // 形式的力量），呼应"蚀"这个字。
+      rift:    { damageReduction: 5, adaptiveForce: 15 },
     },
     // ==================== v51.3：新一轮 --sweep soul 对照（基线 -0.82，样本 20 局/档）====================
     // 上面几条注释里的 +2.86/+3.65/+1.96 都是 v44 时代的老数据——v45~v51 这几轮

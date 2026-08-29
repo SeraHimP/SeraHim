@@ -734,8 +734,10 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // ==================== 十七、巨龙重做：会走路的中立攻城单位 ====================
 {
   const D = CONFIG.gameRules.dragon;
-  T('龙①-刷新节奏：首条 60s，之后一律 300s（含远古龙）',
-    D.firstDelay === 60 && D.elementIntervals.every(v => v === 300)
+  // v51.4：首条元素龙的 60s 抢跑被推翻（用户："第一波龙生成的太快了，导致龙的倾向
+  // 就偏向于红方了"）——改成与后续元素龙同一个 300s 节奏，不再单独抢跑。
+  T('龙①-刷新节奏：首条与之后一律 300s（含远古龙），不再单独抢跑',
+    D.firstDelay === 300 && D.elementIntervals.every(v => v === 300)
     && D.ancientInterval === 300 && D.ancientFirstDelay === 300);
   T('龙②-战斗属性软编码（会动、够得着、带溅射）',
     D.combat.moveSpeed > 0 && D.combat.attackRange > 0

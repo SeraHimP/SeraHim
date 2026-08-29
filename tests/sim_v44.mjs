@@ -471,11 +471,22 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     const gone = !fx.getEffects(t.id).some(e => e.sourceId === 'soul_stat_earth');
     return has && armorUp && gone;
   })());
-  T('龙⑩-每条魂的数值里都有一份生存分量（v43 对照：纯输出的魂推进度差全为负）',
-    ELS.every(el => {
-      const st = CONFIG.dragonSouls.stat[el];
-      return Object.keys(st).some(k => /maxHP|armor|magicResist|healthRegen|healShieldPower|lifeSteal|damageReduction/.test(k));
-    }));
+  // v51.4：推翻了。用户否掉了"每条魂都要塞一份生存分量"这条 v44 规则——
+  // "巨龙之力/龙魂的方向就是只加某方向的属性，不要因为平衡加一些别的（比如加双抗/
+  // 生命值等）。哪种类型的巨龙之力/龙魂就加哪种类型的属性/方向。"
+  // 换成龙魂常驻数值也要满足"每个属性只属于一个元素"（此前只有 dragonPower 守这条，
+  // 龙魂的 stat 层没守——blood 的 lifeStealPct 和 dark 撞车、steel 的 healShieldPowerPct
+  // 和 water 撞车，都是这条规则缺位导致的）。
+  T('龙⑩-十三条魂的常驻数值也互不重复（不再要求"生存分量"，改守"元素独占"）', (() => {
+    const owner = {};
+    for (const [el, tbl] of Object.entries(CONFIG.dragonSouls.stat)) {
+      for (const k of Object.keys(tbl)) {
+        if (owner[k]) return false;
+        owner[k] = el;
+      }
+    }
+    return true;
+  })());
   T('龙⑪-面板文案里说了这份数值（否则玩家不知道自己拿了什么）',
     ELS.every(el => /常驻加持/.test(String(SkillLibrary['dragonsoul_' + el].description))));
 

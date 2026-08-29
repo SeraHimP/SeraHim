@@ -10,7 +10,7 @@
 import { CONFIG } from './Config.js';
 
 export const DRAGON_DEFAULTS = {
-  firstDelay: 60,
+  firstDelay: 300,   // v51.4：60 → 300，与 CONFIG.gameRules.dragon.firstDelay 保持同一份默认值
   elementIntervals: [420, 480, 540],
   ancientFirstDelay: 300,
   ancientInterval: 600,

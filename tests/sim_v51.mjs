@@ -625,4 +625,63 @@ async function world() {
     /NUM\('ap', '法术强度 \/波'/.test(schemaSrc));
 }
 
+// ==================== 二十一、v51.4：龙魂改回纯主题方向 + 首条龙延后 ====================
+// 用户否掉了 v44 定下的"每条魂都塞一份生存分量"规则："巨龙之力/龙魂的方向就是
+// 只加某方向的属性，不要因为平衡加一些别的（比如加双抗/生命值等）。哪种类型的
+// 巨龙之力/龙魂就加哪种类型的属性/方向。" 并要求审视新属性框架（法力/暴击等）
+// 有没有正确用上、以及龙魂/巨龙之力有没有正确在塔与全部大型小兵身上生效。
+{
+  const { ents, fx, CONFIG } = await world();
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: AttributeCalculator, eventBus: new EventBus() };
+
+  // 雷魂新增暴击率、星魂新增法术强度——两个此前龙魂系统完全没用过的新框架属性，
+  // 各挑一个大型小兵类型（不是塔）验证真的吃到了效果，不是只在配置表里存在。
+  const siege = mkEntity(ents, 'siege', {}, CONFIG);
+  const thunderInst = { id: 1, skillId: 'dragonsoul_thunder', state: {} };
+  SkillLibrary.dragonsoul_thunder.onEquip(siege.id, thunderInst, ctx);
+  const critAfter = AttributeCalculator.calc(siege, fx.getEffects(siege.id)).critChance;
+  T('魂框①-雷魂的暴击率（新框架属性）正确挂到大型小兵（炮兵）身上，不只是塔',
+    critAfter >= (siege.baseStats.critChance || 0) + CONFIG.dragonSouls.stat.thunder.critChance - 1e-6);
+
+  const totem = mkEntity(ents, 'totem', {}, CONFIG);
+  const astralInst = { id: 2, skillId: 'dragonsoul_astral', state: {} };
+  SkillLibrary.dragonsoul_astral.onEquip(totem.id, astralInst, ctx);
+  const apAfter = AttributeCalculator.calc(totem, fx.getEffects(totem.id)).abilityPower;
+  T('魂框②-星魂的法术强度（新框架属性）正确挂到大型小兵（图腾兵）身上',
+    apAfter >= (totem.baseStats.abilityPower || 0) + CONFIG.dragonSouls.stat.astral.abilityPower - 1e-6);
+
+  // 领受范围审计：SOUL_REWARD_OK 按"类型排除"而不是"类型枚举"实现——近战/远程/龙
+  // 排除，其余一律放行。这意味着任何现有或将来新增的大型小兵类型都自动覆盖，
+  // 不需要每加一个兵种就去改一次白名单（这正是用户担心的"新加了一堆属性/兵种，
+  // 有没有正确生效"的根子——白名单式实现才会漏，排除式实现结构上不会漏）。
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  T('魂框③-龙魂领受范围是排除式实现（塔+除近战/远程外全部小兵），不是逐个类型枚举',
+    ['siege', 'totem', 'warlock', 'corrupt', 'super', 'ram', 'tower']
+      .every(t => DragonSystem.SOUL_REWARD_OK({ type: t }))
+    && !DragonSystem.SOUL_REWARD_OK({ type: 'melee' })
+    && !DragonSystem.SOUL_REWARD_OK({ type: 'ranged' })
+    && !DragonSystem.SOUL_REWARD_OK({ type: 'dragon' }));
+
+  // 主题独占：十三条魂的常驻数值互不重复（sim_v44「龙⑩」已经断言过，这里额外确认
+  // 六条被改动/新增新框架属性的魂各自"只用了自己的方向"，没有借用别的元素已占用的键）。
+  const stat = CONFIG.dragonSouls.stat;
+  T('魂框④-血魂改用物理吸血后不再与暗魂的生命偷取撞车',
+    'physicalVampPct' in stat.blood && !('lifeStealPct' in stat.blood));
+  T('魂框⑤-铁魂不再借用潮魂独占的治疗护盾强度',
+    !('healShieldPowerPct' in stat.steel));
+  T('魂框⑥-蚀魂不再借用炎魂独占的攻击力百分比',
+    !('attackDamagePct' in stat.rift));
+  T('魂框⑦-炎/雷/毒三条魂不再塞跟主题无关的最大生命百分比（山魂才是）',
+    !('maxHPPct' in stat.fire) && !('maxHPPct' in stat.thunder) && !('maxHPPct' in stat.poison)
+    && 'maxHPPct' in stat.earth);
+
+  // 首条龙延后（用户："第一波龙生成的太快了，导致龙的倾向就偏向于红方了"）
+  const { dragonCfg } = await import('../src/data/dragonCurve.js');
+  T('龙时①-首条元素龙不再单独抢跑，与后续元素龙同一个 300s 节奏',
+    dragonCfg().firstDelay === 300 && dragonCfg().firstDelay === dragonCfg().elementIntervals[0]);
+}
+
 done();

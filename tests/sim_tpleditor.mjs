@@ -124,8 +124,10 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
   // 元素龙间隔 [420,480,540] → [300]；远古龙 600 → 300。
   // 远古龙也提到 300 的理由：成魂方顶着**永久**龙魂，而远古龙的处决 buff 是落后方
   // 唯一的翻盘工具 —— 10 分钟才有一次机会的话"另一方不用玩了"依然成立。
-  T('刷新节奏：首条 60s，之后一律 5 分钟',
-    DC.dragonCfg().firstDelay === 60
+  // v51.4：首条 60s 抢跑被推翻（用户："第一波龙生成的太快了，导致龙的倾向就偏向于
+  // 红方了"）——首条改成与后续同一个 300s 节奏。
+  T('刷新节奏：首条与之后一律 5 分钟，不再单独抢跑',
+    DC.dragonCfg().firstDelay === 300
     && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 1 }) === 300
     && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 2 }) === 300
     && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 3 }) === 300);
