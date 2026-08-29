@@ -165,7 +165,14 @@ export const EDITOR_PAGES_ENTITY = {
       // 否则单位编辑器的"技能"tab 里会突然多出"外侧防御塔""炎魂"这种不该被手动
       // 随便勾选的条目。这两类的装备入口分别是：core 由 createBuilding 按层自动挂，
       // dragonsoul 由 DragonSystem._equipSoul/_grantAncient 或"游戏性·批量加技能"页装。
-      if (def.category === 'core' || def.category === 'dragonsoul') continue;
+      // v51.6 修复：attackmode（充能攻击等）也要排除——同一条口径已经在"游戏性·批量
+      // 加技能"页应用过（pagesGameplaySkillState.js，用户原话："这个里面不要显示充能
+      // 攻击，这个应该是和塔武器/小兵类型相绑定的"），但当时只改了那一个批量页，单位
+      // 编辑器自己的「技能」tab 漏了同一处——于是"充能攻击"作为一条可勾选的被动技能
+      // 残留在这里（atkmode_charge 的 applicableTypes 几乎覆盖所有类型，所以哪个单位
+      // 类型打开这个 tab 都能看到它）。充能攻击跟着兵种默认配置走
+      // （defaultMinionPassives.js），不该在任何"通用技能勾选列表"里出现。
+      if (def.category === 'core' || def.category === 'dragonsoul' || def.category === 'attackmode') continue;
       for (const t of def.applicableTypes) {
         if (!out[t]) out[t] = { weapons: [], passives: [] };
         (def.category === 'weapon' ? out[t].weapons : out[t].passives).push(id);

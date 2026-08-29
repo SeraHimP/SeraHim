@@ -309,13 +309,15 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 }
 
 // ==================== 八、Q9 塔默认伤害类型 + 分层覆写贯通 ====================
-// v51：用户明确定稿推翻了这里 Q9① 记录的决定——塔的默认伤害类型改回物理
-// （见 Config.js 里 tower 模板 attackType 那一段的头注）。这条断言只钉住
-// "分层覆写确实能盖住 attackType"这件事本身，不再钉具体是哪个类型值，
-// 因为默认值这次是被用户主动拍板改的，不是 bug。
+// v51：用户明确定稿推翻了这里 Q9① 记录的决定——塔的默认伤害类型改回物理。
+// v51.6：又被用户明确定稿改回魔法（"处了特殊说明外，所有单位的攻击方式都应该是
+// 自适应，塔默认造成魔法伤害（特殊说明）"）——第三次翻转，同样是用户拍板不是 bug，
+// 见 Config.js 里 tower 模板 attackType 那一段的头注（记录了完整时间线）。
+// 这条断言只钉住"分层覆写确实能盖住 attackType"这件事本身，不再钉具体是哪个
+// 类型值，因为默认值本身会随用户定稿变。
 {
-  T('Q9① 塔模板默认伤害类型改回物理（v51 推翻了 v43 那次改动）',
-    CONFIG.templates.tower.attackType === 'physical');
+  T('Q9① 塔模板默认伤害类型 = 魔法（v51.6 用户定稿"塔默认造成魔法伤害"）',
+    CONFIG.templates.tower.attackType === 'magic');
   const mainSrc = ROOT_SRC;
   T('Q9② createBuilding 不再用八字段白名单，改为"模板里有的键都能覆写"',
     /Object\.fromEntries\(Object\.entries\(s\)\.filter\(\(\[k, v\]\) => \(k in tpl\) && v !== undefined\)\)/.test(mainSrc));

@@ -127,9 +127,12 @@ async function world() {
 }
 
 // ==================== 五、塔的默认伤害类型改回物理 ====================
+// v51.6：用户又一次改稿——"处了特殊说明外，所有单位的攻击方式都应该是自适应，
+// 塔默认造成魔法伤害（特殊说明）"，把这里钉的 physical 再次翻成 magic。
+// 完整时间线记在 Config.js 里 tower 模板 attackType 那段头注，这里不重复。
 {
   const { CONFIG } = await world();
-  T('塔①-默认伤害类型 = physical（推翻 v43 的"改为魔法"）', CONFIG.templates.tower.attackType === 'physical');
+  T('塔①-默认伤害类型 = magic（v51.6 用户定稿"塔默认造成魔法伤害"，第三次翻转）', CONFIG.templates.tower.attackType === 'magic');
 }
 
 // ==================== 六、统一吸血（物理/法术/全能 + 群体折扣） ====================
@@ -1138,10 +1141,95 @@ async function world() {
   T('主动⑥-CombatSystem 的延迟消耗点支持自定义伤害类型（不再永远是真实伤害）',
     /emp\.damageType \|\| 'true'/.test(srcOf('src/systems/CombatSystem.js')));
 
-  T('主动⑦-术士兵/远程兵/图腾兵自带基础法术强度（用户："不要太多"）',
-    CONFIG.templates.warlock.abilityPower > 0 && CONFIG.templates.warlock.abilityPower <= 20
-    && CONFIG.templates.ranged.abilityPower > 0 && CONFIG.templates.ranged.abilityPower <= 20
+  // v51.6：术士兵的基础法强从"数值自己定但是不要太多"的一般性基础值，改成了要
+  // 专门服务于"攻击力极低+初始法强高，自适应稳定解析成魔法伤害"这件事的更高值，
+  // 与远程兵/图腾兵那两个仍然"不要太多"的基础法强不是同一条口径——分开钉两个上限。
+  T('主动⑦-远程兵/图腾兵自带基础法术强度，且量级不大（用户："不要太多"）',
+    CONFIG.templates.ranged.abilityPower > 0 && CONFIG.templates.ranged.abilityPower <= 20
     && CONFIG.templates.totem.abilityPower > 0 && CONFIG.templates.totem.abilityPower <= 20);
+  T('主动⑦b-术士兵基础法强明显高于攻击力（用户："攻击力极低，初始法强高，所以自适应直接造成魔法伤害"）',
+    CONFIG.templates.warlock.abilityPower > CONFIG.templates.warlock.attackDamage * 5
+    && CONFIG.templates.warlock.attackType === 'adaptive');
+}
+
+// ==================== 二十八、v51.6："所有单位攻击方式都自适应"（塔是唯一例外）====================
+// 用户："处了特殊说明外，所有单位的攻击方式都应该是自适应（推翻之前的）。修改为：
+//        术士兵攻击力极低，初始法强高（所以自适应直接造成魔法伤害）。塔默认造成
+//        魔法伤害（特殊说明）。"
+{
+  const { CONFIG, attr } = await world();
+  const nonTower = ['melee', 'ranged', 'siege', 'totem', 'super', 'warlock', 'corrupt', 'ram', 'dragon'];
+  T('自适应①-除塔以外全部单位类型的默认攻击方式都是 adaptive',
+    nonTower.every(t => CONFIG.templates[t].attackType === 'adaptive'));
+  T('自适应②-塔是唯一写死类型的例外，且是魔法（不是 adaptive，也不是 physical）',
+    CONFIG.templates.tower.attackType === 'magic');
+  T('自适应③-龙的真实战斗字段（CONFIG.gameRules.dragon.combat.attackType）同一版一起改，不是只改了展示用的模板字段',
+    CONFIG.gameRules.dragon.combat.attackType === 'adaptive');
+  T('自适应④-resolveAttackType 对术士兵当前基础属性真的解析成魔法（不是"AP高但没高到能压过AD"的空调）',
+    attr.resolveAttackType({ ...CONFIG.templates.warlock, attackType: 'adaptive' }) === 'magic');
+  T('自适应⑤-远程兵默认物理向属性下，resolveAttackType 仍按真实AP/AD比较结果走（不是被写死成某一边）',
+    attr.resolveAttackType({ attackType: 'adaptive', attackDamage: 100, abilityPower: 0, adaptiveDefault: 'physical' }) === 'physical'
+    && attr.resolveAttackType({ attackType: 'adaptive', attackDamage: 0, abilityPower: 100, adaptiveDefault: 'physical' }) === 'magic');
+}
+
+// ==================== 二十九、v51.6：超级兵新主动技能【荆棘装甲】====================
+// 用户："超级兵，最大法力120，1/s。新增主动技能【荆棘装甲】：获得（XX=25+10%法强）
+//        双抗，持续8秒。并且期间反弹给伤害者实际造成造成伤害的25%的魔法伤害。"
+{
+  const { ents, fx, combat, attr, SkillLibrary, CONFIG } = await world();
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr, combat };
+  T('荆棘①-超级兵模板法力值改为定稿数值', CONFIG.templates.super.maxMana === 120 && CONFIG.templates.super.manaRegen === 1);
+
+  const superUnit = mkEntity(ents, 'super', { faction: 'blue' }, CONFIG);
+  superUnit.baseStats.abilityPower = 20; // 25+10%*20=27，验证法强联动确实生效，不是纯固定值
+  const inst = { id: ++window._uid, skillId: 'active_thorn_armor', state: {} };
+  superUnit._skillInstances.push(inst);
+  const before = attr.calc(superUnit, fx.getEffects(superUnit.id));
+  T('荆棘②-施放前没有额外双抗', !(before.armor > CONFIG.templates.super.armor + 1) && !(before.magicResist > CONFIG.templates.super.magicResist + 1));
+
+  const cast = SkillLibrary.active_thorn_armor.onCast(superUnit.id, inst, ctx);
+  T('荆棘③-施放成功', cast === true);
+  const after = attr.calc(superUnit, fx.getEffects(superUnit.id));
+  T('荆棘④-双抗 = 25+10%×法术强度（法强20时应该各+27），且护甲/魔抗同步生效',
+    Math.abs(after.armor - before.armor - 27) < 1e-6 && Math.abs(after.magicResist - before.magicResist - 27) < 1e-6);
+
+  // 反弹的是【魔法伤害】（用户原话就是"魔法伤害"，不是"真实伤害"），要正常吃攻击者
+  // 的魔抗——与 passive_thorns 那条塔反击同一个道理。魔抗清零，让下面的断言直接
+  // 验证"25%"这个比例本身，不用另外把 calcDamageMultiplier 的减伤系数也算进去。
+  const attacker = mkEntity(ents, 'melee', { faction: 'red' }, CONFIG);
+  attacker.baseStats.magicResist = 0;
+  const hpBefore = attacker.currentHP;
+  SkillLibrary.active_thorn_armor.onDamaged(superUnit.id, attacker.id, 100, ctx);
+  const reflectDmg = hpBefore - attacker.currentHP;
+  T('荆棘⑤-装甲生效期间受击，按实际伤害的25%反弹魔法伤害给攻击者（100伤害→反弹25）',
+    Math.abs(reflectDmg - 25) < 1e-6);
+
+  // 装甲窗口结束后不应该再反弹——把两条 stat 效果都手动移除模拟"buff已过期"。
+  for (const e of fx.getEffects(superUnit.id).filter(x => x.sourceId && x.sourceId.startsWith('active_thorn_armor_'))) {
+    fx.remove(e.id);
+  }
+  const hpBefore2 = attacker.currentHP;
+  SkillLibrary.active_thorn_armor.onDamaged(superUnit.id, attacker.id, 100, ctx);
+  T('荆棘⑥-装甲窗口结束后不再反弹（不是"装备了这个技能就永久反弹"）',
+    attacker.currentHP === hpBefore2);
+}
+
+// ==================== 三十、v51.6：Q1 修"编辑单位界面-技能里残留充能攻击" ====================
+// 用户："编辑单位界面-技能中还是残留着充能攻击。"排查结论：_SKILLS_BY_TYPE 只排除了
+// core/dragonsoul 两个 category，没排除 attackmode（充能攻击的 category）——它的
+// applicableTypes 几乎覆盖所有类型，于是作为一条可勾选的"被动"技能残留在通用技能
+// 列表里。这条口径其实已经在"游戏性·批量加技能"页应用过（用户当时原话："这个里面
+// 不要显示充能攻击，这个应该是和塔武器/小兵类型相绑定的"），单位编辑器自己的
+// 「技能」tab 当时漏了同一处，这次一并补齐。
+{
+  const { EDITOR_PAGES_ENTITY } = await import('../src/ui/editor/pagesEntity.js');
+  const byType = EDITOR_PAGES_ENTITY._SKILLS_BY_TYPE;
+  const leaked = Object.entries(byType).some(([, v]) =>
+    (v.passives || []).includes('atkmode_charge') || (v.weapons || []).includes('atkmode_charge'));
+  T('技能残留①-任何单位类型的技能列表里都不再包含 atkmode_charge（充能攻击）',
+    !leaked);
+  T('技能残留②-ram 的充能攻击照样跟着出厂默认配置走（不是被删掉了，只是不进通用勾选列表）',
+    (await import('../src/core/defaultMinionPassives.js')).DEFAULT_MINION_PASSIVES.ram.includes('atkmode_charge'));
 }
 
 done();

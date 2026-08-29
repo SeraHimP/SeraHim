@@ -235,4 +235,65 @@ export const actives = {
       return true;
     },
   },
+
+  // ==================== 超级兵：荆棘装甲（自身双抗 + 期间反弹实际伤害）====================
+  // 用户："超级兵，最大法力120，1/s。新增主动技能【荆棘装甲】：获得（XX=25+10%法强）
+  //        双抗，持续8秒。并且期间反弹给伤害者实际造成造成伤害的25%的魔法伤害。"
+  // 反弹的是【实际伤害】（减免/护盾吸收之后真正掉的血），不是塔那条"荆棘反击"
+  // （passive_thorns）那种按自身属性现算的固定值——两者形状不同，不能公用同一个
+  // 实现：这条要接 CombatSystem 的 onDamaged 钩子（与 dragonsoul_steel 同款，见
+  // dragonSouls.js 头注"受击时反弹：只反弹近战来源"那条旁边），拿到命中那一刻的
+  // 真实扣血量 amount 再按比例反弹；护甲/魔抗那部分是开局蓄势时算好的固定 buff，
+  // 两段各自独立，装甲期间反弹的百分比不会因为双抗生效而"越打伤害越少、反弹跟着变少"。
+  active_thorn_armor: {
+    id: 'active_thorn_armor', name: '荆棘装甲', icon: '🌵', color: '#c0392b', category: 'active',
+    applicableTypes: ['super'],
+    defaultParams: { flatBase: 25, apScalePct: 10, durationSec: 8, reflectPct: 25 },
+    get description() {
+      const p = this.defaultParams;
+      return `法力攒满后获得 (${p.flatBase} + ${p.apScalePct}%×法术强度) 点护甲与魔法抗性，`
+           + `持续 ${p.durationSec} 秒；期间受到攻击时，将本次实际承受伤害的 ${p.reflectPct}% `
+           + `以魔法伤害反弹给攻击者。`;
+    },
+    effects: [],
+    onCast: (entityId, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return false;
+      const p = instance._params || actives.active_thorn_armor.defaultParams;
+      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
+      const amt = (p.flatBase ?? 25) + ((p.apScalePct ?? 10) / 100) * (stats.abilityPower || 0);
+      const dur = p.durationSec ?? 8;
+      if (!(amt > 0)) return false;
+      // 护甲和魔抗是两条独立的 stat 效果（EffectRegistry 一条效果只挂一个 statKey），
+      // sourceId 共用前缀、按 statKey 分开——onDamaged 只要认到其中任意一条还在场，
+      // 就知道"现在处于装甲窗口内"，不用额外起一个计时器去重复维护同一段时长。
+      for (const statKey of ['armor', 'magicResist']) {
+        ctx.effectRegistry.apply(entityId, {
+          name: '荆棘装甲', icon: '🌵', kind: 'stat', statKey,
+          flatValue: amt, duration: dur,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `荆棘装甲：${statKey === 'armor' ? '护甲' : '魔法抗性'} +${Math.round(amt)}，`
+            + `期间受击反弹 ${p.reflectPct ?? 25}% 实际伤害`,
+        }, `active_thorn_armor_${statKey}`, { casterId: entityId });
+      }
+      return true;
+    },
+    // ⚠️ CombatSystem._fireOnDamaged 调用这个钩子时**不传技能实例**（签名固定是
+    // entityId/attackerId/amount/ctx 四个参数，与 dragonsoul_steel 同款）——要读
+    // 地图/实例覆写过的 reflectPct，得自己从受击方身上把技能实例找回来，不能像
+    // onCast 那样直接用参数里的 instance。
+    onDamaged: (entityId, attackerId, amount, ctx) => {
+      if (!(amount > 0)) return;
+      const self = ctx.entityContainer.get(entityId);
+      const attacker = ctx.entityContainer.get(attackerId);
+      if (!self || !attacker || !attacker.alive) return;
+      const stillArmored = ctx.effectRegistry.getEffects(entityId)
+        .some(e => e.sourceId === 'active_thorn_armor_armor' || e.sourceId === 'active_thorn_armor_magicResist');
+      if (!stillArmored) return;
+      const inst = (self._skillInstances || []).find(i => i.skillId === 'active_thorn_armor');
+      const p = inst?._params || actives.active_thorn_armor.defaultParams;
+      const back = amount * ((p.reflectPct ?? 25) / 100);
+      if (back > 0) ctx.combat?.performAttackDirect?.(entityId, attackerId, back, 'magic', { _noProc: true });
+    },
+  },
 };

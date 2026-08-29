@@ -19,7 +19,8 @@ export const DEFAULT_MINION_PASSIVES = {
   // v51.1：主动技能改成用户给的精确规格（active_siege_haste 等，见 actives.js 头注），
   // 推翻 v51 那版占位的 active_siege_barrage。
   'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend', 'active_siege_haste'],
-  'super': ['passive_super_commander'],
+  // v51.6：超级兵首次拥有主动技能——荆棘装甲（用户定稿具体数值，见 actives.js 头注）。
+  'super': ['passive_super_commander', 'active_thorn_armor'],
   // v49 攻城车重做：一条被动拆成三条（攻城炮=常驻闸门，另两条是两个模式）。
   // atkmode_charge 是**攻击方式**技能（与塔的武器同一形状），充能的全部参数在它身上。
   'ram': ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],

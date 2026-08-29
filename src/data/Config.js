@@ -227,7 +227,13 @@ export const CONFIG = {
         // 拆塔要挨完整的对射。
         attackRange: 80,
         baseAttackSpeed: 0.5,
-        attackType: 'physical',
+        // v51.6：同 templates.* 那批一起改自适应（塔是唯一例外）。这里才是龙真正
+        // 战斗时读的字段（factories.js 的 createDragon：`entity.baseStats.attackType
+        // = c.attackType`，c 就是这个 combat 块——templates.dragon.attackType 那份
+        // 只是个从没被真正用上的展示基线，被这里的赋值覆盖）。龙目前没有法术强度
+        // 属性（abilityPower 恒为 0），自适应比较之后必然倒向物理，与改之前的实际
+        // 战斗表现完全一致——单纯是让这个字段也跟上统一规则。
+        attackType: 'adaptive',
         splashRadius: 90,     // 溅射半径（参考爆炸型的 75，大一圈——大家伙的挥击）
         splashPct: 50,        // 溅射伤害占主伤害的比例（爆炸型中心是 60%，这里弱一点）
       },
@@ -1061,10 +1067,13 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      // ==================== v51：塔的默认伤害类型改回物理（推翻 v43 Q9）====================
-      // 用户明确定稿要求推翻上面 v43 那条注释记录的决定。v43 当时的理由（"更贴近魔法建筑"
-      // 之类的口味判断）没有新的机制依据支撑它，用户这次直接拍板改回来，如实记录、不再展开。
-      attackType: 'physical', bulletSpeed: 400,
+      // ==================== v51.6：塔的默认伤害类型再改回魔法（第三次翻转，如实记录）====================
+      // 时间线：v43 定为 magic → v51 用户拍板推翻改回 physical（上面那段注释）→
+      // 这次（v51.6）用户又定稿"处了特殊说明外，所有单位的攻击方式都应该是自适应
+      // （推翻之前的）。塔默认造成魔法伤害（特殊说明）"——塔是这次改动里唯一**不**
+      // 走自适应的类型，直接固定为 magic。三次改动都是用户本人的明确定稿，不是
+      // 哪次判断错了，如实记录时间线，不做口味上的评判。
+      attackType: 'magic', bulletSpeed: 400,
       ...UNIT_STAT_DEFAULTS,
     },
     melee: {
@@ -1082,7 +1091,9 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      // v51.6：用户定稿"处了特殊说明外，所有单位的攻击方式都应该是自适应（推翻之前的）"
+      // ——塔是唯一的例外（见上面 tower 模板），其余全部类型统一改成 adaptive。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // v51.6：用户定稿"近战兵，最大法力值25，0/s，主动技能：获得2伤害格挡，
       // 持续2秒"，见 actives.js 的 active_melee_block。
@@ -1101,7 +1112,8 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'magic', spawnDistance: 300, queueSpacing: 20,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // v51.6：用户定稿"远程兵，最大70，0.5/s，主动技能：下次攻击附带
       // （XX%=25%法强）魔法伤害"，见 actives.js 的 active_ranged_snipe。
@@ -1128,7 +1140,8 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', spawnDistance: 320, queueSpacing: 20,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
+      attackType: 'adaptive', spawnDistance: 320, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // ==================== v51.1：主动技能数值改按用户给定的精确值（推翻 v51 占位值）====================
       // 用户："你写的所有临时主动技能都删了重新按我的写。炮兵法力值上限50，
@@ -1154,7 +1167,8 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'magic', spawnDistance: 300, queueSpacing: 20,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // v51.1：用户定稿"图腾兵法力值上限120，2/s"，见 actives.js 的 active_totem_shield。
       maxMana: 120, manaRegen: 2,
@@ -1177,15 +1191,25 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
+      // v51.6：用户定稿"超级兵，最大法力120，1/s。新增主动技能【荆棘装甲】"，
+      // 见 actives.js 的 active_thorn_armor。
+      maxMana: 120, manaRegen: 1,
     },
     warlock: {
       label: '术士兵', type: 'warlock',
       isLargeMinion: true, isMonster: false,
       maxHP: 520, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 170,
-      attackDamage: 14, baseAttackSpeed: 0.7, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // v51.6：用户定稿"术士兵攻击力极低，初始法强高（所以自适应直接造成魔法伤害）"——
+      // 攻击方式改成 adaptive 之后，术士兵要靠"AP 明显高于 AD"这个真实的属性差距去
+      // 让自适应稳定解析成魔法伤害，不是另开一个"这个兵种硬编码走magic"的例外通道
+      // （那样就和"所有单位都自适应"这条统一规则自相矛盾）。attackDamage 14→1（留 1
+      // 而不是 0，避免任何按 AD 百分比计算的副作用——比如 onHit 换算——在极端情况下
+      // 因为 AD 恰好为 0 而出现除零/恒零的边界行为）；abilityPower 15→30，见下方注释。
+      attackDamage: 1, baseAttackSpeed: 0.7, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 20, magicPenPercent: 0,
       armor: 25, magicResist: 25,
       damageReduction: 0, damageBlock: 0,
@@ -1193,14 +1217,17 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'magic', spawnDistance: 300, queueSpacing: 20, bulletSpeed: 320,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）——术士兵不是硬编码 magic，
+      // 是靠左边 attackDamage 极低 + 下面 abilityPower 高，自适应比较之后自然倒向魔法。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20, bulletSpeed: 320,
       ...UNIT_STAT_DEFAULTS,
       // v51.1：用户定稿"术士兵上限65，3/s"，见 actives.js 的 active_warlock_empower。
       maxMana: 65, manaRegen: 3,
-      // v51.6：用户"术士兵……会自带一些法强，数值自己定但是不要太多"——给 15，
-      // 是它自己独立于 active_warlock_empower 每次施放+5（永久叠加）之外的基础值，
-      // 术士兵本身就是"法系"定位，基础值给得比图腾兵/远程兵略高说得通。
-      abilityPower: 15,
+      // v51.6：基础法术强度从 15 提到 30——v51.5 那次是"数值自己定但是不要太多"的
+      // 一般性法强基础值，这次用户明确要求术士兵要"初始法强高"，专门服务于自适应
+      // 稳定解析成魔法伤害这件事，与远程兵/图腾兵那两个"不要太多"的基础法强性质
+      // 不同，所以单独给了更高的值。
+      abilityPower: 30,
     },
     corrupt: {
       label: '蚀骨兵', type: 'corrupt',
@@ -1215,7 +1242,8 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // v51.1：用户定稿"蚀骨兵上限25，被动获得法力值0/s"（只靠攻击/受击的全局法力
       // 回复），见 actives.js 的 active_corrupt_poison。
@@ -1246,7 +1274,8 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', spawnDistance: 300, queueSpacing: 20,
+      // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       // v49：用户定稿"模板改为0" —— 溅射半径完全由【攻城炮】按模式给出
       // （攻城 gameRules.ram.siegeSplash / 普通 normalSplash），模板不再自带底数。
       splashRadius: 0,
@@ -1265,7 +1294,10 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
       healShieldPowerPct: 0,
-      attackType: 'physical', spawnDistance: 0, queueSpacing: 0,
+      // v51.6：同上，跟着改自适应，纯粹为了字段口径统一——这份 attackType 实际会被
+      // createDragon 用 CONFIG.gameRules.dragon.combat.attackType 整个覆盖掉（那边
+      // 才是龙真正战斗时读的字段，同一版一并改了），这里改不改都不影响真实行为。
+      attackType: 'adaptive', spawnDistance: 0, queueSpacing: 0,
       // v51.1：用户"你写的所有临时主动技能都删了重新按我的写"，本轮没有给龙的主动
       // 技能规格——先摘掉 v51 那版占位的主动技能与法力字段，龙暂时回到没有主动技能
       // 的状态（UNIT_STAT_DEFAULTS 的 maxMana:0 已经保证它不会攒法力）。
