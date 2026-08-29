@@ -34,6 +34,28 @@ import { CONFIG } from '../../data/Config.js';
 const P = (key) => (CONFIG.dragonSouls && CONFIG.dragonSouls[key]) || {};
 
 /**
+ * ==================== 龙魂给的吸血类加成对塔削弱到 33% ====================
+ * 用户定稿："所有龙魂作用增加的吸血（物理/魔法/全能）对防御塔这种单位的数值
+ * 减少至33%。" 只削"龙魂"（dark 的全能吸血 lifeStealPct、poison 的法术吸血
+ * spellVampPct、blood 的物理吸血 physicalVampPct + blood 自己"狂血"机制里的
+ * 全能吸血 lifeStealPct），不动巨龙之力（dragonPower.dark.lifeStealPct）——
+ * 用户点名的是"龙魂"，力是另一条独立的过程奖励线。
+ * 只削塔：塔是钉死原地开火、永远不脱靶的机械单位，同一份吸血系数放它身上
+ * 比放会走位/会被集火打断输出的大型小兵身上明显更稳定、更划算。
+ */
+const VAMP_STAT_KEYS = new Set(['lifeStealPct', 'physicalVampPct', 'spellVampPct']);
+/** 与算数值时用同一条公式（v * 百分比 / 100，四舍五入到 2 位小数），文案与实际生效值才能逐位对上。 */
+function towerVampScaled(v) {
+  const pct = (CONFIG.dragonSouls && CONFIG.dragonSouls.vampTowerScalePct) ?? 33;
+  return Math.round(v * pct) / 100;
+}
+/** entity 是塔时把吸血类数值削到 towerVampScaled()，否则原样返回。 */
+function vampForEntity(entity, statKey, v) {
+  if (!VAMP_STAT_KEYS.has(statKey) || !entity || entity.type !== 'tower') return v;
+  return towerVampScaled(v);
+}
+
+/**
  * 冷却型龙魂的共用判定。
  * 用 gameTime 的**绝对时间戳**比较，而不是自己累加 dt —— onHit/onDealtDamage
  * 这类钩子拿不到 dt，而且绝对时间戳在"只跑部分系统"的仿真里也正确
@@ -516,9 +538,11 @@ export const dragonSouls = {
     applicableTypes: ['tower'],
     get description() {
       const p = P('blood');
+      const vamp = p.lifeStealPct ?? 10;
       return `生命值越低增益越高，在 ${p.peakAtHPPct ?? 33}% 生命时达到峰值并保持：`
         + `攻击力 +${p.attackDamagePct ?? 30}%、攻速 +${p.bonusAttackSpeedPct ?? 25}%、`
-        + `全能吸血 +${p.lifeStealPct ?? 10}%。`;
+        + `全能吸血 +${vamp}%（对防御塔按 ${CONFIG.dragonSouls?.vampTowerScalePct ?? 33}% 生效，`
+        + `即 +${towerVampScaled(vamp)}%）。`;
     },
     get descTemplate() { return this.description; },
     effects: [],
@@ -548,10 +572,13 @@ export const dragonSouls = {
       ]) {
         // attackDamage 走百分比，另两项本身就是百分比属性 → 走固定值加成
         const isPct = statKey === 'attackDamage';
+        // 全能吸血对塔削到 33%（用户定稿，见文件头的 vampForEntity 头注）；
+        // 攻击力/攻速两项是狂血的主方向，不受这条规则影响。
+        const rawFlat = isPct ? 0 : base * k;
         ctx.effectRegistry.apply(entityId, {
           name: '狂血', icon: '🩸', kind: 'stat', color: '#c0392b', type: 'buff',
           statKey,
-          flatValue: isPct ? 0 : base * k,
+          flatValue: vampForEntity(e, statKey, rawFlat),
           percentValue: isPct ? base * k : 0,
           duration: Infinity, permanent: true,
           stackable: false, stackPolicy: 'refresh', uniquePassive: true,
@@ -766,6 +793,11 @@ function statSummary(el) {
     const label = STAT_LABEL[k] || STAT_LABEL[key] || key;
     // 键名本身带 Pct（如 healShieldPowerPct）时不要再补一个 %，否则会写成"强度 +20%%"
     const unit = pct ? '%' : (/Pct$/.test(key) ? '%' : '');
+    // 吸血类常驻属性对塔削到 vampTowerScalePct%（用户定稿，见文件头 vampForEntity 的头注）。
+    if (VAMP_STAT_KEYS.has(k)) {
+      const scalePct = (CONFIG.dragonSouls && CONFIG.dragonSouls.vampTowerScalePct) ?? 33;
+      return `${label} +${v}${unit}（对防御塔按 ${scalePct}% 生效，即 +${towerVampScaled(v)}${unit}）`;
+    }
     return `${label} +${v}${unit}`;
   });
   return parts.length ? `　常驻加持：${parts.join('、')}。` : '';
@@ -835,8 +867,12 @@ for (const el of SOUL_STAT_KEYS) {
   def.onEquip = (entityId, instance, ctx) => {
     if (prevEquip) prevEquip(entityId, instance, ctx);
     if (!ctx || !ctx.effectRegistry) return;
+    // 吸血类常驻属性（dark/poison/blood 各自那一项）对塔削到 vampForEntity 里定的比例；
+    // 其余属性/其余单位类型原样通过（vampForEntity 对非吸血键、非塔单位是恒等函数）。
+    const entity = ctx.entityContainer ? ctx.entityContainer.get(entityId) : null;
     for (const bp of soulStatBlueprints(el)) {
-      ctx.effectRegistry.apply(entityId, { ...bp }, `soul_stat_${el}`);
+      const flatValue = vampForEntity(entity, bp.statKey, bp.flatValue);
+      ctx.effectRegistry.apply(entityId, { ...bp, flatValue }, `soul_stat_${el}`);
     }
   };
   def.onUnequip = (entityId, instance, ctx) => {

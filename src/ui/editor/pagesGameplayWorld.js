@@ -85,6 +85,12 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <button id="dgToggleEffect" style="flex:1;">${CONFIG.dragonToggles?.effect !== false ? '✅ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
       </div>
 
+      <div class="panel-sec">参数</div>
+      <div class="slider-row"><label title="用户定稿：所有龙魂作用增加的吸血（物理/魔法/全能）对防御塔这种单位的数值减少至此比例。只影响龙魂，不影响巨龙之力。">龙魂吸血·塔缩放(%)</label>
+        <input type="number" id="dgVampTowerScale" min="0" max="100" step="1" value="${CONFIG.dragonSouls?.vampTowerScalePct ?? 33}" style="width:70px;">
+        <button id="dgVampTowerScaleApply">应用</button>
+      </div>
+
       <div class="panel-sec">快捷操作</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button id="dgForceElement">🐉 立刻刷一条元素龙</button>
@@ -372,6 +378,15 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       CONFIG.dragonToggles = CONFIG.dragonToggles || {};
       CONFIG.dragonToggles.effect = CONFIG.dragonToggles.effect === false;
       logFn(`🐉 巨龙效果：${CONFIG.dragonToggles.effect ? '开' : '关'}`, 'spawn');
+      refresh();
+    });
+    overlay.querySelector('#dgVampTowerScaleApply')?.addEventListener('click', () => {
+      const inp = overlay.querySelector('#dgVampTowerScale');
+      const v = parseFloat(inp?.value);
+      if (!Number.isFinite(v) || v < 0 || v > 100) { logFn('⚠️ 龙魂吸血·塔缩放需要 0~100 之间的数字', 'error'); return; }
+      CONFIG.dragonSouls = CONFIG.dragonSouls || {};
+      CONFIG.dragonSouls.vampTowerScalePct = v;
+      logFn(`🩸 龙魂吸血·塔缩放已更新为 ${v}%（暗/毒/血三条魂的吸血类加成对塔生效值随即改变）`, 'spawn');
       refresh();
     });
     overlay.querySelector('#dgKillAll')?.addEventListener('click', () => {

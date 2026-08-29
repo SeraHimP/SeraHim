@@ -1728,4 +1728,70 @@ async function world() {
   delete CONFIG.templates.melee._templateSouls;
 }
 
+// ==================== v51.6：龙魂给的吸血类加成对塔削弱到 33% ====================
+// 用户定稿："所有龙魂作用增加的吸血（物理/魔法/全能）对防御塔这种单位的数值
+// 减少至33%。" 涉及三条魂：暗魂的全能吸血（lifeStealPct）、毒魂的法术吸血
+// （spellVampPct）、血魂的物理吸血（常驻属性 physicalVampPct + "狂血"机制里
+// 另一份全能吸血 lifeStealPct）。只削塔，大型小兵原样；巨龙之力（用户没点名）不受影响。
+{
+  const { ents, fx, attr, CONFIG, SkillLibrary } = await world();
+  const ctx = { entityContainer: ents, effectRegistry: fx, eventBus: { emit() {}, on() {} }, attrCalc: attr };
+  const scalePct = CONFIG.dragonSouls.vampTowerScalePct ?? 33;
+  const scaled = (v) => Math.round(v * scalePct) / 100;
+  const equip = (entity, skillId) => {
+    const inst = { id: ++window._uid, skillId, state: {} };
+    entity._skillInstances.push(inst);
+    SkillLibrary[skillId].onEquip(entity.id, inst, ctx);
+    return inst;
+  };
+
+  // 暗魂：全能吸血常驻属性
+  const towerDark = mkEntity(ents, 'tower', {}, CONFIG);
+  const siegeDark = mkEntity(ents, 'siege', {}, CONFIG);
+  equip(towerDark, 'dragonsoul_dark'); equip(siegeDark, 'dragonsoul_dark');
+  const darkFull = CONFIG.dragonSouls.stat.dark.lifeStealPct;
+  T(`吸①-暗魂全能吸血对塔削到${scalePct}%（期望 ${scaled(darkFull)}）`,
+    Math.abs(attr.calc(towerDark, fx.getEffects(towerDark.id)).lifeStealPct - scaled(darkFull)) < 1e-6);
+  T('吸②-暗魂全能吸血对大型小兵原样生效（不打折）',
+    Math.abs(attr.calc(siegeDark, fx.getEffects(siegeDark.id)).lifeStealPct - darkFull) < 1e-6);
+
+  // 毒魂：法术吸血常驻属性
+  const towerPoison = mkEntity(ents, 'tower', {}, CONFIG);
+  const siegePoison = mkEntity(ents, 'siege', {}, CONFIG);
+  equip(towerPoison, 'dragonsoul_poison'); equip(siegePoison, 'dragonsoul_poison');
+  const poisonFull = CONFIG.dragonSouls.stat.poison.spellVampPct;
+  T('吸③-毒魂法术吸血对塔削到33%',
+    Math.abs(attr.calc(towerPoison, fx.getEffects(towerPoison.id)).spellVampPct - scaled(poisonFull)) < 1e-6);
+  T('吸④-毒魂法术吸血对大型小兵原样生效',
+    Math.abs(attr.calc(siegePoison, fx.getEffects(siegePoison.id)).spellVampPct - poisonFull) < 1e-6);
+
+  // 血魂：物理吸血常驻属性
+  const towerBlood = mkEntity(ents, 'tower', {}, CONFIG);
+  const siegeBlood = mkEntity(ents, 'siege', {}, CONFIG);
+  const towerBloodInst = equip(towerBlood, 'dragonsoul_blood');
+  const siegeBloodInst = equip(siegeBlood, 'dragonsoul_blood');
+  const bloodFull = CONFIG.dragonSouls.stat.blood.physicalVampPct;
+  T('吸⑤-血魂物理吸血常驻属性对塔削到33%',
+    Math.abs(attr.calc(towerBlood, fx.getEffects(towerBlood.id)).physicalVampPct - scaled(bloodFull)) < 1e-6);
+  T('吸⑥-血魂物理吸血常驻属性对大型小兵原样生效',
+    Math.abs(attr.calc(siegeBlood, fx.getEffects(siegeBlood.id)).physicalVampPct - bloodFull) < 1e-6);
+
+  // 血魂"狂血"机制（onFrame，残血触发）里的全能吸血——与上面的物理吸血是两个独立的键。
+  towerBlood.currentHP = 1; towerBloodInst.state = {};
+  SkillLibrary.dragonsoul_blood.onFrame(towerBlood.id, 0.1, towerBloodInst, ctx);
+  const bloodVampFull = CONFIG.dragonSouls.blood.lifeStealPct ?? 10;
+  T('吸⑦-血魂"狂血"机制的全能吸血对塔削到33%',
+    Math.abs(attr.calc(towerBlood, fx.getEffects(towerBlood.id)).lifeStealPct - scaled(bloodVampFull)) < 1e-6);
+  siegeBlood.currentHP = 1; siegeBloodInst.state = {};
+  SkillLibrary.dragonsoul_blood.onFrame(siegeBlood.id, 0.1, siegeBloodInst, ctx);
+  T('吸⑧-血魂"狂血"机制的全能吸血对大型小兵原样生效（不打折）',
+    Math.abs(attr.calc(siegeBlood, fx.getEffects(siegeBlood.id)).lifeStealPct - bloodVampFull) < 1e-6);
+
+  // 巨龙之力（用户点名的是"龙魂"，力不受这条规则影响）
+  const { dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
+  const lifeStealPowerBuff = dragonPowerBuffs('dark').find(b => b.statKey === 'lifeStealPct');
+  T('吸⑨-巨龙之力（非龙魂）的暗之力全能吸血不受这条规则影响',
+    !!lifeStealPowerBuff && lifeStealPowerBuff.flat === CONFIG.dragonPower.dark.lifeStealPct);
+}
+
 done();
