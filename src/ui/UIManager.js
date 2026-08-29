@@ -348,7 +348,6 @@ export class UIManager {
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     overlay.querySelector('.wd-detail-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
   _updateWeatherRow(card, entity) {
@@ -494,7 +493,6 @@ export class UIManager {
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     overlay.querySelector('.wx-detail-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
   /**
@@ -760,7 +758,6 @@ export class UIManager {
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     overlay.querySelector('.stat-doc-close').addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
   /** 该天气的效果表里是否有条目命中此单位 */

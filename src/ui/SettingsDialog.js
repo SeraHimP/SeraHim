@@ -487,9 +487,5 @@ export const SettingsDialog = {
       rerender: render,
       close: () => overlay.classList.remove('open'),
     });
-    if (!overlay._settingsCloseBound) {
-      overlay._settingsCloseBound = true;
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
-    }
   },
 };

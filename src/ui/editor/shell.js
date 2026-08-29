@@ -210,7 +210,6 @@ export const EDITOR_SHELL = {
       if (returnCallback) returnCallback();
     };
     document.getElementById('templateCloseBtn').addEventListener('click', closeAndReturn);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAndReturn(); });
   },
 
   // 页面内容分发。**只有这一处**知道"哪一页调哪个 render" ——

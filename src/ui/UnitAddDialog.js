@@ -187,10 +187,6 @@ export const UnitAddDialog = {
       });
     }
 
-    if (!overlay._uadCloseBound) {
-      overlay._uadCloseBound = true;
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
-    }
   },
 
   // 建塔阵营选择（EQ2）：蓝/红/中立。中立=独立一方，打红蓝也被红蓝打，画布显示灰白色。

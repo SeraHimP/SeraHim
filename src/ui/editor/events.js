@@ -84,7 +84,6 @@ export const EDITOR_EVENTS = {
     });
 
     overlay.querySelector('#editorCloseBtn').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   },
 
   _bindAttrEvents(overlay, target, logFn, isTemplate = false) {

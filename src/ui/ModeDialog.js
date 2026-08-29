@@ -48,9 +48,5 @@ export const ModeDialog = {
       `<button id="modeOkBtn" class="primary">确定</button><button id="modeCloseBtn">取消</button>`;
     document.getElementById('modeOkBtn').addEventListener('click', () => overlay.classList.remove('open'));
     document.getElementById('modeCloseBtn').addEventListener('click', () => overlay.classList.remove('open'));
-    if (!overlay._modeCloseBound) {
-      overlay._modeCloseBound = true;
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
-    }
   },
 };

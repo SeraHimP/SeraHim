@@ -143,6 +143,5 @@ export const DetailModal = {
     });
     document.body.appendChild(modal);
     modal.querySelector('#detailCloseBtn').addEventListener('click', () => modal.remove());
-    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
   }
 };

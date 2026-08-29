@@ -1475,4 +1475,20 @@ async function world() {
     (bs.match(/grantsMana: eff\.blueprint\.basicAttack === true/g) || []).length >= 2);
 }
 
+// ==================== v51.6：bug 修复——点击窗口外空白处不再意外关闭窗口 ====================
+// 用户："打开窗口后点击周围空白地方，窗口就会消失（被关闭）。"
+// 全仓库统一删除"点 overlay 背景关闭"这条监听——窗口只能通过明确的关闭/取消/确定
+// 按钮关闭，不会因为鼠标点歪而意外丢失正在编辑的内容。
+{
+  const files = [
+    'src/ui/DetailModal.js', 'src/ui/editor/shell.js', 'src/ui/editor/events.js',
+    'src/ui/UnitAddDialog.js', 'src/ui/ModeDialog.js', 'src/ui/SettingsDialog.js', 'src/ui/UIManager.js',
+  ];
+  for (const f of files) {
+    const src = srcOf(f);
+    T(`关闭①-${f} 不再有"点背景关闭"监听`,
+      !/e\.target === overlay\)/.test(src) && !/e\.target === modal\)/.test(src));
+  }
+}
+
 done();
