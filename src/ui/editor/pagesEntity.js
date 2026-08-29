@@ -187,10 +187,10 @@ export const EDITOR_PAGES_ENTITY = {
     inner:      ['passive_inner_fortify', 'passive_growth_inner', 'passive_inner_bulwark', 'passive_overload',
                  'passive_armor_plating', 'passive_iron_line', 'passive_thorns', 'passive_frost_plating'],
     base:       ['passive_base_fortify', 'passive_growth_base', 'passive_armor_plating', 'passive_overload',
-                 'passive_base_bulwark', 'passive_iron_line', 'passive_heavy_defense', 'passive_thorns'],
+                 'passive_inner_bulwark', 'passive_iron_line', 'passive_heavy_defense', 'passive_thorns'],
     hq_tower:   ['passive_hq_fortify', 'passive_growth_hq', 'passive_overload',
                  'passive_armor_plating', 'passive_iron_line', 'passive_heavy_defense'],
-    nexus_lane: ['passive_nexus_regen', 'passive_base_bulwark', 'passive_heavy_defense'],
+    nexus_lane: ['passive_nexus_regen', 'passive_inner_bulwark', 'passive_heavy_defense'],
     nexus_main: ['passive_nexus_regen', 'passive_home_aura', 'passive_heavy_defense'],
   },
   // main.js 中各层级的默认装配（用于在清单里标 ★ 默认）

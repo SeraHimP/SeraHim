@@ -160,28 +160,10 @@ export const towerPassives = {
     regen: 1, nodes: [0.33, 0.67, 1.0], tierLabel: '水晶防御塔', // 用户定稿：2→1（800盾早前已拆为独立技能）
   }),
 
-  // v37（Q1）：水晶塔版钢铁烈阳护盾——独立技能，仅给自己 +800 固定护盾（不含光环）。
-  // 从"水晶防御塔加固城防"里拆出（用户定稿：加固城防只管节点+恢复，护盾单列）。
-  passive_base_bulwark: {
-    id: 'passive_base_bulwark', name: '钢铁烈阳护盾', icon: '☀️',
-    applicableTypes: ['tower'],
-    category: 'passive',
-    description: '唯一被动——钢铁烈阳护盾：+800固定护盾。',
-    descTemplate: '唯一被动——钢铁烈阳护盾：+800固定护盾（仅自身，无光环）。',
-    effects: [],
-    onEquip: (entityId, instance, ctx) => {
-      ctx.effectRegistry.apply(entityId, {
-        name: '钢铁烈阳护盾', icon: '☀️', kind: 'stat', statKey: 'shieldFixedMax', flatValue: 800,
-        duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: '固定护盾+800',
-      }, 'passive_base_bulwark');
-    },
-    onUnequip: (entityId, instance, ctx) => {
-      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-        if (eff.blueprint.name === '钢铁烈阳护盾') ctx.effectRegistry.remove(eff.id);
-      }
-    },
-  },
+  // v51.4：passive_base_bulwark（水晶塔版"钢铁烈阳护盾"，+800 固定护盾、仅自身）
+  // 已删除。用户："塔的烈阳钢铁护盾等，这个我记得有俩，把其中那个+800固定护盾的
+  // 删除。"——同名技能只留 passive_inner_bulwark（300 范围光环、+50，自己及友军）
+  // 这一份，不再有两条同名不同效果的"钢铁烈阳护盾"。
 
   // 内塔：钢铁烈阳护盾——300 范围光环，自己及友军 +50 固定护盾，离开范围脱落
   passive_inner_bulwark: {

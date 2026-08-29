@@ -52,12 +52,8 @@ function equip(e, skillId, ents, fx, bus) {
   attr.tick();
   const bs = attr.calc(base, fx.getEffects(base.id));
   T('水晶加固城防 +1 恢复、无盾（用户定稿：2→1）', bs.healthRegen === 1 && bs.shieldFixedMax === 0);
-  equip(base, 'passive_base_bulwark', ents, fx);
-  attr.tick();
-  T('钢铁烈阳护盾（水晶版）独立技能 +800 盾', attr.calc(base, fx.getEffects(base.id)).shieldFixedMax === 800);
-  T('水晶版护盾描述为"+800固定护盾"且无光环字样',
-    SkillLibrary.passive_base_bulwark.description.includes('800固定护盾')
-    && !SkillLibrary.passive_base_bulwark.description.includes('友军'));
+  // v51.4：水晶版"钢铁烈阳护盾"（passive_base_bulwark，独立 +800 固定护盾、仅自身）
+  // 已删除（用户："这个我记得有俩，把其中那个+800固定护盾的删除"），只留下面的光环版。
 
   const outer = mkTower(ents, 'outer', 'mid');
   const oInst = equip(outer, 'passive_outer_fortify', ents, fx);
@@ -77,7 +73,7 @@ function equip(e, skillId, ents, fx, bus) {
   // 身份技能不收编独立被动（钢铁防线/镀层/烈阳护盾/过载不在 mergedSkills；绝望反击已删除）
   const allMerged = ['core_tier_outer', 'core_tier_inner', 'core_tier_base', 'core_tier_hq'].flatMap(k => SkillLibrary[k].mergedSkills);
   T('独立被动不被合并（钢铁防线/镀层/烈阳护盾/过载）',
-    !allMerged.some(k => ['passive_iron_line', 'passive_armor_plating', 'passive_inner_bulwark', 'passive_base_bulwark', 'passive_overload'].includes(k)));
+    !allMerged.some(k => ['passive_iron_line', 'passive_armor_plating', 'passive_inner_bulwark', 'passive_overload'].includes(k)));
   // 身份描述含用户指定文案。
   // Q3 之后这三条改为【与子技能实时比对】而不是写死数字：身份技能的文案现在是从
   // passive_*_fortify / passive_growth_* 现拼出来的，写死数字等于把手抄那套搬进测试——
@@ -99,7 +95,8 @@ function equip(e, skillId, ents, fx, bus) {
   const mainSrc = ['../src/main.js','../src/core/factories.js']
     .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
   // Q3：水晶塔(tier base)不再默认装配钢铁烈阳护盾(passive_base_bulwark)——从 base 默认装配行移除。
-  // 外/内 fortify 仍在；base 行现在只有 fortify + armor_plating（bulwark 仅保留定义，可手动装/内塔光环版不受影响）。
+  // v51.4：那个独立技能后来干脆整个删除了（用户："把其中那个+800固定护盾的删除"），
+  // 这条断言留着仍然成立（base 行确实没有它），只是"仅保留定义，可手动装"这半句不再适用。
   const baseLine = (mainSrc.split('\n').find(l => l.includes("tier === 'base'") && l.includes('towerDefaults.push')) || '');
   T('装配：外/内 fortify 仍在，水晶塔不再默认装 bulwark',
     mainSrc.includes("'passive_outer_fortify'") && mainSrc.includes("'passive_inner_fortify'")
@@ -340,7 +337,7 @@ const DT = 1 / 30;
 {
   T('过载图标 💣', SkillLibrary.passive_overload.icon === '💣');
   T('钢铁烈阳护盾（内塔）图标 ☀️', SkillLibrary.passive_inner_bulwark.icon === '☀️');
-  T('钢铁烈阳护盾（水晶塔）图标 ☀️', SkillLibrary.passive_base_bulwark.icon === '☀️');
+  // v51.4：水晶塔版（passive_base_bulwark）已删除，只剩这一条"钢铁烈阳护盾"。
 }
 
 console.log(`v37验收: ${pass} 通过 / ${fail} 失败`);

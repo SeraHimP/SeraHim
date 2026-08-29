@@ -112,10 +112,8 @@ function equip(e, skillId, ents, fx) {
   attr.tick();
   const bs = attr.calc(base, fx.getEffects(base.id));
   T('水晶塔加固城防：+1恢复（用户定稿：2→1；800盾早前已拆为独立技能）', bs.healthRegen === 1 && bs.shieldFixedMax === 0);
-  // v37：800盾由独立技能"钢铁烈阳护盾"（水晶塔版，仅自身）提供
-  equip(base, 'passive_base_bulwark', ents, fx);
-  attr.tick();
-  T('钢铁烈阳护盾（水晶塔版）：+800固定护盾（仅自身）', attr.calc(base, fx.getEffects(base.id)).shieldFixedMax === 800);
+  // v51.4：水晶塔版"钢铁烈阳护盾"（passive_base_bulwark，+800固定护盾、仅自身）已删除
+  // ——用户："这个我记得有俩，把其中那个+800固定护盾的删除"，只留下面的光环版。
   T('水晶塔节点 33/67/100', SkillLibrary.passive_base_fortify.description.includes('33%/67%/100%'));
 
   // 钢铁烈阳护盾：300 范围光环 +50 盾，离开脱落
