@@ -1251,4 +1251,97 @@ async function world() {
   T('炮③-连续两次施放不会叠成两份效果', stillOne === 1);
 }
 
+// ==================== 三十二、v51.6：加状态面板重做（现代化 UI，Q1）====================
+// 用户："加状态的UI你根本没有重做……我要求有现代化的UI并且功能易用。"三处共用同一份
+// _renderEffectPicker/_renderEffectParams/_buildEffectBlueprintFromPicker（单位编辑器
+// 手动加状态、模板编辑器批量加状态、模板编辑器"状态"tab 的默认状态），改一次三处一起好。
+{
+  const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
+
+  // ---- 渲染形状：新组件替换旧的原生 select + 内联深色样式 ----
+  const pickerHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectPicker();
+  T('状态①-类型选择器改成胶囊 tab（data-efftype），不再是原生 <select>',
+    /data-efftype="stat"/.test(pickerHtml) && /data-efftype="stun"/.test(pickerHtml)
+    && /data-efftype="dot"/.test(pickerHtml) && !/class="effect-type-select"/.test(pickerHtml));
+
+  const statParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('stat');
+  T('状态②-属性选择器改成可搜索卡片网格，标签是中文（不是裸的 attackDamage 这种字段名）',
+    /effect-stat-grid/.test(statParamsHtml) && /effect-stat-filter/.test(statParamsHtml)
+    && statParamsHtml.includes('攻击力') && /data-effstat="attackDamage"/.test(statParamsHtml));
+  T('状态③-持续时间新增独立的"永久"勾选框，不再是"填≤0才是永久"这条隐藏规则',
+    /effect-permanent/.test(statParamsHtml));
+  T('状态④-数值输入框统一用 .editor-number（不再是手写内联深色样式）',
+    /class="effect-flat-value editor-number"/.test(statParamsHtml)
+    && !/background:#0d1013/.test(statParamsHtml));
+
+  const dotParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('dot');
+  T('状态⑤-DOT 伤害类型也改成 tab（data-effdot），不再是原生 <select>',
+    /data-effdot="magic"/.test(dotParamsHtml) && !/class="effect-dot-type"[^>]*<select/.test(dotParamsHtml));
+
+  // ---- 三处调用方都改用统一的 _bindEffectPicker，不再各自手写 change 监听 ----
+  const eventsSrc = srcOf('src/ui/editor/events.js');
+  const gpSrc = srcOf('src/ui/editor/pagesGameplaySkillState.js');
+  const skillEffectSrc = srcOf('src/ui/editor/pagesSkillEffect.js');
+  T('状态⑥-单位编辑器/批量加状态/模板默认状态三处都改调 this._bindEffectPicker(box)',
+    /this\._bindEffectPicker\(box\)/.test(eventsSrc)
+    && /this\._bindEffectPicker\(box\)/.test(gpSrc)
+    && /this\._bindEffectPicker\(box\)/.test(skillEffectSrc));
+  T('状态⑦-三处都不再各自手写 .effect-type-select 的 change 监听（旧实现被统一替换）',
+    !/effect-type-select.*addEventListener\('change'/.test(eventsSrc)
+    && !/effect-type-select.*addEventListener\('change'/.test(gpSrc)
+    && !/effect-type-select.*addEventListener\('change'/.test(skillEffectSrc));
+
+  // ---- 行为：_buildEffectBlueprintFromPicker 从新 DOM 结构里正确读值 ----
+  // 用最小的 querySelector/querySelectorAll 桩子模拟渲染出来的 DOM，
+  // 不依赖真实浏览器——测的是"读值逻辑对不对"，不是"点击能不能触发"。
+  const mkFakeBox = (fields) => ({
+    querySelector(sel) { return fields[sel] ?? null; },
+  });
+
+  const statBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'stat' } },
+    '.effect-permanent': { checked: false },
+    '.effect-duration': { value: '8' },
+    '.effect-stat-key': { value: 'armor' },
+    '.effect-flat-value': { value: '15' },
+    '.effect-percent-value': { value: '0' },
+  });
+  const statBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(statBox);
+  T('状态⑧-stat 蓝图：属性/数值/持续时间都从新结构正确读出',
+    statBp.kind === 'stat' && statBp.statKey === 'armor' && statBp.flatValue === 15
+    && statBp.duration === 8 && statBp.permanent === false);
+  T('状态⑨-stat 蓝图描述用中文标签（fieldLabel），不是裸字段名',
+    statBp.description.startsWith('护甲'));
+
+  const permBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'stat' } },
+    '.effect-permanent': { checked: true },
+    '.effect-duration': { value: '8' }, // 即使数字框还留着非≤0的值，勾了永久也要生效
+    '.effect-stat-key': { value: 'maxHP' },
+    '.effect-flat-value': { value: '100' },
+    '.effect-percent-value': { value: '0' },
+  });
+  const permBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(permBox);
+  T('状态⑩-勾选"永久"复选框直接生效，不需要再靠"把数字改成≤0"这个隐藏技巧',
+    permBp.permanent === true && permBp.duration === Infinity);
+
+  const stunBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'stun' } },
+    '.effect-permanent': null,
+    '.effect-duration': { value: '2' },
+  });
+  const stunBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(stunBox);
+  T('状态⑪-stun 蓝图不受重做影响，形状不变', stunBp.kind === 'stun' && stunBp.duration === 2);
+
+  const dotBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'dot' } },
+    '.effect-permanent': null,
+    '.effect-duration': { value: '4' },
+    '.effect-dot-type': { value: 'physical' },
+    '.effect-flat-value': { value: '20' },
+  });
+  const dotBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(dotBox);
+  T('状态⑫-dot 蓝图正确读取新 tab 结构写回的伤害类型', dotBp.kind === 'dot' && dotBp.damageType === 'physical' && dotBp.flatValue === 20);
+}
+
 done();

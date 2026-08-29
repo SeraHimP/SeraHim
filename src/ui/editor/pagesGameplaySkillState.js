@@ -326,9 +326,7 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
       if (box.style.display === 'block') { box.style.display = 'none'; return; }
       box.style.display = 'block';
       box.innerHTML = this._renderEffectPicker();
-      box.querySelector('.effect-type-select')?.addEventListener('change', (e) => {
-        box.querySelector('.effect-params').innerHTML = this._renderEffectParams(e.target.value);
-      });
+      this._bindEffectPicker(box);
       box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
         if (!st.cells.size) { logFn('⚠️ 先勾至少一格', 'error'); return; }
         const blueprint = this._buildEffectBlueprintFromPicker(box);

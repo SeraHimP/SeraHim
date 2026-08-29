@@ -11,6 +11,7 @@
 import { CONFIG } from '../../data/Config.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
 import { DEFAULT_MINION_PASSIVES } from '../../core/defaultMinionPassives.js';
+import { fieldLabel } from './fields.js';
 
 export const EDITOR_PAGES_SKILLEFFECT = {
   // ==================== 模板技能/状态渲染 ====================
@@ -146,10 +147,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       }
       box.style.display = 'block';
       box.innerHTML = this._renderEffectPicker();
-      box.querySelector('.effect-type-select')?.addEventListener('change', (e) => {
-        const type2 = e.target.value;
-        box.querySelector('.effect-params').innerHTML = this._renderEffectParams(type2);
-      });
+      this._bindEffectPicker(box);
       box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
         list.push(this._buildEffectBlueprintFromPicker(box));
         logFn(`✅ 已添加默认状态到 ${this._categoryOfType(type) === 'tower' ? this._tierLabel(tier) : type} 模板`, 'spawn');
@@ -184,7 +182,8 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     return `custom_${Date.now().toString(36)}_${this._customEffectSeq}`;
   },
   _buildEffectBlueprintFromPicker(box) {
-    const type2 = box.querySelector('.effect-type-select').value;
+    const type2 = box.querySelector('[data-efftype].active')?.dataset.efftype || 'stat';
+    const permanentChecked = box.querySelector('.effect-permanent')?.checked || false;
     const rawDur = box.querySelector('.effect-duration')?.value;
     const parsedDur = parseFloat(rawDur);
     const stackKey = this._newCustomStackKey();
@@ -212,88 +211,161 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     const statKey = box.querySelector('.effect-stat-key')?.value || 'attackDamage';
     const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 0;
     const percentValue = parseFloat(box.querySelector('.effect-percent-value')?.value) || 0;
-    const isPermanent = !isNaN(parsedDur) && parsedDur <= 0;
-    const duration = isNaN(parsedDur) ? 5 : (isPermanent ? Infinity : parsedDur);
+    // v51.6：永久现在有一个显式的"永久"勾选框（用户："加状态的UI……要求有现代化的
+    // UI并且功能易用"，≤0=永久这条隐性约定不好发现）；勾选框和"填≤0"两条路都认，
+    // 后者是兼容旧习惯，不是必须记住的隐藏规则。
+    const isPermanent = permanentChecked || (!isNaN(parsedDur) && parsedDur <= 0);
+    const duration = isPermanent ? Infinity : (isNaN(parsedDur) ? 5 : parsedDur);
     return {
       name: '默认状态', icon: '📌', kind: 'stat', statKey, flatValue, percentValue, stackKey,
       duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
-      description: `${statKey} ${flatValue !== 0 ? (flatValue > 0 ? '+' : '') + flatValue : ''}${percentValue !== 0 ? (percentValue > 0 ? '+' : '') + percentValue + '%' : ''}${isPermanent ? ' (永久)' : ''}`,
+      description: `${fieldLabel(statKey)} ${flatValue !== 0 ? (flatValue > 0 ? '+' : '') + flatValue : ''}${percentValue !== 0 ? (percentValue > 0 ? '+' : '') + percentValue + '%' : ''}${isPermanent ? ' (永久)' : ''}`,
     };
   },
 
+  // ==================== v51.6：加状态面板重做（现代化 UI）====================
+  // 用户："加状态的UI你根本没有重做……图片是老版本的，这种根本不好用。我要求有现代
+  //        化的UI并且功能易用。"这个面板被三处共用（单位编辑器手动加状态、模板编辑器
+  //        批量加状态、模板编辑器"小兵/塔→状态"tab 的默认状态），改一次三处一起好。
+  // 三点改动：
+  //   ① 类型从原生 <select> 换成三个胶囊 tab（.editor-tab，与编辑器别处的 tab 同款），
+  //      只有 3 个选项，点一下比展开下拉框更直接。
+  //   ② "属性"从一个列出 28 个原始字段名（attackDamage/baseHealthRegenMod……）、没有
+  //      中文、不能搜索的 <select> 换成可搜索的卡片网格（.pick-grid/.pick-card，与
+  //      武器/被动技能选择器同一套组件），标签换成 fieldLabel() 的中文名。
+  //   ③ 所有输入框统一用 .editor-number（原来是手写的内联深色样式，和面板其它输入框
+  //      对不上），DOT 的伤害类型同样从 <select> 换成 3 个 tab。
+  //   ④ 持续时间新增独立的"永久"勾选框，不再是"填 ≤0 就是永久"这条要靠猜的隐藏规则。
+  _EFFECT_TYPE_TABS: [
+    { key: 'stat', label: '属性修正' },
+    { key: 'stun', label: '眩晕（控制）' },
+    { key: 'dot', label: '持续伤害（DOT）' },
+  ],
+  // 与 CONFIG.templates 的实际字段 + AttributeCalculator 认得的条件字段对齐
+  // （此前漏了 baseAttackSpeed / baseHealthRegenMod / 护盾三项 / 溅射 / 弹速 / 哀兵两项）。
+  _EFFECT_STAT_KEYS: [
+    'attackDamage', 'maxHP', 'healthRegen', 'baseHealthRegenMod', 'armor', 'magicResist',
+    'moveSpeed', 'attackRange', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio',
+    'damageAmpPct', 'damageReduction', 'damageBlock', 'lifeStealPct',
+    'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
+    'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
+    'onHitDamage', 'onHitPercentDamage',
+    'shieldFixedMax', 'tempShieldDecayPct',
+    'splashRadius', 'bulletSpeed',
+    'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
+  ],
+
   _renderEffectPicker() {
+    const tabs = this._EFFECT_TYPE_TABS.map((t, i) => `
+      <button type="button" class="editor-tab ${i === 0 ? 'active' : ''}" data-efftype="${t.key}">${t.label}</button>
+    `).join('');
     return `
-      <div style="display:grid;gap:8px;">
-        <div class="slider-row"><label>类型</label>
-          <select class="effect-type-select" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
-            <option value="stat">属性修正</option>
-            <option value="stun">眩晕（控制）</option>
-            <option value="dot">持续伤害（DOT）</option>
-          </select>
-        </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabs}</div>
         <div class="effect-params">${this._renderEffectParams('stat')}</div>
-        <button id="effectConfirmBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;">确认添加</button>
+        <button id="effectConfirmBtn" class="success" style="align-self:flex-start;">✅ 确认添加</button>
       </div>
     `;
   },
 
+  /** 绑定 _renderEffectPicker 产出的整块（类型 tab + 参数区），三处调用方共用一份。 */
+  _bindEffectPicker(box) {
+    box.querySelectorAll('[data-efftype]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.classList.contains('active')) return;
+        box.querySelectorAll('[data-efftype]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        box.querySelector('.effect-params').innerHTML = this._renderEffectParams(btn.dataset.efftype);
+        this._bindEffectParams(box);
+      });
+    });
+    this._bindEffectParams(box);
+  },
+
+  /** 参数区内部控件（属性卡片网格+搜索 / DOT 伤害类型 tab / 永久勾选框），每次参数区重绘都要重新绑一遍。 */
+  _bindEffectParams(box) {
+    const grid = box.querySelector('.effect-stat-grid');
+    if (grid) {
+      const hidden = box.querySelector('.effect-stat-key');
+      grid.querySelectorAll('[data-effstat]').forEach(card => {
+        card.addEventListener('click', () => {
+          grid.querySelectorAll('[data-effstat]').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+          if (hidden) hidden.value = card.dataset.effstat;
+        });
+      });
+      const filterInput = box.querySelector('.effect-stat-filter');
+      filterInput?.addEventListener('input', () => {
+        const q = filterInput.value.trim().toLowerCase();
+        grid.querySelectorAll('[data-effstat]').forEach(card => {
+          const hit = !q || card.dataset.effstat.toLowerCase().includes(q) || card.textContent.toLowerCase().includes(q);
+          card.style.display = hit ? '' : 'none';
+        });
+      });
+    }
+    box.querySelectorAll('[data-effdot]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        box.querySelectorAll('[data-effdot]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const hidden = box.querySelector('.effect-dot-type');
+        if (hidden) hidden.value = btn.dataset.effdot;
+      });
+    });
+    const permCk = box.querySelector('.effect-permanent');
+    const durInput = box.querySelector('.effect-duration');
+    if (permCk && durInput) {
+      durInput.disabled = permCk.checked;
+      permCk.addEventListener('change', () => { durInput.disabled = permCk.checked; });
+    }
+  },
+
   _renderEffectParams(type) {
-    // 与 CONFIG.templates 的实际字段 + AttributeCalculator 认得的条件字段对齐
-    // （此前漏了 baseAttackSpeed / baseHealthRegenMod / 护盾三项 / 溅射 / 弹速 / 哀兵两项）。
-    const statKeys = [
-      'attackDamage', 'maxHP', 'healthRegen', 'baseHealthRegenMod', 'armor', 'magicResist',
-      'moveSpeed', 'attackRange', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio',
-      'damageAmpPct', 'damageReduction', 'damageBlock', 'lifeStealPct',
-      'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
-      'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
-      'onHitDamage', 'onHitPercentDamage',
-      'shieldFixedMax', 'tempShieldDecayPct',
-      'splashRadius', 'bulletSpeed',
-      'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
-    ];
     if (type === 'stun') {
       return `
         <div class="slider-row"><label>持续时间(秒)</label>
-          <input type="number" step="0.1" class="effect-duration" value="1" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+          <input type="number" step="0.1" class="effect-duration editor-number" value="1">
         </div>
-        <div style="font-size:11px;color:#8b949e;">眩晕期间目标停止一切行动（攻击/移动/技能）。</div>
+        <div class="pick-desc-box">眩晕期间目标停止一切行动（攻击/移动/技能）。</div>
       `;
     }
     if (type === 'dot') {
+      const dotTabs = [
+        { key: 'magic', label: '魔法' }, { key: 'physical', label: '物理' }, { key: 'true', label: '真实' },
+      ].map((d, i) => `<button type="button" class="editor-tab ${i === 0 ? 'active' : ''}" data-effdot="${d.key}">${d.label}</button>`).join('');
       return `
-        <div class="slider-row"><label>伤害类型</label>
-          <select class="effect-dot-type" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
-            <option value="magic">魔法</option>
-            <option value="physical">物理</option>
-            <option value="true">真实</option>
-          </select>
-        </div>
-        <div class="slider-row"><label>每次伤害</label>
-          <input type="number" step="1" class="effect-flat-value" value="10" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+        <div class="panel-sec">伤害类型</div>
+        <div style="display:flex;gap:6px;">${dotTabs}</div>
+        <input type="hidden" class="effect-dot-type" value="magic">
+        <div class="slider-row" style="margin-top:8px;"><label>每次伤害</label>
+          <input type="number" step="1" class="effect-flat-value editor-number" value="10">
         </div>
         <div class="slider-row"><label>持续时间(秒)</label>
-          <input type="number" step="0.5" class="effect-duration" value="5" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
+          <input type="number" step="0.5" class="effect-duration editor-number" value="5">
         </div>
       `;
     }
-    if (type === 'stat') {
-      return `
-        <div class="slider-row"><label>属性</label>
-          <select class="effect-stat-key" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
-            ${statKeys.map(k => `<option value="${k}">${k}</option>`).join('')}
-          </select>
-        </div>
-        <div class="slider-row"><label>数值修正</label>
-          <input type="number" step="0.5" class="effect-flat-value" value="0" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
-        </div>
-        <div class="slider-row"><label>百分比修正</label>
-          <input type="number" step="0.5" class="effect-percent-value" value="0" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
-        </div>
-        <div class="slider-row"><label>持续时间(秒，≤0永久)</label>
-          <input type="number" step="0.5" class="effect-duration" value="5" style="flex:1;background:#0d1013;border:1px solid #2d3540;color:#e6edf3;padding:2px 6px;border-radius:3px;">
-        </div>
-      `;
-    }
-    return '';
+    // stat（默认）
+    const cards = this._EFFECT_STAT_KEYS.map((k, i) => `
+      <div class="pick-card ${i === 0 ? 'selected' : ''}" data-effstat="${k}">
+        <span class="pick-label">${fieldLabel(k)}</span>
+      </div>`).join('');
+    return `
+      <div class="panel-sec">属性</div>
+      <input type="text" class="effect-stat-filter editor-number" placeholder="🔍 搜索属性…" style="width:100%;">
+      <div class="pick-grid effect-stat-grid" style="max-height:160px;overflow-y:auto;margin-top:6px;">${cards}</div>
+      <input type="hidden" class="effect-stat-key" value="${this._EFFECT_STAT_KEYS[0]}">
+      <div class="slider-row" style="margin-top:6px;"><label>数值修正</label>
+        <input type="number" step="0.5" class="effect-flat-value editor-number" value="0">
+      </div>
+      <div class="slider-row"><label>百分比修正</label>
+        <input type="number" step="0.5" class="effect-percent-value editor-number" value="0">
+      </div>
+      <div class="slider-row"><label>持续时间(秒)</label>
+        <input type="number" step="0.5" class="effect-duration editor-number" value="5">
+      </div>
+      <div class="slider-row"><label>永久</label>
+        <input type="checkbox" class="effect-permanent" style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
+      </div>
+    `;
   },
 };

@@ -169,10 +169,7 @@ export const EDITOR_EVENTS = {
       }
       box.style.display = 'block';
       box.innerHTML = this._renderEffectPicker();
-      box.querySelector('.effect-type-select')?.addEventListener('change', (e) => {
-        const type = e.target.value;
-        box.querySelector('.effect-params').innerHTML = this._renderEffectParams(type);
-      });
+      this._bindEffectPicker(box);
       box.querySelector('#effectConfirmBtn').addEventListener('click', () => {
         const effect = this._buildEffectBlueprintFromPicker(box);
         app?.effectRegistry.apply(entity.id, effect, 'custom_' + Date.now());
