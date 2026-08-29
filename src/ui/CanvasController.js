@@ -194,7 +194,7 @@ export class CanvasController {
       if (map?.world) {
         this.fitToWorld(map.world.w, map.world.h);
       } else {
-        this.zoom = 1.0; this.offsetX = 0; this.offsetY = 0; this.updateView(); // 沙盒模式：无地图
+        this.zoom = 1.0; this.offsetX = 0; this.offsetY = 0; this.updateView(); // 防御性兜底：地图理论上不会未加载
       }
     });
 

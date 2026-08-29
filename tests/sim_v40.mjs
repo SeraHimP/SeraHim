@@ -140,10 +140,13 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   T('攻城规则只有一份（数值只在 Config，LaneMovementSystem 不自己抄）',
     csSrc.includes('CONFIG.gameRules?.ram') && !lmsSrc.includes('gameRules?.ram')
     && !lmsSrc.includes('siegeDamagePct') && !lmsSrc.includes('fatiguePerAttack'));
-  T('两条攻击路径都调同一份（对战 = LaneMovementSystem，沙盒 = CombatSystem 小兵循环）',
+  // 沙盒模式删除后，CombatSystem 的小兵循环（原来的第二条攻击路径）一并删了，
+  // 只剩 LaneMovementSystem 这一条，但 siegeAcquire/finishAttack 仍各自独立实现在
+  // CombatSystem 里（不是单单为了眼下这一个调用方而并回去），免得以后再冒出
+  // 第二条攻击路径时又要重新拆一次。
+  T('唯一的攻击路径调用 CombatSystem 里独立实现的攻城规则',
     lmsSrc.includes('this.combat.siegeAcquire(') && lmsSrc.includes('this.combat.finishAttack(')
-    && csSrc.includes('this.siegeAcquire(minion, nearestTower)')
-    && csSrc.includes('this.finishAttack(minion, nearestTower'));
+    && csSrc.includes('siegeAcquire(attacker, target)') && csSrc.includes('finishAttack('));
   // v50：finishAttack 开头多了一段"清零充能"（那件事与是不是攻城车无关，见该处注释），
   // 所以闸门不再是函数的**第一句**。断言改成"函数体里有这道闸"，别钉它在第几行。
   T('闸门仍然是被动（拆掉【攻城炮】即退化为普通车）',

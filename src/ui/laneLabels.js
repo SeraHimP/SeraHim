@@ -18,7 +18,7 @@
  * 抄过去的话，下次再加一个用到分路的界面，就是第三份。
  */
 
-/** 当前地图的路 id 列表。取不到地图（沙盒/尚未载入）时退回三路，与改动前的默认一致。 */
+/** 当前地图的路 id 列表。取不到地图（尚未载入）时退回三路，与改动前的默认一致。 */
 export function mapLaneIds() {
   const m = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
   const ids = (m?.lanes || []).map(l => l.id).filter(Boolean);

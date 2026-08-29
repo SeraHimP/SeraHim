@@ -230,7 +230,6 @@ export const EDITOR_SHELL = {
       case 'effect':     return this._renderTemplateEffectContent(type, tier);
       case 'soul':       return this._renderTemplateSoulContent(type);
       case 'growth':     return this._renderGrowthContent(type);
-      case 'sandbox':    return this._renderSandboxContent(type);
       case 'wave':       return this._renderWaveOrderContent();
       case 'param':      return this._renderSkillParamsContent();
       case 'bsize':      return this._renderBuildingSizeContent();
@@ -262,7 +261,7 @@ export const EDITOR_SHELL = {
       case 'dragonstate': this._bindGameplayDragonEvents(overlay, logFn); break;
       case 'weather': this._bindGameplayWeatherEvents(overlay, logFn); break;
       case 'entropy': this._bindGameplayEntropyEvents(overlay, logFn); break;
-      default: break;   // growth / sandbox / bsize / dragonrule 只有输入框，点应用时统一读
+      default: break;   // growth / bsize / dragonrule 只有输入框，点应用时统一读
     }
   },
 
@@ -273,7 +272,6 @@ export const EDITOR_SHELL = {
       case 'skill':      this._applyTemplateSkillChanges(overlay, type, logFn); break;
       case 'effect':     this._applyTemplateEffectChanges(overlay, type, logFn); break;
       case 'growth':     this._applyGrowthChanges(overlay, type, logFn); break;
-      case 'sandbox':    this._applySpawnRuleChanges(overlay, type, logFn); break;
       case 'wave':       this._applyWaveOrderChanges(overlay, logFn); break;
       case 'param':      this._applySkillParamsChanges(overlay, logFn); break;
       case 'bsize':      this._applyBuildingSizeChanges(overlay, logFn); break;

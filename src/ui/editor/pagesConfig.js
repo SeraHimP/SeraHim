@@ -179,20 +179,21 @@ export const EDITOR_PAGES_CONFIG = {
     });
   },
 
-  // ==================== 建筑体积（对战模式各档建筑的渲染半径）====================
+  // ==================== 建筑体积（各档建筑的渲染半径）====================
   // LoL 中水晶枢纽/防御塔/召唤水晶体积不同，这里按 tier 提供可调半径。
   // 写入 CONFIG.buildingSizes；渲染器的塔精灵缓存 key 含尺寸，改动后新尺寸精灵
   // 会惰性重新烘焙，无需手动清缓存，画面即时生效。
   _BSIZE_TIERS: [
     ['outer', '外塔'], ['inner', '内塔'], ['base', '高地塔'],
     ['hq_tower', '枢纽塔'], ['nexus_lane', '召唤水晶'], ['nexus_main', '水晶枢纽'],
-    ['default', '沙盒塔（默认）'],
+    // 手动建塔（添加单位→建造防御塔）不走地图分层，没有 _mapTier，用这一档兜底。
+    ['default', '手动建塔（默认）'],
   ],
 
   _renderBuildingSizeContent() {
     const sizes = CONFIG.buildingSizes || {};
     return `
-      <p style="color:#8b949e;font-size:11px;margin:4px 0 10px;">对战模式各档建筑在画布上的渲染半径（px）。仅影响显示与血条位置，不影响攻击范围/碰撞。</p>
+      <p style="color:#8b949e;font-size:11px;margin:4px 0 10px;">各档建筑在画布上的渲染半径（px）。仅影响显示与血条位置，不影响攻击范围/碰撞。</p>
       ${this._BSIZE_TIERS.map(([k, label]) => `
         <div class="editor-field" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <label style="width:130px;">${label}</label>

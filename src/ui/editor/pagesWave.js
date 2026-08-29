@@ -14,89 +14,6 @@ import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionCompositio
 import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../../data/dragonCurve.js';
 
 export const EDITOR_PAGES_WAVE = {
-  // ==================== 小兵生成规则 ====================
-  // ============================================================
-  //  SECTION 3: Spawn Rules + Building Size
-  // ============================================================
-
-  _spawnRuleMeta(type) {
-    // 每种小兵对应 CONFIG.gameRules 里控制其生成节奏的字段
-    const map = {
-      melee:   { countKey: 'waveMeleeCount', countLabel: '每波生成数量', countDefault: 3 },
-      ranged:  { countKey: 'waveRangedCount', countLabel: '每波生成数量', countDefault: 3 },
-      siege:   { intervalKey: 'waveSiegeSuperInterval', intervalLabel: '每几波生成一次', intervalDefault: 2,
-                 extraKey: 'waveSuperFromWave', extraLabel: '第几波起改为超级兵', extraDefault: 20 },
-      totem:   { intervalKey: 'waveTotemInterval', intervalLabel: '每几波生成一次（沙盒）', intervalDefault: 5,
-                 battleFromKey: 'battleTotemFromWave', battleFromLabel: '对战模式：第几波起生成', battleFromDefault: 10,
-                 battleIntvKey: 'battleTotemInterval', battleIntvLabel: '对战模式：每几波生成一次', battleIntvDefault: 3 },
-      warlock: { intervalKey: 'waveWarlockInterval', intervalLabel: '每几波生成一次', intervalDefault: 6,
-                 minWaveKey: 'warlockMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 12 },
-      corrupt: { intervalKey: 'waveCorruptInterval', intervalLabel: '每几波生成一次', intervalDefault: 7,
-                minWaveKey: 'corruptMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 15 },
-      ram:     { intervalKey: 'waveRamInterval', intervalLabel: '每几波生成一次', intervalDefault: 15,
-                 minWaveKey: 'ramMinWave', minWaveLabel: '最早生成波次', minWaveDefault: 5 },
-      super:   { intervalKey: 'waveSiegeSuperInterval', intervalLabel: '每几波生成一次（与炮兵共用节奏）', intervalDefault: 2 },
-    };
-    return map[type] || {};
-  },
-
-  // P2：原「生成规则」tab 已拆掉。用户原话是"目前的生成顺序和生成规则就是冲突或者是重合的" ——
-  // 病根在于那一个 tab 里塞了四件互不相干的事：①沙盒出兵节奏 ②兵种总开关
-  // ③对战成长 ④屠戮。而【对战】的出兵完全由另一个 tab 的 laneWaveComposition 决定。
-  // 于是同一屏上"每波生成数量=3"和出兵编排里的"近战兵 ×3"看着是一回事，
-  // 改前者在对战里纹丝不动 —— 这不是排版乱，是两套规则在同一个名字下打架。
-  // 现在：成长/屠戮 → 独立的「成长与屠戮」tab（它们本来就跟生成无关，是战斗数值）；
-  //       出兵的一切（对战编排 + 兵种开关 + 沙盒节奏）→ 合并进唯一的「出兵编排」tab，
-  //       内部按模式分区并标明"这一段只管沙盒 / 这一段只管对战"。
-  // 结论：现在"哪里改出兵"只有一个答案。
-  _renderSandboxRuleRows(type) {
-    const meta = this._spawnRuleMeta(type);
-    const gr = CONFIG.gameRules;
-    let html = '';
-    if (meta.countKey) {
-      const v = gr[meta.countKey] ?? meta.countDefault;
-      html += `<div class="slider-row"><label>${meta.countLabel}</label>
-        <input type="number" class="spawnrule-input" data-key="${meta.countKey}" min="0" step="1" value="${v}" style="width:90px;">
-      </div>`;
-    }
-    if (meta.intervalKey) {
-      const v = gr[meta.intervalKey] ?? meta.intervalDefault;
-      html += `<div class="slider-row"><label>${meta.intervalLabel}</label>
-        <input type="number" class="spawnrule-input" data-key="${meta.intervalKey}" min="1" step="1" value="${v}" style="width:90px;">
-      </div>`;
-    }
-    if (meta.minWaveKey) {
-      const v = gr[meta.minWaveKey] ?? meta.minWaveDefault;
-      html += `<div class="slider-row"><label>${meta.minWaveLabel}</label>
-        <input type="number" class="spawnrule-input" data-key="${meta.minWaveKey}" min="0" step="1" value="${v}" style="width:90px;">
-      </div>`;
-    }
-    if (meta.extraKey) {
-      const v = gr[meta.extraKey] ?? meta.extraDefault;
-      html += `<div class="slider-row"><label>${meta.extraLabel}</label>
-        <input type="number" class="spawnrule-input" data-key="${meta.extraKey}" min="0" step="1" value="${v}" style="width:90px;">
-      </div>`;
-    }
-    // P2：这里原先还有两个标着"对战模式：第几波起生成 / 每几波生成一次"的框
-    // （battleTotemFromWave / battleTotemInterval）。它们是【死配置】——
-    // 全仓库除了 Config 的定义和一句过时注释，没有任何代码读取；对战出兵早已
-    // 全部改由 laneWaveComposition 驱动，默认编排里那条
-    // { type:'totem', count:1, fromWave:10, everyN:3 } 正是同一条规则的第二份表述。
-    // 用户改了这两个框会毫无反应 —— 这就是"生成顺序和生成规则重合"的原型。
-    // 已从面板移除；要调图腾兵的对战节奏请改上面②里那条规则。
-    if (meta.battleFromKey) {
-      // 「上面②」是旧版式的说法 —— 那时对战编排和沙盒节奏挤在同一页。
-      // 现在编排在左侧的独立节点上，指路要指对地方，否则用户会在本页上下找一个不存在的②。
-      html += `<div style="font-size:11px;color:var(--text-mute);padding:4px 0;">
-        ${this._labelOf('totem')}的<b>对战</b>节奏由左侧「🧬 出兵编排」里那条规则的
-        起始波/每几波决定，此处不再重复提供。</div>`;
-    }
-    if (!meta.countKey && !meta.intervalKey) {
-      html += `<div style="color:#8b949e;font-size:12px;padding:4px 0;">该兵种在沙盒模式下没有独立的节奏参数。</div>`;
-    }
-    return html;
-  },
-
   // ==================== 巨龙：刷新节奏与强度曲线 ====================
   // 这一页此前是**空的**（"巨龙暂无可编辑的固定模板"），而 DragonSystem 里刷新时间表
   // 和三条属性曲线全是写死的魔数；CONFIG.gameRules 里倒是躺着七个 dragonXxx 键，
@@ -269,7 +186,7 @@ export const EDITOR_PAGES_WAVE = {
   // 所以页签是现生成的，不写死。
   _waveLaneScope: 'all',
 
-  /** 当前地图的路列表（拿不到地图时退回三路，单测/沙盒下也有东西可显示）。 */
+  /** 当前地图的路列表（拿不到地图时退回三路，单测下也有东西可显示）。 */
   // v46：这两个方法搬到 ui/laneLabels.js 了 —— 添加单位窗口也要用同一套判据，
   // 而它原来把 top/mid/bot 写死在模板字符串里（扭曲丛林没有中路，照样显示三条）。
   // 抄一份过去就是第三份实现，所以抽成共用的，两边都调它。
@@ -380,7 +297,7 @@ export const EDITOR_PAGES_WAVE = {
     const types = this._TPL_MINION_TYPES;
     const EN = gr.spawnEnabled || {};
     const app = window.CTX?.__app || window.__app;
-    const mapSystem = app?.mapSystem, waveSystem = app?.waveSystem, laneWaveSystem = app?.laneWaveSystem;
+    const laneWaveSystem = app?.laneWaveSystem;
 
     const cell = (rule, i, key, min, step) =>
       `<input type="number" class="wo-field" data-idx="${i}" data-field="${key}" min="${min}" step="${step}"
@@ -389,9 +306,9 @@ export const EDITOR_PAGES_WAVE = {
     // 用户定稿："设置窗口只留系统设置，游戏性设置整合到模板编辑器里"——
     // 小兵波次的运行时控制（暂停/立即下一波/间隔秒数）原来在设置面板的"波次"tab，
     // 现在搬到这里，紧挨着它管的这份编排数据，不再和流程/画质那些纯系统设置混在一起。
-    const runtime = mapSystem?.active ? `
+    const runtime = `
       <div class="editor-section">
-        <h4>⚔️ 对战模式 · 运行时控制</h4>
+        <h4>⚔️ 运行时控制</h4>
         <div class="slider-row"><label>双方波次生成</label>
           <button id="woToggleLaneWaveBtn" style="flex:1;">${laneWaveSystem?.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
           <button id="woSkipLaneWaveBtn" style="flex:1;">⏭ 立即下一波</button>
@@ -399,40 +316,22 @@ export const EDITOR_PAGES_WAVE = {
         <div class="slider-row"><label>波次生成间隔（秒）</label>
           <input type="number" id="woLaneWaveInterval" class="editor-number" value="${laneWaveSystem?.waveInterval || 30}" min="5" step="1">
         </div>
-      </div>` : `
-      <div class="editor-section">
-        <h4>🗺️ 沙盒模式 · 运行时控制</h4>
-        <div class="slider-row"><label>小兵波次生成</label>
-          <button id="woToggleWaveBtn" style="flex:1;">${waveSystem?.paused ? '▶ 恢复' : '⏸ 暂停'}</button>
-          <button id="woSkipWaveBtn" style="flex:1;">⏭ 立即下一波</button>
-        </div>
-        <div class="slider-row"><label>波次间隔（秒）</label>
-          <input type="number" id="woWaveInterval" class="editor-number" value="${CONFIG.gameRules.waveInterval || 45}" min="5" step="1">
-        </div>
-        <div class="slider-row"><label>重置波次</label>
-          <button id="woResetWaveBtn" style="flex:1;">🔄 重置到第0波</button>
-        </div>
       </div>`;
 
     // ==================== v51：整页按 .editor-section 分卡片（用户："出兵排版的界面
     // 我觉得好乱"）====================
     // 排查结论：CSS 本身（.wo-row 的列宽）v43 就已经统一过、没有错位；"乱"来自
-    // ①兵种总开关 / ②对战编排 / 预览 这几大块此前只用内联样式的小标题分隔，视觉上
+    // ①兵种总开关 / ②出兵编排 / 预览 这几大块此前只用内联样式的小标题分隔，视觉上
     // 是一整面墙。这里改成与上面"运行时控制"（runtime 变量）同一套 .editor-section
     // + <h4> 卡片，读起来是几张边界清楚的卡片，不是一整页平铺的控件。
-    //
-    // P2：出兵的一切都收在这一个 tab 里，但【必须】按模式分区并写明各自管谁 ——
-    // 两套规则同屏而不标注模式，正是用户说的"冲突或者是重合"。
     let html = runtime + `<div class="pick-desc-box" style="margin-bottom:10px;">
-      🧬 <b>对战模式</b>出什么兵、按什么顺序出，全在这一页。分两段：<br>
-      　<b>① 兵种总开关</b>　对<b>沙盒+对战</b>都生效，关掉的兵种下面怎么排都不会出。<br>
-      　<b>② 对战编排</b>　只管<b>对战模式</b>：数组顺序 = 出兵先后。<br>
-      沙盒模式的出兵节奏是<b>逐兵种</b>的，在左侧对应兵种的「🏖️ 沙盒节奏」页 ——
-      它和这里的编排是两套互不相干的规则，同屏摆着正是用户说的"生成顺序和生成规则冲突或者重合"。
+      🧬 出什么兵、按什么顺序出，全在这一页。分两段：<br>
+      　<b>① 兵种总开关</b>　关掉的兵种下面怎么排都不会出。<br>
+      　<b>② 出兵编排</b>　数组顺序 = 出兵先后。
     </div>`;
 
     // ---- ① 兵种总开关（原「生成规则」里逐个类型翻页才能看到，现在一屏全景）----
-    html += `<div class="editor-section"><h4>① 兵种总开关（沙盒 + 对战通用）</h4>
+    html += `<div class="editor-section"><h4>① 兵种总开关</h4>
     <div class="editor-tabs" style="flex-wrap:wrap;">
       ${types.map(t => {
         const on = EN[t] !== false;
@@ -454,7 +353,7 @@ export const EDITOR_PAGES_WAVE = {
     const _laneIds = this._mapLaneIds();
     const _mapLabel = ((window.CTX?.__app || window.__app)?.mapSystem?.currentMap?.label) || '当前地图';
     html += `<div class="editor-section"><h4 style="display:flex;align-items:center;gap:8px;">
-      <span>② 对战编排（数组顺序 = 出兵先后）</span>
+      <span>② 出兵编排（数组顺序 = 出兵先后）</span>
       <span style="font-size:10px;font-weight:400;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
         作用域：${_who} × ${_laneTxt}${_own ? '（本格已有独立编排）' : '（当前显示继承来的那份，一改就会复制成本格专属）'}
       </span>
@@ -518,7 +417,7 @@ export const EDITOR_PAGES_WAVE = {
 
     html += `<div style="margin-top:8px;"><button id="woAddBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条</button>
       <button id="woResetBtn" style="margin-left:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">↺ 恢复默认编排</button></div>
-      </div>`; // 关闭 ② 对战编排 的 .editor-section
+      </div>`; // 关闭 ② 出兵编排 的 .editor-section
 
     // ---- 实时预览 ----
     const w = this._waveOrderPreviewWave, nd = this._waveOrderPreviewNexusDown;
@@ -570,20 +469,6 @@ export const EDITOR_PAGES_WAVE = {
     return html;
   },
 
-  // 沙盒节奏：**逐兵种**，所以它住在该兵种的节点下，而不是和全局编排挤在同一页。
-  // 这两者曾经同屏，于是"每波生成数量=3"和编排里的"近战兵 ×3"看着是一回事，
-  // 改前者在对战里纹丝不动 —— 那不是排版乱，是两套规则顶着同一个名字打架。
-  _renderSandboxContent(type) {
-    return `<div class="pick-desc-box" style="margin-bottom:10px;">
-        🏖️ 这一页<b>只影响沙盒模式</b>。对战模式的出兵完全由左侧「🧬 出兵编排」决定，
-        改这里在对战里看不到任何变化。
-      </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">
-        当前兵种：${this._iconOf(type)}${this._labelOf(type)}</div>
-      ${this._renderSandboxRuleRows(type)}
-      <div style="margin-top:10px;font-size:11px;color:var(--text-mute);">改完点【应用】写入。</div>`;
-  },
-
   // 兵种总开关：即点即生效（它只是个布尔，没有"批量应用"的必要）。
   _bindSpawnToggles(overlay, logFn, rerender) {
     overlay.querySelectorAll('[data-spawn-toggle]').forEach(btn => {
@@ -592,7 +477,7 @@ export const EDITOR_PAGES_WAVE = {
         CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
         const now = CONFIG.gameRules.spawnEnabled[t] !== false;
         CONFIG.gameRules.spawnEnabled[t] = !now;
-        logFn(`⚙️ 「${this._labelOf(t)}」生成开关：${!now ? '开' : '关'}（沙盒+对战通用）`, 'spawn');
+        logFn(`⚙️ 「${this._labelOf(t)}」生成开关：${!now ? '开' : '关'}`, 'spawn');
         // 重绘：编排表里该兵种的行要跟着变灰/变亮，预览也要重算
         if (rerender) rerender(); else {
           btn.classList.toggle('active', !now);
@@ -612,47 +497,21 @@ export const EDITOR_PAGES_WAVE = {
     this._bindSpawnToggles(overlay, logFn, rerender);
     // 运行时控制（暂停/立即下一波/间隔）：从设置面板搬过来，行为逐位不变。
     const app = window.CTX?.__app || window.__app;
-    const waveSystem = app?.waveSystem, laneWaveSystem = app?.laneWaveSystem;
-    overlay.querySelector('#woToggleWaveBtn')?.addEventListener('click', () => {
-      waveSystem.paused = !waveSystem.paused;
-      logFn(waveSystem.paused ? '⏸ 小兵波次已暂停' : '▶ 小兵波次已恢复', 'spawn');
-      rerender();
-    });
-    overlay.querySelector('#woSkipWaveBtn')?.addEventListener('click', () => {
-      waveSystem.skipToNextWave();
-      logFn('⏭ 跳过等待', 'spawn');
-    });
-    overlay.querySelector('#woWaveInterval')?.addEventListener('input', (e) => {
-      const v = parseFloat(e.target.value);
-      if (!isNaN(v) && v > 0) {
-        CONFIG.gameRules.waveInterval = v;
-        if (waveSystem.nextWaveTime > v) waveSystem.nextWaveTime = v;
-        logFn(`✅ 小兵波次间隔已设为 ${v}秒`, 'spawn');
-      }
-    });
-    overlay.querySelector('#woResetWaveBtn')?.addEventListener('click', () => {
-      if (confirm('重置波次到第0波？')) {
-        window.waveNumber = 0;
-        waveSystem.waveNumber = 0;
-        waveSystem.nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
-        logFn('🔄 波次已重置', 'spawn');
-        rerender();
-      }
-    });
+    const laneWaveSystem = app?.laneWaveSystem;
     overlay.querySelector('#woToggleLaneWaveBtn')?.addEventListener('click', () => {
       laneWaveSystem.paused = !laneWaveSystem.paused;
-      logFn(laneWaveSystem.paused ? '⏸ 对战模式波次已暂停' : '▶ 对战模式波次已恢复', 'spawn');
+      logFn(laneWaveSystem.paused ? '⏸ 波次已暂停' : '▶ 波次已恢复', 'spawn');
       rerender();
     });
     overlay.querySelector('#woSkipLaneWaveBtn')?.addEventListener('click', () => {
-      if (laneWaveSystem) { laneWaveSystem.nextWaveTime = 0; logFn('⏭ 对战模式：立即生成下一波', 'spawn'); }
+      if (laneWaveSystem) { laneWaveSystem.nextWaveTime = 0; logFn('⏭ 立即生成下一波', 'spawn'); }
     });
     overlay.querySelector('#woLaneWaveInterval')?.addEventListener('input', (e) => {
       const v = parseFloat(e.target.value);
       if (!isNaN(v) && v > 0 && laneWaveSystem) {
         laneWaveSystem.waveInterval = v;
         if (laneWaveSystem.nextWaveTime > v) laneWaveSystem.nextWaveTime = v;
-        logFn(`✅ 对战模式波次间隔已设为 ${v}秒`, 'spawn');
+        logFn(`✅ 波次间隔已设为 ${v}秒`, 'spawn');
       }
     });
     // 结构性操作（上下移/删/加/恢复默认）即点即改数组并重绘；
@@ -771,20 +630,6 @@ export const EDITOR_PAGES_WAVE = {
     const n = buildWaveOrder(w, this._waveOrderPreviewNexusDown, CONFIG.gameRules, f).length;
     const who = f ? (f === 'blue' ? '🔵蓝方' : '🔴红方') : '双方共享';
     logFn(`✅ 出兵编排已应用（${who}，${list.length} 条规则；第 ${w} 波将出 ${n} 个单位）`, 'spawn');
-  },
-
-  _applySpawnRuleChanges(overlay, type, logFn) {
-    const inputs = overlay.querySelectorAll('.spawnrule-input');
-    let changed = 0;
-    inputs.forEach(inp => {
-      const key = inp.dataset.key;
-      const val = parseFloat(inp.value);
-      if (!isNaN(val) && key) {
-        CONFIG.gameRules[key] = val;
-        changed++;
-      }
-    });
-    if (changed) logFn(`✅ 「${this._labelOf(type)}」沙盒节奏已更新（${changed}项）`, 'spawn');
   },
 
   // P2：成长/屠戮从原「生成规则」里拆出来单独应用。它们是战斗数值，

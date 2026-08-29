@@ -6,8 +6,7 @@ import { CONFIG, MINION_SIZES } from '../data/Config.js';
 
 /**
  * LaneMovementSystem.js
- * 对战模式专用：小兵沿地图 waypoint 折线行军 + 仇恨索敌（LoL 式）。
- * 沙盒模式完全不用这个系统——两套移动逻辑通过 mapSystem.active 互斥。
+ * 小兵沿地图 waypoint 折线行军 + 仇恨索敌（LoL 式）。
  *
  * ==================== 行为模型（Q2 重构：路径 = 参考线，不再是硬轨道）====================
  * 旧模型：小兵严格贴折线走，索敌半径 = 自身攻击射程 → 近战兵（射程30）会无视
@@ -75,8 +74,6 @@ export class LaneMovementSystem {
   }
 
   update(dt) {
-    if (!this.mapSystem.active) return; // 沙盒模式：这个系统完全不介入
-
     const minions = this.entities.getAllMinions(true).filter(m => m._mapFaction && m._laneId);
 
     // ==================== 守家优先（每帧每阵营只查一次圈）====================
@@ -161,8 +158,7 @@ export class LaneMovementSystem {
       // ===== v39（Q4）攻城车：锁定建筑后不再改目标 =====
       // 用户定稿："以某座防御塔为目标后就不会再改变目标，直至防御塔摧毁或攻城车死亡"，
       // 且"对所有建筑单位生效"。锁定只认【当前可选中】的建筑（受结构保护的不锁）。
-      // v43 Q2：锁定维护搬进 CombatSystem.siegeAcquire —— 攻城武器只有一份实现，
-      // 沙盒路径（CombatSystem 的小兵循环）调的是同一个方法。理由见那边的头注释。
+      // v43 Q2：锁定维护搬进 CombatSystem.siegeAcquire —— 攻城武器只有一份实现。理由见那边的头注释。
       {
         const locked = this.combat.siegeAcquire(minion, target);
         if (locked !== target) { target = locked; minion.targetId = locked ? locked.id : null; }
@@ -216,8 +212,8 @@ export class LaneMovementSystem {
               && canFire(minion, target)) {
             this.combat.performAttack(minion, target);
             // v43 Q7：走属性表，不读原始模板值。
-            // v43 Q2：攻城副作用（攻速 -50% + 自损）搬进 CombatSystem.finishAttack，
-            // 与沙盒路径共用一份实现；没装攻城武器时它原样返回，这里不必再判断。
+            // v43 Q2：攻城副作用（攻速 -50% + 自损）搬进 CombatSystem.finishAttack；
+            // 没装攻城武器时它原样返回，这里不必再判断。
             const finalAS = this.combat.finishAttack(
               minion, target, this.attrCalc.calcAttackSpeedOf(stats));
             minion.attackCooldown = this.attrCalc.attackIntervalOf(finalAS);
@@ -302,7 +298,7 @@ export class LaneMovementSystem {
     for (const other of nearby) {
       if (other.id === minion.id) continue;
       const otherFaction = other._mapFaction || other.faction;
-      if (!otherFaction) continue; // 忽略沙盒模式的手动测试单位（无阵营标记）
+      if (!otherFaction) continue; // 防御性：忽略没有阵营标记的实体（正常游戏中不会出现）
       if (!canTarget(minion._mapFaction, otherFaction)) continue;
       if (isStructureProtected(this.entities, other)) continue; // 受保护水晶不可选中
       const dx = other.pos.x - minion.pos.x, dy = other.pos.y - minion.pos.y;
@@ -723,7 +719,7 @@ export class LaneMovementSystem {
    *     破掉"两侧同样窄、投票平局"造成的对称死锁。
    *
    * 只读 isWalkable，不改任何单位状态（除自身的绕行侧/进度缓存），
-   * 无墙地图 hasWalls() 为假时整段短路 → 沙盒与嚎哭深渊行为完全不变。
+   * 无墙地图 hasWalls() 为假时整段短路 → 嚎哭深渊行为不变。
    */
   _terrainAvoid(minion, dirX, dirY, rSelf, now) {
     const ms = this.mapSystem;

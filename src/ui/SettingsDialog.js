@@ -9,7 +9,6 @@ import { DebugLogger } from '../utils/DebugLogger.js';
  */
 // Q5：按阵营规则行（统一 / 仅蓝 / 仅红三键）。
 // 语义：「统一」= 一键同开同关；「仅蓝/仅红」= 单独切换该阵营。
-// 沙盒模式的塔没有阵营标记，读取时任一方开启即视为开启（见 window.__towerRuleFor）。
 function _fmtTime(sec) {
   const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
@@ -100,7 +99,7 @@ export const SettingsDialog = {
   _tab: 'flow',
 
   open(deps, logFn) {
-    const { waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem } = deps;
+    const { dragonSystem, entityContainer, mapSystem, laneWaveSystem } = deps;
     const overlay = document.getElementById('modalOverlay');
     overlay.classList.add('open');
     document.getElementById('modalTitle').textContent = '⚙️ 设置';
@@ -122,9 +121,7 @@ export const SettingsDialog = {
           </div>
           <div class="slider-row"><label>当前波次</label>
             <div style="flex:1;font-size:13px;padding:5px 0;">
-              ${mapSystem?.active
-                ? `对战 第 <b>${laneWaveSystem?.waveNumber || 0}</b> 波　│　下一波 <b>${Math.ceil(laneWaveSystem?.nextWaveTime || 0)}</b>s`
-                : `沙盒 第 <b>${waveSystem?.waveNumber || 0}</b> 波`}
+              第 <b>${laneWaveSystem?.waveNumber || 0}</b> 波　│　下一波 <b>${Math.ceil(laneWaveSystem?.nextWaveTime || 0)}</b>s
             </div>
           </div>
           <div class="slider-row"><label>游戏暂停</label>
@@ -402,7 +399,7 @@ export const SettingsDialog = {
           }
           const label = { invincible: '防御塔无敌', attackOff: '防御塔停火', waveOn: '小兵波次生成' }[kind];
           logFn(`⚙️ ${label}：🔵${rules.blue ? '开' : '关'} 🔴${rules.red ? '开' : '关'}`, 'spawn');
-          this.open({ waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem }, logFn); // 重开刷新状态
+          this.open({ dragonSystem, entityContainer, mapSystem, laneWaveSystem }, logFn); // 重开刷新状态
         });
       });
 

@@ -11,7 +11,7 @@
  * 真正有效的办法就是：把游戏真跑起来。
  *
  * 做法：用最小 DOM 桩（canvas / document / window）让 main.js 能加载，
- *       然后驱动真实的游戏循环跑若干帧，覆盖沙盒模式 + 对战模式 + 天气开启。
+ *       然后驱动真实的游戏循环跑若干帧，覆盖启动即成局 + 换图 + 天气开启。
  *       任何运行时错误都会被 try-catch 捕获并报告。
  */
 import fs from 'fs';
@@ -144,13 +144,13 @@ const runFrames = (n, dtMs = 33) => {
 
 T('游戏循环已导出供测试驱动（window.CTX.__gameLoop）', typeof window.CTX.__gameLoop === 'function');
 
-// ---- 沙盒模式：跑 100 帧 ----
+// ---- 启动即成局：main.js 已经在启动时直接加载召唤师峡谷，跑 100 帧 ----
 {
   const err = runFrames(100);
-  T('沙盒模式：游戏循环 100 帧无崩溃', !err, err?.stack?.split('\n').slice(0, 3).join('\n    '));
+  T('启动即成局：游戏循环 100 帧无崩溃', !err, err?.stack?.split('\n').slice(0, 3).join('\n    '));
 }
 
-// ---- 对战模式：加载地图后跑 200 帧（覆盖出兵、战斗、碰撞、移动） ----
+// ---- 切换地图后跑 200 帧（覆盖出兵、战斗、碰撞、移动） ----
 {
   let err = null;
   try {

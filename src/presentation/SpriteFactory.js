@@ -102,7 +102,7 @@ export function towerSprite(color, icon, size = 28) {
 //   白色细描边提升与地面的对比度；高缩放下形状上再叠 emoji 图标双保险。
 export function minionSprite(type, faction, icon, size) {
   const color = faction === 'blue' ? '#5b9bd5' : faction === 'red' ? '#e0473f'
-    : (MINION_STYLE[type]?.color || '#c0392b'); // 沙盒无阵营单位沿用旧兵种色
+    : (MINION_STYLE[type]?.color || '#c0392b'); // 无阵营单位（理论上不会出现）沿用旧兵种色
   return getSprite('minion|' + type + '|' + (faction || 'none'), size * 2 + 8, (g, c) => {
     g.fillStyle = color;
     g.strokeStyle = 'rgba(255,255,255,0.75)';

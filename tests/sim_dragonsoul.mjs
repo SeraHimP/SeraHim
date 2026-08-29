@@ -292,7 +292,7 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     && st.soulResolved === false && st.soulOwner === null && !!st.souls);
 }
 
-// ==================== ⑪ 沙盒模式（无阵营）不结算，也不该崩 ====================
+// ==================== ⑪ 没有最后一击归属方（环境击杀）不结算，也不该崩 ====================
 {
   const bus = new EventBus();
   const ents = new EntityContainer(bus);
@@ -309,8 +309,8 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     ents.add(d);
     bus.emit('entity:death', { entityId: d.id });
   }
-  T('⑪-沙盒模式无阵营击杀计数', ds.factionTotals.blue === 0 && ds.factionTotals.red === 0);
-  T('⑪-沙盒模式无人成魂', ds.soulOwner === null && ds.soulResolved === false);
+  T('⑪-无归属击杀不计数', ds.factionTotals.blue === 0 && ds.factionTotals.red === 0);
+  T('⑪-无归属击杀不成魂', ds.soulOwner === null && ds.soulResolved === false);
   T('⑪-没有最后一击方时不发放任何增益（宁可少发也不能误发给敌方）',
     !fx.getEffects(t.id).some(e => e.blueprint?.stackKey?.startsWith('dragon_fire')));
 }

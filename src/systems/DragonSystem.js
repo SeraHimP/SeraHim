@@ -80,7 +80,7 @@ export class DragonSystem {
     // v45：这张图有没有龙。用户定稿："只有在召唤师峡谷中才有龙的生成！其他地图没有！"
     // 判据是**地图自己声明** `dragon.enabled`（与龙坑 v44 改成地图自有是同一个口径），
     // 不是在 Config 里维护一张 id 白名单 —— 那样自制地图想要龙还得去改引擎配置。
-    // 默认 null = 还没载入任何地图（沙盒），此时不拦（沙盒里手动生成龙照常可用）。
+    // 默认 null = 还没载入任何地图，此时不拦（手动生成龙照常可用）。
     this._mapDragon = null;
     this.createEntity = null;
     this.elementDragonSpawned = 0; // 已刷新的元素龙数
@@ -136,7 +136,7 @@ export class DragonSystem {
   /** main.js 注入"按 id 取地图数据"的函数（不注入时退化为不拦，单测里可缺省）。 */
   setMapLookup(fn) { this._mapOf = fn; }
 
-  /** 这张图现在允不允许**自动生成**龙。null（沙盒/未注入）一律放行。 */
+  /** 这张图现在允不允许**自动生成**龙。null（尚未载入地图/未注入）一律放行。 */
   mapAllowsDragon() {
     return this._mapDragon === null ? true : this._mapDragon;
   }
@@ -312,7 +312,7 @@ export class DragonSystem {
    *      旧规则下前 5 条龙谁拿都无所谓，反正最后一起算。
    */
   _onDragonKilled(dragon) {
-    const owner = dragon._lastHitFaction || null;   // 最后一击的阵营（可能为 null=沙盒/环境击杀）
+    const owner = dragon._lastHitFaction || null;   // 最后一击的阵营（可能为 null=环境击杀，无法归属）
     this._grantSlayer(dragon);                      // v45：屠龙者（给出最后一击的**那一个单位**）
 
     if (dragon._isAncient) {

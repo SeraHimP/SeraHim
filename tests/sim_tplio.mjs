@@ -75,9 +75,8 @@ T('出兵编排只剩唯一入口，且提到了顶层（不再挂在某个兵�
   /wave:\s*\{ label: '出兵编排'/.test(src) && /case 'wave':\s*return \['wave'\]/.test(src));
 T('成长/屠戮是独立一页（它们是战斗数值，与出兵无关）',
   /growth:\s*\{ label: '成长与屠戮'/.test(src) && /_applyGrowthChanges/.test(src));
-T('沙盒节奏与对战编排分处两页，且各自写明只管哪种模式',
-  /sandbox:\s*\{ label: '沙盒节奏'/.test(src)
-  && /只影响沙盒模式/.test(src) && /只管<b>对战模式/.test(src));
+// v51.6：沙盒模式整个删除，"沙盒节奏"页跟着一起没了——出兵编排现在唯一的入口。
+T('沙盒节奏页已删除（沙盒模式整个不存在了）', !/sandbox:\s*\{ label: '沙盒节奏'/.test(src));
 
 // battleTotemFromWave / battleTotemInterval 是死配置：全仓库无人读取，
 // 而默认编排里 { totem, fromWave:10, everyN:3 } 是同一条规则的第二份表述。

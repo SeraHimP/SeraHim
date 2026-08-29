@@ -578,7 +578,7 @@ export const towerPassives = {
       const ov_INTERVAL = pOver.INTERVAL ?? def.INTERVAL;
       const ov_PHASE2_DELAY = pOver.PHASE2_DELAY ?? def.PHASE2_DELAY;
       const ov_HP_GROWTH = pOver.HP_GROWTH ?? def.HP_GROWTH;
-      if (!cfg) return; // 非分层塔（沙盒普通塔）不过载
+      if (!cfg) return; // 非分层塔（手动建的塔，没有 _mapTier）不过载
 
       const now = window.gameTime || 0;
       const startSec = tierCfg.startMin * 60;

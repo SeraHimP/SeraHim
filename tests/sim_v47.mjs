@@ -79,16 +79,18 @@ function world() {
   T('生③-沙盒里"套用档位数值"之后同样补满', /effectiveMaxHP\(tower\)/.test(srcOf('src/main.js')));
 }
 
-// 小兵这一侧单独验一次：它走的是另一条工厂路径（hpScale / 里程碑成长 / equipExistingSoul）。
+// 小兵这一侧单独验一次：它走的是另一条工厂路径（hpScale / growthFlat / equipExistingSoul）。
+// （原来这里还测"里程碑成长"——沙盒模式专属的按波次数自动强化，
+// 随沙盒模式一起删除了，见 factories.js 的 createMinion。改用 growthFlat 继续覆盖
+// "出生血量按叠完增益之后的最大生命补满"这条规则，而不是白测一个没有增益的空转场景。）
 {
   const { fx, F } = world();
-  window.waveNumber = 30;   // 里程碑·强化（allStatsPct）从第 30 波起有 3 层
-  const m = F.createMinion('siege', 100, 100);
+  const baseTplHP = CONFIG.templates.siege.maxHP;
+  const m = F.createMinion('siege', 100, 100, 1, 1,
+    { faction: 'blue', laneId: 'mid', direction: 'forward', growthFlat: { hp: 500, ad: 20, res: 10, ap: 0 } });
   const eff = AttributeCalculator.calc(m, fx.getEffects(m.id)).maxHP;
-  T('生④-小兵出生也是满血（里程碑·强化的 allStatsPct 会抬高最大生命）',
-    Math.abs(m.currentHP - eff) < 1e-6);
-  T('生④-前提成立：这只兵的最大生命确实被里程碑抬高过', eff > m.baseStats.maxHP + 1e-6);
-  window.waveNumber = 1;
+  T('生④-小兵出生也是满血（growthFlat 抬高的最大生命也补满）', Math.abs(m.currentHP - eff) < 1e-6);
+  T('生④-前提成立：这只兵的最大生命确实被 growthFlat 抬高过', eff > baseTplHP + 1e-6);
 }
 
 // ==================== 二、龙的射程 ====================
@@ -307,7 +309,7 @@ function world() {
     && /class="icon-btn primary" id="addUnitBtn"/.test(html)
     && /class="icon-btn" id="resetViewBtn"/.test(html));
   T('栏③-模式钮保留文字（它显示的是**当前状态**，图标化会让人不知道点了会变成什么）',
-    /id="modeBtn" class="dragon">🗺️ 沙盒模式/.test(html));
+    /id="modeBtn" class="dragon">🗺️ 游戏地图/.test(html));
   T('栏④-日志按钮已从顶栏删除，接线也一并删了（否则 null.addEventListener 会打断后面所有接线）',
     !/id="toggleLogBtn"/.test(html) && !/getElementById\('toggleLogBtn'\)/.test(mj));
   T('栏④-日志开关搬进设置，操作的还是同一个 #logArea',

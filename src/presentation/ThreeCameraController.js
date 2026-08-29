@@ -74,7 +74,7 @@ export class ThreeCameraController {
     );
     this._ray.setFromCamera(this._ndc, cam);
     // C 组·台阶地形：优先射线打【起伏的地面网格】——高地/河床下点选不再有视差偏移；
-    // 无地形网格（沙盒/无墙）或未命中时回退 y=0 平面，行为与原来一致。
+    // 无地形网格（无墙地图）或未命中时回退 y=0 平面，行为与原来一致。
     const terr = this.r3d._terrainMesh;
     if (terr) {
       const hits = this._ray.intersectObject(terr, false);

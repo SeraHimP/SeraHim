@@ -293,70 +293,6 @@ export class CombatSystem {
       }
     }
 
-    // ---- 小兵移动 & 攻击塔（仅沙盒模式小兵；对战模式小兵由 LaneMovementSystem 接管） ----
-    for (const minion of minions) {
-      if (!minion.alive) continue;
-      if (minion._laneId) continue; // 对战模式小兵，交给 LaneMovementSystem 处理，这里跳过避免重复移动/攻击
-      if (!minion.pos || typeof minion.pos.x !== 'number') {
-        console.warn('小兵 #' + minion.id + ' 位置无效，跳过');
-        continue;
-      }
-      // 眩晕：停止一切活动
-      if (this.effects.isStunned(minion.id)) continue;
-
-      let nearestTower = null;
-      let minDist = Infinity;
-      for (const tower of towers) {
-        if (!tower.alive || !tower.pos) continue;
-        const dx = tower.pos.x - minion.pos.x;
-        const dy = tower.pos.y - minion.pos.y;
-        const d = dx * dx + dy * dy;
-        if (d < minDist) {
-          minDist = d;
-          nearestTower = tower;
-        }
-      }
-
-      if (!nearestTower) continue;
-
-      // v43 Q2：沙盒路径同样走攻城锁定（此前这条路上一条攻城规则都没有 ——
-      // 手动添加的攻城车因此既不显示红线、也没有攻城模式状态、攻速也不降）。
-      // 锁定目标可能与"最近的塔"不同（锁死了就不换），所以下面一律用 nearestTower 这个变量。
-      const lockedTgt = this.siegeAcquire(minion, nearestTower);
-      if (lockedTgt && lockedTgt !== nearestTower) {
-        nearestTower = lockedTgt;
-        minDist = (nearestTower.pos.x - minion.pos.x) ** 2 + (nearestTower.pos.y - minion.pos.y) ** 2;
-      }
-
-      const range = this.attrCalc.calc(minion, this.effects.getEffects(minion.id)).attackRange || 20;
-      const dist = Math.sqrt(minDist);
-
-      if (minion.targetId !== nearestTower.id && dist <= range) {
-        minion.targetId = nearestTower.id;
-        minion._lockUntil = (window.gameTime || 0) + (CONFIG.tuning?.lockOnWindup ?? 0.3); // v33（Q14）：小兵同样有锁定前摇
-      }
-      // v45：朝向门（与对战路径共用 canFire 这一份实现，不在这里再判一次角差）。
-      // v49：充能型攻击（攻城车的攻城模式）没充满就不开火，见 chargeReady/_tickCharge。
-      if (dist <= range && minion.attackCooldown <= 0 && this.chargeReady(minion, nearestTower)
-          && !((window.gameTime || 0) < (minion._lockUntil || 0)) && !this.effects.isDisarmed(minion.id)
-          && canFire(minion, nearestTower)) {
-        minion.targetId = nearestTower.id;
-        this.performAttack(minion, nearestTower);
-        // v43 Q2：与对战路径共用同一个攻城结算（攻速 -50% + 自损 20%）。
-        const finalAS = this.finishAttack(minion, nearestTower, this.attrCalc.calcAttackSpeedOf(
-          this.attrCalc.calc(minion, this.effects.getEffects(minion.id))));
-        minion.attackCooldown = this.attrCalc.attackIntervalOf(finalAS);
-        minion._cdAS = finalAS;
-      } else if (dist > range) {
-        const angle = Math.atan2(nearestTower.pos.y - minion.pos.y, nearestTower.pos.x - minion.pos.x);
-        const speed = this.attrCalc.calc(minion, this.effects.getEffects(minion.id)).moveSpeed || 30;
-        minion.pos.x += Math.cos(angle) * speed * dt;
-        minion.pos.y += Math.sin(angle) * speed * dt;
-        minion.pos.x = Math.max(0, Math.min(900, minion.pos.x));
-        minion.pos.y = Math.max(0, Math.min(700, minion.pos.y));
-      }
-    }
-
     // ---- 触发被动技能 onFrame（眩晕单位跳过；不兼容特殊武器的技能禁用） ----
     for (const entity of this.entities.getAll(true)) {
       if (this.effects.isStunned(entity.id)) continue;
@@ -446,14 +382,13 @@ export class CombatSystem {
       if (!m.pos) continue;
       if (m.type === 'tower') {
         if (!towerVsTower) continue;
-        if (!tower._mapFaction || !m._mapFaction) continue;   // 沙盒塔无阵营，不互打
         if (!canTarget(tower._mapFaction, m._mapFaction)) continue;
         if (isStructureProtected(this.entities, m)) continue;
         inRange.push(m);
         continue;
       }
-      // 对战模式：塔只能攻击敌对阵营的单位；沙盒模式塔（无 _mapFaction）行为不变，照打所有小兵
-      if (tower._mapFaction && !canTarget(tower._mapFaction, m._mapFaction || m.faction || null) && m.type !== 'dragon') continue;
+      // 塔只能攻击敌对阵营的单位（巨龙没有阵营敌我，谁挡路都打）
+      if (!canTarget(tower._mapFaction, m._mapFaction || m.faction || null) && m.type !== 'dragon') continue;
       inRange.push(m);
     }
     if (inRange.length === 0) return null;
@@ -487,14 +422,14 @@ export class CombatSystem {
    * 三个症状读的是三条不同的代码（红线与状态栏读 `_ramLockId`，攻速读
    * LaneMovementSystem 里的 `target.type === 'tower'` 分支），却同时失效 ——
    * 共同上游只有一个：**攻城武器的三条规则只写在 LaneMovementSystem 那一条路上**。
-   * 而 CombatSystem 的小兵循环开头有 `if (minion._laneId) continue;`：
-   * 沙盒里的、以及玩家在编辑器里手动添加的单位**没有** `_laneId`，走的是这条路，
-   * 那里一条攻城规则都没有。这也顺带解释了"攻城车优先攻击塔而不是小兵"——
-   * 沙盒那条路里小兵只认 `nearestTower`，压根不扫小兵。
+   * 而 CombatSystem 当时还有另一条小兵移动/攻击循环（沙盒模式专用，随沙盒模式一起
+   * 删掉了），那条路上一条攻城规则都没有。这也顺带解释了当时"攻城车优先攻击塔而不是
+   * 小兵"的现象——那条路里小兵只认最近的塔，压根不扫小兵。
    *
    * 「同一件事在两处各实现一半」是本仓库反复出事的形状（见 MapSystem.beginNexusRespawn
-   * 的头注释）。所以这次不在沙盒路径里再抄一份，而是把攻城的两件事收进下面两个方法，
-   * 两条攻击路径都调它们 —— 攻城武器从此只有一份实现。
+   * 的头注释）。当时的做法是把攻城的两件事收进下面两个方法，两条攻击路径各自调用 ——
+   * 沙盒路径删掉后，调用方只剩 LaneMovementSystem 这一处，但方法本身仍然保留独立实现，
+   * 免得以后再冒出第二条攻击路径时又要重新拆一次。
    */
 
   /**
@@ -739,7 +674,7 @@ export class CombatSystem {
     //   近战（射程 ≤ 60）：视作"弹速无穷大的弹道"——不可见、瞬时生效（巨龙射程 0 亦属此列）
     // 注意这【改变伤害时序】：远程单位伤害晚 0.3~0.8s 落地，目标先死则该发伤害整个消失。
     if (this.projectiles && !isMeleeUnit(attacker) && attacker.pos && target.pos) {
-      // v33（Q6）：子弹颜色 = 阵营色（原按武器着色）；沙盒中立塔沿用暖橙
+      // v33（Q6）：子弹颜色 = 阵营色（原按武器着色）；中立塔（_mapFaction==='neutral'）沿用暖橙
       const bulletColor = attacker._mapFaction === 'blue' ? '#5b9bd5'
         : attacker._mapFaction === 'red' ? '#e0473f'
         : '#e8563f';

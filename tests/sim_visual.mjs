@@ -45,7 +45,7 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   T('compositionFor 是解析顺序的唯一实现',
     compositionFor('red', gr)[0].type === 'ranged' && compositionFor(null, gr)[0].type === 'melee');
 
-  // 兵种总开关仍然凌驾于两者之上（它是"沙盒+对战通用"的总闸）
+  // 兵种总开关仍然凌驾于两者之上
   gr.spawnEnabled.ranged = false;
   T('兵种总开关对阵营编排同样生效', buildWaveOrder(1, false, gr, 'red').length === 0);
   gr.spawnEnabled.ranged = true;
@@ -91,29 +91,29 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
     ents.add(e);
     return e;
   };
-  // 沙盒手建塔：没有 _mapTier / _mapFaction —— 正是原来会被清掉的那种
-  const sandboxTower = mk('tower');
+  // 无 _mapTier / _mapFaction 的塔（正常游戏里不会出现，防御性场景）：正是原来会被清掉的那种
+  const bareTower = mk('tower');
   const battleTower = mk('tower', { _mapTier: 'outer', _mapFaction: 'blue' });
   const minion = mk('melee', { _mapFaction: 'red' });
 
-  sandboxTower.alive = false; battleTower.alive = false; minion.alive = false;
+  bareTower.alive = false; battleTower.alive = false; minion.alive = false;
   ents.purgeDead();
 
-  T('沙盒手建塔死后留成废墟（原来会被直接清掉，根本选不中）',
-    !!ents.get(sandboxTower.id) && ents.get(sandboxTower.id)._ruin === true);
+  T('无字段的塔死后留成废墟（原来会被直接清掉，根本选不中）',
+    !!ents.get(bareTower.id) && ents.get(bareTower.id)._ruin === true);
   T('对战塔死后同样留成废墟', !!ents.get(battleTower.id) && ents.get(battleTower.id)._ruin === true);
   T('小兵死后照常清除（只有塔留废墟）', !ents.get(minion.id));
 
   // 废墟要能被 aliveOnly=false 的查询命中 —— 点选就是走这条路
   const hit = ents.findInRadius(0, 0, 50, null, false).map(e => e.id);
   T('废墟能被 findInRadius(aliveOnly=false) 命中（点选依赖这条）',
-    hit.includes(sandboxTower.id) && hit.includes(battleTower.id));
+    hit.includes(bareTower.id) && hit.includes(battleTower.id));
   T('废墟不会被 aliveOnly=true 命中（不该被索敌/计入存活）',
-    !ents.findInRadius(0, 0, 50, null, true).some(e => e.id === sandboxTower.id));
+    !ents.findInRadius(0, 0, 50, null, true).some(e => e.id === bareTower.id));
 
   // 反复 purge 不应重复处理或复活
   ents.purgeDead(); ents.purgeDead();
-  T('重复 purge 幂等', !!ents.get(sandboxTower.id) && !ents.get(minion.id));
+  T('重复 purge 幂等', !!ents.get(bareTower.id) && !ents.get(minion.id));
 
   // 点选命中检测确实放行废墟
   const cc = fs.readFileSync('src/ui/CanvasController.js', 'utf8');

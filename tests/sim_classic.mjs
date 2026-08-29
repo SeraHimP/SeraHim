@@ -240,7 +240,7 @@ ms.loadMap(CID);
   T('路④-经典模式三路（沿用召唤师峡谷布局）', mapLaneIds().join(',') === 'top,mid,bot');
 
   app.mapSystem.currentMap = null;
-  T('路⑤-取不到地图时退回三路（沙盒/未载入，与改动前默认一致）',
+  T('路⑤-取不到地图时退回三路（未载入，与改动前默认一致）',
     mapLaneIds().join(',') === 'top,mid,bot');
 
   // clampLaneId：这是这个 bug **看不见的那一半**

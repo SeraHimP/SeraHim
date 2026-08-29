@@ -6,8 +6,6 @@
  * 的方式实现，以后加入第三方阵营（如野怪/中立塔）不需要改判定逻辑，只需要在
  * ENEMY_PAIRS 里补充新的敌对声明。
  *
- * 沙盒模式（现有自由玩法）不使用本系统——那边的索敌逻辑是"塔固定打小兵、小兵固定打塔"，
- * 与阵营无关，保持原样不受影响。本系统只服务于新的"对战模式"。
  */
 
 export const FACTIONS = {
@@ -88,10 +86,8 @@ export function enemyUnitsInRadius(entities, self, radius, opts = {}) {
   for (const e of entities.findInRadius(self.pos.x, self.pos.y, radius, null, true)) {
     if (!e || !e.alive || e.id === self.id) continue;
     if (!opts.includeBuildings && e.type === 'tower') continue;
-    // 沙盒模式（双方都没有阵营）维持"都算敌人"的旧行为 —— 那里本来就只有一伙人，
-    // 一律过滤掉的话沙盒里所有范围技能都会变成哑的。
     const ef = e._mapFaction || e.faction || null;
-    if (sf && ef && !canTarget(sf, ef)) continue;
+    if (!canTarget(sf, ef)) continue;
     out.push(e);
   }
   return out;

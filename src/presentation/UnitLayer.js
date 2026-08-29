@@ -547,8 +547,7 @@ export class UnitLayer {
           for (const o of ents.findInRadius(e.pos.x, e.pos.y, base, null, true)) {
             if (o.id === e.id || o.type === 'tower' || !o.pos) continue;
             const of = o._mapFaction || o.faction;
-            // 沙盒模式（塔无阵营）：任何单位都算"有敌人"，与索敌口径一致
-            if (fac && of && of === fac) continue;
+            if (of === fac) continue;
             if (Math.hypot(o.pos.x - e.pos.x, o.pos.y - e.pos.y) <= base) { hit = true; break; }
           }
         }
@@ -686,13 +685,12 @@ export class UnitLayer {
     const faction = e._mapFaction || e.faction;
     // v43：血条颜色只看**阵营**，不再按 type 分叉。
     // 用户："中立单位的血条是绿色的。并且我新建了中立防御塔，血条是蓝色的。"
-    // 原写法 `defaultColor = e.type === 'tower' ? 蓝 : 绿` 是"沙盒时代"的遗留：
+    // 原写法 `defaultColor = e.type === 'tower' ? 蓝 : 绿` 是早期版本的遗留：
     // 那时塔一定是自己人（蓝）、小兵一定是敌人（绿），颜色实际编码的是敌我而不是阵营。
     // 加入中立阵营之后这个假设就塌了 —— 中立**塔**掉进蓝色分支，看起来像己方建筑。
-    // 现在：蓝=蓝方、红=红方、绿=中立/无阵营（沙盒里塔仍无阵营，故沙盒塔变绿是预期内的统一）。
+    // 现在：蓝=蓝方、红=红方、绿=中立。
     const hpColor = faction === 'blue' ? '#4a9eff'
                   : faction === 'red' ? '#ff5a5a'
-                  : (e.type === 'tower' && !faction) ? '#4a9eff'   // 沙盒塔（压根没有阵营字段）沿用蓝色
                   : '#4caf50';                                     // 中立一律绿色
     const shieldTotal = (e.shieldFixedCurrent || 0) + (e.tempShield || 0);
     const shieldFrac = Math.max(0, Math.min(1, shieldTotal / maxHP));

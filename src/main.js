@@ -4,7 +4,6 @@ import { EffectRegistry } from './core/EffectRegistry.js';
 import { SkillLibrary } from './core/SkillLibrary.js';
 import { AttributeCalculator } from './core/AttributeCalculator.js';
 import { CombatSystem } from './systems/CombatSystem.js';
-import { WaveSystem } from './systems/WaveSystem.js';
 import { ProjectileSystem } from './systems/ProjectileSystem.js';
 import { BuffSystem } from './systems/BuffSystem.js';
 import { ManaSystem } from './systems/ManaSystem.js';
@@ -76,7 +75,6 @@ const attrCalc = AttributeCalculator;
 const combatSystem = new CombatSystem(entityContainer, effectRegistry, eventBus, skillLibrary);
 const projectileSystem = new ProjectileSystem(entityContainer, eventBus, combatSystem);
 combatSystem.setProjectileSystem(projectileSystem);
-const waveSystem = new WaveSystem(entityContainer, eventBus);
 const buffSystem = new BuffSystem(effectRegistry, entityContainer, eventBus, combatSystem);
 // v51：技能增幅（自动生效）与韧性（缩短控制/减速）都要在 EffectRegistry.apply() 里
 // 现读施法者/受术者的属性表，所以注入实体表 + 属性计算器——不注入时两条新逻辑整段短路。
@@ -97,7 +95,6 @@ const uiManager = new UIManager(entityContainer, effectRegistry, attrCalc);
 // ReferenceError 让整个 main.js 加载失败、游戏起不来（v25 事故的成因）。
 // mapSystem 必须先于 renderer3d / canvasController 声明——后两者构造时就要用它。
 const mapSystem = new MapSystem(entityContainer, eventBus);
-waveSystem.setMapSystem(mapSystem);
 mapSystem.setEffectRegistry(effectRegistry); // Q5：召唤水晶"重生中"状态展示
 
 // 全局天气系统：连续演化的权重场，通过 AttributeCalculator 的修正层影响全体单位。
@@ -128,7 +125,6 @@ CTX.__towerRules = {
 CTX.__towerRuleFor = (kind, faction) => {
   const r = CTX.__towerRules?.[kind];
   if (!r) return false;
-  if (!faction) return r.blue || r.red;   // 无阵营（沙盒塔）：任一方开启即视为开启
   return !!r[faction];
 };
 
@@ -233,7 +229,7 @@ const facingSystem = new FacingSystem(entityContainer);
 const laneAvengerSystem = new LaneAvengerSystem(entityContainer, effectRegistry, eventBus, mapSystem); // v33 Q20：哀兵
 
 
-CTX.__app = { entityContainer, effectRegistry, combatSystem, waveSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
+CTX.__app = { entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
 
 // ---------- 创建单位 ----------
 // v43 P1-④：塔 / 对战建筑 / 小兵 / 巨龙 四个工厂已搬到 src/core/factories.js。
@@ -250,11 +246,10 @@ dragonSystem.setMapLookup((id) => mapSystem.getMapById?.(id) || null);
 // v43：龙的「宿怨」被动（对某阵营的减伤/增伤随该阵营击杀数增长）在 CombatSystem 里结算，
 // 击杀数由 DragonSystem 灌过去 —— 这里做一次注入，避免两个系统互相 import。
 dragonSystem.setCombatSystem(combatSystem);
-waveSystem.setCreateMinion(createMinion);
 // 对战模式成长（Q2 再重做）：纯固定值/波，杜绝复利后期爆炸，只动 最大生命/攻击力/双抗。
 // 数值经仿真校准：10分钟（约20波）时穿透塔单发 ≈ 近战44.9%/远程69.0%/炮车13.7%/超级兵4.3% 生命，
 // 对齐 LoL 参考值（45/70/14/5）。无百分比分量 → 负基值属性（如超级兵魔抗-30）天然只吃固定增量。
-// 数值偏保守，为龙魂等后续增益留出空间。沙盒模式里程碑成长公式不受影响。
+// 数值偏保守，为龙魂等后续增益留出空间。
 // Q10：攻击力成长降至原值 75%、双抗成长降至原值 33%（生命成长不变）。
 // 成长表已搬进 CONFIG.battleGrowth（Q2：软编码，模板编辑器可改、地图可覆写）。
 // 这里只保留取值逻辑：CONFIG 基表 → map.minionGrowth 覆写（浅合并，按兵种）。
@@ -269,8 +264,7 @@ function battleGrowthFlat(type) {
   return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n, ap: (f.ap || 0) * n };
 }
 laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
-  // 对战模式小兵按 laneWaveSystem 自己的独立波次计数成长（不能用沙盒的 window.CTX.waveNumber，
-  // 两套波次计数完全独立）。成长公式与沙盒模式一致：固定值线性增长 × 复合增长叠加。
+  // 按 laneWaveSystem 自己的独立波次计数成长。
   const ent = createMinion(type, x, y, 1, 1, { faction, laneId, direction, growthFlat: battleGrowthFlat(type), templateOverride: mapSystem.currentMap?.minionTemplates?.[type] });
   // v42: template override now happens inside createMinion (before growth), passed via templateOverride
   // The growth is already applied on top of template values inside createMinion.
@@ -383,18 +377,9 @@ CTX.__resetRun = () => {
   projectileSystem.beams.clear();
   // ③ 龙系统的整局进度（含龙魂归属）
   dragonSystem.resetRun();
-  // ④ 沙盒波次
-  waveSystem.waveNumber = 0;
-  CTX.waveNumber = 0;
-  CTX.gameTime = 0;
-  CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
-  // ⑤ 地图：对战模式重载当前图；沙盒模式没有地图，上面四步已经够了
-  if (mapSystem.active && mapSystem.currentMap) {
-    mapSystem.loadMap(mapSystem.currentMap.id);
-  } else {
-    weatherSystem.reset();
-    CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
-  }
+  // ④ 地图：重载当前图。loadMap 触发的 map:loading/map:loaded 会把时钟/波次/比分/
+  //    天气一并重置，见下面那两个事件处理器 —— 这里不用重复做一遍。
+  mapSystem.loadMap(mapSystem.currentMap.id);
   uiManager.log('🔄 本局已重置（地图与所有属性设置保持不变）', 'spawn');
   return true;
 };
@@ -408,12 +393,9 @@ function _processNextTowerPlacement() {
   uiManager.log(`🎯 请点击画布选择建塔位置（剩余 ${_towerPlacementQueue.length + 1} 个待放置）`, 'spawn');
   canvasController.armPlaceMode((worldX, worldY) => {
     const tower = createTower(worldX, worldY);
-    // EQ2：对战模式手动建塔归属阵营（蓝/红/中立）。中立=独立一方：打红蓝双方，也被双方打。
-    // 沙盒模式 faction 为 null，行为完全不变（塔固定打小兵、小兵固定打塔）。
-    if (faction) {
-      tower._mapFaction = faction;
-      tower.faction = faction;
-    }
+    // EQ2：手动建塔归属阵营（蓝/红/中立）。中立=独立一方：打红蓝双方，也被双方打。
+    tower._mapFaction = faction;
+    tower.faction = faction;
     const oldWeapon = tower._skillInstances.find(s => s.skillId.startsWith('weapon_'));
     if (oldWeapon) {
       const oldDef = skillLibrary[oldWeapon.skillId];
@@ -467,7 +449,7 @@ function _processNextTowerPlacement() {
           if (fullHP > 0) tower.currentHP = fullHP;
           tower.shieldFixedCurrent = tower.baseStats.shieldFixedMax || 0;
         }
-        // 层级也一并设上：不设的话它在结构保护/推进度统计里仍算"沙盒塔"，
+        // 层级也一并设上：不设的话它在结构保护/推进度统计里仍算"无层级的手建塔"，
         // 而面板写着"已套用召唤水晶数值" —— 又是一处面板与实际不符。
         tower._mapTier = meta.tier;
         mTag += `（已套用${meta.label}档位数值与层级）`;
@@ -482,11 +464,7 @@ function _processNextTowerPlacement() {
 
 document.getElementById('addUnitBtn').addEventListener('click', () => {
   canvasController.cancelPlaceMode();
-  if (mapSystem.active) {
-    uiManager.log('ℹ️ 当前是对战模式：手动添加的单位不属于任何阵营/路径，仅供测试', 'spawn');
-  }
   UnitAddDialog.open({
-    isBattle: () => mapSystem.active,
     onBuildTower: (weaponType, passiveKeys, faction, opts) => {
       // 批量生成时可能一次性收到多个塔条目，串行进入选位模式，避免互相抢占
       _towerPlacementQueue.push({ weaponType, passiveKeys, faction: faction || null,
@@ -494,41 +472,23 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
       if (_towerPlacementQueue.length === 1) _processNextTowerPlacement();
     },
     onAddMinion: (type, count, growth, faction, laneId) => {
-      // 对战模式：带阵营的手动添加——出生点=该阵营水晶枢纽，走指定分路推线，
+      // 带阵营的手动添加——出生点=该阵营水晶枢纽，走指定分路推线，
       // 成长按对战复利公式，默认被动/阵营覆写在 createMinion 内自动生效。
-      if (faction && mapSystem.active && mapSystem.currentMap) {
-        const nexus = mapSystem.currentMap.buildings.find(b => b.tier === 'nexus_main' && b.faction === faction);
-        const px = nexus ? nexus.pos.x : 1776, py = nexus ? nexus.pos.y : 1776;
-        const dir = faction === FACTIONS.BLUE ? 'forward' : 'reverse';
-        const gf = growth ? battleGrowthFlat(type) : null;
-        for (let i = 0; i < count; i++) {
-          createMinion(type, px + (Math.random() - 0.5) * 16, py + (Math.random() - 0.5) * 16,
-            1, 1, { faction, laneId: laneId || 'mid', direction: dir, growthFlat: gf });
-        }
-        uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${laneId || 'mid'} 路`, 'spawn');
-        return;
-      }
-      const n = waveSystem.waveNumber || 1;
-      const hpFixed = CONFIG.gameRules.hpFixedPerWave || 2;
-      const hpComp = CONFIG.gameRules.hpCompPctPerWave || 0.3;
-      const attrFixed = CONFIG.gameRules.attrFixedPerWave || 3.5;
-      const attrComp = CONFIG.gameRules.attrCompPctPerWave || 0.4;
-      const hpScale = growth ? (1 + hpFixed/100*n) * Math.pow(1+hpComp/100, n) : 1;
-      const attrScale = growth ? (1 + attrFixed/100*n) * Math.pow(1+attrComp/100, n) : 1;
+      const nexus = mapSystem.currentMap.buildings.find(b => b.tier === 'nexus_main' && b.faction === faction);
+      const px = nexus ? nexus.pos.x : 1776, py = nexus ? nexus.pos.y : 1776;
+      const dir = faction === FACTIONS.BLUE ? 'forward' : 'reverse';
+      const gf = growth ? battleGrowthFlat(type) : null;
       for (let i = 0; i < count; i++) {
-        createMinion(type, 820 + Math.random()*20 - 10, 400 + Math.random()*50 - 25, hpScale, attrScale);
+        createMinion(type, px + (Math.random() - 0.5) * 16, py + (Math.random() - 0.5) * 16,
+          1, 1, { faction, laneId: laneId || 'mid', direction: dir, growthFlat: gf });
       }
-      uiManager.log(`➕ 生成 ${count} 个 ${type} 兵${growth ? ' (应用波次成长)' : ''}`, 'spawn');
+      uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${laneId || 'mid'} 路`, 'spawn');
     },
     onAddDragon: (element, ancient) => {
       const dstats = dragonSystem._dragonStats(dragonSystem.elementDragonSpawned + 1, ancient);
       const el = element || Object.keys(DRAGON_ELEMENTS)[Math.floor(Math.random() * Object.keys(DRAGON_ELEMENTS).length)];
       createDragon('dragon', { element: ancient ? null : el, isAncient: ancient, absStats: dstats });
       uiManager.log(`🐉 手动生成${ancient ? '远古巨龙' : (DRAGON_ELEMENTS[el]?.label || '巨龙')}`, 'spawn');
-    },
-    onEditSpawnRule: (type, returnCallback) => {
-      // 落到「沙盒节奏」页 —— 这个按钮就是为沙盒出兵节奏来的，落在"属性"页等于没响应
-      AttributeEditor.openTemplateEditor(type, uiManager.log.bind(uiManager), returnCallback, 'sandbox');
     },
   });
 });
@@ -551,24 +511,21 @@ document.getElementById('templateEditorBtn').addEventListener('click', () => {
 // 设置窗口（整合此前的跳过等待/暂停波次/清屏/暂停/重置波次，新增小兵/龙独立控制）
 document.getElementById('settingsBtn').addEventListener('click', () => {
   canvasController.cancelPlaceMode();
-  SettingsDialog.open({ waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem }, uiManager.log.bind(uiManager));
+  SettingsDialog.open({ dragonSystem, entityContainer, mapSystem, laneWaveSystem }, uiManager.log.bind(uiManager));
 });
 
-// 模式切换（沙盒 / 对战）
+// 地图切换（原来这里还有一个"沙盒/对战"模式切换按钮，随沙盒模式一起删掉了）
 function updateModeBtnLabel() {
   const btn = document.getElementById('modeBtn');
-  if (btn) btn.textContent = mapSystem.active ? '⚔️ 对战模式' : '🗺️ 沙盒模式';
+  if (btn) btn.textContent = `🗺️ ${mapSystem.currentMap?.label || '游戏地图'}`;
 }
 document.getElementById('modeBtn').addEventListener('click', () => {
   canvasController.cancelPlaceMode();
-  ModeDialog.open({ mapSystem, waveSystem, onModeChanged: () => {
+  ModeDialog.open({ mapSystem, onMapChanged: () => {
     updateModeBtnLabel();
-    // 对战模式：相机自适应到地图声明的世界尺寸（召唤师峡谷 3552×3552，
-    // 默认 zoom=1 只能看到左上角一角）；沙盒模式：恢复默认视角。
-    if (mapSystem.active && mapSystem.currentMap?.world) {
+    // 相机自适应到地图声明的世界尺寸（召唤师峡谷 3552×3552，默认 zoom=1 只能看到左上角一角）。
+    if (mapSystem.currentMap?.world) {
       canvasController.fitToWorld(mapSystem.currentMap.world.w, mapSystem.currentMap.world.h);
-    } else {
-      canvasController.zoom = 1.0; canvasController.offsetX = 0; canvasController.offsetY = 0; canvasController.updateView();
     }
   } }, uiManager.log.bind(uiManager));
 });
@@ -583,7 +540,7 @@ WeatherPanel.init(weatherSystem, () => {
 WorldHud.init(worldState, {
   onEntropyClick: () => {
     SettingsDialog._tab = 'world';
-    SettingsDialog.open({ waveSystem, dragonSystem, entityContainer, mapSystem, laneWaveSystem },
+    SettingsDialog.open({ dragonSystem, entityContainer, mapSystem, laneWaveSystem },
       (m, k) => uiManager.log(m, k));
   },
 });
@@ -624,11 +581,8 @@ CTX.__perf = PERF;
 
 function stepSimulation(dt) {
   CTX.gameTime += dt;
-  CTX._nextWaveTime = waveSystem.nextWaveTime;
   effectRegistry.update(dt);
   buffSystem.update(dt);
-  // 对战模式激活时暂停沙盒波次（两套系统互斥，详见历史注释）
-  if (!mapSystem.active) waveSystem.update(dt);
   dragonSystem.update(dt);
   combatSystem.update(dt);
   manaSystem.update(dt);      // v51：资源条推进 + 满了就施放主动技能
@@ -718,10 +672,7 @@ function gameLoop(timestamp) {
 }
 
 // ---------- 启动 ----------
-// v33（Q15）：进入游戏默认为【对战模式 - 召唤师峡谷】。
-// 沙盒模式的首波倒计时仍预置好——用户切回沙盒时行为与原来一致（但不再自动放一座初始塔，
-// 对战模式下那座塔会以无阵营单位残留在峡谷正中，纯属干扰）。
-waveSystem.nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
+// 进入游戏默认为【召唤师峡谷】。
 mapSystem.loadMap('summoners_rift_v1');
 const _bootMap = mapSystem.currentMap;
 if (_bootMap?.world) canvasController.fitToWorld(_bootMap.world.w, _bootMap.world.h);

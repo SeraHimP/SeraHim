@@ -115,10 +115,12 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
   T('速③-攻速 0 → 攻击间隔 Infinity（不是被 `|| 0.5` 兜成每 2 秒一下）',
     A.attackIntervalOf(0) === Infinity && A.attackIntervalOf(-1) === Infinity
     && A.attackIntervalOf(2) === 0.5);
-  T('速③-三处冷却都走同一个 attackIntervalOf（原来各写一份 `1/(finalAS||0.5)`）', (() => {
+  // 沙盒模式删除后 CombatSystem 里的小兵冷却那处（原来的第三处）随小兵循环一起没了，
+  // 现在塔（CombatSystem）与小兵（LaneMovementSystem）各一处，仍是同一个 attackIntervalOf。
+  T('速③-两处冷却都走同一个 attackIntervalOf（原来各写一份 `1/(finalAS||0.5)`）', (() => {
     const cs = srcOf('src/systems/CombatSystem.js'), lms = srcOf('src/systems/LaneMovementSystem.js');
     return !/1 \/ \(finalAS \|\| 0\.5\)/.test(cs) && !/1 \/ \(finalAS \|\| 0\.5\)/.test(lms)
-      && (cs.match(/attackIntervalOf\(finalAS\)/g) || []).length === 2
+      && (cs.match(/attackIntervalOf\(finalAS\)/g) || []).length === 1
       && /attackIntervalOf\(finalAS\)/.test(lms);
   })());
   T('速④-攻速恢复后能解冻（Infinity 减多少还是 Infinity，不解冻就永久哑火）', (() => {

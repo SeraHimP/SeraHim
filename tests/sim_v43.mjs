@@ -511,9 +511,11 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     ['内层切页状态与它的绑定一并删干净（留着就是死状态）',
       (src) => !/data-wxsec/.test(src) && !/data-wxnav/.test(src)],
   ]);
-  need('模式选择', srcOf(('../src/ui/ModeDialog.js')), [
-    ['走 paneHtml 出侧栏', /paneHtml\(\{[\s\S]*?navAttr: 'modenav'/],
-    ['两段内容各自成页', /data-modenav/],
+  // v51.6：沙盒模式整个删除后，这个窗口只剩"选地图"一页内容，与详情框同款
+  // "单页 → 不摆侧栏"，不再是当初 Q1 统一外壳时的两段式导航（模式/地图）。
+  need('地图选择', srcOf(('../src/ui/ModeDialog.js')), [
+    ['塞进共用的静态 #modalBody（与设置/添加单位同一套外框）', /paneHtml\(\{/],
+    ['单页 → 不传 groups（沙盒/对战二选一已删除，不再需要侧栏）', /paneHtml\(\{ groups: \[\], body \}\)/],
   ]);
   need('详情框', srcOf(('../src/ui/DetailModal.js')), [
     ['走 shellHtml（它自带 overlay，要完整外框）', /shellHtml\(\{/],
@@ -916,10 +918,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     && /const \{ createTower, createBuilding, createMinion, createDragon \} = createFactories\(\{/.test(mj));
   T('拆④-依赖缺一个就当场抛错（否则场上会出现一堆 undefined 引发的天书报错）',
     /throw new Error\('createFactories: 依赖缺失 ' \+ k\)/.test(fac));
+  // 沙盒模式删除后 waveSystem 也一并删了，第三条接线换成 laneWaveSystem 那条
+  // （它才是现在唯一的出兵入口，见 main.js 里 laneWaveSystem.setCreateMinion 那段）。
   T('拆⑤-四条接线仍在组合根里（谁给谁装工厂，这件事必须一眼看得见）',
     /mapSystem\.setCreateBuildingFn\(createBuilding\);/.test(mj)
     && /dragonSystem\.setCreateEntity\(createDragon\);/.test(mj)
-    && /waveSystem\.setCreateMinion\(createMinion\);/.test(mj)
+    && /laneWaveSystem\.setCreateMinion\(\(type, x, y, faction, laneId, direction\) => \{/.test(mj)
     && /CTX\.createTower = createTower;/.test(mj));
   T('拆⑥-factories.js 不反向 import main.js（组合根是单向的，反过来就成环）',
     !/from '\.\.\/main\.js'/.test(fac) && !/from '\.\/main\.js'/.test(fac));

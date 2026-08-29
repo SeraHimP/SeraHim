@@ -25,7 +25,7 @@ export const IO_GROUPS = [
   'factionOverrides',     // 阵营覆写层
   'battleGrowth',         // 对战成长
   'rend',                 // 屠戮
-  'gameRules',            // 出兵编排 + 沙盒节奏 + 兵种开关 + 龙魂规则
+  'gameRules',            // 出兵编排 + 兵种开关 + 龙魂规则
   'world',                // 昼夜/熵/龙魂耦合与加成
   'skillOverrides',       // 技能参数覆写（按 skillId → { 参数: 值 }）
   'effectOverrides',      // 状态/效果参数覆写

@@ -23,7 +23,6 @@ const _state = {
   __towerRuleFor(kind, faction) {
     const r = this.__towerRules?.[kind];
     if (!r) return false;
-    if (!faction) return r.blue || r.red;
     return !!r[faction];
   },
   createMinion: null, createTower: null,

@@ -4,13 +4,12 @@ import { buildWaveOrder } from '../data/waveComposition.js';
 
 /**
  * LaneWaveSystem.js
- * 对战模式专用小兵生成：双方阵营周期性各自生成一波小兵，沿地图 lane 行走。
- * 与沙盒模式的 WaveSystem 完全独立、互不影响。
+ * 小兵生成：双方阵营周期性各自生成一波小兵，沿地图 lane 行走。
  *
  * 出兵方式（LoL 真实机制）：一波兵不是同时刷出，而是在水晶枢纽处
  * 排成单列、每隔 spawnGap 秒出一个（近战×3 → 远程×2 → 炮车，超级兵排最前）。
  * 实现：spawnWave 只把出兵计划压入 _spawnQueue（带绝对时间戳），
- * update 每帧按时间弹出到期条目、逐个生成。切回沙盒模式时队列清空。
+ * update 每帧按时间弹出到期条目、逐个生成。
  *
  * 水晶摧毁后规则（LoL 真实机制，版本B）：某一路的分路水晶被摧毁后，
  * 【拆掉水晶的一方】在该路额外追加超级兵，原本兵种继续正常生成，不受影响
@@ -35,7 +34,7 @@ export class LaneWaveSystem {
     this.waveColumns = 1;            // v42: columns per wave (1=single file)
     this.columnSpacing = 30;         // v42: spacing between columns (px)
     this._spawnQueue = [];  // { at, type, faction, laneId, direction } —— at 为该系统内部时钟的绝对时间
-    this._clock = 0;        // 内部时钟：只在对战模式激活时推进
+    this._clock = 0;        // 内部时钟
   }
 
   setCreateMinion(fn) { this.createMinion = fn; }
@@ -56,11 +55,7 @@ export class LaneWaveSystem {
       }
     }
     
-    if (!this.mapSystem.active || this.paused) {
-      // 离开对战模式：丢弃未出完的兵，避免切回沙盒后队列残兵在错误的时机涌出
-      if (!this.mapSystem.active && this._spawnQueue.length) this._spawnQueue.length = 0;
-      return;
-    }
+    if (this.paused) return;
     this._clock += dt;
 
     this.nextWaveTime -= dt;

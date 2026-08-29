@@ -193,17 +193,15 @@ export function makeAuraPassive({ id, name, icon, casterType, targetTypes, range
 
       const nearby = ctx.entityContainer.findInRadius(entity.pos.x, entity.pos.y, range, targetTypes, true);
       // 阵营过滤 + 自身排除：findInRadius 不认阵营也不认查询者——
-      // 不过滤的话对战模式会把敌方小兵一起 buff（沙盒单阵营暴露不出来）；
-      // 施法者自己永远在半径 0 处，includeSelf=false 必须显式剔除。
+      // 不过滤的话会把敌方小兵一起 buff；施法者自己永远在半径 0 处，
+      // includeSelf=false 必须显式剔除。
       const allies = nearby.filter(a => {
         if (a.id === entityId) return selfIncluded;
         if (minionsOnly && (a.type === 'tower' || a.type === 'dragon')) return false;
         const af = a._mapFaction || a.faction, ef = entity._mapFaction || entity.faction;
         // hostile=true 的光环作用于【敌方】（如蚀骨兵的双抗削弱）。
-        // 沙盒模式没有阵营：友方光环维持原行为（视为友方），
-        // 敌对光环则一个都不发 —— 沙盒里给"所有人"上 debuff 显然不是本意。
-        if (hostile) return !!ef && !!af && af !== ef;
-        return !ef || af === ef;
+        if (hostile) return af !== ef;
+        return af === ef;
       });
 
       for (const ally of allies) {

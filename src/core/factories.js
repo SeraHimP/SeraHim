@@ -48,7 +48,7 @@ export function createFactories(deps) {
   }
   ({ entityContainer, effectRegistry, eventBus, skillLibrary,
      attrCalc, mapSystem, dragonSystem, uiManager } = deps);
-  return { createTower, createBuilding, createMinion, createDragon, applyMilestoneGrowth };
+  return { createTower, createBuilding, createMinion, createDragon };
 }
 
 /**
@@ -160,9 +160,9 @@ function createTower(x, y) {
   return entity;
 }
 
-// 对战模式专用：由 MapSystem 调用，生成地图上的塔/水晶建筑。
+// 由 MapSystem 调用，生成地图上的塔/水晶建筑。
 // 复用 createTower 的技能装配方式，但额外打上 faction/tier 标记、按 tier 应用数值倍率，
-// 武器按地图配置固定分配（而非模板默认）。沙盒模式不会调用这个函数，互不影响。
+// 武器按地图配置固定分配（而非模板默认）。
 function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, skills }) {
   const tpl = CONFIG.templates.tower;
   // 分层塔属性解析（用户定稿：【模板覆盖地图】）——
@@ -322,11 +322,11 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   return entity;
 }
 
-function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null) {
-  // 阵营覆写合并：对战模式单位按阵营在共享模板上叠加差异字段（编辑器"仅蓝方/仅红方"页签写入）
+function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts) {
+  // 阵营覆写合并：单位按阵营在共享模板上叠加差异字段（编辑器"仅蓝方/仅红方"页签写入）
   const tplBase = CONFIG.templates[type];
   if (!tplBase) return null;
-  const ovr = mapOpts?.faction ? CONFIG.factionOverrides?.[mapOpts.faction]?.[type] : null;
+  const ovr = mapOpts.faction ? CONFIG.factionOverrides?.[mapOpts.faction]?.[type] : null;
   const tpl = ovr && Object.keys(ovr).length ? { ...tplBase, ...ovr } : tplBase;
   const entity = {
     id: ++CTX._uid,
@@ -344,14 +344,11 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     _inCombat: false,
     _attackerCount: 0,
   };
-  // 对战模式专属标记：不传 mapOpts 时（沙盒模式调用）这些字段都是 undefined，
-  // CombatSystem/LaneMovementSystem 里的相关分支只在这些字段存在时才生效，完全不影响沙盒行为。
-  if (mapOpts) {
-    entity._mapFaction = mapOpts.faction;
-    entity.faction = mapOpts.faction;
-    entity._laneId = mapOpts.laneId;
-    entity._laneDirection = mapOpts.direction;
-  }
+  // 阵营 + 所属路标记：CombatSystem/LaneMovementSystem 的索敌/推进都靠它。
+  entity._mapFaction = mapOpts.faction;
+  entity.faction = mapOpts.faction;
+  entity._laneId = mapOpts.laneId;
+  entity._laneDirection = mapOpts.direction;
   // 波次成长的历史 bug：currentHP 乘了 hpScale 但 baseStats.maxHP 从未缩放，
   // 直接造成"当前生命超过最大生命"。maxHP 必须与 currentHP 同源缩放。
   entity.baseStats.maxHP = tpl.maxHP * hpScale;
@@ -360,15 +357,14 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   entity.baseStats.magicResist = tpl.magicResist * attrScale;
   entity.baseStats.onHitDamage = (tpl.onHitDamage || 0) * attrScale;
   // v42: apply map-level minion template override BEFORE growth, so growth stacks on top
-  const tplOverride = mapOpts?.templateOverride;
+  const tplOverride = mapOpts.templateOverride;
   if (tplOverride) {
     Object.assign(entity.baseStats, tplOverride);
     entity.currentHP = entity.baseStats.maxHP;
     if (entity.baseStats.shieldFixedMax != null) entity.shieldFixedCurrent = entity.baseStats.shieldFixedMax;
   }
-  // 对战模式固定值成长（Q2）：加法叠在模板/阵营覆写之上，只动 生命/攻击/双抗。
-  // 沙盒模式走上面的乘法缩放（hpScale/attrScale），两套互不影响。
-  const g = mapOpts?.growthFlat;
+  // 固定值成长（Q2）：加法叠在模板/阵营覆写之上，只动 生命/攻击/双抗。
+  const g = mapOpts.growthFlat;
   if (g) {
     entity.baseStats.maxHP += g.hp;
     entity.currentHP += g.hp;
@@ -391,7 +387,7 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   // 手抄的副本给"模板编辑器首次打开"当默认值回填——两份早就漂移了（编辑器那份
   // 一直没跟上 v51 系列加的主动技能）。现在搬进 defaultMinionPassives.js 统一源。
   // v42: merge map-level minionDefaultPassives overrides
-  const mapMinionPassives = (mapOpts && mapSystem.currentMap?.minionDefaultPassives) || {};
+  const mapMinionPassives = mapSystem.currentMap?.minionDefaultPassives || {};
   const effectivePassiveMap = { ...DEFAULT_MINION_PASSIVES, ...mapMinionPassives };
   let passives = Array.isArray(tpl._templateSkills) ? tpl._templateSkills : (effectivePassiveMap[type] || []);
 
@@ -412,12 +408,6 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
     }, skillLibrary);
   }
 
-  // 波次里程碑成长：每 milestoneEveryWaves 波，普通小兵获得额外增益。
-  // 仅对沙盒模式小兵生效——对战模式小兵用的是 LaneWaveSystem 自己的独立波次计数，
-  // 如果误用 window.CTX.waveNumber（沙盒计数），玩家如果先在沙盒玩了很久再切对战模式，
-  // 对战小兵会莫名其妙继承一个完全不相关的高波次增益（真实发现的串扰问题，这里堵住）。
-  if (!mapOpts) applyMilestoneGrowth(entity, type);
-
   // 模板编辑器中配置的默认状态效果
   if (Array.isArray(tpl._templateEffects)) {
     for (const effBlueprint of tpl._templateEffects) {
@@ -429,44 +419,9 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts = null
   // v43：新出的大型小兵也要拿到本阵营已有的龙之奖励（见 createBuilding 那条同样的注释）。
   // equipExistingSoul 内部按 SOUL_REWARD_OK 过滤，近战/远程会被自然排除。
   dragonSystem.equipExistingSoul(entity);
-  spawnAtFullHP(entity);   // 同上：里程碑·强化(allStatsPct) 与龙之奖励都会抬高最大生命
+  spawnAtFullHP(entity);   // 同上：龙之奖励会抬高最大生命
   eventBus.emit('entity:spawn', { entityId: entity.id });
   return entity;
-}
-
-// 每 10 波：小兵获得永久里程碑增益（普通小兵没有专属被动，靠此成长）
-// 减伤封顶 40%（4 层 ×10%），全属性封顶 45%（3 层 ×15%），避免后期数值墙。
-function applyMilestoneGrowth(entity, type) {
-  const n = CTX.waveNumber || 0;
-  const step = CONFIG.gameRules.milestoneEveryWaves || 10;
-  const milestones = Math.floor(n / step);
-  if (milestones <= 0) return;
-
-  // 减伤：每里程碑 +10%，最多 4 层（封顶 40%）
-  const drStacks = Math.min(milestones, 4);
-  if (drStacks >= 1) {
-    const id = effectRegistry.apply(entity.id, {
-      name: '里程碑·坚韧', icon: '🎖', kind: 'stat', statKey: 'damageReduction',
-      flatValue: 10, perStackFlat: 10, duration: Infinity, permanent: true,
-      stackable: true, maxStacks: 4, stackPolicy: 'stack', stackKey: 'milestone_dr',
-      description: '减伤提升（{stacks}/4层）',
-    }, 'milestone_dr');
-    const eff = effectRegistry.getEffect(id);
-    if (eff) { eff.stacks = drStacks; effectRegistry._recalcEffectValues(eff); effectRegistry._updateDescription(eff); }
-  }
-
-  // 全属性：第 3 里程碑起，每里程碑 +15%，最多 3 层（封顶 45%）
-  if (milestones >= 3) {
-    const allStacks = Math.min(milestones - 2, 3);
-    const id = effectRegistry.apply(entity.id, {
-      name: '里程碑·强化', icon: '🎖', kind: 'stat', statKey: 'allStatsPct',
-      flatValue: 15, perStackFlat: 15, duration: Infinity, permanent: true,
-      stackable: true, maxStacks: 3, stackPolicy: 'stack', stackKey: 'milestone_all',
-      description: '全属性提升（{stacks}/3层）',
-    }, 'milestone_all');
-    const eff = effectRegistry.getEffect(id);
-    if (eff) { eff.stacks = allStacks; effectRegistry._recalcEffectValues(eff); effectRegistry._updateDescription(eff); }
-  }
 }
 
 // ---------- 创建巨龙 ----------
@@ -476,9 +431,9 @@ function createDragon(type, opts = {}) {
   const element = opts.element;
   const abs = opts.absStats || { maxHP: 8000, armor: 40, magicResist: 40, attackDamage: 100 };
 
-  // 龙的登场位置：对战模式用地图中路的中点（公平，不偏向任何一方水晶）；
-  // 沙盒模式沿用原固定坐标。此前固定用 (850,200) 在对战模式里几乎贴着红方水晶/外塔，
-  // 导致红方总能第一时间抢到龙、对蓝方明显不公平，这里修正。
+  // 龙的登场位置：用地图中路的中点（公平，不偏向任何一方水晶）；地图尚未加载完成时
+  // （理论上不该发生）退回旧的固定坐标兜底。此前固定用 (850,200) 在对战模式里几乎贴着
+  // 红方水晶/外塔，导致红方总能第一时间抢到龙、对蓝方明显不公平，这里修正。
   let dragonPos = { x: 850, y: 200 };
   // ==================== v43：龙从上/下龙坑交替出，走对应的路推向某一方基地 ====================
   // 用户定稿："上路的走到蓝方，下路走到红方。""龙永久存活，就像是敌方小兵一样推进到基地。"
@@ -492,7 +447,7 @@ function createDragon(type, opts = {}) {
   // 自动被 LaneMovementSystem 接管（那边的过滤条件就是 `m._mapFaction && m._laneId`），
   // 与小兵完全同一套行进/绕障/接敌逻辑 —— 不另写一份寻路。
   let dragonLane = null, dragonDir = 'forward';
-  if (mapSystem.active && mapSystem.currentMap) {
+  if (mapSystem.currentMap) {
     const lanes = mapSystem.currentMap.lanes || [];
     const pitSide = opts.pitSide === 'bot' ? 'bot' : 'top';
     // 路：优先取同名的那条；没有（如嚎哭深渊只有 mid）就退到唯一那条。

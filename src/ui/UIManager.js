@@ -893,7 +893,7 @@ export class UIManager {
   }
 
   // 根据阵营切换血条颜色 class：blue → faction-blue（蓝），red → faction-red（红），
-  // 沙盒模式（无阵营）不加任何 class，用 CSS 默认色（塔默认蓝、小兵默认绿）。
+  // 中立（或理论上不会出现的无阵营情形）不加任何 class，用 CSS 默认色（塔默认蓝、小兵默认绿）。
   // 这里取代了之前"血量低于30%变红"的逻辑——2D画布和卡片UI都用这一套阵营配色，保持统一。
   _applyFactionHpClass(hpBarEl, entity) {
     const faction = entity._mapFaction || entity.faction;
@@ -1235,27 +1235,19 @@ export class UIManager {
   }
 
   updateTopBar() {
-    // 波次显示按当前模式选择数据源：之前永远读 window.waveNumber（沙盒专属全局变量），
-    // 对战模式下这个变量不再更新（沙盒的 WaveSystem 被暂停），导致左上角波次显示冻结。
-    // 现在对战模式下改读 laneWaveSystem 自己的独立波次计数与倒计时。
+    // 波次显示读 laneWaveSystem 自己的独立波次计数与倒计时。
     // v51.6 修复：window.__app 从未被赋值过（全仓库只有 window.CTX.__app 是真的）——
-    // 上面注释说"对战模式下改读 laneWaveSystem"，但因为这个 bug，mapSystem/
-    // laneWaveSystem 恒为 undefined，条件永远走不到 if 分支，实际上对战模式下
-    // 顶栏波次显示从来没有真正切换过，一直在读沙盒的冻结变量。
+    // 这里曾经因为这个 bug 恒读不到 laneWaveSystem，顶栏波次显示长期冻结在别处的值。
     const app = window.CTX?.__app || window.__app;
-    const mapSystem = app?.mapSystem;
     const laneWaveSystem = app?.laneWaveSystem;
-    if (mapSystem?.active && laneWaveSystem) {
+    if (laneWaveSystem) {
       this._setText('waveNum', String(laneWaveSystem.waveNumber || 0));
       this._setText('waveTimer', Math.max(0, laneWaveSystem.nextWaveTime || 0).toFixed(1) + 's');
-    } else {
-      this._setText('waveNum', String(window.waveNumber || 0));
-      this._setText('waveTimer', Math.max(0, window._nextWaveTime || 0).toFixed(1) + 's');
     }
     // 单位计数（原属两侧列表更新，列表移除后归口到这里）
     this._setText('towerCount', String(this.entities.getAllTowers(true).length));
     this._setText('minionCount', String(this.entities.getAllMinions(true).length));
-    // 对战计分板（击杀/推塔）；沙盒模式显示占位
+    // 计分板（击杀/推塔）
     const sc = window.__score;
     if (sc) {
       // v44：顶栏只显示推塔数（用户定稿）。击杀数照常统计，只是不占顶栏那一格。

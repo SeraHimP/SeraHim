@@ -87,8 +87,7 @@ export const EDITOR_OPEN = {
     this._renderTemplateEditor(logFn, returnCallback);
   },
 
-  // page 可选：直接落到某一页。沙盒的"编辑生成规则"按钮就是靠它落到「沙盒节奏」——
-  // 不指定的话会落在「属性」，用户点了一个写着"生成规则"的按钮却看到一堆攻防数值。
+  // page 可选：直接落到某一页（不指定则落在该大类的第一页）。
   openTemplateEditor(type, logFn, returnCallback, page) {
     // 兼容旧调用（直接指定具体类型，如 'tower' 或某个小兵类型）
     const category = this._categoryOfType(type);
@@ -247,8 +246,7 @@ export const EDITOR_OPEN = {
     effect:     { label: '初始状态',   icon: '🧪', faction: true,  apply: true,  action: 'apply',   writes: '初始状态组' },
     soul:       { label: '龙魂',       icon: '🐉', faction: false, apply: false, action: 'instant', writes: '' },
     growth:     { label: '成长与屠戮', icon: '📈', faction: false, apply: false, action: 'apply',   writes: '成长/屠戮' },
-    sandbox:    { label: '沙盒节奏',   icon: '🏖️', faction: false, apply: false, action: 'apply',   writes: '沙盒生成节奏' },
-    wave:       { label: '出兵编排',   icon: '🧬', faction: true,  apply: false, action: 'apply',   writes: '对战出兵编排' },
+    wave:       { label: '出兵编排',   icon: '🧬', faction: true,  apply: false, action: 'apply',   writes: '出兵编排' },
     param:      { label: '技能数值',   icon: '✨', faction: false, apply: false, action: 'apply',   writes: '技能全局覆写' },
     bsize:      { label: '建筑体积',   icon: '🏗️', faction: false, apply: false, action: 'apply',   writes: '建筑体积' },
     dragonrule: { label: '刷新与强度', icon: '🐲', faction: false, apply: false, action: 'apply',   writes: '巨龙节奏与曲线' },
@@ -267,11 +265,10 @@ export const EDITOR_OPEN = {
   // 每个大类有哪几页（数组顺序 = 页签顺序）。
   // 「出兵编排」从"小兵 → 某个兵种 → 页签"提到了顶层：它本来就是**全局**规则，
   // 挂在某个兵种底下会让人以为"这是近战兵的编排"，而它管的是所有兵种。
-  // 「沙盒节奏」反过来是**逐兵种**的，所以留在兵种节点下，两者不再同屏。
   _pagesOf(category) {
     switch (category) {
       case 'tower':      return ['attr', 'weapon', 'skill', 'effect', 'soul'];
-      case 'minion':     return ['attr', 'skill', 'effect', 'growth', 'sandbox'];
+      case 'minion':     return ['attr', 'skill', 'effect', 'growth'];
       case 'dragon':     return ['attr', 'dragonrule'];
       case 'skillparam': return ['param'];
       case 'bsize':      return ['bsize'];

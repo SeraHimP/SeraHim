@@ -168,8 +168,6 @@ function num(c, v, dflt = 0) {
 
 function sameSide(a, b) {
   const fa = a._mapFaction || a.faction, fb = b._mapFaction || b.faction;
-  // 沙盒模式没有阵营：一律视为敌方，与既有索敌口径一致（那边本来也不分敌我）
-  if (!fa || !fb) return false;
   return fa === fb;
 }
 

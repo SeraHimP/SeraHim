@@ -84,7 +84,6 @@ export const CONFIG = {
     waveCorruptInterval: 7,
     waveRamInterval: 15,       // v40：攻城车每几波生成一次
     ramMinWave: 5,             // v40：攻城车最早生成波次
-    milestoneEveryWaves: 10,
     // ==================== Q1：最大生命变化时当前生命同步跟随 ====================
     // 用户："+500 最大生命值应该是对应的当前生命值也 +500，否则没意义。"
     // lethal（用户定稿"对称扣且可致死"）：最大生命下降时当前生命同样扣，扣到 0 即死亡。
@@ -138,7 +137,7 @@ export const CONFIG = {
     // fromWave/everyN 决定。已从模板编辑器面板移除，请勿再新增读取点。
     battleTotemFromWave: 10,
     battleTotemInterval: 3,
-    // 各兵种"是否生成"总开关（沙盒+对战都生效；模板编辑器「出兵编排」里可切）。
+    // 各兵种"是否生成"总开关（模板编辑器「出兵编排」里可切）。
     // 用户要求"让所有兵种都会默认生成"，所以全部为 true。
     // 注意 ram（攻城车）没有 GLB 模型，会回退到程序化几何 —— 能玩，只是不好看。
     //
@@ -256,7 +255,7 @@ export const CONFIG = {
     },
   },
   // 建筑渲染体积（半径 px）：LoL 中水晶枢纽 > 防御塔 > 召唤水晶，按 tier 区分。
-  // 可在统一模板编辑器的"建筑体积"区块调整；沙盒手建塔无 tier，用 default。
+  // 可在统一模板编辑器的"建筑体积"区块调整；手动建塔无 tier，用 default。
   // 阵营模板覆写层：battle 模式生成单位时按 {...templates[type], ...factionOverrides[faction][type]} 合并。
   // 只存"与共享基础不同的字段"（模板编辑器按阵营页签写入/清除），改一方不影响另一方。
   // 分层防御塔覆写层（模板编辑器"防御塔" 下的 外/内/水晶/枢纽塔、召唤水晶、水晶枢纽）。
@@ -1075,7 +1074,7 @@ export const CONFIG = {
     //     攻击/受击回复法力已改成全局一份（CONFIG.tuning.mana），不在这四件套里。
     tower: {
       label: '防御塔', type: 'tower',
-      // v35（Q5）：所有防御塔默认 生命恢复/固定护盾 = 0（用户定稿，沙盒塔模板同样适用；
+      // v35（Q5）：所有防御塔默认 生命恢复/固定护盾 = 0（用户定稿，手动建塔同样适用；
       // 恢复与护盾一律由被动提供）
       maxHP: 9000, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 0, attackRange: 180,

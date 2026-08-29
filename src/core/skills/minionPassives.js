@@ -2,7 +2,7 @@ import { makeAuraPassive, AURA_THROTTLE, AURA_RANGE } from './_helpers.js';
 import { applyHeal, healPowerFor } from '../healing.js';
 import { CONFIG } from '../../data/Config.js';
 
-// "小兵单位"判定：塔和巨龙不算，其余（含超级兵与沙盒大型兵）都算。
+// "小兵单位"判定：塔和巨龙不算，其余（含超级兵等大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
 
 /**
@@ -225,7 +225,7 @@ export const minionPassives = {
       for (const a of targets) {
         if (a.type === 'tower' || a.type === 'dragon') continue;
         const af = a._mapFaction || a.faction;
-        if (ef && af !== ef) continue;          // 沙盒无阵营则视为友方（与其它光环同口径）
+        if (af !== ef) continue;
         const max = a.baseStats?.maxHP || 0;
         const missing = Math.max(0, max - (a.currentHP || 0));
         if (missing <= 0) continue;             // 满血的不浪费
@@ -404,8 +404,7 @@ export const minionPassives = {
       for (const t of foes) {
         if (t.id === e.id || t.type === 'dragon') continue;
         const tf = t._mapFaction || t.faction;
-        // 沙盒模式没有阵营：一个 debuff 都不发（给"所有人"上 debuff 显然不是本意）
-        if (!ef || !tf || tf === ef) continue;
+        if (tf === ef) continue;
         for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔抗']]) {
           ctx.effectRegistry.apply(t.id, {
             name: '腐蚀', icon: '🦇', kind: 'stat', statKey: key, type: 'debuff', color: '#6b8e23',

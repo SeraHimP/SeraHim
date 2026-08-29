@@ -230,13 +230,14 @@ function world() {
   T('受保护的敌方塔不会被选为目标（不跳过推进顺序）',
     W2.combat.selectTarget(b2, []) === null);
 
-  // 沙盒模式（无阵营）不互打
+  // 防御性场景：塔没有阵营字段（正常游戏里不会出现）时互不攻击，canTarget 自带的
+  // "缺阵营即返回 false" 兜底保证了这一点，不需要 selectTarget 自己再判一次
   const W3 = world();
   const s1 = W3.mk('tower', null, 0, 0, 'outer');
   const s2 = W3.mk('tower', null, 80, 0, 'outer');
   s1._mapFaction = undefined; s2._mapFaction = undefined;
   s1._skillInstances.push({ id: ++window._uid, skillId: 'weapon_piercing', state: {} });
-  T('沙盒模式的塔互不攻击（没有阵营概念）', W3.combat.selectTarget(s1, []) === null);
+  T('无阵营塔互不攻击（canTarget 兜底）', W3.combat.selectTarget(s1, []) === null);
 
   // 开关关掉就完全恢复旧行为
   CONFIG.gameRules.towerAttacksTower = false;

@@ -103,7 +103,7 @@ export class WallLayer {
 
   /**
    * 重建墙体。terrainTex 复用地面那张贴图（顶面与地面配色一致）。
-   * mapSystem 无墙时（沙盒、无 walls 声明的地图）直接清空返回。
+   * mapSystem 无墙时（无 walls 声明的地图）直接清空返回。
    */
   rebuild(mapSystem, terrainTex) {
     this.clear();

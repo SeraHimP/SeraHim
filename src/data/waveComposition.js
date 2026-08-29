@@ -27,7 +27,7 @@ export const RULE_FIELDS = {
 // 判定用的世界快照 ctx 由 LaneWaveSystem 现场组装：
 //   { faction, enemy, laneId, gameTime, nexusDown, census }
 // census 来自 MapSystem.structureCensus()：{ 阵营: { all: {档位:{total,alive}},
-// lanes: { 路: {档位:{total,alive}} } }}。拿不到 census 时（沙盒/单测）
+// lanes: { 路: {档位:{total,alive}} } }}。拿不到 census 时（单测/未接完整上下文）
 // 所有依赖建筑的条件一律**放行**，宁可多出兵也不要静默漏兵 —— 一条规则突然不生效、
 // 却没有任何报错，是这类编排最难查的故障。
 
@@ -73,7 +73,7 @@ export const WAVE_CONDITIONS = {
   // 保留是为了老配置导进来不失效，新建规则请用下面那组。
   'nexusDown':  { label: '本路水晶已陷落（旧写法）', group: '基础', test: (c) => !!c.nexusDown },
   '!nexusDown': { label: '本路水晶未陷落（旧写法）', group: '基础', test: (c) => !c.nexusDown },
-  // gameTime 缺失（沙盒/单测/旧调用不传 ctx）时【放行】，与建筑条件拿不到 census
+  // gameTime 缺失（单测/旧调用不传 ctx）时【放行】，与建筑条件拿不到 census
   // 时的口径一致。若按 0 秒算，"游戏满 10 分钟才出的兵"会在所有不带 ctx 的调用里
   // 静默消失 —— 一条规则突然不生效却不报错，是这类编排最难查的故障。
   'time.after':  { label: '游戏已进行 ≥ N 秒', group: '时间',

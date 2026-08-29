@@ -59,9 +59,9 @@ export function angleTo(from, to) {
 /**
  * 这个攻击者当前能不能打到这个目标（**只判朝向**，射程/敌我另有判定）。
  *
- * 攻击路径必须走这个函数，不要各自算一遍角差 —— 两条攻击路径
- *（LaneMovementSystem 的对战路 / CombatSystem 的沙盒路）历史上就是因为
- * "同一条规则各写一半"反复出事（攻城模式那次最典型）。
+ * 攻击路径必须走这个函数，不要自己算一遍角差 —— 历史上曾经有两条攻击路径
+ *（LaneMovementSystem 与 CombatSystem 的小兵循环，后者随沙盒模式一起删除了）
+ * 各写一半同一条规则，反复出事（攻城模式那次最典型）。
  */
 export function canFire(attacker, target) {
   if (!attacker || !target || !attacker.pos || !target.pos) return true;

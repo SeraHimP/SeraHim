@@ -165,7 +165,7 @@ export class EntityContainer {
       // 才能在属性编辑器里查看/改属性、改阵营、复活或彻底击杀。
       //
       // 原来只有 MapSystem._onEntityDeath 会打 _ruin，而那条路径有三重门槛
-      // （地图未激活 / 无 _mapFaction / 无 _mapTier 一律返回），于是**沙盒里手建的塔
+      // （地图未激活 / 无 _mapFaction / 无 _mapTier 一律返回），于是**手建的塔
       // 死后直接被清掉，根本选不中**。规则挪到这里：实体生命周期归容器管，
       // 放在这一处就漏不掉，也不需要各系统各记一遍。
       if (e.type === 'tower' && !e._ruin) { e._ruin = true; this._gridDirty = true; }

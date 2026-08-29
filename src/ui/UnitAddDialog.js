@@ -160,7 +160,7 @@ export const UnitAddDialog = {
       if (buildBtn) buildBtn.addEventListener('click', () => {
         const weaponType = overlay._selectedWeapon || 'piercing'; // v33：默认穿透型
         const passiveKeys = Array.from(overlay._selectedPassives || []);
-        const faction = this._callbacks?.isBattle?.() ? (this._state.towerFaction || 'neutral') : null;
+        const faction = this._state.towerFaction || 'neutral';
         const model = this._state.towerModel || 'tower';
         const modelStats = !!this._state.towerModelStats
           && !!towerModelTier(model);
@@ -178,10 +178,6 @@ export const UnitAddDialog = {
       });
       overlay.querySelectorAll('[data-uadfaction]').forEach(b => b.addEventListener('click', () => { this._state.faction = b.dataset.uadfaction; this._render(); }));
       overlay.querySelectorAll('[data-uadlane]').forEach(b => b.addEventListener('click', () => { this._state.laneId = b.dataset.uadlane; this._render(); }));
-      const spawnRuleBtn = document.getElementById('uadSpawnRuleBtn');
-      if (spawnRuleBtn) spawnRuleBtn.addEventListener('click', () => {
-        this._callbacks.onEditSpawnRule?.(this._state.minionType, () => this._render());
-      });
       overlay.querySelectorAll('.uad-queue-remove').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -197,20 +193,18 @@ export const UnitAddDialog = {
     }
   },
 
-  // 对战模式建塔阵营选择（EQ2）：蓝/红/中立。中立=独立一方，打红蓝也被红蓝打，画布显示灰白色。
+  // 建塔阵营选择（EQ2）：蓝/红/中立。中立=独立一方，打红蓝也被红蓝打，画布显示灰白色。
   _renderTowerFactionSelector() {
-    if (!this._callbacks?.isBattle?.()) return '';
     const f = this._state.towerFaction || 'neutral';
     const btn = (k, txt) => `<button class="editor-tab ${f === k ? 'active' : ''}" data-uadtowerfaction="${k}">${txt}</button>`;
     return `<div style="margin-top:10px;">
-      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">⚔️ 对战模式建塔阵营（中立：与红蓝双方互为敌对）</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">⚔️ 建塔阵营（中立：与红蓝双方互为敌对）</div>
       <div class="editor-tabs">${btn('blue', '🔵 蓝方')}${btn('red', '🔴 红方')}${btn('neutral', '⚪ 中立')}</div>
     </div>`;
   },
 
-  // 对战模式选择器：阵营 + 分路（沙盒模式不渲染，行为完全不变）
+  // 出生阵营 + 分路选择器
   _renderBattleSelectors() {
-    if (!this._callbacks?.isBattle?.()) return '';
     const f = this._state.faction || 'blue';
     // ==================== 分路按钮按**当前地图**生成 ====================
     // 用户："不同地图有不同的路数……现在进入扭曲丛林也会显示上/中/下路。"
@@ -223,7 +217,7 @@ export const UnitAddDialog = {
     const fBtn = (k, txt) => `<button class="editor-tab ${f === k ? 'active' : ''}" data-uadfaction="${k}">${txt}</button>`;
     const lBtn = (k) => `<button class="editor-tab ${l === k ? 'active' : ''}" data-uadlane="${k}">${laneLabel(k)}</button>`;
     return `<div style="margin-top:10px;">
-      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">⚔️ 对战模式：出生点为所选阵营的水晶枢纽，沿所选分路推线</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">⚔️ 出生点为所选阵营的水晶枢纽，沿所选分路推线</div>
       <div class="editor-tabs">${fBtn('blue', '🔵 蓝方')}${fBtn('red', '🔴 红方')}</div>
       ${lanes.length > 1
         ? `<div class="editor-tabs" style="margin-top:4px;">${lanes.map(lBtn).join('')}</div>`
@@ -252,10 +246,9 @@ export const UnitAddDialog = {
       st.minionCount = count;
       st.minionGrowth = growth;
       const meta = TYPE_META[st.minionType] || {};
-      const battle = this._callbacks?.isBattle?.();
-      const faction = battle ? (st.faction || 'blue') : null;
-      const laneId = battle ? clampLaneId(st.laneId) : null;
-      const fTag = faction ? (faction === 'blue' ? '🔵' : '🔴') + `→${laneShort(laneId)} ` : '';
+      const faction = st.faction || 'blue';
+      const laneId = clampLaneId(st.laneId);
+      const fTag = (faction === 'blue' ? '🔵' : '🔴') + `→${laneShort(laneId)} `;
       this._queue.push({
         category: 'minion', unitType: st.minionType, label: meta.label || st.minionType, icon: meta.icon || '❓',
         summary: `${fTag}数量×${count}${growth ? '（波次成长）' : ''}`, config: { count, growth, faction, laneId },
@@ -346,11 +339,6 @@ export const UnitAddDialog = {
           <input type="checkbox" id="uadMinionGrowth" ${growthChecked ? 'checked' : ''} style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
           <label style="color:var(--text-dim);font-size:12px;cursor:pointer;">应用波次成长</label>
         </div>
-      </div>
-      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--glass-border);">
-        <button id="uadSpawnRuleBtn" style="background:var(--surface-3);border:1px solid var(--glass-border);color:var(--text);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">
-          ⚙️ 编辑「${meta.label || type}」的自动生成规则
-        </button>
       </div>
     `;
   },

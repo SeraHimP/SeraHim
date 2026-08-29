@@ -11,8 +11,7 @@ import { clearDamageMarks } from '../core/reviveState.js';
 
 /**
  * MapSystem.js
- * 读取地图配置（src/data/maps/）生成建筑与路径，管理"对战模式"专属的地图状态。
- * 沙盒模式完全不使用这个系统，互不干扰。
+ * 读取地图配置（src/data/maps/）生成建筑与路径，管理地图相关的对局状态。
  *
  * 职责边界：
  * - 只负责"这张地图有哪些建筑、路径长什么样、水晶被摧毁后该阵营进入什么状态"。
@@ -20,7 +19,7 @@ import { clearDamageMarks } from '../core/reviveState.js';
  *   不管碰撞（CollisionSystem 的事）。
  *
  * tier 数值表：6层建筑（外塔/内塔/水晶塔/召唤水晶/枢纽塔/水晶枢纽），数值是绝对值
- * （不是相对沙盒塔的倍率——之前用倍率体系，但实际需求是直接指定每档具体数值，
+ * （不是相对基础模板的倍率——之前用倍率体系，但实际需求是直接指定每档具体数值，
  * 这样改起来更直观：想调"水晶塔多少血"直接改这一个数字，不用去算倍率）。
  * 以后调整某一档强度，或者新地图想用不同数值，只改这里（或者新地图自己声明一份覆盖），
  * 不用逐个建筑改。攻击距离统一用 CONFIG.templates.tower.attackRange（不按 tier 区分，
@@ -78,13 +77,6 @@ export class MapSystem {
     if (!map) { console.warn('地图不存在:', mapId); return; }
 
     this.clearCurrentMap();
-    // 进入对战模式：沙盒模式下玩家手动建的塔/小兵（没有 _mapFaction/_laneId 标记）
-    // 之前完全没有被清理，会残留在对战模式的地图上。这里一并清空，让对战模式从干净状态开始。
-    const sandboxEntities = this.entities.getAll(true).filter(e =>
-      (e.type === 'tower' || this._isMinionType(e.type)) && !e._mapFaction && !e._laneId
-    );
-    for (const e of sandboxEntities) { e.alive = false; e.currentHP = 0; }
-    this.entities.purgeDead();
 
     this.currentMap = map;
     this._nav = undefined;   // navgrid 随地图重新解码
@@ -154,11 +146,6 @@ export class MapSystem {
     }
   }
 
-  // 判断一个类型字符串是否是"小兵"类（塔/龙以外的都算），用于清理沙盒残留单位。
-  _isMinionType(type) {
-    return type !== 'tower' && type !== 'dragon';
-  }
-
   // 规则性状态镜像到效果系统（Q1）：只增量变更，不每帧 apply（防进度环闪烁）
   _syncRuleStates() {
     if (!this._fx) return;
@@ -221,7 +208,7 @@ export class MapSystem {
 
   clearCurrentMap() {
     // 全局光环是**按地图**的：换图必须先把上一张图的那条从所有残留单位身上摘掉，
-    // 否则跨图存活的单位（沙盒手动放的、还没被清掉的）会带着上一张图的光环进新图。
+    // 否则跨图存活的单位（手动放的、还没被清掉的）会带着上一张图的光环进新图。
     if (this._fx) {
       for (const e of this.entities.getAll(false)) {
         for (const eff of this._fx.getEffects(e.id)) {
@@ -249,9 +236,9 @@ export class MapSystem {
       if (e._respawnAt) { e.alive = false; e.currentHP = 0; delete e._respawnAt; }
     }
     this._respawnQueue = [];
-    // 建筑之外，对战模式生成的小兵（带 _laneId 标记）也要一并清理，
-    // 否则切回沙盒模式后这些小兵会残留在场上（沙盒战斗逻辑会跳过它们，
-    // 但它们既不会被攻击也不会消失，永久卡场占用渲染/实体资源）。
+    // 建筑之外，出兵生成的小兵（带 _laneId 标记）也要一并清理，
+    // 否则切换地图后这些小兵会残留在场上——既不会被攻击也不会消失，
+    // 永久卡场占用渲染/实体资源。
     const laneMinions = this.entities.getAllMinions(true).filter(m => m._laneId);
     for (const m of laneMinions) { m.alive = false; m.currentHP = 0; }
     // ⚠️ 这里【不能】只靠 purgeDead 收尸。
@@ -482,7 +469,7 @@ export class MapSystem {
    *
    * 为什么放在这里逐帧刷，而不是在单位创建时挂一次：
    *   ① "待生成"的单位不需要任何额外接线 —— 下一次 tick 自然就带上了，
-   *      出兵/建塔/水晶重生/沙盒手动放置全都覆盖到，不会漏掉某条创建路径；
+   *      出兵/建塔/水晶重生/手动放置全都覆盖到，不会漏掉某条创建路径；
    *   ② 有些条目是**随时间变的**（扭曲丛林的攻速随分钟数涨），必须重算；
    *   ③ permanent + refresh 的 apply 是幂等的，重复挂只会更新数值（见 EffectRegistry.apply）。
    * 节流到 refreshSec（默认 0.5s）一次：几百个实体的遍历，30Hz 跑纯属白烧。

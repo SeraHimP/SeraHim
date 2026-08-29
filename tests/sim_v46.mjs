@@ -115,12 +115,11 @@ const mkE = (ents, type, x, y, extra = {}) => {
   T('朝⑫-总开关关掉后不再限制（软编码，可退回旧行为）', canFire(m2, outFoe) === true);
   CONFIG.tuning.facing.enabled = sav;
 
-  // 两条攻击路径共用同一份实现 —— 攻城模式那次的教训
+  // 唯一的攻击路径（沙盒模式的第二条已随沙盒模式删除）调朝向门这份共用实现 —— 攻城模式那次的教训
   const cs = srcOf('src/systems/CombatSystem.js');
   const lms = srcOf('src/systems/LaneMovementSystem.js');
-  T('朝⑬-两条攻击路径都调 canFire（规则只有一份实现）',
-    /canFire\(minion, nearestTower\)/.test(cs) && /canFire\(minion, target\)/.test(lms));
-  T('朝⑭-两条路径都不自己算角差（自己算就是第二份实现）',
+  T('朝⑬-攻击路径调 canFire（规则只有一份实现）', /canFire\(minion, target\)/.test(lms));
+  T('朝⑭-不自己算角差（自己算就是第二份实现）',
     !/Math\.atan2[^\n]*_facing/.test(cs) && !/Math\.atan2[^\n]*_facing/.test(lms));
 
   // ==================== 平衡工具必须跑同一套系统 ====================
@@ -175,7 +174,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
     && DragonSystem.SOUL_REWARD_OK({ type: 'dragon' }) === false);
 
   // 地图闸门
-  T('巨④-没注入地图查找时不拦（沙盒照常）', ds.mapAllowsDragon() === true);
+  T('巨④-没注入地图查找时不拦（尚未载入地图数据，默认放行）', ds.mapAllowsDragon() === true);
   ds.setMapLookup((id) => (id === 'yes' ? { dragon: { enabled: true } } : { }));
   bus.emit('map:loaded', { mapId: 'no' });
   T('巨⑤-地图没声明 dragon → 不生成', ds.mapAllowsDragon() === false);
@@ -715,7 +714,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
     return Math.abs(Math.abs(((a - b) % 360 + 540) % 360 - 180) - 180) < 1 || Math.abs(a - b) === 180;
   })());
   // ⑦ 非对战单位不定向
-  T('向⑩-中立/沙盒塔（没有阵营）不定向',
+  T('向⑩-无阵营塔（正常游戏里不会出现）不定向',
     towerFacingRad({ pos: { x: 0, y: 0 }, _mapFaction: null }, map) === null);
 
   // ==================== ⑧ 回环路：切线指反时必须退回"朝敌方枢纽" ====================

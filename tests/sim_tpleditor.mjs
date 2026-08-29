@@ -51,7 +51,7 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
     T(`「${P[page].label}」声明读阵营，实现里确实读了 _factionScope`, P[page].faction && readsFaction(fn));
     T(`「${P[page].label}」声明读应用范围，实现里确实读了 _applyScope`, P[page].apply && readsApply(fn));
   }
-  for (const page of ['growth', 'bsize', 'soul', 'dragonrule', 'sandbox']) {
+  for (const page of ['growth', 'bsize', 'soul', 'dragonrule']) {
     T(`「${P[page].label}」不声明作用域（它对双方共同生效）`, !P[page].faction && !P[page].apply);
   }
   T('「龙魂」标为即点即生效（改版前它和"改完点应用"的页长得一模一样）',
@@ -82,8 +82,8 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
   AE._selectNode('wave');
   T('出兵编排是【顶层】节点，不再挂在某个兵种底下',
     AE._curNodeKey() === 'wave' && AE._pagesOf('wave').join() === 'wave');
-  T('沙盒节奏仍然逐兵种（在兵种节点下）', AE._pagesOf('minion').includes('sandbox'));
-  T('沙盒节奏与全局编排不再同屏', !AE._pagesOf('wave').includes('sandbox'));
+  // 沙盒节奏页随沙盒模式一起删除了（v51.6）——小兵节点下不再有它。
+  T('沙盒节奏页已随沙盒模式删除（小兵节点下不再有它）', !AE._pagesOf('minion').includes('sandbox'));
 
   AE._selectNode('minion');
   T('点父节点"小兵"回到具体兵种而不是空白', AE._tplState.category === 'minion'
@@ -94,9 +94,9 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
   T('巨龙的属性页不画阵营条（中立野怪不分阵营）',
     AE._effPage('attr', 'dragon').faction === false && AE._TPL_PAGES.attr.faction === true);
 
-  T('沙盒的"编辑生成规则"按钮直达沙盒节奏页',
-    /openTemplateEditor\(type, uiManager\.log\.bind\(uiManager\), returnCallback, 'sandbox'\)/
-      .test(fs.readFileSync('src/main.js', 'utf8')));
+  // "编辑生成规则"按钮（UnitAddDialog）与它指向的 onEditSpawnRule 回调（main.js）
+  // 都随沙盒节奏页一起删除了——那个按钮 100%是为沙盒节奏来的，见 v51.6 commit。
+  T('沙盒节奏按钮的回调已删除', !/onEditSpawnRule/.test(fs.readFileSync('src/main.js', 'utf8')));
   T('渲染/绑定/应用各只有一处分发（改版前首屏与切页两条路径各写一份）',
     (AE_SRC.match(/_renderPage\(page, type\)/g) || []).length >= 1
     && /_applyPage\(page, overlay, type, logFn\)/.test(AE_SRC));
