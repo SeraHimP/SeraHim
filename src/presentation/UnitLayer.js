@@ -91,23 +91,16 @@ const ATTACK_POSE_DUR = 0.35;    // 攻击前后摇窗口时长（秒）
 const HIT_POSE_DUR = 0.25;       // 受击反馈窗口时长（秒）
 const WALK_BOB_FRAC = 0.05;      // 走路起伏幅度：模型高度(vis.topY)的比例，大小单位手感统一
 const WALK_SWAY_RAD = 0.05;      // 走路侧倾幅度（弧度），很小的一点才不会像喝醉
-// ==================== 追加需求 Q1：弹跳幅度太夸张、塔看不出反应 ====================
-// 用户："为什么单位攻击/受击的时候一跳一条的，好诡异。尤其是塔，塔受击/攻击时
-// 没有任何动画。把这个弹跳的效果做的没那么明显吧。我说的改进效果，你这个方向
-// 就是错的……算了这个等下周的额度恢复完再具体说吧，你先把我说的这两个改了。"
-// "这两个"＝①整体调小幅度（原 0.1/0.14 对小兵而言太夸张，读成"跳一跳"而不是
-// "打击反馈"）②塔看着像没反应——机制上塔和小兵走的是同一套百分比缩放公式
-// （已用"人为拨 poseAttackT/poseHitT 再读 scale"的方式核对过，塔确实在变），
-// 根子是同一个百分比在【视觉尺寸悬殊】的塔和小兵身上读起来完全不成比例：
-// 塔模型大，10%的缩放变化摊到屏幕上没几个像素，几乎看不出；小兵模型小，同样
-// 10%在其相对更显眼的轮廓上就容易显得"一跳一跳"。这里先做能在"调参数"范围内
-// 做的事——小兵的幅度往下调，塔的幅度保留得更高一些，让两者观感上更接近；
-// 是否该整体换一种反馈手法（描边高亮/粒子/受击方向倾斜……而不是缩放脉冲）
-// 用户已经明确说了"方向是错的、下周再具体说"，这次不擅自决定，留到那时候一起定。
-const ATTACK_PULSE_AMOUNT = 0.035;       // 小兵：攻击命中瞬间的整体缩放脉冲幅度（原 0.1）
-const ATTACK_PULSE_AMOUNT_TOWER = 0.07;  // 塔：同一效果，幅度更高一些，弥补"大模型看不出小百分比变化"
-const HIT_SQUASH_AMOUNT = 0.05;          // 小兵：受击瞬间的挤压幅度（原 0.14）
-const HIT_SQUASH_AMOUNT_TOWER = 0.09;    // 塔：同上
+// ==================== 追加需求 Q1：弹跳幅度太夸张（+ 用户纠正：塔要直接取消）====================
+// 用户先说"把这个弹跳的效果做的没那么明显吧"，我把小兵幅度调小、又给塔单独加了
+// 一档更高的幅度——理解反了。用户随后明确纠正："我说的是把塔攻击/受击弹跳取消
+// 掉！！！你还给我加强了？？" 塔现在**完全不参与**这个效果（见下面 attackPulse/
+// hitSquash 的 if 判断都加了 !en.isTower），塔的 scale 恒为 1；小兵维持调小后的
+// 幅度（原 0.1/0.14 → 0.035/0.05）。是否该给小兵也换一种反馈手法（描边高亮/
+// 粒子/受击方向倾斜……而不是缩放脉冲）用户说了"方向是错的、下周再具体说"，
+// 这次不擅自决定，留到那时候一起定。
+const ATTACK_PULSE_AMOUNT = 0.035;       // 攻击命中瞬间的整体缩放脉冲幅度（原 0.1），仅对非塔单位生效
+const HIT_SQUASH_AMOUNT = 0.05;          // 受击瞬间的挤压幅度（原 0.14），仅对非塔单位生效
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
 // 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
@@ -947,10 +940,14 @@ export class UnitLayer {
     // sin(π·t/DUR) 保证 t=0 和 t=DUR 处都精确为 0，效果开始/结束都不会有跳变；
     // 与巨龙脉动的 s 相乘而不是相加——脉动是持续低频的"呼吸"，这个是攻击那 0.35s
     // 内的短促尖峰，乘法叠加互不冲突，两个效果同时发生也不会显得突兀。
+    // 用户纠正："我说的是把塔攻击/受击弹跳取消掉！！！你还给我加强了？？"——上一版
+    // 理解反了，把塔的幅度从"和小兵共用"改成"单独调高"，方向完全错了。正确做法是
+    // 塔直接不参与这个效果（en.isTower 时 attackPulse/hitSquash 都不计算，跳过
+    // 整段 if），塔的 scale 保持恒为 1（乘 hitSquash 相关项时天然都是 1，等价于
+    // 完全没有这个效果）；小兵维持 Q1 那次已经调小的幅度不变。
     let attackPulse = 0;
-    if (en.poseAttackT >= 0) {
-      const amt = en.isTower ? ATTACK_PULSE_AMOUNT_TOWER : ATTACK_PULSE_AMOUNT;
-      attackPulse = Math.sin(Math.PI * Math.min(1, en.poseAttackT / ATTACK_POSE_DUR)) * amt;
+    if (en.poseAttackT >= 0 && !en.isTower) {
+      attackPulse = Math.sin(Math.PI * Math.min(1, en.poseAttackT / ATTACK_POSE_DUR)) * ATTACK_PULSE_AMOUNT;
     }
     // 脉动（巨龙）改为整体缩放模型本身，与纸片人时代同一近似
     const s = (vis.pulse ? (1 + 0.12 * Math.sin(tNow * 3)) : 1) * (1 + attackPulse);
@@ -963,9 +960,8 @@ export class UnitLayer {
     // 知道受击方向，用现有 scale 通道就能做，与排期"不需要骨骼，纯 Tween"的范围相符；
     // 材质层的闪白效果留到 P0 材质重做时再补，不在这里勉强凑一个会拖累性能的实现。
     let hitSquash = 0;
-    if (en.poseHitT >= 0) {
-      const amt = en.isTower ? HIT_SQUASH_AMOUNT_TOWER : HIT_SQUASH_AMOUNT;
-      hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * amt;
+    if (en.poseHitT >= 0 && !en.isTower) {
+      hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * HIT_SQUASH_AMOUNT;
     }
     en.unit.scale.set(s * (1 + hitSquash * 0.5), s * (1 - hitSquash), s * (1 + hitSquash * 0.5));
     // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。

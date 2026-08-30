@@ -2508,17 +2508,18 @@ async function world() {
     attr.calc(plainInnerTower, fx.getEffects(plainInnerTower.id)).shieldFixedMax === 0);
 }
 
-// ==================== 追加 Q1：攻击/受击弹跳幅度太夸张、塔看着没反应 ====================
-// 用户："为什么单位攻击/受击的时候一跳一条的，好诡异。尤其是塔，塔受击/攻击时
-// 没有任何动画。把这个弹跳的效果做的没那么明显吧……你先把我说的这两个改了。"
+// ==================== 追加 Q1：攻击/受击弹跳幅度太夸张——用户随后纠正：塔要直接取消 ====================
+// 先反馈"把这个弹跳的效果做的没那么明显吧"，我把小兵调小、又给塔单独加了一档
+// 更高的幅度——理解反了。用户随即纠正："我说的是把塔攻击/受击弹跳取消掉！！！
+// 你还给我加强了？？" 塔现在完全不参与这个效果，小兵维持调小后的幅度。
 {
   const ul = srcOf('src/presentation/UnitLayer.js');
   T('跳①-小兵的攻击脉冲/受击挤压幅度比原来小（原 0.1/0.14 → 0.035/0.05）',
     /const ATTACK_PULSE_AMOUNT = 0\.035;/.test(ul) && /const HIT_SQUASH_AMOUNT = 0\.05;/.test(ul));
-  T('跳②-塔单独有一档更高的幅度（不是和小兵共用同一个百分比——大模型上小百分比看不出来）',
-    /const ATTACK_PULSE_AMOUNT_TOWER = 0\.07;/.test(ul) && /const HIT_SQUASH_AMOUNT_TOWER = 0\.09;/.test(ul)
-    && /const amt = en\.isTower \? ATTACK_PULSE_AMOUNT_TOWER : ATTACK_PULSE_AMOUNT;/.test(ul)
-    && /const amt = en\.isTower \? HIT_SQUASH_AMOUNT_TOWER : HIT_SQUASH_AMOUNT;/.test(ul));
+  T('跳②-塔完全不参与攻击脉冲/受击挤压（不是"塔单独一档更高幅度"——那是理解反了、已被用户纠正）',
+    /if \(en\.poseAttackT >= 0 && !en\.isTower\) \{/.test(ul)
+    && /if \(en\.poseHitT >= 0 && !en\.isTower\) \{/.test(ul)
+    && !/ATTACK_PULSE_AMOUNT_TOWER/.test(ul) && !/HIT_SQUASH_AMOUNT_TOWER/.test(ul));
 }
 
 // ==================== 追加 Q2：护盾在血条上的颜色——画板统一白色，属性窗口按深浅+斜纹区分 ====================
