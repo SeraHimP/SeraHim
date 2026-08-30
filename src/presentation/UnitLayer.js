@@ -82,6 +82,13 @@ const CRYSTAL_RISE = 6.0;          // 充能亮度的上升速率（每秒），
 const CRYSTAL_FADE = 1.6;          // 失去目标后亮度滑回基准的速率（每秒）——过渡不突兀
 const CRYSTAL_WINDUP = 0.3;        // 锁定前摇时长（与 CONFIG.tuning.lockOnWindup 同值）
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
+// ==================== 三周渲染排期 Week1·Day1：程序化动画状态时钟 ====================
+// docs/Q4-RENDERING-REDESIGN.md 第 11 节：走路相位推进速度、攻击前后摇/受击反馈的
+// 持续时长。这一步只搭状态管线（en.poseWalkPhase/poseAttackT/poseHitT），Day2 起才会
+// 把它们接进 en.unit 的 scale/rotation——这些常量现在不生效在任何 transform 上。
+const WALK_CYCLE_SPEED = 6.0;    // 走路相位推进速度（弧度/秒），Day2 接上摆动动画时再按手感调
+const ATTACK_POSE_DUR = 0.35;    // 攻击前后摇窗口时长（秒）
+const HIT_POSE_DUR = 0.25;       // 受击反馈窗口时长（秒）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
 // 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
@@ -403,6 +410,7 @@ export class UnitLayer {
 
     this.scene.add(unit); this.scene.add(bar);
     const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, crystal: null, crystalPts: null, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
+                    poseWalkPhase: 0, poseAttackT: -1, poseHitT: -1,
                     rangeFill: null, rangeEdge: null, soul: null, own: null, shield: null,
                     rangeKey: '', soulKey: '', ownKey: '', shieldOn: false,
                     selCore: null, selGlow: null, selKey: '' };
@@ -825,11 +833,53 @@ export class UnitLayer {
     }
   }
 
+  /**
+   * ==================== Week1·Day1：程序化动画状态时钟 ====================
+   * 只算不用——这一步只把 en.poseWalkPhase/poseAttackT/poseHitT 三个状态算对，
+   * 不接进任何 en.unit 的 scale/rotation/position（那是 Day2-4 的事）。
+   * 幽灵/废墟不参与（没有走路/攻击/受击的语义）。
+   * dt 用 tNow 差值现算，跟水晶充能那段 en._glowT 的手法一致，不新增参数穿透调用链。
+   */
+  _updatePose(e, en, tNow) {
+    const pdt = Math.max(0, Math.min(0.1, tNow - (en._poseT || tNow))); en._poseT = tNow;
+
+    // 走路相位：只在真的挪动了才推进；停下来时相位按指数衰减慢慢归零，不是瞬间归位
+    // （避免 Day2 接上摆动动画后"一停就僵直"的突兀感）。lastX/lastZ 是本文件早年
+    // 留下但从没被用过的字段（声明了却没人读写），这里把它做实，不新开字段。
+    const dx = en.lastX === null ? 0 : e.pos.x - en.lastX;
+    const dz = en.lastZ === null ? 0 : e.pos.y - en.lastZ;
+    en.lastX = e.pos.x; en.lastZ = e.pos.y;
+    const moving = (dx * dx + dz * dz) > 1e-6;
+    en.poseWalkPhase = moving ? (en.poseWalkPhase || 0) + pdt * WALK_CYCLE_SPEED : (en.poseWalkPhase || 0) * 0.9;
+
+    // 攻击前后摇：attackCooldown 跳增＝刚打出一次攻击，与水晶充能那段判"刚开了一炮"
+    // （en._lastCd/_cdMax）同一手法，这里独立记一份 _poseLastCd，互不干扰。
+    const cd = e.attackCooldown || 0;
+    if (cd > (en._poseLastCd || 0) + 0.05) en.poseAttackT = 0;
+    en._poseLastCd = cd;
+    if (en.poseAttackT >= 0) {
+      en.poseAttackT += pdt;
+      if (en.poseAttackT > ATTACK_POSE_DUR) en.poseAttackT = -1;
+    }
+
+    // 受击反馈：entity.lastDamageTime 由 CombatSystem 结算伤害时统一戳时间戳（护盾
+    // 三分类那次改动确认过这条链路对临时/固定/护盾三类都生效），这里只读不写。
+    if (e.lastDamageTime !== en._poseLastDmgT) {
+      en._poseLastDmgT = e.lastDamageTime;
+      if (Number.isFinite(e.lastDamageTime)) en.poseHitT = 0;
+    }
+    if (en.poseHitT >= 0) {
+      en.poseHitT += pdt;
+      if (en.poseHitT > HIT_POSE_DUR) en.poseHitT = -1;
+    }
+  }
+
   _syncOne(e, ghost, ctxDeps, lodHideBar, tNow, ruin) {
     const { attrCalc, effects, entities } = ctxDeps;
     let en = this.map.get(e.id);
     if (!en) en = this._makeEntry(e.id);
     en.seen = this._frame;
+    if (!ghost && !ruin) this._updatePose(e, en, tNow);
 
     const vis = this._visualOf(e, ghost, ruin);
     if (en.visKey !== vis.key) {
