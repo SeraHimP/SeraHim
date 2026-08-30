@@ -64,5 +64,35 @@ if (jsonFile) {
 
 fs.rmSync(tmpDir, { recursive: true, force: true });   // 测试产物不留痕迹
 
+// ---- ③ v51.7 新增：--pick 只跑点名的档位（针对性重跑用），不是悄悄跑成全量 ----
+{
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  const r2 = spawnSync('node', [runner, '--pick', 'fire,water,基线', '--runs', '1', '--minutes', '1', '--jobs', '2'],
+    { encoding: 'utf8', cwd: root, timeout: 90_000 });
+  T('--pick 三档：正常退出（0）', r2.status === 0);
+  if (r2.status !== 0) console.log((r2.stdout || '').slice(-1500), (r2.stderr || '').slice(-1500));
+  const files2 = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
+  const jsonFile2 = files2.find(f => f.endsWith('.json'));
+  T('--pick 三档：产出了合并结果文件', !!jsonFile2);
+  if (jsonFile2) {
+    const data2 = JSON.parse(fs.readFileSync(path.join(tmpDir, jsonFile2), 'utf8'));
+    T('--pick 三档：合并结果恰好 3 档，不是悄悄跑了全部 14 档', data2.results.length === 3);
+    const labels2 = new Set(data2.results.map(r => r.label));
+    T('--pick 三档：点名的 fire/water/基线 都在，没跑漏也没跑多',
+      [...labels2].some(l => l.includes('基线'))
+      && [...labels2].some(l => l.includes('fire'))
+      && [...labels2].some(l => l.includes('water'))
+      && ![...labels2].some(l => l.includes('thunder') || l.includes('magma')));
+  }
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  // 写错档名：应该直接报错退出，不能悄悄当成全量跑掉（用户会白等一整轮）。
+  const r3 = spawnSync('node', [runner, '--pick', 'notarealsoul', '--runs', '1', '--minutes', '1'],
+    { encoding: 'utf8', cwd: root, timeout: 30_000 });
+  T('--pick 写错档名：非 0 退出（拒绝悄悄跑成全量）', r3.status !== 0);
+  T('--pick 写错档名：错误信息里点名是哪个档位不认识', /notarealsoul/.test(r3.stderr || ''));
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
+
 console.log(`龙魂平衡本地跑批验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

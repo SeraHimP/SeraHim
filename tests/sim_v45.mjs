@@ -202,26 +202,13 @@ const instOf = (e, id) => (e._skillInstances || []).find(s => s.skillId === id);
       .every(el => el === 'wind' || !('attackSpeedRatio' in CONFIG.dragonPower[el]))
     && Object.keys(CONFIG.dragonSouls.stat)
       .every(el => el === 'wind' || !('attackSpeedRatio' in CONFIG.dragonSouls.stat[el])));
-  T('风④-塔那一半发的是攻速收益率（塔不会动，移速对它是废的；但收益率不是）',
-    'towerAttackSpeedRatio' in CONFIG.dragonSouls.wind
-    && !('towerAttackRangeFlat' in CONFIG.dragonSouls.wind)
-    && /statKey: 'attackSpeedRatio', flatValue: p\.towerAttackSpeedRatio/.test(ds));
-
-  // 行为：收益率真的放大了有效攻速
-  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
-  const t = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
-    baseStats: { ...CONFIG.templates.tower, bonusAttackSpeedPct: 60 }, currentHP: 1000,
-    _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
-  ents.add(t);
-  // ⚠️ 攻速不是 calc() 的输出字段，要过 calcAttackSpeedOf ——
-  // 面板上的 bonusAttackSpeedPct 与"每秒打几下"是两码事，本仓库反复栽在这里。
-  const before = attr.calcAttackSpeedOf(attr.calc(t, fx.getEffects(t.id)));
-  const dsys = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
-  dsys._toggleSoul(t, 'dragonsoul_wind');
-  const st = attr.calc(t, fx.getEffects(t.id));
-  const after = attr.calcAttackSpeedOf(st);
-  T('风⑤-风魂装到塔上后，实际攻速确实提高了（不是只改了面板数字）',
-    after > before && st.attackSpeedRatio > 0.667);
+  // v51.7：本条已被推翻，见 tests/sim_v51.mjs 里的重做用例——塔身上没有别的攻速
+  // 加成可供"收益率"放大，连着两轮真实对局（--sweep soul）都测出这半形同虚设，
+  // 用户要求重做成直接发攻速百分比。这里只留下"旧机制确实已经被替换掉"的负向断言，
+  // 完整的新行为验证在 sim_v51.mjs。
+  T('风④-塔那一半不再是攻速收益率（v51.7 重做，见 sim_v51.mjs）',
+    !('towerAttackSpeedRatio' in CONFIG.dragonSouls.wind)
+    && !/statKey: 'attackSpeedRatio', flatValue: p\.towerAttackSpeedRatio/.test(ds));
 }
 
 // ==================== 五、攻城车：射程比放弃距离长导致锁定永远建立不起来 ====================

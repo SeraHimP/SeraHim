@@ -245,11 +245,11 @@ export const dragonSouls = {
       const p = P('wind');
       const mv = p.moveSpeedPct ?? 0;
       return (mv > 0 ? `小兵移速 +${mv}%，脱战后提升至 +${p.moveSpeedOutPct ?? 25}%` : `小兵脱战后移速 +${p.moveSpeedOutPct ?? 25}%`)
-           + `；防御塔额外获得 +${p.towerAttackSpeedRatio ?? 0.15} 攻速收益率（把所有攻速加成整体放大）。`;
+           + `；防御塔攻速 +${p.towerBonusAttackSpeedPct ?? 35}%。`;
     },
     get descTemplate() {
       const p = P('wind');
-      return `唯一被动——风魂：小兵移速（{val}%，脱战后升至 +${p.moveSpeedOutPct ?? 25}%）；防御塔 +${p.towerAttackSpeedRatio ?? 0.15} 攻速收益率。`;
+      return `唯一被动——风魂：小兵移速（{val}%，脱战后升至 +${p.moveSpeedOutPct ?? 25}%）；防御塔攻速 +${p.towerBonusAttackSpeedPct ?? 35}%。`;
     },
     computeCurrent: (entity) => {
       const p = P('wind');
@@ -269,13 +269,25 @@ export const dragonSouls = {
       // 它是**乘性**的：本项目的攻速公式是 有效加成 = 正值 × attackSpeedRatio(默认 0.667)，
       // 抬高收益率等于把这座塔身上所有来源的攻速加成一起放大，
       // 而且对"不会移动"的单位完全有效（射程那一版方向对，但主题不是速度）。
+      //
+      // ==================== v51.7：v45 的道理没错，但漏看了一个前提 ====================
+      // "抬高收益率能放大所有攻速加成"这句话本身没问题，问题是塔身上**根本没有别的
+      // 攻速加成可放大**——塔模板的 bonusAttackSpeedPct 出厂就是 0，也没有任何其它
+      // 光环/魂/装备会往塔身上叠 bonusAttackSpeedPct。收益率再高，0 × 收益率还是 0。
+      // 这正是这条魂连着两轮 --sweep soul（v51.3 与本轮）都测出"塔那一半形同虚设"的
+      // 根因：sim_v45.mjs 里的旧单测手工把塔的 bonusAttackSpeedPct 造到了 60 去验证
+      // 乘法关系本身写对了没错，但这个前提在真实对局里从不成立——测试证明了公式
+      // 没写错，没证明这条魂真的有用，这两件事此前被当成一回事了。
+      // 用户原话："加移速对塔没啥用，开动脑筋重新做风魂"——于是这次不再去放大一个
+      // 本来就是空的桶，改成直接把攻速百分比本身发给塔，跳过收益率这层间接寻址。
+      // 依然是"速度"主题，只是把间接量换成直接量，这次会真的体现在塔每秒打几下上。
       ctx.effectRegistry.apply(entityId, {
         name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
-        statKey: 'attackSpeedRatio', flatValue: p.towerAttackSpeedRatio ?? 0.15,
+        statKey: 'bonusAttackSpeedPct', flatValue: p.towerBonusAttackSpeedPct ?? 35,
         duration: Infinity, permanent: true,
         stackable: false, stackPolicy: 'refresh', uniquePassive: true,
         stackKey: 'dragonsoul_wind_asr',
-        description: `攻速收益率 +${p.towerAttackSpeedRatio ?? 0.15}`,
+        description: `攻速 +${p.towerBonusAttackSpeedPct ?? 35}%`,
       }, 'dragonsoul_wind');
     },
     onUnequip: (entityId, instance, ctx) => {

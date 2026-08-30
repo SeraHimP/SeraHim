@@ -517,10 +517,14 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 用户明确要求风保持「+移速 +攻速 +攻速收益率」的方向，所以塔那一半改为发
   // attackSpeedRatio（攻速收益率）：它同样是"速度"，同样对静止的塔有效，
   // 而且是全局乘在所有攻速加成上的，与风的主题一致。
-  T('龙⑭-风魂给塔的是攻速收益率（同属速度主题，且对不会动的塔有效）',
-    'towerAttackSpeedRatio' in CONFIG.dragonSouls.wind
-    && !('towerAttackRangeFlat' in CONFIG.dragonSouls.wind)
-    && /statKey: 'attackSpeedRatio', flatValue: p\.towerAttackSpeedRatio/.test(ds));
+  // v51.7：本条又被推翻了——"乘在所有攻速加成上"这句话的前提（塔身上有别的攻速
+  // 加成可乘）在真实对局里从不成立，连着两轮 --sweep soul 都测出塔那一半没用，
+  // 用户直接要求重做。改成直接发 bonusAttackSpeedPct（攻速百分比本身），见
+  // sim_v51.mjs 里的新用例。
+  T('龙⑭-风魂给塔的是攻速百分比（v51.7 重做，不再是收益率乘数）',
+    'towerBonusAttackSpeedPct' in CONFIG.dragonSouls.wind
+    && !('towerAttackSpeedRatio' in CONFIG.dragonSouls.wind)
+    && /statKey: 'bonusAttackSpeedPct', flatValue: p\.towerBonusAttackSpeedPct/.test(ds));
   T('龙⑮-暗魂改为偷取（削对方多少自己得多少）',
     CONFIG.dragonSouls.dark.steal === true && /dragonsoul_dark_steal/.test(ds));
   T('龙⑯-山魂大削（v43 对照 6/6 全胜、推进度差 +3.65）',

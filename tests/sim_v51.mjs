@@ -2595,4 +2595,52 @@ async function world() {
     /return `已过载（最大生命已损失 \$\{Math\.round\(st\.hpLostTotal \|\| 0\)\}）`;/.test(tp));
 }
 
+// ==================== 追加：风魂塔半重做验证（v51.7：攻速收益率→攻速百分比）====================
+// 用户："加移速对塔没啥用，开动脑筋重新做风魂。"根因见 Config.js/dragonSouls.js 里
+// v51.7 那段注释：旧机制放大的是塔身上的 bonusAttackSpeedPct 这个"收益率乘数"，
+// 但塔出厂就没有别的 bonusAttackSpeedPct 来源（模板值是 0），乘数再高乘的还是 0——
+// 这条钉的就是"不做任何人为造条件、直接用真实默认塔"验证攻速确实提高了，堵上被删掉的
+// 旧测试（sim_v45.mjs 原风⑤）手工把 bonusAttackSpeedPct 造到 60 才能测出效果的盲区。
+{
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  T('风⑥-塔的攻速百分比出厂确实是 0（不是测试特意绕开的特例，是真实默认值——旧盲区的根源）',
+    (CONFIG.templates.tower.bonusAttackSpeedPct || 0) === 0);
+
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  fx.setStatSource(ents, AttributeCalculator);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+
+  // 不做任何人为造条件——直接用塔模板的真实出厂值。
+  const t = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.tower }, currentHP: CONFIG.templates.tower.maxHP,
+    _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
+  ents.add(t);
+
+  const before = AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(t, fx.getEffects(t.id)));
+  ds._toggleSoul(t, 'dragonsoul_wind');
+  const after = AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(t, fx.getEffects(t.id)));
+
+  T('风⑦-真实默认塔（无人为造条件）装上风魂后攻速确实提高了（旧机制这里测出来是 after === before）',
+    after > before);
+  // 期望值要把两处来源都算上：mechanism 那半（towerBonusAttackSpeedPct，本次重做的）
+  // + stat 那半（CONFIG.dragonSouls.stat.wind 的常驻 bonusAttackSpeedPct/attackSpeedRatio，
+  // 塔和大型小兵都会拿到的常驻加持，与本次重做无关但同样叠在塔身上）。
+  const p = CONFIG.dragonSouls.wind;
+  const w = CONFIG.dragonSouls.stat.wind;
+  const bonus = (p.towerBonusAttackSpeedPct ?? 35) + (w.bonusAttackSpeedPct || 0);
+  const ratio = (CONFIG.templates.tower.attackSpeedRatio || 0.667) + (w.attackSpeedRatio || 0);
+  const expected = CONFIG.templates.tower.baseAttackSpeed * (1 + bonus * ratio / 100);
+  T('风⑧-提高的幅度对得上 towerBonusAttackSpeedPct（重做的机制半）+ 常驻加持半 的合计，不是随便一个正数就算过',
+    Math.abs(after - expected) < 0.01);
+}
+
 done();
