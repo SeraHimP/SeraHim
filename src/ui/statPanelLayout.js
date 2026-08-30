@@ -29,15 +29,15 @@
  * 否则下一组的第一格会被塞进上一组留下的空位里，分组就白做了。
  *
  * 注：攻击力/攻速/护甲/魔抗四项在**折叠区之上**的常驻属性区，不在这张表里。
+ *
+ * v51.6 追补：子弹速度已从这张表里整个删除（用户："子弹速度已经整合到攻击力窗口了，
+ * 把属性界面遗留的子弹速度删掉"）——它只保留在 RELATED_STATS.attackDamage 里，
+ * 点开【攻击力】的说明弹窗才看得到，不再在"展开更多"网格里单独占一格。
+ * 塔与小兵的表因此**完全一致**，函数不再需要按单位类型分支，故不再接收参数。
  */
 
-/**
- * @param kind 'tower' | 其它（小兵/龙等）——v51.6 起 kind 只影响是否显示子弹速度这一格
- *        （只有塔真正会用到弹道飞行速度，小兵/龙目前都是近身或瞬时结算），
- *        不再决定"最后一格显示什么"——那一格现在固定是移速。
- * @returns [{ title, rows: [{ key, label, suffix }] }]
- */
-export function extAttrGroups(kind) {
+/** @returns [{ title, rows: [{ key, label, suffix }] }] */
+export function extAttrGroups() {
   return [
     // 攻速加成这一格已删除（用户定稿）：【攻速】那一格显示的就是把加成算进去之后的值，
     // 连正负着色都跟着走，再列一次加成百分比是重复信息。
@@ -47,9 +47,6 @@ export function extAttrGroups(kind) {
       { key: 'damageAmpPct', label: '伤害增幅%', suffix: '%' },
       { key: 'onHitDamage', label: '攻击特效(固定)', suffix: '' },
       { key: 'onHitPercentDamage', label: '攻击特效(%当前生命)', suffix: '%' },
-      // v51.6：子弹速度从"机动"那一组搬过来（用户定稿"子弹速度放在攻击力里"）——
-      // 塔的攻击方式本来就属于"怎么打出去"，归进攻这一组比归机动更贴切。
-      ...(kind === 'tower' ? [{ key: 'bulletSpeed', label: '子弹速度', suffix: '' }] : []),
     ] },
     { title: '穿透', rows: [
       { key: 'armorPenFlat', label: '固定穿甲', suffix: '' },
@@ -96,9 +93,9 @@ export const BASE_ATTR_ROWS = [
 ];
 
 /** 这张表里出现的全部 statKey（含常驻区），供断言逐个查说明文案。 */
-export function allPanelStatKeys(kind = 'tower') {
+export function allPanelStatKeys() {
   const ks = BASE_ATTR_ROWS.map(r => r.key);
-  for (const g of extAttrGroups(kind)) for (const r of g.rows) ks.push(r.key);
+  for (const g of extAttrGroups()) for (const r of g.rows) ks.push(r.key);
   return ks;
 }
 

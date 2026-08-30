@@ -192,28 +192,38 @@ export class WorldState {
       const isTower = entity.type === 'tower';
       const favored = night ? isTower : (!isTower && entity.type !== 'dragon');
       const who = night ? '防御塔' : '小兵';
-      const parts = [];
-      if (side.moveSpeedPct) parts.push(`+${side.moveSpeedPct}% 移速`);
-      if (side.attackDamagePct) parts.push(`+${side.attackDamagePct}% 攻击力`);
-      if (side.attackRangeFlat) parts.push(`+${side.attackRangeFlat} 射程`);
-      if (side.armorFlat) parts.push(`+${side.armorFlat} 护甲`);
+      // v51.6：结构化的逐项修正（{statKey: {flat, percent}}），供 UI 按天气弹窗那套
+      // 网格样式渲染——不再只给一句拼好的话。本单位吃不到这条时 mods 是空对象，
+      // UI 据此显示"无增益"，不再说"XX占优（本单位不吃这条）"（用户定稿：删掉这句）。
+      const mods = {};
+      if (favored) {
+        if (side.moveSpeedPct) mods.moveSpeed = { percent: side.moveSpeedPct };
+        if (side.attackDamagePct) mods.attackDamage = { percent: side.attackDamagePct };
+        if (side.attackRangeFlat) mods.attackRange = { flat: side.attackRangeFlat };
+        if (side.armorFlat) mods.armor = { flat: side.armorFlat };
+      }
       rows.push({
         source: `昼夜 · ${this.daynight.label}`,
-        detail: favored
-          ? `${who}占优：${parts.join(' / ') || '无'}`
-          : `${who}占优（本单位不吃这条）`,
+        detail: favored ? `${who}占优` : '无增益',
+        favored, mods,
       });
     }
     if (cp.entropyToUnits) {
       const k = (this.entropy.value - 0.5) * 2;
       const g = cfg.entropyBonus || {};
       const sign = (fac === 'red' ? k : -k) * (this.entropy.volatility || 1);
+      const favored = Math.abs(sign) >= 1e-6;
       rows.push({
         source: `熵 ${(this.entropy.value * 100).toFixed(0)}%`,
-        detail: Math.abs(sign) < 1e-6
-          ? '中性（无修正）'
-          : `${this.entropySystem.describe()} → 本方 ${sign > 0 ? '+' : ''}${(sign * (g.attackDamagePct ?? 0)).toFixed(1)}% 攻击力、` +
-            `${sign > 0 ? '+' : ''}${(sign * (g.armorFlat ?? 0)).toFixed(1)} 护甲`,
+        detail: favored
+          ? `${this.entropySystem.describe()} → 本方 ${sign > 0 ? '+' : ''}${(sign * (g.attackDamagePct ?? 0)).toFixed(1)}% 攻击力、` +
+            `${sign > 0 ? '+' : ''}${(sign * (g.armorFlat ?? 0)).toFixed(1)} 护甲`
+          : '中性（无修正）',
+        favored,
+        mods: favored ? {
+          attackDamage: { percent: Math.round(sign * (g.attackDamagePct ?? 0) * 10) / 10 },
+          armor: { flat: Math.round(sign * (g.armorFlat ?? 0) * 10) / 10 },
+        } : {},
       });
     }
     if (this.souls[fac]?.length) {

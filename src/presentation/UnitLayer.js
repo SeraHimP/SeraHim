@@ -40,6 +40,22 @@ import { towerFacingRad } from './towerFacing.js';
 import { stepTrail, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
+import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
+
+// ==================== v51.6：龙魂环按元素配色 ====================
+// 用户："获得龙魂的某一方，塔下面都会有光圈。这个光圈的颜色目前是不会变的，
+// 应该跟随获得的不同种类龙魂而改变颜色。" 每种元素龙魂的颜色就是 DRAGON_ELEMENTS
+// 里已经定好的那个 color（与巨龙/技能面板同一份配色，不再另起一份）；远古之力
+// 没有元素归属，单独给一个颜色（与 dragonSouls.js 里 dragonsoul_ancient 的
+// color 字段同一个值）。同一单位理论上可能同时挂多条魂（模板编辑器/手动测试
+// 工具可以多选），这里只取【第一条】决定环的颜色——多色环没有直接的视觉语言，
+// 单色环 + 点开效果栏看完整清单是更简单可靠的取舍。
+const SOUL_COLORS = (() => {
+  const m = {};
+  for (const el of Object.values(DRAGON_ELEMENTS)) m[el.soul] = el.color;
+  m.dragonsoul_ancient = '#e67e22';
+  return m;
+})();
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
@@ -277,12 +293,39 @@ export class UnitLayer {
     const k = kind + '|' + r + '|' + w;
     let g = this._geoCache.get(k);
     if (!g) {
-      g = kind === 'ring'
-        ? new THREE.RingGeometry(Math.max(0.1, r - w / 2), r + w / 2, 48)
+      g = kind === 'ring' ? new THREE.RingGeometry(Math.max(0.1, r - w / 2), r + w / 2, 48)
+        : kind === 'squareRing' ? this._squareRingGeo(r, w)
         : new THREE.CircleGeometry(r, 48);
-      g.rotateX(-Math.PI / 2);   // 平躺到 XZ（与地面同向）
+      if (kind !== 'squareRing') g.rotateX(-Math.PI / 2);   // 平躺到 XZ（与地面同向）——方框直接在 XZ 平面里构建，见下方
       this._geoCache.set(k, g);
     }
+    return g;
+  }
+
+  /**
+   * 方形圆环（一圈固定宽度的方框，挖空中间），供【蓝方防御塔】的龙魂环使用。
+   * 用户："由于蓝方塔是方形的，导致下面显示的圈不完全，把蓝方的塔下面匹配轮廓
+   * 而显示方形。" ——蓝方塔身是逐层内收的方形台阶（UnitMeshFactory 的头注：
+   * "蓝方方形逐层内收（秩序），红方圆台（混沌）"），圆环套在方形塔基下会在
+   * 四角露出没盖住的地面，看起来像"圈没画完整"。直接在 XZ 平面里构建（省掉
+   * RingGeometry 那套先在 XY 建、再 rotateX 转平的流程，这里从一开始就是平的）。
+   */
+  _squareRingGeo(r, w) {
+    const o = r + w / 2, i = Math.max(0.05, r - w / 2);
+    const outer = [[-o, -o], [o, -o], [o, o], [-o, o]];
+    const inner = [[-i, -i], [i, -i], [i, i], [-i, i]];
+    const pos = [], idx = [];
+    for (let s = 0; s < 4; s++) {
+      const [ox0, oz0] = outer[s], [ox1, oz1] = outer[(s + 1) % 4];
+      const [ix0, iz0] = inner[s], [ix1, iz1] = inner[(s + 1) % 4];
+      const base = pos.length / 3;
+      pos.push(ox0, 0, oz0, ox1, 0, oz1, ix0, 0, iz0, ix1, 0, iz1);
+      idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
     return g;
   }
 
@@ -469,17 +512,50 @@ export class UnitLayer {
     en.selGlow.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
   }
 
+  _clearSoulRing(en) {
+    en.soul = this._removeFlat(en.soul);
+    en.soulKey = '';
+  }
+
+  /**
+   * ==================== v51.6：龙魂环——塔 + 大型小兵都要有，按元素配色 ====================
+   * 用户："而且所有获得龙魂的单位（包括小兵等）下面都显示这个圈，自适应大小。
+   * 注意是龙魂！并非巨龙之力！" ——原来这一圈只在 _syncTowerInfo 里画（仅活体塔），
+   * 小兵从来没有这个视觉反馈；颜色也是写死的金色，看不出拿的是哪条魂。
+   * 现在独立成一条路径，与 F1 选中光圈同一个调用位置、同一个"所有活体单位都参与"
+   * 的口径（幽灵/废墟/已死单位不参与——那些状态下 _syncOne 会先 return 或标记
+   * ghost/ruin，这里统一收在一处判断，不必在每个调用点各自判断一遍）。
+   * 尺寸走 vis.ringR——与选中光圈同一个"自适应单位大小"的现成值，不必另起一份。
+   */
+  _syncSoulRing(e, en, vis, ghost, ruin) {
+    if (ghost || ruin || !e.alive) { if (en.soul) this._clearSoulRing(en); return; }
+    const soulSkill = (e._skillInstances || []).find(sk => sk.skillId.startsWith('dragonsoul_'));
+    if (!soulSkill) { if (en.soul) this._clearSoulRing(en); return; }
+    const color = SOUL_COLORS[soulSkill.skillId] || '#f6c94a';
+    const r = vis.ringR || 12;
+    // 蓝方塔身是逐层内收的方形台阶（红方是圆台），方环才能贴合它的轮廓；
+    // 其余（红方塔、全部小兵）沿用圆环——小兵是人形剪影，圆环足够贴合。
+    const faction = e._mapFaction || e.faction;
+    const square = e.type === 'tower' && faction === 'blue';
+    const key = (square ? 'sq' : 'rd') + '|' + r + '|' + color;
+    if (en.soulKey !== key) {
+      this._clearSoulRing(en);
+      en.soulKey = key;
+      en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, 3), this._flatMat(color, 1));
+    }
+    en.soul.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
+  }
+
   _clearInfo(en) {
     this._clearSel(en);
     this._clearRange(en);
-    en.soul = this._removeFlat(en.soul);
     en.own = this._removeFlat(en.own);
     if (en.shield) {
       this.scene.remove(en.shield); this.infoObjs--;
       en.shield.material.dispose();   // SpriteMaterial per-entity；共享 map 纹理不释放
       en.shield = null;
     }
-    en.rangeKey = en.soulKey = en.ownKey = '';
+    en.rangeKey = en.ownKey = '';
     en.shieldOn = false;
   }
 
@@ -629,18 +705,6 @@ export class UnitLayer {
       en.own.position.set(x, RING_LIFT + en.groundY, z);
     } else if (en.own) {
       en.own = this._removeFlat(en.own); en.ownKey = '';
-    }
-
-    // --- E4 龙魂金环：dragonsoul_ 前缀技能，半径 32 宽 2 金色 ---
-    const hasSoul = (e._skillInstances || []).some(sk => sk.skillId.startsWith('dragonsoul_'));
-    if (hasSoul) {
-      if (en.soulKey !== '1') {
-        en.soulKey = '1';
-        en.soul = this._flatMesh(this._flatGeo('ring', 32, 2), this._flatMat('#f6c94a', 1));
-      }
-      en.soul.position.set(x, RING_LIFT + en.groundY, z);
-    } else if (en.soul) {
-      en.soul = this._removeFlat(en.soul); en.soulKey = '';
     }
 
     // --- E2 结构保护盾牌：共享纹理 sprite，屏幕空间悬于血条上方（2D: y - bSize - 26 居中） ---
@@ -934,10 +998,12 @@ export class UnitLayer {
       this._syncTowerInfo(e, en, ctxDeps, lodHideBar,
                           ctxDeps.getSelectedId ? ctxDeps.getSelectedId() : null);
     }
-    else if (en.rangeFill || en.own || en.soul || en.shield) this._clearInfo(en);
+    else if (en.rangeFill || en.own || en.shield) this._clearInfo(en);
 
     // F1 选中光圈（第4步）：所有类型都可选中，含幽灵水晶
     this._syncSelection(e, en, vis, ctxDeps.getSelectedId ? ctxDeps.getSelectedId() : null);
+    // 龙魂环：塔与大型小兵都参与，幽灵/废墟/死亡单位不显示（由方法自己判断）。
+    this._syncSoulRing(e, en, vis, ghost, ruin);
   }
 
   /**

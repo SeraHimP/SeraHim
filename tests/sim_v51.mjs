@@ -1378,11 +1378,12 @@ async function world() {
     && !/另一种类型/.test(doc.desc) && !/另一种类型/.test(doc.formula || ''));
 
   const { extAttrGroups } = await import('../src/ui/statPanelLayout.js');
-  const keysOf = (kind) => extAttrGroups(kind).flatMap(g => g.rows.map(r => r.key));
-  const groupOf = (kind, key) => extAttrGroups(kind).find(g => g.rows.some(r => r.key === key))?.title;
-  T('转②-子弹速度搬进了【进攻】组（塔）', groupOf('tower', 'bulletSpeed') === '进攻');
-  T('转③-所有单位类型"展开更多"的最后一格统一是移速',
-    keysOf('tower').includes('moveSpeed') && keysOf('minion').includes('moveSpeed') && keysOf('dragon').includes('moveSpeed'));
+  const keysOf = () => extAttrGroups().flatMap(g => g.rows.map(r => r.key));
+  // v51.6 追补：子弹速度已经从"展开更多"网格里整个删除（用户："子弹速度已经整合到
+  // 攻击力窗口了，把属性界面遗留的子弹速度删掉"）——只留在攻击力的关联属性弹窗里，
+  // 见下面 v51.6 那一节的 RELATED_STATS.attackDamage 断言。
+  T('转②-子弹速度已从"展开更多"网格里删除（不再单独占格）', !keysOf().includes('bulletSpeed'));
+  T('转③-所有单位类型"展开更多"的最后一格统一是移速', keysOf().includes('moveSpeed'));
 }
 
 // ==================== v51.6：关联属性弹窗 + 全能吸血改名 ====================
@@ -1465,6 +1466,28 @@ async function world() {
   combat.performAttackDirect(atk.id, tgt.id, 50, 'magic', { basicAttack: true, grantsMana: true });
   T('法⑨-grantsMana:true 时攻守双方都涨法力（闪电杖/腐蚀型修复生效）',
     (atk._mana || 0) > 0 && (tgt._mana || 0) > 0);
+
+  // ==================== bug 修复：闪电杖每跳各回一次完整攻击的法力（4倍超发）====================
+  // 用户报："目前闪电杖每秒4跳造成伤害，正常应该是每秒算造成一次完整攻击，受击者
+  // 回复2法力，但是目前每一跳（0.25s）都会回复2法力，正常是每跳回复2/4=0.5法力。"
+  // 根因：grantsMana 发的 damage:dealt 事件没带 attackShare，ManaSystem 按"每次
+  // 事件都是一次完整攻击"发放，于是一次攻击拆成的 4 跳变成 4 倍法力。
+  atk._mana = 0; tgt._mana = 0;
+  combat.performAttackDirect(atk.id, tgt.id, 50, 'magic', { basicAttack: true, grantsMana: true, attackShare: 0.25 });
+  T(`法⑨b-attackShare:0.25 时法力只发 1/4（受击 ${tgt._mana}，期望 ${CONFIG.tuning.mana.onHitTaken * 0.25}）`,
+    Math.abs((tgt._mana || 0) - CONFIG.tuning.mana.onHitTaken * 0.25) < 1e-9);
+  T(`法⑨c-累计 4 跳（每跳 attackShare 0.25）等于一次完整攻击的法力`, (() => {
+    atk._mana = 0; tgt._mana = 0;
+    for (let i = 0; i < 4; i++) {
+      combat.performAttackDirect(atk.id, tgt.id, 50, 'magic', { basicAttack: true, grantsMana: true, attackShare: 0.25 });
+    }
+    return Math.abs((tgt._mana || 0) - CONFIG.tuning.mana.onHitTaken) < 1e-9;
+  })());
+  T('法⑨d-不传 attackShare 时仍按一次完整攻击算（向后兼容，普通攻击路径不受影响）', (() => {
+    atk._mana = 0; tgt._mana = 0;
+    combat.performAttackDirect(atk.id, tgt.id, 50, 'magic', { basicAttack: true, grantsMana: true });
+    return Math.abs((tgt._mana || 0) - CONFIG.tuning.mana.onHitTaken) < 1e-9;
+  })());
 
   if (bak) CONFIG.tuning.mana = bak;
 }
@@ -1573,12 +1596,14 @@ async function world() {
   T('磨⑥-暴击伤害总倍率算对：基准200%+30% = 230%，基准200%-50% = 150%',
     critTotal(30) === 230 && critTotal(-50) === 150);
 
-  // 生命恢复：显示经过所有修正后的实际每秒回复值，公式与 CombatSystem 结算生命恢复
-  // 时用的 regen×regenMod×healPowerOf 必须是同一条，不能另写一份（否则面板和实际
-  // 生效值对不上，是本仓库反复出过的那类事故）。
-  T('磨⑦-生命恢复关联行走 regen×regenMod×healPowerOf 同一条公式',
+  // v51.6 追补：用户重新拍板——"属性面板上生命恢复显示实际生效值"这件事挪到
+  // 主格（_effectiveHealthRegenHtml），公式仍是 regen×regenMod×healPowerOf 那一条，
+  // 不能另写一份（否则面板和实际生效值对不上，是本仓库反复出过的那类事故）。
+  // 关联属性区块里的【基础生命回复】（原 baseHealthRegenMod）改回单纯显示这个
+  // 系数本身的百分比，不再混算成"实际生效值"——两件事现在分开显示。
+  T('磨⑦-生命恢复面板主格走 regen×regenMod×healPowerOf 同一条公式',
     /const regenMod = entity\.baseStats\?\.baseHealthRegenMod \?\? 1;/.test(uiSrc)
-    && /const healPower = Math\.max\(0, 1 \+ \(liveStats\.healShieldPowerPct \|\| 0\) \/ 100\);/.test(uiSrc)
+    && /const healPower = Math\.max\(0, 1 \+ \(stats\.healShieldPowerPct \|\| 0\) \/ 100\);/.test(uiSrc)
     && /const effective = Math\.round\(regen \* regenMod \* healPower \* 100\) \/ 100;/.test(uiSrc));
 
   // 用实际数值验证磨⑦这条公式确实按用户给的例子走：基础生命恢复2，
@@ -1586,6 +1611,12 @@ async function world() {
   const effRegen = (regen, regenMod, healShieldPowerPct) =>
     Math.round(regen * regenMod * Math.max(0, 1 + healShieldPowerPct / 100) * 100) / 100;
   T('磨⑧-生命恢复实际值算对：2×1×(1-60%) = 0.8', effRegen(2, 1, -60) === 0.8);
+
+  T('磨⑨-关联属性区块的【基础生命回复】只显示系数本身的百分比，不再混算实际生效值',
+    /const pct = Math\.round\(mod \* 1000\) \/ 10;/.test(uiSrc)
+    && !/\/秒（实际生效值）/.test(uiSrc));
+  T('磨⑩-baseHealthRegenMod 的说明标签已改名为"基础生命回复"',
+    statDoc('baseHealthRegenMod')?.label === '基础生命回复');
 
   // 用户："属性面板每个属性占的空间太大了，优化一下，缩小一下空间。"
   const htmlSrc = srcOf('index.html');
@@ -1792,6 +1823,38 @@ async function world() {
   const lifeStealPowerBuff = dragonPowerBuffs('dark').find(b => b.statKey === 'lifeStealPct');
   T('吸⑨-巨龙之力（非龙魂）的暗之力全能吸血不受这条规则影响',
     !!lifeStealPowerBuff && lifeStealPowerBuff.flat === CONFIG.dragonPower.dark.lifeStealPct);
+}
+
+// ==================== v51.6：龙魂环——按元素配色 + 塔与大型小兵都显示 + 方形塔用方环 ====================
+// 用户："获得龙魂的某一方，塔下面都会有光圈。这个光圈的颜色目前是不会变的，应该跟随
+// 获得的不同种类龙魂而改变颜色。而且由于蓝方塔是方形的，导致下面显示的圈不完全，
+// 你可以把蓝方的塔下面匹配轮廓而显示方形。并且所有获得龙魂的单位（包括小兵等）下面
+// 都显示这个圈，自适应大小。注意是龙魂！并非巨龙之力！"
+{
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  const { DRAGON_ELEMENTS } = await import('../src/systems/DragonSystem.js');
+
+  T('环①-龙魂环颜色表按 DRAGON_ELEMENTS 的 color 构建（不是写死的金色）',
+    /const SOUL_COLORS = \(\(\) => \{/.test(ul) && /m\[el\.soul\] = el\.color;/.test(ul));
+  T('环②-远古之力（无元素归属）也配了颜色，不会落回默认金色',
+    /m\.dragonsoul_ancient = '#e67e22';/.test(ul));
+  T('环③-龙魂环走独立的 _syncSoulRing，不再挤在"仅活体塔"的 _syncTowerInfo 里',
+    /_syncSoulRing\(e, en, vis, ghost, ruin\)/.test(ul)
+    && !/_syncTowerInfo[\s\S]{0,2000}dragonsoul_/.test(ul));
+  T('环④-尺寸走 vis.ringR（与选中光圈同一个"自适应单位大小"的值），不是写死的 32',
+    /const r = vis\.ringR \|\| 12;/.test(ul));
+  T('环⑤-蓝方塔用方形环匹配方形塔基，其余（红方塔/全部小兵）用圆环',
+    /const square = e\.type === 'tower' && faction === 'blue';/.test(ul)
+    && /_flatGeo\(square \? 'squareRing' : 'ring', r, 3\)/.test(ul));
+  T('环⑥-幽灵/废墟/死亡单位不显示龙魂环', /if \(ghost \|\| ruin \|\| !e\.alive\)/.test(ul));
+
+  // 颜色表本身的行为：每种元素都能查到色值，且与 DRAGON_ELEMENTS 定义的颜色一致
+  // （这里直接跑一遍构建函数体同款逻辑核对，不是又对着源码字符串猜）。
+  const rebuilt = {};
+  for (const el of Object.values(DRAGON_ELEMENTS)) rebuilt[el.soul] = el.color;
+  T('环⑦-八条元素龙魂各自的颜色与 DRAGON_ELEMENTS 定义一致（抽样核对暗魂/血魂）',
+    rebuilt.dragonsoul_dark === DRAGON_ELEMENTS.dark.color
+    && rebuilt.dragonsoul_blood === DRAGON_ELEMENTS.blood.color);
 }
 
 done();

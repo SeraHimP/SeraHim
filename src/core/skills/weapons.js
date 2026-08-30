@@ -23,7 +23,7 @@ export const weapons = {
     // 命中时乘入——不进塔的属性系统。状态栏只显示"升温 N 层"（纯计数，无属性）。
     //   穿透：30% 护甲穿透 + 30% 法术穿透（永久状态）；命中削目标 3 双抗最多 -12（原有）。
     description: '唯一被动——升温：连续攻击同一目标，伤害逐次提升（100%→130%→160%…每层+30%，最高+120%），切换目标或目标死亡重置；唯一被动——穿透：固定30%护甲穿透与30%法术穿透。',
-    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（【{val}%】=100%+30%×层数），切换目标重置；唯一被动——穿透：固定30%双穿。',
+    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（{val}%=100%+30%×层数），切换目标重置；唯一被动——穿透：固定30%双穿。',
     computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '升温'); return 100 + 30 * (e ? e.stacks : 0); },
     HEAT_MAX_STACKS: 4,          // 最多 4 层（+120% → 220% 上限），与旧上限一致
     HEAT_PER_STACK: 0.30,
@@ -114,7 +114,7 @@ export const weapons = {
     icon: '⚡',
     category: 'weapon',
     description: '魔法伤害，每秒固定跳4次伤害（各20%攻击力），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
-    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（【{val}】=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
+    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（{val}=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
     computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.attackDamage||0)*0.15); },
     specialAttack: true,
     effects: [],
@@ -397,7 +397,7 @@ export const weapons = {
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
           stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: `唯一被动——腐蚀·毒素：每秒（【{val}】=攻击力1%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多50层。`,
+          descTemplate: `唯一被动——腐蚀·毒素：每秒（{val}=攻击力1%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多50层。`,
           description: '毒素（{stacks}/50层）',
         }, 'weapon_corrosion_poisonA', { casterId: entityId });
 
@@ -408,7 +408,7 @@ export const weapons = {
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
           stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: '唯一被动——腐蚀·剧毒：每秒（【{val}】=攻击力1%×层数）真实伤害，最多50层。',
+          descTemplate: '唯一被动——腐蚀·剧毒：每秒（{val}=攻击力1%×层数）真实伤害，最多50层。',
           description: '剧毒（{stacks}/50层）',
         }, 'weapon_corrosion_poisonB', { casterId: entityId });
 
@@ -417,7 +417,7 @@ export const weapons = {
           name: '腐蚀·迟缓', icon: '🐌', kind: 'stat', color: '#7bc96f', type: 'debuff',
           statKey: 'moveSpeed', percentValue: -7, perStackPercent: -7,
           duration: 5, stackable: true, maxStacks: 5, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: '唯一被动——腐蚀·迟缓：移速降低（【{val}%】=-7%×层数），上限-35%。',
+          descTemplate: '唯一被动——腐蚀·迟缓：移速降低（{val}%=-7%×层数），上限-35%。',
           description: '减速（{stacks}/5层）',
         }, 'weapon_corrosion_slow');
 
@@ -426,7 +426,7 @@ export const weapons = {
           name: '腐蚀·衰弱', icon: '🌿', kind: 'stat', color: '#7bc96f', type: 'debuff',
           statKey: 'bonusAttackSpeedPct', flatValue: -2.5, perStackFlat: -2.5,
           duration: 5, stackable: true, maxStacks: 30, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: '唯一被动——腐蚀·衰弱：攻速降低（【{val}%】=-2.5%×层数），上限-75%。',
+          descTemplate: '唯一被动——腐蚀·衰弱：攻速降低（{val}%=-2.5%×层数），上限-75%。',
           description: '衰弱（{stacks}/30层）',
         }, 'weapon_corrosion_atkslow');
       }

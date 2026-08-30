@@ -82,7 +82,7 @@ export const dragonSouls = {
     get descTemplate() {
       const p = P('fire');
       const cd = p.cooldown ?? 0;
-      return `唯一被动——炎魂：攻击附带溅射（【{val}】=${p.pct ?? 30}% 伤害，半径 ${p.radius ?? 75}）` + (cd > 0 ? `，冷却 ${cd} 秒。` : '，无冷却。');
+      return `唯一被动——炎魂：攻击附带溅射（{val}=${p.pct ?? 30}% 伤害，半径 ${p.radius ?? 75}）` + (cd > 0 ? `，冷却 ${cd} 秒。` : '，无冷却。');
     },
     computeCurrent: () => `${P('fire').pct ?? 30}%`,
     effects: [],
@@ -120,7 +120,7 @@ export const dragonSouls = {
     },
     get descTemplate() {
       const p = P('water');
-      return `唯一被动——潮魂：攻击后回复（【{val}】=已损生命×${p.healMissingPct ?? 8}%）并获得 ${p.powerPct ?? 25}% 治疗与护盾强度 ${p.buffSec ?? 5} 秒，冷却 ${p.cooldown ?? 8} 秒。`;
+      return `唯一被动——潮魂：攻击后回复（{val}=已损生命×${p.healMissingPct ?? 8}%）并获得 ${p.powerPct ?? 25}% 治疗与护盾强度 ${p.buffSec ?? 5} 秒，冷却 ${p.cooldown ?? 8} 秒。`;
     },
     computeCurrent: (entity, ctx) => {
       const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
@@ -167,7 +167,7 @@ export const dragonSouls = {
     },
     get descTemplate() {
       const p = P('earth');
-      return `唯一被动——山魂：【{val}】=${p.damageReduction ?? 33}% 伤害减免 + ${p.damageBlock ?? 2} 点伤害格挡。`;
+      return `唯一被动——山魂：{val}=${p.damageReduction ?? 33}% 伤害减免 + ${p.damageBlock ?? 2} 点伤害格挡。`;
     },
     computeCurrent: () => `${P('earth').damageReduction ?? 33}% / ${P('earth').damageBlock ?? 2}`,
     effects: [],
@@ -204,7 +204,7 @@ export const dragonSouls = {
     },
     get descTemplate() {
       const p = P('thunder');
-      return `唯一被动——雷魂：连锁对最多 ${p.targets ?? 6} 个敌人各造成（【{val}】=${p.perTargetPct ?? 35}% 伤害）真实伤害，冷却 ${p.cooldown ?? 8} 秒。`;
+      return `唯一被动——雷魂：连锁对最多 ${p.targets ?? 6} 个敌人各造成（{val}=${p.perTargetPct ?? 35}% 伤害）真实伤害，冷却 ${p.cooldown ?? 8} 秒。`;
     },
     computeCurrent: () => `${P('thunder').perTargetPct ?? 35}%`,
     effects: [],
@@ -245,7 +245,7 @@ export const dragonSouls = {
     },
     get descTemplate() {
       const p = P('wind');
-      return `唯一被动——风魂：小兵移速（【{val}%】，脱战后升至 +${p.moveSpeedOutPct ?? 25}%）；防御塔 +${p.towerAttackSpeedRatio ?? 0.15} 攻速收益率。`;
+      return `唯一被动——风魂：小兵移速（{val}%，脱战后升至 +${p.moveSpeedOutPct ?? 25}%）；防御塔 +${p.towerAttackSpeedRatio ?? 0.15} 攻速收益率。`;
     },
     computeCurrent: (entity) => {
       const p = P('wind');
@@ -310,7 +310,7 @@ export const dragonSouls = {
     get descTemplate() {
       const p = P('dark');
       const st = p.steal !== false ? '，同时为自己偷取等量' : '';
-      return `唯一被动——暗魂：命中削目标双抗（【{val}】=每层 ${p.flatPerStack ?? 1} 点 + ${p.pctPerStack ?? 0.5}%）${st}，上限 ${p.maxFlat ?? 30} 点 / ${p.maxPct ?? 15}%，友军攻击共享层数。`;
+      return `唯一被动——暗魂：命中削目标双抗（{val}=每层 ${p.flatPerStack ?? 1} 点 + ${p.pctPerStack ?? 0.5}%）${st}，上限 ${p.maxFlat ?? 30} 点 / ${p.maxPct ?? 15}%，友军攻击共享层数。`;
     },
     computeCurrent: () => `-${P('dark').maxFlat ?? 30} / -${P('dark').maxPct ?? 15}%`,
     effects: [],
@@ -339,7 +339,7 @@ export const dragonSouls = {
           duration: p.duration ?? 6,
           stackable: true, maxStacks, stackPolicy: 'stack', uniquePassive: true,
           stackKey: `dragonsoul_dark_${statKey}`,
-          descTemplate: `唯一被动——侵蚀：${label}降低（【{val}】），{stacks}/${maxStacks} 层。`,
+          descTemplate: `唯一被动——侵蚀：${label}降低（{val}），{stacks}/${maxStacks} 层。`,
           description: `${label}降低（{stacks}/${maxStacks}层）`,
         }, 'dragonsoul_dark');
 
@@ -357,7 +357,7 @@ export const dragonSouls = {
             duration: p.duration ?? 6,
             stackable: true, maxStacks, stackPolicy: 'stack', uniquePassive: true,
             stackKey: `dragonsoul_dark_steal_${statKey}`,
-            descTemplate: `唯一被动——掠夺：${label}提升（【{val}】），{stacks}/${maxStacks} 层。`,
+            descTemplate: `唯一被动——掠夺：${label}提升（{val}），{stacks}/${maxStacks} 层。`,
             description: `${label}提升（{stacks}/${maxStacks}层）`,
           }, 'dragonsoul_dark_steal');
         }
@@ -376,7 +376,7 @@ export const dragonSouls = {
     },
     get descTemplate() {
       const p = P('poison');
-      return `唯一被动——毒魂：命中叠一层中毒（【{val}】=每层每秒 ${p.pctPerStack ?? 0.4}% 最大生命魔法伤害），`
+      return `唯一被动——毒魂：命中叠一层中毒（{val}=每层每秒 ${p.pctPerStack ?? 0.4}% 最大生命魔法伤害），`
            + `无限叠加，${p.duration ?? 4} 秒；对建筑 ${p.vsBuildingPct ?? 25}%。`;
     },
     computeCurrent: () => `${P('poison').pctPerStack ?? 0.4}%`,
@@ -405,7 +405,7 @@ export const dragonSouls = {
         tickInterval: 1, duration: p.duration ?? 4,
         stackable: true, maxStacks: p.maxStacks ?? 999, stackPolicy: 'stack', uniquePassive: true,
         stackKey: 'dragonsoul_poison',
-        descTemplate: '唯一被动——腐毒：每秒（【{val}】）魔法伤害，{stacks} 层。',
+        descTemplate: '唯一被动——腐毒：每秒（{val}）魔法伤害，{stacks} 层。',
         description: '腐毒（{stacks}层）',
       }, 'dragonsoul_poison', { casterId: attackerId });
     },
@@ -714,7 +714,7 @@ export const dragonSouls = {
     },
     get descTemplate() {
       const p = P('ancient');
-      return `远古之力：对生命低于 ${p.executeAtPct ?? 20}% 的敌人额外造成（【{val}】=${p.executePct ?? 20}% 最大生命）真实伤害。`;
+      return `远古之力：对生命低于 ${p.executeAtPct ?? 20}% 的敌人额外造成（{val}=${p.executePct ?? 20}% 最大生命）真实伤害。`;
     },
     computeCurrent: () => `${P('ancient').executePct ?? 20}%`,
     effects: [],

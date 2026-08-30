@@ -1482,12 +1482,19 @@ export class CombatSystem {
     // 所以这里用一个专门、含义单一的开关 options.grantsMana——只有真正"武器拆成多跳
     // 结算"的两处（闪电杖 tick、腐蚀型的中毒 DOT）会传它。
     if (options.grantsMana && finalDamage > 0) {
+      // bug 修复：用户报"闪电杖每秒4跳，每一跳都各回复一次完整的受击/攻击法力，
+      // 变成实际每秒4倍"。正常武器一次攻击只发一次这个事件（隐含 attackShare=1），
+      // 而闪电杖这类"一次攻击拆成多跳结算"的武器每跳都发一次，ManaSystem 之前对
+      // 这个份额一无所知，按"每次事件都算一次完整攻击"发放，于是 4 跳 = 4 倍法力。
+      // 带上 attackShare（每跳 = 1/tickPerSec，例如 4 跳/秒时每跳 0.25），
+      // ManaSystem 按份额折算，4 跳累计起来才等于一次完整攻击应得的法力。
       this.eventBus.emit('damage:dealt', {
         sourceId: attacker?.id ?? null,
         targetId: target.id,
         amount: finalDamage,
         type: attackType,
         raw: baseDamage,
+        attackShare,
       });
     }
 

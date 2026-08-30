@@ -16,7 +16,7 @@ export const STAT_LABELS = {
   healthRegen: '生命回复', onHitPercentDamage: '攻击特效',
   shieldFixedMax: '固定护盾', baseAttackSpeed: '基础攻速',
   // v51：新增属性
-  abilityPower: '法术强度', skillAmpPct: '技能增幅', critChance: '暴击率', critDamagePct: '暴击伤害加成',
+  abilityPower: '法术强度', skillAmpPct: '技能增幅', critChance: '暴击率', critDamagePct: '暴击伤害',
   adaptiveForce: '适应之力', physicalVampPct: '物理吸血', spellVampPct: '法术吸血',
   evasionPct: '闪避率', tenacityPct: '韧性',
   maxMana: '最大法力', manaRegen: '法力回复',

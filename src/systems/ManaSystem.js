@@ -65,18 +65,24 @@ export class ManaSystem {
       i => !i._disabled && this.skills[i.skillId]?.category === 'active') || null;
   }
 
-  _onDamageDealt({ sourceId, targetId, amount }) {
+  _onDamageDealt({ sourceId, targetId, amount, attackShare }) {
     if (!(amount > 0)) return;
     const m = CONFIG.tuning?.mana || {};
+    // bug 修复：用户报"闪电杖每秒4跳，每跳都各回复一次完整的攻击/受击法力"。
+    // 普通攻击（_resolveHit）一次攻击只发一次这个事件，隐含 attackShare=1；
+    // 闪电杖/腐蚀型这类"一次攻击拆成多跳结算"的武器每跳都发一次，不折算份额的话
+    // 4 跳会变成 4 倍法力。这里按 attackShare 折算，4 跳累计起来才等于一次
+    // 完整攻击应得的法力（0.25 份额 × 4 跳 = 1 次完整攻击）。
+    const share = Math.max(0, Math.min(1, attackShare ?? 1));
     const attacker = this.entities.get(sourceId);
     const target = this.entities.get(targetId);
     if (attacker && this.hasActiveSkill(attacker) && m.onAttack) {
       const stats = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id));
-      this._addMana(attacker, stats, m.onAttack);
+      this._addMana(attacker, stats, m.onAttack * share);
     }
     if (target && target.alive && this.hasActiveSkill(target) && m.onHitTaken) {
       const stats = this.attrCalc.calc(target, this.effects.getEffects(target.id));
-      this._addMana(target, stats, m.onHitTaken);
+      this._addMana(target, stats, m.onHitTaken * share);
     }
   }
 

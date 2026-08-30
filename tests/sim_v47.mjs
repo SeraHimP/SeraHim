@@ -165,12 +165,17 @@ function world() {
   // 机动那一格不再按 kind 分支，统一固定是移速。
   T('板②-所有单位类型"展开更多"的最后一格统一是移速（不再是塔专属子弹速度）',
     keysOf('minion').includes('moveSpeed') && keysOf('tower').includes('moveSpeed'));
-  T('板②b-子弹速度搬进了【进攻】组，只有塔显示（小兵目前没有弹道飞行速度这回事）',
-    keysOf('tower').includes('bulletSpeed') && !keysOf('minion').includes('bulletSpeed'));
-  T('板③-塔与兵**共用同一张表**（差异只剩子弹速度这一项，移速两边都有了）', (() => {
+  // v51.6 追补：子弹速度已经从"展开更多"网格里整个删除（用户："子弹速度已经整合到
+  // 攻击力窗口了，把属性界面遗留的子弹速度删掉"）——只留在攻击力的关联属性弹窗里
+  // （RELATED_STATS.attackDamage），塔和小兵谁都不再单独占这一格。
+  T('板②b-子弹速度已从网格里删除，塔和小兵都不再单独显示', (() => {
+    const a = keysOf('tower'), b = keysOf('minion');
+    return !a.includes('bulletSpeed') && !b.includes('bulletSpeed');
+  })());
+  T('板③-塔与兵**共用同一张表**（子弹速度移出网格后两边形状完全一致）', (() => {
     const a = keysOf('tower'), b = keysOf('minion');
     const diff = [...new Set([...a, ...b])].filter(k => a.includes(k) !== b.includes(k));
-    return diff.length === 1 && diff.includes('bulletSpeed');
+    return diff.length === 0;
   })());
   T('板④-展开更多不再显示攻速加成，换成了生命恢复（用户定稿）',
     !keysOf('tower').includes('bonusAttackSpeedPct')

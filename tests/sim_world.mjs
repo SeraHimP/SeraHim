@@ -101,6 +101,49 @@ T('getBreakdown 返回逐项来源（可解释性）',
   Array.isArray(rows) && rows.length > 0 && rows.every(r => r.source && r.detail));
 console.log('  夜晚·防御塔的修正来源：' + rows.map(r => `${r.source} → ${r.detail}`).join(' ｜ '));
 
+// ---- ⑤b v51.6：结构化 mods + favored，供 UI 走天气弹窗那套网格样式 ----
+// 用户定稿："在属性界面如果没有增益的话，这个框就不要显示满（进度满），无增益就
+// 不显示进度，有增益才显示进度"；"把'小兵占优（本单位不吃这条）'删掉"。
+{
+  // 此刻是午夜（③ 那段末尾停在 DAY_PERIOD*0.75），塔占优、小兵不占优。
+  const towerRow = world.getBreakdown(mkTower('red')).find(r => r.source.startsWith('昼夜'));
+  T('⑤b-夜晚·塔：favored=true，detail 说"占优"',
+    towerRow.favored === true && /占优/.test(towerRow.detail));
+  T('⑤b-夜晚·塔：mods 里有实际数值（对应 dayNightBonus.night 配置）',
+    Object.keys(towerRow.mods).length > 0
+    && (!g.night.attackDamagePct || towerRow.mods.attackDamage?.percent === g.night.attackDamagePct)
+    && (!g.night.attackRangeFlat || towerRow.mods.attackRange?.flat === g.night.attackRangeFlat));
+
+  const minionRow = world.getBreakdown(mkUnit('red')).find(r => r.source.startsWith('昼夜'));
+  T('⑤b-夜晚·小兵：favored=false，mods 为空对象（不再享受这条昼夜加成）',
+    minionRow.favored === false && Object.keys(minionRow.mods).length === 0);
+  T('⑤b-夜晚·小兵：detail 就是"无增益"，不再说"XX占优（本单位不吃这条）"',
+    minionRow.detail === '无增益' && !/本单位不吃这条/.test(minionRow.detail));
+
+  // 熵：中性（0.5）时同理——favored=false、mods 空、detail 是"中性（无修正）"
+  CONFIG.world.couplings.entropyToUnits = true;
+  world.entropy.value = 0.5;
+  const entropyNeutralRow = world.getBreakdown(mkUnit('red')).find(r => r.source.startsWith('熵'));
+  T('⑤b-熵中性时 favored=false、mods 为空', entropyNeutralRow.favored === false
+    && Object.keys(entropyNeutralRow.mods).length === 0 && entropyNeutralRow.detail === '中性（无修正）');
+  world.entropy.value = 0.9;
+  const entropyHotRow = world.getBreakdown(mkUnit('red')).find(r => r.source.startsWith('熵'));
+  T('⑤b-熵偏离中性时 favored=true 且 mods 有数值', entropyHotRow.favored === true
+    && Object.keys(entropyHotRow.mods).length > 0);
+  CONFIG.world.couplings.entropyToUnits = false;
+  world.entropy.value = 0.5;
+
+  // UI 侧：_modsGridHtml 是唯一实现，天气/世界两个弹窗都走它；进度条按 favored 点亮。
+  const { srcOf } = await import('./_harness.mjs');
+  const um = srcOf('src/ui/UIManager.js');
+  T('⑤b-UIManager 有共用的 _modsGridHtml，天气与世界弹窗都调用它',
+    /_modsGridHtml\(mods\)/.test(um) && (um.match(/this\._modsGridHtml\(/g) || []).length >= 2);
+  T('⑤b-世界效应弹窗不再显示"充能条/占优（本单位不吃这条）"这类旧文案',
+    !/本单位不吃这条/.test(um));
+  T('⑤b-昼夜行的点亮格数按 favored 决定（0 或 3），不再恒定点满',
+    /lit = r\.favored \? 3 : 0/.test(um));
+}
+
 // ---- ⑥ 熵未实现时保持中性（不产生任何修正）----
 CONFIG.world.couplings.dayNight = false;
 CONFIG.world.couplings.entropyToUnits = true;

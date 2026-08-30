@@ -61,7 +61,7 @@ function _makeRendPassive(casterType, name, pct) {
         var src = r.base === 'current' ? '自身当前生命'
                 : r.base === 'template' ? '自身基础生命'
                 : '自身基础生命×当前生命比例';
-        return '唯一被动——' + name + '：攻击小兵单位额外造成（【{val}】=' + src + '×' + disp +
+        return '唯一被动——' + name + '：攻击小兵单位额外造成（{val}=' + src + '×' + disp +
                '%）伤害（类型同自身普攻，对防御塔/巨龙无效）。';
       },
       get description() { return this._text(null); },
@@ -198,7 +198,7 @@ export const minionPassives = {
     color: '#bb86fc',
     category: 'passive',
     _cfg: () => CONFIG.gameRules.supportUnits?.totem || {},
-    _text() { return `唯一被动——图腾壁垒：自身获得（【{val}】=${this._cfg().selfShieldFlat ?? 900}）点固定护盾。`; },
+    _text() { return `唯一被动——图腾壁垒：自身获得（{val}=${this._cfg().selfShieldFlat ?? 900}）点固定护盾。`; },
     get description() { return this._text(); },
     get descTemplate() { return this._text(); },
     computeCurrent() { return this._cfg().selfShieldFlat ?? 900; },
@@ -269,7 +269,7 @@ export const minionPassives = {
     color: '#8e44ad',
     category: 'passive',
     _cfg: () => CONFIG.gameRules.supportUnits?.warlock || {},
-    _text() { return `唯一被动——术法贯通：自身获得（【{val}】=${this._cfg().selfPenPct ?? 70}%）护甲穿透与法术穿透。`; },
+    _text() { return `唯一被动——术法贯通：自身获得（{val}=${this._cfg().selfPenPct ?? 70}%）护甲穿透与法术穿透。`; },
     get description() { return this._text(); },
     get descTemplate() { return this._text(); },
     computeCurrent() { return this._cfg().selfPenPct ?? 70; },
@@ -313,7 +313,7 @@ export const minionPassives = {
       const c = this._cfg();
       return `唯一被动——蚀骨：${c.radius ?? 110} 范围内的所有敌人每 ${c.stackIntervalSec ?? 1} 秒`
            + `叠加一层腐蚀，每层降低 ${c.resistPerStack ?? 1} 点护甲与魔抗，`
-           + `最多 ${c.maxStacks ?? 30} 层（【{val}】=最高 -${(c.resistPerStack ?? 1) * (c.maxStacks ?? 30)} 双抗）；`
+           + `最多 ${c.maxStacks ?? 30} 层（{val}=最高 -${(c.resistPerStack ?? 1) * (c.maxStacks ?? 30)} 双抗）；`
            + `离开范围后逐层消退。`;
     },
     get description() { return this._text(); },
@@ -357,7 +357,7 @@ export const minionPassives = {
             stackable: true, maxStacks: mx, stackPolicy: 'stack', uniquePassive: true,
             stackKey: `corrupt_${key}`,
             description: `${label}降低（{stacks}/${mx} 层，每层 -${per}）`,
-            descTemplate: `唯一被动——蚀骨：${label}降低（【{val}】=-${per}×层数），最多 ${mx} 层。`,
+            descTemplate: `唯一被动——蚀骨：${label}降低（{val}=-${per}×层数），最多 ${mx} 层。`,
           }, 'passive_corrupt_' + key);
         }
       }

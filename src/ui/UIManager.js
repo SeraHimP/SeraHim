@@ -276,7 +276,10 @@ export class UIManager {
     box.innerHTML = rows.map((r, i) => {
       const head = r.source.replace(/[ ·].*$/, '').slice(0, 2);
       const icon = ICONS[head] || (r.source.startsWith('熵') ? '🌀' : '🌍');
-      // 边框点亮格数 = 这条修正的强弱（0~3）。熵按偏离中性的程度，其余给满。
+      // 边框点亮格数 = 这条修正的强弱（0~3）。熵按偏离中性的程度分级；
+      // 昼夜是非黑即白的"占优/不占优"，点亮全部或完全不亮——用户定稿："如果没有
+      // 增益的话，这个框就不要显示满（进度满），无增益就不显示进度，有增益才显示进度"。
+      // 龙魂这一行只在本方确实有魂时才会被推进 rows，本身就等价于"有"，维持点满。
       let lit = 3, cls = '';
       if (r.source.startsWith('熵')) {
         const v = ws.entropy?.value ?? 0.5;
@@ -285,6 +288,8 @@ export class UIManager {
         // 本方是受益还是受罚：高熵利红、低熵利蓝
         const favored = v > 0.5 ? 'red' : (v < 0.5 ? 'blue' : null);
         if (favored && fac) cls = (fac === favored) ? ' wx-chaos' : ' wx-order';
+      } else if (r.source.startsWith('昼夜')) {
+        lit = r.favored ? 3 : 0;
       }
       const col = r.source.startsWith('熵')
         ? ((ws.entropy?.value ?? 0.5) > 0.5 ? '#e0473f' : '#5b9bd5')
@@ -330,12 +335,14 @@ export class UIManager {
     const ICONS = { 昼夜: '🕓', 熵: '🌀', 龙魂: '🐉' };
     const icon = ICONS[head] || '🌍';
 
-    const body = `
-      <p style="font-size:12px;line-height:1.8;margin:0 0 10px;">${row.detail}</p>
-      <p style="font-size:10px;color:var(--text-mute,#6b7480);line-height:1.6;margin:10px 0 0;">
-        世界效应随昼夜/熵/龙魂的当前状态实时变化，具体数值取决于本方阵营与当前世界状态——
-        点开这个窗口看到的是【当前选中单位】此刻实际吃到的那一份。
-      </p>`;
+    // v51.6：与天气弹窗统一成同一套展示——有加成时走同一份"对该单位的影响"网格
+    // （_modsGridHtml），没有加成（如白天的塔、无魂的一方）就只显示一句"无增益"，
+    // 不再写"XX占优（本单位不吃这条）"（用户定稿：删掉这句）。
+    const modsHtml = this._modsGridHtml(row.mods);
+    const body = modsHtml
+      ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
+         <div class="attrs" style="display:grid;">${modsHtml}</div>`
+      : `<p style="font-size:12px;line-height:1.8;margin:0;">${row.detail}</p>`;
 
     const overlay = document.createElement('div');
     overlay.id = 'worldDetailOverlay';
@@ -446,12 +453,17 @@ export class UIManager {
    * 表现就是用户截图里的样子：标题图标与关闭按钮各占一行、字号与别的窗口对不上。
    * 现在与详情框走同一个 shellHtml，正文一行没动，换的只是外框。
    */
-  _showWeatherDetail(row) {
-    const { def, tier, charge, mods, extreme } = row;
-    const old = document.getElementById('wxDetailOverlay');
-    if (old) old.remove();
-
-    const effLines = Object.entries(mods).map(([k, m]) => {
+  /**
+   * ==================== v51.6：属性加成的统一展示块 ====================
+   * 用户："技能/状态/天气等所有点开窗口中，关于属性的加减，都用天气属性那一套UI
+   * 中属性加减那个块。" ——这一块原来只有天气弹窗自己拼了一份，现在抽成共用方法，
+   * 昼夜/熵（见 _showWorldDetail）等其它弹窗一起改走这里，样式只有一份、不会走样。
+   * mods 为空（没有任何加成）时返回空字符串，调用方自己决定空状态怎么显示。
+   */
+  _modsGridHtml(mods) {
+    const entries = Object.entries(mods || {});
+    if (!entries.length) return '';
+    return entries.map(([k, m]) => {
       const label = STAT_LABELS[k] || k;
       const parts = [];
       if (m.flat) {
@@ -461,6 +473,14 @@ export class UIManager {
       if (m.percent) parts.push((m.percent > 0 ? '+' : '') + m.percent.toFixed(1) + '%');
       return `<div class="a"><label>${label}</label><span>${parts.join(' ')}</span></div>`;
     }).join('');
+  }
+
+  _showWeatherDetail(row) {
+    const { def, tier, charge, mods, extreme } = row;
+    const old = document.getElementById('wxDetailOverlay');
+    if (old) old.remove();
+
+    const effLines = this._modsGridHtml(mods);
 
     const body = `
       <p style="font-size:11px;color:var(--text-dim);line-height:1.7;margin:0 0 10px;">${def.desc}</p>
@@ -475,11 +495,7 @@ export class UIManager {
         <span style="font-size:10px;color:var(--text-dim);">强度 ${Math.round(tier.scale * 100)}%</span>
       </div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
-      <div class="attrs" style="display:grid;">${effLines}</div>
-      <p style="font-size:10px;color:var(--text-mute,#6b7480);line-height:1.6;margin:10px 0 0;">
-        天气影响按【充能条】积累：天气越剧烈，充能越快；档位（轻微25%/有限50%/中等75%/严重100%，
-        极端天气充能≥88%时进入第5档【极端150%】）决定效果强度。天气回落后影响会缓慢消散，而非立即消失。
-      </p>`;
+      <div class="attrs" style="display:grid;">${effLines}</div>`;
 
     const overlay = document.createElement('div');
     overlay.id = 'wxDetailOverlay';
@@ -527,9 +543,28 @@ export class UIManager {
 
   /** 面板里一行属性的值（带颜色，无括号——括号明细在点开的说明弹窗里）。 */
   _statValueHtml(key, entity, stats, suffix = '') {
+    // v51.6：用户定稿"属性面板上生命恢复显示实际生效值"——面板这一格不再是
+    // AttributeCalculator 算出来的 healthRegen 原始值，而是叠上【基础生命回复】
+    // （baseHealthRegenMod 系数）与【治疗与护盾强度】之后真正每秒回复的量，
+    // 与 CombatSystem 实际结算生命恢复时的公式（regen×regenMod×healPower）同源。
+    // 点开这一格的说明弹窗时，里面的"生命回复"仍然显示这个原始值本身是什么——
+    // 两处口径不同是有意的，见 _showStatDoc 的关联属性小节。
+    if (key === 'healthRegen') return this._effectiveHealthRegenHtml(entity, stats);
     const p = this._statParts(key, entity, stats);
     if (!p) return '';
     return `<span class="${p.cls}">${p.now}${suffix}</span>`;
+  }
+
+  _effectiveHealthRegenHtml(entity, stats) {
+    if (!entity || !stats) return '';
+    const regen = stats.healthRegen || 0;
+    const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
+    const healPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
+    const effective = Math.round(regen * regenMod * healPower * 100) / 100;
+    const baseline = entity.baseStats?.healthRegen;
+    const cls = Number.isFinite(baseline) && Math.abs(effective - baseline) > 0.005
+      ? (effective > baseline ? 'stat-up' : 'stat-down') : '';
+    return `<span class="${cls}">${effective}</span>`;
   }
 
   /**
@@ -622,7 +657,8 @@ export class UIManager {
    * 改动前塔和兵各写了一份 14 行的模板字符串，除了最后两格以外**逐字相同** ——
    * 又是本仓库那条老毛病"同一件事实现了两遍"：塔那份少了攻击距离，
    * 兵那份少了子弹速度，谁也没发现，因为没人会把两段几乎一样的字符串并排读。
-   * 现在合成一份，差异只剩下最后一格（兵=移速 / 塔=子弹速度），由 kind 决定。
+   * 现在合成一份，塔与兵**完全同形**——子弹速度已经搬进【攻击力】的说明弹窗，
+   * 不再在这张网格里单独占格，extAttrGroups() 因此不再需要按单位类型分支。
    *
    * 分组：按"一个方面放在一块"。每组一个小标题（整行），组内两列。
    * 组内条目为奇数时，最后一格自动横跨两列 —— 否则下一组的第一格会被顶到上一组
@@ -630,7 +666,7 @@ export class UIManager {
    */
   _extAttrsHtml(E, stats) {
     let html = '';
-    for (const g of extAttrGroups(E.type === 'tower' ? 'tower' : 'minion')) {
+    for (const g of extAttrGroups()) {
       // 该组一个格子都渲染不出来时（属性表里没有这些键）连标题一起省掉，
       // 免得留下一个空标题。自制单位模板可能确实没有某一整组属性。
       const cells = g.rows.map(({ key, label, suffix }) => {
@@ -675,8 +711,6 @@ export class UIManager {
           : `<span class="stat-break">（${p.base}${p.delta > 0 ? '+' : '−'}${Math.abs(p.delta)}）</span>`;
         live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
             ${doc.label}：<b class="${p.cls}">${p.now}</b>${paren}
-            ${p.delta !== 0 ? '<div style="font-size:11px;color:var(--text-mute);margin-top:4px;">'
-              + '括号内为（基础值 ' + (p.delta > 0 ? '+' : '−') + ' 各渠道修正之和）。修正来自技能、状态、世界影响（天气/昼夜/熵）与龙之奖励。</div>' : ''}
           </div>`;
       }
     }
@@ -708,16 +742,15 @@ export class UIManager {
               : bonus > 0 ? `（相当于+${bonus}%暴击伤害）` : `（暴击伤害减少${Math.abs(bonus)}%）`;
             return rowHtml(`<b>${total}%</b><span style="color:var(--text-mute);font-size:11px;"> ${note}</span>`);
           }
-          // v51.6：生命恢复——用户"写经过所有修正后的实际每秒生命恢复值。比如默认
-          // 生命恢复2，治疗与护盾强度-60%，所以就实际显示0.8"。真实生效速率见
-          // CombatSystem 的 regen×regenMod×healPowerOf 那一段，这里照抄同一个公式，
-          // 不能只显示 baseHealthRegenMod 这个系数本身（那不是玩家关心的"每秒回多少"）。
+          // v51.6 追补：这条改名叫【基础生命回复】——"经过所有修正后的实际每秒回复值"
+          // 这件事挪到了面板主格（见 _effectiveHealthRegenHtml），这里只单纯展示
+          // baseHealthRegenMod 这个系数本身（百分比，默认 100%），不掺治疗与护盾
+          // 强度等其它渠道——用户定稿："对该单位基础的生命回复的修正，不包含其他的"。
           if (rk === 'baseHealthRegenMod') {
-            const regen = liveStats.healthRegen || 0;
-            const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
-            const healPower = Math.max(0, 1 + (liveStats.healShieldPowerPct || 0) / 100);
-            const effective = Math.round(regen * regenMod * healPower * 100) / 100;
-            return rowHtml(`<b>${effective}</b><span style="color:var(--text-mute);font-size:11px;"> /秒（实际生效值）</span>`);
+            const mod = entity.baseStats?.baseHealthRegenMod ?? 1;
+            const pct = Math.round(mod * 1000) / 10;
+            const cls = Math.abs(mod - 1) > 0.005 ? (mod > 1 ? 'stat-up' : 'stat-down') : '';
+            return rowHtml(`<b class="${cls}">${pct}%</b>`);
           }
           const rp = this._statParts(rk, entity, liveStats);
           if (rp) {

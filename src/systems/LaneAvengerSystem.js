@@ -114,7 +114,7 @@ export class LaneAvengerSystem {
         aura: true, auraGrace: 1.2,
         stackable: true, maxStacks: 3, stackPolicy: 'refresh',
         alwaysShowStacks: true, uniquePassive: true,
-        descTemplate: `哀兵：该路己方防御塔陷落激发斗志（【{val}%】=${per}%×层数）${label}。离开该路或该路召唤水晶被摧毁后失效。`,
+        descTemplate: `哀兵：该路己方防御塔陷落激发斗志（{val}%=${per}%×层数）${label}。离开该路或该路召唤水晶被摧毁后失效。`,
         description: `${label}+${per}%/层（{stacks}/3层）`,
       }, 'lane_avenger_' + key, { initialStacks: stacks });
     }

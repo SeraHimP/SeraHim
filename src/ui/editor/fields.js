@@ -38,7 +38,7 @@ export const FIELD_META = {
   abilityPower:       { label: '法术强度', min: 0, max: 1000, step: 5 },
   skillAmpPct:        { label: '技能增幅%', min: -100, max: 300, step: 5 },
   critChance:         { label: '暴击率%', min: 0, max: 100, step: 1 },
-  critDamagePct:      { label: '暴击伤害加成%', min: 0, max: 300, step: 5 },
+  critDamagePct:      { label: '暴击伤害%', min: 0, max: 300, step: 5 },
   adaptiveForce:       { label: '适应之力', min: 0, max: 500, step: 5 },
   physicalVampPct:    { label: '物理吸血%', min: 0, max: 100, step: 1 },
   spellVampPct:       { label: '法术吸血%', min: 0, max: 100, step: 1 },

@@ -73,10 +73,10 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
       const r = (instance && instance._params && typeof instance._params.regen === 'number')
         ? instance._params.regen : regen;
       const t = r > 0 ? `${tierLabel}获得${r}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
-      return `唯一被动——${name}：${t}生命恢复不超过生命值节点（【{val}】为当前封顶节点）。`;
+      return `唯一被动——${name}：${t}生命恢复不超过生命值节点（{val}为当前封顶节点）。`;
     },
     description: `${regenTxt}生命恢复不超过生命值节点（${nodesTxt}）。`,
-    descTemplate: `唯一被动——${name}：${regenTxt}生命恢复不超过生命值节点（【{val}】为当前封顶节点）。`,
+    descTemplate: `唯一被动——${name}：${regenTxt}生命恢复不超过生命值节点（{val}为当前封顶节点）。`,
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       // 这里挂的是**出厂值**（_params 要等 CombatSystem 第一帧才注入，读不到地图覆写），
@@ -201,7 +201,7 @@ export const towerPassives = {
     // 输出，也该更扛得住控制（否则双抗再高也架不住一个眩晕连招）。系数与双抗那条
     // 同一个"×攻击者数"节奏，但封顶低得多（40% 而不是 100%）：韧性是按比例
     // 缩短控制时长，拉到 100% 就等于控制免疫，太强；具体数字后续按对局观感再调。
-    descTemplate: '唯一被动——重甲联防：每个正在攻击本塔的敌人提供（【{val}】=+5×攻击者数）双抗，上限100；同时获得（+2×攻击者数）韧性，上限40%。',
+    descTemplate: '唯一被动——重甲联防：每个正在攻击本塔的敌人提供（{val}=+5×攻击者数）双抗，上限100；同时获得（+2×攻击者数）韧性，上限40%。',
     computeCurrent: (entity, ctx) => {
       return Math.min(_countTowerAttackers(entity, ctx) * 5, 100);
     },
@@ -229,7 +229,7 @@ export const towerPassives = {
           name: '重甲联防', icon: '🤝', kind: 'stat', statKey: 'armor',
           flatValue: bonus, duration: Infinity, permanent: true, conditional: true,
           stackable: true, maxStacks: 20, stackPolicy: 'refresh', uniquePassive: true,
-          descTemplate: '唯一被动——重甲联防：附近敌人提供（【{val}】=+5×敌人数）双抗，上限100。',
+          descTemplate: '唯一被动——重甲联防：附近敌人提供（{val}=+5×敌人数）双抗，上限100。',
           description: `护甲+${bonus}`,
         }, 'passive_heavy_defense_armor');
         const armorEff = ctx.effectRegistry.getEffect(armorId);
@@ -273,7 +273,7 @@ export const towerPassives = {
     // 反弹伤害本身是魔法伤害，让法术强度这条以前对塔完全没用武之地的属性
     // （只能靠龙魂/冰霜镀层拿到）也能在这条被动上体现出来。系数 0.5 取中庸值：
     // 具体数字不是这次要锁死的，后续按对局观感再调。
-    descTemplate: '唯一被动——荆棘反击：被攻击时反弹（【{val}】=3+护甲×7%+法术强度×50%）魔法伤害。',
+    descTemplate: '唯一被动——荆棘反击：被攻击时反弹（{val}=3+护甲×7%+法术强度×50%）魔法伤害。',
     computeCurrent: (entity, ctx) => {
       const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       return Math.round(3 + (s.armor || 0) * 0.07 + (s.abilityPower || 0) * 0.5);
@@ -301,7 +301,7 @@ export const towerPassives = {
     // v51.5：新增法术强度——用户定稿"+3法术强度……注意不是百分比，是数值"，
     // 与其余四项（%攻击/护甲/魔抗/生命恢复）不同，是每层固定加 3 点，不是百分比。
     description: '每60秒叠1层，最多18层。每层+5%攻击、+2%双抗、+1.5%生命恢复、+3法术强度。',
-    descTemplate: '唯一被动——冰霜镀层：防御塔每分钟获得额外属性（当前【{val}】层，最多18层），每层+5%攻击、+2%双抗、+1.5%生命恢复、+3法术强度。',
+    descTemplate: '唯一被动——冰霜镀层：防御塔每分钟获得额外属性（当前{val}层，最多18层），每层+5%攻击、+2%双抗、+1.5%生命恢复、+3法术强度。',
     computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '冰霜镀层'); return e ? e.stacks : 0; },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -428,7 +428,7 @@ export const towerPassives = {
             name: '镀层破裂', icon: '🔰', kind: 'stat', statKey: 'armor',
             flatValue: 25, perStackFlat: 25, duration: Infinity, permanent: true,
             stackable: true, maxStacks: 4, stackPolicy: 'stack', uniquePassive: true,
-            descTemplate: '唯一被动——镀层破裂：生命跌破阈值永久获得（【{val}】=+25×破裂数）护甲。',
+            descTemplate: '唯一被动——镀层破裂：生命跌破阈值永久获得（{val}=+25×破裂数）护甲。',
             description: '永久护甲提升（{stacks}/4层）',
           }, 'passive_armor_plating_perm_armor');
           const ae = ctx.effectRegistry.getEffect(armorEff);
@@ -438,7 +438,7 @@ export const towerPassives = {
             name: '镀层破裂', icon: '🔰', kind: 'stat', statKey: 'magicResist',
             flatValue: 25, perStackFlat: 25, duration: Infinity, permanent: true,
             stackable: true, maxStacks: 4, stackPolicy: 'stack', uniquePassive: true,
-            descTemplate: '唯一被动——镀层破裂：生命跌破阈值永久获得（【{val}】=+25×破裂数）魔抗。',
+            descTemplate: '唯一被动——镀层破裂：生命跌破阈值永久获得（{val}=+25×破裂数）魔抗。',
             description: '永久魔抗提升（{stacks}/4层）',
           }, 'passive_armor_plating_perm_mr');
           const me = ctx.effectRegistry.getEffect(mrEff);
@@ -518,7 +518,7 @@ export const towerPassives = {
     applicableTypes: ['tower'],
     category: 'passive',
     description: '唯一被动——过载：达到时限后每30秒损失固定双抗（外3/内2.5/水晶2/枢纽1.5）；再过5分钟后额外每30秒损失最大生命值（该项逐次递增）。越外侧的塔损失越多。',
-    descTemplate: '唯一被动——过载：外塔20/内塔30/水晶塔45/枢纽塔60分钟起，每30秒损失双抗；再5分钟后额外损失最大生命值。当前 【{val}】。',
+    descTemplate: '唯一被动——过载：外塔20/内塔30/水晶塔45/枢纽塔60分钟起，每30秒损失双抗；再5分钟后额外损失最大生命值。当前 {val}。',
     // v42: dynamic descTemplate that respects per-map inst._params overrides
     getDescTemplate: function(entity, instance) {
       var def = towerPassives.passive_overload;
@@ -529,7 +529,7 @@ export const towerPassives = {
       var phase2Delay = p.PHASE2_DELAY ?? def.PHASE2_DELAY;
       var resistBase = p.resistBase ?? cfg.resistBase;
       var phase2Min = startMin + (phase2Delay / 60);
-      return '唯一被动——过载：' + startMin + '分钟起每30秒损失' + resistBase + '双抗；' + Math.round(phase2Min) + '分钟起额外损失最大生命值。当前 【{val}】。';
+      return '唯一被动——过载：' + startMin + '分钟起每30秒损失' + resistBase + '双抗；' + Math.round(phase2Min) + '分钟起额外损失最大生命值。当前 {val}。';
     },
     // 各层级：起始分钟 + 双抗每次基数 + 最大生命每次基数（占 maxHP 比例）
     _TIER_CFG: {
@@ -661,7 +661,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
     category: 'passive',
     description: `唯一被动——${name}：从${(adStartT / 60).toFixed(1)}分钟起每分钟攻击力+9（共${totalSteps}层至${capAD}封顶）` +
       (resistGrowthStartT ? '；16分钟起双抗每分钟+1（不封顶）' : '') + '。',
-    descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成【{val}】），每分钟+9共${totalSteps}层至 ${capAD} 封顶` +
+    descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成{val}），每分钟+9共${totalSteps}层至 ${capAD} 封顶` +
      (resistGrowthStartT ? '；16:00 起双抗 +1/分钟' : '') + '。',
    // v42: dynamic descTemplate that respects per-map inst._params overrides
    getDescTemplate: function(entity, instance) {
@@ -669,7 +669,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
      var p = instance && instance._params || {};
      var stepAD = p.stepAD || 9;
      var steps = p.totalSteps || totalSteps;
-     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成【{val}】），每分钟+' + stepAD + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistGrowthStartT ? '；16:00起双抗+1/分钟' : '') + '。';
+     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成{val}），每分钟+' + stepAD + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistGrowthStartT ? '；16:00起双抗+1/分钟' : '') + '。';
    },
    computeCurrent: (entity, ctx) => {
       const inst = (entity._skillInstances || []).find(i => i.skillId === id);
