@@ -91,6 +91,8 @@ const ATTACK_POSE_DUR = 0.35;    // 攻击前后摇窗口时长（秒）
 const HIT_POSE_DUR = 0.25;       // 受击反馈窗口时长（秒）
 const WALK_BOB_FRAC = 0.05;      // 走路起伏幅度：模型高度(vis.topY)的比例，大小单位手感统一
 const WALK_SWAY_RAD = 0.05;      // 走路侧倾幅度（弧度），很小的一点才不会像喝醉
+const ATTACK_PULSE_AMOUNT = 0.1; // 攻击命中瞬间的整体缩放脉冲幅度（Day3-4）
+const HIT_SQUASH_AMOUNT = 0.14;  // 受击瞬间的挤压幅度（Day4-5）
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
 // 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
@@ -914,9 +916,33 @@ export class UnitLayer {
       // 纸片人时代 barD 要补出整个贴图高度，立体化后模型自己有高度，余量因此小得多。
       en.bar.center.set(0.5, 0.5 - vis.barD / vis.barH);
     }
+    // ==================== Week1·Day3-4：攻击前后摇接入 ====================
+    // 排期原话"整体缩放脉冲或朝目标方向的短促前倾"二选一，这里选缩放脉冲——
+    // 朝向目标的前倾需要在已经按 en.faceFixed/faceA 摆好 yaw 之后再叠一个方向敏感的
+    // pitch，Three.js 默认欧拉序 XYZ 下这两者不能简单相加，为了这么小的效果去处理
+    // 旋转序不值得，缩放脉冲本身就是低成本高辨识度的打击感做法。
+    // sin(π·t/DUR) 保证 t=0 和 t=DUR 处都精确为 0，效果开始/结束都不会有跳变；
+    // 与巨龙脉动的 s 相乘而不是相加——脉动是持续低频的"呼吸"，这个是攻击那 0.35s
+    // 内的短促尖峰，乘法叠加互不冲突，两个效果同时发生也不会显得突兀。
+    let attackPulse = 0;
+    if (en.poseAttackT >= 0) {
+      attackPulse = Math.sin(Math.PI * Math.min(1, en.poseAttackT / ATTACK_POSE_DUR)) * ATTACK_PULSE_AMOUNT;
+    }
     // 脉动（巨龙）改为整体缩放模型本身，与纸片人时代同一近似
-    const s = vis.pulse ? (1 + 0.12 * Math.sin(tNow * 3)) : 1;
-    en.unit.scale.set(s, s, s);
+    const s = (vis.pulse ? (1 + 0.12 * Math.sin(tNow * 3)) : 1) * (1 + attackPulse);
+    // ==================== Week1·Day4-5：受击反馈接入 ====================
+    // "闪白 + 后仰"里只做了后仰这半——几何/材质是按 key 全局共享的（_matCache/
+    // UnitMeshFactory 的 _matCache，见 _makeEntry 头注"几何与材质都是共享资源"），
+    // 闪白需要每个实体独立的颜色，要么克隆材质（等于放弃共享带来的性能收益），要么
+    // 上着色器 uniform（属于材质系统改造，是 P0/P2 阶段的事，不是这一天的"纯 Tween"
+    // 范畴）。这里改用不依赖材质的挤压（squash）代替朝向敏感的"后仰"——同样不需要
+    // 知道受击方向，用现有 scale 通道就能做，与排期"不需要骨骼，纯 Tween"的范围相符；
+    // 材质层的闪白效果留到 P0 材质重做时再补，不在这里勉强凑一个会拖累性能的实现。
+    let hitSquash = 0;
+    if (en.poseHitT >= 0) {
+      hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * HIT_SQUASH_AMOUNT;
+    }
+    en.unit.scale.set(s * (1 + hitSquash * 0.5), s * (1 - hitSquash), s * (1 + hitSquash * 0.5));
     // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。
     const gy = (this.mapSystem && this.mapSystem.heightAt) ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
     en.groundY = gy;
