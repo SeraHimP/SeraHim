@@ -86,9 +86,11 @@ const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-figh
 // docs/Q4-RENDERING-REDESIGN.md 第 11 节：走路相位推进速度、攻击前后摇/受击反馈的
 // 持续时长。这一步只搭状态管线（en.poseWalkPhase/poseAttackT/poseHitT），Day2 起才会
 // 把它们接进 en.unit 的 scale/rotation——这些常量现在不生效在任何 transform 上。
-const WALK_CYCLE_SPEED = 6.0;    // 走路相位推进速度（弧度/秒），Day2 接上摆动动画时再按手感调
+const WALK_CYCLE_SPEED = 6.0;    // 走路相位推进速度（弧度/秒），每半个周期一次起伏（对应一步）
 const ATTACK_POSE_DUR = 0.35;    // 攻击前后摇窗口时长（秒）
 const HIT_POSE_DUR = 0.25;       // 受击反馈窗口时长（秒）
+const WALK_BOB_FRAC = 0.05;      // 走路起伏幅度：模型高度(vis.topY)的比例，大小单位手感统一
+const WALK_SWAY_RAD = 0.05;      // 走路侧倾幅度（弧度），很小的一点才不会像喝醉
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
 // 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
@@ -918,7 +920,16 @@ export class UnitLayer {
     // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。
     const gy = (this.mapSystem && this.mapSystem.heightAt) ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
     en.groundY = gy;
-    en.unit.position.set(e.pos.x, gy, e.pos.y);
+    // ==================== Week1·Day2-3：走路摆动接入 ====================
+    // 单位是 mergeParts() 合并后的单一网格（没有可拆的四肢/骨骼，见
+    // docs/Q4-RENDERING-REDESIGN.md §1.2 的审计结论），所以不是承诺不了的分肢摆动，
+    // 而是老老实实做"整体起伏+轻微侧倾"——这也是排期里写的"用现有合并几何的分组做
+    // 整体形变，不需要新几何"真正能落地的那部分。幅度按模型高度(vis.topY)取比例：
+    // 塔从不挪动，poseWalkPhase 天然趋近 0，不需要额外按类型排除。
+    const walkPhase = en.poseWalkPhase || 0;
+    const walkBob = Math.abs(Math.sin(walkPhase)) * (vis.topY || 0) * WALK_BOB_FRAC;
+    en.unit.position.set(e.pos.x, gy + walkBob, e.pos.y);
+    en.unit.rotation.z = Math.sin(walkPhase) * WALK_SWAY_RAD;
 
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
     if (en.crystal) {
