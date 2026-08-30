@@ -915,8 +915,12 @@ async function world() {
     get innerHTML() { return this._html; }
     addEventListener(evt, cb) { this._listeners[evt] = [cb]; }
     click() { (this._listeners.click || []).forEach(cb => cb()); }
+    fire(evt) { (this._listeners[evt] || []).forEach(cb => cb()); }
   }
   const scopeAll = new FakeEl(); scopeAll.value = 'all'; scopeAll.checked = true;
+  const scopeBlue = new FakeEl(); scopeBlue.value = 'blue'; scopeBlue.checked = false;
+  const scopeRed = new FakeEl(); scopeRed.value = 'red'; scopeRed.checked = false;
+  let scopeBoxes = [scopeAll];
   const powerCard = new FakeEl(); powerCard.dataset = { dgpKind: 'power', dgpEl: el0 };
   const soulCard = new FakeEl(); soulCard.dataset = { dgpKind: 'soul', dgpEl: el0, dgpSoulid: soulId0 };
   const templateContentStub = new FakeEl();
@@ -930,7 +934,7 @@ async function world() {
       return null;
     },
     querySelectorAll(sel) {
-      if (sel === '.dg-scope') return [scopeAll];
+      if (sel === '.dg-scope') return scopeBoxes;
       if (sel === '[data-dgp-kind]') return [powerCard, soulCard];
       if (sel === '[data-dg-remove-kind]') return removeChips;
       return [];
@@ -973,6 +977,33 @@ async function world() {
     !/dg-clear-all-soul/.test(gwSrc) && !/data-dgsoul-id/.test(gwSrc) && !/dg-set-kills/.test(gwSrc) && !/dg-kill-field/.test(gwSrc));
   T('批池⑥-巨龙之力的广播/移除都显式指定 POWER_REWARD_OK（不能落到 _grantAll 默认的 SOUL 那条窄范围）',
     (gwSrc.match(/DragonSystem\.POWER_REWARD_OK/g) || []).length >= 2);
+
+  // ==================== Q19：广播目标复选框——互斥 + 跨重绘持久化 ====================
+  // 用户："点击某一方后全部生效还是被错误的选中。并且我选中某个加上去之后，广播
+  // 目标又被设置成默认全部广播了，应该保留原先选中的目标。"
+  scopeBoxes = [scopeAll, scopeBlue, scopeRed];
+  EDITOR_PAGES_GAMEPLAY_WORLD._bindGameplayDragonEvents(overlay, (m) => logs.push(m)); // 重新绑定，拿到新的 scopeBoxes
+
+  // bug①：勾"蓝方"时，"全部生效"必须被联动取消（不是各管各的两个死复选框）
+  scopeBlue.checked = true;
+  scopeBlue.fire('change');
+  T('广①-勾选单独阵营（蓝方）后，"全部生效"复选框被联动取消勾选',
+    scopeAll.checked === false && scopeBlue.checked === true);
+  T('广②-_dgScopeFactions 此时只回蓝方一个阵营，不再被"全部生效"顶掉',
+    JSON.stringify(EDITOR_PAGES_GAMEPLAY_WORLD._dgScopeFactions(overlay)) === JSON.stringify(['blue']));
+
+  // bug②：这份选择必须能扛住一次"重绘"（每秒自重绘定时器/点池子卡片后的 refresh 都会重绘），
+  // 不能被写死的默认值冲掉——重绘就是重新调用 _renderGameplayDragonSoulPool。
+  const reRendered = EDITOR_PAGES_GAMEPLAY_WORLD._renderGameplayDragonSoulPool(ds);
+  T('广③-重绘后的 HTML 里"蓝方"复选框仍然带 checked，"全部生效"不再带 checked（选择被保留，不是被冲回默认全选）',
+    /value="blue" checked/.test(reRendered) && !/value="all" checked/.test(reRendered));
+
+  // 勾"全部生效"要把之前单独选的阵营复选框联动取消（反向互斥同样成立）
+  scopeAll.checked = true;
+  scopeAll.fire('change');
+  T('广④-反向：勾"全部生效"后，之前单独勾选的蓝方复选框被联动取消',
+    scopeAll.checked === true && scopeBlue.checked === false && scopeRed.checked === false);
+  T('广⑤-勾"全部生效"后 _dgScopeFactions 回全部阵营', EDITOR_PAGES_GAMEPLAY_WORLD._dgScopeFactions(overlay).length === EDITOR_PAGES_GAMEPLAY_WORLD._DG_FACTIONS.length);
 }
 
 // ==================== 二十五(c)、v51.6：修单位编辑器"龙魂 tab 点 X 没反应"的真根因 ====================
@@ -1348,6 +1379,78 @@ async function world() {
   });
   const dotBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(dotBox);
   T('状态⑫-dot 蓝图正确读取新 tab 结构写回的伤害类型', dotBp.kind === 'dot' && dotBp.damageType === 'physical' && dotBp.flatValue === 20);
+
+  // ==================== 补：补全"添加效果"面板缺失的类型/属性 ====================
+  // 用户："护盾这个属性别忘了在……某个单位添加效果中加。并且现有的添加效果中属性
+  // 不全，后面新加的这些属性都没有，自查一遍，补全所有的属性。并且添加效果中状态
+  // 的类型（持续伤害，晕眩等）也不全，补全。"
+  const pickerHtml2 = EDITOR_PAGES_SKILLEFFECT._renderEffectPicker();
+  T('状态⑭-类型 tab 补上沉默/缴械/护盾（引擎已认得这三种 kind，只是面板之前没暴露）',
+    /data-efftype="silence"/.test(pickerHtml2)
+    && /data-efftype="disarm"/.test(pickerHtml2) && /data-efftype="shield"/.test(pickerHtml2));
+
+  const missingStatKeys = ['abilityPower', 'skillAmpPct', 'critChance', 'critDamagePct', 'adaptiveForce',
+    'physicalVampPct', 'spellVampPct', 'evasionPct', 'tenacityPct', 'maxMana', 'manaRegen'];
+  T('状态⑮-属性列表补全 v51 新增的这批（法强/技能增幅/暴击/适应之力/双吸血/闪避/韧性/法力两项）',
+    missingStatKeys.every(k => EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_KEYS.includes(k)));
+  const statParamsHtml2 = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('stat');
+  T('状态⑯-补全的属性在卡片网格里也有中文标签（不是裸字段名）',
+    statParamsHtml2.includes('法术强度') && statParamsHtml2.includes('暴击率')
+    && /data-effstat="manaRegen"/.test(statParamsHtml2));
+
+  const shieldParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('shield');
+  T('状态⑰-护盾类型的参数区有护盾值输入（复用 .effect-flat-value）+ 持续时间 + 永久勾选',
+    /effect-flat-value/.test(shieldParamsHtml) && /effect-duration/.test(shieldParamsHtml)
+    && /effect-permanent/.test(shieldParamsHtml));
+  const silenceParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('silence');
+  const disarmParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('disarm');
+  T('状态⑱-沉默/缴械的参数区只有持续时间（跟眩晕同规格，控制类不需要数值输入）',
+    /effect-duration/.test(silenceParamsHtml) && !/effect-flat-value/.test(silenceParamsHtml)
+    && /effect-duration/.test(disarmParamsHtml) && !/effect-flat-value/.test(disarmParamsHtml));
+
+  const shieldBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'shield' } },
+    '.effect-permanent': { checked: false },
+    '.effect-duration': { value: '10' },
+    '.effect-flat-value': { value: '80' },
+  });
+  const shieldBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(shieldBox);
+  T('状态⑲-护盾蓝图：kind:\'shield\'，flatValue/duration 从面板正确读出，不衰减不回复（无 statKey）',
+    shieldBp.kind === 'shield' && shieldBp.flatValue === 80 && shieldBp.duration === 10 && shieldBp.statKey === undefined);
+
+  const silenceBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'silence' } },
+    '.effect-permanent': null,
+    '.effect-duration': { value: '1.5' },
+  });
+  const silenceBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(silenceBox);
+  T('状态⑳-沉默蓝图：kind:\'silence\'，供 EffectRegistry.isSilenced() 识别',
+    silenceBp.kind === 'silence' && silenceBp.duration === 1.5);
+
+  const disarmBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'disarm' } },
+    '.effect-permanent': null,
+    '.effect-duration': { value: '1.5' },
+  });
+  const disarmBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(disarmBox);
+  T('状态㉑-缴械蓝图：kind:\'disarm\'，供 EffectRegistry.isDisarmed() 识别',
+    disarmBp.kind === 'disarm' && disarmBp.duration === 1.5);
+
+  // 行为闭环：新蓝图真的能被 EffectRegistry 认得（不是面板自造了一个引擎不理的 kind）
+  {
+    const { ents, fx, CONFIG } = await world();
+    const t = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000 } }, CONFIG);
+    fx.apply(t.id, shieldBp, 'panel_shield_test');
+    const eff = fx.getEffects(t.id).find(e => e.blueprint.kind === 'shield');
+    T('状态㉒-面板造出的护盾蓝图挂上后 shieldRemaining=80（走的是同一套第三类护盾机制）',
+      !!eff && eff.shieldRemaining === 80);
+
+    fx.apply(t.id, silenceBp, 'panel_silence_test');
+    T('状态㉓-面板造出的沉默蓝图挂上后 EffectRegistry.isSilenced() 识别为真', fx.isSilenced(t.id) === true);
+
+    fx.apply(t.id, disarmBp, 'panel_disarm_test');
+    T('状态㉔-面板造出的缴械蓝图挂上后 EffectRegistry.isDisarmed() 识别为真', fx.isDisarmed(t.id) === true);
+  }
 }
 
 // ==================== 三十三、v51.6：召唤师峡谷塔属性修正 ====================
@@ -1861,6 +1964,16 @@ async function world() {
   T('环⑧-remove(id) 会清理龙魂环，不能只指望 _syncSoulRing 的早退分支',
     /this\._clearInfo\(en\);[\s\S]{0,200}if \(en\.soul\) this\._clearSoulRing\(en\);[\s\S]{0,50}this\.map\.delete\(id\);/.test(ul));
 
+  // ==================== Q20：蓝方塔方形龙魂环没有跟随塔的朝向旋转 ====================
+  // 用户："蓝方塔的龙魂框依旧没有正确跟随塔的朝向。"根因：_syncSoulRing 只 set 了
+  // position，从没写过 rotation——方框是直接在 XZ 平面里建的（_squareRingGeo 的头注），
+  // rotation.y 就是绕竖直轴的偏航角，与 en.unit.rotation.y 用的是同一个量。
+  // 塔的朝向早在 _syncOne 里算好并缓存在 en.faceFixed（同一份值，见"向⑫"那条断言），
+  // 这里直接复用，不新算一份、也不新引入字段。圆环各向同性，赋不赋值肉眼看不出区别，
+  // 所以直接对两种形状统一赋值，不必为方形单独分支。
+  T('环⑨-龙魂环（含方形）跟随塔朝向：rotation.y 复用 en.faceFixed，且在每帧都重新赋值（不是只在新建时赋一次）',
+    /en\.soul\.position\.set\(e\.pos\.x, RING_LIFT \+ en\.groundY, e\.pos\.y\);\s*\n[\s\S]{0,600}if \(en\.faceFixed !== null && en\.faceFixed !== undefined\) en\.soul\.rotation\.y = en\.faceFixed;/.test(ul));
+
   // 颜色表本身的行为：每种元素都能查到色值，且与 DRAGON_ELEMENTS 定义的颜色一致
   // （这里直接跑一遍构建函数体同款逻辑核对，不是又对着源码字符串猜）。
   const rebuilt = {};
@@ -2120,6 +2233,156 @@ async function world() {
 
   T('补⑩-clearSelection 会一并隐藏悬浮预览（Q10：单位阵亡后属性面板关闭但悬浮框残留）',
     /clearSelection\(\) \{[\s\S]{0,400}this\._hideHoverTip\(\);/.test(um));
+
+  // ==================== Q18：毛玻璃效果统一到全部界面 ====================
+  // 用户："毛玻璃效果要统一到所有窗口，所有界面上，目前主界面四个角的工具条，
+  // 单位属性窗口等都没有应用这个效果。"——技术上 .hud-panel/#selectionPanel 本来
+  // 就有 backdrop-filter，但用的是旧的纯色 var(--surface)，跟后来给 .modal-box/
+  // .hover-tip 定下的"渐变高光 + rgba(22,27,34,0.6) 更透底色"是两种质感，肉眼看
+  // 就是没效果。这里统一成与 .hover-tip 完全相同的配方（同一档 blur(14px)）。
+  const hudPanelBlock = html.match(/\.hud-panel \{[\s\S]*?\}/);
+  T('毛①-四角工具条（.hud-panel：顶栏左/右、右下工具栏、右上世界小窗共用）改用与悬浮预览/弹窗同款玻璃配方',
+    !!hudPanelBlock && /rgba\(22,27,34,0\.6\)/.test(hudPanelBlock[0])
+    && /linear-gradient\(180deg, rgba\(255,255,255,0\.06\), rgba\(255,255,255,0\) 50%\)/.test(hudPanelBlock[0])
+    && /backdrop-filter:\s*blur\(14px\)/.test(hudPanelBlock[0]));
+  const selectionPanelBlock = html.match(/#selectionPanel \{[\s\S]*?\}/);
+  T('毛②-单位属性窗口（#selectionPanel）同样改用这份配方，不再是更不透明的旧版 var(--surface)',
+    !!selectionPanelBlock && /rgba\(22,27,34,0\.6\)/.test(selectionPanelBlock[0])
+    && /linear-gradient\(180deg, rgba\(255,255,255,0\.06\), rgba\(255,255,255,0\) 50%\)/.test(selectionPanelBlock[0])
+    && !/background: var\(--surface\);/.test(selectionPanelBlock[0]));
+  T('毛③-四块浮层与属性窗口用的是完全相同的一份配方（同一份字符串出现 3 次：hud-panel + selectionPanel，不是各改各的凑数）',
+    (html.match(/linear-gradient\(180deg, rgba\(255,255,255,0\.06\), rgba\(255,255,255,0\) 50%\), rgba\(22,27,34,0\.6\)/g) || []).length >= 3);
+}
+
+// ==================== 护盾三分类：新增"护盾"（不衰减不回复）====================
+// 用户定稿：临时护盾（衰减）/固定护盾（脱战回满）/护盾（不衰减不回复，随所属效果
+// 自然到期一起消失，被打空不提前结束效果）。承伤顺序①临时②固定③护盾。
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const target = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000 } }, CONFIG);
+
+  // 盾①：创建即满值 —— shieldRemaining = flatValue（首次 delta = totalFlat - 0）
+  fx.apply(target.id, { name: '测试护盾', icon: '🛡', kind: 'shield', flatValue: 100,
+    duration: 5, stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'test_shield');
+  let eff = fx.getEffects(target.id).find(e => e.blueprint.name === '测试护盾');
+  T('盾①-新建 kind:\'shield\' 效果，shieldRemaining 等于 flatValue（满值）', eff.shieldRemaining === 100);
+
+  // 盾②：承伤后 shieldRemaining 减少，且优先级在临时/固定护盾之后
+  const before = target.currentHP;
+  combat.performAttackDirect(null, target.id, 30, 'physical');
+  eff = fx.getEffects(target.id).find(e => e.blueprint.name === '测试护盾');
+  T('盾②-护盾吸收伤害后 shieldRemaining 减少，生命值不掉（没有临时/固定护盾时护盾顶上）',
+    eff.shieldRemaining < 100 && target.currentHP === before);
+
+  // 盾③：refresh（同 stackKey 再次 apply）不会把 shieldRemaining 顶回满——这正是
+  // 用户报"钢铁烈阳护盾/图腾壁垒太强"的根子（旧版固定护盾会在 refresh 时回满）。
+  const remainingBeforeRefresh = eff.shieldRemaining;
+  fx.apply(target.id, { name: '测试护盾', icon: '🛡', kind: 'shield', flatValue: 100,
+    duration: 5, stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'test_shield');
+  eff = fx.getEffects(target.id).find(e => e.blueprint.name === '测试护盾');
+  T('盾③-refresh 不会把 shieldRemaining 顶回满（"护盾"不会自动回复，这是与固定护盾的关键区别）',
+    eff.shieldRemaining === remainingBeforeRefresh && eff.remainingTime > 0);
+
+  // 盾④：承伤顺序——临时护盾①、固定护盾②、护盾③依次吃伤害
+  const t2 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000, shieldFixedMax: 20 } }, CONFIG);
+  t2.tempShield = 10; t2.shieldFixedCurrent = 20;
+  fx.apply(t2.id, { name: '测试护盾2', icon: '🛡', kind: 'shield', flatValue: 50,
+    duration: 5, stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'test_shield2');
+  combat.performAttackDirect(null, t2.id, 15, 'physical');   // 应先吃光 10 点临时护盾，再吃 5 点固定护盾
+  const eff2 = fx.getEffects(t2.id).find(e => e.blueprint.name === '测试护盾2');
+  T('盾④-承伤顺序 临时→固定→护盾：15 点伤害先吃光 10 点临时护盾，再吃 5 点固定护盾，护盾（50）完全没动',
+    t2.tempShield === 0 && t2.shieldFixedCurrent === 15 && eff2.shieldRemaining === 50);
+
+  // 盾⑤：被打空后效果本身不提前结束（remainingTime 照常倒计时，不会因为 shieldRemaining=0 被强制移除）
+  const t3 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000 } }, CONFIG);
+  fx.apply(t3.id, { name: '测试护盾3', icon: '🛡', kind: 'shield', flatValue: 5,
+    duration: 10, stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'test_shield3');
+  combat.performAttackDirect(null, t3.id, 50, 'physical');   // 5 点护盾一下打空，剩余 45 点该扣到生命值上
+  const eff3 = fx.getEffects(t3.id).find(e => e.blueprint.name === '测试护盾3');
+  T('盾⑤-护盾被打空后效果依然存在（不会因为余量归零就提前移除，直到自己的 duration 到期）',
+    !!eff3 && eff3.shieldRemaining === 0 && eff3.remainingTime > 0);
+
+  // 盾⑥：效果自然到期后随之消失，不会有"补偿伤害"或残留
+  const t4 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000 } }, CONFIG);
+  fx.apply(t4.id, { name: '测试护盾4', icon: '🛡', kind: 'shield', flatValue: 30,
+    duration: 0.1, stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'test_shield4');
+  const hpBeforeExpire = t4.currentHP;
+  fx.update(0.2);   // 超过 duration，效果到期移除
+  T('盾⑥-效果自然到期后随之消失，剩余护盾直接消失、不倒扣生命值（不会有"补偿伤害"）',
+    !fx.getEffects(t4.id).some(e => e.blueprint.name === '测试护盾4') && t4.currentHP === hpBeforeExpire);
+
+  // 盾⑦：stackPolicy:'stack' 叠层时，新层的量会加进 shieldRemaining（追加护盾，不是刷新覆盖）
+  const t5 = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000 } }, CONFIG);
+  fx.apply(t5.id, { name: '测试护盾5', icon: '🛡', kind: 'shield', flatValue: 20, perStackFlat: 20, maxStacks: 3,
+    duration: 5, stackable: true, stackPolicy: 'stack' }, 'test_shield5');
+  combat.performAttackDirect(null, t5.id, 12, 'physical');   // 消耗到剩 8
+  fx.apply(t5.id, { name: '测试护盾5', icon: '🛡', kind: 'shield', flatValue: 20, perStackFlat: 20, maxStacks: 3,
+    duration: 5, stackable: true, stackPolicy: 'stack' }, 'test_shield5');   // 叠一层，+20
+  const eff5 = fx.getEffects(t5.id).find(e => e.blueprint.name === '测试护盾5');
+  T('盾⑦-stack 叠层追加护盾量（8 + 新层 20 = 28），不是刷新覆盖成 20', eff5.shieldRemaining === 28);
+}
+
+// EffectRegistry.plainShieldOf 汇总 + CombatSystem 缓存进 entity.plainShield
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  const t = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 100000 } }, CONFIG);
+  fx.apply(t.id, { name: '护盾A', kind: 'shield', flatValue: 15, duration: 5,
+    stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'shieldA');
+  fx.apply(t.id, { name: '护盾B', kind: 'shield', flatValue: 25, duration: 5,
+    stackable: false, stackPolicy: 'refresh', uniquePassive: true }, 'shieldB');
+  T('盾⑧-plainShieldOf 把该实体身上所有 kind:\'shield\' 效果的余量加总', fx.plainShieldOf(t.id) === 40);
+  combat.update(1 / 30);
+  T('盾⑨-CombatSystem 每帧把汇总值缓存进 entity.plainShield（UI/血条读这个缓存字段）', t.plainShield === 40);
+}
+
+// 源码断言：两条被转换的技能不再挂 shieldFixedMax，改挂 kind:'shield'
+{
+  const tp = srcOf('src/core/skills/towerPassives.js');
+  const mp = srcOf('src/core/skills/minionPassives.js');
+  T('盾⑩-钢铁烈阳护盾（passive_inner_bulwark）改挂 kind:\'shield\'，不再是 statKey:\'shieldFixedMax\'',
+    /name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: v,/.test(tp)
+    && !/name: '钢铁烈阳护盾', icon: '☀️', kind: 'stat', statKey: 'shieldFixedMax'/.test(tp));
+  T('盾⑪-图腾壁垒（passive_totem_bulwark）改走 effectRegistry.apply(kind:\'shield\')，不再直接改 baseStats.shieldFixedMax',
+    /kind: 'shield', flatValue: v,/.test(mp) && !/e\.baseStats\.shieldFixedMax = \(e\.baseStats\.shieldFixedMax \|\| 0\) \+ v;/.test(mp));
+  T('盾⑫-图腾壁垒改挂效果后也走 healPowerFor 缩放（"治疗与护盾强度影响所有相关属性"这条硬规矩不能漏）',
+    /const v = \(CONFIG\.gameRules\.supportUnits\?\.totem\?\.selfShieldFlat \?\? 900\) \* healPowerFor\(e, ctx\);/.test(mp));
+  T('盾⑬-钢铁烈阳护盾数值改走 defaultParams（才能被地图级 skillOverrides 覆写，不是仍旧写死在闭包里）',
+    /defaultParams: \{ flatValue: 50 \}/.test(tp));
+}
+
+// ==================== 召唤师峡谷内塔默认+800护盾：走既有"地图级技能参数覆写"通道 ====================
+// 用户："召唤师峡谷内塔默认+800【护盾】属性。就是我刚才说的第三种护盾。"
+// 不新开技能/新造属性：内塔本来就默认装 passive_inner_bulwark（钢铁烈阳护盾，出厂 50），
+// 靠 map.skillOverrides['tower:inner'].passive_inner_bulwark.flatValue 把这张图的值覆写成 800
+// （其它地图 / 编辑器新建的内塔仍是出厂的 50，不受影响）。
+{
+  const { ents, fx, combat, CONFIG, SkillLibrary } = await world();
+  const { MapSystem } = await import('../src/systems/MapSystem.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const bus2 = new EventBus();
+  const ms = new MapSystem(ents, bus2);
+  ms.setEffectRegistry(fx);
+
+  ms.loadMap('summoners_rift_v1');
+  T('盾⑭-召唤师峡谷地图数据里 tower:inner 的 passive_inner_bulwark 覆写为 flatValue:800',
+    ms.currentMap.skillOverrides?.['tower:inner']?.passive_inner_bulwark?.flatValue === 800);
+
+  const innerTower = mkEntity(ents, 'tower', { tier: 'inner', skills: ['passive_inner_bulwark'] }, CONFIG);
+  combat.update(0.31); // 光环节流 0.3s 一次，跑够一次 tick，onFrame 内才真正 apply 上护盾
+  combat.update(0.01); // entity.plainShield 是在 onFrame 之前缓存的，要再跑一帧才能读到刚挂上的护盾
+  const shieldEff = fx.getEffects(innerTower.id).find(e => e.blueprint.kind === 'shield');
+  T('盾⑮-召唤师峡谷的内塔在此覆写下实际拿到 800 护盾（不是出厂的 50）',
+    !!shieldEff && shieldEff.shieldRemaining === 800);
+  T('盾⑯-召唤师峡谷内塔的护盾缓存进 entity.plainShield=800（UI 血条读的就是这个字段）',
+    innerTower.plainShield === 800);
+
+  // 回归：不带这条地图覆写时（其它地图 / 编辑器手动加的内塔），出厂值仍是 50，没被这次改动带偏。
+  SkillLibrary._mapOverrides = null;
+  const plainInnerTower = mkEntity(ents, 'tower', { tier: 'inner', skills: ['passive_inner_bulwark'] }, CONFIG);
+  combat.update(0.31);
+  const shieldEff2 = fx.getEffects(plainInnerTower.id).find(e => e.blueprint.kind === 'shield');
+  T('盾⑰-没有地图级覆写时，钢铁烈阳护盾仍是出厂默认的 50（召唤师峡谷的 800 只影响这张图）',
+    !!shieldEff2 && shieldEff2.shieldRemaining === 50);
 }
 
 done();

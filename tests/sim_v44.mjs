@@ -759,7 +759,9 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     const m = html.match(/\.hud-panel \{([^}]*)\}/);
     if (!m) return false;
     const b = m[1];
-    const okDef = /blur\(14px\)/.test(b) && /var\(--surface\)/.test(b) && /var\(--glass-border\)/.test(b);
+    // Q18：玻璃底色从 var(--surface) 改成与 .hover-tip/.modal-box 同款的渐变高光 + rgba(22,27,34,0.6)
+    // （理由见 index.html 里 .hud-panel 上方的注释），断言跟着改成认新配方，不是认某个具体变量名。
+    const okDef = /blur\(14px\)/.test(b) && /rgba\(22,27,34,0\.6\)/.test(b) && /var\(--glass-border\)/.test(b);
     // v47：世界状态条并进了左上角那一块，所以浮层从四块减到三块。
     // 属性面板保持自己的一份 —— 它不是工具栏，尺寸与滚动行为都差太多。
     const users = ['topbarLeft', 'topbarRight', 'canvasControls'];
@@ -767,7 +769,7 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   })());
   T('顶③-属性面板仍然自带同一组玻璃参数（它不走 .hud-panel）', (() => {
     const m = html.match(/#selectionPanel \{([^}]*)\}/);
-    return !!m && /blur\(14px\)/.test(m[1]) && /var\(--surface\)/.test(m[1]);
+    return !!m && /blur\(14px\)/.test(m[1]) && /rgba\(22,27,34,0\.6\)/.test(m[1]);
   })());
   // v47：世界小窗不再是浮层（并进左上角那块面板），所以"让位"只剩属性面板要做。
   // 而左上角那块因此变高了，属性面板的 top 也跟着从 66 抬到 104 ——

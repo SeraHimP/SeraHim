@@ -557,6 +557,15 @@ export class UnitLayer {
       en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, 1.6), this._flatMat(color, 1));
     }
     en.soul.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
+    // Q20：蓝方塔的方形龙魂环没有跟随塔的朝向——圆环各向同性转不转都一样，从没人管过
+    // 这个朝向；方框不是，之前干脆没写 rotation.y，永远停在几何体的出厂朝向（0），
+    // 边角就跟塔身的实际朝向对不上。塔的朝向是 en.faceFixed（同一份已算好的值，
+    // 见上面 en.unit.rotation.y = en.faceFixed 那段），这里直接复用，不再另起一份。
+    // 圆环也一并赋值——各向同性下赋不赋都一个样，不必为它单独加分支。
+    // 每帧都要赋（不能只在新建 en.soul 那一次赋）：key 变化时上面会整个换新 Mesh，
+    // 新对象 rotation 归零，只赋一次的话下一次换模型就会"啪"地转回正北，
+    // 与 en.unit.rotation.y 那段的道理完全一样。
+    if (en.faceFixed !== null && en.faceFixed !== undefined) en.soul.rotation.y = en.faceFixed;
   }
 
   _clearInfo(en) {
@@ -769,15 +778,19 @@ export class UnitLayer {
     const hpColor = faction === 'blue' ? '#4a9eff'
                   : faction === 'red' ? '#ff5a5a'
                   : '#4caf50';                                     // 中立一律绿色
-    const shieldTotal = (e.shieldFixedCurrent || 0) + (e.tempShield || 0);
+    // v51.6：第三种护盾"护盾"（entity.plainShield，CombatSystem 每帧缓存的汇总值，
+    // 见 EffectRegistry.plainShieldOf 的头注）一并算进血条的护盾段。
+    const shieldTotal = (e.shieldFixedCurrent || 0) + (e.tempShield || 0) + (e.plainShield || 0);
     const shieldFrac = Math.max(0, Math.min(1, shieldTotal / maxHP));
     const total = hpFrac + shieldFrac;
     const scale = total > 1 ? 1 / total : 1;
     const hpDraw = hpFrac * scale;
     const fixedShare = shieldTotal > 0 ? (e.shieldFixedCurrent || 0) / shieldTotal : 0;
     const tempShare = shieldTotal > 0 ? (e.tempShield || 0) / shieldTotal : 0;
+    const plainShare = shieldTotal > 0 ? (e.plainShield || 0) / shieldTotal : 0;
     const sfW = shieldFrac * scale * fixedShare;
     const stW = shieldFrac * scale * tempShare;
+    const spW = shieldFrac * scale * plainShare;
 
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, hpH);
     g.fillStyle = hpColor; g.fillRect(0, 0, BAR_W * hpDraw, hpH);
@@ -787,8 +800,11 @@ export class UnitLayer {
       g.fillStyle = TRAIL_COLOR;
       g.fillRect(BAR_W * hpDraw, 0, BAR_W * (tEnd - hpDraw), hpH);
     }
-    if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * sfW, hpH); }
-    if (stW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(BAR_W * (hpDraw + sfW), 0, BAR_W * stW, hpH); }
+    // 排列同 UIManager 卡片：HP、护盾（贴 HP，承伤顺序里最后吃）、固定护盾、
+    // 临时护盾（最外层，最先吃）——与承伤顺序①临时②固定③护盾互为镜像。
+    if (spW > 0.001) { g.fillStyle = 'rgba(255,213,79,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * spW, hpH); }
+    if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * (hpDraw + spW), 0, BAR_W * sfW, hpH); }
+    if (stW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(BAR_W * (hpDraw + spW + sfW), 0, BAR_W * stW, hpH); }
     g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
     g.strokeRect(0.5, 0.5, BAR_W - 1, hpH - 1);
 
@@ -994,7 +1010,8 @@ export class UnitLayer {
         // 把资源分数也算进去，否则只有资源在变、血量不变时永远不会触发重绘（见下面 _redrawBar）。
         var resInfo = resourceInfoOf(e, { skillLibrary: SkillLibrary, attrCalc, effects });
         barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
-               + q((e.tempShield || 0) / maxHP) + '|' + (e._mapFaction || e.faction || '')
+               + q((e.tempShield || 0) / maxHP) + '|' + q((e.plainShield || 0) / maxHP) + '|'
+               + (e._mapFaction || e.faction || '')
                + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
                + (en.trailing ? '|t' + q(en.dispFrac) : '')
                + (resInfo ? '|r' + q(resInfo.frac) + resInfo.kind : '');

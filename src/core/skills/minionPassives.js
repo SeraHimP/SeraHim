@@ -1,5 +1,6 @@
 import { makeAuraPassive, AURA_THROTTLE } from './_helpers.js';
 import { CONFIG } from '../../data/Config.js';
+import { healPowerFor } from '../healing.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵等大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
@@ -187,9 +188,15 @@ export const minionPassives = {
   // passive_totem_mend（"图腾涌泉"，每15秒按已损生命百分比回血）已在 v51.6
   // 改成主动技能 active_totem_mend（见 actives.js），这里删除。
 
-  // 自身高额固定护盾。走 onEquip 改 baseStats.shieldFixedMax 而不是挂一个 stat 效果：
-  // 护盾上限是"这个单位有多厚"的固有属性，不是临时 buff；挂效果会在面板上
-  // 混进一条永久状态，还会被治疗强化之类的百分比修正二次缩放。
+  // 自身高额护盾。
+  // v51.6 修复：用户"图腾兵的固定护盾也改为护盾"——原来走 onEquip 直接改
+  // baseStats.shieldFixedMax（"固定护盾"那一档，脱战 N 秒后自动回满），900 点满血
+  // 回复型护盾等于图腾兵近乎打不死，这正是用户嫌它太强的根子。改成 kind:'shield'
+  // （第三种"护盾"：不衰减、不回复，见 EffectRegistry._recalcEffectValues 的头注）
+  // ——出场即满盾（900），打没了就没了，直到这条被动被卸下再重新装上才会再给一份。
+  // 效果本身 permanent:true（只要还装着这条被动就一直"存在"，即使余量已经打空），
+  // 与旧版"这个单位有多厚是固有属性、不该在面板上混一条状态"的顾虑不冲突——
+  // 现在它本来就该在状态栏里看得见、看得出还剩多少，这才是"护盾"该有的可见性。
   passive_totem_bulwark: {
     id: 'passive_totem_bulwark',
     applicableTypes: ['totem'],
@@ -198,27 +205,29 @@ export const minionPassives = {
     color: '#bb86fc',
     category: 'passive',
     _cfg: () => CONFIG.gameRules.supportUnits?.totem || {},
-    _text() { return `唯一被动——图腾壁垒：自身获得（{val}=${this._cfg().selfShieldFlat ?? 900}）点固定护盾。`; },
+    _text() { return `唯一被动——图腾壁垒：自身获得（{val}=${this._cfg().selfShieldFlat ?? 900}）点护盾，不会自动回复。`; },
     get description() { return this._text(); },
     get descTemplate() { return this._text(); },
     computeCurrent() { return this._cfg().selfShieldFlat ?? 900; },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       const e = ctx.entityContainer.get(entityId);
-      if (!e || !e.baseStats) return;
-      const v = CONFIG.gameRules.supportUnits?.totem?.selfShieldFlat ?? 900;
-      instance.state = { ...(instance.state || {}), prevShield: e.baseStats.shieldFixedMax || 0 };
-      e.baseStats.shieldFixedMax = (e.baseStats.shieldFixedMax || 0) + v;
-      e.shieldFixedCurrent = e.baseStats.shieldFixedMax;   // 出场即满盾
+      if (!e) return;
+      const v = (CONFIG.gameRules.supportUnits?.totem?.selfShieldFlat ?? 900) * healPowerFor(e, ctx);
+      // 状态栏这条效果的文案不用 {val} 占位符——EffectRegistry._updateDescription
+      // 只替换 description 里的 {stacks}，不认 descTemplate/{val}，v 这里已经是
+      // 算好的最终值，直接拼进 description 就是（同 dragonsoul_earth 那类
+      // onEquip 直接挂效果的写法一致）。
+      ctx.effectRegistry.apply(entityId, {
+        name: '图腾壁垒', icon: '🛡️', color: '#bb86fc', kind: 'shield', flatValue: v,
+        duration: Infinity, permanent: true,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `护盾（初始 ${Math.round(v)} 点，不会自动回复）`,
+      }, 'totem_bulwark');
     },
     onUnequip: (entityId, instance, ctx) => {
-      const e = ctx.entityContainer.get(entityId);
-      if (!e || !e.baseStats) return;
-      // 还原到装备前的值而不是"减掉 v"：v 可能在装备期间被改过，
-      // 减法会留下残差（换一次技能就多/少一点盾，越换越偏）。
-      if (typeof instance.state?.prevShield === 'number') {
-        e.baseStats.shieldFixedMax = instance.state.prevShield;
-        e.shieldFixedCurrent = Math.min(e.shieldFixedCurrent || 0, e.baseStats.shieldFixedMax);
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '图腾壁垒') ctx.effectRegistry.remove(eff.id);
       }
     },
   },

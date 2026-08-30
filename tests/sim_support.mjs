@@ -71,9 +71,16 @@ function world() {
   const allyMax = ally.baseStats.maxHP;
   ally.currentHP = Math.round(allyMax * 0.2);
 
-  T(`图腾·自身高额固定护盾（模板 ${CONFIG.templates.totem.shieldFixedMax} + ${c.selfShieldFlat}）`,
-    totem.baseStats.shieldFixedMax === CONFIG.templates.totem.shieldFixedMax + c.selfShieldFlat);
-  T('图腾·出场即满盾', totem.shieldFixedCurrent === totem.baseStats.shieldFixedMax);
+  // v51.6：用户"图腾兵的固定护盾也改为护盾"——图腾壁垒不再改 baseStats.shieldFixedMax
+  // （那是【固定护盾】，脱战会自动回满，900 点近乎打不死），改挂一条 kind:'shield'
+  // 效果（第三种"护盾"：不衰减、不回复）。断言改成核对这条效果的 shieldRemaining。
+  const bulwarkEff = W.fx.getEffects(totem.id).find(e => e.blueprint.name === '图腾壁垒');
+  T(`图腾·自身高额护盾（不再是固定护盾，改挂 kind:'shield' 效果，初始 ${c.selfShieldFlat}）`,
+    !!bulwarkEff && bulwarkEff.blueprint.kind === 'shield');
+  T('图腾·出场即满护盾（护盾不回复，所以"满"就是刚装备时的那一份，不会再回来）',
+    !!bulwarkEff && bulwarkEff.shieldRemaining === c.selfShieldFlat);
+  T('图腾·baseStats.shieldFixedMax 不再被这条被动动过（不该混进"固定护盾"那一档）',
+    !(totem.baseStats.shieldFixedMax > CONFIG.templates.totem.shieldFixedMax));
 
   W.run(1, [totem]);      // 光环节流 0.3s，1 秒足够铺开
   const as = W.stats(ally);

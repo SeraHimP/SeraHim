@@ -261,7 +261,8 @@ function world() {
     /#topbarLeft {2}\{[^}]*left: 12px/.test(html) && /#topbarRight \{[^}]*right: 12px/.test(html));
   T('栏②-玻璃参数只有一处定义（.hud-panel），四块浮层共用', (() => {
     const b = (html.match(/\.hud-panel \{([^}]*)\}/) || [])[1] || '';
-    const ok = /var\(--surface\)/.test(b) && /blur\(14px\)/.test(b)
+    // Q18：底色从 var(--surface) 改成与 .hover-tip/.modal-box 同款的配方，断言跟着改。
+    const ok = /rgba\(22,27,34,0\.6\)/.test(b) && /blur\(14px\)/.test(b)
             && /var\(--glass-border\)/.test(b) && /position: absolute/.test(b);
     return ok && ['topbarLeft', 'topbarRight', 'canvasControls']
       .every(id => new RegExp(`id="${id}" class="hud-panel"`).test(html));

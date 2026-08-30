@@ -129,7 +129,13 @@ function equip(e, skillId, ents, fx) {
   attr.tick(); ents.rebuildGridIfNeeded?.(attr._frame);
   SkillLibrary.passive_inner_bulwark.onFrame(innerT.id, 0.5, bInst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
   attr.tick();
-  T('钢铁烈阳护盾：范围内友军 +50 固定护盾', attr.calc(ally, fx.getEffects(ally.id)).shieldFixedMax === (CONFIG.templates.melee.shieldFixedMax || 0) + 50);
+  // v51.6：用户"钢铁烈阳护盾的固定护盾改为护盾"——不再走 kind:'stat'/shieldFixedMax
+  // （那一档脱战会自动回满，光环每 0.3 秒重刷等于变相永远满盾），改成 kind:'shield'
+  // 挂在受益者身上的独立效果，不会体现在 AttributeCalculator 算出来的 shieldFixedMax 里。
+  const bulwarkOnAlly = fx.getEffects(ally.id).find(e => e.blueprint.name === '钢铁烈阳护盾');
+  T('钢铁烈阳护盾：范围内友军获得 +50 护盾（kind:\'shield\'，不再计入固定护盾 shieldFixedMax）',
+    !!bulwarkOnAlly && bulwarkOnAlly.blueprint.kind === 'shield' && bulwarkOnAlly.shieldRemaining === 50
+    && attr.calc(ally, fx.getEffects(ally.id)).shieldFixedMax === (CONFIG.templates.melee.shieldFixedMax || 0));
   T('钢铁烈阳护盾：自身也 +50', !!fx.getEffectByName(innerT.id, '钢铁烈阳护盾'));
   T('敌军不获得', !fx.getEffectByName(enemy.id, '钢铁烈阳护盾'));
   ally.pos = { x: 1400, y: 1000 }; // 离开 300 范围

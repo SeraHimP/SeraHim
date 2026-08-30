@@ -163,13 +163,31 @@ export const towerPassives = {
   // 删除。"——同名技能只留 passive_inner_bulwark（300 范围光环、+50，自己及友军）
   // 这一份，不再有两条同名不同效果的"钢铁烈阳护盾"。
 
-  // 内塔：钢铁烈阳护盾——300 范围光环，自己及友军 +50 固定护盾，离开范围脱落
+  // 内塔：钢铁烈阳护盾——300 范围光环，自己及友军 +50 护盾，离开范围脱落
+  // v51.6 修复：用户"钢铁烈阳护盾的固定护盾改为护盾"——原来挂的是 kind:'stat'
+  // + statKey:'shieldFixedMax'，走的是【固定护盾】那一档（脱战 N 秒后自动回满）。
+  // 光环每 0.3 秒重新 apply 一次，只要站在范围内就相当于不断刷新回满，等于变相
+  // 白嫖了一份"永远满盾"，这正是用户嫌它太强的根子。改成 kind:'shield'（第三种
+  // "护盾"：不衰减、不回复，见 EffectRegistry._recalcEffectValues 的头注）之后，
+  // 光环持续照常刷新"还在范围内"这件事（duration 不断续），但 shieldRemaining
+  // 不会被刷新顶满——真的被打没了就没了，只有【先离开范围超过宽限期、效果消失，
+  // 再重新进入】才会拿到一份新的满值护盾。
   passive_inner_bulwark: {
     id: 'passive_inner_bulwark', name: '钢铁烈阳护盾', icon: '☀️',
     applicableTypes: ['tower'],
     category: 'passive',
-    description: '对自己及附近（300范围）友军提供50护盾，友军离开防御塔过远护盾消失。',
-    descTemplate: '唯一被动——钢铁烈阳护盾：对自己及附近（300范围）友军提供50固定护盾，离开范围后护盾消失。',
+    // v51.6 补：数值改走 defaultParams，才能被 map.skillOverrides['tower:inner']
+    // 覆写（召唤师峡谷内塔默认+800护盾就是靠这条覆写接的，见 summoners_rift.js）。
+    // 沿用 passive_*_fortify 那套"声明 defaultParams 才会被注入覆写"的既有机制，
+    // 不新造属性、不新造机制。
+    defaultParams: { flatValue: 50 },
+    description: '对自己及附近（300范围）友军提供护盾（不会自动回复），友军离开防御塔过远护盾消失。',
+    descTemplate: '唯一被动——钢铁烈阳护盾：对自己及附近（300范围）友军提供50护盾（不会自动回复），离开范围后护盾消失。',
+    getDescTemplate: (entity, instance) => {
+      const v = (instance && instance._params && typeof instance._params.flatValue === 'number')
+        ? instance._params.flatValue : 50;
+      return `唯一被动——钢铁烈阳护盾：对自己及附近（300范围）友军提供${v}护盾（不会自动回复），离开范围后护盾消失。`;
+    },
     effects: [],
     onFrame: (entityId, dt, instance, ctx) => {
       instance.state.t = (instance.state.t || 0) + dt;
@@ -177,16 +195,17 @@ export const towerPassives = {
       instance.state.t = 0;
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return;
+      const v = (instance._params && typeof instance._params.flatValue === 'number') ? instance._params.flatValue : 50;
       const bp = (desc) => ({
-        name: '钢铁烈阳护盾', icon: '☀️', kind: 'stat', statKey: 'shieldFixedMax', flatValue: 50,
+        name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: v,
         aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        descTemplate: '唯一被动——钢铁烈阳护盾：固定护盾+50（在内塔光环范围内）。', description: desc,
+        descTemplate: `唯一被动——钢铁烈阳护盾：护盾+${v}（在内塔光环范围内，不会自动回复）。`, description: desc,
       });
-      ctx.effectRegistry.apply(self.id, bp('固定护盾+50（自身）'), 'inner_bulwark');
+      ctx.effectRegistry.apply(self.id, bp(`护盾+${v}（自身，不会自动回复）`), 'inner_bulwark');
       for (const ally of ctx.entityContainer.findInRadius(self.pos.x, self.pos.y, 300, null, true)) {
         if (ally.id === self.id || !ally.alive) continue;
         if ((ally._mapFaction || ally.faction) !== self._mapFaction) continue;
-        ctx.effectRegistry.apply(ally.id, bp('固定护盾+50（内塔光环）'), 'inner_bulwark');
+        ctx.effectRegistry.apply(ally.id, bp(`护盾+${v}（内塔光环，不会自动回复）`), 'inner_bulwark');
       }
     },
   },

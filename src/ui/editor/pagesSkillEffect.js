@@ -196,6 +196,32 @@ export const EDITOR_PAGES_SKILLEFFECT = {
         description: '被眩晕，无法行动',
       };
     }
+    if (type2 === 'silence') {
+      const duration = isNaN(parsedDur) ? 1 : parsedDur;
+      return {
+        name: '沉默', icon: '🔇', kind: 'silence', color: '#9b59b6', stackKey,
+        duration: Math.max(0.1, duration), stackPolicy: 'refresh',
+        description: '被沉默，无法施放技能',
+      };
+    }
+    if (type2 === 'disarm') {
+      const duration = isNaN(parsedDur) ? 1 : parsedDur;
+      return {
+        name: '缴械', icon: '🚫', kind: 'disarm', color: '#e67e22', stackKey,
+        duration: Math.max(0.1, duration), stackPolicy: 'refresh',
+        description: '被缴械，无法进行普通攻击',
+      };
+    }
+    if (type2 === 'shield') {
+      const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 0;
+      const isPermanent = permanentChecked || (!isNaN(parsedDur) && parsedDur <= 0);
+      const duration = isPermanent ? Infinity : (isNaN(parsedDur) ? 5 : parsedDur);
+      return {
+        name: '护盾', icon: '🛡️', kind: 'shield', stackKey,
+        flatValue, duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
+        description: `护盾+${flatValue}（不会衰减，也不会自动回复）`,
+      };
+    }
     if (type2 === 'dot') {
       const damageType = box.querySelector('.effect-dot-type')?.value || 'magic';
       const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 10;
@@ -239,17 +265,27 @@ export const EDITOR_PAGES_SKILLEFFECT = {
   _EFFECT_TYPE_TABS: [
     { key: 'stat', label: '属性修正' },
     { key: 'stun', label: '眩晕（控制）' },
+    { key: 'silence', label: '沉默（控制）' },
+    { key: 'disarm', label: '缴械（控制）' },
     { key: 'dot', label: '持续伤害（DOT）' },
+    { key: 'shield', label: '护盾' },
   ],
   // 与 CONFIG.templates 的实际字段 + AttributeCalculator 认得的条件字段对齐
-  // （此前漏了 baseAttackSpeed / baseHealthRegenMod / 护盾三项 / 溅射 / 弹速 / 哀兵两项）。
+  // （此前漏了 baseAttackSpeed / baseHealthRegenMod / 护盾三项 / 溅射 / 弹速 / 哀兵两项；
+  //  v51 护盾三分类那次又漏了法强/技能增幅/暴击/适应之力/双吸血/闪避/韧性/法力两项，
+  //  这批是那次事后自查补的——"添加效果"面板和真正的属性系统长期不同步，以后加新
+  //  stat 字段时记得回来对一眼这份列表）。
   _EFFECT_STAT_KEYS: [
-    'attackDamage', 'maxHP', 'healthRegen', 'baseHealthRegenMod', 'armor', 'magicResist',
+    'attackDamage', 'abilityPower', 'maxHP', 'healthRegen', 'baseHealthRegenMod', 'armor', 'magicResist',
     'moveSpeed', 'attackRange', 'baseAttackSpeed', 'bonusAttackSpeedPct', 'attackSpeedRatio',
-    'damageAmpPct', 'damageReduction', 'damageBlock', 'lifeStealPct',
+    'critChance', 'critDamagePct', 'adaptiveForce',
+    'damageAmpPct', 'skillAmpPct', 'damageReduction', 'damageBlock',
+    'lifeStealPct', 'physicalVampPct', 'spellVampPct',
     'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
     'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
     'onHitDamage', 'onHitPercentDamage',
+    'evasionPct', 'tenacityPct',
+    'maxMana', 'manaRegen',
     'shieldFixedMax', 'tempShieldDecayPct',
     'splashRadius', 'bulletSpeed',
     'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
@@ -326,6 +362,36 @@ export const EDITOR_PAGES_SKILLEFFECT = {
           <input type="number" step="0.1" class="effect-duration editor-number" value="1">
         </div>
         <div class="pick-desc-box">眩晕期间目标停止一切行动（攻击/移动/技能）。</div>
+      `;
+    }
+    if (type === 'silence') {
+      return `
+        <div class="slider-row"><label>持续时间(秒)</label>
+          <input type="number" step="0.1" class="effect-duration editor-number" value="1">
+        </div>
+        <div class="pick-desc-box">沉默期间目标无法施放技能，仍可移动和普通攻击。</div>
+      `;
+    }
+    if (type === 'disarm') {
+      return `
+        <div class="slider-row"><label>持续时间(秒)</label>
+          <input type="number" step="0.1" class="effect-duration editor-number" value="1">
+        </div>
+        <div class="pick-desc-box">缴械期间目标无法进行普通攻击，仍可移动和施放技能。</div>
+      `;
+    }
+    if (type === 'shield') {
+      return `
+        <div class="slider-row"><label>护盾值</label>
+          <input type="number" step="10" class="effect-flat-value editor-number" value="50">
+        </div>
+        <div class="slider-row"><label>持续时间(秒)</label>
+          <input type="number" step="0.5" class="effect-duration editor-number" value="5">
+        </div>
+        <div class="slider-row"><label>永久</label>
+          <input type="checkbox" class="effect-permanent" style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
+        </div>
+        <div class="pick-desc-box">不会衰减，也不会自动回复；护盾来源的效果到期时，剩余护盾直接消失（不额外扣血补偿）。</div>
       `;
     }
     if (type === 'dot') {

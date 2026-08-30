@@ -223,6 +223,11 @@ export class EffectRegistry {
       maxDuration: permanent ? Infinity : duration,
       totalFlat: 0,
       totalPercent: 0,
+      // v51.6：第三种护盾——"护盾"（kind:'shield'）自己的可用余量。只在
+      // _recalcEffectValues 里按 delta 增减，不会被 update() 的逐帧衰减碰、
+      // 也不会被 refresh 重置回满——护盾本身"不衰减、不回复"，随所属效果
+      // 自然到期一起消失（见 _recalcEffectValues 的头注）。
+      shieldRemaining: 0,
       customData: options.customData ?? null,
       _createdAt: Date.now(),
       _auraStamp: this._clock,
@@ -290,6 +295,19 @@ export class EffectRegistry {
       if (eff) result.push(eff);
     }
     return result;
+  }
+
+  /**
+   * 第三种护盾（kind:'shield'）当前总余量——把该实体身上所有护盾效果的 shieldRemaining
+   * 加起来。CombatSystem 每帧把这个值缓存进 entity.plainShield（与 tempShield/
+   * shieldFixedCurrent 同样是"实体上的一个普通字段"），UI/渲染层直接读那个缓存值，
+   * 不需要各自再来问一遍 EffectRegistry——见 CombatSystem.update() 里的缓存那一行。
+   */
+  plainShieldOf(entityId) {
+    const effs = this.getEffects(entityId);
+    let sum = 0;
+    for (const e of effs) if (e.blueprint.kind === 'shield') sum += e.shieldRemaining || 0;
+    return sum;
   }
 
   /**
@@ -380,13 +398,29 @@ export class EffectRegistry {
   }
 
   /**
-   * 重新计算效果的总修正值
+   * 重新计算效果的总修正值。
+   *
+   * ==================== v51.6：护盾（kind:'shield'）的余量按 delta 增减 ====================
+   * 用户定稿的"护盾"三态之一："不会衰减，但也不会恢复……随所属效果自然到期一起消失"。
+   * 这条效果每次 refresh（光环每 0.3 秒重新 apply 一次、或同名效果被再次触发）都会
+   * 走到这里——如果照搬 kind:'stat' 的做法直接把 totalFlat 当成"当前值"，
+   * 那么每次 refresh 都会把余量刷回满，等于又实现了一次"回复"，
+   * 与"不会恢复"直接矛盾。
+   * 改成：只看这次重算前后 totalFlat（护盾上限）变化了多少，余量就跟着加/减多少
+   * delta，而不是整体赋值成新的 totalFlat。首次创建时 shieldRemaining 从 0 起算，
+   * delta 恰好等于 totalFlat 本身，等价于"新护盾满值"，不需要为"首次创建"单独判断；
+   * stackPolicy:'stack' 增加层数时，新增那一层的量会自然并入 delta、加到余量里
+   * （叠层 = 追加护盾，而不是刷新已有部分）。
    */
   _recalcEffectValues(effect) {
     const bp = effect.blueprint;
     const stacks = effect.stacks;
+    const prevFlat = effect.totalFlat;
     effect.totalFlat = (bp.flatValue || 0) + (bp.perStackFlat || 0) * (stacks - 1);
     effect.totalPercent = (bp.percentValue || 0) + (bp.perStackPercent || 0) * (stacks - 1);
+    if (bp.kind === 'shield') {
+      effect.shieldRemaining = Math.max(0, (effect.shieldRemaining || 0) + (effect.totalFlat - prevFlat));
+    }
   }
 
   /**

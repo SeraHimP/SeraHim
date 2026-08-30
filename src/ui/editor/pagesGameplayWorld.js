@@ -194,13 +194,19 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       <div class="panel-sec" style="margin-top:10px;">${fac === 'blue' ? '🔵 蓝方龙魂池（当前生效）' : '🔴 红方龙魂池（当前生效）'}</div>
       <div class="transfer-active-list">${this._dgActiveChipsHtml(ds, fac)}</div>`).join('');
 
+    // Q19 修复：勾选状态必须跨重绘持久化——这一页每秒有个自重绘定时器（见
+    // _bindGameplayDragonEvents 的 _dgLiveTimer），过去这里每次重绘都硬编码
+    // "全部生效"打勾、其它两项不打勾，等于每秒把用户刚选的目标悄悄冲掉。
+    // 状态挂在 this._dgScopeState 上（与 this._dgLiveTimer 同一持久层），
+    // 渲染时读它，不再写死。
+    const scope = this._dgScopeState || (this._dgScopeState = { all: true, blue: false, red: false });
     const scopeRow = `
       <div class="panel-sec">广播目标</div>
       <div style="display:flex;gap:16px;padding:2px 2px 8px;">
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-          <input type="checkbox" class="dg-scope" value="all" checked>全部生效</label>
+          <input type="checkbox" class="dg-scope" value="all" ${scope.all ? 'checked' : ''}>全部生效</label>
         ${this._DG_FACTIONS.map(fac => `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-          <input type="checkbox" class="dg-scope" value="${fac}">${fac === 'blue' ? '蓝方' : '红方'}</label>`).join('')}
+          <input type="checkbox" class="dg-scope" value="${fac}" ${scope[fac] ? 'checked' : ''}>${fac === 'blue' ? '蓝方' : '红方'}</label>`).join('')}
       </div>`;
 
     const powerPoolHtml = ELS.map(([el, d]) => `<div class="pick-card" data-dgp-kind="power" data-dgp-el="${el}">
@@ -230,6 +236,12 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     if (allBox?.checked) return [...this._DG_FACTIONS];
     const picked = boxes.filter(b => b.value !== 'all' && b.checked).map(b => b.value);
     return picked;
+  },
+
+  /** 把 DOM 上 .dg-scope 复选框的实际勾选状态写回 this._dgScopeState，供下次重绘沿用。 */
+  _dgSyncScopeState(overlay) {
+    const state = this._dgScopeState || (this._dgScopeState = { all: true, blue: false, red: false });
+    for (const box of overlay.querySelectorAll('.dg-scope')) state[box.value] = box.checked;
   },
 
   _bindGameplayDragonEvents(overlay, logFn) {
@@ -263,12 +275,29 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       refresh();
     }, 1000);
 
-    // v51.6：广播目标复选框——"全部生效"与单独的阵营勾选没有互斥逻辑（不强制
-    // 只能选一个），读取时 _dgScopeFactions 统一处理："全部生效"打钩就直接算全部
-    // 阵营，不看其它框；没打钩就取单独勾了的那些。改动本身不需要重绘，下次点池子
-    // 卡片时现读。
+    // ==================== Q19 修复：广播目标复选框 ====================
+    // 用户报了两个连着的毛病：
+    //   ① "点击某一方后全部生效还是被错误的选中"——旧代码里"全部生效"与单独阵营
+    //      勾选**完全没有互斥**（change 监听是个空函数），"全部生效"默认打勾且没人
+    //      去掉它，用户单独勾"蓝方"时 allBox.checked 依然是 true，_dgScopeFactions
+    //      读到"全部生效"打着钩就直接回全部阵营，用户的单独选择形同没点。
+    //   ② "选中某个加上去之后，广播目标又被设置成默认全部广播了"——这一页有个每秒
+    //      自重绘的定时器（_dgLiveTimer），而 scopeRow 每次重绘都硬编码"全部生效"
+    //      打勾、其它不打勾（见上面 _renderGameplayDragonSoulPool），等于每秒把
+    //      用户刚选的目标冲掉，点池子卡片触发的那次 refresh() 同理。
+    // 现在改成真正的互斥（勾"全部生效"清空另外两个；勾单独某方就取消"全部生效"），
+    // 并把结果写回 this._dgScopeState，渲染时读它而不是写死——两个根因一起解决。
     overlay.querySelectorAll('.dg-scope').forEach(box => {
-      box.addEventListener('change', () => {});
+      box.addEventListener('change', () => {
+        const boxes = [...overlay.querySelectorAll('.dg-scope')];
+        if (box.value === 'all') {
+          if (box.checked) boxes.forEach(b => { if (b.value !== 'all') b.checked = false; });
+        } else if (box.checked) {
+          const allBox = boxes.find(b => b.value === 'all');
+          if (allBox) allBox.checked = false;
+        }
+        this._dgSyncScopeState(overlay);
+      });
     });
 
     // 巨龙之力池 / 龙魂池：点击对"广播目标"里勾选的每个阵营生效。

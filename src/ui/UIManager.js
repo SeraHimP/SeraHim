@@ -1238,6 +1238,7 @@ export class UIManager {
           <div class="bar-hp" id="tower-hp-${tower.id}"></div>
           <div class="bar-shield-fixed" id="tower-sf-${tower.id}"></div>
           <div class="bar-shield-temp" id="tower-st-${tower.id}"></div>
+          <div class="bar-shield-plain" id="tower-sp-${tower.id}"></div>
         </div>
       </div>
       <div class="bar-text">
@@ -1280,24 +1281,33 @@ export class UIManager {
     this._stepTrailBar(card.querySelector(`#tower-trail-${id}`), hpFrac);
 
     const sfCur = tower.shieldFixedCurrent || 0, stCur = tower.tempShield || 0;
-    const shieldTotal = sfCur + stCur;
+    // v51.6：第三种护盾"护盾"——entity.plainShield 是 CombatSystem 每帧缓存的汇总值
+    // （见 EffectRegistry.plainShieldOf 的头注），与另外两种护盾同一个读法。
+    const spCur = tower.plainShield || 0;
+    const shieldTotal = sfCur + stCur + spCur;
     // 与 2D 画板一致的比例逻辑：HP+护盾同条，总和超过最大值时整体按比例压缩
-    const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP;
-    let hpDraw = hpFrac, sfDraw = sfFracRaw, stDraw = stFracRaw;
-    const totalFrac = hpFrac + sfFracRaw + stFracRaw;
+    const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP, spFracRaw = spCur / maxHP;
+    let hpDraw = hpFrac, sfDraw = sfFracRaw, stDraw = stFracRaw, spDraw = spFracRaw;
+    const totalFrac = hpFrac + sfFracRaw + stFracRaw + spFracRaw;
     if (totalFrac > 1) {
       const scale = 1 / totalFrac;
-      hpDraw *= scale; sfDraw *= scale; stDraw *= scale;
+      hpDraw *= scale; sfDraw *= scale; stDraw *= scale; spDraw *= scale;
     }
     const hpBar2 = card.querySelector(`#tower-hp-${id}`);
     if (hpBar2) {
       hpBar2.style.width = (hpDraw * 100) + '%';
       this._applyFactionHpClass(hpBar2, tower);
     }
+    // v51.6：三段护盾在条上的排列必须和承伤顺序（①临时②固定③护盾）对应——越靠外
+    // （离生命值越远）越先被打掉，越靠内（贴着生命值）越晚被打掉，玩家一眼就能看出
+    // "先掉的是哪一段"。排列：HP、护盾（最后吃，贴 HP）、固定护盾（第二个吃）、
+    // 临时护盾（最外层，最先吃）——与 _absorbByShields 的吸收顺序互为镜像。
+    const spBar = card.querySelector(`#tower-sp-${id}`);
+    if (spBar) { spBar.style.left = (hpDraw * 100) + '%'; spBar.style.width = (spDraw * 100) + '%'; }
     const sfBar = card.querySelector(`#tower-sf-${id}`);
-    if (sfBar) { sfBar.style.left = (hpDraw * 100) + '%'; sfBar.style.width = (sfDraw * 100) + '%'; }
+    if (sfBar) { sfBar.style.left = ((hpDraw + spDraw) * 100) + '%'; sfBar.style.width = (sfDraw * 100) + '%'; }
     const stBar = card.querySelector(`#tower-st-${id}`);
-    if (stBar) { stBar.style.left = ((hpDraw + sfDraw) * 100) + '%'; stBar.style.width = (stDraw * 100) + '%'; }
+    if (stBar) { stBar.style.left = ((hpDraw + spDraw + sfDraw) * 100) + '%'; stBar.style.width = (stDraw * 100) + '%'; }
 
     const hpText = card.querySelector(`#tower-hptext-${id}`);
     if (hpText) hpText.textContent = `${Math.round(tower.currentHP)}/${Math.round(maxHP)}`;   // v47：去掉 HP 前缀（条本身就是血条），并居中显示
@@ -1365,6 +1375,7 @@ export class UIManager {
           <div class="bar-hp" id="minion-hp-${minion.id}"></div>
           <div class="bar-shield-fixed" id="minion-sf-${minion.id}"></div>
           <div class="bar-shield-temp" id="minion-st-${minion.id}"></div>
+          <div class="bar-shield-plain" id="minion-sp-${minion.id}"></div>
         </div>
       </div>
       <div class="bar-text">
@@ -1402,27 +1413,31 @@ export class UIManager {
     const maxHP = stats.maxHP || 1;
     const hpFrac = Math.max(0, Math.min(1, minion.currentHP / maxHP));
     const sfCur = minion.shieldFixedCurrent || 0, stCur = minion.tempShield || 0;
-    const shieldTotal = sfCur + stCur;
+    const spCur = minion.plainShield || 0;
+    const shieldTotal = sfCur + stCur + spCur;
 
     this._stepTrailBar(card.querySelector(`#minion-trail-${id}`), hpFrac);
 
     // 与 2D 画板一致：HP+护盾同条，超过最大值整体按比例压缩
-    const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP;
-    let hpDraw = hpFrac, sfDraw = sfFracRaw, stDraw = stFracRaw;
-    const totalFrac = hpFrac + sfFracRaw + stFracRaw;
+    const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP, spFracRaw = spCur / maxHP;
+    let hpDraw = hpFrac, sfDraw = sfFracRaw, stDraw = stFracRaw, spDraw = spFracRaw;
+    const totalFrac = hpFrac + sfFracRaw + stFracRaw + spFracRaw;
     if (totalFrac > 1) {
       const scale = 1 / totalFrac;
-      hpDraw *= scale; sfDraw *= scale; stDraw *= scale;
+      hpDraw *= scale; sfDraw *= scale; stDraw *= scale; spDraw *= scale;
     }
     const hpBar = card.querySelector(`#minion-hp-${id}`);
     if (hpBar) {
       hpBar.style.width = (hpDraw * 100) + '%';
       this._applyFactionHpClass(hpBar, minion);
     }
+    // 排列同塔卡片：HP、护盾（贴 HP，最后吃）、固定护盾、临时护盾（最外层，最先吃）。
+    const spBar = card.querySelector(`#minion-sp-${id}`);
+    if (spBar) { spBar.style.left = (hpDraw * 100) + '%'; spBar.style.width = (spDraw * 100) + '%'; }
     const sfBar = card.querySelector(`#minion-sf-${id}`);
-    if (sfBar) { sfBar.style.left = (hpDraw * 100) + '%'; sfBar.style.width = (sfDraw * 100) + '%'; }
+    if (sfBar) { sfBar.style.left = ((hpDraw + spDraw) * 100) + '%'; sfBar.style.width = (sfDraw * 100) + '%'; }
     const stBar = card.querySelector(`#minion-st-${id}`);
-    if (stBar) { stBar.style.left = ((hpDraw + sfDraw) * 100) + '%'; stBar.style.width = (stDraw * 100) + '%'; }
+    if (stBar) { stBar.style.left = ((hpDraw + spDraw + sfDraw) * 100) + '%'; stBar.style.width = (stDraw * 100) + '%'; }
 
     const hpText = card.querySelector(`#minion-hptext-${id}`);
     if (hpText) hpText.textContent = `${Math.round(minion.currentHP)}/${Math.round(maxHP)}`;   // 同上

@@ -66,11 +66,18 @@ body {
    改动前它们各自把 surface + blur + 圆角 + 边框 + 阴影抄了一遍（#topbar 一份、
    #canvasControls 一份、#worldHud 一份），于是"统一设计"这件事每次都只统一了两块。
    现在只有这一处定义，改一次四块一起变 —— 与本仓库对逻辑的要求同一个道理。 */
+/* Q18 修复：用户"毛玻璃效果要统一到所有窗口……目前主界面四个角的工具条、单位属性
+   窗口等都没有应用这个效果。"——技术上这里本来就有 backdrop-filter，但用的是旧的
+   纯色 var(--surface)（0.72 不透明度、无高光），跟后来给弹窗/悬浮预览定下的那套
+   "渐变高光 + 更透的深色底"（.modal-box / .hover-tip）看起来完全是两种质感，
+   在用户眼里就是"没有这个效果"。这里改用与 .hover-tip 完全相同的配方（同一档
+   blur(14px)，弹窗 .modal-box 用的是更强的 22px——那是更突出的大面板，量级不同，
+   不该照抄），四块浮层与悬浮预览/弹窗从此是同一套玻璃质感。 */
 .hud-panel {
   position: absolute; z-index: 20;
   display: flex; align-items: center; gap: var(--gap-sm);
   padding: 7px 12px;
-  background: var(--surface);
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 50%), rgba(22,27,34,0.6);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
@@ -148,7 +155,9 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
      左上角就变高，属性面板又被压在底下。量出来才是与布局无关的做法。 */
   position: absolute; top: 81px; left: 12px; width: 352px; max-width: 82vw;
   max-height: calc(100% - 93px); overflow-y: auto; z-index: 30;
-  background: var(--surface); border: 1px solid var(--glass-border);
+  /* Q18：与 .hud-panel 同一套玻璃配方（理由见那边的注释），不再是更不透明的旧版 var(--surface)。 */
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 50%), rgba(22,27,34,0.6);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); display: none;
   box-shadow: var(--shadow-sm);
@@ -467,6 +476,11 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: width 0.12s linear, background 0.2s; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
+/* v51.6：第三种护盾"护盾"（不衰减不回复）——特意不用白色斜纹（那是另外两种护盾
+   已经用掉的视觉语言），用纯色暖金色区分，"实心不带纹理"也暗示它的性质更"静态"
+   （不像固定/临时护盾那样会随时间变化）。贴在血条最内侧（挨着生命值），
+   与承伤顺序①临时②固定③护盾互为镜像——见 updateTowerCard/updateMinionCard 的排列注释。 */
+.bar-shield-plain { position: absolute; top: 0; height: 100%; background: rgba(255,213,79,0.85); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }
 /* ==================== v47：血条上的读数 ====================
    用户："进度条上的 HP XX/XXX 居中显示为 XX/XX（没有 HP 了），护盾那个靠右

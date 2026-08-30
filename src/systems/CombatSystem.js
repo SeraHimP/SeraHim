@@ -239,6 +239,13 @@ export class CombatSystem {
         entity.tempShield -= entity.tempShield * decayPct * dt;
         if (entity.tempShield < 0.01) entity.tempShield = 0;
       }
+
+      // v51.6：第三种护盾"护盾"（不衰减不回复，见 EffectRegistry.plainShieldOf 的头注）。
+      // 真正的余量记在挂给这个实体的 kind:'shield' 效果实例上（_absorbByShields 直接
+      // 扣那里），这里只是缓存一份汇总值到 entity.plainShield——UI 卡片、3D 血条这些
+      // 渲染层跟 tempShield/shieldFixedCurrent 同一个读法：读实体上的一个普通字段，
+      // 不用各自再去问一遍 EffectRegistry。
+      entity.plainShield = this.effects.plainShieldOf(entity.id);
     }
 
     const towers = this.entities.getAllTowers(true);
@@ -1218,6 +1225,21 @@ export class CombatSystem {
       target.shieldFixedCurrent = Math.max(0, fixedShield - absorbedByFixed / shieldFactor);
       remaining -= absorbedByFixed;
     }
+
+    // v51.6：第三种护盾"护盾"（kind:'shield'，不衰减不回复）——用户定稿的承伤顺序
+    // 是①临时护盾②固定护盾③护盾，前两者吃不完的伤害才轮到它。余量记在各自的
+    // 效果实例上（可能同时有多个来源，如钢铁烈阳护盾+图腾壁垒叠在同一个单位身上），
+    // 按 getEffects 返回的自然顺序（创建先后）依次扣，扣到 0 就换下一个来源——
+    // 不强行按比例摊薄，谁先来的就先扛，逻辑简单也符合直觉。
+    if (remaining > 0) {
+      for (const eff of this.effects.getEffects(target.id)) {
+        if (remaining <= 0) break;
+        if (eff.blueprint.kind !== 'shield' || !(eff.shieldRemaining > 0)) continue;
+        const absorbed = Math.min(remaining, eff.shieldRemaining * shieldFactor);
+        eff.shieldRemaining = Math.max(0, eff.shieldRemaining - absorbed / shieldFactor);
+        remaining -= absorbed;
+      }
+    }
     return remaining;
   }
 
@@ -1361,8 +1383,10 @@ export class CombatSystem {
     if (!grudgeAmp.protective && grudgeAmp.k !== 1) damage *= grudgeAmp.k;
     damage *= this._dragonVsMinionBonus(attacker, target);
 
-    // 若目标当前持有护盾，额外造成一定比例伤害（如闪电杖破盾+7%）
-    const shieldBeforeHit = (target.tempShield || 0) + (target.shieldFixedCurrent || 0);
+    // 若目标当前持有护盾，额外造成一定比例伤害（如闪电杖破盾+7%）。
+    // v51.6：第三种护盾"护盾"（entity.plainShield，见 _absorbByShields 头注）
+    // 同样算"持有护盾"，不能漏了这一档。
+    const shieldBeforeHit = (target.tempShield || 0) + (target.shieldFixedCurrent || 0) + (target.plainShield || 0);
     if (options.bonusVsShieldPct && shieldBeforeHit > 0) {
       damage *= (1 + options.bonusVsShieldPct / 100);
     }
