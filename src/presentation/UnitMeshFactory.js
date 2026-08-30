@@ -23,7 +23,24 @@ import { CONFIG } from '../data/Config.js';
 const _geoCache = new Map();
 const _matCache = new Map();
 
-// ---------- 合并工具：把 [{geo, matrix, color}] 压成单个带顶点色的 BufferGeometry ----------
+// ==================== Week2·Day6：三平面盒式投影 UV ====================
+// docs/Q4-RENDERING-REDESIGN.md §1.2 的审计结论："单位无 UV——mergeParts() 只写了
+// position/normal/color 三个 attribute"。这里补上第四个。造型是几十种手工拼装的
+// 几何体拼在一起（不是一整块能好好做接缝展开的网格），逐部件手工 UV 展开工作量
+// 大且这批模型后续还会跟着规则频繁改（见 docs 第 4 节推荐理由 2），所以按每个
+// 顶点法线的主导轴选一个投影平面（XY/YZ/XZ 三选一，"三平面盒式投影/triplanar
+// box mapping"，程序化几何的标准兜底做法），不需要为每个部件手工展开，新造型
+// 天然免疫（与 pack() 里"贴地强制对齐"同一个"在合并层统一兜底"的思路）。
+// 这一步只生成 UV 属性，材质还没换、没有任何贴图会用到它——纯管线搭建，画面不变。
+const UV_TEXEL_SCALE = 1 / 12;   // 世界单位→UV 的缩放，决定投影出来的贴图密度
+function boxProjectUV(px, py, pz, nx, ny, nz) {
+  const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+  if (ax >= ay && ax >= az) return [pz * UV_TEXEL_SCALE, py * UV_TEXEL_SCALE];
+  if (ay >= ax && ay >= az) return [px * UV_TEXEL_SCALE, pz * UV_TEXEL_SCALE];
+  return [px * UV_TEXEL_SCALE, py * UV_TEXEL_SCALE];
+}
+
+// ---------- 合并工具：把 [{geo, matrix, color}] 压成单个带顶点色+UV 的 BufferGeometry ----------
 function mergeParts(parts) {
   let n = 0;
   const prepped = parts.map(({ geo, matrix, color }) => {
@@ -35,13 +52,18 @@ function mergeParts(parts) {
     return { g: nonIndexed, c: new THREE.Color(color) };
   });
   const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  const uv = new Float32Array(n * 2);
   let o = 0;
   for (const { g, c } of prepped) {
     const p = g.getAttribute('position'), q = g.getAttribute('normal');
     for (let i = 0; i < p.count; i++) {
-      pos[(o + i) * 3] = p.getX(i); pos[(o + i) * 3 + 1] = p.getY(i); pos[(o + i) * 3 + 2] = p.getZ(i);
-      nrm[(o + i) * 3] = q.getX(i); nrm[(o + i) * 3 + 1] = q.getY(i); nrm[(o + i) * 3 + 2] = q.getZ(i);
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const nx = q.getX(i), ny = q.getY(i), nz = q.getZ(i);
+      pos[(o + i) * 3] = x; pos[(o + i) * 3 + 1] = y; pos[(o + i) * 3 + 2] = z;
+      nrm[(o + i) * 3] = nx; nrm[(o + i) * 3 + 1] = ny; nrm[(o + i) * 3 + 2] = nz;
       col[(o + i) * 3] = c.r; col[(o + i) * 3 + 1] = c.g; col[(o + i) * 3 + 2] = c.b;
+      const [u, v] = boxProjectUV(x, y, z, nx, ny, nz);
+      uv[(o + i) * 2] = u; uv[(o + i) * 2 + 1] = v;
     }
     o += p.count;
     g.dispose();
@@ -50,6 +72,7 @@ function mergeParts(parts) {
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   out.computeBoundingBox();
   return out;
 }
@@ -1205,19 +1228,36 @@ export function dragonMesh(key, color, ancient, size = null) {
   return { geo: hit.geo, mat: unitMaterial(false), topY: hit.topY };
 }
 
-/** 单位材质：顶点色 + 受光。幽灵（等待重生的水晶）走半透明。 */
+/**
+ * 单位材质：顶点色 + 受光。幽灵（等待重生的水晶）走半透明。
+ *
+ * ==================== Week2·Day6：Lambert → Standard ====================
+ * docs/Q4-RENDERING-REDESIGN.md 第 11 节 P0："材质从 Lambert 换成 Standard（先不挂
+ * 任何新贴图，验证换材质本身不会让画面变化）"。Standard 是 PBR 材质，默认参数
+ * 下环境反射/高光响应与 Lambert 的纯漫反射模型不是同一套数学，不能假设零配置换皮
+ * 就画面不变——这里显式钉死 roughness:1（完全粗糙，没有镜面高光，最贴近 Lambert
+ * 的观感）、metalness:0（非金属，反射率走的是普通电介质那条低反射路径）、
+ * envMapIntensity:0（场景没挂环境贴图，这个不影响，但显式写零，以后万一加了
+ * 环境贴图也不会让单位平白冒出一层不该有的反射）。这三项是"贴图槽位化"（第 4 节
+ * 的推荐理由）里第一批占位——贴图接进来之后 roughness/metalness 会换成从贴图采样，
+ * 现在先给纯色兜底值。
+ */
 export function unitMaterial(ghost) {
   const k = ghost ? 'ghost' : 'solid';
   let m = _matCache.get(k);
   if (!m) {
-    m = new THREE.MeshLambertMaterial({
+    m = new THREE.MeshStandardMaterial({
       vertexColors: true,
       transparent: !!ghost,
       opacity: ghost ? 0.35 : 1,
       depthWrite: !ghost,
-      // v47：昼夜染色的落点。MeshLambert 的 color 与顶点色**相乘**，
-      // 所以白色 = 完全不改（改动前的行为），越暗越往当时的天空色压。
-      // 初值必须是白：材质是共享缓存的，第一帧在 setUnitTint 之前就会被用到。
+      roughness: 1,
+      metalness: 0,
+      envMapIntensity: 0,
+      // v47：昼夜染色的落点。color 与顶点色**相乘**，所以白色 = 完全不改
+      // （Lambert 时代就是这个行为，Standard 的 color/vertexColors 语义相同），
+      // 越暗越往当时的天空色压。初值必须是白：材质是共享缓存的，第一帧在
+      // setUnitTint 之前就会被用到。
       color: 0xffffff,
     });
     _matCache.set(k, m);
