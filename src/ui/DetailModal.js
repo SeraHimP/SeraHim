@@ -12,7 +12,7 @@ export const STAT_LABELS = {
   // 改名之后名字才真正对上语义。
   lifeStealPct: '全能吸血', healShieldPowerPct: '治疗护盾强度',
   armorPenFlat: '固定护甲穿透', armorPenPercent: '护甲穿透',
-  magicPenFlat: '固定法穿', magicPenPercent: '法术穿透',
+  magicPenFlat: '固定法术穿透', magicPenPercent: '法术穿透',
   healthRegen: '生命回复', onHitPercentDamage: '攻击特效',
   shieldFixedMax: '固定护盾', baseAttackSpeed: '基础攻速',
   // v51：新增属性
@@ -22,6 +22,88 @@ export const STAT_LABELS = {
   maxMana: '最大法力', manaRegen: '法力回复',
 };
 
+/**
+ * ==================== v51.6：属性加成的统一展示块（共享实现） ====================
+ * 用户："技能/状态/天气等所有点开窗口中，关于属性的加减，都用天气属性那一套UI中
+ * 属性加减那个块。" ——天气/世界效应/状态详情三个弹窗都要用同一份，不能各写一份、
+ * 迟早走样。UIManager._modsGridHtml 直接委托这里，避免同一段渲染逻辑抄两遍。
+ * mods 形如 { statKey: { flat, percent } }；为空时返回空字符串，调用方自己决定
+ * 空状态怎么显示（"无增益"之类）。
+ */
+export function modsGridHtml(mods) {
+  const entries = Object.entries(mods || {});
+  if (!entries.length) return '';
+  return entries.map(([k, m]) => {
+    const label = STAT_LABELS[k] || k;
+    const parts = [];
+    if (m.flat) {
+      const v = Math.abs(m.flat) < 10 ? m.flat.toFixed(1) : Math.round(m.flat);
+      parts.push((m.flat > 0 ? '+' : '') + v);
+    }
+    if (m.percent) parts.push((m.percent > 0 ? '+' : '') + m.percent.toFixed(1) + '%');
+    return `<div class="a"><label>${label}</label><span>${parts.join(' ')}</span></div>`;
+  }).join('');
+}
+
+
+/**
+ * ==================== v51.6：技能数值说明——LoL 式颜色标注 + 简洁/详细切换 ====================
+ * 用户举例：【唯一被动——加固城防：防御塔获得（25%=10%【默认颜色】+5%法术强度【紫色】+
+ * 10%攻击力【橙色】+10%魔法抗性【亮蓝色】+5%护甲【皮革色】）伤害减免】，"参考 LoL 中
+ * 关于技能数值的描述，并且可选简洁显示、详细显示。简洁显示就省略计算公式"。
+ *
+ * 本仓库几乎所有 descTemplate 都已经统一用（数值=公式）这个括号形状写公式
+ * （Q5 定稿：外层【】已删，只剩这层圆括号），所以不需要每条技能单独改写——
+ * 提取一个通用的括号解析器就能覆盖全部技能，不用逐条技能手工加颜色标记。
+ *
+ * 颜色只认**已有属性**（STAT_LABELS 这份表——攻击力/护甲/魔抗等都是游戏里本来就有的
+ * 属性，不是为了上色新造的名字），公式里认不出的部分（固定数字、运算符、"×层数"
+ * 这类非属性文字）保持默认色，不强行上色。
+ */
+export const STAT_COLORS = {
+  abilityPower: '#b388ff',   // 法术强度——紫色
+  attackDamage: '#f0a03c',   // 攻击力——橙色（与属性面板"正向修正"同一个橙，含义一致）
+  magicResist: '#4fc3f7',    // 魔法抗性/魔抗——亮蓝色
+  armor: '#c19a6b',          // 护甲——皮革色
+};
+
+// 括号里"（数值=公式）"这个统一形状；数值段不含 = ( ) 三个字符，公式段允许任意字符
+// （护甲×7%这类算式、"每层1点+0.25%"这类连接词都要整段保留，只处理其中的属性名）。
+const FORMULA_RE = /（([^（）=]+)=([^（）]+)）/g;
+
+// 长名字优先匹配，避免"魔法抗性"被"抗性"之类的子串抢先命中（当前 STAT_LABELS
+// 里没有这种前缀重叠，这里排序是防止未来加新属性名时悄悄踩坑）。
+const _colorNames = Object.keys(STAT_COLORS)
+  .map((k) => [STAT_LABELS[k], STAT_COLORS[k]])
+  .filter(([label]) => label)
+  .sort((a, b) => b[0].length - a[0].length);
+
+function _colorizeFormula(formula) {
+  let html = formula;
+  for (const [label, color] of _colorNames) {
+    html = html.split(label).join(`<span style="color:${color};">${label}</span>`);
+  }
+  return html;
+}
+
+/**
+ * 把技能描述文本里的每一处"（数值=公式）"转成 HTML。
+ * concise=true（简洁）：整个括号连同公式一起吞掉，只留数值本身；
+ * concise=false（详细，默认）：保留括号，公式里认得出的属性按专属颜色标出。
+ * 返回的是 **HTML**，只能用在本来就走 innerHTML 的语境（弹窗/悬浮预览）——
+ * 编辑器里那几处技能描述预览框用的是 textContent，会把 <span> 原样显示成文字，
+ * 那些地方不要调用这个函数，直接用 renderSkillDescription 的纯文本结果即可。
+ */
+export function formatSkillFormulasHtml(text, { concise = false } = {}) {
+  if (!text) return text;
+  return text.replace(FORMULA_RE, (_, val, formula) => (concise ? val : `（${val}=${_colorizeFormula(formula)}）`));
+}
+
+// 简洁/详细是查看偏好，不是游戏数值——不进 Config.js（那是给"能改变数值行为"的
+// 参数用的），跨弹窗记住这一个会话内的选择即可，刷新页面重置回默认"详细"。
+let _skillDescMode = 'detail';
+export function getSkillDescMode() { return _skillDescMode; }
+export function setSkillDescMode(mode) { _skillDescMode = mode === 'concise' ? 'concise' : 'detail'; }
 
 export const DetailModal = {
   showTowerDetail(id, entityContainer, effectRegistry, attrCalc) {
@@ -41,50 +123,72 @@ export const DetailModal = {
   },
 
   showSkillDetail(def, instance, entity, ctx) {
-    const desc = renderSkillDescription(def, entity, ctx);
+    const desc = renderSkillDescription(def, entity, ctx) || def.description || '无';
     const disabled = instance && instance._disabled;
-    const lines = [
-      `📌 ${def.name}${disabled ? '（因装备特殊攻击方式武器而禁用）' : ''}`,
-      ``,
-      desc || def.description || '无',
-    ];
-    const html = `<pre style="white-space:pre-wrap;font-size:13px;line-height:1.9;">${lines.join('\n')}</pre>`;
-    this._showModal(`技能详情 - ${def.name}`, html);
+    const title = `📌 ${def.name}${disabled ? '（因装备特殊攻击方式武器而禁用）' : ''}`;
+    const renderBody = (mode) => formatSkillFormulasHtml(desc, { concise: mode === 'concise' });
+    const toggleHtml = `<div class="skill-mode-toggle">
+        <button class="skill-mode-btn" data-mode="detail">详细</button>
+        <button class="skill-mode-btn" data-mode="concise">简洁</button>
+      </div>`;
+    const mode = getSkillDescMode();
+    const body = `${toggleHtml}<pre style="white-space:pre-wrap;font-size:13px;line-height:1.9;" id="skillDescPre">${renderBody(mode)}</pre>`;
+    this._showModal(`技能详情 - ${def.name}`, body, {
+      afterMount: (modal) => {
+        const pre = modal.querySelector('#skillDescPre');
+        const btns = modal.querySelectorAll('.skill-mode-btn');
+        const setActive = (m) => btns.forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+        setActive(mode);
+        btns.forEach((b) => b.addEventListener('click', () => {
+          setSkillDescMode(b.dataset.mode);
+          setActive(b.dataset.mode);
+          pre.innerHTML = renderBody(b.dataset.mode);
+        }));
+      },
+    });
   },
 
+  /**
+   * ==================== v51.6：状态详情改走天气弹窗那一套网格样式 ====================
+   * 用户："状态窗口中属性变化那种我也想弄成天气窗口那种形式。" ——原来是纯文本
+   * 的 <pre> 逐行罗列（"　攻击力：+10"），现在属性类效果（kind:'stat'）走共用的
+   * modsGridHtml 网格；持续伤害/眩晕/展示类效果不是"属性数值"，没法塞进网格，
+   * 仍以文字说明列在网格下方。
+   */
   showEffectGroup(name, effects) {
-    const statNames = STAT_LABELS;
+    const mods = {};
+    const otherLines = [];
     let stacks = 1, hasStack = false;
-    const lines = [];
     for (const e of effects) {
       const bp = e.blueprint;
       if (bp.stackable && e.stacks > stacks) { stacks = e.stacks; hasStack = true; }
       if (bp.kind === 'stat' && bp.statKey) {
-        const label = statNames[bp.statKey] || bp.statKey;
         const flat = e.totalFlat || 0, pct = e.totalPercent || 0;
-        const parts = [];
-        if (flat) parts.push((flat > 0 ? '+' : '') + Math.round(flat * 10) / 10);
-        if (pct) parts.push((pct > 0 ? '+' : '') + Math.round(pct * 10) / 10 + '%');
-        lines.push(`　${label}：${parts.join('，') || '—'}`);
+        if (!flat && !pct) continue;
+        const m = mods[bp.statKey] || (mods[bp.statKey] = { flat: 0, percent: 0 });
+        m.flat += flat; m.percent += pct;
       } else if (bp.kind === 'dot') {
-        lines.push(`　持续伤害（${bp.damageType === 'true' ? '真实' : bp.damageType === 'physical' ? '物理' : '魔法'}）`);
+        otherLines.push(`持续伤害（${bp.damageType === 'true' ? '真实' : bp.damageType === 'physical' ? '物理' : '魔法'}）`);
       } else if (bp.kind === 'stun') {
-        lines.push(`　眩晕：无法行动`);
+        otherLines.push('眩晕：无法行动');
       } else if (bp.kind === 'display') {
-        lines.push(`　${bp.description || ''}`);
+        otherLines.push(bp.description || '');
       }
     }
     const remain = effects.reduce((m, e) => Math.max(m, e.remainingTime), 0);
     const permanent = effects.some(e => e.permanent || e.blueprint.duration <= 0);
-    const header = [
-      `📌 ${name}${hasStack ? `（${stacks}层）` : ''}`,
-      permanent ? '持续：常驻' : `剩余：${remain === Infinity ? '永久' : remain.toFixed(1) + 's'}`,
-      '',
-      '效果：',
-      ...lines,
-    ];
-    const html = `<pre style="white-space:pre-wrap;font-size:13px;line-height:1.9;">${header.join('\n')}</pre>`;
-    this._showModal(`效果详情 - ${name}`, html);
+    const gridHtml = modsGridHtml(mods);
+    const body = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:12px;color:var(--text-dim);">
+        ${hasStack ? `<span>${stacks} 层</span>` : ''}
+        <span>${permanent ? '持续：常驻' : `剩余：${remain === Infinity ? '永久' : remain.toFixed(1) + 's'}`}</span>
+      </div>
+      ${gridHtml ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">属性变化</div>
+        <div class="attrs" style="display:grid;">${gridHtml}</div>` : ''}
+      ${otherLines.length ? `<p style="font-size:12px;line-height:1.8;margin:${gridHtml ? '10px' : '0'} 0 0;">${otherLines.join('<br>')}</p>` : ''}
+      ${!gridHtml && !otherLines.length ? `<p style="font-size:12px;color:var(--text-mute);margin:0;">（无属性变化）</p>` : ''}
+    `;
+    this._showModal(`效果详情 - ${name}`, body);
   },
 
   showEffectDetail(effect) {
@@ -104,12 +208,12 @@ export const DetailModal = {
     const lines = [
       `#${entity.id} ${CONFIG.templates[entity.type]?.label || entity.type}`,
       `──────────────`,
-      `HP: ${Math.round(entity.currentHP)} / ${Math.round(stats.maxHP)}`,
+      `生命值: ${Math.round(entity.currentHP)} / ${Math.round(stats.maxHP)}`,
       `护盾: 固定 ${Math.round(entity.shieldFixedCurrent || 0)} / ${Math.round(stats.shieldFixedMax || 0)}  |  临时 ${Math.round(entity.tempShield || 0)}`,
       `攻击力: ${Math.round(stats.attackDamage)}`,
       `攻速: ${stats.baseAttackSpeed.toFixed(2)} (加成 ${Math.round(stats.bonusAttackSpeedPct)}%)`,
       `护甲: ${Math.round(stats.armor)}  |  魔抗: ${Math.round(stats.magicResist)}`,
-      `穿透: ${Math.round(stats.armorPenPercent)}% + ${Math.round(stats.armorPenFlat)}  |  法穿: ${Math.round(stats.magicPenPercent)}% + ${Math.round(stats.magicPenFlat)}`,
+      `穿透: ${Math.round(stats.armorPenPercent)}% + ${Math.round(stats.armorPenFlat)}  |  法术穿透: ${Math.round(stats.magicPenPercent)}% + ${Math.round(stats.magicPenFlat)}`,
       `伤害减免: ${Math.round(stats.damageReduction)}%  |  格挡: ${Math.round(stats.damageBlock)}`,
       `伤害转化: ${Math.round(stats.damageConvertPct)}%  |  全能吸血: ${Math.round(stats.lifeStealPct)}%`,
       `攻击特效: 固定 ${Math.round(stats.onHitDamage)}  |  %当前生命 ${Math.round(stats.onHitPercentDamage)}%`,
@@ -127,7 +231,7 @@ export const DetailModal = {
     this._showModal(`📋 ${label} 详情`, html);
   },
 
-  _showModal(title, contentHtml) {
+  _showModal(title, contentHtml, opts = {}) {
     // 移除已存在的模态框
     const existing = document.querySelector('.modal-overlay:last-child');
     if (existing) existing.remove();
@@ -142,6 +246,10 @@ export const DetailModal = {
       footer: '<div class="modal-actions"><button id="detailCloseBtn" class="primary">关闭</button></div>',
     });
     document.body.appendChild(modal);
+    // v51.6：技能详情的简洁/详细切换按钮需要在挂载后另外接线（重新渲染 body 里
+    // 那段 <pre>），这段挂载逻辑只有 showSkillDetail 用得到，所以做成可选回调，
+    // 不强加给其它走 _showModal 的调用方（它们不传就什么都不多做）。
+    if (opts.afterMount) opts.afterMount(modal);
     modal.querySelector('#detailCloseBtn').addEventListener('click', () => modal.remove());
   }
 };

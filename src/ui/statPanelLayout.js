@@ -49,9 +49,9 @@ export function extAttrGroups() {
       { key: 'onHitPercentDamage', label: '攻击特效(%当前生命)', suffix: '%' },
     ] },
     { title: '穿透', rows: [
-      { key: 'armorPenFlat', label: '固定穿甲', suffix: '' },
+      { key: 'armorPenFlat', label: '固定护甲穿透', suffix: '' },
       { key: 'armorPenPercent', label: '护甲穿透%', suffix: '%' },
-      { key: 'magicPenFlat', label: '固定法穿', suffix: '' },
+      { key: 'magicPenFlat', label: '固定法术穿透', suffix: '' },
       { key: 'magicPenPercent', label: '法术穿透%', suffix: '%' },
     ] },
     { title: '防御', rows: [

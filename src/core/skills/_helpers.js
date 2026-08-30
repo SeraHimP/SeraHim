@@ -16,8 +16,12 @@ export function renderSkillDescription(def, entity, ctx) {
   // 差别在于占位符——子技能各自有 computeCurrent/getDisplayValue，分开渲染才能填出真实的
   // "当前封顶节点/当前成长层数"；对拼好的整段渲染则找不到归属，只会被兜底成 0。
   if (def.mergedSkills && def.mergedSkills.length) {
+    // v51.6：用户报的"两个被动之间连着显示"——这里原来是 join('')，两条被动的文本
+    // 干脆粘在一起，没有任何分隔。展示这份文本的地方（DetailModal 的 <pre>、悬浮
+    // 预览的 <div>）统一用了 white-space:pre-wrap，所以只要换成 join('\n')，
+    // \n 就会渲染成真正的换行——每条被动独占一行。
     const parts = resolveMergedIds(def, entity).map((id) => renderSkillDescription(lookupSkill(id), entity, ctx));
-    const joined = parts.filter(Boolean).join('');
+    const joined = parts.filter(Boolean).join('\n');
     if (joined) return joined;
   }
   if (!def.descTemplate) return def.description || '';
@@ -101,11 +105,13 @@ export function lookupSkill(id) { return _lookup ? _lookup(id) : null; }
  * @param {boolean} tpl  取 descTemplate（true）还是 description（false）
  */
 export function mergedDescription(ids, tpl) {
+  // v51.6：同上——静态兜底文本（没有 entity 上下文时，如技能百科/模板预览）
+  // 也要每条被动独占一行，不能连着显示，所以同样用 '\n' 分隔。
   return (ids || []).map(id => {
     const d = lookupSkill(id);
     if (!d) return '';
     return (tpl ? (d.descTemplate || d.description) : (d.description || d.descTemplate)) || '';
-  }).filter(Boolean).join('');
+  }).filter(Boolean).join('\n');
 }
 
 // 统一光环范围（所有小兵光环类被动共用，此前炮兵/超级兵150、图腾100、术法120不一致）

@@ -624,6 +624,28 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   margin-top: 8px; padding: 9px 12px; background: var(--bg-deep); border: 1px solid var(--glass-border);
   border-radius: var(--radius-xs); font-size: 12px; color: var(--text-dim); min-height: 36px; line-height: 1.55;
 }
+/* ==================== v51.6：悬浮预览（属性/技能/状态/天气等） ====================
+   用户："鼠标移到上面，就在鼠标旁边显示出窗口，就是不需要再点开就能看了（目前
+   点开查看也保留）。" 固定定位、不吃鼠标事件（pointer-events:none，否则会挡住
+   鼠标移出目标元素的判定，出现"移到提示框上卡住不消失"）；跟随鼠标出现在旁边，
+   贴近视口边缘时 UIManager._positionHoverTip 会翻到另一侧，不会被裁掉。 */
+.hover-tip {
+  position: fixed; z-index: 9999; display: none; pointer-events: none;
+  max-width: 320px; padding: 10px 12px; background: var(--surface-2, #1c232b);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow); font-size: 12px; line-height: 1.6; color: var(--text);
+}
+.hover-tip .attrs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin-top: 4px; }
+/* ==================== v51.6：技能详情的简洁/详细切换 ====================
+   参考 LoL 技能数值说明：详细模式把公式里认得出的属性上色（DetailModal.STAT_COLORS），
+   简洁模式只留最终数值。这两颗按钮就是切换开关，选中的那颗高亮。 */
+.skill-mode-toggle { display: flex; gap: 6px; margin-bottom: 10px; }
+.skill-mode-btn {
+  padding: 4px 12px; font-size: 12px; border-radius: var(--radius-xs);
+  border: 1px solid var(--glass-border); background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.skill-mode-btn.active { background: rgba(79,209,197,0.18); border-color: rgba(79,209,197,0.4); color: var(--text); }
+
 /* 游戏性·批量加技能/加状态：阵营×单位类型矩阵——用户定稿"铺平成一张表直接勾格子"。 */
 .gp-matrix-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: var(--radius-xs); }
 .gp-matrix { width: 100%; border-collapse: collapse; font-size: 12px; }

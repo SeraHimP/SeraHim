@@ -1857,4 +1857,140 @@ async function world() {
     && rebuilt.dragonsoul_blood === DRAGON_ELEMENTS.blood.color);
 }
 
+// ==================== v51.6：Q9——状态详情弹窗改走天气弹窗那套网格样式 ====================
+// 用户："状态窗口中属性变化那种我也想弄成天气窗口那种形式。"
+{
+  const { modsGridHtml, STAT_LABELS } = await import('../src/ui/DetailModal.js');
+  T('状①-DetailModal 导出共用的 modsGridHtml，UIManager 直接委托它（不再各写一份）',
+    typeof modsGridHtml === 'function'
+    && /_modsGridHtml\(mods\) \{ return modsGridHtml\(mods\); \}/.test(srcOf('src/ui/UIManager.js')));
+  T('状②-modsGridHtml 用 .a/.attrs 这套现成的网格 class（与天气/世界弹窗同一视觉语言）',
+    /class="a"><label>\$\{label\}<\/label><span>\$\{parts\.join\(' '\)\}<\/span>/.test(srcOf('src/ui/DetailModal.js')));
+
+  // 直接跑一遍 showEffectGroup 的核心逻辑，验证 kind:'stat' 的效果被折算进 mods
+  // 而不再是逐行拼"　label：+10"这种纯文本。
+  const fakeEff = (statKey, flat, percent, stackable = false, stacks = 1) => ({
+    blueprint: { kind: 'stat', statKey, stackable }, totalFlat: flat, totalPercent: percent,
+    stacks, remainingTime: Infinity, permanent: true,
+  });
+  const mods = {};
+  for (const e of [fakeEff('attackDamage', 10, 0), fakeEff('armor', 0, 5)]) {
+    const m = mods[e.blueprint.statKey] || (mods[e.blueprint.statKey] = { flat: 0, percent: 0 });
+    m.flat += e.totalFlat || 0; m.percent += e.totalPercent || 0;
+  }
+  const grid = modsGridHtml(mods);
+  T('状③-属性类效果折算进 mods 后能生成对应的网格行（标签走 STAT_LABELS 中文名）',
+    grid.includes(STAT_LABELS.attackDamage) && grid.includes('+10')
+    && grid.includes(STAT_LABELS.armor) && grid.includes('+5.0%'));
+}
+
+// ==================== v51.6：Q8——属性/技能/状态/天气/世界 tile 悬浮即预览 ====================
+// 用户："鼠标移动到属性窗口的属性/技能/状态/天气等上面时，我想鼠标移到上面，就在鼠标
+// 旁边显示出窗口，就是不需要再点开就能看了（目前点开查看也保留）。"
+{
+  const um = srcOf('src/ui/UIManager.js');
+  const html = (await import('fs')).default.readFileSync('index.html', 'utf8');
+
+  T('悬①-悬浮浮层的 CSS 存在且 pointer-events:none（否则挡住 mouseleave 判定，会卡住不消失）',
+    /\.hover-tip \{[^}]*pointer-events:\s*none/.test(html));
+  T('悬②-三个核心方法都存在（显示/跟随/隐藏）',
+    /_showHoverTip\(html, x, y\) \{/.test(um) && /_positionHoverTip\(x, y\) \{/.test(um) && /_hideHoverTip\(\) \{/.test(um));
+  T('悬③-属性行用 mouseover/mouseout（会冒泡）而非 mouseenter/mouseleave，才能走事件委托（属性行每帧重建，逐行绑定会随旧节点一起丢失——技能栏/效果栏当年就是这个坑）',
+    /selCard\.addEventListener\('mouseover', \(e\) => \{[\s\S]{0,300}_hoverBodyForStat/.test(um));
+  T('悬④-点击查看依旧保留（悬浮预览是新增，不是替换）',
+    /selCard\.addEventListener\('click', \(e\) => \{[\s\S]{0,300}_showStatDoc/.test(um));
+  T('悬⑤-技能格/状态格的悬浮预览与点击共用同一份查找逻辑（inst/def、effName/group 的取法一致），不是另起一套',
+    /const inst = unit\?\._skillInstances\?\.find\(s => s\.id === skillId\);[\s\S]{0,120}_hoverBodyForSkill/.test(um)
+    && /group\.length\) this\._hoverBodyForEffect|group\.length\) this\._showHoverTip\(this\._hoverBodyForEffect/.test(um));
+  T('悬⑥-天气行/世界行的悬浮预览直接复用点击弹窗同一份 body 构建函数（_weatherDetailBody/_worldDetailBody），不是重新拼一份文案',
+    /_showHoverTip\(this\._worldDetailBody\(row\)/.test(um) && /_showHoverTip\(this\._weatherDetailBody\(row\)/.test(um));
+
+  // 真的跑一遍：三个 _hoverBodyForXxx 在没有真实 DOM 的情况下也能拼出内容
+  // （不依赖 document，只依赖 this.attrCalc / this.effects / statDoc，用假 this 直接调）。
+  const { UIManager } = await import('../src/ui/UIManager.js').catch(() => ({}));
+  if (UIManager) {
+    const { ents, fx, attr, CONFIG } = await world();
+    const t = mkEntity(ents, 'tower', { stats: { attackDamage: 152 } }, CONFIG);
+    const ui = Object.create(UIManager.prototype);
+    ui.attrCalc = attr; ui.effects = fx; ui.entities = ents;
+    const statHtml = ui._hoverBodyForStat('attackDamage', t);
+    T('悬⑦-_hoverBodyForStat 能拼出属性名+当前值+基础描述，不依赖 DOM', statHtml.includes(statDoc('attackDamage').label) && statHtml.length > 20);
+
+    const effHtml = ui._hoverBodyForEffect('测试效果', [{ blueprint: { kind: 'stat', statKey: 'armor' }, totalFlat: 10, totalPercent: 0 }]);
+    T('悬⑧-_hoverBodyForEffect 与 DetailModal.showEffectGroup 同款折算逻辑，效果名+属性名都在', effHtml.includes('测试效果') && effHtml.includes('+10'));
+    const emptyHtml = ui._hoverBodyForEffect('空效果', [{ blueprint: { kind: 'dot' }, totalFlat: 0, totalPercent: 0 }]);
+    T('悬⑨-非属性类效果（如持续伤害）折算不出 mods 时显示"无属性变化"兜底，不留空白', emptyHtml.includes('无属性变化'));
+  }
+}
+
+// ==================== v51.6：Q10——技能描述换行修复 + 口水词/简写/英文残留审查 ====================
+// 用户："目前两个被动之间是连着显示的，应该是每个被动是单独一行……并且我看还有些属性
+// 是英文显示的，应该改成中文……属性的描述绝对不允许简写！一定要描述全称！"
+{
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+
+  // ---- 换行：合并展示的身份技能，两条被动之间要有真正的换行，不是粘在一起 ----
+  T('文①-mergedDescription/renderSkillDescription 合并多条子技能文案时用 \\n 分隔（不再是连着显示）',
+    /\.join\('\\n'\)/.test(srcOf('src/core/skills/_helpers.js')));
+  T('文②-实际跑一遍：枢纽塔身份技能的两条被动文案之间真的有换行符',
+    SkillLibrary.core_tier_hq.description.includes('\n')
+    && SkillLibrary.core_tier_hq.description.split('\n').length === 2);
+
+  // ---- 英文残留：扫全部技能的 description/descTemplate，不该有游戏内文字用英文字段名 ----
+  {
+    let leaks = 0;
+    for (const def of Object.values(SkillLibrary)) {
+      for (const field of ['description', 'descTemplate']) {
+        let v; try { v = def[field]; } catch (e) { continue; }
+        if (typeof v !== 'string') continue;
+        // {val}/{amp}/{dr}/{blue}/{red} 这类占位符会在渲染时被替换成数值，不算残留；
+        // 排除掉花括号占位符本身以后，正文里不该再剩任何英文单词。
+        const stripped = v.replace(/\{[a-zA-Z_]+\}/g, '');
+        if (/[A-Za-z]{2,}/.test(stripped)) leaks++;
+      }
+    }
+    T('文③-全部技能文案扫描不到英文属性字段名残留（此前雷魂/风魂/霜魂/钢魂/血魂/熔魂/星魂/蚀魂的"常驻加持"都漏了翻译）',
+      leaks === 0);
+  }
+
+  // ---- 简写：magicPenFlat 与它的同族 armorPenFlat 用词对称，不再一个全称一个简写 ----
+  const dm = srcOf('src/ui/DetailModal.js');
+  const spl = srcOf('src/ui/statPanelLayout.js');
+  T('文④-DetailModal.STAT_LABELS 里 magicPenFlat 不再是简写"固定法穿"（与 armorPenFlat 的"固定护甲穿透"对称）',
+    /magicPenFlat: '固定法术穿透'/.test(dm) && !/固定法穿'/.test(dm));
+  T('文⑤-属性面板"穿透"组同一处也已同步改成全称（这是玩家真正看到的那一份，不只是弹窗里的表）',
+    /armorPenFlat', label: '固定护甲穿透'/.test(spl) && !/固定穿甲/.test(spl));
+  T('文⑥-防御塔镀层描述里的 "HP" 已改成中文"生命值"', /生命值跌破80%/.test(srcOf('src/core/skills/towerPassives.js')));
+
+  // ---- 一致性：（数值=公式）这个括号形状要统一，不能有的技能漏了括号 ----
+  {
+    let bad = 0;
+    for (const def of Object.values(SkillLibrary)) {
+      const t = def.descTemplate;
+      if (typeof t !== 'string') continue;
+      const re = /(.)\{[a-zA-Z_]+\}=/g;
+      let m;
+      while ((m = re.exec(t))) { if (m[1] !== '（') bad++; }
+    }
+    T('文⑦-所有"{val}=公式"都统一包在圆括号里（山魂此前漏了括号，没有 entity 上下文时会显示成"山魂：0=6%伤害减免…"这种读不懂的文字）',
+      bad === 0);
+  }
+
+  // ---- LoL 式颜色标注 + 简洁/详细切换（message G）----
+  const { formatSkillFormulasHtml, getSkillDescMode, setSkillDescMode, STAT_COLORS, STAT_LABELS } = await import('../src/ui/DetailModal.js');
+  T('文⑧-颜色表只认已有属性（STAT_COLORS 的键都是 STAT_LABELS 里已经有的属性名，不是新造的）',
+    Object.keys(STAT_COLORS).every(k => k in STAT_LABELS));
+  const sample = '（38=3+护甲×7%+法术强度×50%）';
+  const detailHtml = formatSkillFormulasHtml(sample, { concise: false });
+  const conciseHtml = formatSkillFormulasHtml(sample, { concise: true });
+  T('文⑨-详细模式：公式里认得出的属性按专属颜色标出（护甲=皮革色、法术强度=紫色），数字/运算符不受影响',
+    detailHtml.includes(`color:${STAT_COLORS.armor}`) && detailHtml.includes(`color:${STAT_COLORS.abilityPower}`)
+    && detailHtml.includes('38') && detailHtml.includes('×7%'));
+  T('文⑩-简洁模式：整个公式连括号一起吞掉，只留最终数值', conciseHtml === '38');
+  T('文⑪-简洁/详细的选择是模块级状态，弹窗与悬浮预览共用同一份（切一次两处都变）',
+    (() => { setSkillDescMode('concise'); const m = getSkillDescMode(); setSkillDescMode('detail'); return m === 'concise' && getSkillDescMode() === 'detail'; })());
+  T('文⑫-UIManager 的悬浮预览复用同一份颜色/简洁-详细渲染，不是另起一套文案逻辑',
+    /formatSkillFormulasHtml\(desc, \{ concise: getSkillDescMode\(\) === 'concise' \}\)/.test(srcOf('src/ui/UIManager.js')));
+}
+
 done();

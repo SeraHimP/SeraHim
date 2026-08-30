@@ -1,9 +1,9 @@
 import { CONFIG } from '../data/Config.js';
-import { SkillLibrary } from '../core/SkillLibrary.js';
+import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { resolveMergedIds } from '../core/skills/_helpers.js';
 import { AttributeEditor } from './AttributeEditor.js';
 import * as WEATHER_DEFS from '../data/Weather.js';
-import { DetailModal, STAT_LABELS } from './DetailModal.js';
+import { DetailModal, STAT_LABELS, modsGridHtml, formatSkillFormulasHtml, getSkillDescMode } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
@@ -36,6 +36,23 @@ export class UIManager {
         if (!row || !this.selCard.contains(row)) return;
         e.stopPropagation();
         this._showStatDoc(row.dataset.stat, this.entities.get(this.selectedId));
+      });
+      // v51.6：悬浮预览——用户"鼠标移到上面，就在鼠标旁边显示出窗口，不需要再点开
+      // 就能看了（点开查看也保留）"。用 mouseover/mouseout（会冒泡）而不是
+      // mouseenter/mouseleave（不冒泡），这样才能跟点击一样走事件委托——属性行
+      // 是每帧重建的，逐行绑定会在下一帧连同旧节点一起被丢掉，同一个老坑。
+      this.selCard.addEventListener('mouseover', (e) => {
+        const row = e.target.closest?.('.stat-doc[data-stat]');
+        if (row && this.selCard.contains(row)) {
+          this._showHoverTip(this._hoverBodyForStat(row.dataset.stat, this.entities.get(this.selectedId)), e.clientX, e.clientY);
+        }
+      });
+      this.selCard.addEventListener('mousemove', (e) => {
+        if (e.target.closest?.('.stat-doc[data-stat]')) this._positionHoverTip(e.clientX, e.clientY);
+      });
+      this.selCard.addEventListener('mouseout', (e) => {
+        const row = e.target.closest?.('.stat-doc[data-stat]');
+        if (row && !row.contains(e.relatedTarget)) this._hideHoverTip();
       });
     }
     // v33（Q11）：✕ 关闭按钮已移除——点击画布空白处取消选中（CanvasController 负责）
@@ -125,6 +142,42 @@ export class UIManager {
           }
         }
       }
+    });
+
+    // v51.6：悬浮预览——技能格/状态格同样"移上去就看到，不用点"（保留点击不变）。
+    // 两者都在这同一个委托容器上，body 内容直接复用点击那份查找逻辑，只是不弹整个
+    // 模态框，而是丢进跟随鼠标的小浮层。
+    this.selPanel.addEventListener('mouseover', (e) => {
+      const skillSlot = e.target.closest('.skill-slot');
+      if (skillSlot) {
+        const skillId = parseInt(skillSlot.dataset.skillId, 10);
+        const unitCard = skillSlot.closest('.unit-card');
+        if (!isNaN(skillId) && unitCard) {
+          const unitId = parseInt(unitCard.dataset.id, 10);
+          const unit = this.entities.get(unitId);
+          const inst = unit?._skillInstances?.find(s => s.id === skillId);
+          const def = inst && SkillLibrary[inst.skillId];
+          if (def) this._showHoverTip(this._hoverBodyForSkill(def, inst, unit), e.clientX, e.clientY);
+        }
+        return;
+      }
+      const effIcon = e.target.closest('.effect-icon');
+      if (effIcon) {
+        const effName = effIcon.dataset.effectName;
+        const unitCard = effIcon.closest('.unit-card');
+        if (effName && unitCard) {
+          const unitId = parseInt(unitCard.dataset.id, 10);
+          const group = this.effects.getEffects(unitId).filter(x => x.blueprint.name === effName);
+          if (group.length) this._showHoverTip(this._hoverBodyForEffect(effName, group), e.clientX, e.clientY);
+        }
+      }
+    });
+    this.selPanel.addEventListener('mousemove', (e) => {
+      if (e.target.closest?.('.skill-slot') || e.target.closest?.('.effect-icon')) this._positionHoverTip(e.clientX, e.clientY);
+    });
+    this.selPanel.addEventListener('mouseout', (e) => {
+      const t = e.target.closest?.('.skill-slot') || e.target.closest?.('.effect-icon');
+      if (t && !t.contains(e.relatedTarget)) this._hideHoverTip();
     });
 
     // （小兵卡片监听器已并入上方选中卡监听器）
@@ -313,12 +366,34 @@ export class UIManager {
     // 点击弹窗（用户定稿：应该像天气行一样可点，且窗口 UI 与其它详情窗统一，
     // 走同一个 shellHtml 外壳，不是另起一套样式）——绑定一次，不随每帧重建
     box.querySelectorAll('[data-worldidx]').forEach(el => {
+      // v51.6：悬浮预览——同一份 row 查找，只是不弹模态框，丢进跟随鼠标的浮层。
+      el.addEventListener('mouseenter', (e) => {
+        const row = rows[Number(el.dataset.worldidx)];
+        if (row) this._showHoverTip(this._worldDetailBody(row), e.clientX, e.clientY);
+      });
+      el.addEventListener('mousemove', (e) => this._positionHoverTip(e.clientX, e.clientY));
+      el.addEventListener('mouseleave', () => this._hideHoverTip());
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         const row = rows[Number(el.dataset.worldidx)];
         if (row) this._showWorldDetail(row);
       });
     });
+  }
+
+  _worldIconOf(row) {
+    const head = row.source.replace(/[ ·].*$/, '').slice(0, 2);
+    const ICONS = { 昼夜: '🕓', 熵: '🌀', 龙魂: '🐉' };
+    return ICONS[head] || '🌍';
+  }
+
+  // v51.6：抽出纯 body 构建，弹窗与悬浮预览共用（同 _weatherDetailBody 的理由）。
+  _worldDetailBody(row) {
+    const modsHtml = this._modsGridHtml(row.mods);
+    return modsHtml
+      ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
+         <div class="attrs" style="display:grid;">${modsHtml}</div>`
+      : `<p style="font-size:12px;line-height:1.8;margin:0;">${row.detail}</p>`;
   }
 
   /**
@@ -331,25 +406,17 @@ export class UIManager {
     const old = document.getElementById('worldDetailOverlay');
     if (old) old.remove();
 
-    const head = row.source.replace(/[ ·].*$/, '').slice(0, 2);
-    const ICONS = { 昼夜: '🕓', 熵: '🌀', 龙魂: '🐉' };
-    const icon = ICONS[head] || '🌍';
-
+    const icon = this._worldIconOf(row);
     // v51.6：与天气弹窗统一成同一套展示——有加成时走同一份"对该单位的影响"网格
     // （_modsGridHtml），没有加成（如白天的塔、无魂的一方）就只显示一句"无增益"，
-    // 不再写"XX占优（本单位不吃这条）"（用户定稿：删掉这句）。
-    const modsHtml = this._modsGridHtml(row.mods);
-    const body = modsHtml
-      ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
-         <div class="attrs" style="display:grid;">${modsHtml}</div>`
-      : `<p style="font-size:12px;line-height:1.8;margin:0;">${row.detail}</p>`;
-
+    // 不再写"XX占优（本单位不吃这条）"（用户定稿：删掉这句）。body 与悬浮预览
+    // 共用 _worldDetailBody，不再各写一份。
     const overlay = document.createElement('div');
     overlay.id = 'worldDetailOverlay';
     overlay.className = 'modal-overlay open';
     overlay.innerHTML = shellHtml({
       title: `${icon} ${row.source}`,
-      body, crumb: '', width: '480px',
+      body: this._worldDetailBody(row), crumb: '', width: '480px',
       footer: '<div class="modal-actions"><button class="wd-detail-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);
@@ -416,6 +483,14 @@ export class UIManager {
 
     // 点击弹窗（像技能那样）——绑定一次，不随每帧重建
     box.querySelectorAll('[data-wxid]').forEach(el => {
+      // v51.6：悬浮预览——同一份 row 查找逻辑，只是不弹模态框，丢进跟随鼠标的浮层。
+      el.addEventListener('mouseenter', (e) => {
+        const id = el.dataset.wxid;
+        const row = ws.getModifierBreakdown(entity).find(r => r.def.id === id);
+        if (row) this._showHoverTip(this._weatherDetailBody(row), e.clientX, e.clientY);
+      });
+      el.addEventListener('mousemove', (e) => this._positionHoverTip(e.clientX, e.clientY));
+      el.addEventListener('mouseleave', () => this._hideHoverTip());
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = el.dataset.wxid;
@@ -460,29 +535,101 @@ export class UIManager {
    * 昼夜/熵（见 _showWorldDetail）等其它弹窗一起改走这里，样式只有一份、不会走样。
    * mods 为空（没有任何加成）时返回空字符串，调用方自己决定空状态怎么显示。
    */
-  _modsGridHtml(mods) {
-    const entries = Object.entries(mods || {});
-    if (!entries.length) return '';
-    return entries.map(([k, m]) => {
-      const label = STAT_LABELS[k] || k;
-      const parts = [];
-      if (m.flat) {
-        const v = Math.abs(m.flat) < 10 ? m.flat.toFixed(1) : Math.round(m.flat);
-        parts.push((m.flat > 0 ? '+' : '') + v);
-      }
-      if (m.percent) parts.push((m.percent > 0 ? '+' : '') + m.percent.toFixed(1) + '%');
-      return `<div class="a"><label>${label}</label><span>${parts.join(' ')}</span></div>`;
-    }).join('');
+  _modsGridHtml(mods) { return modsGridHtml(mods); }
+
+  /**
+   * ==================== v51.6：悬浮预览（Q8） ====================
+   * 用户："鼠标移动到属性窗口的属性/技能/状态/天气等上面时，我想鼠标移到上面，
+   * 就在鼠标旁边显示出窗口，就是不需要再点开就能看了（目前点开查看也保留）。"
+   *
+   * 浮层是唯一的一个共享 DOM 节点（懒创建），跟随鼠标移动；内容复用点击弹窗
+   * 已经在用的那几个 body 构建函数（_hoverBodyForStat 等），不重新发明一套文案。
+   * pointer-events:none（见 index.html 的 .hover-tip 规则）——否则浮层本身会挡住
+   * "鼠标移出目标元素"的判定，出现移到提示框上卡住不消失的问题。
+   */
+  _showHoverTip(html, x, y) {
+    if (!html) return;
+    let tip = this._hoverTipEl;
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.className = 'hover-tip';
+      document.body.appendChild(tip);
+      this._hoverTipEl = tip;
+    }
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    this._positionHoverTip(x, y);
   }
 
-  _showWeatherDetail(row) {
-    const { def, tier, charge, mods, extreme } = row;
-    const old = document.getElementById('wxDetailOverlay');
-    if (old) old.remove();
+  _positionHoverTip(x, y) {
+    const tip = this._hoverTipEl;
+    if (!tip || tip.style.display === 'none') return;
+    const pad = 16;
+    const r = tip.getBoundingClientRect();
+    let left = x + pad, top = y + pad;
+    if (left + r.width > window.innerWidth) left = x - r.width - pad;
+    if (top + r.height > window.innerHeight) top = y - r.height - pad;
+    tip.style.left = Math.max(4, left) + 'px';
+    tip.style.top = Math.max(4, top) + 'px';
+  }
 
+  _hideHoverTip() { if (this._hoverTipEl) this._hoverTipEl.style.display = 'none'; }
+
+  /** 属性行的悬浮预览：属性名 + 当前值（含正负着色与括号明细）+ 基础描述。 */
+  _hoverBodyForStat(key, entity) {
+    const doc = statDoc(key);
+    if (!doc) return '';
+    let live = '';
+    let liveStats = null;
+    if (entity) {
+      liveStats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
+      const p = this._statParts(key, entity, liveStats);
+      if (p) {
+        const paren = p.delta === 0 ? '' : ` <span class="stat-break">（${p.base}${p.delta > 0 ? '+' : '−'}${Math.abs(p.delta)}）</span>`;
+        live = `<div style="font-size:13px;margin-bottom:6px;">${doc.label}：<b class="${p.cls}">${p.now}</b>${paren}</div>`;
+      }
+    }
+    const descText = typeof doc.desc === 'function' ? doc.desc(liveStats || {}) : doc.desc;
+    return `${live}<div>${descText}</div>`;
+  }
+
+  /**
+   * 技能格的悬浮预览：技能名 + 完整描述（与点开的详情窗同一份 renderSkillDescription）。
+   * 公式上色/简洁-详细口径与点开的详情窗共用同一份状态（DetailModal.getSkillDescMode）——
+   * 在详情窗里切换过一次，悬浮预览也跟着变，不是各记各的。
+   */
+  _hoverBodyForSkill(def, instance, entity) {
+    const desc = renderSkillDescription(def, entity,
+      { entityContainer: this.entities, effectRegistry: this.effects, attrCalc: this.attrCalc }) || def.description || '无';
+    const disabled = instance && instance._disabled;
+    const html = formatSkillFormulasHtml(desc, { concise: getSkillDescMode() === 'concise' });
+    return `<div style="font-size:13px;font-weight:600;margin-bottom:4px;">📌 ${def.name}${disabled ? '（因装备特殊攻击方式武器而禁用）' : ''}</div>
+      <div style="white-space:pre-wrap;">${html}</div>`;
+  }
+
+  /** 状态格的悬浮预览：与 DetailModal.showEffectGroup 同一份"属性变化"网格，只是不弹整个模态框。 */
+  _hoverBodyForEffect(name, group) {
+    const mods = {};
+    for (const e of group) {
+      const bp = e.blueprint;
+      if (bp.kind !== 'stat' || !bp.statKey) continue;
+      const flat = e.totalFlat || 0, pct = e.totalPercent || 0;
+      if (!flat && !pct) continue;
+      const m = mods[bp.statKey] || (mods[bp.statKey] = { flat: 0, percent: 0 });
+      m.flat += flat; m.percent += pct;
+    }
+    const grid = this._modsGridHtml(mods);
+    return `<div style="font-size:13px;font-weight:600;margin-bottom:4px;">📌 ${name}</div>`
+      + (grid ? `<div class="attrs" style="display:grid;">${grid}</div>`
+              : `<div style="color:var(--text-mute);">（无属性变化）</div>`);
+  }
+
+  // v51.6：抽出纯 body 构建——弹窗（点击）与悬浮预览（mouseover）现在共用同一份内容，
+  // 不再各写一遍（那正是本仓库反复出事的"同一件事实现了两遍"形状）。
+  _weatherDetailBody(row) {
+    const { def, tier, mods } = row;
     const effLines = this._modsGridHtml(mods);
-
-    const body = `
+    return `
       <p style="font-size:11px;color:var(--text-dim);line-height:1.7;margin:0 0 10px;">${def.desc}</p>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;
         padding:7px 9px;background:rgba(255,255,255,0.04);border-radius:6px;
@@ -496,6 +643,12 @@ export class UIManager {
       </div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
       <div class="attrs" style="display:grid;">${effLines}</div>`;
+  }
+
+  _showWeatherDetail(row) {
+    const { def, extreme } = row;
+    const old = document.getElementById('wxDetailOverlay');
+    if (old) old.remove();
 
     const overlay = document.createElement('div');
     overlay.id = 'wxDetailOverlay';
@@ -503,7 +656,7 @@ export class UIManager {
     overlay.innerHTML = shellHtml({
       title: `<span style="color:${def.color};">${def.icon} ${def.name}</span>`
            + (extreme ? '<span style="font-size:11px;color:#ffd75e;margin-left:6px;">极端天气</span>' : ''),
-      body, crumb: '', width: '480px',
+      body: this._weatherDetailBody(row), crumb: '', width: '480px',
       footer: '<div class="modal-actions"><button class="wx-detail-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);

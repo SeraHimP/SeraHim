@@ -165,11 +165,15 @@ export const dragonSouls = {
       const p = P('earth');
       return `获得 ${p.damageReduction ?? 33}% 伤害减免与 ${p.damageBlock ?? 2} 点伤害格挡。`;
     },
+    // v51.6 修复：这两个数值是直接读配置的常量，不是由别的属性算出来的公式——
+    // 硬套（{val}=公式）那一套反而会在没有 entity/ctx 的场合（技能百科、地图预览）
+    // 显示成"山魂：0=6%伤害减免+1点伤害格挡"（{val} 填不上就兜底成字面 "0"），
+    // 比不写 {val} 更让人费解。没有公式可讲的情况下就直接把数值摆出来，
+    // 不用 computeCurrent（连带删掉，避免留一个没人再读的死代码）。
     get descTemplate() {
       const p = P('earth');
-      return `唯一被动——山魂：{val}=${p.damageReduction ?? 33}% 伤害减免 + ${p.damageBlock ?? 2} 点伤害格挡。`;
+      return `唯一被动——山魂：${p.damageReduction ?? 33}% 伤害减免 + ${p.damageBlock ?? 2} 点伤害格挡。`;
     },
-    computeCurrent: () => `${P('earth').damageReduction ?? 33}% / ${P('earth').damageBlock ?? 2}`,
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       const p = P('earth');
@@ -781,6 +785,17 @@ const STAT_LABEL = {
   damageConvertPct: '伤害转化', bulletSpeed: '子弹速度',
   critDamagePct: '暴击伤害', evasionPct: '闪避率', skillAmpPct: '技能增幅',
   manaRegen: '法力回复',
+  // v51.6：用户报"还有些属性是英文显示的"——雷魂（armorPenPercent/magicPenPercent）、
+  // 风魂（moveSpeed/attackSpeedRatio）、霜魂/钢魂（damageBlock/shieldFixedMax）、
+  // 蚀魂（damageReduction）这几条魂的常驻加持恰好都用到了这份表里原本缺失的键，
+  // 命中 793 行 `STAT_LABEL[k] || STAT_LABEL[key] || key` 的最后一级兜底，
+  // 于是原样显示了 JS 字段名。这里补齐，与 DetailModal.STAT_LABELS／
+  // editor/fields.js 用词保持一致（moveSpeed/damageReduction/shieldFixedMax/
+  // armorPenPercent/magicPenPercent 抄 DetailModal 那份；attackSpeedRatio/
+  // damageBlock 那两份都没有，抄 fields.js 编辑器里现成的用词）。
+  moveSpeed: '移速', damageReduction: '伤害减免', shieldFixedMax: '固定护盾',
+  armorPenPercent: '护甲穿透', magicPenPercent: '法术穿透',
+  attackSpeedRatio: '攻速系数', damageBlock: '格挡值',
 };
 
 /** 把某条魂的常驻属性拼成一句人话，追加到面板文案里。 */
@@ -845,19 +860,52 @@ for (const el of SOUL_STAT_KEYS) {
   // 不追加的话面板会**少说一半** —— sim_skilldesc 那套"文案数值与实际效果一致"的断言
   // 当场就会红（它逐条比对技能挂出来的效果数值有没有出现在文案里）。
   // 那条断言是对的：面板上看不到的加成，等于玩家不知道自己拿了什么。
-  for (const key of ['description', 'descTemplate']) {
-    const d = Object.getOwnPropertyDescriptor(def, key);
-    if (!d) continue;
-    if (d.get) {
-      const orig = d.get;
-      Object.defineProperty(def, key, {
-        configurable: true, enumerable: d.enumerable,
+  //
+  // v51.6 修复：霜魂/钢魂/血魂/熔魂/星魂/蚀魂这六条的 descTemplate 原本写的是
+  // `get descTemplate() { return this.description; }`（纯代理，不是独立文案）。
+  // 按 key 逐个包一层的旧写法对这种代理是错的——先包好 description（此时它已经
+  // 拼了一次 statSummary），再包 descTemplate 时，它的原始 getter 读 this.description
+  // 读到的正是"已经拼过一次"的那份，外层再拼一次，"常驻加持：……"就重复了一遍。
+  // 这里先探测两者的原始值是否相等（同一份 P() 配置纯函数，探测本身没有副作用）来
+  // 判断是不是纯代理：是的话 descTemplate 直接读（已经拼好一次的）description，
+  // 不再单独拼第二次；不是的话按原来的方式各自独立拼一次。
+  const descDesc = Object.getOwnPropertyDescriptor(def, 'description');
+  const tplDesc = Object.getOwnPropertyDescriptor(def, 'descTemplate');
+  const rawDesc = descDesc ? (descDesc.get ? descDesc.get.call(def) : descDesc.value) : undefined;
+  const rawTpl = tplDesc ? (tplDesc.get ? tplDesc.get.call(def) : tplDesc.value) : undefined;
+  const tplIsAlias = tplDesc && descDesc && rawTpl === rawDesc;
+
+  if (descDesc) {
+    if (descDesc.get) {
+      const orig = descDesc.get;
+      Object.defineProperty(def, 'description', {
+        configurable: true, enumerable: descDesc.enumerable,
         get() { return String(orig.call(this)) + statSummary(el); },
       });
-    } else if (typeof d.value === 'string') {
-      const orig = d.value;
-      Object.defineProperty(def, key, {
-        configurable: true, enumerable: d.enumerable,
+    } else if (typeof descDesc.value === 'string') {
+      const orig = descDesc.value;
+      Object.defineProperty(def, 'description', {
+        configurable: true, enumerable: descDesc.enumerable,
+        get() { return orig + statSummary(el); },
+      });
+    }
+  }
+  if (tplDesc) {
+    if (tplIsAlias) {
+      Object.defineProperty(def, 'descTemplate', {
+        configurable: true, enumerable: tplDesc.enumerable,
+        get() { return this.description; },
+      });
+    } else if (tplDesc.get) {
+      const orig = tplDesc.get;
+      Object.defineProperty(def, 'descTemplate', {
+        configurable: true, enumerable: tplDesc.enumerable,
+        get() { return String(orig.call(this)) + statSummary(el); },
+      });
+    } else if (typeof tplDesc.value === 'string') {
+      const orig = tplDesc.value;
+      Object.defineProperty(def, 'descTemplate', {
+        configurable: true, enumerable: tplDesc.enumerable,
         get() { return orig + statSummary(el); },
       });
     }

@@ -81,10 +81,12 @@ function equip(e, skillId, ents, fx, bus) {
   // 也就是用户报的'技能里写5、状态里是3'。现在只要子技能改了，这里自动跟上。
   const _sub = (id) => SkillLibrary.get(id).description;
   T('身份描述含节点文案（外）', SkillLibrary.core_tier_outer.description.includes('33%/67%/100%'));
-  T('身份描述 = 子技能文案拼接（枢纽）',
-    SkillLibrary.core_tier_hq.description === _sub('passive_hq_fortify') + _sub('passive_growth_hq'));
-  T('身份描述 = 子技能文案拼接（水晶）',
-    SkillLibrary.core_tier_base.description === _sub('passive_base_fortify') + _sub('passive_growth_base'));
+  // v51.6：用户报"两个被动之间连着显示"——拼接分隔符从 '' 改成 '\n'，
+  // 让每条被动在 <pre>/悬浮预览（都是 white-space:pre-wrap）里各占一行。
+  T('身份描述 = 子技能文案拼接、每条独占一行（枢纽）',
+    SkillLibrary.core_tier_hq.description === _sub('passive_hq_fortify') + '\n' + _sub('passive_growth_hq'));
+  T('身份描述 = 子技能文案拼接、每条独占一行（水晶）',
+    SkillLibrary.core_tier_base.description === _sub('passive_base_fortify') + '\n' + _sub('passive_growth_base'));
 
   // main.js 装配（源码断言）
   const fs = await import('fs');
