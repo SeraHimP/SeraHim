@@ -387,7 +387,11 @@ if (SWEEP === 'dayNight') {
   // 实现方式：直接给蓝方全体领受者装上那条魂（不真的去打龙）——
   // 我们要量的是"拿到魂之后的强度差"，不是"抢龙的难易"，两件事必须分开测，
   // 混在一起的话抢龙成功率会把魂本身的强度掩盖掉。
-  const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];  // v44：光魂随光龙删除
+  // v51.6 修复：这份清单一直停在 v44 删光魂那一版，v50 新增的六条魂
+  // （frost/steel/blood/magma/astral/rift）从来没被这把尺子量过——沉默的空白，
+  // 不是"量过没问题"。补齐成当前 SkillLibrary 里真实存在的全部 dragonsoul_* 元素。
+  const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
+    'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
   cells.push(['基线·双方无魂', () => { FORCE_SOUL = null; }, () => { FORCE_SOUL = null; }]);
   for (const k of SOULS) {
     cells.push([`蓝方持${k}魂`, () => { FORCE_SOUL = 'dragonsoul_' + k; },
