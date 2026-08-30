@@ -234,6 +234,10 @@ export class CanvasController {
         if (elevSl) { elevSl.value = String(CAM_ELEVATION_DEG); elevSl.dispatchEvent(new Event('input', { bubbles: true })); }
         const azimSl = document.getElementById('azimSlider');
         if (azimSl) { azimSl.value = '0'; azimSl.dispatchEvent(new Event('input', { bubbles: true })); }
+        // 新增的视角高度也是"重置视角"要归位的一部分——"所有的都重置，不光重置缩放"，
+        // 这条不是加了才想起来补的特例，是同一条规则自然覆盖的第三个滑杆。
+        const lookHeightSl = document.getElementById('lookHeightSlider');
+        if (lookHeightSl) { lookHeightSl.value = '0'; lookHeightSl.dispatchEvent(new Event('input', { bubbles: true })); }
       }
       const map = this.mapSystem?.currentMap;
       if (map?.world) {

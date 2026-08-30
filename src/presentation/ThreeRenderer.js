@@ -114,6 +114,7 @@ export class ThreeRenderer {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, CAM_DIST * 3);
     this.elevationDeg = CAM_ELEVATION_DEG;
     this.azimuthDeg = 0;   // C 组·方位角（绕 Y 偏航）。0 = 原视角（无偏航）。
+    this.lookHeightOffset = 0;   // 视角高度：机位+目标点同步沿世界 Y 轴平移的偏移量，见 setLookHeight 头注。
 
     this._buildLights();
     this.walls = new WallLayer(this.scene);
@@ -613,6 +614,22 @@ export class ThreeRenderer {
     return this.azimuthDeg;
   }
 
+  /**
+   * ==================== 视角高度（追加需求）====================
+   * 用户确认："看的位置上下移，镜头角度/朝向不变——比如把视线抬高去看塔顶/建筑
+   * 上半部分，或者压低去看地面/兵线。" 不是俯仰角（那个是转角度），也不是镜头
+   * 远近（正交摄像机下移动机位对成像没有任何视觉影响，纯属做了个不生效的假滑杆）。
+   * 实现是把摄像机整个机位（cam.position）和看向的目标点（_target）沿世界 Y
+   * 轴平移同一个量——两者一起动，相对几何关系（角度、距离）完全不变，纯粹是把
+   * 整套机位挪到另一个高度去看，等价于"仰头/低头看"里"头的位置上下移"那种感觉，
+   * 不是"头转动角度"。范围 ±250（塔身高度量级的几倍，够用来看塔顶或压到地面
+   * 视角，太大会把目标点甩出地形合理范围）。
+   */
+  setLookHeight(h) {
+    this.lookHeightOffset = Math.max(-250, Math.min(250, Number(h) || 0));
+    return this.lookHeightOffset;
+  }
+
   // 强制重建地形（含墙体重采样 isWalkable）。用于河道可行走开关切换后刷新开挖的河道。
   // 必须把 _terrainMapId 置空——否则 _rebuildTerrain 开头的"同一张图就跳过"守卫会挡回（陷阱#6）。
   invalidateTerrain() { this._terrainMapId = null; this._terrainDirty = true; }
@@ -643,7 +660,11 @@ export class ThreeRenderer {
 
     const tx = (W / 2 - controller.offsetX) / zoom;
     const tz = (H / 2 - controller.offsetY) / zoom;
-    this._target.set(tx, 0, tz);
+    // 视角高度：机位与目标点一起沿世界 Y 轴平移 lookHeightOffset——两者同步移动，
+    // 相对几何（夹角、距离）不变，纯粹是把整套机位挪到另一个高度去看
+    // （见 setLookHeight 头注）。默认 0 时这一项不引入任何变化，与改动前完全一致。
+    const ly = this.lookHeightOffset || 0;
+    this._target.set(tx, ly, tz);
 
     const cam = this.camera;
     cam.left = -W / 2; cam.right = W / 2;
@@ -651,7 +672,7 @@ export class ThreeRenderer {
     cam.zoom = zoom;
     cam.near = 1; cam.far = CAM_DIST * 3;
     // 摄像机站在目标的 +Z 一侧向目标看；方位角把这一"站位"绕目标（绕 Y）转过 az。
-    cam.position.set(tx + CAM_DIST * cosP * sa, CAM_DIST * sinP, tz + CAM_DIST * cosP * ca);
+    cam.position.set(tx + CAM_DIST * cosP * sa, CAM_DIST * sinP + ly, tz + CAM_DIST * cosP * ca);
     // up 显式给出（同样绕 az 旋转），避免仰角 90° 时与视线共线导致 lookAt 退化
     cam.up.set(-sinP * sa, cosP, -sinP * ca);
     cam.lookAt(this._target);

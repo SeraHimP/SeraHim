@@ -1737,6 +1737,37 @@ async function world() {
     /import \{ CAM_ELEVATION_DEG \} from '\.\.\/presentation\/ThreeRenderer\.js';/.test(src));
 }
 
+// ==================== 追加：视角高度——"看的位置上下移，镜头角度不变" ====================
+// 用户确认（AskUserQuestion 选项）："看的位置上下移（推荐）"——不是俯仰角（转角度），
+// 不是镜头远近（正交摄像机下移动机位对成像没有视觉影响）。实现是把摄像机机位和
+// 目标点沿世界 Y 轴同步平移同一个量，相对几何（夹角/距离）完全不变。
+{
+  const tr = srcOf('src/presentation/ThreeRenderer.js');
+  T('高①-setLookHeight 存在，范围钉在 ±250（塔身高度量级的几倍）',
+    /setLookHeight\(h\) \{\s*\n\s*this\.lookHeightOffset = Math\.max\(-250, Math\.min\(250, Number\(h\) \|\| 0\)\);/.test(tr));
+  T('高②-lookHeightOffset 在构造函数里初始化为 0（默认不引入任何变化，与改动前行为一致）',
+    /this\.lookHeightOffset = 0;/.test(tr));
+  T('高③-syncCameraFrom 里目标点的 Y 坐标改用 ly（不再恒为 0）',
+    /const ly = this\.lookHeightOffset \|\| 0;\s*\n\s*this\._target\.set\(tx, ly, tz\);/.test(tr));
+  T('高④-机位（cam.position）的 Y 分量也同步加了 ly——机位与目标点一起平移，不是只挪了目标点',
+    /cam\.position\.set\(tx \+ CAM_DIST \* cosP \* sa, CAM_DIST \* sinP \+ ly, tz \+ CAM_DIST \* cosP \* ca\);/.test(tr));
+
+  const mm = srcOf('src/main.js');
+  T('高⑤-main.js 接线 lookHeightSlider，走 renderer3d.setLookHeight（与俯仰角/方位角同一套接线手法）',
+    /CTX\.__setLookHeight = \(h\) => renderer3d \? renderer3d\.setLookHeight\(h\) : null;/.test(mm)
+    && /document\.getElementById\('lookHeightSlider'\)/.test(mm));
+  T('高⑥-lookHeightUpBtn/DownBtn 步进按钮也接了（统一四行控件的形状）',
+    /lookHeightDownBtn/.test(mm) && /lookHeightUpBtn/.test(mm));
+
+  const html = srcOf('index.html');
+  T('高⑦-index.html 第四行视角高度控件是同一种【图标】【−】【滑杆】【+】【读数】形状',
+    /<span class="ctl-name" title="视角高度">↕<\/span>[\s\S]{0,150}id="lookHeightDownBtn"[\s\S]{0,400}id="lookHeightSlider"[\s\S]{0,400}id="lookHeightUpBtn"[\s\S]{0,150}id="lookHeightLabel"/.test(html));
+
+  const cc = srcOf('src/ui/CanvasController.js');
+  T('高⑧-重置视角按钮把视角高度滑杆也归位到 0（"所有的都重置"覆盖到这条新滑杆，不是漏网之鱼）',
+    /lookHeightSl\.value = '0'; lookHeightSl\.dispatchEvent\(new Event\('input'/.test(cc));
+}
+
 // ==================== 追加：右下角工具条做扁——按钮/行距单独收窄，不影响全局 .icon-btn ====================
 // 用户："右下角工具条做的扁一些，目前右下角工具条的高度太高了。"三行控件用的是全局
 // .icon-btn（30×30，给顶栏那种单行按钮条设计的尺寸），纵向堆三行就显得高。这里单独

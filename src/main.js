@@ -202,6 +202,29 @@ CTX.__riverWalkable = (on) => { const v = mapSystem.setRiverWalkable(on); render
     document.getElementById('azimUpBtn')?.setAttribute('disabled', '');
   }
 }
+// 追加需求：视角高度（与俯仰角/方位角同栏，同一套接线手法——第四行不是新造一套
+// 逻辑，是把上面这两段的形状照抄一遍）。CTX.__setLookHeight 留给控制台手调手感用，
+// 与 __setElevation/__setAzimuth 同级。
+CTX.__setLookHeight = (h) => renderer3d ? renderer3d.setLookHeight(h) : null;
+{
+  const sl = document.getElementById('lookHeightSlider'), lb = document.getElementById('lookHeightLabel');
+  const applyLookHeight = (h) => {
+    const v = renderer3d.setLookHeight(h);
+    sl.value = String(v);
+    if (lb) lb.textContent = (v > 0 ? '+' : '') + v;
+    return v;
+  };
+  if (sl && renderer3d) {
+    applyLookHeight(renderer3d.lookHeightOffset);
+    sl.addEventListener('input', () => applyLookHeight(Number(sl.value)));
+    document.getElementById('lookHeightDownBtn')?.addEventListener('click', () => applyLookHeight(renderer3d.lookHeightOffset - 10));
+    document.getElementById('lookHeightUpBtn')?.addEventListener('click', () => applyLookHeight(renderer3d.lookHeightOffset + 10));
+  } else if (sl) {
+    sl.disabled = true;
+    document.getElementById('lookHeightDownBtn')?.setAttribute('disabled', '');
+    document.getElementById('lookHeightUpBtn')?.setAttribute('disabled', '');
+  }
+}
 // 第 6.1 步：阴影档位。'all' 全投影 / 'static' 仅塔与墙 / 'off' 关闭。
 // 默认 'all'——用户定稿：启动即全部投影（含小兵）。性能有余量；想省开销可在设置面板切 'static'，
 // 而"建筑有影子"的观感基本全留。当前无任何投影体，三档在画面上还看不出区别。

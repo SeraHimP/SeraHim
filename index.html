@@ -1058,6 +1058,17 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
           <button class="icon-btn" id="azimUpBtn" title="顺时针转">+</button>
           <span class="zoom-label" id="azimLabel" title="视角方位（东南西北）">北</span>
         </div>
+        <!-- 追加需求："新增视角高度的调节选项，也是按照同样的设计语言来做。"——
+             不是俯仰角（那是转角度），也不是镜头远近（正交摄像机下移动机位对成像
+             没有视觉影响）；是"看的位置上下移，镜头角度不变"，与上面三行同一种
+             【图标】【−】【滑杆】【+】【读数】形状。 -->
+        <div class="ctl-row">
+          <span class="ctl-name" title="视角高度">↕</span>
+          <button class="icon-btn" id="lookHeightDownBtn" title="视角压低">−</button>
+          <input id="lookHeightSlider" type="range" min="-250" max="250" step="5" value="0" title="视角高度（把镜头角度/朝向不变地整体抬高或压低——正值看得更高，比如塔顶；负值看得更低，比如地面）">
+          <button class="icon-btn" id="lookHeightUpBtn" title="视角抬高">+</button>
+          <span class="zoom-label" id="lookHeightLabel" title="视角高度">0</span>
+        </div>
       </div>
       <div id="selectionPanel">
         <!-- v33（Q11）：✕ 关闭按钮已删（点击画布空白处即取消选中）。
