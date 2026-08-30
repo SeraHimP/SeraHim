@@ -73,10 +73,22 @@ export function paneHtml({ groups = [], activeKey, crumb, body, footer = '', not
 /**
  * 拼出**完整**弹窗外壳的 innerHTML（自带 overlay 的弹窗用）。
  * 参数同 paneHtml，另加 title / width。
+ *
+ * ==================== v51.6：无侧边栏的弹窗改成自适应内容宽高 ====================
+ * 用户："点开的描述窗口可以自适应大小。但是要有最小尺寸。因为看图片，内容很少但是
+ * 窗口很大。"——原来 .modal-box 写死 `width: 92%`，不管内容是一整套带侧边栏的
+ * 编辑器页面、还是一句话的技能说明，都撑到（几乎）同一个宽度。
+ *
+ * 判据直接借用 paneHtml 已经算过的 hasNav：**没有侧边栏**（groups 为空，技能详情/
+ * 效果详情/属性说明/天气详情/世界详情这类单页弹窗都是这个形状）就该"多少内容占多少
+ * 宽"，加 .compact 类走自适应；**有侧边栏**（模板编辑器、单位编辑器那种左侧导航+
+ * 右侧多页内容）版面本来就需要固定宽度撑开两栏布局，维持原样不动。
+ * 不需要每个调用点各自传一个新参数——是不是"单页小弹窗"这件事，hasNav 已经知道。
  */
 export function shellHtml(o) {
-  const { title, width = '880px' } = o;
-  return `<div class="modal-box" style="max-width:${width};">
+  const { title, width = '880px', groups = [] } = o;
+  const compact = groups.length === 0 ? ' compact' : '';
+  return `<div class="modal-box${compact}" style="max-width:${width};">
       <div class="editor-container">
         <h4>${title}</h4>
         ${paneHtml(o)}

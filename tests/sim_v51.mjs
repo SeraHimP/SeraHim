@@ -1843,10 +1843,23 @@ async function world() {
     && !/_syncTowerInfo[\s\S]{0,2000}dragonsoul_/.test(ul));
   T('环④-尺寸走 vis.ringR（与选中光圈同一个"自适应单位大小"的值），不是写死的 32',
     /const r = vis\.ringR \|\| 12;/.test(ul));
-  T('环⑤-蓝方塔用方形环匹配方形塔基，其余（红方塔/全部小兵）用圆环',
-    /const square = e\.type === 'tower' && faction === 'blue';/.test(ul)
-    && /_flatGeo\(square \? 'squareRing' : 'ring', r, 3\)/.test(ul));
+  T('环⑤-默认都用圆环，只有蓝方阶梯方塔（outer/inner/base）才额外适配成方形环',
+    /const isNexusTier = e\._mapTier === 'nexus_lane' \|\| e\._mapTier === 'nexus_main';/.test(ul)
+    && /const square = e\.type === 'tower' && faction === 'blue' && !isNexusTier;/.test(ul)
+    && /_flatGeo\(square \? 'squareRing' : 'ring', r, 1\.6\)/.test(ul));
+  T('环⑤c-蓝方召唤水晶/水晶枢纽（圆形基座）被排除在方环之外，不会跟着阶梯方塔一起被套成方形',
+    /!isNexusTier/.test(ul) && /e\._mapTier === 'nexus_lane' \|\| e\._mapTier === 'nexus_main'/.test(ul));
+  T('环⑤b-环宽比选中光圈的核心环（2.5）细，两种含义不同的环能区分粗细（用户报"太粗了"）',
+    /_flatGeo\(square \? 'squareRing' : 'ring', r, 1\.6\)/.test(ul)
+    && /_flatGeo\('ring', r, 2\.5\)/.test(ul));
   T('环⑥-幽灵/废墟/死亡单位不显示龙魂环', /if \(ghost \|\| ruin \|\| !e\.alive\)/.test(ul));
+  // v51.6 修复：用户报"龙死了之后龙魂的颜色环残余在地面"，后来补充"不只是龙，
+  // 其余单位的龙魂环也会残留"——根因是 remove(id)（单位被整个从 EntityContainer
+  // 移除时的清理路径）只调了 _clearInfo，从没调过 _clearSoulRing；_syncSoulRing
+  // 里那个"幽灵/废墟/死亡才清"的早退分支必须【那个实体还在被 _syncOne 同步】才会
+  // 跑到——一旦整个被 remove() 摘掉（大多数单位死亡就是这样），那次清理永远不会发生。
+  T('环⑧-remove(id) 会清理龙魂环，不能只指望 _syncSoulRing 的早退分支',
+    /this\._clearInfo\(en\);[\s\S]{0,200}if \(en\.soul\) this\._clearSoulRing\(en\);[\s\S]{0,50}this\.map\.delete\(id\);/.test(ul));
 
   // 颜色表本身的行为：每种元素都能查到色值，且与 DRAGON_ELEMENTS 定义的颜色一致
   // （这里直接跑一遍构建函数体同款逻辑核对，不是又对着源码字符串猜）。
@@ -1916,10 +1929,15 @@ async function world() {
     const statHtml = ui._hoverBodyForStat('attackDamage', t);
     T('悬⑦-_hoverBodyForStat 能拼出属性名+当前值+基础描述，不依赖 DOM', statHtml.includes(statDoc('attackDamage').label) && statHtml.length > 20);
 
-    const effHtml = ui._hoverBodyForEffect('测试效果', [{ blueprint: { kind: 'stat', statKey: 'armor' }, totalFlat: 10, totalPercent: 0 }]);
+    const effHtml = ui._hoverBodyForEffect('测试效果', [{ blueprint: { kind: 'stat', statKey: 'armor', icon: '🛡' }, totalFlat: 10, totalPercent: 0 }]);
     T('悬⑧-_hoverBodyForEffect 与 DetailModal.showEffectGroup 同款折算逻辑，效果名+属性名都在', effHtml.includes('测试效果') && effHtml.includes('+10'));
-    const emptyHtml = ui._hoverBodyForEffect('空效果', [{ blueprint: { kind: 'dot' }, totalFlat: 0, totalPercent: 0 }]);
-    T('悬⑨-非属性类效果（如持续伤害）折算不出 mods 时显示"无属性变化"兜底，不留空白', emptyHtml.includes('无属性变化'));
+    T('悬⑧b-悬浮预览标题图标用 blueprint.icon，不再写死📌（用户报"图标和技能栏/状态栏不匹配"）', effHtml.includes('🛡'));
+    // v51.6（Q13）：dot/stun/display 这类"不是属性数值"的效果，用户报悬浮预览之前只看
+    // 属性变化网格、把这些文字说明漏掉了——现在应与 showEffectGroup 一样带出说明文字。
+    const dotHtml = ui._hoverBodyForEffect('持续伤害效果', [{ blueprint: { kind: 'dot', damageType: 'magic' }, totalFlat: 0, totalPercent: 0 }]);
+    T('悬⑨-dot 类效果的悬浮预览带出"持续伤害"文字说明，不是只看 mods 网格', dotHtml.includes('持续伤害'));
+    const emptyHtml = ui._hoverBodyForEffect('空效果', [{ blueprint: { kind: 'stat', statKey: 'armor' }, totalFlat: 0, totalPercent: 0 }]);
+    T('悬⑩-真正没有任何属性变化/文字说明时才显示"无属性变化"兜底，不留空白', emptyHtml.includes('无属性变化'));
   }
 }
 
@@ -1989,8 +2007,119 @@ async function world() {
   T('文⑩-简洁模式：整个公式连括号一起吞掉，只留最终数值', conciseHtml === '38');
   T('文⑪-简洁/详细的选择是模块级状态，弹窗与悬浮预览共用同一份（切一次两处都变）',
     (() => { setSkillDescMode('concise'); const m = getSkillDescMode(); setSkillDescMode('detail'); return m === 'concise' && getSkillDescMode() === 'detail'; })());
-  T('文⑫-UIManager 的悬浮预览复用同一份颜色/简洁-详细渲染，不是另起一套文案逻辑',
-    /formatSkillFormulasHtml\(desc, \{ concise: getSkillDescMode\(\) === 'concise' \}\)/.test(srcOf('src/ui/UIManager.js')));
+  T('文⑫-UIManager 的悬浮预览复用同一份颜色/简洁-详细/常驻加持网格渲染（skillDescHtmlParts），不是另起一套文案逻辑',
+    /skillDescHtmlParts\(def, desc, \{ concise: getSkillDescMode\(\) === 'concise' \}\)/.test(srcOf('src/ui/UIManager.js')));
+}
+
+// ==================== 补充批次三：Q15（龙魂常驻加持改走统一网格块） ====================
+{
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { skillDescHtmlParts } = await import('../src/ui/DetailModal.js');
+  const { soulStatMods } = await import('../src/core/skills/dragonSouls.js');
+
+  T('补⑪-soulStatMods 与真正挂给实体的效果（soulStatBlueprints）同一套 statMod() 翻译规则，不是另起一份换算',
+    /export function soulStatMods\(el\)/.test(srcOf('src/core/skills/dragonSouls.js'))
+    && /const m = statMod\(k, v\);/.test(srcOf('src/core/skills/dragonSouls.js')));
+
+  const def = SkillLibrary.dragonsoul_earth;
+  const r = skillDescHtmlParts(def, def.description, { concise: false });
+  T('补⑫-山魂的常驻加持（护甲+8/魔法抗性+8/最大生命+6%）从文字尾巴换成了网格块，正文里不再重复这句话',
+    !r.textHtml.includes('常驻加持') && r.gridHtml.includes('护甲') && r.gridHtml.includes('+8.0') && r.gridHtml.includes('魔法抗性'));
+
+  T('补⑬-非龙魂技能（没有常驻加持）不受影响，gridHtml 为空、正文原样',
+    (() => {
+      const d2 = SkillLibrary.weapon_piercing;
+      const r2 = skillDescHtmlParts(d2, d2.description, { concise: false });
+      return r2.gridHtml === '' && r2.textHtml.includes('升温');
+    })());
+
+  T('补⑭-description/descTemplate 原始字符串本身不受影响（sim_skilldesc.mjs 靠文本核对数值，不能动这份源数据）',
+    SkillLibrary.dragonsoul_earth.description.includes('常驻加持'));
+
+  const mods = soulStatMods('earth');
+  T('补⑮-soulStatMods 的键就是 STAT_LABELS 里的已有属性名（armor/magicResist/maxHP），没有新造属性',
+    'armor' in mods && 'magicResist' in mods && 'maxHP' in mods);
+}
+
+// ==================== 补充批次二：Q1/Q3/Q5-Q14（截图追加） ====================
+// 用户给了新一批截图追加的问题：悬浮白框、暴击/魔抗描述、穿透型换行、简洁详细按钮合并、
+// 弹窗自适应、龙之力百分比、弹窗毛玻璃、天气进度条、阵亡悬浮框未消失、悬浮图标不匹配、
+// 龙魂环残留与太粗、状态悬浮丢文字说明。
+{
+  const um = srcOf('src/ui/UIManager.js');
+  const wp = srcOf('src/ui/WeatherPanel.js');
+  const html = srcOf('index.html');
+
+  T('补①-技能格/属性行/天气三角/世界三角都不再挂原生 title（Q1：悬浮预览与浏览器原生提示框重叠出现白框）',
+    !/data-skill-id="\$\{inst\.id\}" title=/.test(um)
+    && !/data-stat="\$\{key\}" title=/.test(um)
+    && !/data-worldidx="\$\{i\}" title=/.test(um)
+    && !/data-wxid="\$\{r\.def\.id\}"[\s\S]{0,20}title=/.test(um));
+
+  T('补②-暴击率描述不再有"纯机械单位"这句（Q2）',
+    !/纯机械单位，没有来源加成就不会暴击/.test(srcOf('src/data/statDocs.js')));
+
+  T('补③-魔法抗性：statDocs 不再有"真实伤害不受任何抗性影响"，标签改成全称（Q3a）',
+    !/真实伤害不受任何抗性影响/.test(srcOf('src/data/statDocs.js'))
+    && /magicResist: '魔法抗性'/.test(srcOf('src/ui/DetailModal.js'))
+    && /key: 'magicResist', label: '魔法抗性'/.test(srcOf('src/ui/statPanelLayout.js')));
+
+  T('补④-穿透型子弹描述真正换行、不再是"固定30%双穿"（Q3b）',
+    (() => {
+      const w = srcOf('src/core/skills/weapons.js');
+      return /升温[\s\S]{0,300}\\n唯一被动——穿透/.test(w) && !/固定30%双穿/.test(w) && /\+30%护甲穿透，\+30%法术穿透/.test(w);
+    })());
+
+  T('补⑤-简洁/详细合并成一个按钮（不再是两颗），文字就是当前模式，点一下切到另一个（Q5）',
+    (() => {
+      const dm = srcOf('src/ui/DetailModal.js');
+      return /id="skillModeToggle" class="skill-mode-toggle-single"/.test(dm)
+        && !/id="skillModeToggle"[\s\S]{0,300}id="skillModeToggle"/.test(dm) // 只有一个按钮节点，不是两个
+        && /const next = btn\.dataset\.mode === 'concise' \? 'detail' : 'concise';/.test(dm);
+    })());
+  T('补⑤b-切换按钮塞进 footerExtra、用 margin-right:auto 推到左边，不挤在"关闭"右边（Q5：位置改到左下角）',
+    /const footerExtra = `<button id="skillModeToggle" class="skill-mode-toggle-single" style="margin-right:auto;"/.test(srcOf('src/ui/DetailModal.js'))
+    && /footer: `<div class="modal-actions">\$\{opts\.footerExtra \|\| ''\}<button id="detailCloseBtn"/.test(srcOf('src/ui/DetailModal.js')));
+
+  {
+    const ds = srcOf('src/ui/dialogShell.js');
+    const html = (await import('fs')).default.readFileSync('index.html', 'utf8');
+    T('补⑥-无侧边栏的单页弹窗（技能详情等）自动加 .compact，按 hasNav 判断，不用每个调用点各传参（Q6）',
+      /const compact = groups\.length === 0 \? ' compact' : '';/.test(ds)
+      && /class="modal-box\$\{compact\}"/.test(ds));
+    T('补⑥b-.compact 按内容自适应宽度（fit-content），同时有最小尺寸兜底，不会缩成一个挤扁的小方块',
+      /\.modal-box\.compact \{ width: fit-content; min-width: 320px; min-height: 120px; \}/.test(html));
+  }
+  // 直接跑一遍 shellHtml，核对"有 groups 就不加 .compact，没有就加"这条判据本身。
+  {
+    const { shellHtml } = await import('../src/ui/dialogShell.js');
+    const withNav = shellHtml({ title: 't', body: 'b', groups: [{ title: '', items: [{ key: 'a', label: 'A' }] }], activeKey: 'a' });
+    const withoutNav = shellHtml({ title: 't', body: 'b' });
+    T('补⑥d-真的跑一遍 shellHtml：有 groups 的弹窗（编辑器）不带 .compact', /class="modal-box"/.test(withNav) && !withNav.includes('compact'));
+    T('补⑥e-真的跑一遍 shellHtml：没有 groups 的单页弹窗（技能详情等）带 .compact', /class="modal-box compact"/.test(withoutNav));
+  }
+
+  T('补⑦-modsGridHtml 对百分比量纲的属性（如 bonusAttackSpeedPct）flat 增量也带 %（Q7）',
+    /PERCENT_UNIT_KEYS\.has\(k\) \? '%' : ''/.test(srcOf('src/ui/DetailModal.js')));
+  T('补⑦b-attackSpeedRatio/damageBlock/damageConvertPct/bulletSpeed 补齐中文标签，不再原样显示英文键名（Q7）',
+    /attackSpeedRatio: '攻速系数', damageBlock: '格挡值'/.test(srcOf('src/ui/DetailModal.js'))
+    && /damageConvertPct: '伤害转化', bulletSpeed: '子弹速度'/.test(srcOf('src/ui/DetailModal.js')));
+
+  // Q8 用户澄清："我指的是这个小窗口"（悬浮预览截图）——.hover-tip 原来是接近不透明的
+  // 纯色卡片、完全没有 backdrop-filter，跟弹窗（.modal-box 本来就有 blur）是两回事。
+  T('补⑧-悬浮预览（.hover-tip）补上半透明背景 + backdrop-filter，不再是纯色实底小卡片（Q8）',
+    (() => {
+      const m = html.match(/\.hover-tip \{[\s\S]*?\}/);
+      return !!m && /backdrop-filter:\s*blur/.test(m[0]) && /rgba\(22,27,34,0\.6\)/.test(m[0]);
+    })());
+  T('补⑧b-弹窗（.modal-box）的暗色 tint 调淡，让更多背景色透出来给 blur 处理，不是叠两层暗色吃光颜色',
+    /rgba\(22,27,34,0\.55\)/.test(html) && /rgba\(4,6,9,0\.45\)/.test(html));
+
+  T('补⑨-天气"实时与预报"列表改用圆角发光条，不再是 █/░ 手搓字符条（Q9）',
+    !/'█'\.repeat/.test(wp) && !/'░'\.repeat/.test(wp) && /box-shadow:0 0 6px \$\{def\.color\}80/.test(wp));
+
+  T('补⑩-clearSelection 会一并隐藏悬浮预览（Q10：单位阵亡后属性面板关闭但悬浮框残留）',
+    /clearSelection\(\) \{[\s\S]{0,400}this\._hideHoverTip\(\);/.test(um));
 }
 
 done();

@@ -44,7 +44,7 @@ export const EDITOR_PAGES_WAVE = {
     html += num('ancientFirstDelay', '首条远古龙', c.ancientFirstDelay, 10, '成魂结算后到第一条远古龙');
     html += num('ancientInterval', '远古龙间隔', c.ancientInterval, 10, '');
 
-    const CURVES = [['maxHP', '生命'], ['resist', '双抗（护甲=魔抗）'], ['attackDamage', '攻击力']];
+    const CURVES = [['maxHP', '生命'], ['resist', '双抗（护甲=魔法抗性）'], ['attackDamage', '攻击力']];
     html += `<div style="font-size:12px;color:var(--text-dim);margin:14px 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
       强度曲线　<span style="font-size:10px;color:var(--text-mute);">
       第 w 条 = w≤拐点 ? 起点+(w−1)×前段增量 : 起点+(拐点−1)×前段增量+(w−拐点)×后段增量，再按上限截顶</span></div>`;

@@ -420,6 +420,12 @@ export class UnitLayer {
     en.bar.material.dispose();
     en.barTex.dispose();          // per-entity 纹理；共享单位纹理不在此释放
     this._clearInfo(en);          // E 组对象（几何/材质共享，摘场景即可；盾牌 material 独立需释放）
+    // v51.6 修复：龙魂环单独放在 _clearSoulRing 里（不归 _clearInfo 管），之前只在
+    // _syncSoulRing 每帧同步时的早退分支里调用它——单位死亡后一旦不再进入那个同步
+    // 循环（被整个从 EntityContainer 移除，这里的 remove(id) 直接把渲染条目也摘了），
+    // 那次早退永远不会发生，环就一直挂在场景里。用户报"龙死后""其余单位的龙魂环也会
+    // 残留"，根子就是这里漏了一次清理——挪到 remove() 里保证【无论怎么消失】都会清。
+    if (en.soul) this._clearSoulRing(en);
     this.map.delete(id);
   }
 
@@ -533,15 +539,22 @@ export class UnitLayer {
     if (!soulSkill) { if (en.soul) this._clearSoulRing(en); return; }
     const color = SOUL_COLORS[soulSkill.skillId] || '#f6c94a';
     const r = vis.ringR || 12;
-    // 蓝方塔身是逐层内收的方形台阶（红方是圆台），方环才能贴合它的轮廓；
-    // 其余（红方塔、全部小兵）沿用圆环——小兵是人形剪影，圆环足够贴合。
+    // v51.6 修复：用户报"蓝方召唤水晶/水晶枢纽是圆的，你怎么也给改成方的了"——
+    // 上一版条件是"蓝方的塔"就一律方，没把 nexus_lane/nexus_main（召唤水晶/水晶枢纽，
+    // 圆形水晶基座，与 outer/inner/base 那三档方形阶梯塔身完全是两种模型）分开，
+    // 圆底座的建筑因此也套了方环，边角露在外面。默认都走圆环（与选中光圈同一个
+    // 默认），只有【蓝方 + 阶梯方塔那三档】才需要额外适配成方环——判据复用
+    // isNexus 同一处已有的 tier 集合（_mapTier），不再自己另起一份。
     const faction = e._mapFaction || e.faction;
-    const square = e.type === 'tower' && faction === 'blue';
+    const isNexusTier = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
+    const square = e.type === 'tower' && faction === 'blue' && !isNexusTier;
     const key = (square ? 'sq' : 'rd') + '|' + r + '|' + color;
     if (en.soulKey !== key) {
       this._clearSoulRing(en);
       en.soulKey = key;
-      en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, 3), this._flatMat(color, 1));
+      // v51.6 追补：用户"龙魂这个环太粗了，细一些"——3 与选中光圈的核心环（2.5）
+      // 几乎一样粗，两种含义不同的环粗细却分不清，改细一点（1.6）以示区分。
+      en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, 1.6), this._flatMat(color, 1));
     }
     en.soul.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
   }

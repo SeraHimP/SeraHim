@@ -629,22 +629,29 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    点开查看也保留）。" 固定定位、不吃鼠标事件（pointer-events:none，否则会挡住
    鼠标移出目标元素的判定，出现"移到提示框上卡住不消失"）；跟随鼠标出现在旁边，
    贴近视口边缘时 UIManager._positionHoverTip 会翻到另一侧，不会被裁掉。 */
+/* v51.6 修复：用户报"Q8 我指的是这个小窗口"（指着悬浮预览的截图）——这个框原来
+   background 用的是接近不透明的 --surface-2（0.85 alpha），且完全没有 backdrop-filter，
+   跟"毛玻璃"完全不沾边，是一块纯色实底的小卡片。改成半透明 + 模糊，与技能详情弹窗
+   （.modal-box）同一套玻璃质感，风格统一。 */
 .hover-tip {
   position: fixed; z-index: 9999; display: none; pointer-events: none;
-  max-width: 320px; padding: 10px 12px; background: var(--surface-2, #1c232b);
+  max-width: 320px; padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 50%), rgba(22,27,34,0.6);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
   box-shadow: var(--shadow); font-size: 12px; line-height: 1.6; color: var(--text);
 }
 .hover-tip .attrs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin-top: 4px; }
 /* ==================== v51.6：技能详情的简洁/详细切换 ====================
    参考 LoL 技能数值说明：详细模式把公式里认得出的属性上色（DetailModal.STAT_COLORS），
-   简洁模式只留最终数值。这两颗按钮就是切换开关，选中的那颗高亮。 */
-.skill-mode-toggle { display: flex; gap: 6px; margin-bottom: 10px; }
-.skill-mode-btn {
+   简洁模式只留最终数值。用户定稿："简洁详细按钮合并成一个，显示当前的模式，点一下
+   切换到另一个模式。位置改到左下角。"——一颗按钮，文字就是当前模式，塞进
+   .modal-actions（原来只放"关闭"）靠 margin-right:auto 推到最左边。 */
+.skill-mode-toggle-single {
   padding: 4px 12px; font-size: 12px; border-radius: var(--radius-xs);
-  border: 1px solid var(--glass-border); background: transparent; color: var(--text-dim); cursor: pointer;
+  border: 1px solid var(--glass-border); background: rgba(79,209,197,0.1); color: var(--text-dim); cursor: pointer;
 }
-.skill-mode-btn.active { background: rgba(79,209,197,0.18); border-color: rgba(79,209,197,0.4); color: var(--text); }
+.skill-mode-toggle-single:hover { background: rgba(79,209,197,0.18); color: var(--text); }
 
 /* 游戏性·批量加技能/加状态：阵营×单位类型矩阵——用户定稿"铺平成一张表直接勾格子"。 */
 .gp-matrix-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: var(--radius-xs); }
@@ -843,14 +850,27 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 }
 
 /* ==================== 弹窗 ==================== */
-.modal-overlay { position: fixed; inset: 0; background: rgba(4,6,9,0.68); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 300; display: none; align-items: center; justify-content: center; }
+/* v51.6 修复：用户报"弹出的窗口背景并不是毛玻璃材质的"——原来外层 .modal-overlay
+   先把整个场景压到 68% 暗（rgba(4,6,9,0.68)），.modal-box 又在这份已经压暗的背景上
+   再叠一层 72% 暗色 tint，两层暗色叠加后场景颜色基本被吃光，backdrop-filter 的模糊
+   算是"技术上生效了"，肉眼却只看到一块近乎纯黑的板子，读不出"毛玻璃"的通透感。
+   外层暗度降到 0.45、内层 tint 降到 0.55，让更多场景颜色透进来给 blur 处理；
+   再加一条极淡的顶部高光（模拟玻璃反光），即便个别环境 backdrop-filter 被浏览器
+   降级成不生效，这条高光也能让人一眼看出"这是一块玻璃面板"而不是纯色卡片。 */
+.modal-overlay { position: fixed; inset: 0; background: rgba(4,6,9,0.45); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 300; display: none; align-items: center; justify-content: center; }
 .modal-overlay.open { display: flex; }
 .modal-box {
-  background: var(--surface); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0) 40%), rgba(22,27,34,0.55);
+  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
   border: 1px solid var(--glass-border); border-radius: var(--radius);
   padding: 22px 26px; max-width: 620px; width: 92%;
   max-height: 86vh; overflow-y: auto; box-shadow: var(--shadow);
 }
+/* v51.6：无侧边栏的单页弹窗（技能详情/效果详情/属性说明/天气详情/世界详情……）
+   改成按内容自适应宽度，不再统一撑到 92% 视口宽——同时给一个最小尺寸兜底，
+   避免只有一两个字时缩成一个挤扁的小方块。shellHtml() 按 hasNav 自动加这个类，
+   带侧边栏的编辑器弹窗（.modal-box 不带 .compact）维持原来撑满两栏的宽度不变。 */
+.modal-box.compact { width: fit-content; min-width: 320px; min-height: 120px; }
 .modal-box h3 { margin-bottom: 14px; font-size: 16px; font-weight: 700; }
 #modalTitle { margin-bottom: 14px; font-size: 16px; font-weight: 700; }
 .modal-box .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; gap: 12px; }

@@ -239,7 +239,7 @@ export const towerPassives = {
           name: '重甲联防', icon: '🤝', kind: 'stat', statKey: 'magicResist',
           flatValue: bonus, duration: Infinity, permanent: true, conditional: true,
           stackable: true, maxStacks: 20, stackPolicy: 'refresh', uniquePassive: true,
-          description: `魔抗+${bonus}`,
+          description: `魔法抗性+${bonus}`,
         }, 'passive_heavy_defense_mr');
         const mrEff = ctx.effectRegistry.getEffect(mrId);
         if (mrEff) mrEff.stacks = enemyCount;
@@ -358,7 +358,7 @@ export const towerPassives = {
           perStackPercent: 2,
           stackPolicy: 'stack',
           permanent: true,
-          description: `魔抗+${s*2}%`,
+          description: `魔法抗性+${s*2}%`,
         }, 'passive_frost_plating');
         ctx.effectRegistry.apply(entityId, {
           name: '冰霜镀层',
@@ -438,8 +438,8 @@ export const towerPassives = {
             name: '镀层破裂', icon: '🔰', kind: 'stat', statKey: 'magicResist',
             flatValue: 25, perStackFlat: 25, duration: Infinity, permanent: true,
             stackable: true, maxStacks: 4, stackPolicy: 'stack', uniquePassive: true,
-            descTemplate: '唯一被动——镀层破裂：生命跌破阈值永久获得（{val}=+25×破裂数）魔抗。',
-            description: '永久魔抗提升（{stacks}/4层）',
+            descTemplate: '唯一被动——镀层破裂：生命跌破阈值永久获得（{val}=+25×破裂数）魔法抗性。',
+            description: '永久魔法抗性提升（{stacks}/4层）',
           }, 'passive_armor_plating_perm_mr');
           const me = ctx.effectRegistry.getEffect(mrEff);
           if (me) { me.stacks = brokenCount; ctx.effectRegistry._recalcEffectValues(me); ctx.effectRegistry._updateDescription(me); }
@@ -639,7 +639,7 @@ export const towerPassives = {
       ctx.effectRegistry.apply(entityId, {
         name: '过载', icon: '💣', kind: 'stat', statKey: 'magicResist', flatValue: -st.mrLost,
         duration: nextIn, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `过载：魔抗 -${Math.round(st.mrLost)}`, // 与 armor 条同名 → UI 自动合并为一个图标
+        description: `过载：魔法抗性 -${Math.round(st.mrLost)}`, // 与 armor 条同名 → UI 自动合并为一个图标
       }, 'passive_overload_mr');
 
     },
@@ -722,7 +722,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
         if (steps > 0) {
           if (effectiveArmorPerStep > 0) {
             // Q2 修正（最新确认）：护甲与魔抗一块成长，每层各 +armorPerStep
-            for (const [rk, rl] of [['armor', '护甲'], ['magicResist', '魔抗']]) {
+            for (const [rk, rl] of [['armor', '护甲'], ['magicResist', '魔法抗性']]) {
               ctx.effectRegistry.apply(entityId, {
                 name: name + '·双抗', icon: '🛡', kind: 'stat', statKey: rk, flatValue: steps * effectiveArmorPerStep,
                 duration: capped ? Infinity : 60, permanent: capped,
@@ -762,7 +762,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
         if (rSteps !== st.resSteps) {
           st.resSteps = rSteps;
           if (rSteps > 0) {
-            for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔抗']]) {
+            for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔法抗性']]) {
               ctx.effectRegistry.apply(entityId, {
                 name: name + '·双抗', icon: '🛡', kind: 'stat', statKey: key, flatValue: rSteps,
                 duration: 60, stackable: true, maxStacks: 999, stackPolicy: 'refresh',

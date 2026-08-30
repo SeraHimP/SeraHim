@@ -326,7 +326,7 @@ export const dragonSouls = {
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive) return;
       const maxStacks = Math.max(1, Math.round((p.maxFlat ?? 30) / (p.flatPerStack ?? 1)));
-      for (const [statKey, label] of [['armor', '护甲'], ['magicResist', '魔抗']]) {
+      for (const [statKey, label] of [['armor', '护甲'], ['magicResist', '魔法抗性']]) {
         // uniquePassive:true + **固定** sourceId ⇒ 全队共用一份层数
         //（用户定稿："不可叠加，但是友军单位攻击也会增加层数"）。
         // 若按攻击者分源，五个单位打同一个目标会各攒各的，实际削抗变成五倍。
@@ -772,7 +772,7 @@ const SOUL_STAT_KEYS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'po
 // 属性中文名。只覆盖龙魂用得到的那几项 —— 面板那份完整表在 UI 层（editor/fields.js），
 // core 不该反向依赖 UI，所以这里留一份小的。多出来的键会原样显示，不会漏说。
 const STAT_LABEL = {
-  attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔抗',
+  attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔法抗性',
   healShieldPowerPct: '治疗与护盾强度', healthRegen: '生命回复',
   armorPenFlat: '固定护甲穿透', magicPenFlat: '固定法术穿透',
   bonusAttackSpeedPct: '攻速', attackRange: '攻击距离',
@@ -816,6 +816,28 @@ function statSummary(el) {
     return `${label} +${v}${unit}`;
   });
   return parts.length ? `　常驻加持：${parts.join('、')}。` : '';
+}
+
+/**
+ * ==================== v51.6：常驻加持改走统一的网格块（不再是纯文字） ====================
+ * 用户："龙魂常驻加持的描述目前还是走的文字，改成统一的那种块。"——参考效果详情弹窗
+ * （如"术法贯通"）里护甲穿透/法术穿透那种两列网格。statSummary() 拼出来的那句人话仍然
+ * 保留（description/descTemplate 的纯文本口径不能动——sim_skilldesc.mjs 靠文本里的数字
+ * 核对"文案数值与实际效果一致"，且编辑器里那几处预览框是 textContent，没法塞 HTML），
+ * 但 DetailModal/悬浮预览这类走 innerHTML 的地方，会把这句文字尾巴换成同一份
+ * modsGridHtml 网格——数据来源与 soulStatBlueprints（真正挂给实体的效果）同一个
+ * statMod() 翻译规则，不会出现"网格写的和实际生效的对不上"。
+ */
+export function soulStatMods(el) {
+  const tbl = (CONFIG.dragonSouls && CONFIG.dragonSouls.stat && CONFIG.dragonSouls.stat[el]) || null;
+  if (!tbl) return {};
+  const mods = {};
+  for (const [k, v] of Object.entries(tbl)) {
+    const m = statMod(k, v);
+    const slot = mods[m.statKey] || (mods[m.statKey] = { flat: 0, percent: 0 });
+    slot.flat += m.flat; slot.percent += m.percent;
+  }
+  return mods;
 }
 
 /** 某条魂的常驻属性蓝图列表（读 CONFIG，编辑器改了立刻生效）。 */

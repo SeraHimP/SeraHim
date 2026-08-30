@@ -17,7 +17,7 @@ export const FIELD_META = {
   attackRange:        { label: '攻击距离', min: 0, max: 800, step: 10 },
   bulletSpeed:        { label: '子弹速度', min: 0, max: 1200, step: 20 },
   armor:              { label: '护甲', min: -100, max: 500, step: 5 },
-  magicResist:        { label: '魔抗', min: -100, max: 500, step: 5 },
+  magicResist:        { label: '魔法抗性', min: -100, max: 500, step: 5 },
   damageReduction:    { label: '伤害减免%', min: 0, max: 100, step: 1 },
   damageBlock:        { label: '格挡值', min: 0, max: 500, step: 5 },
   shieldFixedMax:     { label: '固定护盾上限', min: 0, max: 5000, step: 50 },

@@ -3,7 +3,7 @@ import { SkillLibrary, renderSkillDescription } from '../core/SkillLibrary.js';
 import { resolveMergedIds } from '../core/skills/_helpers.js';
 import { AttributeEditor } from './AttributeEditor.js';
 import * as WEATHER_DEFS from '../data/Weather.js';
-import { DetailModal, STAT_LABELS, modsGridHtml, formatSkillFormulasHtml, getSkillDescMode } from './DetailModal.js';
+import { DetailModal, STAT_LABELS, modsGridHtml, getSkillDescMode, effectGroupBreakdown, skillDescHtmlParts } from './DetailModal.js';
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
@@ -254,8 +254,10 @@ export class UIManager {
       const def = SkillLibrary[inst.skillId];
       if (!def) return '';
       const disabled = inst._disabled ? ' disabled' : '';
-      const dtitle = inst._disabled ? '（不兼容特殊攻击方式武器，已禁用）' : '';
-      return `<div class="skill-slot has-skill${disabled}" data-skill-id="${inst.id}" title="${def.name}${dtitle}" style="border-color:${def.color || '#5b9bd5'};">
+      // v51.6 追补：删掉 title——悬浮到这个格子已经会弹出自定义预览（_hoverBodyForSkill
+      // 里含技能名与禁用说明），浏览器原生 title 提示框会在同一个位置再叠一层，
+      // 变成用户报的"鼠标移上去多出一个白框"。
+      return `<div class="skill-slot has-skill${disabled}" data-skill-id="${inst.id}" style="border-color:${def.color || '#5b9bd5'};">
         <span style="font-size:16px;">${def.icon || '🔹'}</span>
       </div>`;
     }).join('');
@@ -351,10 +353,11 @@ export class UIManager {
       const edgeHtml = EDGES.map((d, i) =>
         `<path d="${d}" fill="none" stroke="${i < lit ? col : 'rgba(255,255,255,0.14)'}"
            stroke-width="${i < lit ? 2.2 : 1.2}" stroke-linecap="round"/>`).join('');
-      // title 里放完整明细：三核构成 + 本方最终加成，"为什么我的属性变了"当场能答
-      const tip = `${r.source} — ${r.detail}`.replace(/"/g, '&quot;');
+      // v51.6 追补：删掉原来放完整明细的 title——现在悬浮到这个三角就会弹出
+      // _worldDetailBody 同一份内容（_showHoverTip），浏览器原生 title 提示框
+      // 会在同一位置重叠出现，就是用户报的"多出一个白框"。
       return `
-        <div class="wx-tri${cls}" data-worldidx="${i}" title="${tip}">
+        <div class="wx-tri${cls}" data-worldidx="${i}">
           <svg viewBox="0 0 34 30" class="wx-tri-svg">
             <polygon points="17,3 32,27 2,27" fill="${col}22" stroke="none"/>
             ${edgeHtml}
@@ -471,8 +474,7 @@ export class UIManager {
       const tierExtreme = r.tier.isExtremeTier ? ' tier-extreme' : '';
       return `
         <div class="wx-tri${r.extreme ? ' extreme' : ''}${tierExtreme}"
-             data-wxid="${r.def.id}"
-             title="${r.def.name} · ${r.tier.name}">
+             data-wxid="${r.def.id}">
           <svg viewBox="0 0 34 30" class="wx-tri-svg">
             <polygon points="17,3 32,27 2,27" fill="${col}22" stroke="none"/>
             ${edgeHtml}
@@ -602,26 +604,30 @@ export class UIManager {
     const desc = renderSkillDescription(def, entity,
       { entityContainer: this.entities, effectRegistry: this.effects, attrCalc: this.attrCalc }) || def.description || '无';
     const disabled = instance && instance._disabled;
-    const html = formatSkillFormulasHtml(desc, { concise: getSkillDescMode() === 'concise' });
-    return `<div style="font-size:13px;font-weight:600;margin-bottom:4px;">📌 ${def.name}${disabled ? '（因装备特殊攻击方式武器而禁用）' : ''}</div>
-      <div style="white-space:pre-wrap;">${html}</div>`;
+    // v51.6：龙魂"常驻加持"从文字尾巴换成网格块，与点开的详情弹窗共用同一份
+    // skillDescHtmlParts（Q15），不再各写一份判断逻辑。
+    const { textHtml, gridHtml } = skillDescHtmlParts(def, desc, { concise: getSkillDescMode() === 'concise' });
+    // v51.6 修复：标题图标原来写死是📌，与技能栏格子里显示的真实图标（def.icon）对不上——
+    // 用户报"悬浮窗口中的图标和技能栏/状态栏里的图标并不匹配"。改用同一份 def.icon，
+    // 兜底 🔹 与 .skill-slot 渲染那行（`${def.icon || '🔹'}`）保持一致。
+    return `<div style="font-size:13px;font-weight:600;margin-bottom:4px;">${def.icon || '🔹'} ${def.name}${disabled ? '（因装备特殊攻击方式武器而禁用）' : ''}</div>
+      <div style="white-space:pre-wrap;">${textHtml}</div>${gridHtml}`;
   }
 
-  /** 状态格的悬浮预览：与 DetailModal.showEffectGroup 同一份"属性变化"网格，只是不弹整个模态框。 */
+  /**
+   * 状态格的悬浮预览：与 DetailModal.showEffectGroup 共用同一份折算逻辑
+   * （effectGroupBreakdown）——属性变化走网格，持续伤害/眩晕/展示类效果的文字说明
+   * 也一并带上，不再只显示属性变化那一半（用户报的 bug）。图标用该效果自己的
+   * blueprint.icon，与状态栏格子里显示的图标（effect-icon-glyph）保持一致。
+   */
   _hoverBodyForEffect(name, group) {
-    const mods = {};
-    for (const e of group) {
-      const bp = e.blueprint;
-      if (bp.kind !== 'stat' || !bp.statKey) continue;
-      const flat = e.totalFlat || 0, pct = e.totalPercent || 0;
-      if (!flat && !pct) continue;
-      const m = mods[bp.statKey] || (mods[bp.statKey] = { flat: 0, percent: 0 });
-      m.flat += flat; m.percent += pct;
-    }
-    const grid = this._modsGridHtml(mods);
-    return `<div style="font-size:13px;font-weight:600;margin-bottom:4px;">📌 ${name}</div>`
-      + (grid ? `<div class="attrs" style="display:grid;">${grid}</div>`
-              : `<div style="color:var(--text-mute);">（无属性变化）</div>`);
+    const icon = group[0]?.blueprint?.icon || '🔹';
+    const { gridHtml, otherLines } = effectGroupBreakdown(group);
+    const gridBlock = gridHtml ? `<div class="attrs" style="display:grid;">${gridHtml}</div>` : '';
+    const textBlock = otherLines.length
+      ? `<div style="font-size:12px;line-height:1.8;margin-top:${gridHtml ? '6px' : '0'};">${otherLines.join('<br>')}</div>` : '';
+    const empty = (!gridHtml && !otherLines.length) ? `<div style="color:var(--text-mute);">（无属性变化）</div>` : '';
+    return `<div style="font-size:13px;font-weight:600;margin-bottom:4px;">${icon} ${name}</div>${gridBlock}${textBlock}${empty}`;
   }
 
   // v51.6：抽出纯 body 构建——弹窗（点击）与悬浮预览（mouseover）现在共用同一份内容，
@@ -785,7 +791,7 @@ export class UIManager {
       const val = key === 'bonusAttackSpeedPct' ? this._attackSpeedHtml(E, stats)
         : key === 'critChance' ? this._statValueHtml(key, E, stats, '%')
         : this._statValueHtml(key, E, stats);
-      return `<div class="a stat-doc" data-stat="${key}" title="点击查看说明"><label>${label}</label><span>${val}</span></div>`;
+      return `<div class="a stat-doc" data-stat="${key}"><label>${label}</label><span>${val}</span></div>`;
     }).join('');
   }
 
@@ -825,7 +831,7 @@ export class UIManager {
       const cells = g.rows.map(({ key, label, suffix }) => {
         const v = this._statValueHtml(key, E, stats, suffix);
         return v === '' ? '' :
-          `<div class="a stat-doc" data-stat="${key}" title="点击查看说明"><label>${label}</label><span>${v}</span></div>`;
+          `<div class="a stat-doc" data-stat="${key}"><label>${label}</label><span>${v}</span></div>`;
       }).filter(Boolean);
       if (!cells.length) continue;
       // 奇数格 → 最后一格横跨两列，否则下一组的第一格会被塞进这一组留下的空位里。
@@ -1190,6 +1196,11 @@ export class UIManager {
     this.selPanel.classList.remove('show');
     const _appSel = window.CTX?.__app || window.__app;
     if (_appSel?.renderer) _appSel.renderer.selectedId = null;
+    // v51.6 修复：用户报"单位阵亡、属性面板消失了，但鼠标悬浮弹出的预览框没有消失"。
+    // selCard.innerHTML 被清空后，鼠标仍停在原位置——浏览器不会主动为你补发一次
+    // mouseout（DOM 节点已经不在了，没有"移出"这个事件可触发），悬浮层因此变成孤儿，
+    // 一直挂在屏幕上直到用户自己把鼠标挪开再挪回来。属性面板一关就该把它一并带走。
+    this._hideHoverTip();
   }
 
   updateSelection() {

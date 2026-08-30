@@ -111,7 +111,7 @@ export const minionPassives = {
                  // 光环本身不再按波次拦截——玩家手动装备的任何波次都生效。装配逻辑见 main.js createMinion。
     effectsFn: () => [
       { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'armor', flatValue: 20, description: '护甲+20' },
-      { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'magicResist', flatValue: 20, description: '魔抗+20' },
+      { name: '炮兵指挥官', icon: '📯', kind: 'stat', statKey: 'magicResist', flatValue: 20, description: '魔法抗性+20' },
     ],
   }),
 
@@ -312,7 +312,7 @@ export const minionPassives = {
     _text() {
       const c = this._cfg();
       return `唯一被动——蚀骨：${c.radius ?? 110} 范围内的所有敌人每 ${c.stackIntervalSec ?? 1} 秒`
-           + `叠加一层腐蚀，每层降低 ${c.resistPerStack ?? 1} 点护甲与魔抗，`
+           + `叠加一层腐蚀，每层降低 ${c.resistPerStack ?? 1} 点护甲与魔法抗性，`
            + `最多 ${c.maxStacks ?? 30} 层（{val}=最高 -${(c.resistPerStack ?? 1) * (c.maxStacks ?? 30)} 双抗）；`
            + `离开范围后逐层消退。`;
     },
@@ -348,7 +348,7 @@ export const minionPassives = {
         if (t.id === e.id || t.type === 'dragon') continue;
         const tf = t._mapFaction || t.faction;
         if (tf === ef) continue;
-        for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔抗']]) {
+        for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔法抗性']]) {
           ctx.effectRegistry.apply(t.id, {
             name: '腐蚀', icon: '🦇', kind: 'stat', statKey: key, type: 'debuff', color: '#6b8e23',
             flatValue: -per, perStackFlat: -per,

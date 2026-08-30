@@ -91,17 +91,17 @@ export const STAT_DOCS = {
            + '也就是**负护甲本身就是增伤**（−50 护甲 ≈ 承受 1.33 倍）。',
   },
   magicResist: {
-    label: '魔抗',
+    label: '魔法抗性',
     desc: (stats) => {
       const mr = stats ? (stats.magicResist || 0) : null;
       if (mr === null) return '减免【魔法伤害】。';
       const mult = mr >= 0 ? 100 / (100 + mr) : (2 - 100 / (100 - mr));
       const pct = Math.round((1 - mult) * 100);
       return mr >= 0
-        ? `减免约 ${pct}% 即将到来的魔法伤害。真实伤害不受任何抗性影响。`
-        : `魔抗为负：即将到来的魔法伤害会被放大约 ${Math.abs(pct)}%。真实伤害不受任何抗性影响。`;
+        ? `减免约 ${pct}% 即将到来的魔法伤害。`
+        : `魔法抗性为负：即将到来的魔法伤害会被放大约 ${Math.abs(pct)}%。`;
     },
-    formula: '与护甲同一套公式，只是作用于魔法伤害。真实伤害不受任何抗性影响。',
+    formula: '与护甲同一套公式，只是作用于魔法伤害。',
   },
   damageReduction: {
     label: '伤害减免%',
@@ -133,8 +133,8 @@ export const STAT_DOCS = {
            + '（会夹到 0）—— 否则穿透就成了无上限的增伤放大器。目标护甲本来就是负的时，穿透不再往下打。',
   },
   armorPenPercent: { label: '百分比护甲穿透%', desc: '按百分比削减目标护甲。', formula: '见「固定护甲穿透」的顺序说明。' },
-  magicPenFlat: { label: '固定法术穿透', desc: '按固定值削减目标魔抗。', formula: '与护甲穿透同一套顺序与夹取规则。' },
-  magicPenPercent: { label: '百分比法术穿透%', desc: '按百分比削减目标魔抗。', formula: '与护甲穿透同一套顺序与夹取规则。' },
+  magicPenFlat: { label: '固定法术穿透', desc: '按固定值削减目标魔法抗性。', formula: '与护甲穿透同一套顺序与夹取规则。' },
+  magicPenPercent: { label: '百分比法术穿透%', desc: '按百分比削减目标魔法抗性。', formula: '与护甲穿透同一套顺序与夹取规则。' },
   onHitDamage: { label: '攻击特效固定伤害', desc: '每次命中额外造成的固定伤害。', formula: '计入基础伤害后再走抗性结算，不是独立的一段。' },
   onHitPercentDamage: {
     label: '攻击特效%当前生命',
@@ -184,7 +184,7 @@ export const STAT_DOCS = {
   },
   critChance: {
     label: '暴击率%',
-    desc: '普通攻击的暴击概率。默认 0（纯机械单位，没有来源加成就不会暴击）。',
+    desc: '普通攻击的暴击概率。默认 0。',
     formula: '暴击伤害 = 基础暴击倍率(默认200%) + 暴击伤害加成。持有【技能暴击】状态时，'
            + '技能也能按这个概率暴击，但暴击倍率改用单独更低的一档。',
   },

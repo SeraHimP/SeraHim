@@ -469,16 +469,30 @@ export const WeatherPanel = {
       const live = container.querySelector('#wxLive');
       if (live) {
         const w = ws.getWeights();
+        // v51.6 修复：用户报"天气界面我画圈处的进度条样式还是没有改！这种的不好看！"——
+        // 这里原来是用 █/░ 两种字符手搓的"进度条"（Unicode 方块字符，一大截实心方块
+        // 接一截浅色方块，看起来像老式终端仪表，和 #wxBase 那套已经改成"6px 圆角+
+        // 内发光"的进度条完全是两套视觉语言）。改成同一套：图标+名称+圆角发光条+
+        // 百分比数字，与下面【基础天气】的条形样式统一。
         const rows = Object.entries(w).sort((a, b) => b[1] - a[1])
           .map(([id, v]) => {
             const def = BASE_WEATHERS[id];
-            const n = Math.round(v * 40);
-            return `<span style="color:${def.color}">${def.icon} ${def.name.padEnd(2, '　')} ${'█'.repeat(n)}${'░'.repeat(40 - n)} ${(v * 100).toFixed(1)}%</span>`;
-          }).join('<br>');
+            const pct = v * 100;
+            return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+              <span style="font-size:14px;width:18px;text-align:center;flex:none;">${def.icon}</span>
+              <span style="font-size:12px;color:${def.color};width:28px;flex:none;">${def.name}</span>
+              <div style="flex:1;height:6px;background:rgba(255,255,255,0.07);border-radius:4px;overflow:hidden;">
+                <div style="width:${pct}%;height:100%;border-radius:4px;background:${def.color};
+                  box-shadow:0 0 6px ${def.color}80;"></div>
+              </div>
+              <span style="font-size:11px;color:${def.color};width:46px;text-align:right;flex:none;">${pct.toFixed(1)}%</span>
+            </div>`;
+          }).join('');
         const ex = ws.getActiveExtremes();
-        live.innerHTML = rows + (ex.length
-          ? '<br><br>' + ex.map(e => `<span style="color:${e.color}">${e.icon} <b>${e.name}</b> 强度 ${(e.intensity * 100).toFixed(0)}%</span>`).join('<br>')
-          : '<br><br><span style="color:var(--text-dim)">（无极端天气）</span>');
+        const exHtml = ex.length
+          ? ex.map(e => `<div style="color:${e.color};"><b>${e.icon} ${e.name}</b> 强度 ${(e.intensity * 100).toFixed(0)}%</div>`).join('')
+          : `<div style="color:var(--text-dim);">（无极端天气）</div>`;
+        live.innerHTML = rows + `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">${exHtml}</div>`;
       }
       requestAnimationFrame(tick);
     };
