@@ -8,7 +8,7 @@ import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
 import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES } from '../core/resourceBar.js';
-import { stepTrail } from '../presentation/barTrail.js';
+import { stepTrail, stepEase } from '../presentation/barTrail.js';
 
 export class UIManager {
   constructor(entityContainer, effectRegistry, attrCalc) {
@@ -202,6 +202,22 @@ export class UIManager {
     const dt = Math.min(0.05, (nowTs - (el._lastTs || nowTs)) / 1000);
     el._lastTs = nowTs;
     const tr = stepTrail(el._frac, hpFrac, dt, 1 / 300);
+    el._frac = tr.disp;
+    el.style.width = (Math.max(0, Math.min(1, el._frac)) * 100) + '%';
+  }
+
+  /**
+   * 属性面板法力/充能条的缓动——同 _stepTrailBar，但走 barTrail.stepEase（双向
+   * 缓动，见该函数头注）。用户："画板上进度条和属性窗口进度条的缓动效果是
+   * 统一的"——两处现在都调同一个模块的函数，参数（TRAIL_RATE）也是同一份。
+   */
+  _stepEaseBar(el, frac) {
+    if (!el) return;
+    const nowTs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (el._frac === undefined) { el._frac = frac; el._lastTs = nowTs; }
+    const dt = Math.min(0.05, (nowTs - (el._lastTs || nowTs)) / 1000);
+    el._lastTs = nowTs;
+    const tr = stepEase(el._frac, frac, dt, 1 / 300);
     el._frac = tr.disp;
     el.style.width = (Math.max(0, Math.min(1, el._frac)) * 100) + '%';
   }
@@ -777,7 +793,7 @@ export class UIManager {
     if (!info) return;
     const fill = row.querySelector('.bar-res');
     if (fill) {
-      fill.style.width = (info.frac * 100) + '%';
+      this._stepEaseBar(fill, info.frac);
       fill.style.background = RESOURCE_COLORS[info.kind] || RESOURCE_COLORS.mana;
     }
     if (textEl) textEl.textContent = info.label;

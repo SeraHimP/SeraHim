@@ -2060,12 +2060,16 @@ async function world() {
   T('环⑤-默认都用圆环，只有蓝方阶梯方塔（outer/inner/base）才额外适配成方形环',
     /const isNexusTier = e\._mapTier === 'nexus_lane' \|\| e\._mapTier === 'nexus_main';/.test(ul)
     && /const square = e\.type === 'tower' && faction === 'blue' && !isNexusTier;/.test(ul)
-    && /_flatGeo\(square \? 'squareRing' : 'ring', r, 1\.6\)/.test(ul));
+    && /_flatGeo\(square \? 'squareRing' : 'ring', r, ringW\)/.test(ul));
   T('环⑤c-蓝方召唤水晶/水晶枢纽（圆形基座）被排除在方环之外，不会跟着阶梯方塔一起被套成方形',
     /!isNexusTier/.test(ul) && /e\._mapTier === 'nexus_lane' \|\| e\._mapTier === 'nexus_main'/.test(ul));
   T('环⑤b-环宽比选中光圈的核心环（2.5）细，两种含义不同的环能区分粗细（用户报"太粗了"）',
-    /_flatGeo\(square \? 'squareRing' : 'ring', r, 1\.6\)/.test(ul)
+    /_flatGeo\(square \? 'squareRing' : 'ring', r, ringW\)/.test(ul)
     && /_flatGeo\('ring', r, 2\.5\)/.test(ul));
+  T('环⑤d-追加需求：塔的龙魂环单独收小半径(×0.85)+加粗(2.0)，小兵维持原样(×1, 1.6)',
+    /const isTowerRing = e\.type === 'tower';/.test(ul)
+    && /const r = \(vis\.ringR \|\| 12\) \* \(isTowerRing \? 0\.85 : 1\);/.test(ul)
+    && /const ringW = isTowerRing \? 2\.0 : 1\.6;/.test(ul));
   T('环⑥-幽灵/废墟/死亡单位不显示龙魂环', /if \(ghost \|\| ruin \|\| !e\.alive\)/.test(ul));
   // v51.6 修复：用户报"龙死了之后龙魂的颜色环残余在地面"，后来补充"不只是龙，
   // 其余单位的龙魂环也会残留"——根因是 remove(id)（单位被整个从 EntityContainer
@@ -2450,24 +2454,26 @@ async function world() {
 {
   const tp = srcOf('src/core/skills/towerPassives.js');
   const mp = srcOf('src/core/skills/minionPassives.js');
-  T('盾⑩-钢铁烈阳护盾（passive_inner_bulwark）改挂 kind:\'shield\'，不再是 statKey:\'shieldFixedMax\'',
-    /name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: v,/.test(tp)
-    && !/name: '钢铁烈阳护盾', icon: '☀️', kind: 'stat', statKey: 'shieldFixedMax'/.test(tp));
+  T('盾⑩-钢铁烈阳护盾（passive_inner_bulwark）自身那份改挂 kind:\'shield\'',
+    /name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: selfPlain,/.test(tp));
   T('盾⑪-图腾壁垒（passive_totem_bulwark）改走 effectRegistry.apply(kind:\'shield\')，不再直接改 baseStats.shieldFixedMax',
     /kind: 'shield', flatValue: v,/.test(mp) && !/e\.baseStats\.shieldFixedMax = \(e\.baseStats\.shieldFixedMax \|\| 0\) \+ v;/.test(mp));
   T('盾⑫-图腾壁垒改挂效果后也走 healPowerFor 缩放（"治疗与护盾强度影响所有相关属性"这条硬规矩不能漏）',
     /const v = \(CONFIG\.gameRules\.supportUnits\?\.totem\?\.selfShieldFlat \?\? 900\) \* healPowerFor\(e, ctx\);/.test(mp));
-  T('盾⑬-钢铁烈阳护盾数值改走 defaultParams（才能被地图级 skillOverrides 覆写，不是仍旧写死在闭包里）',
-    /defaultParams: \{ flatValue: 50 \}/.test(tp));
+  T('盾⑬-钢铁烈阳护盾三项数值都走 defaultParams（才能被地图级 skillOverrides 分别覆写，不是仍旧写死在闭包里）',
+    /defaultParams: \{ selfPlainValue: 50, selfFixedValue: 0, allyPlainValue: 50 \}/.test(tp));
+  T('盾⑬b-Q4 修正：自身固定护盾走 kind:\'stat\' statKey:\'shieldFixedMax\'，只有配了 selfFixedValue>0 才挂（不白占状态栏格子）',
+    /if \(selfFixed > 0\) \{[\s\S]{0,300}kind: 'stat', statKey: 'shieldFixedMax', flatValue: selfFixed,/.test(tp));
 }
 
-// ==================== 召唤师峡谷内塔默认+800护盾：走既有"地图级技能参数覆写"通道 ====================
-// 用户："召唤师峡谷内塔默认+800【护盾】属性。就是我刚才说的第三种护盾。"
-// 不新开技能/新造属性：内塔本来就默认装 passive_inner_bulwark（钢铁烈阳护盾，出厂 50），
-// 靠 map.skillOverrides['tower:inner'].passive_inner_bulwark.flatValue 把这张图的值覆写成 800
-// （其它地图 / 编辑器新建的内塔仍是出厂的 50，不受影响）。
+// ==================== 召唤师峡谷内塔：Q4 修正版——自身+800护盾+50固定护盾，友军+50护盾 ====================
+// 用户："内塔+800护盾，+50固定护盾。给周围友军单位+50护盾。"——不新开技能/新造
+// 属性：内塔本来就默认装 passive_inner_bulwark（钢铁烈阳护盾），靠
+// map.skillOverrides['tower:inner'].passive_inner_bulwark 把这张图的
+// selfPlainValue/selfFixedValue 覆写成 800/50，allyPlainValue 留着出厂默认 50
+// 不动（其它地图/编辑器新建的内塔三项都还是出厂默认，不受影响）。
 {
-  const { ents, fx, combat, CONFIG, SkillLibrary } = await world();
+  const { ents, fx, combat, CONFIG, SkillLibrary, attr } = await world();
   const { MapSystem } = await import('../src/systems/MapSystem.js');
   const { EventBus } = await import('../src/utils/EventBus.js');
   const bus2 = new EventBus();
@@ -2475,25 +2481,117 @@ async function world() {
   ms.setEffectRegistry(fx);
 
   ms.loadMap('summoners_rift_v1');
-  T('盾⑭-召唤师峡谷地图数据里 tower:inner 的 passive_inner_bulwark 覆写为 flatValue:800',
-    ms.currentMap.skillOverrides?.['tower:inner']?.passive_inner_bulwark?.flatValue === 800);
+  T('盾⑭-召唤师峡谷地图数据里 tower:inner 的 passive_inner_bulwark 覆写为 selfPlainValue:800, selfFixedValue:50',
+    ms.currentMap.skillOverrides?.['tower:inner']?.passive_inner_bulwark?.selfPlainValue === 800
+    && ms.currentMap.skillOverrides?.['tower:inner']?.passive_inner_bulwark?.selfFixedValue === 50);
 
   const innerTower = mkEntity(ents, 'tower', { tier: 'inner', skills: ['passive_inner_bulwark'] }, CONFIG);
   combat.update(0.31); // 光环节流 0.3s 一次，跑够一次 tick，onFrame 内才真正 apply 上护盾
   combat.update(0.01); // entity.plainShield 是在 onFrame 之前缓存的，要再跑一帧才能读到刚挂上的护盾
-  const shieldEff = fx.getEffects(innerTower.id).find(e => e.blueprint.kind === 'shield');
-  T('盾⑮-召唤师峡谷的内塔在此覆写下实际拿到 800 护盾（不是出厂的 50）',
+  const shieldEff = fx.getEffects(innerTower.id).find(e => e.blueprint.kind === 'shield' && e.blueprint.name === '钢铁烈阳护盾');
+  T('盾⑮-召唤师峡谷的内塔在此覆写下自身拿到 800 护盾（不是出厂的 50）',
     !!shieldEff && shieldEff.shieldRemaining === 800);
-  T('盾⑯-召唤师峡谷内塔的护盾缓存进 entity.plainShield=800（UI 血条读的就是这个字段）',
+  T('盾⑮b-召唤师峡谷的内塔同时拿到 +50 固定护盾（shieldFixedMax 提升 50）',
+    attr.calc(innerTower, fx.getEffects(innerTower.id)).shieldFixedMax === 50);
+  T('盾⑯-召唤师峡谷内塔的护盾缓存进 entity.plainShield=800（UI 血条读的就是这个字段；固定护盾不算进这个字段）',
     innerTower.plainShield === 800);
 
-  // 回归：不带这条地图覆写时（其它地图 / 编辑器手动加的内塔），出厂值仍是 50，没被这次改动带偏。
+  // 回归：不带这条地图覆写时（其它地图 / 编辑器手动加的内塔），自身出厂值仍是 50 护盾、
+  // 没有固定护盾（selfFixedValue 默认 0，没超过 0 就不挂那条效果），没被这次改动带偏。
   SkillLibrary._mapOverrides = null;
   const plainInnerTower = mkEntity(ents, 'tower', { tier: 'inner', skills: ['passive_inner_bulwark'] }, CONFIG);
   combat.update(0.31);
-  const shieldEff2 = fx.getEffects(plainInnerTower.id).find(e => e.blueprint.kind === 'shield');
-  T('盾⑰-没有地图级覆写时，钢铁烈阳护盾仍是出厂默认的 50（召唤师峡谷的 800 只影响这张图）',
+  const shieldEff2 = fx.getEffects(plainInnerTower.id).find(e => e.blueprint.kind === 'shield' && e.blueprint.name === '钢铁烈阳护盾');
+  T('盾⑰-没有地图级覆写时，钢铁烈阳护盾自身仍是出厂默认的 50 护盾（召唤师峡谷的 800 只影响这张图）',
     !!shieldEff2 && shieldEff2.shieldRemaining === 50);
+  T('盾⑰b-没有地图级覆写时，自身不会额外挂固定护盾（selfFixedValue 出厂默认 0）',
+    attr.calc(plainInnerTower, fx.getEffects(plainInnerTower.id)).shieldFixedMax === 0);
+}
+
+// ==================== 追加 Q1：攻击/受击弹跳幅度太夸张、塔看着没反应 ====================
+// 用户："为什么单位攻击/受击的时候一跳一条的，好诡异。尤其是塔，塔受击/攻击时
+// 没有任何动画。把这个弹跳的效果做的没那么明显吧……你先把我说的这两个改了。"
+{
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  T('跳①-小兵的攻击脉冲/受击挤压幅度比原来小（原 0.1/0.14 → 0.035/0.05）',
+    /const ATTACK_PULSE_AMOUNT = 0\.035;/.test(ul) && /const HIT_SQUASH_AMOUNT = 0\.05;/.test(ul));
+  T('跳②-塔单独有一档更高的幅度（不是和小兵共用同一个百分比——大模型上小百分比看不出来）',
+    /const ATTACK_PULSE_AMOUNT_TOWER = 0\.07;/.test(ul) && /const HIT_SQUASH_AMOUNT_TOWER = 0\.09;/.test(ul)
+    && /const amt = en\.isTower \? ATTACK_PULSE_AMOUNT_TOWER : ATTACK_PULSE_AMOUNT;/.test(ul)
+    && /const amt = en\.isTower \? HIT_SQUASH_AMOUNT_TOWER : HIT_SQUASH_AMOUNT;/.test(ul));
+}
+
+// ==================== 追加 Q2：护盾在血条上的颜色——画板统一白色，属性窗口按深浅+斜纹区分 ====================
+// 用户："护盾在血条的显示就应该是灰白色系……在画板上的进度条上这三个显示效果
+// 不需要区分，都是白色就行。但是在单位属性窗口中，可以用颜色深浅和是否有斜线
+// 来区分这三个。"
+{
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  T('护色①-画板（UnitLayer 画布血条）三种护盾合并成一段纯白，不再用黄色画"护盾"那一档',
+    /const shieldW = spW \+ sfW \+ stW;/.test(ul)
+    && /if \(shieldW > 0\.001\) \{ g\.fillStyle = 'rgba\(255,255,255,0\.8\)';/.test(ul)
+    && !/rgba\(255,213,79/.test(ul));   // 旧的暖金色一处都不该剩
+
+  const html = srcOf('index.html');
+  const mPlain = html.match(/\.bar-shield-plain \{[\s\S]*?\}/);
+  const mFixed = html.match(/\.bar-shield-fixed \{[\s\S]*?\}/);
+  const mTemp = html.match(/\.bar-shield-temp \{[\s\S]*?\}/);
+  T('护色②-属性窗口的 .bar-shield-plain 改回灰白色系（不再是暖金色），且不带斜纹（用"是否带斜纹"这个维度跟另外两条区分）',
+    !!mPlain && /rgba\(225,228,232,0\.62\)/.test(mPlain[0]) && !/repeating-linear-gradient/.test(mPlain[0]));
+  T('护色③-固定/临时护盾两条还是白色斜纹（repeating-linear-gradient），只是深浅不同——三条都没有跳出白/灰白色系',
+    !!mFixed && !!mTemp && /repeating-linear-gradient/.test(mFixed[0]) && /repeating-linear-gradient/.test(mTemp[0]));
+}
+
+// ==================== 追加 Q3：画板法力/充能条没有缓动，且要和属性窗口统一 ====================
+// 用户："画板上显示的的法力条/充能条没有缓动效果。增加缓动效果。画板上进度条和
+// 属性窗口进度条的缓动效果是统一的。"
+{
+  const bt = srcOf('src/presentation/barTrail.js');
+  T('缓①-barTrail.js 新增 stepEase（双向缓动，不同于只在【减少】方向缓动的 stepTrail）',
+    /export function stepEase\(disp, real, dt, snapEps\)/.test(bt));
+
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  T('缓②-画板（UnitLayer）法力/充能条改用 stepEase 缓动出 en.dispResFrac，不再直接画瞬时值',
+    /import \{ stepTrail, stepEase, TRAIL_COLOR \} from '\.\/barTrail\.js';/.test(ul)
+    && /const rt = stepEase\(en\.dispResFrac \?\? resInfo\.frac, resInfo\.frac, dt, 1 \/ BAR_W\);/.test(ul)
+    && /resInfo = \{ \.\.\.resInfo, frac: en\.dispResFrac \};/.test(ul));
+  T('缓③-资源种类切换时直接贴齐，不从旧种类的数值缓过来（比如法力条切充能条不该有一条"跨种类"的缓动）',
+    /if \(en\._resKind !== resInfo\.kind\) \{ en\.dispResFrac = resInfo\.frac; en\._resKind = resInfo\.kind; \}/.test(ul));
+
+  const um = srcOf('src/ui/UIManager.js');
+  T('缓④-属性窗口（UIManager）法力/充能条也改走同一个 stepEase（_stepEaseBar），与画板同一份 TRAIL_RATE',
+    /import \{ stepTrail, stepEase \} from '\.\.\/presentation\/barTrail\.js';/.test(um)
+    && /_stepEaseBar\(el, frac\) \{/.test(um)
+    && /const tr = stepEase\(el\._frac, frac, dt, 1 \/ 300\);/.test(um)
+    && /this\._stepEaseBar\(fill, info\.frac\);/.test(um));
+
+  const html = srcOf('index.html');
+  const mRes = html.match(/\.bar-res \{[\s\S]*?\}/);
+  T('缓⑤-CSS 里 .bar-res 不再有 transition: width（JS 逐帧算好的宽度不该再叠一层 CSS 缓动，barTrail.js 头注点过这个老毛病）',
+    !!mRes && !/transition:[^;]*width/.test(mRes[0]));
+}
+
+// ==================== 追加：钢铁烈阳护盾数值改走 defaultParams 后，getDescTemplate 也要带出新参数 ====================
+{
+  const tp = srcOf('src/core/skills/towerPassives.js');
+  T('钢①-钢铁烈阳护盾的 getDescTemplate 读 selfPlainValue/selfFixedValue/allyPlainValue 三项参数拼描述',
+    /const selfPlain = typeof p\.selfPlainValue === 'number' \? p\.selfPlainValue : 50;/.test(tp)
+    && /const selfFixed = typeof p\.selfFixedValue === 'number' \? p\.selfFixedValue : 0;/.test(tp)
+    && /const allyPlain = typeof p\.allyPlainValue === 'number' \? p\.allyPlainValue : 50;/.test(tp));
+}
+
+// ==================== 追加：结构保护状态文案加"无敌"，过载状态显示已损失的最大生命值 ====================
+// 用户："结构保护的状态里面写：无敌。过载状态里面添加最大生命值损失了多少。"
+{
+  const ms = srcOf('src/systems/MapSystem.js');
+  T('文①-结构保护五条描述文案都以"无敌——"开头（用户要求直接点出"无敌"这个词）',
+    /无敌——本路外塔存活期间/.test(ms) && /无敌——本路内塔存活期间/.test(ms)
+    && /无敌——本路水晶塔存活期间/.test(ms) && /无敌——三路召唤水晶完好期间/.test(ms)
+    && /无敌——己方枢纽塔存活期间/.test(ms) && /'无敌——外侧建筑存活期间/.test(ms));
+
+  const tp = srcOf('src/core/skills/towerPassives.js');
+  T('文②-过载 computeCurrent 在进入第二阶段（开始扣最大生命）后显示具体已损失多少，不再只写"含最大生命损失"这种看不出数值的话',
+    /return `已过载（最大生命已损失 \$\{Math\.round\(st\.hpLostTotal \|\| 0\)\}）`;/.test(tp));
 }
 
 done();

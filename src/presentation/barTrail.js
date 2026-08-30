@@ -48,3 +48,25 @@ export function stepTrail(disp, real, dt, snapEps) {
   if (next - real < snapEps) return { disp: real, trailing: false };
   return { disp: next, trailing: true };
 }
+
+/**
+ * ==================== 追加：资源/充能条的缓动（双向）====================
+ * 用户："画板上显示的的法力条/充能条没有缓动效果。增加缓动效果。画板上进度条和
+ * 属性窗口进度条的缓动效果是统一的。"
+ *
+ * 不能直接复用上面的 stepTrail——那个函数专为"掉血拖尾"设计，语义故意不对称
+ * （`real >= disp` 时立刻贴齐、只在【减少】方向才拖尾），这是 HP 场景要的行为
+ * （回血/首帧不该有拖尾残影）。法力/充能条是双向都要缓动的资源量（回蓝要有
+ * 平滑上升的手感，消耗也要平滑下降），套用 stepTrail 的话回蓝这半永远是瞬间
+ * 贴齐、只有消耗那半才缓动，观感是错的。
+ *
+ * 所以这里单开一个对称版本，但**复用同一个 TRAIL_RATE**——这正是"统一缓动效果"
+ * 要求落地的地方：不是随手起一个新的速度，是同一份时间常数在两种语义下各自
+ * 用对方向。画板（UnitLayer）与属性窗口（UIManager）的法力/充能条都改走这个
+ * 函数，两处从此不会再出现"两套参数各调各的"的情况。
+ */
+export function stepEase(disp, real, dt, snapEps) {
+  if (!(disp >= 0) || Math.abs(real - disp) < snapEps) return { disp: real, easing: false };
+  const next = disp + (real - disp) * Math.min(1, dt * TRAIL_RATE);
+  return { disp: next, easing: true };
+}

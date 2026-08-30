@@ -160,16 +160,19 @@ export class MapSystem {
       if (prot !== t._stateProtected) {
         t._stateProtected = prot;
         if (prot) {
+          // 追加需求："结构保护的状态里面写：无敌。"——之前的描述只说"免疫一切
+          // 伤害"，没有直接点出"无敌"这个词；跟下面②全局无敌开关（rule_invincible）
+          // 的效果本质一样（免疫一切伤害），文案上也该同样直白。
           this._fx.apply(t.id, {
             name: '结构保护', icon: '🛡️', kind: 'custom',
             duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
             description: ({
-              inner: '本路外塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
-              base: '本路内塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
-              nexus_lane: '本路水晶塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
-              hq_tower: '三路召唤水晶完好期间：不可被选中、免疫一切伤害（含环境扣血）',
-              nexus_main: '己方枢纽塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
-            })[t._mapTier] || '外侧建筑存活期间：不可被选中、免疫一切伤害',
+              inner: '无敌——本路外塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
+              base: '无敌——本路内塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
+              nexus_lane: '无敌——本路水晶塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
+              hq_tower: '无敌——三路召唤水晶完好期间：不可被选中、免疫一切伤害（含环境扣血）',
+              nexus_main: '无敌——己方枢纽塔存活期间：不可被选中、免疫一切伤害（含环境扣血）',
+            })[t._mapTier] || '无敌——外侧建筑存活期间：不可被选中、免疫一切伤害',
           }, 'rule_protected');
         } else {
           for (const e of this._fx.getEffects(t.id)) if (e.blueprint.name === '结构保护') this._fx.remove(e.id);

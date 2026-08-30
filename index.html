@@ -481,14 +481,25 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .bar-res-row.show { display: flex; }
 /* 具体颜色按资源类型（法力/升温/闪电充能/通用充能）由 JS 现读 RESOURCE_COLORS 写 background，
    这里只给一个兜底色，防止 JS 还没跑到时是空白色块。 */
-.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: width 0.12s linear, background 0.2s; }
+/* 追加需求：法力/充能条缓动改走 barTrail.stepEase（JS 逐帧计算，与画板同一份
+   参数），这里的 width 不再需要 CSS transition——留着的话会跟 JS 缓动叠成两层
+   缓动（barTrail.js 头注点过名的老毛病："JS 每帧改一次 width、CSS 再对每次
+   改动做 transition，两层缓动叠起来"），只保留颜色切换（法力/充能/升温等不同
+   资源类型换色）的过渡。 */
+.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: background 0.2s; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
-/* v51.6：第三种护盾"护盾"（不衰减不回复）——特意不用白色斜纹（那是另外两种护盾
-   已经用掉的视觉语言），用纯色暖金色区分，"实心不带纹理"也暗示它的性质更"静态"
-   （不像固定/临时护盾那样会随时间变化）。贴在血条最内侧（挨着生命值），
-   与承伤顺序①临时②固定③护盾互为镜像——见 updateTowerCard/updateMinionCard 的排列注释。 */
-.bar-shield-plain { position: absolute; top: 0; height: 100%; background: rgba(255,213,79,0.85); transition: width 0.1s, left 0.1s; }
+/* 追加需求 Q2："护盾在血条的显示就应该是灰白色系，你目前的【护盾】是用黄色代替
+   的……在单位属性窗口中，可以用颜色深浅和是否有斜线来区分这三个。"
+   之前特意挑了暖金色去跟另外两种护盾的白色斜纹拉开——但用户的口径是"三种护盾
+   都该待在白/灰白色系里"，色相不该跳出去，只能在【深浅】和【是否带斜纹】这两个
+   维度上做区分。改成纯色（不带斜纹，呼应它"不会像固定/临时护盾那样波动"的静态
+   性质）、灰白色调，取一个与上面两条斜纹色调都不同的深浅——固定用的 0.5 透明度
+   白色纹理、临时用的 0.3，这里挑 0.62（纯色块，比临时的斜纹底色更亮，比固定的
+   纹理亮部更暗），三者一眼就能分开，同时没有一个是跳出白/灰白系的杂色。
+   贴在血条最内侧（挨着生命值），与承伤顺序①临时②固定③护盾互为镜像——
+   见 updateTowerCard/updateMinionCard 的排列注释。 */
+.bar-shield-plain { position: absolute; top: 0; height: 100%; background: rgba(225,228,232,0.62); transition: width 0.1s, left 0.1s; }
 .bar-track { border-radius: 5px; }
 /* ==================== v47：血条上的读数 ====================
    用户："进度条上的 HP XX/XXX 居中显示为 XX/XX（没有 HP 了），护盾那个靠右

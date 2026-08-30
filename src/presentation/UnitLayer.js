@@ -37,7 +37,7 @@ import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
 import { towerFacingRad } from './towerFacing.js';
-import { stepTrail, TRAIL_COLOR } from './barTrail.js';
+import { stepTrail, stepEase, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
@@ -91,8 +91,23 @@ const ATTACK_POSE_DUR = 0.35;    // 攻击前后摇窗口时长（秒）
 const HIT_POSE_DUR = 0.25;       // 受击反馈窗口时长（秒）
 const WALK_BOB_FRAC = 0.05;      // 走路起伏幅度：模型高度(vis.topY)的比例，大小单位手感统一
 const WALK_SWAY_RAD = 0.05;      // 走路侧倾幅度（弧度），很小的一点才不会像喝醉
-const ATTACK_PULSE_AMOUNT = 0.1; // 攻击命中瞬间的整体缩放脉冲幅度（Day3-4）
-const HIT_SQUASH_AMOUNT = 0.14;  // 受击瞬间的挤压幅度（Day4-5）
+// ==================== 追加需求 Q1：弹跳幅度太夸张、塔看不出反应 ====================
+// 用户："为什么单位攻击/受击的时候一跳一条的，好诡异。尤其是塔，塔受击/攻击时
+// 没有任何动画。把这个弹跳的效果做的没那么明显吧。我说的改进效果，你这个方向
+// 就是错的……算了这个等下周的额度恢复完再具体说吧，你先把我说的这两个改了。"
+// "这两个"＝①整体调小幅度（原 0.1/0.14 对小兵而言太夸张，读成"跳一跳"而不是
+// "打击反馈"）②塔看着像没反应——机制上塔和小兵走的是同一套百分比缩放公式
+// （已用"人为拨 poseAttackT/poseHitT 再读 scale"的方式核对过，塔确实在变），
+// 根子是同一个百分比在【视觉尺寸悬殊】的塔和小兵身上读起来完全不成比例：
+// 塔模型大，10%的缩放变化摊到屏幕上没几个像素，几乎看不出；小兵模型小，同样
+// 10%在其相对更显眼的轮廓上就容易显得"一跳一跳"。这里先做能在"调参数"范围内
+// 做的事——小兵的幅度往下调，塔的幅度保留得更高一些，让两者观感上更接近；
+// 是否该整体换一种反馈手法（描边高亮/粒子/受击方向倾斜……而不是缩放脉冲）
+// 用户已经明确说了"方向是错的、下周再具体说"，这次不擅自决定，留到那时候一起定。
+const ATTACK_PULSE_AMOUNT = 0.035;       // 小兵：攻击命中瞬间的整体缩放脉冲幅度（原 0.1）
+const ATTACK_PULSE_AMOUNT_TOWER = 0.07;  // 塔：同一效果，幅度更高一些，弥补"大模型看不出小百分比变化"
+const HIT_SQUASH_AMOUNT = 0.05;          // 小兵：受击瞬间的挤压幅度（原 0.14）
+const HIT_SQUASH_AMOUNT_TOWER = 0.09;    // 塔：同上
 const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、单位之下
 // GLB 塔模型的"正面"轴相对 +Z 的偏移（弧度）。LoL 塔系模型朝向一致，故一个全局常量即可；
 // 由渲染观测标定：正面朝 +X（模型建向）→ 需 -90° 让其对齐 +Z 的定向基准。
@@ -550,7 +565,11 @@ export class UnitLayer {
     const soulSkill = (e._skillInstances || []).find(sk => sk.skillId.startsWith('dragonsoul_'));
     if (!soulSkill) { if (en.soul) this._clearSoulRing(en); return; }
     const color = SOUL_COLORS[soulSkill.skillId] || '#f6c94a';
-    const r = vis.ringR || 12;
+    // 追加需求："塔的龙魂圈略微往里收一收并且变得略微粗一些。"——只调塔（半径
+    // 往内收 15%、环宽从 1.6 加到 2.0），小兵的龙魂环维持原样，不跟着一起变。
+    const isTowerRing = e.type === 'tower';
+    const r = (vis.ringR || 12) * (isTowerRing ? 0.85 : 1);
+    const ringW = isTowerRing ? 2.0 : 1.6;
     // v51.6 修复：用户报"蓝方召唤水晶/水晶枢纽是圆的，你怎么也给改成方的了"——
     // 上一版条件是"蓝方的塔"就一律方，没把 nexus_lane/nexus_main（召唤水晶/水晶枢纽，
     // 圆形水晶基座，与 outer/inner/base 那三档方形阶梯塔身完全是两种模型）分开，
@@ -560,13 +579,14 @@ export class UnitLayer {
     const faction = e._mapFaction || e.faction;
     const isNexusTier = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
     const square = e.type === 'tower' && faction === 'blue' && !isNexusTier;
-    const key = (square ? 'sq' : 'rd') + '|' + r + '|' + color;
+    const key = (square ? 'sq' : 'rd') + '|' + r + '|' + ringW + '|' + color;
     if (en.soulKey !== key) {
       this._clearSoulRing(en);
       en.soulKey = key;
       // v51.6 追补：用户"龙魂这个环太粗了，细一些"——3 与选中光圈的核心环（2.5）
       // 几乎一样粗，两种含义不同的环粗细却分不清，改细一点（1.6）以示区分。
-      en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, 1.6), this._flatMat(color, 1));
+      // 追加需求：塔这一档又单独加粗到 2.0（见上面 ringW），小兵仍是当初改细的 1.6。
+      en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, ringW), this._flatMat(color, 1));
     }
     en.soul.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
     // Q20：蓝方塔的方形龙魂环没有跟随塔的朝向——圆环各向同性转不转都一样，从没人管过
@@ -814,9 +834,12 @@ export class UnitLayer {
     }
     // 排列同 UIManager 卡片：HP、护盾（贴 HP，承伤顺序里最后吃）、固定护盾、
     // 临时护盾（最外层，最先吃）——与承伤顺序①临时②固定③护盾互为镜像。
-    if (spW > 0.001) { g.fillStyle = 'rgba(255,213,79,0.85)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * spW, hpH); }
-    if (sfW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(BAR_W * (hpDraw + spW), 0, BAR_W * sfW, hpH); }
-    if (stW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(BAR_W * (hpDraw + spW + sfW), 0, BAR_W * stW, hpH); }
+    // 追加需求 Q2："护盾在血条的显示就应该是灰白色系……在画板上的进度条上这三个
+    // 显示效果不需要区分，都是白色就行。"——画板尺寸小，斜线/深浅这种细节在这个
+    // 分辨率下basically看不清，索性三段合一，同一种白色画完整个护盾区间；
+    // 需要区分三类护盾的场景放在下面单位属性窗口（CSS 那三条 .bar-shield-*）。
+    const shieldW = spW + sfW + stW;
+    if (shieldW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * shieldW, hpH); }
     g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
     g.strokeRect(0.5, 0.5, BAR_W - 1, hpH - 1);
 
@@ -926,7 +949,8 @@ export class UnitLayer {
     // 内的短促尖峰，乘法叠加互不冲突，两个效果同时发生也不会显得突兀。
     let attackPulse = 0;
     if (en.poseAttackT >= 0) {
-      attackPulse = Math.sin(Math.PI * Math.min(1, en.poseAttackT / ATTACK_POSE_DUR)) * ATTACK_PULSE_AMOUNT;
+      const amt = en.isTower ? ATTACK_PULSE_AMOUNT_TOWER : ATTACK_PULSE_AMOUNT;
+      attackPulse = Math.sin(Math.PI * Math.min(1, en.poseAttackT / ATTACK_POSE_DUR)) * amt;
     }
     // 脉动（巨龙）改为整体缩放模型本身，与纸片人时代同一近似
     const s = (vis.pulse ? (1 + 0.12 * Math.sin(tNow * 3)) : 1) * (1 + attackPulse);
@@ -940,7 +964,8 @@ export class UnitLayer {
     // 材质层的闪白效果留到 P0 材质重做时再补，不在这里勉强凑一个会拖累性能的实现。
     let hitSquash = 0;
     if (en.poseHitT >= 0) {
-      hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * HIT_SQUASH_AMOUNT;
+      const amt = en.isTower ? HIT_SQUASH_AMOUNT_TOWER : HIT_SQUASH_AMOUNT;
+      hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * amt;
     }
     en.unit.scale.set(s * (1 + hitSquash * 0.5), s * (1 - hitSquash), s * (1 + hitSquash * 0.5));
     // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。
@@ -1096,12 +1121,24 @@ export class UnitLayer {
         // v51：资源条（法力/升温/闪电充能/攻城充能）跟着血条同一张纹理画——脏 key 必须
         // 把资源分数也算进去，否则只有资源在变、血量不变时永远不会触发重绘（见下面 _redrawBar）。
         var resInfo = resourceInfoOf(e, { skillLibrary: SkillLibrary, attrCalc, effects });
+        // 追加需求：法力/充能条也要有缓动，且与属性窗口那条统一（同一份 barTrail.
+        // stepEase，同一个 TRAIL_RATE）。资源种类切换（比如法力→充能）时不适合接着
+        // 从旧种类的数值缓过来，直接贴齐——en._resKind 记上一次是哪种资源。
+        if (resInfo) {
+          if (en._resKind !== resInfo.kind) { en.dispResFrac = resInfo.frac; en._resKind = resInfo.kind; }
+          const rt = stepEase(en.dispResFrac ?? resInfo.frac, resInfo.frac, dt, 1 / BAR_W);
+          en.dispResFrac = rt.disp; en.resEasing = rt.easing;
+          resInfo = { ...resInfo, frac: en.dispResFrac };
+        } else { en._resKind = null; en.resEasing = false; }
         barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
                + q((e.tempShield || 0) / maxHP) + '|' + q((e.plainShield || 0) / maxHP) + '|'
                + (e._mapFaction || e.faction || '')
                + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
                + (en.trailing ? '|t' + q(en.dispFrac) : '')
                + (resInfo ? '|r' + q(resInfo.frac) + resInfo.kind : '');
+        // 注意：resInfo.frac 这里已经是缓动后的 en.dispResFrac（上面重新赋值过），
+        // 缓动进行中它本身逐帧变化，量化值自然跟着变，barKey 天然逐帧不同、
+        // 天然触发重绘——不需要再额外拼一个"是否在缓动"的标记位。
       }
       if (en.barKey !== barKey) {
         en.barKey = barKey;

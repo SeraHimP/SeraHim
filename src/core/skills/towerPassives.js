@@ -176,17 +176,25 @@ export const towerPassives = {
     id: 'passive_inner_bulwark', name: '钢铁烈阳护盾', icon: '☀️',
     applicableTypes: ['tower'],
     category: 'passive',
-    // v51.6 补：数值改走 defaultParams，才能被 map.skillOverrides['tower:inner']
-    // 覆写（召唤师峡谷内塔默认+800护盾就是靠这条覆写接的，见 summoners_rift.js）。
-    // 沿用 passive_*_fortify 那套"声明 defaultParams 才会被注入覆写"的既有机制，
-    // 不新造属性、不新造机制。
-    defaultParams: { flatValue: 50 },
-    description: '对自己及附近（300范围）友军提供护盾（不会自动回复），友军离开防御塔过远护盾消失。',
-    descTemplate: '唯一被动——钢铁烈阳护盾：对自己及附近（300范围）友军提供50护盾（不会自动回复），离开范围后护盾消失。',
+    // 追加需求 Q4 修正：用户之前"召唤师峡谷内塔默认+800护盾"我理解错了——不是把
+    // 整条光环（自身+友军共用同一个数）从 50 拉到 800，而是塔自己单独多领两笔
+    // （+800护盾、+50固定护盾），分享给友军的那部分仍然是原来的 +50护盾，不变。
+    // 用户原话："正确的应该是：内塔+800护盾，+50固定护盾。给周围友军单位+50护盾。"
+    // 三个数字分成三个 defaultParams，才能各自被地图级 skillOverrides 覆写——
+    // 召唤师峡谷在 summoners_rift.js 里把 selfPlainValue/selfFixedValue 覆写成
+    // 800/50，allyPlainValue 留着默认 50 不动；其它地图的内塔三项都还是出厂默认，
+    // 不受影响。沿用 passive_*_fortify 那套"声明 defaultParams 才会被注入覆写"的
+    // 既有机制，不新造属性、不新造机制。
+    defaultParams: { selfPlainValue: 50, selfFixedValue: 0, allyPlainValue: 50 },
+    description: '为自己提供护盾（可能还有固定护盾），并对附近（300范围）友军提供护盾（不会自动回复），友军离开防御塔过远护盾消失。',
+    descTemplate: '唯一被动——钢铁烈阳护盾：自身护盾+50，对附近（300范围）友军提供50护盾（不会自动回复），离开范围后护盾消失。',
     getDescTemplate: (entity, instance) => {
-      const v = (instance && instance._params && typeof instance._params.flatValue === 'number')
-        ? instance._params.flatValue : 50;
-      return `唯一被动——钢铁烈阳护盾：对自己及附近（300范围）友军提供${v}护盾（不会自动回复），离开范围后护盾消失。`;
+      const p = (instance && instance._params) || {};
+      const selfPlain = typeof p.selfPlainValue === 'number' ? p.selfPlainValue : 50;
+      const selfFixed = typeof p.selfFixedValue === 'number' ? p.selfFixedValue : 0;
+      const allyPlain = typeof p.allyPlainValue === 'number' ? p.allyPlainValue : 50;
+      const selfTxt = selfFixed > 0 ? `自身护盾+${selfPlain}、固定护盾+${selfFixed}` : `自身护盾+${selfPlain}`;
+      return `唯一被动——钢铁烈阳护盾：${selfTxt}，对附近（300范围）友军提供${allyPlain}护盾（不会自动回复），离开范围后护盾消失。`;
     },
     effects: [],
     onFrame: (entityId, dt, instance, ctx) => {
@@ -195,17 +203,38 @@ export const towerPassives = {
       instance.state.t = 0;
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return;
-      const v = (instance._params && typeof instance._params.flatValue === 'number') ? instance._params.flatValue : 50;
-      const bp = (desc) => ({
-        name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: v,
-        aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        descTemplate: `唯一被动——钢铁烈阳护盾：护盾+${v}（在内塔光环范围内，不会自动回复）。`, description: desc,
-      });
-      ctx.effectRegistry.apply(self.id, bp(`护盾+${v}（自身，不会自动回复）`), 'inner_bulwark');
+      const p = instance._params || {};
+      const selfPlain = typeof p.selfPlainValue === 'number' ? p.selfPlainValue : 50;
+      const selfFixed = typeof p.selfFixedValue === 'number' ? p.selfFixedValue : 0;
+      const allyPlain = typeof p.allyPlainValue === 'number' ? p.allyPlainValue : 50;
+
+      // 自身：护盾（不衰减不回复）——永久效果（自己不存在"离开自己范围"这回事），
+      // 每 0.3s 重新 apply 一次只是让数值随地图覆写实时跟上，refresh 策略下
+      // shieldRemaining 不会被顶满（EffectRegistry._recalcEffectValues 的 delta
+      // 更新逻辑，见该函数头注），"不会自动回复"这条不受影响。
+      ctx.effectRegistry.apply(self.id, {
+        name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: selfPlain,
+        duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `护盾+${selfPlain}（自身，不会自动回复）`,
+      }, 'inner_bulwark_self_plain');
+      // 自身：固定护盾（脱战一段时间后自动回满）——只有配了 selfFixedValue>0 才挂，
+      // 避免所有没配这项的地图/塔白挂一条 flatValue:0 的空效果占状态栏格子。
+      if (selfFixed > 0) {
+        ctx.effectRegistry.apply(self.id, {
+          name: '钢铁烈阳护盾', icon: '☀️', kind: 'stat', statKey: 'shieldFixedMax', flatValue: selfFixed,
+          duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `固定护盾+${selfFixed}（自身，脱战一段时间后自动回满）`,
+        }, 'inner_bulwark_self_fixed');
+      }
+      // 友军：300 范围光环，护盾（不衰减不回复），离开范围超过宽限期后消失。
       for (const ally of ctx.entityContainer.findInRadius(self.pos.x, self.pos.y, 300, null, true)) {
         if (ally.id === self.id || !ally.alive) continue;
         if ((ally._mapFaction || ally.faction) !== self._mapFaction) continue;
-        ctx.effectRegistry.apply(ally.id, bp(`护盾+${v}（内塔光环，不会自动回复）`), 'inner_bulwark');
+        ctx.effectRegistry.apply(ally.id, {
+          name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: allyPlain,
+          aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `护盾+${allyPlain}（内塔光环，不会自动回复）`,
+        }, 'inner_bulwark_ally');
       }
     },
   },
@@ -563,12 +592,17 @@ export const towerPassives = {
     PHASE2_DELAY: 300,   // 第二阶段延后 5 分钟（300s）
     // v42: empty defaultParams enables CombatSystem to inject per-map overrides into inst._params
     defaultParams: {},
+    // 追加需求："过载状态里面添加最大生命值损失了多少。"——原来技能栏这条只写
+    // "已过载（含最大生命损失）"，光看这行看不出具体扣了多少；实际数值
+    // （st.hpLostTotal）其实已经在 onFrame 挂的那条【过载】状态效果描述里算出来了
+    // （见下面 ctx.effectRegistry.apply 那段的 description），这里补上，两处口径
+    // 一致，不是另算一份。
     computeCurrent: (entity, ctx) => {
       const inst = (entity._skillInstances || []).find(i => i.skillId === 'passive_overload');
       const st = inst?.state;
       if (!st || !st.phase1Started) return '未过载';
-      const p2 = st.phase2Started ? '（含最大生命损失）' : '';
-      return `已过载${p2}`;
+      if (!st.phase2Started) return '已过载';
+      return `已过载（最大生命已损失 ${Math.round(st.hpLostTotal || 0)}）`;
     },
     onEquip: (entityId, instance, ctx) => {
       instance.state = instance.state || {};

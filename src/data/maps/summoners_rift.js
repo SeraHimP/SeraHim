@@ -57,13 +57,13 @@ export const summoners_rift = {
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
   },
 
-  // 用户定稿："召唤师峡谷内塔默认+800【护盾】属性"——指第三种"护盾"（不衰减、不
-  // 自动回复，见 EffectRegistry._recalcEffectValues 的头注）。内塔已经默认装
-  // passive_inner_bulwark（钢铁烈阳护盾，出厂 flatValue:50，见 towerPassives.js），
+  // 用户定稿（Q4 修正版）："内塔+800护盾，+50固定护盾。给周围友军单位+50护盾。"
+  // 内塔已经默认装 passive_inner_bulwark（钢铁烈阳护盾，见 towerPassives.js），
   // 不需要另开一条新技能/新属性——走既有的"地图级技能参数覆写"通道（skillParams.js）
-  // 把这张图上内塔那份的数值改成 800 即可，全局默认（其它地图/编辑器新建的内塔）不受影响。
+  // 把这张图上内塔那份的 selfPlainValue/selfFixedValue 改成 800/50；分享给友军的
+  // allyPlainValue 留着出厂默认 50 不动。全局默认（其它地图/编辑器新建的内塔）不受影响。
   skillOverrides: {
-    'tower:inner': { passive_inner_bulwark: { flatValue: 800 } },
+    'tower:inner': { passive_inner_bulwark: { selfPlainValue: 800, selfFixedValue: 50 } },
   },
 
   // === Wave timing (classic defaults) ===
