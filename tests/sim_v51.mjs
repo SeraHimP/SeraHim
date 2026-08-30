@@ -1673,6 +1673,86 @@ async function world() {
     && !/this\.zoom = Math\.(max|min)\(0\.15, this\.zoom/.test(src));
 }
 
+// ==================== 追加：重置视角要重置整套状态 + fitToWorld 修正俯仰角带来的压缩 ====================
+// 用户："重置视角点完之后，这个地图看起来还是很小。就是点完重置视角后根据窗口的大小
+// 来自适应显示全部地图的缩放。并且缩放，视角角度，东南西北等所有的都重置，不光重置
+// 缩放。"排查出两个根因：①resetViewBtn 原来只调 fitToWorld（只碰 zoom/offset），
+// 俯仰角/方位角留着用户之前调的值没归位；②fitToWorld 的缩放公式本身没考虑世界 Z 轴
+// 在当前俯仰角下会先乘 sin(elevationDeg) 才映射到屏幕像素，等于永远假装俯仰角是
+// 90°（正俯视），实际能塞进屏幕的世界范围比算出来的更大，"全图适配"因此偏保守。
+{
+  const src = srcOf('src/ui/CanvasController.js');
+  const mFit = src.match(/fitToWorld\(worldW, worldH\) \{[\s\S]*?\n  \}/);
+  T('位①-能定位到 fitToWorld 实现', !!mFit);
+
+  const makeCC = (W, H, elevationDeg) => {
+    const obj = { zoom: 1, offsetX: 0, offsetY: 0, renderer: { width: W, height: H, elevationDeg, resize() {} } };
+    obj.updateView = () => {};
+    obj.fitToWorld = new Function(`return function ${mFit[0]}`)();
+    return obj;
+  };
+
+  // 位②：90°（正俯视）时退化回"没有压缩"的原始公式——回归锚点，确认这条修正
+  // 没有在基准情形（俯仰角=90°）下引入偏差。
+  const cc90 = makeCC(1000, 800, 90);
+  cc90.fitToWorld.call(cc90, 2000, 1500);
+  const expected90 = Math.min(1000 / 2000, 800 / 1500) * 0.95;
+  T('位②-俯仰角90°(正俯视)时 zoom 与"未修正前"的公式一致（sin(90°)=1，不引入偏差）',
+    Math.abs(cc90.zoom - expected90) < 1e-9);
+
+  // 位③：45°（默认视角）时，Z 轴方向能塞进屏幕的世界范围应该比"假装90°"算出来的更大，
+  // 即修正后的 zoom 应该 ≥ 未修正的 zoom（新公式不应该比旧公式更保守）。
+  // 用一个 worldW 很窄、worldH 很高的世界，让 Y 轴（世界 Z 深度）成为真正的限制项——
+  // 上面 2000×1500 那组两条轴限制太接近，X 轴（0.5×0.95）比 Y 轴更紧，min() 恒取
+  // X 轴，sinP 修正根本轮不到它生效，测不出这条修正有没有用。
+  const worldWNarrow = 100, worldHTall = 1500;
+  const expected90Tall = Math.min(1000 / worldWNarrow, 800 / worldHTall) * 0.95;
+  const cc45 = makeCC(1000, 800, 45);
+  cc45.fitToWorld.call(cc45, worldWNarrow, worldHTall);
+  T('位③-俯仰角45°(默认)时，修正后的 zoom 比"假装90°"的旧公式更大（不再过度保守）',
+    cc45.zoom > expected90Tall);
+  // 数值精确核对：h 轴的限制应该是 h/(worldH*sin(45°))，不是 h/worldH
+  const sin45 = Math.sin(45 * Math.PI / 180);
+  const expected45 = Math.min(1000 / worldWNarrow, 800 / (worldHTall * sin45)) * 0.95;
+  T('位④-45°下 zoom 精确等于 min(w/worldW, h/(worldH·sinP))·0.95', Math.abs(cc45.zoom - expected45) < 1e-9);
+
+  // 位⑤：俯仰角很低（比如 12°，接近水平视角）时，压缩更严重，修正后的 zoom 应该更大，
+  // 不能因为 sin(p) 趋近 0 而算出离谱的极端值（下限保护）。
+  const cc12 = makeCC(1000, 800, 12);
+  cc12.fitToWorld.call(cc12, 2000, 1500);
+  T('位⑥-俯仰角很低时 zoom 依旧是有限正数（sinP 有下限保护，不会除出 Infinity/NaN）',
+    Number.isFinite(cc12.zoom) && cc12.zoom > 0);
+
+  // 位⑦：X 轴（offsetX）的推导本来就不含 sinP，这条断言确认修正没有连带碰坏它。
+  T('位⑦-offsetX 的计算没有被这次修正牵连改动（X 轴本就不含 sinP 因子）',
+    /this\.offsetX = \(w - worldW \* this\.zoom\) \/ 2;/.test(src));
+
+  // 位⑧：resetViewBtn 点击时要把俯仰角/方位角都归位到出厂默认，再算适配缩放——
+  // 不能只重置缩放。
+  T('位⑧-重置视角按钮把俯仰角滑杆归位到 CAM_ELEVATION_DEG（出厂默认），不是留着用户调过的值',
+    /elevSl\.value = String\(CAM_ELEVATION_DEG\)/.test(src) && /elevSl\.dispatchEvent\(new Event\('input'/.test(src));
+  T('位⑨-重置视角按钮把方位角滑杆归位到 0（正北），不是留着用户调过的值',
+    /azimSl\.value = '0'; azimSl\.dispatchEvent\(new Event\('input'/.test(src));
+  T('位⑩-CAM_ELEVATION_DEG 是从 ThreeRenderer 导入的同一个值，不是另起一个可能漂移的硬编码 45',
+    /import \{ CAM_ELEVATION_DEG \} from '\.\.\/presentation\/ThreeRenderer\.js';/.test(src));
+}
+
+// ==================== 追加：右下角工具条做扁——按钮/行距单独收窄，不影响全局 .icon-btn ====================
+// 用户："右下角工具条做的扁一些，目前右下角工具条的高度太高了。"三行控件用的是全局
+// .icon-btn（30×30，给顶栏那种单行按钮条设计的尺寸），纵向堆三行就显得高。这里单独
+// 给 #canvasControls 的按钮/行高/内边距一套更矮的尺寸，不碰全局 .icon-btn（顶栏右侧
+// 单行场景仍需要 30×30 的点击热区）。
+{
+  const html = srcOf('index.html');
+  const m = html.match(/#canvasControls \{[\s\S]*?\}/);
+  T('扁①-#canvasControls 的内边距/行距比旧版收紧（7px 10px/gap 5px → 更小）',
+    !!m && /padding: 6px 9px;/.test(m[0]) && /gap: 3px;/.test(m[0]));
+  T('扁②-#canvasControls 单独给 .icon-btn 一套更小的尺寸（不动全局 30×30 的定义）',
+    /#canvasControls \.icon-btn \{\s*\n\s*width: 20px; height: 20px;/.test(html));
+  T('扁③-全局 .icon-btn 仍然是 30×30（顶栏右侧等其它场景没被这次改动误伤）',
+    /\.icon-btn \{\s*\n\s*width: 30px; height: 30px;/.test(html));
+}
+
 // ==================== v51.6：属性弹窗再打磨 ====================
 {
   const { CONFIG } = await import('../src/data/Config.js');

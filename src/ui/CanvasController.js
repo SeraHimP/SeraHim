@@ -7,6 +7,8 @@
  * this.renderer 现在指向 ThreeRenderer（无 WebGL 时为 null，故所有访问都带保护）。
  * 视口状态（zoom/offsetX/offsetY）的唯一来源仍在本类，渲染器每帧从这里读。
  */
+import { CAM_ELEVATION_DEG } from '../presentation/ThreeRenderer.js';
+
 export class CanvasController {
   constructor(canvas, renderer) {
     this.canvas = canvas;
@@ -218,7 +220,21 @@ export class CanvasController {
 
     // Q12：🎯 = 重置视角为【整个地图的视角】（原来是重置到 zoom=1.0 的左上角，
     // 在 3552 的世界里只能看到一小块，等于没用）。
+    // 追加需求："缩放，视角角度，东南西北等所有的都重置，不光重置缩放"——原来这里
+    // 只调 fitToWorld（只碰 zoom/offset），俯仰角/方位角是用户之前调过就一直留着的。
+    // 这既不符合"重置"这个词该有的语义，也是"重置后地图看起来还是很小"的一半根因：
+    // 如果之前把俯仰角压得很低，fitToWorld 算出来的缩放是照着那个歪视角凑的，
+    // 观感自然不对。这里先把俯仰角/方位角都归位到出厂默认（45°/正北），再算适配缩放。
+    // elevSlider/azimSlider 的滑杆位置与文字标签由 main.js 的 applyElev/applyAzim 维护
+    // （监听各自的 'input' 事件）——这里用 dispatchEvent 复用那份逻辑，不在这个类里
+    // 另起一份"角度怎么换算成东南西北文字"的重复实现。
     document.getElementById('resetViewBtn').addEventListener('click', () => {
+      if (this.renderer) {
+        const elevSl = document.getElementById('elevSlider');
+        if (elevSl) { elevSl.value = String(CAM_ELEVATION_DEG); elevSl.dispatchEvent(new Event('input', { bubbles: true })); }
+        const azimSl = document.getElementById('azimSlider');
+        if (azimSl) { azimSl.value = '0'; azimSl.dispatchEvent(new Event('input', { bubbles: true })); }
+      }
       const map = this.mapSystem?.currentMap;
       if (map?.world) {
         this.fitToWorld(map.world.w, map.world.h);
@@ -281,7 +297,17 @@ export class CanvasController {
     this.renderer?.resize?.();
     const w = this.renderer?.width, h = this.renderer?.height;
     if (!w || !h || !worldW || !worldH) return;
-    this.zoom = Math.min(w / worldW, h / worldH) * 0.95;
+    // 追加需求排查："点完重置视角后，这个地图看起来还是很小。" 除了上面调用方那半
+    // （俯仰角/方位角没跟着重置）之外，这里的公式本身也有漏洞：世界的 Z 深度轴在
+    // 当前俯仰角下会先乘 sin(elevationDeg) 才映射到屏幕像素（见 ThreeRenderer.
+    // syncCameraFrom 头注的推导："屏幕偏移 = ((px-tx)*z, (pz-tz)*sin(p)*z)"——X 轴
+    // 没有这个因子，Z 轴有）。原来 h / worldH 等于假装俯仰角是 90°（正俯视，
+    // sin=1），默认 45° 视角下 sin(45°)≈0.707，Z 方向实际能塞进屏幕的世界范围比
+    // 这个式子算出来的大了 1/0.707≈1.41 倍——"全图适配"因此永远比真正能达到的
+    // 缩放更保守。X 轴的 offsetX 推导本来就不含 sinP（下面这行不用改），只有
+    // zoom 这一行需要补上这个因子。
+    const sinP = Math.max(0.05, Math.sin((this.renderer?.elevationDeg ?? 45) * Math.PI / 180));
+    this.zoom = Math.min(w / worldW, h / (worldH * sinP)) * 0.95;
     this.offsetX = (w - worldW * this.zoom) / 2;
     this.offsetY = (h - worldH * this.zoom) / 2;
     // Q11：记住"全图缩放"，渲染器据此做【相对】LOD 判断——

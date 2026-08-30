@@ -339,19 +339,27 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    和俯仰/方位两行（图标+滑杆+读数，没有 −/+ 步进按钮）根本不是同一种控件，只是碰巧
    都在这块板子里。现在三行统一成【图标】【−】【滑杆】【+】【读数】，缩放行的读数位
    换成 🎯 重置视角按钮（缩放本身不需要精确数值，看画面大小就够）。 */
+/* 追加需求："右下角工具条做的扁一些，目前右下角工具条的高度太高了。"——三行
+   （后来四行）控件用的是全局 .icon-btn（30×30），是给顶栏那种单行按钮条设计的
+   尺寸，堆到四行纵向排列就显得又高又占地方。这里单独给这块面板的按钮/行距/
+   内边距一套更矮的尺寸，不动全局 .icon-btn（顶栏右侧那种单行场景还是需要
+   30×30 的点击热区），两处各自适配自己的排布形状。 */
 #canvasControls {
   bottom: 12px; right: 12px; z-index: 10;
-  flex-direction: column; align-items: stretch; gap: 5px;
-  padding: 7px 10px;
+  flex-direction: column; align-items: stretch; gap: 3px;
+  padding: 6px 9px;
 }
-#canvasControls .ctl-row { display: flex; align-items: center; gap: var(--gap-sm); }
+#canvasControls .ctl-row { display: flex; align-items: center; gap: 6px; height: 20px; }
 #canvasControls button { background: var(--surface-3); }
+#canvasControls .icon-btn {
+  width: 20px; height: 20px; font-size: 12px; border-radius: 5px;
+}
 #canvasControls .zoom-label {
-  font-size: 11px; color: var(--text-dim); min-width: 34px; text-align: center;
+  font-size: 11px; color: var(--text-dim); min-width: 30px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
-/* 图标标签位：固定宽度，两行的滑杆因此左对齐，不会一行一个起点 */
-#canvasControls .ctl-name { font-size: 12px; width: 18px; flex: none; text-align: center; }
+/* 图标标签位：固定宽度，各行的滑杆因此左对齐，不会一行一个起点 */
+#canvasControls .ctl-name { font-size: 11px; width: 16px; flex: none; text-align: center; }
 
 /* 滑杆自绘。Chrome/Edge 走 ::-webkit-slider-*，Firefox 走 ::-moz-range-*；
    两套选择器不能合并写（任何一个不认识的选择器会让整条规则被丢弃）。 */
