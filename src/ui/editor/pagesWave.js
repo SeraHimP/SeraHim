@@ -11,7 +11,7 @@
 import { CONFIG } from '../../data/Config.js';
 import { mapLaneIds, laneLabel } from '../laneLabels.js';
 import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
-import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../../data/dragonCurve.js';
+import { dragonCfg, dragonStatsAt, dragonIntervalAt, rangeMid } from '../../data/dragonCurve.js';
 
 export const EDITOR_PAGES_WAVE = {
   // ==================== 巨龙：刷新节奏与强度曲线 ====================
@@ -29,6 +29,14 @@ export const EDITOR_PAGES_WAVE = {
       <label style="width:150px;" title="${hint || ''}">${label}</label>
       <input type="number" class="dragonrule-input" data-dkey="${k}" step="${step}"
              value="${v === null || v === undefined ? '' : v}" style="width:100px;"></div>`;
+    // v51.9：刷新节奏改成随机区间（用户定稿：首条 60~480s、之后每条 240~360s），
+    // 复用 elementIntervals 这个输入框原本就是的"逗号分隔文本框"形态——只是语义从
+    // "按位置取固定值、越界沿用最后一项"改成"每次都在区间内独立随机取一个值"。
+    const range = (k, label, v, hint) => `<div class="slider-row">
+      <label style="width:150px;" title="${hint || ''}">${label}</label>
+      <input type="text" class="dragonrule-input" data-dkey="${k}" data-drange="1"
+             value="${v[0]}, ${v[1]}" style="width:100px;"
+             placeholder="最小, 最大"></div>`;
 
     let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
       🐲 巨龙的强度按<b>第几条龙</b>算，与游戏波次无关。<br>
@@ -36,13 +44,12 @@ export const EDITOR_PAGES_WAVE = {
       7 分钟后刷第 2 条龙时波次可能已经到 10+，双抗直接飙到几百。这个口径不要改回去。
     </div>`;
 
-    html += `<div style="font-size:12px;color:var(--text-dim);margin:10px 0 4px;">刷新节奏（秒）</div>`;
-    html += num('firstDelay', '首条元素龙', c.firstDelay, 5, '开局多久后刷第一条');
-    html += `<div class="slider-row"><label style="width:150px;" title="第 2/3/4… 条元素龙的间隔，逗号分隔；条数超出则沿用最后一项">元素龙后续间隔</label>
-      <input type="text" class="dragonrule-input" data-dkey="elementIntervals"
-             value="${c.elementIntervals.join(', ')}" style="flex:1;"></div>`;
-    html += num('ancientFirstDelay', '首条远古龙', c.ancientFirstDelay, 10, '成魂结算后到第一条远古龙');
-    html += num('ancientInterval', '远古龙间隔', c.ancientInterval, 10, '');
+    html += `<div style="font-size:12px;color:var(--text-dim);margin:10px 0 4px;">
+      刷新节奏（秒，随机区间——每局/每次都在【最小,最大】里独立取一个值，不是固定时间表）</div>`;
+    html += range('firstDelay', '首条巨龙', c.firstDelay, '开局多久后刷第一条，每局在区间内随机取一次');
+    html += range('elementIntervals', '元素龙后续间隔', c.elementIntervals, '第2条起的每一条元素龙，各自独立随机取');
+    html += range('ancientFirstDelay', '首条远古龙', c.ancientFirstDelay, '成魂结算后到第一条远古龙');
+    html += range('ancientInterval', '远古龙后续间隔', c.ancientInterval, '');
 
     const CURVES = [['maxHP', '生命'], ['resist', '双抗（护甲=魔法抗性）'], ['attackDamage', '攻击力']];
     html += `<div style="font-size:12px;color:var(--text-dim);margin:14px 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
@@ -66,7 +73,10 @@ export const EDITOR_PAGES_WAVE = {
     html += num('ancient.adMult', '攻击 ×', c.ancient.adMult, 0.05, '');
 
     // ---- 预览：与引擎共用 dragonStatsAt/dragonIntervalAt ----
-    let t = c.firstDelay, rows = '';
+    // v51.9：刷新节奏改成随机区间之后，预览没法再画出唯一确定的时间表——这里改用
+    // 区间中点（dragonIntervalAt 现在返回的就是中点）当代表值，标题也说清楚这只是
+    // "大致节奏"，实际每局会在区间内浮动。
+    let t = rangeMid(c.firstDelay), rows = '';
     for (let i = 1; i <= 6; i++) {
       const st = dragonStatsAt(i, false);
       const mm = `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}`;
@@ -77,9 +87,9 @@ export const EDITOR_PAGES_WAVE = {
     }
     const anc = dragonStatsAt(1, true);
     html += `<div style="margin-top:14px;border-top:1px solid #2d3540;padding-top:10px;">
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">预览（按<b>已保存</b>的配置算，点【应用】后刷新）</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">预览（按<b>已保存</b>的配置、取区间中点算出的大致节奏——实际每局会在区间内随机浮动，点【应用】后刷新）</div>
       <table style="font-size:11px;width:100%;"><tr style="color:#8b949e;">
-        <td style="padding:2px 8px;">序号</td><td style="padding:2px 8px;">出现时刻</td>
+        <td style="padding:2px 8px;">序号</td><td style="padding:2px 8px;">出现时刻（中点估算）</td>
         <td style="padding:2px 8px;">生命</td><td style="padding:2px 8px;">双抗</td><td style="padding:2px 8px;">攻击</td></tr>
         ${rows}</table>
       <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">
@@ -98,12 +108,17 @@ export const EDITOR_PAGES_WAVE = {
     overlay.querySelectorAll('.dragonrule-input').forEach(inp => {
       const key = inp.dataset.dkey;
       const raw = (inp.value || '').trim();
-      if (key === 'elementIntervals') {
-        const arr = raw.split(/[,，\s]+/).filter(Boolean).map(Number).filter(v => v > 0);
-        // 空数组会让 dragonIntervalAt 取到 undefined → nextDragonTime 变 NaN → 龙永远不刷、
-        // 且不报任何错。宁可退回出厂间隔，也不要把这种静默失效存进配置。
-        if (!arr.length) { bad++; return; }
-        d.elementIntervals = arr; changed++;
+      if (inp.dataset.drange === '1') {
+        // v51.9：firstDelay/elementIntervals/ancientFirstDelay/ancientInterval
+        // 统一走"随机区间"输入：要求恰好两个正数、且最小值不大于最大值（顺序反了
+        // 就自动交换，不当错误拒绝——用户体验优先，不用为了顺序重填一遍）。
+        // 解析失败/数量不对时退回出厂区间，不把会让 nextDragonTime 变 NaN 的
+        // 半成品状态存进配置（同 v51.8 之前 elementIntervals 那条老规矩）。
+        const nums = raw.split(/[,，\s]+/).filter(Boolean).map(Number);
+        if (nums.length !== 2 || nums.some(v => !(v > 0) && v !== 0)) { bad++; return; }
+        const [a, b] = nums;
+        d[key] = a <= b ? [a, b] : [b, a];
+        changed++;
         return;
       }
       const path = key.split('.');

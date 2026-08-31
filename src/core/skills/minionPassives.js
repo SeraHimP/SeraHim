@@ -169,6 +169,11 @@ export const minionPassives = {
   //                          （临时护盾）一并删除，见 actives.js 头注。
   // targetTypes 传 null + minionsOnly：写死的类型数组【收不到自制兵种】，
   // 用户做出来的兵会拿不到光环，而这不报错、只是静默变弱。
+  // v51.9 修复：用户"给周围友军加固定护盾这个应该改成护盾"——友军光环这份护盾原来
+  // 走 kind:'stat'+statKey:'shieldFixedMax'，脱战一段时间会自动回满；光环每帧刷新，
+  // 只要站在图腾兵附近就相当于不断续这份"自动回满"，与钢铁烈阳护盾此前踩的是
+  // 同一个坑。改成 kind:'shield'（不衰减、不回复），友军离开光环范围过久才会
+  // 重新拿到一份满值。
   passive_totem_aura: makeAuraPassive({
     id: 'passive_totem_aura', name: '图腾守护', icon: '🟣',
     casterType: 'totem', targetTypes: null, minionsOnly: true,
@@ -179,8 +184,8 @@ export const minionPassives = {
       return [
         { name: '图腾守护', icon: '🟣', kind: 'stat', statKey: 'damageReduction',
           flatValue: dr, description: `伤害减免+${dr}%` },
-        { name: '图腾守护', icon: '🟣', kind: 'stat', statKey: 'shieldFixedMax',
-          flatValue: sh, description: `固定护盾+${sh}` },
+        { name: '图腾守护', icon: '🟣', kind: 'shield',
+          flatValue: sh, description: `护盾+${sh}（不会自动回复）` },
       ];
     },
   }),
@@ -197,6 +202,11 @@ export const minionPassives = {
   // 效果本身 permanent:true（只要还装着这条被动就一直"存在"，即使余量已经打空），
   // 与旧版"这个单位有多厚是固有属性、不该在面板上混一条状态"的顾虑不冲突——
   // 现在它本来就该在状态栏里看得见、看得出还剩多少，这才是"护盾"该有的可见性。
+  // v51.9 修复：用户"图腾兵给自己加900护盾的技能，那个应该是固定护盾，你改错成
+  // 护盾了"——把 v51.6 那次的 kind:'shield' 改回 kind:'stat'+statKey:'shieldFixedMax'。
+  // 这是用户对自己 v51.6 那次明确决定（"图腾兵的固定护盾也改为护盾"）的直接反转，
+  // 如实记录：不是我这次诊断出旧实现有问题，是用户重新定了主意，回到"固定护盾"
+  // 那一档（脱战一段时间后自动回满）。
   passive_totem_bulwark: {
     id: 'passive_totem_bulwark',
     applicableTypes: ['totem'],
@@ -205,7 +215,7 @@ export const minionPassives = {
     color: '#bb86fc',
     category: 'passive',
     _cfg: () => CONFIG.gameRules.supportUnits?.totem || {},
-    _text() { return `唯一被动——图腾壁垒：自身获得（{val}=${this._cfg().selfShieldFlat ?? 900}）点护盾，不会自动回复。`; },
+    _text() { return `唯一被动——图腾壁垒：自身获得（{val}=${this._cfg().selfShieldFlat ?? 900}）点固定护盾，脱战一段时间后自动回满。`; },
     get description() { return this._text(); },
     get descTemplate() { return this._text(); },
     computeCurrent() { return this._cfg().selfShieldFlat ?? 900; },
@@ -214,15 +224,12 @@ export const minionPassives = {
       const e = ctx.entityContainer.get(entityId);
       if (!e) return;
       const v = (CONFIG.gameRules.supportUnits?.totem?.selfShieldFlat ?? 900) * healPowerFor(e, ctx);
-      // 状态栏这条效果的文案不用 {val} 占位符——EffectRegistry._updateDescription
-      // 只替换 description 里的 {stacks}，不认 descTemplate/{val}，v 这里已经是
-      // 算好的最终值，直接拼进 description 就是（同 dragonsoul_earth 那类
-      // onEquip 直接挂效果的写法一致）。
       ctx.effectRegistry.apply(entityId, {
-        name: '图腾壁垒', icon: '🛡️', color: '#bb86fc', kind: 'shield', flatValue: v,
+        name: '图腾壁垒', icon: '🛡️', color: '#bb86fc', kind: 'stat', statKey: 'shieldFixedMax',
+        flatValue: v,
         duration: Infinity, permanent: true,
         stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `护盾（初始 ${Math.round(v)} 点，不会自动回复）`,
+        description: `固定护盾+${Math.round(v)}（脱战一段时间后自动回满）`,
       }, 'totem_bulwark');
     },
     onUnequip: (entityId, instance, ctx) => {

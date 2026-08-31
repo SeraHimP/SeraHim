@@ -10,10 +10,17 @@
 import { CONFIG } from './Config.js';
 
 export const DRAGON_DEFAULTS = {
-  firstDelay: 300,   // v51.4：60 → 300，与 CONFIG.gameRules.dragon.firstDelay 保持同一份默认值
-  elementIntervals: [420, 480, 540],
-  ancientFirstDelay: 300,
-  ancientInterval: 600,
+  // ==================== v51.9：刷新节奏改成随机区间 ====================
+  // 用户定稿："第一条巨龙的生成时间改为每局随机，60秒-480秒。之后下一条巨龙的
+  // 生成时间改为随机240-360秒。"——firstDelay 从固定 300 改成 [60,480] 区间，
+  // 每局开局时（DragonSystem 构造/resetRun）在区间内随机取一次；后续每一条龙
+  // （元素龙的第2条起、以及远古龙的每一条，"下一条巨龙"没有分元素/远古）统一从
+  // [240,360] 区间随机取，不再区分"这是第几条"——旧版 elementIntervals 是按位置
+  // 取固定值、越界沿用最后一项，现在每次都独立随机，位置信息不再有意义。
+  firstDelay: [60, 480],
+  elementIntervals: [240, 360],
+  ancientFirstDelay: [240, 360],
+  ancientInterval: [240, 360],
   curve: {
     // 用户定稿：上调前期龙强度——起始值(base)整体调高。
     // 攻击力这次单独给了 3 个校准点（第1/4/8条=102/270/500），按这三点反解
@@ -29,15 +36,22 @@ export const DRAGON_DEFAULTS = {
   ancient: { hpMult: 1.15, resistAdd: 40, adMult: 1.1 },
 };
 
+// 把配置值规整成 [min, max] 区间：合法的两元素数组原样用；单个数字退化成"固定值"
+// 区间（min===max），兼容旧存档/手填一个数字的情况；其它一律回落到出厂区间。
+function normRange(v, fallback) {
+  if (Array.isArray(v) && v.length === 2 && Number.isFinite(v[0]) && Number.isFinite(v[1]) && v[1] >= v[0]) return v;
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return [v, v];
+  return fallback;
+}
+
 /** 当前生效的巨龙配置（未配的键回落到出厂值）。 */
 export function dragonCfg() {
   const d = (CONFIG.gameRules && CONFIG.gameRules.dragon) || {};
   return {
-    firstDelay: d.firstDelay ?? DRAGON_DEFAULTS.firstDelay,
-    elementIntervals: (Array.isArray(d.elementIntervals) && d.elementIntervals.length)
-      ? d.elementIntervals : DRAGON_DEFAULTS.elementIntervals,
-    ancientFirstDelay: d.ancientFirstDelay ?? DRAGON_DEFAULTS.ancientFirstDelay,
-    ancientInterval: d.ancientInterval ?? DRAGON_DEFAULTS.ancientInterval,
+    firstDelay: normRange(d.firstDelay, DRAGON_DEFAULTS.firstDelay),
+    elementIntervals: normRange(d.elementIntervals, DRAGON_DEFAULTS.elementIntervals),
+    ancientFirstDelay: normRange(d.ancientFirstDelay, DRAGON_DEFAULTS.ancientFirstDelay),
+    ancientInterval: normRange(d.ancientInterval, DRAGON_DEFAULTS.ancientInterval),
     curve: {
       maxHP: { ...DRAGON_DEFAULTS.curve.maxHP, ...(d.curve?.maxHP || {}) },
       resist: { ...DRAGON_DEFAULTS.curve.resist, ...(d.curve?.resist || {}) },
@@ -80,15 +94,30 @@ export function dragonStatsAt(dragonIndex, isAncient) {
   };
 }
 
+/** 区间中点——用于预览/估算等需要一个稳定代表值、而不是真去掷骰子的场合。 */
+export function rangeMid([lo, hi]) { return (lo + hi) / 2; }
+
+/** 区间内均匀随机取一个值——真正驱动游戏节奏时用这个，每次调用结果独立随机。 */
+export function rollInRange([lo, hi]) { return hi <= lo ? lo : lo + Math.random() * (hi - lo); }
+
 /**
- * 下一条龙的刷新间隔（秒）。elementSpawned/ancientSpawned 是"已刷新条数"。
- * 元素龙的间隔按下标取，越界沿用最后一项 —— 用户往数组里多加/少加几项都不会
- * 拿到 undefined（那会让 nextDragonTime 变 NaN，龙永远刷不出来且不报任何错）。
+ * 下一条龙的刷新间隔（秒，取区间中点，稳定值）——给编辑器预览/测试用。
+ * elementSpawned 参数保留（调用方仍会传），但 v51.9 起元素龙的"下一条"间隔不再
+ * 按位置区分（旧版按下标取固定值表、越界沿用最后一项），统一是同一个随机区间，
+ * 所以这里不再用它做索引。
  */
 export function dragonIntervalAt({ soulUnlocked, elementSpawned = 0, ancientSpawned = 0 }) {
   const c = dragonCfg();
-  if (soulUnlocked) return ancientSpawned <= 1 ? c.ancientFirstDelay : c.ancientInterval;
-  const arr = c.elementIntervals;
-  const n = Math.max(1, elementSpawned);
-  return arr[Math.min(n - 1, arr.length - 1)];
+  if (soulUnlocked) return rangeMid(ancientSpawned <= 1 ? c.ancientFirstDelay : c.ancientInterval);
+  return rangeMid(c.elementIntervals);
+}
+
+/**
+ * 下一条龙的刷新间隔（秒，真随机）——DragonSystem 实际排定下一条龙的计时器时用这个，
+ * 与 dragonIntervalAt 同一套区间解析逻辑，唯一区别是取随机值而不是中点。
+ */
+export function rollDragonInterval({ soulUnlocked, elementSpawned = 0, ancientSpawned = 0 }) {
+  const c = dragonCfg();
+  if (soulUnlocked) return rollInRange(ancientSpawned <= 1 ? c.ancientFirstDelay : c.ancientInterval);
+  return rollInRange(c.elementIntervals);
 }

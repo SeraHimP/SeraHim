@@ -71,23 +71,28 @@ function world() {
   const allyMax = ally.baseStats.maxHP;
   ally.currentHP = Math.round(allyMax * 0.2);
 
-  // v51.6：用户"图腾兵的固定护盾也改为护盾"——图腾壁垒不再改 baseStats.shieldFixedMax
-  // （那是【固定护盾】，脱战会自动回满，900 点近乎打不死），改挂一条 kind:'shield'
-  // 效果（第三种"护盾"：不衰减、不回复）。断言改成核对这条效果的 shieldRemaining。
+  // v51.9：用户对 v51.6 那次决定又改了主意——"图腾兵给自己加900护盾的技能，那个
+  // 应该是固定护盾，你改错成护盾了"。自身这份改回 kind:'stat'+statKey:'shieldFixedMax'
+  // （脱战一段时间后自动回满）；断言相应改回核对 stats.shieldFixedMax。
   const bulwarkEff = W.fx.getEffects(totem.id).find(e => e.blueprint.name === '图腾壁垒');
-  T(`图腾·自身高额护盾（不再是固定护盾，改挂 kind:'shield' 效果，初始 ${c.selfShieldFlat}）`,
-    !!bulwarkEff && bulwarkEff.blueprint.kind === 'shield');
-  T('图腾·出场即满护盾（护盾不回复，所以"满"就是刚装备时的那一份，不会再回来）',
-    !!bulwarkEff && bulwarkEff.shieldRemaining === c.selfShieldFlat);
-  T('图腾·baseStats.shieldFixedMax 不再被这条被动动过（不该混进"固定护盾"那一档）',
-    !(totem.baseStats.shieldFixedMax > CONFIG.templates.totem.shieldFixedMax));
+  T(`图腾·自身高额护盾改回固定护盾（v51.9 用户重新定稿），走 kind:'stat'/shieldFixedMax（${c.selfShieldFlat}）`,
+    !!bulwarkEff && bulwarkEff.blueprint.kind === 'stat' && bulwarkEff.blueprint.statKey === 'shieldFixedMax');
 
   W.run(1, [totem]);      // 光环节流 0.3s，1 秒足够铺开
+  const ts = W.stats(totem);
+  T(`图腾·固定护盾生效在 shieldFixedMax 上（实测 ${ts.shieldFixedMax}）`,
+    ts.shieldFixedMax === CONFIG.templates.totem.shieldFixedMax + c.selfShieldFlat);
   const as = W.stats(ally);
   T(`图腾光环·友军伤害减免 +${c.auraDamageReduction}%（实测 ${as.damageReduction}）`,
     as.damageReduction === c.auraDamageReduction);
-  T(`图腾光环·友军固定护盾 +${c.auraShieldFlat}（实测 ${as.shieldFixedMax}）`,
-    as.shieldFixedMax === CONFIG.templates.melee.shieldFixedMax + c.auraShieldFlat);
+  // v51.9：友军光环护盾改成 kind:'shield'（用户"给周围友军加固定护盾这个应该改成
+  // 护盾"）——不再体现在 stats.shieldFixedMax 上，改核对 EffectRegistry 里那条
+  // shield 效果本身的 shieldRemaining（不衰减、不回复）。
+  const allyShieldEff = W.fx.getEffects(ally.id).find(e => e.blueprint.name === '图腾守护' && e.blueprint.kind === 'shield');
+  T(`图腾光环·友军护盾 +${c.auraShieldFlat}（不会自动回复，实测 ${allyShieldEff?.shieldRemaining}）`,
+    !!allyShieldEff && allyShieldEff.shieldRemaining === c.auraShieldFlat);
+  T('图腾光环·友军 stats.shieldFixedMax 不再被这条光环动过（已经改走 kind:\'shield\'）',
+    as.shieldFixedMax === CONFIG.templates.melee.shieldFixedMax);
   const fs = W.stats(foe);
   T('图腾光环·不会加到敌方身上',
     fs.damageReduction === CONFIG.templates.melee.damageReduction);

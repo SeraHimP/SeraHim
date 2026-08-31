@@ -8,6 +8,7 @@ export const STAT_LABELS = {
   attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔法抗性',
   moveSpeed: '移速', attackRange: '攻击距离', bonusAttackSpeedPct: '攻速',
   damageReduction: '伤害减免', damageAmpPct: '伤害增幅', allStatsPct: '全属性',
+  coreStatsPct: '核心属性',
   // v51.6：生命偷取全局改名为"全能吸血"（用户定稿）——lifeStealPct 这个字段名不变，
   // 只改中文显示标签，物理/法术/全能三件套里它一直就是"全部伤害类型都算"的那一档，
   // 改名之后名字才真正对上语义。
@@ -15,7 +16,7 @@ export const STAT_LABELS = {
   armorPenFlat: '固定护甲穿透', armorPenPercent: '护甲穿透',
   magicPenFlat: '固定法术穿透', magicPenPercent: '法术穿透',
   healthRegen: '生命回复', onHitPercentDamage: '攻击特效',
-  shieldFixedMax: '固定护盾', baseAttackSpeed: '基础攻速',
+  shieldFixedMax: '固定护盾', plainShieldFlat: '护盾', baseAttackSpeed: '基础攻速',
   // v51：新增属性
   abilityPower: '法术强度', skillAmpPct: '技能增幅', critChance: '暴击率', critDamagePct: '暴击伤害',
   adaptiveForce: '适应之力', physicalVampPct: '物理吸血', spellVampPct: '法术吸血',
@@ -36,6 +37,7 @@ export const STAT_LABELS = {
 // 截图里的攻速那一行）。这张表只是记录"这些已有属性的显示单位是百分比"，不是新增属性。
 const PERCENT_UNIT_KEYS = new Set([
   'bonusAttackSpeedPct', 'damageAmpPct', 'lifeStealPct', 'healShieldPowerPct', 'allStatsPct',
+  'coreStatsPct',
   'skillAmpPct', 'damageConvertPct', 'tenacityPct', 'evasionPct', 'onHitPercentDamage',
   'critDamagePct', 'physicalVampPct', 'spellVampPct', 'damageReduction',
   'armorPenPercent', 'magicPenPercent', 'critChance',

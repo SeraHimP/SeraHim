@@ -281,7 +281,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     'critChance', 'critDamagePct', 'adaptiveForce',
     'damageAmpPct', 'skillAmpPct', 'damageReduction', 'damageBlock',
     'lifeStealPct', 'physicalVampPct', 'spellVampPct',
-    'healShieldPowerPct', 'allStatsPct', 'damageConvertPct',
+    'healShieldPowerPct', 'allStatsPct', 'coreStatsPct', 'damageConvertPct',
     'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
     'onHitDamage', 'onHitPercentDamage',
     'evasionPct', 'tenacityPct',

@@ -696,10 +696,12 @@ async function world() {
     && stat.thunder.critDamagePct > 0 && stat.wind.evasionPct > 0
     && !('manaRegen' in stat.fire) && !('skillAmpPct' in stat.astral));
 
-  // 首条龙延后（用户："第一波龙生成的太快了，导致龙的倾向就偏向于红方了"）
+  // 首条龙延后（用户："第一波龙生成的太快了，导致龙的倾向就偏向于红方了"）——
+  // v51.9 起改成随机区间，这里只钉"首条巨龙的区间下限不再低到能抢跑"这件事本身，
+  // 具体的随机区间行为在下面"龙时②"那块（v51.9 新增）单独钉。
   const { dragonCfg } = await import('../src/data/dragonCurve.js');
-  T('龙时①-首条元素龙不再单独抢跑，与后续元素龙同一个 300s 节奏',
-    dragonCfg().firstDelay === 300 && dragonCfg().firstDelay === dragonCfg().elementIntervals[0]);
+  T('龙时①-首条元素龙不再单独抢跑（下限 ≥ 60s，不是 v43 时代的 1 分钟就刷）',
+    dragonCfg().firstDelay[0] >= 60);
 }
 
 // ==================== 二十二、v51.5：临时龙魂倒计时环不显示的 bug + 升温资源条第一击不计入 ====================
@@ -2456,14 +2458,26 @@ async function world() {
   const mp = srcOf('src/core/skills/minionPassives.js');
   T('盾⑩-钢铁烈阳护盾（passive_inner_bulwark）自身那份改挂 kind:\'shield\'',
     /name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: selfPlain,/.test(tp));
-  T('盾⑪-图腾壁垒（passive_totem_bulwark）改走 effectRegistry.apply(kind:\'shield\')，不再直接改 baseStats.shieldFixedMax',
-    /kind: 'shield', flatValue: v,/.test(mp) && !/e\.baseStats\.shieldFixedMax = \(e\.baseStats\.shieldFixedMax \|\| 0\) \+ v;/.test(mp));
+  // v51.9：用户对 v51.6 那次决定又改了主意——"图腾兵给自己加900护盾的技能，那个
+  // 应该是固定护盾，你改错成护盾了"。改回 kind:'stat'+statKey:'shieldFixedMax'。
+  T('盾⑪-图腾壁垒（passive_totem_bulwark）v51.9 改回 kind:\'stat\'/shieldFixedMax（用户重新定稿）',
+    /kind: 'stat', statKey: 'shieldFixedMax',\s*\n\s*flatValue: v,/.test(mp));
   T('盾⑫-图腾壁垒改挂效果后也走 healPowerFor 缩放（"治疗与护盾强度影响所有相关属性"这条硬规矩不能漏）',
     /const v = \(CONFIG\.gameRules\.supportUnits\?\.totem\?\.selfShieldFlat \?\? 900\) \* healPowerFor\(e, ctx\);/.test(mp));
   T('盾⑬-钢铁烈阳护盾三项数值都走 defaultParams（才能被地图级 skillOverrides 分别覆写，不是仍旧写死在闭包里）',
     /defaultParams: \{ selfPlainValue: 50, selfFixedValue: 0, allyPlainValue: 50 \}/.test(tp));
   T('盾⑬b-Q4 修正：自身固定护盾走 kind:\'stat\' statKey:\'shieldFixedMax\'，只有配了 selfFixedValue>0 才挂（不白占状态栏格子）',
     /if \(selfFixed > 0\) \{[\s\S]{0,300}kind: 'stat', statKey: 'shieldFixedMax', flatValue: selfFixed,/.test(tp));
+  // v51.9：图腾守护（passive_totem_aura）友军光环那份护盾用户定稿"应该改成护盾"——
+  // 光环每帧刷新，走固定护盾会变相"不断续满血护盾"，与前面几条踩的是同一个坑。
+  T('盾⑭-图腾守护友军光环护盾改走 kind:\'shield\'（不再是 shieldFixedMax）',
+    /name: '图腾守护', icon: '🟣', kind: 'shield',\s*\n\s*flatValue: sh,/.test(mp)
+    && !/statKey: 'shieldFixedMax',\s*\n\s*flatValue: sh,/.test(mp));
+  // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户定稿"改为护盾，要不然
+  // 太超标了"——固定护盾会自动回满，四层永久叠加太强。
+  const ds = srcOf('src/systems/DragonSystem.js');
+  T('盾⑮-铁龙之力（statKey===\'shieldFixedMax\'）改走 kind:\'shield\'，不再是 kind:\'stat\'',
+    /if \(b\.statKey === 'shieldFixedMax'\) \{[\s\S]{0,200}kind: 'shield', color: def\.color,/.test(ds));
 }
 
 // ==================== 召唤师峡谷内塔：Q4 修正版——自身+800护盾+50固定护盾，友军+50护盾 ====================
@@ -2641,6 +2655,92 @@ async function world() {
   const expected = CONFIG.templates.tower.baseAttackSpeed * (1 + bonus * ratio / 100);
   T('风⑧-提高的幅度对得上 towerBonusAttackSpeedPct（重做的机制半）+ 常驻加持半 的合计，不是随便一个正数就算过',
     Math.abs(after - expected) < 0.01);
+}
+
+// ==================== 追加：模板默认护盾（plainShieldFlat）====================
+// 用户："【护盾】这个属性我在单位编辑窗口/模板编辑器里并未看到。"——护盾此前只能
+// 靠"状态"tab 的【添加效果】临时挂，没有一个像【固定护盾】那样的模板数值字段入口。
+// 新增 CONFIG.templates.<type>.plainShieldFlat，factories.js 的 grantTemplatePlainShield
+// 在出生时读它，>0 就挂一份 kind:'shield' 效果。这条钉的是端到端行为（模板配置
+// →出生→效果真的出现在 EffectRegistry 里），不是只钉字段存在。
+{
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { createFactories } = await import('../src/core/factories.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  const mapSystem = { active: false, currentMap: null };
+  const F = createFactories({
+    entityContainer: ents, effectRegistry: fx, eventBus: bus,
+    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
+    mapSystem, dragonSystem: ds, uiManager: { log() {} },
+  });
+
+  T('护盾字段①-出厂默认 plainShieldFlat 为 0（不影响没配置这项的单位）',
+    CONFIG.templates.melee.plainShieldFlat === 0);
+
+  const noShield = F.createMinion('melee', 0, 0, 1, 1, { faction: 'blue', laneId: 'mid' });
+  T('护盾字段②-plainShieldFlat=0 时不挂任何护盾效果',
+    !fx.getEffects(noShield.id).some(e => e.blueprint.kind === 'shield'));
+
+  const bak = CONFIG.templates.melee.plainShieldFlat;
+  CONFIG.templates.melee.plainShieldFlat = 77;
+  const withShield = F.createMinion('melee', 0, 0, 1, 1, { faction: 'blue', laneId: 'mid' });
+  const eff = fx.getEffects(withShield.id).find(e => e.blueprint.kind === 'shield');
+  T('护盾字段③-plainShieldFlat=77 时出生即挂一份 kind:\'shield\' 效果，余量=77',
+    !!eff && eff.shieldRemaining === 77);
+  T('护盾字段④-这份护盾不会自动回复（duration 是永久，但不是【固定护盾】那种会回满的类型）',
+    eff.blueprint.duration === Infinity && eff.blueprint.kind === 'shield');
+  CONFIG.templates.melee.plainShieldFlat = bak;
+}
+
+// ==================== 追加：巨龙刷新节奏改随机区间——DragonSystem 端到端验证 ====================
+// 用户："第一条巨龙的生成时间改为每局随机，60秒-480秒。之后下一条巨龙的生成时间
+// 改为随机240-360秒。"——dragonCurve.js 那份是纯函数级验证，这里钉 DragonSystem
+// 真正用起来的样子：反复构造多个实例，首条巨龙的计时器应该落在配置区间内、
+// 且不是每次构造都拿到同一个数（否则等于没做到"每局随机"）。
+{
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  const firstTimes = Array.from({ length: 30 }, () => {
+    const bus = new EventBus();
+    const ents = new EntityContainer(bus);
+    const fx = new EffectRegistry(bus);
+    const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+    return ds.nextDragonTime;
+  });
+  const [lo, hi] = CONFIG.gameRules.dragon.firstDelay;
+  T('龙时②-DragonSystem 构造时首条巨龙的计时器落在配置区间 [60,480] 内',
+    firstTimes.every(v => v >= lo && v <= hi));
+  T('龙时②-同样的配置，多次构造拿到的首条计时器不是同一个值（真的每局随机）',
+    new Set(firstTimes.map(v => v.toFixed(6))).size > 1);
+
+  // ==================== 追加：首条龙坑改随机（Q6 排查"蓝方一直输"发现的不对称）====================
+  // 首条龙坑此前硬编码 'top'（推蓝方），红方因此天然先手抢到"第一条龙威胁蓝方"的
+  // 地理优势。反复构造 DragonSystem，30 次里 top/bot 都应该出现（不是恒为 top）。
+  const firstSides = Array.from({ length: 30 }, () => {
+    const bus = new EventBus();
+    const ents = new EntityContainer(bus);
+    const fx = new EffectRegistry(bus);
+    const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+    return ds._nextPitSide;
+  });
+  T('龙坑①-首条龙坑改成随机后，多次构造里 top/bot 都出现过（不再恒为 top）',
+    firstSides.includes('top') && firstSides.includes('bot'));
 }
 
 done();

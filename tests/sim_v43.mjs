@@ -754,9 +754,13 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   const D = CONFIG.gameRules.dragon;
   // v51.4：首条元素龙的 60s 抢跑被推翻（用户："第一波龙生成的太快了，导致龙的倾向
   // 就偏向于红方了"）——改成与后续元素龙同一个 300s 节奏，不再单独抢跑。
-  T('龙①-刷新节奏：首条与之后一律 300s（含远古龙），不再单独抢跑',
-    D.firstDelay === 300 && D.elementIntervals.every(v => v === 300)
-    && D.ancientInterval === 300 && D.ancientFirstDelay === 300);
+  // v51.9：进一步改成随机区间（用户定稿：首条 60~480s、之后每条 240~360s），不再是
+  // 固定时间表——这里改钉"四个字段都是合法的 [min,max] 区间"这个形状。
+  T('龙①-刷新节奏改成随机区间（首条 60~480s，之后每条含远古龙一律 240~360s）',
+    Array.isArray(D.firstDelay) && D.firstDelay[0] === 60 && D.firstDelay[1] === 480
+    && Array.isArray(D.elementIntervals) && D.elementIntervals[0] === 240 && D.elementIntervals[1] === 360
+    && Array.isArray(D.ancientInterval) && D.ancientInterval[0] === 240 && D.ancientInterval[1] === 360
+    && Array.isArray(D.ancientFirstDelay) && D.ancientFirstDelay[0] === 240 && D.ancientFirstDelay[1] === 360);
   T('龙②-战斗属性软编码（会动、够得着、带溅射）',
     D.combat.moveSpeed > 0 && D.combat.attackRange > 0
     && D.combat.baseAttackSpeed > 0 && D.combat.splashRadius > 0);
@@ -854,8 +858,8 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('魂③-毒魂对建筑打折（百分比最大生命的 DoT 天然反建筑）',
     S.poison.vsBuildingPct > 0 && S.poison.vsBuildingPct < 100);
   // v51.6：durationSec 240→300（用户定稿"远古龙魂还是限时的，时长改为300s"）。
-  T('魂④-只有远古龙魂是限时的，其余八条永久',
-    S.ancient.durationSec === 300
+  T('魂④-只有远古龙魂是限时的，其余八条永久（v51.9：durationSec 300→180，用户定稿改数值，机制不变）',
+    S.ancient.durationSec === 180
     && ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison']
         .every(k => S[k].durationSec === undefined));
   const src = srcOf(('../src/core/skills/dragonSouls.js'));

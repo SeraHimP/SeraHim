@@ -507,11 +507,21 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
       }
       uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${laneId || 'mid'} 路`, 'spawn');
     },
+    // v51.9 修复：用户"添加单位窗口中添加巨龙，无论添加多少条，巨龙的属性都是
+    // 最开始的，并未成长"——根因是这里算强度用的 dragonSystem.elementDragonSpawned + 1
+    // 是个静态快照，而这条手动生成路径从不去递增 elementDragonSpawned/ancientSpawned
+    // （只有 DragonSystem.spawnDragon() 会递增），所以连续手动加 5 条，每条读到的
+    // "第几条"都是同一个数，强度自然长不动。同时按 spawnDragon() 自己的口径把
+    // dragonIndex 换成"元素龙已刷数+远古龙已刷数+1"（两者共用同一条连续序号，
+    // 见 spawnDragon() 头注），并在生成后手动补上递增——让"设置里手动生成"与
+    // "计时刷新"共用同一条成长序号，谁先谁后都接得上。
     onAddDragon: (element, ancient) => {
-      const dstats = dragonSystem._dragonStats(dragonSystem.elementDragonSpawned + 1, ancient);
+      const dragonIndex = dragonSystem.elementDragonSpawned + dragonSystem.ancientSpawned + 1;
+      const dstats = dragonSystem._dragonStats(dragonIndex, ancient);
       const el = element || Object.keys(DRAGON_ELEMENTS)[Math.floor(Math.random() * Object.keys(DRAGON_ELEMENTS).length)];
       createDragon('dragon', { element: ancient ? null : el, isAncient: ancient, absStats: dstats });
-      uiManager.log(`🐉 手动生成${ancient ? '远古巨龙' : (DRAGON_ELEMENTS[el]?.label || '巨龙')}`, 'spawn');
+      if (ancient) dragonSystem.ancientSpawned++; else dragonSystem.elementDragonSpawned++;
+      uiManager.log(`🐉 手动生成${ancient ? '远古巨龙' : (DRAGON_ELEMENTS[el]?.label || '巨龙')}（第 ${dragonIndex} 条强度）`, 'spawn');
     },
   });
 });

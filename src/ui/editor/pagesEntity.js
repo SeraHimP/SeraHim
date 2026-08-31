@@ -53,10 +53,10 @@ export const EDITOR_PAGES_ENTITY = {
       'attackSpeedRatio', 'attackRange', 'attackType', 'bulletSpeed',
       'critChance', 'critDamagePct', 'adaptiveForce'];
     const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax',
-      'tempShieldDecayPct', 'evasionPct', 'tenacityPct'];
+      'plainShieldFlat', 'tempShieldDecayPct', 'evasionPct', 'tenacityPct'];
     const penKeys = ['armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent'];
     const effectKeys = ['onHitDamage', 'onHitPercentDamage', 'damageConvertPct', 'lifeStealPct',
-      'physicalVampPct', 'spellVampPct', 'healShieldPowerPct', 'allStatsPct', 'skillAmpPct'];
+      'physicalVampPct', 'spellVampPct', 'healShieldPowerPct', 'allStatsPct', 'coreStatsPct', 'skillAmpPct'];
     const manaKeys = ['maxMana', 'manaRegen', 'manaStart', 'manaFloor'];
     const allDefinedKeys = [...coreKeys, ...attackKeys, ...defenseKeys, ...penKeys, ...effectKeys, ...manaKeys];
 

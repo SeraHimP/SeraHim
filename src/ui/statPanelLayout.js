@@ -131,4 +131,8 @@ export const RELATED_STATS = {
   attackDamage: ['adaptiveForce', 'bulletSpeed'],
   armor: ['evasionPct'],
   magicResist: ['tenacityPct'],
+  // v51.9：用户"【核心属性加成】显示在全属性加成的点开窗口里"——核心属性加成
+  // （coreStatsPct）本身没有自己的格子（面板格子有限，见文件头注），挂到主题
+  // 最贴近的全属性加成（allStatsPct）说明弹窗里。
+  allStatsPct: ['coreStatsPct'],
 };

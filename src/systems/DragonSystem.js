@@ -1,5 +1,5 @@
 import { CONFIG } from '../data/Config.js';
-import { dragonCfg, dragonStatsAt, dragonIntervalAt } from '../data/dragonCurve.js';
+import { dragonCfg, dragonStatsAt, dragonIntervalAt, rollInRange, rollDragonInterval } from '../data/dragonCurve.js';
 import { statMod } from '../core/statMod.js';
 
 /**
@@ -73,7 +73,9 @@ export class DragonSystem {
     this.attrCalc = attrCalc;
     this.config = CONFIG.gameRules;
 
-    this.nextDragonTime = dragonCfg().firstDelay; // 首条元素龙：开局60秒（软编码）
+    // v51.9：首条元素龙的出现时间改成每局随机（用户定稿 60~480 秒区间），
+    // 在这里（构造时）掷一次骰子，整局固定下来，不是每帧重新随机。
+    this.nextDragonTime = rollInRange(dragonCfg().firstDelay);
     // v45：默认**启用**（用户定稿："龙开关默认启用"）。
     // 此前默认 true（暂停），理由是"巨龙系统待大改，先默认关闭"——那一轮大改已经做完了。
     this.paused = false;
@@ -111,7 +113,13 @@ export class DragonSystem {
     this.souls = { blue: [], red: [] };          // 阵营 → 已获得的龙魂 id
     this.soulResolved = false;                   // 是否已结算过龙魂
     this.soulOwner = null;                       // 成魂阵营（null = 无魂）
-    this._nextPitSide = 'top';                   // v43：上/下龙坑交替，首条从上坑出
+    // v51.9 修复：用户报"蓝方一直在输，从未赢过"排查出的一条——首条龙坑此前
+    // **硬编码**从 'top' 出，而 top 坑走上路、reverse 方向，直逼的正是【蓝方】基地
+    // （见 createDragon 的注释："上坑→上路→reverse（推蓝方）"）。虽然坑位之后确实
+    // 会交替，但"每一局的第一条龙固定先威胁蓝方"这件事本身就是个不对称——红方
+    // 永远先手拿到"抢第一条龙、顺势推蓝方"的地理优势，蓝方永远没有。改成每局开局
+    // 随机决定首条从哪个坑出，之后的交替逻辑不变（组内仍然公平轮流）。
+    this._nextPitSide = Math.random() < 0.5 ? 'top' : 'bot';
 
     this._bindDeath();
     this._bindMap();
@@ -150,7 +158,7 @@ export class DragonSystem {
    * 也就是说：局内进度清空，玩家的调参保留。
    */
   resetRun() {
-    this.nextDragonTime = dragonCfg().firstDelay;
+    this.nextDragonTime = rollInRange(dragonCfg().firstDelay);   // 重开一局也要重新掷一次骰子
     this.elementDragonSpawned = 0;
     this.ancientSpawned = 0;
     this.killCounts = {};
@@ -163,7 +171,7 @@ export class DragonSystem {
     this.souls = { blue: [], red: [] };
     this.soulResolved = false;
     this.soulOwner = null;
-    this._nextPitSide = 'top';
+    this._nextPitSide = Math.random() < 0.5 ? 'top' : 'bot';   // 同上：重开一局也要重新随机首条龙坑
   }
 
   /** 元素龙总数与成魂门槛（软编码）。 */
@@ -198,7 +206,9 @@ export class DragonSystem {
   // 是最该让用户调的东西之一，却只能改源码。现在读 CONFIG.gameRules.dragon，
   // 实现在 data/dragonCurve.js —— 与模板编辑器的预览是**同一个函数**。
   _nextInterval() {
-    return dragonIntervalAt({
+    // v51.9：真正驱动游戏节奏，要用会掷骰子的 rollDragonInterval，不是给编辑器
+    // 预览用的 dragonIntervalAt（那个返回区间中点，是个稳定值，不该拿来定时器）。
+    return rollDragonInterval({
       soulUnlocked: this.soulUnlocked,
       elementSpawned: this.elementDragonSpawned,
       ancientSpawned: this.ancientSpawned,
@@ -579,7 +589,7 @@ export class DragonSystem {
     this.soulUnlocked = true;
     this._unlockWave = (typeof window !== 'undefined' && window.waveNumber) || 0;
     this.ancientSpawned = 0;
-    this.nextDragonTime = dragonCfg().ancientFirstDelay;
+    this.nextDragonTime = rollInRange(dragonCfg().ancientFirstDelay);
   }
 
   // v43：给单个**领受者**（塔或大型小兵）叠加一层元素增益。
@@ -594,6 +604,23 @@ export class DragonSystem {
     const cap = (CONFIG.dragonPower && CONFIG.dragonPower.maxStacks) || 4;
     for (let i = 0; i < buffs.length; i++) {
       const b = buffs[i];
+      // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户定稿"改为护盾，要不然
+      // 太超标了"——固定护盾会自动回满，四层叠加、永久生效、还自动回复，等于变相
+      // 白嫖一份"永远满盾"（与钢铁烈阳护盾/图腾壁垒此前踩的是同一个坑）。这里目前
+      // 只有铁龙一条用 shieldFixedMax 做巨龙之力，判断键名足够定位到它，不需要按
+      // el === 'steel' 再加一层特判。
+      if (b.statKey === 'shieldFixedMax') {
+        this.effects.apply(tower.id, {
+          name: `${def.label}之力`, icon: def.icon, kind: 'shield', color: def.color,
+          flatValue: b.flat || 0,
+          duration: Infinity, permanent: true,
+          stackable: true, maxStacks: cap, stackPolicy: 'stack',
+          stackKey: `dragon_${el}_${b.statKey}`,
+          descTemplate: `唯一被动——${def.label}之力：击杀${def.label}获得的永久护盾（{stacks}层，不会自动回复）。`,
+          description: `${def.label}护盾（{stacks}层，不会自动回复）`,
+        }, `dragon_buff_${el}_${i}`);
+        continue;
+      }
       this.effects.apply(tower.id, {
         name: `${def.label}之力`, icon: def.icon, kind: 'stat', color: def.color,
         statKey: b.statKey,
@@ -684,21 +711,26 @@ export class DragonSystem {
   }
 
   /**
-   * 给单个单位叠一层远古之力（永久 +CONFIG.dragonPower.ancient.allStatsPct% 全属性）。
+   * 给单个单位叠一层远古之力（永久 +CONFIG.dragonPower.ancient.coreStatsPct% 核心属性）。
    * 单独成一条 stat 效果、独立 sourceId，不与 _grantAncientTo 的限时处决效果混在一起——
    * 一个永久叠层、一个到点回收，生命周期完全不同，合在一条效果里没法同时满足两边。
    * 数值放在 CONFIG.dragonPower（不是 CONFIG.dragonSouls）——这是"力"不是"魂"，
    * 与其余七个元素的力同一张表，只是没有元素归属，单独存一个 'ancient' 键。
+   *
+   * v51.9：statKey 从 allStatsPct 改为 coreStatsPct——用户实测"4力+雷魂的蓝方打不过
+   * 0力+远古龙魂的红方"，全属性加成覆盖面太宽，改成只放大六项核心战斗属性的
+   * 核心属性加成，数值同时从 5%/层砍到 2.5%/层。见 Config.js 里 dragonPower.ancient
+   * 的头注与 AttributeCalculator.js 的 v51.9 部分。
    */
   _applyAncientPower(entity) {
     const p = (CONFIG.dragonPower && CONFIG.dragonPower.ancient) || {};
-    const pct = p.allStatsPct ?? 5;
+    const pct = p.coreStatsPct ?? 2.5;
     this.effects.apply(entity.id, {
       name: '远古之力', icon: '🐲', kind: 'stat', color: '#e67e22',
-      statKey: 'allStatsPct', flatValue: pct, perStackFlat: pct,
+      statKey: 'coreStatsPct', flatValue: pct, perStackFlat: pct,
       duration: Infinity, permanent: true, stackable: true, maxStacks: 999, stackPolicy: 'stack',
-      descTemplate: `唯一被动——远古之力：击杀远古巨龙获得的永久全属性加成（{stacks}层，每层+${pct}%）。`,
-      description: `远古之力（{stacks}层，每层+${pct}%全属性）`,
+      descTemplate: `唯一被动——远古之力：击杀远古巨龙获得的永久核心属性加成（{stacks}层，每层+${pct}%）。`,
+      description: `远古之力（{stacks}层，每层+${pct}%核心属性）`,
     }, 'dragon_ancient_power_0');
   }
 

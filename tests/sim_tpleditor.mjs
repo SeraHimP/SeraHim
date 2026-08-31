@@ -126,23 +126,39 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
   // 唯一的翻盘工具 —— 10 分钟才有一次机会的话"另一方不用玩了"依然成立。
   // v51.4：首条 60s 抢跑被推翻（用户："第一波龙生成的太快了，导致龙的倾向就偏向于
   // 红方了"）——首条改成与后续同一个 300s 节奏。
-  T('刷新节奏：首条与之后一律 5 分钟，不再单独抢跑',
-    DC.dragonCfg().firstDelay === 300
-    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 1 }) === 300
+  // v51.9：刷新节奏改成随机区间（用户定稿：首条 60~480s、之后每条 240~360s），不再是
+  // 固定时间表。dragonIntervalAt 现在返回区间中点（给编辑器预览/这类断言用，稳定值），
+  // 真正驱动引擎的是会掷骰子的 rollDragonInterval。
+  T('刷新节奏：出厂区间是首条 60~480s、之后每条（含远古龙）240~360s',
+    JSON.stringify(DC.dragonCfg().firstDelay) === JSON.stringify([60, 480])
+    && JSON.stringify(DC.dragonCfg().elementIntervals) === JSON.stringify([240, 360])
+    && JSON.stringify(DC.dragonCfg().ancientFirstDelay) === JSON.stringify([240, 360])
+    && JSON.stringify(DC.dragonCfg().ancientInterval) === JSON.stringify([240, 360]));
+  T('dragonIntervalAt 返回区间中点（240~360 的中点正好是 300，不分第几条，不再有"越界沿用最后一项"）',
+    DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 1 }) === 300
     && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 2 }) === 300
-    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 3 }) === 300);
-  T('元素龙间隔越界沿用最后一项（不会返回 undefined 让计时变 NaN）',
-    DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 99 }) === 300);
-  T('远古龙：首条与之后都是 5 分钟',
+    && DC.dragonIntervalAt({ soulUnlocked: false, elementSpawned: 99 }) === 300);
+  T('远古龙：首条与之后同一个区间，中点也是 5 分钟',
     DC.dragonIntervalAt({ soulUnlocked: true, ancientSpawned: 1 }) === 300
     && DC.dragonIntervalAt({ soulUnlocked: true, ancientSpawned: 2 }) === 300);
+  // rollDragonInterval 是真掷骰子：多次调用应该落在区间内、且不是每次都一样
+  // （否则等于没随机，用户要的"每局随机"就没做到）。
+  {
+    const rolls = Array.from({ length: 40 }, () => DC.rollDragonInterval({ soulUnlocked: false, elementSpawned: 2 }));
+    T('rollDragonInterval 每次都落在 [240,360] 区间内',
+      rolls.every(v => v >= 240 && v <= 360));
+    T('rollDragonInterval 不是每次都返回同一个值（真的在随机，不是伪装成随机的固定值）',
+      new Set(rolls.map(v => v.toFixed(4))).size > 1);
+  }
+  T('rollInRange 落在给定区间内（firstDelay 的 60~480 那档，抽样验证）',
+    Array.from({ length: 40 }, () => DC.rollInRange([60, 480])).every(v => v >= 60 && v <= 480));
 
   // 真的读配置，不是摆设
   const bak = JSON.parse(JSON.stringify(CONFIG.gameRules.dragon));
   CONFIG.gameRules.dragon.curve.maxHP.base = 5000;
-  CONFIG.gameRules.dragon.firstDelay = 30;
+  CONFIG.gameRules.dragon.firstDelay = [30, 30];
   T('改配置立刻改结果（不是"改了没反应"）',
-    DC.dragonStatsAt(1, false).maxHP === 5000 && DC.dragonCfg().firstDelay === 30);
+    DC.dragonStatsAt(1, false).maxHP === 5000 && DC.rollInRange(DC.dragonCfg().firstDelay) === 30);
   CONFIG.gameRules.dragon.curve.resist.cap = 100;
   T('上限生效', DC.dragonStatsAt(20, false).armor === 100);
   CONFIG.gameRules.dragon = bak;

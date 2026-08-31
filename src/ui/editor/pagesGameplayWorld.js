@@ -389,13 +389,21 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         refresh();
       });
     });
+    // v51.9 修复：用户"手动刷一条巨龙，点了很多下但是只刷一条"——旧写法只是把
+    // nextDragonTime 清零，真正的 spawnDragon() 要等下一次 DragonSystem.update(dt)
+    // 帧才会跑；同一帧内连点 N 次，nextDragonTime 每次都被清成 0（本来就是 0，
+    // 幂等），下一帧只会触发一次生成，其余 N-1 次点击全部"消失"。改成直接同步调用
+    // spawnDragon()，点几下就立刻生成几条，不再依赖引擎下一帧才处理。
     overlay.querySelector('#dgForceElement')?.addEventListener('click', () => {
-      ds.nextDragonTime = 0;
-      logFn('🐲 下一次刷新将提前生成一条元素龙', 'spawn');
+      ds.spawnDragon();
+      ds.nextDragonTime = ds._nextInterval();
+      logFn('🐲 已立刻生成一条巨龙（不是元素龙就是远古龙，取决于当前是否已成魂）', 'spawn');
     });
     overlay.querySelector('#dgForceAncient')?.addEventListener('click', () => {
-      ds.soulUnlocked = true; ds.nextDragonTime = 0;
-      logFn('🐉 下一次刷新将提前生成一条远古龙', 'spawn');
+      ds.soulUnlocked = true;
+      ds.spawnDragon();
+      ds.nextDragonTime = ds._nextInterval();
+      logFn('🐉 已立刻生成一条远古龙', 'spawn');
     });
     overlay.querySelector('#dgToggleSpawn')?.addEventListener('click', () => {
       CONFIG.dragonToggles = CONFIG.dragonToggles || {};

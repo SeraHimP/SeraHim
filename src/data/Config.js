@@ -202,10 +202,15 @@ export const CONFIG = {
       // 这种"谁先摸到"的偶然因素，而不是真实的战局。改成与后续元素龙同一个 300 秒
       // 节奏——不再单独给第一条龙"抢跑"，届时双方已经有几波兵线的真实较量支撑，
       // 抢龙结果才更多由玩法本身决定。
-      firstDelay: 300,                   // 首条元素龙的出现时间（秒）v51.4：60 → 300
-      elementIntervals: [300],           // v43：[420,480,540] → 统一 300（越界沿用最后一项）
-      ancientFirstDelay: 300,            // v43：成魂后首条远古龙也是 300（原 300，未变）
-      ancientInterval: 300,              // v43：600 → 300。理由见下。
+      // v51.9：刷新节奏从固定时间表改成随机区间（用户定稿："第一条巨龙的生成时间
+      // 改为每局随机，60秒-480秒。之后下一条巨龙的生成时间改为随机240-360秒。"）。
+      // "下一条巨龙"没有分元素龙/远古龙，所以 elementIntervals/ancientFirstDelay/
+      // ancientInterval 统一用同一个 [240,360] 区间——旧版按位置取固定值、越界沿用
+      // 最后一项那套逻辑（v43 定的）不再需要，见 src/data/dragonCurve.js 的实现。
+      firstDelay: [60, 480],             // 首条巨龙的出现时间（秒）v51.4：60 → 300（固定）；v51.9：改回随机，区间 60~480
+      elementIntervals: [240, 360],      // v43：[420,480,540]（按位取值）；v51.3：统一300（固定）；v51.9：随机区间 240~360
+      ancientFirstDelay: [240, 360],     // v43：300（固定）；v51.9：随机区间 240~360
+      ancientInterval: [240, 360],       // v43：300（固定）；v51.9：随机区间 240~360
       // 为什么远古龙也要提到 300：成魂方顶着**永久**龙魂，而远古龙的处决 buff 是
       // 落后方唯一的翻盘工具。10 分钟才有一次机会的话，"拿到龙魂之后另一方不用玩了"
       // 这句话依然成立。翻盘窗口的密度必须配得上永久优势。
@@ -513,7 +518,12 @@ export const CONFIG = {
     rift:    { perStack: 1, maxStacks: 5, duration: 6 },
     // 🐲 远古龙魂：唯一**限时**的一条（其余七条全部永久）。durationSec 240→300
     // （用户定稿"远古龙魂还是限时的，时长改为300s"）。
-    ancient: { executeAtPct: 20, executePct: 20, durationSec: 300 },
+    // v51.9：用户实测"4巨龙之力+雷魂的蓝方打不过0巨龙之力+远古龙魂的红方"，连带
+    // 定稿新数值："对生命值低于17%的敌人造成最大生命值17%的真实伤害，持续180秒"——
+    // 机制字段名恰好就是 executeAtPct/executePct/durationSec，不用改代码，纯改数字。
+    // 真正的超标大头是下面 dragonPower.ancient（永久的全属性加成，见那条注释），
+    // 这条龙魂本身砍得比力温和，因为它是限时的、且只对残血目标生效，天然自限。
+    ancient: { executeAtPct: 17, executePct: 17, durationSec: 180 },
     // ☀️ 光魂已随【光龙】一并删除（用户定稿："光龙直接删除吧"）。
     // 删除理由记在这里，免得下一个人以为是漏了：塔无限重生会把对局拖成平局，
     // 而且它在 v43 的对照里整档与基线**逐位相同** —— 因为当时它根本没接上
@@ -571,11 +581,21 @@ export const CONFIG = {
     // （作用在某阵营所有单位）的效果每层：+5%全属性加成（永久生效）。远古之力肯定要
     // 比其他的强一些，但也不能太强。"——与其余元素之力同一套机制（永久、逐层叠加、
     // 覆盖该阵营全部单位，见 DragonSystem._applyAncientPower），但没有元素归属，
-    // 所以单独放在这里而不是走 DRAGON_ELEMENTS 那套按元素查表的通路。5%比其它单条
-    // 元素之力的单项数值（大多 1~4 左右的固定值或几个点的百分比）高一截，且是【全属性】
-    // 同时生效，量级上明显比任何一条单一元素之力强，符合"肯定要强一些"；但没有强到
-    // 离谱（对照冰魂那次"太慷慨"的教训，没有让它无限失控式碾压）。
-    ancient: { allStatsPct: 5 },
+    // 所以单独放在这里而不是走 DRAGON_ELEMENTS 那套按元素查表的通路。
+    //
+    // ==================== v51.9：全属性加成砍成核心属性加成，5%→2.5% ====================
+    // 用户实测（真实对局，不是理论推演）："4巨龙之力+雷魂的蓝方打不过0巨龙之力+
+    // 远古龙魂的红方"。回头看 v51.6 那次的判断站不住：+5%【全属性】永久叠加、上限
+    // 999 层、还覆盖阵营全部单位（塔+大型小兵，人数越多总收益越大），"没有强到离谱"
+    // 这个结论只是没有实测验证过。用户定稿修正方案："远古之力的属性改为【核心属性
+    // 加成】+2.5%。它和【全属性加成】的区别是【核心属性加成】只加攻击力，法强，
+    // 双抗，攻击速度，移速。"——双管齐下：数值砍半（5%→2.5%）+ 收益面收窄（全部
+    // 数值型属性 → 六项核心战斗属性，减伤/穿透/吸血/护盾这类"二次修正"型属性不再
+    // 被放大）。coreStatsPct 是这次新增的属性类型，实现见 AttributeCalculator.js
+    // 的 v51.9 部分，只对 attackDamage/abilityPower/armor/magicResist/
+    // baseAttackSpeed/moveSpeed 六项生效，与全属性加成（allStatsPct）是两条独立
+    // 通路，互不影响其它已有效果。
+    ancient: { coreStatsPct: 2.5 },
   },
 
   // v43：龙的两个独立开关（用户定稿："龙魂效果有独立开关（是否生成/效果）"）。
@@ -1187,9 +1207,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 40, magicResist: 40,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0  , tempShieldDecayPct: 5,
+      shieldFixedMax: 0  , tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // ==================== v51.6：塔的默认伤害类型再改回魔法（第三次翻转，如实记录）====================
       // 时间线：v43 定为 magic → v51 用户拍板推翻改回 physical（上面那段注释）→
@@ -1211,9 +1231,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 15, magicResist: 15,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：用户定稿"处了特殊说明外，所有单位的攻击方式都应该是自适应（推翻之前的）"
       // ——塔是唯一的例外（见上面 tower 模板），其余全部类型统一改成 adaptive。
@@ -1232,9 +1252,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: 5,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
@@ -1260,9 +1280,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 34, magicResist: 34,                               // v43：40/40 → 34/34
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 320, queueSpacing: 20,
@@ -1287,9 +1307,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: -10,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 600, tempShieldDecayPct: 5,
+      shieldFixedMax: 600, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
@@ -1312,9 +1332,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 100, magicResist: -30,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
@@ -1338,9 +1358,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 20, magicPenPercent: 0,
       armor: 25, magicResist: 25,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）——术士兵不是硬编码 magic，
       // 是靠左边 attackDamage 极低 + 下面 abilityPower 高，自适应比较之后自然倒向魔法。
@@ -1363,9 +1383,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 25, magicResist: 25,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
@@ -1395,9 +1415,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 0, magicResist: 0,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，攻击方式改自适应（塔是唯一例外）。
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
@@ -1415,9 +1435,9 @@ export const CONFIG = {
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 40, magicResist: 40,
       damageReduction: 0, damageBlock: 0,
-      shieldFixedMax: 0, tempShieldDecayPct: 5,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
       onHitDamage: 0, onHitPercentDamage: 0,
-      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
       // v51.6：同上，跟着改自适应，纯粹为了字段口径统一——这份 attackType 实际会被
       // createDragon 用 CONFIG.gameRules.dragon.combat.attackType 整个覆盖掉（那边

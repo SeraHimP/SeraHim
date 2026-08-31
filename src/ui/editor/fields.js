@@ -21,6 +21,7 @@ export const FIELD_META = {
   damageReduction:    { label: '伤害减免%', min: 0, max: 100, step: 1 },
   damageBlock:        { label: '格挡值', min: 0, max: 500, step: 5 },
   shieldFixedMax:     { label: '固定护盾上限', min: 0, max: 5000, step: 50 },
+  plainShieldFlat:    { label: '护盾（不会自动回复）', min: 0, max: 5000, step: 50 },
   tempShieldDecayPct: { label: '临时护盾衰减%', min: 0, max: 100, step: 1 },
   armorPenFlat:       { label: '固定护甲穿透', min: 0, max: 500, step: 5 },
   armorPenPercent:    { label: '百分比护甲穿透%', min: 0, max: 100, step: 1 },
@@ -32,6 +33,7 @@ export const FIELD_META = {
   lifeStealPct:       { label: '全能吸血%', min: 0, max: 100, step: 1 },
   healShieldPowerPct: { label: '治疗护盾强度%', min: -100, max: 200, step: 5 },
   allStatsPct:        { label: '全属性加成%', min: -100, max: 300, step: 5 },
+  coreStatsPct:       { label: '核心属性加成%', min: -100, max: 300, step: 5 },
   damageAmpPct:       { label: '伤害增幅%', min: -100, max: 300, step: 5 },
   moveSpeed:          { label: '移动速度', min: 0, max: 300, step: 5 },
   // ==================== v51：新增属性 ====================

@@ -189,7 +189,7 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     fx.getEffects(redOk[0].id).some(x => x.blueprint.name === '远古处决'
       && x.remainingTime > 0 && x.remainingTime !== Infinity));
   const dur = CONFIG.dragonSouls.ancient.durationSec;
-  T('⑥-限时 300 秒（八条龙魂里唯一限时的一条；v51.6 从 240 改稿为 300）', dur === 300);
+  T('⑥-限时 180 秒（八条龙魂里唯一限时的一条；v51.6 从 240 改稿为 300，v51.9 用户实测超标改为 180）', dur === 180);
   // 到点回收
   window.gameTime = 100 + dur + 1;
   ds.update(0.1);
@@ -199,10 +199,11 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   window.gameTime = 0;
 }
 
-// ==================== ⑥b 远古之力（新增，v51.6）：永久全属性加成，覆盖全部单位 ====================
+// ==================== ⑥b 远古之力（新增，v51.6；v51.9 改用核心属性加成）：永久核心属性加成，覆盖全部单位 ====================
 // 用户："远古巨龙目前只有龙魂，没有远古之力，远古之力（作用在某阵营所有单位）的效果
 //        每层：+5%全属性加成（永久生效）。"——与限时的"远古处决"（上面⑥那节）是两件
 //        独立的事：一个永久叠层覆盖全部单位（含近战/远程），一个限时只给塔+大型小兵。
+// v51.9：用户实测发现太超标，改用核心属性加成（更窄的六项属性），5%→2.5%。
 {
   const { ds, fx, units, killBy } = mk();
   const findPower = (e) => fx.getEffects(e.id).find(x => x.sourceId === 'dragon_ancient_power_0');
@@ -212,9 +213,12 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   const towerRed = units.red.find(u => u.type === 'tower');
   T('⑥b-近战兵也拿到远古之力（POWER_REWARD_OK 范围，不是龙魂那条窄范围）',
     !!findPower(meleeRed) && findPower(meleeRed).stacks === 1);
-  T('⑥b-塔同样拿到，且每层 +5%全属性（与 CONFIG.dragonPower.ancient.allStatsPct 一致）',
-    findPower(towerRed).blueprint.flatValue === CONFIG.dragonPower.ancient.allStatsPct
-    && CONFIG.dragonPower.ancient.allStatsPct === 5);
+  // v51.9：用户实测"4力+雷魂的蓝方打不过0力+远古龙魂的红方"，把全属性加成砍成
+  // 核心属性加成、5%→2.5%（见 Config.js dragonPower.ancient 的头注）。
+  T('⑥b-塔同样拿到，且每层 +2.5%核心属性（与 CONFIG.dragonPower.ancient.coreStatsPct 一致）',
+    findPower(towerRed).blueprint.flatValue === CONFIG.dragonPower.ancient.coreStatsPct
+    && CONFIG.dragonPower.ancient.coreStatsPct === 2.5
+    && findPower(towerRed).blueprint.statKey === 'coreStatsPct');
   T('⑥b-是永久效果，不受"远古处决"限时窗口影响',
     findPower(towerRed).blueprint.duration === Infinity && findPower(towerRed).blueprint.permanent === true);
 
@@ -258,6 +262,10 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
 }
 
 // ==================== ⑧ 龙坑交替 ====================
+// v51.9 修复：用户报"蓝方一直在输，从未赢过"排查出的一条——首条龙坑此前硬编码
+// 从 'top' 出（top 坑推的正是【蓝方】基地），等于每一局红方都天然先手抢到"第一条
+// 龙威胁蓝方"这个地理优势，蓝方永远没有。改成每局随机决定首条坑位，组内仍然
+// 严格交替（公平性只挪到"哪边先手"上随机，不影响"轮流"这条规则本身）。
 {
   const { ds } = mk();
   const sides = [];
@@ -265,8 +273,9 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   ds.paused = false;
   for (let i = 0; i < 4; i++) ds.spawnDragon();
   T(`⑧-上/下龙坑严格交替（实际 ${sides.join('/')}）`,
-    sides.join('/') === 'top/bot/top/bot');
-  T('⑧-首条从上坑出（上坑推蓝方，下坑推红方）', sides[0] === 'top');
+    sides.join('/') === 'top/bot/top/bot' || sides.join('/') === 'bot/top/bot/top');
+  T('⑧-首条坑位是合法值（不再固定是 top——固定就是本条要修的不对称本身）',
+    sides[0] === 'top' || sides[0] === 'bot');
 }
 
 // ==================== ⑨ 重置本局把整局进度清干净 ====================
@@ -277,7 +286,11 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   T('⑨-resetRun 清掉成魂状态与击杀数',
     ds.soulOwner === null && ds.soulResolved === false && ds.soulUnlocked === false
     && ds.factionTotals.blue === 0 && ds.getSouls().blue.length === 0);
-  T('⑨-龙坑交替也复位（否则重开一局首条会从下坑出）', ds._nextPitSide === 'top');
+  // v51.9：首条坑位改成每局随机（见上面⑧那条），resetRun 也要重新掷一次骰子，
+  // 不能停在上一局用剩的值——这里只能钉"复位后仍是合法坑位"，具体是哪一边不该
+  // 是固定值（固定就是回归到本条要修的不对称）。
+  T('⑨-龙坑交替也复位（重开一局仍是合法坑位，不会残留成 undefined 之类的坏状态）',
+    ds._nextPitSide === 'top' || ds._nextPitSide === 'bot');
 }
 
 // ==================== ⑩ getSouls / getState 仍然可用（WorldState 与 UI 读它们）====================

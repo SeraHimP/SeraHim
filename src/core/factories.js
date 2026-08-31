@@ -80,6 +80,29 @@ function spawnAtFullHP(entity) {
 }
 
 /**
+ * ==================== v51.9：模板默认护盾 ====================
+ * 用户："【护盾】这个属性我在单位编辑窗口/模板编辑器里并未看到。"——护盾（第三种
+ * "不衰减、不回复"的盾，与固定护盾 shieldFixedMax 那种会自动回满的不同）此前只能
+ * 靠"状态"tab 的【添加效果】临时挂一条 kind:'shield' 效果，没有一个像【固定护盾】
+ * 那样直接摆在【属性】tab 里、改个数字就生效的入口。
+ *
+ * CONFIG.templates.<type>.plainShieldFlat 就是这个入口：出生时若 >0，直接挂一份
+ * kind:'shield' 效果，用法与 shieldFixedMax 等其它模板数值字段一致（改完对之后
+ * 生成的单位立刻生效，不追溯已在场的）。四个工厂都调用它——理由与 spawnAtFullHP
+ * 头注说的一样：只补一处会漏掉另外三处。
+ */
+function grantTemplatePlainShield(entity) {
+  const v = entity.baseStats?.plainShieldFlat;
+  if (!(v > 0) || !effectRegistry) return;
+  effectRegistry.apply(entity.id, {
+    name: '护盾', icon: '🛡', kind: 'shield', flatValue: v,
+    duration: Infinity, permanent: true,
+    stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+    description: `护盾+${v}（模板默认，不会自动回复）`,
+  }, 'template_plain_shield');
+}
+
+/**
  * 「这个单位此刻真正的最大生命」—— 叠完技能/状态/龙之奖励/世界修正之后的那个数。
  *
  * 导出是给 MapSystem 的重生路径用的：那边算"重生到 hpPct%"时读的也是
@@ -155,6 +178,7 @@ function createTower(x, y) {
   }
 
   spawnAtFullHP(entity);   // 见 spawnAtFullHP 头注：模板状态/龙魂里有 maxHPPct，必须在它们之后补满
+  grantTemplatePlainShield(entity);
   eventBus.emit('entity:spawn', { entityId: entity.id });
   uiManager.log(`🏰 塔 #${entity.id} 建造在 (${Math.round(x)}, ${Math.round(y)})`, 'spawn');
   return entity;
@@ -333,6 +357,7 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   // 不补的话，成魂之后新建/重生的建筑全是裸的 —— 奖励等于几十秒后自动失效。
   dragonSystem.equipExistingSoul(entity);
   spawnAtFullHP(entity);   // 同上：成魂之后新建/重生的建筑吃到 maxHPPct，出生血量要跟上
+  grantTemplatePlainShield(entity);
   eventBus.emit('entity:spawn', { entityId: entity.id });
   uiManager.log(`${isNexus ? '💎 水晶' : '🏯 ' + tier + '塔'}（${faction === FACTIONS.BLUE ? '蓝方' : '红方'}）已生成`, 'spawn');
   return entity;
@@ -453,6 +478,7 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts) {
   // equipExistingSoul 内部按 SOUL_REWARD_OK 过滤，近战/远程会被自然排除。
   dragonSystem.equipExistingSoul(entity);
   spawnAtFullHP(entity);   // 同上：龙之奖励会抬高最大生命
+  grantTemplatePlainShield(entity);
   eventBus.emit('entity:spawn', { entityId: entity.id });
   return entity;
 }
@@ -577,6 +603,7 @@ function createDragon(type, opts = {}) {
   // 而 currentHP 是在函数顶部按 abs.maxHP 定的，所以龙一出场就是残的，且越往后越明显。
   dragonSystem.applyDragonSelfBuffs(entity);
   spawnAtFullHP(entity);
+  grantTemplatePlainShield(entity);
   const label = isAncient ? '🐲 远古巨龙' : `${entity._dragonIcon} ${entity.baseStats.label}`;
   uiManager.log(`${label} 降临！击败它获得龙之增益`, 'spawn');
   return entity;

@@ -75,11 +75,28 @@ export const AttributeCalculator = {
       mod.percent += eff.totalPercent || 0;
     }
 
+    // ==================== v51.9：核心属性加成（coreStatsPct）====================
+    // 用户："远古之力的属性改为【核心属性加成】+2.5%。它和【全属性加成】的区别是
+    // 【核心属性加成】只加攻击力，法强，双抗，攻击速度，移速。" —— 全属性加成放大
+    // "所有数值型属性"，收益面太宽，力量级说不清楚；核心属性加成只放大这六项
+    // 最直接影响战力的基础属性，作为一个比全属性加成温和、但比单条元素之力通用的
+    // 中间档，供远古之力这类"没有元素归属、但必须比单一元素之力强一些"的效果使用。
+    let coreStatsPctMod = 0;
+    if (modMap.has('coreStatsPct')) {
+      const mod = modMap.get('coreStatsPct');
+      coreStatsPctMod = mod.flat + mod.percent;
+    }
+
     let allStatsPctMod = 0;
     if (modMap.has('allStatsPct')) {
+      // v51.9 修复：这里原来会把 allStatsPct 从 modMap 里删掉，让它跳过下面 127 行那个
+      // 把 mod 写进 stats[key] 的通用循环——效果本身没坏（allStatsPctMod 照样被拿去
+      // 放大其它属性），但 stats.allStatsPct 这个【展示字段】永远停在模板默认值 0，
+      // 面板上"全属性加成"永远显示 0（用户报的就是这个）。不删，让它照常走通用循环
+      // 写进 stats.allStatsPct；它不会被自己二次放大——下面 160 行的 allStatsExclude
+      // 本来就把 allStatsPct 自己排除在"放大所有属性"的目标之外。
       const mod = modMap.get('allStatsPct');
       allStatsPctMod = mod.flat + mod.percent;
-      modMap.delete('allStatsPct');
     }
 
     // ==================== 天气修正层（全局连续场） ====================
@@ -153,11 +170,24 @@ export const AttributeCalculator = {
       else stats.attackDamage = ad + af * 0.6;
     }
 
+    // 核心属性加成：只放大这六项，且放在全属性加成之前——如果两者同时存在（理论上
+    // 不该发生，但不该假设"不会发生"），先让核心属性把这六项垫高，全属性加成再统一
+    // 放大一遍，是两层乘法叠加而不是互相覆盖，与本文件其余百分比修正的叠加方式一致。
+    if (includeAllStats && coreStatsPctMod !== 0) {
+      const coreStatsKeys = ['attackDamage', 'abilityPower', 'armor', 'magicResist',
+        'baseAttackSpeed', 'moveSpeed'];
+      for (const key of coreStatsKeys) {
+        if (typeof stats[key] === 'number') {
+          stats[key] *= (1 + coreStatsPctMod / 100);
+        }
+      }
+    }
+
     if (includeAllStats && allStatsPctMod !== 0) {
       // 全属性加成不应作用于"百分比上限型"属性（减伤、伤害转化、全能吸血等），
       // 否则会把已经封顶的属性二次放大、突破设计上限。这类属性只吃自身的加成。
       const allStatsExclude = new Set([
-        'allStatsPct', 'damageReduction', 'lifeStealPct', 'damageConvertPct',
+        'allStatsPct', 'coreStatsPct', 'damageReduction', 'lifeStealPct', 'damageConvertPct',
         'armorPenPercent', 'magicPenPercent', 'attackType',
       ]);
       const keysToApply = Object.keys(stats).filter(k => !allStatsExclude.has(k));
