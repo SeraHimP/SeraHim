@@ -496,7 +496,11 @@ export const CONFIG = {
     // ☠️ 毒魂：命中叠中毒，无限叠加。v51.13：本轮 --sweep soul 20 局全胜/推进度差
     // +3.94（扣基线），离谱超标——主伤害杠杆 pctPerStack 砍到约 0.27 倍，粗估数值，
     // 下一轮验证。
-    poison:  { pctPerStack: 0.08, duration: 4, vsBuildingPct: 25, maxStacks: 999 },   // v51.11：0.02→0.3（恢复到 v51.3 改动前的原值）；v51.13：0.3→0.08（本轮实测离谱超标，×0.27）
+    // v51.16：本轮 --sweep soul 数据（20局/档，用户实测）：magma 那次修的是真正的
+    // 结构性 bug（溅射滚雪球，见 v51.15），poison 没有这类结构问题——纯单目标叠层
+    // DOT，没有半径/溅射，20局95%胜/推进度差+2.23（扣基线）不是机制坏了，是数值
+    // 确实还是偏强，继续按同一套"缩到 fire/water/earth 那条参照带"的比例砍。
+    poison:  { pctPerStack: 0.03, duration: 4, vsBuildingPct: 25, maxStacks: 999 },   // v51.11：0.02→0.3（恢复到 v51.3 改动前的原值）；v51.13：0.3→0.08（本轮实测离谱超标，×0.27）；v51.16：0.08→0.03（再次实测仍偏强+2.23，×0.36）
     // ==================== v50：六条新魂的机制参数 ====================
     // 🧊 霜魂：命中叠【霜冻】，满层冻结；**对建筑改为减攻速**（用户定稿："塔做减攻速的"）。
     //    冻结后目标获得 immuneSec 秒的冻结免疫（用户定稿），状态栏显示剩余时间。
@@ -511,8 +515,11 @@ export const CONFIG = {
     // v51.13：本轮 --sweep soul 20 局全胜/推进度差 +3.06——v51.8 已经验证过真正的
     // 硬度大头是这个周期护盾（flat/maxHPPct/missingHPPct），不是 reflectPct，三项
     // 一起砍到约 0.3 倍（只砍一项等于没砍，同一个教训不要再犯第二次）。
-    steel:   { everySec: 8, flat: 35, maxHPPct: 1, missingHPPct: 2, currentHPPct: 0,
-               reflectPct: 30 },   // v51.11：flat 20→120、maxHPPct 0.5→3、missingHPPct 1→6、reflectPct 5→30（全部恢复原值）；v51.13：flat 120→35、maxHPPct 3→1、missingHPPct 6→2（本轮实测离谱超标，三项一起×0.3，reflectPct不动）
+    // v51.16：steel 的护盾结算是纯 onFrame 周期发放，onDamaged 反弹那条命中已经
+    // 传了 _noProc（见下面 onDamaged 实现），没有 magma 那类结构性 bug——本轮实测
+    // 80%胜/推进度差+1.87（扣基线）仍偏强，继续按同一套比例砍护盾三项。
+    steel:   { everySec: 8, flat: 15, maxHPPct: 0.4, missingHPPct: 0.9, currentHPPct: 0,
+               reflectPct: 30 },   // v51.11：flat 20→120、maxHPPct 0.5→3、missingHPPct 1→6、reflectPct 5→30（全部恢复原值）；v51.13：flat 120→35、maxHPPct 3→1、missingHPPct 6→2（本轮实测离谱超标，三项一起×0.3，reflectPct不动）；v51.16：35→15、1→0.4、2→0.9（再次实测仍偏强+1.87，三项一起×0.44）
     // 🩸 血魂：越残血越强，**33% 生命时增益最大**（用户定稿），低于 33% 维持峰值不再回落
     //    —— 越接近死亡收益反而下降会很怪。加的是攻击力/攻速/全能吸血三项。
     // v51.13：本轮实测推进度差 +1.96（扣基线），中等超标——延续 v51.8 的教训，三项
@@ -534,7 +541,9 @@ export const CONFIG = {
     // BuffSystem.js 的 auraSplashPct 与 dragonSouls.js 的 dragonsoul_magma 蓝图）。
     // 加了这个折扣之后，主目标自己的灼烧伤害/减速没必要跟着一起腰斩，恢复回
     // v51.11 那版原始量级——"对密集兵线最强"这个机制身份保留，但不再是"团灭"。
-    magma:   { duration: 4, radius: 70, tickDamagePct: 0.6, slowPct: 20, splashPct: 35 },   // v51.13：0.6→0.3、20→6（砍错了杠杆，本轮验证纹丝不动）；v51.15：tickDamagePct/slowPct 都恢复回 v51.11 原值，新增 splashPct=35（真正的杠杆，半径内其他敌人只吃35%伤害，不再是满伤团灭）
+    // v51.16：v51.15 修好滚雪球之后本轮实测 90%胜/推进度差+2.63（扣基线）——比修复
+    // 前的 100%/+4.97 好太多，但仍偏强，splashPct 这个新杠杆继续按同一套比例砍。
+    magma:   { duration: 4, radius: 70, tickDamagePct: 0.6, slowPct: 20, splashPct: 12 },   // v51.13：0.6→0.3、20→6（砍错了杠杆，本轮验证纹丝不动）；v51.15：tickDamagePct/slowPct 都恢复回 v51.11 原值，新增 splashPct=35（真正的杠杆，修好滚雪球 bug 之后半径内其他敌人只吃35%伤害）；v51.16：35→12（再次实测仍偏强+2.63，×0.34）
     // 🌌 星魂：命中后分裂两枚小弹打向最近的敌人。
     //    分裂弹**不触发任何技能/被动**，但攻击特效（固定/%当前生命）按 onHitEffPct 效率工作
     //    （用户定稿：55%）。不这么限的话毒魂/暗魂/蚀魂的叠层速度会直接翻三倍。
