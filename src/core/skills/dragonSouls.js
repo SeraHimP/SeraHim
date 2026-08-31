@@ -611,10 +611,23 @@ export const dragonSouls = {
   dragonsoul_magma: {
     id: 'dragonsoul_magma', name: '熔魂', icon: '🌋', color: '#d35400', category: 'dragonsoul',
     applicableTypes: ['tower'],
+    // ==================== v51.15：找到了真正超标的杠杆——半径内"其他人"原来是满伤 ====================
+    // 用户实测熔魂离谱超标（20局全胜、红方均局0推进度），v51.13 砍了两轮
+    // tickDamagePct/slowPct 结果几乎纹丝不动——回头查 BuffSystem 的半径 DOT 结算
+    // 才发现：灼烧圈打到的"目标本人"和"半径内的其他敌人"原来吃的是同一份满额
+    // 伤害，等于一次攻击变成"每秒对着整支扎堆的兵线来一发真实伤害"，AOE 命中
+    // 的单位数（一波兵通常挤在一起，5~8 个很常见）远比单个百分比数字更能决定
+    // 胜负——这才是之前两轮怎么调 tickDamagePct 都不动的真正原因。
+    // 真正的杠杆是 splashPct（半径内"其他人"打的折扣），加上之后，主目标自己的
+    // 灼烧伤害/减速就没必要跟着一起腰斩了，恢复回本 session 改动前的原始量级
+    // （tickDamagePct 0.3→0.6，slowPct 6→20），"对密集兵线最强"这个机制身份保留，
+    // 但不再是"直接团灭"——溅射目标只按 splashPct% 的效率吃这份伤害。
     get description() {
       const p = P('magma');
-      return `攻击对目标施加【灼烧】${p.duration ?? 4} 秒：以该目标为中心 ${p.radius ?? 70} 半径内的敌人`
-        + `每秒受到其最大生命 ${p.tickDamagePct ?? 0.6}% 的真实伤害并减速 ${p.slowPct ?? 20}%（灼烧圈跟着目标移动）。`;
+      const splash = p.splashPct ?? 35;
+      return `攻击对目标施加【灼烧】${p.duration ?? 4} 秒：目标每秒受到其最大生命 ${p.tickDamagePct ?? 0.6}% 的真实伤害；`
+        + `${p.radius ?? 70} 半径内的其他敌人按 ${splash}% 的效率承受同一份伤害；`
+        + `灼烧范围内的敌人全部减速 ${p.slowPct ?? 20}%（灼烧圈跟着目标移动）。`;
     },
     get descTemplate() { return this.description; },
     effects: [],
@@ -635,8 +648,9 @@ export const dragonSouls = {
         flatValue: perTick, perStackFlat: perTick,
         tickInterval: 1, duration: p.duration ?? 4,
         auraRadius: p.radius ?? 70,       // ← 通用字段：带半径的 DOT（见 BuffSystem）
+        auraSplashPct: p.splashPct ?? 35, // ← v51.15 新增：半径内"其他人"只吃这个比例，不再是满伤
         stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `灼烧：半径 ${p.radius ?? 70} 内每秒真实伤害`,
+        description: `灼烧：半径 ${p.radius ?? 70} 内每秒真实伤害（自己 100%，波及的其他敌人 ${p.splashPct ?? 35}%）`,
       }, 'dragonsoul_magma', { casterId: attackerId });
       ctx.effectRegistry.apply(targetId, {
         name: '灼烧', icon: '🌋', kind: 'stat', color: '#d35400', type: 'debuff',

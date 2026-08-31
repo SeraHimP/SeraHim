@@ -262,6 +262,41 @@ const mk = (ents, t, x, f, hp = 100000) => {
       !/magma/i.test(srcOf('src/systems/BuffSystem.js')));
   }
 
+  // ==================== v51.15：熔魂溅射会重新触发施法者自己的 onDealtDamage，
+  // 滚雪球式扩散到半径内所有单位（不是数值大小问题，是机制结构问题）====================
+  // 用户实测熔魂离谱超标（20局全胜、红方均局0推进度），v51.13 砍了两轮
+  // tickDamagePct/slowPct 结果几乎纹丝不动——根因是 performAttackDirect 结算完
+  // 溅射伤害后，不管这一下是不是溅射，都会照常触发攻击者自己的 onDealtDamage，
+  // 等于熔魂的溅射命中会把熔魂自己又新挂一份满强度到溅射到的单位身上，下一 tick
+  // 这些新目标又各自溅射、各自再触发……一波兵挤在一起时呈滚雪球式扩散。
+  // 修复：溅射命中传 options._noProc（CombatSystem 已有的口子），不让溅射再触发
+  // 一次完整的被动链；同时给溅射伤害本身也打个折（auraSplashPct），双管齐下。
+  {
+    const { ents, fx, buffs, ctx } = W();
+    const t = mk(ents, 'tower', 0, 'blue'); equipSkill(t, 'dragonsoul_magma', ctx, SkillLibrary);
+    const inst = t._skillInstances.find(i => i.skillId === 'dragonsoul_magma');
+    const p = CONFIG.dragonSouls.magma;
+    const burn = mk(ents, 'melee', 50, 'red', 5000);
+    const near = mk(ents, 'melee', 50 + p.radius - 10, 'red', 5000);
+    SkillLibrary.dragonsoul_magma.onDealtDamage(t.id, burn.id, inst, ctx);
+    const beforeBurn = burn.currentHP, beforeNear = near.currentHP;
+    buffs.update(1.0);
+    const lostBurn = beforeBurn - burn.currentHP;
+    const lostNear = beforeNear - near.currentHP;
+    const splashPct = p.splashPct ?? 35;
+    T('熔⑤-溅射伤害按 splashPct 打折，不再是跟主目标一样的满额伤害',
+      Math.abs(lostNear / lostBurn * 100 - splashPct) < 1);
+    T('熔⑥-溅射命中不会在溅射到的单位身上新挂一份灼烧（不再滚雪球）',
+      fx.getEffects(near.id).length === 0);
+
+    // 再多走两个 tick：如果还在滚雪球，near 挨打会越来越多；如果已经修好，
+    // near 应该保持"只挨主目标那份溅射"，不会自己长出独立的灼烧再继续扩散。
+    buffs.update(1.0);
+    buffs.update(1.0);
+    T('熔⑦-连续三个 tick 后 near 身上仍然没有独立的灼烧效果（没有滚雪球）',
+      fx.getEffects(near.id).length === 0);
+  }
+
   // 🌌 星魂
   {
     const { ents, fx, combat, proj, ctx } = W();

@@ -101,10 +101,31 @@ export class BuffSystem {
               const probe = { id: entity.id, pos: entity.pos, alive: true,
                 _mapFaction: caster?._mapFaction || caster?.faction || null,
                 faction: caster?.faction || null };
+              // ==================== v51.15：真正的病灶——溅射命中会重新触发施法者自己的
+              // onDealtDamage，把自己再挂一遍到新目标身上，滚雪球式扩散 ====================
+              // 用户实测熔魂（唯一用到 auraRadius 的 DOT）离谱超标（20局全胜、红方均局0
+              // 推进度），砍了两轮 tickDamagePct/slowPct 都砍不动——用调试打点才查到
+              // 真正的根因：performAttackDirect 结算完伤害后，**不管这一下是主命中还是
+              // 溅射**，都会跑 _fireOnDealtDamage 去触发攻击者自己身上所有 onDealtDamage
+              // 被动（CombatSystem 那段"两条伤害路径共用一份触发逻辑"）。于是"打半径内
+              // 其他敌人"这个溅射命中，会把熔魂自己的 onDealtDamage 又对着这个新目标
+              // 触发一次——等于每 tick 都会给半径内**每一个**敌人各自新挂一份满强度的
+              // 灼烧，而这些新灼烧下一 tick 又会各自再溅射、再触发……一波兵挤在一起时
+              // 呈滚雪球式扩散，这才是两轮怎么调 tickDamagePct/slowPct 结果都纹丝不动的
+              // 真正原因——问题不在百分比大小，在"溅射不该重新触发一次完整攻击"。
+              // CombatSystem 已经留了 options._noProc 这个口子（专门给"这一下不算一次
+              // 完整攻击，不该再触发被动链"的场景用），溅射命中传上就行，不用碰
+              // CombatSystem 那边的通用逻辑——别的调用方（真正的多目标技能溅射，比如
+              // 星魂分裂弹）不受影响，那些确实希望溅射也能触发被动。
+              // auraSplashPct 缺省 100（= 打完 _noProc 之后，伤害本身仍是满额，逐位不变、
+              // 零回归风险），熔魂这次额外传了一个折扣值，双管齐下：不再滚雪球 + 伤害本身
+              // 也打个折——见 dragonSouls.js dragonsoul_magma 蓝图。
+              const splashPct = eff.blueprint.auraSplashPct ?? 100;
+              const splashDmg = dmg * (splashPct / 100);
               for (const other of enemyUnitsInRadius(this.entities, probe, R)) {
                 // v51：半径 DOT 打到的"其他人"是群体命中，吸血按 vampGroup 折扣。
-                this.combat.performAttackDirect(eff.casterId ?? 0, other.id, dmg, type,
-                  { basicAttack: true, vampGroup: true, grantsMana: eff.blueprint.basicAttack === true });
+                this.combat.performAttackDirect(eff.casterId ?? 0, other.id, splashDmg, type,
+                  { basicAttack: true, vampGroup: true, grantsMana: eff.blueprint.basicAttack === true, _noProc: true });
               }
             }
           }
