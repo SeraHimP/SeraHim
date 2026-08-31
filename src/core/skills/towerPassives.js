@@ -702,6 +702,11 @@ export const towerPassives = {
 // ==================== Q2：防御塔成长（LoL 对齐，按建筑层级分技能） ====================
 // 攻击力从 startT 起以 +9/分钟 线性推进至 capAD 封顶；内塔额外从 16:00 起双抗 +1/分钟（不封顶）。
 // 全部走效果系统（stat 效果、每秒刷新、面板可见），基准时刻取 onEquip 时的游戏时间（即建筑创建/地图加载时刻）。
+// 秒数→分钟数文案，去掉整分钟时多余的".0"（10:00 而不是 10.0:00）。
+function _fmtMin(sec) {
+  const m = sec / 60;
+  return Number.isInteger(m) ? String(m) : m.toFixed(1);
+}
 function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStartT, fixedSteps, armorPerStep = 0 }) {
   const totalSteps = fixedSteps || Math.round((capAD - startAD) / 9);
   return {
@@ -712,17 +717,23 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
     // v42: defaultParams enables CombatSystem to inject per-map overrides into inst._params
     defaultParams: { adStartT: adStartT, stepAD: 9, totalSteps: totalSteps, armorPerStep: armorPerStep ?? 0, resistGrowthStartT: resistGrowthStartT ?? 0 },
     category: 'passive',
-    description: `唯一被动——${name}：从${(adStartT / 60).toFixed(1)}分钟起每分钟攻击力+9（共${totalSteps}层至${capAD}封顶）` +
-      (resistGrowthStartT ? '；16分钟起双抗每分钟+1（不封顶）' : '') + '。',
+    // v51.18 修复：这三处原来把双抗成长的起算时间写成字面量"16分钟/16:00"，
+    // 只有 passive_growth_inner（唯一传了 resistGrowthStartT 的调用点，当时是
+    // 960 秒=16 分钟）凑巧数字对得上；改内塔的 resistGrowthStartT（960→600，
+    // 见下面调用处）之后这三处文案就会跟实际生效时间对不上——同一类"文案写死、
+    // 数值走参数"的口径不一致，改成从 resistGrowthStartT 动态换算分钟数。
+    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟攻击力+9（共${totalSteps}层至${capAD}封顶）` +
+      (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}分钟起双抗每分钟+1（不封顶）` : '') + '。',
     descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成{val}），每分钟+9共${totalSteps}层至 ${capAD} 封顶` +
-     (resistGrowthStartT ? '；16:00 起双抗 +1/分钟' : '') + '。',
+     (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}:00 起双抗 +1/分钟` : '') + '。',
    // v42: dynamic descTemplate that respects per-map inst._params overrides
    getDescTemplate: function(entity, instance) {
      var sv = this; // this === def
      var p = instance && instance._params || {};
      var stepAD = p.stepAD || 9;
      var steps = p.totalSteps || totalSteps;
-     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成{val}），每分钟+' + stepAD + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistGrowthStartT ? '；16:00起双抗+1/分钟' : '') + '。';
+     var resistT = p.resistGrowthStartT ?? resistGrowthStartT;
+     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成{val}），每分钟+' + stepAD + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistT ? '；' + _fmtMin(resistT) + ':00起双抗+1/分钟' : '') + '。';
    },
    computeCurrent: (entity, ctx) => {
       const inst = (entity._skillInstances || []).find(i => i.skillId === id);
@@ -926,7 +937,8 @@ export const TowerGrowthSkills = {
   // Q9：嚎哭深渊统一塔成长——每分钟 +9攻击力/+1护甲，封顶14层（首层于 1:00）
   passive_growth_ha: _makeTowerGrowth({ id: 'passive_growth_ha', name: '深渊塔成长', startAD: 0, capAD: 126, adStartT: 0, fixedSteps: 14, armorPerStep: 1 }), // 每分钟+9攻/+1护甲/+1魔抗，开局起算，14层封顶（Q1/Q2最新确认）
   passive_growth_outer: _makeTowerGrowth({ id: 'passive_growth_outer', name: '外塔成长', startAD: 152, capAD: 278, adStartT: 40 }),
-  passive_growth_inner: _makeTowerGrowth({ id: 'passive_growth_inner', name: '内塔成长', startAD: 170, capAD: 305, adStartT: 180, resistGrowthStartT: 960 }),
+  // v51.18：双抗成长起算时间 16:00→10:00（用户定稿，简单平衡性调整）。
+  passive_growth_inner: _makeTowerGrowth({ id: 'passive_growth_inner', name: '内塔成长', startAD: 170, capAD: 305, adStartT: 180, resistGrowthStartT: 600 }),
   passive_growth_base:  _makeTowerGrowth({ id: 'passive_growth_base',  name: '水晶塔成长', startAD: 170, capAD: 305, adStartT: 180 }),
   passive_growth_hq:    _makeTowerGrowth({ id: 'passive_growth_hq',    name: '枢纽塔成长', startAD: 150, capAD: 285, adStartT: 180 }),
 

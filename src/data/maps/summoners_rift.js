@@ -48,13 +48,37 @@ export const summoners_rift = {
   //   outer：4000→5000（双抗40不变，本来就是40）
   //   inner：3500→4000，双抗 55→70
   //   base（水晶塔）：3300→3500，双抗 70→55
+  // v51.18：简单的平衡性调整（用户定稿，跳过测试）——
+  //   外塔：maxHP 5000→3300，双抗 40→15（开局更脆，靠下面新增的 tierEffects
+  //         临时状态补前期）
+  //   内塔：maxHP 4000→3750
+  //   高地塔（base）：maxHP 3500→4000，攻速 2.5→4.0
+  //   枢纽塔（hq_tower）：+7 格挡（damageBlock，直接进默认属性，见下方那一行）
   tierStats: {
-    outer:      { maxHP: 5000, shieldFixedMax: 0, healthRegen: 0, armor: 40, magicResist: 40, attackDamage: 152, baseAttackSpeed: 0.833 },
-    inner:      { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
-    base:       { maxHP: 3500, shieldFixedMax: 0, healthRegen: 0, armor: 55, magicResist: 55, attackDamage: 170, baseAttackSpeed: 2.50 },
+    outer:      { maxHP: 3300, shieldFixedMax: 0, healthRegen: 0, armor: 15, magicResist: 15, attackDamage: 152, baseAttackSpeed: 0.833 },
+    inner:      { maxHP: 3750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
+    base:       { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 55, magicResist: 55, attackDamage: 170, baseAttackSpeed: 4.00 },
     nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
-    hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 110, attackDamage: 150, baseAttackSpeed: 4.00 },
+    hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 110, attackDamage: 150, baseAttackSpeed: 4.00, damageBlock: 7 },
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
+  },
+
+  // v51.18：外塔开局默认获得的临时状态（用户定稿："新增开局就默认获得的状态
+  // （持续7分钟）：获得25护甲和魔法抗性"）——配合上面外塔双抗砍到15的改动，
+  // 让外塔前7分钟（420秒）双抗等效40（15+25，与改动前的原值持平），7分钟后
+  // 状态到期，双抗回落到砍过的15，前期不至于被瞬秒、后期恢复到砍过之后的真实强度。
+  // 只挂在这张图的外塔上（tierEffects 是地图级字段，与全局 CONFIG.towerTierEffects
+  // 是两条独立通路，见 factories.js createBuilding 里两处都读的说明），不影响
+  // 嚎哭深渊/扭曲丛林等其它地图的外塔。
+  tierEffects: {
+    outer: [
+      { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'armor', flatValue: 25,
+        duration: 420, stackable: false, stackPolicy: 'refresh',
+        description: '开局前7分钟：护甲+25' },
+      { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'magicResist', flatValue: 25,
+        duration: 420, stackable: false, stackPolicy: 'refresh',
+        description: '开局前7分钟：魔法抗性+25' },
+    ],
   },
 
   // 用户定稿（Q4 修正版）："内塔+800护盾，+50固定护盾。给周围友军单位+50护盾。"
