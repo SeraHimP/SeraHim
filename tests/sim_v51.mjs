@@ -649,19 +649,28 @@ async function world() {
 
   // 雷魂新增暴击率、星魂新增法术强度——两个此前龙魂系统完全没用过的新框架属性，
   // 各挑一个大型小兵类型（不是塔）验证真的吃到了效果，不是只在配置表里存在。
+  // v51.11：雷魂/星魂的常驻加持已按用户定稿清零（强度旋钮搬到这里，见 Config.js
+  // dragonSouls.stat 的 v51.11 说明），这条测的是"框架本身接得上"而不是"现在
+  // 配了多少"，所以临时塞一个非零测试值，跑完再还原，不依赖当前的平衡数值。
   const siege = mkEntity(ents, 'siege', {}, CONFIG);
   const thunderInst = { id: 1, skillId: 'dragonsoul_thunder', state: {} };
+  const thunderStatBak = { ...CONFIG.dragonSouls.stat.thunder };
+  CONFIG.dragonSouls.stat.thunder.critChance = 15;
   SkillLibrary.dragonsoul_thunder.onEquip(siege.id, thunderInst, ctx);
   const critAfter = AttributeCalculator.calc(siege, fx.getEffects(siege.id)).critChance;
   T('魂框①-雷魂的暴击率（新框架属性）正确挂到大型小兵（炮兵）身上，不只是塔',
     critAfter >= (siege.baseStats.critChance || 0) + CONFIG.dragonSouls.stat.thunder.critChance - 1e-6);
+  CONFIG.dragonSouls.stat.thunder = thunderStatBak;
 
   const totem = mkEntity(ents, 'totem', {}, CONFIG);
   const astralInst = { id: 2, skillId: 'dragonsoul_astral', state: {} };
+  const astralStatBak = { ...CONFIG.dragonSouls.stat.astral };
+  CONFIG.dragonSouls.stat.astral.abilityPower = 20;
   SkillLibrary.dragonsoul_astral.onEquip(totem.id, astralInst, ctx);
   const apAfter = AttributeCalculator.calc(totem, fx.getEffects(totem.id)).abilityPower;
   T('魂框②-星魂的法术强度（新框架属性）正确挂到大型小兵（图腾兵）身上',
     apAfter >= (totem.baseStats.abilityPower || 0) + CONFIG.dragonSouls.stat.astral.abilityPower - 1e-6);
+  CONFIG.dragonSouls.stat.astral = astralStatBak;
 
   // 领受范围审计：SOUL_REWARD_OK 按"类型排除"而不是"类型枚举"实现——近战/远程/龙
   // 排除，其余一律放行。这意味着任何现有或将来新增的大型小兵类型都自动覆盖，
@@ -678,8 +687,10 @@ async function world() {
   // 主题独占：十三条魂的常驻数值互不重复（sim_v44「龙⑩」已经断言过，这里额外确认
   // 六条被改动/新增新框架属性的魂各自"只用了自己的方向"，没有借用别的元素已占用的键）。
   const stat = CONFIG.dragonSouls.stat;
-  T('魂框④-血魂改用物理吸血后不再与暗魂的生命偷取撞车',
-    'physicalVampPct' in stat.blood && !('lifeStealPct' in stat.blood));
+  // v51.11：血魂常驻加持已清零（见上），"是否用了 physicalVampPct"不再适用——
+  // 空对象天然不会跟任何人撞车，这里只保留"没有误留 lifeStealPct"这条还有意义的检查。
+  T('魂框④-血魂常驻加持不含 lifeStealPct（不会跟暗魂撞车，哪怕以后又填了内容）',
+    !('lifeStealPct' in stat.blood));
   T('魂框⑤-铁魂不再借用潮魂独占的治疗护盾强度',
     !('healShieldPowerPct' in stat.steel));
   T('魂框⑥-蚀魂不再借用炎魂独占的攻击力百分比',
@@ -691,10 +702,13 @@ async function world() {
   // 补齐剩下四个还没用上的新框架属性（用户确认的方案A）：法力回复→潮魂（次要项，
   // 对塔空转但强化装了主动技能的小兵）、技能增幅→熔魂（自己的灼烧DOT已标casterId，
   // 吃得到）、暴击伤害→雷魂（配暴击率凑成"会心一击"）、闪避率→风魂（呼应难以捉摸）。
-  T('魂框⑧-四个此前没用上的新框架属性各自分给了一条魂，且不撞车',
-    stat.water.manaRegen > 0 && stat.magma.skillAmpPct > 0
-    && stat.thunder.critDamagePct > 0 && stat.wind.evasionPct > 0
-    && !('manaRegen' in stat.fire) && !('skillAmpPct' in stat.astral));
+  // v51.11：magma/thunder 的常驻加持已清零，skillAmpPct/critDamagePct 不再挂在
+  // 它们身上——这两项只在 water.manaRegen / wind.evasionPct 上还留着，一并核对
+  // 没有撞到别的元素独占的键。
+  T('魂框⑧-未清零的新框架属性各自分给了一条魂，且不撞车',
+    stat.water.manaRegen > 0 && stat.wind.evasionPct > 0
+    && !('manaRegen' in stat.fire) && !('skillAmpPct' in stat.astral)
+    && !('skillAmpPct' in stat.magma) && !('critDamagePct' in stat.thunder));
 
   // 首条龙延后（用户："第一波龙生成的太快了，导致龙的倾向就偏向于红方了"）——
   // v51.9 起改成随机区间，这里只钉"首条巨龙的区间下限不再低到能抢跑"这件事本身，
@@ -1996,7 +2010,9 @@ async function world() {
   const towerDark = mkEntity(ents, 'tower', {}, CONFIG);
   const siegeDark = mkEntity(ents, 'siege', {}, CONFIG);
   equip(towerDark, 'dragonsoul_dark'); equip(siegeDark, 'dragonsoul_dark');
-  const darkFull = CONFIG.dragonSouls.stat.dark.lifeStealPct;
+  // v51.11：dark 常驻加持已清零，lifeStealPct 可能不存在——用 || 0 兜底，
+  // 缩放测试在"没有常驻加持"的情况下应该照样通过（0 缩放还是 0）。
+  const darkFull = CONFIG.dragonSouls.stat.dark.lifeStealPct || 0;
   T(`吸①-暗魂全能吸血对塔削到${scalePct}%（期望 ${scaled(darkFull)}）`,
     Math.abs(attr.calc(towerDark, fx.getEffects(towerDark.id)).lifeStealPct - scaled(darkFull)) < 1e-6);
   T('吸②-暗魂全能吸血对大型小兵原样生效（不打折）',
@@ -2006,7 +2022,7 @@ async function world() {
   const towerPoison = mkEntity(ents, 'tower', {}, CONFIG);
   const siegePoison = mkEntity(ents, 'siege', {}, CONFIG);
   equip(towerPoison, 'dragonsoul_poison'); equip(siegePoison, 'dragonsoul_poison');
-  const poisonFull = CONFIG.dragonSouls.stat.poison.spellVampPct;
+  const poisonFull = CONFIG.dragonSouls.stat.poison.spellVampPct || 0;
   T('吸③-毒魂法术吸血对塔削到33%',
     Math.abs(attr.calc(towerPoison, fx.getEffects(towerPoison.id)).spellVampPct - scaled(poisonFull)) < 1e-6);
   T('吸④-毒魂法术吸血对大型小兵原样生效',
@@ -2017,7 +2033,7 @@ async function world() {
   const siegeBlood = mkEntity(ents, 'siege', {}, CONFIG);
   const towerBloodInst = equip(towerBlood, 'dragonsoul_blood');
   const siegeBloodInst = equip(siegeBlood, 'dragonsoul_blood');
-  const bloodFull = CONFIG.dragonSouls.stat.blood.physicalVampPct;
+  const bloodFull = CONFIG.dragonSouls.stat.blood.physicalVampPct || 0;
   T('吸⑤-血魂物理吸血常驻属性对塔削到33%',
     Math.abs(attr.calc(towerBlood, fx.getEffects(towerBlood.id)).physicalVampPct - scaled(bloodFull)) < 1e-6);
   T('吸⑥-血魂物理吸血常驻属性对大型小兵原样生效',

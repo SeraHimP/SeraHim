@@ -150,8 +150,12 @@ const mk = (ents, t, x, f, hp = 100000) => {
   // 常驻数值不再靠塞跟主题无关的防御/生存属性来平衡。sim_v44.mjs「龙⑩」已经把
   // 这条改成了跨全部十三条魂的"元素独占"检查，这里不用重复断言，只确认这六条
   // 新魂本身也在那份独占表里（不是被漏掉、stat 是空对象）。
-  T('魂③-六条新魂都有非空的常驻数值（方向对不对由龙⑩的独占检查守）',
-    NEW.every(k => Object.keys(CONFIG.dragonSouls.stat[k]).length > 0));
+  // v51.11：用户定稿"龙魂可以没有常驻加持，以机制为主要的方向"——强度旋钮从
+  // 机制杠杆搬到常驻加持之后，steel/blood/magma/astral/rift 五条被清空成 {}
+  // 是刻意设计，不再是"非空"这条硬规矩。这里只确认每条魂在表里都有一个真实的
+  // 对象（不是被漏掉、不是 undefined），是不是空对象由平衡数据决定。
+  T('魂③-六条新魂在常驻数值表里都有一个真实的对象条目（哪怕是空的 {}，不是漏配）',
+    NEW.every(k => typeof CONFIG.dragonSouls.stat[k] === 'object' && CONFIG.dragonSouls.stat[k] !== null));
 
   // 🧊 霜魂
   {
