@@ -81,23 +81,41 @@ export const AttributeCalculator = {
     // "所有数值型属性"，收益面太宽，力量级说不清楚；核心属性加成只放大这六项
     // 最直接影响战力的基础属性，作为一个比全属性加成温和、但比单条元素之力通用的
     // 中间档，供远古之力这类"没有元素归属、但必须比单一元素之力强一些"的效果使用。
-    let coreStatsPctMod = 0;
+    //
+    // ==================== v51.14：两个各自独立的 bug，逐一修（用户实测发现的）====================
+    // 用户："通过属性面板加的全属性加成……未加攻击距离。通过手动状态加的全属性加成，
+    // 攻击距离加了……但是在UI中全属性加成显示是0。"——分别对应下面两处根因：
+    //
+    // ① 面板直接改 baseStats.allStatsPct 完全不生效：这两个 Mod 变量原来只从 modMap
+    //   （即 EffectRegistry 里的效果）取值，压根不读 baseStats 里那份静态值。于是编辑器
+    //   把 baseStats.allStatsPct 从 0 改成 30，stats.allStatsPct 那一格显示确实是 30
+    //   （它就是从 baseStats 原样 spread 过来的），但 allStatsPctMod 仍然是 0——不会去
+    //   放大任何别的属性，攻击距离/攻击力等等原地不动。这里改成"baseStats 里的值 +
+    //   modMap 里的 flat/percent"三者相加，静态字段和效果两条通路统一走同一个总量。
+    //
+    // ② 效果用【百分比修正】（percentValue）而不是【数值修正】（flatValue）时，展示值
+    //   算错：下面第 144 行那个通用循环给 stats[key] 用的公式是
+    //   `(基础值+flat) × (1+percent%)`——这对 attackDamage 这类"有一个正的基础值"
+    //   的属性是对的（150 × 1.3 = 195），但 allStatsPct/coreStatsPct 自己的基础值
+    //   天生是 0（模板里就是 0），0 乘任何数还是 0：只填百分比修正、不填数值修正的话，
+    //   展示值必然算成 0，即便 allStatsPctMod（真正拿去放大其它属性的那个量）已经正确
+    //   算出了 30。这两个字段的语义本来就是"总加成百分比"，flat 与 percent 该直接相加
+    //   而不是相乘——现在不再让它们走第 144 行那条通用（乘法）公式，改成下面显式赋值
+    //   `stats.allStatsPct = allStatsPctMod`（第 189 行附近），与放大其它属性用的是
+    //   同一个数，天然不会出现"生效了但展示对不上"。
+    let coreStatsPctMod = entity.baseStats.coreStatsPct || 0;
     if (modMap.has('coreStatsPct')) {
       const mod = modMap.get('coreStatsPct');
-      coreStatsPctMod = mod.flat + mod.percent;
+      coreStatsPctMod += mod.flat + mod.percent;
     }
+    stats.coreStatsPct = coreStatsPctMod;
 
-    let allStatsPctMod = 0;
+    let allStatsPctMod = entity.baseStats.allStatsPct || 0;
     if (modMap.has('allStatsPct')) {
-      // v51.9 修复：这里原来会把 allStatsPct 从 modMap 里删掉，让它跳过下面 127 行那个
-      // 把 mod 写进 stats[key] 的通用循环——效果本身没坏（allStatsPctMod 照样被拿去
-      // 放大其它属性），但 stats.allStatsPct 这个【展示字段】永远停在模板默认值 0，
-      // 面板上"全属性加成"永远显示 0（用户报的就是这个）。不删，让它照常走通用循环
-      // 写进 stats.allStatsPct；它不会被自己二次放大——下面 160 行的 allStatsExclude
-      // 本来就把 allStatsPct 自己排除在"放大所有属性"的目标之外。
       const mod = modMap.get('allStatsPct');
-      allStatsPctMod = mod.flat + mod.percent;
+      allStatsPctMod += mod.flat + mod.percent;
     }
+    stats.allStatsPct = allStatsPctMod;
 
     // ==================== 天气修正层（全局连续场） ====================
     // 强度 = 各天气的实时占比；多天气并存时相加。合并进 modMap 后与技能效果
@@ -142,6 +160,11 @@ export const AttributeCalculator = {
     }
 
     for (const [key, mod] of modMap) {
+      // v51.14：allStatsPct/coreStatsPct 已经在上面单独算出正确的总量并直接写进
+      // stats 了（baseStats 静态值 + modMap 的 flat/percent 相加）——这里不能再让它们
+      // 走下面 (base+flat)×(1+percent%) 这条通用公式，那条公式对"基础值恒为0、
+      // flat/percent 应该直接相加"的这两个字段是错的（见上面 v51.14 大段说明）。
+      if (key === 'allStatsPct' || key === 'coreStatsPct') continue;
       // 条件型战斗属性（不写进任何 baseStats，基值视为 0）：这类属性只在结算处按
       // 攻击来源/目标类型生效（如哀兵的"对敌方小兵"加成），模板里没有对应字段。
       // 只对白名单内的键开这个口子，其余键维持"baseStats 没有就丢弃"的原行为 → 零回归风险。

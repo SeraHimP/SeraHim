@@ -2949,4 +2949,71 @@ async function world() {
     firstSides.includes('top') && firstSides.includes('bot'));
 }
 
+// ==================== 追加：v51.14 allStatsPct/coreStatsPct 两个独立 bug ====================
+// 用户实测报的两条：
+//   ①"通过属性面板加的全属性加成显示在属性UI里，但是不正确（包括但不限于未加攻击距离）"
+//     ——根因：Mod 变量原来只从 modMap（效果）取值，压根不读 baseStats.allStatsPct
+//     这个静态字段，编辑器/模板直接改这个数字对其它属性完全没有放大效果。
+//   ②"通过手动状态加的全属性加成，攻击距离加了……但是在UI中全属性加成显示是0"
+//     ——根因：效果用【百分比修正】而不是【数值修正】时，展示值走的是
+//     `(基础值+flat)×(1+percent%)` 这条通用公式，allStatsPct 自己的基础值恒为 0，
+//     0 乘任何数还是 0，只填百分比修正的话展示值必然算成 0（即便真正拿去放大其它
+//     属性的量已经算对了）。
+// 四种组合都要覆盖，任何一种回归都要能抓到。
+{
+  const { ents, CONFIG } = await world();
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+
+  const mkTw = (allStatsPct) => mkEntity(ents, 'tower',
+    { stats: { allStatsPct, attackRange: 500, attackDamage: 100 } }, CONFIG);
+
+  // ① 面板/模板直接写 baseStats.allStatsPct，不经过任何效果
+  const eA = mkTw(30);
+  const sA = AttributeCalculator.calc(eA, []);
+  T('全①-baseStats.allStatsPct 直接设置时，展示值正确',
+    sA.allStatsPct === 30);
+  T('全①b-baseStats.allStatsPct 直接设置时，真的放大了其它属性（此前完全不生效）',
+    Math.abs(sA.attackRange - 650) < 1e-6 && Math.abs(sA.attackDamage - 130) < 1e-6);
+
+  // ② 手动状态用【数值修正】（flatValue）——这条本来就没坏，回归保护
+  const w2 = await world();
+  const eB2ent = mkEntity(w2.ents, 'tower', { stats: { allStatsPct: 0, attackRange: 500, attackDamage: 100 } }, w2.CONFIG);
+  w2.fx.apply(eB2ent.id, { name: '全属性(flat)', kind: 'stat', statKey: 'allStatsPct', flatValue: 30,
+    duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh' }, 'test_allstats_flat');
+  const sB = AttributeCalculator.calc(eB2ent, w2.fx.getEffects(eB2ent.id));
+  T('全②-手动状态用数值修正(flatValue)时，展示值与放大效果都正确',
+    sB.allStatsPct === 30 && Math.abs(sB.attackRange - 650) < 1e-6);
+
+  // ③ 手动状态用【百分比修正】（percentValue）——这是用户实测抓到的那个 bug
+  const w3 = await world();
+  const eC = mkEntity(w3.ents, 'tower', { stats: { allStatsPct: 0, attackRange: 500, attackDamage: 100 } }, w3.CONFIG);
+  w3.fx.apply(eC.id, { name: '全属性(pct)', kind: 'stat', statKey: 'allStatsPct', percentValue: 30,
+    duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh' }, 'test_allstats_pct');
+  const sC = AttributeCalculator.calc(eC, w3.fx.getEffects(eC.id));
+  T('全③-手动状态只用百分比修正(percentValue)时，放大效果本来就是对的',
+    Math.abs(sC.attackRange - 650) < 1e-6 && Math.abs(sC.attackDamage - 130) < 1e-6);
+  T('全③b-手动状态只用百分比修正(percentValue)时，展示值不再是 0（用户报的 bug）',
+    sC.allStatsPct === 30);
+
+  // ④ 组合：baseStats 本身有静态值 + 效果的 flat/percent 都有，三者应直接相加
+  const w4 = await world();
+  const eD = mkEntity(w4.ents, 'tower', { stats: { allStatsPct: 10, attackRange: 500 } }, w4.CONFIG);
+  w4.fx.apply(eD.id, { name: '全属性(combo)', kind: 'stat', statKey: 'allStatsPct', flatValue: 5, percentValue: 15,
+    duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh' }, 'test_allstats_combo');
+  const sD = AttributeCalculator.calc(eD, w4.fx.getEffects(eD.id));
+  T('全④-静态值+效果flat+效果percent 三者直接相加（10+5+15=30），不是互相覆盖',
+    sD.allStatsPct === 30 && Math.abs(sD.attackRange - 650) < 1e-6);
+
+  // ⑤ coreStatsPct 是同一段代码的姊妹字段，同一个 bug 模式一起验（① 那种"面板直接写
+  // 静态值"的场景）——核心属性加成只放大六项白名单属性，攻击距离不在其中，顺带验证
+  // "该放大的放大、不该放大的不动"两条都成立。
+  const w5 = await world();
+  const eE = mkEntity(w5.ents, 'tower', { stats: { coreStatsPct: 10, attackDamage: 100, armor: 50, attackRange: 500 } }, w5.CONFIG);
+  const sE = AttributeCalculator.calc(eE, w5.fx.getEffects(eE.id));
+  T('全⑤-coreStatsPct 同样修好了"面板直接写静态值不生效"这个 bug',
+    sE.coreStatsPct === 10 && Math.abs(sE.attackDamage - 110) < 1e-6 && Math.abs(sE.armor - 55) < 1e-6);
+  T('全⑤b-coreStatsPct 白名单外的属性（攻击距离）不受影响',
+    Math.abs(sE.attackRange - 500) < 1e-6);
+}
+
 done();
