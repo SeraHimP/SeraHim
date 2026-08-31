@@ -235,7 +235,10 @@ export const actives = {
           damageType: 'true', dotBasis: 'currentHP',
           percentValue: p.pctPerSec ?? 1, tickInterval: 1, duration: p.durationSec ?? 4,
           stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: `环刃毒雾：每秒损失当前生命 ${p.pctPerSec ?? 1}%（真实伤害）`,
+          // v51.12：用户"描述要写清晰：该单位每秒损失1%生命值"——照这个句式改写，
+          // 同时保留"真实伤害"与"当前生命"这两条机制上不能丢的信息（基数是当前
+          // 生命而不是最大生命，见本条上方 v43 头注）。
+          description: `该单位每秒损失当前生命值 ${p.pctPerSec ?? 1}%（真实伤害）`,
         }, 'active_corrupt_poison', { casterId: entityId });
       }
       return true;

@@ -879,14 +879,35 @@ export class UIManager {
     if (entity) {
       const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
       liveStats = stats;
-      const p = this._statParts(key, entity, stats);
-      if (p) {
-        // 用户定稿的格式：攻击力：182（152+30）。没有修正就不显示括号。
-        const paren = p.delta === 0 ? ''
-          : `<span class="stat-break">（${p.base}${p.delta > 0 ? '+' : '−'}${Math.abs(p.delta)}）</span>`;
-        live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
-            ${doc.label}：<b class="${p.cls}">${p.now}</b>${paren}
-          </div>`;
+      // v51.12：Q7——"攻速"这一格点开要显示的是**算完的实际攻速**（次/秒），
+      // 不是 bonusAttackSpeedPct 自己的原始百分比（那条现在挪到下面关联属性区块
+      // 的【攻速加成】行）。拆成"基础攻速 + 加成部分"两截求和，跟 _attackSpeedHtml
+      // 那份"基础 vs 最终"配色判断同一套口径，例：攻速：1.0（0.833+0.167）。
+      if (key === 'bonusAttackSpeedPct') {
+        const r3 = (v) => Math.round(v * 1000) / 1000;
+        const total = r3(this.attrCalc.calcAttackSpeedOf(stats));
+        const bs = entity.baseStats;
+        const baseAS = bs && Number.isFinite(bs.baseAttackSpeed) ? r3(this.attrCalc.calcAttackSpeedOf(bs)) : null;
+        if (baseAS !== null) {
+          const bonus = r3(total - baseAS);
+          const cls = bonus > 0.0005 ? 'stat-up' : bonus < -0.0005 ? 'stat-down' : '';
+          const paren = bonus === 0 ? '' : `<span class="stat-break">（${baseAS}${bonus > 0 ? '+' : '−'}${Math.abs(bonus)}）</span>`;
+          live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
+              攻速：<b class="${cls}">${total}</b>${paren}
+            </div>`;
+        } else {
+          live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">攻速：<b>${total}</b></div>`;
+        }
+      } else {
+        const p = this._statParts(key, entity, stats);
+        if (p) {
+          // 用户定稿的格式：攻击力：182（152+30）。没有修正就不显示括号。
+          const paren = p.delta === 0 ? ''
+            : `<span class="stat-break">（${p.base}${p.delta > 0 ? '+' : '−'}${Math.abs(p.delta)}）</span>`;
+          live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
+              ${doc.label}：<b class="${p.cls}">${p.now}</b>${paren}
+            </div>`;
+        }
       }
     }
 
@@ -982,7 +1003,7 @@ export class UIManager {
     overlay.id = 'statDocOverlay';
     overlay.className = 'modal-overlay open';
     overlay.innerHTML = shellHtml({
-      title: `📊 ${doc.label}`, body, crumb: '', width: '460px',
+      title: `📊 ${key === 'bonusAttackSpeedPct' ? '攻速' : doc.label}`, body, crumb: '', width: '460px',
       footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);

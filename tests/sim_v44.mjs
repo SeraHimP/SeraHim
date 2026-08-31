@@ -471,9 +471,14 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     && dragonPowerBuffs('earth').some(b => b.statKey === 'armor' && b.flat > 0));
 
   // ---- 龙魂 = 数值 + 机制 ----
-  T('龙⑧-七条魂都有数值部分（CONFIG.dragonSouls.stat）',
-    ELS.every(el => CONFIG.dragonSouls.stat[el]
-      && Object.keys(CONFIG.dragonSouls.stat[el]).length > 0));
+  // v51.11：这条断言被用户的平衡方向反转推翻了——"龙魂削弱的方向是削弱常驻加持
+  // 甚至不要这个也行……龙魂可以没有常驻加持，以机制为主要的方向！！！！"之后
+  // thunder/dark/poison/steel/blood/magma/astral/rift 这 8 条魂的 stat 块被
+  // 有意清空成 {}（机制本身的杠杆全部还原，调平衡只调 stat 块），"每条魂都必须
+  // 有数值部分"不再是硬性要求——改成断言"每个键至少是个对象（哪怕是空的）"，
+  // 真正的机制侧强弱由 sim_v51.mjs 的魂框①②④⑧那组断言守着。
+  T('龙⑧-每条魂在 CONFIG.dragonSouls.stat 下都至少有一个（可能为空的）对象',
+    ELS.every(el => CONFIG.dragonSouls.stat[el] && typeof CONFIG.dragonSouls.stat[el] === 'object'));
   T('龙⑨-数值部分真的会挂到单位身上（装魂 → 出现常驻 stat 效果）', (() => {
     const { ents, fx } = world();
     const t = mk(ents, 'tower', { faction: 'blue' });
@@ -502,8 +507,13 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     }
     return true;
   })());
-  T('龙⑪-面板文案里说了这份数值（否则玩家不知道自己拿了什么）',
-    ELS.every(el => /常驻加持/.test(String(SkillLibrary['dragonsoul_' + el].description))));
+  // v51.11：statSummary() 只在 stat 块非空时才拼"常驻加持"那句（parts.length
+  // 判断，见 dragonSouls.js），8 条被清空成 {} 的魂现在如实地不再声称有常驻
+  // 加持——这是设计意图（"龙魂可以没有常驻加持，以机制为主要方向"），不是漏写。
+  // 断言收窄成"有非空 stat 块的魂，文案里必须说清楚"，不再要求全部 13 条都有。
+  T('龙⑪-有常驻数值的魂，面板文案里说了这份数值（否则玩家不知道自己拿了什么）',
+    ELS.filter(el => Object.keys(CONFIG.dragonSouls.stat[el] || {}).length > 0)
+      .every(el => /常驻加持/.test(String(SkillLibrary['dragonsoul_' + el].description))));
 
   // ---- 机制侧的三处改动 ----
   const ds = srcOf('src/core/skills/dragonSouls.js');

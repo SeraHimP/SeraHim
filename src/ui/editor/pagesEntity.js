@@ -95,11 +95,16 @@ export const EDITOR_PAGES_ENTITY = {
           html += `</select></div>`;
         } else {
           const meta = FIELD_META[key] || { min: 0, max: Math.max(100, value * 2), step: (key === 'currentHP' ? 1 : 0.1) };
+          // v51.12：Q9——纯展示偏移（目前只有暴击伤害用），面板/滑块显示的是
+          // 存储值+偏移，min/max 也跟着平移，写回那边（events.js）再减掉。
+          const offset = typeof meta.displayOffset === 'function' ? meta.displayOffset() : (meta.displayOffset || 0);
+          const dispValue = value + offset;
+          const dispMin = meta.min + offset, dispMax = meta.max + offset;
           html += `<div class="slider-row">
             <label title="${key}">${label}${this._srcBadge(srcCtx, key)}</label>
             <div class="slider-wrap">
-              <input type="range" class="editor-slider" data-key="${key}" min="${meta.min}" max="${meta.max}" step="${meta.step}" value="${Math.min(meta.max, Math.max(meta.min, value))}">
-              <input type="number" class="editor-number" data-key="${key}" data-orig="${value}" step="${meta.step}" value="${value}">
+              <input type="range" class="editor-slider" data-key="${key}" min="${dispMin}" max="${dispMax}" step="${meta.step}" value="${Math.min(dispMax, Math.max(dispMin, dispValue))}">
+              <input type="number" class="editor-number" data-key="${key}" data-orig="${dispValue}" step="${meta.step}" value="${dispValue}">
             </div>
           </div>`;
         }

@@ -1401,9 +1401,12 @@ async function world() {
   // 不全，后面新加的这些属性都没有，自查一遍，补全所有的属性。并且添加效果中状态
   // 的类型（持续伤害，晕眩等）也不全，补全。"
   const pickerHtml2 = EDITOR_PAGES_SKILLEFFECT._renderEffectPicker();
-  T('状态⑭-类型 tab 补上沉默/缴械/护盾（引擎已认得这三种 kind，只是面板之前没暴露）',
-    /data-efftype="silence"/.test(pickerHtml2)
-    && /data-efftype="disarm"/.test(pickerHtml2) && /data-efftype="shield"/.test(pickerHtml2));
+  // v51.12（Q6）：护盾后来又从独立 tab 挪进了"属性修正"分类里（见下面状态㉕组），
+  // 顶层 tab 只保留沉默/缴械两个新增的，护盾这半句断言随之失效——不是本次要测的
+  // 行为撤回了，是它换了个位置，断言要跟着挪，不能继续认定"没有 shield tab"是回归。
+  T('状态⑭-类型 tab 补上沉默/缴械（引擎已认得这两种 kind，只是面板之前没暴露）',
+    /data-efftype="silence"/.test(pickerHtml2) && /data-efftype="disarm"/.test(pickerHtml2)
+    && !/data-efftype="shield"/.test(pickerHtml2));
 
   const missingStatKeys = ['abilityPower', 'skillAmpPct', 'critChance', 'critDamagePct', 'adaptiveForce',
     'physicalVampPct', 'spellVampPct', 'evasionPct', 'tenacityPct', 'maxMana', 'manaRegen'];
@@ -1414,9 +1417,13 @@ async function world() {
     statParamsHtml2.includes('法术强度') && statParamsHtml2.includes('暴击率')
     && /data-effstat="manaRegen"/.test(statParamsHtml2));
 
-  const shieldParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('shield');
-  T('状态⑰-护盾类型的参数区有护盾值输入（复用 .effect-flat-value）+ 持续时间 + 永久勾选',
-    /effect-flat-value/.test(shieldParamsHtml) && /effect-duration/.test(shieldParamsHtml)
+  // v51.12（Q6）：护盾不再是独立参数区，'shield' 已经不是 _renderEffectParams
+  // 认识的 type，改为断言"属性修正"（stat）默认参数区里带着 __shield__ 卡片，
+  // 且复用同一套 .effect-flat-value/.effect-duration/.effect-permanent 输入。
+  const shieldParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('stat');
+  T('状态⑰-护盾已并入"属性修正"卡片网格（__shield__ 哨兵卡），复用数值/持续时间/永久输入',
+    /data-effstat="__shield__"/.test(shieldParamsHtml) && shieldParamsHtml.includes('护盾')
+    && /effect-flat-value/.test(shieldParamsHtml) && /effect-duration/.test(shieldParamsHtml)
     && /effect-permanent/.test(shieldParamsHtml));
   const silenceParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('silence');
   const disarmParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('disarm');
@@ -1424,11 +1431,16 @@ async function world() {
     /effect-duration/.test(silenceParamsHtml) && !/effect-flat-value/.test(silenceParamsHtml)
     && /effect-duration/.test(disarmParamsHtml) && !/effect-flat-value/.test(disarmParamsHtml));
 
+  // v51.12（Q6）：护盾走"属性修正"tab + __shield__ 哨兵卡，不再有独立的
+  // data-efftype="shield"；_buildEffectBlueprintFromPicker 靠 .effect-stat-key
+  // 的值识别，不是靠顶层 tab。
   const shieldBox = mkFakeBox({
-    '[data-efftype].active': { dataset: { efftype: 'shield' } },
+    '[data-efftype].active': { dataset: { efftype: 'stat' } },
     '.effect-permanent': { checked: false },
     '.effect-duration': { value: '10' },
+    '.effect-stat-key': { value: '__shield__' },
     '.effect-flat-value': { value: '80' },
+    '.effect-percent-value': { value: '0' },
   });
   const shieldBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(shieldBox);
   T('状态⑲-护盾蓝图：kind:\'shield\'，flatValue/duration 从面板正确读出，不衰减不回复（无 statKey）',
@@ -1467,6 +1479,145 @@ async function world() {
     fx.apply(t.id, disarmBp, 'panel_disarm_test');
     T('状态㉔-面板造出的缴械蓝图挂上后 EffectRegistry.isDisarmed() 识别为真', fx.isDisarmed(t.id) === true);
   }
+}
+
+// ==================== 三十二B、v51.12：Q5-Q9 追加 ====================
+// 用户 Q5-Q9 一次性提的一批编辑器/属性弹窗细节：
+//   Q5 添加状态窗口默认持续时间 5→300 秒，且默认勾选永久
+//   Q6 添加状态里的"护盾"从独立 tab 并入"属性修正"分类
+//   Q7 攻速点开窗口描述改进 + attackSpeedRatio 全局改名"攻击速度收益率"
+//   Q8 关联属性归属调整：韧性→移速，闪避率→伤害减免
+//   Q9 编辑面板暴击伤害默认显示 200%（总倍率）而不是 0%（加成量）
+{
+  const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
+
+  // ---- Q5 ----
+  const statHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('stat');
+  const dotHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('dot');
+  T('态①-属性修正默认参数：持续时间默认值改成 300，永久勾选框默认勾中',
+    /class="effect-duration editor-number" value="300"/.test(statHtml)
+    && /class="effect-permanent"\s+checked/.test(statHtml));
+  T('态②-DOT 默认参数同样改成 300+默认勾永久（DOT 原来没有永久勾选框，这次一起补上）',
+    /class="effect-duration editor-number" value="300"/.test(dotHtml)
+    && /class="effect-permanent"\s+checked/.test(dotHtml));
+
+  const stunHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('stun');
+  T('态③-控制类（眩晕/沉默/缴械）默认时长仍是 1 秒，也没有永久勾选框（用户只点名了 5 秒那几类）',
+    /value="1"/.test(stunHtml) && !/effect-permanent/.test(stunHtml));
+
+  const mkFakeBox = (fields) => ({ querySelector(sel) { return fields[sel] ?? null; } });
+  const dotPermBox = mkFakeBox({
+    '[data-efftype].active': { dataset: { efftype: 'dot' } },
+    '.effect-permanent': { checked: true },
+    '.effect-duration': { value: '300' },
+    '.effect-dot-type': { value: 'true' },
+    '.effect-flat-value': { value: '5' },
+  });
+  const dotPermBp = EDITOR_PAGES_SKILLEFFECT._buildEffectBlueprintFromPicker(dotPermBox);
+  T('态④-DOT 勾选永久后 duration=Infinity（Q5 新增的能力，之前 DOT 压根没有永久这个概念）',
+    dotPermBp.kind === 'dot' && dotPermBp.permanent === true && dotPermBp.duration === Infinity);
+
+  // ---- Q6 ----
+  T('态⑤-护盾不再是独立顶层 tab',
+    !EDITOR_PAGES_SKILLEFFECT._EFFECT_TYPE_TABS.some(t => t.key === 'shield'));
+  T('态⑥-护盾变成"属性修正"网格里的一张卡（__shield__ 哨兵键），文案仍叫"护盾"',
+    /data-effstat="__shield__"[\s\S]{0,80}护盾/.test(statHtml));
+}
+
+// ---- Q7：攻速点开窗口描述改进 + attackSpeedRatio 改名 ----
+{
+  T('速①-"攻速"点开窗口的描述改成"每秒攻击的次数。"',
+    statDoc('bonusAttackSpeedPct').desc === '每秒攻击的次数。');
+  T('速②-attackSpeedRatio 全局改名为"攻击速度收益率"（statDocs.js + fields.js 两处标签）',
+    statDoc('attackSpeedRatio').label === '攻击速度收益率'
+    && fieldLabel('attackSpeedRatio') === '攻击速度收益率');
+  const { STAT_LABELS } = await import('../src/ui/DetailModal.js');
+  T('速③-DetailModal 的简写标签表也同步改名（悬浮预览走的是这份表）',
+    STAT_LABELS.attackSpeedRatio === '攻击速度收益率');
+
+  // 行为：点开"攻速"格子时，弹窗主体显示的是算完的实际攻速（base+bonus 两截求和），
+  // 不再是 bonusAttackSpeedPct 自己的原始百分比；原始百分比连同收益率挪进了关联属性。
+  // base/total 要真的不同才能验证拆分格式，所以基础值放进 baseStats、加成部分靠一条
+  // 真实的 EffectRegistry 状态叠上去（直接把 bonusAttackSpeedPct 写进 baseStats 的话，
+  // "entity.baseStats" 本身就已经含着这份加成，_showStatDoc 算出来的 base 会跟 total
+  // 相等，delta=0，括注直接被判定"没有修正"而省略——那是别的用例在测的口径，不是这条）。
+  const { ents, fx, CONFIG } = await world();
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { UIManager } = await import('../src/ui/UIManager.js');
+  const e = mkEntity(ents, 'tower', { stats: { baseAttackSpeed: 0.833, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667 } }, CONFIG);
+  fx.apply(e.id, {
+    name: '测试攻速buff', kind: 'stat', statKey: 'bonusAttackSpeedPct', flatValue: 25,
+    duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh',
+  }, 'test_as_buff');
+
+  class FakeOverlay {
+    constructor() { this.id = ''; this.className = ''; this._html = ''; }
+    set innerHTML(v) { this._html = v; }
+    get innerHTML() { return this._html; }
+    querySelector(sel) { return sel === '.stat-doc-close' ? { addEventListener() {} } : null; }
+    remove() {}
+  }
+  let captured = null;
+  globalThis.document = {
+    getElementById: () => null,
+    createElement: () => new FakeOverlay(),
+    body: { appendChild: (el) => { captured = el; } },
+  };
+  const ui = Object.create(UIManager.prototype);
+  ui.attrCalc = AttributeCalculator;
+  ui.effects = fx;
+  ui._showStatDoc('bonusAttackSpeedPct', e);
+
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+  const base = r3(AttributeCalculator.calcAttackSpeedOf(e.baseStats));
+  const total = r3(AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(e, fx.getEffects(e.id))));
+  const bonus = r3(total - base);
+  T('速③b-测试前提：base/total 确实不同（否则下面的括注断言测不出问题）', bonus !== 0);
+
+  T('速④-点开"攻速"窗口标题显示"攻速"，不是内部字段的原始 doc 标签',
+    captured && /📊 攻速</.test(captured._html));
+  T('速⑤-窗口主体显示的是算完的实际攻速数值，用"基础+加成"两截求和的括注格式',
+    captured && captured._html.includes(`攻速：`) && captured._html.includes(`>${total}<`)
+    && captured._html.includes(`（${base}${bonus >= 0 ? '+' : '−'}${Math.abs(bonus)}）`));
+}
+
+// ---- Q8：关联属性归属调整——韧性→移速，闪避率→伤害减免 ----
+{
+  T('联①-闪避率现在挂在"伤害减免"的关联属性里', RELATED_STATS.damageReduction?.includes('evasionPct'));
+  T('联②-韧性现在挂在"移速"的关联属性里', RELATED_STATS.moveSpeed?.includes('tenacityPct'));
+  T('联③-不再挂在旧位置（护甲/魔抗）',
+    !RELATED_STATS.armor?.includes('evasionPct') && !RELATED_STATS.magicResist?.includes('tenacityPct'));
+  T('联④-"攻速"关联属性同时带出【攻速加成】原始百分比与【攻击速度收益率】',
+    RELATED_STATS.bonusAttackSpeedPct?.includes('bonusAttackSpeedPct')
+    && RELATED_STATS.bonusAttackSpeedPct?.includes('attackSpeedRatio'));
+}
+
+// ---- Q9：编辑面板暴击伤害默认显示 200%（总倍率），不是 0%（加成量） ----
+{
+  const { EDITOR_PAGES_ENTITY } = await import('../src/ui/editor/pagesEntity.js');
+  const { EDITOR_EVENTS } = await import('../src/ui/editor/events.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+  const baseline = CONFIG.tuning?.crit?.baseCritDamagePct ?? 200;
+
+  const tplLike = { ...CONFIG.templates.tower, critDamagePct: 0 };
+  const html = EDITOR_PAGES_ENTITY._renderAttrContent(tplLike, true);
+  T('暴①-模板编辑器里暴击伤害默认显示的是总倍率（加成 0 + 基准 200 = 200），不是 0',
+    new RegExp(`class="editor-number" data-key="critDamagePct" data-orig="${baseline}"[^>]*value="${baseline}"`).test(html));
+
+  // 写回：面板填 230（总倍率，相当于 +30% 加成）要正确换算回存储的加成量 30
+  const entity = { baseStats: { ...CONFIG.templates.tower, critDamagePct: 0 }, currentHP: 100 };
+  const fakeOverlay = {
+    querySelectorAll(sel) {
+      return sel === '.editor-number'
+        ? [{ dataset: { key: 'critDamagePct', orig: String(baseline) }, value: String(baseline + 30) }]
+        : [];
+    },
+    querySelector() { return null; },
+    remove() {},
+  };
+  EDITOR_EVENTS._applyAttrChanges(fakeOverlay, entity, () => {});
+  T('暴②-面板填 230（总倍率）写回 baseStats 时正确减掉基准 200，存的是加成量 30',
+    entity.baseStats.critDamagePct === 30);
 }
 
 // ==================== 三十三、v51.6：召唤师峡谷塔属性修正 ====================
@@ -1514,11 +1665,16 @@ async function world() {
     RELATED_STATS.lifeStealPct?.includes('spellVampPct'));
   T('关③-生命恢复关联基础生命恢复', RELATED_STATS.healthRegen?.includes('baseHealthRegenMod'));
 
-  // 补充的 4 组也要有内容，且不能跟自己关联
-  for (const k of ['abilityPower', 'attackDamage', 'armor', 'magicResist']) {
+  // 补充的关联组也要有内容，且不能跟自己关联。
+  // v51.12（Q8）：armor/magicResist 原来各挂了一条（闪避率/韧性），用户后来
+  // 重新指定了归属——闪避率→伤害减免，韧性→移速——护甲/魔抗这两组关联属性
+  // 因此被搬空了，不再是回归，换成断言新宿主 damageReduction/moveSpeed。
+  for (const k of ['abilityPower', 'attackDamage', 'damageReduction', 'moveSpeed']) {
     const arr = RELATED_STATS[k];
     T(`关④-补充关联组「${k}」非空且不自指`, Array.isArray(arr) && arr.length > 0 && !arr.includes(k));
   }
+  T('关④b-护甲/魔抗不再挂关联属性（闪避率/韧性已搬去伤害减免/移速）',
+    !RELATED_STATS.armor && !RELATED_STATS.magicResist);
 
   // _showStatDoc 要真正读取并渲染 RELATED_STATS
   const uiSrc = srcOf('src/ui/UIManager.js');
@@ -2347,8 +2503,11 @@ async function world() {
 
   T('补⑦-modsGridHtml 对百分比量纲的属性（如 bonusAttackSpeedPct）flat 增量也带 %（Q7）',
     /PERCENT_UNIT_KEYS\.has\(k\) \? '%' : ''/.test(srcOf('src/ui/DetailModal.js')));
+  // v51.12：attackSpeedRatio 的中文标签本身又被改名了（"攻速系数"→"攻击速度收益率"，
+  // 这次 Q7 的要求），这条断言原来钉死的是旧标签文本——不是标签又丢了，是标签改了
+  // 名字，正则要跟着改，不能继续认定"没有'攻速系数'"是回归。
   T('补⑦b-attackSpeedRatio/damageBlock/damageConvertPct/bulletSpeed 补齐中文标签，不再原样显示英文键名（Q7）',
-    /attackSpeedRatio: '攻速系数', damageBlock: '格挡值'/.test(srcOf('src/ui/DetailModal.js'))
+    /attackSpeedRatio: '攻击速度收益率', damageBlock: '格挡值'/.test(srcOf('src/ui/DetailModal.js'))
     && /damageConvertPct: '伤害转化', bulletSpeed: '子弹速度'/.test(srcOf('src/ui/DetailModal.js')));
 
   // Q8 用户澄清："我指的是这个小窗口"（悬浮预览截图）——.hover-tip 原来是接近不透明的

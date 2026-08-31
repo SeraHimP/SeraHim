@@ -807,7 +807,7 @@ const STAT_LABEL = {
   // damageBlock 那两份都没有，抄 fields.js 编辑器里现成的用词）。
   moveSpeed: '移速', damageReduction: '伤害减免', shieldFixedMax: '固定护盾',
   armorPenPercent: '护甲穿透', magicPenPercent: '法术穿透',
-  attackSpeedRatio: '攻速系数', damageBlock: '格挡值',
+  attackSpeedRatio: '攻击速度收益率', damageBlock: '格挡值',
 };
 
 /** 把某条魂的常驻属性拼成一句人话，追加到面板文案里。 */

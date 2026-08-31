@@ -212,23 +212,16 @@ export const EDITOR_PAGES_SKILLEFFECT = {
         description: '被缴械，无法进行普通攻击',
       };
     }
-    if (type2 === 'shield') {
-      const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 0;
-      const isPermanent = permanentChecked || (!isNaN(parsedDur) && parsedDur <= 0);
-      const duration = isPermanent ? Infinity : (isNaN(parsedDur) ? 5 : parsedDur);
-      return {
-        name: '护盾', icon: '🛡️', kind: 'shield', stackKey,
-        flatValue, duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
-        description: `护盾+${flatValue}`,
-      };
-    }
     if (type2 === 'dot') {
       const damageType = box.querySelector('.effect-dot-type')?.value || 'magic';
       const flatValue = parseFloat(box.querySelector('.effect-flat-value')?.value) || 10;
-      const duration = isNaN(parsedDur) ? 5 : parsedDur;
+      // v51.12：持续伤害现在也带"永久"勾选框（之前没有——旧版持续伤害只能靠填一个很
+      // 大的秒数模拟"永久"，和护盾/属性两种状态的永久勾选框不对称）。
+      const isPermanent = permanentChecked || (!isNaN(parsedDur) && parsedDur <= 0);
+      const duration = isPermanent ? Infinity : (isNaN(parsedDur) ? 5 : parsedDur);
       return {
         name: '持续伤害', icon: '🩸', kind: 'dot', damageType, stackKey,
-        flatValue, tickInterval: 1, duration: Math.max(1, duration),
+        flatValue, tickInterval: 1, duration: Math.max(1, duration), permanent: isPermanent,
         stackable: false, stackPolicy: 'refresh',
         description: `每秒${flatValue}点${damageType === 'magic' ? '魔法' : damageType === 'physical' ? '物理' : '真实'}伤害`,
       };
@@ -242,6 +235,17 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     // 后者是兼容旧习惯，不是必须记住的隐藏规则。
     const isPermanent = permanentChecked || (!isNaN(parsedDur) && parsedDur <= 0);
     const duration = isPermanent ? Infinity : (isNaN(parsedDur) ? 5 : parsedDur);
+    // v51.12："护盾"从独立 tab 移进了"属性修正"的卡片网格，选中哨兵键 __shield__
+    // 时这里的"数值修正"输入框实际填的是护盾值，产出的效果类型也要是 kind:'shield'
+    // 而不是 kind:'stat'（护盾走 EffectRegistry 的 shieldRemaining 独立记账，不能
+    // 当成普通属性修正处理）。
+    if (statKey === '__shield__') {
+      return {
+        name: '护盾', icon: '🛡️', kind: 'shield', stackKey,
+        flatValue, duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
+        description: `护盾+${flatValue}`,
+      };
+    }
     return {
       name: '默认状态', icon: '📌', kind: 'stat', statKey, flatValue, percentValue, stackKey,
       duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
@@ -268,7 +272,6 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     { key: 'silence', label: '沉默（控制）' },
     { key: 'disarm', label: '缴械（控制）' },
     { key: 'dot', label: '持续伤害（DOT）' },
-    { key: 'shield', label: '护盾' },
   ],
   // 与 CONFIG.templates 的实际字段 + AttributeCalculator 认得的条件字段对齐
   // （此前漏了 baseAttackSpeed / baseHealthRegenMod / 护盾三项 / 溅射 / 弹速 / 哀兵两项；
@@ -323,13 +326,22 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     const grid = box.querySelector('.effect-stat-grid');
     if (grid) {
       const hidden = box.querySelector('.effect-stat-key');
+      const percentRow = box.querySelector('.effect-percent-row');
+      const flatLabel = box.querySelector('.effect-flat-label');
+      const syncShieldMode = (key) => {
+        const isShield = key === '__shield__';
+        if (percentRow) percentRow.style.display = isShield ? 'none' : '';
+        if (flatLabel) flatLabel.textContent = isShield ? '护盾值' : '数值修正';
+      };
       grid.querySelectorAll('[data-effstat]').forEach(card => {
         card.addEventListener('click', () => {
           grid.querySelectorAll('[data-effstat]').forEach(c => c.classList.remove('selected'));
           card.classList.add('selected');
           if (hidden) hidden.value = card.dataset.effstat;
+          syncShieldMode(card.dataset.effstat);
         });
       });
+      syncShieldMode(hidden?.value);
       const filterInput = box.querySelector('.effect-stat-filter');
       filterInput?.addEventListener('input', () => {
         const q = filterInput.value.trim().toLowerCase();
@@ -380,20 +392,16 @@ export const EDITOR_PAGES_SKILLEFFECT = {
         <div class="pick-desc-box">缴械期间目标无法进行普通攻击，仍可移动和施放技能。</div>
       `;
     }
-    if (type === 'shield') {
-      return `
-        <div class="slider-row"><label>护盾值</label>
-          <input type="number" step="10" class="effect-flat-value editor-number" value="50">
-        </div>
-        <div class="slider-row"><label>持续时间(秒)</label>
-          <input type="number" step="0.5" class="effect-duration editor-number" value="5">
-        </div>
-        <div class="slider-row"><label>永久</label>
-          <input type="checkbox" class="effect-permanent" style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
-        </div>
-        <div class="pick-desc-box">不会衰减，也不会自动回复；护盾来源的效果到期时，剩余护盾直接消失（不额外扣血补偿）。</div>
-      `;
-    }
+    // v51.12：用户"状态添加的窗口里，持续时间默认5秒改为300秒，并且默认选中永久
+    // 生效"——原来 5 秒默认值太短，编辑器里加个状态测试/调试经常还没看清楚就
+    // 自己过期了；默认勾"永久"之后，持续时间那个数字只在取消勾选时才用得上
+    // （下面几处保存逻辑本来就是"勾了永久就忽略具体秒数"）。stun/silence/disarm
+    // 三种控制效果默认 1 秒不受影响——那三个是"短暂打断"用的，默认永久反而不合理。
+    // 护盾原来是独立的第 6 个顶层 tab，用户："把添加状态中的护盾移动到属性修正里
+    // 面"——现在改成"属性修正"卡片网格里的第一张卡（data-effstat="__shield__"，
+    // 见下面 stat 分支），不再单独占一个 tab；具体的"护盾值/持续时间/永久"输入框
+    // 直接复用 stat 分支已有的 数值修正/持续时间/永久（见 _bindEffectParams 里
+    // 选中该卡时隐藏"百分比修正"、把"数值修正"标签换成"护盾值"的逻辑）。
     if (type === 'dot') {
       const dotTabs = [
         { key: 'magic', label: '魔法' }, { key: 'physical', label: '物理' }, { key: 'true', label: '真实' },
@@ -406,12 +414,24 @@ export const EDITOR_PAGES_SKILLEFFECT = {
           <input type="number" step="1" class="effect-flat-value editor-number" value="10">
         </div>
         <div class="slider-row"><label>持续时间(秒)</label>
-          <input type="number" step="0.5" class="effect-duration editor-number" value="5">
+          <input type="number" step="0.5" class="effect-duration editor-number" value="300">
+        </div>
+        <div class="slider-row"><label>永久</label>
+          <input type="checkbox" class="effect-permanent" checked style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
         </div>
       `;
     }
     // stat（默认）
-    const cards = this._EFFECT_STAT_KEYS.map((k, i) => `
+    // "护盾"卡片放最前面，data-effstat 用 __shield__ 这个不进 AttributeCalculator 的
+    // 哨兵键——选中它时不是加一条 kind:'stat' 的属性修正，而是建一条 kind:'shield'
+    // 效果（见 _buildEffectBlueprintFromPicker 里的分支），复用下面同一套 数值修正
+    // （此时含义变成"护盾值"）/持续时间/永久 输入框，_bindEffectParams 里会在选中
+    // 它时隐藏用不上的"百分比修正"行。
+    const shieldCard = `
+      <div class="pick-card" data-effstat="__shield__">
+        <span class="pick-label">护盾</span>
+      </div>`;
+    const cards = shieldCard + this._EFFECT_STAT_KEYS.map((k, i) => `
       <div class="pick-card ${i === 0 ? 'selected' : ''}" data-effstat="${k}">
         <span class="pick-label">${fieldLabel(k)}</span>
       </div>`).join('');
@@ -420,17 +440,17 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       <input type="text" class="effect-stat-filter editor-number" placeholder="🔍 搜索属性…" style="width:100%;">
       <div class="pick-grid effect-stat-grid" style="max-height:160px;overflow-y:auto;margin-top:6px;">${cards}</div>
       <input type="hidden" class="effect-stat-key" value="${this._EFFECT_STAT_KEYS[0]}">
-      <div class="slider-row" style="margin-top:6px;"><label>数值修正</label>
+      <div class="slider-row" style="margin-top:6px;"><label class="effect-flat-label">数值修正</label>
         <input type="number" step="0.5" class="effect-flat-value editor-number" value="0">
       </div>
-      <div class="slider-row"><label>百分比修正</label>
+      <div class="slider-row effect-percent-row"><label>百分比修正</label>
         <input type="number" step="0.5" class="effect-percent-value editor-number" value="0">
       </div>
       <div class="slider-row"><label>持续时间(秒)</label>
-        <input type="number" step="0.5" class="effect-duration editor-number" value="5">
+        <input type="number" step="0.5" class="effect-duration editor-number" value="300">
       </div>
       <div class="slider-row"><label>永久</label>
-        <input type="checkbox" class="effect-permanent" style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
+        <input type="checkbox" class="effect-permanent" checked style="accent-color:var(--accent-2);width:16px;height:16px;cursor:pointer;">
       </div>
     `;
   },

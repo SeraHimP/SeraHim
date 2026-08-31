@@ -11,6 +11,16 @@
 import { CONFIG } from '../../data/Config.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
 import { grantTemplatePlainShield } from '../../core/factories.js';
+import { FIELD_META } from './fields.js';
+
+// v51.12：Q9 的展示偏移（见 fields.js critDamagePct 头注）——渲染时加过一次，
+// 这两处写回路径（单个实体 / 模板与场上批量）都要照原样减掉，否则存进
+// baseStats 的会是"总倍率"而不是"加成"，CombatSystem 的暴击结算会直接错位 200%。
+function _fieldDisplayOffset(key) {
+  const meta = FIELD_META[key];
+  if (!meta) return 0;
+  return typeof meta.displayOffset === 'function' ? meta.displayOffset() : (meta.displayOffset || 0);
+}
 
 export const EDITOR_EVENTS = {
   // ==================== 事件绑定 ====================
@@ -194,7 +204,7 @@ export const EDITOR_EVENTS = {
       // 只写回真正改动过的字段
       if (!isNaN(orig) && val === orig) continue;
       if (key === 'currentHP') entity[key] = Math.min(val, entity.baseStats.maxHP || 1);
-      else entity.baseStats[key] = val;
+      else entity.baseStats[key] = val - _fieldDisplayOffset(key);
       changed++;
     }
     const selects = overlay.querySelectorAll('.editor-select');
@@ -319,7 +329,7 @@ export const EDITOR_EVENTS = {
     const readPairs = [];
     for (const inp of overlay.querySelectorAll('.editor-number')) {
       const val = parseFloat(inp.value);
-      if (!isNaN(val)) readPairs.push([inp.dataset.key, val]);
+      if (!isNaN(val)) readPairs.push([inp.dataset.key, val - _fieldDisplayOffset(inp.dataset.key)]);
     }
     for (const sel of overlay.querySelectorAll('.editor-select')) readPairs.push([sel.dataset.key, sel.value]);
     if (!readPairs.length) { logFn('（没有可应用的字段）', 'spawn'); return; }

@@ -26,7 +26,7 @@ export const STAT_LABELS = {
   // 霜龙/龙魂的 damageBlock、血龙之力的 damageConvertPct、星龙之力的 bulletSpeed），
   // 之前这张表没覆盖，落进 modsGridHtml 的 `STAT_LABELS[k] || k` 兜底，原样显示了英文
   // 字段名（用户报的"风龙之力"悬浮预览截图里那个"attackSpeedRatio"就是这个）。
-  attackSpeedRatio: '攻速系数', damageBlock: '格挡值',
+  attackSpeedRatio: '攻击速度收益率', damageBlock: '格挡值',
   damageConvertPct: '伤害转化', bulletSpeed: '子弹速度',
 };
 
@@ -183,7 +183,12 @@ export function effectGroupBreakdown(effects) {
       const m = mods[bp.statKey] || (mods[bp.statKey] = { flat: 0, percent: 0 });
       m.flat += flat; m.percent += pct;
     } else if (bp.kind === 'dot') {
-      otherLines.push(`持续伤害（${bp.damageType === 'true' ? '真实' : bp.damageType === 'physical' ? '物理' : '魔法'}）`);
+      // v51.12 修复：用户"蚀骨兵主动技能对敌人施加的状态里，描述要写清晰"——这里
+      // 原来无条件显示一句笼统的"持续伤害（真实）"，把效果自己精心写好的具体描述
+      // （比如"该单位每秒损失当前生命值1%"）直接扔了。改成优先用 bp.description，
+      // 没有才退回这句兜底文案（同 'display' kind 的处理方式一致）。
+      otherLines.push(bp.description
+        || `持续伤害（${bp.damageType === 'true' ? '真实' : bp.damageType === 'physical' ? '物理' : '魔法'}）`);
     } else if (bp.kind === 'stun') {
       otherLines.push('眩晕：无法行动');
     } else if (bp.kind === 'shield') {

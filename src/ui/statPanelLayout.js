@@ -109,15 +109,12 @@ export function allPanelStatKeys() {
  * 玩家只能去编辑器里翻才知道它们存在。这张表不新增格子，而是把"没有自己格子"的
  * 属性挂到主题相近的**已有**格子的说明弹窗里，点开就能看到，不占面板空间。
  *
- * 前三条是用户点名的例子，原样落地；后四条（法强/攻击力/护甲/魔抗那几条）是同一个
- * 思路下我按主题就近安排的："等等"没有给出穷举名单，这几个是当前唯一还完全没有
- * 任何展示入口的属性（critDamagePct/physicalVampPct/spellVampPct/baseHealthRegenMod
- * 之外，还有 skillAmpPct/adaptiveForce/evasionPct/tenacityPct），不安排的话它们还是
- * "编辑器里能改、面板上永远看不到"——分组理由：
+ * 前三条是用户点名的例子，原样落地；法强/攻击力两条是同一个思路下按主题就近安排的：
  *   法术强度 → 技能增幅（都是"魔法输出"范畴）
  *   攻击力   → 适应之力（适应之力两边都能转，攻击力这边正好没有别的关联项）
- *   护甲     → 闪避率（都是"减少受到的伤害"范畴，闪避是完全避免这一下）
- *   魔抗     → 韧性（都是"抵御控制/负面效果的生存类"范畴，护甲那边已经放了闪避）
+ * 闪避率/韧性最初也是按"就近主题"分到了护甲/魔抗（同属"减伤/抗性"范畴），但 v51.12
+ * 里用户直接点名重新指定了归属："韧性显示在移速里，闪避率显示在伤害减免"——不再是
+ * 主题就近，是用户自己的分类口径，按此改掉，不要再按"减伤类"的直觉挪回去。
  * 每条独立展示一次，不重复安排到两个宿主格子里。
  */
 export const RELATED_STATS = {
@@ -129,10 +126,20 @@ export const RELATED_STATS = {
   // extAttrGroups 的"进攻"组里有自己的格子（塔专属），这里额外把它也带进攻击力
   // 的关联属性区块，方便点开攻击力时一并看到。
   attackDamage: ['adaptiveForce', 'bulletSpeed'],
-  armor: ['evasionPct'],
-  magicResist: ['tenacityPct'],
+  // v51.12：Q8——用户"补充关联属性……韧性显示在移速里，闪避率显示在伤害减免"，
+  // 这是用户自己重新指定的归属，跟上面 v51 注释写的"护甲→闪避、魔抗→韧性"那版
+  // 分类是两回事：闪避率从护甲搬到伤害减免，韧性从魔抗搬到移速。damageReduction/
+  // moveSpeed 这两格原来没有关联属性区块，这里各自新增一条。
+  damageReduction: ['evasionPct'],
+  moveSpeed: ['tenacityPct'],
   // v51.9：用户"【核心属性加成】显示在全属性加成的点开窗口里"——核心属性加成
   // （coreStatsPct）本身没有自己的格子（面板格子有限，见文件头注），挂到主题
   // 最贴近的全属性加成（allStatsPct）说明弹窗里。
   allStatsPct: ['coreStatsPct'],
+  // v51.12：Q7——"攻速"点开窗口现在显示的是算完的实际攻速（次/秒），原来直接
+  // 显示的【攻速加成】百分比和【攻击速度收益率】换算系数挪到关联属性区块里，
+  // 而不是消失。bonusAttackSpeedPct 关联到它自己这件事是有意的：主区块显示的
+  // 已经不是这个键的原始值了（见 UIManager._showStatDoc 对这个 key 的特判），
+  // 所以还需要单独一行把它的原始百分比带出来。
+  bonusAttackSpeedPct: ['bonusAttackSpeedPct', 'attackSpeedRatio'],
 };
