@@ -297,6 +297,34 @@ const mk = (ents, t, x, f, hp = 100000) => {
       fx.getEffects(near.id).length === 0);
   }
 
+  // ==================== v51.17：毒魂叠层数在持续攻击下会一路走高，不会像设计
+  // 注释假设的那样稳定在"施加速率×持续时间"那个有界值 ====================
+  // 用户实测毒魂反复砍 pctPerStack 数值杠杆，推进度差几乎不动——复现脚本直接量
+  // 层数才发现：stackPolicy:'stack' 是整条效果共用一个 remainingTime，每次命中
+  // 除了加一层，还会把这个共用计时器刷回满 duration；只要两次命中间隔小于
+  // duration，效果就永远没机会"到期减层"，层数只会一路涨（实测持续攻击 60 秒后
+  // 逼近 500 层，远超设计注释假设的"~27 层稳态"）。用 maxStacks 兜个安全上限
+  // （999→30，贴着原设计假设的稳态给点余量）作为软编码的止损，不动
+  // EffectRegistry 那套全仓库共用的叠层结算逻辑（牵连面太大，这次不改）。
+  {
+    const { ents, fx, buffs, ctx } = W();
+    const t = mk(ents, 'tower', 0, 'blue'); equipSkill(t, 'dragonsoul_poison', ctx, SkillLibrary);
+    const inst = t._skillInstances.find(i => i.skillId === 'dragonsoul_poison');
+    const target = mk(ents, 'tower', 50, 'red', 9000);
+    const maxStacks = CONFIG.dragonSouls.poison.maxStacks;
+    // 模拟远高于 1/duration 的命中频率（持续 30 次命中，每次间隔远小于 4 秒的
+    // duration），如果层数不封顶就会一路涨过 maxStacks。
+    for (let i = 0; i < 30; i++) {
+      SkillLibrary.dragonsoul_poison.onDealtDamage(t.id, target.id, inst, ctx);
+      buffs.update(0.1);
+    }
+    const eff = fx.getEffects(target.id).find(e => e.sourceId === 'dragonsoul_poison');
+    T('毒①-持续命中下层数被 maxStacks 封住，不会一路涨过配置的上限',
+      !!eff && eff.stacks <= maxStacks);
+    T('毒②-maxStacks 本身是个有意义的有限值（不是回退成 999 那种"名义上限"）',
+      maxStacks < 100);
+  }
+
   // 🌌 星魂
   {
     const { ents, fx, combat, proj, ctx } = W();
