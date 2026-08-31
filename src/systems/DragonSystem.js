@@ -604,21 +604,35 @@ export class DragonSystem {
     const cap = (CONFIG.dragonPower && CONFIG.dragonPower.maxStacks) || 4;
     for (let i = 0; i < buffs.length; i++) {
       const b = buffs[i];
-      // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户定稿"改为护盾，要不然
-      // 太超标了"——固定护盾会自动回满，四层叠加、永久生效、还自动回复，等于变相
-      // 白嫖一份"永远满盾"（与钢铁烈阳护盾/图腾壁垒此前踩的是同一个坑）。这里目前
-      // 只有铁龙一条用 shieldFixedMax 做巨龙之力，判断键名足够定位到它，不需要按
-      // el === 'steel' 再加一层特判。
+      // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户先定稿"改为护盾，
+      // 要不然太超标了"，之后又补充定稿具体分配："对塔+45固定护盾。对其余单位
+      // +45护盾。"——塔是钉死原地不移动的机械单位，固定护盾会自动回满对它没那么
+      // 离谱（只有城防塔本来就有的那点护甲/血量在撑），真正"变相永远满盾"的问题
+      // 出在会走位、会脱离战斗自然回满的大型小兵身上，所以只对塔保留固定护盾，
+      // 其余（大型小兵）改用不会自动回复的护盾。
       if (b.statKey === 'shieldFixedMax') {
-        this.effects.apply(tower.id, {
-          name: `${def.label}之力`, icon: def.icon, kind: 'shield', color: def.color,
-          flatValue: b.flat || 0,
-          duration: Infinity, permanent: true,
-          stackable: true, maxStacks: cap, stackPolicy: 'stack',
-          stackKey: `dragon_${el}_${b.statKey}`,
-          descTemplate: `唯一被动——${def.label}之力：击杀${def.label}获得的永久护盾（{stacks}层，不会自动回复）。`,
-          description: `${def.label}护盾（{stacks}层，不会自动回复）`,
-        }, `dragon_buff_${el}_${i}`);
+        if (tower.type === 'tower') {
+          this.effects.apply(tower.id, {
+            name: `${def.label}之力`, icon: def.icon, kind: 'stat', color: def.color,
+            statKey: 'shieldFixedMax',
+            flatValue: b.flat || 0, perStackFlat: b.flat || 0,
+            duration: Infinity, permanent: true,
+            stackable: true, maxStacks: cap, stackPolicy: 'stack',
+            stackKey: `dragon_${el}_${b.statKey}`,
+            descTemplate: `唯一被动——${def.label}之力：击杀${def.label}获得的永久固定护盾（{stacks}层）。`,
+            description: `${def.label}固定护盾（{stacks}层）`,
+          }, `dragon_buff_${el}_${i}`);
+        } else {
+          this.effects.apply(tower.id, {
+            name: `${def.label}之力`, icon: def.icon, kind: 'shield', color: def.color,
+            flatValue: b.flat || 0,
+            duration: Infinity, permanent: true,
+            stackable: true, maxStacks: cap, stackPolicy: 'stack',
+            stackKey: `dragon_${el}_${b.statKey}`,
+            descTemplate: `唯一被动——${def.label}之力：击杀${def.label}获得的永久护盾（{stacks}层）。`,
+            description: `${def.label}护盾（{stacks}层）`,
+          }, `dragon_buff_${el}_${i}`);
+        }
         continue;
       }
       this.effects.apply(tower.id, {

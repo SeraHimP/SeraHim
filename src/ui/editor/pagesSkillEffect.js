@@ -219,7 +219,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       return {
         name: '护盾', icon: '🛡️', kind: 'shield', stackKey,
         flatValue, duration, permanent: isPermanent, stackable: false, stackPolicy: 'refresh',
-        description: `护盾+${flatValue}（不会衰减，也不会自动回复）`,
+        description: `护盾+${flatValue}`,
       };
     }
     if (type2 === 'dot') {

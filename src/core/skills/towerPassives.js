@@ -186,15 +186,15 @@ export const towerPassives = {
     // 不受影响。沿用 passive_*_fortify 那套"声明 defaultParams 才会被注入覆写"的
     // 既有机制，不新造属性、不新造机制。
     defaultParams: { selfPlainValue: 50, selfFixedValue: 0, allyPlainValue: 50 },
-    description: '为自己提供护盾（可能还有固定护盾），并对附近（300范围）友军提供护盾（不会自动回复），友军离开防御塔过远护盾消失。',
-    descTemplate: '唯一被动——钢铁烈阳护盾：自身护盾+50，对附近（300范围）友军提供50护盾（不会自动回复），离开范围后护盾消失。',
+    description: '为自己提供护盾（可能还有固定护盾），并对附近（300范围）友军提供护盾，友军离开防御塔过远护盾消失。',
+    descTemplate: '唯一被动——钢铁烈阳护盾：自身护盾+50，对附近（300范围）友军提供50护盾，离开范围后护盾消失。',
     getDescTemplate: (entity, instance) => {
       const p = (instance && instance._params) || {};
       const selfPlain = typeof p.selfPlainValue === 'number' ? p.selfPlainValue : 50;
       const selfFixed = typeof p.selfFixedValue === 'number' ? p.selfFixedValue : 0;
       const allyPlain = typeof p.allyPlainValue === 'number' ? p.allyPlainValue : 50;
       const selfTxt = selfFixed > 0 ? `自身护盾+${selfPlain}、固定护盾+${selfFixed}` : `自身护盾+${selfPlain}`;
-      return `唯一被动——钢铁烈阳护盾：${selfTxt}，对附近（300范围）友军提供${allyPlain}护盾（不会自动回复），离开范围后护盾消失。`;
+      return `唯一被动——钢铁烈阳护盾：${selfTxt}，对附近（300范围）友军提供${allyPlain}护盾，离开范围后护盾消失。`;
     },
     effects: [],
     onFrame: (entityId, dt, instance, ctx) => {
@@ -215,7 +215,7 @@ export const towerPassives = {
       ctx.effectRegistry.apply(self.id, {
         name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: selfPlain,
         duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `护盾+${selfPlain}（自身，不会自动回复）`,
+        description: `护盾+${selfPlain}（自身）`,
       }, 'inner_bulwark_self_plain');
       // 自身：固定护盾（脱战一段时间后自动回满）——只有配了 selfFixedValue>0 才挂，
       // 避免所有没配这项的地图/塔白挂一条 flatValue:0 的空效果占状态栏格子。
@@ -233,7 +233,7 @@ export const towerPassives = {
         ctx.effectRegistry.apply(ally.id, {
           name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: allyPlain,
           aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: `护盾+${allyPlain}（内塔光环，不会自动回复）`,
+          description: `护盾+${allyPlain}（内塔光环）`,
         }, 'inner_bulwark_ally');
       }
     },

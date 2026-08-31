@@ -10,6 +10,7 @@
  */
 import { CONFIG } from '../../data/Config.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
+import { grantTemplatePlainShield } from '../../core/factories.js';
 
 export const EDITOR_EVENTS = {
   // ==================== 事件绑定 ====================
@@ -203,6 +204,14 @@ export const EDITOR_EVENTS = {
       changed++;
     }
     if (entity.currentHP > entity.baseStats.maxHP) entity.currentHP = entity.baseStats.maxHP;
+    // v51.9 修复：用户"我手动设置了护盾（非自动回复）数值，但是并未生效"——
+    // plainShieldFlat 只有 factories.js 那四个工厂在**出生那一刻**读一次去挂
+    // kind:'shield' 效果，跟这里其它字段"改完 entity.baseStats[key] 立刻在下一次
+    // AttributeCalculator.calc() 里生效"不是同一套机制——它压根不在属性合成管线里，
+    // 单纯写 baseStats 不会有任何效果。这里补上：改完属性之后主动补挂一次
+    // （stackPolicy:'refresh'，值没变就是空操作，值变大只会照 delta 补差额，不会
+    // 把已经打没的护盾凭空顶满——见 EffectRegistry._recalcEffectValues 的头注）。
+    grantTemplatePlainShield(entity);
     // v33（Q13）：塔模型大小——留空恢复该档全局尺寸，填数字则本塔独享
     const msInput = overlay.querySelector('#editorModelSize');
     if (msInput) {

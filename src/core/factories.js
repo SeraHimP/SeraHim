@@ -91,14 +91,14 @@ function spawnAtFullHP(entity) {
  * 生成的单位立刻生效，不追溯已在场的）。四个工厂都调用它——理由与 spawnAtFullHP
  * 头注说的一样：只补一处会漏掉另外三处。
  */
-function grantTemplatePlainShield(entity) {
+export function grantTemplatePlainShield(entity) {
   const v = entity.baseStats?.plainShieldFlat;
   if (!(v > 0) || !effectRegistry) return;
   effectRegistry.apply(entity.id, {
     name: '护盾', icon: '🛡', kind: 'shield', flatValue: v,
     duration: Infinity, permanent: true,
     stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-    description: `护盾+${v}（模板默认，不会自动回复）`,
+    description: `护盾+${v}（模板默认）`,
   }, 'template_plain_shield');
 }
 

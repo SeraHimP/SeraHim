@@ -185,7 +185,7 @@ export const minionPassives = {
         { name: '图腾守护', icon: '🟣', kind: 'stat', statKey: 'damageReduction',
           flatValue: dr, description: `伤害减免+${dr}%` },
         { name: '图腾守护', icon: '🟣', kind: 'shield',
-          flatValue: sh, description: `护盾+${sh}（不会自动回复）` },
+          flatValue: sh, description: `护盾+${sh}` },
       ];
     },
   }),

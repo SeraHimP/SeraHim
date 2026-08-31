@@ -186,6 +186,12 @@ export function effectGroupBreakdown(effects) {
       otherLines.push(`持续伤害（${bp.damageType === 'true' ? '真实' : bp.damageType === 'physical' ? '物理' : '魔法'}）`);
     } else if (bp.kind === 'stun') {
       otherLines.push('眩晕：无法行动');
+    } else if (bp.kind === 'shield') {
+      // v51.9 修复：用户"铁龙之力的状态里写无属性变化，应该为护盾+45"——这里原来
+      // 完全没处理 kind:'shield'，落不进 mods 也落不进 otherLines，两边都空
+      // 就显示"（无属性变化）"，即使效果本身确实挂着一份护盾。护盾不是"属性
+      // 修正"（没有 statKey，不走乘算管线），所以放进 otherLines 而不是 mods 网格。
+      otherLines.push(`护盾+${Math.round(e.shieldRemaining || 0)}`);
     } else if (bp.kind === 'display') {
       otherLines.push(bp.description || '');
     }

@@ -21,7 +21,7 @@ export const FIELD_META = {
   damageReduction:    { label: '伤害减免%', min: 0, max: 100, step: 1 },
   damageBlock:        { label: '格挡值', min: 0, max: 500, step: 5 },
   shieldFixedMax:     { label: '固定护盾上限', min: 0, max: 5000, step: 50 },
-  plainShieldFlat:    { label: '护盾（不会自动回复）', min: 0, max: 5000, step: 50 },
+  plainShieldFlat:    { label: '护盾', min: 0, max: 5000, step: 50 },
   tempShieldDecayPct: { label: '临时护盾衰减%', min: 0, max: 100, step: 1 },
   armorPenFlat:       { label: '固定护甲穿透', min: 0, max: 500, step: 5 },
   armorPenPercent:    { label: '百分比护甲穿透%', min: 0, max: 100, step: 1 },

@@ -2473,11 +2473,42 @@ async function world() {
   T('盾⑭-图腾守护友军光环护盾改走 kind:\'shield\'（不再是 shieldFixedMax）',
     /name: '图腾守护', icon: '🟣', kind: 'shield',\s*\n\s*flatValue: sh,/.test(mp)
     && !/statKey: 'shieldFixedMax',\s*\n\s*flatValue: sh,/.test(mp));
-  // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户定稿"改为护盾，要不然
-  // 太超标了"——固定护盾会自动回满，四层永久叠加太强。
-  const ds = srcOf('src/systems/DragonSystem.js');
-  T('盾⑮-铁龙之力（statKey===\'shieldFixedMax\'）改走 kind:\'shield\'，不再是 kind:\'stat\'',
-    /if \(b\.statKey === 'shieldFixedMax'\) \{[\s\S]{0,200}kind: 'shield', color: def\.color,/.test(ds));
+  // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户先说"改为护盾，要不然
+  // 太超标了"，之后补充定稿具体分配——"对塔+45固定护盾。对其余单位+45护盾。"
+  // 钉的是真实行为而不是正则抠源码：塔拿到的应该是 kind:'stat'/shieldFixedMax
+  // （会自动回满），大型小兵拿到的应该是 kind:'shield'（不会自动回复）。
+  {
+    const { EventBus } = await import('../src/utils/EventBus.js');
+    const { EntityContainer } = await import('../src/core/EntityContainer.js');
+    const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+    const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+    const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+    const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+    const { CONFIG } = await import('../src/data/Config.js');
+    const bus2 = new EventBus();
+    const ents2 = new EntityContainer(bus2);
+    const fx2 = new EffectRegistry(bus2);
+    const ds2 = new DragonSystem(ents2, bus2, fx2, SkillLibrary, AttributeCalculator);
+    const tw = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...CONFIG.templates.tower }, currentHP: 9000, _skillInstances: [],
+      _mapFaction: 'blue', faction: 'blue' };
+    ents2.add(tw);
+    const siege = { id: ++window._uid, type: 'siege', alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...CONFIG.templates.siege }, currentHP: 900, _skillInstances: [],
+      _mapFaction: 'blue', faction: 'blue' };
+    ents2.add(siege);
+    ds2._applyElementBuff(tw, 'steel');
+    ds2._applyElementBuff(siege, 'steel');
+    const twEff = fx2.getEffects(tw.id).find(e => e.blueprint.name === '铁龙之力');
+    const siegeEff = fx2.getEffects(siege.id).find(e => e.blueprint.name === '铁龙之力');
+    T('盾⑮-塔拿到的铁龙之力是 kind:\'stat\'/shieldFixedMax（会自动回满）',
+      !!twEff && twEff.blueprint.kind === 'stat' && twEff.blueprint.statKey === 'shieldFixedMax');
+    T('盾⑮b-大型小兵拿到的铁龙之力是 kind:\'shield\'（不会自动回复）',
+      !!siegeEff && siegeEff.blueprint.kind === 'shield');
+    T('盾⑮c-数值一致，都是 CONFIG.dragonPower.steel.shieldFixedMax（未改数值，只改类型分配）',
+      twEff.blueprint.flatValue === CONFIG.dragonPower.steel.shieldFixedMax
+      && siegeEff.blueprint.flatValue === CONFIG.dragonPower.steel.shieldFixedMax);
+  }
 }
 
 // ==================== 召唤师峡谷内塔：Q4 修正版——自身+800护盾+50固定护盾，友军+50护盾 ====================
