@@ -1000,6 +1000,23 @@ export const CONFIG = {
       bloomThreshold: 1.0,  // Bloom 阈值。原 0.82 会把所有亮色都糊开（偏"脏"），
                             // 提到 1.0 只抓真正过曝的东西
     },
+
+    // 渲染重构 Week3·Day13-14：移动端画质分档系统。低/中/高三档把阴影/Bloom/描边/
+    // SSAO/渲染分辨率这五项打包成一个统一开关（延续 setShadowLevel 那种"每项独立
+    // 可开关"的写法，只是分档系统再包一层"一键切一整套"）。自动模式按帧时（复用
+    // main.js 已有的 PERF.render 采样，不再另开一条测量）在三档间动态切换，见
+    // ThreeRenderer.setQualityPreset / _autoAdjustQuality。
+    qualityPresets: {
+      low:    { shadow: 'off',    bloom: false, outline: false, ssao: false, resolutionScale: 0.6 },
+      medium: { shadow: 'static', bloom: true,  outline: true,  ssao: false, resolutionScale: 0.85 },
+      high:   { shadow: 'all',    bloom: true,  outline: true,  ssao: true,  resolutionScale: 1.0 },
+      // 自动档的帧时判据（毫秒，对应 main.js PERF.render 的 250ms 窗口均值）：
+      // 连续 autoDownTicks 次超过 autoDownMs 就降一档；连续 autoUpTicks 次低于
+      // autoUpMs 才升一档——升档要求的次数更多，"偶尔快一帧"不该立刻贸然提画质，
+      // 免得在阈值附近来回抖动（这条经验直接照抄 WeatherSystem 主导天气迟滞的
+      // 教训：滤抖动比"反应快"更重要，见 DOMINANCE_HYSTERESIS 的头注）。
+      autoDownMs: 16, autoUpMs: 8, autoDownTicks: 2, autoUpTicks: 4,
+    },
   },
 
   world: {

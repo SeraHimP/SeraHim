@@ -99,7 +99,15 @@ export class ThreeRenderer {
     this.deps = deps; // { entities, attrCalc, effects } —— UnitLayer 每帧读实体数据用（只读）
 
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.gl.setPixelRatio(window.devicePixelRatio || 1);
+    this._devicePixelRatio = window.devicePixelRatio || 1;
+    this.resolutionScale = 1;    // Week3·Day13-14：移动端分辨率自适应，见 setResolutionScale
+    // qualityPreset 留 null（不是随便挑一个如 'high' 当默认）——开局的实际画质组合
+    // （阴影 off + Bloom/描边/SSAO 全开 + 分辨率 100%）本来就不严格等于三档预设表里
+    // 的任何一档，硬说它是"高"是骗自己；null 意味着"还没套用过任何预设，当前是
+    // 逐项开关攒出来的自定义组合"，画质面板上三个按钮谁都不高亮，如实反映这一点。
+    this.qualityPreset = null;
+    this.qualityAuto = false;
+    this.gl.setPixelRatio(this._devicePixelRatio);
     // P1 画质选项。电影级色调（ACES）默认【开启】（用户定稿）；可在设置里关。
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.0;
@@ -609,6 +617,79 @@ export class ThreeRenderer {
   // 换来的多余开销只是一次法线材质的场景渲染，同屏单位规模下可以接受。
   setOutline(on) { this.outlineOn = !!on; if (this.outlinePass) this.outlinePass.enabled = this.outlineOn; return this.outlineOn; }
   setSSAO(on) { this.ssaoOn = !!on; if (this.ssaoPass) this.ssaoPass.enabled = this.ssaoOn; return this.ssaoOn; }
+
+  /**
+   * Week3·Day13-14：渲染分辨率缩放（移动端/低端设备用）。
+   * scale=1 时行为与改动前完全一致（devicePixelRatio 原样用）；scale<1 时
+   * 按比例调低实际渲染像素数——GPU 每帧要画的像素点是 (宽×高×DPR)²级别的开销，
+   * 缩到 0.6 大约只画 36% 的像素，这是"平板卡"这类问题里性价比最高的一刀
+   * （降分辨率对观感的伤害远小于关阴影/关后处理，尤其在小屏上几乎看不出）。
+   */
+  setResolutionScale(scale) {
+    this.resolutionScale = Math.max(0.4, Math.min(1, scale || 1));
+    this.gl.setPixelRatio(this._devicePixelRatio * this.resolutionScale);
+    this._sizeComposer(this.width, this.height);
+    return this.resolutionScale;
+  }
+
+  /**
+   * Week3·Day13-14：画质分档——低/中/高一键切一整套（阴影/Bloom/描边/SSAO/分辨率）。
+   * 数值表在 CONFIG.ui.qualityPresets（软编码，改那张表就能重新定义每档具体是什么）。
+   * 'auto' 不在这三档字面量里——它是"自动模式"的标记，实际画质由
+   * _autoAdjustQuality() 按帧时动态选一档落地，这里只记下"当前处于自动模式"。
+   */
+  setQualityPreset(preset) {
+    this.qualityAuto = preset === 'auto';
+    if (this.qualityAuto) {
+      // 自动模式的起点档：从"中"开始试探，比从"高"开始更不容易让用户先看到一次卡顿。
+      this._autoTier = this._autoTier || 'medium';
+      this._autoDownStreak = 0; this._autoUpStreak = 0;
+      preset = this._autoTier;
+    }
+    const table = CONFIG.ui?.qualityPresets || {};
+    const p = table[preset] || table.medium;
+    if (!p) return this.qualityPreset;
+    this.qualityPreset = this.qualityAuto ? 'auto' : preset;
+    this.setShadowLevel(p.shadow);
+    this.setBloom(p.bloom);
+    this.setOutline(p.outline);
+    this.setSSAO(p.ssao);
+    this.setResolutionScale(p.resolutionScale);
+    return this.qualityPreset;
+  }
+
+  /**
+   * 自动模式的帧时判据：main.js 每 250ms 用 PERF.render 的窗口均值调这个方法一次
+   * （复用既有的性能面板采样，不另开一条测量通道）。带连续命中次数的迟滞——
+   * 直接照抄 WeatherSystem.getDominant() 的 DOMINANCE_HYSTERESIS 教训：单次超阈值
+   * 就切档会在临界值附近来回抖动，画质一会儿高一会儿低比稳定在中档更打扰人。
+   */
+  _autoAdjustQuality(avgRenderMs) {
+    if (!this.qualityAuto || !Number.isFinite(avgRenderMs)) return;
+    const T = CONFIG.ui?.qualityPresets || {};
+    const downMs = T.autoDownMs ?? 16, upMs = T.autoUpMs ?? 8;
+    const downTicks = T.autoDownTicks ?? 2, upTicks = T.autoUpTicks ?? 4;
+    const LADDER = ['low', 'medium', 'high'];
+    const idx = LADDER.indexOf(this._autoTier);
+
+    if (avgRenderMs > downMs) {
+      this._autoDownStreak++; this._autoUpStreak = 0;
+      if (this._autoDownStreak >= downTicks && idx > 0) {
+        this._autoTier = LADDER[idx - 1];
+        this._autoDownStreak = 0;
+        this.setQualityPreset('auto'); // 重新走一遍，落地新档且保持 auto 标记
+      }
+    } else if (avgRenderMs < upMs) {
+      this._autoUpStreak++; this._autoDownStreak = 0;
+      if (this._autoUpStreak >= upTicks && idx < LADDER.length - 1) {
+        this._autoTier = LADDER[idx + 1];
+        this._autoUpStreak = 0;
+        this.setQualityPreset('auto');
+      }
+    } else {
+      this._autoDownStreak = 0; this._autoUpStreak = 0;
+    }
+  }
   setToneMapping(on) {
     this.toneMapOn = !!on;
     this.gl.toneMapping = this.toneMapOn ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;

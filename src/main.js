@@ -583,18 +583,28 @@ canvasController.onSelect = (id) => uiManager.selectEntity(id);
 canvasController.onDeselect = () => uiManager.clearSelection();
 
 // ---------- 性能面板（📊 按钮开关，4Hz 刷新滚动窗口平均） ----------
+// Week3·Day13-14：这个采样窗口现在身兼两职——除了给 perfHud 显示，还要喂给画质
+// 自动分档（renderer3d._autoAdjustQuality）。后者必须每 250ms 都跑，不能像原来
+// 那样"HUD 不可见就直接清零早退"——那样自动画质在用户没打开性能面板时（也就是
+// 绝大多数正常游玩场景）会完全失效，而这恰恰是最需要它默默工作的时候。改成
+// 无论 HUD 显不显示都算一遍均值喂给自动分档，只有【写文字】这一步仍然按可见性
+// 跳过——原有的"每 250ms 清空累计"这条不变式没变，只是挪到了函数末尾统一做。
 {
   const hud = document.getElementById('perfHud');
   // Q12：性能面板开关已移入设置面板（SettingsDialog）
   setInterval(() => {
-    if (!hud || !hud.classList.contains('show')) { if (CTX.__perf) { const P = CTX.__perf; P.sim = P.render = P.dom = P.n = P.steps = 0; } return; }
-    const P = CTX.__perf; if (!P || !P.n) return;
-    const units = entityContainer.getAllMinions(true).length + entityContainer.getAllTowers(true).length;
+    const P = CTX.__perf;
+    if (!P || !P.n) return;
     const frame = (P.sim + P.render + P.dom) / P.n;
-    hud.textContent =
-      `帧均 ${frame.toFixed(2)}ms (${(1000 / Math.max(frame, 1000 / 240)).toFixed(0)}fps上限)\n` +
-      `模拟 ${(P.sim / P.n).toFixed(2)}ms · 步/帧 ${(P.steps / P.n).toFixed(2)}\n` +
-      `渲染 ${(P.render / P.n).toFixed(2)}ms\nDOM  ${(P.dom / P.n).toFixed(2)}ms\n单位 ${units}`;
+    const avgRender = P.render / P.n;
+    renderer3d?._autoAdjustQuality?.(avgRender);
+    if (hud && hud.classList.contains('show')) {
+      const units = entityContainer.getAllMinions(true).length + entityContainer.getAllTowers(true).length;
+      hud.textContent =
+        `帧均 ${frame.toFixed(2)}ms (${(1000 / Math.max(frame, 1000 / 240)).toFixed(0)}fps上限)\n` +
+        `模拟 ${(P.sim / P.n).toFixed(2)}ms · 步/帧 ${(P.steps / P.n).toFixed(2)}\n` +
+        `渲染 ${avgRender.toFixed(2)}ms\nDOM  ${(P.dom / P.n).toFixed(2)}ms\n单位 ${units}`;
+    }
     P.sim = P.render = P.dom = P.n = P.steps = 0;
   }, 250);
 }

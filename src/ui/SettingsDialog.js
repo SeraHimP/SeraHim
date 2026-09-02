@@ -158,6 +158,13 @@ export const SettingsDialog = {
         ${TAB === 'quality' ? `
         <div class="editor-section">
           <h4>🎨 渲染</h4>
+          <div class="slider-row"><label title="一键切一整套（阴影/辉光/描边/SSAO/渲染分辨率）。自动＝按帧时动态调档，平板/低端设备卡的话选这个；下面的单项开关随时可以再手动微调，不会被这里锁死">画质档位</label>
+            <div style="flex:1;display:flex;gap:4px;">
+              ${['low', 'medium', 'high', 'auto'].map(k => `<button data-quality="${k}" class="editor-tab ${
+                window.__three?.qualityPreset === k ? 'active' : ''
+              }" style="flex:1;">${{ low: '🔋 低', medium: '⚖️ 中', high: '💎 高', auto: '🤖 自动' }[k]}</button>`).join('')}
+            </div>
+          </div>
           <div class="slider-row"><label>阴影质量</label>
             <button id="setShadowBtn" style="flex:1;">${{ all: '🌑 全部投影', static: '🏛️ 仅建筑投影', off: '⭕ 关闭阴影' }[window.__three?.shadowLevel || 'off']}</button>
           </div>
@@ -392,6 +399,17 @@ export const SettingsDialog = {
         btn.addEventListener('click', () => {
           window.__gameSpeed = parseFloat(btn.dataset.speed);
           logFn(`⏱ 游戏速度 → ${window.__gameSpeed}x`, 'spawn');
+          render();
+        });
+      });
+      // Week3·Day13-14：画质档位一键切换。一次改好几个开关（阴影/Bloom/描边/SSAO/
+      // 分辨率），全靠 render() 整页重画来刷新下面那些单项按钮的文案，不用逐个手改。
+      overlay.querySelectorAll('[data-quality]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const r = window.__three;
+          if (!r) return;
+          const applied = r.setQualityPreset(btn.dataset.quality);
+          logFn(`🎨 画质档位 → ${({ low: '低', medium: '中', high: '高', auto: '自动' })[applied] || applied}`, 'spawn');
           render();
         });
       });
