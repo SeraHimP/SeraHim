@@ -310,9 +310,18 @@ export const EDITOR_PAGES_WAVE = {
     const gr = CONFIG.gameRules;
     const list = this._woList(false);
     const types = this._TPL_MINION_TYPES;
-    const EN = gr.spawnEnabled || {};
     const app = window.CTX?.__app || window.__app;
     const laneWaveSystem = app?.laneWaveSystem;
+    // v51.26 修复：用户报"经典模式下出兵是对的（没有攻城车/术士兵之类的），但模板
+    // 编辑器-出兵编排窗口里显示的不正常"——排查结论：这里原来只读全局
+    // CONFIG.gameRules.spawnEnabled，从没读过 mapSystem.currentMap?.spawnEnabled。
+    // 真正驱动出兵的 LaneWaveSystem.js 会把地图覆写摊平合并进规则、且地图覆写优先
+    // （见该文件 `_mapSE ? {...gr, spawnEnabled:{...gr.spawnEnabled, ..._mapSE}}`），
+    // 经典模式下术士/蚀骨/攻城车/图腾被地图层关掉了，这里却仍显示全局默认"已启用"——
+    // 不只是显示错，这几个开关是即点即生效的控件，点了在经典模式下真的没反应
+    // （地图覆写永远赢，合并顺序见下面 EN 的算法，与 LaneWaveSystem 保持同一个口径）。
+    const mapSE = app?.mapSystem?.currentMap?.spawnEnabled || null;
+    const EN = { ...(gr.spawnEnabled || {}), ...(mapSE || {}) };
 
     const cell = (rule, i, key, min, step) =>
       `<input type="number" class="wo-field" data-idx="${i}" data-field="${key}" min="${min}" step="${step}"
@@ -346,13 +355,20 @@ export const EDITOR_PAGES_WAVE = {
     </div>`;
 
     // ---- ① 兵种总开关（原「生成规则」里逐个类型翻页才能看到，现在一屏全景）----
+    // v51.26：被当前地图/模式覆写锁住的兵种（如经典模式关掉的术士/蚀骨/攻城车/图腾）
+    // 显式标成🔒锁定态，不响应点击——不能让玩家点了没反应却看不出原因（见上面 EN 的注释）。
     html += `<div class="editor-section"><h4>① 兵种总开关</h4>
     <div class="editor-tabs" style="flex-wrap:wrap;">
       ${types.map(t => {
         const on = EN[t] !== false;
+        const locked = mapSE && Object.prototype.hasOwnProperty.call(mapSE, t);
+        const title = locked
+          ? `当前地图/模式已将此项强制${on ? '启用' : '关闭'}，这里改不了`
+          : (on ? '点击停用' : '点击启用');
         return `<button class="editor-tab ${on ? 'active' : ''}" data-spawn-toggle="${t}"
-                 title="${on ? '点击停用' : '点击启用'}" style="font-size:11px;">
-          ${on ? '✅' : '⛔'} ${this._iconOf(t)}${this._labelOf(t)}
+                 ${locked ? 'data-spawn-locked="1"' : ''} title="${title}"
+                 style="font-size:11px;${locked ? 'opacity:0.7;cursor:not-allowed;' : ''}">
+          ${locked ? '🔒' : (on ? '✅' : '⛔')} ${this._iconOf(t)}${this._labelOf(t)}
         </button>`;
       }).join('')}
     </div></div>`;
@@ -485,9 +501,16 @@ export const EDITOR_PAGES_WAVE = {
   },
 
   // 兵种总开关：即点即生效（它只是个布尔，没有"批量应用"的必要）。
+  // v51.26：锁定态（当前地图/模式覆写了这一项）点击直接短路——改的是全局
+  // CONFIG.gameRules.spawnEnabled，但地图覆写在 LaneWaveSystem 里合并时永远赢，
+  // 点了也不会真的生效，与其让玩家困惑不如干脆不响应，配合上面渲染时的 title 说明。
   _bindSpawnToggles(overlay, logFn, rerender) {
     overlay.querySelectorAll('[data-spawn-toggle]').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (btn.dataset.spawnLocked) {
+          logFn(`🔒 「${this._labelOf(btn.dataset.spawnToggle)}」被当前地图/模式强制锁定，改不了`, 'error');
+          return;
+        }
         const t = btn.dataset.spawnToggle;
         CONFIG.gameRules.spawnEnabled = CONFIG.gameRules.spawnEnabled || {};
         const now = CONFIG.gameRules.spawnEnabled[t] !== false;

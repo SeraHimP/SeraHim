@@ -37,7 +37,17 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       return { pool, defaults, equipped: new Set(CONFIG.towerTierSkills[tier]), title: this._tierLabel(tier) };
     }
     const tpl = CONFIG.templates[type];
-    const defaults = this._DEFAULT_PASSIVE_MAP[type] || [];
+    // v51.26 修复：与出兵编排页（pagesWave.js）同一次排查发现的同型 bug——这里原来
+    // 只读全局 _DEFAULT_PASSIVE_MAP（= DEFAULT_MINION_PASSIVES），从没合并
+    // mapSystem.currentMap?.minionDefaultPassives。真正装配技能的 factories.js
+    // createMinion 是 `{...DEFAULT_MINION_PASSIVES, ...mapMinionPassives}` 合并、
+    // 地图覆写优先，经典模式把这张表整个清空了（"所有小兵无技能"），这里却仍然把
+    // 全局默认技能标成★"游戏实际默认"——是本仓库 v51.5 修过一次的"编辑器默认表
+    // 与真正消费的清单各存一份、会漂移"那次的同型复发，上次统一的是数值本身，
+    // 这次漏掉的是"地图覆写"这一层合并，一并补上。
+    const app = window.CTX?.__app || window.__app;
+    const mapPassives = app?.mapSystem?.currentMap?.minionDefaultPassives || {};
+    const defaults = mapPassives[type] || this._DEFAULT_PASSIVE_MAP[type] || [];
     if (tpl._templateSkills === undefined) tpl._templateSkills = [...defaults];
     return {
       pool: this._SKILLS_BY_TYPE[type]?.passives || [],

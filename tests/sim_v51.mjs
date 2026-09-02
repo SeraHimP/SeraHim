@@ -3119,4 +3119,63 @@ async function world() {
     RELATED_STATS.allStatsPct === undefined);
 }
 
+// ==================== 追加：v51.26 出兵编排/技能装配编辑器读取地图覆写 ====================
+// 用户报告："我在经典模式下，出兵是正常的（没有攻城车/术士兵之类的），但是在模板
+// 编辑器-出兵编排窗口里显示的不正常。"排查结论：pagesWave.js 的"兵种总开关"和
+// pagesSkillEffect.js 的"默认技能回填"都只读全局 CONFIG.gameRules.spawnEnabled /
+// DEFAULT_MINION_PASSIVES，从没合并 mapSystem.currentMap?.spawnEnabled /
+// minionDefaultPassives——而真正驱动出兵/装配的 LaneWaveSystem.js / factories.js
+// 都会把地图覆写摊平合并进去、且地图覆写优先。两处是同一次排查发现的同型 bug。
+{
+  const { AttributeEditor } = await import('../src/ui/AttributeEditor.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  const prevApp = window.CTX?.__app;
+  window.CTX = window.CTX || {};
+  window.CTX.__app = {
+    mapSystem: {
+      currentMap: {
+        spawnEnabled: { totem: false, warlock: false, corrupt: false, ram: false },
+        minionDefaultPassives: { melee: [], ranged: [], siege: [], super: [] },
+        lanes: [{ id: 'top' }, { id: 'mid' }, { id: 'bot' }],
+      },
+    },
+  };
+  AttributeEditor._factionScope = 'shared';
+  AttributeEditor._waveLaneScope = 'all';
+
+  // ① 出兵编排页：兵种总开关要按地图覆写显示成锁定态，不能仍显示全局默认"已启用"
+  const woHtml = AttributeEditor._renderWaveOrderContent();
+  T('编①-经典模式（示例：图腾/术士/蚀骨/攻城车被地图关闭）下，出兵编排页把这四项渲染成锁定态（🔒），不再显示成"已启用"',
+    /data-spawn-toggle="totem"[^>]*data-spawn-locked="1"/.test(woHtml)
+    && /data-spawn-toggle="warlock"[^>]*data-spawn-locked="1"/.test(woHtml)
+    && woHtml.includes('🔒'));
+  T('编②-没被地图覆写的兵种（如近战/远程）依然是正常可编辑的开关，不会被误锁',
+    /data-spawn-toggle="melee"(?![^>]*data-spawn-locked)/.test(woHtml));
+
+  // ② 技能装配页：默认技能回填要读地图覆写清空后的表，不能仍然★标全局默认技能
+  const skillSet = AttributeEditor._skillSetFor('melee', undefined);
+  T('编③-经典模式下小兵技能装配页读到的默认列表是地图覆写后的空表，不是全局默认（屠戮等）',
+    Array.isArray(skillSet.defaults) && skillSet.defaults.length === 0);
+
+  // ③ 没有地图覆写时（如普通模式/自由摆放），行为要和改动前一模一样——这条守的是
+  // "加通道没改坏原有路径"
+  window.CTX.__app.mapSystem.currentMap = { lanes: [{ id: 'top' }, { id: 'mid' }, { id: 'bot' }] };
+  const woHtmlNormal = AttributeEditor._renderWaveOrderContent();
+  T('编④-普通模式（地图没声明 spawnEnabled 覆写）下没有任何兵种被误锁',
+    !woHtmlNormal.includes('data-spawn-locked'));
+  const skillSetNormal = AttributeEditor._skillSetFor('melee', undefined);
+  T('编⑤-普通模式（地图没声明 minionDefaultPassives 覆写）下技能装配页仍然读全局默认表',
+    Array.isArray(skillSetNormal.defaults)
+    && JSON.stringify(skillSetNormal.defaults) === JSON.stringify(AttributeEditor._DEFAULT_PASSIVE_MAP.melee || []));
+
+  // ④ 锁定态的点击要被短路——改动写不进 CONFIG，不能让玩家以为点了就生效
+  const src = srcOf('src/ui/editor/pagesWave.js');
+  T('编⑥-锁定态按钮的点击处理会直接短路返回，不会去改 CONFIG.gameRules.spawnEnabled',
+    /if \(btn\.dataset\.spawnLocked\) \{[\s\S]{0,200}return;\s*\}/.test(src));
+
+  window.CTX.__app = prevApp;
+  delete CONFIG.templates.melee._templateSkills; // 清掉本节测试写入的缓存，避免影响后面的用例
+}
+
 done();
