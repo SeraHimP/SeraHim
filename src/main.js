@@ -668,7 +668,11 @@ function gameLoop(timestamp) {
       if (performance.now() - tSim0 >= budgetMs) break;
     }
     // 欠账上限：按倍率放宽但封顶 —— 留太多会在卡顿缓解后突然补跑一大段（画面跳）。
-    const maxDebt = SIM_DT * Math.max(2, Math.min(8, speed) * 2);
+    // v51.26：封顶原来硬编码在 8，倍率选项抬高后（simSpeedOptions）如果不跟着抬，
+    // 高倍率下欠账被摁在旧上限，快进效果会打折扣。改成跟 simSpeedOptions 的最大
+    // 档位对齐，不再单独维护一个数字——防止以后改了档位表却忘记同步这里。
+    const maxSpeedForDebt = Math.max(...(CONFIG.tuning?.simSpeedOptions || [1, 2, 4, 8]));
+    const maxDebt = SIM_DT * Math.max(2, Math.min(maxSpeedForDebt, speed) * 2);
     if (_acc > maxDebt) _acc = maxDebt;
     PERF.steps += steps;
   } else {

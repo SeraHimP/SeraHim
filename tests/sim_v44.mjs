@@ -806,7 +806,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     /id="setLogAreaBtn"/.test(sd) && /getElementById\('logArea'\)/.test(sd));
 
   // 速度 / 性能
-  T('速①-倍率是 1/2/4/8（用户定稿）', /\[1, 2, 4, 8\]\.map\(v =>/.test(sd));
+  // v51.26：倍率档位表改成软编码（CONFIG.tuning.simSpeedOptions），不再是页面里
+  // 硬写的 [1,2,4,8] 字面量——用户要求"抬高模拟倍率上限"，钉法跟着从"是这四个数"
+  // 改成"读的是 CONFIG 里那张表"，具体档位改了不该让这条测试跟着变。
+  T('速①-倍率档位表从 CONFIG.tuning.simSpeedOptions 软编码读取，不再是页面硬写的字面量',
+    /CONFIG\.tuning\?\.simSpeedOptions/.test(sd) && Array.isArray(CONFIG.tuning?.simSpeedOptions));
   T('速②-「快进 N 秒」已删除（它的作用被 8x 覆盖）',
     !/data-ff=/.test(sd) && !/__ffRemain/.test(mj) && !/__ffRemain/.test(sd));
   T('速③-每帧模拟预算改为**墙钟毫秒**（原来限步数，而单步耗时随单位数增长）',
@@ -815,8 +819,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('速③-步数上限 MAX_SUBSTEPS / 240 的写死值已去掉',
     !/MAX_SUBSTEPS/.test(mj) && !/maxSteps/.test(mj));
   T('速④-预算软编码在 CONFIG', Number.isFinite(CONFIG.tuning.simBudgetMs));
-  T('速⑤-欠账有封顶（否则卡顿缓解后会突然补跑一大段，画面跳）',
-    /const maxDebt = SIM_DT \* Math\.max\(2, Math\.min\(8, speed\) \* 2\);/.test(mj));
+  // v51.26：封顶不再硬写 8，改成跟 simSpeedOptions 的最大档位对齐（否则倍率上限
+  // 抬高后，高倍率下欠账仍被摁在旧的 8x 上限，快进效果打折扣）。
+  T('速⑤-欠账有封顶，且封顶随 simSpeedOptions 的最大档位走（不再硬写死数字）',
+    /const maxSpeedForDebt = Math\.max\(\.\.\.\(CONFIG\.tuning\?\.simSpeedOptions \|\| \[1, 2, 4, 8\]\)\);/.test(mj)
+    && /const maxDebt = SIM_DT \* Math\.max\(2, Math\.min\(maxSpeedForDebt, speed\) \* 2\);/.test(mj));
 }
 
 // ==================== 十三、属性面板重做 + 数值显示口径 ====================

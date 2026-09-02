@@ -129,7 +129,7 @@ export const SettingsDialog = {
           </div>
           <div class="slider-row"><label title="真实加速模拟：战斗照常结算，不是跳时钟">游戏速度</label>
             <div style="flex:1;display:flex;gap:4px;">
-              ${[1, 2, 4, 8].map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}" style="flex:1;">${v}x</button>`).join('')}
+              ${(CONFIG.tuning?.simSpeedOptions ?? [1, 2, 4, 8]).map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}" style="flex:1;">${v}x</button>`).join('')}
             </div>
           </div>
           <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
