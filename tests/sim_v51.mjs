@@ -1629,7 +1629,7 @@ async function world() {
 {
   const { summoners_rift } = await import('../src/data/maps/summoners_rift.js');
   const ts = summoners_rift.tierStats;
-  T('峡①-外塔：HP 3300，双抗15（v51.18：5000→3300，40→15，靠 tierEffects 的开局临时状态补前期）',
+  T('峡①-外塔：HP 3300，双抗15（v51.18：5000→3300，40→15，靠"前期城防"补前期）',
     ts.outer.maxHP === 3300 && ts.outer.armor === 15 && ts.outer.magicResist === 15);
   T('峡②-内塔：HP 3750，双抗70不变（v51.18：4000→3750）',
     ts.inner.maxHP === 3750 && ts.inner.armor === 70 && ts.inner.magicResist === 70);
@@ -1639,11 +1639,83 @@ async function world() {
     ts.hq_tower.maxHP === 4750 && ts.hq_tower.damageBlock === 7);
   T('峡⑤-召唤水晶本体（nexus_main）不在本次修正范围内，维持原值',
     ts.nexus_main.maxHP === 5500);
-  // v51.19（Q2）：持续时间 7分钟→10分钟（420→600秒）。
-  T('峡⑥-外塔新增开局临时状态：10分钟护甲+25、魔法抗性+25（配合双抗砍到15，前10分钟等效40）',
-    Array.isArray(summoners_rift.tierEffects?.outer)
-    && summoners_rift.tierEffects.outer.some(e => e.statKey === 'armor' && e.flatValue === 25 && e.duration === 600)
-    && summoners_rift.tierEffects.outer.some(e => e.statKey === 'magicResist' && e.flatValue === 25 && e.duration === 600));
+  // v51.26：前期城防不再是地图级 tierEffects（无条件糊在外塔身上），收进了
+  // passive_outer_fortify 技能本身的 defaultParams 覆写——只有装了这个技能的塔
+  // 才会有这层加成。数值（25/600）现在挂在 skillOverrides 里，不是 tierEffects。
+  T('峡⑥-tierEffects 字段已下线（前期城防不再是地图级无条件默认状态）',
+    summoners_rift.tierEffects === undefined);
+  T('峡⑦-外塔的加固城防技能覆写了开局限时护甲/魔抗：25点，持续600秒',
+    summoners_rift.skillOverrides?.['tower:outer']?.passive_outer_fortify?.earlyDefenseBonus === 25
+    && summoners_rift.skillOverrides['tower:outer'].passive_outer_fortify.earlyDefenseDuration === 600);
+}
+
+// ==================== 三十三·补充：v51.26 前期城防收进加固城防技能本身 ====================
+// 用户定稿："把前期城防整个到技能（加固城防）里面。不再默认装配在地图上，只有加固
+// 城防的技能的塔才会有这个开局加成。"——原来是召唤师峡谷地图数据里一条独立的
+// tierEffects.outer，只要这张图的外塔一生成就无条件糊上，跟这座塔到底有没有装
+// "加固城防"技能完全无关；现在改成 passive_outer_fortify 技能自己的 onEquip 逻辑，
+// 装了才有、不装就没有。这里钉的是"技能门控"这条行为本身——不是靠字符串比对
+// 源码，是真的走一遍 equipSkill()，看效果到底挂没挂上。
+{
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { equipSkill } = await import('../src/core/skillParams.js');
+  const { summoners_rift } = await import('../src/data/maps/summoners_rift.js');
+
+  const prevMapOv = SkillLibrary._mapOverrides;
+  SkillLibrary._mapOverrides = summoners_rift.skillOverrides || {};
+
+  const busX = new EventBus();
+  const entsX = new EntityContainer();
+  const fxX = new EffectRegistry(busX);
+  const ctxX = { entityContainer: entsX, effectRegistry: fxX, eventBus: busX, attrCalc: AttributeCalculator };
+
+  const mkOuterTower = (id) => {
+    const e = { id, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+      baseStats: { maxHP: 3300, armor: 15, magicResist: 15 }, currentHP: 3300,
+      shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity, attackCooldown: 0,
+      targetId: null, _skillInstances: [], _mapTier: 'outer' };
+    entsX.add(e);
+    return e;
+  };
+
+  // ① 装了加固城防的外塔（召唤师峡谷）：开局立刻拿到 25 点限时护甲/魔抗
+  const withSkill = mkOuterTower(9001);
+  equipSkill(withSkill, 'passive_outer_fortify', ctxX, SkillLibrary);
+  const effWith = fxX.getEffects(withSkill.id);
+  T('城①-召唤师峡谷外塔装了加固城防 → 开局立刻拿到"前期城防"护甲+25/魔抗+25（不用等地图级 tierEffects）',
+    effWith.some(x => x.blueprint.name === '前期城防' && x.blueprint.statKey === 'armor' && x.blueprint.flatValue === 25)
+    && effWith.some(x => x.blueprint.name === '前期城防' && x.blueprint.statKey === 'magicResist' && x.blueprint.flatValue === 25)
+    && effWith.some(x => x.maxDuration === 600));
+
+  // ② 没装加固城防的裸塔：不该凭空长出这层加成——这正是本次改动要堵住的口子
+  const bareTower = mkOuterTower(9002);
+  const effBare = fxX.getEffects(bareTower.id);
+  T('城②-裸塔（没装加固城防）没有"前期城防"效果——之前地图级 tierEffects 会无条件糊上，现在必须真装技能才有',
+    !effBare.some(x => x.blueprint.name === '前期城防'));
+
+  // ③ 卸下加固城防后，"前期城防"效果要跟着摘掉，不能拆了技能还留着加成
+  const unequipTower = mkOuterTower(9003);
+  const inst3 = equipSkill(unequipTower, 'passive_outer_fortify', ctxX, SkillLibrary);
+  const def3 = SkillLibrary.passive_outer_fortify;
+  def3.onUnequip(unequipTower.id, inst3, ctxX);
+  const effAfterUnequip = fxX.getEffects(unequipTower.id);
+  T('城③-卸下加固城防后"前期城防"效果被一并摘除，不会拆了技能还残留加成',
+    !effAfterUnequip.some(x => x.blueprint.name === '前期城防'));
+
+  // ④ 换一张没有这条覆写的图（嚎哭深渊/扭曲丛林）：出厂默认 earlyDefenseBonus=0，
+  // 装了加固城防也不该凭空长出前期护甲/魔抗——这条不是召唤师峡谷专属送的。
+  SkillLibrary._mapOverrides = {};
+  const otherMapTower = mkOuterTower(9004);
+  equipSkill(otherMapTower, 'passive_outer_fortify', ctxX, SkillLibrary);
+  const effOtherMap = fxX.getEffects(otherMapTower.id);
+  T('城④-没有地图覆写时（如嚎哭深渊/扭曲丛林）加固城防出厂默认不带前期护甲/魔抗加成',
+    !effOtherMap.some(x => x.blueprint.name === '前期城防'));
+
+  SkillLibrary._mapOverrides = prevMapOv;
 }
 
 // ==================== 三十四、v51.6：伤害转化描述文案纠正 + 子弹速度分组调整 ====================

@@ -63,32 +63,23 @@ export const summoners_rift = {
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
   },
 
-  // v51.18：外塔开局默认获得的临时状态（用户定稿："新增开局就默认获得的状态
-  // （持续7分钟）：获得25护甲和魔法抗性"）——配合上面外塔双抗砍到15的改动，
-  // 让外塔前期双抗等效40（15+25，与改动前的原值持平），状态到期后双抗回落到
-  // 砍过的15，前期不至于被瞬秒、后期恢复到砍过之后的真实强度。只挂在这张图的
-  // 外塔上（tierEffects 是地图级字段，与全局 CONFIG.towerTierEffects 是两条
-  // 独立通路，见 factories.js createBuilding 里两处都读的说明），不影响
-  // 嚎哭深渊/扭曲丛林等其它地图的外塔。
-  // v51.19（Q2）：持续时间 7分钟→10分钟（420→600秒）。
-  tierEffects: {
-    outer: [
-      { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'armor', flatValue: 25,
-        duration: 600, stackable: false, stackPolicy: 'refresh',
-        description: '开局前10分钟：护甲+25' },
-      { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'magicResist', flatValue: 25,
-        duration: 600, stackable: false, stackPolicy: 'refresh',
-        description: '开局前10分钟：魔法抗性+25' },
-    ],
-  },
-
   // 用户定稿（Q4 修正版）："内塔+800护盾，+50固定护盾。给周围友军单位+50护盾。"
   // 内塔已经默认装 passive_inner_bulwark（钢铁烈阳护盾，见 towerPassives.js），
   // 不需要另开一条新技能/新属性——走既有的"地图级技能参数覆写"通道（skillParams.js）
   // 把这张图上内塔那份的 selfPlainValue/selfFixedValue 改成 800/50；分享给友军的
   // allyPlainValue 留着出厂默认 50 不动。全局默认（其它地图/编辑器新建的内塔）不受影响。
+  //
+  // 外塔开局限时护甲/魔抗（原来叫"前期城防"）：v51.18 配合外塔双抗砍到15的改动，
+  // 加了这条开局前10分钟+25/+25 的补偿，让前期双抗等效40（与改动前持平），到期后
+  // 回落到砍过的15。v51.26 用户定稿把它从"地图级默认状态（tierEffects，跟塔有没有
+  // 装技能无关，无条件糊上）"收进 passive_outer_fortify 技能本身——"前期城防整个到
+  // 技能（加固城防）里面，不再默认装配在地图上，只有加固城防的技能的塔才会有这个
+  // 开局加成"。数值走跟内塔护盾同一套 defaultParams 覆写通道（见 towerPassives.js
+  // 的 _makeFortify/_fortifyRecalc），出厂默认是 0（不生效），这里覆写成 25/600
+  // 才让召唤师峡谷的外塔真的拿到——其它地图的外塔维持出厂默认，不受影响。
   skillOverrides: {
     'tower:inner': { passive_inner_bulwark: { selfPlainValue: 800, selfFixedValue: 50 } },
+    'tower:outer': { passive_outer_fortify: { earlyDefenseBonus: 25, earlyDefenseDuration: 600 } },
   },
 
   // === Wave timing (classic defaults) ===

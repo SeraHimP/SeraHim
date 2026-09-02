@@ -53,30 +53,73 @@ function _fortifyRecalc(entityId, instance, ctx, nodes, meta) {
       }
     }
   }
+
+  // ==================== v51.26：前期城防（开局限时护甲/魔抗）收进技能本身 ====================
+  // 原来是召唤师峡谷地图数据里一条独立的 tierEffects.outer，只要这张图的外塔一生成
+  // 就无条件糊上，跟这座塔到底有没有装"加固城防"技能完全无关——哪怕编辑器把外塔的
+  // 加固城防拆了，这层前期加成照样在。用户定稿："前期城防整个到技能里面，不再默认
+  // 装配在地图上，只有加固城防的技能的塔才会有这个开局加成"。
+  // 数值走跟 regen 同一套 defaultParams + map.skillOverrides 覆写通道（召唤师峡谷在
+  // summoners_rift.js 里把 earlyDefenseBonus/earlyDefenseDuration 覆写成 25/600，
+  // 其它地图/其它层级维持出厂默认 0 = 不生效）。
+  //
+  // 跟 regen 不一样的地方：这是个**限时**buff（到点就该真的消失，不是一直续满），
+  // 不能像 regen 那样每 0.3s 都 apply 一次——effectRegistry 的 stackPolicy:'refresh'
+  // 会把每次 apply 都当成"续满剩余时间"，0.3s 刷一次等于永远续满、事实上变成永久。
+  // 所以只在【第一次算出覆写值】时 apply 一次（instance.state 记一次性标记），
+  // 之后交给 duration 自己倒计时到期——跟 onEquip 不能直接做这件事的原因一样：
+  // onEquip 那一刻 instance._params 还没被 CombatSystem 注入地图覆写值，写死在
+  // 闭包里的出厂默认（0）会赢，读不到召唤师峡谷的 25/600。
+  if (!instance.state._earlyDefenseApplied) {
+    instance.state._earlyDefenseApplied = true;
+    const bonus = (instance._params && typeof instance._params.earlyDefenseBonus === 'number')
+      ? instance._params.earlyDefenseBonus : meta.earlyDefenseBonus;
+    const dur = (instance._params && typeof instance._params.earlyDefenseDuration === 'number')
+      ? instance._params.earlyDefenseDuration : meta.earlyDefenseDuration;
+    if (bonus > 0) {
+      const mins = Math.round(dur / 60);
+      ctx.effectRegistry.apply(entityId, {
+        name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'armor', flatValue: bonus,
+        duration: dur, stackable: false, stackPolicy: 'refresh',
+        description: `开局前${mins}分钟：护甲+${bonus}`,
+      }, id + '_early_armor');
+      ctx.effectRegistry.apply(entityId, {
+        name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'magicResist', flatValue: bonus,
+        duration: dur, stackable: false, stackPolicy: 'refresh',
+        description: `开局前${mins}分钟：魔法抗性+${bonus}`,
+      }, id + '_early_mr');
+    }
+  }
 }
 
-function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
+function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel, earlyDefenseBonus = 0, earlyDefenseDuration = 600 }) {
   const nodesTxt = nodes.map(n => Math.round(n * 100) + '%').join('/');
   // v37：regen 可为 0（外/内塔版加固城防：只有节点封顶，不提供恢复数值）
   const regenTxt = regen > 0 ? `${tierLabel}获得${regen}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
-  const meta = { id, name, icon, regen, nodesTxt };
+  const meta = { id, name, icon, regen, nodesTxt, earlyDefenseBonus, earlyDefenseDuration };
+  // v51.26：前期城防文案片段——出厂默认 earlyDefenseBonus=0 时不出现这句，
+  // 只有地图覆写把它调大于 0（目前只有召唤师峡谷外塔）才会加上这句。
+  const earlyTxt = (bonus, dur) => bonus > 0 ? `开局前${Math.round(dur / 60)}分钟额外获得${bonus}护甲和${bonus}魔法抗性，` : '';
   return {
     id, name, icon,
     category: 'passive',
     // 加固城防固定四个塔层各一份变体，永远只装在塔身上。
     applicableTypes: ['tower'],
     // 恢复数值可按地图覆写（map.skillOverrides['tower:base'].passive_base_fortify = { regen: 1.5 }）。
+    // earlyDefenseBonus/earlyDefenseDuration 同理（召唤师峡谷外塔覆写成 25/600）。
     // 声明 defaultParams 才会被 CombatSystem 注入覆写 —— 见 _fortifyRecalc 里那段说明。
-    defaultParams: { regen },
-    // 文案跟着实际生效的 regen 走，不写死出厂值（地图改了 1→1.5，面板必须也是 1.5）
+    defaultParams: { regen, earlyDefenseBonus, earlyDefenseDuration },
+    // 文案跟着实际生效的 regen/earlyDefenseBonus 走，不写死出厂值（地图改了覆写值，面板必须跟着变）
     getDescTemplate: (entity, instance) => {
-      const r = (instance && instance._params && typeof instance._params.regen === 'number')
-        ? instance._params.regen : regen;
+      const p = (instance && instance._params) || {};
+      const r = typeof p.regen === 'number' ? p.regen : regen;
+      const b = typeof p.earlyDefenseBonus === 'number' ? p.earlyDefenseBonus : earlyDefenseBonus;
+      const d = typeof p.earlyDefenseDuration === 'number' ? p.earlyDefenseDuration : earlyDefenseDuration;
       const t = r > 0 ? `${tierLabel}获得${r}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
-      return `唯一被动——${name}：${t}生命恢复不超过生命值节点（{val}为当前封顶节点）。`;
+      return `唯一被动——${name}：${earlyTxt(b, d)}${t}生命恢复不超过生命值节点（{val}为当前封顶节点）。`;
     },
-    description: `${regenTxt}生命恢复不超过生命值节点（${nodesTxt}）。`,
-    descTemplate: `唯一被动——${name}：${regenTxt}生命恢复不超过生命值节点（{val}为当前封顶节点）。`,
+    description: `${earlyTxt(earlyDefenseBonus, earlyDefenseDuration)}${regenTxt}生命恢复不超过生命值节点（${nodesTxt}）。`,
+    descTemplate: `唯一被动——${name}：${earlyTxt(earlyDefenseBonus, earlyDefenseDuration)}${regenTxt}生命恢复不超过生命值节点（{val}为当前封顶节点）。`,
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       // 这里挂的是**出厂值**（_params 要等 CombatSystem 第一帧才注入，读不到地图覆写），
@@ -101,7 +144,9 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel }) {
       const e = ctx.entityContainer.get(entityId);
       if (e) delete e._regenCapHP; // 卸下即解除封顶
       for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-        if (eff.blueprint.name === name) ctx.effectRegistry.remove(eff.id);
+        // 前期城防（'前期城防'）跟这个变体自己的名字（如"外塔加固城防"）不是同一个
+        // blueprint.name，卸下技能时要一起摘掉，不然拆了技能这层加成还留在身上。
+        if (eff.blueprint.name === name || eff.blueprint.name === '前期城防') ctx.effectRegistry.remove(eff.id);
       }
     },
     getDisplayValue: (instance) => (instance.state?._capPct ?? 100) + '%',

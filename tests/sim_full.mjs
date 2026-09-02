@@ -31,14 +31,20 @@ function mkBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats }) {
     targetId: null, _skillInstances: [], _mapFaction: faction, _mapTier: tier, _laneId: laneId || null, faction };
   e.currentHP = e.baseStats.maxHP; ents.add(e);
   // v51.18：这个简化 stub 完全不装配技能/被动（加固城防、塔成长等都没有），
-  // 但地图级默认状态（tierEffects，召唤师峡谷外塔开局前7分钟的临时双抗）走的是
-  // 独立通路，不依赖技能系统——真实游戏里外塔前7分钟靠它补足双抗，这个冒烟
-  // 测试不接上的话，量出来的塔会比真实游戏里脆得多，"前期(240s)建筑无损"这条
-  // 不变式在真实游戏里成立、在这里却会被误报成回归（见 factories.js
-  // createBuilding 同一处逻辑，mapSys.currentMap 在 loadMap() 里已经设好）。
-  const tierEffects = mapSys.currentMap?.tierEffects?.[tier];
-  if (Array.isArray(tierEffects)) {
-    for (const bp of tierEffects) fx.apply(e.id, { ...bp }, 'map_effect_tier');
+  // 但真实游戏里外塔靠"加固城防"技能（passive_outer_fortify）自带的开局限时双抗
+  // 补足前期防御（v51.26：这条已经从地图级独立通路收进技能本身，见 towerPassives.js
+  // _fortifyRecalc + summoners_rift.js 的 skillOverrides）——这个冒烟测试不接上的话，
+  // 量出来的塔会比真实游戏里脆得多，"前期(240s)建筑无损"这条不变式在真实游戏里成立、
+  // 在这里却会被误报成回归。这个 stub 本来就不装任何技能实例，跟下面的"钢铁防线"
+  // 一样直接复刻效果本体（不经过 equipSkill/skillOverrides 解析那一层），数值跟
+  // summoners_rift.js 里的覆写值（25/600）保持一致。
+  if (tier === 'outer') {
+    fx.apply(e.id, { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'armor', flatValue: 25,
+      duration: 600, stackable: false, stackPolicy: 'refresh',
+      description: '开局前10分钟：护甲+25' }, 'passive_outer_fortify_early_armor');
+    fx.apply(e.id, { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'magicResist', flatValue: 25,
+      duration: 600, stackable: false, stackPolicy: 'refresh',
+      description: '开局前10分钟：魔法抗性+25' }, 'passive_outer_fortify_early_mr');
   }
   // v51.19：外塔在真实游戏里默认还装了"钢铁防线"（passive_iron_line：开局300秒
   // +33%伤害减免），这个 stub 同样从来没接过——加上 tierEffects 之后仍然偶发

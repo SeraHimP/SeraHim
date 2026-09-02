@@ -336,17 +336,11 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
   if (Array.isArray(tierEffects)) {
     for (const bp of tierEffects) effectRegistry.apply(entity.id, { ...bp }, 'template_effect_tier');
   }
-  // v51.18：地图级默认状态（与上面全局 CONFIG.towerTierEffects 是两条独立通路）。
-  // 用户："召唤师峡谷外塔新增开局就默认获得的状态（持续7分钟）：获得25护甲和
-  // 魔法抗性"——这条只该在召唤师峡谷生效，不能借用全局 towerTierEffects（那个
-  // 会漏到嚎哭深渊/扭曲丛林等其它地图的外塔上）。mapSystem 本来就是这个文件
-  // 的注入依赖（见上面 minionDefaultPassives/lanes 那两处同样读 currentMap 的
-  // 用法），地图数据自己带一份 tierEffects 字段（见 summoners_rift.js），
-  // 与全局那份分开读、都读的话两边各自生效，不冲突。
-  const mapTierEffects = mapSystem.currentMap?.tierEffects?.[tier];
-  if (Array.isArray(mapTierEffects)) {
-    for (const bp of mapTierEffects) effectRegistry.apply(entity.id, { ...bp }, 'map_effect_tier');
-  }
+  // v51.18 曾在这里加过一条"地图级默认状态"（mapSystem.currentMap?.tierEffects?.[tier]），
+  // 专门给召唤师峡谷外塔糊一份开局限时双抗（"前期城防"）。v51.26 已经把它收进
+  // passive_outer_fortify 技能本身（见 towerPassives.js _fortifyRecalc + summoners_rift.js
+  // 的 skillOverrides），不再需要这条跟技能系统平行、无条件生效的独立通路——现在
+  // 已经没有任何地图数据会填 tierEffects 这个字段，这一段连同它一起删掉，不留死分支。
 
   // ==================== 同一处 bug：地图上真正的塔（对局用的那份）也漏了这一步 ====================
   // 顺着"龙魂对大型小兵不生效"往下查，发现 createTower()（手动放置的单座塔）读了
