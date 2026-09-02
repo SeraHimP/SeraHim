@@ -176,15 +176,17 @@ const mkE = (ents, type, x, y, extra = {}) => {
   // 地图闸门
   T('巨④-没注入地图查找时不拦（尚未载入地图数据，默认放行）', ds.mapAllowsDragon() === true);
   ds.setMapLookup((id) => (id === 'yes' ? { dragon: { enabled: true } } : { }));
-  bus.emit('map:loaded', { mapId: 'no' });
+  // v51.23：DragonSystem 换成挂 map:loading（不再是 map:loaded）——resetRun 必须在
+  // 建塔之前触发，见 DragonSystem.js 那段修复注释。测试用的信号跟着改用真实事件名。
+  bus.emit('map:loading', { mapId: 'no' });
   T('巨⑤-地图没声明 dragon → 不生成', ds.mapAllowsDragon() === false);
-  bus.emit('map:loaded', { mapId: 'yes' });
+  bus.emit('map:loading', { mapId: 'yes' });
   T('巨⑥-地图声明了 dragon → 生成', ds.mapAllowsDragon() === true);
 
   // 换图重置
   ds.elementDragonSpawned = 4; ds.totalKills = 3; ds.soulUnlocked = true;
   ds.factionTotals.blue = 4;
-  bus.emit('map:loaded', { mapId: 'yes' });
+  bus.emit('map:loading', { mapId: 'yes' });
   T('巨⑦-换地图把局内进度整个清零（否则换图后可能直接出远古龙）',
     ds.elementDragonSpawned === 0 && ds.totalKills === 0
     && ds.soulUnlocked === false && ds.factionTotals.blue === 0);

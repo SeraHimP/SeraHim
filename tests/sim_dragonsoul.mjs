@@ -336,4 +336,46 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     ds._applyElementBuffToTower === undefined && typeof ds._applyElementBuff === 'function');
 }
 
+// ==================== ⑬ v51.23：换图不再把上一局的龙魂/巨龙之力带进新一局 ====================
+// 用户报告："切换地图时上局残留的龙魂会应用到新的一盘中，导致我每次想要真正的从零
+// 开始需要刷新网页。" 根因：MapSystem.loadMap() 的真实顺序是 clearCurrentMap()（清旧塔）
+// → 发 map:loading → **逐个建新塔（这一步会调 equipExistingSoul，把"本阵营已有的
+// 龙之奖励"补给新塔）** → 发 map:loaded。resetRun() 原来挂在 map:loaded 上，等它清空
+// 时新塔已经在建塔那一步把上一局的旧数据当成"已有奖励"吃进去了——这里直接复现
+// 这个时序，不只是调一下 resetRun() 就完事。
+{
+  const { bus, ds, fx, killBy } = mk();
+
+  // ① 模拟"上一局"：蓝方杀了 2 条山龙，全场领受者应该带着 2 层山龙之力
+  for (let i = 0; i < 2; i++) killBy('blue', 'earth');
+  T('⑬-上一局：蓝方确实拿到了2层山龙击杀记录（先确认残留数据是真的存在）',
+    ds.factionKills.blue.earth === 2);
+
+  // ② 模拟"切换地图"：真实 MapSystem.loadMap() 的顺序是先发 map:loading（这里挂的
+  // resetRun 应该在这一刻清空一切），再才逐个建新塔——用紧跟着手动调
+  // equipExistingSoul 模拟"新塔刚被建出来"这一步。
+  bus.emit('map:loading', { mapId: 'howling_abyss_v1' });
+  const newTower = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.tower }, currentHP: 9000,
+    _skillInstances: [], _mapFaction: 'blue', faction: 'blue', _mapTier: 'outer' };
+  const gotAny = ds.equipExistingSoul(newTower);
+  T('⑬-新地图的新塔建出来时，resetRun 已经先清空了——equipExistingSoul 无事可做',
+    gotAny === false && fx.getEffects(newTower.id).length === 0);
+  T('⑬-DragonSystem 的击杀/奖励簿记确实清零了，不是巧合没触发',
+    Object.keys(ds.factionKills.blue).length === 0 && ds.factionTotals.blue === 0);
+
+  // ③ 新地图里蓝方杀的第一条山龙，新塔身上应该是干干净净的1层，不是"3层"
+  //（2层残留 + 1层新的）。newTower 是手搭的、不在 mk() 的 ents 容器里，
+  // 直接调内部记账+应用两步，与 killBy 内部真正做的事等价（killBy 本身也是靠
+  // entity:death 事件间接触发同一段逻辑，这里跳过事件只是省得再搭一个 ents.add）。
+  ds.killCounts.earth = (ds.killCounts.earth || 0) + 1;
+  ds.totalKills++;
+  ds.factionKills.blue.earth = (ds.factionKills.blue.earth || 0) + 1;
+  ds.factionTotals.blue++;
+  ds._applyElementBuff(newTower, 'earth');
+  const earthEff = fx.getEffects(newTower.id).find(e => e.blueprint.stackKey?.startsWith('dragon_earth_'));
+  T('⑬-新地图第一次杀山龙，新塔身上的山龙之力正好是1层（不是带着上一局残留的3层）',
+    !!earthEff && earthEff.stacks === 1);
+}
+
 board.done();

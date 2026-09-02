@@ -133,9 +133,22 @@ export class DragonSystem {
    * 挂在 map:loaded 上而不是让 main.js 去调：这条规则属于巨龙系统自己，
    * 放在外面就会出现"某个新的载图入口忘了调"——本仓库刚因为同类问题
    *（龙的两条出生路径）踩过一次。
+   *
+   * ==================== v51.23 修复：改挂 map:loading，不再挂 map:loaded ====================
+   * 用户报告："切换地图时上局残留的龙魂会应用到新的一盘中，导致我每次想要真正的
+   * 从零开始需要刷新网页。" 排查结论：resetRun() 挂的时机晚了一步。
+   * MapSystem.loadMap() 的顺序是：clearCurrentMap()（清掉旧塔）→ 发 map:loading →
+   * **逐个建新塔**（createBuildingFn 内部会调 dragonSystem.equipExistingSoul(entity)，
+   * 给每座新塔按 this.factionKills/this.souls/this.ancientPowerStacks 补发"本阵营已有的
+   * 龙之奖励"——这是给"中途新增单位"设计的正常机制，见 equipExistingSoul 头注）→
+   * 最后才发 map:loaded。resetRun() 原来挂在 map:loaded 上，等它真正清空这几个字段时，
+   * 新地图的塔早就在【建塔那一步】把上一局还没清空的旧数据当成"已有奖励"吃进去了——
+   * 这就是"上局龙魂应用到新的一盘"的根因，不是清空逻辑本身有漏项，是清空的时机在
+   * 建塔之后。改挂 map:loading（在建塔之前触发）即可让新塔在一张真正干净的白板上
+   * 创建，equipExistingSoul 读到的 factionKills/souls/ancientPowerStacks 全是空的。
    */
   _bindMap() {
-    this.eventBus.on('map:loaded', ({ mapId }) => {
+    this.eventBus.on('map:loading', ({ mapId }) => {
       this.resetRun();
       const m = this._mapOf ? this._mapOf(mapId) : null;
       this._mapDragon = m ? (m.dragon?.enabled === true) : null;

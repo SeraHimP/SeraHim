@@ -255,9 +255,12 @@ ms.loadMap('summoners_rift_v1', MODES.classic.id);
 {
   const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
   ds.setMapLookup((id) => ms.getMapById(id));
-  bus.emit('map:loaded', { mapId: 'summoners_rift_v1_classic' });
+  // v51.23：DragonSystem 换成挂 map:loading（不再是 map:loaded）——见 DragonSystem.js
+  // 那段修复注释，resetRun 必须在建塔之前触发，这里跟着改用真实事件名，
+  // 不然测试用的信号和游戏里实际发生的对不上。
+  bus.emit('map:loading', { mapId: 'summoners_rift_v1_classic' });
   T('龙①-经典模式不自动生成龙', ds.mapAllowsDragon() === false);
-  bus.emit('map:loaded', { mapId: 'summoners_rift_v1' });
+  bus.emit('map:loading', { mapId: 'summoners_rift_v1' });
   T('龙②-换回召唤师峡谷普通模式仍然生成（闸门是按图判的，不是全局关掉）',
     ds.mapAllowsDragon() === true);
 }
