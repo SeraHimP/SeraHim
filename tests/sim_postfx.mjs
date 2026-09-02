@@ -18,7 +18,9 @@ const postfx = srcOf('src/presentation/PostFX.js');
 const settings = srcOf('src/ui/SettingsDialog.js');
 
 // ==================== ThreeRenderer 开关方法 ====================
-T('渲①-ThreeRenderer 声明 outlineOn/ssaoOn 默认状态字段', /this\.outlineOn\s*=\s*true/.test(renderer) && /this\.ssaoOn\s*=\s*true/.test(renderer));
+// v51.28：outline 有画面 bug，默认值改成了 false（禁用），bug 修好前不该被这条断言逼着改回 true。
+T('渲①-ThreeRenderer 声明 outlineOn/ssaoOn 默认状态字段（outline 因 bug 默认关，ssao 仍默认开）',
+  /this\.outlineOn\s*=\s*false/.test(renderer) && /this\.ssaoOn\s*=\s*true/.test(renderer));
 T('渲②-setOutline(on) 方法存在且写回 outlinePass.enabled', /setOutline\(on\)\s*\{[^}]*outlinePass[^}]*enabled[^}]*\}/.test(renderer));
 T('渲③-setSSAO(on) 方法存在且写回 ssaoPass.enabled', /setSSAO\(on\)\s*\{[^}]*ssaoPass[^}]*enabled[^}]*\}/.test(renderer));
 T('渲④-_buildComposer 里描边/SSAO 的 enabled 初值来自 outlineOn/ssaoOn（不是永远开）',

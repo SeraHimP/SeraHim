@@ -1006,10 +1006,12 @@ export const CONFIG = {
     // 可开关"的写法，只是分档系统再包一层"一键切一整套"）。自动模式按帧时（复用
     // main.js 已有的 PERF.render 采样，不再另开一条测量）在三档间动态切换，见
     // ThreeRenderer.setQualityPreset / _autoAdjustQuality。
+    // v51.28：outline 三档全部改 false——用户报了轮廓描边的画面 bug，先禁用，
+    // bug 以后再查再修。等 bug 修好，medium/high 想恢复描边只需要把这两个 true 改回来。
     qualityPresets: {
       low:    { shadow: 'off',    bloom: false, outline: false, ssao: false, resolutionScale: 0.6 },
-      medium: { shadow: 'static', bloom: true,  outline: true,  ssao: false, resolutionScale: 0.85 },
-      high:   { shadow: 'all',    bloom: true,  outline: true,  ssao: true,  resolutionScale: 1.0 },
+      medium: { shadow: 'static', bloom: true,  outline: false, ssao: false, resolutionScale: 0.85 },
+      high:   { shadow: 'all',    bloom: true,  outline: false, ssao: true,  resolutionScale: 1.0 },
       // 自动档的帧时判据（毫秒，对应 main.js PERF.render 的 250ms 窗口均值）：
       // 连续 autoDownTicks 次超过 autoDownMs 就降一档；连续 autoUpTicks 次低于
       // autoUpMs 才升一档——升档要求的次数更多，"偶尔快一帧"不该立刻贸然提画质，

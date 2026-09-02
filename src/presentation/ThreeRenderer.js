@@ -118,7 +118,10 @@ export class ThreeRenderer {
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
     this.toneMapOn = true;   // 电影级色调（ACES）
-    this.outlineOn = true;   // Week2·Day8-9：轮廓描边，默认开（低多边形风格化的关键一步）
+    // v51.28：用户报了轮廓描边的画面 bug，先禁用，bug 以后再查再修——不要因为这里
+    // 顺手把默认值改回 true。OutlinePass 本身（createOutlinePass）没删，setOutline(true)
+    // 仍然能手动开，只是不再默认开。
+    this.outlineOn = false;
     this.ssaoOn = true;      // Week2·Day9-10：SSAO，默认开
 
     this.scene = new THREE.Scene();
