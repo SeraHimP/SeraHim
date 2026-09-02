@@ -36,7 +36,7 @@ import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
-import { MinionInstancer, InstancedUnitProxy } from './InstancedMinionLayer.js';
+import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
 import { towerFacingRad } from './towerFacing.js';
 import { stepTrail, stepEase, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
@@ -123,13 +123,13 @@ export class UnitLayer {
     this.infoObjs = 0;             // E 组场景对象计数（sceneStats 用：children = 2×tracked + infoObjs + fx）
     this.pxPerUnit = 1;            // 像素/世界单位（每帧由 ThreeRenderer 注入；正交相机 = zoom×DPR）
     this.particlesOn = true;       // 水晶粒子开关（设置面板）
-    // v51.30：小兵本体合批——见 InstancedMinionLayer.js 头注。塔/龙/废墟/幽灵水晶
-    // 仍走原来的独立 Mesh/Group 路径（_isInstancedType 判据）。
-    this.minionInst = new MinionInstancer(this.scene);
+    // v51.30/v51.31：单位本体合批（小兵+塔）——见 InstancedBodyLayer.js 头注。
+    // 龙不合批（数量少、颜色任意导致 key 天然碎，合批收益趋近于零）。
+    this.bodyInst = new BodyInstancer(this.scene);
   }
 
-  /** 谁走合批路径：塔（含损毁/幽灵）与龙不合批——数量少或几何 key 本来就碎，不值得。 */
-  _isInstancedType(e) { return e.type !== 'tower' && e.type !== 'dragon'; }
+  /** 谁走合批路径：龙不合批（数量少、颜色任意导致 key 天然碎），其余（塔+全部小兵）都走。 */
+  _isInstancedType(e) { return e.type !== 'dragon'; }
 
 
   // ============ 单位外观（key + 贴图）：与 CanvasRenderer 渲染循环同口径 ============
@@ -379,8 +379,11 @@ export class UnitLayer {
 
   // Q6：水晶件的材质是【逐塔独立】的（攻击辉光要单独调），切换外观/移除时必须释放。
   // 水晶几何是共享缓存（不释放）；子物体粒子（Points）的几何/材质逐塔独立（释放）。软圆点贴图全局共享（不释放）。
+  // v51.31：本体合批之后水晶不再是 en.unit 的子物体（本体现在多半是合批槽位，没有
+  // 子物体这个概念了），水晶是场景里的独立顶层 Mesh，这里必须显式摘场景，否则会漏删。
   _disposeCrystal(en) {
     if (!en.crystal) return;
+    this.scene.remove(en.crystal); this.infoObjs--;
     if (en.crystal.material) en.crystal.material.dispose();
     en.crystal.traverse(o => { if (o.isPoints) { o.geometry.dispose(); o.material.dispose(); } });
     en.crystal = null; en.crystalPts = null;
@@ -388,7 +391,13 @@ export class UnitLayer {
 
   // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
   _applyUnitShadow(en) {
-    if (en.unit.isInstancedProxy) return;   // 合批单位的阴影是整批一份，见 setShadowLevel 里对 minionInst 的调用
+    // v51.31：水晶是独立顶层 Mesh，不归 en.unit 管了（本体合批之后没有"子物体"这回事），
+    // 阴影要单独下发；水晶只有塔才有，用 en.isTower 同一个判据。
+    if (en.crystal) {
+      en.crystal.castShadow = this.shadowLevel === 'all' || (this.shadowLevel === 'static' && en.isTower);
+      en.crystal.receiveShadow = this.shadowLevel !== 'off';
+    }
+    if (en.unit.isInstancedProxy) return;   // 合批单位的阴影按桶设置，见 setShadowLevel 里对 bodyInst 的调用
     const cast = this.shadowLevel === 'all' || (this.shadowLevel === 'static' && en.isTower);
     const recv = this.shadowLevel !== 'off';
     en.unit.traverse(o => { if (o.isMesh) { o.castShadow = cast; o.receiveShadow = recv; } });
@@ -470,7 +479,7 @@ export class UnitLayer {
     for (const m of this._matCache.values()) m.dispose();
     this._matCache.clear();
     if (this._shieldTex) { this._shieldTex.dispose(); this._shieldTex = null; }
-    this.minionInst.dispose();
+    this.bodyInst.dispose();
   }
 
   // 第 6.1 步：接收阴影档位。当前单位仍是 Sprite（Sprite 不参与阴影），故这里只是存档；
@@ -499,8 +508,8 @@ export class UnitLayer {
     this.shadowLevel = level;
     // 已在场的单位立即生效：visKey 未变不会重走装配分支，故这里直接刷一遍
     for (const en of this.map.values()) this._applyUnitShadow(en);
-    // 合批小兵没有 en.isTower 这种个体判据（全体走同一套阴影规则），批量设一次即可。
-    this.minionInst.setShadowLevel(level === 'all', level !== 'off');
+    // 合批单位按桶（塔/小兵）套各自的阴影规则，见 InstancedBodyLayer.shadowFor。
+    this.bodyInst.setShadowLevel(level);
   }
 
   // A：防御塔朝向 = 沿本路兵线【朝敌方来兵方向】。取最近车道段的切向，按"指向敌方基地中心"
@@ -921,37 +930,45 @@ export class UnitLayer {
       en.facing = !!vis.facing;
       en.topY = vis.topY;
       en.muzzleY = vis.muzzleY != null ? vis.muzzleY : vis.topY;
-      if (vis.crystal) {
-        // Q6：程序化塔/水晶 + 独立水晶件 → Group(石身 Mesh + 会转/发光的水晶 Mesh)。
-        this._disposeCrystal(en);
-        const g = new THREE.Group();
-        g.add(new THREE.Mesh(vis.geo, vis.mat));               // 石身：共享几何/材质
-        const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
-        cm.position.set(0, vis.crystal.cy, 0);
-        const pts = crystalParticles(vis.crystalColor, vis.crystal.r || 8);  // Q6：绕水晶公转的发光粒子（随水晶慢转）
-        cm.add(pts); en.crystalPts = pts;
-        g.add(cm);
-        this._installUnit(en, g);
-        en.crystal = cm; en.unitIsModel = false;
-      } else if (this._isInstancedType(e)) {
-        // v51.30：小兵合批——本体不再是独立 Mesh，而是共享 InstancedMesh 里的一个槽位。
-        // 见 InstancedMinionLayer.js 头注：小兵的几何 key 本来就已经把颜色/造型正确
-        // 归到同一份共享几何，是 InstancedMesh 的标准场景。
-        this._disposeCrystal(en);
+      // ==================== 本体：塔+小兵合批，龙独立 Mesh ====================
+      // v51.31：水晶（若有）与本体路径【无关】——它是逐塔独立数据（攻击充能要单写
+      // material.emissiveIntensity），从来就不适合合批，本体走哪条路都要单独处理它，
+      // 见下面 `if (vis.crystal)` 那一段，与这里的 if/else 是两件独立的事。
+      if (this._isInstancedType(e)) {
+        // v51.30/v51.31：本体合批——不再是独立 Mesh，而是共享 InstancedMesh 里的一个槽位。
+        // 见 InstancedBodyLayer.js 头注：小兵/塔的几何 key 本来就已经把颜色/造型正确
+        // 归到同一份共享几何，vis.key 变化（含塔的损毁档跳变/幽灵/废墟）天然由
+        // bindSlot 换桶处理，不需要额外的迁移代码。
         if (!en.unit || !en.unit.isInstancedProxy) {
           if (en.unit) this.scene.remove(en.unit);   // 摘掉首次装配时 _makeEntry 建的占位 Mesh
-          en.unit = new InstancedUnitProxy(this.minionInst);
+          en.unit = new InstancedUnitProxy(this.bodyInst);
         }
-        en.unit.bindSlot(vis.key, vis.geo, vis.mat);
+        en.unit.bindSlot(vis.key, vis.geo, vis.mat, en.isTower);
         en.unitIsModel = false;
       } else {
-        // 单 Mesh（龙/废墟/重生水晶）：从 Group（模型/水晶塔）或合批槽位切回时重建 Mesh 壳，否则换共享几何/材质引用。
-        this._disposeCrystal(en);
+        // 单 Mesh（龙）：从合批槽位切回时重建 Mesh 壳，否则换共享几何/材质引用。
         if (!en.unit || !en.unit.isMesh) {
           if (en.unit && en.unit.isInstancedProxy) en.unit.releaseSlot();
           this._installUnit(en, new THREE.Mesh(vis.geo, vis.mat)); en.unitIsModel = false;
         }
         else { en.unit.geometry = vis.geo; en.unit.material = vis.mat; }
+      }
+
+      if (vis.crystal) {
+        // Q6：水晶单独成件（自转/发光/攻击充能都是逐塔独立数据，天然不适合合批）。
+        // v51.31：本体合批之后水晶不再是 Group 的子物体，改成场景里的独立顶层 Mesh——
+        // 位置/朝向不再靠父子关系自动继承，由下面"水晶慢转 + 攻击辉光"那段每帧显式赋值
+        //（局部偏移量 crystalLocalY 记在 entry 上，同一个道理见那段的头注）。
+        this._disposeCrystal(en);
+        const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
+        cm.renderOrder = ORDER_UNIT;
+        this.scene.add(cm); this.infoObjs++;
+        const pts = crystalParticles(vis.crystalColor, vis.crystal.r || 8);  // Q6：绕水晶公转的发光粒子（随水晶慢转）
+        cm.add(pts); en.crystalPts = pts;
+        en.crystal = cm;
+        en.crystalLocalY = vis.crystal.cy;
+      } else if (en.crystal) {
+        this._disposeCrystal(en);
       }
       this._applyUnitShadow(en);
       en.bar.scale.set(vis.barW, vis.barH, 1);
@@ -1007,9 +1024,14 @@ export class UnitLayer {
 
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
     if (en.crystal) {
+      // v51.31：水晶不再是塔身的子物体（塔身合批之后没有"子物体"这个概念了），
+      // 位置/朝向要在这里显式同步——crystalLocalY 是建造时算好的局部偏移
+      // （护柱/台阶顶端往上多少），(en.faceFixed||0) 补回原来"作为子物体继承父级
+      // yaw"的那部分朝向（水晶造型高度对称，这个补偿肉眼几乎看不出来，但补上更精确）。
+      en.crystal.position.set(e.pos.x, gy + walkBob + (en.crystalLocalY || 0), e.pos.y);
       const cc = CONFIG.ui?.crystal || {};
       const spin = cc.spin ?? CRYSTAL_SPIN;
-      en.crystal.rotation.y = tNow * spin;
+      en.crystal.rotation.y = (en.faceFixed || 0) + tNow * spin;
       // 粒子尺寸：正交相机下 gl_PointSize 是【像素】且不随缩放变，必须自己按 像素/世界单位 换算，
       // 否则缩小看全图时粒子把塔糊成一团。上限 CRYSTAL_PT_MAX_PX 防近距离过大。
       if (en.crystalPts) {

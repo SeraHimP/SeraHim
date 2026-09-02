@@ -1,15 +1,21 @@
-// v51.30：小兵本体合批（InstancedMesh）——docs/Q4-RENDERING-REDESIGN.md §1.2 记的数：
-// 44 塔 + 100~200 小兵同屏时每个单位各自一次 draw call。小兵数量是大头，且几何 key
-// （`m|${type}|${faction}`）本来就已经把同类型同阵营小兵的颜色/造型正确归到同一份
-// 共享几何——不需要为自定义兵种皮肤做 instanceColor 改造（验证过：自定义兵种的
-// `e.type` 本身就是唯一模板 id，颜色天然不会跨兵种混进同一个几何 key）。
-// 塔的 key 空间已经很碎（tier×faction×损毁档×废墟，见 UnitMeshFactory.towerMesh），
-// 真正能合批的量很少，且要拆水晶发光风险不小，所以塔/龙不参与合批
-//（UnitLayer._isInstancedType 判据）。
+// v51.30/v51.31：单位本体合批（InstancedMesh，小兵 + 塔）——
+// docs/Q4-RENDERING-REDESIGN.md §1.2 记的数：44 塔 + 100~200 小兵同屏时每个单位各自
+// 一次 draw call。小兵数量是大头，几何 key（`m|${type}|${faction}`）本来就已经把
+// 同类型同阵营小兵的颜色/造型正确归到同一份共享几何——不需要为自定义兵种皮肤做
+// instanceColor 改造（验证过：自定义兵种的 `e.type` 本身就是唯一模板 id，颜色天然
+// 不会跨兵种混进同一个几何 key）。
+//
+// v51.31：塔也接进同一套机制。塔的几何 key（tier×faction×损毁档×废墟）本来就已经
+// 很碎，真正能合批的量不大，但架构上塔和小兵走的是同一套"vis.key 变了就 bindSlot
+// 换桶"，损毁档跳变/幽灵/废墟这些"换几何"场景天然由这套机制处理，不需要额外代码；
+// 塔的水晶（自转/发光/攻击充能，逐塔独立数据）不参与合批，改成场景里的独立顶层
+// Mesh，位置/朝向由 UnitLayer 每帧显式同步（不再靠"是 Group 子物体"自动继承）。
+// 龙不合批（数量少、颜色任意导致 key 天然碎，合批收益趋近于零）。
 //
 // 这里分两块测：
-//   ① InstancedMinionLayer.js 本身：不依赖 document，可以在 headless Node 里真实
-//      实例化几何/材质/InstancedMesh 做行为验证（不是只读源码正则）。
+//   ① InstancedBodyLayer.js 本身：不依赖 document，可以在 headless Node 里真实
+//      实例化几何/材质/InstancedMesh 做行为验证（不是只读源码正则），含塔小兵
+//      各自的阴影规则要按桶区分这件事。
 //   ② UnitLayer.js 的接线：这个文件 import 了 three 且 `_makeEntry` 会
 //      `document.createElement('canvas')`，headless 下不能真实 new UnitLayer(scene)
 //      ——这是本仓库既有的测试边界（sim_lightring.mjs 头注写明了同样的限制，
@@ -19,22 +25,22 @@ import * as THREE from '../vendor/three.module.js';
 
 globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0, CTX: {} };
 
-const { MinionInstancer, InstancedUnitProxy } = await import('../src/presentation/InstancedMinionLayer.js');
+const { BodyInstancer, InstancedUnitProxy } = await import('../src/presentation/InstancedBodyLayer.js');
 const { UnitLayer } = await import('../src/presentation/UnitLayer.js');
 
-const { T, done } = scoreboard('小兵合批（InstancedMesh）');
+const { T, done } = scoreboard('单位本体合批（InstancedMesh，小兵+塔）');
 
-// ==================== 一、MinionInstancer / InstancedUnitProxy：真实构建 ====================
+// ==================== 一、BodyInstancer / InstancedUnitProxy：真实构建 ====================
 {
   const scene = new THREE.Scene();
-  const inst = new MinionInstancer(scene);
+  const inst = new BodyInstancer(scene);
   const geo = new THREE.BoxGeometry(1, 1, 1);
   const mat = new THREE.MeshBasicMaterial();
 
   const proxies = [];
   for (let i = 0; i < 8; i++) {
     const p = new InstancedUnitProxy(inst);
-    p.bindSlot('m|melee|blue', geo, mat);
+    p.bindSlot('m|melee|blue', geo, mat, false);
     p.position.set(i * 10, 1, i * -3);
     p.scale.set(1, 1, 1);
     proxies.push(p);
@@ -55,7 +61,7 @@ const { T, done } = scoreboard('小兵合批（InstancedMesh）');
 
   // 旋转：rotation.y + rotation.z 要按 Object3D 默认欧拉序('XYZ')叠加，而不是互相覆盖
   const p9 = new InstancedUnitProxy(inst);
-  p9.bindSlot('m|melee|blue', geo, mat);
+  p9.bindSlot('m|melee|blue', geo, mat, false);
   p9.position.set(0, 0, 0);
   p9.rotation.y = 0.6;
   p9.rotation.z = 0.2;
@@ -78,19 +84,18 @@ const { T, done } = scoreboard('小兵合批（InstancedMesh）');
     return s.x === 0 && s.y === 0 && s.z === 0;
   })());
   const p10 = new InstancedUnitProxy(inst);
-  p10.bindSlot('m|melee|blue', geo, mat);
+  p10.bindSlot('m|melee|blue', geo, mat, false);
   T('新单位复用刚释放的槽位（自由表生效，不会无限增长 capacity）', p10._slot.index === freedIndex);
 
   // 不同 key → 不同桶
   const p11 = new InstancedUnitProxy(inst);
-  p11.bindSlot('m|ranged|red', geo, mat);
+  p11.bindSlot('m|ranged|red', geo, mat, false);
   T('不同几何 key 落在不同的桶（不会把不同类型/阵营的小兵混进同一个 InstancedMesh）',
     inst.buckets.get('m|ranged|red') !== bucket);
   T('不同桶各自新增一个 scene child', scene.children.length === 2);
 
   // 换 key（模拟阵营变化等场景）：旧槽位应该被释放
-  const oldBucketUsed = bucket.used;
-  p11.bindSlot('m|melee|blue', geo, mat);   // 从 ranged|red 换到 melee|blue
+  p11.bindSlot('m|melee|blue', geo, mat, false);   // 从 ranged|red 换到 melee|blue
   T('换桶后旧桶的槽位数不变（released 进自由表，没有额外分配）',
     inst.buckets.get('m|ranged|red').free.length === 1);
 
@@ -99,7 +104,7 @@ const { T, done } = scoreboard('小兵合批（InstancedMesh）');
   const growProxies = [];
   for (let i = 0; i < 40; i++) {   // 超过 INITIAL_CAPACITY(24)
     const p = new InstancedUnitProxy(inst);
-    p.bindSlot(growBucketKey, geo, mat);
+    p.bindSlot(growBucketKey, geo, mat, false);
     p.position.set(i, 0, 0);
     growProxies.push(p);
   }
@@ -109,13 +114,26 @@ const { T, done } = scoreboard('小兵合批（InstancedMesh）');
   m4.decompose(pos, q, s);
   T('扩容后早期写入的矩阵数据保留（没有在换 InstancedMesh 时丢失）', Math.abs(pos.x - 10) < 1e-6);
 
-  // 阴影档位：整批一份，不是逐实例
-  inst.setShadowLevel(true, true);
-  T('setShadowLevel 对已存在的桶立即生效', bucket.mesh.castShadow === true && bucket.mesh.receiveShadow === true);
+  // ==================== 阴影：塔与小兵走不同规则，逐桶而不是全局一份 ====================
+  const towerProxy = new InstancedUnitProxy(inst);
+  towerProxy.bindSlot('t|blue|outer', geo, mat, true);   // isTower=true
+  const towerBucket = inst.buckets.get('t|blue|outer');
+
+  inst.setShadowLevel('static');
+  T('static 档：塔桶投影（cast=true）', towerBucket.mesh.castShadow === true);
+  T('static 档：小兵桶不投影（cast=false，和塔不是同一条规则）', bucket.mesh.castShadow === false);
+  T('static 档：两者都接收阴影（recv 与 isTower 无关）', towerBucket.mesh.receiveShadow === true && bucket.mesh.receiveShadow === true);
+
+  inst.setShadowLevel('all');
+  T('all 档：小兵桶也投影了', bucket.mesh.castShadow === true);
+
+  inst.setShadowLevel('off');
+  T('off 档：两者都不投影也不接收', towerBucket.mesh.castShadow === false && bucket.mesh.receiveShadow === false);
+
   const p12 = new InstancedUnitProxy(inst);
-  p12.bindSlot('m|totem|blue', geo, mat);   // 新建的桶
+  p12.bindSlot('m|totem|blue', geo, mat, false);   // 新建的桶：off 档下不应该被开
   T('setShadowLevel 之后新建的桶也带着当前档位（不是只对已存在的桶生效）',
-    inst.buckets.get('m|totem|blue').mesh.castShadow === true);
+    inst.buckets.get('m|totem|blue').mesh.castShadow === false);
 
   inst.dispose();
   T('dispose 后所有桶的 Mesh 都从 scene 里摘除', scene.children.length === 0);
@@ -124,17 +142,30 @@ const { T, done } = scoreboard('小兵合批（InstancedMesh）');
 // ==================== 二、UnitLayer.js 接线：源码形态 + 可安全借用的纯函数 ====================
 {
   const src = srcOf('src/presentation/UnitLayer.js');
-  T('导入了 MinionInstancer/InstancedUnitProxy', /import \{ MinionInstancer, InstancedUnitProxy \} from '\.\/InstancedMinionLayer\.js'/.test(src));
-  T('构造函数里建了 this.minionInst', /this\.minionInst = new MinionInstancer\(this\.scene\)/.test(src));
-  T('_isInstancedType 排除塔和龙（数量少/几何 key 已经很碎，不值得合批）',
-    /_isInstancedType\(e\) \{ return e\.type !== 'tower' && e\.type !== 'dragon'; \}/.test(src));
-  T('vis-key 变化时，合批类型走 InstancedUnitProxy 分支', /else if \(this\._isInstancedType\(e\)\)/.test(src));
-  T('合批分支调用 bindSlot(vis.key, vis.geo, vis.mat)', /en\.unit\.bindSlot\(vis\.key, vis\.geo, vis\.mat\)/.test(src));
-  T('_applyUnitShadow 对合批单位提前返回（阴影整批设置，不逐实例 traverse）',
-    /_applyUnitShadow\(en\) \{\s*if \(en\.unit\.isInstancedProxy\) return;/.test(src));
-  T('setShadowLevel 里同步调用 minionInst.setShadowLevel', /this\.minionInst\.setShadowLevel\(level === 'all', level !== 'off'\)/.test(src));
+  T('导入了 BodyInstancer/InstancedUnitProxy（从改名后的 InstancedBodyLayer.js）',
+    /import \{ BodyInstancer, InstancedUnitProxy \} from '\.\/InstancedBodyLayer\.js'/.test(src));
+  T('构造函数里建了 this.bodyInst', /this\.bodyInst = new BodyInstancer\(this\.scene\)/.test(src));
+  T('_isInstancedType 只排除龙（塔已经并入合批，v51.31）',
+    /_isInstancedType\(e\) \{ return e\.type !== 'dragon'; \}/.test(src));
+  T('vis-key 变化时，合批类型走 InstancedUnitProxy 分支', /if \(this\._isInstancedType\(e\)\)/.test(src));
+  T('合批分支调用 bindSlot(vis.key, vis.geo, vis.mat, en.isTower)——第4参数区分塔/小兵阴影规则',
+    /en\.unit\.bindSlot\(vis\.key, vis\.geo, vis\.mat, en\.isTower\)/.test(src));
+  T('水晶分支与本体合批分支解耦（独立的 if (vis.crystal) 块，不再嵌在本体 if/else 里）',
+    /if \(vis\.crystal\) \{[\s\S]{0,400}this\.scene\.add\(cm\); this\.infoObjs\+\+;/.test(src));
+  T('水晶创建时记录 crystalLocalY（每帧同步位置要用，水晶不再是子物体自动继承）',
+    /en\.crystalLocalY = vis\.crystal\.cy/.test(src));
+  T('_disposeCrystal 显式把水晶从 scene 里摘除（不再靠父物体 Group 被移除带走）',
+    /_disposeCrystal\(en\) \{\s*if \(!en\.crystal\) return;\s*this\.scene\.remove\(en\.crystal\); this\.infoObjs--;/.test(src));
+  T('_applyUnitShadow 单独给水晶下发阴影（水晶不归 en.unit 管了）',
+    /_applyUnitShadow\(en\) \{[\s\S]{0,200}if \(en\.crystal\) \{[\s\S]{0,200}en\.crystal\.castShadow/.test(src));
+  T('_applyUnitShadow 对合批本体提前返回（阴影按桶设置，不逐实例 traverse）',
+    /if \(en\.unit\.isInstancedProxy\) return;/.test(src));
+  T('setShadowLevel 里同步调用 bodyInst.setShadowLevel(level)（传原始档位字符串，不是预算好的布尔值——逐桶区分塔/小兵要靠桶自己判断 isTower）',
+    /this\.bodyInst\.setShadowLevel\(level\)/.test(src));
   T('remove(id) 里合批单位走 releaseSlot 而不是 scene.remove', /if \(en\.unit\.isInstancedProxy\) en\.unit\.releaseSlot\(\);/.test(src));
-  T('dispose() 里释放 minionInst', /this\.minionInst\.dispose\(\)/.test(src));
+  T('dispose() 里释放 bodyInst', /this\.bodyInst\.dispose\(\)/.test(src));
+  T('水晶每帧同步位置（gy+walkBob+crystalLocalY），不再靠父子关系自动继承',
+    /en\.crystal\.position\.set\(e\.pos\.x, gy \+ walkBob \+ \(en\.crystalLocalY \|\| 0\), e\.pos\.y\)/.test(src));
   T('没有外部文件依赖 en.unit 是真实 Object3D（否则合批换成代理对象会在别处炸）',
     !/\.unit\.(position|rotation|scale|matrixWorld|getWorldPosition)/.test(srcOf('src/presentation/ThreeRenderer.js'))
     && !/\.unit\.(position|rotation|scale|matrixWorld|getWorldPosition)/.test(srcOf('src/ui/CanvasController.js')));
@@ -143,8 +174,8 @@ const { T, done } = scoreboard('小兵合批（InstancedMesh）');
   const fn = UnitLayer.prototype._isInstancedType;
   T('_isInstancedType(melee) → true（走合批）', fn.call({}, { type: 'melee' }) === true);
   T('_isInstancedType(自定义兵种) → true（合批不区分内置/自定义，key 天然按 type 分桶）', fn.call({}, { type: 'my_custom_wolf' }) === true);
-  T('_isInstancedType(tower) → false（塔不合批）', fn.call({}, { type: 'tower' }) === false);
-  T('_isInstancedType(dragon) → false（龙不合批）', fn.call({}, { type: 'dragon' }) === false);
+  T('_isInstancedType(tower) → true（v51.31：塔也合批了）', fn.call({}, { type: 'tower' }) === true);
+  T('_isInstancedType(dragon) → false（龙不合批：数量少、颜色任意，合批收益趋近于零）', fn.call({}, { type: 'dragon' }) === false);
 }
 
 done();

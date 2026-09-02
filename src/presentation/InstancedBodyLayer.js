@@ -1,22 +1,40 @@
 /**
- * InstancedMinionLayer.js —— 小兵本体合批（v51.30，渲染重构 Week3·Day11-12）
+ * InstancedBodyLayer.js —— 单位本体合批（v51.30 小兵，v51.31 加入塔，渲染重构 Week3·Day11-12）
  *
  * docs/Q4-RENDERING-REDESIGN.md §1.2 记的数：44 塔 + 100~200 小兵同屏时，每个单位
- * 各自一次 draw call。塔的数量少、且塔的几何 key（tier×faction×损毁档×废墟）已经把
- * 塔拆得很碎，真正能合批的量很小；小兵才是数量大头，且小兵的几何 key
- *（`m|${type}|${faction}`，见 UnitLayer._visualOf）本来就已经把颜色/造型正确归到
- * 同一份共享几何里——同类型同阵营的小兵，材质/几何完全一致，是 InstancedMesh 的
- * 教科书场景，不需要像最初担心的那样为自定义兵种皮肤单独做 instanceColor 改造
- *（验证过：自定义兵种的 `e.type` 本身就是唯一的模板 id，`CONFIG.customMinions[type]`
- * 一个 type 只对应一种颜色，key 里已经带了 type，颜色天然不会跨兵种混在一个桶里）。
+ * 各自一次 draw call。小兵是数量大头，且小兵的几何 key（`m|${type}|${faction}`，见
+ * UnitLayer._visualOf）本来就已经把颜色/造型正确归到同一份共享几何里——同类型同阵营
+ * 的小兵，材质/几何完全一致，是 InstancedMesh 的教科书场景，不需要像最初担心的那样
+ * 为自定义兵种皮肤单独做 instanceColor 改造（验证过：自定义兵种的 `e.type` 本身就是
+ * 唯一的模板 id，`CONFIG.customMinions[type]` 一个 type 只对应一种颜色，key 里已经
+ * 带了 type，颜色天然不会跨兵种混在一个桶里）。
+ *
+ * ==================== v51.31：塔也合批 ====================
+ * 用户明确要求"塔也一起做"。排查过塔的几何 key（`t|${color}|${wid}|${kind}|${tier}|
+ * ${faction}|${size}|${dmg}|${flags}`，见 UnitMeshFactory.towerMesh）本来就很碎——
+ * 大部分塔已经互不共享几何，真正能合批的量不大，但架构上塔和小兵走的是**同一套**
+ * 分桶/槽位机制（vis.key 变了就 bindSlot 到新桶，损毁档跳变/幽灵/废墟这些"换几何"
+ * 的场景，恰好都是 vis.key 变化，天然由 bindSlot 处理，不需要额外的迁移代码），
+ * 所以直接复用，没有为塔单独写一套。
+ *
+ * 塔的水晶（发光/自转/攻击充能）**不参与合批**——它需要逐塔独立写
+ * `material.emissiveIntensity`（攻击蓄力发光），这本来就不是能共享材质的东西，合批前
+ * 就已经是"塔身共享几何、水晶逐塔独立材质"的结构（见 UnitLayer._syncOne 里
+ * `vis.crystal` 分支）。合批只是把"塔身"从 Group 的子 Mesh 换成 InstancedMesh 的一个
+ * 槽位，水晶从 Group 子物体改成场景里的独立顶层 Mesh（位置/朝向由 UnitLayer 每帧显式
+ * 同步，不再靠父子关系自动继承）。塔数量少（≤44），水晶不合批的开销可以忽略。
  *
  * ==================== 设计 ====================
- * 每个几何 key 一个 `MinionBucket`（= 一个 InstancedMesh + 一个空槽位自由表）。
+ * 每个几何 key 一个 `BodyBucket`（= 一个 InstancedMesh + 一个空槽位自由表）。
  * 槽位释放走【零缩放矩阵 + 回收进自由表】，不做"和最后一个交换再收缩 count"那种
  * 索引搬迁——那需要额外一层"谁持有这个 index"的反向映射，正确性风险与实现量都更大；
  * 零缩放的槽位在 GPU 侧只是几个退化三角形，成本可以忽略，用简单换安全完全值得。
  * count 只增不减（复用 VegetationLayer"静态野区一次建好"之外的另一种简单模型：
  * 这里是动态的，但"曾经出现过的槽位数"通常就是这一局的稳态峰值，没必要来回缩容）。
+ *
+ * 阴影是【逐桶】而不是全局一份：塔和小兵的阴影规则本来就不同
+ *（`static` 档只有塔投影，小兵不投影，见 UnitLayer._applyUnitShadow 原判据），
+ * 桶创建时记下 `isTower`，setShadowLevel 按这个标志逐桶重算 cast/recv。
  *
  * 照抄 VegetationLayer.js 的两条已验证经验：
  *   · `frustumCulled = false`——单位散布满全图，不是聚在几何中心附近，
@@ -35,13 +53,20 @@ const _pos = new THREE.Vector3();
 const _scl = new THREE.Vector3();
 const _zeroM4 = new THREE.Matrix4().makeScale(0, 0, 0);
 
-class MinionBucket {
-  constructor(scene, geo, mat, cast, recv) {
+/** 阴影规则与 UnitLayer._applyUnitShadow 原判据同一口径：塔在 static 档才投影，小兵不投影。 */
+function shadowFor(level, isTower) {
+  return { cast: level === 'all' || (level === 'static' && isTower), recv: level !== 'off' };
+}
+
+class BodyBucket {
+  constructor(scene, geo, mat, isTower, level) {
     this.scene = scene;
     this.geo = geo; this.mat = mat;
+    this.isTower = isTower;
     this.capacity = INITIAL_CAPACITY;
     this.mesh = new THREE.InstancedMesh(geo, mat, this.capacity);
     this.mesh.frustumCulled = false;
+    const { cast, recv } = shadowFor(level, isTower);
     this.mesh.castShadow = cast; this.mesh.receiveShadow = recv;
     this.mesh.count = 0;
     this.free = [];
@@ -90,7 +115,8 @@ class MinionBucket {
     this.mesh.instanceMatrix.needsUpdate = true;
   }
 
-  setShadow(cast, recv) {
+  setLevel(level) {
+    const { cast, recv } = shadowFor(level, this.isTower);
     this.mesh.castShadow = cast;
     this.mesh.receiveShadow = recv;
   }
@@ -103,23 +129,22 @@ class MinionBucket {
   }
 }
 
-export class MinionInstancer {
+export class BodyInstancer {
   constructor(scene) {
     this.scene = scene;
-    this.buckets = new Map();   // geo/mat key -> MinionBucket
-    this._cast = false;
-    this._recv = false;   // 与 UnitLayer 构造函数里 shadowLevel 的默认值 'off' 一致
+    this.buckets = new Map();   // geo/mat key -> BodyBucket
+    this._level = 'off';        // 与 UnitLayer 构造函数里 shadowLevel 的默认值一致
   }
 
-  _bucket(key, geo, mat) {
+  _bucket(key, geo, mat, isTower) {
     let b = this.buckets.get(key);
-    if (!b) { b = new MinionBucket(this.scene, geo, mat, this._cast, this._recv); this.buckets.set(key, b); }
+    if (!b) { b = new BodyBucket(this.scene, geo, mat, isTower, this._level); this.buckets.set(key, b); }
     return b;
   }
 
   /** 分配一个新槽位。调用方负责在拿到新槽位后释放旧槽位（见 InstancedUnitProxy.bindSlot）。 */
-  alloc(key, geo, mat) {
-    const b = this._bucket(key, geo, mat);
+  alloc(key, geo, mat, isTower) {
+    const b = this._bucket(key, geo, mat, isTower);
     return { bucket: b, index: b.alloc() };
   }
 
@@ -127,9 +152,9 @@ export class MinionInstancer {
     if (slot) slot.bucket.release(slot.index);
   }
 
-  setShadowLevel(cast, recv) {
-    this._cast = cast; this._recv = recv;
-    for (const b of this.buckets.values()) b.setShadow(cast, recv);
+  setShadowLevel(level) {
+    this._level = level;
+    for (const b of this.buckets.values()) b.setLevel(level);
   }
 
   dispose() {
@@ -163,9 +188,9 @@ export class InstancedUnitProxy {
   }
 
   /** 换几何/材质 key（含首次装配）：分配新槽位，再释放旧槽位——保证任意时刻只占一个槽。 */
-  bindSlot(key, geo, mat) {
+  bindSlot(key, geo, mat, isTower) {
     const old = this._slot;
-    this._slot = this._instancer.alloc(key, geo, mat);
+    this._slot = this._instancer.alloc(key, geo, mat, isTower);
     if (old) this._instancer.release(old);
     this._flush();
   }
