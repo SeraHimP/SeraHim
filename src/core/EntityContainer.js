@@ -214,7 +214,34 @@ export class EntityContainer {
     return this.getByType('tower', aliveOnly);
   }
 
+  /**
+   * 除了塔以外的所有实体（含中立生物如巨龙——塔的索敌"小兵 + 巨龙"就靠这条）。
+   *
+   * v51.26 性能：原实现是 getAll(aliveOnly).filter(e => e.type !== 'tower')——
+   * 先把【全部实体（含塔）】扫一遍拷出数组，再扫一遍数组筛掉塔，两次分配、
+   * 塔也白扫一遍。本方法一帧被 CombatSystem/LaneMovementSystem/LaneAvengerSystem/
+   * MapSystem/渲染层等 ~10 处各调一次，单位一多就是重复的浪费。
+   * 现在跟 getByType 走同一套类型索引分桶收集，只是合并"塔以外的所有类型"，
+   * 塔的桶直接跳过，不用扫、不用筛。
+   *
+   * 没有做跨调用缓存：entity.alive 在 CombatSystem/BuffSystem/MapSystem/
+   * UIManager/编辑器等一大堆地方是【直接改 entity.alive】，不经过本容器
+   * （sim_full.mjs/sim_crystal.mjs/sim_accept.mjs 里都有"改完 alive 立刻指望
+   * getAllMinions/getAllTowers 反映出来"的用法）——按帧缓存会读到不该看见的
+   * 陈旧结果，是真实的正确性风险，不是可以忽略的边缘情况，所以这里保持【每次
+   * 都现算】，只是把"现算"本身做得更便宜。
+   */
   getAllMinions(aliveOnly = true) {
-    return this.getAll(aliveOnly).filter(e => e.type !== 'tower');
+    const result = [];
+    for (const [type, ids] of this._typeIndex) {
+      if (type === 'tower') continue;
+      for (const id of ids) {
+        const e = this._entities.get(id);
+        if (!e) continue;
+        if (aliveOnly && !e.alive) continue;
+        result.push(e);
+      }
+    }
+    return result;
   }
 }

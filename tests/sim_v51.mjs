@@ -3178,4 +3178,34 @@ async function world() {
   delete CONFIG.templates.melee._templateSkills; // 清掉本节测试写入的缓存，避免影响后面的用例
 }
 
+// ==================== 追加：v51.26 EntityContainer.getAllMinions 收敛重复扫描 ====================
+// 原实现 getAll(aliveOnly).filter(e => e.type !== 'tower')：先把【全部实体（含塔）】
+// 拷出一份数组，再筛一遍扔掉塔——两次分配、塔也白扫。改成跟 getByType 一样走类型索引
+// 分桶收集、跳过塔的桶。这里钉的是【行为不变】，不是内部实现——换了算法，结果集合必须
+// 跟旧实现完全一致（含"塔以外的所有类型"要覆盖到，特别是巨龙这种非小兵非塔的中立单位）。
+{
+  const { ents, CONFIG } = await world();
+  const t1 = mkEntity(ents, 'tower', { faction: 'blue', tier: 'outer' }, CONFIG);
+  const m1 = mkEntity(ents, 'melee', { faction: 'blue', lane: 'mid' }, CONFIG);
+  const m2 = mkEntity(ents, 'ranged', { faction: 'red', lane: 'top' }, CONFIG);
+  const d1 = mkEntity(ents, 'dragon', {}, CONFIG);
+
+  T('容①-getAllMinions 不含塔', !ents.getAllMinions(true).some(e => e.type === 'tower'));
+  T('容②-getAllMinions 含巨龙这类非塔非常规小兵的类型（塔索敌"小兵+巨龙"靠这条）',
+    ents.getAllMinions(true).some(e => e.id === d1.id));
+  T('容③-getAllMinions 收全了所有小兵（近战+远程+巨龙 = 3 个，不多不少）',
+    ents.getAllMinions(true).length === 3
+    && new Set(ents.getAllMinions(true).map(e => e.id)).size === 3
+    && [m1.id, m2.id, d1.id].every(id => ents.getAllMinions(true).some(e => e.id === id)));
+
+  // aliveOnly=true/false 两条路径都要对：杀掉一个小兵后 true 少一个、false 不变
+  m1.alive = false;
+  T('容④-aliveOnly=true 立刻反映刚死的小兵（不经容器直接改 entity.alive 也要即时生效，不能因为改成"收敛扫描"就顺带引入按帧缓存——sim_full.mjs 等好几套已有测试都是这么用的）',
+    ents.getAllMinions(true).length === 2 && !ents.getAllMinions(true).some(e => e.id === m1.id));
+  T('容⑤-aliveOnly=false 仍能看到刚死的小兵', ents.getAllMinions(false).length === 3);
+
+  T('容⑥-getAllTowers 仍然只含塔（这次改动没碰它，行为原样）',
+    ents.getAllTowers(true).length === 1 && ents.getAllTowers(true)[0].id === t1.id);
+}
+
 done();
