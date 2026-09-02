@@ -250,6 +250,9 @@ export class ThreeRenderer {
     if (unitTint !== undefined) {
       setUnitTint(unitTint);
       if (this.veg?.setTint) this.veg.setTint(unitTint);   // 野区植被同理，见 VegetationLayer.setTint 的注释
+      // v51.29：裙边改用 MeshBasicMaterial 后不再自动吃场景光照，昼夜响应靠这一句手动补——
+      // 见 MapSkirtLayer.js 头注"为什么不用 MeshLambertMaterial"的排查记录。
+      if (this.skirt?.setTint) this.skirt.setTint(unitTint);
     }
     if (background !== undefined && this.scene.background) this.scene.background.set(background); // C 组·天空：昼夜给天穹/边界底色染色
     if (sunColor !== undefined) this.sun.color.set(sunColor);
@@ -742,7 +745,7 @@ export class ThreeRenderer {
   }
   setMapSkirt(on) {
     this.skirtOn = on !== false;
-    if (this.skirtOn) this.skirt.build(this.mapSystem, this._terrainMesh?.material?.map || null);
+    if (this.skirtOn) this.skirt.build(this.mapSystem);
     else this.skirt.dispose();
     return this.skirtOn;
   }
@@ -830,7 +833,7 @@ export class ThreeRenderer {
 
   // ==================== 地面 ====================
   _disposeTerrain() {
-    this.skirt?.dispose();   // 裙边复用地形贴图，必须先于/随地形一起清，避免持有已释放的纹理
+    this.skirt?.dispose();   // 地形一换图，裙边也跟着重建（尺寸随地图边长变化）
     if (!this._terrainMesh) return;
     this.scene.remove(this._terrainMesh);
     this._terrainMesh.geometry.dispose();
@@ -907,7 +910,7 @@ export class ThreeRenderer {
       this.walls.top.material.needsUpdate = true;
     }
     if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
-    if (this.skirtOn) this.skirt.build(this.mapSystem, tex); // v51.27：地图外围裙边，复用刚合成的地形贴图
+    if (this.skirtOn) this.skirt.build(this.mapSystem); // v51.27：地图外围裙边（自己的贴图/纯色，见 MapSkirtLayer）
     this.water.build(this.mapSystem);                 // P1：河道水面同上
   }
 

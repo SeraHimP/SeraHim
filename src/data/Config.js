@@ -1035,16 +1035,18 @@ export const CONFIG = {
     },
 
     // v51.27："地图是个纸片子"——地形是严格贴合世界边界的一整块平面，边界外直接是
-    // 纯色虚空，没有过渡。裙边（MapSkirtLayer）复用地形自己的贴图向外拉伸 + 顶点
-    // alpha 径向淡出，把硬边软化成一圈雾化过渡，零新增美术资源。texturePath 留给
-    // 以后真的有背景图时用（比如让 ChatGPT 画一张，见开发对话）——配了就换成那张图，
-    // 不配/加载失败一律静默回退到"延伸地形贴图"这个默认方案。
+    // 纯色虚空，没有过渡。裙边（MapSkirtLayer）用顶点 alpha 径向淡出把硬边软化成
+    // 一圈过渡；没配 texturePath 时用 innerColor 这个纯色兜底，零新增美术资源。
+    // v51.29：texturePath 已经接了用户找 ChatGPT 生成的图——径向对称、无方向性的
+    // 雾状渐变（专门为这个正交相机可以任意转方位角设计的，不能有"左边山右边太阳"
+    // 那种方向性landmark，转个视角就穿帮），路径缺失/加载失败一律静默回退到纯色。
     mapSkirt: {
       enabled: true,
-      scale: 3,         // 裙边总边长 = 地图边长 × 这个倍数
-      fadeFrac: 0.5,     // 裙边向外延伸段里，前这么大比例用来做 alpha 淡出（其余全透明）
-      yOffset: -15,      // 比地形低这么多世界单位，避免共面 z-fighting
-      texturePath: null, // 例：'assets/textures/env/horizon.jpg'——配了就用真背景图铺裙边
+      scale: 3,          // 裙边总边长 = 地图边长 × 这个倍数
+      fadeFrac: 0.5,      // 裙边向外延伸段里，前这么大比例用来做 alpha 淡出（其余全透明）
+      yOffset: -15,       // 比地形低这么多世界单位，避免共面 z-fighting
+      innerColor: '#4c5a45',                          // 没有背景图时的纯色兜底（中性草绿灰调）
+      texturePath: 'assets/textures/env/skirt_horizon.png', // 用户提供的径向对称雾状渐变图
     },
 
     // v51.27：自动线性雾，配合裙边一起给"纸片感"加一点近实远虚的纵深线索。
