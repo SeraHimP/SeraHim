@@ -3026,4 +3026,63 @@ async function world() {
     Math.abs(sE.attackRange - 500) < 1e-6);
 }
 
+// ==================== 追加：v51.21 添加状态窗口——纯百分比字段锁掉"百分比修正"框 ====================
+// 用户："以行测中的增长率举例，增长率不能再有'增长率'。在添加状态那个窗口里，涉及到
+// 这种只能加数值的，要让百分比框不可选中（就是不能被误填入数值）。"
+// allStatsPct/coreStatsPct 自己就是一个百分比数字，不是"某个东西的数量"——给它们的
+// 百分比修正框在概念上说不通（哪怕 v51.14 修完之后算法上两路都是直接相加，等效于
+// 数值修正）。UI 上应该直接把这一行藏起来，逼用户只能用"数值修正"填。
+{
+  const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
+
+  T('锁①-被锁定的属性正好是 allStatsPct/coreStatsPct 这两个百分比元字段，不多不少',
+    EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT instanceof Set
+    && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT.size === 2
+    && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT.has('allStatsPct')
+    && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT.has('coreStatsPct'));
+
+  // 用最小的手搓 DOM 桩子跑一遍真实的 _bindEffectParams（不是只测"读值逻辑"，
+  // 是测"选中卡片之后该发生的副作用"：隐藏整行 + 把可能残留的旧值清零）。
+  const fakeEl = (props = {}) => ({
+    style: {}, classList: { add() {}, remove() {} }, dataset: {}, value: '0', textContent: '',
+    _handlers: {},
+    addEventListener(type, fn) { this._handlers[type] = fn; },
+    click() { this._handlers.click?.(); },
+    ...props,
+  });
+  const hiddenKeyInput = fakeEl({ value: 'attackDamage' });
+  const percentRow = fakeEl();
+  const flatLabel = fakeEl();
+  const percentInput = fakeEl({ value: '0' });
+  const cardAD = fakeEl({ dataset: { effstat: 'attackDamage' } });
+  const cardAllStats = fakeEl({ dataset: { effstat: 'allStatsPct' } });
+  const cardCore = fakeEl({ dataset: { effstat: 'coreStatsPct' } });
+  const grid = { querySelectorAll: (sel) => (sel === '[data-effstat]' ? [cardAD, cardAllStats, cardCore] : []) };
+  const fields = {
+    '.effect-stat-grid': grid, '.effect-stat-key': hiddenKeyInput,
+    '.effect-percent-row': percentRow, '.effect-flat-label': flatLabel,
+    '.effect-percent-value': percentInput,
+  };
+  const box = {
+    querySelector: (sel) => fields[sel] ?? null,
+    querySelectorAll: (sel) => (sel === '[data-effdot]' ? [] : []),
+  };
+  EDITOR_PAGES_SKILLEFFECT._bindEffectParams(box);
+  T('锁②-初始选中普通属性（攻击力）时，百分比修正行正常显示', percentRow.style.display === '');
+
+  // 模拟用户先在攻击力上填了 50% 百分比修正，再切到全属性加成
+  percentInput.value = '50';
+  cardAllStats.click();
+  T('锁③-切到全属性加成后，百分比修正行被隐藏', percentRow.style.display === 'none');
+  T('锁④-切换时把残留的旧百分比值清零，不会带着 50 悄悄混进蓝图', percentInput.value === '0');
+
+  // 切回普通属性，这一行应该重新出现（不是永久锁死）
+  cardAD.click();
+  T('锁⑤-切回普通属性（攻击力）后，百分比修正行恢复显示', percentRow.style.display === '');
+
+  // 核心属性加成同理
+  cardCore.click();
+  T('锁⑥-核心属性加成同样锁百分比框', percentRow.style.display === 'none' && percentInput.value === '0');
+}
+
 done();

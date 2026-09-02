@@ -294,6 +294,15 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
   ],
 
+  // v51.21：allStatsPct/coreStatsPct 自己就是"一个百分比数字"本身（全属性/核心属性
+  // 要放大百分之几），不是"某个东西的数量"——用户原话"增长率不能再有'增长率'"，
+  // 给一个百分比数再套一层百分比修正在概念上说不通。v51.14 修过之后这两个字段的
+  // 百分比修正在计算上其实跟数值修正等效（两路都是直接相加，见 AttributeCalculator
+  // 那段大注释），但界面上留着百分比框还是会诱导用户去填一个"给百分比加百分比"的
+  // 数——所以跟护盾（__shield__）一样，选中这两项时直接把"百分比修正"那一行隐藏掉，
+  // 只留"数值修正"，从输入源头堵掉这个误填。
+  _EFFECT_STAT_NO_PERCENT: new Set(['allStatsPct', 'coreStatsPct']),
+
   _renderEffectPicker() {
     const tabs = this._EFFECT_TYPE_TABS.map((t, i) => `
       <button type="button" class="editor-tab ${i === 0 ? 'active' : ''}" data-efftype="${t.key}">${t.label}</button>
@@ -328,9 +337,19 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       const hidden = box.querySelector('.effect-stat-key');
       const percentRow = box.querySelector('.effect-percent-row');
       const flatLabel = box.querySelector('.effect-flat-label');
+      const percentInput = box.querySelector('.effect-percent-value');
       const syncShieldMode = (key) => {
         const isShield = key === '__shield__';
-        if (percentRow) percentRow.style.display = isShield ? 'none' : '';
+        // v51.21：allStatsPct/coreStatsPct 只能用数值修正——见上面 _EFFECT_STAT_NO_PERCENT
+        // 头注，跟护盾一样直接隐藏"百分比修正"整行，不是禁用输入框（免得用户以为
+        // 灰掉的框还能填、只是暂时点不动）。
+        const noPercent = this._EFFECT_STAT_NO_PERCENT.has(key);
+        const hide = isShield || noPercent;
+        if (percentRow) percentRow.style.display = hide ? 'none' : '';
+        // 隐藏之后把输入框清零：不清的话，用户先在别的属性上填过百分比、再切到
+        // allStatsPct，这一行虽然看不见了，但 DOM 里的旧值还在，_buildEffectBlueprintFromPicker
+        // 照样会把它读出来塞进 percentValue——UI 上"锁住"了，蓝图里其实没锁住。
+        if (hide && percentInput) percentInput.value = '0';
         if (flatLabel) flatLabel.textContent = isShield ? '护盾值' : '数值修正';
       };
       grid.querySelectorAll('[data-effstat]').forEach(card => {
