@@ -27,6 +27,7 @@ import { buildTerrainLayer } from './TerrainLayer.js';
 import { UnitLayer } from './UnitLayer.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
+import { MapSkirtLayer } from './MapSkirtLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
@@ -133,6 +134,8 @@ export class ThreeRenderer {
     this.walls = new WallLayer(this.scene);
     this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
     this.vegOn = true;
+    this.skirt = new MapSkirtLayer(this.scene);   // v51.27：地图外围裙边（软化"纸片子"硬边）
+    this.skirtOn = true;
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
     this.weatherFx = new WeatherLayer(this.scene); // 天气可视化（雨/雪/雾/风/晴的粒子与薄纱）
     this.tex = { ground: null, plateau: null, cliff: null };
@@ -265,8 +268,35 @@ export class ThreeRenderer {
     }
     if (fog !== undefined) {
       this.scene.fog = fog ? new THREE.Fog(this.scene.background, fog.near ?? 500, fog.far ?? 4000) : null;
+    } else {
+      // v51.27：调用方（main.js）不知道相机离场景多远，这条自动雾效自己算——见 _autoFog 头注。
+      this._autoFog();
     }
     return { hemi: this.hemi.intensity, sun: this.sun.intensity, sunY: this._sunDir.y };
+  }
+
+  /**
+   * v51.27：自动线性雾——用户提过"地图是个纸片子"，缺一层近实远虚的深度线索。
+   *
+   * 不能直接照抄 setLighting() 文档注释里写的那对旧默认值（near=500, far=4000）：
+   * 相机实际上离目标点恒定 CAM_DIST(=20000) 那么远（见 _syncCamera 里 `cam.position.set`），
+   * 且是【正交相机】——near/far 比的是相机到每个片元的真实视空间距离，不是屏幕上看起来的远近。
+   * 500~4000 这个区间完全落在"比相机近得多"的地方，真接上会把整个场景雾成一片纯色，
+   * 这套默认值显然是早年占位、从没跟这台相机的实际距离对过。
+   *
+   * 所以雾效范围要以 CAM_DIST 为基准、按当前地图对角线动态算：只在地图最远角落才开始
+   * 起一点点雾（nearOffset 很保守），完全雾化的位置留在裙边淡出区之外（farOffset 给得
+   * 足够远）——核心玩法区域几乎不受影响，只在地图边缘/裙边区域添一层大气纵深感，
+   * 不会因为起雾而看不清对局。
+   */
+  _autoFog() {
+    const F = (CONFIG.ui && CONFIG.ui.mapFog) || {};
+    if (F.enabled === false) { this.scene.fog = null; return; }
+    const map = this.mapSystem?.currentMap;
+    const halfDiag = map?.world ? Math.hypot(map.world.w, map.world.h) / 2 : 2500;
+    const near = CAM_DIST + (F.nearOffset ?? 800);
+    const far = CAM_DIST + halfDiag + (F.farOffset ?? 7000);
+    this.scene.fog = new THREE.Fog(this.scene.background, near, far);
   }
 
   /** 排查用：关/开材质贴图后重建地形。用于二分"画面问题出在贴图还是别处"。 */
@@ -707,6 +737,12 @@ export class ThreeRenderer {
     if (this.vegOn) this.veg.build(this.mapSystem); else this.veg.clear();
     return this.vegOn;
   }
+  setMapSkirt(on) {
+    this.skirtOn = on !== false;
+    if (this.skirtOn) this.skirt.build(this.mapSystem, this._terrainMesh?.material?.map || null);
+    else this.skirt.dispose();
+    return this.skirtOn;
+  }
   setParticles(on) { this.units.particlesOn = on !== false; return this.units.particlesOn; }
   setWater(on) { const v = this.water.setEnabled(on); if (v) this.water.build(this.mapSystem); return v; }
 
@@ -791,6 +827,7 @@ export class ThreeRenderer {
 
   // ==================== 地面 ====================
   _disposeTerrain() {
+    this.skirt?.dispose();   // 裙边复用地形贴图，必须先于/随地形一起清，避免持有已释放的纹理
     if (!this._terrainMesh) return;
     this.scene.remove(this._terrainMesh);
     this._terrainMesh.geometry.dispose();
@@ -867,6 +904,7 @@ export class ThreeRenderer {
       this.walls.top.material.needsUpdate = true;
     }
     if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
+    if (this.skirtOn) this.skirt.build(this.mapSystem, tex); // v51.27：地图外围裙边，复用刚合成的地形贴图
     this.water.build(this.mapSystem);                 // P1：河道水面同上
   }
 

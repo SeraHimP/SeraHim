@@ -1031,6 +1031,28 @@ export const CONFIG = {
       desaturate: 0.7,        // 太阳/天空色往阴天灰调混合的最大比例
       overcastColor: '#a4abb6',
     },
+
+    // v51.27："地图是个纸片子"——地形是严格贴合世界边界的一整块平面，边界外直接是
+    // 纯色虚空，没有过渡。裙边（MapSkirtLayer）复用地形自己的贴图向外拉伸 + 顶点
+    // alpha 径向淡出，把硬边软化成一圈雾化过渡，零新增美术资源。texturePath 留给
+    // 以后真的有背景图时用（比如让 ChatGPT 画一张，见开发对话）——配了就换成那张图，
+    // 不配/加载失败一律静默回退到"延伸地形贴图"这个默认方案。
+    mapSkirt: {
+      enabled: true,
+      scale: 3,         // 裙边总边长 = 地图边长 × 这个倍数
+      fadeFrac: 0.5,     // 裙边向外延伸段里，前这么大比例用来做 alpha 淡出（其余全透明）
+      yOffset: -15,      // 比地形低这么多世界单位，避免共面 z-fighting
+      texturePath: null, // 例：'assets/textures/env/horizon.jpg'——配了就用真背景图铺裙边
+    },
+
+    // v51.27：自动线性雾，配合裙边一起给"纸片感"加一点近实远虚的纵深线索。
+    // 范围以相机真实距离 CAM_DIST 为基准动态算（见 ThreeRenderer._autoFog 头注），
+    // 这两个 offset 只用来微调"雾从哪开始"和"哪结束"，不是雾本身的距离。
+    mapFog: {
+      enabled: true,
+      nearOffset: 800,   // 雾开始起效的距离 = CAM_DIST + 这个值（越大雾越晚出现）
+      farOffset: 7000,   // 雾完全不透明的距离 = CAM_DIST + 地图半对角线 + 这个值
+    },
   },
 
   world: {
