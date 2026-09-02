@@ -490,6 +490,36 @@ export class WeatherSystem {
   }
 
   /**
+   * v51.26：当前"实际生效"的主导天气——按【充能】选，不是占比。
+   *
+   * getDominant() 答的是"接下来天气会往哪个方向走"（占比，反应快、随 OU 抖动，
+   * 只挡了几个百分点的迟滞）；这个方法答的是"屏幕上现在真正在下什么、玩法数值
+   * 现在真正吃的是哪个天气"（充能，一阶惯性、有积累—消退的节奏，跟
+   * WeatherLayer 的可视化、getEffectiveStrengths() 的数值加成走的是**同一个量**，
+   * 见 WeatherLayer.js 头注"强度取充能不取占比"）。
+   *
+   * 用户报的真实症状："天气上面显示晴，但是可视化效果竟然有雨和雪"——根因是
+   * HUD 原来用 getDominant()（占比，天气一换几乎瞬时跳标签）当"当前天气"，
+   * 画面/数值却是充能驱动的（消退要 20~30 秒）：天气快速切换时标签几秒内就跳到
+   * "晴"，屏幕上那场雨却还要慢慢收几十秒才谢幕——标签和画面各读各的量，看着
+   * 就像"标签说晴，天上却在下雨"。HUD 改读这个方法后，标签跟画面是同一个量，
+   * 不会再对不上（见 WeatherPanel._renderNow）。
+   *
+   * 开局或天气刚 reset 时所有充能都是 0（还没来得及积累），这时"谁充能最高"
+   * 没有意义（谁都是 0，选出来的只是遍历顺序），退回 getDominant()——占比好歹
+   * 能告诉用户"现在正朝哪边走"，不会让标签在开局头几秒显示得莫名其妙。
+   */
+  getChargeDominant() {
+    let best = null, bestC = -1;
+    for (const id of this.baseIds) {
+      const c = this.getCharge(id);
+      if (c > bestC) { bestC = c; best = id; }
+    }
+    if (!best || bestC <= 1e-6) return this.getDominant();
+    return { ...BASE_WEATHERS[best], weight: bestC };
+  }
+
+  /**
    * 当前激活的极端天气及其强度。
    * 强度 = min over 触发条件 of (占比 − 阈值)/(1 − 阈值)，即"最勉强满足的条件"决定强度。
    */

@@ -578,5 +578,54 @@ import fs from 'fs';
   T('缓⑨-reset() 之后 getWeights() 缓存失效换新引用', w5 !== w4);
 }
 
+// ==================== v51.26：HUD"当前天气"标签改读充能，不再读占比 ====================
+// 用户报的真实症状："天气上面显示晴，但是可视化效果竟然有雨和雪"。根因：HUD 原来用
+// getDominant()（占比，几乎瞬时切换）当"当前天气"，画面（WeatherLayer）和数值加成
+// （getEffectiveStrengths）却都是充能驱动的（消退要 20~30 秒）——天气快速切换时
+// 标签几秒内就跳到新天气，屏幕上那场雨却还要慢慢收好几十秒，标签和画面各读各的量。
+// 这里钉住：① getChargeDominant() 在充能明显不同步于占比时，报的是"充能最高的那个"
+// 而不是"占比最高的那个"；② 开局充能全 0 时正确退回占比（不会瞎报一个充能=0的天气）。
+{
+  const wd = new WeatherSystem(null);
+  wd.setEnabled(true);
+  wd.reset(2026);
+
+  // 开局充能全 0：退回占比主导，不能因为"充能全 0，谁都一样"就随便选一个。
+  const d0 = wd.getDominant();
+  const cd0 = wd.getChargeDominant();
+  T('充①-开局充能全 0 时，getChargeDominant() 退回 getDominant()（占比主导），不是瞎选',
+    cd0 && d0 && cd0.id === d0.id);
+
+  // 强行把雨充满能（模拟"刚下过一场大雨"），此时权重仍然是雨占绝对优势。
+  wd.getWeights = () => ({ clear: 0, rain: 1, fog: 0, wind: 0, snow: 0 });
+  for (let t = 0; t < 400; t++) wd._updateCharges(1);
+  T('充②-雨充满能时，占比主导和充能主导都应该是雨（两者本该一致的基线情况）',
+    wd.getDominant().id === 'rain' && wd.getChargeDominant().id === 'rain');
+
+  // 天气权重瞬间切到晴（模拟 OU 游走一步切走）——getDominant() 应该立刻跳到晴
+  // （它就是读瞬时占比的），但雨的充能还没来得及消退，getChargeDominant() 此时
+  // 仍然应该报"雨"，而不是"晴"——这正是用户报的"标签说晴，画面还在下雨"那个
+  // 不一致的窗口，测的就是这条修复本身：换成充能主导后，这个窗口不会再出现
+  // 在 HUD 标签上（标签会跟着画面一起，还报"雨"，直到雨真的消退完）。
+  wd.getWeights = () => ({ clear: 1, rain: 0, fog: 0, wind: 0, snow: 0 });
+  const domAfterSwitch = wd.getDominant();
+  const chargeDomAfterSwitch = wd.getChargeDominant();
+  T('充③-占比瞬间切到晴后，getDominant()（占比主导）立刻跳成晴',
+    domAfterSwitch.id === 'clear');
+  T('充④-但雨的充能还没消退，getChargeDominant()（HUD 现在读的这个）仍然报雨，不会跟着占比瞬间跳标签',
+    chargeDomAfterSwitch.id === 'rain');
+
+  // 放够长时间让雨充能真正消退、晴充能追上来，这时 getChargeDominant() 才应该
+  // 跟着变成晴——不是"永远报雨"，是"消退完了才换"，验证不是死绑第一次算出的天气。
+  for (let t = 0; t < 400; t++) wd._updateCharges(1);
+  T('充⑤-充分等待雨消退、晴充能追上后，getChargeDominant() 最终也会跟着变成晴（不是卡死在雨上）',
+    wd.getChargeDominant().id === 'clear');
+
+  // WeatherPanel._renderNow 要读的是新方法，不能改完 WeatherSystem 却漏了调用方。
+  const panelSrc = fs.readFileSync(new URL('../src/ui/WeatherPanel.js', import.meta.url), 'utf8');
+  T('充⑥-WeatherPanel._renderNow 已经切换成调用 getChargeDominant()（不是仍然调旧的 getDominant()）',
+    /getChargeDominant\(\)/.test(panelSrc) && !/\.getDominant\(\)/.test(panelSrc));
+}
+
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail?1:0);

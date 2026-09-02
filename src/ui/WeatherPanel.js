@@ -259,7 +259,12 @@ export const WeatherPanel = {
       const top = ex.reduce((a, b) => (b.intensity > a.intensity ? b : a));
       icon = top.icon; name = top.name; color = top.color;
     } else {
-      const dom = this._weather.getDominant();
+      // v51.26：HUD 标签改读"充能主导"而不是"占比主导"——见 WeatherSystem.
+      // getChargeDominant() 头注。占比切换快、充能消退慢，两者不一致时标签会先
+      // 跳到新天气，画面（WeatherLayer 同样读充能）却还在显示上一场天气好几十秒，
+      // 用户反馈"标签说晴，画面却在下雨下雪"就是这个不一致。现在标签跟画面读的
+      // 是同一个量，天然对得上。
+      const dom = this._weather.getChargeDominant();
       if (!dom) return;
       icon = dom.icon; name = dom.name; color = dom.color;
     }
@@ -278,7 +283,7 @@ export const WeatherPanel = {
     if (val) {
       const pct = ex.length
         ? Math.round(ex.reduce((a, b) => (b.intensity > a.intensity ? b : a)).intensity * 100)
-        : Math.round((this._weather.getDominant()?.weight || 0) * 100);
+        : Math.round((this._weather.getChargeDominant()?.weight || 0) * 100);
       const txt = pct + '%';
       if (val.textContent !== txt) val.textContent = txt;
     }
