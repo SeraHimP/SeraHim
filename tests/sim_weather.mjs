@@ -447,8 +447,59 @@ import fs from 'fs';
 {
   const panel = fs.readFileSync(new URL('../src/ui/WeatherPanel.js', import.meta.url), 'utf8');
   T('UI① 极端天气权重滑条（data-exw）已删除', !panel.includes('data-exw'));
-  T('UI② 基础天气的出现倾向滑条（data-mu）不受影响，仍然存在', panel.includes('data-mu='));
+  // v51.24：出现倾向（mu）的编辑控件从原生 <input type=range data-mu> 换成了 MIUI
+  // 风格胶囊（data-pill，见下面那段），data-mu 这个属性名本身已经不存在了——
+  // 断言随之改成"ws.setMu 仍然从这个控件被调用"，钉的是行为（还能编辑出现倾向），
+  // 不是钉一个已经作废的具体属性名。
+  T('UI②-出现倾向的编辑控件换成了胶囊（data-pill），原生滑条（data-mu）已删除',
+    panel.includes('data-pill=') && !panel.includes('data-mu'));
+  T('UI②b-胶囊仍然调 ws.setMu(id, v) 提交出现倾向，编辑能力没有跟着控件一起丢',
+    /ws\.setMu\(id, v\)/.test(panel));
   T('UI③ 极端天气行改用只读的实时充能进度条（ws.getCharge）', /getCharge\(def\.id\)/.test(panel));
+}
+
+// ==================== v51.24：天气面板重做（Q3）====================
+// 用户三条：① 基础天气行里那个静止的"当前XX%"文字与上方【实时与预报】重复，删掉；
+// ② 基础天气的滑块条整体大改成 MIUI 风格胶囊，进度条在胶囊里填充且可滑动，
+//    文字（图标+百分比）都显示在胶囊里；③【实时预报】下面的极端天气摘要，把
+//    "有充能但还没生效"的也列进去、灰显，生效后正常显示。
+// 这个面板高度依赖真实 DOM/canvas（document.createElement、requestAnimationFrame、
+// 2D context），本文件里已有的其它 WeatherPanel UI 断言（UI①-③）走的都是"读源码
+// 正则"这条路，不是真的渲染+交互——这里延续同一套办法，不额外搭一个和这个文件
+// 惯例不一致的假 DOM 全量渲染。
+{
+  const panel = fs.readFileSync(new URL('../src/ui/WeatherPanel.js', import.meta.url), 'utf8');
+
+  // ① 重复的静态"当前XX%"文字删掉了（旧版这一行的字面模式）
+  T('胶①-基础天气行不再有旧版那句"· 当前 XX%"静态文字（与上方实时列表重复的那句）',
+    !panel.includes("' · 当前 '"));
+
+  // ② 胶囊：填充比例与文字都来自同一个 mu，点/拖任意位置直接跳值（无独立把手）
+  T('胶②-基础天气行是一颗 data-pill 胶囊：填充层(.wx-pill-fill)+文字层同时存在',
+    /class="wx-pill"/.test(panel) && panel.includes('wx-pill-fill') && panel.includes('wx-pill-label'));
+  T('胶③-填充比例把 mu(-1~+1) 映射到 0~100%（(mu+1)/2），不是另算一套数',
+    /Math\.round\(\(\(mu \+ 1\) \/ 2\) \* 100\)/.test(panel));
+  T('胶④-胶囊里的文字就是这个映射出来的百分比（带符号），图标+百分比一起显示，没有中文名',
+    /const label = \(mu >= 0 \? '\+' : ''\) \+ Math\.round\(mu \* 100\) \+ '%'/.test(panel));
+  T('胶⑤-交互是 pointerdown 起手、pointermove 跟手、pointerup/cancel 收手——不是只认一次点击',
+    panel.includes("addEventListener('pointerdown'") && panel.includes("addEventListener('pointermove'")
+    && panel.includes("addEventListener('pointerup'") && panel.includes("addEventListener('pointercancel'"));
+  T('胶⑥-点/拖【任意位置】直接跳值：按指针相对胶囊的位置算比例，不是只挪一个把手',
+    /rect\.width \? Math\.max\(0, Math\.min\(1, \(clientX - rect\.left\) \/ rect\.width\)\) : 0/.test(panel));
+  T('胶⑦-拖动仍然走原有的 120ms 防抖再提交 ws.setMu，没有丢掉"松手才重算时间线"这条性能保护',
+    /muTimer = setTimeout\(\(\) => \{\s*ws\.setMu\(id, v\);/.test(panel));
+  T('胶⑧-禁用某天气时胶囊本身也跟着变灰+不可交互（opacity 0.4 + pointer-events:none）',
+    /off \? 'opacity:0\.4;pointer-events:none;'/.test(panel));
+
+  // ③ 极端天气摘要：充能中但未生效的也列出来，灰显；生效的正常显示
+  T('极①-实时摘要不再只看 getActiveExtremes，逐个 EXTREME_WEATHERS 判断"有没有充能"',
+    /Object\.values\(EXTREME_WEATHERS\)\s*\n\s*\.map\(def => \{\s*\n\s*const act = activeEx\.get\(def\.id\);/.test(panel));
+  T('极②-未生效但有充能的行整体调暗（opacity 0.45），生效的不受影响',
+    panel.includes("act ? '' : 'opacity:0.45;'"));
+  T('极③-未生效行显示"充能 XX%"，生效行显示"强度 XX%"，不是同一句话',
+    panel.includes("act ? '强度 ' : '充能 '"));
+  T('极④-完全没充能（0%）且没生效的天气不占地方——不是把 15 种全部铺出来',
+    panel.includes('if (!act && chargePct <= 0) return null;'));
 }
 
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);

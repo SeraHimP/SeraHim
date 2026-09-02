@@ -381,7 +381,6 @@ export const WeatherPanel = {
 
     const renderRows = () => {
       const baseBox = container.querySelector('#wxBase');
-      const w = ws.getWeights();
 
       const tplBox = container.querySelector('#wxTemplates');
       if (tplBox) {
@@ -394,48 +393,79 @@ export const WeatherPanel = {
         }));
       }
 
-      // v51.6（Q5美化）：占比条从 3px 细线改成 6px 圆角 + 内发光，当前占比越高条本身
-      // 越亮——不再是一条干巴巴的纯色细条。基础天气的 mu 出现倾向滑条本身不受影响
-      // （用户定稿"基础天气的权重不受影响"），只改视觉。
+      // ==================== v51.24：基础天气行改成 MIUI 风格胶囊滑块 ====================
+      // 用户："天气窗口中基础天气上面显示了静止不动的'当前数值'，把这个删掉和上面的
+      // 重复了（与上方【实时与预报】的只读百分比列表是同一个数，念两遍）。然后基础
+      // 天气的滑块条这部分大改一下，把这个整体做成MINI那种胶囊的样式，进度条在胶囊
+      // 里面填充（并且可以滑动进度），文字和图标都在胶囊里显示。"
+      //
+      // 旧版一行三层：① 图标+中文名+"当前XX%"文字（只读实况，与上面 #wxLive 重复）
+      // ② 一条只读发光条（同一个只读实况的第二次呈现）③ 原生 <input type=range> 滑条
+      // +独立数字（真正在编辑的出现倾向 mu，-1~+1）。三样东西挤在一行，其中①②纯粹
+      // 是重复信息。现在只留"你在编辑什么"这一件事：一颗胶囊，填充比例与胶囊内的
+      // 百分比文字都是 mu（映射到 0~100% 的可视填充：mu=-1 空、mu=0 半、mu=+1 满），
+      // 图标+百分比一起显示在胶囊正中。"现在实际出现的占比"这个只读数只在上面
+      // 【实时与预报】的 #wxLive 列表里出现一次，不再重复。
+      //
+      // 交互：点/拖胶囊【任意位置】直接把值跳到手指/指针位置（不留独立圆点把手），
+      // 更贴近 MIUI 那种"胶囊本身就是把手"的滑块观感，在触屏（平板）上也更好点中。
       baseBox.innerHTML = Object.values(BASE_WEATHERS).map(def => {
-        const pct = Math.round((w[def.id] || 0) * 100);
         const off = ws.isWeatherDisabled(def.id);
         const mu = ws.getMu(def.id);
-        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
-          background:rgba(255,255,255,0.03);margin-bottom:4px;${off ? 'opacity:0.4;' : ''}">
-          <span style="font-size:16px;">${def.icon}</span>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:12px;color:${def.color};font-weight:600;">${def.name}
-              <span style="color:var(--text-dim);font-weight:400;">${off ? '（已禁用）' : ' · 当前 ' + pct + '%'}</span></div>
-            <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:4px;margin:4px 0;overflow:hidden;">
-              <div style="width:${off ? 0 : pct}%;height:100%;border-radius:4px;background:${def.color};
-                box-shadow:0 0 6px ${def.color}80;transition:width 0.3s ease;"></div>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
-              <input type="range" data-mu="${def.id}" min="-1" max="1" step="0.05" value="${mu.toFixed(2)}"
-                style="flex:1;height:3px;" ${off ? 'disabled' : ''} />
-              <span data-muval="${def.id}" style="font-size:9px;color:${def.color};width:32px;text-align:right;
-                font-variant-numeric:tabular-nums;">${mu >= 0 ? '+' : ''}${mu.toFixed(2)}</span>
+        const fillPct = Math.round(((mu + 1) / 2) * 100);
+        const label = (mu >= 0 ? '+' : '') + Math.round(mu * 100) + '%';
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <div class="wx-pill" data-pill="${def.id}" style="position:relative;flex:1;height:28px;
+            border-radius:14px;background:rgba(255,255,255,0.06);overflow:hidden;touch-action:none;
+            user-select:none;${off ? 'opacity:0.4;pointer-events:none;' : 'cursor:pointer;'}">
+            <div class="wx-pill-fill" style="position:absolute;left:0;top:0;bottom:0;width:${fillPct}%;
+              background:${def.color};opacity:0.55;"></div>
+            <div style="position:relative;height:100%;display:flex;align-items:center;justify-content:center;
+              gap:5px;font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.7);
+              pointer-events:none;">
+              <span style="font-size:14px;">${def.icon}</span>
+              <span class="wx-pill-label" style="font-variant-numeric:tabular-nums;">${label}</span>
             </div>
           </div>
-          <button data-wx="${def.id}" style="font-size:11px;padding:3px 8px;">${off ? '启用' : '禁用'}</button>
+          <button data-wx="${def.id}" style="font-size:11px;padding:3px 8px;flex:none;">${off ? '启用' : '禁用'}</button>
         </div>`;
       }).join('');
 
-      // mu 滑条：拖动时只更新数字（零开销），松手 120ms 后才重算时间线（约 2-6ms，无感）。
-      // 不做防抖的话，拖动会每帧触发一次整条时间线重算 → 掉帧。
+      // 拖动时只更新这一颗胶囊的填充宽度与文字（零开销），松手/移动中防抖 120ms 后
+      // 才重算时间线（约 2-6ms，无感）——不做防抖的话，拖动会每帧触发一次整条时间线
+      // 重算，在平板上尤其容易掉帧。多颗胶囊共用同一个防抖计时器，与旧版原生滑条
+      // 的既有行为一致（连续拖两颗时后一颗会顶掉前一颗还没提交的那次，不是新引入的）。
       let muTimer = null;
-      baseBox.querySelectorAll('[data-mu]').forEach(sl => {
-        sl.addEventListener('input', () => {
-          const id = sl.dataset.mu;
-          const v = parseFloat(sl.value);
-          const lab = baseBox.querySelector(`[data-muval="${id}"]`);
-          if (lab) lab.textContent = (v >= 0 ? '+' : '') + v.toFixed(2);
+      baseBox.querySelectorAll('.wx-pill[data-pill]').forEach(pill => {
+        const id = pill.dataset.pill;
+        if (ws.isWeatherDisabled(id)) return; // 禁用态 pointer-events:none 已经挡了交互，不用再绑
+        const fillEl = pill.querySelector('.wx-pill-fill');
+        const labelEl = pill.querySelector('.wx-pill-label');
+        const applyFromClientX = (clientX) => {
+          const rect = pill.getBoundingClientRect();
+          const frac = rect.width ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 0;
+          const v = Math.round((frac * 2 - 1) * 100) / 100; // -1..1，百分点精度
+          fillEl.style.width = (frac * 100) + '%';
+          labelEl.textContent = (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
           clearTimeout(muTimer);
           muTimer = setTimeout(() => {
             ws.setMu(id, v);
             ws._template = 'custom_'; // 手动调过 → 不再属于任何模板
           }, 120);
+        };
+        pill.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          pill.setPointerCapture?.(e.pointerId);
+          applyFromClientX(e.clientX);
+          const onMove = (ev) => applyFromClientX(ev.clientX);
+          const onUp = () => {
+            pill.removeEventListener('pointermove', onMove);
+            pill.removeEventListener('pointerup', onUp);
+            pill.removeEventListener('pointercancel', onUp);
+          };
+          pill.addEventListener('pointermove', onMove);
+          pill.addEventListener('pointerup', onUp);
+          pill.addEventListener('pointercancel', onUp);
         });
       });
 
@@ -488,9 +518,31 @@ export const WeatherPanel = {
               <span style="font-size:11px;color:${def.color};width:46px;text-align:right;flex:none;">${pct.toFixed(1)}%</span>
             </div>`;
           }).join('');
-        const ex = ws.getActiveExtremes();
-        const exHtml = ex.length
-          ? ex.map(e => `<div style="color:${e.color};"><b>${e.icon} ${e.name}</b> 强度 ${(e.intensity * 100).toFixed(0)}%</div>`).join('')
+        // v51.24：用户"实时预报下面的极端天气那里，把有充能的极端天气放在里面
+        // （如果暂未生效的就变灰），生效了之后才正常显示"——原来这里只列**已生效**
+        // 的极端天气，充能中但还没触发的完全不出现，玩家在这个紧凑摘要里看不到
+        // "快下暴雨了"这种预兆，得翻到下面单独的【极端天气】大列表才看得到充能进度。
+        // 现在把"有充能（>0%）"的都列进来：已生效的正常高亮显示强度，充能中但还
+        // 没生效的整行变灰、显示充能进度条+百分比，一触发就自动切换成正常样式
+        // （下一次 tick 重绘时 activeEx 里就有它了）。
+        const activeEx = new Map(ws.getActiveExtremes().map(e => [e.id, e]));
+        const exRows = Object.values(EXTREME_WEATHERS)
+          .map(def => {
+            const act = activeEx.get(def.id);
+            const chargePct = Math.round((act ? act.intensity : ws.getCharge(def.id)) * 100);
+            if (!act && chargePct <= 0) return null; // 没生效也完全没充能 → 不占地方
+            return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0;${act ? '' : 'opacity:0.45;'}">
+              <span style="font-size:14px;width:18px;text-align:center;flex:none;">${def.icon}</span>
+              <span style="font-size:12px;color:${def.color};min-width:28px;flex:none;">${def.name}</span>
+              <div style="flex:1;height:6px;background:rgba(255,255,255,0.07);border-radius:4px;overflow:hidden;">
+                <div style="width:${chargePct}%;height:100%;border-radius:4px;background:${def.color};
+                  ${act ? `box-shadow:0 0 6px ${def.color}80;` : ''}"></div>
+              </div>
+              <span style="font-size:11px;color:${def.color};width:64px;text-align:right;flex:none;">${act ? '强度 ' : '充能 '}${chargePct}%</span>
+            </div>`;
+          })
+          .filter(Boolean);
+        const exHtml = exRows.length ? exRows.join('')
           : `<div style="color:var(--text-dim);">（无极端天气）</div>`;
         live.innerHTML = rows + `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">${exHtml}</div>`;
       }
