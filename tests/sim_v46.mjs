@@ -249,10 +249,12 @@ const mkE = (ents, type, x, y, extra = {}) => {
   T('光⑥-正午仍然是白天（地板不能把白天也点亮）', env(0.25) < 0.05);
 
   T('光⑦-昼夜曲线的低阳三档整体抬亮，正午一档未动', (() => {
+    // v51.26 新增了 azim（太阳方位角）列，插在 elev 和 exp 之间——
+    // 这里放宽成 elev 和 exp 之间允许任意非 } 字符，不再要求两者字面相邻。
     const dn = srcRaw('src/presentation/DayNight.js');
-    const mid = /p: 0\.25[^}]*elev: 82, exp: 1\.00, amb: 0\.30/.test(dn);
-    const dawn = /p: 0\.00[^}]*elev: 16, exp: 0\.86, amb: 0\.52/.test(dn);
-    const night = /p: 0\.75[^}]*elev: 14, exp: 0\.66, amb: 0\.68/.test(dn);
+    const mid = /p: 0\.25[^}]*elev: 82,[^}]*exp: 1\.00, amb: 0\.30/.test(dn);
+    const dawn = /p: 0\.00[^}]*elev: 16,[^}]*exp: 0\.86, amb: 0\.52/.test(dn);
+    const night = /p: 0\.75[^}]*elev: 14,[^}]*exp: 0\.66, amb: 0\.68/.test(dn);
     return mid && dawn && night;
   })());
 }

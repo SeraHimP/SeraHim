@@ -1017,6 +1017,20 @@ export const CONFIG = {
       // 教训：滤抖动比"反应快"更重要，见 DOMINANCE_HYSTERESIS 的头注）。
       autoDownMs: 16, autoUpMs: 8, autoDownTicks: 2, autoUpTicks: 4,
     },
+
+    // v51.26：天气驱动的阴天压光——用户："如果有雨的话，云层是不是就遮住阳光了。"
+    // 见 DayNight.js 的 applyWeatherOvercast/weatherOvercastFactor。三个 xxxWeight
+    // 是各天气对"云量"的贡献权重（雨挡光最狠、雪次之、雾更偏地表雾霭所以权重最低，
+    // 风/晴不遮光不参与）；exposureDrop/ambientBoost/desaturate 是云量拉满时三个
+    // 光照杠杆各压多少，overcastColor 是阴天把太阳/天空颜色往哪个灰调拉。
+    weatherLighting: {
+      rainWeight: 1.0, fogWeight: 0.5, snowWeight: 0.8,
+      exposureDrop: 0.35,     // 云量拉满时曝光再打几折（1 - cover*这个值）
+      ambientBoost: 0.28,     // 云量拉满时环境光占比再加多少
+      maxAmbientShare: 0.9,   // 环境光占比的硬上限，留一点方向光不至于完全没有立体感
+      desaturate: 0.7,        // 太阳/天空色往阴天灰调混合的最大比例
+      overcastColor: '#a4abb6',
+    },
   },
 
   world: {

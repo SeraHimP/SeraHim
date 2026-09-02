@@ -20,7 +20,7 @@ import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
 import { FACTIONS, canTarget } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
-import { dayNightAt, DAY_PERIOD, resolveDayPhase } from './presentation/DayNight.js';
+import { dayNightAt, DAY_PERIOD, resolveDayPhase, applyWeatherOvercast } from './presentation/DayNight.js';
 import { EventBus } from './utils/EventBus.js';
 import { equipSkill } from './core/skillParams.js';
 import { createFactories, effectiveMaxHP } from './core/factories.js';
@@ -705,7 +705,8 @@ function gameLoop(timestamp) {
     // 相位走 resolveDayPhase 这唯一口径（光照 / WorldState 数值化昼夜 / HUD 时间条共用）。
     // 三处各算一遍时"画面白天、数值夜晚"这种不一致不会报错，只会让人怀疑眼睛。
     const dp = resolveDayPhase(CTX.gameTime, CTX, weatherSystem.enabled);
-    renderer3d.setLighting(dayNightAt(dp.phase * dp.period, dp.period));
+    // v51.26：阴天压光——下雨/下雪/起雾时云层遮阳，在昼夜光照之上再叠一层天气影响。
+    renderer3d.setLighting(applyWeatherOvercast(dayNightAt(dp.phase * dp.period, dp.period), weatherSystem));
   }
   renderer3d?.render(canvasController);
   const t2 = performance.now();

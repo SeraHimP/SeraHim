@@ -237,7 +237,7 @@ export class ThreeRenderer {
    * fog 传数值即启用线性雾（世界单位），传 null 关闭。
    */
   setLighting(opt = {}) {
-    const { sunColor, ambientSky, ambientGround, sunElevation, ambientShare, exposure, fog, background, unitTint, normalize = true } = opt;
+    const { sunColor, ambientSky, ambientGround, sunElevation, sunAzimuth, ambientShare, exposure, fog, background, unitTint, normalize = true } = opt;
     // v47：单位（塔/兵/龙）跟着环境一起变色，否则夜里满地图发白的小人（见 DayNight.unitTintOf）。
     // 走 setLighting 是因为**这里已经是光照的唯一入口** —— 再开一条并行的通道，
     // 就会出现"改了灯没改单位"的半截状态。
@@ -249,10 +249,13 @@ export class ThreeRenderer {
     if (sunColor !== undefined) this.sun.color.set(sunColor);
     if (ambientSky !== undefined) this.hemi.color.set(ambientSky);
     if (ambientGround !== undefined) this.hemi.groundColor.set(ambientGround);
-    if (sunElevation !== undefined) {
-      const e = Math.max(5, Math.min(89, sunElevation)) * DEG;
-      this._sunDir.set(Math.cos(SUN_AZIM_DEG * DEG) * Math.cos(e), Math.sin(e),
-                       Math.sin(SUN_AZIM_DEG * DEG) * Math.cos(e)).normalize();
+    // v51.26：太阳方位角现在也能随时段扫动（原来固定死在 SUN_AZIM_DEG，太阳只会
+    // 升降不会横移）。sunAzimuth 不传时退回原来的固定常量——这条分支单独存在
+    // 就是为了保这个兜底：老调用点（不知道这个新参数的）行为不变。
+    if (sunElevation !== undefined || sunAzimuth !== undefined) {
+      const e = Math.max(5, Math.min(89, sunElevation ?? (Math.asin(this._sunDir.y) / DEG))) * DEG;
+      const az = (sunAzimuth ?? SUN_AZIM_DEG) * DEG;
+      this._sunDir.set(Math.cos(az) * Math.cos(e), Math.sin(e), Math.sin(az) * Math.cos(e)).normalize();
     }
     if (normalize) {
       const share = ambientShare ?? (this.hemi.intensity / IRRADIANCE_TARGET);

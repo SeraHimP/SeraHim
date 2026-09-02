@@ -25,13 +25,21 @@ import { CONFIG } from '../data/Config.js';
 //      配上低曝光会把整场染成橙黑，正是扭曲丛林夜里"看起来很怪"的那种脏。
 // 另外还有一处**不在这个表里**的真 bug（塔灯在黎明前半段直接灭掉），
 // 已在 ThreeRenderer._syncTowerLights 修 —— 光调这张表是治不好"纯黑"的。
-//               相位   太阳色     天空色(半球上)  地面反照色     太阳仰角  曝光   环境占比   天穹/边界底色
+// v51.26：太阳方位角（azim）随时段扫动——用户："光线的角度要模拟真实的"。原来
+// 方位角是 ThreeRenderer.js 里的一个死常量（135°，"左上打光"），太阳只会升降、
+// 一天到头都从同一个水平方向照过来，不是真实天体运动。
+// 现在给一个【温和的】扫动（105°→135°→165°，跨度 60°），不做成东升西落那种
+// 满 180° 的大摆动——这是俯视策略游戏，玩家会靠阴影方向读地形高低/立体感，
+// 摆动太大会让同一片地形在一天里阴影来回大幅摆动，读图变累；温和摆动既能让人
+// 看出"太阳真的在移动"，又不至于扰乱既有的阴影阅读习惯。夜晚方位角随便给
+// （太阳此时贡献趋近于 0，方向已经不重要），延续午夜前一个关键帧收尾。
+//               相位   太阳色     天空色(半球上)  地面反照色     太阳仰角 太阳方位角  曝光   环境占比   天穹/边界底色
 const KEYS = [
-  { p: 0.00, sun: '#ffc48c', sky: '#e0a888', gnd: '#6a5a48', elev: 16, exp: 0.86, amb: 0.52, bg: '#2e2838' }, // 黎明
-  { p: 0.25, sun: '#fff6e8', sky: '#8fbce6', gnd: '#6b7a5a', elev: 82, exp: 1.00, amb: 0.30, bg: '#1a2740' }, // 正午
-  { p: 0.50, sun: '#ff9d6a', sky: '#d99a78', gnd: '#5c4d40', elev: 16, exp: 0.84, amb: 0.54, bg: '#33222a' }, // 黄昏
-  { p: 0.75, sun: '#a8b6e2', sky: '#3a4468', gnd: '#2c3450', elev: 14, exp: 0.66, amb: 0.68, bg: '#151b30' }, // 午夜
-  { p: 1.00, sun: '#ffc48c', sky: '#e0a888', gnd: '#6a5a48', elev: 16, exp: 0.86, amb: 0.52, bg: '#2e2838' }, // 回到黎明（闭合）
+  { p: 0.00, sun: '#ffc48c', sky: '#e0a888', gnd: '#6a5a48', elev: 16, azim: 105, exp: 0.86, amb: 0.52, bg: '#2e2838' }, // 黎明（偏东）
+  { p: 0.25, sun: '#fff6e8', sky: '#8fbce6', gnd: '#6b7a5a', elev: 82, azim: 135, exp: 1.00, amb: 0.30, bg: '#1a2740' }, // 正午（居中，与改动前的固定值一致）
+  { p: 0.50, sun: '#ff9d6a', sky: '#d99a78', gnd: '#5c4d40', elev: 16, azim: 165, exp: 0.84, amb: 0.54, bg: '#33222a' }, // 黄昏（偏西）
+  { p: 0.75, sun: '#a8b6e2', sky: '#3a4468', gnd: '#2c3450', elev: 14, azim: 165, exp: 0.66, amb: 0.68, bg: '#151b30' }, // 午夜（太阳贡献趋零，方位不重要）
+  { p: 1.00, sun: '#ffc48c', sky: '#e0a888', gnd: '#6a5a48', elev: 16, azim: 105, exp: 0.86, amb: 0.52, bg: '#2e2838' }, // 回到黎明（闭合）
 ];
 
 // 一整天的游戏秒数。**权威值在 CONFIG.world.dayPeriodSec**（用户定稿默认 480 = 8 分钟）；
@@ -60,6 +68,7 @@ export function dayNightAt(gameTime, period = DAY_PERIOD) {
     ambientSky: _lerpHex(a.sky, b.sky, t),
     ambientGround: _lerpHex(a.gnd, b.gnd, t),
     sunElevation: a.elev + (b.elev - a.elev) * t,
+    sunAzimuth: a.azim + (b.azim - a.azim) * t,
     exposure: a.exp + (b.exp - a.exp) * t,
     ambientShare: a.amb + (b.amb - a.amb) * t,
     background: _lerpHex(a.bg, b.bg, t),
@@ -98,6 +107,56 @@ export function unitTintOf(skyHex, exposure) {
   const k = Math.max(0, Math.min(c.maxMix ?? 0.62, (1 - (exposure ?? 1)) * strength));
   if (k <= 0) return '#ffffff';
   return _lerpHex('#ffffff', skyHex, k);
+}
+
+/**
+ * v51.26：天气驱动的阴天压光。用户："如果有雨的话，云层是不是就遮住阳光了。"
+ *
+ * 不改 dayNightAt() 本身——那是【纯昼夜函数】，不依赖天气，也是 resolveDayPhase
+ * 头注强调的"三处必须读同一个函数"里的那个唯一口径，掺进天气状态会破坏它的
+ * 纯函数性质、也会让"只想看纯昼夜效果"的调用方（如果以后有）被迫捎带天气。
+ * 所以单开一个函数：吃 dayNightAt() 算出的参数 + WeatherSystem，
+ * 吐出【叠加了阴天效果之后】的新参数，main.js 里两个函数串着调用一次。
+ *
+ * 强度用的是【充能】不是占比——跟 WeatherLayer 的可视化、getEffectiveStrengths()
+ * 的数值加成走同一个量（这次会话早些时候刚为了"标签/画面对不上"这个坑修过一次，
+ * 这里不重蹈覆辙）：云层要挡多久太阳，跟"雨这场下了多久、真下透了没"是同一件事，
+ * 不该跟着占比的瞬时抖动一起闪烁。
+ *
+ * 只有雨/雾/雪算"云"，风和晴本身不遮光（大晴天刮风依然是大晴天）。
+ */
+const _cA = new THREE.Color(), _cB = new THREE.Color();
+export function weatherOvercastFactor(weatherSystem) {
+  if (!weatherSystem || !weatherSystem.enabled || !weatherSystem.getCharge) return 0;
+  const W = (CONFIG.ui && CONFIG.ui.weatherLighting) || {};
+  const rain = weatherSystem.getCharge('rain') * (W.rainWeight ?? 1.0);
+  const fog = weatherSystem.getCharge('fog') * (W.fogWeight ?? 0.5);
+  const snow = weatherSystem.getCharge('snow') * (W.snowWeight ?? 0.8);
+  return Math.max(0, Math.min(1, rain + fog + snow));
+}
+
+/** 把 dayNightAt() 算出的参数，按当前天气的"云量"再压一层阴天效果。 */
+export function applyWeatherOvercast(params, weatherSystem) {
+  const cover = weatherOvercastFactor(weatherSystem);
+  if (cover <= 0) return params;
+  const W = (CONFIG.ui && CONFIG.ui.weatherLighting) || {};
+  // 阴天三件套：曝光降（云层挡光，直射变弱）、环境光占比升（光被云层散射成柔光，
+  // 不再是"一面亮一面黑"的硬光）、太阳与天空色都往灰调拉（阴天没有蓝天也没有
+  // 夕阳橙，颜色本身就是被云层"漂白"过的）——跟 v45 那次"黎明/黄昏/夜晚整体
+  // 抬亮"改的是同一套三个杠杆，只是这次是压暗而不是抬亮，道理相通。
+  const exposure = params.exposure * (1 - cover * (W.exposureDrop ?? 0.35));
+  const ambientShare = Math.min(W.maxAmbientShare ?? 0.9, params.ambientShare + cover * (W.ambientBoost ?? 0.28));
+  const grey = W.overcastColor ?? '#a4abb6';
+  const mix = cover * (W.desaturate ?? 0.7);
+  const sunColor = '#' + _cA.set(params.sunColor).lerp(_cB.set(grey), mix).getHexString();
+  const ambientSky = '#' + _cA.set(params.ambientSky).lerp(_cB.set(grey), mix * 0.6).getHexString();
+  return {
+    ...params,
+    exposure, ambientShare, sunColor, ambientSky,
+    // 单位色调也要跟着阴天一起变暗变灰，否则会出现"天暗了、兵却还是原来那么亮"的
+    // 半截状态——跟 unitTintOf 本来就要解决的问题（v47 那条）同一个道理。
+    unitTint: unitTintOf(ambientSky, exposure),
+  };
 }
 
 /** 相位（0..1）对应的一天时刻标签，供 UI/调试显示。 */
