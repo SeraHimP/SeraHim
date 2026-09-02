@@ -488,8 +488,34 @@ import fs from 'fs';
     /rect\.width \? Math\.max\(0, Math\.min\(1, \(clientX - rect\.left\) \/ rect\.width\)\) : 0/.test(panel));
   T('胶⑦-拖动仍然走原有的 120ms 防抖再提交 ws.setMu，没有丢掉"松手才重算时间线"这条性能保护',
     /muTimer = setTimeout\(\(\) => \{\s*ws\.setMu\(id, v\);/.test(panel));
-  T('胶⑧-禁用某天气时胶囊本身也跟着变灰+不可交互（opacity 0.4 + pointer-events:none）',
-    /off \? 'opacity:0\.4;pointer-events:none;'/.test(panel));
+  T('胶⑧-禁用某天气时胶囊整体调暗（opacity 0.45），但不再是 pointer-events:none 那种整体锁死',
+    panel.includes("off ? 'opacity:0.45;'") && !/off \? 'opacity:0\.4;pointer-events:none;'/.test(panel));
+
+  // ==================== v51.25：胶囊改小、禁用按钮并进胶囊里 ====================
+  // 用户对 v51.24 的追加反馈："天气胶囊也太大了，做成小巧的（宽度大幅减少），
+  // 禁用按钮最好也集成到胶囊里，目前的胶囊也太丑了。"
+  T('胶⑨-胶囊改成按内容自适应宽度（inline-flex），不再是撑满一整行的 flex:1',
+    panel.includes("display:inline-flex") && !panel.includes('flex:1;height:28px'));
+  T('胶⑩-多颗胶囊用 flex-wrap 挤在一起（标签流布局），不再一行一个天气各占一整行',
+    panel.includes('flex-wrap:wrap;gap:6px'));
+  T('胶⑪-高度收窄到 22px（原来是 28px），确实变小了不是只改了说法',
+    panel.includes('height:22px') && !panel.includes('height:28px'));
+  // 注：极端天气区块（renderExtreme）仍然合法地保留着独立的 <button data-wx>——那部分
+  // 这次没有要求改，只钉"基础天气区块（wxBase 那段模板里）不再输出这种 <button>"。
+  const baseTplStart = panel.indexOf("baseBox.innerHTML");
+  const baseTplEnd = panel.indexOf('}).join', baseTplStart);
+  const baseTpl = panel.slice(baseTplStart, baseTplEnd);
+  T('胶⑫-禁用开关是嵌在胶囊里的一颗小圆点（.wx-pill-power），基础天气这段模板里不再输出独立 <button>',
+    baseTpl.includes('wx-pill-power') && !baseTpl.includes('<button'));
+  T('胶⑬-圆点自己的 pointerdown 会 stopPropagation，不会被胶囊的拖拽逻辑先一步当成"拖到这个位置"',
+    /dot\.addEventListener\('pointerdown', \(e\) => e\.stopPropagation\(\)\)/.test(panel));
+  T('胶⑭-圆点的 click 才是真正切换禁用状态的地方，且同样 stopPropagation',
+    /dot\.addEventListener\('click', \(e\) => \{\s*e\.stopPropagation\(\);\s*const id = dot\.dataset\.wx;\s*ws\.setWeatherDisabled/.test(panel));
+  T('胶⑮-禁用某天气后，那颗圆点本身不会被一起锁死——不然禁用了就永远点不回来',
+    (() => {
+      const m = panel.match(/<span class="wx-pill-power"[\s\S]*?<\/span>\s*<\/div>`;/);
+      return !!m && !m[0].includes('pointer-events:none');
+    })());
 
   // ③ 极端天气摘要：充能中但未生效的也列出来，灰显；生效的正常显示
   T('极①-实时摘要不再只看 getActiveExtremes，逐个 EXTREME_WEATHERS 判断"有没有充能"',

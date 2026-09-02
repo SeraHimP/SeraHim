@@ -393,43 +393,46 @@ export const WeatherPanel = {
         }));
       }
 
-      // ==================== v51.24：基础天气行改成 MIUI 风格胶囊滑块 ====================
-      // 用户："天气窗口中基础天气上面显示了静止不动的'当前数值'，把这个删掉和上面的
-      // 重复了（与上方【实时与预报】的只读百分比列表是同一个数，念两遍）。然后基础
-      // 天气的滑块条这部分大改一下，把这个整体做成MINI那种胶囊的样式，进度条在胶囊
-      // 里面填充（并且可以滑动进度），文字和图标都在胶囊里显示。"
+      // ==================== v51.25：胶囊改小、禁用按钮并进胶囊里 ====================
+      // 用户对 v51.24 那版的反馈："天气胶囊也太大了，我要做成那种小巧的（宽度大幅
+      // 减少），然后禁用按钮最好也集成到胶囊里……目前的胶囊也太丑了。"
       //
-      // 旧版一行三层：① 图标+中文名+"当前XX%"文字（只读实况，与上面 #wxLive 重复）
-      // ② 一条只读发光条（同一个只读实况的第二次呈现）③ 原生 <input type=range> 滑条
-      // +独立数字（真正在编辑的出现倾向 mu，-1~+1）。三样东西挤在一行，其中①②纯粹
-      // 是重复信息。现在只留"你在编辑什么"这一件事：一颗胶囊，填充比例与胶囊内的
-      // 百分比文字都是 mu（映射到 0~100% 的可视填充：mu=-1 空、mu=0 半、mu=+1 满），
-      // 图标+百分比一起显示在胶囊正中。"现在实际出现的占比"这个只读数只在上面
-      // 【实时与预报】的 #wxLive 列表里出现一次，不再重复。
-      //
-      // 交互：点/拖胶囊【任意位置】直接把值跳到手指/指针位置（不留独立圆点把手），
-      // 更贴近 MIUI 那种"胶囊本身就是把手"的滑块观感，在触屏（平板）上也更好点中。
-      baseBox.innerHTML = Object.values(BASE_WEATHERS).map(def => {
-        const off = ws.isWeatherDisabled(def.id);
-        const mu = ws.getMu(def.id);
-        const fillPct = Math.round(((mu + 1) / 2) * 100);
-        const label = (mu >= 0 ? '+' : '') + Math.round(mu * 100) + '%';
-        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <div class="wx-pill" data-pill="${def.id}" style="position:relative;flex:1;height:28px;
-            border-radius:14px;background:rgba(255,255,255,0.06);overflow:hidden;touch-action:none;
-            user-select:none;${off ? 'opacity:0.4;pointer-events:none;' : 'cursor:pointer;'}">
+      // 三处改动：
+      //   ① 胶囊从 flex:1（撑满一整行）改成按内容自适应宽度的小号胶囊，5 颗一起用
+      //      flex-wrap 挤在一块——和上面【气候模板】那排按钮同一种"标签流"布局，
+      //      不再一行一个天气、大半行空着。
+      //   ② 高度从 28px 收到 22px，字号收到 10-11px，配色也更克制（描边代替大面积
+      //      纯色发光），不再是一坨大色块。
+      //   ③ 禁用按钮不再是胶囊右边单独一个 <button>，改成嵌进胶囊自己右侧的一个小圆点
+      //      开关（.wx-pill-power）。拖拽区仍然是整颗胶囊，但这个小圆点自己拦截
+      //      pointerdown（阻止冒泡到胶囊的拖拽逻辑），点它只切换启用/禁用，不会被
+      //      当成一次拖拽误触发 setMu；点圆点之外的任何地方都还是"点哪跳到哪"的滑块。
+      //      禁用后胶囊整体调暗，但这颗圆点本身**不**跟着变不可交互——不然禁用了就
+      //      永远点不开，只能去别处找回退开关。
+      baseBox.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;">` +
+        Object.values(BASE_WEATHERS).map(def => {
+          const off = ws.isWeatherDisabled(def.id);
+          const mu = ws.getMu(def.id);
+          const fillPct = Math.round(((mu + 1) / 2) * 100);
+          const label = (mu >= 0 ? '+' : '') + Math.round(mu * 100) + '%';
+          return `<div class="wx-pill" data-pill="${def.id}" style="position:relative;display:inline-flex;
+            align-items:center;height:22px;padding:0 6px;border-radius:11px;
+            background:var(--surface-2, rgba(255,255,255,0.05));border:1px solid rgba(255,255,255,0.08);
+            overflow:hidden;touch-action:none;user-select:none;${off ? 'opacity:0.45;' : 'cursor:pointer;'}">
             <div class="wx-pill-fill" style="position:absolute;left:0;top:0;bottom:0;width:${fillPct}%;
-              background:${def.color};opacity:0.55;"></div>
-            <div style="position:relative;height:100%;display:flex;align-items:center;justify-content:center;
-              gap:5px;font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.7);
-              pointer-events:none;">
-              <span style="font-size:14px;">${def.icon}</span>
-              <span class="wx-pill-label" style="font-variant-numeric:tabular-nums;">${label}</span>
-            </div>
-          </div>
-          <button data-wx="${def.id}" style="font-size:11px;padding:3px 8px;flex:none;">${off ? '启用' : '禁用'}</button>
-        </div>`;
-      }).join('');
+              background:${def.color};opacity:0.4;pointer-events:none;"></div>
+            <span style="position:relative;font-size:11px;pointer-events:none;">${def.icon}</span>
+            <span class="wx-pill-label" style="position:relative;font-size:10.5px;font-weight:700;
+              margin-left:3px;color:${def.color};text-shadow:0 1px 1px rgba(0,0,0,0.5);
+              font-variant-numeric:tabular-nums;pointer-events:none;">${label}</span>
+            <span class="wx-pill-power" data-wx="${def.id}" title="${off ? '点击启用' : '点击禁用'}"
+              style="position:relative;margin-left:5px;width:12px;height:12px;border-radius:50%;
+              display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer;">
+              <span style="width:5px;height:5px;border-radius:50%;
+                background:${off ? 'rgba(255,255,255,0.3)' : '#ffffff'};box-shadow:${off ? 'none' : '0 0 3px rgba(255,255,255,0.8)'};"></span>
+            </span>
+          </div>`;
+        }).join('') + `</div>`;
 
       // 拖动时只更新这一颗胶囊的填充宽度与文字（零开销），松手/移动中防抖 120ms 后
       // 才重算时间线（约 2-6ms，无感）——不做防抖的话，拖动会每帧触发一次整条时间线
@@ -438,7 +441,7 @@ export const WeatherPanel = {
       let muTimer = null;
       baseBox.querySelectorAll('.wx-pill[data-pill]').forEach(pill => {
         const id = pill.dataset.pill;
-        if (ws.isWeatherDisabled(id)) return; // 禁用态 pointer-events:none 已经挡了交互，不用再绑
+        if (ws.isWeatherDisabled(id)) return; // 禁用态：拖拽不绑，但下面的圆点开关照样单独绑
         const fillEl = pill.querySelector('.wx-pill-fill');
         const labelEl = pill.querySelector('.wx-pill-label');
         const applyFromClientX = (clientX) => {
@@ -469,11 +472,13 @@ export const WeatherPanel = {
         });
       });
 
-      // 基础天气的启用/禁用按钮——极端天气那部分现在完全归 renderExtreme() 管
-      // （它是纯只读展示，见上面那个函数头的说明），这里只需要管 baseBox 自己这些按钮。
-      baseBox.querySelectorAll('[data-wx]').forEach(b => {
-        b.addEventListener('click', () => {
-          const id = b.dataset.wx;
+      // 启用/禁用圆点：嵌在胶囊里，但事件要在冒泡到胶囊的拖拽 pointerdown 之前拦下来，
+      // 否则点这个点会被胶囊那边先解读成"拖到这个位置"，setMu 一次再被禁用状态盖掉。
+      baseBox.querySelectorAll('.wx-pill-power[data-wx]').forEach(dot => {
+        dot.addEventListener('pointerdown', (e) => e.stopPropagation());
+        dot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = dot.dataset.wx;
           ws.setWeatherDisabled(id, !ws.isWeatherDisabled(id));
           renderRows();
         });
