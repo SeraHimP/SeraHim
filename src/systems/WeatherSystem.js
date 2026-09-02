@@ -73,7 +73,28 @@ export class WeatherSystem {
     this._fcCache = null;
     this._clock = 0;
 
+    // ==================== v51.26：占比/强度读出按帧缓存一次 ====================
+    // 用户报"开天气之后更卡"——排查结论：getWeights()/getEffectiveStrengths()/
+    // getExtremeStrengths() 跟"是哪个单位"完全无关，是这一帧的全局天气状态，
+    // 理论上整局每步只用算一次；但 AttributeCalculator 给每个实体算属性时都会调
+    // 到它们（getModifiers(entity) 内部又各调一次），单位一多就是把一份 O(1) 的
+    // 全局计算重复算几百遍（softmax 里的 Math.exp、档位查表都不算贵，但架不住
+    // 单位数 × 每帧调用次数）。三个方法各自缓存，命中同一次 update() 步进内的
+    // 重复调用；见下面 _invalidateWeatherReadout() 及其调用点（与既有的
+    // _invalidateForecast() 挂在同一批"状态真的变了"的入口上，外加 update() 本身，
+    // 因为 _x 只在 update() 里重新采样）。
+    this._weightsCache = null;
+    this._effStrCache = null;
+    this._extStrCache = null;
+
     this.reset();
+  }
+
+  /** 见构造函数里那段大注释：状态一变就清掉这一步的缓存，下次调用重算。 */
+  _invalidateWeatherReadout() {
+    this._weightsCache = null;
+    this._effStrCache = null;
+    this._extStrCache = null;
   }
 
   /**
@@ -85,6 +106,7 @@ export class WeatherSystem {
     this._extremeHistory = [];
     this._fcCache = null;
     this._invalidateForecast();
+    this._invalidateWeatherReadout(); // v51.26：重开一局，天气从零算起，缓存不能带着上一局的值
     this._rng = _makeRng(seed ?? (Math.random() * 1e9) | 0);
 
     // θ 决定主导天气的平均持续时长。经验关系：持续时长 ≈ 1/θ 量级。
@@ -187,6 +209,12 @@ export class WeatherSystem {
     if (!this.enabled) return;
     this._clock += dt;
     this._x = this._sampleTimeline(this._clock);
+    // v51.26：_x 换了，权重/强度缓存必须失效——放在 _updateCharges 之前，
+    // 好让它内部那次 getWeights() 用新 _x 重算并把新值缓存下来；
+    // _effStrCache/_extStrCache 这里清空后，一直空到 _updateCharges 改完
+    // _charge/_extremeCharge 为止，之后外部（AttributeCalculator 等）第一次
+    // 调用 getEffectiveStrengths()/getExtremeStrengths() 时才会用新充能值重算。
+    this._invalidateWeatherReadout();
     this._updateCharges(dt);
   }
 
@@ -201,6 +229,10 @@ export class WeatherSystem {
     // v34（Q4）：充能方程抽成纯函数 _stepCharges，真实演化与预报前向模拟【共用同一份代码】——
     // 两处各写一份迟早漂移，预报又会不准。
     this._stepCharges(this._charge, this._extremeCharge, this.getWeights(), dt);
+    // v51.26：_charge/_extremeCharge 刚被 _stepCharges 就地改过，getEffectiveStrengths()/
+    // getExtremeStrengths() 的缓存必须跟着失效——放在这里（而不是只放 update()）是因为
+    // _updateCharges 本身也会被外部直接调用（如测试里绕过 update() 手动推进充能），
+    // 缓存失效点必须钉在"真正改了 _charge"这一步，不能假定调用方一定走 update()。
 
     // v34（Q4）：记录过去的极端充能快照（对齐 SAMPLE_INTERVAL 网格）。
     // 充能是路径依赖的（一阶惯性），过去无法从时间线反推，只能实时记账；
@@ -210,6 +242,8 @@ export class WeatherSystem {
       this._extremeHistory.push({ t: grid, ex: { ...this._extremeCharge } });
       if (this._extremeHistory.length > 40) this._extremeHistory.shift(); // 保留 80s，够覆盖条上的过去段
     }
+
+    this._invalidateWeatherReadout();
   }
 
   /**
@@ -372,7 +406,8 @@ export class WeatherSystem {
   // ==================== 权重读出 ====================
   /** 当前基础天气占比（softmax，和为 1）。被禁用的天气占比恒为 0。 */
   getWeights() {
-    return this._softmax(this._x);
+    if (this._weightsCache) return this._weightsCache;
+    return (this._weightsCache = this._softmax(this._x));
   }
 
   /**
@@ -484,17 +519,19 @@ export class WeatherSystem {
    * 返回 { weatherId: scale }，只含 scale > 0 的。基础与极端天气一并返回。
    */
   getEffectiveStrengths() {
+    if (this._effStrCache) return this._effStrCache;
     const out = {};
     for (const id of this.baseIds) {
       if (this.disabledWeathers.has(id)) continue;
       const scale = tierOf(this._charge[id] || 0).scale;
       if (scale > 0) out[id] = scale;
     }
-    return out;
+    return (this._effStrCache = out);
   }
 
   /** 极端天气的生效强度（同样是档位系数） */
   getExtremeStrengths() {
+    if (this._extStrCache) return this._extStrCache;
     const out = {};
     for (const id of Object.keys(EXTREME_WEATHERS)) {
       if (this.disabledWeathers.has(id)) continue;
@@ -502,7 +539,7 @@ export class WeatherSystem {
       const scale = tierOfExtreme(this._extremeCharge[id] || 0).scale;
       if (scale > 0) out[id] = scale;
     }
-    return out;
+    return (this._extStrCache = out);
   }
 
   // ==================== 属性注入 ====================
@@ -648,6 +685,7 @@ export class WeatherSystem {
     this._mu[id] = _clamp(value, -1, 1);
     this._timeline = this._generateTimeline(this._clock);
     this._invalidateForecast(); // v34 Q4：时间线变 → 预报重算
+    this._invalidateWeatherReadout(); // v51.26：同一批状态变更也让占比/强度读出缓存失效
   }
 
   /** 套用气候模板（mu 一次性全部替换），并重算未来 */
@@ -657,6 +695,7 @@ export class WeatherSystem {
     this._initMu();
     this._timeline = this._generateTimeline(this._clock);
     this._invalidateForecast(); // v34 Q4：时间线变 → 预报重算
+    this._invalidateWeatherReadout(); // v51.26：同一批状态变更也让占比/强度读出缓存失效
   }
 
   get template() { return this._template; }
@@ -668,6 +707,7 @@ export class WeatherSystem {
 
   setWeatherDisabled(id, disabled) {
     this._invalidateForecast(); // v34 Q4：开关直接改充能方程行为
+    this._invalidateWeatherReadout(); // v51.26：同上
     // 只影响 softmax 的读出（被禁用的天气占比恒为 0），不改动底层时间线——
     // 所以禁用/启用天气不会"洗牌"未来，只是把某种天气从分配中剔除。
     if (disabled) this.disabledWeathers.add(id);

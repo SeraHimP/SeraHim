@@ -528,5 +528,55 @@ import fs from 'fs';
     panel.includes('if (!act && chargePct <= 0) return null;'));
 }
 
+// ==================== v51.26：占比/强度读出按帧缓存一次 ====================
+// 用户报"开天气之后更卡"——getWeights()/getEffectiveStrengths()/getExtremeStrengths()
+// 跟单位无关、是全局状态，本应整局每步只算一次，却被 AttributeCalculator 每个实体每帧
+// 各调一次。这里钉的不是数值而是【缓存行为的形状】：同一步内重复调用拿到同一个对象引用
+// （命中缓存，没有重新 new 一个），真正会让读数变化的入口调用后引用必须换掉（缓存失效）。
+{
+  const wc = new WeatherSystem(null);
+  wc.setEnabled(true);
+  wc.reset(2026);
+
+  const w1 = wc.getWeights();
+  const w2 = wc.getWeights();
+  T('缓①-同一步内重复调用 getWeights() 命中缓存（同一个对象引用）', w1 === w2);
+
+  const e1 = wc.getEffectiveStrengths();
+  const e2 = wc.getEffectiveStrengths();
+  T('缓②-同一步内重复调用 getEffectiveStrengths() 命中缓存', e1 === e2);
+
+  const x1 = wc.getExtremeStrengths();
+  const x2 = wc.getExtremeStrengths();
+  T('缓③-同一步内重复调用 getExtremeStrengths() 命中缓存', x1 === x2);
+
+  wc.update(1 / 30);
+  const w3 = wc.getWeights();
+  T('缓④-update() 推进一步后 getWeights() 换成新引用（不是拿着上一步的老值）', w3 !== w1);
+
+  const e3 = wc.getEffectiveStrengths();
+  T('缓⑤-update() 推进一步后 getEffectiveStrengths() 也换成新引用', e3 !== e1);
+
+  // 直接调 _updateCharges（不经 update()）也要让 effStr/extStr 缓存失效——
+  // 这条测的正是刚才修的那个坑：只在 update() 里失效覆盖不到直接调 _updateCharges 的调用方。
+  const e4 = wc.getEffectiveStrengths();
+  wc._updateCharges(1);
+  const e5 = wc.getEffectiveStrengths();
+  T('缓⑥-绕开 update() 直接调 _updateCharges() 同样让 getEffectiveStrengths() 缓存失效', e4 !== e5);
+
+  wc.setMu('rain', 0.5);
+  const w4 = wc.getWeights();
+  T('缓⑦-setMu 之后 getWeights() 缓存失效换新引用', w4 !== w3);
+
+  wc.setWeatherDisabled('rain', true);
+  const e6 = wc.getEffectiveStrengths();
+  T('缓⑧-setWeatherDisabled 之后 getEffectiveStrengths() 缓存失效换新引用', e6 !== e5 && e6 !== e4);
+  wc.setWeatherDisabled('rain', false);
+
+  wc.reset(1);
+  const w5 = wc.getWeights();
+  T('缓⑨-reset() 之后 getWeights() 缓存失效换新引用', w5 !== w4);
+}
+
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail?1:0);
