@@ -74,7 +74,31 @@ function mergeParts(parts) {
   out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   out.computeBoundingBox();
+  _applyFakeAO(pos, col, out.boundingBox);
   return out;
+}
+
+// ==================== Week2·Day7：贴地渐变假 AO ====================
+// docs/Q4-RENDERING-REDESIGN.md 第 2 节判断依据："低多边形场景对 AO 极其敏感，
+// 缝隙/接缝处一旦有柔和暗角，立刻显得有实体感"——真 AO（屏幕空间或逐顶点遮蔽率）
+// 要么要后处理 Pass（SSAO，排在 Week2·Day9-10）、要么要知道几何真实的缝隙遮挡关系
+// 逐顶点算，这批造型是几十种手工拼装体拼出来的，没有一份"这个顶点被谁挡住"的
+// 关系数据。这里先用一个便宜但视觉收益不小的近似：**越靠近整个单位的底部越暗**——
+// 现实里接触地面的凹角本来就是最容易积灰、被自身遮挡的地方，这条经验规律对绝大多数
+// 造型（塔/小兵都是"下宽上窄或直筒"）成立。用 pow(t, AO_CURVE) 而不是线性 t，
+// 让暗化只集中在贴近底部的一小段，中上段基本不受影响——不是整体调暗，是"贴地阴影"。
+// 直接乘进顶点色（col 已经是 mergeParts 自己算出来的部件颜色），不需要新增贴图/新
+// 材质通道，因此这一步不改变材质、不改变着色器行为，风险局限在"数值算对了没有"。
+const AO_MIN = 0.72;    // 单位最底部的顶点色亮度下限（1 = 不变暗）
+const AO_CURVE = 0.6;   // <1 时暗化集中在贴近底部的一小段，越小集中范围越窄
+function _applyFakeAO(pos, col, bbox) {
+  const minY = bbox.min.y, span = Math.max(bbox.max.y - minY, 1e-6);
+  const n = col.length / 3;
+  for (let i = 0; i < n; i++) {
+    const t = (pos[i * 3 + 1] - minY) / span;               // 0（底部）~1（顶部）
+    const factor = AO_MIN + (1 - AO_MIN) * Math.pow(Math.min(1, Math.max(0, t)), AO_CURVE);
+    col[i * 3] *= factor; col[i * 3 + 1] *= factor; col[i * 3 + 2] *= factor;
+  }
 }
 
 // topY 一律从合并后的包围盒读【真值】，不手工累加各部件高度：
