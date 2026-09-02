@@ -26,7 +26,8 @@
  *   第三 sprite，屏幕空间锚点悬于血条上方（与 2D 的 y-bSize-26 同距）；E3/E4/E5 =
  *   贴地圆环网格（RingGeometry/CircleGeometry 平躺，renderOrder=5 垫在单位下），
  *   几何体与材质按量化 key 全局共享，创建后零分配。条件分支与 2D 逐条同口径：
- *   射程圈 hasWeapon && !isNexus && !lodBars；归属环 _mapFaction && !_mapTier；
+ *   射程圈 hasWeapon && !lodBars（v51.32 起去掉 !isNexus——见 _syncTowerInfo 头注）；
+ *   归属环 _mapFaction && !_mapTier；
  *   龙魂金环 dragonsoul_ 前缀技能；盾牌 isStructureProtected。幽灵水晶不参与 E 组。
  */
 import * as THREE from '../../vendor/three.module.js';
@@ -718,17 +719,23 @@ export class UnitLayer {
     const bSizes = CONFIG.buildingSizes || {};
     // Q3：与 _visualOf 同步放大——归属环等随放大后的模型走（纯表现）。
     const bSize = (e._modelSize || bSizes[e._mapTier] || bSizes.default || 28) * towerVizScale(e._mapTier);
-    const isNexus = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
     const color = e._mapFaction === 'blue' ? '#5b9bd5' : e._mapFaction === 'red' ? '#e0473f' : '#8a92a0';
     const x = e.pos.x, z = e.pos.y;
 
-    // --- E3 射程圈：hasWeapon && !isNexus && !lodBars（与 2D 逐字同条件） ---
+    // --- E3 射程圈：hasWeapon && !lodBars ---
     // 半径每帧读 attrCalc（buff/天气可变），量化 4px 步长做几何缓存 key（见头注刻意差异）。
     // attrCalc.calc 与血条处各调一次：≤30 塔的重复计算换第 3 步已验收路径零改动。
     const hasWeapon = (e._skillInstances || []).some(sk => sk.skillId.startsWith('weapon_'));
+    // v51.32 修复：这里原来还带了一条 `&& !isNexus`（水晶枢纽/召唤水晶一律不显示
+    // 射程圈），是从"水晶枢纽出厂默认没有武器"这个事实反推出来的硬编码——默认确实
+    // 没武器，hasWeapon 已经是 false，这条 !isNexus 平时看不出多余。用户报"手动
+    // 给水晶枢纽装了武器，攻击正常但不显示射程圈"，根因就是这条硬编码 tier 白名单，
+    // 与实体是否真的装了武器（hasWeapon）无关地把水晶枢纽排除在外。既然 hasWeapon
+    // 已经是唯一需要的判据，删掉 !isNexus 不会让默认状态（没武器）的水晶枢纽多出
+    // 一个圈——它本来就因为 hasWeapon===false 不显示。
     // 用户定稿：射程圈【只在选中 或 半径内有敌人时】显示。
     // 常显是画面最大的噪音源 —— 22 座塔 ×2 阵营的圈全亮着，地图上全是同心圆。
-    const ringK = (hasWeapon && !isNexus && !lodHideBar)
+    const ringK = (hasWeapon && !lodHideBar)
       ? this._rangeRingStrength(e, en, ctxDeps, selectedId) : 0;
     if (ringK > 0) {
       const range = attrCalc.calc(e, effects.getEffects(e.id)).attackRange || 250;

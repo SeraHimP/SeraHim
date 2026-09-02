@@ -719,7 +719,7 @@ export class UIManager {
   /** 面板里一行属性的值（带颜色，无括号——括号明细在点开的说明弹窗里）。 */
   _statValueHtml(key, entity, stats, suffix = '') {
     // v51.6：用户定稿"属性面板上生命恢复显示实际生效值"——面板这一格不再是
-    // AttributeCalculator 算出来的 healthRegen 原始值，而是叠上【基础生命回复】
+    // AttributeCalculator 算出来的 healthRegen 原始值，而是叠上【基础生命值恢复】
     // （baseHealthRegenMod 系数）与【治疗与护盾强度】之后真正每秒回复的量，
     // 与 CombatSystem 实际结算生命恢复时的公式（regen×regenMod×healPower）同源。
     // 点开这一格的说明弹窗时，里面的"生命回复"仍然显示这个原始值本身是什么——
@@ -938,7 +938,7 @@ export class UIManager {
               : bonus > 0 ? `（相当于+${bonus}%暴击伤害）` : `（暴击伤害减少${Math.abs(bonus)}%）`;
             return rowHtml(`<b>${total}%</b><span style="color:var(--text-mute);font-size:11px;"> ${note}</span>`);
           }
-          // v51.6 追补：这条改名叫【基础生命回复】——"经过所有修正后的实际每秒回复值"
+          // v51.6 追补：这条改名叫【基础生命值恢复】——"经过所有修正后的实际每秒回复值"
           // 这件事挪到了面板主格（见 _effectiveHealthRegenHtml），这里只单纯展示
           // baseHealthRegenMod 这个系数本身（百分比，默认 100%），不掺治疗与护盾
           // 强度等其它渠道——用户定稿："对该单位基础的生命回复的修正，不包含其他的"。

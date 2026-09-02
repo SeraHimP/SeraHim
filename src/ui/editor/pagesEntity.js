@@ -131,7 +131,12 @@ export const EDITOR_PAGES_ENTITY = {
   },
 
   _renderWeaponContent(entity) {
-    const current = entity._skillInstances?.find(s => s.skillId.startsWith('weapon_'))?.skillId || 'weapon_piercing'; // v33
+    // v51.32 修复：这里原来兜底成 'weapon_piercing'——于是真的【没装武器】的单位
+    // （水晶枢纽/召唤水晶，地图数据里 weapon:null，从不进 _skillInstances）打开
+    // 编辑器一样会显示"穿透型"选中态，看着像是装了武器，实际上 entity 身上什么
+    // 都没有。回显必须如实反映 _skillInstances 里到底有没有 weapon_ 开头的技能，
+    // 没有就是 'none'，不该替用户瞎猜一个默认选项。
+    const current = entity._skillInstances?.find(s => s.skillId.startsWith('weapon_'))?.skillId || 'none';
     const weaponMeta = {
       weapon_piercing: { label: '穿透型', icon: '🔷' },
       weapon_lightning: { label: '闪电杖', icon: '⚡' },

@@ -2067,7 +2067,7 @@ async function world() {
   // v51.6 追补：用户重新拍板——"属性面板上生命恢复显示实际生效值"这件事挪到
   // 主格（_effectiveHealthRegenHtml），公式仍是 regen×regenMod×healPowerOf 那一条，
   // 不能另写一份（否则面板和实际生效值对不上，是本仓库反复出过的那类事故）。
-  // 关联属性区块里的【基础生命回复】（原 baseHealthRegenMod）改回单纯显示这个
+  // 关联属性区块里的【基础生命值恢复】（原 baseHealthRegenMod）改回单纯显示这个
   // 系数本身的百分比，不再混算成"实际生效值"——两件事现在分开显示。
   T('磨⑦-生命恢复面板主格走 regen×regenMod×healPowerOf 同一条公式',
     /const regenMod = entity\.baseStats\?\.baseHealthRegenMod \?\? 1;/.test(uiSrc)
@@ -2080,11 +2080,11 @@ async function world() {
     Math.round(regen * regenMod * Math.max(0, 1 + healShieldPowerPct / 100) * 100) / 100;
   T('磨⑧-生命恢复实际值算对：2×1×(1-60%) = 0.8', effRegen(2, 1, -60) === 0.8);
 
-  T('磨⑨-关联属性区块的【基础生命回复】只显示系数本身的百分比，不再混算实际生效值',
+  T('磨⑨-关联属性区块的【基础生命值恢复】只显示系数本身的百分比，不再混算实际生效值',
     /const pct = Math\.round\(mod \* 1000\) \/ 10;/.test(uiSrc)
     && !/\/秒（实际生效值）/.test(uiSrc));
-  T('磨⑩-baseHealthRegenMod 的说明标签已改名为"基础生命回复"',
-    statDoc('baseHealthRegenMod')?.label === '基础生命回复');
+  T('磨⑩-baseHealthRegenMod 的说明标签已改名为"基础生命值恢复"',
+    statDoc('baseHealthRegenMod')?.label === '基础生命值恢复');
 
   // 用户："属性面板每个属性占的空间太大了，优化一下，缩小一下空间。"
   const htmlSrc = srcOf('index.html');
@@ -3278,6 +3278,50 @@ async function world() {
 
   T('容⑥-getAllTowers 仍然只含塔（这次改动没碰它，行为原样）',
     ents.getAllTowers(true).length === 1 && ents.getAllTowers(true)[0].id === t1.id);
+}
+
+// ---- v51.32：单位编辑窗口"武器"页签，没装武器的单位不该回显成"穿透型" ----
+// 用户报："单位属性编辑窗口-武器中，我打开默认水晶枢纽的武器应该是无武器，
+// 但是目前默认显示穿透型（实际上并未装配武器）。"
+// 根因：_renderWeaponContent 找不到 weapon_ 开头的技能实例时兜底成
+// 'weapon_piercing'——水晶枢纽/召唤水晶在地图数据里 weapon:null，从来不会有
+// 这个技能实例，于是回显成"选中了穿透型"，与实体真实状态（什么都没装）不符。
+{
+  const { EDITOR_PAGES_ENTITY } = await import('../src/ui/editor/pagesEntity.js');
+  // 卡片标记是 `class="pick-card [selected]" data-weapon="<id>"`——selected 在
+  // class 属性里，写在 data-weapon 前面，所以按 id 找卡片时要往前找 class 属性。
+  const isCardSelected = (html, id) => {
+    const re = new RegExp(`class="pick-card( selected)?"\\s*data-weapon="${id}"`);
+    const m = html.match(re);
+    return !!m && !!m[1];
+  };
+
+  const noWeaponEntity = { type: 'tower', _mapTier: 'nexus_main', _skillInstances: [] };
+  const html = EDITOR_PAGES_ENTITY._renderWeaponContent(noWeaponEntity);
+  T('武①-没有 weapon_ 技能实例的单位（如水晶枢纽），武器页签选中的是"无武器"',
+    isCardSelected(html, 'none'));
+  T('武②-同一份 html 里"穿透型"这张卡不带 selected',
+    !isCardSelected(html, 'weapon_piercing'));
+
+  const piercingEntity = { type: 'tower', _mapTier: 'outer', _skillInstances: [{ skillId: 'weapon_piercing' }] };
+  const html2 = EDITOR_PAGES_ENTITY._renderWeaponContent(piercingEntity);
+  T('武③-真的装了穿透型的塔，回显依旧正确选中"穿透型"（确认没把这条路一起改坏）',
+    isCardSelected(html2, 'weapon_piercing'));
+}
+
+// ---- v51.32：手动给水晶枢纽装了武器，射程圈应该照常显示 ----
+// 用户报："手动设置水晶枢纽有武器，虽然正常攻击但是不显示射程，需要修复。"
+// 根因：_syncTowerInfo 的射程圈开关是 `hasWeapon && !isNexus && !lodHideBar`——
+// !isNexus 是从"水晶枢纽出厂默认没武器"反推出来的 tier 硬编码，与实体是否真的
+// 装了武器（hasWeapon，同一行已经在算）无关地把水晶枢纽整个排除。
+// UnitLayer 依赖 document，不能在无头 Node 里直接实例化（sim_lightring.mjs 头注
+// 已经记过这条约束），这里按同一惯例走源码正则断言。
+{
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  T('圈①-射程圈开关不再排除水晶枢纽（!isNexus 已删除）',
+    !/hasWeapon && !isNexus/.test(ul));
+  T('圈②-射程圈开关仍然由 hasWeapon 唯一把关（不是干脆常显）',
+    /const ringK = \(hasWeapon && !lodHideBar\)/.test(ul));
 }
 
 done();

@@ -11,7 +11,7 @@ export const FIELD_META = {
   maxHP:              { label: '最大生命', min: 0, max: 20000, step: 50 },
   currentHP:          { label: '当前生命', min: 0, max: 20000, step: 50 },
   healthRegen:        { label: '生命回复/秒', min: 0, max: 200, step: 1 },
-  baseHealthRegenMod: { label: '生命回复系数', min: 0, max: 5, step: 0.1 },
+  baseHealthRegenMod: { label: '基础生命值恢复', min: 0, max: 5, step: 0.1 },
   attackDamage:       { label: '攻击力', min: 0, max: 2000, step: 5 },
   baseAttackSpeed:    { label: '基础攻速', min: 0.1, max: 5, step: 0.05 },
   bonusAttackSpeedPct:{ label: '攻速加成%', min: -100, max: 500, step: 5 },

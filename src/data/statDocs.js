@@ -184,7 +184,7 @@ export const STAT_DOCS = {
   },
   moveSpeed: { label: '移动速度', desc: '每秒移动的世界单位数。', formula: '建筑恒为 0。脱战时部分增益会更高（如风魂）。' },
   baseHealthRegenMod: {
-    label: '基础生命回复',
+    label: '基础生命值恢复',
     desc: '对该单位【生命回复】的修正系数，百分比，默认 100%。不包含治疗与护盾强度等其它渠道的加成。',
   },
 
