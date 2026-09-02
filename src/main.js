@@ -312,15 +312,29 @@ eventBus.on('dragon:soulResolved', (d) => {
     uiManager.log(`❌ 无人成魂（蓝 ${t.blue||0} : ${t.red||0} 红，无一方达到门槛），直接进入远古龙阶段`, 'spawn');
   }
 });
-// 召唤水晶重建后补发本阵营已有的龙魂 —— 重建路径是全新实体，不补就把魂丢了。
-// 写在这里而不是 MapSystem 里，是为了守住“系统之间禁止互相 import”的规矩。
-eventBus.on('map:nexusRespawned', ({ faction }) => {
-  if (!faction) return;
-  for (const t of entityContainer.getAllTowers(true)) {
-    if (t._mapFaction === faction) dragonSystem.equipExistingSoul(t);
-  }
-
-});
+// v51.32 修复：用户报"击杀巨龙获得的巨龙之力，层数还是有问题——每新杀一条巨龙都会
+// 使原来有的其他巨龙之力层数+1，应该相互独立"。
+//
+// 根因就是【这个已删除的 map:nexusRespawned 处理器】。它的前提"重建路径是全新实体，
+// 不补就把魂丢了"是错的——MapSystem.update() 里召唤水晶复活优先走【原地复活尸体】
+// （corpse.alive = true，见 MapSystem.js 的 _respawnQueue 处理，同一个 entity id），
+// 而 _onEntityDeath 从不清除实体身上的效果（只打 _ruin 标记），所以尸体复活时它自己
+// 的巨龙之力/龙魂本来就还在，完全不需要重发。唯一会造出【真正全新实体】的分支是
+// "尸体意外不在（旧存档等）"的兜底路径（createBuildingFn），而那条路径内部的
+// createBuilding() 早就调用了 dragonSystem.equipExistingSoul(entity)（factories.js
+// 361-363 行），同一件事不需要在这里再做一遍。
+// 于是这个处理器唯一的实际效果，就是每次某一路召唤水晶复活时，把 equipExistingSoul
+// 重新套在【该阵营全部现存的塔】身上——包括早就正确持有各自层数的旧塔。
+// equipExistingSoul 内部对每个元素按 this.factionKills[fac] 的击杀数循环调用
+// _applyElementBuff（stackPolicy:'stack'，只会往上叠、不会先清零），于是每次召唤
+// 水晶复活，所有元素的巨龙之力就会集体再叠一轮已有的层数——这正是用户看到的
+// "杀一条龙，其他元素的层数也跟着涨"（召唤水晶复活的时机在真实对局里经常和
+// 击杀巨龙前后脚发生，才会被感知成"每杀一条龙都会这样"）。
+// 写脚本复现过：蓝方先后杀 2 条炎龙 + 1 条潮龙 + 1 条山龙，塔上层数正确
+// （炎2/潮1/山1，互不干扰）；模拟一次这个处理器后，层数直接变成炎4/潮2/山2——
+// 与用户描述的现象完全对应。
+// 治本方法就是删掉这个处理器：两条真实的复活路径都已经在别处正确处理了巨龙奖励，
+// 不需要靠这里"补发"，补发反而是纯粹的 bug。
 eventBus.on('dragon:spawn', (d) => {
   uiManager.log(`⚠️ ${d.label} 即将降临`, 'spawn');
 });

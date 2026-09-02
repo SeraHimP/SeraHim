@@ -378,4 +378,50 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     !!earthEff && earthEff.stacks === 1);
 }
 
+// ==================== ⑭ v51.32：召唤水晶复活不该把全阵营的巨龙之力重新叠一遍 ====================
+// 用户报告（v51.23 那次"排查结论：不是独立引擎bug，是Q1下游症状"判断错了，这次是真的）：
+// "击杀巨龙获得的巨龙之力，层数还是有问题，每新杀一条巨龙都会使原来有的其他巨龙之力的
+// 层数+1……应该相互独立的！"
+//
+// 真根因：main.js 原来订阅 map:nexusRespawned，一路召唤水晶复活时就对【该阵营全部
+// 现存的塔】重新调用一遍 equipExistingSoul——理由写的是"重建路径是全新实体，不补就把
+// 魂丢了"，这个前提是错的：MapSystem.update() 里召唤水晶优先走【原地复活尸体】
+//（同一个 entity id，效果系统里的巨龙之力从未被摘掉，见 _onEntityDeath 只打 _ruin
+// 标记、从不清效果），根本不需要重发；唯一会造出全新实体的"尸体不在"兜底路径，
+// createBuildingFn 内部的 createBuilding() 早就调用过一次 equipExistingSoul 了。
+// 于是那个处理器唯一的效果就是：每次召唤水晶复活，把已经正确持有各自层数的旧塔，
+// 按 factionKills 记的每个元素击杀数再重新叠一轮——四条元素一起涨，看起来就像
+// "巨龙之力之间互相污染"。已在 main.js 里删掉这个处理器（见删除处留的详细注释）。
+//
+// 这里从两个角度钉住：① 源码层面确认那个处理器真的不在了，不会有人以后原样加回来；
+// ② 行为层面直接示范"对已有层数的实体重复调用 equipExistingSoul 会发生什么"——
+// 用来说明为什么"广播补发"绝不能作用于旧实体，只能用于真正的新实体（那两条真实路径
+// 各自已经正确处理，不需要再有第三条路径去"兜底"）。
+{
+  // srcOf 剥掉注释——上面那段解释性注释里出现的 nexusRespawned/equipExistingSoul
+  // 字样不会污染这条断言，真正要钉住的是【代码】里不再有这个监听器。
+  const src = srcOf('src/main.js');
+  T('⑭-main.js 不再监听 map:nexusRespawned 广播补发巨龙之力（真根因已删除）',
+    !/nexusRespawned/.test(src));
+
+  const { ds, fx, killBy } = mk();
+  killBy('blue', 'fire'); killBy('blue', 'fire');   // 2层炎之力
+  killBy('blue', 'water');                          // 1层潮之力
+  const tower = ds.entities?.getAllTowers ? ds.entities.getAllTowers(true).find(e => (e._mapFaction || e.faction) === 'blue') : null;
+  const stackOf = (el) => {
+    const eff = fx.getEffects(tower.id).find(e => e.blueprint?.stackKey?.startsWith(`dragon_${el}_`));
+    return eff ? eff.stacks : 0;
+  };
+  T('⑭-正常击杀链路下层数本来就是独立的（炎2/潮1，互不干扰）——对照组',
+    stackOf('fire') === 2 && stackOf('water') === 1);
+
+  // 手动示范"广播补发"式的错误调用（main.js 已删掉的那种），确认它确实会让全部
+  // 元素一起叠加——这正是被删掉的处理器过去在做的事，也是用户看到的现象。
+  for (const t of ds.entities.getAllTowers(true)) {
+    if ((t._mapFaction || t.faction) === 'blue') ds.equipExistingSoul(t);
+  }
+  T('⑭-对已有层数的旧塔广播 equipExistingSoul 会让全部元素一起多叠一轮（复现被删掉的bug机制）',
+    stackOf('fire') === 4 && stackOf('water') === 2);
+}
+
 board.done();
