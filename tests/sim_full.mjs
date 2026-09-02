@@ -29,7 +29,29 @@ function mkBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats }) {
       attackDamage: s.attackDamage ?? 0, baseAttackSpeed: s.baseAttackSpeed ?? 0, attackRange: tpl.attackRange },
     currentHP: 0, shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity, attackCooldown: 0,
     targetId: null, _skillInstances: [], _mapFaction: faction, _mapTier: tier, _laneId: laneId || null, faction };
-  e.currentHP = e.baseStats.maxHP; ents.add(e); return e;
+  e.currentHP = e.baseStats.maxHP; ents.add(e);
+  // v51.18：这个简化 stub 完全不装配技能/被动（加固城防、塔成长等都没有），
+  // 但地图级默认状态（tierEffects，召唤师峡谷外塔开局前7分钟的临时双抗）走的是
+  // 独立通路，不依赖技能系统——真实游戏里外塔前7分钟靠它补足双抗，这个冒烟
+  // 测试不接上的话，量出来的塔会比真实游戏里脆得多，"前期(240s)建筑无损"这条
+  // 不变式在真实游戏里成立、在这里却会被误报成回归（见 factories.js
+  // createBuilding 同一处逻辑，mapSys.currentMap 在 loadMap() 里已经设好）。
+  const tierEffects = mapSys.currentMap?.tierEffects?.[tier];
+  if (Array.isArray(tierEffects)) {
+    for (const bp of tierEffects) fx.apply(e.id, { ...bp }, 'map_effect_tier');
+  }
+  // v51.19：外塔在真实游戏里默认还装了"钢铁防线"（passive_iron_line：开局300秒
+  // +33%伤害减免），这个 stub 同样从来没接过——加上 tierEffects 之后仍然偶发
+  // 240s 内塔阵亡（约 1/5 概率），排查发现就是漏了这条：外塔本来就是靠双抗临时
+  // 状态 + 钢铁防线两层一起扛过开局，只补一层还是不够。跟 tierEffects 一样直接
+  // 复刻效果本体（不经过 equipSkill，省掉参数解析那一层，这个 stub 本来就不装
+  // 任何技能实例）。
+  if (tier === 'outer') {
+    fx.apply(e.id, { name: '钢铁防线', icon: '🛡️', kind: 'stat', statKey: 'damageReduction', flatValue: 33,
+      duration: 300, stackable: false, stackPolicy: 'refresh',
+      description: '格挡33%即将到来的伤害（开局保护期）' }, 'passive_iron_line');
+  }
+  return e;
 }
 function mkMinion(type, x, y, faction, laneId, direction) {
   if (faction==='blue'&&laneId==='mid') spawnTimes.push(+window.gameTime.toFixed(2));

@@ -1639,10 +1639,11 @@ async function world() {
     ts.hq_tower.maxHP === 4750 && ts.hq_tower.damageBlock === 7);
   T('峡⑤-召唤水晶本体（nexus_main）不在本次修正范围内，维持原值',
     ts.nexus_main.maxHP === 5500);
-  T('峡⑥-外塔新增开局临时状态：7分钟护甲+25、魔法抗性+25（配合双抗砍到15，前7分钟等效40）',
+  // v51.19（Q2）：持续时间 7分钟→10分钟（420→600秒）。
+  T('峡⑥-外塔新增开局临时状态：10分钟护甲+25、魔法抗性+25（配合双抗砍到15，前10分钟等效40）',
     Array.isArray(summoners_rift.tierEffects?.outer)
-    && summoners_rift.tierEffects.outer.some(e => e.statKey === 'armor' && e.flatValue === 25 && e.duration === 420)
-    && summoners_rift.tierEffects.outer.some(e => e.statKey === 'magicResist' && e.flatValue === 25 && e.duration === 420));
+    && summoners_rift.tierEffects.outer.some(e => e.statKey === 'armor' && e.flatValue === 25 && e.duration === 600)
+    && summoners_rift.tierEffects.outer.some(e => e.statKey === 'magicResist' && e.flatValue === 25 && e.duration === 600));
 }
 
 // ==================== 三十四、v51.6：伤害转化描述文案纠正 + 子弹速度分组调整 ====================

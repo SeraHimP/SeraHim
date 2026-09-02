@@ -65,19 +65,20 @@ export const summoners_rift = {
 
   // v51.18：外塔开局默认获得的临时状态（用户定稿："新增开局就默认获得的状态
   // （持续7分钟）：获得25护甲和魔法抗性"）——配合上面外塔双抗砍到15的改动，
-  // 让外塔前7分钟（420秒）双抗等效40（15+25，与改动前的原值持平），7分钟后
-  // 状态到期，双抗回落到砍过的15，前期不至于被瞬秒、后期恢复到砍过之后的真实强度。
-  // 只挂在这张图的外塔上（tierEffects 是地图级字段，与全局 CONFIG.towerTierEffects
-  // 是两条独立通路，见 factories.js createBuilding 里两处都读的说明），不影响
+  // 让外塔前期双抗等效40（15+25，与改动前的原值持平），状态到期后双抗回落到
+  // 砍过的15，前期不至于被瞬秒、后期恢复到砍过之后的真实强度。只挂在这张图的
+  // 外塔上（tierEffects 是地图级字段，与全局 CONFIG.towerTierEffects 是两条
+  // 独立通路，见 factories.js createBuilding 里两处都读的说明），不影响
   // 嚎哭深渊/扭曲丛林等其它地图的外塔。
+  // v51.19（Q2）：持续时间 7分钟→10分钟（420→600秒）。
   tierEffects: {
     outer: [
       { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'armor', flatValue: 25,
-        duration: 420, stackable: false, stackPolicy: 'refresh',
-        description: '开局前7分钟：护甲+25' },
+        duration: 600, stackable: false, stackPolicy: 'refresh',
+        description: '开局前10分钟：护甲+25' },
       { name: '前期城防', icon: '🧱', kind: 'stat', statKey: 'magicResist', flatValue: 25,
-        duration: 420, stackable: false, stackPolicy: 'refresh',
-        description: '开局前7分钟：魔法抗性+25' },
+        duration: 600, stackable: false, stackPolicy: 'refresh',
+        description: '开局前10分钟：魔法抗性+25' },
     ],
   },
 
