@@ -185,6 +185,12 @@ export const SettingsDialog = {
           <div class="slider-row"><label>抗锯齿 FXAA</label>
             <button id="setFxaaBtn" style="flex:1;">${window.__three?.fxaaOn !== false ? '🔷 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
+          <div class="slider-row"><label title="给模型边缘加一圈描边，低多边形风格化的关键一步">轮廓描边</label>
+            <button id="setOutlineBtn" style="flex:1;">${window.__three?.outlineOn !== false ? '✏️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
+          <div class="slider-row"><label title="环境光遮蔽：缝隙/接缝处自动变暗，让模型有实体感">环境光遮蔽 SSAO</label>
+            <button id="setSsaoBtn" style="flex:1;">${window.__three?.ssaoOn !== false ? '🌑 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
         </div>
         <div class="editor-section">
           <h4>🌿 场景元素</h4>
@@ -317,6 +323,10 @@ export const SettingsDialog = {
              '🎬 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       bindFx('setFxaaBtn', r => r.fxaaOn !== false, (r, v) => r.setFXAA(v),
              '🔷 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setOutlineBtn', r => r.outlineOn !== false, (r, v) => r.setOutline(v),
+             '✏️ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setSsaoBtn', r => r.ssaoOn !== false, (r, v) => r.setSSAO(v),
+             '🌑 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       // HDR：手动切换要同时写 CONFIG.ui.hdr.force，否则下次自动判定会把它覆盖回去。
       document.getElementById('setHdrBtn')?.addEventListener('click', (ev) => {
         const r = window.__three;

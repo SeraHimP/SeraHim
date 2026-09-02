@@ -60,6 +60,8 @@ import { OutputPass } from '../../vendor/postprocessing/OutputPass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
 import { setUnitTint } from './UnitMeshFactory.js';
+// 渲染重构 Week2·Day8-10：轮廓描边 + SSAO，见 PostFX.js 头注。
+import { NormalDepthPrepass, createSSAOPass, createOutlinePass } from './PostFX.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
@@ -102,10 +104,13 @@ export class ThreeRenderer {
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.0;
     this.composer = null; this.bloomPass = null; this.fxaaPass = null;
-    this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA 一并失效）
+    this.normalDepthPrepass = null; this.ssaoPass = null; this.outlinePass = null;
+    this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA/描边/SSAO 一并失效）
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
     this.toneMapOn = true;   // 电影级色调（ACES）
+    this.outlineOn = true;   // Week2·Day8-9：轮廓描边，默认开（低多边形风格化的关键一步）
+    this.ssaoOn = true;      // Week2·Day9-10：SSAO，默认开
 
     this.scene = new THREE.Scene();
     // 与 2D 画布 CSS 背景 #0a0d12 一致，切换时不闪底色
@@ -390,10 +395,25 @@ export class ThreeRenderer {
   }
 
   // P1：后处理管线。Bloom 让自发光水晶/粒子/明亮昼夜辉光起来；ACES 由 OutputPass 收尾；FXAA 抗锯齿。
+  // Week2·Day8-10：法线+深度预渲染 → SSAO → 描边，插在 RenderPass 之后、Bloom 之前——
+  // SSAO 先把遮蔽处压暗，描边再叠边缘线，这样 Bloom 抓到的亮度已经是"压完 AO 之后"的
+  // 真实值，不会对本该被遮挡的暗部误加辉光；描边线本身留给后面的 FXAA 顺便抗一下锯齿。
   _buildComposer() {
     const w = this.width, h = this.height;
     this.composer = new EffectComposer(this.gl);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+
+    this.normalDepthPrepass = new NormalDepthPrepass(this.scene, this.camera, w, h);
+    this.composer.addPass(this.normalDepthPrepass);
+
+    this.ssaoPass = createSSAOPass(this.normalDepthPrepass, this.camera, w, h);
+    this.ssaoPass.enabled = this.ssaoOn;
+    this.composer.addPass(this.ssaoPass);
+
+    this.outlinePass = createOutlinePass(this.normalDepthPrepass, w, h);
+    this.outlinePass.enabled = this.outlineOn;
+    this.composer.addPass(this.outlinePass);
+
     // 阈值软编码：原来写死 0.82，会把所有偏亮的颜色都糊开（画面偏"脏"）。
     // 提到 1.0 之后只抓【真正过曝】的东西 —— 前提是场景里真的有超过 1.0 的东西，
     // 这正是 towerLight.emissiveNight 要把自发光推到 1.8 的原因。
@@ -583,6 +603,12 @@ export class ThreeRenderer {
   setPostFX(on) { this.postFX = !!on; return this.postFX; }
   setBloom(on) { this.bloomOn = !!on; if (this.bloomPass) this.bloomPass.enabled = this.bloomOn; return this.bloomOn; }
   setFXAA(on) { this.fxaaOn = !!on; if (this.fxaaPass) this.fxaaPass.enabled = this.fxaaOn; return this.fxaaOn; }
+  // Week2·Day8-10：轮廓描边 / SSAO 独立开关（同一批"每项可独立开关"的先例）。
+  // 两者关闭时对应的 ShaderPass 被跳过，但共用的 normalDepthPrepass 仍会渲染——
+  // 只要两个开关有一个开着就需要它，省一次判断"谁还需要这份数据"的复杂度，
+  // 换来的多余开销只是一次法线材质的场景渲染，同屏单位规模下可以接受。
+  setOutline(on) { this.outlineOn = !!on; if (this.outlinePass) this.outlinePass.enabled = this.outlineOn; return this.outlineOn; }
+  setSSAO(on) { this.ssaoOn = !!on; if (this.ssaoPass) this.ssaoPass.enabled = this.ssaoOn; return this.ssaoOn; }
   setToneMapping(on) {
     this.toneMapOn = !!on;
     this.gl.toneMapping = this.toneMapOn ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
@@ -1019,9 +1045,13 @@ export class ThreeRenderer {
                             this.width / z, (this.height / z) / sinP + depthPad,
                             this._lightDt || 0.016, this.azimuthDeg || 0);
     }
-    // P1：走后处理管线（Bloom+ACES+FXAA）；关掉后处理或管线未就绪时回退直渲。
+    // P1：走后处理管线（Bloom+ACES+FXAA+描边+SSAO）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
       if (!this.composer) this._buildComposer();
+      // 正交相机的视锥（left/right/top/bottom/near/far）随缩放每帧都可能变——
+      // SSAO 的深度/位置重建公式直接用这几个值，缩放过程中不跟着刷新会让 AO
+      // 算错半径（zoom 越大，同样的世界半径在算式里应该占的视锥比例越大）。
+      this.ssaoPass?._syncCamera?.();
       this.composer.render();
     } else {
       this.gl.render(this.scene, this.camera);
