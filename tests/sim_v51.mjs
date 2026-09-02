@@ -3324,4 +3324,23 @@ async function world() {
     /const ringK = \(hasWeapon && !lodHideBar\)/.test(ul));
 }
 
+// ---- v51.32：设置窗口"游戏速度"/"画质档位"按钮行在固定 620px 宽的窗口里溢出 ----
+// 用户报："全面排查由于修改了窗口的大小导致的旧窗口中组件的位置问题，比如单位编辑
+// 窗口、设置窗口等。" 实测（playwright 截图 + getBoundingClientRect）：
+// simSpeedOptions 从早前的 [1,2,4,8] 加到 [1,2,4,8,16,32]（"抬高模拟倍率上限"那次
+// 改动）之后，6 个按钮在设置窗口固定 620px 宽度里单行放不下——16x/32x 被裁在窗口
+// 边缘外，点不到；同一屏的"画质档位"4 个按钮同样贴边溢出。根因不是"窗口改小了"，
+// 是按钮数量比窗口设计时更多了，行布局本身没有随内容多少自适应。
+// 修复：给这几行按钮容器补上 flex-wrap:wrap——这正是 pagesEntity.js"层级"那一行
+// （塔的层级按钮）已经在用的写法，SettingsDialog.js 这几处当年没跟着抄。
+{
+  const src = srcOf('src/ui/SettingsDialog.js');
+  const speedRowBlock = src.match(/游戏速度[\s\S]{0,700}/)?.[0] || '';
+  const qualityRowBlock = src.match(/画质档位[\s\S]{0,700}/)?.[0] || '';
+  T('设①-"游戏速度"按钮行加了 flex-wrap，选项变多不会被窗口边缘裁掉',
+    /flex-wrap:wrap/.test(speedRowBlock));
+  T('设②-"画质档位"按钮行同样加了 flex-wrap',
+    /flex-wrap:wrap/.test(qualityRowBlock));
+}
+
 done();

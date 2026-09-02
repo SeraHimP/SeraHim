@@ -23,7 +23,7 @@ function _ruleRow(kind, label, icon, defaultOn = false) {
   const bothOn = r.blue && r.red;
   return `<div class="slider-row" style="align-items:flex-start;">
     <label style="padding-top:5px;">${icon} ${label}</label>
-    <div style="flex:1;display:flex;gap:4px;">
+    <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap;">
       ${chip('both', bothOn ? '全部开' : '全部关', bothOn)}
       ${chip('blue', `🔵 ${r.blue ? '开' : '关'}`, r.blue)}
       ${chip('red', `🔴 ${r.red ? '开' : '关'}`, r.red)}
@@ -128,8 +128,13 @@ export const SettingsDialog = {
             <button id="setGamePauseBtn" style="flex:1;">${window.gamePaused ? '▶ 继续' : '⏸ 暂停'}</button>
           </div>
           <div class="slider-row"><label title="真实加速模拟：战斗照常结算，不是跳时钟">游戏速度</label>
-            <div style="flex:1;display:flex;gap:4px;">
-              ${(CONFIG.tuning?.simSpeedOptions ?? [1, 2, 4, 8]).map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}" style="flex:1;">${v}x</button>`).join('')}
+            <!-- v51.32 修复：simSpeedOptions 从 [1,2,4,8] 加到 [1,2,4,8,16,32]（抬高模拟倍率
+                 上限那次改动）之后，这一行按钮在固定 620px 宽的设置窗里单行放不下，
+                 16x/32x 被裁在窗口边缘外点不到——加 flex-wrap，choices 变多时自动换行，
+                 不用再跟着按钮数量反过来猜窗口该多宽。按钮去掉 flex:1，换行后不再需要
+                 被拉伸铺满整行（同样的写法见 pagesEntity.js 的"层级"那一行）。 -->
+            <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap;">
+              ${(CONFIG.tuning?.simSpeedOptions ?? [1, 2, 4, 8]).map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}">${v}x</button>`).join('')}
             </div>
           </div>
           <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
@@ -159,10 +164,12 @@ export const SettingsDialog = {
         <div class="editor-section">
           <h4>🎨 渲染</h4>
           <div class="slider-row"><label title="一键切一整套（阴影/辉光/描边/SSAO/渲染分辨率）。自动＝按帧时动态调档，平板/低端设备卡的话选这个；下面的单项开关随时可以再手动微调，不会被这里锁死">画质档位</label>
-            <div style="flex:1;display:flex;gap:4px;">
+            <!-- v51.32 修复：同一行原来 4 个按钮就已经在 620px 宽的窗口里贴边溢出
+                 （"高/自动"两颗常被裁掉一半），加 flex-wrap 让它按需换行。 -->
+            <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap;">
               ${['low', 'medium', 'high', 'auto'].map(k => `<button data-quality="${k}" class="editor-tab ${
                 window.__three?.qualityPreset === k ? 'active' : ''
-              }" style="flex:1;">${{ low: '🔋 低', medium: '⚖️ 中', high: '💎 高', auto: '🤖 自动' }[k]}</button>`).join('')}
+              }">${{ low: '🔋 低', medium: '⚖️ 中', high: '💎 高', auto: '🤖 自动' }[k]}</button>`).join('')}
             </div>
           </div>
           <div class="slider-row"><label>阴影质量</label>
@@ -177,8 +184,13 @@ export const SettingsDialog = {
           <div class="slider-row"><label>电影级色调 ACES</label>
             <button id="setToneBtn" style="flex:1;">${window.__three?.toneMapOn ? '🎬 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
-          <div class="slider-row"><label title="WebGL 画布的 HDR 输出。注意它与「HDR 视频/图片能不能播」是两套不同的能力——测试网站说支持的通常是后者。">HDR 输出</label>
-            <button id="setHdrBtn" style="flex:1;">${SettingsDialog._hdrLabel()}</button>
+          <!-- v51.32 修复：全局「button { white-space: nowrap; }」（index.html）对短按钮文字
+               没问题，但 _hdrLabel() 有一条分支会拼出"🔒 需开 Chrome 实验功能（可点击强制
+               尝试）"这种长句——nowrap 不让它换行，结果在固定宽度的设置窗口里被裁在
+               按钮/窗口边缘外，看不全。这颗按钮单独覆盖成 white-space:normal 允许换行；
+               行本身也从垂直居中改成顶部对齐，两行文字时标签不会被挤到按钮中间高度。 -->
+          <div class="slider-row" style="align-items:flex-start;"><label title="WebGL 画布的 HDR 输出。注意它与「HDR 视频/图片能不能播」是两套不同的能力——测试网站说支持的通常是后者。">HDR 输出</label>
+            <button id="setHdrBtn" style="flex:1;white-space:normal;text-align:left;">${SettingsDialog._hdrLabel()}</button>
           </div>
           <div class="pick-desc-box" id="setHdrDiag" style="margin:-4px 0 8px;font-size:11px;line-height:1.7;">${SettingsDialog._hdrDiagHtml()}</div>
           <div class="slider-row"><label title="夜晚塔会照亮射程×1.2 的范围（真光源，能照到小兵）">塔夜间照明</label>
