@@ -294,14 +294,40 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
   ],
 
-  // v51.21：allStatsPct/coreStatsPct 自己就是"一个百分比数字"本身（全属性/核心属性
-  // 要放大百分之几），不是"某个东西的数量"——用户原话"增长率不能再有'增长率'"，
-  // 给一个百分比数再套一层百分比修正在概念上说不通。v51.14 修过之后这两个字段的
-  // 百分比修正在计算上其实跟数值修正等效（两路都是直接相加，见 AttributeCalculator
-  // 那段大注释），但界面上留着百分比框还是会诱导用户去填一个"给百分比加百分比"的
-  // 数——所以跟护盾（__shield__）一样，选中这两项时直接把"百分比修正"那一行隐藏掉，
-  // 只留"数值修正"，从输入源头堵掉这个误填。
-  _EFFECT_STAT_NO_PERCENT: new Set(['allStatsPct', 'coreStatsPct']),
+  // v51.21 起：任何"自己就是一个百分比数字"的属性（技能增幅%、伤害增幅%、伤害减免%……），
+  // 都不该再对它做百分比修正——用户原话"增长率不能再有'增长率'"，给一个百分比数再套
+  // 一层百分比修正在概念上说不通。
+  //
+  // v51.21 最初只锁了 allStatsPct/coreStatsPct 这两个（当时正在查它们的显示 bug，
+  // 顺手做的）。用户后来追问"是不是所有百分比的属性都这样，这个你做了吗"——查了一遍
+  // 才发现漏了一大片：本仓库另一处（src/core/statMod.js，早前修暗之力/风魂失效那次）
+  // 已经确立了同一条判据——"键名本身就是一个真实属性 → 按固定值加；键名去掉 Pct 后缀
+  // 才是真实属性 → 才按百分比加"——但那是给 CONFIG 驱动的龙魂/龙威用的，这个手填的
+  // "添加状态"编辑器一直没跟上，一个字段都没锁，用户能在这里对着 skillAmpPct 这类
+  // 字段随手填百分比修正，填了跟没填一样（AttributeCalculator 通用公式是
+  // `(基础值+flat)×(1+percent%)`，这批字段的基础值在全部单位模板里都是 0，
+  // 光填百分比修正算出来恒等于 0——不是"数值算错"，是这条效果自己整个不生效，
+  // 比原来那个 allStatsPct 的 bug 还彻底：那个好歹底层数值算对了、只是自己格子
+  // 显示成 0；这批字段是真的连底层都没生效）。
+  //
+  // 名单按 src/ui/editor/fields.js 里 label 以"%"结尾的字段取（这是本仓库自己筛选
+  // "这是不是一个百分比属性"的现成基准，逐个手动判断容易漏），另加两个 fields.js
+  // 没收录但同样是"自身即百分比"的字段：onHitPercentDamage（攻击特效%当前生命）、
+  // avengerVsMinionAmpPct/RedPct（哀兵机制，对小兵增伤/减伤%）。
+  // 不锁的两类：① armorPenFlat/magicPenFlat/damageBlock/onHitDamage/adaptiveForce
+  //   这些是"数量"不是"百分比"（穿透点数、格挡点数、适应之力点数），percent 修正对
+  //   它们语义上没问题，只是恰好基础值也是 0——那是另一个"基础值恒为0所以百分比
+  //   修正用不上"的普适现象，不属于"给百分比套百分比"这条概念性铁律，不在这次范围内。
+  //   ② attackSpeedRatio（攻击速度收益率）：数值上是个系数（0.667），不是"XX%"，
+  //   界面上也没有 % 后缀，且各模板基础值都非 0，不算这一类。
+  _EFFECT_STAT_NO_PERCENT: new Set([
+    'allStatsPct', 'coreStatsPct',
+    'bonusAttackSpeedPct', 'damageReduction', 'tempShieldDecayPct',
+    'armorPenPercent', 'magicPenPercent', 'damageConvertPct', 'lifeStealPct',
+    'healShieldPowerPct', 'damageAmpPct', 'skillAmpPct', 'critChance', 'critDamagePct',
+    'physicalVampPct', 'spellVampPct', 'evasionPct', 'tenacityPct',
+    'onHitPercentDamage', 'avengerVsMinionAmpPct', 'avengerVsMinionRedPct',
+  ]),
 
   _renderEffectPicker() {
     const tabs = this._EFFECT_TYPE_TABS.map((t, i) => `

@@ -3034,12 +3034,23 @@ async function world() {
 // 数值修正）。UI 上应该直接把这一行藏起来，逼用户只能用"数值修正"填。
 {
   const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
+  const { FIELD_META } = await import('../src/ui/editor/fields.js');
+  const noPct = EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT;
 
-  T('锁①-被锁定的属性正好是 allStatsPct/coreStatsPct 这两个百分比元字段，不多不少',
-    EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT instanceof Set
-    && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT.size === 2
-    && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT.has('allStatsPct')
-    && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_NO_PERCENT.has('coreStatsPct'));
+  // v51.21 追补：用户追问"是不是所有百分比的属性都这样，这个你做了吗"——查了一遍发现
+  // 最初只锁了 allStatsPct/coreStatsPct 两个，漏了一整批同类字段（技能增幅/伤害增幅/
+  // 伤害减免/百分比穿透……），这里把断言也扩到全量，不再只钉那两个。
+  T('锁①-fields.js 里 label 以"%"结尾的字段，只要出现在"添加状态"的属性列表里，就必须被锁',
+    Object.entries(FIELD_META)
+      .filter(([k, m]) => m.label?.endsWith('%') && EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_KEYS.includes(k))
+      .every(([k]) => noPct.has(k)));
+  T('锁①b-额外两个 fields.js 没收录、但同样自身即百分比的字段也在锁定名单里',
+    noPct.has('onHitPercentDamage') && noPct.has('avengerVsMinionAmpPct') && noPct.has('avengerVsMinionRedPct'));
+  T('锁①c-"数量"类字段（穿透点数/格挡/适应之力/攻速收益系数）不误锁——基础值虽然也是0，但语义上是数量不是百分比，percent 修正对它们没有"给百分比套百分比"这层概念问题',
+    !noPct.has('armorPenFlat') && !noPct.has('magicPenFlat') && !noPct.has('damageBlock')
+    && !noPct.has('onHitDamage') && !noPct.has('adaptiveForce') && !noPct.has('attackSpeedRatio'));
+  T('锁①d-锁定名单里的每一项都真的是"添加状态"属性列表里存在的键（不多列不存在的字段）',
+    [...noPct].every(k => EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_KEYS.includes(k)));
 
   // 用最小的手搓 DOM 桩子跑一遍真实的 _bindEffectParams（不是只测"读值逻辑"，
   // 是测"选中卡片之后该发生的副作用"：隐藏整行 + 把可能残留的旧值清零）。
@@ -3057,7 +3068,8 @@ async function world() {
   const cardAD = fakeEl({ dataset: { effstat: 'attackDamage' } });
   const cardAllStats = fakeEl({ dataset: { effstat: 'allStatsPct' } });
   const cardCore = fakeEl({ dataset: { effstat: 'coreStatsPct' } });
-  const grid = { querySelectorAll: (sel) => (sel === '[data-effstat]' ? [cardAD, cardAllStats, cardCore] : []) };
+  const cardSkillAmp = fakeEl({ dataset: { effstat: 'skillAmpPct' } });
+  const grid = { querySelectorAll: (sel) => (sel === '[data-effstat]' ? [cardAD, cardAllStats, cardCore, cardSkillAmp] : []) };
   const fields = {
     '.effect-stat-grid': grid, '.effect-stat-key': hiddenKeyInput,
     '.effect-percent-row': percentRow, '.effect-flat-label': flatLabel,
@@ -3083,6 +3095,13 @@ async function world() {
   // 核心属性加成同理
   cardCore.click();
   T('锁⑥-核心属性加成同样锁百分比框', percentRow.style.display === 'none' && percentInput.value === '0');
+
+  // v51.21 追补的新成员抽一个实际跑一遍绑定逻辑，不只是查名单里有没有这个字符串
+  cardAD.click();
+  percentInput.value = '30';
+  cardSkillAmp.click();
+  T('锁⑦-新追加锁定的技能增幅%同样在选中时隐藏百分比修正行并清零残留值',
+    percentRow.style.display === 'none' && percentInput.value === '0');
 }
 
 // ==================== 追加：v51.22 属性面板——核心属性加成/全属性加成互换位置 ====================
