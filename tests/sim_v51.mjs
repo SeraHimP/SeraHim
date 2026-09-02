@@ -3085,4 +3085,19 @@ async function world() {
   T('锁⑥-核心属性加成同样锁百分比框', percentRow.style.display === 'none' && percentInput.value === '0');
 }
 
+// ==================== 追加：v51.22 属性面板——核心属性加成/全属性加成互换位置 ====================
+// 用户："属性面板中全属性加成那个改成核心属性加成，全属性加成塞到点开的窗口里面
+// （两者互换一下位置）。"
+{
+  const { extAttrGroups, RELATED_STATS } = await import('../src/ui/statPanelLayout.js');
+  const groups = extAttrGroups();
+  const hasTile = (key) => groups.some(g => g.rows.some(r => r.key === key));
+  T('换①-展开区的主格子现在是核心属性加成（coreStatsPct），不再是全属性加成',
+    hasTile('coreStatsPct') && !hasTile('allStatsPct'));
+  T('换②-全属性加成（allStatsPct）挪进核心属性加成点开窗口的关联属性区',
+    Array.isArray(RELATED_STATS.coreStatsPct) && RELATED_STATS.coreStatsPct.includes('allStatsPct'));
+  T('换③-原来挂在全属性加成下面的那条关联属性入口已经跟着搬走，不留一份重复的',
+    RELATED_STATS.allStatsPct === undefined);
+}
+
 done();

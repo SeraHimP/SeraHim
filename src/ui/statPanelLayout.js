@@ -67,7 +67,12 @@ export function extAttrGroups() {
       { key: 'healShieldPowerPct', label: '治疗与护盾强度%', suffix: '%' },
     ] },
     { title: '增益与机动', rows: [
-      { key: 'allStatsPct', label: '全属性加成%', suffix: '%' },
+      // v51.22：用户"属性面板中全属性加成那个改成核心属性加成，全属性加成塞到
+      // 点开的窗口里面（两者互换一下位置）"——这一格与下面 RELATED_STATS 的
+      // coreStatsPct/allStatsPct 那条一起换，主格子从 allStatsPct 换成 coreStatsPct，
+      // allStatsPct 挪进点开窗口的关联属性区。两个字段的说明文案（statDocs.js）本来
+      // 就各自独立、不依赖"谁是主格子"，不用跟着改。
+      { key: 'coreStatsPct', label: '核心属性加成%', suffix: '%' },
       // v51.6：最后一格统一固定显示移速（用户定稿），子弹速度已经搬进上面的【进攻】组，
       // 不再由 kind 决定"这一格显示什么"——三种单位类型的面板形状因此完全一致。
       { key: 'moveSpeed', label: '移速', suffix: '' },
@@ -132,10 +137,11 @@ export const RELATED_STATS = {
   // moveSpeed 这两格原来没有关联属性区块，这里各自新增一条。
   damageReduction: ['evasionPct'],
   moveSpeed: ['tenacityPct'],
-  // v51.9：用户"【核心属性加成】显示在全属性加成的点开窗口里"——核心属性加成
-  // （coreStatsPct）本身没有自己的格子（面板格子有限，见文件头注），挂到主题
-  // 最贴近的全属性加成（allStatsPct）说明弹窗里。
-  allStatsPct: ['coreStatsPct'],
+  // v51.9：用户"【核心属性加成】显示在全属性加成的点开窗口里"——最初核心属性加成
+  // （coreStatsPct）没有自己的格子，挂到全属性加成（allStatsPct）说明弹窗里。
+  // v51.22：用户反过来定稿，两者互换位置——核心属性加成现在是主格子（见上面
+  // extAttrGroups），全属性加成改挂进核心属性加成的点开窗口。
+  coreStatsPct: ['allStatsPct'],
   // v51.12：Q7——"攻速"点开窗口现在显示的是算完的实际攻速（次/秒），原来直接
   // 显示的【攻速加成】百分比和【攻击速度收益率】换算系数挪到关联属性区块里，
   // 而不是消失。bonusAttackSpeedPct 关联到它自己这件事是有意的：主区块显示的
