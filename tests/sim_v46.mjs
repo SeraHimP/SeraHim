@@ -726,7 +726,10 @@ const mkE = (ents, type, x, y, extra = {}) => {
   //
   // 断言钉的是**行为形状**（每座塔都朝敌方半场），不是具体角度 ——
   // 角度会随地图微调而变，"朝向敌人"这条不会。
-  for (const mid of ['twisted_treeline_v1', 'howling_abyss_v1', 'summoners_rift_classic_v1']) {
+  // v51.20：summoners_rift_classic_v1 已下线（经典模式改成套在任意地图上的变换，
+  // 不再单独注册），而且经典模式对召唤师峡谷不改建筑坐标/朝向——几何断言用
+  // summoners_rift_v1 测（第651行 map 常量）已经够了，这里去掉这个 id 不算漏测。
+  for (const mid of ['twisted_treeline_v1', 'howling_abyss_v1']) {
     const mm = M3[mid];
     if (!mm) { T(`向⑧-${mid} 地图存在`, false); continue; }
     let bad = 0, n = 0;

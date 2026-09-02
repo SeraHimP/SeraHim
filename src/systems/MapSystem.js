@@ -1,4 +1,5 @@
 import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
+import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode } from '../data/maps/modeTransforms.js';
 import { CONFIG } from '../data/Config.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected } from './FactionSystem.js';
@@ -47,6 +48,8 @@ export class MapSystem {
     this.entities = entityContainer;
     this.eventBus = eventBus;
     this.currentMap = null;
+    this.currentMode = MODES.normal.id;   // v51.20：地图/模式两条轴，模式默认普通
+    this.currentBaseMapId = null;         // 不含 _classic 后缀的"真地图" id，UI 高亮用
     this.active = false;
     this.createBuildingFn = null;
     this.nexusDestroyed = { blue: {}, red: {} }; // { faction: { laneId: true } } —— 每路水晶独立摧毁状态
@@ -64,21 +67,58 @@ export class MapSystem {
     return Object.values(MAPS).map(m => ({ id: m.id, label: m.label }));
   }
 
+  /** v51.20：模式列表（普通/经典），与地图是两条独立的轴，UI 先选这个再选地图。 */
+  getAvailableModes() {
+    return Object.values(MODES);
+  }
+
   /**
    * v45：按 id 取地图数据。给"需要问地图声明了什么"的系统用（目前是 DragonSystem
    * 问 `dragon.enabled`）。走这一个入口而不是让各系统自己 import MAPS ——
    * 自制地图也注册在 MAPS 里，但入口只有一个，以后改注册方式只改这一处。
+   *
+   * v51.20：经典模式不是一张注册在 MAPS 里的独立地图，是"基础地图 id + _classic
+   * 后缀"现算出来的——这里认得这个后缀，现场套 applyClassicMode 变换、不用另外注册。
    */
-  getMapById(id) { return MAPS[id] || null; }
+  getMapById(id) {
+    if (MAPS[id]) return MAPS[id];
+    if (typeof id === 'string' && id.endsWith(CLASSIC_ID_SUFFIX)) {
+      const base = MAPS[id.slice(0, -CLASSIC_ID_SUFFIX.length)];
+      if (base) return applyClassicMode(base);
+    }
+    return null;
+  }
 
-  loadMap(mapId = DEFAULT_MAP_ID) {
-    const map = MAPS[mapId];
+  /**
+   * v51.20：mapId 是"真地图" id（如 summoners_rift_v1）；mode 是 MODES 里的一个 id
+   * （'normal' | 'classic'），缺省是 'normal' —— 一个不带后缀的裸 id 本来就该是"这张图
+   * 的普通版"，不该悄悄沿用上一次调用留下的 currentMode（那样太容易在别处踩坑：调用方
+   * 明明只传了 id，却因为"之前切过经典模式"而拿到经典模式的塔）。
+   * 唯一的例外是 mapId 自己带 _classic 后缀——那是 `mapSystem.loadMap(mapSystem
+   * .currentMap.id)`（main.js __resetRun 那种"原样重载当前图"的调用）在经典模式下
+   * 拿到的形状，这时才需要自动识别后缀、拆成 base id + 推出 mode='classic'，
+   * 不强制调用方都要记得多传一个参数。
+   */
+  loadMap(mapId = DEFAULT_MAP_ID, mode) {
+    let baseId = mapId;
+    let effectiveMode = mode;
+    if (typeof mapId === 'string' && mapId.endsWith(CLASSIC_ID_SUFFIX)) {
+      baseId = mapId.slice(0, -CLASSIC_ID_SUFFIX.length);
+      if (effectiveMode === undefined) effectiveMode = MODES.classic.id;
+    }
+    if (effectiveMode === undefined) effectiveMode = MODES.normal.id;
+
+    const base = MAPS[baseId];
+    if (!base) { console.warn('地图不存在:', mapId); return; }
+    const map = effectiveMode === MODES.classic.id ? applyClassicMode(base) : base;
+
     if (map?.nexusRespawnTime != null) this.NEXUS_RESPAWN_TIME = map.nexusRespawnTime;
-    if (!map) { console.warn('地图不存在:', mapId); return; }
 
     this.clearCurrentMap();
 
     this.currentMap = map;
+    this.currentMode = effectiveMode;
+    this.currentBaseMapId = baseId;
     this._nav = undefined;   // navgrid 随地图重新解码
     // Store per-type skill overrides for CombatSystem auto-init
     SkillLibrary._mapOverrides = map.skillOverrides || {};
@@ -90,7 +130,9 @@ export class MapSystem {
     // ⚠️ 必须在【创建建筑之前】发。听它的那一侧要把 gameTime 归零，
     // 而塔成长被动在 onEquip 里就把当时的 gameTime 记成了起算点 t0 ——
     // 归零晚一步，成长就被推迟"归零前已经过去的那么多秒"（见 main.js 的长注释）。
-    this.eventBus.emit('map:loading', { mapId, label: map.label });
+    // 用 map.id（可能带 _classic 后缀）而不是原始 mapId 入参——DragonSystem 等下游
+    // 靠这个 id 反查 getMapById，经典模式下必须拿到变换后的那份（dragon 字段被清空）。
+    this.eventBus.emit('map:loading', { mapId: map.id, label: map.label });
 
     if (this.createBuildingFn) {
       for (const b of map.buildings) {
@@ -112,7 +154,7 @@ export class MapSystem {
     }
     this._computeWaypointBlock(map);
     this.active = true;
-    this.eventBus.emit('map:loaded', { mapId, label: map.label });
+    this.eventBus.emit('map:loaded', { mapId: map.id, label: map.label });
   }
 
   /**
