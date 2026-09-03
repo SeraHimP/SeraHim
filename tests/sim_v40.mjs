@@ -17,6 +17,9 @@ const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
 const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
 const { CONFIG, MINION_SIZES, MELEE_RANGE_THRESHOLD } = await import('../src/data/Config.js');
 const { MAPS } = await import('../src/data/maps/index.js');
+// v51.34：最近点对距离的双循环搬进了 mapValidate.js，与 sim_maps.mjs 里隐含的
+// 同形状双循环合并成唯一实现。
+const { minPairwiseDistance } = await import('../src/data/mapValidate.js');
 const fs = await import('fs');
 
 let pass = 0, fail = 0;
@@ -53,9 +56,7 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
       T(`${mid}/${f} 出兵点都在枢纽塔身后（径向 < ${hqR.toFixed(0)}）`, pts.every(q => q.r < hqR));
       T(`${mid}/${f} 出兵点都可行走`, pts.every(q => ms.isWalkable(q.p.x, q.p.y)));
       if (pts.length > 1) {
-        let minGap = Infinity;
-        for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++)
-          minGap = Math.min(minGap, Math.hypot(pts[i].p.x - pts[j].p.x, pts[i].p.y - pts[j].p.y));
+        const minGap = minPairwiseDistance(pts.map(q => q.p));
         T(`${mid}/${f} 三路出兵点互相分开（最小间距 ${minGap.toFixed(0)}px > 50）`, minGap > 50);
       }
     }
@@ -78,11 +79,7 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
   const blueFirst = {};
   for (const s of spawnPts.filter(s => s.f === 'blue')) if (!blueFirst[s.laneId]) blueFirst[s.laneId] = s;
   const ids = Object.keys(blueFirst);
-  let ok = ids.length >= 3;
-  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
-    const A = blueFirst[ids[i]], B = blueFirst[ids[j]];
-    if (Math.hypot(A.x - B.x, A.y - B.y) < 50) ok = false;
-  }
+  const ok = ids.length >= 3 && minPairwiseDistance(ids.map(id => blueFirst[id])) >= 50;
   T('实际出兵：三路首兵落点互不重合（>50px）', ok);
 }
 

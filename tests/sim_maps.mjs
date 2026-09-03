@@ -7,6 +7,12 @@
 globalThis.window = { gameTime: 0, waveNumber: 1, _uid: 0, CTX: {} };
 const { MAPS } = await import('../src/data/maps/index.js');
 const { baseCircleCenter } = await import('../src/data/baseCircle.js');
+// v51.34：点到折线距离 / 弧长投影这两段算法搬进了 mapValidate.js（与 sim_abyss.mjs/
+// sim_v40.mjs 里各自重复的版本合并成唯一实现），这里改成调用，不再本地重复一份。
+const {
+  distToPolyline, arcLengthAt, buildingCountsSymmetric, insideBaseCircle,
+  buildingOnLaneOrInBase, crossFactionTowerSpacingOk,
+} = await import('../src/data/mapValidate.js');
 let pass = 0, fail = 0;
 const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 
@@ -14,32 +20,8 @@ const TOWER_RANGE = 180;          // TIER_STATS 默认射程
 const ATTACK_TIERS = ['outer', 'inner', 'base', 'hq_tower'];
 
 const len = (p, q) => Math.hypot(q.x - p.x, q.y - p.y);
-/** 点到折线的最短距离（与 MapSystem._nearestOnLane 同一算法） */
-function distToLane(wp, x, y) {
-  let best = Infinity;
-  for (let i = 0; i < wp.length - 1; i++) {
-    const a = wp[i], b = wp[i + 1];
-    const vx = b.x - a.x, vy = b.y - a.y;
-    const L2 = vx * vx + vy * vy || 1;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / L2));
-    best = Math.min(best, Math.hypot(x - (a.x + t * vx), y - (a.y + t * vy)));
-  }
-  return best;
-}
-/** 沿折线的弧长位置（取最近投影点处的累计长度） */
-function arcAt(wp, x, y) {
-  let acc = 0, best = Infinity, bestS = 0;
-  for (let i = 0; i < wp.length - 1; i++) {
-    const a = wp[i], b = wp[i + 1];
-    const vx = b.x - a.x, vy = b.y - a.y;
-    const L = Math.hypot(vx, vy) || 1;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / (L * L)));
-    const d = Math.hypot(x - (a.x + t * vx), y - (a.y + t * vy));
-    if (d < best) { best = d; bestS = acc + t * L; }
-    acc += L;
-  }
-  return bestS;
-}
+const distToLane = distToPolyline;
+const arcAt = arcLengthAt;
 
 for (const map of Object.values(MAPS)) {
   const tag = `[${map.label}]`;
@@ -50,14 +32,7 @@ for (const map of Object.values(MAPS)) {
   T(`${tag} 有建筑`, map.buildings?.length > 0);
 
   // ---- 双方必须对称：同 tier 同 lane 的建筑数一致 ----
-  const count = (f) => {
-    const m = {};
-    for (const b of map.buildings) if (b.faction === f) m[b.tier + '|' + (b.laneId || '-')] = (m[b.tier + '|' + (b.laneId || '-')] || 0) + 1;
-    return m;
-  };
-  const cb = count('blue'), cr = count('red');
-  T(`${tag} 蓝红两方建筑构成完全对称`,
-    JSON.stringify(Object.entries(cb).sort()) === JSON.stringify(Object.entries(cr).sort()));
+  T(`${tag} 蓝红两方建筑构成完全对称`, buildingCountsSymmetric(map));
   T(`${tag} 每方恰好一个水晶枢纽`,
     map.buildings.filter(b => b.tier === 'nexus_main' && b.faction === 'blue').length === 1
     && map.buildings.filter(b => b.tier === 'nexus_main' && b.faction === 'red').length === 1);
@@ -73,7 +48,7 @@ for (const map of Object.values(MAPS)) {
       const nx = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
       const R = map.baseOpenRadius ?? map.baseCircleRadius ?? 0;
       T(`${tag} ${f} 基地圈罩住自家水晶枢纽（圈心距枢纽 ${len(c, nx.pos).toFixed(0)} < ${R}）`,
-        len(c, nx.pos) < R);
+        insideBaseCircle(map, f, nx.pos));
     }
   }
 
@@ -85,17 +60,14 @@ for (const map of Object.values(MAPS)) {
   // 不满足的话塔会立在墙里：小兵打不到它、它却能打小兵，而且画面上看不出异常。
   const hw = map.walls?.corridorHalfWidth;
   if (hw && !map.useNavgrid) {
-    let offLane = [];
-    for (const b of map.buildings) {
-      if (!b.laneId) continue;
-      const lane = map.lanes.find(l => l.id === b.laneId);
-      if (!lane) { offLane.push(`${b.tier}(找不到路 ${b.laneId})`); continue; }
-      const d = distToLane(lane.waypoints, b.pos.x, b.pos.y);
-      // 基地圈内的建筑（枢纽塔等）本来就可以离兵线远，走廊之外由基地圈兜底
-      const nx = map.buildings.find(x => x.tier === 'nexus_main' && x.faction === b.faction);
-      const inBase = nx && len(nx.pos, b.pos) <= (map.baseOpenRadius ?? 0);
-      if (d > hw && !inBase) offLane.push(`${b.faction}/${b.tier}/${b.laneId} 离线 ${d.toFixed(0)} > ${hw}`);
-    }
+    const offLane = map.buildings
+      .filter(b => b.laneId && !buildingOnLaneOrInBase(map, b))
+      .map(b => {
+        const lane = map.lanes.find(l => l.id === b.laneId);
+        if (!lane) return `${b.tier}(找不到路 ${b.laneId})`;
+        const d = distToLane(lane.waypoints, b.pos.x, b.pos.y);
+        return `${b.faction}/${b.tier}/${b.laneId} 离线 ${d.toFixed(0)} > ${hw}`;
+      });
     T(`${tag} 分路建筑都在走廊或基地圈内（不会立在墙里）${offLane.length ? '：' + offLane.join('；') : ''}`,
       offLane.length === 0);
   }
@@ -119,6 +91,14 @@ for (const map of Object.values(MAPS)) {
           gap > 2 * TOWER_RANGE);
       }
     }
+  }
+
+  // ---- 敌我攻击塔射程圈也不能重叠（原来只有嚎哭深渊单测钉了这条，现在推广到全部地图）----
+  // 不重叠就意味着双方前排塔永远打不到彼此，推线节奏才不会被"两塔夹一塔"打乱。
+  {
+    const cross = crossFactionTowerSpacingOk(map, TOWER_RANGE, ATTACK_TIERS);
+    T(`${tag} 敌我攻击塔射程圈无交集（最小间距 ${cross.length ? cross[0].gap.toFixed(0) : '∞'} > ${2 * TOWER_RANGE}）`,
+      cross.length === 0);
   }
 
   // ---- 双方外塔不能越过中线（旧 midlane_v1 就死在这条上）----

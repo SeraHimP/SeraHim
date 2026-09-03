@@ -32,6 +32,9 @@ const {SkillLibrary}=await import('../src/core/SkillLibrary.js');
 const {MapSystem}=await import('../src/systems/MapSystem.js');
 const {LaneWaveSystem}=await import('../src/systems/LaneWaveSystem.js');
 const {CONFIG}=await import('../src/data/Config.js');
+// v51.34：点到折线距离算法搬进了 mapValidate.js（与 sim_maps.mjs 的通用版本合并成
+// 唯一实现——这里原来的 distToLane 其实就是那个算法的"折线只有两个点"特化情形）。
+const {distToPolyline}=await import('../src/data/mapValidate.js');
 let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
 
 // ---- Q9 嚎哭深渊加载 ----
@@ -89,7 +92,7 @@ T('敌我攻击塔射程无交集(>360)', crossMin>2*RANGE);
 T('HA 不再摘掉屠戮（所有地图小兵默认装备屠戮）', mapSys.currentMap.minionNoRend === undefined);
 // 建筑到兵线距离 ≤190
 const wps=mapSys.currentMap.lanes[0].waypoints;
-function distToLane(p){const a=wps[0],b=wps[1];const vx=b.x-a.x,vy=b.y-a.y,L2=vx*vx+vy*vy;const t=Math.max(0,Math.min(1,((p.x-a.x)*vx+(p.y-a.y)*vy)/L2));return Math.hypot(p.x-(a.x+t*vx),p.y-(a.y+t*vy));}
+const distToLane=(p)=>distToPolyline(wps,p.x,p.y);
 T('HA全建筑距兵线≤190', captured.every(c=>distToLane(c.pos)<=190));
 
 // ---- Q3/Q9 波次构成 ----

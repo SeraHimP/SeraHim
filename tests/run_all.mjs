@@ -21,7 +21,7 @@ const suites = [
   'sim_world.mjs', 'sim_entropy.mjs', 'sim_dragonsoul.mjs', 'sim_skilldesc.mjs',
   'sim_skillparams.mjs', 'sim_custom.mjs', 'sim_support.mjs', 'sim_visual.mjs',
   'sim_tpleditor.mjs', 'sim_lightring.mjs', 'sim_lanequeue.mjs', 'sim_uiq57.mjs',
-  'sim_maps.mjs', 'sim_pathcorner.mjs', 'sim_balance_q2.mjs', 'sim_matrix.mjs',
+  'sim_maps.mjs', 'sim_mapvalidate.mjs', 'sim_pathcorner.mjs', 'sim_balance_q2.mjs', 'sim_matrix.mjs',
   'sim_tplio.mjs', 'sim_crystal.mjs', 'sim_weather.mjs',
   'sim_v24.mjs', 'sim_v33.mjs', 'sim_v34.mjs', 'sim_v35.mjs', 'sim_v36.mjs', 'sim_v37.mjs',
   'sim_v39.mjs', 'sim_v40.mjs', 'sim_v41.mjs', 'sim_v42.mjs', 'sim_v43.mjs',
