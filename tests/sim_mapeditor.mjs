@@ -423,6 +423,17 @@ const T = board.T;
     /_pausedBefore\s*=\s*CTX\.gamePaused[\s\S]{0,200}CTX\.gamePaused\s*=\s*true/.test(src));
   T('㉘-关闭按钮把 CTX.gamePaused 恢复成 _pausedBefore（不是无脑续玩）',
     /mapEditorCloseBtn[\s\S]{0,300}CTX\.gamePaused\s*=\s*_pausedBefore/.test(src));
+
+  // 用户定稿"窗口做的大一些"：弹窗打开时给 #modalBox 加尺寸变体 class，
+  // 关闭时摘掉（#modalBox 是全弹窗共用的元素，摘不掉会把其它弹窗也带宽）。
+  T('㉙-open() 给 modalBox 加 mapEditorWide 尺寸变体',
+    /modalBox['"]\)\.classList\.add\(['"]mapEditorWide['"]\)/.test(src));
+  T('㉚-关闭按钮把 mapEditorWide 从 modalBox 摘掉（不带宽其它弹窗）',
+    /mapEditorCloseBtn[\s\S]{0,400}modalBox['"]\)\.classList\.remove\(['"]mapEditorWide['"]\)/.test(src));
+
+  const htmlSrc = srcOf('index.html');
+  T('㉛-index.html 定义了 .modal-box.mapEditorWide 尺寸变体',
+    /\.modal-box\.mapEditorWide\s*\{[^}]*max-width\s*:\s*960px/.test(htmlSrc));
 }
 
 // ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================

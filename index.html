@@ -904,6 +904,11 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
    避免只有一两个字时缩成一个挤扁的小方块。shellHtml() 按 hasNav 自动加这个类，
    带侧边栏的编辑器弹窗（.modal-box 不带 .compact）维持原来撑满两栏的宽度不变。 */
 .modal-box.compact { width: fit-content; min-width: 320px; min-height: 120px; }
+/* 地图编辑器弹窗单独放大：全局 620px 上限是给"文字为主"的弹窗（属性/技能详情等）
+   定的，画布类内容按这个上限挤会导致画布分辨率被迫调小（曾经的 CANVAS_DISPLAY_PX=380
+   就是被这道上限逼出来的将就值）。用户："窗口做的大一些"——加一档更大的尺寸变体，
+   只给地图编辑器这一个用途用，不动其它弹窗共用的默认上限。 */
+.modal-box.mapEditorWide { max-width: 960px; max-height: 92vh; }
 .modal-box h3 { margin-bottom: 14px; font-size: 16px; font-weight: 700; }
 #modalTitle { margin-bottom: 14px; font-size: 16px; font-weight: 700; }
 .modal-box .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; gap: 12px; }

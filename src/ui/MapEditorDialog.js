@@ -63,10 +63,11 @@ import {
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
 
 // 画布 CSS 显示尺寸（正方形）；内部像素分辨率=n，靠 image-rendering:pixelated 放大不糊边。
-// 380 而不是更大：弹窗共用 index.html 里 #modalBox 的全局尺寸上限（其它弹窗，如设置面板，
-// 内容超高时本来就是靠 overflow-y:auto 滚动查看——这里沿用同一惯例，不新开一套弹窗尺寸逻辑），
-// 画布调小一点能让"笔刷模式/半径/画布/保存"这几块常用控件尽量在不滚动的情况下就看得见。
-const CANVAS_DISPLAY_PX = 380;
+// 用户："窗口做的大一些"——地图编辑器弹窗改用单独的 .modal-box.mapEditorWide 尺寸变体
+// （960px 而不是全局默认的 620px 上限，见 index.html），画布跟着放大到 560。
+// 560 仍留出边距：960 宽的弹窗还要塞下画布右侧"笔刷模式/半径/保存"这些常用控件，
+// 不能整个宽度都给画布。
+const CANVAS_DISPLAY_PX = 560;
 
 export const MapEditorDialog = {
   open(deps, logFn) {
@@ -77,6 +78,7 @@ export const MapEditorDialog = {
     CTX.gamePaused = true;
     const overlay = document.getElementById('modalOverlay');
     overlay.classList.add('open');
+    document.getElementById('modalBox').classList.add('mapEditorWide');
     document.getElementById('modalTitle').textContent = '🗺️✏️ 地图编辑器（地形笔刷 + 建筑摆放）';
 
     // ---------- 编辑状态（整个弹窗生命周期内持续，只有切换起点地图才重置） ----------
@@ -803,6 +805,7 @@ export const MapEditorDialog = {
     document.getElementById('modalActions').innerHTML = `<button id="mapEditorCloseBtn" class="primary">关闭</button>`;
     document.getElementById('mapEditorCloseBtn').addEventListener('click', () => {
       overlay.classList.remove('open');
+      document.getElementById('modalBox').classList.remove('mapEditorWide');
       CTX.gamePaused = _pausedBefore;
     });
   },
