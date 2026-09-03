@@ -1142,6 +1142,10 @@ export const CONFIG = {
     buildingHitRadiusPx: 9,
     // 建筑标记本身画多大（CSS 像素半径）。
     buildingMarkerRadiusPx: 6,
+    // 主画面工具条：地形笔刷拖动期间，屏幕空间轨迹反馈画多粗（CSS 像素半径）。
+    // 纯视觉提示，不是真实笔刷半径（真实半径是 brushRadiusGridDefault，单位是格子，
+    // 两者故意分开——这个只管"拖的时候看着够不够粗"，不该跟着格子半径联动改变）。
+    boardBrushTrailRadiusPx: 9,
   },
 
   tuning: {

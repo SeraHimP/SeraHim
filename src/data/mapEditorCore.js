@@ -21,6 +21,15 @@ import {
 } from './mapValidate.js';
 
 /**
+ * 主画面工具条（MapEditorBoardTool.js）要让草稿"所见即所得"，走的是编辑器已经在用
+ * 的同一条落盘路径——存进 CONFIG.customMaps 再 mapSystem.loadMap()——只是自动存到
+ * 这个保留 id 下，不需要用户手动填。这不是一张真正的自制地图，MapSystem.
+ * getAvailableMaps() 与地图编辑器弹窗的"已保存的自制地图"列表都要认得这个 id
+ * 并把它过滤掉，否则用户会在选图列表里看到一张自己从没存过、名字奇怪的"地图"。
+ */
+export const LIVE_EDIT_SESSION_MAP_ID = '__map_editor_live_session__';
+
+/**
  * 一张地图对象声明的 navgrid，或者该用哪张兜底。
  * 召唤师峡谷（summoners_rift.js）没有在地图对象上写 navgrid 字段，而是靠
  * MapSystem._navgrid() 里的 `this.currentMap.navgrid || SR_NAVGRID` 兜底——

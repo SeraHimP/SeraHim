@@ -6,6 +6,7 @@ import { isStructureProtected } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
+import { LIVE_EDIT_SESSION_MAP_ID } from '../data/mapEditorCore.js';
 // 重生血量与出生血量必须用同一个"最大生命"口径，见 factories.js spawnAtFullHP 头注。
 import { effectiveMaxHP } from '../core/factories.js';
 // 复活要清哪些标记：唯一清单，两条复活路径共用（见该文件头注）。
@@ -65,6 +66,27 @@ export class MapSystem {
   setCreateBuildingFn(fn) { this.createBuildingFn = fn; }
 
   /**
+   * 在【当前已加载的地图】上现场再造一座建筑，不重新走 loadMap()（那会清空全场、
+   * 归零对局时钟、重置召唤水晶重生队列——对"只是想再加一座塔"这个操作来说代价太大）。
+   * 地图编辑器主画面工具条的"➕ 添加塔"工具用它：数值/技能查表逻辑与 loadMap()
+   * 建塔那段、以及水晶重生那条建塔路径（本文件下方 _respawnNexus 附近）完全一致——
+   * 三处都在造同一种东西，数值来源必须是同一张 TIER_STATS/tierStats 表，不能各查各的。
+   * @param {{faction:string, tier:string, laneId:?string, pos:{x:number,y:number}, weapon?:string, skills?:string[]}} b
+   * @returns {object|null} 新建的实体（createBuildingFn 未注入或造塔失败时为 null）
+   */
+  addBuildingLive(b) {
+    if (!this.createBuildingFn || !this.currentMap) return null;
+    const stats = (this.currentMap.tierStats && this.currentMap.tierStats[b.tier]) || TIER_STATS[b.tier] || TIER_STATS.outer;
+    const isNexus = b.tier === 'nexus_lane' || b.tier === 'nexus_main';
+    const entity = this.createBuildingFn({
+      faction: b.faction, tier: b.tier, laneId: b.laneId ?? null, isNexus,
+      pos: b.pos, weapon: b.weapon, stats, skills: b.skills,
+    });
+    if (entity) this._buildingIds.push(entity.id);
+    return entity;
+  }
+
+  /**
    * v51.32：内置地图（MAPS）∪ 自制地图（CONFIG.customMaps，地图编辑器落盘的地方，
    * 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §3.5）。
    * `getAvailableMaps`/`getMapById`/`loadMap` 三处都要认自制地图，统一从这一个
@@ -80,7 +102,12 @@ export class MapSystem {
   }
 
   getAvailableMaps() {
-    return Object.values(this._mapRegistry()).map(m => ({ id: m.id, label: m.label }));
+    // 地图编辑器主画面工具条借这个 id 落一份临时草稿（见 mapEditorCore.js 头注的
+    // LIVE_EDIT_SESSION_MAP_ID 说明），不是用户存过的真地图，选图列表里不该出现它。
+    // getMapById()/loadMap() 不受影响——它们要能正常找到并加载这个 id。
+    return Object.values(this._mapRegistry())
+      .filter(m => m.id !== LIVE_EDIT_SESSION_MAP_ID)
+      .map(m => ({ id: m.id, label: m.label }));
   }
 
   /** v51.20：模式列表（普通/经典），与地图是两条独立的轴，UI 先选这个再选地图。 */

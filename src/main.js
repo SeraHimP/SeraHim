@@ -33,6 +33,7 @@ import { TOWER_MODEL_ROLES } from './data/towerModels.js';
 import { SettingsDialog } from './ui/SettingsDialog.js';
 import { ModeDialog } from './ui/ModeDialog.js';
 import { MapEditorDialog } from './ui/MapEditorDialog.js';
+import { MapEditorBoardTool } from './ui/MapEditorBoardTool.js';
 import { DebugLogger } from './utils/DebugLogger.js';
 import { syncAll as syncCustomContent } from './data/customContent.js';
 import { WorldHud } from './ui/WorldHud.js';
@@ -592,6 +593,17 @@ document.getElementById('mapEditorBtn').addEventListener('click', () => {
       canvasController.fitToWorld(mapSystem.currentMap.world.w, mapSystem.currentMap.world.h);
     }
   } }, uiManager.log.bind(uiManager));
+});
+
+// 地图编辑器第二个入口：直接在主 3D 画面上编辑（见 MapEditorBoardTool.js 头注三条
+// 交互决策）。与上面的弹窗入口共享同一份草稿（mapEditorSession.js），互相独立存在，
+// 谁都不替代谁——用户定稿"你目前这个也保留"。
+document.getElementById('mapEditorBoardBtn').addEventListener('click', () => {
+  canvasController.cancelPlaceMode();
+  MapEditorBoardTool.toggle({
+    mapSystem, renderer3d, canvasController, entityContainer,
+    logFn: uiManager.log.bind(uiManager),
+  });
 });
 
 // ---------- 点选面板接线 ----------
