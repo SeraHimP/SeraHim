@@ -3363,4 +3363,130 @@ async function world() {
     /export function invalidateTerrainCache/.test(tlSrc) && /_terrainCache\.delete/.test(tlSrc));
 }
 
+// ==================== v51.33：任务 #104 真根因——SSAO 把血条渲染成了带半透明重影的假几何 ====================
+// 用户最终定位："关闭环境光遮蔽(SSAO)后重影血条消失"。根因见 PostFX.js 里
+// HUD_SPRITE_LAYER 的头注：NormalDepthPrepass 用 scene.overrideMaterial 整场景
+// 重渲一遍求法线/深度，覆写渲染只认覆写材质自己的 depthTest/depthWrite（都是
+// true），完全不理会血条 Sprite 自己配的 depthTest:false——于是这块永远悬浮在
+// 最上层、朝向摄像机的小方片在深度图里被当成了一块真实几何，SSAO 沿着它的边缘
+// 算出一圈错误遮蔽，合成后就是"血条旁边多出一块同形状的半透明暗影"。
+// ThreeRenderer 依赖 document 无法无头实例化（sim_lightring.mjs 头注记过这条
+// 约束），这里按同一惯例走源码正则断言，钉住"这几处接线确实都在"这个行为形状。
+{
+  const pfxSrc = srcOf('src/presentation/PostFX.js');
+  T('SSAO①-PostFX.js 导出了 HUD_SPRITE_LAYER 常量（血条/护盾图标专用 layer）',
+    /export const HUD_SPRITE_LAYER = 1;/.test(pfxSrc));
+  const prepassBlock = pfxSrc.match(/render\(renderer[\s\S]{0,900}?\n  \}/)?.[0] || '';
+  T('SSAO②-NormalDepthPrepass.render() 渲染前临时关掉这个 layer、渲染后恢复（不是永久改相机状态）',
+    /this\.camera\.layers\.disable\(HUD_SPRITE_LAYER\)/.test(prepassBlock)
+    && /this\.camera\.layers\.enable\(HUD_SPRITE_LAYER\)/.test(prepassBlock));
+
+  const trSrc = srcOf('src/presentation/ThreeRenderer.js');
+  T('SSAO③-ThreeRenderer 建主相机时把这个 layer 加入可见集合（否则 beauty pass 也会漏画血条）',
+    /this\.camera\.layers\.enable\(HUD_SPRITE_LAYER\)/.test(trSrc));
+
+  const ulSrc = srcOf('src/presentation/UnitLayer.js');
+  T('SSAO④-血条 Sprite 挂进了这个专用 layer', /bar\.layers\.set\(HUD_SPRITE_LAYER\)/.test(ulSrc));
+  T('SSAO⑤-护盾图标 Sprite 同样挂进了这个专用 layer（同一类问题，两处都要修，不能只修一半）',
+    /en\.shield\.layers\.set\(HUD_SPRITE_LAYER\)/.test(ulSrc));
+}
+
+// ==================== v51.33：护盾详情改用属性网格，不再单独一行纯文字 ====================
+// 用户截图报"钢铁烈阳护盾"详情弹窗里"固定护盾+50"是网格块，"护盾+0"却是网格下方
+// 单独一行没有信息量的纯文字，两条本该并列的数值视觉不统一。用户定稿："都用那个格子
+// 来显示"——kind:'shield' 效果现在并入 mods 网格（复用 STAT_LABELS 里已有的
+// plainShieldFlat→'护盾' 标签），且余量为 0 时不占任何一行（与 stat 类效果"数值为0
+// 就不占格子"的既有规则一致，不是新引入的例外）。
+{
+  const { effectGroupBreakdown, STAT_LABELS } = await import('../src/ui/DetailModal.js');
+  const fakeShieldEff = (remain) => ({
+    blueprint: { kind: 'shield' }, shieldRemaining: remain,
+    totalFlat: 0, totalPercent: 0, remainingTime: Infinity, permanent: true,
+  });
+  const fakeStatEff = (statKey, flat) => ({
+    blueprint: { kind: 'stat', statKey }, totalFlat: flat, totalPercent: 0,
+    remainingTime: Infinity, permanent: true,
+  });
+
+  const both = effectGroupBreakdown([fakeStatEff('shieldFixedMax', 50), fakeShieldEff(800)]);
+  T('护①-固定护盾(50)与护盾(800)都出现在同一块 gridHtml 里，不再拆成网格+纯文字两种视觉',
+    both.gridHtml.includes(STAT_LABELS.shieldFixedMax) && both.gridHtml.includes('+50')
+    && both.gridHtml.includes(STAT_LABELS.plainShieldFlat) && both.gridHtml.includes('+800'));
+  T('护②-两条都走网格，otherLines 不再重复出现护盾说明', both.otherLines.length === 0);
+
+  const depleted = effectGroupBreakdown([fakeShieldEff(0)]);
+  T('护③-护盾余量为 0（被打空）时不生成任何"护盾"行——不是网格里空着，是压根不出现',
+    !depleted.gridHtml.includes(STAT_LABELS.plainShieldFlat) && depleted.otherLines.length === 0);
+
+  const multi = effectGroupBreakdown([fakeShieldEff(300), fakeShieldEff(200)]);
+  T('护④-同一组内多份护盾效果按余量累加显示（300+200=500），不是只取最后一份',
+    multi.gridHtml.includes('+500'));
+}
+
+// ==================== v51.33：加固城防生命节点——编辑器分层技能覆写会顶掉 fortify ====================
+// 用户报"XX防御塔加固城防中关于生命节点全面排查，目前有问题，血量降到节点以下后
+// 节点并未刷新"。排查过程见 src/core/factories.js 的详细注释：真正原因不是
+// _fortifyRecalc 算错了（那部分逻辑本身正确，见 core/skills/towerPassives.js 里
+// 早就有的 sim_v35.mjs 断言），是 CONFIG.towerTierSkills[tier]（模板编辑器的分层
+// 技能覆写）在"确保 fortify 被装上"那条既有保护（v37 就有，最初是为了修嚎哭深渊/
+// 扭曲丛林地图 skills 覆写的同一类问题）**之后**又整体替换了一次 towerDefaults，
+// 把刚补上的 fortify 又顶掉了——fortify 从未被装上，_regenCapHP 永远是 undefined
+// （恢复无上限，看起来像"节点系统完全不存在"）。
+// 这里用真实的 createBuilding 工厂（不是简化版测试直接拼实体），因为 bug 恰好就在
+// 工厂内部的技能列表拼接顺序上，简化版实体构造完全绕不过这条路径，测不出这个问题。
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { createFactories } = await import('../src/core/factories.js');
+  const { CombatSystem } = await import('../src/systems/CombatSystem.js');
+
+  const savedOverride = CONFIG.towerTierSkills;
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  const mapSystem = { active: false, currentMap: null };
+  const F = createFactories({
+    entityContainer: ents, effectRegistry: fx, eventBus: bus,
+    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
+    mapSystem, dragonSystem: ds, uiManager: { log() {} },
+  });
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+
+  // 模拟用户在模板编辑器里给外塔设了分层技能覆写（只想调整别的被动，
+  // 没意识到这会把加固城防一起顶掉）——不含 passive_outer_fortify。
+  CONFIG.towerTierSkills = { outer: ['passive_iron_line'] };
+  const outer = F.createBuilding({ faction: 'blue', tier: 'outer', laneId: 'mid', isNexus: false, pos: { x: 0, y: 0 } });
+
+  T('节①-编辑器分层覆写生效后，加固城防仍被保证装上（不被覆写顶掉）',
+    outer._skillInstances.some(i => i.skillId === 'passive_outer_fortify'));
+
+  AttributeCalculator.tick();
+  combat.update(0.5);
+  T('节②-装上之后，节点封顶在跑一帧后正确初始化（满血=100%封顶）',
+    Math.abs(outer._regenCapHP - outer.baseStats.maxHP) < 1);
+
+  // 核心复现场景：打到某个节点以下，封顶必须跟着往下调，不能停在旧的高节点上
+  // （用户原话："血量降到节点以下后节点并未刷新"）。
+  outer.currentHP = outer.baseStats.maxHP * 0.20; // 20% < 外塔节点 33%
+  combat.update(0.5);
+  T('节③-血量降到节点以下后，封顶正确刷新到新的（更低的）节点，不停在旧值',
+    Math.abs(outer._regenCapHP - outer.baseStats.maxHP * 0.33) < 1);
+
+  // 显式排除仍然优先于这条保证——地图/编辑器仍然有办法真的关掉它，只是"整体替换
+  // 列表时不小心漏掉"不再是关掉它的手段之一。
+  SkillLibrary._excludeSkills = { 'tower:outer': ['passive_outer_fortify'] };
+  const outerExcluded = F.createBuilding({ faction: 'blue', tier: 'outer', laneId: 'mid', isNexus: false, pos: { x: 100, y: 0 } });
+  T('节④-显式 excludeSkills 排除时，保证不会强行把它加回来（排除仍然是关掉它的唯一正规手段）',
+    !outerExcluded._skillInstances.some(i => i.skillId === 'passive_outer_fortify'));
+  SkillLibrary._excludeSkills = {};
+
+  CONFIG.towerTierSkills = savedOverride;
+}
+
 done();

@@ -43,6 +43,7 @@ import { stepTrail, stepEase, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
+import { HUD_SPRITE_LAYER } from './PostFX.js';
 
 // ==================== v51.6：龙魂环按元素配色 ====================
 // 用户："获得龙魂的某一方，塔下面都会有光圈。这个光圈的颜色目前是不会变的，
@@ -437,6 +438,11 @@ export class UnitLayer {
     const barMat = new THREE.SpriteMaterial({ map: barTex, depthTest: false, depthWrite: false });
     const bar = new THREE.Sprite(barMat);
     bar.renderOrder = ORDER_BAR;
+    // v51.33 修复（任务 #104）：血条不参与 SSAO/描边的深度预渲染——见 PostFX.js
+    // 里 HUD_SPRITE_LAYER 的头注，根因是覆写材质预渲染不认 depthTest:false，
+    // 血条这块永远悬浮在最上层的小方片被当成了真实遮挡几何，SSAO 因此在它周围
+    // 算出一圈与血条同形状的错误暗影（用户报的"半透明重影血条"）。
+    bar.layers.set(HUD_SPRITE_LAYER);
 
     this.scene.add(unit); this.scene.add(bar);
     const entry = { unit, bar, barCanvas, barTex, visKey: '', barKey: '', seen: 0, topY: 0, muzzleY: 0, unitIsModel: false, crystal: null, crystalPts: null, isTower: false, faceFixed: null, faceA: 0, lastX: null, lastZ: null, facing: false, groundY: 0, dispFrac: -1, trailing: false, _lastT: 0,
@@ -792,6 +798,7 @@ export class UnitLayer {
         en.shield.renderOrder = ORDER_SHIELD;
         en.shield.scale.set(16, 16, 1);
         en.shield.center.set(0.5, 0.5 - 22 / 16); // 立体化后模型自带高度，屏幕余量只留血条上方一点
+        en.shield.layers.set(HUD_SPRITE_LAYER); // 同血条，见上方 bar.layers.set 那处注释
         this.scene.add(en.shield); this.infoObjs++;
         en.shieldOn = true;
       }

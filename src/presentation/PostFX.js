@@ -19,6 +19,29 @@ import * as THREE from '../../vendor/three.module.js';
 import { Pass } from '../../vendor/postprocessing/Pass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 
+/**
+ * v51.33 修复：塔/单位附近莫名出现的半透明"重影血条"（任务 #104，用户最终定位——
+ * 关掉环境光遮蔽 SSAO 后重影消失，指向了这里）。
+ *
+ * 根因：血条/护盾图标（UnitLayer.js 的两个 Sprite）用 `depthTest:false` 让自己
+ * 永远画在最上层、不被地面/建筑挡住（头注 ①"贴地的下半张不会被地面深度裁掉"）。
+ * 但 NormalDepthPrepass.render() 是用 `scene.overrideMaterial` 整场景重渲一遍
+ * ——覆写渲染用的是覆写材质【自己】的 depthTest/depthWrite（MeshNormalMaterial
+ * 默认都是 true），根本不看原材质那份 depthTest:false。于是血条这个悬浮在单位
+ * 头顶、朝向摄像机的小方片，在 SSAO/描边共用的这份深度图里被记成了一块"正常
+ * 参与深度测试的实体几何"，形状和血条一模一样——SSAO 用这份深度算遮蔽时，
+ * 血条自己的这一小块矩形边缘会被当成真实几何的轮廓，算出一圈围绕血条形状的
+ * 错误遮蔽量，叠回主画面就是"血条旁边多出一块同形状的半透明暗影"。
+ *
+ * 修法：给这类"永远画在最上层、不参与场景遮蔽"的精灵一个专用 layer，预渲染
+ * 这一步用的相机临时关掉这个 layer——它们在深度图里就等于不存在，SSAO/描边
+ * 处理的是它们背后的真实几何，血条本身仍然照常画在最终画面最上层（beauty pass
+ * 用的是主相机，全程开着这个 layer，不受影响）。UnitLayer.js 创建血条/护盾
+ * Sprite 时把它们放进这个 layer；ThreeRenderer 建主相机时把这个 layer 加入主相机
+ * 默认可见集合（否则主渲染也会漏画它们）。
+ */
+export const HUD_SPRITE_LAYER = 1;
+
 // ==================== 法线+深度预渲染 Pass ====================
 class NormalDepthPrepass extends Pass {
   constructor(scene, camera, width, height) {
@@ -47,9 +70,13 @@ class NormalDepthPrepass extends Pass {
     const prevBackground = this.scene.background;
     this.scene.overrideMaterial = this._normalMaterial;
     this.scene.background = null; // 背景色不该被当成"某个物体的法线"参与边缘/遮蔽判定
+    // 血条/护盾图标这类"永远画在最上层"的 HUD 精灵不该参与深度/遮蔽判定——见上方头注。
+    const hadHudLayer = this.camera.layers.isEnabled(HUD_SPRITE_LAYER);
+    this.camera.layers.disable(HUD_SPRITE_LAYER);
     renderer.setRenderTarget(this.renderTarget);
     renderer.clear();
     renderer.render(this.scene, this.camera);
+    if (hadHudLayer) this.camera.layers.enable(HUD_SPRITE_LAYER);
     this.scene.overrideMaterial = prevOverride;
     this.scene.background = prevBackground;
     renderer.setRenderTarget(prevTarget);

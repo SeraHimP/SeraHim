@@ -194,9 +194,23 @@ export function effectGroupBreakdown(effects) {
     } else if (bp.kind === 'shield') {
       // v51.9 修复：用户"铁龙之力的状态里写无属性变化，应该为护盾+45"——这里原来
       // 完全没处理 kind:'shield'，落不进 mods 也落不进 otherLines，两边都空
-      // 就显示"（无属性变化）"，即使效果本身确实挂着一份护盾。护盾不是"属性
-      // 修正"（没有 statKey，不走乘算管线），所以放进 otherLines 而不是 mods 网格。
-      otherLines.push(`护盾+${Math.round(e.shieldRemaining || 0)}`);
+      // 就显示"（无属性变化）"，即使效果本身确实挂着一份护盾。
+      // v51.33 修复：用户截图报"钢铁烈阳护盾"详情里"固定护盾+50"走的是网格块，
+      // "护盾+0"却是网格下方单独一行纯文字，两条本该并列的数值长得不一样，还带出
+      // 一条读不出信息量的"+0"。用户定稿："都用那个格子来显示"——护盾（kind:'shield'）
+      // 与固定护盾（kind:'stat',statKey:'shieldFixedMax'）虽然是两套不同机制（前者
+      // 不衰减不回复、后者脱战自动回满），但对玩家而言都是"这份效果现在还剩多少
+      // 护盾"，展示上没理由分成两种视觉语言。这里改成并入 mods 网格，复用
+      // STAT_LABELS 里已有的 plainShieldFlat→'护盾' 这个中文标签（该字段平时是
+      // 出生自带护盾的模板配置项，纯粹借用它已经确定好的中文名，两处数据互不相干）。
+      // shieldRemaining 被打空后确实会停在 0（"护盾"不会脱战自动回满，这是设计
+      // 使然，不是 bug）——modsGridHtml 对 flat===0 的键不渲染数值，效果是"占位
+      // 但不出现"，与固定护盾/生命恢复等"数值 0 就不占一行"的既有规则完全一致。
+      const remain = Math.round(e.shieldRemaining || 0);
+      if (remain > 0) {
+        const m = mods.plainShieldFlat || (mods.plainShieldFlat = { flat: 0, percent: 0 });
+        m.flat += remain;
+      }
     } else if (bp.kind === 'display') {
       otherLines.push(bp.description || '');
     }

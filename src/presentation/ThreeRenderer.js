@@ -62,7 +62,7 @@ import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
 import { setUnitTint } from './UnitMeshFactory.js';
 // 渲染重构 Week2·Day8-10：轮廓描边 + SSAO，见 PostFX.js 头注。
-import { NormalDepthPrepass, createSSAOPass, createOutlinePass } from './PostFX.js';
+import { NormalDepthPrepass, createSSAOPass, createOutlinePass, HUD_SPRITE_LAYER } from './PostFX.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
@@ -129,6 +129,9 @@ export class ThreeRenderer {
     this.scene.background = new THREE.Color(0x0a0d12);
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, CAM_DIST * 3);
+    // 主相机（beauty pass）要能看见血条/护盾图标这类 HUD 精灵——只有法线/深度预渲染
+    // 那个专用相机会在渲染时临时关掉这个 layer（PostFX.js 头注），不影响这里。
+    this.camera.layers.enable(HUD_SPRITE_LAYER);
     this.elevationDeg = CAM_ELEVATION_DEG;
     this.azimuthDeg = 0;   // C 组·方位角（绕 Y 偏航）。0 = 原视角（无偏航）。
     this.lookHeightOffset = 0;   // 视角高度：机位+目标点同步沿世界 Y 轴平移的偏移量，见 setLookHeight 头注。

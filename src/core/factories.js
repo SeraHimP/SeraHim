@@ -294,30 +294,45 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
         towerDefaults.push('passive_nexus_regen'); // v36 Q4 修复：水晶/枢纽的生命恢复被动
       }
     }
-    // ==================== 加固城防：地图显式指定 skills 时也必须补上 ====================
+    // ==================== 加固城防：任何一条"整体替换 towerDefaults"的路径都必须补上 ====================
     // 用户："XX加固城防中的生命节点失效（嚎哭深渊，扭曲丛林）"。
     // 根因不是节点算错了，而是 fortify **压根没装上**：
-    // 这两张图的地图数据给建筑写了显式 skills（为了换成本图专属的成长/钢铁防线），
-    // 而上面那句 `towerDefaults = [...skills]` 是**整体替换** —— 默认列表里的 fortify
+    // 地图数据给建筑写了显式 skills（为了换成本图专属的成长/钢铁防线），
+    // `towerDefaults = [...skills]` 是**整体替换** —— 默认列表里的 fortify
     // 连同别的一起被顶掉了，_regenCapHP 从没被设过。
     // 可身份技能（core_tier_*）是无条件装的，它的面板照样写着"三个生命节点"——
     // 于是"看得见、写得明白、就是不生效"。
-    // 这里只补 fortify 一项，不补 iron_line / overload / plating 那些：
-    // 那几个是"默认配置"，地图有权换掉；而 fortify 是身份技能承诺过的东西，
+    // 只补 fortify 一项，不补 iron_line / overload / plating 那些：
+    // 那几个是"默认配置"，地图/编辑器有权换掉；而 fortify 是身份技能承诺过的东西，
     // 面板上写了就必须真的有。地图仍可用 excludeSkills 显式排除（下面那一步）。
-    if (!isNexus && fortifyByTier[tier] && !towerDefaults.includes(fortifyByTier[tier])) {
-      towerDefaults.unshift(fortifyByTier[tier]);
-    }
-    // ==================== v42: Apply map-level skill exclusions ====================
+    // 排除表要在两次"补 fortify"之前就取到——保证本身也要认它，否则地图/编辑器
+    // 明确排除了 fortify，这条保证却把它强行加回来，excludeSkills 就形同虚设了。
     const skillExcludeList = SkillLibrary._excludeSkills?.["tower:" + tier] || [];
+    const ensureFortifyPresent = (list) => {
+      if (!isNexus && fortifyByTier[tier] && !list.includes(fortifyByTier[tier])
+          && !skillExcludeList.includes(fortifyByTier[tier])) list.unshift(fortifyByTier[tier]);
+      return list;
+    };
+    towerDefaults = ensureFortifyPresent(towerDefaults);
+    // ==================== v42: Apply map-level skill exclusions ====================
     if (skillExcludeList.length) {
       towerDefaults = towerDefaults.filter(k => !skillExcludeList.includes(k));
     }
     // 模板编辑器的分层被动覆写（用户定稿："所有的都不要硬编码，都应该是可编辑的软编码"）。
     // 与小兵 _templateSkills 同语义：显式设过就完全由它决定（空数组=不装），没设过才走上面的默认。
     // 放在排除表之后：玩家在编辑器里的显式选择优先于地图排除规则。
+    //
+    // v51.33 修复：这句同样是"整体替换 towerDefaults"，跟地图 skills 那条是完全一样的
+    // 坑——只是这次复现路径变成了"编辑器分层技能覆写"而不是地图数据。原来的 fortify
+    // 保证只在【替换之前】补了一次，编辑器覆写在它之后再整体替换一遍，等于把刚补上的
+    // fortify 又顶掉了。用户报的"血量降到节点以下后节点并未刷新"根因就在这——不是
+    // _fortifyRecalc 算错了（那部分逻辑本身是对的，见 core/skills/towerPassives.js），
+    // 是这份被动从一开始就没被装上，_regenCapHP 一直是 undefined，恢复没有任何封顶。
+    // 同一条保证在这里必须再跑一遍——两处 replace 各自补一次，而不是想办法只保留一处
+    // replace（地图 skills 与编辑器覆写谁该赢是两条独立的既有规则，不该为了省一次调用
+    // 去改动它们的优先级）。
     const tierSkillOverride = CONFIG.towerTierSkills?.[tier];
-    if (Array.isArray(tierSkillOverride)) towerDefaults = [...tierSkillOverride];
+    if (Array.isArray(tierSkillOverride)) towerDefaults = ensureFortifyPresent([...tierSkillOverride]);
     for (const key of towerDefaults) equipSkill(entity, key, ctx, skillLibrary);
   }
 
