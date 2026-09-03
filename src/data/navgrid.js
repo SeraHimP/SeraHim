@@ -139,3 +139,35 @@ export function paintPolyline(bits, n, points, halfWidth, value) {
   }
   return bits;
 }
+
+/**
+ * 去毛刺（阶段四剩余）：清理笔刷/折线造墙留下的孤立噪点与 1 格宽尖刺——
+ * 手画的地形边界经常在拐角、折线接缝处留下"多刷了一格"或"少刷了一格"的锯齿，
+ * 这些锯齿在寻路上不影响连通性，但画面上很显眼、也容易在验收时被当成"没画干净"。
+ *
+ * 算法：单遍多数表决（4 邻域中值滤波）。对每个内部格子（不含最外一圈——那一圈本来就
+ * 靠边界墙环加宽兜底，见 sr_navgrid.js 头注④，不该被这个纯几何判据误吃掉），
+ * 数它上下左右 4 个邻格里跟自己同值的有几个：≤1 个（也就是 3 个或以上邻格跟自己不同）
+ * 判定为孤点/尖刺，翻转成跟多数邻格一致。这不是原地边算边改——每个格子的判定都基于
+ * 【改动前】的邻居快照，否则同一遍扫描里后面的格子会读到前面格子已经翻转过的新值，
+ * 结果依赖扫描方向（先左后右 vs 先右后左会翻出不同形状），不可预测。
+ *
+ * 单遍不一定能清干净大块噪点（那不是"毛刺"，是画错了，应该用笔刷改，不是这个按钮的
+ * 职责）；效果不够就让用户在编辑器里多点几次这个按钮，比在这里编个"迭代次数"参数、
+ * 把简单操作复杂化更符合"笔刷"这个交互隐喻（画笔哪有自带跑几遍的）。
+ * @param {Uint8Array} bits @param {number} n
+ * @returns {Uint8Array} 原地修改后的 bits（同一个引用，方便链式调用，与 paintCircle 一致）
+ */
+export function despeckle(bits, n) {
+  const snapshot = bits.slice();
+  for (let gy = 1; gy < n - 1; gy++) {
+    for (let gx = 1; gx < n - 1; gx++) {
+      const i = gy * n + gx;
+      const v = snapshot[i];
+      const same = (snapshot[i - 1] === v ? 1 : 0) + (snapshot[i + 1] === v ? 1 : 0)
+                 + (snapshot[i - n] === v ? 1 : 0) + (snapshot[i + n] === v ? 1 : 0);
+      if (same <= 1) bits[i] = v ? 0 : 1;
+    }
+  }
+  return bits;
+}

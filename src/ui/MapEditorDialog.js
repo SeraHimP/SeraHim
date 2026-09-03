@@ -22,11 +22,12 @@
  * ——现在数据还没稳定，不必现在就把交互框架焊死）。
  *
  * ==================== 本次范围 ====================
- * 做：navgrid 圆形笔刷（画/擦）、建筑拖拽摆放（吸附兵线 + 实时校验红线）、
+ * 做：navgrid 圆形笔刷（画/擦）、折线造墙笔刷（点选顶点连成带状墙体，画/擦通用）、
+ *     去毛刺（清理孤立噪点/1格尖刺）、建筑拖拽摆放（吸附兵线 + 实时校验红线）、
  *     区域参数表单（基地圈半径、龙坑/男爵坑中心+半径，画布半透明预览）、
  *     克隆已有地图作为起点、保存到 CONFIG.customMaps、加载预览、删除自制地图。
- * 不做（设计报告后续阶段）：画线/折线造墙模式、去毛刺整理、路径编辑、高度笔刷。
- * 这些各自是独立的阶段四剩余/五/六，不在这一批一起做——单批改动越大，出问题时越难
+ * 不做（设计报告后续阶段）：路径编辑（兵线路点增删/整条路增删）、高度笔刷。
+ * 这些各自是独立的阶段五/六，不在这一批一起做——单批改动越大，出问题时越难
  * 定位是哪一步引入的。
  *
  * ==================== 建筑摆放为什么复用同一块画布，不叠一层 overlay ====================
@@ -38,7 +39,7 @@
  */
 import { paneHtml } from './dialogShell.js';
 import { CONFIG } from '../data/Config.js';
-import { paintCircle } from '../data/navgrid.js';
+import { paintCircle, paintPolyline, despeckle } from '../data/navgrid.js';
 import { STRUCT_TIERS } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import {
@@ -67,7 +68,10 @@ export const MapEditorDialog = {
     let baseMap = mapSystem.getMapById(baseId);
     let { n, bits } = decodeBaseBits(baseMap);
     let brushMode = 'draw';   // 'draw'=画可走 | 'erase'=擦成不可走
-    let brushRadius = CONFIG.mapEditor.brushRadiusGridDefault;
+    let brushShape = 'circle';   // 'circle'=圆形笔刷（拖动连续画） | 'polyline'=折线造墙（点选顶点，完成后一次性画）
+    let brushRadius = CONFIG.mapEditor.brushRadiusGridDefault;   // 圆形半径 / 折线半宽，共用同一个值和同一条滑杆
+    let polylinePoints = [];      // 折线造墙模式下已点选的顶点（格子坐标）
+    let polylineHover = null;     // 鼠标当前位置（格子坐标）——画"橡皮筋"预览线用，不是真正的顶点
     let painting = false;
     let statusMsg = '';
     let editMode = 'terrain';           // 'terrain'=地形笔刷 | 'buildings'=建筑摆放
@@ -94,7 +98,26 @@ export const MapEditorDialog = {
       }
       ctx.putImageData(img, 0, 0);
       drawRegionOverlays(ctx);
+      if (editMode === 'terrain' && brushShape === 'polyline') drawPolylinePreview(ctx);
       if (editMode === 'buildings') drawBuildingMarkers(ctx);
+    };
+
+    // 折线造墙：画布坐标系就是 navgrid 的 n×n 格子坐标系（与其它重绘函数一致），
+    // 点选顶点时直接存格子坐标，这里不需要再做世界↔格子的换算。
+    const drawPolylinePreview = (ctx) => {
+      if (!polylinePoints.length) return;
+      ctx.strokeStyle = brushMode === 'draw' ? '#78c878' : '#ff5a5a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      polylinePoints.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      if (polylineHover) ctx.lineTo(polylineHover.x, polylineHover.y);   // 橡皮筋：预览"再点一下会连到哪"
+      ctx.stroke();
+      polylinePoints.forEach((p, i) => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, i === 0 ? 3.5 : 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = i === 0 ? '#ffd700' : '#fff';   // 起点用金色区分，方便确认闭合/走向
+        ctx.fill();
+      });
     };
 
     // 区域参数（阶段四剩余）：基地圈半径 + 龙坑/男爵坑画成半透明预览圈，两种编辑模式下
@@ -246,6 +269,14 @@ export const MapEditorDialog = {
       });
     };
 
+    // 折线模式下把 client 坐标换算成格子坐标——与 paintAt 内联的那行算法一致，
+    // 单独抽出来是因为点选顶点、画橡皮筋预览两处都要用，不想抄两遍。
+    const clientToGrid = (canvas, clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return { x: (clientX - rect.left) / rect.width * n, y: (clientY - rect.top) / rect.height * n };
+    };
+
     const bindCanvasEvents = () => {
       const canvas = document.getElementById('mapEditorCanvas');
       if (!canvas) return;
@@ -256,6 +287,9 @@ export const MapEditorDialog = {
           selectedBuildingIndex = draggingBuildingIndex;
           updateSelectionPanel();
           if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
+        } else if (brushShape === 'polyline') {
+          const g = clientToGrid(canvas, e.clientX, e.clientY);
+          if (g) { polylinePoints.push(g); updatePolylineStatus(); redrawCanvas(); }
         } else {
           painting = true;
           paintAt(e.clientX, e.clientY);
@@ -263,12 +297,18 @@ export const MapEditorDialog = {
       });
       canvas.addEventListener('pointermove', (e) => {
         if (editMode === 'buildings') { if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY); }
+        else if (brushShape === 'polyline') { polylineHover = clientToGrid(canvas, e.clientX, e.clientY); redrawCanvas(); }
         else if (painting) paintAt(e.clientX, e.clientY);
       });
       const stop = () => { painting = false; draggingBuildingIndex = -1; redrawCanvas(); };
       canvas.addEventListener('pointerup', stop);
       canvas.addEventListener('pointercancel', stop);
       canvas.addEventListener('pointerleave', stop);
+    };
+
+    const updatePolylineStatus = () => {
+      const el = document.getElementById('mapEditorPolylineStatus');
+      if (el) el.textContent = polylinePoints.length ? `已点选 ${polylinePoints.length} 个顶点` : '点击画布开始造墙';
     };
 
     // ---------- 结构性重绘（切起点地图/保存/删除后调用；笔刷拖动期间绝不调这个） ----------
@@ -305,11 +345,34 @@ export const MapEditorDialog = {
               <button id="mapEditorModeErase" class="${brushMode === 'erase' ? 'primary' : ''}">⬛ 擦（不可走）</button>
             </div>
           </div>
-          <div class="slider-row"><label>笔刷半径</label>
+          <div class="slider-row"><label>笔刷形状</label>
+            <div style="display:flex;gap:6px;">
+              <button id="mapEditorShapeCircle" class="${brushShape === 'circle' ? 'primary' : ''}">⚪ 圆形（拖动画）</button>
+              <button id="mapEditorShapePolyline" class="${brushShape === 'polyline' ? 'primary' : ''}">📐 折线造墙（点选顶点）</button>
+            </div>
+          </div>
+          <div class="slider-row"><label>${brushShape === 'polyline' ? '墙体半宽' : '笔刷半径'}</label>
             <input id="mapEditorBrushSlider" type="range"
               min="${CONFIG.mapEditor.brushRadiusGridMin}" max="${CONFIG.mapEditor.brushRadiusGridMax}"
               value="${brushRadius}" style="flex:1;">
             <span id="mapEditorBrushLabel">${brushRadius} 格</span>
+          </div>
+          ${brushShape === 'polyline' ? `
+          <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
+            在画布上依次点选墙体的顶点（金点=起点），移动鼠标能看到下一段的橡皮筋预览；
+            点完按"完成造墙"一次性画到地形上（画/擦由上面的"模式"决定），或"取消"放弃这次。
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span id="mapEditorPolylineStatus" style="font-size:11px;color:var(--text-mute);">点击画布开始造墙</span>
+            <div style="display:flex;gap:6px;">
+              <button id="mapEditorPolylineUndo">↩️ 撤销上一点</button>
+              <button id="mapEditorPolylineCancel">✖ 取消</button>
+              <button id="mapEditorPolylineCommit" class="primary">✅ 完成造墙</button>
+            </div>
+          </div>` : ''}
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <button id="mapEditorDespeckleBtn">🧹 去毛刺</button>
+            <span style="font-size:10px;color:var(--text-mute);">清理孤立噪点/1格尖刺，不够干净可以多点几次</span>
           </div>` : `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
             拖动一座建筑：分路的塔（外塔/内塔/水晶防御塔）会被吸附纠正回自己那条兵线上，
@@ -398,6 +461,7 @@ export const MapEditorDialog = {
       bindCanvasEvents();
       redrawCanvas();
       if (editMode === 'buildings') { updateValidationStatus(); updateSelectionPanel(); }
+      if (editMode === 'terrain' && brushShape === 'polyline') updatePolylineStatus();
     };
 
     const setStatus = (msg) => {
@@ -413,6 +477,7 @@ export const MapEditorDialog = {
       draftBuildings = cloneBuildingsForEdit(baseMap);
       selectedBuildingIndex = -1;   // 建筑数组重建了，旧下标不再指向同一座塔
       draftRegions = cloneRegionsForEdit(baseMap);   // 换了起点地图，区域参数草稿也要跟着重来
+      polylinePoints = []; polylineHover = null;   // n/bits 重建了，旧顶点的格子坐标不再有意义
       statusMsg = '';
       render();
     };
@@ -440,6 +505,34 @@ export const MapEditorDialog = {
       slider?.addEventListener('input', () => {
         brushRadius = Number(slider.value) || CONFIG.mapEditor.brushRadiusGridDefault;
         document.getElementById('mapEditorBrushLabel').textContent = `${brushRadius} 格`;
+      });
+
+      // 笔刷形状切换：换形状时把还没提交的折线顶点扔掉（半成品墙留着容易误以为已经生效）。
+      document.getElementById('mapEditorShapeCircle')?.addEventListener('click', () => {
+        brushShape = 'circle'; polylinePoints = []; polylineHover = null; render();
+      });
+      document.getElementById('mapEditorShapePolyline')?.addEventListener('click', () => { brushShape = 'polyline'; render(); });
+
+      document.getElementById('mapEditorPolylineUndo')?.addEventListener('click', () => {
+        polylinePoints.pop(); updatePolylineStatus(); redrawCanvas();
+      });
+      document.getElementById('mapEditorPolylineCancel')?.addEventListener('click', () => {
+        polylinePoints = []; updatePolylineStatus(); redrawCanvas();
+      });
+      document.getElementById('mapEditorPolylineCommit')?.addEventListener('click', () => {
+        if (polylinePoints.length >= 2) {
+          paintPolyline(bits, n, polylinePoints, brushRadius, brushMode === 'draw');
+          logFn(`📐 已把 ${polylinePoints.length} 个顶点连成的墙体${brushMode === 'draw' ? '画成可走' : '擦成不可走'}`, 'spawn');
+        }
+        polylinePoints = [];
+        updatePolylineStatus();
+        redrawCanvas();
+      });
+
+      document.getElementById('mapEditorDespeckleBtn')?.addEventListener('click', () => {
+        despeckle(bits, n);
+        redrawCanvas();
+        logFn('🧹 已清理一遍孤立噪点/尖刺（效果不够可以多点几次）', 'spawn');
       });
 
       // 区域参数表单：基地圈半径改动只重画预览圈（不结构性重渲，输入框失焦体验更好）；

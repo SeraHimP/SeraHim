@@ -302,6 +302,17 @@ const T = board.T;
     /switchBase[\s\S]{0,400}draftRegions = cloneRegionsForEdit/.test(src));
   T('⑭-保存时把当前区域参数草稿传给了 buildCustomMapPayload（表单改的值真的会存下去）',
     /buildCustomMapPayload\([^)]*baseCircleRadius:\s*draftRegions\.baseCircleRadius[^)]*pits:\s*draftRegions\.pits/.test(src));
+
+  // 阶段四剩余：折线造墙笔刷调了 navgrid.js 的 paintPolyline/despeckle，没有另起一套
+  // 折线栅格化或去噪算法；完成造墙时真的把点选的顶点数组传给了 paintPolyline。
+  T('⑮-折线造墙调用了 navgrid.js 的 paintPolyline（不是弹窗里另算一套折线栅格化）',
+    /paintPolyline/.test(src));
+  T('⑯-去毛刺按钮调用了 navgrid.js 的 despeckle（不是弹窗里另算一套降噪）',
+    /despeckle/.test(src));
+  T('⑰-完成造墙时把当前点选的顶点数组传给了 paintPolyline',
+    /paintPolyline\(bits,\s*n,\s*polylinePoints/.test(src));
+  T('⑱-切换起点地图会重置折线顶点（switchBase 里清空 polylinePoints，避免旧格子坐标在新分辨率下错位）',
+    /switchBase[\s\S]{0,700}polylinePoints = \[\]/.test(src));
 }
 
 // ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================

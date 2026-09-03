@@ -8,7 +8,7 @@
  */
 import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
-const { unpackBits, packBits, unpackByteGrid, packByteGrid, resolveGridN, paintCircle, paintPolyline } =
+const { unpackBits, packBits, unpackByteGrid, packByteGrid, resolveGridN, paintCircle, paintPolyline, despeckle } =
   await import('../src/data/navgrid.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -111,6 +111,56 @@ const T = board.T;
     paintPolyline(b, 3, [{ x: 1, y: 1 }], 1, 1);
     return b.every(v => v === 0);
   })());
+}
+
+// ==================== ⑥b 去毛刺（阶段四剩余，§3.3）====================
+{
+  const n = 10;
+  // 单个孤立的可走噪点（周围全是不可走）——4 邻居全不同 → 应被翻转成 0
+  const bits = new Uint8Array(n * n);
+  bits[5 * n + 5] = 1;
+  despeckle(bits, n);
+  const at = (b, x, y) => b[y * n + x];
+  T('去毛刺①-孤立的单格噪点（4 邻居全不同）被清除', at(bits, 5, 5) === 0);
+
+  // 一整块可走区域中间挖了一个孤立的不可走噪点——同理应被填平
+  const bits2 = new Uint8Array(n * n).fill(1);
+  bits2[5 * n + 5] = 0;
+  despeckle(bits2, n);
+  T('去毛刺②-可走区域里孤立的单格不可走噪点也会被清除（对称，不只单向）', at(bits2, 5, 5) === 1);
+
+  // 1 格宽尖刺：从一块可走区域向外伸出一条单格宽的刺，尖刺应被吃掉，主体保留
+  const bits3 = new Uint8Array(n * n);
+  for (let gy = 2; gy <= 6; gy++) for (let gx = 2; gx <= 6; gx++) bits3[gy * n + gx] = 1; // 5x5 主体
+  bits3[7 * n + 4] = 1; // 从底边向下伸出一格尖刺
+  despeckle(bits3, n);
+  T('去毛刺③-从主体伸出的 1 格宽尖刺被削平', at(bits3, 4, 7) === 0);
+  T('去毛刺④-主体本身不受影响（不是无差别腐蚀，5x5 主体内部格子全部保留可走）',
+    at(bits3, 4, 4) === 1 && at(bits3, 2, 2) === 1 && at(bits3, 6, 6) === 1);
+
+  // 一条有厚度的墙带（真实造墙场景：paintPolyline 画的是 halfWidth ≥ 1 的带状区域，
+  // 不是 1 格宽的细线）不应被误判成毛刺——带内每个格子沿线方向都有同值邻居，
+  // 不会触发"≤1 个邻居相同"这条阈值。1 格宽的细线是另一回事：细线的两端本来就
+  // 只有 1 个同值邻居，在几何上确实是"尖刺"，被削平是这个算法的正确行为，不在这里测。
+  const bits4 = new Uint8Array(n * n);
+  for (let gy = 4; gy <= 6; gy++) for (let gx = 1; gx < n - 1; gx++) bits4[gy * n + gx] = 1; // 3 格厚的墙带
+  const before4 = bits4.slice();
+  despeckle(bits4, n);
+  T('去毛刺⑤-有厚度的墙带（含两端）完整保留，不会被误判成毛刺削掉',
+    bits4.every((v, i) => v === before4[i]));
+
+  // 判定基于改动前的快照，不依赖扫描方向——两个相邻的孤立噪点同时清理，
+  // 结果应与"谁先谁后"无关（不是原地边算边改导致的方向依赖 bug）。
+  const bits5 = new Uint8Array(n * n);
+  bits5[5 * n + 4] = 1; bits5[5 * n + 5] = 1; // 横向相邻两格孤立噪点（各自只有 1 个同值邻居）
+  despeckle(bits5, n);
+  T('去毛刺⑥-判定基于翻转前的快照（相邻两格各只有 1 个同值邻居，按快照判定都应被清除）',
+    at(bits5, 4, 5) === 0 && at(bits5, 5, 5) === 0);
+
+  T('去毛刺⑦-返回值就是传入的 bits（原地修改，方便像 paintCircle 一样链式调用）',
+    despeckle(new Uint8Array(9), 3) instanceof Uint8Array);
+  const same = new Uint8Array(9);
+  T('去毛刺⑧-返回的是同一个引用，不是拷贝', despeckle(same, 3) === same);
 }
 
 // ==================== ⑦ 逐格字节数据编解码（高度笔刷/材质笔刷共用） ====================
