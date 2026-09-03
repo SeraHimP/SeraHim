@@ -24,6 +24,12 @@ import { TT_NAVGRID } from './map_navgrids.js';
  * 地图中轴（img y=402）落在 world y = 664。左右镜像轴 world x = 1504。
  */
 
+// 两路的出兵流完全一样，抽成常量避免重复——见 summoners_rift.js 里同名常量的头注。
+const LANE_SPAWNS_2F = [
+  { faction: FACTIONS.BLUE, direction: 'forward', targetFactions: [FACTIONS.RED] },
+  { faction: FACTIONS.RED, direction: 'reverse', targetFactions: [FACTIONS.BLUE] },
+];
+
 const M = (p) => ({ x: 3008 - p.x, y: p.y });     // 红方 = 左右镜像（本图左右对称，不是中心对称）
 // （上下镜像函数已删除：小地图上两条路并不对称，下路必须单独量）
 
@@ -90,6 +96,7 @@ export const twisted_treeline = {
   id: 'twisted_treeline_v1',
   label: '扭曲丛林',
   world: { w: 3008, h: 1388 },
+  factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
 
   // ==================== 地形 ====================
   useNavgrid: true,
@@ -168,8 +175,8 @@ export const twisted_treeline = {
   },
 
   lanes: [
-    { id: 'top', waypoints: LANE_TOP },
-    { id: 'bot', waypoints: LANE_BOT },
+    { id: 'top', waypoints: LANE_TOP, spawns: LANE_SPAWNS_2F },
+    { id: 'bot', waypoints: LANE_BOT, spawns: LANE_SPAWNS_2F },
   ],
 
   // 塔位：水晶枢纽/枢纽塔/水晶塔/召唤水晶 **全部从标准小地图逐个量出**（见上面 B）；

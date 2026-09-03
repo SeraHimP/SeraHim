@@ -53,6 +53,7 @@ export const howling_abyss = {
   id: 'howling_abyss_v1',
   label: '嚎哭深渊',
   world: { w: 2325, h: 2325 },
+  factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
 
   // ==================== 地形 ====================
   // useNavgrid + 自带位图：MapSystem 逐格判可走，不再有走廊/基地圈。
@@ -138,7 +139,14 @@ export const howling_abyss = {
 
   // 兵线 = 桥心那条直线（全长 2462）。桥是直的，两个端点就够，不需要中间路点。
   lanes: [
-    { id: 'mid', waypoints: [BLUE_NEXUS, R(BLUE_NEXUS)] },
+    {
+      id: 'mid',
+      waypoints: [BLUE_NEXUS, R(BLUE_NEXUS)],
+      spawns: [
+        { faction: FACTIONS.BLUE, direction: 'forward', targetFactions: [FACTIONS.RED] },
+        { faction: FACTIONS.RED, direction: 'reverse', targetFactions: [FACTIONS.BLUE] },
+      ],
+    },
   ],
 
   buildings: [

@@ -31,6 +31,33 @@ export function declareEnemies(factionA, factionB) {
 }
 
 /**
+ * ==================== 多阵营地基：地图声明哪些阵营、每条路打谁 ====================
+ * 见 docs/REPORT-2026-09-03-multifaction.md §3。地图作者时间声明，对局中固定不变。
+ *
+ * 未声明时按两阵营解读，跟改动前逐位一致——现有三张地图暂时都没有显式写
+ * factions/lane.spawns 字段（正在按报告的分阶段顺序逐步补），这两个函数保证
+ * 在字段补齐之前，读它们的代码不会因为"字段不存在"而表现异常。
+ */
+
+/** 地图声明支持的阵营列表。未声明时兜底为 [blue, red]（现有地图的既定行为）。 */
+export function mapFactionsOf(map) {
+  return map?.factions || [FACTIONS.BLUE, FACTIONS.RED];
+}
+
+/**
+ * 一条兵线上有哪些出兵流：每一项是"某阵营从这条路的哪个方向出发、打向哪些阵营"。
+ * 未声明时兜底为"蓝方 forward 打红方 + 红方 reverse 打蓝方"——与
+ * LaneWaveSystem.spawnWave 改造前对每条 lane 各调一次 BLUE/RED 的行为逐位一致。
+ * @param {{spawns?: {faction:string, direction:'forward'|'reverse', targetFactions:string[]}[]}} lane
+ */
+export function laneSpawnsOf(lane) {
+  return lane?.spawns || [
+    { faction: FACTIONS.BLUE, direction: 'forward', targetFactions: [FACTIONS.RED] },
+    { faction: FACTIONS.RED, direction: 'reverse', targetFactions: [FACTIONS.BLUE] },
+  ];
+}
+
+/**
  * 判断两个阵营是否敌对。
  * 中立阵营（NEUTRAL）对任何阵营都不主动敌对（不会被这个函数判定为"是敌人"），
  * 但可以被任何阵营攻击——中立单位是否还手，由具体单位的 AI/技能逻辑决定，不归这里管。

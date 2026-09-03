@@ -33,12 +33,23 @@ import { SR_PITS } from './sr_navgrid.js';
  * - 下路 = rot(上路) 逐点核对通过（中心对称）。
  */
 
+// 三路的出兵流完全一样（蓝方 forward 打红方、红方 reverse 打蓝方），抽成常量避免三份重复。
+// 见 FactionSystem.laneSpawnsOf 的头注——这就是它未声明时的兜底值，写出来是当模板。
+const LANE_SPAWNS_2F = [
+  { faction: FACTIONS.BLUE, direction: 'forward', targetFactions: [FACTIONS.RED] },
+  { faction: FACTIONS.RED, direction: 'reverse', targetFactions: [FACTIONS.BLUE] },
+];
+
 export const WORLD_SIZE = 3552;
 
 export const summoners_rift = {
   id: 'summoners_rift_v1',
   label: '召唤师峡谷',
   world: { w: WORLD_SIZE, h: WORLD_SIZE },
+  // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §3）：地图声明支持哪些阵营，
+  // 对局中固定不变。这张图只有蓝红两阵营，显式写出来是给以后的 N 阵营地图当模板——
+  // 不写也不影响现有行为（FactionSystem.mapFactionsOf 未声明时兜底就是这两个）。
+  factions: [FACTIONS.BLUE, FACTIONS.RED],
 
   // === Building tier stats (classic defaults, self-contained) ===
   // v51.6：用户定稿属性修正——"外塔HP5000，双抗40。内塔HP4000，双抗70。水晶塔HP3500，
@@ -167,6 +178,7 @@ export const summoners_rift = {
         { x: 1110, y: 300 },
         { x: 3226, y: 305 },
       ],
+      spawns: LANE_SPAWNS_2F,
     },
     {
       id: 'mid',
@@ -174,6 +186,7 @@ export const summoners_rift = {
         { x: 305, y: 3226 },
         { x: 3226, y: 305 },
       ],
+      spawns: LANE_SPAWNS_2F,
     },
     {
       id: 'bot',
@@ -190,6 +203,7 @@ export const summoners_rift = {
         { x: 3262, y: 2432 },
         { x: 3226, y: 305 },
       ],
+      spawns: LANE_SPAWNS_2F,
     },
   ],
 
