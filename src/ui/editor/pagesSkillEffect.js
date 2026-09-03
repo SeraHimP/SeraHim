@@ -60,7 +60,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     const { pool, defaults, equipped, title } = this._skillSetFor(type, tier);
     const defSet = new Set(defaults);
 
-    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${title} 将自动装备选中的被动技能（★ = 代码里的原始默认装配）</p>`;
+    let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${title} 将自动装备选中的被动技能（★ = 出厂默认装配）</p>`;
     if (pool.length === 0) {
       html += `<div class="pick-desc-box">该类型没有可配置的被动技能。</div>`;
       return html;

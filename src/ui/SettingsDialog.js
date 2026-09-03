@@ -138,10 +138,7 @@ export const SettingsDialog = {
             </div>
           </div>
           <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
-            v44：「快进 N 秒」已并入倍率（8x 就是它）。同时把每帧的模拟预算从
-            <b>固定步数</b> 改成 <b>墙钟毫秒</b>（CONFIG.tuning.simBudgetMs = ${CONFIG.tuning?.simBudgetMs ?? 12}ms）——
-            原来限步数，而单步耗时随单位数增长，满场时同样的步数就是几百毫秒的卡顿。
-            现在倍率再高也只会「跑得慢一点」，不会卡住。
+            倍率再高也只会「跑得慢一点」，不会卡住。
           </div>
         </div>
         <div class="editor-section">

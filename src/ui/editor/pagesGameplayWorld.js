@@ -86,7 +86,7 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       </div>
 
       <div class="panel-sec">参数</div>
-      <div class="slider-row"><label title="用户定稿：所有龙魂作用增加的吸血（物理/魔法/全能）对防御塔这种单位的数值减少至此比例。只影响龙魂，不影响巨龙之力。">龙魂吸血·塔缩放(%)</label>
+      <div class="slider-row"><label title="所有龙魂作用增加的吸血（物理/魔法/全能）对防御塔这种单位的数值减少至此比例。只影响龙魂，不影响巨龙之力。">龙魂吸血·塔缩放(%)</label>
         <input type="number" id="dgVampTowerScale" min="0" max="100" step="1" value="${CONFIG.dragonSouls?.vampTowerScalePct ?? 33}" style="width:70px;">
         <button id="dgVampTowerScaleApply">应用</button>
       </div>
@@ -542,7 +542,7 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         </div>
       </div>
       <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
-        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">法力（全局，用户定稿"先都按这个写，可修改"）</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">法力（全局，可修改）</div>
         ${manaFields}
         <button id="setManaTuningApplyBtn" style="margin-top:6px;width:100%;">✅ 应用法力回复数值</button>
       </div>`;

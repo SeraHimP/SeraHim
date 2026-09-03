@@ -130,8 +130,7 @@ export const EDITOR_OPEN = {
     const ovr = CONFIG.skillOverrides || {};
     let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
       ✨ 技能参数的叠加顺序：<b>技能出厂值 → 这里的全局覆写 → 地图级覆写</b>（后者压前者）。<br>
-      改这里等于改"所有地图上的基准值"；某张地图要不一样，仍然在该地图模块的
-      <code>skillOverrides</code> 里单独写（这就是"同一技能在不同地图上数值可以不同"的做法）。<br>
+      改这里等于改"所有地图上的基准值"。<br>
       留空 = 不覆写，用出厂值。改完点【应用】。
     </div>`;
 
@@ -140,8 +139,7 @@ export const EDITOR_OPEN = {
       return html;
     }
     html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:8px;">
-      共 ${list.length} 个技能可调。只列出声明了可覆写参数的技能 ——
-      其余技能的数值是写死在函数体里的字面量，列出来只会给人"改了没反应"的错觉。</div>`;
+      共 ${list.length} 个技能可调。只列出声明了可覆写参数的技能。</div>`;
 
     for (const { id, def, params } of list) {
       const o = ovr[id] || {};

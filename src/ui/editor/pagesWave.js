@@ -40,9 +40,7 @@ export const EDITOR_PAGES_WAVE = {
              placeholder="最小, 最大"></div>`;
 
     let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
-      🐲 巨龙的强度按<b>第几条龙</b>算，与游戏波次无关。<br>
-      早期版本是按 <code>window.waveNumber</code> 算的，而龙按固定时间表刷新 ——
-      7 分钟后刷第 2 条龙时波次可能已经到 10+，双抗直接飙到几百。这个口径不要改回去。
+      🐲 巨龙的强度按<b>第几条龙</b>算，与游戏波次无关。
     </div>`;
 
     html += `<div style="font-size:12px;color:var(--text-dim);margin:10px 0 4px;">

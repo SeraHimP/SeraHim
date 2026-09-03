@@ -534,7 +534,7 @@ export const MapEditorDialog = {
                      border:1px solid var(--border-color,#444);cursor:crosshair;touch-action:none;border-radius:4px;"></canvas>
           </div>
           <div style="font-size:11px;color:var(--text-mute);text-align:center;">
-            ${editMode === 'terrain' ? `按住拖动连续绘制；分辨率 ${n}×${n} 格（自适应公式，见 CONFIG.mapEditor）。`
+            ${editMode === 'terrain' ? `按住拖动连续绘制；分辨率 ${n}×${n} 格。`
               : editMode === 'buildings' ? '按住一座建筑拖动即可移动。'
               : '点路点拖动，点空白处插入新路点。'}
           </div>
