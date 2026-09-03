@@ -1,6 +1,8 @@
 import { FACTIONS } from './FactionSystem.js';
 import { CONFIG } from '../data/Config.js';
-import { buildWaveOrder } from '../data/waveComposition.js';
+import { buildWaveOrder, buildBroadcastOrder } from '../data/waveComposition.js';
+import { SkillLibrary } from '../core/SkillLibrary.js';
+import { resolveSkillParams } from '../core/skillParams.js';
 
 /**
  * LaneWaveSystem.js
@@ -35,9 +37,29 @@ export class LaneWaveSystem {
     this.columnSpacing = 30;         // v42: spacing between columns (px)
     this._spawnQueue = [];  // { at, type, faction, laneId, direction } —— at 为该系统内部时钟的绝对时间
     this._clock = 0;        // 内部时钟
+    // v51.33：出兵编排"广播"（design §5.1）——执行广播规则需要 effectRegistry/
+    // attrCalc/combat（onBroadcast 的动作原语要用它们），判定广播的 when 条件需要
+    // dragonSystem/worldState（§5.2 的龙魂/天气/昼夜条件来源）。这几样都不是本系统
+    // 原本的职责，构造函数不强制要求——不注入时按"这类条件全部放行/广播直接跳过"
+    // 降级，与 census/gameTime 拿不到时的既有口径一致（宁可多算，不要因为缺一个
+    // 依赖就整个系统起不来）。
+    this._effectRegistry = null;
+    this._attrCalc = null;
+    this._combat = null;
+    this._dragonSystem = null;
+    this._worldState = null;
   }
 
   setCreateMinion(fn) { this.createMinion = fn; }
+
+  /** 见构造函数头注。main.js 在四个依赖都构造完之后调一次。 */
+  setBroadcastDeps({ effectRegistry, attrCalc, combat, dragonSystem, worldState } = {}) {
+    if (effectRegistry) this._effectRegistry = effectRegistry;
+    if (attrCalc) this._attrCalc = attrCalc;
+    if (combat) this._combat = combat;
+    if (dragonSystem) this._dragonSystem = dragonSystem;
+    if (worldState) this._worldState = worldState;
+  }
 
   update(dt) {
     // 首帧应用**地图自带的波次设置**（地图载入之后才读得到）。
@@ -125,9 +147,15 @@ export class LaneWaveSystem {
     const rules = _mapSE
       ? { ...CONFIG.gameRules, spawnEnabled: { ...(CONFIG.gameRules.spawnEnabled || {}), ..._mapSE } }
       : CONFIG.gameRules;
-    const order = buildWaveOrder(this.waveNumber, nexusDown, rules, faction, {
-      laneId: lane.id, gameTime: this._clock, census: this._census,
-    });
+    const wctx = { laneId: lane.id, gameTime: this._clock, census: this._census, ...this._extraWaveCtx() };
+    const order = buildWaveOrder(this.waveNumber, nexusDown, rules, faction, wctx);
+
+    // v51.33：出兵编排"广播"——与刷兵共用同一份 wctx/rules，"这一波该生效哪些
+    // 规则"只判定一次（buildBroadcastOrder 内部走的是同一套 compositionFor/
+    // whenPasses，不是另一套判定），不会出现"预览一套、真实执行一套"。
+    for (const b of buildBroadcastOrder(this.waveNumber, nexusDown, rules, faction, wctx)) {
+      this._broadcast(faction, lane.id, b.skillId, b.scope);
+    }
 
     for (let i = 0; i < order.length; i++) {
       this._spawnQueue.push({
@@ -138,6 +166,55 @@ export class LaneWaveSystem {
     }
     // 保证队列整体按时间有序（双方三路同时入队，交错时间戳）
     this._spawnQueue.sort((a, b) => a.at - b.at);
+  }
+
+  /**
+   * v51.33：出兵条件的世界快照里补上龙魂/天气/昼夜/得分（design §5.2）。
+   * 每一项都在对应依赖没注入时降级成"缺失"（undefined），交给
+   * WAVE_CONDITIONS 里各自的 test() 按"拿不到就放行"的既有口径处理——
+   * 与 census/gameTime 缺失时的处理原则完全一致，不单独发明一套新规矩。
+   */
+  _extraWaveCtx() {
+    const ds = this._dragonSystem;
+    const ws = this._worldState;
+    return {
+      dragonState: ds ? { soulOwner: ds.soulOwner, factionKills: ds.factionKills, killCounts: ds.killCounts } : null,
+      weather: ws?.weather?.getDominant?.() ?? null, // { id, name, icon, ... }（BASE_WEATHERS/EXTREME_WEATHERS 条目原样）
+      dayPhase: ws ? { phase: ws.daynight?.phase ?? null, isNight: !!ws.daynight?.isNight } : null,
+      score: (typeof window !== 'undefined' && window.CTX?.__score) || null,
+    };
+  }
+
+  /**
+   * v51.33：执行一条广播规则——按 scope 枚举范围内的单位，逐个调用其
+   * onBroadcast(unitId, instance, ctx)。与 DragonSystem._grantAll 同款
+   * "按阵营/路过滤 entityContainer.getAll" 逻辑（design §5.1），这里独立写一份
+   * 而不是直接调用 DragonSystem 的私有方法——那是另一个系统内部的实现细节，
+   * 跨系统伸手进去拿私有方法比重复三行过滤逻辑更容易在将来悄悄踩坑。
+   *
+   * 广播技能不要求单位【预先装备】它——每次广播现造一个一次性 instance
+   * 传给 onBroadcast，语义是"对这批单位施放一次"，不是"这批单位长期带着这个
+   * 被动"（装备/卸下、常驻面板展示都不适用于广播技能）。behaviorVM 生成的
+   * applyEffect 动作用 `vm_${skillId}` 作为固定 sourceId（不依赖 instance.id），
+   * 所以一次性 instance 与常驻 instance 在 stackPolicy 上表现完全一致，见
+   * behaviorVM.js ACTIONS.applyEffect 的实现。
+   */
+  _broadcast(faction, laneId, skillId, scope) {
+    const def = SkillLibrary[skillId];
+    if (!def || !def.onBroadcast) return;
+    const ctx = {
+      entityContainer: this.entities, effectRegistry: this._effectRegistry,
+      eventBus: this.eventBus, waveNumber: this.waveNumber,
+      attrCalc: this._attrCalc, combat: this._combat,
+    };
+    for (const e of this.entities.getAll(true)) {
+      if ((e._mapFaction || e.faction) !== faction) continue;
+      if (scope === 'lane' && e._laneId !== laneId) continue;
+      const inst = { id: `broadcast_${skillId}`, skillId, state: {} };
+      resolveSkillParams(inst, e, SkillLibrary);
+      try { def.onBroadcast(e.id, inst, ctx); }
+      catch (err) { console.error(`[LaneWaveSystem] 出兵编排广播技能「${skillId}」执行出错：`, err); }
+    }
   }
 
   /**

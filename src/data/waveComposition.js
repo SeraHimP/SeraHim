@@ -1,4 +1,5 @@
 import { CONFIG } from './Config.js';
+import { EXTREME_WEATHERS } from './Weather.js';
 
 /**
  * waveComposition.js
@@ -104,6 +105,52 @@ for (const side of SIDES) {
       test: (c) => { const n = tally(c, side.key, t.key); return n ? n.alive === n.total : true; },
     };
   }
+}
+
+// ==================== v51.33：龙魂/天气/昼夜/得分条件（design §5.2） ====================
+// ctx 来源见 LaneWaveSystem._extraWaveCtx()：dragonState/weather/dayPhase/score
+// 四样都可能是 null（对应依赖没注入，或单测/预览不传）——统一按"拿不到就放行"
+// 处理，与本文件其它依赖 census/gameTime 的条件同一套口径（宁可多算不要静默漏判）。
+for (const side of SIDES) {
+  WAVE_CONDITIONS[`${side.key}.soul.owned`] = {
+    label: `${side.label}已成魂`, group: '龙魂',
+    test: (c) => { const ds = c.dragonState; if (!ds) return true; return ds.soulOwner === side.of(c); },
+  };
+  WAVE_CONDITIONS[`${side.key}.dragonKills.atLeast`] = {
+    label: `${side.label}龙击杀数 ≥ N`, group: '龙魂',
+    arg: { label: '条数', def: 2, min: 1, step: 1 },
+    test: (c, n) => {
+      const ds = c.dragonState; if (!ds) return true;
+      const fac = side.of(c); const kills = fac && ds.factionKills?.[fac];
+      if (!kills) return false;
+      const total = Object.values(kills).reduce((s, v) => s + v, 0);
+      return total >= (n ?? 0);
+    },
+  };
+}
+WAVE_CONDITIONS['weather.extreme'] = {
+  label: '当前是极端天气', group: '天气/昼夜',
+  test: (c) => { if (c.weather === null) return true; return !!c.weather?.id && !!EXTREME_WEATHERS[c.weather.id]; },
+};
+WAVE_CONDITIONS['daynight.isNight'] = {
+  label: '当前是夜晚', group: '天气/昼夜',
+  test: (c) => { if (!c.dayPhase) return true; return !!c.dayPhase.isNight; },
+};
+WAVE_CONDITIONS['daynight.isDay'] = {
+  label: '当前是白天', group: '天气/昼夜',
+  test: (c) => { if (!c.dayPhase) return true; return !c.dayPhase.isNight; },
+};
+for (const side of SIDES) {
+  WAVE_CONDITIONS[`${side.key}.towers.leadAtLeast`] = {
+    label: `${side.label}推塔数领先 ≥ N 座`, group: '战绩',
+    arg: { label: '座', def: 3, min: 1, step: 1 },
+    test: (c, n) => {
+      const sc = c.score; if (!sc) return true;
+      const fac = side.of(c), opp = fac === c.faction ? c.enemy : c.faction;
+      const mine = sc[fac]?.towers ?? 0, theirs = sc[opp]?.towers ?? 0;
+      return (mine - theirs) >= (n ?? 0);
+    },
+  };
 }
 
 /** 下拉框用：按 group 归类后的选项列表（编辑器直接渲染成 optgroup）。 */
@@ -214,4 +261,34 @@ export function buildWaveOrder(waveNumber, nexusDown, rules = CONFIG.gameRules, 
     for (let k = 0; k < n; k++) order.push(rule.type);
   }
   return order;
+}
+
+/**
+ * ==================== v51.33：出兵编排"广播"规则展开 ====================
+ * 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §5.1（用户定稿"打通"，不建独立
+ * WAVE_ACTIONS 表）。广播规则形状：{ kind:'broadcast', skillId, scope, when,
+ * whenArg, fromWave, everyN }——与刷兵规则（{type,count,...}）共存在同一个
+ * compositionFor() 数组里，靠 kind 字段区分。buildWaveOrder() 的主循环已经用
+ * `!rule.type` 天然跳过了这类规则（不会把广播规则误当刷兵规则展开），这里补一个
+ * 镜像函数专门收集广播规则——两者共用同一份 compositionFor()/whenPasses()，
+ * "这一波该生效哪些规则"的判定逻辑只有一份，不会出现"预览一套、真实执行一套"。
+ *
+ * 不返回"广播了几次"（count 对广播没有意义，技能被广播给一批单位，不是叠加触发
+ * 好几遍），每条命中的规则在这一波恰好出现一次。
+ *
+ * @returns {{skillId:string, scope:'faction'|'lane'}[]}
+ */
+export function buildBroadcastOrder(waveNumber, nexusDown, rules = CONFIG.gameRules, faction = null, ctx = null) {
+  const wctx = { nexusDown, faction, enemy: faction === 'blue' ? 'red' : (faction === 'red' ? 'blue' : null), ...(ctx || {}) };
+  if (wctx.nexusDown === undefined) wctx.nexusDown = nexusDown;
+  const out = [];
+  for (const rule of compositionFor(faction, rules, wctx.laneId || null)) {
+    if (!rule || rule.kind !== 'broadcast' || !rule.skillId) continue;
+    if (!whenPasses(rule, wctx)) continue;
+    const from = rule.fromWave ?? 0, every = Math.max(1, rule.everyN ?? 1);
+    if (waveNumber < from) continue;
+    if ((waveNumber - from) % every !== 0) continue;
+    out.push({ skillId: rule.skillId, scope: rule.scope === 'lane' ? 'lane' : 'faction' });
+  }
+  return out;
 }

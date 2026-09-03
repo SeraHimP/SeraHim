@@ -246,6 +246,8 @@ CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || CONFIG.wor
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem);
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
+// v51.33：出兵编排"广播"需要的依赖，见 LaneWaveSystem 构造函数头注。
+laneWaveSystem.setBroadcastDeps({ effectRegistry, attrCalc, combat: combatSystem, dragonSystem, worldState });
 const collisionSystem = new CollisionSystem(entityContainer, mapSystem);
 // v45：朝向/转身。排在移动之后（用最新位置转），攻击门读的是上一帧的朝向 ——
 // 见 FacingSystem 头注的「时序」一节。

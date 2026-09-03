@@ -28,7 +28,7 @@ const suites = [
   'sim_deadcode.mjs', 'sim_v44.mjs', 'sim_v45.mjs', 'sim_v46.mjs', 'sim_classic.mjs',
   'sim_v47.mjs', 'sim_v49.mjs', 'sim_v50.mjs', 'sim_v51.mjs',
   'sim_balance_soul_runner.mjs', 'sim_postfx.mjs', 'sim_daynight.mjs', 'sim_mapskirt.mjs',
-  'sim_instancing.mjs', 'sim_navgrid.mjs', 'sim_mapeditor.mjs',
+  'sim_instancing.mjs', 'sim_navgrid.mjs', 'sim_mapeditor.mjs', 'sim_waveaction.mjs',
 ];
 
 const args = process.argv.slice(2);

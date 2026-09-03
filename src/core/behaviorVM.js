@@ -39,6 +39,13 @@ export const TRIGGERS = {
   frame:         { label: '每隔一段时间', hasTarget: false, needs: ['every'] },
   equip:         { label: '装备时',     hasTarget: false },
   beingAttacked: { label: '被攻击时',   hasTarget: true },
+  // v51.33：出兵编排"广播"升级（docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §5.1，
+  // 用户定稿"打通"而不是另开一张 WAVE_ACTIONS 表）。与 equip 同形状（hasTarget:false，
+  // self=被广播到的那个单位，没有 target），因为出兵编排广播的语义本来就是"作用于
+  // 一批单位自身"（加状态/改属性/治疗自己），表达不了"对目标造成伤害"这类需要目标
+  // 的动作——这条限制不是遗漏，是与 equip 触发共享同一条边界，写在这里免得以后
+  // 有人往 broadcast 上加 damage/splash 这类需要目标的动作又得重新论证一遍。
+  broadcast:     { label: '出兵编排广播时', hasTarget: false },
 };
 
 /** 条件。fn(c) → boolean，c 为求值上下文。 */
@@ -412,6 +419,17 @@ export function compileSpec(spec, onError = null) {
         if (self.baseStats[k] !== undefined) self.baseStats[k] = v;
       }
       delete self._vmStatBackup;
+    };
+  }
+  if (byTrigger.broadcast) {
+    // 照抄 onEquip 那段：mkCtx 组装、evalConditions/runActions 复用，零新增执行逻辑
+    // ——这正是"打通"换来的好处（设计报告 §5.1）。调用方（出兵编排的广播调度）
+    // 负责按 scope 枚举单位、逐个调用这个钩子，这里只管单个单位的求值与执行。
+    def.onBroadcast = (selfId, instance, ctx) => {
+      const c = mkCtx(spec, selfId, null, instance, ctx);
+      for (const r of byTrigger.broadcast) {
+        if (evalConditions(r.when, c)) runActions(r.do, c, spec.id);
+      }
     };
   }
   return def;
