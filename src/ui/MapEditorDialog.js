@@ -22,16 +22,28 @@
  * ——现在数据还没稳定，不必现在就把交互框架焊死）。
  *
  * ==================== 本次范围 ====================
- * 做：navgrid 圆形笔刷（画/擦）、克隆已有地图作为起点、保存到 CONFIG.customMaps、
- *     加载预览、删除自制地图。
- * 不做（设计报告后续阶段）：画线/折线造墙模式、去毛刺整理、建筑摆放、路径编辑、
- *     高度笔刷、实时校验红线。这些各自是独立的阶段三剩余项/阶段四/五/六，
- *     不在这一批一起做——单批改动越大，出问题时越难定位是哪一步引入的。
+ * 做：navgrid 圆形笔刷（画/擦）、建筑拖拽摆放（吸附兵线 + 实时校验红线）、
+ *     克隆已有地图作为起点、保存到 CONFIG.customMaps、加载预览、删除自制地图。
+ * 不做（设计报告后续阶段）：画线/折线造墙模式、去毛刺整理、路径编辑、高度笔刷。
+ * 这些各自是独立的阶段四/五/六，不在这一批一起做——单批改动越大，出问题时越难
+ * 定位是哪一步引入的。
+ *
+ * ==================== 建筑摆放为什么复用同一块画布，不叠一层 overlay ====================
+ * 地形笔刷和建筑摆放【互斥使用同一块画布区域】而不是两块画布叠放：叠放需要绝对定位、
+ * 需要在"地形模式下点击穿透到下层画布、建筑模式下拦截点击"之间来回切 pointer-events，
+ * 徒增一层状态要跟地形笔刷的 painting 状态保持同步。改成一个 editMode 开关
+ * （'terrain'|'buildings'）决定 redrawCanvas() 多画一层建筑标记、
+ * 决定 pointer 事件是拖笔刷还是拖建筑，两种模式的状态天然不会同时存在。
  */
 import { paneHtml } from './dialogShell.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle } from '../data/navgrid.js';
-import { decodeBaseBits, buildCustomMapPayload } from '../data/mapEditorCore.js';
+import {
+  decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
+  snapBuildingPos, withBuildingMoved, validateDraftMap,
+} from '../data/mapEditorCore.js';
+
+const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
 
 // 画布 CSS 显示尺寸（正方形）；内部像素分辨率=n，靠 image-rendering:pixelated 放大不糊边。
 // 380 而不是更大：弹窗共用 index.html 里 #modalBox 的全局尺寸上限（其它弹窗，如设置面板，
@@ -44,7 +56,7 @@ export const MapEditorDialog = {
     const { mapSystem, renderer3d } = deps;
     const overlay = document.getElementById('modalOverlay');
     overlay.classList.add('open');
-    document.getElementById('modalTitle').textContent = '🗺️✏️ 地图编辑器（地形笔刷）';
+    document.getElementById('modalTitle').textContent = '🗺️✏️ 地图编辑器（地形笔刷 + 建筑摆放）';
 
     // ---------- 编辑状态（整个弹窗生命周期内持续，只有切换起点地图才重置） ----------
     let baseId = mapSystem.currentBaseMapId || mapSystem.getAvailableMaps()[0]?.id;
@@ -54,10 +66,16 @@ export const MapEditorDialog = {
     let brushRadius = CONFIG.mapEditor.brushRadiusGridDefault;
     let painting = false;
     let statusMsg = '';
+    let editMode = 'terrain';           // 'terrain'=地形笔刷 | 'buildings'=建筑摆放
+    let draftBuildings = cloneBuildingsForEdit(baseMap);
+    let draggingBuildingIndex = -1;
 
     const isCustomMap = (id) => !!(CONFIG.customMaps && CONFIG.customMaps[id]);
+    // 校验只关心结构（lanes/world/walls/useNavgrid）+ 当前草稿建筑，navgrid 笔刷改的
+    // 地形位图跟这套结构性规则无关，不需要把 bits 也塞进去。
+    const draftMapForValidate = () => ({ ...baseMap, buildings: draftBuildings });
 
-    // ---------- 画布：只重画像素，不重建 DOM（笔刷拖动时每帧都会调，必须轻量） ----------
+    // ---------- 画布：只重画像素，不重建 DOM（拖动期间每帧都会调，必须轻量） ----------
     const redrawCanvas = () => {
       const canvas = document.getElementById('mapEditorCanvas');
       if (!canvas) return;
@@ -69,6 +87,45 @@ export const MapEditorDialog = {
         else { img.data[o] = 46; img.data[o + 1] = 48; img.data[o + 2] = 56; img.data[o + 3] = 255; }             // 不可走：深灰
       }
       ctx.putImageData(img, 0, 0);
+      if (editMode === 'buildings') drawBuildingMarkers(ctx);
+    };
+
+    // 建筑标记画在 navgrid 的 n×n 像素坐标系里（与 redrawCanvas 的 putImageData 同一
+    // 坐标系），世界坐标按 world.w/world.h 分别换算——与 MapSystem.isWalkable 的
+    // "i=x/W.w*n, j=y/W.h*n"用的是同一条换算规则，非正方形世界（如扭曲丛林）也不会错位。
+    const worldToGrid = (wx, wy) => ({
+      gx: wx / (baseMap.world?.w || 1) * n,
+      gy: wy / (baseMap.world?.h || 1) * n,
+    });
+
+    const drawBuildingMarkers = (ctx) => {
+      // n 随 switchBase() 换起点地图而变（不同地图 navgrid 分辨率不同），标记半径
+      // 必须每次重画时用【当前】n 现算，写成挂在外层作用域的 const 会在切图后画错大小。
+      const markerR = CONFIG.mapEditor.buildingMarkerRadiusPx / CANVAS_DISPLAY_PX * n;
+      const result = validateDraftMap(draftMapForValidate());
+      draftBuildings.forEach((b, i) => {
+        const { gx, gy } = worldToGrid(b.pos.x, b.pos.y);
+        const bad = result.offLaneIds.has(b.id ?? i)
+          || result.spacingViolations.some(v => v.faction === b.faction && v.laneId === b.laneId
+              && (v.tierA === b.tier || v.tierB === b.tier));
+        if (bad) {
+          ctx.beginPath();
+          ctx.arc(gx, gy, markerR + 3, 0, Math.PI * 2);
+          ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 2; ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.arc(gx, gy, markerR, 0, Math.PI * 2);
+        ctx.fillStyle = FAC_COLOR[b.faction] || '#ccc';
+        ctx.fill();
+        ctx.lineWidth = 1; ctx.strokeStyle = i === draggingBuildingIndex ? '#fff' : 'rgba(0,0,0,.5)'; ctx.stroke();
+      });
+    };
+
+    const clientToWorld = (canvas, clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      const fracX = (clientX - rect.left) / rect.width, fracY = (clientY - rect.top) / rect.height;
+      return { x: fracX * (baseMap.world?.w || 0), y: fracY * (baseMap.world?.h || 0) };
     };
 
     const paintAt = (clientX, clientY) => {
@@ -82,16 +139,64 @@ export const MapEditorDialog = {
       redrawCanvas();
     };
 
+    const findBuildingNear = (canvas, clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0) return -1;
+      const hitPx = CONFIG.mapEditor.buildingHitRadiusPx;
+      let best = -1, bestD = hitPx;
+      draftBuildings.forEach((b, i) => {
+        const px = b.pos.x / (baseMap.world?.w || 1) * rect.width + rect.left;
+        const py = b.pos.y / (baseMap.world?.h || 1) * rect.height + rect.top;
+        const d = Math.hypot(px - clientX, py - clientY);
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      return best;
+    };
+
+    const dragBuildingTo = (clientX, clientY) => {
+      if (draggingBuildingIndex < 0) return;
+      const canvas = document.getElementById('mapEditorCanvas');
+      const world = clientToWorld(canvas, clientX, clientY);
+      if (!world) return;
+      const b = draftBuildings[draggingBuildingIndex];
+      const pos = snapBuildingPos(draftMapForValidate(), b, world.x, world.y);
+      draftBuildings = withBuildingMoved(draftBuildings, draggingBuildingIndex, pos);
+      redrawCanvas();
+      updateValidationStatus();
+    };
+
+    const updateValidationStatus = () => {
+      const el = document.getElementById('mapEditorValidationStatus');
+      if (!el) return;
+      const r = validateDraftMap(draftMapForValidate());
+      if (r.ok) { el.textContent = '✅ 结构校验全部通过'; el.style.color = 'var(--text-mute)'; return; }
+      const msgs = [];
+      if (!r.symmetric) msgs.push('蓝红建筑构成不对称');
+      if (r.offLaneIds.size) msgs.push(`${r.offLaneIds.size} 座建筑离开走廊/基地圈`);
+      if (r.spacingViolations.length) msgs.push(`${r.spacingViolations.length} 处同阵营塔间距过近`);
+      if (r.crossViolations.length) msgs.push('敌我攻击塔射程圈有交集');
+      el.textContent = `⚠️ ${msgs.join('；')}`;
+      el.style.color = '#ff8080';
+    };
+
     const bindCanvasEvents = () => {
       const canvas = document.getElementById('mapEditorCanvas');
       if (!canvas) return;
       canvas.addEventListener('pointerdown', (e) => {
-        painting = true;
         canvas.setPointerCapture(e.pointerId);
-        paintAt(e.clientX, e.clientY);
+        if (editMode === 'buildings') {
+          draggingBuildingIndex = findBuildingNear(canvas, e.clientX, e.clientY);
+          if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
+        } else {
+          painting = true;
+          paintAt(e.clientX, e.clientY);
+        }
       });
-      canvas.addEventListener('pointermove', (e) => { if (painting) paintAt(e.clientX, e.clientY); });
-      const stop = () => { painting = false; };
+      canvas.addEventListener('pointermove', (e) => {
+        if (editMode === 'buildings') { if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY); }
+        else if (painting) paintAt(e.clientX, e.clientY);
+      });
+      const stop = () => { painting = false; draggingBuildingIndex = -1; redrawCanvas(); };
       canvas.addEventListener('pointerup', stop);
       canvas.addEventListener('pointercancel', stop);
       canvas.addEventListener('pointerleave', stop);
@@ -117,7 +222,14 @@ export const MapEditorDialog = {
         </div>
 
         <div class="editor-section">
-          <h4>地形笔刷</h4>
+          <h4>编辑</h4>
+          <div class="slider-row"><label>画布用途</label>
+            <div style="display:flex;gap:6px;">
+              <button id="mapEditorEditModeTerrain" class="${editMode === 'terrain' ? 'primary' : ''}">🖌️ 地形笔刷</button>
+              <button id="mapEditorEditModeBuildings" class="${editMode === 'buildings' ? 'primary' : ''}">🏗️ 建筑摆放</button>
+            </div>
+          </div>
+          ${editMode === 'terrain' ? `
           <div class="slider-row"><label>模式</label>
             <div style="display:flex;gap:6px;">
               <button id="mapEditorModeDraw" class="${brushMode === 'draw' ? 'primary' : ''}">🟩 画（可走）</button>
@@ -129,13 +241,22 @@ export const MapEditorDialog = {
               min="${CONFIG.mapEditor.brushRadiusGridMin}" max="${CONFIG.mapEditor.brushRadiusGridMax}"
               value="${brushRadius}" style="flex:1;">
             <span id="mapEditorBrushLabel">${brushRadius} 格</span>
+          </div>` : `
+          <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
+            拖动一座建筑：分路的塔（外/内/水晶塔）会被吸附纠正回自己那条兵线上，
+            不分路的建筑（水晶枢纽/枢纽塔）自由摆放。红圈标出违反结构规则的建筑
+            （同一套判定见 tests/sim_maps.mjs，编辑器和发布前验收用的是同一个 mapValidate.js）。
           </div>
+          <div id="mapEditorValidationStatus" style="font-size:12px;margin-bottom:4px;"></div>`}
           <div style="display:flex;justify-content:center;margin:8px 0;">
             <canvas id="mapEditorCanvas" width="${n}" height="${n}"
               style="width:${CANVAS_DISPLAY_PX}px;height:${CANVAS_DISPLAY_PX}px;image-rendering:pixelated;
                      border:1px solid var(--border-color,#444);cursor:crosshair;touch-action:none;border-radius:4px;"></canvas>
           </div>
-          <div style="font-size:11px;color:var(--text-mute);text-align:center;">按住拖动连续绘制；分辨率 ${n}×${n} 格（自适应公式，见 CONFIG.mapEditor）。</div>
+          <div style="font-size:11px;color:var(--text-mute);text-align:center;">
+            ${editMode === 'terrain' ? `按住拖动连续绘制；分辨率 ${n}×${n} 格（自适应公式，见 CONFIG.mapEditor）。`
+              : '按住一座建筑拖动即可移动。'}
+          </div>
         </div>
 
         <div class="editor-section">
@@ -172,6 +293,7 @@ export const MapEditorDialog = {
       bindEvents();
       bindCanvasEvents();
       redrawCanvas();
+      if (editMode === 'buildings') updateValidationStatus();
     };
 
     const setStatus = (msg) => {
@@ -184,6 +306,7 @@ export const MapEditorDialog = {
       baseId = id;
       baseMap = mapSystem.getMapById(baseId);
       ({ n, bits } = decodeBaseBits(baseMap));
+      draftBuildings = cloneBuildingsForEdit(baseMap);
       statusMsg = '';
       render();
     };
@@ -191,11 +314,15 @@ export const MapEditorDialog = {
     const bindEvents = () => {
       document.getElementById('mapEditorBaseSelect').addEventListener('change', (e) => switchBase(e.target.value));
 
-      document.getElementById('mapEditorModeDraw').addEventListener('click', () => { brushMode = 'draw'; render(); });
-      document.getElementById('mapEditorModeErase').addEventListener('click', () => { brushMode = 'erase'; render(); });
+      document.getElementById('mapEditorEditModeTerrain').addEventListener('click', () => { editMode = 'terrain'; render(); });
+      document.getElementById('mapEditorEditModeBuildings').addEventListener('click', () => { editMode = 'buildings'; render(); });
+
+      // 画/擦切换、笔刷半径滑杆只在地形模式下渲染，建筑模式下这几个元素不存在
+      document.getElementById('mapEditorModeDraw')?.addEventListener('click', () => { brushMode = 'draw'; render(); });
+      document.getElementById('mapEditorModeErase')?.addEventListener('click', () => { brushMode = 'erase'; render(); });
 
       const slider = document.getElementById('mapEditorBrushSlider');
-      slider.addEventListener('input', () => {
+      slider?.addEventListener('input', () => {
         brushRadius = Number(slider.value) || CONFIG.mapEditor.brushRadiusGridDefault;
         document.getElementById('mapEditorBrushLabel').textContent = `${brushRadius} 格`;
       });
@@ -205,7 +332,7 @@ export const MapEditorDialog = {
         const label = document.getElementById('mapEditorLabelInput').value.trim();
         if (!id) { setStatus('⚠️ 请填写地图 ID'); return; }
         try {
-          const payload = buildCustomMapPayload(baseMap, { id, label, n, bits });
+          const payload = buildCustomMapPayload(baseMap, { id, label, n, bits, buildings: draftBuildings });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;
           logFn(`🗺️ 已保存自制地图：${payload.label}（id=${id}）`, 'spawn');

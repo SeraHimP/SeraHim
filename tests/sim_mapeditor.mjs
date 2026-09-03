@@ -9,8 +9,10 @@
  */
 import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
-const { resolveBaseNavgrid, decodeBaseBits, cloneMapForEdit, buildCustomMapPayload } =
-  await import('../src/data/mapEditorCore.js');
+const {
+  resolveBaseNavgrid, decodeBaseBits, cloneMapForEdit, buildCustomMapPayload,
+  cloneBuildingsForEdit, snapBuildingPos, withBuildingMoved, validateDraftMap,
+} = await import('../src/data/mapEditorCore.js');
 const { unpackBits, packBits } = await import('../src/data/navgrid.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
 const { MAPS } = await import('../src/data/maps/index.js');
@@ -86,6 +88,69 @@ const T = board.T;
   let threw = false;
   try { buildCustomMapPayload(sr, { label: '没给 id', n, bits }); } catch { threw = true; }
   T('⑦-不传 id 时 buildCustomMapPayload 抛错，而不是静默生成一张无 id 的地图', threw);
+
+  // 阶段三剩余：不传 buildings 时行为与参数化之前逐位一致（见 CLAUDE.md §2）——
+  // 仍然整体克隆 baseMap 的建筑数组，不受这次加的新参数影响。
+  const payload2 = buildCustomMapPayload(sr, { id: 'no_buildings_arg', label: 'x', n, bits });
+  T('⑧-不传 buildings 时保留 baseMap 原有建筑（新参数不改默认行为）',
+    JSON.stringify(payload2.buildings) === JSON.stringify(sr.buildings));
+  const movedBuildings = sr.buildings.map((b, i) => (i === 0 ? { ...b, pos: { x: 1, y: 2 } } : b));
+  const payload3 = buildCustomMapPayload(sr, { id: 'with_buildings_arg', label: 'x', n, bits, buildings: movedBuildings });
+  T('⑨-传了 buildings 时用传入的草稿数组覆盖', payload3.buildings[0].pos.x === 1 && payload3.buildings[0].pos.y === 2);
+}
+
+// ==================== ⑤b 建筑摆放：克隆/吸附/挪动/实时校验 ====================
+{
+  const sr = MAPS.summoners_rift_v1;
+
+  // cloneBuildingsForEdit：深克隆，不共享引用
+  const draft = cloneBuildingsForEdit(sr);
+  T('①-cloneBuildingsForEdit 内容与原地图建筑相等', JSON.stringify(draft) === JSON.stringify(sr.buildings));
+  draft[0].pos.x = -999;
+  T('②-改动克隆体不影响原地图对象（深克隆）', sr.buildings[0].pos.x !== -999);
+
+  // snapBuildingPos：有 laneId 的建筑吸附到自己那条兵线上
+  const outerTop = sr.buildings.find(b => b.tier === 'outer' && b.laneId === 'top' && b.faction === 'blue');
+  const topLane = sr.lanes.find(l => l.id === 'top');
+  const farOff = { x: outerTop.pos.x + 500, y: outerTop.pos.y + 500 }; // 明显偏离兵线的拖拽点
+  const snapped = snapBuildingPos(sr, outerTop, farOff.x, farOff.y);
+  const { distToPolyline } = await import('../src/data/mapValidate.js');
+  T('③-拖到偏离兵线很远的点，落点仍被吸附回兵线上（距离≈0）',
+    distToPolyline(topLane.waypoints, snapped.x, snapped.y) < 1e-6);
+
+  // 没有 laneId 的建筑（水晶枢纽）不吸附，只夹在世界范围内
+  const nexus = sr.buildings.find(b => b.tier === 'nexus_main' && b.faction === 'blue');
+  const free = snapBuildingPos(sr, nexus, 123, 456);
+  T('④-没有 laneId 的建筑自由摆放（不吸附到任何兵线）', free.x === 123 && free.y === 456);
+  const clampTest = snapBuildingPos(sr, nexus, -100, sr.world.h + 999);
+  T('⑤-自由摆放仍会夹在世界范围内（不能拖出地图外）',
+    clampTest.x === 0 && clampTest.y === sr.world.h);
+
+  // withBuildingMoved：返回新数组，不改原数组
+  const moved = withBuildingMoved(draft, 1, { x: 10, y: 20 });
+  T('⑥-withBuildingMoved 不改原数组（拖拽期间每帧调用，不能有副作用累积）',
+    draft[1].pos.x !== 10 || draft[1].pos.y !== 20);
+  T('⑦-withBuildingMoved 返回的新数组里目标建筑落点已更新', moved[1].pos.x === 10 && moved[1].pos.y === 20);
+  T('⑧-withBuildingMoved 只改目标下标，其它建筑原样保留',
+    JSON.stringify(moved[0]) === JSON.stringify(draft[0]));
+
+  // validateDraftMap：正常的召唤师峡谷应该全部合规
+  const okResult = validateDraftMap({ ...sr, buildings: cloneBuildingsForEdit(sr) });
+  T('⑨-未改动的峡谷建筑数据跑校验应该全部合规', okResult.ok === true && okResult.symmetric === true
+    && okResult.spacingViolations.length === 0 && okResult.crossViolations.length === 0);
+
+  // 把外塔拖到和内塔贴脸——应该报出间距违规
+  const draft2 = cloneBuildingsForEdit(sr);
+  const outerIdx = draft2.findIndex(b => b.tier === 'outer' && b.laneId === 'top' && b.faction === 'blue');
+  const innerB = draft2.find(b => b.tier === 'inner' && b.laneId === 'top' && b.faction === 'blue');
+  const badDraft = withBuildingMoved(draft2, outerIdx, { x: innerB.pos.x + 10, y: innerB.pos.y });
+  const badResult = validateDraftMap({ ...sr, buildings: badDraft });
+  T('⑩-把外塔拖到贴着内塔 → 报出间距违规', badResult.ok === false && badResult.spacingViolations.length > 0);
+
+  // 破坏对称性：删掉红方一座塔
+  const asymDraft = draft2.filter(b => !(b.tier === 'outer' && b.laneId === 'top' && b.faction === 'red'));
+  const asymResult = validateDraftMap({ ...sr, buildings: asymDraft });
+  T('⑪-少一座红方塔 → 报出不对称', asymResult.ok === false && asymResult.symmetric === false);
 }
 
 // ==================== ⑤ CONFIG.mapEditor 笔刷半径软编码 ====================
@@ -93,6 +158,10 @@ const T = board.T;
   T('①-CONFIG.mapEditor.brushRadiusGridDefault 存在且在 [min,max] 区间内',
     CONFIG.mapEditor.brushRadiusGridDefault >= CONFIG.mapEditor.brushRadiusGridMin &&
     CONFIG.mapEditor.brushRadiusGridDefault <= CONFIG.mapEditor.brushRadiusGridMax);
+  T('②-CONFIG.mapEditor.validationAttackTiers 是非空数组（建筑摆放实时校验用它判定哪些档位会攻击）',
+    Array.isArray(CONFIG.mapEditor.validationAttackTiers) && CONFIG.mapEditor.validationAttackTiers.length > 0);
+  T('③-CONFIG.mapEditor.buildingHitRadiusPx/buildingMarkerRadiusPx 都是正数（软编码，不是画布代码里的魔数）',
+    CONFIG.mapEditor.buildingHitRadiusPx > 0 && CONFIG.mapEditor.buildingMarkerRadiusPx > 0);
 }
 
 // ==================== ⑥ MapEditorDialog.js：源码层面的接线检查（DOM 弹窗测不到交互，但能测"接对了没接错"）====================
@@ -106,6 +175,14 @@ const T = board.T;
     /CONFIG\.customMaps/.test(src));
   T('④-MapEditorDialog.js 没有直接操作 CanvasController 的拖拽状态（_placeMode/isDragging 等），画布笔刷是独立实现，不与相机拖拽/建塔选位共用状态机',
     !/canvasController\.(isDragging|_placeMode|dragStartX)/.test(src));
+  T('⑤-建筑摆放调用了 mapEditorCore.js 的 snapBuildingPos/withBuildingMoved/validateDraftMap（拖拽吸附/校验逻辑不在弹窗里重新写一遍）',
+    /snapBuildingPos/.test(src) && /withBuildingMoved/.test(src) && /validateDraftMap/.test(src));
+  T('⑥-保存时把当前草稿建筑数组传给了 buildCustomMapPayload（拖拽结果真的会存下去，不是只在画布上好看）',
+    /buildCustomMapPayload\([^)]*buildings:\s*draftBuildings/.test(src));
+  T('⑦-切换起点地图会重置草稿建筑（cloneBuildingsForEdit 在 switchBase 里被调用，不是只在弹窗打开时调一次）',
+    /switchBase[\s\S]{0,400}cloneBuildingsForEdit/.test(src));
+  T('⑧-建筑标记半径在重画函数里现算，不是模块顶层的一次性常量（切图后 n 变了，写成一次性常量会画错大小）',
+    /drawBuildingMarkers[\s\S]{0,200}buildingMarkerRadiusPx/.test(src));
 }
 
 board.done();

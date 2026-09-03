@@ -7,7 +7,7 @@
 // 这里用手搭的最小地图数据直接钉这些分支，不依赖真实地图会不会凑巧经过它们。
 globalThis.window = { gameTime: 0, waveNumber: 1, _uid: 0, CTX: {} };
 const {
-  distToPolyline, arcLengthAt, buildingCountsSymmetric, isMirroredAcrossAxis,
+  distToPolyline, arcLengthAt, nearestPointOnPolyline, buildingCountsSymmetric, isMirroredAcrossAxis,
   insideBaseCircle, buildingOnLaneOrInBase, minPairwiseDistance,
   attackTowerSpacingOk, crossFactionTowerSpacingOk, outerTowersOwnHalfOk,
 } = await import('../src/data/mapValidate.js');
@@ -26,6 +26,11 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   // 两点折线（sim_abyss.mjs 原来的特化版）与通用版数学上完全一致
   const wp2 = [{ x: 0, y: 0 }, { x: 200, y: 0 }];
   T('距④：两点折线退化为点到线段（与通用版同一算法）', Math.abs(distToPolyline(wp2, 100, 30) - 30) < 1e-9);
+  // nearestPointOnPolyline 与 distToPolyline/arcLengthAt 共用同一次投影计算
+  const near = nearestPointOnPolyline(wp, 50, 10);
+  T('近①：投影点落在折线上（不是原始拖拽点）', Math.abs(near.x - 50) < 1e-9 && Math.abs(near.y - 0) < 1e-9);
+  const near2 = nearestPointOnPolyline(wp, 110, 50);
+  T('近②：拐角之后投影到第二段', Math.abs(near2.x - 100) < 1e-9 && Math.abs(near2.y - 50) < 1e-9);
 }
 
 // ==================== buildingCountsSymmetric ====================

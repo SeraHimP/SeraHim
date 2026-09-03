@@ -20,6 +20,26 @@ import { baseCircleCenter } from './baseCircle.js';
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
 /**
+ * 把 (x,y) 投影到折线上最近的一点，一次算出距离/弧长/投影坐标三件套。
+ * distToPolyline / arcLengthAt / nearestPointOnPolyline 都是这一份投影的不同切面——
+ * 拆开各写一份就会变成三份"点到折线"的重复实现，恰好是本模块本身要防的那种漂移。
+ */
+function projectOntoPolyline(waypoints, x, y) {
+  let acc = 0, best = Infinity, bestS = 0, bestX = waypoints[0]?.x ?? x, bestY = waypoints[0]?.y ?? y;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const a = waypoints[i], b = waypoints[i + 1];
+    const vx = b.x - a.x, vy = b.y - a.y;
+    const L2 = vx * vx + vy * vy || 1;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / L2));
+    const px = a.x + t * vx, py = a.y + t * vy;
+    const d = Math.hypot(x - px, y - py);
+    if (d < best) { best = d; bestS = acc + t * Math.sqrt(L2); bestX = px; bestY = py; }
+    acc += Math.sqrt(L2);
+  }
+  return { dist: best, s: bestS, x: bestX, y: bestY };
+}
+
+/**
  * 点到折线的最短距离（与 MapSystem._nearestOnLane 同一算法）。
  * waypoints 只有 2 个点时就是"点到线段"距离——sim_abyss.mjs 原来的特化版
  * 其实就是这个通用算法的单段情形，数学上完全一致。
@@ -28,15 +48,7 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
  * @returns {number}
  */
 export function distToPolyline(waypoints, x, y) {
-  let best = Infinity;
-  for (let i = 0; i < waypoints.length - 1; i++) {
-    const a = waypoints[i], b = waypoints[i + 1];
-    const vx = b.x - a.x, vy = b.y - a.y;
-    const L2 = vx * vx + vy * vy || 1;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / L2));
-    best = Math.min(best, Math.hypot(x - (a.x + t * vx), y - (a.y + t * vy)));
-  }
-  return best;
+  return projectOntoPolyline(waypoints, x, y).dist;
 }
 
 /**
@@ -46,17 +58,20 @@ export function distToPolyline(waypoints, x, y) {
  * @returns {number}
  */
 export function arcLengthAt(waypoints, x, y) {
-  let acc = 0, best = Infinity, bestS = 0;
-  for (let i = 0; i < waypoints.length - 1; i++) {
-    const a = waypoints[i], b = waypoints[i + 1];
-    const vx = b.x - a.x, vy = b.y - a.y;
-    const L = Math.hypot(vx, vy) || 1;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / (L * L)));
-    const d = Math.hypot(x - (a.x + t * vx), y - (a.y + t * vy));
-    if (d < best) { best = d; bestS = acc + t * L; }
-    acc += L;
-  }
-  return bestS;
+  return projectOntoPolyline(waypoints, x, y).s;
+}
+
+/**
+ * 折线上离 (x,y) 最近的投影点本身的世界坐标（不是距离/弧长）——
+ * 地图编辑器拖拽建筑时用它做"吸附到兵线"：拖到哪都把建筑的落点纠正到
+ * 兵线上最近的一点，而不是允许它离开兵线自由摆放。
+ * @param {{x:number,y:number}[]} waypoints
+ * @param {number} x @param {number} y
+ * @returns {{x:number,y:number}}
+ */
+export function nearestPointOnPolyline(waypoints, x, y) {
+  const p = projectOntoPolyline(waypoints, x, y);
+  return { x: p.x, y: p.y };
 }
 
 /**

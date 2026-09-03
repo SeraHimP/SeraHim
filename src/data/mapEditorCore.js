@@ -14,6 +14,11 @@
  */
 import { SR_NAVGRID } from './maps/sr_navgrid.js';
 import { unpackBits, packBits } from './navgrid.js';
+import { CONFIG } from './Config.js';
+import {
+  nearestPointOnPolyline, buildingCountsSymmetric, buildingOnLaneOrInBase,
+  attackTowerSpacingOk, crossFactionTowerSpacingOk,
+} from './mapValidate.js';
 
 /**
  * 一张地图对象声明的 navgrid，或者该用哪张兜底。
@@ -49,11 +54,89 @@ export function cloneMapForEdit(baseMap) {
  * @param {object} baseMap  作为起点克隆的地图（内置或已有的自制地图）
  * @param {object} o        { id, label, n, bits }—— bits 是笔刷改完的 Uint8Array
  */
-export function buildCustomMapPayload(baseMap, { id, label, n, bits }) {
+export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
   clone.id = id;
   clone.label = label || id;
   clone.navgrid = { n, bits: packBits(bits) };
+  // 建筑摆放（阶段三剩余）：不传 buildings 时保持"整体克隆 baseMap 的建筑"这条
+  // 参数化前的默认行为完全不变（见 docs/DEVELOPMENT.md §8.3），只有真的拖动过
+  // 建筑、调用方显式传了草稿数组时才覆盖。
+  if (Array.isArray(buildings)) clone.buildings = buildings;
   return clone;
+}
+
+// ==================== 建筑摆放（阶段三剩余）====================
+// 设计报告 §3.2 阶段三待办项："Building placement (drag + arc-length snap to path)"
+// + "real-time validation red lines"。判定算法一律调 src/data/mapValidate.js
+// （唯一实现），这里只做"编辑器需要、但不属于几何校验本身"的胶水：克隆建筑数组、
+// 拖拽落点吸附到兵线、挪动后返回新数组、把校验结果整理成 UI 好消费的形状。
+
+/**
+ * 深克隆一张地图的建筑数组，供编辑器拖拽而不污染原地图对象（同 cloneMapForEdit
+ * 的理由：内置地图是模块级常量，被 MAPS 表和当前对局同时引用）。
+ * @param {object} baseMap
+ * @returns {object[]}
+ */
+export function cloneBuildingsForEdit(baseMap) {
+  return JSON.parse(JSON.stringify(baseMap.buildings || []));
+}
+
+/**
+ * 建筑拖拽到 (worldX, worldY) 时，实际应该落在哪——有 laneId 的建筑吸附到
+ * 自己那条兵线上最近的一点（用户拖到哪都会被纠正回兵线上，不能允许分路建筑
+ * 离开自己的路，否则又是"塔立在墙里"那个老坑的编辑器版）；没有 laneId 的建筑
+ * （水晶枢纽等）不吸附，只夹在世界范围内，允许自由摆放。
+ * @param {object} map 当前草稿地图（要有 lanes/world）
+ * @param {object} building 被拖拽的建筑（读它的 laneId）
+ * @param {number} worldX @param {number} worldY 拖拽点的世界坐标
+ * @returns {{x:number,y:number}}
+ */
+export function snapBuildingPos(map, building, worldX, worldY) {
+  const W = map.world || { w: 0, h: 0 };
+  const clampX = Math.max(0, Math.min(W.w, worldX));
+  const clampY = Math.max(0, Math.min(W.h, worldY));
+  if (building.laneId) {
+    const lane = map.lanes?.find(l => l.id === building.laneId);
+    if (lane) return nearestPointOnPolyline(lane.waypoints, clampX, clampY);
+  }
+  return { x: clampX, y: clampY };
+}
+
+/**
+ * 把 buildings[index] 的落点换成 pos，返回一份新数组（不改原数组——拖拽期间
+ * 每帧都会调，调用方决定要不要把结果存回草稿状态；纯函数方便单测和撤销/重做）。
+ * @param {object[]} buildings @param {number} index @param {{x:number,y:number}} pos
+ * @returns {object[]}
+ */
+export function withBuildingMoved(buildings, index, pos) {
+  return buildings.map((b, i) => (i === index ? { ...b, pos: { x: pos.x, y: pos.y } } : b));
+}
+
+/**
+ * 对草稿建筑跑一遍 mapValidate.js 那套结构性校验，整理成编辑器能直接渲染
+ * 红线/状态文字的形状。attackRange/attackTiers 不传时退回 CONFIG 里的软编码默认值
+ * （调用方传自定义值是为了单测覆盖，不是产品需要另配一套数字）。
+ * @param {object} draftMap 草稿地图（buildings 是当前正在编辑的数组）
+ * @param {{attackRange?:number, attackTiers?:string[]}} [opts]
+ * @returns {{symmetric:boolean, offLaneIds:Set<any>, spacingViolations:object[], crossViolations:object[], ok:boolean}}
+ */
+export function validateDraftMap(draftMap, opts = {}) {
+  const attackRange = opts.attackRange ?? CONFIG.templates.tower.attackRange;
+  const attackTiers = opts.attackTiers ?? CONFIG.mapEditor.validationAttackTiers;
+  const buildings = draftMap.buildings || [];
+  const symmetric = buildingCountsSymmetric(draftMap);
+  const offLane = draftMap.walls?.corridorHalfWidth && !draftMap.useNavgrid
+    ? buildings.filter(b => b.laneId && !buildingOnLaneOrInBase(draftMap, b))
+    : [];
+  const spacingViolations = attackTowerSpacingOk(draftMap, attackRange, attackTiers);
+  const crossViolations = crossFactionTowerSpacingOk(draftMap, attackRange, attackTiers);
+  return {
+    symmetric,
+    offLaneIds: new Set(offLane.map(b => b.id ?? buildings.indexOf(b))),
+    spacingViolations,
+    crossViolations,
+    ok: symmetric && offLane.length === 0 && spacingViolations.length === 0 && crossViolations.length === 0,
+  };
 }

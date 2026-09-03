@@ -1131,6 +1131,17 @@ export const CONFIG = {
     brushRadiusGridDefault: 6,
     brushRadiusGridMin: 1,
     brushRadiusGridMax: 24,
+    // 阶段三剩余：建筑摆放的实时校验红线复用 tests/sim_maps.mjs 那一套间距规则
+    // （见 src/data/mapValidate.js），这里给它俩用到的常量一个软编码入口——
+    // 射程沿用 CONFIG.templates.tower.attackRange，不再另开一个数字；
+    // 会攻击的档位单独列一张表，因为 mapEditorCore.js 不该反过来读 tierStats
+    // 猜"这个档位打不打人"，那是地图数据要回答的问题，不是常量表该猜的。
+    validationAttackTiers: ['outer', 'inner', 'base', 'hq_tower'],
+    // 建筑摆放画布上，点击命中一座建筑标记的半径（CSS 像素，画布显示尺寸下量）。
+    // 太小了手抖点不中，太大了密集摆放的塔互相抢点击——380px 画布上 9px 手感够用。
+    buildingHitRadiusPx: 9,
+    // 建筑标记本身画多大（CSS 像素半径）。
+    buildingMarkerRadiusPx: 6,
   },
 
   tuning: {
