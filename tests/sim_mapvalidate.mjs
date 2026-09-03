@@ -7,7 +7,7 @@
 // 这里用手搭的最小地图数据直接钉这些分支，不依赖真实地图会不会凑巧经过它们。
 globalThis.window = { gameTime: 0, waveNumber: 1, _uid: 0, CTX: {} };
 const {
-  distToPolyline, arcLengthAt, nearestPointOnPolyline, buildingCountsSymmetric, isMirroredAcrossAxis,
+  distToPolyline, arcLengthAt, nearestPointOnPolyline, nearestSegmentIndex, buildingCountsSymmetric, isMirroredAcrossAxis,
   insideBaseCircle, buildingOnLaneOrInBase, minPairwiseDistance,
   attackTowerSpacingOk, crossFactionTowerSpacingOk, outerTowersOwnHalfOk,
 } = await import('../src/data/mapValidate.js');
@@ -31,6 +31,13 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   T('近①：投影点落在折线上（不是原始拖拽点）', Math.abs(near.x - 50) < 1e-9 && Math.abs(near.y - 0) < 1e-9);
   const near2 = nearestPointOnPolyline(wp, 110, 50);
   T('近②：拐角之后投影到第二段', Math.abs(near2.x - 100) < 1e-9 && Math.abs(near2.y - 50) < 1e-9);
+
+  // nearestSegmentIndex（阶段六：地图编辑器路径编辑"点空白处插入新路点"用它）
+  T('段①：折线第一段中点 → 段下标 0（插入点应落在 waypoints[0]/[1] 之间）',
+    nearestSegmentIndex(wp, 50, 10) === 0);
+  T('段②：拐角之后落在第二段 → 段下标 1', nearestSegmentIndex(wp, 110, 50) === 1);
+  const wp3 = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 200, y: 100 }];
+  T('段③：三段折线，离第三段最近的点 → 段下标 2', nearestSegmentIndex(wp3, 150, 90) === 2);
 }
 
 // ==================== buildingCountsSymmetric ====================

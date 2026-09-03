@@ -25,10 +25,19 @@
  * 做：navgrid 圆形笔刷（画/擦）、折线造墙笔刷（点选顶点连成带状墙体，画/擦通用）、
  *     去毛刺（清理孤立噪点/1格尖刺）、建筑拖拽摆放（吸附兵线 + 实时校验红线）、
  *     区域参数表单（基地圈半径、龙坑/男爵坑中心+半径，画布半透明预览）、
+ *     兵路径编辑（路点拖动/点空白插入/删除，整条路增删，见下方"路径编辑"一节）、
  *     克隆已有地图作为起点、保存到 CONFIG.customMaps、加载预览、删除自制地图。
- * 不做（设计报告后续阶段）：路径编辑（兵线路点增删/整条路增删）、高度笔刷。
- * 这些各自是独立的阶段五/六，不在这一批一起做——单批改动越大，出问题时越难
- * 定位是哪一步引入的。
+ * 不做（设计报告后续阶段）：高度笔刷（用户明确定稿暂缓）。
+ *
+ * ==================== 路径编辑为什么放在建筑摆放之后单独做 ====================
+ * map.lanes 不只是画面上一条线——LaneMovementSystem/LaneWaveSystem 靠它算小兵怎么走，
+ * mapEditorCore.js 的 snapBuildingPos 靠它算建筑吸附点，mapValidate.js 的间距/对称
+ * 校验也全部读它。改动面比"往 navgrid 位图上刷格子"或"挪一座建筑"都大，所以放在
+ * 地形笔刷/建筑摆放/区域参数表单全部做完、摸清了这套"克隆草稿→改草稿→随
+ * buildCustomMapPayload 落盘"的模式确实稳之后再做，而不是一开始就跟建筑摆放混在一起改。
+ * `draftMapForValidate()` 现在把 `lanes: draftLanes` 一起传出去——路径编辑模式改了路点后，
+ * 建筑摆放模式的吸附/校验必须立刻读到新路径，不能还拿着编辑前的 baseMap.lanes 判定，
+ * 否则会出现"编辑器里两个模式对同一条路的认知不一致"这种编辑器自己制造的 bug。
  *
  * ==================== 建筑摆放为什么复用同一块画布，不叠一层 overlay ====================
  * 地形笔刷和建筑摆放【互斥使用同一块画布区域】而不是两块画布叠放：叠放需要绝对定位、
@@ -46,6 +55,8 @@ import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
   snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
   cloneRegionsForEdit, defaultPitFor,
+  cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
+  withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
 } from '../data/mapEditorCore.js';
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
@@ -79,11 +90,18 @@ export const MapEditorDialog = {
     let draggingBuildingIndex = -1;
     let selectedBuildingIndex = -1;     // 点选一座建筑后可在下方手动改档位（覆盖自动识别）
     let draftRegions = cloneRegionsForEdit(baseMap);   // 区域参数草稿：{baseCircleRadius, pits:{baron?,dragon?}}
+    let draftLanes = cloneLanesForEdit(baseMap);        // 路径编辑（阶段六）草稿：[{id, waypoints:[{x,y}...]}]
+    let selectedLaneId = draftLanes[0]?.id ?? null;     // 当前正在编辑哪条路
+    let draggingWaypointIndex = -1;
+    let selectedWaypointIndex = -1;                     // 点选一个路点后可在下方"删除选中路点"
 
     const isCustomMap = (id) => !!(CONFIG.customMaps && CONFIG.customMaps[id]);
     // 校验只关心结构（lanes/world/walls/useNavgrid）+ 当前草稿建筑，navgrid 笔刷改的
     // 地形位图跟这套结构性规则无关，不需要把 bits 也塞进去。
-    const draftMapForValidate = () => ({ ...baseMap, buildings: draftBuildings });
+    // ⚠️ lanes 必须用 draftLanes（草稿）不是 baseMap.lanes（原始）——路径编辑模式改动
+    // 路点之后，建筑摆放模式的吸附/校验如果还读原始 lanes，会拿着"编辑前的路"去吸附/
+    // 校验"编辑后的路应该在的位置"，两边就对不上了。
+    const draftMapForValidate = () => ({ ...baseMap, buildings: draftBuildings, lanes: draftLanes });
 
     // ---------- 画布：只重画像素，不重建 DOM（拖动期间每帧都会调，必须轻量） ----------
     const redrawCanvas = () => {
@@ -100,6 +118,38 @@ export const MapEditorDialog = {
       drawRegionOverlays(ctx);
       if (editMode === 'terrain' && brushShape === 'polyline') drawPolylinePreview(ctx);
       if (editMode === 'buildings') drawBuildingMarkers(ctx);
+      if (editMode === 'paths') drawLanePaths(ctx);
+    };
+
+    // 路径编辑（阶段六）：画全部路（未选中的路淡色，方便看出彼此的相对位置），
+    // 选中的路加粗高亮，路点画成小圆点，被选中/正在拖动的路点额外描白边。
+    const LANE_COLOR = ['#ffd166', '#06d6a0', '#ef476f', '#118ab2', '#8338ec'];
+    const drawLanePaths = (ctx) => {
+      draftLanes.forEach((lane, li) => {
+        const isSel = lane.id === selectedLaneId;
+        const color = LANE_COLOR[li % LANE_COLOR.length];
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = isSel ? 1 : 0.35;
+        ctx.lineWidth = isSel ? 2 : 1;
+        ctx.beginPath();
+        lane.waypoints.forEach((wp, i) => {
+          const { gx, gy } = worldToGrid(wp.x, wp.y);
+          if (i === 0) ctx.moveTo(gx, gy); else ctx.lineTo(gx, gy);
+        });
+        ctx.stroke();
+        if (isSel) {
+          lane.waypoints.forEach((wp, i) => {
+            const { gx, gy } = worldToGrid(wp.x, wp.y);
+            const highlighted = i === draggingWaypointIndex || i === selectedWaypointIndex;
+            ctx.beginPath();
+            ctx.arc(gx, gy, highlighted ? 4 : 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            if (highlighted) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
+          });
+        }
+        ctx.globalAlpha = 1;
+      });
     };
 
     // 折线造墙：画布坐标系就是 navgrid 的 n×n 格子坐标系（与其它重绘函数一致），
@@ -232,6 +282,68 @@ export const MapEditorDialog = {
       updateValidationStatus();
     };
 
+    // 路径编辑（阶段六）：只在【当前选中的那条路】上找最近的路点——不同路之间线段
+    // 可能离得很近甚至交叉，命中判定不分路的话，拖着拖着可能拖到另一条路的点上去。
+    const findWaypointNear = (canvas, clientX, clientY) => {
+      const lane = draftLanes.find(l => l.id === selectedLaneId);
+      if (!lane) return -1;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0) return -1;
+      const hitPx = CONFIG.mapEditor.buildingHitRadiusPx;   // 复用建筑摆放同一个命中半径，同一种"点选精度"心智模型
+      let best = -1, bestD = hitPx;
+      lane.waypoints.forEach((wp, i) => {
+        const px = wp.x / (baseMap.world?.w || 1) * rect.width + rect.left;
+        const py = wp.y / (baseMap.world?.h || 1) * rect.height + rect.top;
+        const d = Math.hypot(px - clientX, py - clientY);
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      return best;
+    };
+
+    const dragWaypointTo = (clientX, clientY) => {
+      if (draggingWaypointIndex < 0 || !selectedLaneId) return;
+      const canvas = document.getElementById('mapEditorCanvas');
+      const world = clientToWorld(canvas, clientX, clientY);
+      if (!world) return;
+      const clampX = Math.max(0, Math.min(baseMap.world?.w || 0, world.x));
+      const clampY = Math.max(0, Math.min(baseMap.world?.h || 0, world.y));
+      draftLanes = withWaypointMoved(draftLanes, selectedLaneId, draggingWaypointIndex, { x: clampX, y: clampY });
+      redrawCanvas();
+    };
+
+    // 点在选中路的空白处（没命中任何既有路点）：在离点击处最近的那一段中间插入新路点，
+    // 插完立刻把它设成"正在拖动"的点——用户点哪就是想在那附近加个弯，允许接着拖精确摆放，
+    // 不用"先点插入、再单独点一次去拖"这两步。
+    const insertWaypointAt = (clientX, clientY) => {
+      const lane = draftLanes.find(l => l.id === selectedLaneId);
+      const canvas = document.getElementById('mapEditorCanvas');
+      if (!lane || !canvas) return;
+      const world = clientToWorld(canvas, clientX, clientY);
+      if (!world) return;
+      const afterIndex = nearestSegmentIndex(lane.waypoints, world.x, world.y);
+      draftLanes = withWaypointInserted(draftLanes, selectedLaneId, afterIndex, world);
+      draggingWaypointIndex = afterIndex + 1;
+      selectedWaypointIndex = afterIndex + 1;
+      redrawCanvas();
+    };
+
+    const updatePathStatus = () => {
+      // 删除按钮的 disabled 只在 render() 整体重渲时按当时的 selectedWaypointIndex
+      // 写死进 HTML；点选/插入路点走的是轻量的 redrawCanvas()（不整体重渲画布下方
+      // 这块常用控件区，拖动/点选期间没必要每次都重建整个弹窗 DOM），所以按钮状态
+      // 必须在这里手动同步，否则选中了路点、按钮却还停在上一次 render() 时的disabled。
+      const btn = document.getElementById('mapEditorDeleteWaypointBtn');
+      if (btn) btn.disabled = selectedWaypointIndex < 0;
+      const delLaneBtn = document.getElementById('mapEditorDeleteLaneBtn');
+      if (delLaneBtn) delLaneBtn.disabled = !selectedLaneId;
+      const el = document.getElementById('mapEditorPathStatus');
+      if (!el) return;
+      const lane = draftLanes.find(l => l.id === selectedLaneId);
+      if (!lane) { el.textContent = '还没有任何路，点"新增一条路"开始'; return; }
+      el.textContent = `${lane.id} 共 ${lane.waypoints.length} 个路点`
+        + (selectedWaypointIndex >= 0 ? `，已选中第 ${selectedWaypointIndex + 1} 个` : '');
+    };
+
     const updateValidationStatus = () => {
       const el = document.getElementById('mapEditorValidationStatus');
       if (!el) return;
@@ -287,6 +399,12 @@ export const MapEditorDialog = {
           selectedBuildingIndex = draggingBuildingIndex;
           updateSelectionPanel();
           if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
+        } else if (editMode === 'paths') {
+          const idx = findWaypointNear(canvas, e.clientX, e.clientY);
+          if (idx >= 0) { draggingWaypointIndex = idx; selectedWaypointIndex = idx; }
+          else insertWaypointAt(e.clientX, e.clientY);
+          updatePathStatus();
+          redrawCanvas();
         } else if (brushShape === 'polyline') {
           const g = clientToGrid(canvas, e.clientX, e.clientY);
           if (g) { polylinePoints.push(g); updatePolylineStatus(); redrawCanvas(); }
@@ -297,10 +415,11 @@ export const MapEditorDialog = {
       });
       canvas.addEventListener('pointermove', (e) => {
         if (editMode === 'buildings') { if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY); }
+        else if (editMode === 'paths') { if (draggingWaypointIndex >= 0) dragWaypointTo(e.clientX, e.clientY); }
         else if (brushShape === 'polyline') { polylineHover = clientToGrid(canvas, e.clientX, e.clientY); redrawCanvas(); }
         else if (painting) paintAt(e.clientX, e.clientY);
       });
-      const stop = () => { painting = false; draggingBuildingIndex = -1; redrawCanvas(); };
+      const stop = () => { painting = false; draggingBuildingIndex = -1; draggingWaypointIndex = -1; redrawCanvas(); };
       canvas.addEventListener('pointerup', stop);
       canvas.addEventListener('pointercancel', stop);
       canvas.addEventListener('pointerleave', stop);
@@ -336,6 +455,7 @@ export const MapEditorDialog = {
             <div style="display:flex;gap:6px;">
               <button id="mapEditorEditModeTerrain" class="${editMode === 'terrain' ? 'primary' : ''}">🖌️ 地形笔刷</button>
               <button id="mapEditorEditModeBuildings" class="${editMode === 'buildings' ? 'primary' : ''}">🏗️ 建筑摆放</button>
+              <button id="mapEditorEditModePaths" class="${editMode === 'paths' ? 'primary' : ''}">🛣️ 路径编辑</button>
             </div>
           </div>
           ${editMode === 'terrain' ? `
@@ -373,7 +493,7 @@ export const MapEditorDialog = {
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <button id="mapEditorDespeckleBtn">🧹 去毛刺</button>
             <span style="font-size:10px;color:var(--text-mute);">清理孤立噪点/1格尖刺，不够干净可以多点几次</span>
-          </div>` : `
+          </div>` : editMode === 'buildings' ? `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
             拖动一座建筑：分路的塔（外塔/内塔/水晶防御塔）会被吸附纠正回自己那条兵线上，
             不分路的建筑（水晶枢纽/枢纽防御塔）自由摆放。红圈标出违反结构规则的建筑
@@ -386,6 +506,25 @@ export const MapEditorDialog = {
           </div>
           <div id="mapEditorSelectionPanel" style="margin-bottom:6px;">
             <div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>
+          </div>` : `
+          <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
+            点一个已有路点=拖动它；点路径上的空白处=在最近的一段中间插入新路点（插完可以
+            接着拖精确摆放）。改的是当前选中的这条路——路径改了，建筑摆放模式的"吸附兵线"
+            和结构校验会立刻跟着用新的路径判定，两边不会各说各话。
+          </div>
+          <div class="slider-row"><label>正在编辑</label>
+            <select id="mapEditorLaneSelect" style="flex:1;">
+              ${draftLanes.map(l => `<option value="${l.id}" ${l.id === selectedLaneId ? 'selected' : ''}>${l.id}（${l.waypoints.length} 点）</option>`).join('')}
+            </select>
+          </div>
+          <div id="mapEditorPathStatus" style="font-size:12px;margin-bottom:4px;color:var(--text-mute);"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <button id="mapEditorDeleteWaypointBtn" ${selectedWaypointIndex < 0 ? 'disabled' : ''}>🗑️ 删除选中路点</button>
+            <div style="display:flex;gap:6px;">
+              <input id="mapEditorNewLaneIdInput" type="text" placeholder="新路 id" style="width:90px;">
+              <button id="mapEditorAddLaneBtn">➕ 新增一条路</button>
+              <button id="mapEditorDeleteLaneBtn" ${!selectedLaneId ? 'disabled' : ''}>🗑️ 删除整条路</button>
+            </div>
           </div>`}
           <div style="display:flex;justify-content:center;margin:8px 0;">
             <canvas id="mapEditorCanvas" width="${n}" height="${n}"
@@ -394,7 +533,8 @@ export const MapEditorDialog = {
           </div>
           <div style="font-size:11px;color:var(--text-mute);text-align:center;">
             ${editMode === 'terrain' ? `按住拖动连续绘制；分辨率 ${n}×${n} 格（自适应公式，见 CONFIG.mapEditor）。`
-              : '按住一座建筑拖动即可移动。'}
+              : editMode === 'buildings' ? '按住一座建筑拖动即可移动。'
+              : '点路点拖动，点空白处插入新路点。'}
           </div>
         </div>
 
@@ -462,6 +602,7 @@ export const MapEditorDialog = {
       redrawCanvas();
       if (editMode === 'buildings') { updateValidationStatus(); updateSelectionPanel(); }
       if (editMode === 'terrain' && brushShape === 'polyline') updatePolylineStatus();
+      if (editMode === 'paths') updatePathStatus();
     };
 
     const setStatus = (msg) => {
@@ -478,6 +619,9 @@ export const MapEditorDialog = {
       selectedBuildingIndex = -1;   // 建筑数组重建了，旧下标不再指向同一座塔
       draftRegions = cloneRegionsForEdit(baseMap);   // 换了起点地图，区域参数草稿也要跟着重来
       polylinePoints = []; polylineHover = null;   // n/bits 重建了，旧顶点的格子坐标不再有意义
+      draftLanes = cloneLanesForEdit(baseMap);
+      selectedLaneId = draftLanes[0]?.id ?? null;
+      draggingWaypointIndex = -1; selectedWaypointIndex = -1;
       statusMsg = '';
       render();
     };
@@ -487,6 +631,57 @@ export const MapEditorDialog = {
 
       document.getElementById('mapEditorEditModeTerrain').addEventListener('click', () => { editMode = 'terrain'; render(); });
       document.getElementById('mapEditorEditModeBuildings').addEventListener('click', () => { editMode = 'buildings'; render(); });
+      document.getElementById('mapEditorEditModePaths').addEventListener('click', () => { editMode = 'paths'; render(); });
+
+      // 路径编辑：只在 paths 模式下渲染这几个元素
+      document.getElementById('mapEditorLaneSelect')?.addEventListener('change', (e) => {
+        selectedLaneId = e.target.value;
+        selectedWaypointIndex = -1;
+        redrawCanvas();
+        updatePathStatus();
+      });
+      document.getElementById('mapEditorDeleteWaypointBtn')?.addEventListener('click', () => {
+        if (!selectedLaneId || selectedWaypointIndex < 0) return;
+        const before = draftLanes.find(l => l.id === selectedLaneId).waypoints.length;
+        draftLanes = withWaypointRemoved(draftLanes, selectedLaneId, selectedWaypointIndex);
+        const after = draftLanes.find(l => l.id === selectedLaneId).waypoints.length;
+        if (after === before) {
+          logFn('⚠️ 这条路只剩 2 个路点了，至少要保留起点和终点', 'spawn');
+        } else {
+          logFn(`🗑️ 已删除 ${selectedLaneId} 的第 ${selectedWaypointIndex + 1} 个路点`, 'spawn');
+        }
+        selectedWaypointIndex = -1;
+        render();
+      });
+      document.getElementById('mapEditorAddLaneBtn')?.addEventListener('click', () => {
+        const id = document.getElementById('mapEditorNewLaneIdInput').value.trim();
+        if (!id) { logFn('⚠️ 请先填写新路的 id', 'spawn'); return; }
+        // 默认给一条蓝方基地到红方基地的直线（用户新建后自己往里插路点改形状）——
+        // 用世界对角当默认端点，比"两个点都在原点"更有用，至少一开局就是条能走的路。
+        const W = baseMap.world || { w: 0, h: 0 };
+        try {
+          draftLanes = withLaneAdded(draftLanes, { id, waypoints: [{ x: 0, y: W.h }, { x: W.w, y: 0 }] });
+          selectedLaneId = id;
+          selectedWaypointIndex = -1;
+          logFn(`🛣️ 已新增一条路：${id}`, 'spawn');
+          render();
+        } catch (err) {
+          logFn(`⚠️ ${err.message}`, 'spawn');
+        }
+      });
+      document.getElementById('mapEditorDeleteLaneBtn')?.addEventListener('click', () => {
+        if (!selectedLaneId) return;
+        const usedBy = laneBuildingCount(draftBuildings, selectedLaneId);
+        if (usedBy > 0) {
+          logFn(`⚠️ 还有 ${usedBy} 座建筑挂在 ${selectedLaneId} 上，请先去"建筑摆放"模式移走/删除它们再删这条路`, 'spawn');
+          return;
+        }
+        draftLanes = withLaneRemoved(draftLanes, selectedLaneId);
+        selectedLaneId = draftLanes[0]?.id ?? null;
+        selectedWaypointIndex = -1;
+        logFn('🗑️ 已删除这条路', 'spawn');
+        render();
+      });
 
       // 自动识别档位：只在建筑模式下渲染
       document.getElementById('mapEditorAutoDetectBtn')?.addEventListener('click', () => {
@@ -564,6 +759,7 @@ export const MapEditorDialog = {
           const payload = buildCustomMapPayload(baseMap, {
             id, label, n, bits, buildings: draftBuildings,
             baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
+            lanes: draftLanes,
           });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;

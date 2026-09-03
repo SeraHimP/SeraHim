@@ -13,6 +13,8 @@ const {
   resolveBaseNavgrid, decodeBaseBits, cloneMapForEdit, buildCustomMapPayload,
   cloneBuildingsForEdit, snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
   cloneRegionsForEdit, defaultPitFor,
+  cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
+  withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
 } = await import('../src/data/mapEditorCore.js');
 const { unpackBits, packBits } = await import('../src/data/navgrid.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -109,6 +111,14 @@ const T = board.T;
   });
   T('⑪-传了 baseCircleRadius/pits 时用传入值覆盖', payload5.baseCircleRadius === 999
     && payload5.pits.baron.x === 1 && payload5.pits.baron.r === 3 && payload5.pits.dragon === undefined);
+
+  // 阶段六（兵路径编辑）：同样遵循"不传就保留 baseMap 原值"的默认行为不变原则。
+  const payload6 = buildCustomMapPayload(sr, { id: 'no_lanes_arg', label: 'x', n, bits });
+  T('⑫-不传 lanes 时保留 baseMap 原有路径', JSON.stringify(payload6.lanes) === JSON.stringify(sr.lanes));
+  const movedLanes = sr.lanes.map((l, i) => (i === 0 ? { ...l, waypoints: [{ x: 1, y: 2 }, { x: 3, y: 4 }] } : l));
+  const payload7 = buildCustomMapPayload(sr, { id: 'with_lanes_arg', label: 'x', n, bits, lanes: movedLanes });
+  T('⑬-传了 lanes 时用传入的草稿数组覆盖',
+    payload7.lanes[0].waypoints.length === 2 && payload7.lanes[0].waypoints[0].x === 1);
 }
 
 // ==================== ④b 区域参数草稿：克隆 / 默认坑位 ====================
@@ -138,6 +148,68 @@ const T = board.T;
   T('⑧-男爵坑默认位置偏世界中心的左上、龙坑偏右下（呼应 SR_PITS 的几何直觉，不是同一个点）',
     baronDefault.x < dragonDefault.x && baronDefault.y < dragonDefault.y);
   T('⑨-defaultPitFor 给出合理的默认半径/深度（非零，可直接用于渲染）', baronDefault.r > 0 && baronDefault.depth < 0);
+}
+
+// ==================== ④c 兵路径编辑（阶段六）：克隆/拖动/插入/删除路点/整条路增删 ====================
+{
+  const sr = MAPS.summoners_rift_v1;
+
+  // cloneLanesForEdit：深克隆，不共享引用（同 cloneBuildingsForEdit 的理由）
+  const lanes = cloneLanesForEdit(sr);
+  T('①-cloneLanesForEdit 内容与原地图路径相等', JSON.stringify(lanes) === JSON.stringify(sr.lanes));
+  lanes[0].waypoints[0].x = -999;
+  T('②-改动草稿不影响原地图对象（深克隆）', sr.lanes[0].waypoints[0].x !== -999);
+
+  // withWaypointMoved：只改目标路的目标下标，不改原数组，其它路原样保留
+  const topLaneId = sr.lanes[0].id;
+  const moved = withWaypointMoved(lanes, topLaneId, 0, { x: 10, y: 20 });
+  T('③-withWaypointMoved 不改原数组（拖拽期间每帧调用，不能有副作用累积）',
+    lanes.find(l => l.id === topLaneId).waypoints[0].x !== 10);
+  T('④-withWaypointMoved 返回的新数组里目标路点落点已更新',
+    moved.find(l => l.id === topLaneId).waypoints[0].x === 10 && moved.find(l => l.id === topLaneId).waypoints[0].y === 20);
+  T('⑤-withWaypointMoved 只改目标路，其它路原样保留',
+    JSON.stringify(moved.find(l => l.id !== topLaneId)) === JSON.stringify(lanes.find(l => l.id !== topLaneId)));
+
+  // withWaypointInserted：插在指定下标之后，其它点顺移，不改原数组
+  const beforeLen = lanes.find(l => l.id === topLaneId).waypoints.length;
+  const inserted = withWaypointInserted(lanes, topLaneId, 0, { x: 111, y: 222 });
+  const insertedLane = inserted.find(l => l.id === topLaneId);
+  T('⑥-withWaypointInserted 新路点插在 afterIndex+1 处', insertedLane.waypoints[1].x === 111 && insertedLane.waypoints[1].y === 222);
+  T('⑦-withWaypointInserted 总点数 +1', insertedLane.waypoints.length === beforeLen + 1);
+  T('⑧-withWaypointInserted 不改原数组', lanes.find(l => l.id === topLaneId).waypoints.length === beforeLen);
+  T('⑨-withWaypointInserted 原有点的相对顺序保留（原第 2 个点现在是第 3 个）',
+    insertedLane.waypoints[2].x === lanes.find(l => l.id === topLaneId).waypoints[1].x);
+
+  // withWaypointRemoved：正常删除、以及"少于等于 2 个点时拒绝删除"这条安全底线
+  const removed = withWaypointRemoved(lanes, topLaneId, 0);
+  T('⑩-withWaypointRemoved 正常删除后总点数 -1',
+    removed.find(l => l.id === topLaneId).waypoints.length === beforeLen - 1);
+  const twoPointLanes = [{ id: 'x', waypoints: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }];
+  const refused = withWaypointRemoved(twoPointLanes, 'x', 0);
+  T('⑪-只剩 2 个点时拒绝删除（一条路至少要有起点终点两个点，不能删到只剩 1 个）',
+    refused.find(l => l.id === 'x').waypoints.length === 2);
+
+  // withLaneAdded / withLaneRemoved：整条路增删
+  const newLane = { id: 'brand_new_lane', waypoints: [{ x: 0, y: 0 }, { x: 100, y: 100 }] };
+  const withNew = withLaneAdded(lanes, newLane);
+  T('⑫-withLaneAdded 新增一条路，总数 +1', withNew.length === lanes.length + 1);
+  T('⑬-withLaneAdded 不改原数组', lanes.length === sr.lanes.length);
+  let threwDup = false;
+  try { withLaneAdded(withNew, newLane); } catch { threwDup = true; }
+  T('⑭-withLaneAdded 对已存在的 id 抛错，而不是静默覆盖（新增和改名顶替是两回事）', threwDup);
+  const withoutTop = withLaneRemoved(lanes, topLaneId);
+  T('⑮-withLaneRemoved 删除指定 id 的路，总数 -1', withoutTop.length === lanes.length - 1);
+  T('⑯-withLaneRemoved 不影响其它路', withoutTop.every(l => l.id !== topLaneId));
+
+  // laneBuildingCount：删整条路之前用它判断会不会留下孤儿建筑
+  T('⑰-laneBuildingCount 统计出召唤师峡谷 top 路上确实有建筑（真实数据，不是 0）',
+    laneBuildingCount(sr.buildings, topLaneId) > 0);
+  T('⑱-laneBuildingCount 对不存在的 laneId 返回 0', laneBuildingCount(sr.buildings, 'no_such_lane') === 0);
+
+  // nearestSegmentIndex 已经在 sim_mapvalidate.mjs 里直接测过，这里只确认
+  // mapEditorCore.js 转导出的是同一个函数（不是另起一份同名实现）。
+  const { nearestSegmentIndex: directImport } = await import('../src/data/mapValidate.js');
+  T('⑲-mapEditorCore.js 转导出的 nearestSegmentIndex 与 mapValidate.js 是同一个函数引用', nearestSegmentIndex === directImport);
 }
 
 // ==================== ⑤b 建筑摆放：克隆/吸附/挪动/实时校验 ====================
@@ -313,6 +385,27 @@ const T = board.T;
     /paintPolyline\(bits,\s*n,\s*polylinePoints/.test(src));
   T('⑱-切换起点地图会重置折线顶点（switchBase 里清空 polylinePoints，避免旧格子坐标在新分辨率下错位）',
     /switchBase[\s\S]{0,700}polylinePoints = \[\]/.test(src));
+
+  // 阶段六：路径编辑调了 mapEditorCore.js 的纯函数，没有另起一套路点增删/插入逻辑；
+  // draftMapForValidate 用的是草稿 lanes 不是原始 baseMap.lanes；删整条路之前真的
+  // 检查了 laneBuildingCount，不会留下孤儿建筑；保存时 lanes 草稿真的传给了 payload。
+  T('⑲-路径编辑调用了 mapEditorCore.js 的 withWaypointMoved/withWaypointInserted/withWaypointRemoved（不是弹窗里另算一套）',
+    /withWaypointMoved/.test(src) && /withWaypointInserted/.test(src) && /withWaypointRemoved/.test(src));
+  T('⑳-路径编辑调用了 withLaneAdded/withLaneRemoved（整条路增删同样不重新实现）',
+    /withLaneAdded/.test(src) && /withLaneRemoved/.test(src));
+  T('㉑-draftMapForValidate 用的是草稿 draftLanes 而不是原始 baseMap.lanes（否则路径编辑后建筑摆放模式的吸附/校验还在用编辑前的路）',
+    /draftMapForValidate\s*=\s*\(\)\s*=>\s*\(\{[^}]*lanes:\s*draftLanes/.test(src));
+  T('㉒-删除整条路之前调用了 laneBuildingCount 检查孤儿建筑', /laneBuildingCount\(draftBuildings/.test(src));
+  T('㉓-保存时把当前路径草稿传给了 buildCustomMapPayload', /buildCustomMapPayload\([^)]*lanes:\s*draftLanes/.test(src));
+  T('㉔-切换起点地图会重置路径草稿（switchBase 里重建 draftLanes）',
+    /switchBase[\s\S]{0,900}draftLanes = cloneLanesForEdit/.test(src));
+
+  // 真机跑出来的 bug：点选/插入路点只走轻量的 redrawCanvas()（不整体重渲 DOM），
+  // "删除选中路点"按钮的 disabled 是渲染 HTML 字符串时按当时的 selectedWaypointIndex
+  // 写死的一次性属性——选中路点之后按钮永远显示 disabled，点不动，直到下次整体 render()。
+  // 钉住"updatePathStatus 会手动同步这个按钮的 disabled"，防止以后重构时又把这行删掉。
+  T('㉕-updatePathStatus 会同步删除路点按钮的 disabled 状态（不能只靠 render() 时写死一次）',
+    /updatePathStatus[\s\S]{0,400}mapEditorDeleteWaypointBtn['"][\s\S]{0,150}disabled\s*=\s*selectedWaypointIndex\s*<\s*0/.test(src));
 }
 
 // ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================

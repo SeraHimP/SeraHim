@@ -19,6 +19,7 @@ import {
   nearestPointOnPolyline, buildingCountsSymmetric, buildingOnLaneOrInBase,
   attackTowerSpacingOk, crossFactionTowerSpacingOk,
 } from './mapValidate.js';
+export { nearestSegmentIndex } from './mapValidate.js';
 
 /**
  * 主画面工具条（MapEditorBoardTool.js）要让草稿"所见即所得"，走的是编辑器已经在用
@@ -63,7 +64,7 @@ export function cloneMapForEdit(baseMap) {
  * @param {object} baseMap  作为起点克隆的地图（内置或已有的自制地图）
  * @param {object} o        { id, label, n, bits }—— bits 是笔刷改完的 Uint8Array
  */
-export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings, baseCircleRadius, pits }) {
+export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings, baseCircleRadius, pits, lanes }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
   clone.id = id;
@@ -77,6 +78,8 @@ export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings, 
   // 这两项不像 buildings 有天然的"空数组也合法"歧义，用 undefined 判断是否传入即可。
   if (Number.isFinite(baseCircleRadius)) clone.baseCircleRadius = baseCircleRadius;
   if (pits) clone.pits = pits;
+  // 兵路径编辑（阶段六）：同样的"不传就保留原值"规则。
+  if (Array.isArray(lanes)) clone.lanes = lanes;
   return clone;
 }
 
@@ -252,4 +255,80 @@ export function autoDetectTiers(map, buildings) {
   next.forEach(b => { if (!b.laneId && b.tier !== 'nexus_main') b.tier = 'hq_tower'; });
 
   return next;
+}
+
+// ==================== 兵路径编辑（阶段六）====================
+// 设计报告把这一批列为独立阶段——路点/整条路的增删动的是 map.lanes，这份数据不只是
+// 画面上一条线：LaneMovementSystem/LaneWaveSystem 靠它算小兵怎么走，snapBuildingPos
+// 靠它算建筑吸附点，mapValidate.js 的间距/对称校验也全部读它。改动面比"往 navgrid
+// 位图上刷格子"大得多，所以单独放在地形笔刷/建筑摆放/区域参数表单全部做完之后再做。
+//
+// 与 draftBuildings 同样的理由，这里也不能直接改 baseMap.lanes（那是 mapSystem.
+// getMapById() 的直接引用，可能是内置地图常量或已存的自制地图）——一律走"克隆出草稿
+// →改草稿→保存时随 buildCustomMapPayload 一起落盘"这条路。
+
+/** 深克隆一张地图的路径数组，供编辑器改动而不污染原地图对象。 */
+export function cloneLanesForEdit(baseMap) {
+  return JSON.parse(JSON.stringify(baseMap.lanes || []));
+}
+
+/**
+ * 把 laneId 那条路的第 index 个路点挪到 pos，返回一份新的 lanes 数组（不改原数组，
+ * 拖拽期间每帧都会调，纯函数方便单测和撤销/重做，与 withBuildingMoved 同一套约定）。
+ */
+export function withWaypointMoved(lanes, laneId, index, pos) {
+  return lanes.map(l => (l.id !== laneId ? l : {
+    ...l,
+    waypoints: l.waypoints.map((wp, i) => (i === index ? { x: pos.x, y: pos.y } : wp)),
+  }));
+}
+
+/**
+ * 在 laneId 那条路的第 afterIndex 个路点之后插入一个新路点（新点下标 = afterIndex+1）。
+ * 用于"点在路径中段的空白处"这个交互——把新点插进最近那一段的两端之间，而不是追加到
+ * 整条路的末尾（追加到末尾会让路径突然拐个大弯，不是用户想要的"在这里加个弯"）。
+ */
+export function withWaypointInserted(lanes, laneId, afterIndex, pos) {
+  return lanes.map(l => (l.id !== laneId ? l : {
+    ...l,
+    waypoints: [...l.waypoints.slice(0, afterIndex + 1), { x: pos.x, y: pos.y }, ...l.waypoints.slice(afterIndex + 1)],
+  }));
+}
+
+/**
+ * 删除 laneId 那条路的第 index 个路点。少于等于 2 个点时拒绝删除（返回原数组不变）——
+ * 一条路至少要有起点和终点两个点才成路，删到只剩 1 个点会让这条路失去方向，
+ * LaneMovementSystem 沿着它算出的行进方向没有意义。
+ */
+export function withWaypointRemoved(lanes, laneId, index) {
+  return lanes.map(l => {
+    if (l.id !== laneId || l.waypoints.length <= 2) return l;
+    return { ...l, waypoints: l.waypoints.filter((_, i) => i !== index) };
+  });
+}
+
+/**
+ * 新增一条路。id 已存在时抛错（不是静默覆盖——"新增"和"改名顶替一条已有的路"
+ * 是两个不同的用户意图，静默覆盖会在用户没意识到的情况下丢掉一条路的既有数据）。
+ * @param {object[]} lanes @param {{id:string, waypoints:{x:number,y:number}[]}} lane
+ */
+export function withLaneAdded(lanes, lane) {
+  if (lanes.some(l => l.id === lane.id)) throw new Error(`withLaneAdded: 路 id 已存在：${lane.id}`);
+  return [...lanes, lane];
+}
+
+/** 删除一整条路。调用方负责在删之前检查这条路上还有没有建筑（见 laneBuildingCount）。 */
+export function withLaneRemoved(lanes, laneId) {
+  return lanes.filter(l => l.id !== laneId);
+}
+
+/**
+ * 有多少座建筑的 laneId 指向这条路——编辑器删除整条路之前用它判断"删了会不会留下
+ * 一堆找不到路的孤儿建筑"，不适合静默删，也不适合在这里自作主张连带删掉那些建筑
+ * （建筑摆放是另一个独立的编辑模式，删建筑该是用户在那边显式做的操作）。
+ * @param {object[]} buildings @param {string} laneId
+ * @returns {number}
+ */
+export function laneBuildingCount(buildings, laneId) {
+  return buildings.filter(b => b.laneId === laneId).length;
 }
