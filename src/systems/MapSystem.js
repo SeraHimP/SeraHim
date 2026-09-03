@@ -64,8 +64,23 @@ export class MapSystem {
 
   setCreateBuildingFn(fn) { this.createBuildingFn = fn; }
 
+  /**
+   * v51.32：内置地图（MAPS）∪ 自制地图（CONFIG.customMaps，地图编辑器落盘的地方，
+   * 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §3.5）。
+   * `getAvailableMaps`/`getMapById`/`loadMap` 三处都要认自制地图，统一从这一个
+   * 方法取——踩过的坑（docs/DEVELOPMENT.md §5"已知的坑"）："列表不要写死"：
+   * 只改其中一处会变成"地图能加载但选不到"或"能选到但加载空白"这类各写一半的故障，
+   * 一处改就三处一起跟上。CONFIG.customMaps 里的 id 与内置地图撞车时内置地图优先——
+   * 自制地图不该有能力顶掉三张官方图，真出现同名多半是用户手改配置时的失误，
+   * 优先内置图能让游戏保持能玩，而不是静默换成一张来源不明的地图。
+   */
+  _mapRegistry() {
+    const custom = (CONFIG.customMaps && typeof CONFIG.customMaps === 'object') ? CONFIG.customMaps : null;
+    return custom ? { ...custom, ...MAPS } : MAPS;
+  }
+
   getAvailableMaps() {
-    return Object.values(MAPS).map(m => ({ id: m.id, label: m.label }));
+    return Object.values(this._mapRegistry()).map(m => ({ id: m.id, label: m.label }));
   }
 
   /** v51.20：模式列表（普通/经典），与地图是两条独立的轴，UI 先选这个再选地图。 */
@@ -82,9 +97,10 @@ export class MapSystem {
    * 后缀"现算出来的——这里认得这个后缀，现场套 applyClassicMode 变换、不用另外注册。
    */
   getMapById(id) {
-    if (MAPS[id]) return MAPS[id];
+    const reg = this._mapRegistry();
+    if (reg[id]) return reg[id];
     if (typeof id === 'string' && id.endsWith(CLASSIC_ID_SUFFIX)) {
-      const base = MAPS[id.slice(0, -CLASSIC_ID_SUFFIX.length)];
+      const base = reg[id.slice(0, -CLASSIC_ID_SUFFIX.length)];
       if (base) return applyClassicMode(base);
     }
     return null;
@@ -109,7 +125,7 @@ export class MapSystem {
     }
     if (effectiveMode === undefined) effectiveMode = MODES.normal.id;
 
-    const base = MAPS[baseId];
+    const base = this._mapRegistry()[baseId];
     if (!base) { console.warn('地图不存在:', mapId); return; }
     const map = effectiveMode === MODES.classic.id ? applyClassicMode(base) : base;
 

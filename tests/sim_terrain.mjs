@@ -232,5 +232,56 @@ T('回流场未把行军队形压扁（p90 铺开度 ≥ 关闭态的 60%）', s
     /this\.invalidateNav\(\);/.test(srcOf('src/systems/MapSystem.js')));
 }
 
+// ==================== v51.32：地图编辑器 §3.5——自制地图接入地图注册表 ====================
+// 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §1.6/§3.5，呼应 docs/DEVELOPMENT.md §5
+// "已知的坑"点名过的"列表不要写死"：getAvailableMaps/getMapById/loadMap 三处
+// 必须都认 CONFIG.customMaps，只改一处会变成"能选到但加载空白"或"能加载但选不到"。
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  const savedCustom = CONFIG.customMaps;
+  CONFIG.customMaps = {
+    my_custom_v1: { id: 'my_custom_v1', label: '我的自制地图', world: { w: 1000, h: 1000 },
+      lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 1000, y: 1000 }] }], buildings: [] },
+  };
+
+  const { mapSys } = build(); // build() 会 loadMap('summoners_rift_v1')，不受 customMaps 影响
+
+  T('自制地图①-getAvailableMaps 里能看到自制地图（不是只读内置 MAPS）',
+    mapSys.getAvailableMaps().some(m => m.id === 'my_custom_v1'));
+  T('自制地图②-getMapById 能按 id 取到自制地图数据',
+    mapSys.getMapById('my_custom_v1')?.label === '我的自制地图');
+
+  mapSys.loadMap('my_custom_v1');
+  T('自制地图③-loadMap 能真的加载自制地图（不是只能选中选不动）',
+    mapSys.currentMap?.id === 'my_custom_v1' && mapSys.currentMap?.world.w === 1000);
+
+  // id 撞车：自制地图不该有能力顶掉内置官方图（见 _mapRegistry 头注的取舍记录）
+  CONFIG.customMaps.summoners_rift_v1 = { id: 'summoners_rift_v1', label: '假冒的峡谷', world: { w: 1, h: 1 } };
+  T('自制地图④-id 与内置地图撞车时，内置地图优先（不会被自制数据静默顶替）',
+    mapSys.getMapById('summoners_rift_v1')?.label !== '假冒的峡谷');
+
+  CONFIG.customMaps = savedCustom; // 不污染后面的测试
+}
+
+// ==================== v51.32：自制地图能存档往返（用户的地图作品不能丢） ====================
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  const { exportTemplates, importTemplates, IO_GROUPS } = await import('../src/data/templateIO.js');
+  T('存档①-customMaps 在 IO_GROUPS 白名单里（否则导出的存档里悄悄漏掉这一组）',
+    IO_GROUPS.includes('customMaps'));
+
+  const savedCustom = CONFIG.customMaps;
+  CONFIG.customMaps = { archived_map_v1: { id: 'archived_map_v1', label: '存档测试地图', world: { w: 500, h: 500 } } };
+  const snap = exportTemplates(CONFIG);
+  T('存档②-自制地图确实进了导出结果', snap.customMaps?.archived_map_v1?.label === '存档测试地图');
+
+  CONFIG.customMaps = {}; // 模拟"新开一局，自制地图暂时没导入"
+  importTemplates(CONFIG, JSON.parse(JSON.stringify(snap)));
+  T('存档③-导入存档后自制地图复活，且内容逐位一致',
+    JSON.stringify(CONFIG.customMaps.archived_map_v1) === JSON.stringify(snap.customMaps.archived_map_v1));
+
+  CONFIG.customMaps = savedCustom;
+}
+
 console.log(`地形避障验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -36,13 +36,17 @@ export const IO_GROUPS = [
   'customEffects',        // 自制状态（纯数据蓝图）
   'customSkills',         // 自制技能/武器（声明式规格，由 behaviorVM 编译）
   'customMinions',        // 自制兵种（模板数据）
+  'customMaps',           // v51.32：地图编辑器画出来的自制地图（结构与内置地图对象一致，
+                           // 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §3.5）。不需要
+                           // customContent.js 那套"编译并注册"——地图是纯数据，
+                           // MapSystem._mapRegistry() 按需读取，不用像技能那样启动时预编译。
 ];
 
 // 上面三个 *Overrides 分组可能尚未在 CONFIG 里存在（按需创建）。
 // 列进白名单是为了让导出的存档**结构稳定** —— 存档格式不该随"用户这次有没有改过技能"
 // 而时有时无，否则做前后对比（diff 两个存档）时会满屏是结构差异而不是数值差异。
 export const IO_ENSURE = ['skillOverrides', 'effectOverrides', 'mapOverrides',
-                          'customEffects', 'customSkills', 'customMinions'];
+                          'customEffects', 'customSkills', 'customMinions', 'customMaps'];
 
 export const IO_VERSION = 1;
 
