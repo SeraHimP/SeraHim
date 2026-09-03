@@ -2,7 +2,7 @@ import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
 import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode } from '../data/maps/modeTransforms.js';
 import { CONFIG } from '../data/Config.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
-import { isStructureProtected } from './FactionSystem.js';
+import { isStructureProtected, mapFactionsOf } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
@@ -515,6 +515,23 @@ export class MapSystem {
     return !!(this.nexusDestroyed[faction] && this.nexusDestroyed[faction][laneId]);
   }
 
+  /**
+   * 该阵营是否已被淘汰——主水晶枢纽（nexus_main）全灭。
+   * 用户定稿（docs/REPORT-2026-09-03-multifaction.md §4）："某一方水晶枢纽被摧毁，
+   * 该方以及攻击该方的路径就不再生成小兵"，塔本身保留、仍可被攻击/反击（不是消失）。
+   *
+   * 动态从实体状态现算，不额外维护一个"已淘汰"标记——同 isStructureProtected 头注
+   * 那条教训：缓存的状态迟早跟真实状态脱节（水晶手动复活/编辑器改动都可能漏更新），
+   * 用得到时现算一次，没有"忘了同步"这类 bug 可能。
+   * 这张图对该阵营没有声明 nexus_main（比如未来的中立阵营）→ 不算淘汰。
+   */
+  isFactionEliminated(faction) {
+    const mains = this.entities.getAllTowers(false)
+      .filter(t => t._mapFaction === faction && t._mapTier === 'nexus_main');
+    if (!mains.length) return false;
+    return mains.every(t => !t.alive);
+  }
+
   /** 摘掉那颗 ⏳「重生中」状态。EffectRegistry.remove 收的是 effectId，不是 (entityId, source)。 */
   _clearRespawnEffect(entityId) {
     const eff = this._fx?.getEffectByName?.(entityId, '重生中');
@@ -528,7 +545,11 @@ export class MapSystem {
    */
   structureCensus() {
     const mk = () => ({ total: 0, alive: 0 });
-    const out = { blue: { all: {}, lanes: {} }, red: { all: {}, lanes: {} } };
+    // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §3）：按地图声明的阵营
+    // 列表动态建表，不再写死 {blue,red} 两个 key——改动前只有两阵营地图，
+    // mapFactionsOf 未声明时兜底就是 [blue,red]，行为逐位不变。
+    const out = {};
+    for (const faction of mapFactionsOf(this.currentMap)) out[faction] = { all: {}, lanes: {} };
     // 同样从容器枚举（理由见 laneNexuses）：编排的条件问的是"场上还剩几座"，
     // 而不是"地图当初建了几座"。
     for (const e of this.entities.getAll(false)) {

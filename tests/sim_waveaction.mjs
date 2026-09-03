@@ -145,7 +145,7 @@ const T = board.T;
 
 // ==================== ⑦ LaneWaveSystem._broadcast：scope 过滤（阵营/路）====================
 // 直接调 _broadcast 而不经过 spawnWave()——共享编排规则（不分阵营）在 spawnWave()
-// 里会对蓝红各跑一次 _enqueueForFaction，两边各自广播给"自己"是正确的对称行为
+// 里会对每条 lane 声明的出兵流各跑一次 _enqueueSpawn，两边各自广播给"自己"是正确的对称行为
 // （与刷兵规则同一套语义：共享编排对双方都生效，不是只对一方生效），
 // 那不是 _broadcast 本身的过滤逻辑该测的东西——过滤逻辑单独、干净地测。
 {

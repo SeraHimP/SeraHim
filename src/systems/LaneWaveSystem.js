@@ -1,4 +1,4 @@
-import { FACTIONS } from './FactionSystem.js';
+import { laneSpawnsOf } from './FactionSystem.js';
 import { CONFIG } from '../data/Config.js';
 import { buildWaveOrder, buildBroadcastOrder } from '../data/waveComposition.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
@@ -100,24 +100,49 @@ export class LaneWaveSystem {
     // 每条规则各查一次会把一次遍历放大成几十次，而且同一波里前后两条规则
     // 可能看到不同的世界状态（塔正好在这中间被拆掉），判定就不自洽了。
     this._census = this.mapSystem.structureCensus ? this.mapSystem.structureCensus() : null;
+    // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §3/§4）：不再对每条 lane
+    // 硬编码调用 BLUE forward / RED reverse 各一次，改成遍历该 lane 自己声明的
+    // 出兵流（laneSpawnsOf 未声明时兜底为原来这两条，两阵营地图行为逐位不变）。
     for (const lane of this.mapSystem.currentMap?.lanes || []) {
-      this._enqueueForFaction(FACTIONS.BLUE, lane, 'forward');
-      this._enqueueForFaction(FACTIONS.RED, lane, 'reverse');
+      for (const spawn of laneSpawnsOf(lane)) {
+        this._enqueueSpawn(spawn, lane);
+      }
     }
   }
 
-  _enqueueForFaction(faction, lane, direction) {
+  /**
+   * @param {{faction:string, direction:'forward'|'reverse', targetFactions:string[]}} spawn
+   *   一条出兵流：某阵营从这条路的某方向出发，打向声明的目标阵营列表。
+   * @param {*} lane
+   */
+  _enqueueSpawn(spawn, lane) {
     if (!this.createMinion) return;
-    // 按"这一路"查询【敌方】水晶摧毁状态（每路独立）。
-    const enemy = faction === FACTIONS.BLUE ? FACTIONS.RED : FACTIONS.BLUE;
+    const { faction, direction, targetFactions } = spawn;
+
+    // ==================== 阵营淘汰 → 停止出兵（用户定稿，见设计报告 §4） ====================
+    // 出兵方自己的主水晶枢纽已被摧毁 → 这条出兵流直接不出兵（"该方停止出兵"）。
+    if (this.mapSystem.isFactionEliminated?.(faction)) return;
+    // 目标阵营里还有没被淘汰的，才继续打——全部目标都被淘汰才停这条路
+    // （"攻击该方的路径不再生成小兵"；汇合路径打多个目标时，其余目标还活着就
+    // 该继续照常出兵，只是不再对已经淘汰的那个目标触发超级兵，见下面 nexusDown）。
+    const liveTargets = (targetFactions || []).filter(f => !this.mapSystem.isFactionEliminated?.(f));
+    if ((targetFactions || []).length && !liveTargets.length) return;
+
+    // 按"这一路"查询【存活目标里】的水晶摧毁状态（每路独立）——多个目标时，
+    // 任意一个存活目标的本路水晶陷落就触发超级兵（与改动前单目标时逐位一致：
+    // liveTargets 只有一个元素时，这段就是原来的 nexusDown 计算本身）。
     // Q2（用户要求的新规则）：召唤水晶重生【前 30 秒】就停止生成超级兵。
     // 语义：水晶快复活了 → 敌方的超级兵红利提前结束，防守方有喘息窗口去重整防线。
-    let nexusDown = this.mapSystem.isNexusDestroyed(enemy, lane.id);
-    if (nexusDown) {
-      // v33（Q10 定稿）：水晶重生【前 45 秒】停发超级兵（30→45），恢复普通兵线
-      const remain = this.mapSystem.getNexusRespawnRemain(enemy, lane.id);
-      const cutoff = CONFIG.tuning?.superMinionCutoffBeforeRespawn ?? 45;
-      if (remain !== null && remain <= cutoff) nexusDown = false;
+    let nexusDown = false;
+    for (const enemy of liveTargets) {
+      let down = this.mapSystem.isNexusDestroyed(enemy, lane.id);
+      if (down) {
+        // v33（Q10 定稿）：水晶重生【前 45 秒】停发超级兵（30→45），恢复普通兵线
+        const remain = this.mapSystem.getNexusRespawnRemain(enemy, lane.id);
+        const cutoff = CONFIG.tuning?.superMinionCutoffBeforeRespawn ?? 45;
+        if (remain !== null && remain <= cutoff) down = false;
+      }
+      if (down) { nexusDown = true; break; }
     }
 
     // 出兵顺序（对齐 LoL）：
@@ -147,7 +172,14 @@ export class LaneWaveSystem {
     const rules = _mapSE
       ? { ...CONFIG.gameRules, spawnEnabled: { ...(CONFIG.gameRules.spawnEnabled || {}), ..._mapSE } }
       : CONFIG.gameRules;
-    const wctx = { laneId: lane.id, gameTime: this._clock, census: this._census, ...this._extraWaveCtx() };
+    // enemy：多阵营下"敌方"不再是唯一解（一条路可以同时打多个目标阵营），
+    // 这里取存活目标里的第一个当"敌方xxx"这类编排条件的判定对象——两阵营地图
+    // liveTargets 恰好只有一个元素，取法与改动前逐位一致。真正的 N 阵营
+    // 汇合语义（"敌方"该指哪一个）留给以后按需再设计，见设计报告 §9。
+    const wctx = {
+      laneId: lane.id, gameTime: this._clock, census: this._census, enemy: liveTargets[0] ?? null,
+      ...this._extraWaveCtx(),
+    };
     const order = buildWaveOrder(this.waveNumber, nexusDown, rules, faction, wctx);
 
     // v51.33：出兵编排"广播"——与刷兵共用同一份 wctx/rules，"这一波该生效哪些

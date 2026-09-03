@@ -1,3 +1,5 @@
+import { towerRuleFor } from '../systems/FactionSystem.js';
+
 /**
  * GameContext.js ? centralized game state management.
  *
@@ -20,10 +22,11 @@ const _state = {
     attackOff:  { blue: false, red: false },
     waveOn:     { blue: true,  red: true  },
   },
+  // window.__towerRuleFor 在 main.js 赋值之前的默认值（main.js 启动后会整个
+  // 覆盖掉）——取值逻辑与 main.js 共用 FactionSystem.towerRuleFor 一份实现，
+  // 不在这里另写一份迟早漂移的拷贝。
   __towerRuleFor(kind, faction) {
-    const r = this.__towerRules?.[kind];
-    if (!r) return false;
-    return !!r[faction];
+    return towerRuleFor(this.__towerRules, kind, faction);
   },
   createMinion: null, createTower: null,
   __app: null, __weather: null, __world: null, __mapSystem: null,

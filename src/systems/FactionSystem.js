@@ -58,6 +58,22 @@ export function laneSpawnsOf(lane) {
 }
 
 /**
+ * CTX.__towerRules（{invincible,attackOff,waveOn} 三张按阵营开关的表）的统一取值逻辑。
+ * 三张表都只声明了 blue/red 两个 key，查不到某个阵营的 key 时：
+ *   - waveOn 兜底 true——这张表是"选中才不出兵"的反向语义，新阵营不声明就该照常
+ *     出兵，兜底 false 会把新阵营默认静音且不报任何错，是最难查的那类问题
+ *     （见 docs/REPORT-2026-09-03-multifaction.md §1.2）。
+ *   - 其余表兜底 false——"选中才生效"的正向语义，默认不生效本来就对。
+ * main.js 的 CTX.__towerRuleFor 与 GameContext.js 的初始默认值都调用这一份，
+ * 不在两处各写一遍同样的逻辑（两份迟早漂移，是本项目一贯在防的重复）。
+ */
+export function towerRuleFor(towerRules, kind, faction) {
+  const r = towerRules?.[kind];
+  if (r && faction in r) return !!r[faction];
+  return kind === 'waveOn';
+}
+
+/**
  * 判断两个阵营是否敌对。
  * 中立阵营（NEUTRAL）对任何阵营都不主动敌对（不会被这个函数判定为"是敌人"），
  * 但可以被任何阵营攻击——中立单位是否还手，由具体单位的 AI/技能逻辑决定，不归这里管。

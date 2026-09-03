@@ -17,7 +17,7 @@ import { FacingSystem } from './systems/FacingSystem.js';
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
 import { CollisionSystem } from './systems/CollisionSystem.js';
 import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
-import { FACTIONS, canTarget } from './systems/FactionSystem.js';
+import { FACTIONS, canTarget, towerRuleFor } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
 import { dayNightAt, DAY_PERIOD, resolveDayPhase, applyWeatherOvercast } from './presentation/DayNight.js';
@@ -124,11 +124,9 @@ CTX.__towerRules = {
   attackOff:  { blue: false, red: false },
   waveOn:     { blue: true,  red: true  },   // 小兵是否随波次生成
 };
-CTX.__towerRuleFor = (kind, faction) => {
-  const r = CTX.__towerRules?.[kind];
-  if (!r) return false;
-  return !!r[faction];
-};
+// 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §3）：取值逻辑见
+// FactionSystem.towerRuleFor 的头注（未声明的阵营 waveOn 兜底 true，其余兜底 false）。
+CTX.__towerRuleFor = (kind, faction) => towerRuleFor(CTX.__towerRules, kind, faction);
 
 // ==================== v2.5D 第5步：Three 是唯一渲染器 ====================
 // create() 是两层探测的静态工厂：无 WebGL 全局（Node 测试环境）或构造 throw（显卡黑名单/
