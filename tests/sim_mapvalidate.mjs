@@ -7,7 +7,8 @@
 // 这里用手搭的最小地图数据直接钉这些分支，不依赖真实地图会不会凑巧经过它们。
 globalThis.window = { gameTime: 0, waveNumber: 1, _uid: 0, CTX: {} };
 const {
-  distToPolyline, arcLengthAt, nearestPointOnPolyline, nearestSegmentIndex, buildingCountsSymmetric, isMirroredAcrossAxis,
+  distToPolyline, arcLengthAt, nearestPointOnPolyline, nearestSegmentIndex, lookaheadOnPolyline,
+  buildingCountsSymmetric, isMirroredAcrossAxis,
   insideBaseCircle, buildingOnLaneOrInBase, minPairwiseDistance,
   attackTowerSpacingOk, crossFactionTowerSpacingOk, outerTowersOwnHalfOk,
 } = await import('../src/data/mapValidate.js');
@@ -38,6 +39,18 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   T('段②：拐角之后落在第二段 → 段下标 1', nearestSegmentIndex(wp, 110, 50) === 1);
   const wp3 = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 200, y: 100 }];
   T('段③：三段折线，离第三段最近的点 → 段下标 2', nearestSegmentIndex(wp3, 150, 90) === 2);
+
+  // lookaheadOnPolyline（阶段五：小兵寻路 pure-pursuit 前瞻插值，见 LaneMovementSystem.js）
+  const straight = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 200, y: 0 }];
+  const closeTo = (p, x, y) => Math.abs(p.x - x) < 1e-6 && Math.abs(p.y - y) < 1e-6;
+  T('前瞻①：段内前瞻不越过下一个路点', closeTo(lookaheadOnPolyline(straight, 50, 0, 30), 80, 0));
+  T('前瞻②：前瞻跨过路点，继续消耗剩余弧长走进下一段', closeTo(lookaheadOnPolyline(straight, 50, 0, 100), 150, 0));
+  T('前瞻③：前瞻距离超过折线剩余总长 → 停在终点，不会越界', closeTo(lookaheadOnPolyline(straight, 50, 0, 100000), 200, 0));
+  T('前瞻④：反向（direction=-1）前瞻走向下标更小的方向', closeTo(lookaheadOnPolyline(straight, 50, 0, 30, -1), 20, 0));
+  T('前瞻⑤：反向前瞻跨过路点继续走进上一段', closeTo(lookaheadOnPolyline(straight, 150, 0, 100, -1), 50, 0));
+  T('前瞻⑥：偏离折线的起点先投影回折线，再沿折线前瞻（不是直接从偏离点算直线距离）',
+    closeTo(lookaheadOnPolyline(straight, 50, 10, 30), 80, 0));
+  T('前瞻⑦：前瞻距离为 0 → 停在投影点本身', closeTo(lookaheadOnPolyline(straight, 50, 10, 0), 50, 0));
 }
 
 // ==================== buildingCountsSymmetric ====================

@@ -3,6 +3,7 @@ import { AISystem } from './AISystem.js';
 import { hasRamCannon } from './CombatSystem.js';
 import { canFire } from './FacingSystem.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
+import { lookaheadOnPolyline, projectOntoPolyline } from '../data/mapValidate.js';
 
 /**
  * LaneMovementSystem.js
@@ -59,6 +60,12 @@ const STUCK_T = 1.2;             // 观察窗口（秒）
 const STUCK_D = 14;              // 窗口内的最小位移（px）
 // 兵线回流场：距路面超过这么多格才接管前进方向（1~2 格属正常贴边行军，不该被接管）
 const LANE_FLOW_MIN_STEPS = 2;
+// pure-pursuit 前瞻弧长：转向目标不再是路点数组的精确坐标，而是沿折线往前探这么远
+// 的插值点（见 lookaheadOnPolyline，mapValidate.js）——拐弯处不会让一整波小兵的
+// 期望方向同时收敛到同一个像素，天然削成弧线。60 大致是小兵半径(约10)+到达圈(24)
+// 的数量级再放大几倍，够在标准转角（峡谷最大 16°）削出可见弧度，又不至于大到
+// 让小兵在急弯（扭曲丛林基地口 84°）抄内角穿墙。
+const LANE_LOOKAHEAD = CONFIG.tuning?.laneLookaheadDist ?? 60;
 // v39 互卡死锁让位：两个行军单位贴身对顶时，靠 id 比大小产生确定性的不对称来解锁。
 const DEADLOCK_GAP = 6;    // 贴身判据：间距小于 半径和 + 本值 才算对峙
 const DEADLOCK_DOT = 0.6;  // 双方"朝着对方"的方向余弦阈值（越大越只认正面顶牛）
@@ -396,8 +403,24 @@ export class LaneMovementSystem {
       minion._laneWaypointIndex = Math.max(0, Math.min(wps.length - 1, idx));
       return;
     }
-    const dist = Math.sqrt(distSq);
-    let mx = dx / dist, my = dy / dist; // 期望前进方向（指向当前路点）
+    // pure-pursuit：期望前进方向不再直奔 target 的精确坐标，而是沿折线前瞻
+    // LANE_LOOKAHEAD 弧长算出的一段**纯切线向量**——路点索引/到达判定（上面
+    // 那一段）完全不变，只有"往哪个方向使劲"这一步换了算法。
+    //
+    // ⚠️ 这里必须用"投影点→前瞻点"而不是"小兵当前位置→前瞻点"（回归修复，
+    // 见 lookaheadOnPolyline 头注详细案发过程）：小兵允许在走廊内有侧向偏移
+    // （LANE_KEEP=150 起才纠偏），若用当前位置算向量，前瞻点又强行落在折线
+    // 正中央，等于把"纠偏回中线"也悄悄叠进了转向力——sim_passthrough.mjs
+    // 实测过：仅 ~15px 的侧向偏移，60px 前瞻距离下就能拗出 ~14° 额外转角，
+    // 打乱个别小兵接敌时机，导致混战里有兵在未接敌状态下从别人身边擦过去。
+    // 用投影点起算，两头的侧向偏移分量抵消掉，只留"沿折线走+转弯"，
+    // 走廊纠偏继续完全交给下面 LANE_KEEP 那段逻辑，不重复实现。
+    const proj = projectOntoPolyline(wps, minion.pos.x, minion.pos.y);
+    const look = lookaheadOnPolyline(wps, minion.pos.x, minion.pos.y, LANE_LOOKAHEAD, forward ? 1 : -1);
+    const ldx = look.x - proj.x, ldy = look.y - proj.y;
+    const ldist = Math.hypot(ldx, ldy) || 1;
+    let mx = ldist > 1e-6 ? ldx / ldist : (forward ? 1 : -1); // 期望前进方向（沿折线切线，不含侧向纠偏）
+    let my = ldist > 1e-6 ? ldy / ldist : 0;
     // Q1：人不在路面上时，"直奔下一个路点"是错的——路点方向多半指着一堵野区墙，
     // 兵会顶着凹壁磨到死（实测中路凹角 30s 推进 10px）。这时改用兵线回流场的下山方向：
     // 那是 navgrid 上真正走得通的回家路线，先照它走回路面，回到路面场值归零后自动恢复原逻辑。

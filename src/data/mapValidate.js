@@ -23,8 +23,12 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
  * 把 (x,y) 投影到折线上最近的一点，一次算出距离/弧长/投影坐标三件套。
  * distToPolyline / arcLengthAt / nearestPointOnPolyline 都是这一份投影的不同切面——
  * 拆开各写一份就会变成三份"点到折线"的重复实现，恰好是本模块本身要防的那种漂移。
+ *
+ * 对外导出给 LaneMovementSystem.js 单独调用：小兵的 pure-pursuit 转向方向要用
+ * "投影点→前瞻点"这段纯切线向量（见 lookaheadOnPolyline 的头注），不能用
+ * "小兵当前位置→前瞻点"（那会把小兵在走廊内的侧向偏移也当成转向分量，见下）。
  */
-function projectOntoPolyline(waypoints, x, y) {
+export function projectOntoPolyline(waypoints, x, y) {
   let acc = 0, best = Infinity, bestS = 0, bestX = waypoints[0]?.x ?? x, bestY = waypoints[0]?.y ?? y, bestSeg = 0;
   for (let i = 0; i < waypoints.length - 1; i++) {
     const a = waypoints[i], b = waypoints[i + 1];
@@ -84,6 +88,54 @@ export function nearestPointOnPolyline(waypoints, x, y) {
  */
 export function nearestSegmentIndex(waypoints, x, y) {
   return projectOntoPolyline(waypoints, x, y).seg;
+}
+
+/**
+ * pure-pursuit 前瞻插值点：先把 (x,y) 投影到折线上，再沿折线往 direction 方向走
+ * lookaheadDist 弧长，返回走到的世界坐标——这个返回点本身**落在折线上**（不带
+ * 调用者的侧向偏移量），转角天然被削成弧线（各点沿弧长走到哪算哪，不是全体
+ * 盯着路点数组里同一个精确坐标那种"漏斗"收敛）。
+ * 走到折线端点、后面没有更多点可走时，直接停在最后能走到的那个点上（自然退化成
+ * "瞄着终点"，与旧行为在临近终点时的表现一致）。
+ *
+ * ⚠️ 小兵寻路（LaneMovementSystem._advanceAlongLane）不能直接拿
+ * "本函数返回点 − 小兵当前位置" 当转向方向：小兵允许在走廊内有侧向偏移
+ * （LANE_KEEP=150 起才纠偏，见 LaneMovementSystem.js），若转向目标强行落在
+ * 折线正中央，等于把"走到前瞻点"和"纠偏回中线"这两股力叠在一起，
+ * 侧向偏移越大转向角越猛——仿真已实测：仅 ~15px 的侧向偏移就能在 60px
+ * 前瞻距离下拗出 ~14° 转角，足以打乱一场混战里个别小兵的接敌时机
+ * （sim_passthrough.mjs 曾在这个雷上炸过，见提交历史）。正确用法是同时调用
+ * projectOntoPolyline 拿到"投影点"，用 "本函数返回点 − 投影点" 这段纯切线
+ * 向量当转向方向——侧向偏移被两头抵消掉，只留"往前走+转弯"的分量，
+ * 走廊纠偏完全交给 LaneMovementSystem 自己的 LANE_KEEP 逻辑去管，不重复实现。
+ * @param {{x:number,y:number}[]} waypoints
+ * @param {number} x @param {number} y 当前位置
+ * @param {number} lookaheadDist 前瞻弧长（世界单位）
+ * @param {1|-1} [direction=1] 沿折线走的方向：1=下标递增，-1=下标递减
+ * @returns {{x:number,y:number}}
+ */
+export function lookaheadOnPolyline(waypoints, x, y, lookaheadDist, direction = 1) {
+  const p = projectOntoPolyline(waypoints, x, y);
+  let idx = direction > 0 ? p.seg : p.seg + 1;
+  let curX = p.x, curY = p.y;
+  let remaining = lookaheadDist;
+  while (remaining > 0) {
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= waypoints.length) break;
+    const nx = waypoints[nextIdx].x, ny = waypoints[nextIdx].y;
+    const segDx = nx - curX, segDy = ny - curY;
+    const segLen = Math.hypot(segDx, segDy);
+    if (segLen <= remaining) {
+      curX = nx; curY = ny;
+      remaining -= segLen;
+      idx = nextIdx;
+    } else {
+      const t = segLen > 0 ? remaining / segLen : 0;
+      curX += segDx * t; curY += segDy * t;
+      remaining = 0;
+    }
+  }
+  return { x: curX, y: curY };
 }
 
 /**
