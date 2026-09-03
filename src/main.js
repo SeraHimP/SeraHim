@@ -32,6 +32,7 @@ import { UnitAddDialog } from './ui/UnitAddDialog.js';
 import { TOWER_MODEL_ROLES } from './data/towerModels.js';
 import { SettingsDialog } from './ui/SettingsDialog.js';
 import { ModeDialog } from './ui/ModeDialog.js';
+import { MapEditorDialog } from './ui/MapEditorDialog.js';
 import { DebugLogger } from './utils/DebugLogger.js';
 import { syncAll as syncCustomContent } from './data/customContent.js';
 import { WorldHud } from './ui/WorldHud.js';
@@ -577,6 +578,19 @@ document.getElementById('modeBtn').addEventListener('click', () => {
   } }, uiManager.log.bind(uiManager));
 });
 updateModeBtnLabel();
+
+// 地图编辑器（任务 #109，见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §3/§6 阶段三）：
+// 独立的地形笔刷弹窗，与上面的"游戏地图"切换窗口是两个不同的东西——那个窗口选的是
+// "现在玩哪张已有的图"，这个窗口是"画一张新的自制图"。
+document.getElementById('mapEditorBtn').addEventListener('click', () => {
+  canvasController.cancelPlaceMode();
+  MapEditorDialog.open({ mapSystem, renderer3d, onMapChanged: () => {
+    updateModeBtnLabel();
+    if (mapSystem.currentMap?.world) {
+      canvasController.fitToWorld(mapSystem.currentMap.world.w, mapSystem.currentMap.world.h);
+    }
+  } }, uiManager.log.bind(uiManager));
+});
 
 // ---------- 点选面板接线 ----------
 WeatherPanel.init(weatherSystem, () => {

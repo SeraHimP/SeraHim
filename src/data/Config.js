@@ -1117,8 +1117,6 @@ export const CONFIG = {
   // 改这里即可调平衡，各系统启动时读取；缺省值与系统内兜底一致。
   // ==================== 地图编辑器（v51.32 起分批实现，见
   // docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md）====================
-  // 目前只有 navgrid 笔刷的底层纯函数（src/data/navgrid.js）在用；笔刷 UI/画布
-  // 交互接上之后会陆续补上 brushRadius 等参数，先只放已经有代码在读的这几项。
   mapEditor: {
     // navgrid 分辨率自适应公式（§3.2 已确认）：n = round(max(world.w,world.h) / cellSize)，
     // 夹在 [navgridMinN, navgridMaxN]。cellSize 取值依据：召唤师峡谷现有的 3552/256
@@ -1126,6 +1124,13 @@ export const CONFIG = {
     navgridCellSize: 14,
     navgridMinN: 128,   // 下限：格子太粗，小地图会失真
     navgridMaxN: 512,   // 上限：笔刷实时重绘/位打包的性能红线，真机测过再收紧或放宽
+    // 阶段三 MVP：笔刷 UI 接入（MapEditorDialog.js）。半径单位是【格子】，
+    // 不是世界单位——不同地图 navgrid 分辨率不同，同一个世界距离在细格子地图上
+    // 需要更多格子数才能覆盖，画笔"看起来多粗"交给格子数而不是世界距离控制，
+    // 用户拖滑杆时看到的是画布上笔刷圈的像素大小，跟世界尺度无关，更符合直觉。
+    brushRadiusGridDefault: 6,
+    brushRadiusGridMin: 1,
+    brushRadiusGridMax: 24,
   },
 
   tuning: {
