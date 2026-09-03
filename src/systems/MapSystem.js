@@ -119,7 +119,7 @@ export class MapSystem {
     this.currentMap = map;
     this.currentMode = effectiveMode;
     this.currentBaseMapId = baseId;
-    this._nav = undefined;   // navgrid 随地图重新解码
+    this.invalidateNav();   // navgrid 随地图重新解码（_fields 本来就会靠 mapId 变化自然失效，一并清掉不多余）
     // Store per-type skill overrides for CombatSystem auto-init
     SkillLibrary._mapOverrides = map.skillOverrides || {};
     SkillLibrary._excludeSkills = map.excludeSkills || {};
@@ -755,6 +755,27 @@ export class MapSystem {
       }
     }
     return this._nav;
+  }
+
+  /**
+   * v51.32：地图编辑器前置重构（阶段二，见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md
+   * §2 原则 6）——navgrid 相关缓存的失效入口：解码后的可行走位图（`_nav`）与
+   * 各路回流场（`_fields`，见 `_laneField`）。
+   *
+   * 正常切图不需要调用这个方法：两处缓存各自靠 `this._nav !== undefined` /
+   * `this._fieldsMapId !== map.id` 在切图时自然重算。这个方法是给"同一张图、
+   * navgrid 数据在运行时被改了"这一种场景用的——目前唯一会发生这种事的是地图编辑器
+   * 的地形笔刷：画一笔就要让"能不能走"和"沿哪条路脱困"两份缓存立刻失效，
+   * 否则画完地形，寻路读到的还是画之前的旧位图。
+   *
+   * 只清 MapSystem 自己这两处逻辑层缓存；渲染层（离屏地形画布、植被/水面/裙边网格）
+   * 的缓存走 `ThreeRenderer.invalidateTerrain()`，两处调用点分开是因为
+   * MapSystem（系统层）不允许 import 渲染层模块（CLAUDE.md 的系统间禁止互相 import）——
+   * 调用方（未来的地图编辑器）需要在改完 navgrid 后把两个方法都调一遍。
+   */
+  invalidateNav() {
+    this._nav = undefined;
+    this._fields = {};
   }
 
   /** 龙坑/男爵坑坑心（navgrid 地图才有）。name = 'dragon' | 'baron' */

@@ -3343,4 +3343,24 @@ async function world() {
     /flex-wrap:wrap/.test(qualityRowBlock));
 }
 
+// ---- v51.32：地图编辑器前置重构——渲染层的地形/植被/水面/裙边缓存要跟着一起失效 ----
+// 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §2 原则 6。MapSystem 那半的失效
+// （_nav/_fields）在 tests/sim_terrain.mjs 里已经behaviorally 验过；ThreeRenderer
+// 依赖 document 不能无头实例化（sim_lightring.mjs 头注记过这条约束），这半按同一
+// 惯例走源码正则断言。
+{
+  const trSrc = srcOf('src/presentation/ThreeRenderer.js');
+  const invalidateBlock = trSrc.match(/invalidateTerrain\(\) \{[\s\S]{0,400}?\n  \}/)?.[0] || '';
+  T('渲①-invalidateTerrain() 会清 TerrainLayer 的离屏画布缓存（之前从未被清过的那处）',
+    /invalidateTerrainCache\(this\.mapSystem\?\.currentMap\?\.id\)/.test(invalidateBlock));
+  T('渲②-同时清掉植被/水面/裙边各自的 "同图跳过" 守卫（_mapId）',
+    /this\.veg\._mapId = null/.test(invalidateBlock)
+    && /this\.water\._mapId = null/.test(invalidateBlock)
+    && /this\.skirt\._mapId = null/.test(invalidateBlock));
+
+  const tlSrc = srcOf('src/presentation/TerrainLayer.js');
+  T('渲③-TerrainLayer 导出了 invalidateTerrainCache，且真的对 _terrainCache 调用了 delete',
+    /export function invalidateTerrainCache/.test(tlSrc) && /_terrainCache\.delete/.test(tlSrc));
+}
+
 done();

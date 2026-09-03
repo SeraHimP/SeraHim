@@ -205,5 +205,32 @@ for (const laneId of ['top', 'mid', 'bot']) {
 }
 T('回流场未把行军队形压扁（p90 铺开度 ≥ 关闭态的 60%）', spreadOk);
 
+// ==================== v51.32：地图编辑器前置重构——navgrid 缓存失效 ====================
+// 见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md §2 原则 6："改地形要通知失效"。
+// 排查发现 _nav（解码后的可行走位图）与 _fields（各路回流场）此前只在【切图】时
+// 自然失效（靠 map.id 变化触发），同一张图运行时改 navgrid 数据没有任何清缓存的入口——
+// 地图编辑器的地形笔刷画一笔就需要让寻路立刻看见新数据，这里补上 invalidateNav()。
+{
+  const { mapSys } = build();
+  const navBefore = mapSys._navgrid();
+  T('失效①-navgrid 解码后被缓存（同一次调用拿到同一个对象）', mapSys._navgrid() === navBefore);
+  mapSys._laneField('top'); // 触发回流场缓存
+  T('失效②-回流场确实缓存了（_fields.top 不是 undefined）', mapSys._fields?.top !== undefined);
+
+  mapSys.invalidateNav();
+  T('失效③-invalidateNav() 之后 _nav 变回 undefined（下次访问会重新解码）', mapSys._nav === undefined);
+  T('失效④-invalidateNav() 之后 _fields 被清空', Object.keys(mapSys._fields || {}).length === 0);
+
+  const navAfter = mapSys._navgrid();
+  T('失效⑤-重新解码出一份新对象（不是复用失效前那份引用，证明真的重算了）', navAfter !== navBefore);
+  T('失效⑥-但内容等价（同一张地图，重新解码结果应该一致，证明"重算"没有意外改变数据）',
+    navAfter.n === navBefore.n && navAfter.bits.length === navBefore.bits.length
+    && navAfter.bits.every((v, i) => v === navBefore.bits[i]));
+
+  const { srcOf } = await import('./_harness.mjs');
+  T('失效⑦-loadMap 内部也走 invalidateNav（不是两处各写一份重置逻辑）',
+    /this\.invalidateNav\(\);/.test(srcOf('src/systems/MapSystem.js')));
+}
+
 console.log(`地形避障验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

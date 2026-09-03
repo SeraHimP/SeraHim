@@ -23,7 +23,7 @@
  *   CTX.__checkProjection()  见 ProjectionCheck.js
  */
 import * as THREE from '../../vendor/three.module.js';
-import { buildTerrainLayer } from './TerrainLayer.js';
+import { buildTerrainLayer, invalidateTerrainCache } from './TerrainLayer.js';
 import { UnitLayer } from './UnitLayer.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
@@ -782,9 +782,26 @@ export class ThreeRenderer {
     return this.lookHeightOffset;
   }
 
-  // 强制重建地形（含墙体重采样 isWalkable）。用于河道可行走开关切换后刷新开挖的河道。
+  // 强制重建地形（含墙体重采样 isWalkable）。用于河道可行走开关切换、以及地图编辑器
+  // 的地形笔刷改完 navgrid 之后刷新画面。
   // 必须把 _terrainMapId 置空——否则 _rebuildTerrain 开头的"同一张图就跳过"守卫会挡回（陷阱#6）。
-  invalidateTerrain() { this._terrainMapId = null; this._terrainDirty = true; }
+  //
+  // v51.32：光置空 _terrainMapId 只解决渲染器自己这层守卫，还有三处各自独立的
+  // "同图跳过"守卫必须一起清，否则重建了个寂寞（渲染器以为在重建，实际每处内部
+  // 都直接返回了旧结果）：
+  //   ① TerrainLayer.js 的 _terrainCache（模块级 Map，按 map.id 缓存烘焙好的离屏
+  //      画布，之前从未被清过，见 invalidateTerrainCache 的头注）；
+  //   ② VegetationLayer/WaterLayer/MapSkirtLayer 各自的 `this._mapId === map.id`
+  //      守卫——三者的 build() 都是"同图直接 return"，不会因为地形变了就自动重算。
+  // 四处一起清，改地形才能保证画面立刻反映新数据，不用切一次图才刷新。
+  invalidateTerrain() {
+    this._terrainMapId = null;
+    this._terrainDirty = true;
+    invalidateTerrainCache(this.mapSystem?.currentMap?.id);
+    if (this.veg) this.veg._mapId = null;
+    if (this.water) this.water._mapId = null;
+    if (this.skirt) this.skirt._mapId = null;
+  }
 
   /**
    * 摄像机映射桥（第2步的临时件，第4步 ThreeCameraController 会取代它）。

@@ -21,6 +21,26 @@ import { baseCircleCenter } from '../data/baseCircle.js';
 const _terrainCache = new Map();
 
 /**
+ * v51.32：地图编辑器前置重构（阶段二，见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md
+ * §2 原则 6）——清掉某张地图缓存的离屏地形画布。
+ *
+ * 在此之前 `_terrainCache` 是【全程只增不减】的：ThreeRenderer.invalidateTerrain()
+ * 只置空 `_terrainMapId` 让渲染器那一层的"同图跳过"守卫失效，但 buildTerrainLayer()
+ * 自己这份缓存的 key（map.id 不变）从没变过，于是"渲染器以为在重建"实际拿到的还是
+ * 上一次烘焙的旧画布——这条路径目前唯一的调用者（河道可行走开关）之所以没暴露这个
+ * 坑，是因为那个开关只影响寻路/isWalkable，不影响 buildTerrainLayer 读的 grid.walk
+ * 视觉表现在那条路径上恰好没有变化。地图编辑器的地形笔刷会真的改 navgrid 的可走位，
+ * 每一笔都要求这份缓存跟着作废，否则画完地形游戏里看到的还是旧的。
+ *
+ * 两个 key（有无 '#nav' 后缀）一起删，不假设调用方知道当前地图是不是 navgrid 模式。
+ */
+export function invalidateTerrainCache(mapId) {
+  if (!mapId) return;
+  _terrainCache.delete(mapId);
+  _terrainCache.delete(mapId + '#nav');
+}
+
+/**
  * @param map        地图定义
  * @param grid       WallLayer 的可走网格 { walk, nx, ny }（navgrid 地图才有意义）
  * @param mapSystem  用于取河道强度场（riverFactor）；缺省则不画河
