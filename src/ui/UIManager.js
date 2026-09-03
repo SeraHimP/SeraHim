@@ -1197,7 +1197,11 @@ export class UIManager {
     const card = e.type === 'tower' ? this.createTowerCard(e) : this.createMinionCard(e);
     this.selCard.appendChild(card);
     this._selCardEl = card;
-    const tierLabels = { outer: '外塔', inner: '内塔', base: '高地塔', nexus_lane: '召唤水晶', hq_tower: '枢纽塔', nexus_main: '水晶枢纽' };
+    // v51.35：'base'/'hq_tower' 统一改名"水晶防御塔"/"枢纽防御塔"（原来这里叫
+    // "高地塔"/"枢纽塔"，与 core.js 里 core_tier_base/core_tier_hq 两条身份技能
+    // 的显示名不一致——玩家点开塔的技能栏看到的是"水晶防御塔"，标题却写"高地塔"，
+    // 同一座塔两个名字。用户定稿全局统一，这里改成跟身份技能同一个名字。）
+    const tierLabels = { outer: '外塔', inner: '内塔', base: '水晶防御塔', nexus_lane: '召唤水晶', hq_tower: '枢纽防御塔', nexus_main: '水晶枢纽' };
     // v45：标题与右侧徽标合并。
     // 用户："左上角那个就显示为 [阵营色圆圈] 单位类型。不要显示文字的阵营和右侧的＃编号"
     // 合并前左边写「🏰 #1 防御塔」、右边写「🔵 蓝方 · 外塔」，两处说的是同一件事，

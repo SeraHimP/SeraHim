@@ -11,7 +11,7 @@ import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
 const {
   resolveBaseNavgrid, decodeBaseBits, cloneMapForEdit, buildCustomMapPayload,
-  cloneBuildingsForEdit, snapBuildingPos, withBuildingMoved, validateDraftMap,
+  cloneBuildingsForEdit, snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
 } = await import('../src/data/mapEditorCore.js');
 const { unpackBits, packBits } = await import('../src/data/navgrid.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -153,6 +153,69 @@ const T = board.T;
   T('⑪-少一座红方塔 → 报出不对称', asymResult.ok === false && asymResult.symmetric === false);
 }
 
+// ==================== ⑤c 档位自动识别 autoDetectTiers ====================
+{
+  const sr = MAPS.summoners_rift_v1;
+
+  // 真实地图往返：现有峡谷的档位本来就是"正确答案"，自动识别应该原样复现它，
+  // 不依赖弧长方向假设（用距自家召唤水晶的直线距离判断，见函数头注）。
+  const real = cloneBuildingsForEdit(sr);
+  const detected = autoDetectTiers(sr, real);
+  const mismatches = detected.filter((b, i) => b.tier !== real[i].tier)
+    .map(b => `${b.faction}/${b.laneId}/${b.tier}(期望${real[detected.indexOf(b)]?.tier})`);
+  T(`①-真实峡谷数据跑自动识别，档位与原数据逐位一致${mismatches.length ? '：' + mismatches.join('；') : ''}`,
+    mismatches.length === 0);
+
+  // 打乱一路的档位（外/内互换），自动识别应该按位置纠正回来
+  const shuffled = cloneBuildingsForEdit(sr).map(b => {
+    if (b.faction === 'blue' && b.laneId === 'top' && b.tier === 'outer') return { ...b, tier: 'inner' };
+    if (b.faction === 'blue' && b.laneId === 'top' && b.tier === 'inner') return { ...b, tier: 'outer' };
+    return b;
+  });
+  const fixed = autoDetectTiers(sr, shuffled);
+  const wantOuter = sr.buildings.find(b => b.faction === 'blue' && b.laneId === 'top' && b.tier === 'outer');
+  const wantInner = sr.buildings.find(b => b.faction === 'blue' && b.laneId === 'top' && b.tier === 'inner');
+  T('②-外/内塔的档位被人为打乱后，自动识别按位置纠正回原样',
+    fixed.find(b => b.pos.x === wantOuter.pos.x && b.pos.y === wantOuter.pos.y).tier === 'outer'
+    && fixed.find(b => b.pos.x === wantInner.pos.x && b.pos.y === wantInner.pos.y).tier === 'inner');
+
+  // 手搭最小地图：单路只有一座链上的塔 + 一个召唤水晶 → 判给水晶防御塔
+  // （见函数头注的边界情形取舍：离锚点最近同时也是唯一一座，优先按"离锚点最近"判）
+  const oneLane = {
+    lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 1000, y: 0 }] }],
+    buildings: [
+      { faction: 'blue', laneId: 'mid', tier: 'inner', pos: { x: 800, y: 0 } },
+      { faction: 'blue', laneId: 'mid', tier: 'nexus_lane', pos: { x: 900, y: 0 } },
+    ],
+  };
+  const oneLaneResult = autoDetectTiers(oneLane, oneLane.buildings);
+  T('③-单路只有一座链上的塔 → 判给水晶防御塔', oneLaneResult[0].tier === 'base');
+
+  // 没有 laneId 的塔（不管原来是什么档位）一律判给枢纽防御塔，nexus_main 本身不受影响
+  const hqCase = [
+    { faction: 'blue', laneId: null, tier: 'outer', pos: { x: 0, y: 0 } },   // 手误设错的档位
+    { faction: 'blue', laneId: null, tier: 'nexus_main', pos: { x: 10, y: 10 } },
+  ];
+  const hqResult = autoDetectTiers({ lanes: [] }, hqCase);
+  T('④-没有路的塔一律判给枢纽防御塔（不管原来标了什么）', hqResult[0].tier === 'hq_tower');
+  T('⑤-nexus_main 本身不会被自动识别改动', hqResult[1].tier === 'nexus_main');
+
+  // 既没有召唤水晶也没有水晶枢纽做锚点 → 无法判断方向，保留原档位
+  const noAnchor = [
+    { faction: 'blue', laneId: 'mid', tier: 'inner', pos: { x: 100, y: 0 } },
+    { faction: 'blue', laneId: 'mid', tier: 'outer', pos: { x: 900, y: 0 } },
+  ];
+  const noAnchorResult = autoDetectTiers({ lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 1000, y: 0 }] }] }, noAnchor);
+  T('⑥-两个锚点都没有 → 保留原档位（不瞎猜）',
+    noAnchorResult[0].tier === 'inner' && noAnchorResult[1].tier === 'outer');
+
+  // 纯函数：不改原数组
+  const before = cloneBuildingsForEdit(sr);
+  const beforeSnapshot = JSON.stringify(before);
+  autoDetectTiers(sr, before);
+  T('⑦-autoDetectTiers 不修改传入的原数组（纯函数）', JSON.stringify(before) === beforeSnapshot);
+}
+
 // ==================== ⑤ CONFIG.mapEditor 笔刷半径软编码 ====================
 {
   T('①-CONFIG.mapEditor.brushRadiusGridDefault 存在且在 [min,max] 区间内',
@@ -183,6 +246,42 @@ const T = board.T;
     /switchBase[\s\S]{0,400}cloneBuildingsForEdit/.test(src));
   T('⑧-建筑标记半径在重画函数里现算，不是模块顶层的一次性常量（切图后 n 变了，写成一次性常量会画错大小）',
     /drawBuildingMarkers[\s\S]{0,200}buildingMarkerRadiusPx/.test(src));
+  T('⑨-自动识别档位按钮调用了 mapEditorCore.js 的 autoDetectTiers（不是弹窗里另算一套）',
+    /autoDetectTiers/.test(src) && /from ['"].*waveComposition\.js['"]/.test(src));
+  T('⑩-点选建筑后的手动改档位下拉框用的是 STRUCT_TIERS（与游戏内其它地方同一张档位表，不是另起一份）',
+    /STRUCT_TIERS\.map/.test(src));
+  T('⑪-切换起点地图会重置选中的建筑（selectedBuildingIndex 在 switchBase 里被清空，避免旧下标指错建筑）',
+    /switchBase[\s\S]{0,400}selectedBuildingIndex = -1/.test(src));
+}
+
+// ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================
+// v51.35：'base'/'hq_tower' 原来在 waveComposition.js/UIManager.js/pagesConfig.js/
+// open.js/schema/index.js 五处各写各的（"水晶塔"/"高地塔"/"枢纽塔"三种叫法混用），
+// 玩家点开塔的技能栏（core_tier_base/core_tier_hq 身份技能的显示名）看到的又是
+// 第四种"水晶防御塔"/"枢纽防御塔"——同一座塔在不同地方叫不同名字。
+// 这里钉住"以 core.js 身份技能的名字为准，其余四处都跟它一致"，
+// 防止改名改了一半、或者以后又漂移回去。
+{
+  const { STRUCT_TIERS } = await import('../src/data/waveComposition.js');
+  const { SCHEMA } = await import('../src/data/schema/index.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const CANON = { base: SkillLibrary.core_tier_base?.name, hq_tower: SkillLibrary.core_tier_hq?.name };
+  T('①-core.js 身份技能确实叫"水晶防御塔"/"枢纽防御塔"（本条测试自己的前提假设）',
+    CANON.base === '水晶防御塔' && CANON.hq_tower === '枢纽防御塔');
+  T('②-waveComposition.js STRUCT_TIERS 与身份技能同名',
+    STRUCT_TIERS.find(t => t.key === 'base').label === CANON.base
+    && STRUCT_TIERS.find(t => t.key === 'hq_tower').label === CANON.hq_tower);
+  T('③-schema/index.js SCHEMA 的 tower.base/tower.hq_tower 与身份技能同名',
+    SCHEMA['tower.base'].label === CANON.base && SCHEMA['tower.hq_tower'].label === CANON.hq_tower);
+  const uiSrc = srcOf('../src/ui/UIManager.js');
+  T('④-UIManager.js 选中卡片标题的 tierLabels 与身份技能同名',
+    uiSrc.includes(`base: '${CANON.base}'`) && uiSrc.includes(`hq_tower: '${CANON.hq_tower}'`));
+  const cfgSrc = srcOf('../src/ui/editor/pagesConfig.js');
+  T('⑤-pagesConfig.js 建筑体积面板的 _BSIZE_TIERS 与身份技能同名',
+    cfgSrc.includes(`'base', '${CANON.base}'`) && cfgSrc.includes(`'hq_tower', '${CANON.hq_tower}'`));
+  const openSrc = srcOf('../src/ui/editor/open.js');
+  T('⑥-open.js 模板编辑器的 _TPL_TOWER_TIERS 与身份技能同名',
+    openSrc.includes(`label: '${CANON.base}'`) && openSrc.includes(`label: '${CANON.hq_tower}'`));
 }
 
 board.done();

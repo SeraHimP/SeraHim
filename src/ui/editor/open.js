@@ -213,13 +213,15 @@ export const EDITOR_OPEN = {
   _labelOf(type) { return this._TPL_LABELS[type] || minionLabel(type); },
   _iconOf(type) { return this._TPL_ICONS[type] || minionIcon(type); },
   // 分层防御塔：模板编辑器"防御塔"下的二级 tab。tier 与地图 tierStats / 生成建筑的 _mapTier 同键。
+  // v51.35：base/hq_tower 改名"水晶防御塔"/"枢纽防御塔"，见 waveComposition.js
+  // STRUCT_TIERS 头注。
   _TPL_TOWER_TIERS: [
-    { key: 'outer',      label: '外塔',     icon: '🗼' },
-    { key: 'inner',      label: '内塔',     icon: '🏯' },
-    { key: 'base',       label: '水晶塔',   icon: '🏛️' },
-    { key: 'hq_tower',   label: '枢纽塔',   icon: '🏰' },
-    { key: 'nexus_lane', label: '召唤水晶', icon: '🔮' },
-    { key: 'nexus_main', label: '水晶枢纽', icon: '💎' },
+    { key: 'outer',      label: '外塔',       icon: '🗼' },
+    { key: 'inner',      label: '内塔',       icon: '🏯' },
+    { key: 'base',       label: '水晶防御塔', icon: '🏛️' },
+    { key: 'hq_tower',   label: '枢纽防御塔', icon: '🏰' },
+    { key: 'nexus_lane', label: '召唤水晶',   icon: '🔮' },
+    { key: 'nexus_main', label: '水晶枢纽',   icon: '💎' },
   ],
   // 应用范围（用户定稿）：仅模板 / 仅场上目标 / 两者。阵营筛选对【塔与小兵都生效】。
   _applyScope: 'both',

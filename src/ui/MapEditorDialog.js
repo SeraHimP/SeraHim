@@ -38,9 +38,10 @@
 import { paneHtml } from './dialogShell.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle } from '../data/navgrid.js';
+import { STRUCT_TIERS } from '../data/waveComposition.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
-  snapBuildingPos, withBuildingMoved, validateDraftMap,
+  snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
 } from '../data/mapEditorCore.js';
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
@@ -69,6 +70,7 @@ export const MapEditorDialog = {
     let editMode = 'terrain';           // 'terrain'=地形笔刷 | 'buildings'=建筑摆放
     let draftBuildings = cloneBuildingsForEdit(baseMap);
     let draggingBuildingIndex = -1;
+    let selectedBuildingIndex = -1;     // 点选一座建筑后可在下方手动改档位（覆盖自动识别）
 
     const isCustomMap = (id) => !!(CONFIG.customMaps && CONFIG.customMaps[id]);
     // 校验只关心结构（lanes/world/walls/useNavgrid）+ 当前草稿建筑，navgrid 笔刷改的
@@ -117,7 +119,10 @@ export const MapEditorDialog = {
         ctx.arc(gx, gy, markerR, 0, Math.PI * 2);
         ctx.fillStyle = FAC_COLOR[b.faction] || '#ccc';
         ctx.fill();
-        ctx.lineWidth = 1; ctx.strokeStyle = i === draggingBuildingIndex ? '#fff' : 'rgba(0,0,0,.5)'; ctx.stroke();
+        const highlighted = i === draggingBuildingIndex || i === selectedBuildingIndex;
+        ctx.lineWidth = highlighted ? 2 : 1;
+        ctx.strokeStyle = highlighted ? '#fff' : 'rgba(0,0,0,.5)';
+        ctx.stroke();
       });
     };
 
@@ -179,6 +184,29 @@ export const MapEditorDialog = {
       el.style.color = '#ff8080';
     };
 
+    // 点选一座建筑后，在画布下方展示它的档位并允许手动改（覆盖自动识别的结果）。
+    // 用户定稿："档位自动识别为主，允许手动覆盖"——这里就是那个"手动覆盖"入口，
+    // 独立于画布重绘（每次拖拽/选中都只替换这一小块 DOM，不走整弹窗 render()）。
+    const updateSelectionPanel = () => {
+      const el = document.getElementById('mapEditorSelectionPanel');
+      if (!el) return;
+      const b = selectedBuildingIndex >= 0 ? draftBuildings[selectedBuildingIndex] : null;
+      if (!b) {
+        el.innerHTML = `<div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>`;
+        return;
+      }
+      const facLabel = b.faction === 'blue' ? '蓝方' : (b.faction === 'red' ? '红方' : b.faction);
+      el.innerHTML = `<div class="slider-row"><label style="width:auto;">${facLabel}${b.laneId ? '/' + b.laneId : ''}：</label>
+        <select id="mapEditorTierSelect" style="flex:1;">
+          ${STRUCT_TIERS.map(t => `<option value="${t.key}" ${t.key === b.tier ? 'selected' : ''}>${t.label}</option>`).join('')}
+        </select></div>`;
+      document.getElementById('mapEditorTierSelect').addEventListener('change', (e) => {
+        draftBuildings = draftBuildings.map((x, i) => (i === selectedBuildingIndex ? { ...x, tier: e.target.value } : x));
+        redrawCanvas();
+        updateValidationStatus();
+      });
+    };
+
     const bindCanvasEvents = () => {
       const canvas = document.getElementById('mapEditorCanvas');
       if (!canvas) return;
@@ -186,6 +214,8 @@ export const MapEditorDialog = {
         canvas.setPointerCapture(e.pointerId);
         if (editMode === 'buildings') {
           draggingBuildingIndex = findBuildingNear(canvas, e.clientX, e.clientY);
+          selectedBuildingIndex = draggingBuildingIndex;
+          updateSelectionPanel();
           if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
         } else {
           painting = true;
@@ -243,11 +273,18 @@ export const MapEditorDialog = {
             <span id="mapEditorBrushLabel">${brushRadius} 格</span>
           </div>` : `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
-            拖动一座建筑：分路的塔（外/内/水晶塔）会被吸附纠正回自己那条兵线上，
-            不分路的建筑（水晶枢纽/枢纽塔）自由摆放。红圈标出违反结构规则的建筑
+            拖动一座建筑：分路的塔（外塔/内塔/水晶防御塔）会被吸附纠正回自己那条兵线上，
+            不分路的建筑（水晶枢纽/枢纽防御塔）自由摆放。红圈标出违反结构规则的建筑
             （同一套判定见 tests/sim_maps.mjs，编辑器和发布前验收用的是同一个 mapValidate.js）。
           </div>
-          <div id="mapEditorValidationStatus" style="font-size:12px;margin-bottom:4px;"></div>`}
+          <div id="mapEditorValidationStatus" style="font-size:12px;margin-bottom:4px;"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <button id="mapEditorAutoDetectBtn">🔍 自动识别档位</button>
+            <span style="font-size:10px;color:var(--text-mute);">离召唤水晶最近=水晶防御塔，最远=外塔，没有路的塔=枢纽防御塔</span>
+          </div>
+          <div id="mapEditorSelectionPanel" style="margin-bottom:6px;">
+            <div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>
+          </div>`}
           <div style="display:flex;justify-content:center;margin:8px 0;">
             <canvas id="mapEditorCanvas" width="${n}" height="${n}"
               style="width:${CANVAS_DISPLAY_PX}px;height:${CANVAS_DISPLAY_PX}px;image-rendering:pixelated;
@@ -293,7 +330,7 @@ export const MapEditorDialog = {
       bindEvents();
       bindCanvasEvents();
       redrawCanvas();
-      if (editMode === 'buildings') updateValidationStatus();
+      if (editMode === 'buildings') { updateValidationStatus(); updateSelectionPanel(); }
     };
 
     const setStatus = (msg) => {
@@ -307,6 +344,7 @@ export const MapEditorDialog = {
       baseMap = mapSystem.getMapById(baseId);
       ({ n, bits } = decodeBaseBits(baseMap));
       draftBuildings = cloneBuildingsForEdit(baseMap);
+      selectedBuildingIndex = -1;   // 建筑数组重建了，旧下标不再指向同一座塔
       statusMsg = '';
       render();
     };
@@ -316,6 +354,15 @@ export const MapEditorDialog = {
 
       document.getElementById('mapEditorEditModeTerrain').addEventListener('click', () => { editMode = 'terrain'; render(); });
       document.getElementById('mapEditorEditModeBuildings').addEventListener('click', () => { editMode = 'buildings'; render(); });
+
+      // 自动识别档位：只在建筑模式下渲染
+      document.getElementById('mapEditorAutoDetectBtn')?.addEventListener('click', () => {
+        draftBuildings = autoDetectTiers(draftMapForValidate(), draftBuildings);
+        redrawCanvas();
+        updateValidationStatus();
+        updateSelectionPanel();
+        logFn('🔍 已按位置自动识别全部建筑档位（手动改过的也会被重算，如需保留请改完再点这个）', 'spawn');
+      });
 
       // 画/擦切换、笔刷半径滑杆只在地形模式下渲染，建筑模式下这几个元素不存在
       document.getElementById('mapEditorModeDraw')?.addEventListener('click', () => { brushMode = 'draw'; render(); });

@@ -140,3 +140,57 @@ export function validateDraftMap(draftMap, opts = {}) {
     ok: symmetric && offLane.length === 0 && spacingViolations.length === 0 && crossViolations.length === 0,
   };
 }
+
+// ==================== 档位自动识别（用户定稿："塔的层次也可以设置，最好弄个自动
+// 识别这种"）====================
+// 规则（用户原话）：一条路上有很多塔时，外防御塔只能有一个（原则上是最外侧），
+// 召唤水晶前为水晶防御塔，水晶枢纽前面为枢纽防御塔，剩下的都是内塔（或者没有）。
+//
+// "最外侧/紧贴"不依赖弧长方向假设（沿折线哪一端是哪一方，各地图并不统一）——
+// 直接量到本方【召唤水晶】的直线距离：同路同阵营的塔按这个距离排序，
+// 离召唤水晶最近的是水晶防御塔，最远的是外塔，中间的都是内塔。
+// 没有召唤水晶（编辑器里被删掉了，或地图本来就没有）时退回本方水晶枢纽做锚点；
+// 两个锚点都没有就不改这条路（无法判断方向，保留原档位好过瞎猜）。
+//
+// 没有 laneId 的塔（不属于任何一条路）只有一种可能：枢纽防御塔——分路的四档
+// （外/内/水晶防御塔/召唤水晶）按定义都必须挂在某条路上，水晶枢纽本身是识别的
+// 起点不会被重新分类，排除这两者后，"没有路"在当前档位词表里只剩枢纽防御塔一种解释。
+const _dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const _CHAIN_TIERS = new Set(['outer', 'inner', 'base']);
+
+/**
+ * 对整份草稿建筑跑一遍档位自动识别，返回一份新数组（不改原数组）。
+ * 只重算"链上"的塔（当前档位是 outer/inner/base 之一）和"没有路"的塔（判给
+ * 枢纽防御塔）——nexus_lane/nexus_main 是识别用的锚点，不会被这个函数改动，
+ * 手动把某座塔的档位设成这两者也不会被自动识别悄悄改回去。
+ * @param {object} map 草稿地图（要有 lanes）
+ * @param {object[]} buildings 草稿建筑数组
+ * @returns {object[]}
+ */
+export function autoDetectTiers(map, buildings) {
+  const next = buildings.map(b => ({ ...b }));
+
+  // ---- 分路链：outer/inner/base 按到本方召唤水晶（缺省水晶枢纽）的距离重排 ----
+  const groups = new Map();
+  next.forEach((b, i) => {
+    if (!b.laneId || !_CHAIN_TIERS.has(b.tier)) return;
+    const key = b.faction + '|' + b.laneId;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  });
+  for (const [key, idxs] of groups) {
+    const [faction, laneId] = key.split('|');
+    const anchor = next.find(b => b.faction === faction && b.laneId === laneId && b.tier === 'nexus_lane')
+      || next.find(b => b.faction === faction && b.tier === 'nexus_main');
+    if (!anchor) continue;   // 没有任何锚点，无法判断方向，保留原档位
+    const sorted = [...idxs].sort((a, b) => _dist(next[a].pos, anchor.pos) - _dist(next[b].pos, anchor.pos));
+    sorted.forEach((idx, rank) => {
+      next[idx].tier = rank === 0 ? 'base' : (rank === sorted.length - 1 ? 'outer' : 'inner');
+    });
+  }
+
+  // ---- 没有路的塔：枢纽防御塔（水晶枢纽本身按 tier 排除，不参与重分类） ----
+  next.forEach(b => { if (!b.laneId && b.tier !== 'nexus_main') b.tier = 'hq_tower'; });
+
+  return next;
+}

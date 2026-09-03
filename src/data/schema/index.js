@@ -154,9 +154,11 @@ const GROWTH_FIELDS = [
   NUM('ap', '法术强度 /波', 0, 50, 0.1),
 ];
 
+// v51.35：base/hq_tower 改名"水晶防御塔"/"枢纽防御塔"，见 waveComposition.js
+// STRUCT_TIERS 头注。
 const TOWER_TIERS = [
-  ['outer', '外塔'], ['inner', '内塔'], ['base', '水晶塔'],
-  ['hq_tower', '枢纽塔'], ['nexus_lane', '召唤水晶'], ['nexus_main', '水晶枢纽'],
+  ['outer', '外塔'], ['inner', '内塔'], ['base', '水晶防御塔'],
+  ['hq_tower', '枢纽防御塔'], ['nexus_lane', '召唤水晶'], ['nexus_main', '水晶枢纽'],
 ];
 const MINION_TYPES = [
   ['melee', '近战兵'], ['ranged', '远程兵'], ['siege', '炮兵'], ['super', '超级兵'],

@@ -183,9 +183,11 @@ export const EDITOR_PAGES_CONFIG = {
   // LoL 中水晶枢纽/防御塔/召唤水晶体积不同，这里按 tier 提供可调半径。
   // 写入 CONFIG.buildingSizes；渲染器的塔精灵缓存 key 含尺寸，改动后新尺寸精灵
   // 会惰性重新烘焙，无需手动清缓存，画面即时生效。
+  // v51.35：base/hq_tower 改名"水晶防御塔"/"枢纽防御塔"，见 waveComposition.js
+  // STRUCT_TIERS 头注（全局统一改名的唯一理由说明，不在每处重复）。
   _BSIZE_TIERS: [
-    ['outer', '外塔'], ['inner', '内塔'], ['base', '高地塔'],
-    ['hq_tower', '枢纽塔'], ['nexus_lane', '召唤水晶'], ['nexus_main', '水晶枢纽'],
+    ['outer', '外塔'], ['inner', '内塔'], ['base', '水晶防御塔'],
+    ['hq_tower', '枢纽防御塔'], ['nexus_lane', '召唤水晶'], ['nexus_main', '水晶枢纽'],
     // 手动建塔（添加单位→建造防御塔）不走地图分层，没有 _mapTier，用这一档兜底。
     ['default', '手动建塔（默认）'],
   ],

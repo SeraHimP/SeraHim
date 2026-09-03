@@ -32,14 +32,19 @@ export const RULE_FIELDS = {
 // 所有依赖建筑的条件一律**放行**，宁可多出兵也不要静默漏兵 —— 一条规则突然不生效、
 // 却没有任何报错，是这类编排最难查的故障。
 
-/** 档位：分路的四档 + 全场的两档。key 与地图 buildings 的 tier 同名。 */
+/**
+ * 档位：分路的四档 + 全场的两档。key 与地图 buildings 的 tier 同名。
+ * v51.35：base/hq_tower 的显示名统一成"水晶防御塔"/"枢纽防御塔"——与
+ * src/core/skills/core.js 的 core_tier_base/core_tier_hq 两条身份技能显示名对齐
+ * （原来这里叫"水晶塔"/"枢纽塔"，UIManager.js 又叫"高地塔"，三处各写各的）。
+ */
 export const STRUCT_TIERS = [
-  { key: 'outer',      label: '外塔',     lane: true },
-  { key: 'inner',      label: '内塔',     lane: true },
-  { key: 'base',       label: '水晶塔',   lane: true },
-  { key: 'nexus_lane', label: '召唤水晶', lane: true },
-  { key: 'hq_tower',   label: '枢纽塔',   lane: false },
-  { key: 'nexus_main', label: '水晶枢纽', lane: false },
+  { key: 'outer',      label: '外塔',       lane: true },
+  { key: 'inner',      label: '内塔',       lane: true },
+  { key: 'base',       label: '水晶防御塔', lane: true },
+  { key: 'nexus_lane', label: '召唤水晶',   lane: true },
+  { key: 'hq_tower',   label: '枢纽防御塔', lane: false },
+  { key: 'nexus_main', label: '水晶枢纽',   lane: false },
 ];
 
 const SIDES = [
