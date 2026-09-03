@@ -41,9 +41,10 @@
  * 三种情况都不需要整份 syncLiveMap()（那是"清场重建全部塔"的重活）——
  * 唯一需要它的时机是**工具刚激活、场上还没有任何与草稿对应的塔**的那一次。
  */
+import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle } from '../data/navgrid.js';
-import { snapBuildingPos, autoDetectTiers } from '../data/mapEditorCore.js';
+import { snapBuildingPos, freeBuildingPos, autoDetectTiers } from '../data/mapEditorCore.js';
 import {
   ensureSession, getSession, syncLiveMap, commitTerrainLive,
 } from './mapEditorSession.js';
@@ -61,10 +62,17 @@ export const MapEditorBoardTool = {
   _strokePoints: [],      // 本次拖动画过的屏幕点（用于结束时重播成真实笔刷）
   _draggingEntity: null,  // 'move' 工具正在拖的真实塔实体
   _entityToIndex: null,   // Map<entityId, draftBuildings下标>，syncLiveMap/addBuildingLive 后维护
+  _pausedBefore: false,   // enable() 时进来之前的暂停状态，disable() 时恢复成这个值
 
   /** 打开工具条（deps 见上）。已经开着时相当于把工具条带到最新状态。 */
   enable(deps) {
     this._deps = deps;
+    // 编辑时游戏不运行：进工具条就暂停，退出恢复成进来之前的暂停状态。
+    // 只在【从关到开】这一刻记一次"进来之前是不是已经暂停着"——enable() 在已经开着时
+    // 还会被调用（头注"已经开着时相当于把工具条带到最新状态"），此时 CTX.gamePaused
+    // 已经是我们自己强制置的 true，再记一次会把"进来之前"的原始状态覆盖掉。
+    if (!this._active) this._pausedBefore = CTX.gamePaused;
+    CTX.gamePaused = true;
     this._brushRadius = CONFIG.mapEditor.brushRadiusGridDefault;
     const session = ensureSession(deps.mapSystem);
     this._buildOverlay();
@@ -87,6 +95,7 @@ export const MapEditorBoardTool = {
     this._draggingEntity = null;
     this._setOverlayInteractive(false);
     this._clearStrokeVisual();
+    CTX.gamePaused = this._pausedBefore;
     const panel = document.getElementById('mapEditorBoardToolbar');
     if (panel) panel.remove();
   },
@@ -220,7 +229,7 @@ export const MapEditorBoardTool = {
     const { canvasController } = this._deps;
     const world = canvasController.screenToWorld(e.clientX, e.clientY);
     const entity = this._draggingEntity;
-    const pos = snapBuildingPos(session.baseMap, { laneId: entity._laneId, faction: entity._mapFaction }, world.x, world.y);
+    const pos = freeBuildingPos(session.baseMap, world.x, world.y);
     entity.pos.x = pos.x; entity.pos.y = pos.y;
     // 松手前先把草稿也同步上——中途切到弹窗查看时不该看到旧位置。
     const idx = this._entityToIndex?.get(entity.id);

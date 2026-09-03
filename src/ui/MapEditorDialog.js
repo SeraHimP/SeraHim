@@ -47,13 +47,14 @@
  * 决定 pointer 事件是拖笔刷还是拖建筑，两种模式的状态天然不会同时存在。
  */
 import { paneHtml } from './dialogShell.js';
+import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle, paintPolyline, despeckle } from '../data/navgrid.js';
 import { STRUCT_TIERS } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
-  snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
+  freeBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
   cloneRegionsForEdit, defaultPitFor,
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
@@ -70,6 +71,10 @@ const CANVAS_DISPLAY_PX = 380;
 export const MapEditorDialog = {
   open(deps, logFn) {
     const { mapSystem, renderer3d } = deps;
+    // 编辑时游戏不运行：进弹窗就暂停，退出恢复成进来之前的暂停状态
+    // （不是无脑续玩——你进来之前手动暂停着，出去也该还是暂停）。
+    const _pausedBefore = CTX.gamePaused;
+    CTX.gamePaused = true;
     const overlay = document.getElementById('modalOverlay');
     overlay.classList.add('open');
     document.getElementById('modalTitle').textContent = '🗺️✏️ 地图编辑器（地形笔刷 + 建筑摆放）';
@@ -275,8 +280,7 @@ export const MapEditorDialog = {
       const canvas = document.getElementById('mapEditorCanvas');
       const world = clientToWorld(canvas, clientX, clientY);
       if (!world) return;
-      const b = draftBuildings[draggingBuildingIndex];
-      const pos = snapBuildingPos(draftMapForValidate(), b, world.x, world.y);
+      const pos = freeBuildingPos(draftMapForValidate(), world.x, world.y);
       draftBuildings = withBuildingMoved(draftBuildings, draggingBuildingIndex, pos);
       redrawCanvas();
       updateValidationStatus();
@@ -495,9 +499,7 @@ export const MapEditorDialog = {
             <span style="font-size:10px;color:var(--text-mute);">清理孤立噪点/1格尖刺，不够干净可以多点几次</span>
           </div>` : editMode === 'buildings' ? `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
-            拖动一座建筑：分路的塔（外塔/内塔/水晶防御塔）会被吸附纠正回自己那条兵线上，
-            不分路的建筑（水晶枢纽/枢纽防御塔）自由摆放。红圈标出违反结构规则的建筑
-            （同一套判定见 tests/sim_maps.mjs，编辑器和发布前验收用的是同一个 mapValidate.js）。
+            拖动一座建筑可以随意摆放。红圈标出违反结构规则的建筑。
           </div>
           <div id="mapEditorValidationStatus" style="font-size:12px;margin-bottom:4px;"></div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -799,6 +801,9 @@ export const MapEditorDialog = {
 
     render();
     document.getElementById('modalActions').innerHTML = `<button id="mapEditorCloseBtn" class="primary">关闭</button>`;
-    document.getElementById('mapEditorCloseBtn').addEventListener('click', () => overlay.classList.remove('open'));
+    document.getElementById('mapEditorCloseBtn').addEventListener('click', () => {
+      overlay.classList.remove('open');
+      CTX.gamePaused = _pausedBefore;
+    });
   },
 };

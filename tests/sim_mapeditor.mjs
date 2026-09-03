@@ -11,7 +11,7 @@ import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
 const {
   resolveBaseNavgrid, decodeBaseBits, cloneMapForEdit, buildCustomMapPayload,
-  cloneBuildingsForEdit, snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
+  cloneBuildingsForEdit, snapBuildingPos, freeBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
   cloneRegionsForEdit, defaultPitFor,
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
@@ -239,6 +239,14 @@ const T = board.T;
   T('⑤-自由摆放仍会夹在世界范围内（不能拖出地图外）',
     clampTest.x === 0 && clampTest.y === sr.world.h);
 
+  // freeBuildingPos（用户定稿"移动塔只能沿着某线运动，修复为可以随意移动"）：
+  // 挪动一座已有塔时不吸附到任何兵线，哪怕这座塔有 laneId。
+  const freeMoveLaneTower = freeBuildingPos(sr, outerTop.pos.x + 500, outerTop.pos.y + 500);
+  T('⑤b-freeBuildingPos 不把有 laneId 的塔吸附回兵线（落点就是传入的世界坐标本身）',
+    freeMoveLaneTower.x === outerTop.pos.x + 500 && freeMoveLaneTower.y === outerTop.pos.y + 500);
+  T('⑤c-freeBuildingPos 仍会夹在世界范围内（不能拖出地图外）',
+    freeBuildingPos(sr, -100, sr.world.h + 999).x === 0 && freeBuildingPos(sr, -100, sr.world.h + 999).y === sr.world.h);
+
   // withBuildingMoved：返回新数组，不改原数组
   const moved = withBuildingMoved(draft, 1, { x: 10, y: 20 });
   T('⑥-withBuildingMoved 不改原数组（拖拽期间每帧调用，不能有副作用累积）',
@@ -351,8 +359,8 @@ const T = board.T;
     /CONFIG\.customMaps/.test(src));
   T('④-MapEditorDialog.js 没有直接操作 CanvasController 的拖拽状态（_placeMode/isDragging 等），画布笔刷是独立实现，不与相机拖拽/建塔选位共用状态机',
     !/canvasController\.(isDragging|_placeMode|dragStartX)/.test(src));
-  T('⑤-建筑摆放调用了 mapEditorCore.js 的 snapBuildingPos/withBuildingMoved/validateDraftMap（拖拽吸附/校验逻辑不在弹窗里重新写一遍）',
-    /snapBuildingPos/.test(src) && /withBuildingMoved/.test(src) && /validateDraftMap/.test(src));
+  T('⑤-建筑摆放调用了 mapEditorCore.js 的 freeBuildingPos/withBuildingMoved/validateDraftMap（拖拽/校验逻辑不在弹窗里重新写一遍）',
+    /freeBuildingPos/.test(src) && /withBuildingMoved/.test(src) && /validateDraftMap/.test(src));
   T('⑥-保存时把当前草稿建筑数组传给了 buildCustomMapPayload（拖拽结果真的会存下去，不是只在画布上好看）',
     /buildCustomMapPayload\([^)]*buildings:\s*draftBuildings/.test(src));
   T('⑦-切换起点地图会重置草稿建筑（cloneBuildingsForEdit 在 switchBase 里被调用，不是只在弹窗打开时调一次）',
@@ -406,6 +414,15 @@ const T = board.T;
   // 钉住"updatePathStatus 会手动同步这个按钮的 disabled"，防止以后重构时又把这行删掉。
   T('㉕-updatePathStatus 会同步删除路点按钮的 disabled 状态（不能只靠 render() 时写死一次）',
     /updatePathStatus[\s\S]{0,400}mapEditorDeleteWaypointBtn['"][\s\S]{0,150}disabled\s*=\s*selectedWaypointIndex\s*<\s*0/.test(src));
+
+  // 用户定稿"地图编辑器运行时游戏不运行，退出后才恢复"：打开弹窗就暂停，
+  // 关闭按钮恢复成打开之前的暂停状态。
+  T('㉖-导入了 GameContext.js 的 CTX（暂停开关走唯一取值口）',
+    /from ['"].*GameContext\.js['"]/.test(src) && /\bCTX\b/.test(src));
+  T('㉗-open() 打开弹窗时记住进来之前的暂停状态并强制置为暂停',
+    /_pausedBefore\s*=\s*CTX\.gamePaused[\s\S]{0,200}CTX\.gamePaused\s*=\s*true/.test(src));
+  T('㉘-关闭按钮把 CTX.gamePaused 恢复成 _pausedBefore（不是无脑续玩）',
+    /mapEditorCloseBtn[\s\S]{0,300}CTX\.gamePaused\s*=\s*_pausedBefore/.test(src));
 }
 
 // ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================

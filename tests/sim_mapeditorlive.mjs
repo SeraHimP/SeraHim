@@ -144,7 +144,9 @@ function mkMapSystem() {
     && /ensureSession|getSession/.test(src) && /syncLiveMap/.test(src) && /commitTerrainLive/.test(src));
   T('②-移动塔时直接改 entity.pos（真拖真实塔模型，不是另画一个标记）',
     /\.pos\.x\s*=|\.pos\s*=\s*\{/.test(src));
-  T('③-拖拽用了 mapEditorCore.js 的 snapBuildingPos（吸附逻辑与弹窗同一份，不是另起一套）',
+  T('③-挪动已有塔用了 mapEditorCore.js 的 freeBuildingPos（自由移动，不吸附兵线；不是另起一套逻辑）',
+    /freeBuildingPos/.test(src));
+  T('③b-添加新塔时仍用 snapBuildingPos 就近吸附到最近的路（"添加"与"挪动已有塔"是两个不同场景，只有后者改成自由移动）',
     /snapBuildingPos/.test(src));
   T('④-命中/坐标转换调用了 canvasController 已有的 screenToWorld（不在这里另写一遍射线检测）',
     /screenToWorld/.test(src));
@@ -152,6 +154,15 @@ function mkMapSystem() {
     /addBuildingLive/.test(src));
   T('⑥-笔刷拖动期间不会每帧调 syncLiveMap/commitTerrainLive（那是松手才做的事，源码里对这条有说明）',
     /松开|松手|pointerup/.test(src));
+
+  // 用户定稿"地图编辑器运行时游戏不运行，退出后才恢复"：enable() 进来就暂停，
+  // disable() 退出恢复成进来之前的暂停状态（不是无脑续玩）。
+  T('⑦-导入了 GameContext.js 的 CTX（暂停开关走唯一取值口，不直接摸 window.gamePaused）',
+    /from ['"].*GameContext\.js['"]/.test(src) && /\bCTX\b/.test(src));
+  T('⑧-enable() 里把 CTX.gamePaused 强制置为 true', /CTX\.gamePaused\s*=\s*true/.test(src));
+  T('⑨-只在【从关到开】那一刻记一次"进来之前是不是已经暂停着"（用 !this._active 判断，避免 enable() 重复调用时把原始状态覆盖掉）',
+    /if\s*\(\s*!this\._active\s*\)\s*this\._pausedBefore\s*=\s*CTX\.gamePaused/.test(src));
+  T('⑩-disable() 里把 CTX.gamePaused 恢复成 _pausedBefore', /CTX\.gamePaused\s*=\s*this\._pausedBefore/.test(src));
 }
 
 board.done();

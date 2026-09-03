@@ -167,6 +167,22 @@ export function snapBuildingPos(map, building, worldX, worldY) {
 }
 
 /**
+ * 挪动一座【已有】建筑时的落点——只夹世界边界，不管有没有 laneId 都不吸附到兵线上
+ * （用户定稿："移动塔只能沿着某线运动，修复为可以随意移动"）。
+ * 与 snapBuildingPos 是两个不同的场景，不是同一个函数改参数：snapBuildingPos 服务的是
+ * "新增一座塔时就近吸附到最近的路"（阶段四"添加塔"工具仍在用，这个默认值本身没问题，
+ * 用户没提意见）；这个函数服务的是"挪动一座已经放好的塔"，用户明确要求这里不该被强制
+ * 拘束在线上。落错位置由已有的结构校验红线去提示，不再靠拖拽本身强行拦。
+ * @param {object} map 需要有 world
+ * @param {number} worldX @param {number} worldY
+ * @returns {{x:number,y:number}}
+ */
+export function freeBuildingPos(map, worldX, worldY) {
+  const W = map.world || { w: 0, h: 0 };
+  return { x: Math.max(0, Math.min(W.w, worldX)), y: Math.max(0, Math.min(W.h, worldY)) };
+}
+
+/**
  * 把 buildings[index] 的落点换成 pos，返回一份新数组（不改原数组——拖拽期间
  * 每帧都会调，调用方决定要不要把结果存回草稿状态；纯函数方便单测和撤销/重做）。
  * @param {object[]} buildings @param {number} index @param {{x:number,y:number}} pos
