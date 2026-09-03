@@ -12,6 +12,7 @@ setupWindow({ waveNumber: 1 });
 const {
   resolveBaseNavgrid, decodeBaseBits, cloneMapForEdit, buildCustomMapPayload,
   cloneBuildingsForEdit, snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
+  cloneRegionsForEdit, defaultPitFor,
 } = await import('../src/data/mapEditorCore.js');
 const { unpackBits, packBits } = await import('../src/data/navgrid.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -97,6 +98,46 @@ const T = board.T;
   const movedBuildings = sr.buildings.map((b, i) => (i === 0 ? { ...b, pos: { x: 1, y: 2 } } : b));
   const payload3 = buildCustomMapPayload(sr, { id: 'with_buildings_arg', label: 'x', n, bits, buildings: movedBuildings });
   T('⑨-传了 buildings 时用传入的草稿数组覆盖', payload3.buildings[0].pos.x === 1 && payload3.buildings[0].pos.y === 2);
+
+  // 阶段四剩余（区域参数表单）：同样遵循"不传就保留 baseMap 原值"的默认行为不变原则。
+  const payload4 = buildCustomMapPayload(sr, { id: 'no_regions_arg', label: 'x', n, bits });
+  T('⑩-不传 baseCircleRadius/pits 时保留 baseMap 原值', payload4.baseCircleRadius === sr.baseCircleRadius
+    && JSON.stringify(payload4.pits) === JSON.stringify(sr.pits));
+  const payload5 = buildCustomMapPayload(sr, {
+    id: 'with_regions_arg', label: 'x', n, bits,
+    baseCircleRadius: 999, pits: { baron: { x: 1, y: 2, r: 3, depth: -1 } },
+  });
+  T('⑪-传了 baseCircleRadius/pits 时用传入值覆盖', payload5.baseCircleRadius === 999
+    && payload5.pits.baron.x === 1 && payload5.pits.baron.r === 3 && payload5.pits.dragon === undefined);
+}
+
+// ==================== ④b 区域参数草稿：克隆 / 默认坑位 ====================
+{
+  const sr = MAPS.summoners_rift_v1;
+  const regions = cloneRegionsForEdit(sr);
+  T('①-cloneRegionsForEdit(峡谷) 的 baseCircleRadius 与原地图一致', regions.baseCircleRadius === sr.baseCircleRadius);
+  T('②-cloneRegionsForEdit(峡谷) 的 pits 内容与原地图一致（峡谷声明了龙坑/男爵坑）',
+    JSON.stringify(regions.pits) === JSON.stringify(sr.pits));
+  regions.pits.baron.x = -999;
+  T('③-改动草稿的 pits 不影响原地图对象（深克隆）', sr.pits.baron.x !== -999);
+
+  const howl = MAPS.howling_abyss_v1;
+  const regionsHowl = cloneRegionsForEdit(howl);
+  T('④-嚎哭深渊没声明 pits → 草稿的 pits 是空对象（不是 undefined，表单可以直接读 .baron/.dragon）',
+    typeof regionsHowl.pits === 'object' && regionsHowl.pits.baron === undefined && regionsHowl.pits.dragon === undefined);
+  T('⑤-嚎哭深渊 baseCircleRadius 有声明 → 草稿原样带出', regionsHowl.baseCircleRadius === howl.baseCircleRadius);
+
+  const noRadiusMap = { world: { w: 100, h: 100 } };
+  T('⑥-地图完全没声明 baseCircleRadius 时草稿是 null（不是误导性的 0，表单据此显示空输入框）',
+    cloneRegionsForEdit(noRadiusMap).baseCircleRadius === null);
+
+  const baronDefault = defaultPitFor(sr, 'baron');
+  const dragonDefault = defaultPitFor(sr, 'dragon');
+  T('⑦-defaultPitFor 给出的默认坑位落在世界范围内', baronDefault.x >= 0 && baronDefault.x <= sr.world.w
+    && baronDefault.y >= 0 && baronDefault.y <= sr.world.h);
+  T('⑧-男爵坑默认位置偏世界中心的左上、龙坑偏右下（呼应 SR_PITS 的几何直觉，不是同一个点）',
+    baronDefault.x < dragonDefault.x && baronDefault.y < dragonDefault.y);
+  T('⑨-defaultPitFor 给出合理的默认半径/深度（非零，可直接用于渲染）', baronDefault.r > 0 && baronDefault.depth < 0);
 }
 
 // ==================== ⑤b 建筑摆放：克隆/吸附/挪动/实时校验 ====================
@@ -252,6 +293,15 @@ const T = board.T;
     /STRUCT_TIERS\.map/.test(src));
   T('⑪-切换起点地图会重置选中的建筑（selectedBuildingIndex 在 switchBase 里被清空，避免旧下标指错建筑）',
     /switchBase[\s\S]{0,400}selectedBuildingIndex = -1/.test(src));
+
+  // 阶段四剩余：区域参数表单调了 mapEditorCore.js 的纯函数，没有另起一套坑位/半径逻辑；
+  // 切图会重置区域参数草稿；保存时区域参数真的传给了 buildCustomMapPayload。
+  T('⑫-区域参数表单调用了 mapEditorCore.js 的 cloneRegionsForEdit/defaultPitFor（不是弹窗里另算一套）',
+    /cloneRegionsForEdit/.test(src) && /defaultPitFor/.test(src));
+  T('⑬-切换起点地图会重置区域参数草稿（cloneRegionsForEdit 在 switchBase 里被调用）',
+    /switchBase[\s\S]{0,400}draftRegions = cloneRegionsForEdit/.test(src));
+  T('⑭-保存时把当前区域参数草稿传给了 buildCustomMapPayload（表单改的值真的会存下去）',
+    /buildCustomMapPayload\([^)]*baseCircleRadius:\s*draftRegions\.baseCircleRadius[^)]*pits:\s*draftRegions\.pits/.test(src));
 }
 
 // ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================

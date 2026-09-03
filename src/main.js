@@ -596,8 +596,13 @@ document.getElementById('mapEditorBtn').addEventListener('click', () => {
 });
 
 // 地图编辑器第二个入口：直接在主 3D 画面上编辑（见 MapEditorBoardTool.js 头注三条
-// 交互决策）。与上面的弹窗入口共享同一份草稿（mapEditorSession.js），互相独立存在，
-// 谁都不替代谁——用户定稿"你目前这个也保留"。
+// 交互决策）。与上面的弹窗入口各自独立存在，谁都不替代谁——用户定稿"你目前这个也保留"。
+// ⚠️ 两者的草稿状态【不】共享：弹窗（MapEditorDialog.js）管的是"挑一张地图当起点、
+// 改完显式存成一份新的自制地图"，草稿只活在弹窗自己的闭包变量里；这个按钮管的是
+// "就地改当前正在跑的这张地图"，草稿活在 mapEditorSession.js 的模块级单例里。
+// 两者用同一批 mapEditorCore.js 纯函数（snapBuildingPos/autoDetectTiers 等），
+// 但没有共用同一份草稿对象——先前这条注释写成"共享同一份草稿"是不准确的，
+// 两边各自维护自己的编辑会话，互不读写对方的状态。
 document.getElementById('mapEditorBoardBtn').addEventListener('click', () => {
   canvasController.cancelPlaceMode();
   MapEditorBoardTool.toggle({

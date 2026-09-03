@@ -23,9 +23,10 @@
  *
  * ==================== 本次范围 ====================
  * 做：navgrid 圆形笔刷（画/擦）、建筑拖拽摆放（吸附兵线 + 实时校验红线）、
+ *     区域参数表单（基地圈半径、龙坑/男爵坑中心+半径，画布半透明预览）、
  *     克隆已有地图作为起点、保存到 CONFIG.customMaps、加载预览、删除自制地图。
  * 不做（设计报告后续阶段）：画线/折线造墙模式、去毛刺整理、路径编辑、高度笔刷。
- * 这些各自是独立的阶段四/五/六，不在这一批一起做——单批改动越大，出问题时越难
+ * 这些各自是独立的阶段四剩余/五/六，不在这一批一起做——单批改动越大，出问题时越难
  * 定位是哪一步引入的。
  *
  * ==================== 建筑摆放为什么复用同一块画布，不叠一层 overlay ====================
@@ -39,9 +40,11 @@ import { paneHtml } from './dialogShell.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle } from '../data/navgrid.js';
 import { STRUCT_TIERS } from '../data/waveComposition.js';
+import { baseCircleCenter } from '../data/baseCircle.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
   snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
+  cloneRegionsForEdit, defaultPitFor,
 } from '../data/mapEditorCore.js';
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
@@ -71,6 +74,7 @@ export const MapEditorDialog = {
     let draftBuildings = cloneBuildingsForEdit(baseMap);
     let draggingBuildingIndex = -1;
     let selectedBuildingIndex = -1;     // 点选一座建筑后可在下方手动改档位（覆盖自动识别）
+    let draftRegions = cloneRegionsForEdit(baseMap);   // 区域参数草稿：{baseCircleRadius, pits:{baron?,dragon?}}
 
     const isCustomMap = (id) => !!(CONFIG.customMaps && CONFIG.customMaps[id]);
     // 校验只关心结构（lanes/world/walls/useNavgrid）+ 当前草稿建筑，navgrid 笔刷改的
@@ -89,7 +93,42 @@ export const MapEditorDialog = {
         else { img.data[o] = 46; img.data[o + 1] = 48; img.data[o + 2] = 56; img.data[o + 3] = 255; }             // 不可走：深灰
       }
       ctx.putImageData(img, 0, 0);
+      drawRegionOverlays(ctx);
       if (editMode === 'buildings') drawBuildingMarkers(ctx);
+    };
+
+    // 区域参数（阶段四剩余）：基地圈半径 + 龙坑/男爵坑画成半透明预览圈，两种编辑模式下
+    // 都画（不像建筑标记那样只在 buildings 模式画）——这几个数值改起来影响的是整张地图的
+    // 地形观感，笔刷模式下也需要看见它们在哪，才知道笔刷该往哪画/避开哪。
+    const drawRegionOverlays = (ctx) => {
+      if (draftRegions.baseCircleRadius) {
+        const gr = draftRegions.baseCircleRadius / (baseMap.world?.w || 1) * n;
+        for (const fac of ['blue', 'red']) {
+          const c = baseCircleCenter(baseMap, fac);
+          if (!c) continue;
+          const { gx, gy } = worldToGrid(c.x, c.y);
+          ctx.beginPath();
+          ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+          ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = FAC_COLOR[fac] || '#ccc';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+      for (const name of ['baron', 'dragon']) {
+        const pit = draftRegions.pits[name];
+        if (!pit) continue;
+        const { gx, gy } = worldToGrid(pit.x, pit.y);
+        const gr = pit.r / (baseMap.world?.w || 1) * n;
+        ctx.beginPath();
+        ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+        ctx.fillStyle = name === 'baron' ? 'rgba(150,80,220,.28)' : 'rgba(255,160,40,.28)';
+        ctx.fill();
+        ctx.strokeStyle = name === 'baron' ? '#9650dc' : '#ffa028';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
     };
 
     // 建筑标记画在 navgrid 的 n×n 像素坐标系里（与 redrawCanvas 的 putImageData 同一
@@ -297,6 +336,34 @@ export const MapEditorDialog = {
         </div>
 
         <div class="editor-section">
+          <h4>区域参数</h4>
+          <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+            基地圈半径决定基地光环范围与高地地形隆起大小（画布上两方各一圈虚线预览）；
+            龙坑/男爵坑决定巨龙/男爵刷新点与地形凹陷范围（半透明圆形预览）。
+            没有龙坑/男爵坑的地图（如嚎哭深渊/扭曲丛林）可以按需新增。
+          </div>
+          <div class="slider-row"><label>基地圈半径</label>
+            <input id="mapEditorBaseRadiusInput" type="number" min="1" style="flex:1;"
+              value="${draftRegions.baseCircleRadius ?? ''}" placeholder="未声明">
+          </div>
+          ${['baron', 'dragon'].map((name) => {
+            const pit = draftRegions.pits[name];
+            const label = name === 'baron' ? '男爵坑' : '龙坑';
+            return `
+            <div class="slider-row"><label>${label}</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:11px;">
+                <input type="checkbox" id="mapEditorPit${name}Enable" ${pit ? 'checked' : ''}> 启用
+              </label>
+            </div>
+            ${pit ? `
+            <div class="slider-row"><label>　X</label><input id="mapEditorPit${name}X" type="number" value="${pit.x}" style="flex:1;"></div>
+            <div class="slider-row"><label>　Y</label><input id="mapEditorPit${name}Y" type="number" value="${pit.y}" style="flex:1;"></div>
+            <div class="slider-row"><label>　半径</label><input id="mapEditorPit${name}R" type="number" min="1" value="${pit.r}" style="flex:1;"></div>
+            ` : ''}`;
+          }).join('')}
+        </div>
+
+        <div class="editor-section">
           <h4>保存</h4>
           <div class="slider-row"><label>地图 ID</label>
             <input id="mapEditorIdInput" type="text" value="${suggestedId}" style="flex:1;" ${isCustomMap(baseId) ? 'title="正在编辑已保存的自制地图，保存会覆盖它"' : ''}>
@@ -345,6 +412,7 @@ export const MapEditorDialog = {
       ({ n, bits } = decodeBaseBits(baseMap));
       draftBuildings = cloneBuildingsForEdit(baseMap);
       selectedBuildingIndex = -1;   // 建筑数组重建了，旧下标不再指向同一座塔
+      draftRegions = cloneRegionsForEdit(baseMap);   // 换了起点地图，区域参数草稿也要跟着重来
       statusMsg = '';
       render();
     };
@@ -374,12 +442,36 @@ export const MapEditorDialog = {
         document.getElementById('mapEditorBrushLabel').textContent = `${brushRadius} 格`;
       });
 
+      // 区域参数表单：基地圈半径改动只重画预览圈（不结构性重渲，输入框失焦体验更好）；
+      // 龙坑/男爵坑的"启用"勾选框会增删表单里的 X/Y/半径三个输入框，必须走结构性 render()。
+      document.getElementById('mapEditorBaseRadiusInput').addEventListener('input', (e) => {
+        const v = Number(e.target.value);
+        draftRegions.baseCircleRadius = Number.isFinite(v) && v > 0 ? v : null;
+        redrawCanvas();
+      });
+      for (const name of ['baron', 'dragon']) {
+        document.getElementById(`mapEditorPit${name}Enable`).addEventListener('change', (e) => {
+          if (e.target.checked) draftRegions.pits[name] = draftRegions.pits[name] || defaultPitFor(baseMap, name);
+          else delete draftRegions.pits[name];
+          render();
+        });
+        const xEl = document.getElementById(`mapEditorPit${name}X`);
+        const yEl = document.getElementById(`mapEditorPit${name}Y`);
+        const rEl = document.getElementById(`mapEditorPit${name}R`);
+        xEl?.addEventListener('input', () => { draftRegions.pits[name].x = Number(xEl.value) || 0; redrawCanvas(); });
+        yEl?.addEventListener('input', () => { draftRegions.pits[name].y = Number(yEl.value) || 0; redrawCanvas(); });
+        rEl?.addEventListener('input', () => { draftRegions.pits[name].r = Math.max(1, Number(rEl.value) || 1); redrawCanvas(); });
+      }
+
       document.getElementById('mapEditorSaveBtn').addEventListener('click', () => {
         const id = document.getElementById('mapEditorIdInput').value.trim();
         const label = document.getElementById('mapEditorLabelInput').value.trim();
         if (!id) { setStatus('⚠️ 请填写地图 ID'); return; }
         try {
-          const payload = buildCustomMapPayload(baseMap, { id, label, n, bits, buildings: draftBuildings });
+          const payload = buildCustomMapPayload(baseMap, {
+            id, label, n, bits, buildings: draftBuildings,
+            baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
+          });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;
           logFn(`🗺️ 已保存自制地图：${payload.label}（id=${id}）`, 'spawn');

@@ -63,7 +63,7 @@ export function cloneMapForEdit(baseMap) {
  * @param {object} baseMap  作为起点克隆的地图（内置或已有的自制地图）
  * @param {object} o        { id, label, n, bits }—— bits 是笔刷改完的 Uint8Array
  */
-export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings }) {
+export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings, baseCircleRadius, pits }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
   clone.id = id;
@@ -73,7 +73,57 @@ export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings }
   // 参数化前的默认行为完全不变（见 docs/DEVELOPMENT.md §8.3），只有真的拖动过
   // 建筑、调用方显式传了草稿数组时才覆盖。
   if (Array.isArray(buildings)) clone.buildings = buildings;
+  // 区域参数表单（阶段四剩余）：同样只在真的编辑过时覆盖，不传就保持 baseMap 原值——
+  // 这两项不像 buildings 有天然的"空数组也合法"歧义，用 undefined 判断是否传入即可。
+  if (Number.isFinite(baseCircleRadius)) clone.baseCircleRadius = baseCircleRadius;
+  if (pits) clone.pits = pits;
   return clone;
+}
+
+// ==================== 区域参数（阶段四剩余）====================
+// 设计报告把"区域参数表单"（龙坑/男爵坑中心+半径、基地圈半径）与"画线造墙/去毛刺"
+// 分开列为阶段四的两个独立子项——前者是纯数值表单，复用 MapSystem.getPit()/
+// getBaseCircleRadius() 已经在读的 map.pits / map.baseCircleRadius 字段，不需要新的
+// 数据模型；后者是全新的折线栅格化+连通域降噪算法，工作量和风险都大得多，留到下一批。
+//
+// 为什么不能像 draftBuildings 那样直接改 baseMap 的字段：baseMap 在 MapEditorDialog.js
+// 里是 mapSystem.getMapById() 返回的**直接引用**（MAPS 表的内置常量或 CONFIG.customMaps
+// 里已存的自制地图），不是克隆——直接写 baseMap.pits.baron.x 会当场污染共享数据，
+// 与本仓库反复强调的"currentMap 是直接引用，绝不能就地改"是同一个坑。
+// 所以这里跟 draftBuildings 一样，走"克隆出一份独立草稿 → 表单改草稿 → 保存时随
+// buildCustomMapPayload 一起落盘"的路子。
+
+/**
+ * 从一张地图克隆出区域参数草稿（供表单编辑，不污染 baseMap 原对象）。
+ * baseCircleRadius 缺省地图（理论上不存在，所有内置地图都声明了）用 null 占位，
+ * 表单据此显示空输入框而不是误导性的 0。
+ * @param {object} baseMap
+ * @returns {{baseCircleRadius:number|null, pits:object}}
+ */
+export function cloneRegionsForEdit(baseMap) {
+  return {
+    baseCircleRadius: Number.isFinite(baseMap.baseCircleRadius) ? baseMap.baseCircleRadius : null,
+    pits: baseMap.pits ? JSON.parse(JSON.stringify(baseMap.pits)) : {},
+  };
+}
+
+/**
+ * 给"启用龙坑/男爵坑"勾选框新增一个坑时的默认位置——地图世界中心，按龙/男爵各偏移
+ * 一点（呼应 sr_navgrid.js 里 SR_PITS 的几何直觉：男爵在偏左上那半，龙在偏右下那半，
+ * 但这里不依赖河道采样，纯粹给用户一个可见、能直接拖表单数值微调的起点，不追求精确)。
+ * @param {object} map 需要有 world
+ * @param {'baron'|'dragon'} name
+ * @returns {{x:number,y:number,r:number,depth:number}}
+ */
+export function defaultPitFor(map, name) {
+  const W = map.world || { w: 0, h: 0 };
+  const offset = name === 'baron' ? -0.15 : 0.15;
+  return {
+    x: W.w / 2 + offset * W.w,
+    y: W.h / 2 + offset * W.h,
+    r: 150,
+    depth: -26,
+  };
 }
 
 // ==================== 建筑摆放（阶段三剩余）====================
