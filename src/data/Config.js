@@ -1115,6 +1115,19 @@ export const CONFIG = {
 
   // ==================== 对战调参表（技术债清偿：原散落在各系统源码里的硬编码） ====================
   // 改这里即可调平衡，各系统启动时读取；缺省值与系统内兜底一致。
+  // ==================== 地图编辑器（v51.32 起分批实现，见
+  // docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md）====================
+  // 目前只有 navgrid 笔刷的底层纯函数（src/data/navgrid.js）在用；笔刷 UI/画布
+  // 交互接上之后会陆续补上 brushRadius 等参数，先只放已经有代码在读的这几项。
+  mapEditor: {
+    // navgrid 分辨率自适应公式（§3.2 已确认）：n = round(max(world.w,world.h) / cellSize)，
+    // 夹在 [navgridMinN, navgridMaxN]。cellSize 取值依据：召唤师峡谷现有的 3552/256
+    // ≈ 13.875，四舍五入到 14，让新地图与现有三张图的"每格代表的实际距离"手感一致。
+    navgridCellSize: 14,
+    navgridMinN: 128,   // 下限：格子太粗，小地图会失真
+    navgridMaxN: 512,   // 上限：笔刷实时重绘/位打包的性能红线，真机测过再收紧或放宽
+  },
+
   tuning: {
 
     // v44 每帧留给【模拟】的墙钟预算（毫秒）。超过就把剩下的账留到下一帧。

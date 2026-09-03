@@ -5,6 +5,7 @@ import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
+import { unpackBits } from '../data/navgrid.js';
 // 重生血量与出生血量必须用同一个"最大生命"口径，见 factories.js spawnAtFullHP 头注。
 import { effectiveMaxHP } from '../core/factories.js';
 // 复活要清哪些标记：唯一清单，两条复活路径共用（见该文件头注）。
@@ -744,15 +745,12 @@ export class MapSystem {
       // 现在优先用地图自带的 navgrid，未声明的沿用峡谷那张（对已有地图逐位不变）。
       const NG = this.currentMap.navgrid || SR_NAVGRID;
       const n = NG.n;
-      // base64 → 位数组。atob 在浏览器有、Node 18+ 全局也有；都没有就退回走廊模型（不炸）。
-      const dec = (typeof atob === 'function') ? atob
-        : (typeof Buffer !== 'undefined' ? (b) => Buffer.from(b, 'base64').toString('binary') : null);
-      if (dec) {
-        const bin = dec(NG.bits);
-        const bits = new Uint8Array(n * n);
-        for (let k = 0; k < n * n; k++) bits[k] = (bin.charCodeAt(k >> 3) >> (k & 7)) & 1;
-        this._nav = { n, bits };
-      }
+      // base64 → 位数组：v51.32 起改调 data/navgrid.js 的 unpackBits（地图编辑器的
+      // 笔刷要用同一份编解码逻辑序列化画好的地形，不能各写一份、容易悄悄跑偏）。
+      // atob 在浏览器有、Node 18+ 全局也有；都没有就退回走廊模型（不炸），
+      // unpackBits 内部处理这个兜底，这里只需要判断返回值。
+      const bits = unpackBits(NG.bits, n);
+      if (bits) this._nav = { n, bits };
     }
     return this._nav;
   }
