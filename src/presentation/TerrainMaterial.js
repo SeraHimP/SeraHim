@@ -15,6 +15,7 @@
  * 再把高地材质按遮罩裁进墙区。遮罩用最近邻放大——它本来就是格点数据，
  * 平滑插值只会在边界糊出一圈错误材质。
  */
+import { unpackByteGrid } from '../data/navgrid.js';
 
 const TILE_WORLD = 384;     // 一张材质覆盖的世界尺寸。小兵约 10~24 单位，故一块石子约 4 单位
 const AMPLIFY = 1.8;        // 材质自身对比放大（保留其原色，只把起伏拉明显）
@@ -128,8 +129,29 @@ export function placeholderTexture(zone, size = 256) {
  * 逐格算出分区 id（返回 Uint8Array，长度 nx*ny，值是 ZONES 的下标）。
  * 在**网格分辨率**上算而不是逐像素：这是给最近邻放大用的遮罩，
  * 与既有的 walk 遮罩同一套做法，边界因此严格一致（逐像素算反而会与高地边界错开一格）。
+ *
+ * ==================== v51.32：地图编辑器——材质分区可以手绘覆写 ====================
+ * 用户问"以后的材质问题你想想怎么处理，就是每部分的材质不同"——下面这段是回答。
+ *
+ * 现状：这份函数本身就已经是"每部分不同材质"的机制（ZONES 六个分区各配一张贴图，
+ * 见文件头注 v45 那段），只是分区**怎么划**是按几何邻近关系现算的——离哪条兵线近算
+ * 哪一区、离基地/河道近算哪一区。这个推导假设了召唤师峡谷式的对称布局；地图编辑器
+ * 画出来的自定义地形形状不规则，邻近推导不一定符合作者想要的样子（比如一片手绘的
+ * 湖泊，离任何声明的 river.path 都不够近，会被判成 jungle 而不是 river）。
+ *
+ * 处理方式：与高度笔刷（heightGrid，见设计报告 §3.2）同一个模式——地图声明了
+ * `zoneCellGrid`（逐格材质分区，笔刷画出来的）就优先读格子值；没声明就照旧走下面
+ * 这套邻近推导公式。两条路径共存，内置三张地图不受影响（它们从不声明这个字段）。
+ * `zoneCellGrid.n` 必须与调用方传入的 nx/ny 一致才采用，尺寸对不上（比如地图数据
+ * 被手改过、或者笔刷分辨率与渲染时的 navgrid 分辨率不同批次）时安全退回邻近推导，
+ * 不强行拉伸凑数据——那样会在分区边界糊出一圈不对齐的材质。
  */
 export function zoneGrid(map, walk, nx, ny, world) {
+  const zcg = map?.zoneCellGrid;
+  if (zcg && zcg.n === nx && zcg.n === ny) {
+    const decoded = unpackByteGrid(zcg.zones, zcg.n);
+    if (decoded && decoded.length === nx * ny) return decoded;
+  }
   const out = new Uint8Array(nx * ny);
   const iOf = (z) => ZONES.indexOf(z);
   const cw = world.w / nx, ch = world.h / ny;

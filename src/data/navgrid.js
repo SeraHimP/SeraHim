@@ -89,6 +89,28 @@ export function paintCircle(bits, n, cx, cy, r, value) {
 }
 
 /**
+ * 通用逐格字节数据的编解码——每格 1 字节（0~255），不做位打包，直接
+ * Uint8Array → base64。与 unpackBits/packBits（每格 1 bit）是两套独立编码，
+ * 不要为了"格式统一"硬凑成同一种打包方式（见设计报告 §3.2 高度笔刷那段的
+ * 取舍记录）。高度笔刷（heightGrid）与材质笔刷（zoneCellGrid）都是"每格一个
+ * 小整数"这个形状，共用这两个函数，不必再各写一份。
+ */
+export function unpackByteGrid(base64, n) {
+  const bin = b64decode(base64);
+  if (bin == null) return null;
+  const total = n * n;
+  if (bin.length < total) return null;
+  const out = new Uint8Array(total);
+  for (let k = 0; k < total; k++) out[k] = bin.charCodeAt(k);
+  return out;
+}
+export function packByteGrid(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return b64encode(bin);
+}
+
+/**
  * 笔刷：折线模式（造墙用，见设计报告 §3.3）——沿一串路径点、按线宽展开成一条带状
  * 区域，整体设成 value。points 是【格子】坐标 `[{x,y}, ...]`（至少 2 个点），
  * halfWidth 同样是格子单位。实现上是逐段对线段做"到线段距离 ≤ halfWidth"判定，

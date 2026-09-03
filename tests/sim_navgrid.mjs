@@ -8,9 +8,11 @@
  */
 import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
-const { unpackBits, packBits, resolveGridN, paintCircle, paintPolyline } = await import('../src/data/navgrid.js');
+const { unpackBits, packBits, unpackByteGrid, packByteGrid, resolveGridN, paintCircle, paintPolyline } =
+  await import('../src/data/navgrid.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
+const { ZONES, zoneGrid } = await import('../src/presentation/TerrainMaterial.js');
 
 const board = scoreboard('navgrid 笔刷核心验收');
 const T = board.T;
@@ -109,6 +111,44 @@ const T = board.T;
     paintPolyline(b, 3, [{ x: 1, y: 1 }], 1, 1);
     return b.every(v => v === 0);
   })());
+}
+
+// ==================== ⑦ 逐格字节数据编解码（高度笔刷/材质笔刷共用） ====================
+{
+  const n = 12;
+  const bytes = new Uint8Array(n * n);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 37 + 5) % 256; // 覆盖 0~255 全值域
+  const b64 = packByteGrid(bytes);
+  const back = unpackByteGrid(b64, n);
+  T('字节格①-往返一致（0~255 全值域，不是只测了 0/1）',
+    back && back.length === bytes.length && bytes.every((v, i) => v === back[i]));
+  T('字节格②-尺寸不够时安全返回 null，不越界读取', unpackByteGrid(b64, n + 5) === null);
+}
+
+// ==================== ⑧ 材质分区可以手绘覆写（§3.2 已确认："以后的材质问题"的处理方式） ====================
+{
+  const fakeMap = { lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 100, y: 100 }] }], buildings: [] };
+  const nx = 8, ny = 8, world = { w: 800, h: 800 };
+  const walk = new Uint8Array(nx * ny).fill(1); // 全可走，方便看纯邻近推导的结果
+  const proximityResult = zoneGrid(fakeMap, walk, nx, ny, world);
+  T('材质①-没声明 zoneCellGrid 时走原有的邻近推导（现状不受影响）',
+    proximityResult.length === nx * ny && !proximityResult.every(v => v === proximityResult[0]));
+
+  // 手绘一份"整张图全部是 river"的覆写（现实里邻近推导几乎不可能得出这个结果，
+  // 用来证明确实是覆写生效了，不是巧合碰上同一个结果）
+  const riverIdx = ZONES.indexOf('river');
+  const overrideBytes = new Uint8Array(nx * ny).fill(riverIdx);
+  const mapWithOverride = { ...fakeMap, zoneCellGrid: { n: nx, zones: packByteGrid(overrideBytes) } };
+  const overrideResult = zoneGrid(mapWithOverride, walk, nx, ny, world);
+  T('材质②-声明了 zoneCellGrid 且尺寸匹配时，直接用手绘数据，不再跑邻近推导',
+    overrideResult.every(v => v === riverIdx));
+
+  // 尺寸对不上（比如笔刷分辨率与本次渲染的 nx/ny 不是同一批次）时安全退回邻近推导，
+  // 不强行拉伸凑数据——那样会在分区边界糊出一圈不对齐的材质。
+  const mismatchedMap = { ...fakeMap, zoneCellGrid: { n: nx + 1, zones: packByteGrid(new Uint8Array((nx + 1) * (nx + 1)).fill(riverIdx)) } };
+  const mismatchedResult = zoneGrid(mismatchedMap, walk, nx, ny, world);
+  T('材质③-zoneCellGrid 尺寸与本次渲染的网格不匹配时，安全退回邻近推导（不强行拉伸）',
+    mismatchedResult.length === nx * ny && !mismatchedResult.every(v => v === riverIdx));
 }
 
 board.done();
