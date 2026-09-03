@@ -3489,4 +3489,75 @@ async function world() {
   CONFIG.towerTierSkills = savedOverride;
 }
 
+// ==================== v51.33：出兵编排面板——广播规则的编辑器接线（design §5.3） ====================
+// "打通"换来的直接好处：这一页不需要另起一套动作表单，"兵种/技能"下拉框直接合并
+// 刷兵类型与可广播技能（📡 分组），选中即把整行变形。与其它 AttributeEditor 页面
+// 同一套测试惯例：_renderWaveOrderContent() 是纯字符串模板（不碰真实 DOM），
+// 直接调用断言输出的 HTML；_readWaveOrderInputs() 只用 overlay.querySelectorAll(...)
+// .forEach(...) 和 el.dataset/el.value，用一个手搭的假 overlay（数组 + querySelectorAll
+// 返回它）就能测，不需要 jsdom（sim_v43.mjs Q5b⑨-⑬ 那段已经是这个套路，这里延续）。
+{
+  const { compileSpec } = await import('../src/core/behaviorVM.js');
+  const { AttributeEditor } = await import('../src/ui/AttributeEditor.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  const spec = {
+    id: 'test_editor_broadcast_skill', name: '测试编辑器广播技能', category: 'passive',
+    rules: [{ on: 'broadcast', do: [{ act: 'applyEffect', to: 'self',
+      effect: { kind: 'stat', statKey: 'armor', flatValue: 5, duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh' } }] }],
+  };
+  SkillLibrary.register(spec.id, compileSpec(spec));
+
+  T('播编①-_broadcastSkillOptions() 认得刚注册的广播技能（声明了 broadcast 触发的技能才会出现）',
+    AttributeEditor._broadcastSkillOptions().some(s => s.id === spec.id && s.name === spec.name));
+  T('播编②-没有声明 broadcast 触发的技能（如任意一个内置武器）不会混进这份列表',
+    !AttributeEditor._broadcastSkillOptions().some(s => s.id === 'weapon_piercing'));
+
+  const savedComposition = CONFIG.gameRules.laneWaveComposition;
+  const savedFactionOv = CONFIG.factionOverrides;
+  AttributeEditor._factionScope = 'shared';
+  AttributeEditor._waveLaneScope = 'all';
+  window.CTX = window.CTX || {};
+  window.CTX.__app = { mapSystem: { currentMap: { lanes: [{ id: 'top' }, { id: 'mid' }, { id: 'bot' }] } } };
+
+  CONFIG.gameRules = { ...CONFIG.gameRules,
+    laneWaveComposition: [{ kind: 'broadcast', skillId: spec.id, scope: 'lane', fromWave: 0, everyN: 1 }] };
+  CONFIG.factionOverrides = {};
+
+  const html = AttributeEditor._renderWaveOrderContent();
+  T('播编③-广播行的"兵种/技能"下拉框里，对应的 📡 选项被 selected',
+    new RegExp(`<option value="broadcast:${spec.id}" selected>`).test(html));
+  T('播编④-广播行的"数量"列渲染成 scope 选择框（仅本路 selected），不是刷兵的数量输入框',
+    /<option value="lane" selected>仅本路<\/option>/.test(html));
+  T('播编⑤-有可广播技能时，"+ 添加一条广播规则"按钮会渲染出来', /id="woAddBroadcastBtn"/.test(html));
+  T('播编⑥-预览区会把命中的广播规则列出来（📡 本波广播），且带上技能名与 scope 文案',
+    html.includes('📡 本波广播') && html.includes(spec.name) && html.includes('仅本路'));
+
+  // ---- _readWaveOrderInputs：合并下拉框在"刷兵 ↔ 广播"之间切换时的字段变形 ----
+  const fakeOverlay = (fields) => ({ querySelectorAll: () => fields });
+  const fakeEl = (idx, field, value) => ({ dataset: { idx: String(idx), field }, value });
+
+  CONFIG.gameRules.laneWaveComposition = [{ type: 'melee', count: 3 }];
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'typeOrSkill', `broadcast:${spec.id}`)]));
+  const r0 = CONFIG.gameRules.laneWaveComposition[0];
+  T('播编⑦-把刷兵行切成广播技能后：kind/skillId 写上，count 被清掉（形状不再是刷兵规则）',
+    r0.kind === 'broadcast' && r0.skillId === spec.id && r0.count === undefined);
+  T('播编⑧-切成广播行时 scope 有默认值（faction）', r0.scope === 'faction');
+
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'scope', 'lane')]));
+  T('播编⑨-scope 字段能单独改（lane/faction 二选一）', CONFIG.gameRules.laneWaveComposition[0].scope === 'lane');
+
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'typeOrSkill', 'spawn:ranged')]));
+  const r1 = CONFIG.gameRules.laneWaveComposition[0];
+  T('播编⑩-把广播行切回刷兵类型后：type 写上，kind/skillId/scope 被清掉（形状变回刷兵规则）',
+    r1.type === 'ranged' && r1.kind === undefined && r1.skillId === undefined && r1.scope === undefined
+    && r1.count === 1);
+
+  CONFIG.gameRules.laneWaveComposition = savedComposition;
+  CONFIG.factionOverrides = savedFactionOv;
+  SkillLibrary._registry.delete(spec.id);
+  delete SkillLibrary[spec.id];
+}
+
 done();

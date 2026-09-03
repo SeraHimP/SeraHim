@@ -10,8 +10,9 @@
  */
 import { CONFIG } from '../../data/Config.js';
 import { mapLaneIds, laneLabel } from '../laneLabels.js';
-import { buildWaveOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
+import { buildWaveOrder, buildBroadcastOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, rangeMid } from '../../data/dragonCurve.js';
+import { SkillLibrary } from '../../core/SkillLibrary.js';
 
 export const EDITOR_PAGES_WAVE = {
   // ==================== 巨龙：刷新节奏与强度曲线 ====================
@@ -207,6 +208,20 @@ export const EDITOR_PAGES_WAVE = {
   // 抄一份过去就是第三份实现，所以抽成共用的，两边都调它。
   _mapLaneIds() { return mapLaneIds(); },
   _laneLabel(id) { return laneLabel(id); },
+
+  /**
+   * v51.33：出兵编排"广播"（design §5.1/§5.3，任务 #109 阶段一第 4 项）——
+   * 能被广播的技能 = 在技能编辑器里声明了「出兵编排广播时」触发的技能，编译产物
+   * 会有 onBroadcast（behaviorVM.compileSpec 只在 byTrigger.broadcast 存在时才挂
+   * 这个钩子，见该文件）。内置技能与自制技能走同一个判据，不需要分别处理。
+   * "打通"换来的直接好处：这里不需要另一张"可广播技能"注册表，SkillLibrary 本身
+   * 就是唯一真源。
+   */
+  _broadcastSkillOptions() {
+    return SkillLibrary.ids()
+      .filter(id => typeof SkillLibrary[id]?.onBroadcast === 'function')
+      .map(id => ({ id, name: SkillLibrary[id].name || id }));
+  },
 
   /**
    * 当前作用域下【要编辑哪一份编排】。作用域是二维的：阵营 × 路。
@@ -407,17 +422,24 @@ export const EDITOR_PAGES_WAVE = {
     // 表头 52/96/62/62/62 和行里的按钮/输入框实际宽度对不上，列标题整体左偏 ——
     // 用户说的"UI 显示格式有些混乱"就是这个。现在列宽只有一处定义，不可能再错位。
     html += `<div class="wo-row wo-head">
-      <span>顺序</span><span>兵种</span><span>数量</span><span>起始波</span>
+      <span>顺序</span><span>兵种/技能</span><span>数量/范围</span><span>起始波</span>
       <span>每几波</span><span>生效条件</span><span></span>
     </div>`;
 
     if (list.length === 0) {
-      html += `<div style="color:#8b949e;font-size:12px;padding:8px;">编排为空 —— 当前对战不会生成任何小兵。</div>`;
+      html += `<div style="color:#8b949e;font-size:12px;padding:8px;">编排为空 —— 当前对战不会生成任何小兵，也不会广播任何技能。</div>`;
     }
     const groups = whenOptionGroups();
+    // v51.33：广播规则（design §5.1/§5.3）——"兵种/技能"这一列现在是刷兵类型与
+    // 可广播技能的合并下拉框，选中广播技能即把这一行整体变形成广播规则；
+    // "数量/范围"那一列跟着变形成 scope 选择（不分路/仅本路）。两种规则共用同一套
+    // 起始波/每几波/生效条件（WAVE_CONDITIONS 对两者一视同仁），不需要为广播另起
+    // 一套表单——这正是"打通"换来的 UI 复杂度收益（见 design §5.3）。
+    const broadcastSkills = this._broadcastSkillOptions();
     for (let i = 0; i < list.length; i++) {
       const r = list[i];
-      const off = EN[r.type] === false;
+      const isBroadcast = r.kind === 'broadcast';
+      const off = !isBroadcast && EN[r.type] === false;
       const cond = WAVE_CONDITIONS[r.when || ''] || WAVE_CONDITIONS[''];
       // 需要参数的条件（"游戏已进行 ≥ N 秒"）才显示那个数值框。
       // 无条件显示的话，用户会对着一个"总是"规则旁边的空数字框琢磨半天它管什么。
@@ -427,15 +449,27 @@ export const EDITOR_PAGES_WAVE = {
                   value="${r.whenArg ?? ''}" placeholder="${cond.arg.def}"
                   title="${cond.arg.label}">`
         : '';
-      html += `<div class="wo-row${off ? ' wo-off' : ''}">
+      const typeOrSkillSelect = `<select class="wo-field" data-idx="${i}" data-field="typeOrSkill">
+          <optgroup label="刷兵">
+            ${types.map(t => `<option value="spawn:${t}" ${!isBroadcast && t === r.type ? 'selected' : ''}>${this._iconOf(t)} ${this._labelOf(t)}</option>`).join('')}
+          </optgroup>
+          ${broadcastSkills.length ? `<optgroup label="📡 广播技能（在技能编辑器里声明「出兵编排广播时」触发）">
+            ${broadcastSkills.map(s => `<option value="broadcast:${s.id}" ${isBroadcast && s.id === r.skillId ? 'selected' : ''}>📡 ${s.name}</option>`).join('')}
+          </optgroup>` : ''}
+        </select>`;
+      const scopeOrCountCell = isBroadcast
+        ? `<select class="wo-field" data-idx="${i}" data-field="scope">
+            <option value="faction" ${(r.scope || 'faction') === 'faction' ? 'selected' : ''}>全阵营</option>
+            <option value="lane" ${r.scope === 'lane' ? 'selected' : ''}>仅本路</option>
+          </select>`
+        : cell(r, i, 'count', 0, 1);
+      html += `<div class="wo-row${off ? ' wo-off' : ''}${isBroadcast ? ' wo-broadcast' : ''}">
         <span class="wo-move-cell">
           <button class="wo-move" data-idx="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''}>▲</button>
           <button class="wo-move" data-idx="${i}" data-dir="1" ${i === list.length - 1 ? 'disabled' : ''}>▼</button>
         </span>
-        <select class="wo-field" data-idx="${i}" data-field="type">
-          ${types.map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${this._iconOf(t)} ${this._labelOf(t)}</option>`).join('')}
-        </select>
-        ${cell(r, i, 'count', 0, 1)}${cell(r, i, 'fromWave', 0, 1)}${cell(r, i, 'everyN', 1, 1)}
+        ${typeOrSkillSelect}
+        ${scopeOrCountCell}${cell(r, i, 'fromWave', 0, 1)}${cell(r, i, 'everyN', 1, 1)}
         <span class="wo-when-cell">
           <select class="wo-field" data-idx="${i}" data-field="when">
             ${groups.map(g => `<optgroup label="${g.label}">${g.items.map(o =>
@@ -445,8 +479,14 @@ export const EDITOR_PAGES_WAVE = {
         <button class="wo-del" data-idx="${i}" title="删除这条规则">✕</button>
       </div>`;
     }
+    if (!broadcastSkills.length) {
+      html += `<div style="font-size:11px;color:var(--text-mute);margin-top:4px;">
+        当前没有任何技能声明了「出兵编排广播时」触发——去技能编辑器给一个自制技能加上
+        这个触发时机，它就会出现在上面"兵种/技能"下拉框的 📡 分组里。</div>`;
+    }
 
-    html += `<div style="margin-top:8px;"><button id="woAddBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条</button>
+    html += `<div style="margin-top:8px;"><button id="woAddBtn" style="background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条刷兵规则</button>
+      ${broadcastSkills.length ? `<button id="woAddBroadcastBtn" style="margin-left:6px;background:#2a5a8a;border:none;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ 添加一条广播规则</button>` : ''}
       <button id="woResetBtn" style="margin-left:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">↺ 恢复默认编排</button></div>
       </div>`; // 关闭 ② 出兵编排 的 .editor-section
 
@@ -466,9 +506,12 @@ export const EDITOR_PAGES_WAVE = {
     // 预览按【当前作用域的阵营】算 —— 不传 faction 的话，编了红方专属编排却预览共享的，
     // 就又回到"预览骗人"那个老问题上了。
     const _pf = (this._factionScope && this._factionScope !== 'shared') ? this._factionScope : null;
-    const order = buildWaveOrder(w, nd, gr, _pf, {
-      gameTime: _pvTime, laneId: this._waveOrderPreviewLane, census: _census,
-    });
+    const _pvCtx = { gameTime: _pvTime, laneId: this._waveOrderPreviewLane, census: _census };
+    const order = buildWaveOrder(w, nd, gr, _pf, _pvCtx);
+    // v51.33：广播预览与刷兵预览共用同一份世界快照/判定管线（buildBroadcastOrder
+    // 内部也是 compositionFor+whenPasses），"预览与真实执行是否一致"这条既有保证
+    // 天然覆盖广播规则，不需要另外证明一遍。
+    const broadcasts = buildBroadcastOrder(w, nd, gr, _pf, _pvCtx);
     html += `<div class="editor-section"><h4>🔍 出兵预览</h4>
       <div class="slider-row" style="gap:8px;">
         <label style="width:auto;">预览第</label>
@@ -487,6 +530,12 @@ export const EDITOR_PAGES_WAVE = {
           ? order.map(t => `${this._iconOf(t)}${this._labelOf(t)}`).join(' → ')
           : '（本波无兵）'}
       </div>
+      ${broadcasts.length ? `<div class="pick-desc-box" style="margin-top:6px;">
+        📡 本波广播：${broadcasts.map(b => {
+          const name = SkillLibrary[b.skillId]?.name || b.skillId;
+          return `${name}（${b.scope === 'lane' ? '仅本路' : '全阵营'}）`;
+        }).join('、')}
+      </div>` : ''}
       <div style="font-size:10px;color:var(--text-mute);margin-top:4px;">
         按第 ${w} 波 ≈ 开局 ${Math.floor(_pvTime / 60)}分${String(Math.round(_pvTime % 60)).padStart(2, '0')}秒 推算
         （首波 ${_first}s，之后每 ${_every}s 一波）。
@@ -574,6 +623,13 @@ export const EDITOR_PAGES_WAVE = {
       this._woList(true).push({ type: 'melee', count: 1 });
       rerender();
     });
+    overlay.querySelector('#woAddBroadcastBtn')?.addEventListener('click', () => {
+      flush();
+      const first = this._broadcastSkillOptions()[0];
+      if (!first) return; // 按钮本来就只在有可广播技能时才渲染，这里只是防御
+      this._woList(true).push({ kind: 'broadcast', skillId: first.id, scope: 'faction' });
+      rerender();
+    });
     overlay.querySelectorAll('[data-wo-lane]').forEach(b => b.addEventListener('click', () => {
       flush();
       this._waveLaneScope = b.dataset.woLane;
@@ -632,7 +688,23 @@ export const EDITOR_PAGES_WAVE = {
       const r = list[+el.dataset.idx];
       if (!r) return;
       const f = el.dataset.field;
-      if (f === 'type') { r.type = el.value; return; }
+      // v51.33：合并下拉框（刷兵类型 / 广播技能）——value 带 "spawn:"/"broadcast:"
+      // 前缀区分选了哪一类，选中广播技能会把这一行**整体变形**成广播规则（反之亦然），
+      // 两种形状互斥的字段（type/count vs skillId/scope）各自清掉，不留旧形状的残余字段。
+      if (f === 'typeOrSkill') {
+        const v = el.value;
+        if (v.startsWith('broadcast:')) {
+          if (r.kind !== 'broadcast') { delete r.type; delete r.count; }
+          r.kind = 'broadcast';
+          r.skillId = v.slice('broadcast:'.length);
+          r.scope = r.scope === 'lane' ? 'lane' : 'faction';
+        } else {
+          if (r.kind === 'broadcast') { delete r.kind; delete r.skillId; delete r.scope; r.count = r.count ?? 1; }
+          r.type = v.slice('spawn:'.length);
+        }
+        return;
+      }
+      if (f === 'scope') { r.scope = el.value === 'lane' ? 'lane' : 'faction'; return; }
       if (f === 'when') {
         if (el.value) r.when = el.value; else delete r.when;
         const arg = WAVE_CONDITIONS[el.value]?.arg;
@@ -666,8 +738,9 @@ export const EDITOR_PAGES_WAVE = {
     // 回执里报的却是共享基准的条数 —— 又一处"面板说的和实际发生的不是一回事"。
     const f = (this._factionScope && this._factionScope !== 'shared') ? this._factionScope : null;
     const n = buildWaveOrder(w, this._waveOrderPreviewNexusDown, CONFIG.gameRules, f).length;
+    const nb = buildBroadcastOrder(w, this._waveOrderPreviewNexusDown, CONFIG.gameRules, f).length;
     const who = f ? (f === 'blue' ? '🔵蓝方' : '🔴红方') : '双方共享';
-    logFn(`✅ 出兵编排已应用（${who}，${list.length} 条规则；第 ${w} 波将出 ${n} 个单位）`, 'spawn');
+    logFn(`✅ 出兵编排已应用（${who}，${list.length} 条规则；第 ${w} 波将出 ${n} 个单位、广播 ${nb} 条技能）`, 'spawn');
   },
 
   // P2：成长/屠戮从原「生成规则」里拆出来单独应用。它们是战斗数值，

@@ -73,8 +73,11 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
     ...fs.readdirSync('.' + '/src/ui/editor').sort()
       .filter(f => f.endsWith('.js')).map(f => '.' + '/src/ui/editor/' + f)]
     .map(f => fs.readFileSync(f, 'utf8')).join('\n');
-  // 预览调用现在是多行的（第 5 个参数是条件判定用的世界快照）
-  T('编辑器预览也按阵营算（否则预览骗人）', /buildWaveOrder\(w, nd, gr, _pf, \{/.test(ui));
+  // 预览调用现在是多行的（第 5 个参数是条件判定用的世界快照）。
+  // v51.33：世界快照抽成了 _pvCtx 变量（刷兵预览和广播预览共用同一份，
+  // 保证两边"预览与真实执行是否一致"这条保证一起覆盖），不再是内联对象字面量，
+  // 所以这里只钉"faction 有没有传下去"，不钉第 5 个参数的字面形状。
+  T('编辑器预览也按阵营算（否则预览骗人）', /buildWaveOrder\(w, nd, gr, _pf/.test(ui));
   T('编辑器读写走同一个 _woList 入口', /_woList\(true\)/.test(ui) && /_woList\(false\)/.test(ui));
 
   delete CONFIG.factionOverrides.red.laneWaveComposition;
