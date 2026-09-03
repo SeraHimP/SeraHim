@@ -2,8 +2,10 @@
 
 > 交付形式说明：本文档**只是设计，不是实现**。用户原话："这个还是你认真构思，出报告，
 > 明早起来我查看。" 里面没有一行改动过 `src/`。所有涉及"现状"的描述都标了具体文件/行号，
-> 可以直接去核对；涉及"新做"的部分标了候选方案和取舍理由，而不是直接给答案——
-> 有几处关键决策（§7）需要你来定，不是我能替你定的。
+> 可以直接去核对；涉及"新做"的部分标了候选方案和取舍理由，而不是直接给答案。
+>
+> **v2 更新**：§7 原来的四条开放问题已经和用户确认完毕，结论并入正文（§3.2 navgrid
+> 分辨率与高度笔刷、§5.1 出兵编排动作），§7 改成"已确认的决策"记录，不再是待定项。
 
 ## 0. 结论先行
 
@@ -196,6 +198,37 @@ faction, ctx)`（`src/data/waveComposition.js`），后者读
    `src/data/mapValidate.js` 共享模块，测试和编辑器都调它），红线实时标出
    "这里建筑被围进墙里了""基地圈没罩住水晶枢纽"。
 
+**分辨率（已确认：自适应）**：不再固定 256×256。取一个"每格代表的实际距离"
+的软编码常量（`CONFIG.mapEditor.navgridCellSize`，初值按现有峡谷倒推 ≈
+3552/256 ≈ 13.875 世界单位/格，四舍五入取 14），新地图的 `n` 按
+`round(max(world.w, world.h) / cellSize)` 现算，再夹到 `[128, 512]`（下限保证
+最小地图不会因为格子太粗而失真，上限是笔刷实时重绘/位打包的性能红线，具体上限
+要拿真机测过再定，这里先给一个可调的软编码占位）。已有的三张内置地图（`n=256`）
+不受影响——它们是**手动指定**的 `navgrid`，不会被这条自适应公式反向改写；
+公式只管"编辑器新建地图时该用多大的格子"。
+
+**高度（已确认：笔刷要管）**：当前 `heightZones` 是"几个全局比例参数算出一圈
+圆形台阶"，笔刷画的是任意形状，两种数据模型天然对不上，所以不是给
+`heightZones` 加参数，而是新增一张**逐格高度图**，与 navgrid 同一个 `n×n`
+网格对齐（同一份格子索引 `i,j`，一份管"能不能走"，一份管"多高"）：
+
+- 数据形状：`{ n, heights: '<base64>' }`，每格 1 字节（0~255，线性映射到世界
+  高度，映射比例同样进 `CONFIG.mapEditor.heightScale` 软编码），**不做位打包**
+  ——高度不是 0/1，值域用满一字节，位打包反而没有收益，直接
+  `Uint8Array` → `btoa()`。与 navgrid 的 1-bit 位打包并列成两套独立编码，
+  不要为了"格式统一"硬塞进同一种打包方式。
+- 笔刷模式新增"高度"页签，与"可走/不可走"是两支笔（互相独立，可以先画墙再单独
+  抬高，也可以画一块可走的高台），预设几档快捷高度（平地/缓坡/高台，对应
+  `heightZones` 现有的语义），也支持精确数值输入。
+- 读取侧：`MapSystem.heightAt(x,y)` 现在的实现（`docs/DEVELOPMENT.md` 附录提到
+  的公式路径）**保留不动，作为内置地图/没有 `heightGrid` 字段的地图的默认行为**；
+  新增一个分支——地图声明了 `heightGrid` 就优先读格子插值（双线性，避免台阶感），
+  没声明就照旧走比例公式。两条路径共存，不强迫内置三张地图迁移格式。
+- 渲染侧：`TerrainLayer` 现在按 `heightZones` 参数生成台阶网格，要新增"按
+  `heightGrid` 采样生成位移网格"的路径；这一步工作量比笔刷本身大（涉及法线
+  重新计算、与植被/水面贴合），是"高度笔刷"这个子功能里风险最高的一块，
+  建议放在地图编辑器 MVP 之后单独一个阶段做（见 §6 路线图更新）。
+
 ### 3.3 手动画墙：是地形笔刷的一个特化操作，不是独立机制
 
 用户原话"手动画画造墙"——建议不要做成"墙"和"地形"两套独立数据（那是在重复
@@ -271,31 +304,57 @@ faction, ctx)`（`src/data/waveComposition.js`），后者读
 
 ## 5. 出兵编排升级设计
 
-### 5.1 数据结构扩展
+### 5.1 数据结构扩展（已确认：与 behaviorVM 打通，不建独立动作表）
 
 现有规则 `{type, count, fromWave, everyN, when, whenArg}` 是"单一动作=刷兵"的
-特化形式。建议**不推翻现有结构**（避免所有老配置失效），而是新增一种规则类型：
+特化形式。**不推翻现有结构**（避免所有老配置失效），新增一种规则类型：
 
 ```js
 // 现有：刷兵规则（保留，行为不变）
 { type: 'melee', count: 3, fromWave: 0, everyN: 1, when: '', whenArg: null }
 
-// 新增：动作规则（当 kind:'action' 时，type 字段不再是兵种，走 do 数组）
-{ kind: 'action', when: 'enemy.nexus_lane.allDown', whenArg: null,
-  fromWave: 10, everyN: 5,
-  do: [
-    { act: 'applyEffect', to: 'faction', effect: 'rally_buff', duration: 20 },
-    { act: 'spawnMinion', minionType: 'super', count: 1 },
-  ] }
+// 新增：广播规则（kind:'broadcast' 时不再是兵种，改成引用一个已有技能）
+{ kind: 'broadcast', when: 'enemy.nexus_lane.allDown', whenArg: null,
+  fromWave: 10, everyN: 5, scope: 'faction',   // 'faction' | 'lane'
+  skillId: 'custom_rally_buff' }               // 内置武器/被动，或 CONFIG.customSkills 里的自制技能
 ```
 
-`do` 数组复用 `behaviorVM.js` 的 `ACTIONS` 表模式（同一个"动作表=校验来源=编辑器
-选项来源"的原则，§2 原则 1），但**开一张新的 `WAVE_ACTIONS` 表**而不是直接摘
-`behaviorVM.ACTIONS`——原因是执行上下文完全不同：`behaviorVM` 的动作作用于
-"一个具体单位对另一个具体单位"（`self`/`target`），出兵编排的动作作用于
-"一个阵营/一条路"（没有单一目标单位的概念，`to` 的取值应该是 `'faction'` /
-`'lane'` 这种范围，不是具体实体）。两张表**结构相似、内容不同**，这是有意的
-不复用（模式复用，数据不复用）。
+**取舍过程记录（用户定稿：打通）**：最初考虑过开一张独立的 `WAVE_ACTIONS`
+表，照抄 `behaviorVM.ACTIONS` 的模式但不共用数据，理由是两边的执行目标不同
+（`behaviorVM` 作用于"一个具体单位对另一个具体单位"，出兵编排作用于"一个阵营/
+一条路"）。但这样 `applyEffect`/`heal`/`shield` 这几个动作原语要在两处各实现
+一遍，以后加新原语要改两个地方，正是本仓库最怕的"同一件事实现了两遍"。
+
+**改成打通后的设计**：广播规则不自带 `do` 数组，而是**引用一个已经在技能编辑器
+里做好的技能 id**。执行时不新建一套动作解释器，是给 `behaviorVM.TRIGGERS` 加一
+个新的触发时机：
+
+```js
+// behaviorVM.js 的 TRIGGERS 表新增一项
+broadcast: { label: '出兵编排广播时', hasTarget: false },
+```
+
+与现有的 `equip`（装备时，同样 `hasTarget:false`，`self`=该单位、无 `target`）
+形状完全一致，`compileSpec` 按 `byTrigger.broadcast` 生成一个 `onBroadcast` 钩子，
+写法照抄 `onEquip` 那一段（`mkCtx` 组装、`evalConditions`/`runActions` 复用，
+零新增执行逻辑）。出兵编排这边触发时只做一件事：按 `scope` 枚举范围内的单位
+（复用 `DragonSystem._grantAll` 同款"按阵营/路过滤 `entityContainer.getAll`"逻辑，
+不重新写一遍枚举），对每个单位调用其 `onBroadcast(unitId, ctx)`。
+
+好处：
+- **零重复实现**——`applyEffect`/`heal`/`shield`/`damage` 等动作原语只有一份，
+  两边共用，加新原语只改 `behaviorVM.ACTIONS` 一张表。
+- **UI 白嫖**——用户在已有的技能编辑器里做一个"声明了 `broadcast` 触发"的技能，
+  出兵编排面板只需要一个"选技能"的下拉框 + 触发条件表单，不需要另建一套动作
+  表单生成器。
+- **校验白嫖**——`validateSpec` 已经会检查"没有目标时不能用需要目标的动作"，
+  `broadcast`（`hasTarget:false`）天然继承这条保护，广播规则不会被写成"对目标
+  造成伤害"这种没有目标可打的坏配置。
+
+代价：广播型技能只能表达"没有目标、作用于自身"形状的效果（加状态、改属性、
+治疗自己），表达不了"造成伤害""溅射"这类需要目标的动作——这条限制是
+`hasTarget:false` 自带的，与 `equip` 触发的限制完全一致，符合出兵编排"广播给
+一批单位"的语义（本来就没有"目标"这个概念），不是遗漏。
 
 ### 5.2 条件来源扩展
 
@@ -317,31 +376,46 @@ laneId, gameTime, nexusDown, census}`（`LaneWaveSystem._enqueueForFaction` 现�
 `compositionFor`/UI 下拉框都自动跟上（这是现有代码已经做对的地方，新增不破坏
 这个性质）。
 
-### 5.3 UI 改动
+### 5.3 UI 改动（打通之后，比原方案更薄）
 
 现有"出兵顺序"面板（`pagesGameplayWorld.js` 附近，具体页面需要进一步定位，
 本报告未深入到编辑器 UI 代码层）大概率是一个线性列表 + 表单。升级后每条规则
-要能区分"刷兵"与"动作"两种卡片样式（不同图标/配色），"动作"卡片展开后是
-`do` 数组的子列表，每个子项选动作类型后按 `WAVE_ACTIONS[act].fields` 现出对应
-字段——这与 `behaviorVM` 已有的技能编辑器表单生成逻辑是同一个模式，UI 层的
-表单生成代码理应能抽出公共部分复用（哪怕只是"根据 fields 数组生成表单控件"
-这一小段）。
+要能区分"刷兵"与"广播"两种卡片样式（不同图标/配色），"广播"卡片**不需要
+展开成动作子列表**——因为动作本身已经是"选一个技能"这一件事：一个下拉框
+（列出 `SkillLibrary` 里所有 `applicableTypes` 含 `broadcast` 触发的技能，
+含内置与 `CONFIG.customSkills`）+ `scope`（阵营/路）+ 现有的 `when`/`fromWave`/
+`everyN` 表单，UI 复杂度比原来"重开一套动作表单生成器"的方案小很多——这是
+打通换来的直接好处，不只是省了运行时代码，也省了编辑器 UI 代码。
+
+技能本身"是不是能被出兵编排广播"由技能作者在**技能编辑器**里勾选/声明
+`broadcast` 触发（与现有"命中时/每隔一段时间/装备时/被攻击时"四个触发时机
+的编辑方式完全一致，用户已经会用），出兵编排面板只负责"什么时候广播、广播
+给谁"，两边职责分得干净。
 
 ### 5.4 校验
 
-复用 `behaviorVM.validateSpec` 的报错风格（"第几条规则、第几个动作、合法取值
-是什么"），新写 `validateWaveComposition(rules)`，保存时跑，不要留到运行时
-静默失效。
+`broadcast` 触发下的技能规格校验，**完全复用** `behaviorVM.validateSpec`
+（`hasTarget:false` 的校验分支本来就存在，`equip` 触发已经在用）。出兵编排
+规则自身只需要校验"引用的 `skillId` 存在、且该技能确实声明了 `broadcast`
+触发"，新写一个几行的 `validateWaveComposition(rules)`，不需要重新校验动作
+字段本身——这部分已经在保存技能那一刻校验过了。
 
 ---
 
 ## 6. 分阶段实施路线图（建议，不是强制顺序）
 
 **阶段一：出兵编排升级（独立可交付，风险最低）**
-1. `WAVE_ACTIONS` 表 + 规则结构扩展（`kind:'action'`）。
-2. `ctx` 扩展龙魂/天气/得分来源。
-3. UI 表单化 + 校验。
-4. `tests/sim_waveaction.mjs`：新增动作规则的求值断言，钉行为形状（见 §8）。
+1. `behaviorVM.TRIGGERS` 加 `broadcast` 一项 + `compileSpec` 生成 `onBroadcast`
+   钩子（照抄 `onEquip` 分支）。
+2. 出兵编排规则结构扩展（`kind:'broadcast'`，`skillId` + `scope`），
+   `LaneWaveSystem`（或新抽一个更薄的"广播调度"函数）按 `scope` 枚举单位、
+   逐个调用 `onBroadcast`。
+3. `ctx` 扩展龙魂/天气/得分来源（供 `when` 条件使用）。
+4. UI：广播规则卡片（选技能 + scope + when 表单，见 §5.3），复用技能编辑器
+   已有的 `broadcast` 触发勾选项。
+5. `tests/sim_waveaction.mjs`：新增广播规则的求值断言——满足条件时对应技能的
+   `onBroadcast` 被调用、`scope` 限定范围正确、`fromWave`/`everyN` 与刷兵规则
+   走同一套判定代码，钉行为形状（见 §8）。
 
 **阶段二：地形/缓存失效重构（地基前置工作，§2 原则 6 点名的技术债）**
 1. 抽出 `mapSystem.invalidate([...])`，收敛现有三处分散失效。
@@ -350,7 +424,8 @@ laneId, gameTime, nexusDown, census}`（`LaneWaveSystem._enqueueForFaction` 现�
    共用同一份校验"的地基先打好，不用等编辑器动工才做。
 
 **阶段三：地图编辑器 MVP**
-1. navgrid 笔刷（画/擦，不含去毛刺整理）+ 保存/加载。
+1. navgrid 笔刷（画/擦，不含去毛刺整理）+ 保存/加载，分辨率按 §3.2 的自适应
+   公式现算。
 2. 建筑摆放（拖拽 + 弧长吸附）。
 3. `CONFIG.customMaps` 持久化 + 地图选择 UI 接入。
 4. 实时校验红线（调阶段二的共享模块）。
@@ -360,7 +435,14 @@ laneId, gameTime, nexusDown, census}`（`LaneWaveSystem._enqueueForFaction` 现�
 2. 去毛刺整理按钮。
 3. 龙坑/基地圈等"点/半径"参数表单。
 
-**阶段五：兵路径自定义**
+**阶段五：高度笔刷**（§3.2 已确认要做，单独拆一个阶段——`TerrainLayer` 按
+逐格高度图生成位移网格是这一整块设计里风险最高的一段，不与地图编辑器 MVP
+混在一起，出问题时便于单独回滚）
+1. 逐格高度数据（`heightGrid`）+ 笔刷高度页签。
+2. `MapSystem.heightAt` 接入格子插值分支（保留旧的比例公式分支不动）。
+3. `TerrainLayer` 按 `heightGrid` 生成位移网格，处理法线/植被/水面贴合。
+
+**阶段六：兵路径自定义**
 1. 路径层的增删拖拽点。
 2. 与出兵编排 `laneId` 联动校验（新路径必须配齐兵种/建筑，否则给警告）。
 
@@ -370,21 +452,21 @@ laneId, gameTime, nexusDown, census}`（`LaneWaveSystem._enqueueForFaction` 现�
 
 ---
 
-## 7. 需要你确认的开放问题
+## 7. 已确认的决策（原开放问题，已与用户逐条对齐）
 
-1. **navgrid 分辨率**：现在固定 256×256。地图编辑器如果支持"新建任意大小的地图"，
-   分辨率要不要跟着 `world.w/h` 的比例自适应，还是继续固定 256（更大的图会导致
-   每格代表的实际距离变粗，笔刷精度下降）？
-2. **地形笔刷要不要支持"高度"**（`heightZones` 那套台阶地形现在是几个比例参数
-   算出来的，不是逐格数据）？如果笔刷只管可走性，高度还是维持"少数几个全局参数"
-   的老办法，两者数据模型不统一，你能接受吗？
-3. **出兵编排的动作范围要放多宽**：§5.1 的例子只给了"施加状态"和"额外刷兵"。
-   要不要开放"直接调用某个已有 behaviorVM 技能的动作序列"（相当于两套引擎打通）？
-   这会让动作表达力大增，但也让两套引擎的边界变模糊，需要你权衡。
-4. **地图编辑器要不要做"多人协作/云端存档"**：当前项目是纯静态站、零后端，
-   `CONFIG.customMaps` 只能存在浏览器本地（localStorage）+ 手动导出 JSON 分享。
-   如果以后要支持"我做的地图发给你玩"，现在这套导出/导入机制已经够用，只是
-   体验是"发文件"不是"发链接"，要不要现在就规划得更长远一点？
+1. **navgrid 分辨率**：自适应，不再固定 256。按"每格代表的实际距离"这个软编码
+   常量反算 `n`，夹在 `[128, 512]`。内置三张地图的 `n=256` 不受影响。详见 §3.2。
+2. **地形笔刷要不要管高度**：要。新增与 navgrid 同网格对齐的逐格高度图
+   （`heightGrid`），不是往 `heightZones` 加参数。渲染侧接入是这一整块设计里
+   风险最高的部分，单独拆成 §6 阶段五，不与地图编辑器 MVP 混在一起。详见 §3.2。
+3. **出兵编排的动作要不要跟 behaviorVM 打通**：打通。不建独立的 `WAVE_ACTIONS`
+   表，改成给 `behaviorVM.TRIGGERS` 加一个 `broadcast` 触发时机（`hasTarget:
+   false`，形状与现有的 `equip` 一致），出兵编排规则引用一个声明了这个触发的
+   技能 id，执行/校验/UI 三处全部复用现成的 `behaviorVM` 运行时，不新增一套
+   平行实现。详见 §5.1/§5.3/§5.4。
+4. **要不要做多人协作/云端存档**：暂不做。当前的导出/导入 JSON 机制维持现状
+   （`CONFIG.customMaps` 走 `templateIO.js`），"发链接"式协作留到以后有真实
+   需求时再单独立项，不在这一轮范围内。
 
 ---
 
@@ -397,7 +479,11 @@ laneId, gameTime, nexusDown, census}`（`LaneWaveSystem._enqueueForFaction` 现�
 - **地图编辑器**：`tests/sim_mapeditor.mjs`——navgrid 位打包/解包往返一致性
   （画什么读出来还是什么）、去毛刺算法的输入输出断言、共享校验模块
   （`mapValidate.js`）与现有 `sim_maps.mjs` 断言口径一致（两边应该收敛成一份，
-  这里其实是"迁移测试"而不是"新增测试"）。
+  这里其实是"迁移测试"而不是"新增测试"）、分辨率自适应公式的边界值（世界尺寸
+  很小/很大时 `n` 被正确夹到 `[128,512]`）。
+- **高度笔刷**（阶段五单独一批）：`heightGrid` 的编解码往返一致性、
+  `MapSystem.heightAt` 在"有 `heightGrid`"与"无 `heightGrid`（走比例公式）"
+  两条路径下互不干扰（内置三张地图跑一遍现有 `sim_maps.mjs`，行为必须逐位不变）。
 - **兵路径自定义**：路径点增删的边界情况（首尾不可删、单点路径的兜底）、
   新路径与出兵编排 `laneId` 联动的集成测试。
 
