@@ -532,3 +532,75 @@ export function withCampSpawnPointRemoved(camps, campId, spIndex) {
     return { ...c, spawnPoints: c.spawnPoints.filter((_, i) => i !== spIndex) };
   });
 }
+
+// ==================== 兵线自动对齐（2026-09-04 第二节）====================
+// 用户："蓝方下路的兵线，在路上有些偏上。正常的下路兵线应该是在下路的路中央。"
+// 用一个垂直于局部切线方向、在 navgrid 上双向探测可行走边界的算法核实过：
+// 召唤师峡谷上/下路贴着地图边界走的直线段，路点确实一致地偏离走廊横截面
+// 中点 1~4 格（256 分辨率下约 14~55 世界单位），量级不大但方向一致，跟用户
+// "有些偏"的描述吻合；而路点数组里靠近基地的转角/开阔地那几个点，用同一个
+// 算法量出来的"偏移"高达 20+ 格——那不是真的偏了，是那一段地形本来就是
+// 开阔广场，两侧很远才碰到墙，"走廊中点"这个概念在开阔地根本不成立，量出来
+// 的大偏移是算法在开阔地失真，不是真实问题。
+//
+// 所以关键设计是**搜索半径设上限**（默认 15 格）：窄直线段两侧都能在这个
+// 半径内碰到真墙，判定可信，居中生效；开阔地两侧都碰不到墙，直接跳过不碰——
+// 一个算法，自动区分"该修的窄段"和"不该碰的开阔地"，不需要额外传参告诉它
+// 哪几个点是转角。
+
+/**
+ * 把一条路的中间路点（跳过首尾——那两个锚定基地/水晶，编辑器路径模式里
+ * "拖动路点"本来就不让拖首尾，这里保持同一条规矩）沿垂直于局部切线的方向，
+ * 吸附到 navgrid 可行走走廊的横截面中点。
+ * @param {Uint8Array} bits navgrid 位图（0/1，n×n，见 navgrid.js unpackBits）
+ * @param {number} n navgrid 分辨率
+ * @param {{w:number,h:number}} world 地图世界尺寸（世界坐标→格子坐标换算用，
+ *   与 MapEditorDialog.js 的 worldToGrid 同一条规则：gx = x/W.w*n）
+ * @param {{x:number,y:number}[]} waypoints
+ * @param {{maxRadius?:number}} [opts] maxRadius：单侧搜索上限格数，默认 15——
+ *   两侧都在这个半径内摸到墙才算"窄走廊，可信、居中"，任一侧摸不到墙
+ *   （开阔地）就跳过这个点，原样保留，不瞎猜。
+ * @returns {{x:number,y:number}[]} 新数组（不修改输入）
+ */
+export function alignLaneToCorridor(bits, n, world, waypoints, opts = {}) {
+  const maxRadius = opts.maxRadius ?? 15;
+  const W = world?.w || 1, H = world?.h || 1;
+  const toGrid = (x, y) => ({ gx: x / W * n, gy: y / H * n });
+  const toWorld = (gx, gy) => ({ x: gx / n * W, y: gy / n * H });
+  const isWalkable = (gx, gy) => {
+    const x = Math.round(gx), y = Math.round(gy);
+    if (x < 0 || y < 0 || x >= n || y >= n) return false;
+    return !!bits[y * n + x];
+  };
+  return waypoints.map((wp, i) => {
+    if (i === 0 || i === waypoints.length - 1) return wp;
+    const prev = waypoints[i - 1], next = waypoints[i + 1];
+    const g = toGrid(wp.x, wp.y);
+    const gPrev = toGrid(prev.x, prev.y), gNext = toGrid(next.x, next.y);
+    const dx = gNext.gx - gPrev.gx, dy = gNext.gy - gPrev.gy;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = -dy / len, uy = dx / len; // 垂直方向单位向量（格子空间）
+    // 路点本身若恰好落在不可走格（贴边/取整误差导致的边界抖动），先找最近的
+    // 可走格当参照点——不然两侧从原地探墙立刻失败（0=0），会被误判成"已经
+    // 居中"，实际上这个点根本不在走廊里，是最该修的情形。
+    let originS = 0;
+    if (!isWalkable(g.gx, g.gy)) {
+      let found = null;
+      for (let s = 1; s <= maxRadius; s++) {
+        if (isWalkable(g.gx + ux * s, g.gy + uy * s)) { found = s; break; }
+        if (isWalkable(g.gx - ux * s, g.gy - uy * s)) { found = -s; break; }
+      }
+      if (found === null) return wp; // 附近整片都不可走（异常数据），不瞎猜，原样保留
+      originS = found;
+    }
+    const ox = g.gx + ux * originS, oy = g.gy + uy * originS;
+    let posEdge = maxRadius, negEdge = maxRadius;
+    for (let s = 0; s < maxRadius; s++) { if (!isWalkable(ox + ux * s, oy + uy * s)) { posEdge = s; break; } }
+    for (let s = 0; s < maxRadius; s++) { if (!isWalkable(ox - ux * s, oy - uy * s)) { negEdge = s; break; } }
+    if (posEdge >= maxRadius || negEdge >= maxRadius) return wp; // 开阔地，任一侧没摸到墙就不碰
+    const offset = originS + (posEdge - negEdge) / 2;
+    if (Math.abs(offset) < 0.5) return wp; // 已经居中（半格以内），不用挪
+    const ng = { gx: g.gx + ux * offset, gy: g.gy + uy * offset };
+    return toWorld(ng.gx, ng.gy);
+  });
+}

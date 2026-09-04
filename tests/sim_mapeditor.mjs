@@ -467,7 +467,7 @@ const T = board.T;
   // "起点地图"下拉框（不重新做一份，见 renderConfigModeBody 头注），这里只钉阵营
   // 增删/出兵开关/跳转入口这几处新接线，以及 mapEditorCore.js 那几个纯函数真的被调用了。
   T('㊵-导入了阵营管理的纯函数（cloneFactionsForEdit/withFactionAdded/withFactionRemoved/pruneMapDataForRemovedFaction）',
-    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,200}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,400}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('㊶-新增了第四个 editMode 切换按钮（配置模式）',
     /mapEditorEditModeConfig['"]\)\.addEventListener\(['"]click['"][\s\S]{0,60}editMode\s*=\s*['"]config['"]/.test(src));
   T('㊷-新增阵营按钮调用 withFactionAdded 并捕获异常写回状态提示（不是让整个弹窗崩掉）',
@@ -516,6 +516,12 @@ const T = board.T;
     /switchBase\s*=[\s\S]{0,1400}draftNeutralCamps\s*=\s*cloneNeutralCampsForEdit\(baseMap\)/.test(src));
   T('60-保存时把 draftNeutralCamps 传给 buildCustomMapPayload',
     /buildCustomMapPayload\(baseMap[\s\S]{0,600}neutralCamps:\s*draftNeutralCamps/.test(src));
+
+  // 兵线自动对齐（2026-09-04 第二节）：导入了纯函数、按钮真的调用了它并写回
+  // draftLanes（不是只调轻量重绘，糊弄一下）。
+  T('61-导入了 alignLaneToCorridor 纯函数', /alignLaneToCorridor[\s\S]{0,60}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('62-自动对齐按钮真的调用 alignLaneToCorridor 并写回 draftLanes',
+    /mapEditorAlignLaneBtn['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,300}alignLaneToCorridor\(bits, n, baseMap\.world, lane\.waypoints\)[\s\S]{0,300}draftLanes\s*=/.test(src));
 }
 
 // ==================== ⑦ 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================

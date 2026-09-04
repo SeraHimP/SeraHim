@@ -680,10 +680,25 @@ const mkE = (ents, type, x, y, extra = {}) => {
       }
     }
   }
-  // ② 同一路同一阵营的塔朝向一致（它们在同一段路上）
+  // ② 同一路同一阵营的塔朝向大体一致（它们在同一段路上）
+  //
+  // 2026-09-04：原来是 new Set(angs).size===1 的**逐度**相等，能成立纯粹是因为
+  // 当时召唤师峡谷上路靠近蓝方基地那几个路点恰好共线（不同塔各自最近的路点段
+  // 切线方向凑巧四舍五入到同一个整数度）。跑过 mapEditorCore.js 的
+  // alignLaneToCorridor() 把上路路点吸附回走廊中线后（修正用户反馈的"下路兵线
+  // 偏上"那类问题），这份共线性被打破——上路 outer/inner/base 三座塔的朝向
+  // 变成 -179.98°/-179.98°/-178.83°，肉眼分辨不出的 ~1.15° 差异。
+  // 逐度相等本来就是在钉"当时数据恰好共线"这个偶然结果，不是真正该守的不变量
+  // ——真正该守的是"同一路的塔看起来朝向一致"，改成允许小容差（同一路内两两
+  // 角度差 ≤ 3°），既保住设计意图，又不会把"路点几何被合理校正"的真实改进
+  // 錯判成 bug。
   for (const lane of ['top', 'mid', 'bot']) {
-    const angs = ['outer', 'inner', 'base'].map(t => pick('blue', lane, t)).filter(Boolean).map(of);
-    T(`向②-${lane}：蓝方同路各档朝向一致`, new Set(angs).size === 1);
+    const angs = ['outer', 'inner', 'base'].map(t => pick('blue', lane, t)).filter(Boolean).map(of)
+      .filter(a => a !== null);
+    const maxDiff = angs.length < 2 ? 0 : Math.max(...angs.flatMap((a, i) =>
+      angs.slice(i + 1).map(b => { let d = Math.abs(a - b); if (d > 180) d = 360 - d; return d; })));
+    T(`向②-${lane}：蓝方同路各档朝向大体一致（角度：${angs.join('/')}，最大两两差 ${maxDiff.toFixed(2)}° ≤ 3°）`,
+      maxDiff <= 3);
   }
   // ③ 三条路的朝向互不相同（不是全都朝同一个方向 —— 那正是改动前的样子）
   T('向③-三条路朝向各不相同（改动前是所有塔一个朝向）',

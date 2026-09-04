@@ -62,6 +62,7 @@ import {
   cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
   withRuleAdded, withRuleRemoved, withRuleMoved, withRuleFieldSet,
   cloneNeutralCampsForEdit, withCampSpawnPointFieldSet, withCampSpawnPointAdded, withCampSpawnPointRemoved,
+  alignLaneToCorridor,
 } from '../data/mapEditorCore.js';
 import { allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
 import { NEUTRAL_UNIT_TYPES } from '../systems/NeutralCampSystem.js';
@@ -868,6 +869,10 @@ export const MapEditorDialog = {
           </div>
           <div id="mapEditorPathStatus" style="font-size:12px;margin-bottom:4px;color:var(--text-mute);"></div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <button id="mapEditorAlignLaneBtn" title="把这条路中间的路点吸附到 navgrid 可行走走廊的横截面中点；只对能在搜索半径内两侧都摸到墙的窄走廊生效，靠近基地的开阔转角不会被误改">🎯 自动对齐到走廊中线</button>
+            <span style="font-size:10px;color:var(--text-mute);">首尾路点（锚定基地/水晶）不会被移动</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <button id="mapEditorDeleteWaypointBtn" ${selectedWaypointIndex < 0 ? 'disabled' : ''}>🗑️ 删除选中路点</button>
             <div style="display:flex;gap:6px;">
               <input id="mapEditorNewLaneIdInput" type="text" placeholder="新路 id" style="width:90px;">
@@ -1151,6 +1156,20 @@ export const MapEditorDialog = {
         }
         selectedWaypointIndex = -1;
         render();
+      });
+      document.getElementById('mapEditorAlignLaneBtn')?.addEventListener('click', () => {
+        if (!selectedLaneId) return;
+        const lane = draftLanes.find(l => l.id === selectedLaneId);
+        if (!lane) return;
+        const alignedWps = alignLaneToCorridor(bits, n, baseMap.world, lane.waypoints);
+        const moved = alignedWps.reduce((c, wp, i) =>
+          c + ((wp.x !== lane.waypoints[i].x || wp.y !== lane.waypoints[i].y) ? 1 : 0), 0);
+        draftLanes = draftLanes.map(l => (l.id === selectedLaneId ? { ...l, waypoints: alignedWps } : l));
+        logFn(moved > 0
+          ? `🎯 已把「${selectedLaneId}」的 ${moved} 个路点吸附到走廊中线（开阔地/首尾不动）`
+          : `🎯 「${selectedLaneId}」的路点已经都在走廊中线附近，没有需要调整的`, 'spawn');
+        redrawCanvas();
+        updatePathStatus();
       });
       document.getElementById('mapEditorAddLaneBtn')?.addEventListener('click', () => {
         const id = document.getElementById('mapEditorNewLaneIdInput').value.trim();
