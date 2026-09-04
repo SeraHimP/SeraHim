@@ -29,6 +29,7 @@
  */
 
 import { CONFIG } from '../data/Config.js';
+import { FACTIONS, mapFactionsOf, laneSpawnsOf } from '../systems/FactionSystem.js';
 
 /** 归一化到 (-π, π]。 */
 function wrap(a) {
@@ -73,17 +74,26 @@ export function towerFacingRad(entity, map, cfg = null) {
   if (c.enabled === false) return null;
   if (!entity || !entity.pos || !map) return null;
   const fac = entity._mapFaction || entity.faction;
-  if (fac !== 'blue' && fac !== 'red') return null;
+  if (!fac || fac === FACTIONS.NEUTRAL) return null;
 
   const nexusOf = (f) => (map.buildings || []).find(b =>
     b.tier === 'nexus_main' && b.faction === f && b.pos);
-  const foe = nexusOf(fac === 'blue' ? 'red' : 'blue');
+  const lane = (map.lanes || []).find(l => l.id === entity._laneId);
+  // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §1.3）：原来写死
+  // "敌人=另外那一个"，改成优先读这条路自己声明的目标阵营（laneSpawnsOf）——
+  // 汇合路径上一座塔理论上有多个目标，朝向取第一个目标当"正对方向"，跟
+  // LaneWaveSystem 的 wctx.enemy 简化取法一致，真正的多目标朝向语义留给以后。
+  // 找不到匹配的 spawn 声明时（自制图没配 lane.spawns，或建筑不在任何路上），
+  // 兜底成"地图声明的阵营列表里第一个不是自己的"——两阵营地图下这就是
+  // "另外那一个"，与改动前逐位一致。
+  const mySpawn = laneSpawnsOf(lane || {}).find(s => s.faction === fac);
+  const enemyFac = mySpawn?.targetFactions?.[0] || mapFactionsOf(map).find(f => f !== fac) || null;
+  const foe = enemyFac ? nexusOf(enemyFac) : null;
   // 指向敌方水晶枢纽的向量：既是规则②本身，也是规则①的可信度判据。
   const fx = foe ? foe.pos.x - entity.pos.x : 0;
   const fy = foe ? foe.pos.y - entity.pos.y : 0;
 
   // ---- ① 有兵线：取切线（且切线得指着敌方半场） ----
-  const lane = (map.lanes || []).find(l => l.id === entity._laneId);
   const wps = lane && lane.waypoints;
   if (wps && wps.length >= 2) {
     // 找最近的路点，用它前后两点连线当切线 —— 只用相邻一段的话，
@@ -98,8 +108,10 @@ export function towerFacingRad(entity, map, cfg = null) {
     const b = wps[Math.min(wps.length - 1, bi + 1)];
     let dx = b.x - a.x, dy = b.y - a.y;
     if (dx === 0 && dy === 0) return null;
-    // 蓝方朝路点前进方向（指向红方），红方反过来 —— 即"每座塔面朝敌人来向"。
-    if (fac === 'red') { dx = -dx; dy = -dy; }
+    // 朝路点前进方向还是反过来，取这条路自己声明的方向（mySpawn.direction）——
+    // 两阵营默认声明里 blue=forward/red=reverse，跟改动前"红方反过来"逐位一致；
+    // 找不到声明（同上面 enemyFac 的兜底理由）时按 forward 处理，即"沿路点顺序朝敌人来向"。
+    if (mySpawn?.direction === 'reverse') { dx = -dx; dy = -dy; }
     // 可信度判据。没有敌方枢纽可参照时（自制图可能没写）就无条件信切线 ——
     // 那是改动前的行为，不能因为拿不到参照物就把整条规则①废掉。
     //

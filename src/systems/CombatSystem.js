@@ -1,6 +1,6 @@
 import { AttributeCalculator } from '../core/AttributeCalculator.js';
 import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
-import { canTarget, isStructureProtected, enemyUnitsInRadius } from './FactionSystem.js';
+import { canTarget, isStructureProtected, enemyUnitsInRadius, FACTIONS } from './FactionSystem.js';
 import { chargeParamsFor } from '../core/skills/attackModes.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
@@ -119,7 +119,11 @@ function recordLastHit(target, attacker) {
   if (!target || !attacker) return;
   target._lastHitBy = attacker.id;
   const fac = attacker._mapFaction || attacker.faction || null;
-  if (fac === 'blue' || fac === 'red') target._lastHitFaction = fac;
+  // 多阵营地基：原来写死"只认 blue/red"，第三阵营打出的最后一击不会被记录，
+  // 直接卡死 DragonSystem 的龙魂归属判定（读的就是这个字段）。这里的真实意图
+  // 是上面头注写的"中立的一击不该顶掉非中立方的归属"——泛化成"任何非中立
+  // 阵营都能记"，不再限定成恰好两个阵营名字。
+  if (fac && fac !== FACTIONS.NEUTRAL) target._lastHitFaction = fac;
 }
 
 export class CombatSystem {

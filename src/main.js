@@ -17,7 +17,7 @@ import { FacingSystem } from './systems/FacingSystem.js';
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
 import { CollisionSystem } from './systems/CollisionSystem.js';
 import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
-import { FACTIONS, canTarget, towerRuleFor } from './systems/FactionSystem.js';
+import { FACTIONS, canTarget, towerRuleFor, mapFactionsOf, scorerFactionOf } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
 import { dayNightAt, DAY_PERIOD, resolveDayPhase, applyWeatherOvercast } from './presentation/DayNight.js';
@@ -308,7 +308,10 @@ eventBus.on('dragon:soulUnlocked', (d) => {
 eventBus.on('dragon:soulResolved', (d) => {
   const t = d.factionTotals || {};
   if (d.owner) {
-    const who = d.owner === 'blue' ? '🔵蓝方' : '🔴红方';
+    // 多阵营地基：原来"非 blue 就当 red"会把第三阵营（比如 green）的胜利
+    // 错标成"红方取得"——现在只对已知的两个默认阵营用专属图标，其余阵营
+    // 照实打印阵营名，不再瞎猜。
+    const who = d.owner === 'blue' ? '🔵蓝方' : d.owner === 'red' ? '🔴红方' : d.owner;
     uiManager.log(`✨ 龙魂归属：${who}取得【${d.label}魂】（蓝 ${t.blue||0} : ${t.red||0} 红），全军生效`, 'spawn');
   } else {
     uiManager.log(`❌ 无人成魂（蓝 ${t.blue||0} : ${t.red||0} 红，无一方达到门槛），直接进入远古龙阶段`, 'spawn');
@@ -340,12 +343,20 @@ eventBus.on('dragon:soulResolved', (d) => {
 eventBus.on('dragon:spawn', (d) => {
   uiManager.log(`⚠️ ${d.label} 即将降临`, 'spawn');
 });
-// ==================== 对战计分板：击杀数/推塔数（死亡归属：敌方阵亡=我方得分，无需击杀者溯源） ====================
+// ==================== 对战计分板：击杀数/推塔数 ====================
+// 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §1.3）：blue/red 仍然预置
+// （顶栏 UI 目前只有这两块 DOM，第三阵营的计分板展示是后续 UI 层的事，见需求
+// 文档第二/四节），归属判定改成 scorerFactionOf——"死者的对面"只在恰好两阵营时
+// 有唯一解，用户拍板"计分板每阵营一栏"，真正的归属该是"谁打的最后一击"，
+// 两阵营地图行为逐位不变（见该函数头注）。第三阵营的分记进惰性创建的新 key，
+// 目前没有 UI 显示，但数据本身是对的，UI 补上时不用回来重新算这段逻辑。
 CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
 eventBus.on('entity:death', ({ entityId }) => {
   const e = entityContainer.get(entityId);
   if (!e || !e._mapFaction || !mapSystem.active) return;
-  const scorer = e._mapFaction === 'blue' ? 'red' : 'blue';
+  const scorer = scorerFactionOf(e, mapFactionsOf(mapSystem.currentMap));
+  if (!scorer) return;
+  CTX.__score[scorer] = CTX.__score[scorer] || { kills: 0, towers: 0 };
   if (e.type === 'tower') {
     // 只计四类攻击塔为"推塔"；水晶类另有事件与日志
     if (['outer', 'inner', 'base', 'hq_tower'].includes(e._mapTier)) CTX.__score[scorer].towers++;

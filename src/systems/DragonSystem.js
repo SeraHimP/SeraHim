@@ -1,6 +1,7 @@
 import { CONFIG } from '../data/Config.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, rollInRange, rollDragonInterval } from '../data/dragonCurve.js';
 import { statMod } from '../core/statMod.js';
+import { FACTIONS } from './FactionSystem.js';
 
 /**
  * DragonSystem.js
@@ -108,6 +109,12 @@ export class DragonSystem {
     // 现在：元素龙总共 elementDragonTotal（默认 6）条。每条龙的击杀归属到阵营。
     // 6 条打完后结算一次：谁 ≥ soulThreshold（默认 4）谁成魂；都不到则**无魂**
     // （3:3 是合法结局，不是需要兜底的边界）。结算后转入远古龙阶段。
+    // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §1.3）：blue/red 这两个
+    // key 仍然预置——DragonSystem 拿不到 map.factions（构造时没注入 mapSystem），
+    // 且大量既有代码/测试依赖"两阵营地图下 factionTotals.red 恒为数字、不是
+    // undefined"这个既定行为，不能说改就改。第三阵营走惰性建表：谁真的杀了龙，
+    // _onDragonKilled 才第一次给它开一份记账（见下面 owner 判定那段），
+    // 两阵营地图逐位不变，第三阵营不再被写死的 'blue'/'red' 判定挡在门外。
     this.factionKills = { blue: {}, red: {} };   // 阵营 → { 元素: 次数 }
     this.factionTotals = { blue: 0, red: 0 };
     this.souls = { blue: [], red: [] };          // 阵营 → 已获得的龙魂 id
@@ -202,7 +209,9 @@ export class DragonSystem {
    * 可选调用把缺失静默吞掉了，于是"龙魂已接入 WorldState"其实一直是空转。
    */
   getSouls() {
-    return { blue: [...this.souls.blue], red: [...this.souls.red] };
+    const out = {};
+    for (const [fac, arr] of Object.entries(this.souls)) out[fac] = [...arr];
+    return out;
   }
 
   setCreateEntity(fn) { this.createEntity = fn; }
@@ -351,7 +360,13 @@ export class DragonSystem {
     this.killCounts[el] = (this.killCounts[el] || 0) + 1; // 全局统计（仅用于显示）
     this.totalKills++;
 
-    if (owner === 'blue' || owner === 'red') {
+    // 多阵营地基：原来写死"只认 blue/red"，第三阵营击杀巨龙不结算任何奖励。
+    // 用户拍板"龙魂击杀方独享"——owner 本来就是"最后一击的那一个阵营"（见上面
+    // recordLastHit 的头注），这条规则改动前对两阵营就已经是"独享"了，这里只是
+    // 把判定范围从"恰好两个阵营名字"泛化成"任意非中立阵营"，逻辑本身不用变。
+    if (owner && owner !== FACTIONS.NEUTRAL) {
+      this.factionKills[owner] = this.factionKills[owner] || {};
+      this.factionTotals[owner] = this.factionTotals[owner] || 0;
       this.factionKills[owner][el] = (this.factionKills[owner][el] || 0) + 1;
       this.factionTotals[owner]++;
       // 巨龙之力：给该阵营**全体**（塔 + 大型小兵）叠一层该元素的永久增益
@@ -493,7 +508,9 @@ export class DragonSystem {
   _pushKillCounts() {
     const combat = this._combat || (typeof window !== 'undefined' && window.CTX?.__app?.combatSystem);
     if (combat && combat.setDragonKillCounts) {
-      combat.setDragonKillCounts({ blue: this.factionTotals.blue, red: this.factionTotals.red });
+      // CombatSystem._dragonGrudge 已经是按 K[faction] 动态查表（不是写死 .blue/.red），
+      // 直接把整份 factionTotals 灌过去即可，不用再挑两个 key 出来拼对象。
+      combat.setDragonKillCounts({ ...this.factionTotals });
     }
   }
   /** main.js 注入，供上面那个函数用（不注入时退化为读 window，单测里两条都可缺省）。 */
@@ -525,7 +542,11 @@ export class DragonSystem {
   equipExistingSoul(entity) {
     if (CONFIG.dragonToggles && CONFIG.dragonToggles.effect === false) return false;
     const fac = entity?._mapFaction || entity?.faction;
-    if (fac !== 'blue' && fac !== 'red') return false;
+    // 多阵营地基：原来写死"只认 blue/red"，第三阵营的新单位（包括中途新建的塔/
+    // 补兵）永远补不到已有的巨龙之力/龙魂——factionKills/ancientPowerStacks/souls
+    // 这几张表本身已经是按 fac 动态取（惰性建表，见上面几处头注），卡住它们的
+    // 只有这一道门，泛化成"任意非中立阵营"即可，不用碰下面的取值逻辑。
+    if (!fac || fac === FACTIONS.NEUTRAL) return false;
     let any = false;
     // ① 巨龙之力：按该阵营每种元素已击杀的条数逐层补 —— **所有单位**都补（v45）。
     // 这个门原来写在函数开头，是一句 SOUL_REWARD_OK 管两件事；力的范围放宽之后

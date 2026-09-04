@@ -1,4 +1,5 @@
 import { baseCircleCenter } from './baseCircle.js';
+import { mapFactionsOf } from '../systems/FactionSystem.js';
 
 /**
  * mapValidate.js —— 地图几何校验的**唯一**实现。
@@ -140,10 +141,18 @@ export function lookaheadOnPolyline(waypoints, x, y, lookaheadDist, direction = 
 
 /**
  * 蓝红两方建筑构成是否完全对称（同 tier 同 laneId 的建筑数一致）。
+ *
+ * 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §5）："对称"这个概念本身
+ * 只对两阵营设计成立——三方地图没有唯一的"该跟谁对称"答案，勉强套用会把一张
+ * 正常的三阵营地图判成"不合规"。所以只在 map.factions 恰好两个时才跑这条检查，
+ * 3+ 阵营的地图直接放行（不是删规则，是它的适用范围本来就只覆盖两阵营设计，
+ * 两阵营地图的行为完全不变）。
  * @param {*} map
  * @returns {boolean}
  */
 export function buildingCountsSymmetric(map) {
+  const factions = mapFactionsOf(map);
+  if (factions.length !== 2) return true;
   const count = (f) => {
     const m = {};
     for (const b of map.buildings) {
@@ -153,7 +162,7 @@ export function buildingCountsSymmetric(map) {
     }
     return m;
   };
-  const cb = count('blue'), cr = count('red');
+  const cb = count(factions[0]), cr = count(factions[1]);
   return JSON.stringify(Object.entries(cb).sort()) === JSON.stringify(Object.entries(cr).sort());
 }
 
@@ -228,7 +237,7 @@ export function minPairwiseDistance(points) {
 export function attackTowerSpacingOk(map, attackRange, attackTiers) {
   const violations = [];
   for (const lane of map.lanes) {
-    for (const f of ['blue', 'red']) {
+    for (const f of mapFactionsOf(map)) {
       const ts = map.buildings
         .filter(b => b.faction === f && b.laneId === lane.id && attackTiers.includes(b.tier))
         .map(b => ({ tier: b.tier, s: arcLengthAt(lane.waypoints, b.pos.x, b.pos.y), pos: b.pos }))
@@ -248,15 +257,26 @@ export function attackTowerSpacingOk(map, attackRange, attackTiers) {
 /**
  * 敌我双方的攻击塔射程圈是否互不重叠（全图范围，不分路——嚎哭深渊只有一条路时
  * 这就是"敌我攻击塔"的完整集合）。
+ *
+ * 多阵营地基：不再只算 blue↔red 这一对，改成遍历 map.factions 的所有两两组合——
+ * "敌对双方射程圈不重叠"这条规则的意义在 N 阵营下依然成立，只是检查对象从
+ * "唯一的一对"变成"所有的对"。两阵营地图只有一对组合，行为逐位不变。
  * @param {*} map @param {number} attackRange @param {string[]} attackTiers
- * @returns {{gap:number}[]} 违规列表（最多一条，只报最小间距那一对），空数组=合规
+ * @returns {{gap:number, factionA:string, factionB:string}[]} 违规列表（每对超标的阵营组合各报一条），空数组=合规
  */
 export function crossFactionTowerSpacingOk(map, attackRange, attackTiers) {
-  const blue = map.buildings.filter(b => b.faction === 'blue' && attackTiers.includes(b.tier)).map(b => b.pos);
-  const red = map.buildings.filter(b => b.faction === 'red' && attackTiers.includes(b.tier)).map(b => b.pos);
-  let best = Infinity;
-  for (const a of blue) for (const b of red) best = Math.min(best, dist(a, b));
-  return best <= 2 * attackRange ? [{ gap: best }] : [];
+  const factions = mapFactionsOf(map);
+  const posOf = (f) => map.buildings.filter(b => b.faction === f && attackTiers.includes(b.tier)).map(b => b.pos);
+  const violations = [];
+  for (let i = 0; i < factions.length; i++) {
+    for (let j = i + 1; j < factions.length; j++) {
+      const a = posOf(factions[i]), b = posOf(factions[j]);
+      let best = Infinity;
+      for (const pa of a) for (const pb of b) best = Math.min(best, dist(pa, pb));
+      if (best <= 2 * attackRange) violations.push({ gap: best, factionA: factions[i], factionB: factions[j] });
+    }
+  }
+  return violations;
 }
 
 /**

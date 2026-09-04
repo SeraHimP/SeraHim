@@ -58,6 +58,30 @@ export function laneSpawnsOf(lane) {
 }
 
 /**
+ * 一个死亡实体的击杀分该记给谁（main.js 的对战计分板用）。
+ *
+ * 改动前的逻辑是"死者阵营的另一个"——只有恰好两阵营时才有唯一解，第三阵营
+ * 出现后"死者的对面是谁"就没有唯一答案了。真正在 N 阵营下有意义的答案是
+ * "谁打的最后一击"（entity._lastHitFaction，CombatSystem.recordLastHit 维护，
+ * 任意非中立阵营都会被记录，见那边的头注）——这本来就是"谁杀的算谁的分"该有
+ * 的语义，不是重新发明一套规则。
+ *
+ * 两阵营地图下这条与改动前逐位一致：canTarget 本来就不允许同阵营攻击，
+ * 所以只要 _lastHitFaction 有值，它在两阵营对局里必然就是"死者的对面"——
+ * 唯一可能出现分歧的情形是死亡完全没有可归属的最后一击（纯 DOT/环境伤害，
+ * 从没有经过 canTarget 校验的攻击流程），这种情形直接兜底成
+ * "mapFactions 里第一个不是死者自己的阵营"，与改动前的三元表达式结果相同。
+ * @param {*} entity 已经死亡、带 _mapFaction 的实体
+ * @param {string[]} mapFactions 地图声明的阵营列表（mapFactionsOf 的返回值）
+ * @returns {string|null}
+ */
+export function scorerFactionOf(entity, mapFactions) {
+  const lastHit = entity._lastHitFaction;
+  if (lastHit && lastHit !== entity._mapFaction) return lastHit;
+  return (mapFactions || []).find(f => f !== entity._mapFaction) || null;
+}
+
+/**
  * CTX.__towerRules（{invincible,attackOff,waveOn} 三张按阵营开关的表）的统一取值逻辑。
  * 三张表都只声明了 blue/red 两个 key，查不到某个阵营的 key 时：
  *   - waveOn 兜底 true——这张表是"选中才不出兵"的反向语义，新阵营不声明就该照常

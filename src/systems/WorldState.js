@@ -25,6 +25,7 @@
 import { CONFIG } from '../data/Config.js';
 import { DAY_PERIOD, resolveDayPhase } from '../presentation/DayNight.js';
 import { EntropySystem } from './EntropySystem.js';
+import { mapFactionsOf } from './FactionSystem.js';
 
 // 昼夜相位与 DayNight.js 的关键帧同口径：0=黎明 0.25=正午 0.5=黄昏 0.75=午夜。
 // 因此 [0, 0.5) 是白天（黎明→正午→黄昏），[0.5, 1) 是夜晚（黄昏→午夜→黎明）。
@@ -45,7 +46,7 @@ export class WorldState {
     this.entropy = { value: 0.5, black: 0, white: 0, red: 8, total: 8, volatility: 1,
                      charge: { black: 0, white: 0 } };
     this.daynight = { phase: 0.5, isNight: false, label: '正午' };
-    this.souls = { blue: [], red: [] };
+    this.souls = { blue: [], red: [] };   // 阵营 → 已获得的龙魂 id（DragonSystem.getSouls() 同款预置，见那边头注）
     this._enabled = true;
   }
 
@@ -118,11 +119,24 @@ export class WorldState {
     }
 
     // ---- ③ 龙魂统计（规则待实现，先把数据接上，让 UI 与修正层有东西可读）----
-    if (this.dragons?.getSouls) {
-      const s = this.dragons.getSouls();
-      this.souls.blue = s.blue || [];
-      this.souls.red = s.red || [];
-    }
+    // DragonSystem.getSouls() 已经是按阵营动态返回（多阵营地基），这里整份接过来，
+    // 不再只挑 blue/red 两个 key（挑的话第三阵营的魂会被悄悄丢在半路）。
+    if (this.dragons?.getSouls) this.souls = this.dragons.getSouls() || {};
+  }
+
+  /**
+   * 熵-阵营耦合（"混乱侧受益于高熵，秩序侧受益于低熵"）在概念上就是一根
+   * 二元对抗轴——`fac==='red'` 是混乱侧，"其余所有阵营"被当成秩序侧对待。
+   * 三阵营起，"其余所有阵营"不再是一个统一的"秩序侧"，这条耦合没有唯一的
+   * 泛化答案。用户拍板：3+ 阵营地图上直接禁用这条耦合（不是删掉机制，只是
+   * 不在这类地图上生效），两阵营地图行为逐位不变。
+   * 用全局 CTX.__mapSystem 读地图（GameContext.js 的既有同步 key，
+   * WorldState 构造时没有注入 mapSystem 依赖，这是本项目里"跨系统只读一个
+   * 不critical 的量"时的既有惯例，见 dragonPassives.js 同款读法）。
+   */
+  _entropyCouplingApplies() {
+    const map = (typeof window !== 'undefined') ? window.CTX?.__mapSystem?.currentMap : null;
+    return mapFactionsOf(map).length === 2;
   }
 
   /**
@@ -160,7 +174,7 @@ export class WorldState {
     }
 
     // ---- 熵 → 全局（中性值 0.5 时下面全为 0，等价于未启用）----
-    if (cp.entropyToUnits) {
+    if (cp.entropyToUnits && this._entropyCouplingApplies()) {
       const k = (this.entropy.value - 0.5) * 2;      // -1（极秩序） .. +1（极混乱）
       const g = cfg.entropyBonus || {};
       const fac = entity._mapFaction || entity.faction;
@@ -208,7 +222,7 @@ export class WorldState {
         favored, mods,
       });
     }
-    if (cp.entropyToUnits) {
+    if (cp.entropyToUnits && this._entropyCouplingApplies()) {
       const k = (this.entropy.value - 0.5) * 2;
       const g = cfg.entropyBonus || {};
       const sign = (fac === 'red' ? k : -k) * (this.entropy.volatility || 1);
@@ -238,7 +252,7 @@ export class WorldState {
       enabled: this._enabled,
       daynight: { ...this.daynight },
       entropy: { ...this.entropy },
-      souls: { blue: [...this.souls.blue], red: [...this.souls.red] },
+      souls: Object.fromEntries(Object.entries(this.souls).map(([fac, ids]) => [fac, [...ids]])),
       weather: this.weather?.getDominant?.()?.label || null,
     };
   }
