@@ -1,15 +1,16 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
+import { DEMO_STYLIZED_NAVGRID } from './demo_stylized_navgrid.js';
 
 /**
  * demo_stylized.js —— 风格化画面地图（低多边形+纯色+圆润树冠这条方向的落地图）
  *
  * 2026-09-04：用户对照 Thronefall 实机截图核实过画面方向后，先要了一版最小可跑的
- * demo（世界 4200×1500）验证成本，看完直接反馈"不用局限于特别小的地图，可以把
- * 地图做大，留很多余量"——这版把世界放大到 9000×5000，单路两侧留出大片开阔"野区"
- * 给风格化的树/岩铺开，不再是挤出来的一条窄带。仍然走最简单的单路走廊模型
- * （跟 howling_abyss.js 同一套 `walls.corridorHalfWidth` 机制，不需要逐像素描
- * navgrid 位图）——用户明确表示不追求召唤师峡谷式的三路野区迷宫，"我们游戏的
- * 核心是打来打去，舍弃 LoL 那种地图设计都无所谓"。
+ * demo（世界 4200×1500）验证成本，看完认可方向，中途一度放大到 9000×5000 想看
+ * "留余量"的效果，但放大之后不便于反复测试，用户明确要求"弄成第一次那种大小"
+ * ——所以世界尺寸改回 4200×1500。仍然走最简单的单路走廊模型（跟 howling_abyss.js
+ * 同一套 `walls.corridorHalfWidth` 机制，不需要逐像素描 navgrid 位图）——用户明确
+ * 表示不追求召唤师峡谷式的三路野区迷宫，"我们游戏的核心是打来打去，舍弃 LoL
+ * 那种地图设计都无所谓"。
  *
  * 只有这张图把 `visualStyle` 设成 'stylized'——渲染层（VegetationLayer/
  * TerrainLayer/WallLayer）按这个字段分支，三张正式地图这个字段是 undefined，
@@ -20,26 +21,26 @@ import { FACTIONS } from '../../systems/FactionSystem.js';
  * outer 的注释）。
  */
 
-const WORLD = { w: 9000, h: 5000 };
-const BLUE_NEXUS = { x: 600, y: 2500 };
-const RED_NEXUS = { x: 8400, y: 2500 };
+const WORLD = { w: 4200, h: 1500 };
+const BLUE_NEXUS = { x: 300, y: 750 };
+const RED_NEXUS = { x: 3900, y: 750 };
 const LANE = [BLUE_NEXUS, RED_NEXUS];
 
 /** 沿蓝→红方向、弧长 d 处的世界坐标（单路水平直线，公式与 howling_abyss.js 的 P() 同款） */
-const P = (d) => ({ x: BLUE_NEXUS.x + d, y: 2500 });
+const P = (d) => ({ x: BLUE_NEXUS.x + d, y: 750 });
 const R = (p) => ({ x: WORLD.w - p.x, y: p.y });   // 红方 = 沿世界中轴镜像
 
 const B = {
-  hq_a: { x: P(400).x, y: 2440 },
-  hq_b: { x: P(400).x, y: 2560 },
-  nexus_lane: P(750),
-  base: P(1050),
-  // 1900：sim_maps.mjs 的通用地图几何校验要求①同阵营同路相邻攻击塔档位间距
-  // > 2×射程(360)（base→outer 需要 outer_d − base_d > 360，这里 850，余量很大）
-  // ②双方外塔射程圈无交集且中间留出真正的战斗区（净空 > 400，这里净空 4000，
-  // 留了"留很多余量"要求的那种量级）。这条校验适用于所有地图，不是这张图的
-  // 特例——被它拦下说明地图数据本身不合理，不是测试要迁就。
-  outer: P(1900),
+  hq_a: { x: P(300).x, y: 700 },
+  hq_b: { x: P(300).x, y: 800 },
+  nexus_lane: P(560),
+  base: P(760),
+  // 1400：sim_maps.mjs 的通用地图几何校验要求①同阵营同路相邻攻击塔档位间距
+  // > 2×射程(360)（base→outer 需要 outer_d − base_d > 360）②双方外塔射程圈无
+  // 交集且中间留出真正的战斗区（净空 > 400）。1400 落在两条约束的合法区间
+  // (1120, 1600) 中间，留了余量，不是卡着边界。这条校验适用于所有地图，
+  // 不是这张 demo 图的特例——被它拦下说明地图数据本身不合理，不是测试要迁就。
+  outer: P(1400),
 };
 
 export const demo_stylized = {
@@ -49,9 +50,15 @@ export const demo_stylized = {
   visualStyle: 'stylized',   // 唯一驱动这张图走风格化渲染分支的字段
 
   world: WORLD,
-  walls: { corridorHalfWidth: 140 },
+  walls: { corridorHalfWidth: 110 },
   baseCenters: { blue: BLUE_NEXUS, red: R(BLUE_NEXUS) },
-  baseCircleRadius: 480,
+  baseCircleRadius: 340,
+  // 2026-09-04：地图编辑器的 2D 缩略图/笔刷只认 navgrid 位图，没声明就兜底成
+  // 召唤师峡谷那张（见 demo_stylized_navgrid.js 头注）——这里声明的是从这张图的
+  // 走廊模型离线烘焙出来的 navgrid，**只给编辑器展示用**。刻意不加
+  // `useNavgrid: true`：MapSystem 判定占位仍然走上面 `walls.corridorHalfWidth`
+  // 那套走廊模型，真实玩法逻辑不受这个字段影响。
+  navgrid: DEMO_STYLIZED_NAVGRID,
 
   // 数值照抄 howling_abyss.js 的 tierStats/skillOverrides——这张图不评估数值，
   // 直接复用一份已知能跑的配置。
