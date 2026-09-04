@@ -315,20 +315,27 @@ function forceAndRefill(e, fx, ents, bus) {
  * 领受范围与引擎同源（DragonSystem.SOUL_REWARD_OK），否则测出来的东西不是游戏里的东西。
  * 走 equipSkill 而不是手动 push：龙魂的 onEquip 里要施加常驻效果（山魂/风魂），
  * 手动 push 会漏掉那一步，量出来的强度偏低。
+ *
+ * 2026-09-04 修复：这两个分支原来共用同一句 `if (!SOUL_REWARD_OK(e)) return;`
+ * 早退——巨龙之力分支被误连坐进了龙魂那条【窄】范围（塔+大型小兵，不含普通
+ * 近战/远程兵）。DragonSystem.js 自己的注释写得很清楚：龙魂用 SOUL_REWARD_OK，
+ * 巨龙之力用【更宽】的 POWER_REWARD_OK（塔+全部小兵，含近战/远程），这是用户
+ * 定稿"巨龙之力现在作用于所有单位（包含普通小兵）"——工具这份没跟上，于是
+ * `--sweep power` 量出来的强度系统性偏低（普通兵完全没吃到力），量出来的
+ * "参差不齐"程度也不可信。改成两个分支各自判自己的领受范围。
  */
 function equipForcedSoul(e, fx, ents, bus) {
   if ((e._mapFaction || e.faction) !== 'blue') return;
-  if (!DragonSystem.SOUL_REWARD_OK(e)) return;
-  if (FORCE_SOUL) {
+  // v44：巨龙之力单独一档。力和魂必须**分开测** ——
+  // 混在一起的话，某一档偏强时分不清是"力给多了"还是"魂给多了"，
+  // 只能整体往下砍，而整体砍会把本来正常的那一半也砍坏。
+  if (FORCE_SOUL && DragonSystem.SOUL_REWARD_OK(e)) {
     equipSkill(e, FORCE_SOUL, {
       entityContainer: ents, effectRegistry: fx, eventBus: bus,
       attrCalc: AttributeCalculator, waveNumber: 0,
     }, SkillLibrary);
   }
-  // v44：巨龙之力单独一档。力和魂必须**分开测** ——
-  // 混在一起的话，某一档偏强时分不清是"力给多了"还是"魂给多了"，
-  // 只能整体往下砍，而整体砍会把本来正常的那一半也砍坏。
-  if (FORCE_POWER) {
+  if (FORCE_POWER && DragonSystem.POWER_REWARD_OK(e)) {
     const cap = (CONFIG.dragonPower && CONFIG.dragonPower.maxStacks) || 4;
     const el = FORCE_POWER;
     const buffs = dragonPowerBuffs(el);

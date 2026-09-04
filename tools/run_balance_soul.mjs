@@ -1,24 +1,40 @@
 #!/usr/bin/env node
 /**
- * run_balance_soul.mjs —— 本地一键跑"龙魂平衡"全量扫描（多进程并行加速）
+ * run_balance_soul.mjs —— 本地一键跑"龙魂 / 巨龙之力平衡"全量扫描（多进程并行加速）
  *
  * ==================== 为什么要有这个 ====================
- * balance_matrix.mjs --sweep soul 是单进程串行跑 14 档（基线 + 13 种龙魂）×
- * --runs 局，在弱一点的机器/共享容器上跑 --runs 20 --minutes 40 可能要好几个
- * 小时——这正是这次评估在沙盒容器里被空闲回收、始终跑不完的根子（不是数值/
- * 参数不对，是环境撑不住这么长的连续跑）。
+ * balance_matrix.mjs --sweep soul/power 是单进程串行跑一串档位（soul：基线+13种龙魂
+ * 共 14 档；power：基线+7种元素之力共 8 档）× --runs 局，在弱一点的机器/共享容器上
+ * 跑 --runs 20 --minutes 40 可能要好几个小时——这正是这次评估在沙盒容器里被空闲
+ * 回收、始终跑不完的根子（不是数值/参数不对，是环境撑不住这么长的连续跑）。
  *
  * balance_matrix.mjs 本身早就留了 --pick 参数（"拆成几个进程各跑几档，墙钟
  * 时间按核数除下去"，见该文件 v48 的头注），只是需要手动拆分、手动起多个
- * 进程、手动合并结果——这个脚本就是把这几步自动化：按本机 CPU 核数把 14 档
+ * 进程、手动合并结果——这个脚本就是把这几步自动化：按本机 CPU 核数把档位
  * 拆成 N 份，每份起一个子进程并行跑，跑完合并成一份结果，控制台完整回显、
  * 同时落盘一份 .log/.json，方便直接复制或把文件发回去。
  *
+ * ==================== 2026-09-04：加 --sweep 支持 power ====================
+ * 起因：这脚本原来硬编码只会拼 `--sweep soul` 传给子进程、TIERS 也只认 SOULS
+ * 清单——用户想测"巨龙之力"（--sweep power）时，我一开始让他直接单进程跑
+ * balance_matrix.mjs，没意识到这个并行封装完全可以照抄一份逻辑给 power 用，
+ * 结果单进程跑 8 档 × 20 局在他 16 核机器上干等了两个多小时（CPU 占用低，
+ * 因为 Node 单线程只吃一个核，任务管理器按全核百分比显示就显得"没在算"）。
+ * 而同样规模的 soul 扫描当初是用这个脚本跑的，14 档几乎能摊平到 14 个核上
+ * 各跑各的，90 分钟就出结果——不是数值/环境变差了，是我这次没让他用对工具。
+ *
+ * 现在补上 --sweep power：TIERS 从 SOULS 换成与 balance_matrix.mjs --sweep power
+ * 分支同源的 POWERS 清单（同样有防漂移检查，见 tests/sim_balance_soul_runner.mjs），
+ * 转发给子进程的 --sweep 参数也跟着改，其余并行/合并/落盘逻辑一字不动。
+ * 默认值仍是 'soul'——不传 --sweep 时行为与之前逐位一致。
+ *
  * ==================== 用法 ====================
- *   node tools/run_balance_soul.mjs                     # 完整规模：--runs 20 --minutes 40
+ *   node tools/run_balance_soul.mjs                     # 默认龙魂，完整规模：--runs 20 --minutes 40
+ *   node tools/run_balance_soul.mjs --sweep power        # 巨龙之力，完整规模
+ *   node tools/run_balance_soul.mjs --sweep power --quick    # 巨龙之力，快速摸底
  *   node tools/run_balance_soul.mjs --runs 8 --minutes 30
  *   node tools/run_balance_soul.mjs --quick              # 快速摸底：--runs 5 --minutes 25
- *   node tools/run_balance_soul.mjs --jobs 4             # 手动指定并行进程数（默认按 CPU 核数，封顶 14）
+ *   node tools/run_balance_soul.mjs --jobs 4             # 手动指定并行进程数（默认按 CPU 核数，封顶档位数）
  *   node tools/run_balance_soul.mjs --pick fire,water,magma   # 只重跑这几档（调完数值针对性验证用，
  *                                                              # "基线"/baseline 也可以写进去）
  *
@@ -33,11 +49,13 @@
  *     解析出"第几局"后在本进程里累加成一条总进度行，不再有多路互相覆盖的问题；
  *     用已耗时 / 已完成局数反推剩余时间，同样每隔几秒刷新一次。
  *
- * 判读标准（写死在 balance_matrix.mjs 的 --sweep soul 分支注释里，这里抄一遍
+ * 判读标准（写死在 balance_matrix.mjs 的 --sweep soul/power 分支注释里，这里抄一遍
  * 方便对着看）：
- *   · 基线档（双方无魂）的"推进度差"应当接近 0——对称局面。
- *   · 每条龙魂的目标是让蓝方【略微】占优，胜率落在 60~70% 区间。
+ *   · 基线档（双方无魂/无力）的"推进度差"应当接近 0——对称局面。
+ *   · 龙魂：每条魂的目标是让蓝方【略微】占优，胜率落在 60~70% 区间；
  *     超过 70% 说明这条魂太强，该削；低于 55% 说明太弱，该加。
+ *   · 巨龙之力：是"过程奖励"，强度应明显低于魂——每档相对基线的推进度差
+ *     应落在 +0.3~+1.0 之间，力比魂还强就说明成魂这件事没有意义了。
  */
 import { spawn } from 'node:child_process';
 import { cpus } from 'node:os';
@@ -56,13 +74,25 @@ const QUICK = argv.includes('--quick');
 const RUNS = flag('runs', QUICK ? '5' : '20');
 const MINUTES = flag('minutes', QUICK ? '25' : '40');
 
+// --sweep soul（默认，与之前逐位一致）或 --sweep power。
+const SWEEP = flag('sweep', 'soul');
+if (SWEEP !== 'soul' && SWEEP !== 'power') {
+  console.error(`✗ --sweep 只认 soul 或 power，收到的是 "${SWEEP}"`);
+  process.exit(1);
+}
+const SWEEP_LABEL = { soul: '龙魂', power: '巨龙之力' }[SWEEP];
+
 // 与 balance_matrix.mjs --sweep soul 分支里的 SOULS 列表保持一致（见该文件
 // v51.6 的补齐记录）。这里不 import 那份代码去读常量——那个文件顶部就执行
-// 了一堆 window/CONFIG 初始化副作用，不适合当纯数据模块 import；13 个龙魂
-// key 抄一份维护成本很低，比硬拉一个有副作用的模块进来更干净。
+// 了一堆 window/CONFIG 初始化副作用，不适合当纯数据模块 import；抄一份清单
+// 维护成本很低，比硬拉一个有副作用的模块进来更干净。
 const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
   'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
-const ALL_TIERS = ['基线', ...SOULS];   // "基线"能匹配到"基线·双方无魂"（--pick 是子串匹配）
+// 与 balance_matrix.mjs --sweep power 分支里的 ELS 列表保持一致（同样的理由，
+// 不 import 有副作用的模块）。
+const POWERS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+const ELEMENTS = SWEEP === 'power' ? POWERS : SOULS;
+const ALL_TIERS = ['基线', ...ELEMENTS];   // "基线"能匹配到"基线·双方无魂/无力"（--pick 是子串匹配）
 
 // --pick fire,water,magma：只跑点名的那几档，支持中文"基线"或英文别名 baseline/all。
 // 大小写不敏感、允许有空格；写错的名字直接报错退出，不悄悄跑成全量（免得白等一轮）。
@@ -91,15 +121,15 @@ TIERS.forEach((t, i) => buckets[i % JOBS].push(t));
 const ts = new Date().toISOString().replace(/[:.]/g, '-');
 const outDir = path.join(ROOT, '.balance');
 fs.mkdirSync(outDir, { recursive: true });
-const logPath = path.join(outDir, `soul_sweep_${ts}.log`);
-const jsonPath = path.join(outDir, `soul_sweep_${ts}.json`);
+const logPath = path.join(outDir, `${SWEEP}_sweep_${ts}.log`);
+const jsonPath = path.join(outDir, `${SWEEP}_sweep_${ts}.json`);
 
 const logLines = [];
 const log = (s = '') => { console.log(s); logLines.push(s); };
 
 log(pickArg
-  ? `龙魂平衡扫描（--pick 指定档位）：${TIERS.join('、')}，每档 ${RUNS} 局，单局上限 ${MINUTES} 分钟`
-  : `龙魂平衡扫描：${TIERS.length} 档（基线 + ${SOULS.length} 种龙魂），每档 ${RUNS} 局，单局上限 ${MINUTES} 分钟`);
+  ? `${SWEEP_LABEL}平衡扫描（--pick 指定档位）：${TIERS.join('、')}，每档 ${RUNS} 局，单局上限 ${MINUTES} 分钟`
+  : `${SWEEP_LABEL}平衡扫描：${TIERS.length} 档（基线 + ${ELEMENTS.length} 种${SWEEP_LABEL}），每档 ${RUNS} 局，单局上限 ${MINUTES} 分钟`);
 log(`拆成 ${JOBS} 个并行进程（本机 ${cpuCount} 核）：`);
 buckets.forEach((b, i) => log(`  进程${i + 1}：${b.join('、')}`));
 log('');
@@ -146,8 +176,8 @@ const ticker = setInterval(() => {
 // onProgressChunk() 去算总进度，原始的逐子进程 \r 不再直接打印。
 function runJob(idx, pickList) {
   return new Promise((resolve) => {
-    const jsonOut = path.join(outDir, `soul_sweep_${ts}_job${idx}.json`);
-    const args = ['tools/balance_matrix.mjs', '--sweep', 'soul',
+    const jsonOut = path.join(outDir, `${SWEEP}_sweep_${ts}_job${idx}.json`);
+    const args = ['tools/balance_matrix.mjs', '--sweep', SWEEP,
       '--runs', String(RUNS), '--minutes', String(MINUTES),
       '--pick', pickList.join(','), '--json', jsonOut];
     const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -186,7 +216,7 @@ for (const r of jobResults.sort((a, b) => a.idx - b.idx)) {
   }
 }
 
-fs.writeFileSync(jsonPath, JSON.stringify({ runs: Number(RUNS), maxMin: Number(MINUTES), sweep: 'soul', results: mergedResults }, null, 2));
+fs.writeFileSync(jsonPath, JSON.stringify({ runs: Number(RUNS), maxMin: Number(MINUTES), sweep: SWEEP, results: mergedResults }, null, 2));
 fs.writeFileSync(logPath, logLines.join('\n') + '\n');
 
 log(`==================== 完成 ====================`);
