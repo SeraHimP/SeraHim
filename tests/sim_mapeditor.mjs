@@ -15,6 +15,7 @@ const {
   cloneRegionsForEdit, defaultPitFor,
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
+  cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
 } = await import('../src/data/mapEditorCore.js');
 const { unpackBits, packBits } = await import('../src/data/navgrid.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -461,9 +462,81 @@ const T = board.T;
   // 用户点不了"应用"。跟 ㉕ 的 updatePathStatus() 同步删除按钮同一类问题。
   T('㊴-redrawImgImportPreview 会同步应用按钮的 disabled 状态（不能只靠 render() 时写死一次）',
     /redrawImgImportPreview[\s\S]{0,2500}mapEditorImgImportApplyBtn['"][\s\S]{0,150}disabled\s*=\s*!imgImportResult/.test(src));
+
+  // 配置模式（第四节 Part A：统一编辑器接入"配置"模式）：地形模板选择器复用已有的
+  // "起点地图"下拉框（不重新做一份，见 renderConfigModeBody 头注），这里只钉阵营
+  // 增删/出兵开关/跳转入口这几处新接线，以及 mapEditorCore.js 那几个纯函数真的被调用了。
+  T('㊵-导入了阵营管理的纯函数（cloneFactionsForEdit/withFactionAdded/withFactionRemoved/pruneMapDataForRemovedFaction）',
+    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,60}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('㊶-新增了第四个 editMode 切换按钮（配置模式）',
+    /mapEditorEditModeConfig['"]\)\.addEventListener\(['"]click['"][\s\S]{0,60}editMode\s*=\s*['"]config['"]/.test(src));
+  T('㊷-新增阵营按钮调用 withFactionAdded 并捕获异常写回状态提示（不是让整个弹窗崩掉）',
+    /mapEditorAddFactionBtn['"]\)[\s\S]{0,300}withFactionAdded\(draftFactions[\s\S]{0,400}catch[\s\S]{0,300}mapEditorFactionStatus/.test(src));
+  T('㊸-删除阵营按钮：调用 withFactionRemoved 之后紧接着调用 pruneMapDataForRemovedFaction 级联清理（用户定稿"删除阵营时级联全部删除相关数据"）',
+    /data-remove-faction[\s\S]{0,400}withFactionRemoved\(draftFactions[\s\S]{0,200}pruneMapDataForRemovedFaction/.test(src));
+  T('㊹-出兵开关复选框绑定到 draftSpawnEnabled（而不是直接写 CONFIG.gameRules 之类的全局状态）',
+    /data-spawn-enabled[\s\S]{0,200}draftSpawnEnabled\[cb\.dataset\.spawnEnabled\]\s*=\s*e\.target\.checked/.test(src));
+  T('㊺-切换起点地图（switchBase）会重建阵营/出兵开关草稿（不然切了图，草稿还是上一张图的阵营列表）',
+    /switchBase\s*=[\s\S]{0,900}draftFactions\s*=\s*cloneFactionsForEdit\(baseMap\)[\s\S]{0,200}draftSpawnEnabled\s*=/.test(src));
+  T('㊻-保存时把 draftFactions/draftSpawnEnabled 一起传给 buildCustomMapPayload（不是编辑了但存不下去）',
+    /buildCustomMapPayload\(baseMap[\s\S]{0,400}factions:\s*draftFactions[\s\S]{0,100}spawnEnabled:\s*draftSpawnEnabled/.test(src));
 }
 
-// ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================
+// ==================== ⑦ 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================
+{
+  const sr = MAPS.summoners_rift_v1;
+  T('①-cloneFactionsForEdit 对没声明 factions 的地图兜底为 [blue,red]（与 mapFactionsOf 一致）',
+    JSON.stringify(cloneFactionsForEdit({})) === JSON.stringify(['blue', 'red']));
+  T('①b-cloneFactionsForEdit 对已声明 factions 的地图读它自己的值（不是重新兜底）',
+    JSON.stringify(cloneFactionsForEdit(sr)) === JSON.stringify(sr.factions));
+
+  const withGreen = withFactionAdded(['blue', 'red'], 'green');
+  T('②-withFactionAdded 追加新阵营，不修改输入数组', JSON.stringify(withGreen) === JSON.stringify(['blue', 'red', 'green'])
+    && JSON.stringify(['blue', 'red']) === JSON.stringify(['blue', 'red']));
+  T('③-withFactionAdded 去首尾空白', JSON.stringify(withFactionAdded(['blue', 'red'], '  green  ')) === JSON.stringify(['blue', 'red', 'green']));
+  let threw = false;
+  try { withFactionAdded(['blue', 'red'], 'blue'); } catch { threw = true; }
+  T('④-withFactionAdded 拒绝重复 id', threw);
+  threw = false;
+  try { withFactionAdded(['blue', 'red'], '   '); } catch { threw = true; }
+  T('⑤-withFactionAdded 拒绝空白 id', threw);
+
+  const removed = withFactionRemoved(['blue', 'red', 'green'], 'green');
+  T('⑥-withFactionRemoved 删掉指定阵营，不修改输入数组', JSON.stringify(removed) === JSON.stringify(['blue', 'red']));
+  threw = false;
+  try { withFactionRemoved(['blue', 'red'], 'red'); } catch { threw = true; }
+  T('⑦-withFactionRemoved 拒绝删到只剩一个阵营', threw);
+
+  const buildings = [
+    { faction: 'blue', kind: 'outer' }, { faction: 'red', kind: 'outer' }, { faction: 'green', kind: 'outer' },
+  ];
+  const lanes = [
+    { id: 'mid', waypoints: [], spawns: [
+      { faction: 'blue', direction: 'forward', targetFactions: ['red', 'green'] },
+      { faction: 'green', direction: 'forward', targetFactions: ['blue'] },
+    ] },
+  ];
+  const pruned = pruneMapDataForRemovedFaction({ buildings, lanes }, 'green');
+  T('⑧-pruneMapDataForRemovedFaction 删掉被删阵营的建筑', pruned.buildings.length === 2
+    && pruned.buildings.every(b => b.faction !== 'green'));
+  T('⑨-pruneMapDataForRemovedFaction 摘掉引用了被删阵营的出兵流（整条 green→blue 摘掉；blue→[red,green] 里只摘 green）',
+    pruned.lanes[0].spawns.length === 1
+    && JSON.stringify(pruned.lanes[0].spawns[0]) === JSON.stringify({ faction: 'blue', direction: 'forward', targetFactions: ['red'] }));
+  T('⑩-pruneMapDataForRemovedFaction 保留路的 waypoints/id（只删阵营数据，不删物理路径）',
+    pruned.lanes[0].id === 'mid' && Array.isArray(pruned.lanes[0].waypoints));
+  T('⑪-pruneMapDataForRemovedFaction 不修改输入数组', buildings.length === 3 && lanes[0].spawns.length === 2);
+
+  // buildCustomMapPayload：factions/spawnEnabled 走同一条"不传就保留原值"规则。
+  const { n: n0, bits: bits0 } = decodeBaseBits(sr);
+  const p1 = buildCustomMapPayload(sr, { id: 'x1', label: 'x1', n: n0, bits: bits0 });
+  T('⑫-buildCustomMapPayload 不传 factions/spawnEnabled 时保持 baseMap 原值（factions 随整体克隆带过来，spawnEnabled 峡谷本没声明故仍是 undefined）',
+    JSON.stringify(p1.factions) === JSON.stringify(sr.factions) && p1.spawnEnabled === undefined);
+  const p2 = buildCustomMapPayload(sr, { id: 'x2', label: 'x2', n: n0, bits: bits0, factions: ['blue', 'red', 'green'], spawnEnabled: { totem: false } });
+  T('⑬-buildCustomMapPayload 传了就整体覆盖', JSON.stringify(p2.factions) === JSON.stringify(['blue', 'red', 'green'])
+    && p2.spawnEnabled.totem === false);
+}
+
+// ==================== ⑧ 档位显示名统一（水晶防御塔/枢纽防御塔）====================
 // v51.35：'base'/'hq_tower' 原来在 waveComposition.js/UIManager.js/pagesConfig.js/
 // open.js/schema/index.js 五处各写各的（"水晶塔"/"高地塔"/"枢纽塔"三种叫法混用），
 // 玩家点开塔的技能栏（core_tier_base/core_tier_hq 身份技能的显示名）看到的又是

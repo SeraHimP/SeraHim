@@ -59,7 +59,9 @@ import {
   cloneRegionsForEdit, defaultPitFor,
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
+  cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
 } from '../data/mapEditorCore.js';
+import { allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
 
@@ -102,6 +104,10 @@ export const MapEditorDialog = {
     let selectedLaneId = draftLanes[0]?.id ?? null;     // 当前正在编辑哪条路
     let draggingWaypointIndex = -1;
     let selectedWaypointIndex = -1;                     // 点选一个路点后可在下方"删除选中路点"
+
+    // ---- 配置模式（第四节 Part A）：阵营管理 + 出兵开关，见 mapEditorCore.js 对应函数头注 ----
+    let draftFactions = cloneFactionsForEdit(baseMap);        // ['blue','red',...]
+    let draftSpawnEnabled = { ...(baseMap.spawnEnabled || {}) };  // {[兵种]: boolean}，未声明=默认开
 
     // ---- 图片自动识别导入（第四节，见 src/data/imageImport.js 头注） ----
     let imgImportOpen = false;         // 是否展开这个子面板
@@ -493,6 +499,58 @@ export const MapEditorDialog = {
       if (el) el.textContent = polylinePoints.length ? `已点选 ${polylinePoints.length} 个顶点` : '点击画布开始造墙';
     };
 
+    // ---------- 配置模式（第四节 Part A）：阵营管理 + 出兵开关 + 快捷跳转 ----------
+    // 不用画布——这个模式管的是"这张图声明哪些阵营/哪些兵种能出兵"，不是地形/坐标，
+    // 画布留着反而是摆设。地形模板本身仍然是上面"起点地图"选择器决定的（同一个
+    // 下拉框两种模式共用，见 render() 顶部注释），这里不重复一份。
+    // 塔位/兵线的详细编辑复用已有的"建筑摆放"/"路径编辑"两个模式（这两个模式本来
+    // 就已经是通用实现，不因为阵营数变多而需要改），这里只放跳转入口，不重新做一遍。
+    const renderConfigModeBody = () => `
+      <div style="font-size:11px;color:var(--text-mute);margin-bottom:8px;">
+        地形（上面的"起点地图"）与这里的阵营/出兵配置是两层独立的东西——同一份地形可以
+        配出不同的打法。塔位用"🏗️ 建筑摆放"编、兵线路径用"🛣️ 路径编辑"编，这两个模式
+        已经是通用实现，不用在这里重做一遍。
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px;">阵营</div>
+        ${draftFactions.length > 2 ? '' : `<div style="font-size:10px;color:var(--text-mute);margin-bottom:4px;">至少保留两个阵营才能对战。</div>`}
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+          ${draftFactions.map(f => `
+            <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--border-color,#444);border-radius:4px;font-size:12px;">
+              ${f}
+              <button data-remove-faction="${f}" ${draftFactions.length <= 2 ? 'disabled' : ''}
+                style="font-size:10px;padding:0 4px;line-height:16px;" title="删除该阵营（连带删掉它的建筑，兵线里打向它/由它出发的出兵流也会一并摘掉）">✖</button>
+            </span>`).join('')}
+        </div>
+        <div style="display:flex;gap:6px;">
+          <input id="mapEditorNewFactionInput" type="text" placeholder="新阵营 id（如 green）" style="flex:1;">
+          <button id="mapEditorAddFactionBtn">➕ 新增阵营</button>
+        </div>
+        <div id="mapEditorFactionStatus" style="font-size:11px;color:var(--text-mute);margin-top:4px;"></div>
+        <div style="font-size:10px;color:var(--text-mute);margin-top:4px;">
+          新增阵营的规则判定（索敌/结构校验/记分/出兵目标）已经是通用实现，立即可用；
+          单位描边色/小地图光点色暂时会显示成灰色占位（这层泛化不在本批范围内）。
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button id="mapEditorJumpBuildingsBtn" style="flex:1;">🏗️ 去建筑摆放</button>
+        <button id="mapEditorJumpPathsBtn" style="flex:1;">🛣️ 去路径编辑</button>
+      </div>
+      <div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px;">出兵开关</div>
+        <div style="font-size:10px;color:var(--text-mute);margin-bottom:4px;">
+          关掉的兵种这张图不会出兵（两种阵型都不出）。出兵顺序/权重等完整编排仍在
+          全局的"出兵编排"页（见开发说明第四节 Part B，还没做成按地图独立）。
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${allMinionTypes().map(t => `
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;border:1px solid var(--border-color,#444);border-radius:4px;padding:2px 6px;">
+              <input type="checkbox" data-spawn-enabled="${t}" ${draftSpawnEnabled[t] === false ? '' : 'checked'}>
+              ${minionIcon(t)} ${minionLabel(t)}
+            </label>`).join('')}
+        </div>
+      </div>`;
+
     // ---------- 结构性重绘（切起点地图/保存/删除后调用；笔刷拖动期间绝不调这个） ----------
     const render = () => {
       const maps = mapSystem.getAvailableMaps();
@@ -519,6 +577,7 @@ export const MapEditorDialog = {
               <button id="mapEditorEditModeTerrain" class="${editMode === 'terrain' ? 'primary' : ''}">🖌️ 地形笔刷</button>
               <button id="mapEditorEditModeBuildings" class="${editMode === 'buildings' ? 'primary' : ''}">🏗️ 建筑摆放</button>
               <button id="mapEditorEditModePaths" class="${editMode === 'paths' ? 'primary' : ''}">🛣️ 路径编辑</button>
+              <button id="mapEditorEditModeConfig" class="${editMode === 'config' ? 'primary' : ''}">⚙️ 配置模式</button>
             </div>
           </div>
           ${editMode === 'terrain' ? `
@@ -602,7 +661,7 @@ export const MapEditorDialog = {
           </div>
           <div id="mapEditorSelectionPanel" style="margin-bottom:6px;">
             <div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>
-          </div>` : `
+          </div>` : editMode === 'paths' ? `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
             点一个已有路点=拖动它；点路径上的空白处=在最近的一段中间插入新路点（插完可以
             接着拖精确摆放）。改的是当前选中的这条路——路径改了，建筑摆放模式的"吸附兵线"
@@ -621,7 +680,8 @@ export const MapEditorDialog = {
               <button id="mapEditorAddLaneBtn">➕ 新增一条路</button>
               <button id="mapEditorDeleteLaneBtn" ${!selectedLaneId ? 'disabled' : ''}>🗑️ 删除整条路</button>
             </div>
-          </div>`}
+          </div>` : ''}
+          ${editMode !== 'config' ? `
           <div style="display:flex;justify-content:center;margin:8px 0;">
             <canvas id="mapEditorCanvas" width="${n}" height="${n}"
               style="width:${CANVAS_DISPLAY_PX}px;height:${CANVAS_DISPLAY_PX}px;image-rendering:pixelated;
@@ -631,7 +691,7 @@ export const MapEditorDialog = {
             ${editMode === 'terrain' ? `按住拖动连续绘制；分辨率 ${n}×${n} 格。`
               : editMode === 'buildings' ? '按住一座建筑拖动即可移动。'
               : '点路点拖动，点空白处插入新路点。'}
-          </div>
+          </div>` : renderConfigModeBody()}
         </div>
 
         <div class="editor-section">
@@ -719,6 +779,8 @@ export const MapEditorDialog = {
       draftLanes = cloneLanesForEdit(baseMap);
       selectedLaneId = draftLanes[0]?.id ?? null;
       draggingWaypointIndex = -1; selectedWaypointIndex = -1;
+      draftFactions = cloneFactionsForEdit(baseMap);
+      draftSpawnEnabled = { ...(baseMap.spawnEnabled || {}) };
       statusMsg = '';
       render();
     };
@@ -729,6 +791,43 @@ export const MapEditorDialog = {
       document.getElementById('mapEditorEditModeTerrain').addEventListener('click', () => { editMode = 'terrain'; render(); });
       document.getElementById('mapEditorEditModeBuildings').addEventListener('click', () => { editMode = 'buildings'; render(); });
       document.getElementById('mapEditorEditModePaths').addEventListener('click', () => { editMode = 'paths'; render(); });
+      document.getElementById('mapEditorEditModeConfig').addEventListener('click', () => { editMode = 'config'; render(); });
+
+      // 配置模式：阵营管理 + 出兵开关 + 跳转（元素只在 editMode==='config' 时存在，
+      // 用可选链跳过，同一套 bindEvents() 在别的模式下调用是无害的）。
+      document.getElementById('mapEditorJumpBuildingsBtn')?.addEventListener('click', () => { editMode = 'buildings'; render(); });
+      document.getElementById('mapEditorJumpPathsBtn')?.addEventListener('click', () => { editMode = 'paths'; render(); });
+      document.getElementById('mapEditorAddFactionBtn')?.addEventListener('click', () => {
+        const input = document.getElementById('mapEditorNewFactionInput');
+        try {
+          draftFactions = withFactionAdded(draftFactions, input.value);
+          render();
+        } catch (err) {
+          const el = document.getElementById('mapEditorFactionStatus');
+          if (el) el.textContent = `⚠️ ${err.message}`;
+        }
+      });
+      document.querySelectorAll('[data-remove-faction]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = btn.dataset.removeFaction;
+          try {
+            draftFactions = withFactionRemoved(draftFactions, id);
+            ({ buildings: draftBuildings, lanes: draftLanes } =
+              pruneMapDataForRemovedFaction({ buildings: draftBuildings, lanes: draftLanes }, id));
+            selectedBuildingIndex = -1;   // 建筑数组可能被删过元素，旧下标不再可信
+            logFn(`🗑️ 已删除阵营「${id}」（连带清理它的建筑与相关出兵流）`, 'spawn');
+            render();
+          } catch (err) {
+            const el = document.getElementById('mapEditorFactionStatus');
+            if (el) el.textContent = `⚠️ ${err.message}`;
+          }
+        });
+      });
+      document.querySelectorAll('[data-spawn-enabled]').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+          draftSpawnEnabled[cb.dataset.spawnEnabled] = e.target.checked;
+        });
+      });
 
       // 路径编辑：只在 paths 模式下渲染这几个元素
       document.getElementById('mapEditorLaneSelect')?.addEventListener('change', (e) => {
@@ -920,7 +1019,7 @@ export const MapEditorDialog = {
           const payload = buildCustomMapPayload(baseMap, {
             id, label, n, bits, buildings: draftBuildings,
             baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
-            lanes: draftLanes,
+            lanes: draftLanes, factions: draftFactions, spawnEnabled: draftSpawnEnabled,
           });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;

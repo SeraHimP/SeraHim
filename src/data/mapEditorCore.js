@@ -19,6 +19,7 @@ import {
   nearestPointOnPolyline, buildingCountsSymmetric, buildingOnLaneOrInBase,
   attackTowerSpacingOk, crossFactionTowerSpacingOk,
 } from './mapValidate.js';
+import { mapFactionsOf, laneSpawnsOf } from '../systems/FactionSystem.js';
 export { nearestSegmentIndex } from './mapValidate.js';
 
 /**
@@ -64,7 +65,9 @@ export function cloneMapForEdit(baseMap) {
  * @param {object} baseMap  作为起点克隆的地图（内置或已有的自制地图）
  * @param {object} o        { id, label, n, bits }—— bits 是笔刷改完的 Uint8Array
  */
-export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings, baseCircleRadius, pits, lanes }) {
+export function buildCustomMapPayload(baseMap, {
+  id, label, n, bits, buildings, baseCircleRadius, pits, lanes, factions, spawnEnabled,
+}) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
   clone.id = id;
@@ -80,7 +83,82 @@ export function buildCustomMapPayload(baseMap, { id, label, n, bits, buildings, 
   if (pits) clone.pits = pits;
   // 兵路径编辑（阶段六）：同样的"不传就保留原值"规则。
   if (Array.isArray(lanes)) clone.lanes = lanes;
+  // 阵营管理（第四节 Part A）：同样的"不传就保留原值"规则——map.factions 未声明时
+  // mapFactionsOf() 兜底为 [blue,red]，克隆时不传这一项，行为与改动前逐位一致。
+  if (Array.isArray(factions)) clone.factions = factions;
+  // 出兵开关（第四节 Part A）：复用 LaneWaveSystem.js 已经在读的 map.spawnEnabled
+  // 覆写机制（见该文件 `_mapSE` 那段注释），编辑器这里只是给它一个可视化入口，
+  // 不是新发明一套开关。空对象也是合法值（等于"这张图不覆写任何兵种"），
+  // 所以判断"是否传入"用 typeof 而不是"有没有键"。
+  if (spawnEnabled && typeof spawnEnabled === 'object') clone.spawnEnabled = spawnEnabled;
   return clone;
+}
+
+// ==================== 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================
+// 见 docs/REQUIREMENTS-2026-09-03.md 第四节、docs/REPORT-2026-09-03-multifaction.md。
+// 数据模型跟 FactionSystem.js 的 mapFactionsOf() 保持一致：map.factions 是一个纯
+// 字符串 id 数组，没有单独的显示名字段——本仓库现有三张地图从来没有过"阵营显示名"
+// 这个概念（UI 上蓝方/红方是按 id 硬编码文案，不是从数据读的），这里不无中生有造
+// 一个新字段，用户新增的阵营 id 本身就是它在各处列表里显示的样子。
+//
+// 3+ 阵营下的真实**渲染**（单位描边色/小地图光点色）目前仍会落到 SpriteFactory.js/
+// UnitLayer.js 里"非 blue/red 就用灰色兜底"的分支——那一层的按阵营配色泛化没有做
+// （不在这次范围内，属于设计报告里"中立野怪泛化"那个独立后续项目），这里保存出的
+// 地图数据在**规则判定**上是完整可用的（canTarget/结构校验/记分/出兵目标筛选全部
+// 走 mapFactionsOf()，已经是通用实现），只是新增阵营的单位在画面上暂时都是灰色。
+
+/** 从一张地图克隆出阵营列表草稿，供编辑器增删。未声明时按 mapFactionsOf() 的两阵营兜底。 */
+export function cloneFactionsForEdit(baseMap) {
+  return [...mapFactionsOf(baseMap)];
+}
+
+/**
+ * 新增一个阵营。id 去首尾空白、不能为空、不能与现有的重复（阵营 id 同时是
+ * canTarget()/记分板/建筑归属的键，撞了会直接把两个阵营的数据混在一起算）。
+ * @returns {string[]} 新数组（不修改输入）
+ */
+export function withFactionAdded(factions, id) {
+  const clean = (id || '').trim();
+  if (!clean) throw new Error('阵营 id 不能为空');
+  if (factions.includes(clean)) throw new Error(`阵营「${clean}」已存在`);
+  return [...factions, clean];
+}
+
+/**
+ * 删除一个阵营。至少保留两个——单阵营的地图打不起来（canTarget 要求双方阵营不同），
+ * 编辑器不应该允许存出一张必然打不起来的图。
+ * @returns {string[]} 新数组（不修改输入）
+ */
+export function withFactionRemoved(factions, id) {
+  if (factions.length <= 2) throw new Error('至少要保留两个阵营');
+  return factions.filter(f => f !== id);
+}
+
+/**
+ * 删除阵营时级联清理引用它的数据（用户定稿"删除阵营时级联全部删除相关数据"，
+ * 见 docs/REPORT-2026-09-03-multifaction.md §9）：
+ *   - 建筑：该阵营的塔/水晶直接删掉（留着一座没有阵营归属的塔没有意义）。
+ *   - 兵线：不删整条路（路是地形层的物理连线，删了会把其它还在用这条路的阵营
+ *     出兵也带崩），只摘掉引用了被删阵营的出兵流（laneSpawnsOf 展开后逐条过滤）。
+ *     一条路摘完可能变成零出兵流，留空即可，不是错误状态——用户后续可以在
+ *     配置模式里给这条路重新配出兵。
+ * @returns {{buildings, lanes}} 新对象（不修改输入的 buildings/lanes 数组本身）
+ */
+export function pruneMapDataForRemovedFaction({ buildings, lanes }, removedId) {
+  const nextBuildings = (buildings || []).filter(b => b.faction !== removedId);
+  const nextLanes = (lanes || []).map((lane) => {
+    if (!Array.isArray(lane.spawns)) return lane; // 没显式声明出兵流的路，兜底逻辑自己会跳过被删阵营，不用改
+    // 出兵流本身（faction 就是被删阵营）整条摘掉——没有兵源了；只是**目标**里
+    // 提到被删阵营（targetFactions 包含它）的，只摘掉那一个目标，其余目标阵营
+    // 照打不误（一条路同时打两个阵营，删掉其中一个不该连另一个也停）。
+    // 摘完 targetFactions 变空的出兵流（唯一目标就是被删阵营）才整条一起摘掉。
+    const spawns = laneSpawnsOf(lane)
+      .filter(s => s.faction !== removedId)
+      .map(s => ({ ...s, targetFactions: (s.targetFactions || []).filter(f => f !== removedId) }))
+      .filter(s => s.targetFactions.length > 0);
+    return { ...lane, spawns };
+  });
+  return { buildings: nextBuildings, lanes: nextLanes };
 }
 
 // ==================== 区域参数（阶段四剩余）====================
