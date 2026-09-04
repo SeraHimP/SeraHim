@@ -8,7 +8,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { WALL_H } from './WallLayer.js';
-import { CONFIG } from '../data/Config.js';
+import { stylizedPaletteOf } from '../data/Config.js';
 
 function withColor(geo, hex) {
   const c = new THREE.Color(hex), n = geo.getAttribute('position').count, col = new Float32Array(n * 3);
@@ -24,11 +24,11 @@ function treeGeo() {
   return mergeGeometries([trunk, c1, c2]);
 }
 
-// 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——树冠换成圆润的
+// 2026-09-04：风格化 demo（见 Config.stylizedPalettes 头注）——树冠换成圆润的
 // 球体团簇（参照实拍截图：Thronefall 的树是几个球挤在一起，不是锥形松树尖顶）。
 // 材质在 place() 那边套 flatShading:true，硬切面的观感靠材质标记，不靠这里加细分。
-function stylizedTreeGeo() {
-  const SV = CONFIG.stylizedVisuals || {};
+function stylizedTreeGeo(map) {
+  const SV = stylizedPaletteOf(map);
   // ⚠️ mergeGeometries 要求参与合并的几何"要么全带 index，要么全不带"（否则直接
   // 失败返回 null，下游 place() 拿到 null 几何再崩一次）。CylinderGeometry 默认带
   // index，IcosahedronGeometry（PolyhedronGeometry 系）默认不带——两者混着合并
@@ -64,6 +64,12 @@ export class VegetationLayer {
     this.clear(); this._mapId = map.id;
 
     const stylized = map.visualStyle === 'stylized';
+    // 2026-09-04：冰封版嚎哭深渊（见 docs/MAP-DESIGN-howling-abyss-frost.md 第 4.1
+    // 节）——这张图的不可走区域是水/浮冰，不是森林，硬套下面这套"野区=树林"的
+    // 散布逻辑会变成"水里长树"。调色板声明 vegetationMode:'none' 时整段跳过，
+    // 水域装饰改由该图专用的 HowlingAbyssDecor.js 负责。default 调色板没有这个
+    // 字段，三张老地图和 demo_stylized_v1 都不受影响。
+    if (stylized && stylizedPaletteOf(map).vegetationMode === 'none') { this.clear(); this._mapId = map.id; return; }
     const { w: WW, h: WH } = map.world;
     const heightAt = mapSystem.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
@@ -113,8 +119,8 @@ export class VegetationLayer {
       // 风格化 demo：flatShading:true 给硬切面观感（参照截图里岩石/树冠都是平面
       // 色阶，不是平滑渐变），树/岩/灌木各自一个声明出来的纯色，不叠 HSL 随机抖动
       // ——克制色板是这条风格的核心，不是这里漏做了"多样性"。
-      const SV = CONFIG.stylizedVisuals || {};
-      place(stylizedTreeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), trees, null);
+      const SV = stylizedPaletteOf(map);
+      place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), trees, null);
       place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), rocks, null);
       place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.6, 1), new THREE.MeshLambertMaterial({ color: SV.treeCrownColorB || '#6cbb5e', flatShading: true }), bushes, null);
     } else {

@@ -108,11 +108,6 @@ export class WallLayer {
   rebuild(mapSystem, terrainTex) {
     this.clear();
     if (!mapSystem?.hasWalls?.() || !mapSystem.currentMap?.world) return;
-    // 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——不可走区域不再
-    // 抬高成岩壁台地，改由 VegetationLayer 用更密的树/灌木在原地形高度上标出边界
-    // （参照实拍截图："墙"是贴边的细栅栏/树林，不是大块岩壁台地）。这张图直接
-    // 走"无墙地图"同一条早退路径，什么都不画；三张老地图这个分支永远不命中。
-    if (mapSystem.currentMap.visualStyle === 'stylized') return;
 
     const t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
     const { w: WW, h: WH } = mapSystem.currentMap.world;
@@ -120,7 +115,29 @@ export class WallLayer {
 
     // ---- 采样：格心是否可走。这是唯一一次调用 isWalkable，之后全部读这张表 ----
     const walk = this._sample(mapSystem, nx, ny);
+    // 2026-09-04 修复：这份网格是 TerrainLayer navMode 分支的唯一数据源（见
+    // ThreeRenderer._rebuildTerrain 里的 `const gr = this.walls.grid`），必须
+    // 在任何早退之前就算好、赋给 this.grid——原来的风格化早退在这一步【之前】，
+    // clear() 又不清 this.grid，于是切到一张"风格化+navgrid"的地图时，
+    // this.grid 停留在上一张【非风格化】地图的旧网格，TerrainLayer 拿着错误
+    // 形状的网格画路面，画出来的是上一张图的桥/走廊形状，不是当前这张。
+    // demo_stylized_v1（走廊模型，不用 navgrid）从来没触发过这个坑——它的
+    // TerrainLayer 分支根本不读 grid，掩盖了这个问题一直没被发现。
+    // 嚎哭深渊·冰封版是第一张"风格化 + navgrid"的图，把它暴露了出来。
+    this.grid = { walk, nx, ny };
     const isWall = (i, j) => (i < 0 || j < 0 || i >= nx || j >= ny) ? 1 : !walk[j * nx + i];
+
+    // 2026-09-04：风格化地图（见 Config.stylizedPalettes 头注）——不可走区域不再
+    // 抬高成岩壁台地，改由 VegetationLayer 用更密的树/灌木（或该图专属的装饰层，
+    // 如 HowlingAbyssDecor.js）在原地形高度上标出边界（参照实拍截图："墙"是贴边
+    // 的细栅栏/树林，不是大块岩壁台地）。这张图直接走"无墙地图"同一条早退路径，
+    // 不建墙体网格；三张老地图这个分支永远不命中。上面的 this.grid 已经算好，
+    // 早退不影响下游读它。
+    if (mapSystem.currentMap.visualStyle === 'stylized') {
+      this._stats = { cells: nx * ny, wallCells: nx * ny - walk.reduce((a, b) => a + b, 0), cliffTris: 0,
+        buildMs: (typeof performance !== 'undefined' ? performance.now() : 0) - t0 };
+      return;
+    }
 
     // ---- ① 顶面遮罩：墙区不透明。线性过滤 + alphaTest 0.5 让边界落在格间中点，
     //        有效精度约半格，比纯格点量化更贴合真实边界。----
@@ -202,7 +219,7 @@ export class WallLayer {
     }
 
     this.setShadowLevel(this.shadowLevel);
-    this.grid = { walk, nx, ny };   // 第 6.5 步：材质合成按同一张网格分区，避免二次采样
+    // this.grid 已经在方法开头算好并赋值过了（见上面 2026-09-04 修复的说明），这里不重复赋值。
     this._stats = {
       cells: nx * ny,
       wallCells: nx * ny - walk.reduce((a, b) => a + b, 0),

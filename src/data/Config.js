@@ -1168,21 +1168,48 @@ export const CONFIG = {
   // 三张老地图（召唤师峡谷/嚎哭深渊/扭曲丛林）这个字段是 undefined，走原来的
   // 渲染分支，画面逐位不变——这里只是给"风格化"这条新分支一个软编码的参数入口，
   // 不是要在这批改动里替换现有三张图的画风。
-  stylizedVisuals: {
-    // 地面/走廊纯色（TerrainLayer 在 visualStyle==='stylized' 时跳过材质贴图叠加，
-    // 直接用这两个颜色，不再叠噪声/AO 贴图——参照实拍截图里"地面就是一片饱和纯色"）。
-    groundColor: '#3fa06a',
-    corridorColor: '#c9a06b',
-    // 树冠：矮宽的球形团簇（不是现有 VegetationLayer.treeGeo 那种锥形松树），
-    // 两层颜色做一点深浅层次，flatShading:true 让每个面自己的色阶独立（硬切面）。
-    treeTrunkColor: '#6b5230',
-    treeCrownColorA: '#4f9a52',
-    treeCrownColorB: '#6cbb5e',
-    // 岩石：低模多面体，flatShading，不做平滑法线（对应截图里"硬切面"的观感）。
-    rockColor: '#8a8f96',
-    // 轮廓描边默认是否随这张 demo 地图一起打开——先给个开关，观感如果比预期糟，
-    // 关掉这一项就能继续看其它风格化改动，不用连累整个 demo。
-    outlineOnByDefault: false,
+  //
+  // ==================== 2026-09-04（第二版）：单一全局配色 → 按主题分组的调色板 ====================
+  // 起因：嚎哭深渊的冰封风格重做（docs/MAP-DESIGN-howling-abyss-frost.md）也要用
+  // 同一条 `visualStyle==='stylized'` 分支，但配色必须是冰蓝/雪白，不能沿用 demo
+  // 那套绿色调——原来的 `stylizedVisuals` 是唯一一份全局配色，两张图会互相打架。
+  // 改成 `stylizedPalettes`（按主题分组的字典），地图新增 `paletteId` 字段
+  // （不声明时退回 'default'）。`default` 这一份的取值与原 `stylizedVisuals`
+  // 逐字段相同——demo_stylized_v1 不声明 `paletteId`，画面因此逐位不变（第 3 条
+  // 铁律要求的"参数化默认值不变"）。渲染代码统一改用 `stylizedPaletteOf(map)`
+  // （见下方函数）取值，不再直接读某个写死的字段名。
+  stylizedPalettes: {
+    default: {
+      // 地面/走廊纯色（TerrainLayer 在 visualStyle==='stylized' 时跳过材质贴图叠加，
+      // 直接用这两个颜色，不再叠噪声/AO 贴图——参照实拍截图里"地面就是一片饱和纯色"）。
+      groundColor: '#3fa06a',
+      corridorColor: '#c9a06b',
+      // 树冠：矮宽的球形团簇（不是现有 VegetationLayer.treeGeo 那种锥形松树），
+      // 两层颜色做一点深浅层次，flatShading:true 让每个面自己的色阶独立（硬切面）。
+      treeTrunkColor: '#6b5230',
+      treeCrownColorA: '#4f9a52',
+      treeCrownColorB: '#6cbb5e',
+      // 岩石：低模多面体，flatShading，不做平滑法线（对应截图里"硬切面"的观感）。
+      rockColor: '#8a8f96',
+      // 轮廓描边默认是否随这张 demo 地图一起打开——先给个开关，观感如果比预期糟，
+      // 关掉这一项就能继续看其它风格化改动，不用连累整个 demo。
+      outlineOnByDefault: false,
+    },
+    // 嚎哭深渊·冰封版专用（见设计文档第 4.1 节）。这张图没有"树/野区"这个概念
+    // （不可走区域是水/浮冰，不是森林），`vegetationMode:'none'` 让 VegetationLayer
+    // 跳过它默认的树/岩/灌木散布——那套散布逻辑是为"野区=森林"设计的，冰封水域
+    // 硬套上去会变成"水里长树"，不对。水域装饰改由该图专用的
+    // `HowlingAbyssDecor.js` 负责（石柱/分段墙/豁口瓦砾/火炬/浮冰/孤灵小岛）。
+    frost: {
+      groundColor: '#33566e',     // 不可走区域（冰下水体）基底：深冷蓝
+      corridorColor: '#eef4f8',   // 桥面：近白的雪色
+      treeTrunkColor: '#6b7a85',  // 本图不生成树，保留字段仅为结构完整
+      treeCrownColorA: '#8fa3b0',
+      treeCrownColorB: '#a9bfc9',
+      rockColor: '#8fa3b0',       // 石柱/墙体材质取色的兜底值（HowlingAbyssDecor 也可直接引用）
+      outlineOnByDefault: false,
+      vegetationMode: 'none',
+    },
   },
 
   tuning: {
@@ -1671,3 +1698,14 @@ export const MINION_SIZES = {
   corrupt: 10,
   ram: 14,     // v39：攻城车（体型与超级兵相当）
 };
+
+/**
+ * 风格化地图的调色板取值——统一入口，见 CONFIG.stylizedPalettes 头注（第二版）。
+ * `map.paletteId` 未声明时退回 'default'（demo_stylized_v1 走这条，取值与改动前
+ * 的 CONFIG.stylizedVisuals 逐字段相同）；渲染代码一律调这个函数，不直接读
+ * CONFIG.stylizedPalettes[...] 或某个写死的字段名，避免以后加新主题时改漏一处。
+ */
+export function stylizedPaletteOf(map) {
+  const id = (map && map.paletteId) || 'default';
+  return CONFIG.stylizedPalettes[id] || CONFIG.stylizedPalettes.default;
+}

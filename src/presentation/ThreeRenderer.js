@@ -27,6 +27,7 @@ import { buildTerrainLayer, invalidateTerrainCache } from './TerrainLayer.js';
 import { UnitLayer } from './UnitLayer.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
+import { HowlingAbyssDecor } from './HowlingAbyssDecor.js';
 import { MapSkirtLayer } from './MapSkirtLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
@@ -140,6 +141,12 @@ export class ThreeRenderer {
     this.walls = new WallLayer(this.scene);
     this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
     this.vegOn = true;
+    // 2026-09-04：嚎哭深渊·冰封版专属装饰（石柱/分段墙/豁口瓦砾/火炬/浮冰/孤灵
+    // 小岛），只在 paletteId==='frost' 时建东西，见 HowlingAbyssDecor.js 头注。
+    this.frostDecor = new HowlingAbyssDecor(this.scene);
+    if (this.mapSystem?.isWalkable) {
+      this.frostDecor.setWalkableFn((x, y) => this.mapSystem.isWalkable(x, y));
+    }
     this.skirt = new MapSkirtLayer(this.scene);   // v51.27：地图外围裙边（软化"纸片子"硬边）
     this.skirtOn = true;
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
@@ -887,7 +894,7 @@ export class ThreeRenderer {
     // 另起一套分辨率的话高地边界会与既有的 plateau 遮罩错开一格，接缝立刻可见。
     const zones = (gr?.walk && gr.nx && gr.ny)
       ? zoneGrid(map, gr.walk, gr.nx, gr.ny, map.world) : null;
-    // 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——不叠材质贴图合成
+    // 2026-09-04：风格化 demo（见 Config.stylizedPalettes 头注）——不叠材质贴图合成
     // 这一层（噪声/AO/渐变都是"贴图感"的来源），直接用 buildTerrainLayer 画出来的
     // 纯色画布当贴图。只影响这张 demo 图，三张老地图仍然走 compositeTerrain。
     const composed = map.visualStyle === 'stylized'
@@ -935,6 +942,7 @@ export class ThreeRenderer {
       this.walls.top.material.needsUpdate = true;
     }
     if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
+    this.frostDecor.build(this.mapSystem);   // 嚎哭深渊·冰封版专属装饰（自带 paletteId 判断+同图跳过守卫）
     if (this.skirtOn) this.skirt.build(this.mapSystem); // v51.27：地图外围裙边（自己的贴图/纯色，见 MapSkirtLayer）
     this.water.build(this.mapSystem);                 // P1：河道水面同上
   }

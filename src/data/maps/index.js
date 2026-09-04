@@ -2,6 +2,7 @@ import { summoners_rift } from './summoners_rift.js';
 import { howling_abyss } from './howling_abyss.js';
 import { twisted_treeline } from './twisted_treeline.js';
 import { demo_stylized } from './demo_stylized.js';
+import { howling_abyss_frost } from './howling_abyss_frost.js';
 
 /**
  * maps/index.js
@@ -24,6 +25,9 @@ export const MAPS = {
   [twisted_treeline.id]: twisted_treeline, // 扭曲丛林（双路）
   // 2026-09-04：风格化画面 demo（探路用，见 demo_stylized.js 头注）。
   [demo_stylized.id]: demo_stylized,
+  // 2026-09-04：嚎哭深渊·冰封风格重做（见 howling_abyss_frost.js 头注 + 设计文档
+  // docs/MAP-DESIGN-howling-abyss-frost.md），原图 howling_abyss.js 不受影响。
+  [howling_abyss_frost.id]: howling_abyss_frost,
 };
 
 export const DEFAULT_MAP_ID = summoners_rift.id;

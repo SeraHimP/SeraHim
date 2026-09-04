@@ -14,7 +14,7 @@ import { DEMO_STYLIZED_NAVGRID } from './demo_stylized_navgrid.js';
  *
  * 只有这张图把 `visualStyle` 设成 'stylized'——渲染层（VegetationLayer/
  * TerrainLayer/WallLayer）按这个字段分支，三张正式地图这个字段是 undefined，
- * 走原来的分支，画面逐位不变（见 CONFIG.stylizedVisuals 头注）。
+ * 走原来的分支，画面逐位不变（见 CONFIG.stylizedPalettes 头注）。
  *
  * 建筑档位数值（tierStats/skillOverrides）直接照抄 howling_abyss.js——不是这次
  * 要评估的东西，复用一份已经验证过的配置，只重新摆了塔位坐标（间距规则见下面

@@ -15,7 +15,7 @@
  * 视觉编码：深色丛林 = 墙（不可行走），亮色走廊 = 兵线路面，斜向河道为装饰，
  * 走廊外沿一圈"墙缘"高光，读起来就是 LoL 小地图的结构。
  */
-import { CONFIG } from '../data/Config.js';
+import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 
 const _terrainCache = new Map();
@@ -60,12 +60,12 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   g.scale(S, S);
   const hw = map.walls?.corridorHalfWidth ?? 95;
 
-  // 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——地面/走廊直接用
+  // 2026-09-04：风格化地图（见 Config.stylizedPalettes 头注）——地面/走廊直接用
   // 声明的纯色，不叠"稀疏亮斑"这层噪声纹理（实拍截图核对过：Thronefall 的地面
-  // 就是一片饱和纯色，没有可见的铺贴纹理）。只影响这张 demo 图，三张老地图
-  // 这里的颜色/纹理逐位不变。
+  // 就是一片饱和纯色，没有可见的铺贴纹理）。只影响声明了 visualStyle:'stylized'
+  // 的地图，三张老地图这里的颜色/纹理逐位不变。
   const stylized = map.visualStyle === 'stylized';
-  const SV = CONFIG.stylizedVisuals || {};
+  const SV = stylizedPaletteOf(map);
 
   // 丛林底（= 墙）
   g.fillStyle = stylized ? (SV.groundColor || '#151c26') : '#151c26';
@@ -109,12 +109,22 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     cell.width = nx; cell.height = ny;
     const cg = cell.getContext('2d');
     const im = cg.createImageData(nx, ny);
-    // 走廊 #2b3647 / 野区 #151c26 —— 与走廊模型同一对颜色，材质合成的明暗关系保持不变
+    // 2026-09-04：navMode 原来完全没读 stylized/调色板（现有缺口，见
+    // docs/MAP-DESIGN-howling-abyss-frost.md 第 4.3 节）——写死的 #2b3647/#151c26
+    // 走廊模型和 navgrid 地图共用同一对颜色，非风格化地图逐位不变；风格化地图
+    // 改用调色板的 corridorColor（可走）/groundColor（不可走），不再是这两个死值。
+    const hex2rgb = (h, fallback) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(h || '');
+      const v = m ? m[1] : fallback;
+      return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
+    };
+    const [corR, corG, corB] = stylized ? hex2rgb(SV.corridorColor, 'c9a06b') : [0x2b, 0x36, 0x47];
+    const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
     for (let k = 0; k < nx * ny; k++) {
       const on = walk[k];
-      im.data[k * 4]     = on ? 0x2b : 0x15;
-      im.data[k * 4 + 1] = on ? 0x36 : 0x1c;
-      im.data[k * 4 + 2] = on ? 0x47 : 0x26;
+      im.data[k * 4]     = on ? corR : gndR;
+      im.data[k * 4 + 1] = on ? corG : gndG;
+      im.data[k * 4 + 2] = on ? corB : gndB;
       im.data[k * 4 + 3] = 255;
     }
     cg.putImageData(im, 0, 0);

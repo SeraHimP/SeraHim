@@ -52,8 +52,10 @@ const { T, done } = scoreboard('经典模式验收（模式×地图）');
   // 2026-09-04：新增 demo_stylized_v1（风格化画面 demo，见该文件头注），
   // 这里的期望常量从 3 改成 4——不是"经典模式"那个第四张地图的老问题复发，
   // 是探路用的第四张真实地图，只加不改，与经典模式变换无关。
+  // 2026-09-04（第二次）：再新增 howling_abyss_frost_v1（嚎哭深渊·冰封版，见
+  // docs/MAP-DESIGN-howling-abyss-frost.md），常量从 4 改成 5，同样只加不改。
   T('注①-summoners_rift_classic 不再单独注册（经典模式不是第四张地图）',
-    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 4);
+    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 5);
   T('注②-MapSystem 认得 __/_classic 后缀，能反查回经典模式版本',
     !!(new MapSystem(new EntityContainer(new EventBus()), new EventBus())
       .getMapById('summoners_rift_v1_classic')));
