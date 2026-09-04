@@ -91,7 +91,60 @@
 
 ---
 
-## 三、地图光环状态系统三种数值模式
+## 四、老地图接入新框架（地形模板拆分 + 中立营地显式化）
+
+### 用户原话
+"还有把老地图都接入新的框架，包括地形，光环等等。"
+
+### 与既有决定的冲突（先问清楚再动）
+`mapComposition.js` 头注里记着一条此前拍板的决定："现有三张地图不迁移"——
+不拆分成独立的地形/配置文件，理由是怕牵连它们身上大量的既有测试/平衡数据。
+这次用户的新要求正好推翻这条决定，先确认过用户明确要推翻（接受返工风险），
+才动手，没有静默覆盖一条已经写进代码注释里的历史决定。
+
+### 落地
+三张内置地图源码（`summoners_rift.js`/`twisted_treeline.js`/`howling_abyss.js`）
+内部拆成 `XX_TERRAIN`（纯物理地形：world/useNavgrid/navgrid/walls/heightZones/
+highground/obstacles）+ `XX_CONFIG`（阵营/塔位/兵线/数值覆写/出兵节奏等玩法
+内容），末尾用 `composeMap({ terrain, config })` 拼回原来"一个对象揉在一起"
+的导出形状——**对下游系统完全透明**：`MapSystem`/所有系统读的还是同一个
+完整地图对象，只有这三个源文件内部怎么组织自己的数据变了。用脚本对三张图
+分别做过深度比较（逐字段递归 JSON 比对，不受 key 顺序影响），确认拆分前后
+除新增的 `neutralCamps` 字段外，其余每一个字段值逐位不变。
+
+同时把中立营地（巨龙）从"没声明就靠 `NeutralCampSystem.neutralCampsOf()`
+合成默认值"改成三张图各自显式声明——写的是同一份默认合成的数据形状
+（baron/top/reverse + dragon/bot/forward），`campSpawnPoints()` 解析出来的
+坑位/路/方向与显式化之前逐位一致（含嚎哭深渊"没有 top/bot，退化到 mid 路点
+中点"那条既有的退化行为，也原样保留）。这张图自己现在能在编辑器"配置模式"
+的中立营地面板里直接看到/改这份配置，不再是隐式黑盒。
+
+光环（`globalAura`）本来就是显式字段（扭曲丛林/嚎哭深渊各自的光环定义早就
+写在 config 里），这次拆分把它自然带进了 `XX_CONFIG`，不需要额外改动；
+召唤师峡谷目前没有光环（第三节的三种数值模式做完后再决定要不要给它加）。
+
+### 测试
+`tests/sim_mapcomposition.mjs` 新增两节：④用源码正则钉住三个文件确实各自
+`import { composeMap }` 并用 `XX_TERRAIN`/`XX_CONFIG` 拼出导出对象（防止
+以后有人手滑改回整体字面量又不吱声）；⑤核对三张图的 `neutralCamps` 都是
+显式声明（不再靠 `neutralCampsOf()` 合成）且解析行为与改动前逐位一致。
+`tests/sim_neutralcamp.mjs` 的 25 号断言相应更新（见下方"改动的期望常量"）。
+Playwright 实机验收：三张图依次在编辑器里切换、进配置模式，画面正常、
+0 条真实控制台报错。
+
+### 改动的期望常量
+- `tests/sim_neutralcamp.mjs` 25 号断言从"`buildCustomMapPayload` 不传
+  `neutralCamps` 时该字段是 `undefined`"改为"不传时保留 `baseMap` 声明的
+  原值"。原因：这条断言测的是"`baseMap`（`summoners_rift_v1`）本来就没有
+  `neutralCamps` 这个字段"这个前提——`buildCustomMapPayload` 对其它所有
+  "不传"字段（buildings/lanes/factions 等）的既定规则统一是"保留
+  `cloneMapForEdit(baseMap)` 克隆出来的原值"，`neutralCamps` 显式化之后，
+  `baseMap` 真的有这个字段了，"不传就带出原值"是这条既定规则的自然结果，
+  不是新 bug；旧断言的前提已经不存在，不是真正该守的不变量。
+
+---
+
+## 五、地图光环状态系统三种数值模式
 
 用户拍板：光环只做"状态"（不做"技能"挂载），参照现有扭曲丛林/嚎哭深渊
 `globalAura` 形状；数值模式固定值/线性渐进到目标值都好确定，"分阶段"用
@@ -112,4 +165,10 @@
       纯函数 + 编辑器一键按钮 + 直接校正 top/bot 两条路的真实数据。10 条
       pure-function 测试（含真实数据核验、"路点落在走廊外"回归用例），
       Playwright 实机验收（bot 路 2 点被吸附、日志/画布同步、0 真实控制台报错）。
-- [ ] 第三节：地图光环状态系统三种数值模式（未开始）。
+- [x] 第四节：老地图接入新框架（地形模板拆分 + 中立营地显式化）——三张内置
+      地图源码内部拆成 `XX_TERRAIN`/`XX_CONFIG` 两块，用 `composeMap()` 拼回
+      同一个导出对象（对下游透明，脚本深度比较过逐字段值不变）；`neutralCamps`
+      从隐式默认合成改为三张图各自显式声明。`sim_mapcomposition.mjs` 新增
+      ④⑤两节（17→34 条），`sim_neutralcamp.mjs` 更新 1 条断言，Playwright
+      实机验收三张图切换/配置模式 0 真实控制台报错。
+- [ ] 第五节：地图光环状态系统三种数值模式（未开始）。

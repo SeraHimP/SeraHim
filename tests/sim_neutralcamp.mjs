@@ -168,7 +168,15 @@ function dragonWorld(mapId) {
 
   const { n: n0, bits: bits0 } = decodeBaseBits(MAPS.summoners_rift_v1);
   const p1 = buildCustomMapPayload(MAPS.summoners_rift_v1, { id: 'nc1', label: 'nc1', n: n0, bits: bits0 });
-  T('25-buildCustomMapPayload 不传 neutralCamps 时不写这个字段', p1.neutralCamps === undefined);
+  // 2026-09-04：老地图接入新框架后 summoners_rift_v1.neutralCamps 是真实声明的字段
+  // （不再是 undefined），buildCustomMapPayload 对"不传"字段的既定规则是
+  // "保留 cloneMapForEdit(baseMap) 克隆出来的原值"（buildings/lanes/factions
+  // 等其它字段都是这条规则，见函数里各处"不传就保留原值"的注释）——不传
+  // neutralCamps 现在应该带出 baseMap 的真实配置，而不是凭空变成 undefined。
+  // 旧断言测的是"baseMap 本来就没这个字段"这个已经不存在的前提，不是真正该守
+  // 的不变量，改成断言"不传时原样带出 baseMap 声明的配置"。
+  T('25-buildCustomMapPayload 不传 neutralCamps 时保留 baseMap 声明的原值（不是清空成 undefined）',
+    JSON.stringify(p1.neutralCamps) === JSON.stringify(MAPS.summoners_rift_v1.neutralCamps));
   const p2 = buildCustomMapPayload(MAPS.summoners_rift_v1, { id: 'nc2', label: 'nc2', n: n0, bits: bits0, neutralCamps: removed });
   T('26-buildCustomMapPayload 传了就整体写入', JSON.stringify(p2.neutralCamps) === JSON.stringify(removed));
 }

@@ -1,5 +1,6 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
 import { HA_NAVGRID } from './map_navgrids.js';
+import { composeMap } from '../mapComposition.js';
 
 /**
  * howling_abyss.js —— 嚎哭深渊（单路，一条横跨深渊的冰桥）
@@ -49,28 +50,22 @@ const B = {
   outer:      P(850),
 };
 
-export const howling_abyss = {
-  id: 'howling_abyss_v1',
-  label: '嚎哭深渊',
+// 2026-09-04：接入地形模板/config 拆分框架，见 summoners_rift.js 同一处头注
+// （用户拍板推翻了 mapComposition.js 里"现有三张地图不迁移"的旧决定）。
+// HA_TERRAIN 装纯地形，HA_CONFIG 装玩法内容，composeMap() 拼回去，拼出来的
+// howling_abyss 与拆分前逐字段相同（脚本深度比较过），只多了下面新增的
+// neutralCamps（逐位照抄 NeutralCampSystem 默认合成的形状，行为不变）。
+const HA_TERRAIN = {
   world: { w: 2325, h: 2325 },
-  factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
-
-  // ==================== 地形 ====================
   // useNavgrid + 自带位图：MapSystem 逐格判可走，不再有走廊/基地圈。
   useNavgrid: true,
   navgrid: HA_NAVGRID,
   walls: { river: false },   // 深渊是冰桥，没有河道（地形层据此不画水带）
 
-  // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管）。
-  // 不声明的话 getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地毫不相干的
-  // 巨圈 —— 用户看到的"基地圈可视化乱七八糟"就是这个。圆心显式给到水晶枢纽上。
-  baseCenters: { blue: { x: 292, y: 2033 }, red: { x: 2033, y: 292 } },
-  baseCircleRadius: 330,
-
   // ⚠️ 本图**没有高低差**（用户定稿："嚎哭深渊无高低差但是有基地环"）——它就是一座平桥。
   // 声明成空对象而不是干脆不写：不写的话 heightAt 会退回"按基地圈抬一个圆台"的老分支，
-  // 而上面那个 baseCircleRadius:330 又是为光环圈保留的，于是桥两端会凭空鼓起两个包。
-  // 空对象走的是新分支，blue/red 都取不到 → 全图高度恒 0，正是要的。
+  // 而下面 HA_CONFIG 里的 baseCircleRadius:330 又是为光环圈保留的，于是桥两端会凭空
+  // 鼓起两个包。空对象走的是新分支，blue/red 都取不到 → 全图高度恒 0，正是要的。
   // 基地光环（玩法效果）不受影响，它走 towerPassives，与地形高度无关。
   highground: {},
 
@@ -83,6 +78,26 @@ export const howling_abyss = {
   // 落在虚空里的障碍等于没有。这里用地图自己的 isWalkable 逐个验过。
   obstacles: [280, 440, 600, 760, 920, 1080, 1240, 1400, 1560, 1720, 1880, 2040, 2180]
     .flatMap((d) => [{ ...P(d, +140), r: 26 }, { ...P(d, -140), r: 26 }]),
+};
+
+const HA_CONFIG = {
+  id: 'howling_abyss_v1',
+  label: '嚎哭深渊',
+  factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
+
+  // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管）。
+  // 不声明的话 getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地毫不相干的
+  // 巨圈 —— 用户看到的"基地圈可视化乱七八糟"就是这个。圆心显式给到水晶枢纽上。
+  baseCenters: { blue: { x: 292, y: 2033 }, red: { x: 2033, y: 292 } },
+  baseCircleRadius: 330,
+
+  neutralCamps: [{
+    id: 'dragon', unitType: 'dragon', label: '巨龙',
+    spawnPoints: [
+      { pitRef: 'baron', laneMatch: 'top', direction: 'reverse' },
+      { pitRef: 'dragon', laneMatch: 'bot', direction: 'forward' },
+    ],
+  }],
 
   // === 波次节奏 ===
   waveInterval: 30,
@@ -166,3 +181,5 @@ export const howling_abyss = {
     { faction: FACTIONS.RED, tier: 'nexus_main', laneId: 'mid', pos: R(BLUE_NEXUS),   weapon: null },
   ],
 };
+
+export const howling_abyss = composeMap({ terrain: HA_TERRAIN, config: HA_CONFIG });

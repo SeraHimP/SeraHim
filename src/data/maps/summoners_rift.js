@@ -1,5 +1,6 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
 import { SR_PITS } from './sr_navgrid.js';
+import { composeMap } from '../mapComposition.js';
 
 /**
  * summoners_rift.js
@@ -42,10 +43,38 @@ const LANE_SPAWNS_2F = [
 
 export const WORLD_SIZE = 3552;
 
-export const summoners_rift = {
+// ==================== 2026-09-04：接入地形模板/config 拆分框架 ====================
+// 用户："把老地图都接入新的框架，包括地形，光环等等。"——推翻 mapComposition.js
+// 头注里此前"现有三张地图不迁移"那条拍板（当时的顾虑是怕牵连既有测试/平衡数据，
+// 这次用户明确要求还是要拆，接受返工风险）。
+//
+// 拆法：把下面这一个整体对象按 TERRAIN_FIELDS / CONFIG_FIELDS 的既定字段表分成
+// SR_TERRAIN（纯物理地形：world/useNavgrid/walls/heightZones）和 SR_CONFIG
+// （阵营/塔位/兵线/数值覆写/出兵节奏等玩法内容），再用 composeMap() 拼回同一个
+// 对象——**导出的 summoners_rift 结构与拆分前逐字段相同**（用脚本深度比较过
+// JSON 序列化结果，只多了下面新增的 neutralCamps 字段，其余一个值都没变）。
+// 这样编辑器的"配置模式"就能直接读/改老图的 config 部分，不用再靠
+// extractConfigFromMap() 现场从整体对象里抠。
+const SR_TERRAIN = {
+  world: { w: WORLD_SIZE, h: WORLD_SIZE },
+  // v34/v35（Q4）：地图墙壁（走廊模型，参照 LoL 小地图）。
+  // 可行走区域 = 三路走廊（兵线折线 ± corridorHalfWidth）∪ 双方基地高地区（基地圈）。
+  // 半宽 95 → 130（v35 用户定稿）：LoL 路面约占图宽 6.4%，旧 190/3552=5.3% 偏窄且硬墙缘
+  // 无草地过渡视觉更细；260/3552≈7.3% 对齐。塔射程 180 仍 > 半宽 → 高地口卡位保留。
+  walls: { corridorHalfWidth: 130 },
+  // C 组·台阶地形（用户 Q1）：高地平台抬升 + 明显陡台阶，边缘外扩到画线处（纯渲染，仿真不读）。
+  // plateauFull/Edge 是 baseOpenRadius(1185) 的比例：满高核心到 0.97(≈1149)，陡降到 0 在 1.055(≈1250，红线处)；
+  // 抬升高度 40（原默认 20，更"明显"）。窄坡宽(≈100)＝台阶感；河床沿用默认。
+  heightZones: { plateauHeight: 40, plateauFull: 0.97, plateauEdge: 1.055 },
+  // 真实峡谷地形（navgrid）：可行走区改由 src/data/maps/sr_navgrid.js 的位图判定
+  // （自 assets/maps/preview.jpg 导航图描出）——野区可走、野区墙体成形、河道连通，
+  // 并带龙坑/男爵坑。置 false 可退回旧的"三路走廊"模型。
+  useNavgrid: true,
+};
+
+const SR_CONFIG = {
   id: 'summoners_rift_v1',
   label: '召唤师峡谷',
-  world: { w: WORLD_SIZE, h: WORLD_SIZE },
   // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §3）：地图声明支持哪些阵营，
   // 对局中固定不变。这张图只有蓝红两阵营，显式写出来是给以后的 N 阵营地图当模板——
   // 不写也不影响现有行为（FactionSystem.mapFactionsOf 未声明时兜底就是这两个）。
@@ -101,12 +130,6 @@ export const summoners_rift = {
   // === System rules ===
   nexusRespawnTime: 300,
 
-  // v34/v35（Q4）：地图墙壁（走廊模型，参照 LoL 小地图）。
-  // 可行走区域 = 三路走廊（兵线折线 ± corridorHalfWidth）∪ 双方基地高地区（基地圈）。
-  // 半宽 95 → 130（v35 用户定稿）：LoL 路面约占图宽 6.4%，旧 190/3552=5.3% 偏窄且硬墙缘
-  // 无草地过渡视觉更细；260/3552≈7.3% 对齐。塔射程 180 仍 > 半宽 → 高地口卡位保留。
-  walls: { corridorHalfWidth: 130 },
-
   // v34（Q1）：基地圈半径改为显式声明的固定值（原为"由高地建筑位置反推"——
   // 但高地塔现在要按"距入口180px"摆放，位置依赖圈、圈又依赖位置，形成循环。
   // 定死半径后：入口位置固定，高地塔=入口沿走廊内推180，射程外沿恰好卡在入口）。
@@ -140,15 +163,6 @@ export const summoners_rift = {
   // 之所以要显式声明：嚎哭深渊重做后把口的换成了枢纽塔，写死 'base' 会验错对象。
   gateTier: 'base',
 
-  // C 组·台阶地形（用户 Q1）：高地平台抬升 + 明显陡台阶，边缘外扩到画线处（纯渲染，仿真不读）。
-  // plateauFull/Edge 是 baseOpenRadius(1185) 的比例：满高核心到 0.97(≈1149)，陡降到 0 在 1.055(≈1250，红线处)；
-  // 抬升高度 40（原默认 20，更"明显"）。窄坡宽(≈100)＝台阶感；河床沿用默认。
-  heightZones: { plateauHeight: 40, plateauFull: 0.97, plateauEdge: 1.055 },
-
-  // 真实峡谷地形（navgrid）：可行走区改由 src/data/maps/sr_navgrid.js 的位图判定
-  // （自 assets/maps/preview.jpg 导航图描出）——野区可走、野区墙体成形、河道连通，
-  // 并带龙坑/男爵坑。置 false 可退回旧的"三路走廊"模型。
-  useNavgrid: true,
   // v45：只有这张图有龙（用户定稿："只有在召唤师峡谷中才有龙的生成！其他地图没有！"）。
   // 与下面的 pits 同一个口径：**地图自己声明自己有什么**，引擎不按 id 猜。
   // 嚎哭深渊 / 扭曲丛林不写这一项 → DragonSystem.mapAllowsDragon() 为 false，不自动刷龙。
@@ -159,6 +173,18 @@ export const summoners_rift = {
   // 之前没被发现，只是因为旧坑位恰好落在没人采样的地方；v44 把坑挪到河段重心之后，
   // 嚎哭深渊的"全图零高差"断言当场就红了。
   pits: SR_PITS,
+
+  // 2026-09-04：中立营地显式化——原来靠 NeutralCampSystem.neutralCampsOf() 在
+  // 没声明时按巨龙既定行为合成默认值（同一份 baron/top/reverse + dragon/bot/forward），
+  // 现在把它写成真实数据。逐位照抄默认合成的形状，行为不变（sim_neutralcamp.mjs
+  // 逐条断言过），区别只是这张图自己现在能在编辑器里看到/改这份配置，不再是黑盒。
+  neutralCamps: [{
+    id: 'dragon', unitType: 'dragon', label: '巨龙',
+    spawnPoints: [
+      { pitRef: 'baron', laneMatch: 'top', direction: 'reverse' },
+      { pitRef: 'dragon', laneMatch: 'bot', direction: 'forward' },
+    ],
+  }],
 
   // 兵线路点（Q1 拉直）：枢纽端原有贴着枢纽塔的中转点导致参考线/行军在枢纽处折一下，
   // 已删除，枢纽 → 主线为纯直线（中路即枢纽对枢纽两点直线）。
@@ -257,3 +283,5 @@ export const summoners_rift = {
 
   ],
 };
+
+export const summoners_rift = composeMap({ terrain: SR_TERRAIN, config: SR_CONFIG });

@@ -1,5 +1,6 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
 import { TT_NAVGRID } from './map_navgrids.js';
+import { composeMap } from '../mapComposition.js';
 
 /**
  * twisted_treeline.js —— 扭曲丛林（双路 + 中间野区）
@@ -92,24 +93,16 @@ const B = {
   bot: { nexus_lane: { x: 428, y: 896 }, base: { x: 428, y: 1060 } },  // 橙圈③④
 };
 
-export const twisted_treeline = {
-  id: 'twisted_treeline_v1',
-  label: '扭曲丛林',
+// 2026-09-04：接入地形模板/config 拆分框架，见 summoners_rift.js 同一处头注
+// （用户拍板推翻了 mapComposition.js 里"现有三张地图不迁移"的旧决定）。
+// 拆分方式相同：TT_TERRAIN 装纯地形，TT_CONFIG 装玩法内容，composeMap() 拼回去，
+// 拼出来的 twisted_treeline 与拆分前逐字段相同（脚本深度比较过），只多了
+// 下面新增的 neutralCamps（逐位照抄 NeutralCampSystem 默认合成的形状，行为不变）。
+const TT_TERRAIN = {
   world: { w: 3008, h: 1388 },
-  factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
-
-  // ==================== 地形 ====================
   useNavgrid: true,
   navgrid: TT_NAVGRID,
   walls: { river: false },
-
-  // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管，
-  // MapSystem.isWalkable 走 navgrid 分支时根本不看这两个字段）。
-  // 不声明的话 getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地毫不相干的
-  // 巨圈 —— 用户看到的"基地圈可视化乱七八糟"就是这个。圆心显式给到水晶枢纽上。
-  baseCenters: { blue: { x: 584, y: 676 }, red: { x: 2424, y: 676 } },
-  baseCircleRadius: 300,
-
   // 高地范围。用户定稿："扭曲丛林你可以做一个圆"、"效果就是从水晶塔前面就是斜坡，
   // 枢纽那里都是高地"。**圆心放水晶枢纽**，满高半径 420、外扩 140 斜坡（总半径 560）。
   // 420 是反推的，不是拍的：
@@ -122,6 +115,27 @@ export const twisted_treeline = {
     red:  { center: { x: 2424, y: 676 }, full: 420 },
     ramp: 140,
   },
+};
+
+const TT_CONFIG = {
+  id: 'twisted_treeline_v1',
+  label: '扭曲丛林',
+  factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
+
+  // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管，
+  // MapSystem.isWalkable 走 navgrid 分支时根本不看这两个字段）。
+  // 不声明的话 getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地毫不相干的
+  // 巨圈 —— 用户看到的"基地圈可视化乱七八糟"就是这个。圆心显式给到水晶枢纽上。
+  baseCenters: { blue: { x: 584, y: 676 }, red: { x: 2424, y: 676 } },
+  baseCircleRadius: 300,
+
+  neutralCamps: [{
+    id: 'dragon', unitType: 'dragon', label: '巨龙',
+    spawnPoints: [
+      { pitRef: 'baron', laneMatch: 'top', direction: 'reverse' },
+      { pitRef: 'dragon', laneMatch: 'bot', direction: 'forward' },
+    ],
+  }],
 
   // === 波次节奏 ===
   waveInterval: 35,
@@ -229,3 +243,5 @@ export const twisted_treeline = {
     return out;
   })(),
 };
+
+export const twisted_treeline = composeMap({ terrain: TT_TERRAIN, config: TT_CONFIG });
