@@ -434,6 +434,33 @@ const T = board.T;
   const htmlSrc = srcOf('index.html');
   T('㉛-index.html 定义了 .modal-box.mapEditorWide 尺寸变体',
     /\.modal-box\.mapEditorWide\s*\{[^}]*max-width\s*:\s*960px/.test(htmlSrc));
+
+  // 图片自动识别导入（docs/REQUIREMENTS-2026-09-03.md 第四节，用户拍板先只做
+  // "识别可行走地形"）：算法本体在 imageImport.js（sim_imageimport.mjs 单测过），
+  // 这里只钉 DOM 弹窗那层——导入了纯函数、事件绑定齐全、取样点击换算了坐标、
+  // 应用按钮真的把结果写回 bits，不是摆设。
+  T('㉜-MapEditorDialog.js 导入了 imageImport.js 的 imageToNavgrid',
+    /imageToNavgrid[\s\S]{0,60}from ['"]\.\.\/data\/imageImport\.js['"]/.test(src));
+  T('㉝-展开/收起按钮切换 imgImportOpen 并触发 render()',
+    /mapEditorImgImportToggle['"]\)[\s\S]{0,150}imgImportOpen\s*=\s*!imgImportOpen[\s\S]{0,250}render\(\)/.test(src));
+  T('㉞-文件选择后用 getImageData 存下整份原图像素（不进 HTML，避免弹窗重渲把大数组序列化）',
+    /mapEditorImgImportFile['"]\)[\s\S]{0,600}getImageData\(/.test(src));
+  T('㉟-点击原图画布会把屏幕坐标换算回原图像素坐标再取色（不是直接拿显示坐标当像素坐标）',
+    /mapEditorImgImportSrcCanvas['"]\)[\s\S]{0,900}imgImportImageData\.width\s*\/\s*canvas\.width/.test(src));
+  T('㊱-容差滑块把 0~100 的百分比换算成 RGB 距离单位（×441.7）再传给 imageToNavgrid',
+    /imgImportTolerancePct\s*\/\s*100\)\s*\*\s*441\.7/.test(src));
+  T('㊲-应用按钮真的把识别结果写回 bits（不是只关面板）',
+    /mapEditorImgImportApplyBtn['"]\)[\s\S]{0,200}bits\s*=\s*imgImportResult\.bits/.test(src));
+  T('㊳-CONFIG.mapEditor 声明了图片导入容差的默认值/上下限（第二条铁律：数值软编码）',
+    typeof CONFIG.mapEditor.imageImportTolerancePctDefault === 'number'
+    && typeof CONFIG.mapEditor.imageImportTolerancePctMin === 'number'
+    && typeof CONFIG.mapEditor.imageImportTolerancePctMax === 'number');
+  // 实机验收踩到的真 bug：取样/拖容差走的是轻量更新（不调 render()，避免弹窗重渲打断
+  // 画布/输入框状态），但"应用"按钮的 disabled 是 render() 整页重渲时按当时 imgImportResult
+  // 写死的一次性属性——不在 redrawImgImportPreview() 里手动同步，取样完按钮永远是灰的，
+  // 用户点不了"应用"。跟 ㉕ 的 updatePathStatus() 同步删除按钮同一类问题。
+  T('㊴-redrawImgImportPreview 会同步应用按钮的 disabled 状态（不能只靠 render() 时写死一次）',
+    /redrawImgImportPreview[\s\S]{0,2500}mapEditorImgImportApplyBtn['"][\s\S]{0,150}disabled\s*=\s*!imgImportResult/.test(src));
 }
 
 // ==================== ⑦ 档位显示名统一（水晶防御塔/枢纽防御塔）====================

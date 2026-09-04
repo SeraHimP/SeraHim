@@ -1146,6 +1146,19 @@ export const CONFIG = {
     // 纯视觉提示，不是真实笔刷半径（真实半径是 brushRadiusGridDefault，单位是格子，
     // 两者故意分开——这个只管"拖的时候看着够不够粗"，不该跟着格子半径联动改变）。
     boardBrushTrailRadiusPx: 9,
+
+    // ==================== 图片自动识别导入（第四节，docs/imageImport.js）====================
+    // 颜色距离容差，百分比口径（0~100，UI 滑杆单位），换算成 RGB 欧氏距离时
+    // ×4.417（0~441.7 是 RGB 立方体对角线长度，255×√3）。默认 15% ≈ 66，
+    // 大致允许"同一片路面因光影有点深浅差异"这种正常抗锯齿/压缩噪声，
+    // 又不会把明显不同的地形色块也蒙混过去——凭手感定的初始值，不是量出来的，
+    // 所以留在这里方便以后跟着实测效果调。
+    imageImportTolerancePctDefault: 15,
+    imageImportTolerancePctMin: 1,
+    imageImportTolerancePctMax: 60,
+    // 识别结果目标分辨率——复用 navgridMinN/navgridMaxN 同一档区间，不再另开
+    // 一套上下限（这本来就是同一件事："navgrid 该多大"，不该因为来源是笔刷
+    // 还是图片识别就有两个答案）。
   },
 
   tuning: {

@@ -50,6 +50,7 @@ import { paneHtml } from './dialogShell.js';
 import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle, paintPolyline, despeckle } from '../data/navgrid.js';
+import { imageToNavgrid } from '../data/imageImport.js';
 import { STRUCT_TIERS } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import {
@@ -102,6 +103,14 @@ export const MapEditorDialog = {
     let draggingWaypointIndex = -1;
     let selectedWaypointIndex = -1;                     // 点选一个路点后可在下方"删除选中路点"
 
+    // ---- 图片自动识别导入（第四节，见 src/data/imageImport.js 头注） ----
+    let imgImportOpen = false;         // 是否展开这个子面板
+    let imgImportImageData = null;     // 原图整份像素（{data,width,height}），只存在内存里，不进 HTML
+    let imgImportSrcDisplayW = 0, imgImportSrcDisplayH = 0;   // 原图预览画布的显示像素尺寸（等比缩放后）
+    let imgImportSampleColor = null;   // 用户点选的"可走"参考色 {r,g,b}
+    let imgImportTolerancePct = CONFIG.mapEditor.imageImportTolerancePctDefault;
+    let imgImportResult = null;        // 最近一次算出的 {n,bits}，供"应用"按钮落盘
+
     const isCustomMap = (id) => !!(CONFIG.customMaps && CONFIG.customMaps[id]);
     // 校验只关心结构（lanes/world/walls/useNavgrid）+ 当前草稿建筑，navgrid 笔刷改的
     // 地形位图跟这套结构性规则无关，不需要把 bits 也塞进去。
@@ -126,6 +135,54 @@ export const MapEditorDialog = {
       if (editMode === 'terrain' && brushShape === 'polyline') drawPolylinePreview(ctx);
       if (editMode === 'buildings') drawBuildingMarkers(ctx);
       if (editMode === 'paths') drawLanePaths(ctx);
+    };
+
+    // ---------- 图片自动识别导入：算一遍识别结果（不碰 DOM，纯数据） ----------
+    // 目标分辨率固定用当前草稿的 n——识别结果要能直接换掉 bits，两者必须同一个格子数，
+    // 不然还要另外一步"重采样对齐"，没必要把这一步的复杂度也加进来。
+    const recomputeImgImportPreview = () => {
+      if (!imgImportImageData || !imgImportSampleColor) { imgImportResult = null; return; }
+      // 容差滑杆是 0~100 的百分比，imageToNavgrid 要的是 RGB 欧氏距离（0~441.7，
+      // 255×√3 是 RGB 立方体对角线长度）——换算公式见 Config.js 里这个字段旁边的注释。
+      const tolerance = (imgImportTolerancePct / 100) * 441.7;
+      imgImportResult = imageToNavgrid(imgImportImageData, { n, sampleColor: imgImportSampleColor, tolerance });
+    };
+
+    // ---------- 图片自动识别导入：重绘原图/结果两块预览画布 ----------
+    const redrawImgImportPreview = () => {
+      const src = document.getElementById('mapEditorImgImportSrcCanvas');
+      if (src && imgImportImageData) {
+        const sctx = src.getContext('2d');
+        sctx.clearRect(0, 0, src.width, src.height);
+        // 用一块临时画布持有原图原始像素，再整体缩放画到显示尺寸——getImageData 拿到的
+        // 是 ImageData 对象，不能直接 drawImage，得先 putImageData 到同尺寸的画布上。
+        const full = document.createElement('canvas');
+        full.width = imgImportImageData.width; full.height = imgImportImageData.height;
+        full.getContext('2d').putImageData(imgImportImageData, 0, 0);
+        sctx.drawImage(full, 0, 0, src.width, src.height);
+        if (imgImportSampleColor) {
+          sctx.fillStyle = `rgb(${imgImportSampleColor.r},${imgImportSampleColor.g},${imgImportSampleColor.b})`;
+          sctx.strokeStyle = '#fff'; sctx.lineWidth = 2;
+          sctx.fillRect(4, 4, 16, 16); sctx.strokeRect(4, 4, 16, 16); // 左上角画一块取样色小样块
+        }
+      }
+      const prev = document.getElementById('mapEditorImgImportPreviewCanvas');
+      if (prev && imgImportResult) {
+        const pctx = prev.getContext('2d');
+        const img = pctx.createImageData(imgImportResult.n, imgImportResult.n);
+        for (let i = 0; i < imgImportResult.bits.length; i++) {
+          const o = i * 4;
+          if (imgImportResult.bits[i]) { img.data[o] = 206; img.data[o + 1] = 224; img.data[o + 2] = 188; img.data[o + 3] = 255; }
+          else { img.data[o] = 46; img.data[o + 1] = 48; img.data[o + 2] = 56; img.data[o + 3] = 255; }
+        }
+        pctx.putImageData(img, 0, 0);
+      }
+      // 应用按钮的 disabled 是 render() 整页重渲时按当时的 imgImportResult 写死的一次性属性；
+      // 取样/拖动容差这两条走的是轻量更新（不调 render()，避免弹窗重渲的画布/输入框状态被打断），
+      // 不在这里手动同步就会一直卡在"识别结果已经算出来了，按钮却还是灰的"——
+      // 跟 updatePathStatus() 同步删除路点按钮 disabled 状态是同一类问题、同一种修法。
+      const applyBtn = document.getElementById('mapEditorImgImportApplyBtn');
+      if (applyBtn) applyBtn.disabled = !imgImportResult;
     };
 
     // 路径编辑（阶段六）：画全部路（未选中的路淡色，方便看出彼此的相对位置），
@@ -499,7 +556,42 @@ export const MapEditorDialog = {
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <button id="mapEditorDespeckleBtn">🧹 去毛刺</button>
             <span style="font-size:10px;color:var(--text-mute);">清理孤立噪点/1格尖刺，不够干净可以多点几次</span>
-          </div>` : editMode === 'buildings' ? `
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <button id="mapEditorImgImportToggle" class="${imgImportOpen ? 'primary' : ''}">🖼️ 导入图片识别地形</button>
+          </div>
+          ${imgImportOpen ? `
+          <div style="border:1px solid var(--border-color,#444);border-radius:4px;padding:8px;margin-bottom:8px;">
+            <input id="mapEditorImgImportFile" type="file" accept="image/*" style="margin-bottom:6px;display:block;">
+            <div id="mapEditorImgImportStatus" style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+              选一张地图图片，然后点它上面的可行走区域取样颜色。
+            </div>
+            ${imgImportImageData ? `
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px;">
+              <div>
+                <div style="font-size:10px;color:var(--text-mute);margin-bottom:2px;">原图（点击取样）</div>
+                <canvas id="mapEditorImgImportSrcCanvas" width="${imgImportSrcDisplayW}" height="${imgImportSrcDisplayH}"
+                  style="cursor:crosshair;border:1px solid var(--border-color,#444);border-radius:4px;"></canvas>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text-mute);margin-bottom:2px;">识别结果预览</div>
+                <canvas id="mapEditorImgImportPreviewCanvas" width="${n}" height="${n}"
+                  style="width:${imgImportSrcDisplayW}px;height:${imgImportSrcDisplayH}px;image-rendering:pixelated;
+                         border:1px solid var(--border-color,#444);border-radius:4px;"></canvas>
+              </div>
+            </div>
+            <div class="slider-row">
+              <label>颜色容差</label>
+              <input id="mapEditorImgImportTolerance" type="range"
+                min="${CONFIG.mapEditor.imageImportTolerancePctMin}" max="${CONFIG.mapEditor.imageImportTolerancePctMax}"
+                value="${imgImportTolerancePct}" style="flex:1;">
+              <span id="mapEditorImgImportToleranceLabel">${imgImportTolerancePct}%</span>
+            </div>` : ''}
+            <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px;">
+              <button id="mapEditorImgImportCancelBtn">✖ 取消</button>
+              <button id="mapEditorImgImportApplyBtn" class="primary" ${imgImportResult ? '' : 'disabled'}>✅ 应用到当前地形</button>
+            </div>
+          </div>` : ''}` : editMode === 'buildings' ? `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
             拖动一座建筑可以随意摆放。红圈标出违反结构规则的建筑。
           </div>
@@ -607,6 +699,7 @@ export const MapEditorDialog = {
       if (editMode === 'buildings') { updateValidationStatus(); updateSelectionPanel(); }
       if (editMode === 'terrain' && brushShape === 'polyline') updatePolylineStatus();
       if (editMode === 'paths') updatePathStatus();
+      if (imgImportOpen && imgImportImageData) redrawImgImportPreview();
     };
 
     const setStatus = (msg) => {
@@ -732,6 +825,70 @@ export const MapEditorDialog = {
         despeckle(bits, n);
         redrawCanvas();
         logFn('🧹 已清理一遍孤立噪点/尖刺（效果不够可以多点几次）', 'spawn');
+      });
+
+      document.getElementById('mapEditorImgImportToggle')?.addEventListener('click', () => {
+        imgImportOpen = !imgImportOpen;
+        if (!imgImportOpen) { imgImportImageData = null; imgImportSampleColor = null; imgImportResult = null; }
+        render();
+      });
+      document.getElementById('mapEditorImgImportCancelBtn')?.addEventListener('click', () => {
+        imgImportOpen = false; imgImportImageData = null; imgImportSampleColor = null; imgImportResult = null;
+        render();
+      });
+      document.getElementById('mapEditorImgImportFile')?.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const img = new Image();
+        img.onload = () => {
+          const off = document.createElement('canvas');
+          off.width = img.naturalWidth; off.height = img.naturalHeight;
+          const octx = off.getContext('2d');
+          octx.drawImage(img, 0, 0);
+          imgImportImageData = octx.getImageData(0, 0, off.width, off.height);
+          // 预览画布按显示上限等比缩放，不直接拿原图分辨率（有的截图几千像素宽，
+          // 撑爆弹窗）——上限跟主画布同一档（CANVAS_DISPLAY_PX），足够点着取样。
+          const scale = Math.min(1, CANVAS_DISPLAY_PX / Math.max(off.width, off.height));
+          imgImportSrcDisplayW = Math.round(off.width * scale);
+          imgImportSrcDisplayH = Math.round(off.height * scale);
+          imgImportSampleColor = null;
+          imgImportResult = null;
+          render();
+        };
+        img.onerror = () => { setStatus('⚠️ 图片读取失败'); };
+        img.src = URL.createObjectURL(file);
+      });
+      document.getElementById('mapEditorImgImportSrcCanvas')?.addEventListener('click', (e) => {
+        if (!imgImportImageData) return;
+        const canvas = e.target;
+        const rect = canvas.getBoundingClientRect();
+        // 显示画布是原图等比缩放后的尺寸，点击坐标要换算回原图像素坐标才能取对颜色。
+        const dispX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const dispY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        const srcX = Math.floor(dispX * (imgImportImageData.width / canvas.width));
+        const srcY = Math.floor(dispY * (imgImportImageData.height / canvas.height));
+        const idx = (Math.min(imgImportImageData.height - 1, Math.max(0, srcY)) * imgImportImageData.width
+          + Math.min(imgImportImageData.width - 1, Math.max(0, srcX))) * 4;
+        imgImportSampleColor = {
+          r: imgImportImageData.data[idx], g: imgImportImageData.data[idx + 1], b: imgImportImageData.data[idx + 2],
+        };
+        recomputeImgImportPreview();
+        redrawImgImportPreview();
+      });
+      document.getElementById('mapEditorImgImportTolerance')?.addEventListener('input', (e) => {
+        imgImportTolerancePct = Number(e.target.value) || CONFIG.mapEditor.imageImportTolerancePctDefault;
+        document.getElementById('mapEditorImgImportToleranceLabel').textContent = `${imgImportTolerancePct}%`;
+        recomputeImgImportPreview();
+        redrawImgImportPreview();
+      });
+      document.getElementById('mapEditorImgImportApplyBtn')?.addEventListener('click', () => {
+        if (!imgImportResult) return;
+        // 识别结果本来就是按当前地形分辨率（n）算出来的（见 recomputeImgImportPreview），
+        // 直接整份换掉 bits 就行，不用像切换起点地图那样重建整个草稿状态。
+        bits = imgImportResult.bits;
+        imgImportOpen = false; imgImportImageData = null; imgImportSampleColor = null; imgImportResult = null;
+        logFn('🖼️ 已把图片识别结果应用为当前地形（可以接着用笔刷/去毛刺微调）', 'spawn');
+        render();
       });
 
       // 区域参数表单：基地圈半径改动只重画预览圈（不结构性重渲，输入框失焦体验更好）；
