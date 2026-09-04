@@ -20,6 +20,7 @@ import {
   attackTowerSpacingOk, crossFactionTowerSpacingOk,
 } from './mapValidate.js';
 import { mapFactionsOf, laneSpawnsOf } from '../systems/FactionSystem.js';
+import { neutralCampsOf } from '../systems/NeutralCampSystem.js';
 export { nearestSegmentIndex } from './mapValidate.js';
 
 /**
@@ -67,7 +68,7 @@ export function cloneMapForEdit(baseMap) {
  */
 export function buildCustomMapPayload(baseMap, {
   id, label, n, bits, buildings, baseCircleRadius, pits, lanes, factions, spawnEnabled,
-  laneWaveCompositionByLane,
+  laneWaveCompositionByLane, neutralCamps,
 }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
@@ -98,6 +99,9 @@ export function buildCustomMapPayload(baseMap, {
   if (laneWaveCompositionByLane && typeof laneWaveCompositionByLane === 'object') {
     clone.laneWaveCompositionByLane = laneWaveCompositionByLane;
   }
+  // 中立营地（第四节 Part D）：同样的"不传就保留原值"规则——未声明时
+  // neutralCampsOf() 兜底成巨龙那份既定默认值，逐位不变。
+  if (Array.isArray(neutralCamps)) clone.neutralCamps = neutralCamps;
   return clone;
 }
 
@@ -478,4 +482,53 @@ export function withRuleMoved(rules, fromIndex, toIndex) {
  */
 export function withRuleFieldSet(rules, index, field, value) {
   return rules.map((r, i) => (i === index ? { ...r, [field]: value } : r));
+}
+
+// ==================== 中立营地（第四节 Part D：统一编辑器"配置模式"）====================
+// 见 systems/NeutralCampSystem.js 头注。这里只是给编辑器一套克隆/增删改的纯函数，
+// 跟阵营/出兵编排那两节是同一个套路——数据形状的唯一权威定义在 NeutralCampSystem.js，
+// 这里不重新定义一遍，只操作它。
+
+/** 从一张地图克隆出中立营地草稿（没声明时带出 neutralCampsOf() 合成的默认值）。 */
+export function cloneNeutralCampsForEdit(baseMap) {
+  return JSON.parse(JSON.stringify(neutralCampsOf(baseMap)));
+}
+
+/** 改某个营地某个出生点的某个字段（x/y/laneMatch/direction）。@returns 新数组 */
+export function withCampSpawnPointFieldSet(camps, campId, spIndex, field, value) {
+  return camps.map((c) => {
+    if (c.id !== campId) return c;
+    const spawnPoints = c.spawnPoints.map((sp, i) => {
+      if (i !== spIndex) return sp;
+      if (field === 'x' || field === 'y') {
+        const pit = { ...(sp.pit || {}), [field]: value };
+        // 一旦用户手动编辑坐标，这个出生点就有了自己的坐标，不再间接指向
+        // baron/dragon 这类共享坑位——否则改了 x 却因为 pitRef 还在，下次
+        // 解析时又被 pitRef 指向的坐标顶回去，表现成"改了但存不住"。
+        const { pitRef, ...rest } = sp;
+        return { ...rest, pit };
+      }
+      return { ...sp, [field]: value };
+    });
+    return { ...c, spawnPoints };
+  });
+}
+
+/** 给指定营地新增一个出生点（默认坐标由调用方传入，比如画布中心）。@returns 新数组 */
+export function withCampSpawnPointAdded(camps, campId, spawnPoint) {
+  return camps.map(c => (c.id === campId ? { ...c, spawnPoints: [...c.spawnPoints, spawnPoint] } : c));
+}
+
+/**
+ * 删除指定营地的一个出生点。至少保留一个——删到零个出生点的营地形同虚设
+ * （生成器查不到任何位置，等于这个营地虽然还在列表里但从不出生），编辑器不该
+ * 允许存出这种"看着有、其实是死的"配置。
+ * @returns 新数组
+ */
+export function withCampSpawnPointRemoved(camps, campId, spIndex) {
+  return camps.map((c) => {
+    if (c.id !== campId) return c;
+    if (c.spawnPoints.length <= 1) throw new Error('每个营地至少要保留一个出生点');
+    return { ...c, spawnPoints: c.spawnPoints.filter((_, i) => i !== spIndex) };
+  });
 }

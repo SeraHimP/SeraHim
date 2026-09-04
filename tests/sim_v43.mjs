@@ -784,10 +784,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('龙⑦-中立阵营（两边都打它、它也打两边）', /_mapFaction: 'neutral'/.test(mainSrc));
   T('龙⑧-挂到兵线上，由 LaneMovementSystem 驱动（不另写一套寻路）',
     /_laneId: dragonLane/.test(mainSrc) && /_laneDirection: dragonDir/.test(mainSrc));
-  T('龙⑨-上坑推蓝方(reverse)、下坑推红方(forward)',
-    /dragonDir = \(pitSide === 'top'\) \? 'reverse' : 'forward'/.test(mainSrc));
-  T('龙⑩-上坑取 baron 位、下坑取 dragon 位',
-    /getPit\?\.\(pitSide === 'top' \? 'baron' : 'dragon'\)/.test(mainSrc));
+  // 第四节 Part D：坑位/路/方向这份数据搬进了 NeutralCampSystem（campSpawnPoints），
+  // "上坑推蓝方(reverse)/下坑推红方(forward)、上坑取baron位/下坑取dragon位"这套
+  // 既定行为现在钉在 NeutralCampSystem.js 的默认合成里，见 sim_neutralcamp.mjs；
+  // 这里只钉 factories.js 真的在查它，不是自己另写一份判定。
+  T('龙⑨-坑位/路/方向查询改走 NeutralCampSystem.campSpawnPoints（不再自己内联算 pitSide）',
+    /campSpawnPoints\(mapSystem\.currentMap, mapSystem, 'dragon'\)/.test(mainSrc));
 
   // LaneMovementSystem 的接管条件：有阵营 + 有路。中立龙两者都满足。
   const lms = srcOf(('../src/systems/LaneMovementSystem.js'));

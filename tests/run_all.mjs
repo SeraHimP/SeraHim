@@ -30,6 +30,7 @@ const suites = [
   'sim_balance_soul_runner.mjs', 'sim_postfx.mjs', 'sim_daynight.mjs', 'sim_mapskirt.mjs',
   'sim_instancing.mjs', 'sim_navgrid.mjs', 'sim_mapeditor.mjs', 'sim_mapeditorlive.mjs', 'sim_waveaction.mjs',
   'sim_multifaction.mjs', 'sim_mapcomposition.mjs', 'sim_imageimport.mjs', 'sim_wavecompmap.mjs',
+  'sim_neutralcamp.mjs',
 ];
 
 const args = process.argv.slice(2);

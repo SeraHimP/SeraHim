@@ -486,7 +486,7 @@ const T = board.T;
   // 导入了纯函数、缩略图点击换算了坐标选路、增删/拖拽真的调了对应纯函数、
   // 字段改动写回草稿、保存时把刷兵规则和原样保留的广播规则拼起来传出去。
   T('㊼-导入了出兵编排的纯函数（withRuleAdded/withRuleRemoved/withRuleMoved/withRuleFieldSet）',
-    /withRuleAdded[\s\S]{0,200}withRuleRemoved[\s\S]{0,200}withRuleMoved[\s\S]{0,200}withRuleFieldSet[\s\S]{0,60}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+    /withRuleAdded[\s\S]{0,200}withRuleRemoved[\s\S]{0,200}withRuleMoved[\s\S]{0,200}withRuleFieldSet[\s\S]{0,300}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('㊽-缩略图点击会把屏幕坐标换算成格子坐标，再找最近的路（不是瞎猜第一条）',
     /mapEditorWaveThumb['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,150}clientToGrid\(e\.target[\s\S]{0,150}nearestLaneAtGridPoint/.test(src));
   T('㊾-新增规则按钮：先 ensureWaveDraft 材料化草稿，再调 withRuleAdded',
@@ -501,6 +501,21 @@ const T = board.T;
     /laneWaveCompositionByLane\[laneId\]\s*=\s*\[\.\.\.draftLaneComposition\[laneId\], \.\.\.\(draftLaneBroadcast\[laneId\][\s\S]{0,300}buildCustomMapPayload\(baseMap[\s\S]{0,500}laneWaveCompositionByLane/.test(src));
   T('54-切换起点地图会重建出兵编排草稿（不然切图后草稿还是上一张图的覆写）',
     /switchBase\s*=[\s\S]{0,1200}draftLaneComposition\s*=[\s\S]{0,200}draftLaneBroadcast\s*=/.test(src));
+
+  // 中立营地（第四节 Part D）：DOM 弹窗这层同样只钉接线——导入了纯函数、
+  // 字段改动/新增/删除出生点真的调了对应纯函数、切图会重建草稿、保存时传出去。
+  T('55-导入了中立营地的纯函数（cloneNeutralCampsForEdit/withCampSpawnPointFieldSet/Added/Removed）',
+    /cloneNeutralCampsForEdit[\s\S]{0,200}withCampSpawnPointFieldSet[\s\S]{0,200}withCampSpawnPointAdded[\s\S]{0,200}withCampSpawnPointRemoved[\s\S]{0,200}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('56-出生点字段改动调用 withCampSpawnPointFieldSet 写回草稿',
+    /data-camp-id\]\[data-sp-field\][\s\S]{0,400}withCampSpawnPointFieldSet\(draftNeutralCamps/.test(src));
+  T('57-新增出生点按钮调用 withCampSpawnPointAdded（默认坐标用世界坐标系，不是格子坐标）',
+    /data-camp-add-sp\][\s\S]{0,300}baseMap\.world[\s\S]{0,300}withCampSpawnPointAdded\(draftNeutralCamps/.test(src));
+  T('58-删除出生点按钮调用 withCampSpawnPointRemoved 并捕获异常（不是让整个弹窗崩掉）',
+    /data-camp-remove-sp\][\s\S]{0,300}withCampSpawnPointRemoved\(draftNeutralCamps[\s\S]{0,300}catch/.test(src));
+  T('59-切换起点地图会重建中立营地草稿',
+    /switchBase\s*=[\s\S]{0,1400}draftNeutralCamps\s*=\s*cloneNeutralCampsForEdit\(baseMap\)/.test(src));
+  T('60-保存时把 draftNeutralCamps 传给 buildCustomMapPayload',
+    /buildCustomMapPayload\(baseMap[\s\S]{0,600}neutralCamps:\s*draftNeutralCamps/.test(src));
 }
 
 // ==================== ⑦ 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================

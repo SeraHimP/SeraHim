@@ -61,8 +61,10 @@ import {
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
   cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
   withRuleAdded, withRuleRemoved, withRuleMoved, withRuleFieldSet,
+  cloneNeutralCampsForEdit, withCampSpawnPointFieldSet, withCampSpawnPointAdded, withCampSpawnPointRemoved,
 } from '../data/mapEditorCore.js';
 import { allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
+import { NEUTRAL_UNIT_TYPES } from '../systems/NeutralCampSystem.js';
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
 
@@ -122,6 +124,10 @@ export const MapEditorDialog = {
     let draftLaneBroadcast = {};
     let selectedWaveLaneId = draftLanes[0]?.id ?? null;
     let draggingRuleIndex = -1;
+
+    // ---- 配置模式（第四节 Part D）：中立营地，见 mapEditorCore.js "中立营地" 节头注 ----
+    let draftNeutralCamps = cloneNeutralCampsForEdit(baseMap);
+    let neutralCampStatus = '';
 
     // ---- 图片自动识别导入（第四节，见 src/data/imageImport.js 头注） ----
     let imgImportOpen = false;         // 是否展开这个子面板
@@ -366,6 +372,47 @@ export const MapEditorDialog = {
         <button id="mapEditorWaveAddRuleBtn" style="margin-top:4px;">➕ 新增规则</button>
       </div>`;
     };
+
+    // ---- 中立营地（第四节 Part D）：出生地/出生路径可配，骨架目前只有巨龙接了生成器 ----
+    const renderSpawnPointRow = (campId, sp, idx, total) => {
+      const resolved = sp.pit || (sp.pitRef ? mapSystem.getPit?.(sp.pitRef) : null) || {};
+      return `
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap;">
+        <span style="font-size:10px;color:var(--text-mute);width:16px;">#${idx + 1}</span>
+        <label style="font-size:10px;display:flex;align-items:center;gap:2px;">X
+          <input type="number" data-camp-id="${campId}" data-sp-index="${idx}" data-sp-field="x" value="${resolved.x ?? ''}" style="width:64px;"></label>
+        <label style="font-size:10px;display:flex;align-items:center;gap:2px;">Y
+          <input type="number" data-camp-id="${campId}" data-sp-index="${idx}" data-sp-field="y" value="${resolved.y ?? ''}" style="width:64px;"></label>
+        <label style="font-size:10px;display:flex;align-items:center;gap:2px;">路
+          <select data-camp-id="${campId}" data-sp-index="${idx}" data-sp-field="laneMatch" style="width:72px;">
+            ${draftLanes.map(l => `<option value="${l.id}" ${l.id === sp.laneMatch ? 'selected' : ''}>${l.id}</option>`).join('')}
+          </select></label>
+        <label style="font-size:10px;display:flex;align-items:center;gap:2px;">方向
+          <select data-camp-id="${campId}" data-sp-index="${idx}" data-sp-field="direction" style="width:78px;">
+            <option value="forward" ${sp.direction === 'forward' ? 'selected' : ''}>forward</option>
+            <option value="reverse" ${sp.direction === 'reverse' ? 'selected' : ''}>reverse</option>
+          </select></label>
+        ${sp.pitRef ? `<span style="font-size:9px;color:var(--text-mute);" title="还没手动改过坐标，跟着 ${sp.pitRef} 坑位走">继承${sp.pitRef}坑</span>` : ''}
+        <button data-camp-remove-sp="${campId}:${idx}" ${total <= 1 ? 'disabled' : ''} title="删除这个出生点" style="font-size:10px;padding:0 4px;">✖</button>
+      </div>`;
+    };
+    const renderCampCard = (camp) => `
+      <div style="border:1px solid var(--border-color,#444);border-radius:4px;padding:6px;margin-bottom:6px;">
+        <div style="font-size:11px;font-weight:600;margin-bottom:4px;">${NEUTRAL_UNIT_TYPES[camp.unitType]?.label || camp.unitType}（${camp.id}）</div>
+        ${camp.spawnPoints.map((sp, i) => renderSpawnPointRow(camp.id, sp, i, camp.spawnPoints.length)).join('')}
+        <button data-camp-add-sp="${camp.id}" style="font-size:10px;">➕ 新增出生点</button>
+      </div>`;
+    const renderNeutralCampsPanel = () => `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px;">中立营地</div>
+        <div style="font-size:10px;color:var(--text-mute);margin-bottom:6px;">
+          每个营地是一个中立单位类型的出生配置：在哪（坐标）/走哪条路/往哪个方向。
+          目前只有巨龙接了真正的生成逻辑（一直存在的元素/远古轮换、龙魂这些机制不动，
+          这里只管它在这张图上从哪出生），其它单位类型是留给以后的骨架，编辑器里还选不了。
+        </div>
+        ${draftNeutralCamps.map(renderCampCard).join('')}
+        <div id="mapEditorNeutralCampStatus" style="font-size:11px;color:var(--text-mute);margin-top:4px;">${neutralCampStatus}</div>
+      </div>`;
 
     // 折线造墙：画布坐标系就是 navgrid 的 n×n 格子坐标系（与其它重绘函数一致），
     // 点选顶点时直接存格子坐标，这里不需要再做世界↔格子的换算。
@@ -695,7 +742,8 @@ export const MapEditorDialog = {
             </label>`).join('')}
         </div>
       </div>
-      ${renderWaveOrderPanel()}`;
+      ${renderWaveOrderPanel()}
+      ${renderNeutralCampsPanel()}`;
 
     // ---------- 结构性重绘（切起点地图/保存/删除后调用；笔刷拖动期间绝不调这个） ----------
     const render = () => {
@@ -932,6 +980,8 @@ export const MapEditorDialog = {
       draftLaneBroadcast = {};
       selectedWaveLaneId = draftLanes[0]?.id ?? null;
       draggingRuleIndex = -1;
+      draftNeutralCamps = cloneNeutralCampsForEdit(baseMap);
+      neutralCampStatus = '';
       statusMsg = '';
       render();
     };
@@ -1039,6 +1089,46 @@ export const MapEditorDialog = {
             withRuleMoved(draftLaneComposition[selectedWaveLaneId], draggingRuleIndex, toIndex);
           draggingRuleIndex = -1;
           render();
+        });
+      });
+
+      // 中立营地（第四节 Part D）：出生点字段改动 + 新增/删除出生点。
+      // 元素只在 editMode==='config' 时存在，可选链/存在性判断天然跳过其它模式。
+      document.querySelectorAll('[data-camp-id][data-sp-field]').forEach(el => {
+        el.addEventListener('change', (e) => {
+          const campId = el.dataset.campId;
+          const spIndex = Number(el.dataset.spIndex);
+          const field = el.dataset.spField;
+          const value = (field === 'x' || field === 'y') ? (Number(e.target.value) || 0) : e.target.value;
+          draftNeutralCamps = withCampSpawnPointFieldSet(draftNeutralCamps, campId, spIndex, field, value);
+          if (field === 'laneMatch' || field === 'direction') render();
+          // x/y 是数字输入框：跟出兵编排规则卡片同样的道理，不整页重渲，
+          // 避免用户正在打字时输入框被打断（见 renderRuleCard 那边同款处理）。
+        });
+      });
+      document.querySelectorAll('[data-camp-add-sp]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const campId = btn.dataset.campAddSp;
+          // 默认坐标给世界正中心（pit.x/y 是世界坐标，不是 navgrid 格子坐标——
+          // 跟 defaultPitFor() 龙坑/男爵坑新增时的默认值同一个坐标系）。
+          const W = baseMap.world || { w: 0, h: 0 };
+          draftNeutralCamps = withCampSpawnPointAdded(draftNeutralCamps, campId, {
+            pit: { x: W.w / 2, y: W.h / 2 }, laneMatch: draftLanes[0]?.id || 'mid', direction: 'forward',
+          });
+          render();
+        });
+      });
+      document.querySelectorAll('[data-camp-remove-sp]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const [campId, idx] = btn.dataset.campRemoveSp.split(':');
+          try {
+            draftNeutralCamps = withCampSpawnPointRemoved(draftNeutralCamps, campId, Number(idx));
+            render();
+          } catch (err) {
+            neutralCampStatus = `⚠️ ${err.message}`;
+            const el = document.getElementById('mapEditorNeutralCampStatus');
+            if (el) el.textContent = neutralCampStatus;
+          }
         });
       });
 
@@ -1242,7 +1332,7 @@ export const MapEditorDialog = {
             id, label, n, bits, buildings: draftBuildings,
             baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
             lanes: draftLanes, factions: draftFactions, spawnEnabled: draftSpawnEnabled,
-            laneWaveCompositionByLane,
+            laneWaveCompositionByLane, neutralCamps: draftNeutralCamps,
           });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;

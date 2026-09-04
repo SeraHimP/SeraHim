@@ -25,6 +25,7 @@ import { CTX } from './GameContext.js';
 import { equipSkill } from './skillParams.js';
 import { FACTIONS } from '../systems/FactionSystem.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
+import { campSpawnPoints } from '../systems/NeutralCampSystem.js';
 // createBuilding 里有一处读的是 SkillLibrary._excludeSkills（地图级技能排除表）。
 // 它与下面注入的 skillLibrary 是**同一个对象**（main.js 里就是 `const skillLibrary = SkillLibrary`），
 // 这里照原样 import 一份，是为了让搬过来的函数体一个字符都不用改 —— 这次搬迁的
@@ -525,25 +526,20 @@ function createDragon(type, opts = {}) {
   // 所以两边都会打它、它也打两边挡路的一切。它挂上 _laneId/_laneDirection 之后
   // 自动被 LaneMovementSystem 接管（那边的过滤条件就是 `m._mapFaction && m._laneId`），
   // 与小兵完全同一套行进/绕障/接敌逻辑 —— 不另写一份寻路。
+  //
+  // 第四节 Part D（中立阵营通用骨架）：坑位/路选择这部分数据改成向
+  // NeutralCampSystem.campSpawnPoints() 查（地图没声明 map.neutralCamps 时，那边
+  // 按巨龙这套 baron/top/reverse + dragon/bot/forward 的既定行为原样合成默认值），
+  // 判定逻辑一处没搬——只是把"上坑/下坑对应哪个 pit、哪条路、哪个方向"这份数据
+  // 挪到了一个以后新中立单位也能复用的地方，这段逐位对应改造前的写死实现。
   let dragonLane = null, dragonDir = 'forward';
   if (mapSystem.currentMap) {
-    const lanes = mapSystem.currentMap.lanes || [];
-    const pitSide = opts.pitSide === 'bot' ? 'bot' : 'top';
-    // 路：优先取同名的那条；没有（如嚎哭深渊只有 mid）就退到唯一那条。
-    const laneId = lanes.some(l => l.id === pitSide) ? pitSide
-                 : (lanes.find(l => l.id === 'mid') ? 'mid' : (lanes[0] && lanes[0].id));
-    const lane = lanes.find(l => l.id === laneId);
-    if (lane) {
-      dragonLane = lane.id;
-      dragonDir = (pitSide === 'top') ? 'reverse' : 'forward';
-      // 出生点：优先用真正的龙坑（navgrid 峡谷有 baron/dragon 两个），
-      // 上坑取 baron（上半河道）、下坑取 dragon（下半河道）；没有龙坑的图退到兵线中点。
-      const pit = mapSystem.getPit?.(pitSide === 'top' ? 'baron' : 'dragon');
-      if (pit) dragonPos = { x: pit.x, y: pit.y };
-      else {
-        const mid = lane.waypoints[Math.floor(lane.waypoints.length / 2)];
-        dragonPos = { x: mid.x, y: mid.y };
-      }
+    const idx = opts.pitSide === 'bot' ? 1 : 0;
+    const sp = campSpawnPoints(mapSystem.currentMap, mapSystem, 'dragon')[idx];
+    if (sp && sp.laneId) {
+      dragonLane = sp.laneId;
+      dragonDir = sp.direction;
+      if (sp.pit) dragonPos = { x: sp.pit.x, y: sp.pit.y };
     }
   }
 
