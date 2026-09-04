@@ -7,6 +7,7 @@ import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
 import { LIVE_EDIT_SESSION_MAP_ID } from '../data/mapEditorCore.js';
+import { resolveAuraEffectValue } from './AuraValueResolver.js';
 // 重生血量与出生血量必须用同一个"最大生命"口径，见 factories.js spawnAtFullHP 头注。
 import { effectiveMaxHP } from '../core/factories.js';
 // 复活要清哪些标记：唯一清单，两条复活路径共用（见该文件头注）。
@@ -583,6 +584,12 @@ export class MapSystem {
    *   ② 有些条目是**随时间变的**（扭曲丛林的攻速随分钟数涨），必须重算；
    *   ③ permanent + refresh 的 apply 是幂等的，重复挂只会更新数值（见 EffectRegistry.apply）。
    * 节流到 refreshSec（默认 0.5s）一次：几百个实体的遍历，30Hz 跑纯属白烧。
+   *
+   * 2026-09-04：数值解析从这里内联的"看 perMinute 存不存在"两分支，改成调用
+   * `resolveAuraEffectValue()`（见该文件头注）——新增了第三种"分阶段"模式
+   * （事件触发换挡，复用出兵编排的 WAVE_CONDITIONS），逻辑挪到独立纯函数里
+   * 才能脱离完整 MapSystem 单独测试。固定值/渐进到目标值两种改动前就有的
+   * 模式解析结果逐位不变。
    */
   _applyGlobalAura(dt) {
     const aura = this.currentMap && this.currentMap.globalAura;
@@ -592,19 +599,17 @@ export class MapSystem {
     if (this._auraT < every) return;
     this._auraT = 0;
     if (!aura || !aura.effects || !aura.effects.length) return;
-    const minutes = (window.gameTime || 0) / 60;
+    // 分阶段模式用得到的 ctx——地图光环对全部阵营生效，没有"我方/敌方"视角，
+    // 也没有接 DragonSystem/WorldState，所以这里只给 gameTime，其余字段留空
+    // 交给 whenPasses 的"拿不到就放行"既定口径处理（见 AuraValueResolver.js 头注）。
+    const ctx = { gameTime: window.gameTime || 0 };
     for (const e of this.entities.getAll(true)) {
       if (!e || !e.alive) continue;
       for (const it of aura.effects) {
-        // perMinute：随本局时间线性成长，到 max 封顶（扭曲丛林的攻速那条）
-        let flat = it.flat ?? 0;
-        if (typeof it.perMinute === 'number') {
-          flat = Math.min(it.max ?? Infinity, it.perMinute * minutes);
-          flat = Math.round(flat * 100) / 100;   // 面板上别出现 7.333333%
-        }
+        const { flat, percent } = resolveAuraEffectValue(it, ctx);
         this._fx.apply(e.id, {
           name: aura.name, icon: aura.icon || '🌐', kind: 'stat', statKey: it.statKey,
-          flatValue: flat, percentValue: it.percent,
+          flatValue: flat, percentValue: percent,
           duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh',
           uniquePassive: true,
           description: `${it.label || it.statKey}${flat >= 0 ? '+' : ''}${flat}`,

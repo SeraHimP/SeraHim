@@ -8,7 +8,7 @@
  */
 import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
-const { unpackBits, packBits, unpackByteGrid, packByteGrid, resolveGridN, paintCircle, paintPolyline, despeckle } =
+const { unpackBits, packBits, unpackByteGrid, packByteGrid, resolveGridN, paintCircle, paintPolyline, despeckle, canvasDisplaySize } =
   await import('../src/data/navgrid.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -63,6 +63,30 @@ const T = board.T;
     resolveGridN(999999, 999999, cs, minN, maxN) === maxN);
   T('分辨率④-取长边（非正方形地图，扭曲丛林那种长宽比），不是简单取宽或高',
     resolveGridN(3008, 1388, cs, minN, maxN) === resolveGridN(3008, 3008, cs, minN, maxN));
+}
+
+// ==================== ④b canvasDisplaySize：画布显示尺寸按世界长宽比自适应 ====================
+// 用户反馈"扭曲丛林地图都变形了"——navgrid 内部缓冲永远是 n×n 正方形（两条轴
+// 各自独立归一化），但显示框如果也写死正方形，非正方形世界（扭曲丛林 3008×1388）
+// 就会被硬挤成正方形。见 navgrid.js canvasDisplaySize() 头注里的推导：显示框
+// 长宽比 = 世界长宽比时，世界→CSS px 的缩放系数在两条轴上正好相等，画面比例才对。
+{
+  const sr = canvasDisplaySize(3552, 3552, 560);
+  T('画布①-正方形世界（召唤师峡谷）：显示框仍是正方形，长边=maxPx', sr.w === 560 && sr.h === 560);
+
+  const tt = canvasDisplaySize(3008, 1388, 560);
+  T('画布②-扭曲丛林（3008×1388，宽>高）：长边（宽）封顶在 maxPx', tt.w === 560);
+  T('画布③-扭曲丛林：短边（高）按世界长宽比等比缩小，不是也顶到 maxPx（不然还是正方形，等于没修）',
+    Math.abs(tt.h - 560 * 1388 / 3008) < 1 && tt.h < 560);
+  T('画布④-显示框长宽比与世界长宽比一致（核心不变量：这才是"没变形"的定义）',
+    Math.abs(tt.w / tt.h - 3008 / 1388) < 0.01);
+
+  const tall = canvasDisplaySize(1000, 2000, 560);
+  T('画布⑤-高>宽的世界：这次换高封顶在 maxPx（不是永远锁宽）', tall.h === 560 && tall.w === 280);
+
+  const zero = canvasDisplaySize(0, 0, 560);
+  T('画布⑥-world 缺失/退化成0时不报错、不产出 NaN（兜底成1，退回正方形）',
+    Number.isFinite(zero.w) && Number.isFinite(zero.h) && zero.w === 560 && zero.h === 560);
 }
 
 // ==================== ⑤ 笔刷：圆形填充/擦除 ====================

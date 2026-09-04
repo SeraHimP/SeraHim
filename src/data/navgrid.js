@@ -69,6 +69,31 @@ export function resolveGridN(worldW, worldH, cellSize, minN, maxN) {
 }
 
 /**
+ * 编辑器画布该用多大的**显示**尺寸（CSS px），按地图 world.w/world.h 的长宽比
+ * 自适应——navgrid 的内部像素缓冲永远是 n×n 正方形（gx=x/w*n、gy=y/h*n 把两条轴
+ * 各自独立归一化到 [0,n]，这是既有格式，不能动），非正方形世界（如扭曲丛林
+ * 3008×1388）直接拿正方形 CSS 框显示这个 n×n 缓冲，就是把长方形的地图硬挤成
+ * 正方形——用户反馈"扭曲丛林地图都变形了"就是这个。
+ *
+ * 修法不是改 navgrid 的数据格式（那会牵连已有三张内置图的 navgrid 数据 + 大量
+ * 读写它的代码），而是让**显示框跟着世界比例走**：长边封顶在 maxPx，短边按
+ * 世界长宽比等比缩小。canvas 元素的内部像素缓冲（width/height 属性）依然是
+ * n×n，只是 CSS 显示尺寸（width/height 样式）不再强制正方形——浏览器把 n×n
+ * 的内容缩放进这个非正方形 CSS 框时，两条轴各自的缩放系数不同，恰好抵消了
+ * navgrid 自己在采样时对两条轴做的不同归一化，画面比例就对上了。
+ *
+ * 点击换算（clientToGrid）不需要跟着改：它已经是从 canvas.getBoundingClientRect()
+ * 现读的实际显示尺寸反推格子坐标，不是写死 maxPx，天然适配这里返回的新尺寸。
+ *
+ * @returns {{w:number,h:number}} CSS px，长边等于 maxPx
+ */
+export function canvasDisplaySize(worldW, worldH, maxPx) {
+  const w = worldW > 0 ? worldW : 1, h = worldH > 0 ? worldH : 1;
+  if (w >= h) return { w: maxPx, h: Math.round(maxPx * h / w) };
+  return { w: Math.round(maxPx * w / h), h: maxPx };
+}
+
+/**
  * 笔刷：把 (cx, cy) 为圆心、半径 r（都是【格子】单位，不是世界单位——调用方按
  * cellSize 换算）的圆形区域整体设成 value（1=可走/0=不可走）。原地修改 bits，
  * 同时把它返回，方便链式调用。

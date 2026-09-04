@@ -467,7 +467,7 @@ const T = board.T;
   // "起点地图"下拉框（不重新做一份，见 renderConfigModeBody 头注），这里只钉阵营
   // 增删/出兵开关/跳转入口这几处新接线，以及 mapEditorCore.js 那几个纯函数真的被调用了。
   T('㊵-导入了阵营管理的纯函数（cloneFactionsForEdit/withFactionAdded/withFactionRemoved/pruneMapDataForRemovedFaction）',
-    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,400}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,800}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('㊶-新增了第四个 editMode 切换按钮（配置模式）',
     /mapEditorEditModeConfig['"]\)\.addEventListener\(['"]click['"][\s\S]{0,60}editMode\s*=\s*['"]config['"]/.test(src));
   T('㊷-新增阵营按钮调用 withFactionAdded 并捕获异常写回状态提示（不是让整个弹窗崩掉）',
@@ -486,7 +486,7 @@ const T = board.T;
   // 导入了纯函数、缩略图点击换算了坐标选路、增删/拖拽真的调了对应纯函数、
   // 字段改动写回草稿、保存时把刷兵规则和原样保留的广播规则拼起来传出去。
   T('㊼-导入了出兵编排的纯函数（withRuleAdded/withRuleRemoved/withRuleMoved/withRuleFieldSet）',
-    /withRuleAdded[\s\S]{0,200}withRuleRemoved[\s\S]{0,200}withRuleMoved[\s\S]{0,200}withRuleFieldSet[\s\S]{0,300}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+    /withRuleAdded[\s\S]{0,200}withRuleRemoved[\s\S]{0,200}withRuleMoved[\s\S]{0,200}withRuleFieldSet[\s\S]{0,800}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('㊽-缩略图点击会把屏幕坐标换算成格子坐标，再找最近的路（不是瞎猜第一条）',
     /mapEditorWaveThumb['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,150}clientToGrid\(e\.target[\s\S]{0,150}nearestLaneAtGridPoint/.test(src));
   T('㊾-新增规则按钮：先 ensureWaveDraft 材料化草稿，再调 withRuleAdded',
@@ -505,7 +505,7 @@ const T = board.T;
   // 中立营地（第四节 Part D）：DOM 弹窗这层同样只钉接线——导入了纯函数、
   // 字段改动/新增/删除出生点真的调了对应纯函数、切图会重建草稿、保存时传出去。
   T('55-导入了中立营地的纯函数（cloneNeutralCampsForEdit/withCampSpawnPointFieldSet/Added/Removed）',
-    /cloneNeutralCampsForEdit[\s\S]{0,200}withCampSpawnPointFieldSet[\s\S]{0,200}withCampSpawnPointAdded[\s\S]{0,200}withCampSpawnPointRemoved[\s\S]{0,200}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+    /cloneNeutralCampsForEdit[\s\S]{0,200}withCampSpawnPointFieldSet[\s\S]{0,200}withCampSpawnPointAdded[\s\S]{0,200}withCampSpawnPointRemoved[\s\S]{0,800}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('56-出生点字段改动调用 withCampSpawnPointFieldSet 写回草稿',
     /data-camp-id\]\[data-sp-field\][\s\S]{0,400}withCampSpawnPointFieldSet\(draftNeutralCamps/.test(src));
   T('57-新增出生点按钮调用 withCampSpawnPointAdded（默认坐标用世界坐标系，不是格子坐标）',
@@ -519,9 +519,39 @@ const T = board.T;
 
   // 兵线自动对齐（2026-09-04 第二节）：导入了纯函数、按钮真的调用了它并写回
   // draftLanes（不是只调轻量重绘，糊弄一下）。
-  T('61-导入了 alignLaneToCorridor 纯函数', /alignLaneToCorridor[\s\S]{0,60}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('61-导入了 alignLaneToCorridor 纯函数', /alignLaneToCorridor[\s\S]{0,800}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('62-自动对齐按钮真的调用 alignLaneToCorridor 并写回 draftLanes',
     /mapEditorAlignLaneBtn['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,300}alignLaneToCorridor\(bits, n, baseMap\.world, lane\.waypoints\)[\s\S]{0,300}draftLanes\s*=/.test(src));
+
+  // 地图光环（2026-09-04 第五节）：DOM 弹窗这层同样只钉接线——导入了纯函数
+  // （含复用"添加效果"面板的 EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_KEYS，这就是
+  // 用户说的"这一堆UI都是复用"）、增删效果/切模式/增删阶段/字段改动真的调了
+  // 对应纯函数、切图会重建草稿、保存时传出去。
+  T('63-导入了地图光环的纯函数（cloneGlobalAuraForEdit/withAuraFieldSet/withAuraEffectAdded/Removed/FieldSet/ModeSet/withAuraStageAdded/Removed/FieldSet）',
+    /cloneGlobalAuraForEdit[\s\S]{0,200}withAuraFieldSet[\s\S]{0,200}withAuraEffectAdded[\s\S]{0,200}withAuraEffectRemoved[\s\S]{0,800}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('64-复用了"添加效果"面板的属性清单 EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_KEYS（不是在这里另抄一份，防止两处漂移）',
+    /import \{ EDITOR_PAGES_SKILLEFFECT \} from ['"]\.\/editor\/pagesSkillEffect\.js['"]/.test(src)
+    && /EDITOR_PAGES_SKILLEFFECT\._EFFECT_STAT_KEYS/.test(src));
+  T('65-新增效果按钮调用 withAuraEffectAdded；切数值模式调用 withAuraEffectModeSet',
+    /mapEditorAuraEffectAddBtn['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,200}withAuraEffectAdded\(draftGlobalAura[\s\S]{0,1500}withAuraEffectModeSet\(draftGlobalAura/.test(src));
+  T('66-分阶段模式的新增/删除阶段按钮真的调了 withAuraStageAdded/withAuraStageRemoved（删除时捕获异常，不是让整个弹窗崩掉）',
+    /data-aura-stage-add\][\s\S]{0,300}withAuraStageAdded\(draftGlobalAura[\s\S]{0,600}data-aura-stage-remove\][\s\S]{0,300}withAuraStageRemoved\(draftGlobalAura[\s\S]{0,300}catch/.test(src));
+  T('67-切换起点地图会重建光环草稿（不然切图后草稿还是上一张图的光环）',
+    /switchBase\s*=[\s\S]{0,1600}draftGlobalAura\s*=\s*cloneGlobalAuraForEdit\(baseMap\)/.test(src));
+  T('68-保存时把 draftGlobalAura 传给 buildCustomMapPayload',
+    /buildCustomMapPayload\(baseMap[\s\S]{0,600}globalAura:\s*draftGlobalAura/.test(src));
+
+  // 画布显示尺寸自适应（2026-09-04：用户反馈"扭曲丛林地图都变形了"）：
+  // 主画布/出兵编排缩略图都改成调用 canvasDisplaySize()（按 baseMap.world 的
+  // 长宽比算显示框），不是写死的正方形常量。
+  T('69-导入了 canvasDisplaySize', /canvasDisplaySize[\s\S]{0,60}from ['"]\.\.\/data\/navgrid\.js['"]/.test(src));
+  T('70-主画布 style 的 width/height 调用 mainCanvasSize()（不是写死 CANVAS_DISPLAY_PX）',
+    /mapEditorCanvas['"][\s\S]{0,150}style="width:\$\{mainCanvasSize\(\)\.w\}px;height:\$\{mainCanvasSize\(\)\.h\}px/.test(src));
+  T('71-出兵编排缩略图 style 的 width/height 调用 waveThumbSize()（同一套修法）',
+    /mapEditorWaveThumb['"][\s\S]{0,150}style="width:\$\{waveThumbSize\(\)\.w\}px;height:\$\{waveThumbSize\(\)\.h\}px/.test(src));
+  T('72-mainCanvasSize/waveThumbSize 都是基于当前 baseMap.world 现算（不是缓存成固定值，切图后要跟着变）',
+    /mainCanvasSize\s*=\s*\(\)\s*=>\s*canvasDisplaySize\(baseMap\.world/.test(src)
+    && /waveThumbSize\s*=\s*\(\)\s*=>\s*canvasDisplaySize\(baseMap\.world/.test(src));
 }
 
 // ==================== ⑦ 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================

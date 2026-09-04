@@ -49,7 +49,7 @@
 import { paneHtml } from './dialogShell.js';
 import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
-import { paintCircle, paintPolyline, despeckle } from '../data/navgrid.js';
+import { paintCircle, paintPolyline, despeckle, canvasDisplaySize } from '../data/navgrid.js';
 import { imageToNavgrid } from '../data/imageImport.js';
 import { STRUCT_TIERS, RULE_FIELDS, compositionFor, whenOptionGroups } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
@@ -63,9 +63,13 @@ import {
   withRuleAdded, withRuleRemoved, withRuleMoved, withRuleFieldSet,
   cloneNeutralCampsForEdit, withCampSpawnPointFieldSet, withCampSpawnPointAdded, withCampSpawnPointRemoved,
   alignLaneToCorridor,
+  cloneGlobalAuraForEdit, withAuraFieldSet, withAuraEffectAdded, withAuraEffectRemoved,
+  withAuraEffectFieldSet, withAuraEffectModeSet, withAuraStageAdded, withAuraStageRemoved, withAuraStageFieldSet,
 } from '../data/mapEditorCore.js';
 import { allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
 import { NEUTRAL_UNIT_TYPES } from '../systems/NeutralCampSystem.js';
+import { EDITOR_PAGES_SKILLEFFECT } from './editor/pagesSkillEffect.js';
+import { fieldLabel } from './editor/fields.js';
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
 
@@ -92,6 +96,11 @@ export const MapEditorDialog = {
     let baseId = mapSystem.currentBaseMapId || mapSystem.getAvailableMaps()[0]?.id;
     let baseMap = mapSystem.getMapById(baseId);
     let { n, bits } = decodeBaseBits(baseMap);
+    // 画布 CSS 显示尺寸按当前 baseMap.world 的长宽比自适应（见 navgrid.js
+    // canvasDisplaySize() 头注——用户反馈"扭曲丛林地图都变形了"）。读实时的
+    // baseMap（切图后会重新赋值），不缓存成固定值，否则切图后尺寸对不上新地图。
+    const mainCanvasSize = () => canvasDisplaySize(baseMap.world?.w, baseMap.world?.h, CANVAS_DISPLAY_PX);
+    const waveThumbSize = () => canvasDisplaySize(baseMap.world?.w, baseMap.world?.h, 170);
     let brushMode = 'draw';   // 'draw'=画可走 | 'erase'=擦成不可走
     let brushShape = 'circle';   // 'circle'=圆形笔刷（拖动连续画） | 'polyline'=折线造墙（点选顶点，完成后一次性画）
     let brushRadius = CONFIG.mapEditor.brushRadiusGridDefault;   // 圆形半径 / 折线半宽，共用同一个值和同一条滑杆
@@ -129,6 +138,11 @@ export const MapEditorDialog = {
     // ---- 配置模式（第四节 Part D）：中立营地，见 mapEditorCore.js "中立营地" 节头注 ----
     let draftNeutralCamps = cloneNeutralCampsForEdit(baseMap);
     let neutralCampStatus = '';
+
+    // ---- 配置模式（2026-09-04 第五节）：地图光环三种数值模式，见 mapEditorCore.js
+    // "地图光环" 节头注 / AuraValueResolver.js 头注 ----
+    let draftGlobalAura = cloneGlobalAuraForEdit(baseMap);
+    let auraStatus = '';
 
     // ---- 图片自动识别导入（第四节，见 src/data/imageImport.js 头注） ----
     let imgImportOpen = false;         // 是否展开这个子面板
@@ -354,7 +368,7 @@ export const MapEditorDialog = {
         </div>
         <div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start;">
           <canvas id="mapEditorWaveThumb" width="${n}" height="${n}"
-            style="width:170px;height:170px;image-rendering:pixelated;cursor:pointer;flex-shrink:0;
+            style="width:${waveThumbSize().w}px;height:${waveThumbSize().h}px;image-rendering:pixelated;cursor:pointer;flex-shrink:0;
                    border:1px solid var(--border-color,#444);border-radius:4px;"></canvas>
           <div style="flex:1;">
             <select id="mapEditorWaveLaneSelect" style="width:100%;padding:4px;margin-bottom:6px;">
@@ -413,6 +427,93 @@ export const MapEditorDialog = {
         </div>
         ${draftNeutralCamps.map(renderCampCard).join('')}
         <div id="mapEditorNeutralCampStatus" style="font-size:11px;color:var(--text-mute);margin-top:4px;">${neutralCampStatus}</div>
+      </div>`;
+
+    // ---- 地图光环（2026-09-04 第五节）：三种数值模式，见 mapEditorCore.js
+    // "地图光环" 节头注 / AuraValueResolver.js 头注 ----
+    // statKey 下拉框复用"添加效果"面板（pagesSkillEffect.js）已经在用的那份属性清单——
+    // 这就是用户说的"这一堆UI都是复用"落到具体处的样子，不在这里另抄一份、迟早漂移。
+    const AURA_STAT_KEYS = EDITOR_PAGES_SKILLEFFECT._EFFECT_STAT_KEYS;
+    const auraWhenGroups = whenOptionGroups();
+
+    const renderAuraStageRow = (effectIdx, stage, stIdx, total) => {
+      const whenDef = auraWhenGroups.flatMap(g => g.items).find(it => it.value === (stage.when || ''));
+      return `
+      <div style="display:flex;gap:4px;align-items:center;margin-bottom:3px;flex-wrap:wrap;padding-left:12px;">
+        <span style="font-size:9px;color:var(--text-mute);">阶段${stIdx + 1}</span>
+        <select data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="when" style="flex:1;min-width:90px;font-size:10px;">
+          ${auraWhenGroups.map(g => `<optgroup label="${g.label}">
+            ${g.items.map(it => `<option value="${it.value}" ${it.value === (stage.when || '') ? 'selected' : ''}>${it.label}</option>`).join('')}
+          </optgroup>`).join('')}
+        </select>
+        ${whenDef?.arg ? `
+        <input type="number" data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="whenArg" title="${whenDef.arg.label}"
+          min="${whenDef.arg.min}" step="${whenDef.arg.step}" value="${stage.whenArg ?? whenDef.arg.def}" style="width:54px;">` : ''}
+        <label style="font-size:9px;">数值
+          <input type="number" data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="flat" step="0.5" value="${stage.flat ?? 0}" style="width:56px;"></label>
+        <label style="font-size:9px;">百分比
+          <input type="number" data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="percent" step="0.5" value="${stage.percent ?? ''}" style="width:56px;"></label>
+        <button data-aura-stage-remove="${effectIdx}:${stIdx}" ${total <= 1 ? 'disabled' : ''} title="删除这个阶段" style="font-size:10px;padding:0 4px;">✖</button>
+      </div>`;
+    };
+
+    const renderAuraEffectCard = (effect, idx) => {
+      const mode = Array.isArray(effect.stages) ? 'staged' : (typeof effect.perMinute === 'number' ? 'gradual' : 'fixed');
+      return `
+      <div style="border:1px solid var(--border-color,#444);border-radius:4px;padding:6px;margin-bottom:6px;">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+          <select data-aura-effect="${idx}" data-aura-effect-field="statKey" style="width:130px;">
+            ${AURA_STAT_KEYS.map(k => `<option value="${k}" ${k === effect.statKey ? 'selected' : ''}>${fieldLabel(k)}</option>`).join('')}
+          </select>
+          <input type="text" data-aura-effect="${idx}" data-aura-effect-field="label" placeholder="显示名（不填用属性名）"
+            value="${effect.label || ''}" style="width:120px;">
+          <select data-aura-effect="${idx}" data-aura-effect-mode="1" style="width:96px;">
+            <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>固定值</option>
+            <option value="gradual" ${mode === 'gradual' ? 'selected' : ''}>渐进到目标值</option>
+            <option value="staged" ${mode === 'staged' ? 'selected' : ''}>分阶段（事件触发）</option>
+          </select>
+          <button data-aura-effect-remove="${idx}" style="font-size:10px;padding:0 4px;">✖</button>
+        </div>
+        ${mode === 'fixed' ? `
+        <div style="display:flex;gap:8px;padding-left:12px;">
+          <label style="font-size:10px;">数值
+            <input type="number" data-aura-effect="${idx}" data-aura-effect-field="flat" step="0.5" value="${effect.flat ?? 0}" style="width:64px;"></label>
+          <label style="font-size:10px;">百分比
+            <input type="number" data-aura-effect="${idx}" data-aura-effect-field="percent" step="0.5" value="${effect.percent ?? ''}" style="width:64px;"></label>
+        </div>` : ''}
+        ${mode === 'gradual' ? `
+        <div style="display:flex;gap:8px;padding-left:12px;">
+          <label style="font-size:10px;">每分钟增加
+            <input type="number" data-aura-effect="${idx}" data-aura-effect-field="perMinute" step="0.1" value="${effect.perMinute ?? 0}" style="width:64px;"></label>
+          <label style="font-size:10px;">封顶
+            <input type="number" data-aura-effect="${idx}" data-aura-effect-field="max" step="0.5" value="${effect.max ?? ''}" style="width:64px;"></label>
+        </div>` : ''}
+        ${mode === 'staged' ? `
+        <div>
+          ${(effect.stages || []).map((st, si) => renderAuraStageRow(idx, st, si, effect.stages.length)).join('')}
+          <button data-aura-stage-add="${idx}" style="font-size:10px;margin-left:12px;">➕ 新增阶段</button>
+        </div>` : ''}
+      </div>`;
+    };
+
+    const renderGlobalAuraPanel = () => `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px;">地图光环</div>
+        <div style="font-size:10px;color:var(--text-mute);margin-bottom:6px;">
+          常驻被动状态（不是技能），挂给场上所有单位（含防御塔与水晶）。三种数值模式：
+          固定值（一直是这个数）、渐进到目标值（随本局时长线性涨，到封顶不再涨）、
+          分阶段（按出兵编排同一套条件系统判定换挡时机，条件满足就切到对应数值——
+          阶段按"越靠后越进阶"顺序排列，最后一个满足条件的阶段生效）。
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+          <label style="font-size:10px;">名称
+            <input type="text" id="mapEditorAuraNameInput" value="${draftGlobalAura.name || ''}" style="width:140px;"></label>
+          <label style="font-size:10px;">图标
+            <input type="text" id="mapEditorAuraIconInput" value="${draftGlobalAura.icon || '🌐'}" style="width:48px;"></label>
+        </div>
+        ${draftGlobalAura.effects.map((e, i) => renderAuraEffectCard(e, i)).join('')}
+        <button id="mapEditorAuraEffectAddBtn" style="font-size:10px;">➕ 新增效果</button>
+        <div id="mapEditorAuraStatus" style="font-size:11px;color:var(--text-mute);margin-top:4px;">${auraStatus}</div>
       </div>`;
 
     // 折线造墙：画布坐标系就是 navgrid 的 n×n 格子坐标系（与其它重绘函数一致），
@@ -478,7 +579,11 @@ export const MapEditorDialog = {
     const drawBuildingMarkers = (ctx) => {
       // n 随 switchBase() 换起点地图而变（不同地图 navgrid 分辨率不同），标记半径
       // 必须每次重画时用【当前】n 现算，写成挂在外层作用域的 const 会在切图后画错大小。
-      const markerR = CONFIG.mapEditor.buildingMarkerRadiusPx / CANVAS_DISPLAY_PX * n;
+      // 用 mainCanvasSize().w（不是写死的 CANVAS_DISPLAY_PX）换算——非正方形世界
+      // （扭曲丛林）显示框的宽已经不等于 CANVAS_DISPLAY_PX 了，见 canvasDisplaySize() 头注；
+      // 用宽这条轴换算，非正方形地图上标记会略呈椭圆（半径本来就是"格子空间里的一个数"，
+      // 两条轴缩放系数天生不同，见该函数头注），但这远比整张地图形状挤歪更不显眼。
+      const markerR = CONFIG.mapEditor.buildingMarkerRadiusPx / mainCanvasSize().w * n;
       const result = validateDraftMap(draftMapForValidate());
       draftBuildings.forEach((b, i) => {
         const { gx, gy } = worldToGrid(b.pos.x, b.pos.y);
@@ -744,7 +849,8 @@ export const MapEditorDialog = {
         </div>
       </div>
       ${renderWaveOrderPanel()}
-      ${renderNeutralCampsPanel()}`;
+      ${renderNeutralCampsPanel()}
+      ${renderGlobalAuraPanel()}`;
 
     // ---------- 结构性重绘（切起点地图/保存/删除后调用；笔刷拖动期间绝不调这个） ----------
     const render = () => {
@@ -883,7 +989,7 @@ export const MapEditorDialog = {
           ${editMode !== 'config' ? `
           <div style="display:flex;justify-content:center;margin:8px 0;">
             <canvas id="mapEditorCanvas" width="${n}" height="${n}"
-              style="width:${CANVAS_DISPLAY_PX}px;height:${CANVAS_DISPLAY_PX}px;image-rendering:pixelated;
+              style="width:${mainCanvasSize().w}px;height:${mainCanvasSize().h}px;image-rendering:pixelated;
                      border:1px solid var(--border-color,#444);cursor:crosshair;touch-action:none;border-radius:4px;"></canvas>
           </div>
           <div style="font-size:11px;color:var(--text-mute);text-align:center;">
@@ -987,6 +1093,8 @@ export const MapEditorDialog = {
       draggingRuleIndex = -1;
       draftNeutralCamps = cloneNeutralCampsForEdit(baseMap);
       neutralCampStatus = '';
+      draftGlobalAura = cloneGlobalAuraForEdit(baseMap);
+      auraStatus = '';
       statusMsg = '';
       render();
     };
@@ -1134,6 +1242,77 @@ export const MapEditorDialog = {
             const el = document.getElementById('mapEditorNeutralCampStatus');
             if (el) el.textContent = neutralCampStatus;
           }
+        });
+      });
+
+      // 地图光环（2026-09-04 第五节）：名称/图标 + 效果增删/改字段/切模式 +
+      // 分阶段模式下的阶段增删/改字段。元素只在 editMode==='config' 时存在，
+      // 可选链/存在性判断天然跳过其它模式（同上面几节同款写法）。
+      document.getElementById('mapEditorAuraNameInput')?.addEventListener('change', (e) => {
+        draftGlobalAura = withAuraFieldSet(draftGlobalAura, 'name', e.target.value);
+      });
+      document.getElementById('mapEditorAuraIconInput')?.addEventListener('change', (e) => {
+        draftGlobalAura = withAuraFieldSet(draftGlobalAura, 'icon', e.target.value);
+      });
+      document.getElementById('mapEditorAuraEffectAddBtn')?.addEventListener('click', () => {
+        draftGlobalAura = withAuraEffectAdded(draftGlobalAura, { statKey: AURA_STAT_KEYS[0], label: '', flat: 0 });
+        render();
+      });
+      document.querySelectorAll('[data-aura-effect-remove]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          draftGlobalAura = withAuraEffectRemoved(draftGlobalAura, Number(btn.dataset.auraEffectRemove));
+          render();
+        });
+      });
+      document.querySelectorAll('[data-aura-effect][data-aura-effect-mode]').forEach(el => {
+        el.addEventListener('change', (e) => {
+          draftGlobalAura = withAuraEffectModeSet(draftGlobalAura, Number(el.dataset.auraEffect), e.target.value);
+          render();
+        });
+      });
+      document.querySelectorAll('[data-aura-effect][data-aura-effect-field]').forEach(el => {
+        el.addEventListener('change', (e) => {
+          const idx = Number(el.dataset.auraEffect);
+          const field = el.dataset.auraEffectField;
+          const isNumeric = field === 'flat' || field === 'percent' || field === 'perMinute' || field === 'max';
+          const raw = e.target.value;
+          const value = isNumeric ? (raw === '' ? undefined : (Number(raw) || 0)) : raw;
+          draftGlobalAura = withAuraEffectFieldSet(draftGlobalAura, idx, field, value);
+          // statKey 换了显示名跟着变，需要整页重渲；label/数值类输入框跟出兵编排
+          // 规则卡片同样的道理，不重渲，避免正在打字时被打断。
+          if (field === 'statKey') render();
+        });
+      });
+      document.querySelectorAll('[data-aura-stage-add]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          draftGlobalAura = withAuraStageAdded(draftGlobalAura, Number(btn.dataset.auraStageAdd), { when: '', flat: 0 });
+          render();
+        });
+      });
+      document.querySelectorAll('[data-aura-stage-remove]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const [effIdx, stIdx] = btn.dataset.auraStageRemove.split(':').map(Number);
+          try {
+            draftGlobalAura = withAuraStageRemoved(draftGlobalAura, effIdx, stIdx);
+            render();
+          } catch (err) {
+            auraStatus = `⚠️ ${err.message}`;
+            const el = document.getElementById('mapEditorAuraStatus');
+            if (el) el.textContent = auraStatus;
+          }
+        });
+      });
+      document.querySelectorAll('[data-aura-effect][data-stage-index][data-stage-field]').forEach(el => {
+        el.addEventListener('change', (e) => {
+          const effIdx = Number(el.dataset.auraEffect);
+          const stIdx = Number(el.dataset.stageIndex);
+          const field = el.dataset.stageField;
+          const isNumeric = field === 'flat' || field === 'percent' || field === 'whenArg';
+          const raw = e.target.value;
+          const value = isNumeric ? (raw === '' ? undefined : (Number(raw) || 0)) : raw;
+          draftGlobalAura = withAuraStageFieldSet(draftGlobalAura, effIdx, stIdx, field, value);
+          // when 换了可能要显示/隐藏 whenArg 输入框，需要整页重渲；其它字段不重渲。
+          if (field === 'when') render();
         });
       });
 
@@ -1351,7 +1530,7 @@ export const MapEditorDialog = {
             id, label, n, bits, buildings: draftBuildings,
             baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
             lanes: draftLanes, factions: draftFactions, spawnEnabled: draftSpawnEnabled,
-            laneWaveCompositionByLane, neutralCamps: draftNeutralCamps,
+            laneWaveCompositionByLane, neutralCamps: draftNeutralCamps, globalAura: draftGlobalAura,
           });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;

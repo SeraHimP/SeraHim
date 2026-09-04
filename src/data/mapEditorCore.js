@@ -68,7 +68,7 @@ export function cloneMapForEdit(baseMap) {
  */
 export function buildCustomMapPayload(baseMap, {
   id, label, n, bits, buildings, baseCircleRadius, pits, lanes, factions, spawnEnabled,
-  laneWaveCompositionByLane, neutralCamps,
+  laneWaveCompositionByLane, neutralCamps, globalAura,
 }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
@@ -102,6 +102,11 @@ export function buildCustomMapPayload(baseMap, {
   // 中立营地（第四节 Part D）：同样的"不传就保留原值"规则——未声明时
   // neutralCampsOf() 兜底成巨龙那份既定默认值，逐位不变。
   if (Array.isArray(neutralCamps)) clone.neutralCamps = neutralCamps;
+  // 地图光环（2026-09-04 第五节）：同样的"不传就保留原值"规则。空 effects 数组
+  // 也是合法值（这张图配了光环外壳但还没加任何效果，或者用户把效果全删了），
+  // 所以判断"是否传入"用 typeof 而不是看 effects 是否非空——跟 spawnEnabled/
+  // laneWaveCompositionByLane 同一个理由。
+  if (globalAura && typeof globalAura === 'object') clone.globalAura = globalAura;
   return clone;
 }
 
@@ -603,4 +608,101 @@ export function alignLaneToCorridor(bits, n, world, waypoints, opts = {}) {
     const ng = { gx: g.gx + ux * offset, gy: g.gy + uy * offset };
     return toWorld(ng.gx, ng.gy);
   });
+}
+
+// ==================== 地图光环（2026-09-04 第五节：三种数值模式）====================
+// 见 systems/AuraValueResolver.js 头注（三种模式的力学定义、为什么没有显式 mode
+// 字段——沿用 MapSystem._applyGlobalAura 原有的"看字段推断"风格）。这里跟中立
+// 营地那节同一个套路：数据形状的唯一权威定义在 AuraValueResolver.js，这里只给
+// 编辑器一套克隆/增删改的纯函数，不重新定义数值怎么算。
+
+/** 从一张地图克隆出光环草稿（没声明 globalAura 时给一个空壳，不是 null——
+ *  编辑器表单要有东西可渲染，"这张图没有光环"和"光环字段是 null/undefined"
+ *  不该是两种要分别处理的状态）。 */
+export function cloneGlobalAuraForEdit(baseMap) {
+  const aura = baseMap?.globalAura;
+  if (aura) return JSON.parse(JSON.stringify(aura));
+  return { name: '', icon: '🌐', effects: [] };
+}
+
+/** 改光环整体的字段（name/icon）。@returns 新对象 */
+export function withAuraFieldSet(aura, field, value) {
+  return { ...aura, [field]: value };
+}
+
+/** 新增一条效果，默认固定值模式（数值 0，等用户自己填）。@returns 新对象 */
+export function withAuraEffectAdded(aura, effect) {
+  return { ...aura, effects: [...(aura.effects || []), effect] };
+}
+
+/** 删除第 idx 条效果。@returns 新对象 */
+export function withAuraEffectRemoved(aura, idx) {
+  return { ...aura, effects: aura.effects.filter((_, i) => i !== idx) };
+}
+
+/** 改第 idx 条效果的单个字段（statKey/label/flat/percent/perMinute/max）。@returns 新对象 */
+export function withAuraEffectFieldSet(aura, idx, field, value) {
+  return { ...aura, effects: aura.effects.map((e, i) => (i === idx ? { ...e, [field]: value } : e)) };
+}
+
+/**
+ * 切换第 idx 条效果的数值模式。三种模式各自认的字段不重叠（固定值：flat/percent；
+ * 渐进：perMinute/max；分阶段：stages），切换时把上一个模式的专属字段清掉、
+ * 换上新模式的默认字段——不然编辑器里改完"固定值"又切到"渐进"，effect 对象上
+ * 同时挂着 flat 和 perMinute 两组字段，MapSystem._applyGlobalAura 那边"看字段
+ * 推断模式"的判断顺序（stages > perMinute > flat）会让残留字段悄悄决定行为，
+ * 界面显示的模式和实际生效的模式对不上。
+ * 分阶段模式默认给一条 `when:''`（永远成立）的兜底阶段——不给的话所有条件都
+ * 不满足时 resolveAuraEffectValue() 会退回 flat:0，界面上看着配了光环、场上
+ * 却什么都没生效，找起来最费劲的那类"看着对却不生效"。
+ * @returns 新对象
+ */
+export function withAuraEffectModeSet(aura, idx, mode) {
+  return {
+    ...aura,
+    effects: aura.effects.map((e, i) => {
+      if (i !== idx) return e;
+      const { statKey, label } = e;
+      if (mode === 'gradual') return { statKey, label, perMinute: 0, max: undefined };
+      if (mode === 'staged') return { statKey, label, stages: [{ when: '', flat: 0 }] };
+      return { statKey, label, flat: 0, percent: undefined };
+    }),
+  };
+}
+
+/** 给第 effectIdx 条效果新增一个分阶段。@returns 新对象 */
+export function withAuraStageAdded(aura, effectIdx, stage) {
+  return {
+    ...aura,
+    effects: aura.effects.map((e, i) => (i === effectIdx ? { ...e, stages: [...(e.stages || []), stage] } : e)),
+  };
+}
+
+/**
+ * 删除第 effectIdx 条效果的第 stageIdx 个阶段。至少保留一个——删到零个阶段的
+ * 分阶段效果，resolveAuraEffectValue() 会因为 `stages` 数组存在但为空而直接
+ * 走"不算 stages 分支"（`Array.isArray && length` 判据），退化成固定值 0，
+ * 界面上还显示"分阶段模式"、实际却是个恒为 0 的死效果，同上一条的踩坑理由。
+ * @returns 新对象
+ */
+export function withAuraStageRemoved(aura, effectIdx, stageIdx) {
+  return {
+    ...aura,
+    effects: aura.effects.map((e, i) => {
+      if (i !== effectIdx) return e;
+      if ((e.stages || []).length <= 1) throw new Error('分阶段模式至少要保留一个阶段');
+      return { ...e, stages: e.stages.filter((_, si) => si !== stageIdx) };
+    }),
+  };
+}
+
+/** 改第 effectIdx 条效果第 stageIdx 个阶段的单个字段（when/whenArg/flat/percent）。@returns 新对象 */
+export function withAuraStageFieldSet(aura, effectIdx, stageIdx, field, value) {
+  return {
+    ...aura,
+    effects: aura.effects.map((e, i) => {
+      if (i !== effectIdx) return e;
+      return { ...e, stages: e.stages.map((st, si) => (si === stageIdx ? { ...st, [field]: value } : st)) };
+    }),
+  };
 }
