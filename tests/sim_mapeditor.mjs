@@ -552,6 +552,24 @@ const T = board.T;
   T('72-mainCanvasSize/waveThumbSize 都是基于当前 baseMap.world 现算（不是缓存成固定值，切图后要跟着变）',
     /mainCanvasSize\s*=\s*\(\)\s*=>\s*canvasDisplaySize\(baseMap\.world/.test(src)
     && /waveThumbSize\s*=\s*\(\)\s*=>\s*canvasDisplaySize\(baseMap\.world/.test(src));
+
+  // 中立营地出生点并入"建筑摆放"画布可视化点选（2026-09-04，用户反馈：
+  // "巨龙出生点等所有中立生物的出生点所有的都可以在地图上选点……显示点位那里弄个
+  // 过滤器……并且在右侧也有新增/移动/删除等工具栏"）。
+  T('73-画布渲染时会画中立营地出生点标记（drawCampPointMarkers 挂在 buildings 模式的重绘分支上）',
+    /editMode === ['"]buildings['"][\s\S]{0,60}drawBuildingMarkers\(ctx\)[\s\S]{0,60}drawCampPointMarkers\(ctx\)/.test(src));
+  T('74-过滤器复选框绑定 campPointFilter（Set 的增删），不是简单的整体开关',
+    /data-camp-filter-type\][\s\S]{0,150}campPointFilter\.add\(type\)[\s\S]{0,60}campPointFilter\.delete\(type\)/.test(src));
+  T('75-点击画布时：新增模式下调用 addCampPointAt；否则先查 findCampPointNear 再退回建筑命中判定',
+    /campAddMode[\s\S]{0,80}addCampPointAt\(e\.clientX, e\.clientY\)[\s\S]{0,300}findCampPointNear\(canvas, e\.clientX, e\.clientY\)/.test(src));
+  T('76-拖动出生点调用 withCampSpawnPointFieldSet 写回草稿（不是只改本地渲染状态）',
+    /dragCampPointTo[\s\S]{0,400}withCampSpawnPointFieldSet\(draftNeutralCamps, draggingCampPoint\.campId/.test(src));
+  T('77-新增出生点按钮真的调用了 withCampSpawnPointAdded（不是只切换模式什么都不做）',
+    /addCampPointAt[\s\S]{0,400}withCampSpawnPointAdded\(draftNeutralCamps, campAddTargetId/.test(src));
+  T('78-删除选中出生点按钮调用 withCampSpawnPointRemoved 并捕获异常（同其它删除按钮同一套容错）',
+    /mapEditorDeleteCampPointBtn['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,300}withCampSpawnPointRemoved\(draftNeutralCamps[\s\S]{0,200}catch/.test(src));
+  T('79-切换起点地图会重置出生点画布交互状态（selectedCampPoint/draggingCampPoint/campAddMode），不然切图后还拖着上一张图的选中态',
+    /switchBase\s*=[\s\S]{0,2000}selectedCampPoint\s*=\s*null[\s\S]{0,60}draggingCampPoint\s*=\s*null[\s\S]{0,60}campAddMode\s*=\s*false/.test(src));
 }
 
 // ==================== ⑦ 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================

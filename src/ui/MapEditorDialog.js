@@ -139,6 +139,23 @@ export const MapEditorDialog = {
     let draftNeutralCamps = cloneNeutralCampsForEdit(baseMap);
     let neutralCampStatus = '';
 
+    // ---- 中立营地出生点：并入"建筑摆放"画布可视化点选（2026-09-04，用户反馈：
+    // "巨龙出生点等所有中立生物的出生点所有的都可以在地图上选点……显示点位那里弄个
+    // 过滤器，可以选择都显示什么，并且在右侧也有新增/移动/删除等工具栏"）----
+    // 过滤器：按单位类型决定哪些营地的出生点画到画布上，默认全显示。目前
+    // NEUTRAL_UNIT_TYPES 只有 dragon 一种，这套按类型过滤的骨架是为以后真的
+    // 出现第二种中立单位准备的（同 NeutralCampSystem.js 的既有克制——不为不存在
+    // 的类型编造 UI）。
+    let campPointFilter = new Set(Object.keys(NEUTRAL_UNIT_TYPES));
+    // "新增出生点"是个独立的模态开关（同折线造墙那种"点几下画布=连续下顶点"的
+    // 交互心智），开着的时候点画布任意位置=给 campAddTargetId 指向的营地加一个
+    // 出生点；关着的时候点一个已有出生点=选中它并可以拖动（跟建筑摆放同一套
+    // "pointerdown 命中就直接进入拖拽"手感）。
+    let campAddMode = false;
+    let campAddTargetId = draftNeutralCamps[0]?.id ?? null;
+    let selectedCampPoint = null;    // { campId, index } | null —— 供下方"删除选中出生点"按钮用
+    let draggingCampPoint = null;    // 同形状，仅在拖动期间非空
+
     // ---- 配置模式（2026-09-04 第五节）：地图光环三种数值模式，见 mapEditorCore.js
     // "地图光环" 节头注 / AuraValueResolver.js 头注 ----
     let draftGlobalAura = cloneGlobalAuraForEdit(baseMap);
@@ -174,7 +191,7 @@ export const MapEditorDialog = {
       ctx.putImageData(img, 0, 0);
       drawRegionOverlays(ctx);
       if (editMode === 'terrain' && brushShape === 'polyline') drawPolylinePreview(ctx);
-      if (editMode === 'buildings') drawBuildingMarkers(ctx);
+      if (editMode === 'buildings') { drawBuildingMarkers(ctx); drawCampPointMarkers(ctx); }
       if (editMode === 'paths') drawLanePaths(ctx);
     };
 
@@ -606,6 +623,45 @@ export const MapEditorDialog = {
       });
     };
 
+    /** 一个出生点的世界坐标——与 renderSpawnPointRow（配置模式下的坐标输入框）同一条解析规则：
+     *  自带 pit 优先，否则跟着 pitRef 指向的坑位走。两处都要保持一致，不然"画布上看到的
+     *  位置"和"配置面板里填的坐标"会对不上。 */
+    const campPointWorldPos = (sp) => sp.pit || (sp.pitRef ? mapSystem.getPit?.(sp.pitRef) : null) || null;
+
+    /** 遍历 campPointFilter 允许的营地出生点，返回 { camp, sp, index, gx, gy } 列表——
+     *  拖拽命中判定和画布渲染共用同一份枚举，不想在两处各写一遍"该显示哪些点"的判断。 */
+    const visibleCampPoints = () => {
+      const out = [];
+      for (const camp of draftNeutralCamps) {
+        if (!campPointFilter.has(camp.unitType)) continue;
+        camp.spawnPoints.forEach((sp, index) => {
+          const pos = campPointWorldPos(sp);
+          if (!pos) return;
+          out.push({ camp, sp, index, ...worldToGrid(pos.x, pos.y) });
+        });
+      }
+      return out;
+    };
+
+    // 中立营地出生点的画布标记：菱形 + 图标，跟建筑标记（圆点+阵营色）明显区分开——
+    // 这些点不属于任何阵营，用蓝红任一种颜色都会让人误以为它是某一方的建筑。
+    const drawCampPointMarkers = (ctx) => {
+      const markerR = CONFIG.mapEditor.buildingMarkerRadiusPx / mainCanvasSize().w * n;
+      for (const { camp, index, gx, gy } of visibleCampPoints()) {
+        const isSel = selectedCampPoint?.campId === camp.id && selectedCampPoint?.index === index;
+        const isDrag = draggingCampPoint?.campId === camp.id && draggingCampPoint?.index === index;
+        ctx.save();
+        ctx.translate(gx, gy);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = '#f6c94a';
+        ctx.fillRect(-markerR * 0.75, -markerR * 0.75, markerR * 1.5, markerR * 1.5);
+        ctx.lineWidth = (isSel || isDrag) ? 2 : 1;
+        ctx.strokeStyle = (isSel || isDrag) ? '#fff' : 'rgba(0,0,0,.6)';
+        ctx.strokeRect(-markerR * 0.75, -markerR * 0.75, markerR * 1.5, markerR * 1.5);
+        ctx.restore();
+      }
+    };
+
     const clientToWorld = (canvas, clientX, clientY) => {
       const rect = canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return null;
@@ -647,6 +703,53 @@ export const MapEditorDialog = {
       draftBuildings = withBuildingMoved(draftBuildings, draggingBuildingIndex, pos);
       redrawCanvas();
       updateValidationStatus();
+    };
+
+    /** 找离 (clientX,clientY) 最近的、当前可见（过滤器允许）的中立营地出生点。
+     *  命中半径与建筑复用同一个 buildingHitRadiusPx——同一种"点选精度"心智模型。 */
+    const findCampPointNear = (canvas, clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0) return null;
+      const hitPx = CONFIG.mapEditor.buildingHitRadiusPx;
+      let best = null, bestD = hitPx;
+      for (const camp of draftNeutralCamps) {
+        if (!campPointFilter.has(camp.unitType)) continue;
+        camp.spawnPoints.forEach((sp, index) => {
+          const pos = campPointWorldPos(sp);
+          if (!pos) return;
+          const px = pos.x / (baseMap.world?.w || 1) * rect.width + rect.left;
+          const py = pos.y / (baseMap.world?.h || 1) * rect.height + rect.top;
+          const d = Math.hypot(px - clientX, py - clientY);
+          if (d < bestD) { bestD = d; best = { campId: camp.id, index }; }
+        });
+      }
+      return best;
+    };
+
+    const dragCampPointTo = (clientX, clientY) => {
+      if (!draggingCampPoint) return;
+      const canvas = document.getElementById('mapEditorCanvas');
+      const world = clientToWorld(canvas, clientX, clientY);
+      if (!world) return;
+      const clampX = Math.max(0, Math.min(baseMap.world?.w || 0, world.x));
+      const clampY = Math.max(0, Math.min(baseMap.world?.h || 0, world.y));
+      draftNeutralCamps = withCampSpawnPointFieldSet(draftNeutralCamps, draggingCampPoint.campId, draggingCampPoint.index, 'x', clampX);
+      draftNeutralCamps = withCampSpawnPointFieldSet(draftNeutralCamps, draggingCampPoint.campId, draggingCampPoint.index, 'y', clampY);
+      redrawCanvas();
+    };
+
+    /** "新增出生点"模式下点画布：给 campAddTargetId 指向的营地加一个出生点。 */
+    const addCampPointAt = (clientX, clientY) => {
+      const canvas = document.getElementById('mapEditorCanvas');
+      const world = clientToWorld(canvas, clientX, clientY);
+      if (!world || !campAddTargetId) return;
+      draftNeutralCamps = withCampSpawnPointAdded(draftNeutralCamps, campAddTargetId, {
+        pit: { x: world.x, y: world.y }, laneMatch: draftLanes[0]?.id || 'mid', direction: 'forward',
+      });
+      const camp = draftNeutralCamps.find(c => c.id === campAddTargetId);
+      selectedCampPoint = camp ? { campId: campAddTargetId, index: camp.spawnPoints.length - 1 } : null;
+      redrawCanvas();
+      updateCampPointStatus();
     };
 
     // 路径编辑（阶段六）：只在【当前选中的那条路】上找最近的路点——不同路之间线段
@@ -748,6 +851,20 @@ export const MapEditorDialog = {
       });
     };
 
+    // 中立营地出生点：拖拽/点选/新增都走轻量更新（不整页 render()，避免打断正在
+    // 进行的拖拽/画布交互，同 updatePathStatus() 的既定处理）——只同步状态文字和
+    // "删除选中出生点"按钮的 disabled，这两处会随选中状态漂移。
+    const updateCampPointStatus = () => {
+      const btn = document.getElementById('mapEditorDeleteCampPointBtn');
+      if (btn) btn.disabled = !selectedCampPoint;
+      const el = document.getElementById('mapEditorCampPointStatus');
+      if (!el) return;
+      if (!selectedCampPoint) { el.textContent = '点画布上的一个菱形点可选中/拖动。'; return; }
+      const camp = draftNeutralCamps.find(c => c.id === selectedCampPoint.campId);
+      const label = camp ? (NEUTRAL_UNIT_TYPES[camp.unitType]?.label || camp.unitType) : selectedCampPoint.campId;
+      el.textContent = `已选中「${label}」的第 ${selectedCampPoint.index + 1} 个出生点`;
+    };
+
     // 折线模式下把 client 坐标换算成格子坐标——与 paintAt 内联的那行算法一致，
     // 单独抽出来是因为点选顶点、画橡皮筋预览两处都要用，不想抄两遍。
     const clientToGrid = (canvas, clientX, clientY) => {
@@ -762,10 +879,24 @@ export const MapEditorDialog = {
       canvas.addEventListener('pointerdown', (e) => {
         canvas.setPointerCapture(e.pointerId);
         if (editMode === 'buildings') {
-          draggingBuildingIndex = findBuildingNear(canvas, e.clientX, e.clientY);
-          selectedBuildingIndex = draggingBuildingIndex;
-          updateSelectionPanel();
-          if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
+          if (campAddMode) {
+            addCampPointAt(e.clientX, e.clientY);
+          } else {
+            // 营地出生点优先判定：数量少（通常1~2个/营地），建筑动辄二三十座，
+            // 先查营地能保证出生点不会被密集的建筑标记"抢"走点选。
+            const campHit = findCampPointNear(canvas, e.clientX, e.clientY);
+            if (campHit) {
+              draggingCampPoint = campHit;
+              selectedCampPoint = campHit;
+              updateCampPointStatus();
+              dragCampPointTo(e.clientX, e.clientY);
+            } else {
+              draggingBuildingIndex = findBuildingNear(canvas, e.clientX, e.clientY);
+              selectedBuildingIndex = draggingBuildingIndex;
+              updateSelectionPanel();
+              if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
+            }
+          }
         } else if (editMode === 'paths') {
           const idx = findWaypointNear(canvas, e.clientX, e.clientY);
           if (idx >= 0) { draggingWaypointIndex = idx; selectedWaypointIndex = idx; }
@@ -781,12 +912,18 @@ export const MapEditorDialog = {
         }
       });
       canvas.addEventListener('pointermove', (e) => {
-        if (editMode === 'buildings') { if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY); }
+        if (editMode === 'buildings') {
+          if (draggingCampPoint) dragCampPointTo(e.clientX, e.clientY);
+          else if (draggingBuildingIndex >= 0) dragBuildingTo(e.clientX, e.clientY);
+        }
         else if (editMode === 'paths') { if (draggingWaypointIndex >= 0) dragWaypointTo(e.clientX, e.clientY); }
         else if (brushShape === 'polyline') { polylineHover = clientToGrid(canvas, e.clientX, e.clientY); redrawCanvas(); }
         else if (painting) paintAt(e.clientX, e.clientY);
       });
-      const stop = () => { painting = false; draggingBuildingIndex = -1; draggingWaypointIndex = -1; redrawCanvas(); };
+      const stop = () => {
+        painting = false; draggingBuildingIndex = -1; draggingWaypointIndex = -1; draggingCampPoint = null;
+        redrawCanvas();
+      };
       canvas.addEventListener('pointerup', stop);
       canvas.addEventListener('pointercancel', stop);
       canvas.addEventListener('pointerleave', stop);
@@ -962,6 +1099,28 @@ export const MapEditorDialog = {
           </div>
           <div id="mapEditorSelectionPanel" style="margin-bottom:6px;">
             <div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>
+          </div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
+            <div style="font-size:12px;font-weight:600;margin-bottom:4px;">中立营地出生点（画布上的金色菱形）</div>
+            <div style="font-size:10px;color:var(--text-mute);margin-bottom:6px;">
+              巨龙等中立生物的出生点现在能直接在画布上点选/拖拽了，不用只靠下面配置面板里
+              手填坐标。过滤器决定哪些类型的出生点画出来；开着"新增出生点"时点画布任意
+              位置就能给选中的营地加一个新出生点。
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+              ${Object.entries(NEUTRAL_UNIT_TYPES).map(([type, meta]) => `
+              <label style="font-size:11px;display:flex;align-items:center;gap:3px;">
+                <input type="checkbox" data-camp-filter-type="${type}" ${campPointFilter.has(type) ? 'checked' : ''}>
+                ${meta.label}</label>`).join('')}
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+              <button id="mapEditorCampAddModeBtn" class="${campAddMode ? 'primary' : ''}" title="开着时点画布任意位置=新增一个出生点；关着时（默认）点已有的点=选中并可拖动移动">➕ 新增出生点</button>
+              <select id="mapEditorCampAddTargetSelect" style="flex:1;min-width:100px;">
+                ${draftNeutralCamps.map(c => `<option value="${c.id}" ${c.id === campAddTargetId ? 'selected' : ''}>${NEUTRAL_UNIT_TYPES[c.unitType]?.label || c.unitType}</option>`).join('')}
+              </select>
+              <button id="mapEditorDeleteCampPointBtn" ${!selectedCampPoint ? 'disabled' : ''}>🗑️ 删除选中出生点</button>
+            </div>
+            <div id="mapEditorCampPointStatus" style="font-size:11px;color:var(--text-mute);">默认可直接拖动已有的点移动；点画布上的一个菱形点可选中。</div>
           </div>` : editMode === 'paths' ? `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
             点一个已有路点=拖动它；点路径上的空白处=在最近的一段中间插入新路点（插完可以
@@ -1093,6 +1252,8 @@ export const MapEditorDialog = {
       draggingRuleIndex = -1;
       draftNeutralCamps = cloneNeutralCampsForEdit(baseMap);
       neutralCampStatus = '';
+      campAddTargetId = draftNeutralCamps[0]?.id ?? null;
+      selectedCampPoint = null; draggingCampPoint = null; campAddMode = false;
       draftGlobalAura = cloneGlobalAuraForEdit(baseMap);
       auraStatus = '';
       statusMsg = '';
@@ -1243,6 +1404,36 @@ export const MapEditorDialog = {
             if (el) el.textContent = neutralCampStatus;
           }
         });
+      });
+
+      // 中立营地出生点：并入"建筑摆放"画布的可视化点选（2026-09-04）——过滤器/
+      // 新增模式开关/新增目标营地/删除选中，元素只在 editMode==='buildings' 时
+      // 存在，可选链天然跳过其它模式。拖拽本身的接线在 bindCanvasEvents() 里。
+      document.querySelectorAll('[data-camp-filter-type]').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+          const type = cb.dataset.campFilterType;
+          if (e.target.checked) campPointFilter.add(type); else campPointFilter.delete(type);
+          redrawCanvas();
+        });
+      });
+      document.getElementById('mapEditorCampAddModeBtn')?.addEventListener('click', () => {
+        campAddMode = !campAddMode;
+        render();
+      });
+      document.getElementById('mapEditorCampAddTargetSelect')?.addEventListener('change', (e) => {
+        campAddTargetId = e.target.value;
+      });
+      document.getElementById('mapEditorDeleteCampPointBtn')?.addEventListener('click', () => {
+        if (!selectedCampPoint) return;
+        try {
+          draftNeutralCamps = withCampSpawnPointRemoved(draftNeutralCamps, selectedCampPoint.campId, selectedCampPoint.index);
+          selectedCampPoint = null;
+          redrawCanvas();
+          updateCampPointStatus();
+        } catch (err) {
+          const el = document.getElementById('mapEditorCampPointStatus');
+          if (el) el.textContent = `⚠️ ${err.message}`;
+        }
       });
 
       // 地图光环（2026-09-04 第五节）：名称/图标 + 效果增删/改字段/切模式 +
