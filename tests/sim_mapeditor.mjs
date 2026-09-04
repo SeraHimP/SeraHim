@@ -495,8 +495,30 @@ const T = board.T;
     /data-rule-remove[\s\S]{0,300}withRuleRemoved\(draftLaneComposition\[selectedWaveLaneId\]/.test(src));
   T('51-拖拽排序：dragstart 记下标，drop 时调 withRuleMoved',
     /dragstart['"][\s\S]{0,100}draggingRuleIndex\s*=\s*Number\(card\.dataset\.ruleIndex\)[\s\S]{0,400}withRuleMoved/.test(src));
-  T('52-字段改动：调 withRuleFieldSet 写回草稿，"条件"字段改动才触发整页重渲（其它字段不打断输入焦点）',
-    /data-rule-field[\s\S]{0,400}withRuleFieldSet\(draftLaneComposition\[selectedWaveLaneId\][\s\S]{0,150}if \(field === ['"]when['"]\) render\(\)/.test(src));
+  T('52-字段改动（兵种/数量/起始波/每几波/whenOp）：调 withRuleFieldSet 写回草稿',
+    /data-rule-field\]'\)\.forEach\(el[\s\S]{0,400}withRuleFieldSet\(draftLaneComposition\[selectedWaveLaneId\]/.test(src));
+
+  // 出兵条件重做（2026-09-04）：单一 when/whenArg 改成"平铺列表+每条可取反+
+  // 整体AND/OR"，见 waveComposition.js 的 conditionItemsOf/whenPasses 头注 与
+  // mapEditorCore.js 的 withRuleConditionsSet 头注——这里同样只钉接线：
+  // 导入了纯函数、渲染时按 conditionItemsOf(r) 展开、faction 类型的 arg 换成
+  // 从 draftFactions 生成的下拉框、增删条件/改 token-arg-negate 真的调了
+  // withRuleConditionsSet。
+  T('52.1-导入了 conditionItemsOf（waveComposition.js）与 withRuleConditionsSet（mapEditorCore.js）',
+    /conditionItemsOf[\s\S]{0,200}from ['"]\.\.\/data\/waveComposition\.js['"]/.test(src)
+    && /withRuleConditionsSet[\s\S]{0,400}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('52.2-渲染规则卡片时用 conditionItemsOf(r) 展开当前条件列表（不是只读 r.when 一条）',
+    /const items = conditionItemsOf\(r\)/.test(src));
+  T('52.3-条件的阵营下拉框选项来自 draftFactions（跟这次编辑会话里增删的阵营同步，不是写死的地图原值）',
+    /def\.arg\.type === ['"]faction['"][\s\S]{0,300}draftFactions\.map/.test(src));
+  T('52.4-添加条件按钮：真的调了 withRuleConditionsSet，新条件默认 token 为空（"总是"）',
+    /data-cond-add\][\s\S]{0,400}\[\.\.\.conditionItemsOf\(rule\), \{ token: ['"]['"][\s\S]{0,200}withRuleConditionsSet/.test(src));
+  T('52.5-删除条件按钮：filter 掉对应下标后调 withRuleConditionsSet 写回',
+    /data-cond-remove\][\s\S]{0,400}\.filter\(\(_, i\) => i !== condIdx\)[\s\S]{0,150}withRuleConditionsSet/.test(src));
+  T('52.6-条件字段（token/arg/negate）改动：先克隆当前条件数组再改指定一条，不直接改原数组（不修改输入）',
+    /data-cond-field\]'\)\.forEach[\s\S]{0,500}conditionItemsOf\(rule\)\.map\(it => \(\{ \.\.\.it \}\)\)[\s\S]{0,600}withRuleConditionsSet/.test(src));
+  T('52.7-arg 字段改动时按 token 对应条件的 arg.type 分支：faction 存字符串，否则走 Number()',
+    /def\?\.arg\?\.type === ['"]faction['"] \? e\.target\.value : \(Number\(e\.target\.value\) \|\| 0\)/.test(src));
   T('53-保存时把刷兵规则（draftLaneComposition）和原样保留的广播规则（draftLaneBroadcast）拼起来传给 buildCustomMapPayload',
     /laneWaveCompositionByLane\[laneId\]\s*=\s*\[\.\.\.draftLaneComposition\[laneId\], \.\.\.\(draftLaneBroadcast\[laneId\][\s\S]{0,300}buildCustomMapPayload\(baseMap[\s\S]{0,500}laneWaveCompositionByLane/.test(src));
   T('54-切换起点地图会重建出兵编排草稿（不然切图后草稿还是上一张图的覆写）',
@@ -540,6 +562,16 @@ const T = board.T;
     /switchBase\s*=[\s\S]{0,1600}draftGlobalAura\s*=\s*cloneGlobalAuraForEdit\(baseMap\)/.test(src));
   T('68-保存时把 draftGlobalAura 传给 buildCustomMapPayload',
     /buildCustomMapPayload\(baseMap[\s\S]{0,600}globalAura:\s*draftGlobalAura/.test(src));
+
+  // 出兵条件重做（2026-09-04）的连带修复：地图光环"分阶段"模式的阶段切换条件
+  // （renderAuraStageRow）复用同一份 WAVE_CONDITIONS，选到新增的 faction.nexus_lane.*
+  // 条件时同样要把参数框换成阵营下拉——这里不做多条件组合（阶段判定仍是单条件，
+  // 按用户已定的范围：完整的 AND/OR/NOT 组合 UI 只做在出兵编排规则卡片），
+  // 但至少不能让这两条件在这里选中后渲染出一个存不了阵营 id 的数字框。
+  T('68.1-地图光环阶段行的参数框同样按 arg.type===\'faction\' 分支成阵营下拉（不是无条件数字框）',
+    /whenDef\.arg\.type === ['"]faction['"][\s\S]{0,300}draftFactions\.map/.test(src));
+  T('68.2-阶段条件切换时，新旧条件的 arg 类型不一致会把 whenArg 重置成新条件默认值（不留阵营/数值残值）',
+    /const oldArg = WAVE_CONDITIONS\[currentWhen\]\?\.arg[\s\S]{0,300}oldArg\?\.type !== newArg\.type/.test(src));
 
   // 画布显示尺寸自适应（2026-09-04：用户反馈"扭曲丛林地图都变形了"）：
   // 主画布/出兵编排缩略图都改成调用 canvasDisplaySize()（按 baseMap.world 的

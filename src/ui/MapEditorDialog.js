@@ -51,7 +51,7 @@ import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle, paintPolyline, despeckle, canvasDisplaySize } from '../data/navgrid.js';
 import { imageToNavgrid } from '../data/imageImport.js';
-import { STRUCT_TIERS, RULE_FIELDS, compositionFor, whenOptionGroups } from '../data/waveComposition.js';
+import { STRUCT_TIERS, RULE_FIELDS, compositionFor, whenOptionGroups, WAVE_CONDITIONS, conditionItemsOf } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
@@ -60,7 +60,7 @@ import {
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
   cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
-  withRuleAdded, withRuleRemoved, withRuleMoved, withRuleFieldSet,
+  withRuleAdded, withRuleRemoved, withRuleMoved, withRuleFieldSet, withRuleConditionsSet,
   cloneNeutralCampsForEdit, withCampSpawnPointFieldSet, withCampSpawnPointAdded, withCampSpawnPointRemoved,
   alignLaneToCorridor,
   cloneGlobalAuraForEdit, withAuraFieldSet, withAuraEffectAdded, withAuraEffectRemoved,
@@ -341,31 +341,71 @@ export const MapEditorDialog = {
       draftLaneBroadcast[laneId] = full.filter(r => r.kind === 'broadcast');
     };
 
-    const renderRuleCard = (r, i, whenGroups) => {
-      const whenDef = whenGroups.flatMap(g => g.items).find(it => it.value === (r.when || ''));
+    // 2026-09-04：出兵条件重做——"生效条件"从单一 when/whenArg 改成可平铺加多条
+    // + 每条可取反（NOT）+ 整体 AND/OR（用户拍板方案，见 waveComposition.js
+    // conditionItemsOf/whenPasses 头注）。数据统一走 conditionItemsOf(r) 读、
+    // withRuleConditionsSet 写——两边都是"唯一实现"，这里不重新发明判定逻辑。
+    const renderCondItemRow = (ruleIdx, item, condIdx, whenGroupsShared) => {
+      const def = WAVE_CONDITIONS[item.token || ''];
+      const argBox = def?.arg
+        ? (def.arg.type === 'faction'
+            ? `<select data-cond-field="arg" data-rule-index="${ruleIdx}" data-cond-index="${condIdx}"
+                 title="${def.arg.label}" style="width:64px;">
+                 <option value="">（未选）</option>
+                 ${draftFactions.map(fid => `<option value="${fid}" ${item.arg === fid ? 'selected' : ''}>${fid}</option>`).join('')}
+               </select>`
+            : `<input type="number" data-cond-field="arg" data-rule-index="${ruleIdx}" data-cond-index="${condIdx}"
+                 title="${def.arg.label}" min="${def.arg.min ?? 0}" step="${def.arg.step ?? 1}"
+                 value="${item.arg ?? def.arg.def}" style="width:56px;">`)
+        : '';
       return `
-        <div class="wave-rule-card" draggable="true" data-rule-index="${i}"
-          style="display:flex;align-items:center;gap:6px;padding:4px 6px;margin-bottom:4px;flex-wrap:wrap;
-                 border:1px solid var(--border-color,#444);border-radius:4px;background:rgba(255,255,255,0.03);">
-          <span style="cursor:grab;color:var(--text-mute);" title="拖动调整出兵顺序">⠿</span>
-          <select data-rule-field="type" data-rule-index="${i}" style="width:88px;">
-            ${allMinionTypes().map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${minionIcon(t)} ${minionLabel(t)}</option>`).join('')}
-          </select>
-          ${Object.entries(RULE_FIELDS).map(([k, meta]) => `
-          <label style="font-size:10px;color:var(--text-mute);display:flex;align-items:center;gap:2px;">
-            ${meta.label}
-            <input type="number" data-rule-field="${k}" data-rule-index="${i}" min="${meta.min}" step="${meta.step}"
-              value="${r[k] ?? meta.def}" style="width:42px;">
-          </label>`).join('')}
-          <select data-rule-field="when" data-rule-index="${i}" style="flex:1;min-width:90px;">
-            ${whenGroups.map(g => `<optgroup label="${g.label}">
-              ${g.items.map(it => `<option value="${it.value}" ${it.value === (r.when || '') ? 'selected' : ''}>${it.label}</option>`).join('')}
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">
+          <label style="font-size:9px;color:var(--text-mute);display:flex;align-items:center;gap:1px;" title="取反（NOT）：条件成立时这一条反而算不成立">
+            <input type="checkbox" data-cond-field="negate" data-rule-index="${ruleIdx}" data-cond-index="${condIdx}" ${item.negate ? 'checked' : ''}>非
+          </label>
+          <select data-cond-field="token" data-rule-index="${ruleIdx}" data-cond-index="${condIdx}" style="flex:1;min-width:80px;font-size:11px;">
+            ${whenGroupsShared.map(g => `<optgroup label="${g.label}">
+              ${g.items.map(it => `<option value="${it.value}" ${it.value === (item.token || '') ? 'selected' : ''}>${it.label}</option>`).join('')}
             </optgroup>`).join('')}
           </select>
-          ${whenDef?.arg ? `
-          <input type="number" data-rule-field="whenArg" data-rule-index="${i}" title="${whenDef.arg.label}"
-            min="${whenDef.arg.min}" step="${whenDef.arg.step}" value="${r.whenArg ?? whenDef.arg.def}" style="width:56px;">` : ''}
-          <button data-rule-remove="${i}" style="font-size:11px;padding:2px 6px;">✖</button>
+          ${argBox}
+          <button data-cond-remove="${ruleIdx}:${condIdx}" title="删除这条条件" style="font-size:10px;padding:0 4px;">✖</button>
+        </div>`;
+    };
+
+    const renderRuleCard = (r, i, whenGroupsShared) => {
+      const items = conditionItemsOf(r);
+      return `
+        <div class="wave-rule-card" draggable="true" data-rule-index="${i}"
+          style="display:flex;flex-direction:column;gap:4px;padding:4px 6px;margin-bottom:4px;
+                 border:1px solid var(--border-color,#444);border-radius:4px;background:rgba(255,255,255,0.03);">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span style="cursor:grab;color:var(--text-mute);" title="拖动调整出兵顺序">⠿</span>
+            <select data-rule-field="type" data-rule-index="${i}" style="width:88px;">
+              ${allMinionTypes().map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${minionIcon(t)} ${minionLabel(t)}</option>`).join('')}
+            </select>
+            ${Object.entries(RULE_FIELDS).map(([k, meta]) => `
+            <label style="font-size:10px;color:var(--text-mute);display:flex;align-items:center;gap:2px;">
+              ${meta.label}
+              <input type="number" data-rule-field="${k}" data-rule-index="${i}" min="${meta.min}" step="${meta.step}"
+                value="${r[k] ?? meta.def}" style="width:42px;">
+            </label>`).join('')}
+            <button data-rule-remove="${i}" style="font-size:11px;padding:2px 6px;margin-left:auto;">✖</button>
+          </div>
+          <div style="padding-left:18px;">
+            <div style="font-size:9px;color:var(--text-mute);display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+              <span>生效条件${items.length ? '' : '（无 = 总是生效）'}</span>
+              ${items.length >= 2 ? `
+              <label style="display:flex;align-items:center;gap:2px;">整体
+                <select data-rule-field="whenOp" data-rule-index="${i}" style="font-size:9px;">
+                  <option value="and" ${(r.whenOp || 'and') === 'and' ? 'selected' : ''}>AND（全部成立）</option>
+                  <option value="or" ${r.whenOp === 'or' ? 'selected' : ''}>OR（任一成立）</option>
+                </select>
+              </label>` : ''}
+            </div>
+            ${items.map((it, ci) => renderCondItemRow(i, it, ci, whenGroupsShared)).join('')}
+            <button data-cond-add="${i}" style="font-size:10px;">➕ 添加条件</button>
+          </div>
         </div>`;
     };
 
@@ -463,9 +503,16 @@ export const MapEditorDialog = {
             ${g.items.map(it => `<option value="${it.value}" ${it.value === (stage.when || '') ? 'selected' : ''}>${it.label}</option>`).join('')}
           </optgroup>`).join('')}
         </select>
-        ${whenDef?.arg ? `
-        <input type="number" data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="whenArg" title="${whenDef.arg.label}"
-          min="${whenDef.arg.min}" step="${whenDef.arg.step}" value="${stage.whenArg ?? whenDef.arg.def}" style="width:54px;">` : ''}
+        ${whenDef?.arg
+          ? (whenDef.arg.type === 'faction'
+              ? `<select data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="whenArg"
+                   title="${whenDef.arg.label}" style="width:64px;">
+                   <option value="">（未选）</option>
+                   ${draftFactions.map(fid => `<option value="${fid}" ${stage.whenArg === fid ? 'selected' : ''}>${fid}</option>`).join('')}
+                 </select>`
+              : `<input type="number" data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="whenArg" title="${whenDef.arg.label}"
+                   min="${whenDef.arg.min}" step="${whenDef.arg.step}" value="${stage.whenArg ?? whenDef.arg.def}" style="width:54px;">`)
+          : ''}
         <label style="font-size:9px;">数值
           <input type="number" data-aura-effect="${effectIdx}" data-stage-index="${stIdx}" data-stage-field="flat" step="0.5" value="${stage.flat ?? 0}" style="width:56px;"></label>
         <label style="font-size:9px;">百分比
@@ -1340,13 +1387,64 @@ export const MapEditorDialog = {
         el.addEventListener('change', (e) => {
           const idx = Number(el.dataset.ruleIndex);
           const field = el.dataset.ruleField;
-          const value = (field === 'type' || field === 'when') ? e.target.value : (Number(e.target.value) || 0);
+          // v2026-09-04：when/whenArg 不再从这张表单写（已经改成下面的 data-cond-field
+          // 那一套，走 withRuleConditionsSet），这里只剩 type（字符串）、whenOp（'and'/'or'
+          // 字符串）和数量类字段（数值）。
+          const value = (field === 'type' || field === 'whenOp') ? e.target.value : (Number(e.target.value) || 0);
           ensureWaveDraft(selectedWaveLaneId);
           draftLaneComposition[selectedWaveLaneId] =
             withRuleFieldSet(draftLaneComposition[selectedWaveLaneId], idx, field, value);
-          // 只有"条件"这一项会改变卡片上要不要多画一个参数输入框（whenDef.arg），
-          // 其它字段改了就是纯数值/文本，不需要重渲染（不打断输入框的焦点/滚动位置）。
-          if (field === 'when') render();
+        });
+      });
+      // 生效条件（平铺列表 + 每条可取反 + 整体 AND/OR）：token/arg/negate 改动统一
+      // 走 conditionItemsOf(rule) 读出当前展开的条件数组、改其中一条、
+      // withRuleConditionsSet 整体写回——不直接改 rule.whenItems 的引用（不修改输入）。
+      document.querySelectorAll('[data-cond-field]').forEach(el => {
+        el.addEventListener('change', (e) => {
+          const ruleIdx = Number(el.dataset.ruleIndex);
+          const condIdx = Number(el.dataset.condIndex);
+          const field = el.dataset.condField;
+          ensureWaveDraft(selectedWaveLaneId);
+          const rules = draftLaneComposition[selectedWaveLaneId];
+          const rule = rules[ruleIdx];
+          if (!rule) return;
+          const items = conditionItemsOf(rule).map(it => ({ ...it }));
+          const item = items[condIdx];
+          if (!item) return;
+          if (field === 'token') item.token = e.target.value;
+          else if (field === 'negate') item.negate = e.target.checked;
+          else if (field === 'arg') {
+            const def = WAVE_CONDITIONS[item.token || ''];
+            item.arg = def?.arg?.type === 'faction' ? e.target.value : (Number(e.target.value) || 0);
+          }
+          draftLaneComposition[selectedWaveLaneId] = withRuleConditionsSet(rules, ruleIdx, items, rule.whenOp);
+          // 换条件（token）可能要多/少画一个参数框（数值 vs 阵营下拉），需要整页重渲；
+          // negate/arg 只是改值，不需要（避免打断正在操作的输入框）。
+          if (field === 'token') render();
+        });
+      });
+      document.querySelectorAll('[data-cond-remove]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const [ruleIdx, condIdx] = btn.dataset.condRemove.split(':').map(Number);
+          ensureWaveDraft(selectedWaveLaneId);
+          const rules = draftLaneComposition[selectedWaveLaneId];
+          const rule = rules[ruleIdx];
+          if (!rule) return;
+          const items = conditionItemsOf(rule).filter((_, i) => i !== condIdx);
+          draftLaneComposition[selectedWaveLaneId] = withRuleConditionsSet(rules, ruleIdx, items, rule.whenOp);
+          render();
+        });
+      });
+      document.querySelectorAll('[data-cond-add]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ruleIdx = Number(btn.dataset.condAdd);
+          ensureWaveDraft(selectedWaveLaneId);
+          const rules = draftLaneComposition[selectedWaveLaneId];
+          const rule = rules[ruleIdx];
+          if (!rule) return;
+          const items = [...conditionItemsOf(rule), { token: '', arg: undefined, negate: false }];
+          draftLaneComposition[selectedWaveLaneId] = withRuleConditionsSet(rules, ruleIdx, items, rule.whenOp);
+          render();
         });
       });
       document.querySelectorAll('.wave-rule-card').forEach(card => {
@@ -1498,12 +1596,31 @@ export const MapEditorDialog = {
           const effIdx = Number(el.dataset.auraEffect);
           const stIdx = Number(el.dataset.stageIndex);
           const field = el.dataset.stageField;
-          const isNumeric = field === 'flat' || field === 'percent' || field === 'whenArg';
+          // whenArg 是数值还是阵营 id 字符串，取决于当前这一阶段选的条件（whenDef.arg.type）——
+          // 与出兵编排规则卡片同一份判据（cond.arg?.type === 'faction'），不能只看字段名。
+          const currentWhen = draftGlobalAura.effects?.[effIdx]?.stages?.[stIdx]?.when || '';
+          const isFactionArg = field === 'whenArg' && WAVE_CONDITIONS[currentWhen]?.arg?.type === 'faction';
+          const isNumeric = (field === 'flat' || field === 'percent' || field === 'whenArg') && !isFactionArg;
           const raw = e.target.value;
-          const value = isNumeric ? (raw === '' ? undefined : (Number(raw) || 0)) : raw;
+          const value = isFactionArg ? raw : (isNumeric ? (raw === '' ? undefined : (Number(raw) || 0)) : raw);
           draftGlobalAura = withAuraStageFieldSet(draftGlobalAura, effIdx, stIdx, field, value);
-          // when 换了可能要显示/隐藏 whenArg 输入框，需要整页重渲；其它字段不重渲。
-          if (field === 'when') render();
+          // when 换了可能要显示/隐藏 whenArg 输入框（甚至改成阵营下拉），需要整页重渲；
+          // 其它字段不重渲。
+          if (field === 'when') {
+            // 换条件时如果新旧条件的 arg 类型不一样（数值 ⇄ 阵营 id），旧 whenArg 留着
+            // 会变成一个类型不对的残值（比如把数字 600 当阵营 id 存下）——虽然
+            // WAVE_CONDITIONS 的 test() 对"阵营不存在"一律放行，不会崩，但不清掉的话
+            // 界面上会显示"未选阵营"、模型里却还留着旧数字，是个看着改了、实际没改干净
+            // 的陷阱。与 pagesWave.js 出兵编排页同一处理口径。
+            const oldArg = WAVE_CONDITIONS[currentWhen]?.arg;
+            const newArg = WAVE_CONDITIONS[e.target.value]?.arg;
+            if (newArg && oldArg?.type !== newArg.type) {
+              draftGlobalAura = withAuraStageFieldSet(draftGlobalAura, effIdx, stIdx, 'whenArg', newArg.def);
+            } else if (!newArg) {
+              draftGlobalAura = withAuraStageFieldSet(draftGlobalAura, effIdx, stIdx, 'whenArg', undefined);
+            }
+            render();
+          }
         });
       });
 

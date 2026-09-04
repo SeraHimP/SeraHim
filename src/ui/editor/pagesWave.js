@@ -11,6 +11,7 @@
 import { CONFIG } from '../../data/Config.js';
 import { mapLaneIds, laneLabel } from '../laneLabels.js';
 import { buildWaveOrder, buildBroadcastOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
+import { mapFactionsOf } from '../../systems/FactionSystem.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, rangeMid } from '../../data/dragonCurve.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
 
@@ -395,7 +396,8 @@ export const EDITOR_PAGES_WAVE = {
     // 嚎哭深渊 1 路，写死三路的话在后两张图上会摆出根本不存在的页签
     //（用户："每个地图的路数不同，UI上记得做区分！"）。
     const _laneIds = this._mapLaneIds();
-    const _mapLabel = ((window.CTX?.__app || window.__app)?.mapSystem?.currentMap?.label) || '当前地图';
+    const _currentMap = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap || null;
+    const _mapLabel = _currentMap?.label || '当前地图';
     html += `<div class="editor-section"><h4 style="display:flex;align-items:center;gap:8px;">
       <span>② 出兵编排（数组顺序 = 出兵先后）</span>
       <span style="font-size:10px;font-weight:400;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
@@ -441,11 +443,20 @@ export const EDITOR_PAGES_WAVE = {
       const cond = WAVE_CONDITIONS[r.when || ''] || WAVE_CONDITIONS[''];
       // 需要参数的条件（"游戏已进行 ≥ N 秒"）才显示那个数值框。
       // 无条件显示的话，用户会对着一个"总是"规则旁边的空数字框琢磨半天它管什么。
+      // 2026-09-04：faction.nexus_lane.* 这两条的 arg 是阵营 id（字符串），不是数值——
+      // arg.type==='faction' 是本文件唯一一处这样的标记（判据与 waveComposition.js
+      // 头注一致），要换成"从 map.factions 选一个阵营"的下拉框，不能沿用数字输入框
+      // （数字输入框根本存不了字符串 id，选了也白选）。
       const argBox = cond.arg
-        ? `<input type="number" class="wo-field wo-arg" data-idx="${i}" data-field="whenArg"
-                  min="${cond.arg.min ?? 0}" step="${cond.arg.step ?? 1}"
-                  value="${r.whenArg ?? ''}" placeholder="${cond.arg.def}"
-                  title="${cond.arg.label}">`
+        ? (cond.arg.type === 'faction'
+            ? `<select class="wo-field wo-arg" data-idx="${i}" data-field="whenArg" title="${cond.arg.label}">
+                 <option value="">（未选阵营）</option>
+                 ${mapFactionsOf(_currentMap).map(fid => `<option value="${fid}" ${r.whenArg === fid ? 'selected' : ''}>${fid}</option>`).join('')}
+               </select>`
+            : `<input type="number" class="wo-field wo-arg" data-idx="${i}" data-field="whenArg"
+                      min="${cond.arg.min ?? 0}" step="${cond.arg.step ?? 1}"
+                      value="${r.whenArg ?? ''}" placeholder="${cond.arg.def}"
+                      title="${cond.arg.label}">`)
         : '';
       const typeOrSkillSelect = `<select class="wo-field" data-idx="${i}" data-field="typeOrSkill">
           <optgroup label="刷兵">
@@ -704,6 +715,7 @@ export const EDITOR_PAGES_WAVE = {
       }
       if (f === 'scope') { r.scope = el.value === 'lane' ? 'lane' : 'faction'; return; }
       if (f === 'when') {
+        const oldArg = WAVE_CONDITIONS[r.when || '']?.arg;
         if (el.value) r.when = el.value; else delete r.when;
         const arg = WAVE_CONDITIONS[el.value]?.arg;
         // 换成不吃参数的条件时把 whenArg 一并清掉 —— 留着它会在导出的 JSON 里
@@ -712,7 +724,17 @@ export const EDITOR_PAGES_WAVE = {
         // 反过来：选了吃参数的条件就【把声明的默认值真的写进去】。
         // 只把它当 placeholder 显示是个陷阱 —— 框里灰着 600、实际按 0 判定，
         // 于是"游戏满 10 分钟才出的兵"第 1 波就出来了，而面板看着完全正常。
-        else if (r.whenArg == null) r.whenArg = arg.def;
+        // 新增 oldArg?.type !== arg.type 这一半：数值条件（如"游戏已进行≥N秒"）
+        // 切到阵营条件（如"指定阵营召唤水晶被摧毁"）时，如果只看"whenArg==null"，
+        // 留在 r.whenArg 里的旧数字（比如600）会被当成阵营 id 存下去——不报错，
+        // 但那条规则会一直按"未选阵营"放行，是个不出错误、只出静默错判的陷阱。
+        else if (r.whenArg == null || oldArg?.type !== arg.type) r.whenArg = arg.def;
+        return;
+      }
+      if (f === 'whenArg' && WAVE_CONDITIONS[r.when || '']?.arg?.type === 'faction') {
+        // 阵营选择框：值本身就是阵营 id 字符串，不走下面的 parseFloat 数值管线
+        // （空字符串=未选阵营，是合法值，WAVE_CONDITIONS 的 test() 已经按"放行"处理）。
+        r.whenArg = el.value;
         return;
       }
       const raw = el.value.trim();

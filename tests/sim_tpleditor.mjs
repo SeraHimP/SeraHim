@@ -250,8 +250,13 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
     /_waveOrderPreviewLane/.test(AE_SRC) && /woPreviewLane/.test(AE_SRC));
   // 参数默认值必须**真的写进规则**。只当 placeholder 显示的话，框里灰着 600、
   // 实际按 0 判定 —— "满 10 分钟才出的兵"第 1 波就冒出来，而面板看着毫无异常。
+  // 2026-09-04：出兵条件重做加了 faction.nexus_lane.* 这种非数值 arg 之后，
+  // 这里多了一半 `oldArg?.type !== arg.type` 的判断——数值条件切到阵营条件时
+  // 也要重置默认值，不能把旧数字留着当阵营 id 存下去（见 waveComposition.js
+  // 头注、pagesWave.js 该处注释）；原来的"whenArg 为空才补默认值"这半句判断
+  // 逐字未动，这里只是把断言的正则跟着放宽，不是这条既有行为被削弱了。
   T('选中吃参数的条件时把默认值写进规则，而不是只当 placeholder 显示',
-    /else if \(r\.whenArg == null\) r\.whenArg = arg\.def/.test(AE_SRC));
+    /else if \(r\.whenArg == null \|\| oldArg\?\.type !== arg\.type\) r\.whenArg = arg\.def/.test(AE_SRC));
   T('清空参数框回到该条件的默认值，而不是变成"没门槛"',
     /if \(f === 'whenArg' && arg\) r\.whenArg = arg\.def/.test(AE_SRC));
   T('条件声明了默认值', WC.WAVE_CONDITIONS['time.after'].arg.def === 600);

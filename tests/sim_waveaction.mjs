@@ -17,7 +17,7 @@ import { setupWindow, scoreboard } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
 
 const { validateSpec, compileSpec, TRIGGERS } = await import('../src/core/behaviorVM.js');
-const { buildWaveOrder, buildBroadcastOrder, WAVE_CONDITIONS, compositionFor } = await import('../src/data/waveComposition.js');
+const { buildWaveOrder, buildBroadcastOrder, WAVE_CONDITIONS, compositionFor, whenPasses } = await import('../src/data/waveComposition.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
@@ -141,6 +141,74 @@ const T = board.T;
   T('条⑫-ally.towers.leadAtLeast：领先不足门槛为 false',
     !lead.test({ faction: 'blue', enemy: 'red', score: { blue: { towers: 2 }, red: { towers: 1 } } }, 3));
   T('条⑬-ally.towers.leadAtLeast：score 缺失时放行', lead.test({ faction: 'blue', enemy: 'red', score: null }, 3));
+}
+
+// ==================== ⑥.5 出兵条件重做（2026-09-04）：faction.nexus_lane.* + whenPasses 的
+// AND/OR/NOT 组合。见 WAVE_CONDITIONS 头部注释与 whenPasses 头部注释。 ====================
+{
+  const destroyed = WAVE_CONDITIONS['faction.nexus_lane.destroyed'];
+  const alive = WAVE_CONDITIONS['faction.nexus_lane.alive'];
+  const censusBlueDead = { blue: { all: { nexus_lane: { alive: 0, total: 1 } } } };
+  const censusBlueAlive = { blue: { all: { nexus_lane: { alive: 1, total: 1 } } } };
+
+  T('阵①-faction.nexus_lane.destroyed：指定阵营的召唤水晶已摧毁为 true',
+    destroyed.test({ census: censusBlueDead }, 'blue'));
+  T('阵②-faction.nexus_lane.destroyed：指定阵营的召唤水晶仍存活为 false',
+    !destroyed.test({ census: censusBlueAlive }, 'blue'));
+  T('阵③-faction.nexus_lane.alive：与 destroyed 互为相反数（同一份 census 下结论相反）',
+    alive.test({ census: censusBlueAlive }, 'blue') && !alive.test({ census: censusBlueDead }, 'blue'));
+  T('阵④-faction.nexus_lane.destroyed：没选阵营（arg 为空串）时放行，不因半配置状态静默失效',
+    destroyed.test({ census: censusBlueDead }, ''));
+  T('阵⑤-faction.nexus_lane.destroyed：census 缺失时放行', destroyed.test({}, 'blue'));
+  T('阵⑥-faction.nexus_lane.destroyed：census 里没有指定阵营时放行', destroyed.test({ census: {} }, 'blue'));
+  T('阵⑦-faction.nexus_lane.destroyed：nexus_lane 档位本身缺失时放行',
+    destroyed.test({ census: { blue: { all: {} } } }, 'blue'));
+
+  // whenPasses：旧写法（when/whenArg）必须与改动前逐位一致 —— 不传 whenItems 时
+  // 退化成单元素数组，AND/OR/negate 都是恒等操作。
+  T('组①-whenPasses 兼容旧写法：when 命中时通过',
+    whenPasses({ when: 'time.after', whenArg: 100 }, { gameTime: 200 }));
+  T('组②-whenPasses 兼容旧写法：when 不命中时不通过',
+    !whenPasses({ when: 'time.after', whenArg: 100 }, { gameTime: 10 }));
+  T('组③-whenPasses：完全没写 when/whenItems 时总是通过（没有条件=总是生效）',
+    whenPasses({}, {}));
+
+  // 新写法：whenItems + whenOp。
+  const twoTrue = [
+    { token: 'time.after', arg: 0, negate: false },
+    { token: 'faction.nexus_lane.destroyed', arg: 'blue', negate: false },
+  ];
+  T('组④-whenPasses：whenItems 两条都成立 + whenOp=and(默认) → 通过',
+    whenPasses({ whenItems: twoTrue }, { gameTime: 100, census: censusBlueDead }));
+  T('组⑤-whenPasses：whenItems 一条不成立 + whenOp=and(默认) → 不通过',
+    !whenPasses({ whenItems: twoTrue }, { gameTime: 100, census: censusBlueAlive }));
+  T('组⑥-whenPasses：whenOp=or 时只要一条成立就通过',
+    whenPasses({ whenItems: twoTrue, whenOp: 'or' }, { gameTime: 100, census: censusBlueAlive }));
+  // 注意：red 阵营必须显式出现在 census 里且水晶存活，否则会命中"census 里没有
+  // 指定阵营时放行"的既定口径（宁可多算），把这条测试的期望值带偏。
+  T('组⑦-whenPasses：whenOp=or 时两条都不成立才不通过',
+    !whenPasses({ whenItems: [
+      { token: 'faction.nexus_lane.destroyed', arg: 'blue', negate: false },
+      { token: 'faction.nexus_lane.destroyed', arg: 'red', negate: false },
+    ], whenOp: 'or' }, { census: { ...censusBlueAlive, red: { all: { nexus_lane: { alive: 1, total: 1 } } } } }));
+
+  // negate：单条取反。
+  T('组⑧-whenPasses：negate:true 把"已摧毁"取反成"未摧毁时通过"',
+    whenPasses({ whenItems: [{ token: 'faction.nexus_lane.destroyed', arg: 'blue', negate: true }] },
+      { census: censusBlueAlive }));
+  T('组⑨-whenPasses：negate:true 时"已摧毁"应不通过',
+    !whenPasses({ whenItems: [{ token: 'faction.nexus_lane.destroyed', arg: 'blue', negate: true }] },
+      { census: censusBlueDead }));
+
+  // 未知 token：与既有口径一致，放行（不因为拼错 token 让整条规则连带失效）。
+  T('组⑩-whenPasses：whenItems 里有未知 token 时该条按放行处理（不拖累整条 AND）',
+    whenPasses({ whenItems: [{ token: 'not.a.real.token', arg: null, negate: false }] }, {}));
+
+  // whenItems 优先于 when/whenArg（两者同时出现时，新写法说了算——不存在这种数据，
+  // 但函数行为要明确，不能悄悄按旧字段判）。
+  T('组⑪-whenPasses：whenItems 非空时优先于 when/whenArg（旧字段被忽略）',
+    !whenPasses({ when: '', whenArg: undefined, whenItems: [{ token: 'time.after', arg: 999999, negate: false }] },
+      { gameTime: 1 }));
 }
 
 // ==================== ⑦ LaneWaveSystem._broadcast：scope 过滤（阵营/路）====================

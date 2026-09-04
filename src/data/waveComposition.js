@@ -74,10 +74,13 @@ function tally(ctx, sideKey, tier) {
  */
 export const WAVE_CONDITIONS = {
   '': { label: '总是', group: '基础', test: () => true },
-  // 兼容旧存档里的两个 token：语义 = 本路（敌方）召唤水晶是否已全灭。
-  // 它们和下面的 enemy.nexus_lane.allDown / .anyAlive 是同一件事，
-  // 保留是为了老配置导进来不失效，新建规则请用下面那组。
-  'nexusDown':  { label: '本路水晶已陷落（旧写法）', group: '基础', test: (c) => !!c.nexusDown },
+  // 2026-09-04：用户反馈"本路水晶已陷落（旧写法）"在多阵营地图下语义不成立——
+  // 它读的是 ctx.nexusDown（LaneWaveSystem 按"本路敌方"这个二元关系算出来的
+  // 一个布尔值），3+ 阵营时"敌方"本就不是唯一的，这条件天生说不清"是哪个
+  // 阵营的水晶陷落了"。新写法直接指定阵营 id，不依赖 ally/enemy 相对关系。
+  // 旧的两个 token 保留（老存档/老配置引用它们不能失效），但不再是新建规则的
+  // 推荐项——下面 faction.nexus_lane.destroyed 才是。
+  'nexusDown':  { label: '本路水晶已陷落（旧写法，建议改用下面"指定阵营召唤水晶被摧毁"）', group: '基础', test: (c) => !!c.nexusDown },
   '!nexusDown': { label: '本路水晶未陷落（旧写法）', group: '基础', test: (c) => !c.nexusDown },
   // gameTime 缺失（单测/旧调用不传 ctx）时【放行】，与建筑条件拿不到 census
   // 时的口径一致。若按 0 秒算，"游戏满 10 分钟才出的兵"会在所有不带 ctx 的调用里
@@ -88,6 +91,36 @@ export const WAVE_CONDITIONS = {
   'time.before': { label: '游戏进行不足 N 秒', group: '时间',
                    arg: { label: '秒', def: 600, min: 0, step: 30 },
                    test: (c, n) => c.gameTime == null || c.gameTime < (n ?? 0) },
+  // 2026-09-04：多阵营地图下"本路水晶已陷落（旧写法）"的替代——直接指定一个
+  // 阵营 id（不是 ally/enemy 相对概念），判定它的召唤水晶是否被摧毁。
+  // arg.type='faction' 是本文件唯一一处非数值参数：UI 要按这个标记把参数框
+  // 从数字输入换成"从 map.factions 选一个阵营"的下拉框（见各处 argBox 的渲染，
+  // 判据统一是 `cond.arg?.type === 'faction'`，不要在别处另起一套判断）。
+  // 拿不到 census、或指定的阵营在这张图上不存在时一律放行（与本文件其它条件
+  // 同一套"信息不足就不拦"的既定口径）——包括"还没选阵营"（factionId 为空）
+  // 这种半配置状态：不能让规则因为用户还没填完就静默失效。
+  'faction.nexus_lane.destroyed': {
+    label: '指定阵营召唤水晶被摧毁', group: '阵营（多阵营地图用）',
+    arg: { type: 'faction', label: '阵营', def: '' },
+    test: (c, factionId) => {
+      if (!factionId) return true;
+      const census = c.census; if (!census) return true;
+      const box = census[factionId]; if (!box) return true;
+      const n = box.all?.nexus_lane; if (!n) return true;
+      return n.alive === 0 && n.total > 0;
+    },
+  },
+  'faction.nexus_lane.alive': {
+    label: '指定阵营召唤水晶仍存活', group: '阵营（多阵营地图用）',
+    arg: { type: 'faction', label: '阵营', def: '' },
+    test: (c, factionId) => {
+      if (!factionId) return true;
+      const census = c.census; if (!census) return true;
+      const box = census[factionId]; if (!box) return true;
+      const n = box.all?.nexus_lane; if (!n) return true;
+      return n.alive > 0;
+    },
+  },
 };
 
 // 建筑条件：档位 × 我方/敌方 × 三种成色。共 36 条，全部由这张表生成 ——
@@ -173,13 +206,36 @@ export function whenOptionGroups() {
 export const WHEN_OPTIONS = Object.entries(WAVE_CONDITIONS)
   .map(([value, def]) => ({ value, label: def.label }));
 
+/**
+ * 2026-09-04：条件组合（AND/OR/NOT，用户拍板"平铺列表+每条可取反，整体AND或
+ * 整体OR"）。数据形状：
+ *   rule.whenItems: [{ token, arg, negate }, ...]   —— 新写法，多条时用它
+ *   rule.when / rule.whenArg                        —— 旧写法（单条件），
+ *     没有 whenItems 时当作"只有这一条、negate:false"的兜底
+ *   rule.whenOp: 'and' | 'or'                        —— whenItems 有 ≥2 条时
+ *     怎么组合，默认 'and'；只有 0~1 条时这个字段不影响结果
+ *
+ * 只加字段、不改旧字段的语义——旧规则只有 when/whenArg 时，conditionItemsOf
+ * 退化成单元素数组，whenPasses 的判定与改动前逐位一致（单条件时 AND/OR 无区别，
+ * negate 恒为 false，跟原来"直接返回 test() 结果"完全一样）。
+ */
+export function conditionItemsOf(rule) {
+  if (Array.isArray(rule?.whenItems) && rule.whenItems.length) return rule.whenItems;
+  if (rule && rule.when) return [{ token: rule.when, arg: rule.whenArg, negate: false }];
+  return [];
+}
+
 /** 单条规则的 when 是否成立。未知 token 一律放行（见文件顶部关于"宁可多出兵"的说明）。 */
 export function whenPasses(rule, ctx) {
-  const token = rule && rule.when;
-  if (!token) return true;
-  const def = WAVE_CONDITIONS[token];
-  if (!def) return true;
-  return !!def.test(ctx || {}, rule.whenArg);
+  const items = conditionItemsOf(rule);
+  if (!items.length) return true;
+  const c = ctx || {};
+  const results = items.map(({ token, arg, negate }) => {
+    const def = WAVE_CONDITIONS[token];
+    const pass = def ? !!def.test(c, arg) : true;
+    return negate ? !pass : pass;
+  });
+  return rule?.whenOp === 'or' ? results.some(Boolean) : results.every(Boolean);
 }
 
 /**

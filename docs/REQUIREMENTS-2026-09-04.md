@@ -185,16 +185,38 @@ Playwright 实机验收：三张图依次在编辑器里切换、进配置模式
 
 ## 八、出兵条件重做：阵营选择 + AND/OR/NOT 组合
 
-（未开始，见下方执行状态）
+（已完成，见下方执行状态）
 
 用户拍板：①"本路水晶已陷落（旧写法）"重做成显式指定阵营 id（从
 `map.factions` 下拉选）的条件，直接判定"XX阵营召唤水晶被摧毁"，不再依赖
 ally/enemy 相对概念（3+阵营地图下 enemy 只能指向第一个非自己阵营，语义不成立）；
 ②出兵条件从单条件扩展为平铺列表+每条可取反(NOT)+整组 AND/OR，不做嵌套
-表达式树。这会牵连 `waveComposition.js` 的 `WAVE_CONDITIONS`/`whenPasses`
-数据结构本身，以及全部消费方：出兵编排规则卡片 UI、`NeutralCampSystem.
-campTriggerDue`、刚做的地图光环分阶段模式 UI——四处的 when 下拉都要跟着换成
-新的条件组合编辑器。
+表达式树。
+
+**数据模型**（`src/data/waveComposition.js`）：新增两条条件
+`faction.nexus_lane.destroyed`/`faction.nexus_lane.alive`，`arg: { type:
+'faction', ... }` 是全文件唯一一处非数值参数标记；旧的 `nexusDown`/
+`!nexusDown` 保留（老存档不失效），标签改注"建议改用……"。组合逻辑：
+`rule.whenItems: [{token, arg, negate}]` + `rule.whenOp: 'and'|'or'`
+是纯新增字段，`conditionItemsOf(rule)` 在没有 `whenItems` 时从旧的
+`when`/`whenArg` 合成一个单元素数组兜底——旧规则的判定结果与改动前逐位
+一致（单条件时 AND/OR 无意义、negate 恒为 false，退化成原来"直接返回
+test() 结果"）。`AuraValueResolver.js` 的分阶段光环因为已经复用
+`whenPasses(stage, ctx)`，这条组合能力零改动自动继承。
+
+**消费方接线**：`arg.type==='faction'` 这个判据统一贯穿三处 UI——
+`pagesWave.js`（全局模板编辑器出兵编排页，只做了这一处最小修复：数字
+输入框换成阵营下拉，**没有**做完整多条件组合 UI，切换条件时新旧 arg
+类型不一致会把 whenArg 重置成新默认值，避免残留一个类型不对的值）、
+`MapEditorDialog.js` 的地图光环分阶段行（`renderAuraStageRow`，同样只
+修了 arg 渲染，阶段判定仍是单条件，不做组合）、`MapEditorDialog.js` 的
+出兵编排规则卡片（`renderRuleCard`，**唯一**做了完整平铺列表+NOT+整体
+AND/OR 编辑 UI 的地方——用户拍板的范围就是"按地图编排的规则卡片"，全局
+模板编辑器那张密集网格表和光环阶段行结构风险更高，这次不动）。
+`mapEditorCore.js` 新增 `withRuleConditionsSet()`：整体替换某条规则的
+条件组合并清掉旧的 when/whenArg 字段，不留两套写法互相打架。
+`NeutralCampSystem.campTriggerDue` 调用的是旧的 `{when, whenArg}` 单条件
+形状，`conditionItemsOf` 天然兼容，零改动。
 
 ---
 
@@ -223,4 +245,12 @@ campTriggerDue`、刚做的地图光环分阶段模式 UI——四处的 when �
 - [x] 第七节：中立营地出生点并入"建筑摆放"画布可视化点选——金色菱形标记 +
       过滤器 + 新增/拖动/删除。7 条 DOM 接线断言，Playwright 实机验收
       （新增→拖动→删除全链路，0 真实控制台报错）。
-- [ ] 第八节：出兵条件重做（阵营选择 + AND/OR/NOT 组合）（未开始）。
+- [x] 第八节：出兵条件重做（阵营选择 + AND/OR/NOT 组合）——`waveComposition.js`
+      新增 `faction.nexus_lane.destroyed/.alive` + `whenItems`/`whenOp`
+      组合（`conditionItemsOf` 对旧数据逐位兼容），`mapEditorCore.js` 新增
+      `withRuleConditionsSet`。50 条 pure-function 测试
+      （`sim_waveaction.mjs`）、8 条 pagesWave.js 阵营下拉渲染/写回测试
+      （`sim_v51.mjs`）、10 条 MapEditorDialog.js DOM 接线断言
+      （`sim_mapeditor.mjs`）。Playwright 实机验收（地图编辑器规则卡片
+      加两条条件→出现 AND/OR 切换→切成阵营条件参数框变成
+      `<select>`→勾选 NOT→删除条件，全程 0 真实控制台报错）。

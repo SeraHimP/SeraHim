@@ -3560,4 +3560,72 @@ async function world() {
   delete SkillLibrary[spec.id];
 }
 
+// ==================== 2026-09-04：出兵条件重做——pagesWave.js 的 faction.nexus_lane.*
+// arg 渲染修复。见 waveComposition.js 新增的 faction.nexus_lane.destroyed/.alive：
+// 这两条的 arg 是阵营 id（字符串），不是数值——cond.arg 原来只要存在就画数字输入框，
+// 选了这两条会画出一个数字框，往里填阵营 id 会被 parseFloat 成 NaN，条件形同虚设。
+// 修法是 argBox 按 cond.arg.type==='faction' 分支成 <select>（下拉列出 map.factions）。
+// 延续本文件已经在用的套路：_renderWaveOrderContent() 纯字符串模板直接调断言 HTML，
+// _readWaveOrderInputs() 用手搭的假 overlay（不需要 jsdom）。
+// ====================
+{
+  const { AttributeEditor } = await import('../src/ui/AttributeEditor.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+
+  const savedComposition = CONFIG.gameRules.laneWaveComposition;
+  const savedFactionOv = CONFIG.factionOverrides;
+  const prevApp = window.CTX?.__app;
+  AttributeEditor._factionScope = 'shared';
+  AttributeEditor._waveLaneScope = 'all';
+  window.CTX = window.CTX || {};
+  window.CTX.__app = {
+    mapSystem: { currentMap: { lanes: [{ id: 'top' }, { id: 'mid' }, { id: 'bot' }], factions: ['blue', 'red', 'green'] } },
+  };
+  CONFIG.factionOverrides = {};
+  CONFIG.gameRules = { ...CONFIG.gameRules,
+    laneWaveComposition: [{ type: 'melee', count: 3, when: 'faction.nexus_lane.destroyed', whenArg: 'red' }] };
+
+  const html = AttributeEditor._renderWaveOrderContent();
+  T('阵编①-faction.nexus_lane.destroyed 的参数框渲染成 <select>（阵营下拉），当前值 red 被 selected',
+    /<select class="wo-field wo-arg" data-idx="0" data-field="whenArg"[\s\S]{0,200}<option value="red" selected>red<\/option>/.test(html));
+  T('阵编②-下拉框列出了这张图声明的全部阵营（blue/red/green），不是写死两个',
+    /<option value="blue"[^>]*>blue<\/option>/.test(html) && /<option value="green"[^>]*>green<\/option>/.test(html));
+  T('阵编③-没有把它误画成数字输入框（不会出现 type="number" 的 wo-arg）',
+    !/<input type="number" class="wo-field wo-arg" data-idx="0" data-field="whenArg"/.test(html));
+
+  // 回归：普通数值条件（如"游戏已进行≥N秒"）还是数字输入框，没被这次改动带偏。
+  CONFIG.gameRules.laneWaveComposition = [{ type: 'melee', count: 3, when: 'time.after', whenArg: 300 }];
+  const htmlNumeric = AttributeEditor._renderWaveOrderContent();
+  T('阵编④-数值条件（time.after）仍然渲染数字输入框，不受这次改动影响',
+    /<input type="number" class="wo-field wo-arg" data-idx="0" data-field="whenArg"[\s\S]{0,100}value="300"/.test(htmlNumeric));
+
+  // ---- _readWaveOrderInputs：faction 类型的 arg 走字符串直存，不走 parseFloat ----
+  const fakeOverlay = (fields) => ({ querySelectorAll: () => fields });
+  const fakeEl = (idx, field, value) => ({ dataset: { idx: String(idx), field }, value });
+
+  CONFIG.gameRules.laneWaveComposition = [{ type: 'melee', count: 3 }];
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'when', 'faction.nexus_lane.destroyed')]));
+  T('阵编⑤-选中 faction.nexus_lane.destroyed 后，whenArg 按声明的默认值（空串）写入，不是 NaN',
+    CONFIG.gameRules.laneWaveComposition[0].whenArg === '');
+
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'whenArg', 'blue')]));
+  T('阵编⑥-阵营下拉框改选后，whenArg 原样存成字符串 "blue"（不经过 parseFloat）',
+    CONFIG.gameRules.laneWaveComposition[0].whenArg === 'blue');
+
+  // 从阵营条件切回数值条件：新旧 arg.type 不一致，whenArg 必须被重置成新条件的默认值，
+  // 不能把 "blue" 这个字符串原样留着当数值条件的门槛（那会是个存进 JSON 却永远读不出
+  // 正确语义的残留字段）。
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'when', 'time.after')]));
+  T('阵编⑦-切回数值条件（time.after）后，whenArg 被重置成该条件的默认值（600），不是残留的 "blue"',
+    CONFIG.gameRules.laneWaveComposition[0].whenArg === 600);
+
+  AttributeEditor._readWaveOrderInputs(fakeOverlay([fakeEl(0, 'whenArg', '120')]));
+  T('阵编⑧-数值条件下 whenArg 走原来的 parseFloat 管线，不受这次改动影响',
+    CONFIG.gameRules.laneWaveComposition[0].whenArg === 120);
+
+  CONFIG.gameRules.laneWaveComposition = savedComposition;
+  CONFIG.factionOverrides = savedFactionOv;
+  window.CTX.__app = prevApp;
+}
+
 done();

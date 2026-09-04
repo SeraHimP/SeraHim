@@ -489,6 +489,33 @@ export function withRuleFieldSet(rules, index, field, value) {
   return rules.map((r, i) => (i === index ? { ...r, [field]: value } : r));
 }
 
+/**
+ * 出兵条件重做（2026-09-04）：整体替换某条规则的"生效条件"组合，写 whenItems/
+ * whenOp（见 waveComposition.js 的 conditionItemsOf/whenPasses 头注），并清掉
+ * 旧写法的 when/whenArg —— 编辑器一旦碰过"生效条件"这块 UI 就统一按新写法存，
+ * 不留两套字段互相打架（whenPasses 优先认 whenItems，留着旧字段不会读错，
+ * 但会让下一个看导出 JSON 的人以为这条规则还是旧写法）。
+ * whenItems 为空（用户把所有条件都删掉了）时连 whenItems/whenOp 一起删掉，
+ * 退回"没有条件字段=总是生效"这个两种写法共通的兜底状态，不留一个空数组占位。
+ * @returns {object[]} 新数组（不修改输入，也不修改被改的那条规则本身）
+ */
+export function withRuleConditionsSet(rules, index, whenItems, whenOp) {
+  return rules.map((r, i) => {
+    if (i !== index) return r;
+    const next = { ...r };
+    delete next.when;
+    delete next.whenArg;
+    if (Array.isArray(whenItems) && whenItems.length) {
+      next.whenItems = whenItems;
+      next.whenOp = whenOp === 'or' ? 'or' : 'and';
+    } else {
+      delete next.whenItems;
+      delete next.whenOp;
+    }
+    return next;
+  });
+}
+
 // ==================== 中立营地（第四节 Part D：统一编辑器"配置模式"）====================
 // 见 systems/NeutralCampSystem.js 头注。这里只是给编辑器一套克隆/增删改的纯函数，
 // 跟阵营/出兵编排那两节是同一个套路——数据形状的唯一权威定义在 NeutralCampSystem.js，
