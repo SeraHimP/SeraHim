@@ -167,10 +167,22 @@ lane 数据模型选方案A / 龙魂击杀方独享 / 计分板每阵营一栏 /
         `structureCensus` 泛化 + `LaneWaveSystem._enqueueSpawn` 淘汰门控 +
         `__towerRuleFor` 未声明阵营的 waveOn 兜底修正——`572d51d`。
         阵营淘汰后**真正停止出兵**这条用户最明确要求的行为已经跑通。
-  - [ ] 阶段3：编辑器校验放开（`mapValidate.js` 对称性检查只在两阵营地图生效）。
+  - [x] 阶段3：编辑器校验放开——`buildingCountsSymmetric`/`attackTowerSpacingOk`/
+        `crossFactionTowerSpacingOk` 按 `mapFactionsOf` 泛化，3+ 阵营地图不再被
+        两阵营对称规则误判"不合规"——`dbbe2ff`。
+  - [x] 阶段5：结算类专项——`dbbe2ff`。龙魂击杀方独享（`DragonSystem.js`
+        factionKills/factionTotals/souls 惰性开第三阵营记账 + `equipExistingSoul`
+        泛化门 + `CombatSystem.recordLastHit` 泛化）、计分板每阵营一栏
+        （`main.js` 新 `scorerFactionOf`，归属改成"谁打的最后一击"而不是
+        "死者阵营表里另一个"）、熵-阵营耦合在 3+ 阵营地图禁用
+        （`WorldState._entropyCouplingApplies`）、塔朝向按 `lane.spawns`
+        声明的目标阵营取（`towerFacing.js`）。过程中 DragonSystem 的表结构
+        第一版做成完全惰性 `{}`，两阵营既有测试当场炸了 2 条（`ds.factionTotals.red`
+        从恒为 0 变成 undefined）——诊断后改回预置 `{blue:...,red:...}`，
+        只在写入路径泛化，详见该提交信息。
   - [ ] 阶段4：编辑器 UI 阵营增删入口（放在第二节入口合并之后做）。
-  - [ ] 阶段5：结算类专项——龙魂击杀方独享（`DragonSystem.js`）、计分板每阵营
-        一栏（`main.js`）、秩序-混乱系统在 3+ 阵营地图禁用（`EntropySystem.js`/
-        `WorldState.js`）、塔朝向泛化（`towerFacing.js`）。用户已拍板前三条的
-        具体规则，可以直接排进实现，不必再等设计确认。
   - [ ] 阶段6：中立野怪泛化——独立立项，本次不做（见报告 §7）。
+
+  第六节到此**除阶段4（等入口合并）、阶段6（独立立项）外全部完成**，
+  多阵营的地基数据模型、出兵/淘汰链路、编辑器校验、龙魂/计分板/熵系统/
+  塔朝向五处结算类专项都已跑通并有测试钉住，两阵营地图全程逐位不变。
