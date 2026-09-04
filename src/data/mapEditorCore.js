@@ -67,6 +67,7 @@ export function cloneMapForEdit(baseMap) {
  */
 export function buildCustomMapPayload(baseMap, {
   id, label, n, bits, buildings, baseCircleRadius, pits, lanes, factions, spawnEnabled,
+  laneWaveCompositionByLane,
 }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
   const clone = cloneMapForEdit(baseMap);
@@ -91,6 +92,12 @@ export function buildCustomMapPayload(baseMap, {
   // 不是新发明一套开关。空对象也是合法值（等于"这张图不覆写任何兵种"），
   // 所以判断"是否传入"用 typeof 而不是"有没有键"。
   if (spawnEnabled && typeof spawnEnabled === 'object') clone.spawnEnabled = spawnEnabled;
+  // 出兵编排（第四节 Part B）：复用 LaneWaveSystem.js 新接的 map.laneWaveCompositionByLane
+  // 覆写层（见该文件 `_mapLWC` 那段注释）——同样"不传就保留原值"，空对象也是合法值
+  // （编过但没给任何一条路配独立编排，仍然是"整张图不覆写"）。
+  if (laneWaveCompositionByLane && typeof laneWaveCompositionByLane === 'object') {
+    clone.laneWaveCompositionByLane = laneWaveCompositionByLane;
+  }
   return clone;
 }
 
@@ -425,4 +432,50 @@ export function withLaneRemoved(lanes, laneId) {
  */
 export function laneBuildingCount(buildings, laneId) {
   return buildings.filter(b => b.laneId === laneId).length;
+}
+
+// ==================== 出兵编排（第四节 Part B：地图独立的按路编排）====================
+// 见 docs/REQUIREMENTS-2026-09-03.md 第四节、src/data/waveComposition.js 头注。
+// 数据形状跟 CONFIG.gameRules.laneWaveCompositionByLane[laneId] 一模一样（一条路
+// 一份规则数组，每条规则 {type,count,fromWave,everyN,when?,whenArg?}）——
+// compositionFor() 早就认这一层（阵营独立编排之下、共享基准之上，见该函数头注
+// 的四级解析顺序），这里只是把它从"只能在全局 CONFIG 里改"接到"可以按地图存"，
+// 判定逻辑一处没动（LaneWaveSystem.js 的 `_mapLWC` 合并块）。
+// 这几个函数只管"改一份规则数组"，不关心它挂在哪条路——挂哪条路是调用方
+// （编辑器 UI）通过 `draftLaneComposition[laneId] = withRuleXxx(...)` 决定的。
+
+/**
+ * 新增一条规则到队尾（拖拽编排"新增"永远加在最后，用户再拖到想要的位置）。
+ * @returns {object[]} 新数组（不修改输入）
+ */
+export function withRuleAdded(rules, rule) {
+  return [...rules, rule];
+}
+
+/** 删除指定下标的规则。@returns {object[]} 新数组（不修改输入） */
+export function withRuleRemoved(rules, index) {
+  return rules.filter((_, i) => i !== index);
+}
+
+/**
+ * 把某条规则从一个位置挪到另一个位置（拖拽排序落点用）——这就是"出兵顺序改
+ * 拖拽编排"里"顺序"两个字的全部实现：数组下标就是出兵顺序，不需要额外的
+ * "序号"字段。
+ * @returns {object[]} 新数组（不修改输入）
+ */
+export function withRuleMoved(rules, fromIndex, toIndex) {
+  if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= rules.length) return [...rules];
+  const next = [...rules];
+  const [moved] = next.splice(fromIndex, 1);
+  const clampedTo = Math.max(0, Math.min(next.length, toIndex));
+  next.splice(clampedTo, 0, moved);
+  return next;
+}
+
+/**
+ * 改某条规则的某个字段（数量/起始波次/每几波一次/兵种/条件……）。
+ * @returns {object[]} 新数组（不修改输入，也不修改被改的那条规则本身）
+ */
+export function withRuleFieldSet(rules, index, field, value) {
+  return rules.map((r, i) => (i === index ? { ...r, [field]: value } : r));
 }

@@ -56,7 +56,7 @@ export const CONFIG_FIELDS = [
   'dragon', 'pits',
   'tierStats', 'skillOverrides', 'excludeSkills',
   'waveInterval', 'firstWaveDelay', 'spawnGap', 'waveColumns', 'columnSpacing', 'nexusRespawnTime',
-  'globalAura', 'spawnEnabled',
+  'globalAura', 'spawnEnabled', 'laneWaveCompositionByLane',
 ];
 
 /**

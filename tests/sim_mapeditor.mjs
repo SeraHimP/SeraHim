@@ -467,7 +467,7 @@ const T = board.T;
   // "起点地图"下拉框（不重新做一份，见 renderConfigModeBody 头注），这里只钉阵营
   // 增删/出兵开关/跳转入口这几处新接线，以及 mapEditorCore.js 那几个纯函数真的被调用了。
   T('㊵-导入了阵营管理的纯函数（cloneFactionsForEdit/withFactionAdded/withFactionRemoved/pruneMapDataForRemovedFaction）',
-    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,60}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+    /cloneFactionsForEdit[\s\S]{0,300}withFactionAdded[\s\S]{0,300}withFactionRemoved[\s\S]{0,300}pruneMapDataForRemovedFaction[\s\S]{0,200}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
   T('㊶-新增了第四个 editMode 切换按钮（配置模式）',
     /mapEditorEditModeConfig['"]\)\.addEventListener\(['"]click['"][\s\S]{0,60}editMode\s*=\s*['"]config['"]/.test(src));
   T('㊷-新增阵营按钮调用 withFactionAdded 并捕获异常写回状态提示（不是让整个弹窗崩掉）',
@@ -480,6 +480,27 @@ const T = board.T;
     /switchBase\s*=[\s\S]{0,900}draftFactions\s*=\s*cloneFactionsForEdit\(baseMap\)[\s\S]{0,200}draftSpawnEnabled\s*=/.test(src));
   T('㊻-保存时把 draftFactions/draftSpawnEnabled 一起传给 buildCustomMapPayload（不是编辑了但存不下去）',
     /buildCustomMapPayload\(baseMap[\s\S]{0,400}factions:\s*draftFactions[\s\S]{0,100}spawnEnabled:\s*draftSpawnEnabled/.test(src));
+
+  // 出兵编排（第四节 Part B：地图独立的按路编排，见 mapEditorCore.js"出兵编排"节
+  // 头注 + LaneWaveSystem.js 的 _mapLWC 合并块）——DOM 弹窗这层同样只钉接线：
+  // 导入了纯函数、缩略图点击换算了坐标选路、增删/拖拽真的调了对应纯函数、
+  // 字段改动写回草稿、保存时把刷兵规则和原样保留的广播规则拼起来传出去。
+  T('㊼-导入了出兵编排的纯函数（withRuleAdded/withRuleRemoved/withRuleMoved/withRuleFieldSet）',
+    /withRuleAdded[\s\S]{0,200}withRuleRemoved[\s\S]{0,200}withRuleMoved[\s\S]{0,200}withRuleFieldSet[\s\S]{0,60}from ['"]\.\.\/data\/mapEditorCore\.js['"]/.test(src));
+  T('㊽-缩略图点击会把屏幕坐标换算成格子坐标，再找最近的路（不是瞎猜第一条）',
+    /mapEditorWaveThumb['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,150}clientToGrid\(e\.target[\s\S]{0,150}nearestLaneAtGridPoint/.test(src));
+  T('㊾-新增规则按钮：先 ensureWaveDraft 材料化草稿，再调 withRuleAdded',
+    /mapEditorWaveAddRuleBtn['"]\)\?\.addEventListener\(['"]click['"][\s\S]{0,150}ensureWaveDraft\(selectedWaveLaneId\)[\s\S]{0,200}withRuleAdded/.test(src));
+  T('㊿-删除规则按钮：真的调了 withRuleRemoved（不是只关掉面板）',
+    /data-rule-remove[\s\S]{0,300}withRuleRemoved\(draftLaneComposition\[selectedWaveLaneId\]/.test(src));
+  T('51-拖拽排序：dragstart 记下标，drop 时调 withRuleMoved',
+    /dragstart['"][\s\S]{0,100}draggingRuleIndex\s*=\s*Number\(card\.dataset\.ruleIndex\)[\s\S]{0,400}withRuleMoved/.test(src));
+  T('52-字段改动：调 withRuleFieldSet 写回草稿，"条件"字段改动才触发整页重渲（其它字段不打断输入焦点）',
+    /data-rule-field[\s\S]{0,400}withRuleFieldSet\(draftLaneComposition\[selectedWaveLaneId\][\s\S]{0,150}if \(field === ['"]when['"]\) render\(\)/.test(src));
+  T('53-保存时把刷兵规则（draftLaneComposition）和原样保留的广播规则（draftLaneBroadcast）拼起来传给 buildCustomMapPayload',
+    /laneWaveCompositionByLane\[laneId\]\s*=\s*\[\.\.\.draftLaneComposition\[laneId\], \.\.\.\(draftLaneBroadcast\[laneId\][\s\S]{0,300}buildCustomMapPayload\(baseMap[\s\S]{0,500}laneWaveCompositionByLane/.test(src));
+  T('54-切换起点地图会重建出兵编排草稿（不然切图后草稿还是上一张图的覆写）',
+    /switchBase\s*=[\s\S]{0,1200}draftLaneComposition\s*=[\s\S]{0,200}draftLaneBroadcast\s*=/.test(src));
 }
 
 // ==================== ⑦ 阵营管理（第四节 Part A：统一编辑器"配置模式"）====================

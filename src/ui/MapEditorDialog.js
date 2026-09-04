@@ -51,7 +51,7 @@ import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle, paintPolyline, despeckle } from '../data/navgrid.js';
 import { imageToNavgrid } from '../data/imageImport.js';
-import { STRUCT_TIERS } from '../data/waveComposition.js';
+import { STRUCT_TIERS, RULE_FIELDS, compositionFor, whenOptionGroups } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
@@ -60,6 +60,7 @@ import {
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
   cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
+  withRuleAdded, withRuleRemoved, withRuleMoved, withRuleFieldSet,
 } from '../data/mapEditorCore.js';
 import { allMinionTypes, minionLabel, minionIcon } from '../data/customContent.js';
 
@@ -108,6 +109,19 @@ export const MapEditorDialog = {
     // ---- 配置模式（第四节 Part A）：阵营管理 + 出兵开关，见 mapEditorCore.js 对应函数头注 ----
     let draftFactions = cloneFactionsForEdit(baseMap);        // ['blue','red',...]
     let draftSpawnEnabled = { ...(baseMap.spawnEnabled || {}) };  // {[兵种]: boolean}，未声明=默认开
+
+    // ---- 配置模式（第四节 Part B）：出兵编排，按路独立，见 mapEditorCore.js "出兵编排" 节头注 ----
+    // 稀疏表：只有被在这个面板里打开过的路才有 key（"打开=开始编辑这条路的独立编排"，
+    // 没打开过的路继续读共享基准，不会因为看了一眼就被存成一份跟基准一模一样的覆写——
+    // 除了已经打开过之后：那之后哪怕没真的改动也会按当前值存下去，这是刻意接受的
+    // 简化，见 renderWaveOrderPanel 头注）。
+    let draftLaneComposition = { ...(baseMap.laneWaveCompositionByLane || {}) };
+    // 广播规则（v51.33，技能触发）不在这一批的编辑范围内（见头注），但也不能因为
+    // 打开这条路编辑就把它们弄丢——从共享基准里摘出来的广播规则原样存这里，
+    // 保存时原样拼回去，不参与本面板任何编辑操作。
+    let draftLaneBroadcast = {};
+    let selectedWaveLaneId = draftLanes[0]?.id ?? null;
+    let draggingRuleIndex = -1;
 
     // ---- 图片自动识别导入（第四节，见 src/data/imageImport.js 头注） ----
     let imgImportOpen = false;         // 是否展开这个子面板
@@ -220,6 +234,137 @@ export const MapEditorDialog = {
         }
         ctx.globalAlpha = 1;
       });
+    };
+
+    // ---- 出兵编排（第四节 Part B）：地图缩略图画兵线，点线选路 ----
+    // 复用地形笔刷同一套地形画法 + drawLanePaths 同一套配色/坐标换算（worldToGrid），
+    // 只是选中态换成 selectedWaveLaneId（这个面板自己的"正在编哪条路"，跟路径编辑
+    // 模式的 selectedLaneId 是两件独立的事——你可能在编 A 路的地形路点，同时想看
+    // B 路的出兵编排）。
+    const drawWaveLaneThumbnail = () => {
+      const canvas = document.getElementById('mapEditorWaveThumb');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(n, n);
+      for (let i = 0; i < n * n; i++) {
+        const o = i * 4;
+        if (bits[i]) { img.data[o] = 206; img.data[o + 1] = 224; img.data[o + 2] = 188; img.data[o + 3] = 255; }
+        else { img.data[o] = 46; img.data[o + 1] = 48; img.data[o + 2] = 56; img.data[o + 3] = 255; }
+      }
+      ctx.putImageData(img, 0, 0);
+      draftLanes.forEach((lane, li) => {
+        const isSel = lane.id === selectedWaveLaneId;
+        ctx.strokeStyle = LANE_COLOR[li % LANE_COLOR.length];
+        ctx.globalAlpha = isSel ? 1 : 0.4;
+        ctx.lineWidth = isSel ? 3 : 1.5;
+        ctx.beginPath();
+        lane.waypoints.forEach((wp, i) => {
+          const { gx, gy } = worldToGrid(wp.x, wp.y);
+          if (i === 0) ctx.moveTo(gx, gy); else ctx.lineTo(gx, gy);
+        });
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+    };
+
+    /** 点到线段的最短距离（缩略图点选最近的路用）——纯几何，跟哪条路无关。 */
+    const pointToSegmentDist = (px, py, ax, ay, bx, by) => {
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    };
+
+    /** 缩略图上离 (gx,gy) 最近的那条路的 id——点选用。 */
+    const nearestLaneAtGridPoint = (gx, gy) => {
+      let best = null, bestDist = Infinity;
+      for (const lane of draftLanes) {
+        for (let i = 0; i < lane.waypoints.length - 1; i++) {
+          const a = worldToGrid(lane.waypoints[i].x, lane.waypoints[i].y);
+          const b = worldToGrid(lane.waypoints[i + 1].x, lane.waypoints[i + 1].y);
+          const d = pointToSegmentDist(gx, gy, a.gx, a.gy, b.gx, b.gy);
+          if (d < bestDist) { bestDist = d; best = lane.id; }
+        }
+      }
+      return best;
+    };
+
+    /**
+     * 第一次真正编辑某条路的出兵队列时，把它从"继承共享基准"挪成"这条路自己的
+     * 草稿"——只看一眼、没做任何改动的路不会被这一步碰到（调用点全部在会真的
+     * 改数组的那几个事件处理器里，不在渲染/选中路径那几处）。
+     * 广播规则（kind:'broadcast'，见 waveComposition.js v51.33）不在这批编辑范围内，
+     * 摘出来单独存一份、原样带回保存结果，不参与这里任何增删拖拽。
+     */
+    const ensureWaveDraft = (laneId) => {
+      if (draftLaneComposition[laneId]) return;
+      const full = compositionFor(null, CONFIG.gameRules, laneId);
+      draftLaneComposition[laneId] = full.filter(r => r.type);
+      draftLaneBroadcast[laneId] = full.filter(r => r.kind === 'broadcast');
+    };
+
+    const renderRuleCard = (r, i, whenGroups) => {
+      const whenDef = whenGroups.flatMap(g => g.items).find(it => it.value === (r.when || ''));
+      return `
+        <div class="wave-rule-card" draggable="true" data-rule-index="${i}"
+          style="display:flex;align-items:center;gap:6px;padding:4px 6px;margin-bottom:4px;flex-wrap:wrap;
+                 border:1px solid var(--border-color,#444);border-radius:4px;background:rgba(255,255,255,0.03);">
+          <span style="cursor:grab;color:var(--text-mute);" title="拖动调整出兵顺序">⠿</span>
+          <select data-rule-field="type" data-rule-index="${i}" style="width:88px;">
+            ${allMinionTypes().map(t => `<option value="${t}" ${t === r.type ? 'selected' : ''}>${minionIcon(t)} ${minionLabel(t)}</option>`).join('')}
+          </select>
+          ${Object.entries(RULE_FIELDS).map(([k, meta]) => `
+          <label style="font-size:10px;color:var(--text-mute);display:flex;align-items:center;gap:2px;">
+            ${meta.label}
+            <input type="number" data-rule-field="${k}" data-rule-index="${i}" min="${meta.min}" step="${meta.step}"
+              value="${r[k] ?? meta.def}" style="width:42px;">
+          </label>`).join('')}
+          <select data-rule-field="when" data-rule-index="${i}" style="flex:1;min-width:90px;">
+            ${whenGroups.map(g => `<optgroup label="${g.label}">
+              ${g.items.map(it => `<option value="${it.value}" ${it.value === (r.when || '') ? 'selected' : ''}>${it.label}</option>`).join('')}
+            </optgroup>`).join('')}
+          </select>
+          ${whenDef?.arg ? `
+          <input type="number" data-rule-field="whenArg" data-rule-index="${i}" title="${whenDef.arg.label}"
+            min="${whenDef.arg.min}" step="${whenDef.arg.step}" value="${r.whenArg ?? whenDef.arg.def}" style="width:56px;">` : ''}
+          <button data-rule-remove="${i}" style="font-size:11px;padding:2px 6px;">✖</button>
+        </div>`;
+    };
+
+    const renderWaveOrderPanel = () => {
+      const laneId = selectedWaveLaneId;
+      const overridden = !!draftLaneComposition[laneId];
+      const rules = draftLaneComposition[laneId]
+        || compositionFor(null, CONFIG.gameRules, laneId).filter(r => r.type);
+      const whenGroups = whenOptionGroups();
+      return `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px;">出兵编排（按路独立）</div>
+        <div style="font-size:10px;color:var(--text-mute);margin-bottom:6px;">
+          点缩略图上的一条路（或用下拉选）选中要编的路，拖卡片"⠿"调整出兵顺序。
+          技能广播规则（v51.33）暂不支持在这里编辑——已有的会原样保留，不受这里的改动影响，
+          要改请去全局的"出兵编排"页。
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start;">
+          <canvas id="mapEditorWaveThumb" width="${n}" height="${n}"
+            style="width:170px;height:170px;image-rendering:pixelated;cursor:pointer;flex-shrink:0;
+                   border:1px solid var(--border-color,#444);border-radius:4px;"></canvas>
+          <div style="flex:1;">
+            <select id="mapEditorWaveLaneSelect" style="width:100%;padding:4px;margin-bottom:6px;">
+              ${draftLanes.map(l => `<option value="${l.id}" ${l.id === laneId ? 'selected' : ''}>${l.id}${draftLaneComposition[l.id] ? '（已覆写）' : ''}</option>`).join('')}
+            </select>
+            <div style="font-size:11px;color:var(--text-mute);">
+              ${overridden ? '✏️ 这条路已有独立编排，会存进这张图。' : '↩️ 当前继承共享基准（还没改过这条路）。'}
+            </div>
+            ${overridden ? `<button id="mapEditorWaveClearBtn" style="margin-top:4px;font-size:11px;">🧹 清除覆写，改回继承</button>` : ''}
+          </div>
+        </div>
+        <div id="mapEditorWaveRuleList">
+          ${rules.map((r, i) => renderRuleCard(r, i, whenGroups)).join('')
+            || '<div style="font-size:11px;color:var(--text-mute);">这条路目前没有任何出兵规则。</div>'}
+        </div>
+        <button id="mapEditorWaveAddRuleBtn" style="margin-top:4px;">➕ 新增规则</button>
+      </div>`;
     };
 
     // 折线造墙：画布坐标系就是 navgrid 的 n×n 格子坐标系（与其它重绘函数一致），
@@ -539,8 +684,8 @@ export const MapEditorDialog = {
       <div>
         <div style="font-size:12px;font-weight:600;margin-bottom:4px;">出兵开关</div>
         <div style="font-size:10px;color:var(--text-mute);margin-bottom:4px;">
-          关掉的兵种这张图不会出兵（两种阵型都不出）。出兵顺序/权重等完整编排仍在
-          全局的"出兵编排"页（见开发说明第四节 Part B，还没做成按地图独立）。
+          关掉的兵种这张图不会出兵（两种阵型都不出）。哪一波出什么、出多少，
+          在下面"出兵编排"里按路单独调。
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;">
           ${allMinionTypes().map(t => `
@@ -549,7 +694,8 @@ export const MapEditorDialog = {
               ${minionIcon(t)} ${minionLabel(t)}
             </label>`).join('')}
         </div>
-      </div>`;
+      </div>
+      ${renderWaveOrderPanel()}`;
 
     // ---------- 结构性重绘（切起点地图/保存/删除后调用；笔刷拖动期间绝不调这个） ----------
     const render = () => {
@@ -760,6 +906,7 @@ export const MapEditorDialog = {
       if (editMode === 'terrain' && brushShape === 'polyline') updatePolylineStatus();
       if (editMode === 'paths') updatePathStatus();
       if (imgImportOpen && imgImportImageData) redrawImgImportPreview();
+      if (editMode === 'config') drawWaveLaneThumbnail();
     };
 
     const setStatus = (msg) => {
@@ -781,6 +928,10 @@ export const MapEditorDialog = {
       draggingWaypointIndex = -1; selectedWaypointIndex = -1;
       draftFactions = cloneFactionsForEdit(baseMap);
       draftSpawnEnabled = { ...(baseMap.spawnEnabled || {}) };
+      draftLaneComposition = { ...(baseMap.laneWaveCompositionByLane || {}) };
+      draftLaneBroadcast = {};
+      selectedWaveLaneId = draftLanes[0]?.id ?? null;
+      draggingRuleIndex = -1;
       statusMsg = '';
       render();
     };
@@ -826,6 +977,68 @@ export const MapEditorDialog = {
       document.querySelectorAll('[data-spawn-enabled]').forEach(cb => {
         cb.addEventListener('change', (e) => {
           draftSpawnEnabled[cb.dataset.spawnEnabled] = e.target.checked;
+        });
+      });
+
+      // 出兵编排（第四节 Part B）：缩略图点线选路 + 下拉选路 + 清除覆写 + 规则卡片
+      // 增删/拖拽排序/改字段。元素只在 editMode==='config' 时存在，可选链跳过。
+      document.getElementById('mapEditorWaveThumb')?.addEventListener('click', (e) => {
+        const g = clientToGrid(e.target, e.clientX, e.clientY);
+        if (!g) return;
+        const laneId = nearestLaneAtGridPoint(g.x, g.y);
+        if (laneId) { selectedWaveLaneId = laneId; render(); }
+      });
+      document.getElementById('mapEditorWaveLaneSelect')?.addEventListener('change', (e) => {
+        selectedWaveLaneId = e.target.value;
+        render();
+      });
+      document.getElementById('mapEditorWaveClearBtn')?.addEventListener('click', () => {
+        delete draftLaneComposition[selectedWaveLaneId];
+        delete draftLaneBroadcast[selectedWaveLaneId];
+        render();
+      });
+      document.getElementById('mapEditorWaveAddRuleBtn')?.addEventListener('click', () => {
+        ensureWaveDraft(selectedWaveLaneId);
+        draftLaneComposition[selectedWaveLaneId] = withRuleAdded(draftLaneComposition[selectedWaveLaneId], {
+          type: allMinionTypes()[0], count: 1, fromWave: 0, everyN: 1,
+        });
+        render();
+      });
+      document.querySelectorAll('[data-rule-remove]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          ensureWaveDraft(selectedWaveLaneId);
+          draftLaneComposition[selectedWaveLaneId] =
+            withRuleRemoved(draftLaneComposition[selectedWaveLaneId], Number(btn.dataset.ruleRemove));
+          render();
+        });
+      });
+      document.querySelectorAll('[data-rule-field]').forEach(el => {
+        el.addEventListener('change', (e) => {
+          const idx = Number(el.dataset.ruleIndex);
+          const field = el.dataset.ruleField;
+          const value = (field === 'type' || field === 'when') ? e.target.value : (Number(e.target.value) || 0);
+          ensureWaveDraft(selectedWaveLaneId);
+          draftLaneComposition[selectedWaveLaneId] =
+            withRuleFieldSet(draftLaneComposition[selectedWaveLaneId], idx, field, value);
+          // 只有"条件"这一项会改变卡片上要不要多画一个参数输入框（whenDef.arg），
+          // 其它字段改了就是纯数值/文本，不需要重渲染（不打断输入框的焦点/滚动位置）。
+          if (field === 'when') render();
+        });
+      });
+      document.querySelectorAll('.wave-rule-card').forEach(card => {
+        card.addEventListener('dragstart', () => {
+          draggingRuleIndex = Number(card.dataset.ruleIndex);
+        });
+        card.addEventListener('dragover', (e) => { e.preventDefault(); });
+        card.addEventListener('drop', (e) => {
+          e.preventDefault();
+          if (draggingRuleIndex < 0) return;
+          const toIndex = Number(card.dataset.ruleIndex);
+          ensureWaveDraft(selectedWaveLaneId);
+          draftLaneComposition[selectedWaveLaneId] =
+            withRuleMoved(draftLaneComposition[selectedWaveLaneId], draggingRuleIndex, toIndex);
+          draggingRuleIndex = -1;
+          render();
         });
       });
 
@@ -1016,10 +1229,20 @@ export const MapEditorDialog = {
         const label = document.getElementById('mapEditorLabelInput').value.trim();
         if (!id) { setStatus('⚠️ 请填写地图 ID'); return; }
         try {
+          // 出兵编排（第四节 Part B）：draftLaneComposition 只装了"刷兵"规则
+          // （ensureWaveDraft 摘出去的），保存时把原样保留的广播规则拼回同一条路，
+          // 拼的顺序不影响判定（buildWaveOrder/buildBroadcastOrder 各自只认自己
+          // 关心的那种规则，见 compositionFor 头注）。
+          const laneWaveCompositionByLane = {};
+          for (const laneId of Object.keys(draftLaneComposition)) {
+            laneWaveCompositionByLane[laneId] =
+              [...draftLaneComposition[laneId], ...(draftLaneBroadcast[laneId] || [])];
+          }
           const payload = buildCustomMapPayload(baseMap, {
             id, label, n, bits, buildings: draftBuildings,
             baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
             lanes: draftLanes, factions: draftFactions, spawnEnabled: draftSpawnEnabled,
+            laneWaveCompositionByLane,
           });
           if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
           CONFIG.customMaps[id] = payload;

@@ -168,9 +168,23 @@ export class LaneWaveSystem {
     // 走 spawnEnabled 这个既有闸门而不是让地图重写一份编排 ——
     // 编排是用户在编辑器里会调的东西，地图重写一份等于把他的调整覆盖掉。
     // 没有覆写时 rules 就是 CONFIG.gameRules 本身，行为逐位不变。
+    //
+    // 第四节 Part B："出兵编排要能和地图独立选择"——同样走"只覆写这一层，
+    // 不重写整份规则"的路子：map.laneWaveCompositionByLane 是"这条路的完整
+    // 出兵队列"，合并进 rules 之后交给 compositionFor()（data/waveComposition.js）
+    // 判定——那边本来就认 rules.laneWaveCompositionByLane[laneId] 这一层
+    // （阵营独立编排 CONFIG.factionOverrides 之下、共享基准 gameRules.laneWaveComposition
+    // 之上，见 compositionFor 头注的四级解析顺序），这里只是把"这一层从哪来"
+    // 从"全局唯一"改成"地图可以覆写"，判定逻辑一处都没改。没声明的地图/路，
+    // 一路落回共享基准，行为与改动前逐位一致。
     const _mapSE = this.mapSystem.currentMap?.spawnEnabled;
-    const rules = _mapSE
-      ? { ...CONFIG.gameRules, spawnEnabled: { ...(CONFIG.gameRules.spawnEnabled || {}), ..._mapSE } }
+    const _mapLWC = this.mapSystem.currentMap?.laneWaveCompositionByLane;
+    const rules = (_mapSE || _mapLWC)
+      ? {
+          ...CONFIG.gameRules,
+          spawnEnabled: { ...(CONFIG.gameRules.spawnEnabled || {}), ...(_mapSE || {}) },
+          laneWaveCompositionByLane: { ...(CONFIG.gameRules.laneWaveCompositionByLane || {}), ...(_mapLWC || {}) },
+        }
       : CONFIG.gameRules;
     // enemy：多阵营下"敌方"不再是唯一解（一条路可以同时打多个目标阵营），
     // 这里取存活目标里的第一个当"敌方xxx"这类编排条件的判定对象——两阵营地图
