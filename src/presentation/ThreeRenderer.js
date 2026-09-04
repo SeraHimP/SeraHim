@@ -887,10 +887,15 @@ export class ThreeRenderer {
     // 另起一套分辨率的话高地边界会与既有的 plateau 遮罩错开一格，接缝立刻可见。
     const zones = (gr?.walk && gr.nx && gr.ny)
       ? zoneGrid(map, gr.walk, gr.nx, gr.ny, map.world) : null;
-    const composed = compositeTerrain(buildTerrainLayer(map, gr, ms), map.world,
-                                      gr?.walk || null, gr?.nx || 0, gr?.ny || 0,
-                                      this.tex.ground, this.tex.plateau,
-                                      zones, this.zoneTex || null);
+    // 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——不叠材质贴图合成
+    // 这一层（噪声/AO/渐变都是"贴图感"的来源），直接用 buildTerrainLayer 画出来的
+    // 纯色画布当贴图。只影响这张 demo 图，三张老地图仍然走 compositeTerrain。
+    const composed = map.visualStyle === 'stylized'
+      ? buildTerrainLayer(map, gr, ms)
+      : compositeTerrain(buildTerrainLayer(map, gr, ms), map.world,
+                          gr?.walk || null, gr?.nx || 0, gr?.ny || 0,
+                          this.tex.ground, this.tex.plateau,
+                          zones, this.zoneTex || null);
     const tex = new THREE.CanvasTexture(composed);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;

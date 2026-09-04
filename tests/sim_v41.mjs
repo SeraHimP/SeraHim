@@ -373,7 +373,11 @@ function unit(ents, o = {}) {
   const wall = fs.readFileSync('src/presentation/WallLayer.js', 'utf8');
   T('WallLayer 导出墙高（两边共用同一个数，不各写一份）', /export const WALL_H = 70;/.test(wall));
   T('VegetationLayer 用的是墙高而不是地形高度场', /import \{ WALL_H \} from '\.\/WallLayer\.js'/.test(veg));
-  T('摆放高度确实来自 WALL_H', /const y0 = WALL_H - [\d.]+;/.test(veg));
+  // 2026-09-04：风格化 demo（visualStyle==='stylized'，见 Config.stylizedVisuals 头注）
+  // 给这一行加了个三元——那种图没有台地（WallLayer 对它整个早退），植被改按地形
+  // 高度摆放，否则会悬空。非 stylized 地图（三张老地图）这半句分支原样是
+  // `WALL_H - 1.5`，逐位不变，正则跟着放宽成"分支里含这一段"而不是要求整行只有它。
+  T('摆放高度确实来自 WALL_H（非风格化地图分支）', /y0 = stylized \? gh : WALL_H - [\d.]+;/.test(veg));
   T('三类植被都用同一个高度', (veg.match(/push\(\[x, y0, y,/g) || []).length === 3);
   T('注释写清了根因（植被只撒在不可走格，而那些格被拔高到 WALL_H）',
     /WallLayer 把不可走区整块拔高到 WALL_H/.test(veg));

@@ -108,6 +108,11 @@ export class WallLayer {
   rebuild(mapSystem, terrainTex) {
     this.clear();
     if (!mapSystem?.hasWalls?.() || !mapSystem.currentMap?.world) return;
+    // 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——不可走区域不再
+    // 抬高成岩壁台地，改由 VegetationLayer 用更密的树/灌木在原地形高度上标出边界
+    // （参照实拍截图："墙"是贴边的细栅栏/树林，不是大块岩壁台地）。这张图直接
+    // 走"无墙地图"同一条早退路径，什么都不画；三张老地图这个分支永远不命中。
+    if (mapSystem.currentMap.visualStyle === 'stylized') return;
 
     const t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
     const { w: WW, h: WH } = mapSystem.currentMap.world;

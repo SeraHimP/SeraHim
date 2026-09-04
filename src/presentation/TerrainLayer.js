@@ -60,16 +60,25 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   g.scale(S, S);
   const hw = map.walls?.corridorHalfWidth ?? 95;
 
+  // 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——地面/走廊直接用
+  // 声明的纯色，不叠"稀疏亮斑"这层噪声纹理（实拍截图核对过：Thronefall 的地面
+  // 就是一片饱和纯色，没有可见的铺贴纹理）。只影响这张 demo 图，三张老地图
+  // 这里的颜色/纹理逐位不变。
+  const stylized = map.visualStyle === 'stylized';
+  const SV = CONFIG.stylizedVisuals || {};
+
   // 丛林底（= 墙）
-  g.fillStyle = '#151c26';
+  g.fillStyle = stylized ? (SV.groundColor || '#151c26') : '#151c26';
   g.fillRect(0, 0, WW, WH);
-  // 丛林纹理：稀疏亮斑（廉价的"树丛"感）
-  g.fillStyle = 'rgba(74,110,87,0.10)';
-  let seed = 12345;
-  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  for (let i = 0; i < 260; i++) {
-    const x = rnd() * WW, y = rnd() * WH, r = 14 + rnd() * 30;
-    g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill();
+  if (!stylized) {
+    // 丛林纹理：稀疏亮斑（廉价的"树丛"感）
+    g.fillStyle = 'rgba(74,110,87,0.10)';
+    let seed = 12345;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * WW, y = rnd() * WH, r = 14 + rnd() * 30;
+      g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill();
+    }
   }
 
   // 河道（装饰）：v34 起地图可声明 walls.river:false 关闭（嚎哭深渊是冰桥，没有河道）。
@@ -169,12 +178,20 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // 开放区改用 oBlue/oRed（收束段内圈）而不是 rBlue/rRed（外层完整基地圈半径）——
   // 收束段（oBlue~rBlue 之间）不再被开放色覆盖，corridor 墙壁在那一圈保持可见，
   // 高地塔（落在收束段内）的射程圈因此会真实穿过两侧墙壁。
-  strokeLanes(hw * 2 + 14, '#43536a');
-  fillBase(cB.x, cB.y, oBlue + 7, '#43536a'); fillBase(cR.x, cR.y, oRed + 7, '#43536a');
-  strokeLanes(hw * 2, '#2b3647');
-  fillBase(cB.x, cB.y, oBlue, '#2b3647'); fillBase(cR.x, cR.y, oRed, '#2b3647');
-  // 走廊中心细线（路感）
-  strokeLanes(3, 'rgba(246,201,74,0.10)');
+  if (stylized) {
+    // 风格化 demo：单色走廊 + 干净边界，不叠边缘高光/中心细线（那两层是"贴图感"，
+    // 参照截图里道路就是一条颜色差一档的干净色带）。
+    const roadColor = SV.corridorColor || '#c9a06b';
+    strokeLanes(hw * 2, roadColor);
+    fillBase(cB.x, cB.y, oBlue, roadColor); fillBase(cR.x, cR.y, oRed, roadColor);
+  } else {
+    strokeLanes(hw * 2 + 14, '#43536a');
+    fillBase(cB.x, cB.y, oBlue + 7, '#43536a'); fillBase(cR.x, cR.y, oRed + 7, '#43536a');
+    strokeLanes(hw * 2, '#2b3647');
+    fillBase(cB.x, cB.y, oBlue, '#2b3647'); fillBase(cR.x, cR.y, oRed, '#2b3647');
+    // 走廊中心细线（路感）
+    strokeLanes(3, 'rgba(246,201,74,0.10)');
+  }
 
   // v36（Q6）：高地门槛线已删除（用户反馈突兀且蓝红不对称）。
 

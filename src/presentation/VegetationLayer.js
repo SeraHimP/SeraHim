@@ -8,6 +8,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { WALL_H } from './WallLayer.js';
+import { CONFIG } from '../data/Config.js';
 
 function withColor(geo, hex) {
   const c = new THREE.Color(hex), n = geo.getAttribute('position').count, col = new Float32Array(n * 3);
@@ -21,6 +22,25 @@ function treeGeo() {
   const c1 = withColor(new THREE.ConeGeometry(16, 32, 7).translate(0, 30, 0), '#5aa64e');
   const c2 = withColor(new THREE.ConeGeometry(11, 22, 7).translate(0, 44, 0), '#78c866');
   return mergeGeometries([trunk, c1, c2]);
+}
+
+// 2026-09-04：风格化 demo（见 Config.stylizedVisuals 头注）——树冠换成圆润的
+// 球体团簇（参照实拍截图：Thronefall 的树是几个球挤在一起，不是锥形松树尖顶）。
+// 材质在 place() 那边套 flatShading:true，硬切面的观感靠材质标记，不靠这里加细分。
+function stylizedTreeGeo() {
+  const SV = CONFIG.stylizedVisuals || {};
+  // ⚠️ mergeGeometries 要求参与合并的几何"要么全带 index，要么全不带"（否则直接
+  // 失败返回 null，下游 place() 拿到 null 几何再崩一次）。CylinderGeometry 默认带
+  // index，IcosahedronGeometry（PolyhedronGeometry 系）默认不带——两者混着合并
+  // 踩了这一条，这里统一 .toNonIndexed() 到"都不带"那一档。
+  const trunk = withColor(new THREE.CylinderGeometry(3, 4, 13, 6).translate(0, 6.5, 0).toNonIndexed(), SV.treeTrunkColor || '#6b5230');
+  const A = SV.treeCrownColorA || '#4f9a52', B = SV.treeCrownColorB || '#6cbb5e';
+  const blobs = [
+    [0, 32, 0, 16, A], [-10, 24, 6, 12, B], [10, 25, -5, 12, A],
+    [0, 19, 10, 10, B], [-7, 40, -7, 11, A], [6, 41, 6, 10, B],
+  ];
+  const parts = [trunk, ...blobs.map(([x, y, z, r, hex]) => withColor(new THREE.IcosahedronGeometry(r, 0).translate(x, y, z), hex))];
+  return mergeGeometries(parts);
 }
 // 坐标哈希 → [0,1)，确定性伪随机
 function hash(x, y) {
@@ -43,6 +63,7 @@ export class VegetationLayer {
     if (this._mapId === map.id && this.meshes.length) return;   // 同图已建，跳过
     this.clear(); this._mapId = map.id;
 
+    const stylized = map.visualStyle === 'stylized';
     const { w: WW, h: WH } = map.world;
     const heightAt = mapSystem.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
@@ -62,7 +83,10 @@ export class VegetationLayer {
       // 而这里取的 heightAt 是**地形高度场**，压根不含墙体那 70 单位。
       // 于是每一棵树都被埋在自己脚下那块墙体里，一棵也看不见。
       // 往下沉 1.5：树干底面正好咬进墙顶，不会看到悬空的接缝。
-      const y0 = WALL_H - 1.5;
+      // 风格化 demo（visualStyle==='stylized'）没有台地——WallLayer.rebuild() 对这种
+      // 地图整个跳过，不可走区域的地面仍是普通地形高度，植被因此改按【地形高度】摆放，
+      // 不是墙顶，否则会悬空在空气里（没有台地接住它）。
+      const y0 = stylized ? gh : WALL_H - 1.5;
       const r = hash(gx, gy);
       const sc = 0.65, rot = hash(gx + 5, gy + 5) * 6.2832;
       if (r < 0.44) trees.push([x, y0, y, sc + hash(gx + 7, gy) * 0.7, rot]);
@@ -85,9 +109,19 @@ export class VegetationLayer {
       inst.frustumCulled = false;   // 实例包围盒默认在原点，整片会被误剔除
       this.scene.add(inst); this.meshes.push(inst);
     };
-    place(treeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true }), trees, null);
-    place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: 0xffffff }), rocks, { h: 0.08, s: 0.12, l: 0.52, dh: 0.03, dl: 0.10 });
-    place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.55, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), bushes, { h: 0.27, s: 0.45, l: 0.40, dh: 0.05, dl: 0.08 });
+    if (stylized) {
+      // 风格化 demo：flatShading:true 给硬切面观感（参照截图里岩石/树冠都是平面
+      // 色阶，不是平滑渐变），树/岩/灌木各自一个声明出来的纯色，不叠 HSL 随机抖动
+      // ——克制色板是这条风格的核心，不是这里漏做了"多样性"。
+      const SV = CONFIG.stylizedVisuals || {};
+      place(stylizedTreeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), trees, null);
+      place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), rocks, null);
+      place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.6, 1), new THREE.MeshLambertMaterial({ color: SV.treeCrownColorB || '#6cbb5e', flatShading: true }), bushes, null);
+    } else {
+      place(treeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true }), trees, null);
+      place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: 0xffffff }), rocks, { h: 0.08, s: 0.12, l: 0.52, dh: 0.03, dl: 0.10 });
+      place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.55, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), bushes, { h: 0.27, s: 0.45, l: 0.40, dh: 0.05, dl: 0.08 });
+    }
     if (this._tint) this.setTint(this._tint);   // 重建时把当前昼夜染色补回去（否则重建那一帧会闪回白天的颜色）
   }
 

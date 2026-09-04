@@ -1161,6 +1161,30 @@ export const CONFIG = {
     // 还是图片识别就有两个答案）。
   },
 
+  // ==================== 2026-09-04：风格化画面 demo（探路，不影响任何既有地图）====================
+  // 用户想评估"低多边形+纯色+粗描边"这条画面方向（参照 Thronefall 实机截图核对过）
+  // 落到 SeraHim 的程序化渲染管线上成本大不大。做法：新开一张 demo 地图
+  // （src/data/maps/demo_stylized.js），只有它把 `visualStyle` 设成 'stylized'，
+  // 三张老地图（召唤师峡谷/嚎哭深渊/扭曲丛林）这个字段是 undefined，走原来的
+  // 渲染分支，画面逐位不变——这里只是给"风格化"这条新分支一个软编码的参数入口，
+  // 不是要在这批改动里替换现有三张图的画风。
+  stylizedVisuals: {
+    // 地面/走廊纯色（TerrainLayer 在 visualStyle==='stylized' 时跳过材质贴图叠加，
+    // 直接用这两个颜色，不再叠噪声/AO 贴图——参照实拍截图里"地面就是一片饱和纯色"）。
+    groundColor: '#3fa06a',
+    corridorColor: '#c9a06b',
+    // 树冠：矮宽的球形团簇（不是现有 VegetationLayer.treeGeo 那种锥形松树），
+    // 两层颜色做一点深浅层次，flatShading:true 让每个面自己的色阶独立（硬切面）。
+    treeTrunkColor: '#6b5230',
+    treeCrownColorA: '#4f9a52',
+    treeCrownColorB: '#6cbb5e',
+    // 岩石：低模多面体，flatShading，不做平滑法线（对应截图里"硬切面"的观感）。
+    rockColor: '#8a8f96',
+    // 轮廓描边默认是否随这张 demo 地图一起打开——先给个开关，观感如果比预期糟，
+    // 关掉这一项就能继续看其它风格化改动，不用连累整个 demo。
+    outlineOnByDefault: false,
+  },
+
   tuning: {
 
     // v44 每帧留给【模拟】的墙钟预算（毫秒）。超过就把剩下的账留到下一帧。
