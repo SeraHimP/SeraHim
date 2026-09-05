@@ -67,7 +67,12 @@ export function dayNightAt(gameTime, period = DAY_PERIOD) {
     sunColor: _lerpHex(a.sun, b.sun, t),
     ambientSky: _lerpHex(a.sky, b.sky, t),
     ambientGround: _lerpHex(a.gnd, b.gnd, t),
-    sunElevation: a.elev + (b.elev - a.elev) * t,
+    // v54：仰角过一道**上限夹取**。默认 90 = 不夹，与参数化前逐位一致。
+    // 存在的理由见 docs/MAP-DESIGN-howling-abyss-frost.md §10：正午 82° 几乎垂直照下来，
+    // 影子压在物体脚下 —— 这是"塔/小兵像贴纸"的根因之一。调低这个上限就能让全天影子变长，
+    // 而不必把整张 KEYS 表重标一遍（那样会连带改掉色温与曝光的手感）。
+    sunElevation: Math.min(CONFIG.ui?.lighting?.maxSunElevDeg ?? 90,
+                           a.elev + (b.elev - a.elev) * t),
     sunAzimuth: a.azim + (b.azim - a.azim) * t,
     exposure: a.exp + (b.exp - a.exp) * t,
     ambientShare: a.amb + (b.amb - a.amb) * t,

@@ -47,12 +47,18 @@ import { buildingSize, minionSize } from './UnitInfo.js';
 //   这正是本步的验收标准：光照铺好，画面不变。有体积的东西（第 6.2 墙体、
 //   第 6.3 单位）法线不是 +Y，才会显出明暗——那时才该看见变化。
 const IRRADIANCE_TARGET = Math.PI;
-const AMBIENT_SHARE = 0.40;              // 环境占比：低了太硬、高了发灰，0.4 是低多边形常用区间
-const SUN_ELEV_DEG = 55;                 // 太阳仰角（比摄像机 45° 高，投影不会长得盖住画面）
-const SUN_AZIM_DEG = 135;                // 方位：左上打光
+// v54：以下五项从写死的模块常量改为读 CONFIG.ui.lighting（软编码，编辑器可改）。
+// **默认值与参数化前逐位一致**，本次改的只是"从哪里取"，不是取到什么。
+// 之所以做成取值函数而不是模块顶层求值：CONFIG 可能在运行时被编辑器改，
+// 顶层求值会把开局那一刻的值永久钉死（这个坑本仓库在 towerTierSkills 上踩过）。
+const LIGHT = () => CONFIG.ui?.lighting || {};
+const AMBIENT_SHARE_OF = () => LIGHT().ambientShare ?? 0.40;
+const SUN_ELEV_OF = () => LIGHT().sunElevDeg ?? 55;   // 太阳仰角（DayNight 接管前）
+const SUN_AZIM_OF = () => LIGHT().sunAzimDeg ?? 135;  // 方位：左上打光
+const SHADOW_MAP_OF = () => LIGHT().shadowMapSize ?? 2048;
+const SKY_COLOR_OF = () => LIGHT().skyColor ?? '#a8c4e0';
+const GROUND_COLOR_OF = () => LIGHT().groundColor ?? '#40485a';
 const SUN_DIST = 2000;                   // 光源到视野中心的距离（仅影响阴影相机 near/far 余量）
-const SHADOW_MAP_SIZE = 2048;
-const SKY_COLOR = 0xa8c4e0, GROUND_COLOR = 0x40485a; // 半球光上下色，冷调，贴合现有暗蓝底
 import { EffectsLayer } from './EffectsLayer.js';
 // P1 视觉优化：后处理管线（Bloom 辉光 + ACES 色调映射 + FXAA 抗锯齿）。插件本地 vendor（离线）。
 import { EffectComposer } from '../../vendor/postprocessing/EffectComposer.js';
@@ -297,7 +303,7 @@ export class ThreeRenderer {
     // 就是为了保这个兜底：老调用点（不知道这个新参数的）行为不变。
     if (sunElevation !== undefined || sunAzimuth !== undefined) {
       const e = Math.max(5, Math.min(89, sunElevation ?? (Math.asin(this._sunDir.y) / DEG))) * DEG;
-      const az = (sunAzimuth ?? SUN_AZIM_DEG) * DEG;
+      const az = (sunAzimuth ?? SUN_AZIM_OF()) * DEG;
       this._sunDir.set(Math.cos(az) * Math.cos(e), Math.sin(e), Math.sin(az) * Math.cos(e)).normalize();
     }
     if (normalize) {
@@ -350,20 +356,20 @@ export class ThreeRenderer {
   }
 
   _buildLights() {
-    const dirShare = 1 - AMBIENT_SHARE;
-    const sinSun = Math.sin(SUN_ELEV_DEG * DEG);
+    const dirShare = 1 - AMBIENT_SHARE_OF();
+    const sinSun = Math.sin(SUN_ELEV_OF() * DEG);
 
     // 半球光而非纯环境光：法线朝上取天空色、朝下取地色，墙面与单位侧面自带冷暖过渡，
     // 低多边形风格靠这个才不会显得死板。地面法线恒 +Y，故其贡献恰为 skyColor 强度。
-    this.hemi = new THREE.HemisphereLight(SKY_COLOR, GROUND_COLOR,
-                                          IRRADIANCE_TARGET * AMBIENT_SHARE);
+    this.hemi = new THREE.HemisphereLight(new THREE.Color(SKY_COLOR_OF()), new THREE.Color(GROUND_COLOR_OF()),
+                                          IRRADIANCE_TARGET * AMBIENT_SHARE_OF());
     this.scene.add(this.hemi);
 
     this.sun = new THREE.DirectionalLight(0xffffff,
                                           IRRADIANCE_TARGET * dirShare / sinSun);
     this.sun.castShadow = false;   // 由 setShadowLevel 决定
     const sh = this.sun.shadow;
-    sh.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    sh.mapSize.set(SHADOW_MAP_OF(), SHADOW_MAP_OF());
     sh.bias = -0.0005;
     sh.normalBias = 1.5;           // 世界单位；本场景尺度以 px 计，1~2 能压住自阴影条纹
     this.scene.add(this.sun);
@@ -406,9 +412,9 @@ export class ThreeRenderer {
 
     this.shadowLevel = 'off';      // 'all' | 'static' | 'off'
     this._sunDir = new THREE.Vector3(
-      Math.cos(SUN_AZIM_DEG * DEG) * Math.cos(SUN_ELEV_DEG * DEG),
+      Math.cos(SUN_AZIM_OF() * DEG) * Math.cos(SUN_ELEV_OF() * DEG),
       sinSun,
-      Math.sin(SUN_AZIM_DEG * DEG) * Math.cos(SUN_ELEV_DEG * DEG),
+      Math.sin(SUN_AZIM_OF() * DEG) * Math.cos(SUN_ELEV_OF() * DEG),
     ).normalize();
   }
 
@@ -456,7 +462,7 @@ export class ThreeRenderer {
                           t.z + this._sunDir.z * SUN_DIST);
     // normalBias 必须随阴影贴图的【世界像素尺寸】走：视锥越大每贴图像素覆盖越多世界单位，
     // 固定 bias 在全图视角下压不住大平面（高地顶面）的自阴影，整片会发黑。
-    this.sun.shadow.normalBias = (2 * r / SHADOW_MAP_SIZE) * 2.2;
+    this.sun.shadow.normalBias = (2 * r / SHADOW_MAP_OF()) * 2.2;
     const c = this.sun.shadow.camera;
     c.left = -r; c.right = r; c.top = r; c.bottom = -r;
     c.near = 1; c.far = SUN_DIST * 2.5;

@@ -108,4 +108,29 @@ const { T, done } = scoreboard('DayNight（太阳方位角 + 天气压光）');
   T('真实 WeatherSystem 充能归零后恢复原参数', outClear === base);
 }
 
+// ==================== v54：光照软编码 + 太阳仰角上限 ====================
+// 加这一组的理由：割裂感的根因之一是"影子几乎不存在"（正午仰角 82°，影子压在脚下）。
+// 这个上限就是拉长影子的那根杠杆，必须有断言守着 —— 没有断言守的行为，
+// 下一个人改两行就没了（CLAUDE.md 第 1 条）。
+{
+  const L = CONFIG.ui.lighting;
+  T('光①-光照参数已软编码进 CONFIG.ui.lighting（不再是模块里写死的常量）',
+    typeof L?.sunElevDeg === 'number' && typeof L?.ambientShare === 'number'
+    && typeof L?.maxSunElevDeg === 'number' && typeof L?.shadowMapSize === 'number');
+
+  const sav = L.maxSunElevDeg;
+  // 上限调低 → 全天任意时刻的仰角都不超过它。钉的是"夹取真的生效"这个行为形状，
+  // 不是某个具体角度（角度是会调的）。
+  L.maxSunElevDeg = 30;
+  let maxSeen = 0;
+  for (let i = 0; i < 48; i++) maxSeen = Math.max(maxSeen, dayNightAt(i * 10, 480).sunElevation);
+  T(`光②-仰角上限生效：全天最高仰角 ${maxSeen.toFixed(1)}° ≤ 30°`, maxSeen <= 30 + 1e-9);
+
+  // 上限拉满 = 不夹。这条守的是"默认不改变行为"——参数化那一步必须是视觉空操作。
+  L.maxSunElevDeg = 90;
+  const noonFree = dayNightAt(120, 480).sunElevation;
+  T(`光③-上限 90 时不夹取（正午仍是关键帧原值 ${noonFree.toFixed(1)}°）`, noonFree > 80);
+  L.maxSunElevDeg = sav;
+}
+
 done();
