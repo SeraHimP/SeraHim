@@ -392,4 +392,32 @@ const halfWidth = (bits, d, sign) => {
     && /const bowlH = capH \+ CAP_H \/ 2 \+ BRAZIER_BOWL_H \/ 2/.test(decor));
 }
 
+// ==================== v54：塔的石色归地图调色板管 ====================
+// 用户："目前的塔模型根本无法融入地形……最重要的就是塔/小兵和环境的割裂感！"
+// 放大到实机看得很清楚：城墙用的是本表的 rockColor/wallCapColor（冷蓝灰、暗于桥面，
+// 读起来是"长在桥上的"），而塔用的是 FACTION_STYLE 里那套与本图无关的暖中性灰。
+// 这一组钉住"塔与城墙同源"这件事本身，而不是某个具体色值。
+{
+  const P = CONFIG.stylizedPalettes.frost;
+  T('塔①-冰封调色板声明了塔的石色/亮色', !!P.towerStone && !!P.towerTrim);
+
+  const hex = (h) => { const v = parseInt(h.slice(1), 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
+  const lum = (h) => { const [r, g, b] = hex(h); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const cool = (h) => { const [r, , b] = hex(h); return b - r; };   // 蓝多于红 = 冷调
+
+  // ① 与城墙同族：都必须是冷调（蓝分量高于红分量）。塔用暖灰是被否掉的那一版。
+  T(`塔②-塔石色是冷调（与城墙同族，蓝-红 = ${cool(P.towerStone)}）`, cool(P.towerStone) > 12);
+  // ② 必须明显暗于桥面，否则塔在近白的桥上"压不住"，看起来是浮的。
+  T(`塔③-塔石色明显暗于桥面（塔 ${lum(P.towerStone).toFixed(0)} < 桥面 ${lum(P.corridorColor).toFixed(0)}）`,
+    lum(P.towerStone) < lum(P.corridorColor) - 40);
+  // ③ 亮部要比石身亮，塔身上才有明暗层次（全一个值就是一块剪影）。
+  T('塔④-塔的亮部亮于石身', lum(P.towerTrim) > lum(P.towerStone) + 20);
+
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  // ⚠️ 几何按 key 全局缓存。paletteId 不进 key 的话，换到另一张调色板的地图会直接
+  //    命中上一张图的几何，颜色跟着错 —— 而且**只在切图时复现**，最难查的一类 bug。
+  T('塔⑤-paletteId 进了塔几何缓存 key（否则切图会命中上一张图的几何）',
+    /\$\{palId\}/.test(ul) && /stylizedPaletteOf\(this\.mapSystem\?\.currentMap\)/.test(ul));
+}
+
 done();

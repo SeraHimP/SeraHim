@@ -49,6 +49,32 @@ const PHASE = process.argv[4];
 if (PHASE !== undefined) {
   await page.evaluate((v) => { window.CTX = window.CTX || {}; window.CTX.__dayPhaseOverride = Number(v); }, PHASE);
 }
+// v54：可选地换地图 + 把镜头对到某座塔上放大。
+// 为什么需要：模型改得对不对，**只有放进真实地图里才看得出来**。
+// 对照图（run_tower_sheet）是白底居中的，看不出"融不融入环境"——
+// 用户否掉的几版都是在对照图上看着还行、放进地图就出戏。
+//   node tests/browser/run_game_shot.mjs 输出 秒数 相位 地图id 缩放
+const MAP = process.argv[5];
+if (MAP) {
+  await page.evaluate(async (id) => {
+    const ms = window.CTX?.__app?.mapSystem;
+    if (ms?.loadMap) await ms.loadMap(id);
+    window.CTX?.__three?.invalidateTerrain?.();
+  }, MAP);
+  await page.waitForTimeout(1500);
+}
+const ZOOM = process.argv[6];
+if (ZOOM) {
+  // 对到第一座活着的防御塔上（不是地图中心）—— 要看的是塔与它脚下地面的关系。
+  await page.evaluate((z) => {
+    const app = window.CTX?.__app;
+    const ents = app?.entityContainer;
+    const towers = ents?.getAllTowers ? ents.getAllTowers(true) : [];
+    const t = [...towers].find(e => e._mapTier && e._mapTier !== 'nexus_main');
+    if (t && window.CTX.__lookAt) window.CTX.__lookAt(t.pos.x, t.pos.y, Number(z));
+  }, ZOOM);
+  await page.waitForTimeout(800);
+}
 await page.waitForTimeout(SECS * 1000);
 await page.screenshot({ path: OUT });
 console.log('截图已写入', OUT);

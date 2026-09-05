@@ -471,7 +471,12 @@ const mkE = (ents, type, x, y, extra = {}) => {
   // 现在**三档一律整块**，损毁只是在冠沿嵌几块 char 色的缺口。
   // 所以这条从"完好是整块"改成"三档都是整块（冠体只 add 一次）"。
   T('损⑰-冠的做法三档一致（同一个零件坏掉，不是换了个零件）', (() => {
-    const seg = umf2.slice(umf2.indexOf('const nSec = red'), umf2.indexOf('const crownTopY'));
+    // v54：切片终点原来用 'const crownTopY'，那是角楼的锚点变量，角楼已随
+    // "去掉塔顶那堆小装饰"一并删除（用户："尤其是蓝方上面那一堆小块块，看的我头疼"）。
+    // 改用顶盖那段的第一行代码当终点 —— 它是冠之后紧接着的下一段，范围与原来等价。
+    // ⚠️ 终点必须是**代码 token**，不能用注释：srcOf() 会先 stripComments()，
+    //    拿注释当锚点会 indexOf 得到 -1，切出一段完全错误的范围（本轮踩到过）。
+    const seg = umf2.slice(umf2.indexOf('const nSec = red'), umf2.indexOf('const topH = '));
     // 冠体本身只画一次，且不在任何 dmg 分支里
     return (seg.match(/new THREE\.CylinderGeometry\(R \* 0\.72, R \* 0\.86, crownH/g) || []).length === 1
         && !/if \(dmg === 0\)/.test(seg);
@@ -492,8 +497,30 @@ const mkE = (ents, type, x, y, extra = {}) => {
         m[0].geo.attributes.position.count !== m[2].geo.attributes.position.count);
     }
   }
-  T('损⑱-角楼架在冠顶（crownTopY），不是架在雉堞推进后的高度上（那样会悬空）',
-    /const crownTopY = y;/.test(umf2) && /T\(tx, crownTopY \+ th \/ 2, tz\)/.test(umf2));
+  // v54：这条改过两次，过程本身值得留着 ——
+  //   ① 用户："去除那些莫名其妙并且丑的小装饰，尤其是蓝方上面那一堆小块块。"
+  //      我据此把雉堞与角楼**整段删了**，断言也跟着改成"必须已删"。
+  //   ② 用户随即纠正："小块块和角楼**不要全部清掉**啊。"
+  //      —— 问题从来不是"有没有"，是"**太多太碎**"（外塔原本一圈 10 块小方齿）。
+  // 所以现在钉的是**数量上限**，不是有无：顶部装饰最多四个，且角楼仍然保留。
+  // 这样既挡住"又堆回一圈噪点"，也挡住"下次又一刀全删"。
+  T('损⑱-塔顶装饰是"减量保留"：最多四个，角楼仍在', (() => {
+    const alive = umf2.slice(umf2.indexOf('const SP = TIER_SPEC[tier] || TIER_FALLBACK;'),
+                             umf2.indexOf('void weaponId;'));
+    const m = alive.match(/const nDeco = (\d+);/);
+    return !!m && Number(m[1]) <= 4 && /SP\.turrets/.test(alive) && /crownTopY/.test(alive);
+  })());
+  if (THREE) {
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    for (const fac of ['blue', 'red']) {
+      for (const tier of ['outer', 'inner', 'base', 'hq_tower']) {
+        const m = towerMesh(`v54|${fac}|${tier}`, '#5b9bd5', 34, '', 'tower', false, false, tier, fac, 0);
+        m.geo.computeBoundingBox();
+        T(`损⑱b-${fac}/${tier}：水晶坐在石身上（底面不高于石身顶面，不悬空）`,
+          m.crystal.cy - m.crystal.r <= m.geo.boundingBox.max.y + 1e-6);
+      }
+    }
+  }
 
   // v47：清零改走 core/reviveState.clearDamageMarks 这一份唯一清单。
   // 用户："我手动恢复损毁的塔，但是模型还是重度损毁的模型。"

@@ -135,4 +135,35 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
     r6._autoDownStreak === 0 && r6._autoUpStreak === 0 && r6._applied.length === 0);
 }
 
+
+// ==================== v54：割裂感整改（A1 描边 / A2 太阳压低 / A4 接地暗斑）====================
+// 诊断见 docs/MAP-DESIGN-howling-abyss-frost.md 第 10 节。
+// 这三条都是**很容易被下一个人顺手关掉**的开关，所以逐条钉住。
+{
+  const q = CONFIG.ui.qualityPresets;
+  // v51.28 因为描边有 bug 把三档全关了；bug 已在 f83a3c1 修好（透明物体不进法线深度预渲染），
+  // 这里把 medium/high 开回来。描边是"把 3D 单位和 2D 地面缝在一起"最强的一招。
+  T('缝①-中/高画质档的描边已开回来（低档仍关，那是性能档）',
+    q.medium.outline === true && q.high.outline === true && q.low.outline === false);
+
+  const L = CONFIG.ui.lighting;
+  T(`缝②-太阳仰角上限已压低到 ${L.maxSunElevDeg}°（影子要够长才能把物体钉在地上）`,
+    L.maxSunElevDeg <= 45);
+
+  const gcfg = CONFIG.ui.groundContact;
+  T('缝③-接地暗斑已软编码且默认开启', gcfg && gcfg.enabled === true
+    && typeof gcfg.radiusK === 'number' && typeof gcfg.opacity === 'number');
+
+  const ul = srcOf('src/presentation/UnitLayer.js');
+  // 暗斑必须用**不带 walkBob 的地面高度**。跟着走路起伏一起上下跳的"影子"会立刻穿帮。
+  T('缝④-接地暗斑贴在地面高度上，不跟随走路起伏（跟着跳就穿帮了）',
+    /en\.contact\.position\.set\(e\.pos\.x, CONTACT_LIFT \+ gy, e\.pos\.y\)/.test(ul));
+  // 它是"影子"，必须压在射程圈/归属环之下。
+  T('缝⑤-暗斑的渲染次序压在贴地环之下',
+    /const ORDER_CONTACT = (\d+);/.test(ul)
+    && Number(ul.match(/const ORDER_CONTACT = (\d+);/)[1]) < 5);
+  T('缝⑥-幽灵单位不画暗斑（预览摆放的塔不该在地上留影子）',
+    /gc\.enabled !== false && !ghost/.test(ul));
+}
+
 done();

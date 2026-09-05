@@ -32,7 +32,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { MINION_STYLE, minionStyle } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
-import { CONFIG } from '../data/Config.js';
+import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
@@ -61,6 +61,9 @@ const SOUL_COLORS = (() => {
 })();
 
 const ORDER_UNIT = 10, ORDER_BAR = 20;
+// v54：接地暗斑压在所有贴地环之下（它是"影子"，射程圈/归属环应该画在它上面）。
+const ORDER_CONTACT = 4;
+const CONTACT_LIFT = 0.35;   // 比 RING_LIFT(0.6) 更贴地，避免与地面 z-fighting 又不抢环的位置
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
 const _EMPTY_GEO = new THREE.BufferGeometry();  // Mesh 首帧占位，随即被 _visualOf 的共享几何替换
 // Q3：程序化塔/水晶的视觉放大系数（纯表现；不动 CONFIG.buildingSizes，故 GLB/碰撞/玩法都不受影响）。
@@ -184,8 +187,15 @@ export class UnitLayer {
       // 已经是废墟(showRuin)时不再分档：废墟有自己一套造型，再叠损毁没有意义。
       const hpMax = e.baseStats?.maxHP || 1;
       const dmg = showRuin ? 0 : towerDamageStage(e, (e.currentHP || 0) / hpMax);
-      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
-      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac, dmg);
+      // v54：塔的石色跟随**地图调色板**（见 CONFIG.stylizedPalettes 的 towerStone/towerTrim）。
+      // ⚠️ paletteId 必须进 key —— 几何是按 key 全局缓存的，不进 key 的话换到另一张
+      //    调色板的地图后会直接命中上一张图的几何，颜色跟着错，而且**只在切图时复现**，
+      //    是最难查的一类 bug。
+      const pal = stylizedPaletteOf(this.mapSystem?.currentMap);
+      const palId = this.mapSystem?.currentMap?.paletteId || 'default';
+      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${palId}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
+      const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac, dmg,
+                          { stone: pal.towerStone, trim: pal.towerTrim });
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,
@@ -230,6 +240,38 @@ export class UnitLayer {
   }
 
   // ============ E 组共享资源（几何/材质/盾牌纹理全局复用，暖机后零分配） ============
+  /**
+   * v54：接地暗斑专用材质。**不能复用 _flatMat** —— 那是纯色硬边圆，
+   * 贴在地上读起来是"单位站在一个水洼里"，不是影子。影子的关键是**边缘化开**，
+   * 所以这里自己生成一张径向渐变贴图（中心不透明 → 边缘全透明）。
+   * 贴图与材质都只建一次，全场单位共用（暗斑的颜色/浓度是全局配置，不逐单位变）。
+   */
+  _contactMat() {
+    if (this._contactM) return this._contactM;
+    const gc = CONFIG.ui?.groundContact || {};
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    // 中段保持较实、最外圈才快速化开：这样暗斑有一个"实心的核"（接地点）
+    // 加一圈柔边，而不是从中心就开始淡出（那样会糊成一团看不出接地）。
+    grad.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.92)');
+    grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(c);
+    this._contactM = new THREE.MeshBasicMaterial({
+      map: tex, color: gc.color || '#0a1020',
+      transparent: true, opacity: gc.opacity ?? 0.30,
+      depthTest: true, depthWrite: false,
+      // 场景雾会把暗斑染成天空色 —— 血条踩过同一个坑（SpriteMaterial.fog 默认 true）。
+      // 影子不该随昼夜变色，关掉。
+      fog: false,
+    });
+    return this._contactM;
+  }
+
   _flatMat(color, opacity) {
     const k = color + '|' + opacity;
     let m = this._matCache.get(k);
@@ -480,6 +522,10 @@ export class UnitLayer {
     // 那次早退永远不会发生，环就一直挂在场景里。用户报"龙死后""其余单位的龙魂环也会
     // 残留"，根子就是这里漏了一次清理——挪到 remove() 里保证【无论怎么消失】都会清。
     if (en.soul) this._clearSoulRing(en);
+    // v54：接地暗斑同样必须在这里清。本文件已经因为"只在每帧同步的早退分支里清"
+    // 漏过一次（龙魂环残留，见上面那段注释）——单位一旦被整个移除就再也不进同步循环，
+    // 那条早退永远不会发生。新增贴地对象一律在 remove() 里补一次清理。
+    en.contact = this._removeFlat(en.contact); en.contactKey = '';
     this.map.delete(id);
   }
 
@@ -1044,6 +1090,28 @@ export class UnitLayer {
     const walkBob = Math.abs(Math.sin(walkPhase)) * (vis.topY || 0) * WALK_BOB_FRAC;
     en.unit.position.set(e.pos.x, gy + walkBob, e.pos.y);
     en.unit.rotation.z = Math.sin(walkPhase) * WALK_SWAY_RAD;
+
+    // ==================== v54：接地暗斑（A4）====================
+    // 诊断见 docs/MAP-DESIGN-howling-abyss-frost.md 第 10 节。
+    // 割裂感的一条根因是"影子几乎不存在"：默认画质档下小兵**完全不投影**
+    //（unitsCastShadow() 只在 'all' 档为真），塔的影子也因为太阳仰角太高而压在脚下。
+    // 这片暗斑是保底：它是一张地面贴花，不进阴影贴图，画质降到 low 也还在。
+    // ⚠️ 位置用**不带 walkBob 的 gy**：暗斑要黏在地上，跟着走路起伏一起上下跳
+    //    会立刻穿帮（那是"影子飘起来了"）。
+    const gc = CONFIG.ui?.groundContact || {};
+    if (gc.enabled !== false && !ghost) {
+      const cr = Math.max(gc.minRadius ?? 7, (vis.size || 20) * (gc.radiusK ?? 1.05));
+      const ck = cr.toFixed(1);   // 材质是全局单例，key 只随半径变
+      if (en.contactKey !== ck) {
+        en.contactKey = ck;
+        en.contact = this._removeFlat(en.contact);
+        en.contact = this._flatMesh(this._flatGeo('circle', cr), this._contactMat());
+        en.contact.renderOrder = ORDER_CONTACT;
+      }
+      en.contact.position.set(e.pos.x, CONTACT_LIFT + gy, e.pos.y);
+    } else if (en.contact) {
+      en.contact = this._removeFlat(en.contact); en.contactKey = '';
+    }
 
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
     if (en.crystal) {

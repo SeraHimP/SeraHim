@@ -2332,8 +2332,15 @@ async function world() {
   // 移除时的清理路径）只调了 _clearInfo，从没调过 _clearSoulRing；_syncSoulRing
   // 里那个"幽灵/废墟/死亡才清"的早退分支必须【那个实体还在被 _syncOne 同步】才会
   // 跑到——一旦整个被 remove() 摘掉（大多数单位死亡就是这样），那次清理永远不会发生。
+  // v54：窗口从 50 放宽到 400。原因不是判据松了，是 remove() 里又多了一处清理
+  //（接地暗斑 en.contact，同样必须在这里清 —— 它踩的是与龙魂环**一模一样**的坑）。
+  // 这条断言想守的是"清理发生在 remove() 里、且在 map.delete 之前"，
+  // 不是"这两行之间不许有别的东西"。窗口钉太死，等于每加一处清理都要来改一次断言，
+  // 而那次改动与它想守的东西无关。
   T('环⑧-remove(id) 会清理龙魂环，不能只指望 _syncSoulRing 的早退分支',
-    /this\._clearInfo\(en\);[\s\S]{0,200}if \(en\.soul\) this\._clearSoulRing\(en\);[\s\S]{0,50}this\.map\.delete\(id\);/.test(ul));
+    /this\._clearInfo\(en\);[\s\S]{0,200}if \(en\.soul\) this\._clearSoulRing\(en\);[\s\S]{0,400}this\.map\.delete\(id\);/.test(ul));
+  T('环⑧b-接地暗斑同样在 remove(id) 里清（与龙魂环同一个坑）',
+    /en\.contact = this\._removeFlat\(en\.contact\);[\s\S]{0,120}this\.map\.delete\(id\);/.test(ul));
 
   // ==================== Q20：蓝方塔方形龙魂环没有跟随塔的朝向旋转 ====================
   // 用户："蓝方塔的龙魂框依旧没有正确跟随塔的朝向。"根因：_syncSoulRing 只 set 了

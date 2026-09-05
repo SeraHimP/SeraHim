@@ -1018,7 +1018,24 @@ export const CONFIG = {
       groundColor: '#40485a',// 半球光·下（地面反照）
       // 昼夜关键帧里太阳仰角的**上限**。90 = 不夹（与参数化前逐位一致）。
       // 调低它就能让全天的影子都变长 —— 这是 §10.3 的 A2。
-      maxSunElevDeg: 90,
+      maxSunElevDeg: 34,
+    },
+
+    // ==================== v54：接地暗斑（A4）====================
+    // 用户："最重要的就是塔/小兵和环境的割裂感！"
+    // 每个单位脚下一片跟随的暗色圆斑。它**不吃阴影贴图开销**，所以即使玩家把画质
+    // 降到 low（阴影 off）也仍然接地 —— 这是保底手段，真投影是锦上添花。
+    // 复用 UnitLayer 已有的"地面贴花"设施（_flatGeo/_flatMat/_flatMesh），
+    // 与射程圈/归属环同一套缓存与 depthTest 语义，不另起炉灶。
+    groundContact: {
+      enabled: true,
+      color: '#0a1020',   // 冷调深色。不用纯黑：纯黑在夜里会变成一个洞
+      opacity: 0.46,      // 贴图是径向渐变（软边），所以浓度可以比纯色圆高一点
+      // ⚠️ 这个系数必须让暗斑**明显大于单位自己的底盘**，否则整片贴图都被单位挡住，
+      // 看起来就像没生效。本轮踩过：1.05 时肉眼完全看不出来，把它临时调到 3.0
+      // 才确认贴片其实一直在画。1.85 是能看见一圈、又不至于糊成一摊的值。
+      radiusK: 1.85,
+      minRadius: 7,
     },
 
     // 渲染重构 Week3·Day13-14：移动端画质分档系统。低/中/高三档把阴影/Bloom/描边/
@@ -1030,8 +1047,8 @@ export const CONFIG = {
     // bug 以后再查再修。等 bug 修好，medium/high 想恢复描边只需要把这两个 true 改回来。
     qualityPresets: {
       low:    { shadow: 'off',    bloom: false, outline: false, ssao: false, resolutionScale: 0.6 },
-      medium: { shadow: 'static', bloom: true,  outline: false, ssao: false, resolutionScale: 0.85 },
-      high:   { shadow: 'all',    bloom: true,  outline: false, ssao: true,  resolutionScale: 1.0 },
+      medium: { shadow: 'static', bloom: true,  outline: true,  ssao: false, resolutionScale: 0.85 },
+      high:   { shadow: 'all',    bloom: true,  outline: true,  ssao: true,  resolutionScale: 1.0 },
       // 自动档的帧时判据（毫秒，对应 main.js PERF.render 的 250ms 窗口均值）：
       // 连续 autoDownTicks 次超过 autoDownMs 就降一档；连续 autoUpTicks 次低于
       // autoUpMs 才升一档——升档要求的次数更多，"偶尔快一帧"不该立刻贸然提画质，
@@ -1276,6 +1293,14 @@ export const CONFIG = {
       waterColor: '#24558a',      // 裸露水面：比冰暗、比深渊基底亮，三者拉开层次
       islandColor: '#c8dcea',     // 孤灵小岛台面：接近桥面但略冷一点
       spikeColor: '#b9d5e6',      // 冰刺：整张图最亮的一档冷色，参考图里最抓眼的母题
+      // v54：**塔与小兵的石色也归地图调色板管**。
+      // 用户："目前的塔模型根本无法融入地形……最重要的就是塔/小兵和环境的割裂感！"
+      // 放大到实机看得很清楚：城墙用的是这张表里的 rockColor/wallCapColor（冷蓝灰，
+      // 明显暗于桥面，读起来是"长在桥上的"），而塔用的是 FACTION_STYLE 里那套
+      // 与本图无关的暖中性灰 —— 于是墙融进去了、塔像贴纸。
+      // 这两项一给，塔就和城墙同源了。不声明的地图（峡谷/丛林）取值逐位不变。
+      towerStone: '#6d8aa6',      // 塔身：比 rockColor 略深一档，让塔在桥面上先"压得住"
+      towerTrim: '#c3d8e6',       // 塔的亮部：与 wallCapColor 同族，略亮
       outlineOnByDefault: false,
       vegetationMode: 'none',
     },

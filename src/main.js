@@ -149,6 +149,20 @@ if (renderer3d && glCanvas) {
   // 命中逻辑本身在世界坐标里工作，因此容差手感、幽灵水晶可选、点空地清除选中全部不变。
   canvasController.view3d = new ThreeCameraController(renderer3d, glCanvas, () => true);
 }
+// v54：把镜头对到世界某一点并设定缩放。**给验收工具用的固定入口**。
+// 为什么做成常驻而不是临时加一行再删：每次要"在真实地图里看某个模型改得对不对"，
+// 都需要这个能力（tests/browser/run_game_shot.mjs 就是靠它对焦到某座塔）。
+// 本仓库为此临时改过 main.js 又忘记回滚过一次 —— 与其反复加删，不如做成一条
+// 有名字、有注释的调试杠杆，和旁边这些 CTX.__ 系列同类。
+CTX.__lookAt = (wx, wy, zoom) => {
+  if (!canvasController) return null;
+  if (zoom) canvasController.zoom = Math.max(0.05, +zoom);
+  const z = canvasController.zoom || 1;
+  // syncCameraFrom 的逆运算：tx=(W/2-offsetX)/zoom  ⇒  offsetX=W/2-tx*zoom
+  canvasController.offsetX = glCanvas.clientWidth / 2 - wx * z;
+  canvasController.offsetY = glCanvas.clientHeight / 2 - wy * z;
+  return { zoom: z, offsetX: canvasController.offsetX, offsetY: canvasController.offsetY };
+};
 // 仰角可调（默认 45°）。这不是脚手架，是画面手感参数，保留。
 CTX.__setElevation = (deg) => renderer3d ? renderer3d.setElevation(deg) : null;
 CTX.__setAzimuth = (deg) => renderer3d ? renderer3d.setAzimuth(deg) : null; // C 组·方位角：绕地图中心偏航

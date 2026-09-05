@@ -241,13 +241,22 @@ export function towerDamageStage(e, hpFrac) {
   return stage;
 }
 
-export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction, dmg = 0) {
+/**
+ * @param {object|null} pal 地图调色板里的塔配色 { stone, trim }（见 CONFIG.stylizedPalettes）。
+ *   不传 / 缺字段时退回 FACTION_STYLE 的原值 —— 没声明这两项的地图画面**逐位不变**。
+ *   ⚠️ 调用方必须把调色板 id 并进 `key`，否则换地图后会命中上一张图的缓存几何。
+ */
+export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction, dmg = 0, pal = null) {
   let hit = _geoCache.get(key);
   if (!hit) {
     const R = bSize, parts = [];
     let crystalGeo = null, crystalCy = 0, crystalR = 0;   // Q6：水晶单独成件，不并入石身
     let crystalMuzzleK = 0;   // v43 Q8：炮口相对水晶中心上移的比例（× crystalR），0 = 正中心
-    const F = facStyle(faction);
+    const F0 = facStyle(faction);
+    // v54：地图调色板可以覆写石色/亮色。塔要和这张图的城墙同源，否则融不进去。
+    const F = (pal && (pal.stone || pal.trim))
+      ? { ...F0, stone: pal.stone || F0.stone, trim: pal.trim || F0.trim }
+      : F0;
     const add = (geo, m, c) => parts.push({ geo, matrix: m, color: c });
 
     if (ruin) {
@@ -761,40 +770,42 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         }
         y += crownH;
         chip(y - crownH * 0.5, R * 0.78, 1, 1.3, 1.0);   // 冠上掉块
-        // 角楼要架在冠顶上，不能架在"雉堞推进之后"的 y 上（那样底下没东西托着 = 悬空）。
-        const crownTopY = y;
-
-        // 雉堞（蓝方方齿）/ 骨刺（红方）—— 轻度损毁时**缺几个**，这是最好读的"受损"信号
-        if (red) {
-          const nS = 8;
-          for (let i = 0; i < nS; i++) {
-            if (skip.includes(i % nSec)) continue;    // 与冠的缺口对齐（同一处坏掉）
-            if (dmg === 2 && i % 2 === 0) continue;   // 重损：再掉一半
-            const a = (i / nS) * Math.PI * 2 + 0.3;
-            add(new THREE.ConeGeometry(R * 0.08, R * 0.40, 4),
-                compose(T(Math.cos(a) * R * 0.58, y + R * 0.20, Math.sin(a) * R * 0.58),
-                        R_Z(Math.cos(a) * 0.55), R_X(-Math.sin(a) * 0.55)), shade(cTr, 0.8 * wear));
+        // ==================== v54：塔顶小装饰**减量保留**（不是清空）====================
+        // 用户第一次说："去除那些莫名其妙并且丑的小装饰，尤其是蓝方上面那一堆小块块。"
+        // 我据此把雉堞与角楼整段删了，用户随即纠正："小块块和角楼不要全部清掉啊。"
+        // —— 所以问题不是"有没有"，是"**太多太碎**"：外塔原本一圈 10 块小方齿
+        //（8 + tiers*2），在实机俯视视距下只剩一圈噪点。
+        //
+        // 现在的做法：**数量砍到四个、每个变大、对齐冠的四个角**。
+        // 冠本身蓝方是方块、红方是六棱柱，角上放东西比沿边匀开更能读出"这是个冠"。
+        const nDeco = 4;
+        const decoR = crownR * 0.80;
+        for (let i = 0; i < nDeco; i++) {
+          if (skip.includes(i % nSec)) continue;      // 与冠的缺口对齐（同一处坏掉）
+          if (dmg === 2 && i % 2 === 0) continue;     // 重损再崩一半
+          const a = (i / nDeco) * Math.PI * 2 + Math.PI / 4;
+          const px = Math.cos(a) * decoR, pz = Math.sin(a) * decoR;
+          if (red) {
+            add(new THREE.ConeGeometry(R * 0.13, R * 0.52, 4),
+                compose(T(px, y + R * 0.26, pz), R_Z(Math.cos(a) * 0.45), R_X(-Math.sin(a) * 0.45)),
+                shade(cTr, 0.80 * wear));
+          } else {
+            add(new THREE.BoxGeometry(R * 0.24, R * 0.34, R * 0.24),
+                T(px, y + R * 0.17, pz), shade(cSt, 0.78 * wear));
+            add(new THREE.BoxGeometry(R * 0.30, R * 0.06, R * 0.30),
+                T(px, y + R * 0.37, pz), shade(cTr, 0.72 * wear));
           }
-          y += R * 0.30;
-        } else {
-          const mN = 8 + SP.tiers * 2, mS = R * 0.19, rr = R * 0.74;
-          for (let i = 0; i < mN; i++) {
-            if (skip.includes(i % nSec)) continue;    // 与冠的缺口对齐（同一处坏掉）
-            if (dmg === 2 && i % 3 === 0) continue;   // 重损：再崩几块
-            const a = (i / mN) * Math.PI * 2;
-            add(new THREE.BoxGeometry(mS, mS * 1.5, mS),
-                T(Math.cos(a) * rr, y + mS * 0.75, Math.sin(a) * rr), shade(cSt, 0.60 * wear));
-          }
-          y += mS * 1.5;
         }
+        const crownTopY = y;      // 角楼架在冠顶上，不是架在装饰推进后的高度上（那样会悬空）
+        y += R * 0.34;
 
-        // 角楼（高地塔起）：冠上四个小塔楼，是"这是一座要塞"的读感来源。轻损时缺一角。
+        // 角楼（水晶防御塔起）：冠上四个小塔楼，是"这是一座要塞"的读感来源。**保留**。
+        // 轻损时缺一角；塌掉的留一截断根，不是整个消失（整个消失会让剪影缺一块，
+        // 那就变成"主体不一样了"，是用户当场推翻过的错误）。
         for (let i = 0; i < SP.turrets; i++) {
           const broken = (dmg === 1 && i === 0) || (dmg === 2 && i % 2 === 0);
           const a = (i / Math.max(1, SP.turrets)) * Math.PI * 2 + Math.PI / 4;
           const tx = Math.cos(a) * R * 0.52, tz = Math.sin(a) * R * 0.52;
-          // 塌掉的角楼**留一截断根**，不是整个消失 —— 整个消失会让剪影缺一块，
-          // 那又变成"主体不一样了"。坏掉的东西还在原地，只是矮了、黑了。
           const th = broken ? R * 0.16 : R * 0.42;
           add(red ? new THREE.CylinderGeometry(R * (broken ? 0.16 : 0.13), R * 0.17, th, 5)
                   : new THREE.BoxGeometry(R * 0.26, th, R * 0.26),
@@ -849,7 +860,19 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       // 水晶＝武器＝炮口。它的**大小与高度都不随损毁变** ——
       // 前一版让它缩小，等于损毁顺带改了炮口位置，弹道会看起来像换了把武器。
       crystalR = R * (0.34 + SP.tiers * 0.035);
-      crystalCy = y + crystalR * 0.75;
+      // ==================== v54：水晶底座（火盆）====================
+      // 用户："塔上面的水晶底下有个底座，要不然水晶直接放针上面太奇怪了……
+      //        这个底座不用很大（就像是火焰下面的火盆一样）。""不需要太显眼！"
+      // 所以刻意做小：外径不到水晶的六成、总高只有水晶半径的三分之一，
+      // 两片薄盘（下窄上宽）读作"盆"，水晶坐进盆口。
+      // 颜色跟塔身走（cTr 的暗一档），**不给队伍色** —— 饱和色只留给水晶本身。
+      const pedR = crystalR * 0.58, pedH = crystalR * 0.34;
+      add(new THREE.CylinderGeometry(pedR * 0.72, pedR * 0.92, pedH * 0.55, 8),
+          T(0, y + pedH * 0.275, 0), shade(cSt, 0.66 * wear));
+      add(new THREE.CylinderGeometry(pedR, pedR * 0.78, pedH * 0.45, 8),
+          T(0, y + pedH * 0.775, 0), shade(cTr, 0.62 * wear));
+      // 水晶坐进盆口：底面略陷（0.62 而不是原来的 0.75），读作"盛在盆里"而不是"架在杆上"。
+      crystalCy = y + pedH + crystalR * 0.62;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
     }
