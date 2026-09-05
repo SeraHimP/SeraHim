@@ -18,6 +18,7 @@
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
+import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
 
 const _terrainCache = new Map();
 
@@ -39,6 +40,10 @@ export function invalidateTerrainCache(mapId) {
   if (!mapId) return;
   _terrainCache.delete(mapId);
   _terrainCache.delete(mapId + '#nav');
+  // v55.1：挖空型地图的 key 带 '#cut'，原来漏删了；轮廓缓存同源，一起丢。
+  _terrainCache.delete(mapId + '#cut');
+  _terrainCache.delete(mapId + '#nav#cut');
+  invalidateMapOutline(mapId);
 }
 
 /**
@@ -160,6 +165,67 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     // ⚠️ 材质那边要配 alphaTest（discard）而不是混合：discard 的深度写入是正确的，
     //    SSAO / 描边的法线深度预渲染不会被半透明搞乱，也没有渲染排序问题。
     const cutout = !!map.terrainEdge;
+    // 阵营底色：基地圈的蓝/红是敌我识别信息（材质合成里靠 CHROMA_KEEP 单独保留），
+    // 但只染色不改亮度 —— 用叠加半透明色而不是实心填充，免得又造出一圈新的亮度边界。
+    const tintBases = () => {
+      const tintBase = (cx, cy, r, color) => {
+        const gr2 = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+        gr2.addColorStop(0, color); gr2.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr2;
+        g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill();
+      };
+      // 阵营底色的圆心跟着基地圈走（原来写死在两个角上，扭曲丛林的基地不在角上）。
+      // 305/326 是相对角点的内缩偏移，改成沿"角点→基地圈心"同向内缩同样的量。
+      const bcB = baseCircleCenter(map, 'blue'), bcR = baseCircleCenter(map, 'red');
+      tintBase(bcB.x + 305, bcB.y - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
+      tintBase(bcR.x - 326, bcR.y + 305, WW * 0.30, 'rgba(224,71,63,0.20)');
+    };
+
+    // ============ v55.1：挖空型地图 —— 地面按**平滑轮廓**填，不再逐格填色 ============
+    // 用户反馈两条：「你新做的那个条在图上乱飘」「大陆的锯齿感太重」。实测下来是同一个
+    // 根因：同一条"陆地边界"在工程里存了三份，各自的量化粒度还不一样——
+    //   · 能不能走：navgrid 256 格 = 9.08 世界单位/格；
+    //   · 地面底图：下面那段逐格填色用的是 WallLayer 的 CELL=8 网格，从 256 格最近邻
+    //     重采样。9.08 与 8 频率不同，两次量化打出**拍频**，所以锯齿不只是台阶，
+    //     还带一层摩尔纹；
+    //   · 崖壁：navOutline 追边 → DP → Chaikin 的平滑折线。
+    // 平滑折线与 8 单位台阶最大偏离 23 世界单位，而崖壁块厚度只有 16 —— 沿轮廓密采样
+    // 2620 点，29.6% 落在被挖空的地方，也就是崖壁脚下根本没有地面 = "乱飘"。
+    //
+    // 修法不是调参数，是**取消另外两份**：地面直接填 mapOutline 那条折线，崖壁读同一条。
+    // 两者从此共用同一组顶点，物理上不可能再错开；矢量填充的边缘精度 ≈ 1 个底图像素
+    // ≈ 2 世界单位，锯齿一并消失。
+    // ⚠️ 只对声明了 terrainEdge 的地图走这条分支，三张老地图仍走下面的逐格路径，逐位不变。
+    const loops = cutout ? mapOutline(map) : null;
+    if (loops && loops.length) {
+      const tracePath = () => {
+        g.beginPath();
+        for (const lp of loops) {
+          const pts = lp.pts;
+          g.moveTo(pts[0][0], pts[0][1]);
+          for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+          g.closePath();
+        }
+      };
+      // 陆地以外一律 alpha=0：上面那层铺满画布的 groundColor 底要先清掉，
+      // 挖空区交给 TerrainEdgeLayer 在更低处铺的深渊面。
+      // even-odd 填充：外环与洞的绕向相反，用它就不必分辨哪条环是洞。
+      g.clearRect(0, 0, WW, WH);
+      g.fillStyle = stylized ? (SV.corridorColor || '#c9a06b') : '#2b3647';
+      tracePath();
+      g.fill('evenodd');
+      // 河道与阵营底色裁到陆地内。挖空区的残留 alpha 虽然低于 alphaTest 会被 discard，
+      // 但不要指望阈值兜底——直接裁干净，换个 alphaTest 值也不会翻车。
+      g.save();
+      tracePath();
+      g.clip('evenodd');
+      drawRiver(riverAt);
+      tintBases();
+      g.restore();
+      _terrainCache.set(key, c);
+      return c;
+    }
+
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
       im.data[k * 4]     = on ? corR : gndR;
@@ -172,19 +238,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     g.drawImage(cell, 0, 0, WW, WH);
     g.imageSmoothingEnabled = true;
     drawRiver(riverAt);
-    // 阵营底色：基地圈的蓝/红是敌我识别信息（材质合成里靠 CHROMA_KEEP 单独保留），
-    // 但只染色不改亮度 —— 用叠加半透明色而不是实心填充，免得又造出一圈新的亮度边界。
-    const tintBase = (cx, cy, r, color) => {
-      const gr2 = g.createRadialGradient(cx, cy, 0, cx, cy, r);
-      gr2.addColorStop(0, color); gr2.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = gr2;
-      g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill();
-    };
-    // 阵营底色的圆心跟着基地圈走（原来写死在两个角上，扭曲丛林的基地不在角上）。
-    // 305/326 是相对角点的内缩偏移，改成沿"角点→基地圈心"同向内缩同样的量。
-    const bcB = baseCircleCenter(map, 'blue'), bcR = baseCircleCenter(map, 'red');
-    tintBase(bcB.x + 305, bcB.y - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
-    tintBase(bcR.x - 326, bcR.y + 305, WW * 0.30, 'rgba(224,71,63,0.20)');
+    tintBases();
     _terrainCache.set(key, c);
     return c;
   }

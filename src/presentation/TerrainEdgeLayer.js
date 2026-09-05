@@ -24,8 +24,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
-import { unpackBits } from '../data/navgrid.js';
-import { navOutline } from '../data/navOutline.js';
+import { mapOutline } from '../data/navOutline.js';
 
 const DEF = {
   cliffHeight: 28,      // 崖壁高度（陆地面 y=0 往下伸多少）
@@ -34,8 +33,10 @@ const DEF = {
   thickness: 16,        // 崖壁块朝内的厚度
   jitter: 0.22,         // 每块的高度抖动比例（0 = 齐平，参考图里崖顶是参差的）
   capHeight: 5,         // 崖顶那道亮边的厚度
-  simplifyCells: 2.2,   // 轮廓简化容差（格）
-  smoothPasses: 1,
+  // ⚠️ 轮廓的简化容差 / 平滑遍数**不在这里**：它们决定的是"陆地边界长什么样"，
+  //    地面底图和崖壁必须用同一条，所以统一由 navOutline.mapOutline 读地图声明
+  //    （`terrainEdge.simplifyCells` / `.smoothPasses`，默认见 OUTLINE_DEF）。
+  //    v55 初版在这里另存了一份，是"同一条边界存了三份"那个 bug 的一部分。
   cliffColor: '#3d5470',
   capColor: '#8ea6b8',
   abyssColor: '#16233d',
@@ -85,20 +86,10 @@ export class TerrainEdgeLayer {
     this.dispose();
 
     const P = { ...DEF, ...cfg };
-    const g = map.navgrid;
-    const bits = g && unpackBits(g.bits, g.n);
-    if (!bits) return;
-    // 崖壁跟着**看得见的地面**走，不是跟着可走区域走：这两者可以不同
-    // （见 TerrainLayer 的 visualWalkOf —— 冰封图故意让视觉地面比可走区域宽一圈，
-    //  好在墙外留一条不可走的檐）。跟错了崖壁会长在地面中间。
-    const vg = map.visualNavgrid;
-    const vbits = vg ? unpackBits(vg.bits, vg.n) : bits;
-    const vn = vg ? vg.n : g.n;
-
-    const loops = navOutline(vbits, vn, map.world, {
-      simplifyCells: P.simplifyCells, smoothPasses: P.smoothPasses,
-    });
-    if (!loops.length) return;
+    // 崖壁与地面底图共用**同一条**轮廓（见 navOutline.mapOutline 的头注：
+    // 各画各的会让一半崖壁块脚下没有地面，就是用户说的"条在图上乱飘"）。
+    const loops = mapOutline(map);
+    if (!loops || !loops.length) return;
 
     this.group = new THREE.Group();
     this.group.name = 'terrainEdge';

@@ -13,7 +13,7 @@
  *   > 崖壁**绝不能逐 navgrid 格摆**，那样只会把锯齿放大成锯齿墙。
  *
  * 所以这里的流水线是三段，缺一不可：
- *   ① 边界跟踪（Moore 邻域）→ 得到逐格的闭合环，带一圈锯齿；
+ *   ① 边界跟踪（收集单位边再串环，见 traceLoops）→ 逐格的闭合环，带一圈锯齿；
  *   ② Douglas–Peucker 简化 → 把台阶压成干净的斜切直线（这一步才是消锯齿的关键）；
  *   ③ Chaikin 圆角（可选）→ 拐角轻微倒角，避免简化后过于生硬。
  *
@@ -22,6 +22,7 @@
  *   wx = (gx + 0.5) * world / n,  wy = (gy + 0.5) * world / n
  * 输出一律是**世界坐标**的点列，调用方不用再自己换算（换算写两遍必然会错一遍）。
  */
+import { unpackBits } from './navgrid.js';
 
 /**
  * 边界跟踪：**先收集"内外分界的单位边"，再把边串成环**。
@@ -44,16 +45,22 @@
 export function traceLoops(bits, n) {
   if (!bits || !n) return [];
   const at = (x, y) => (x < 0 || y < 0 || x >= n || y >= n) ? 0 : bits[y * n + x];
-  // 有向边：起点 -> 终点。方向统一取"内部在左手边"，于是外环逆时针、洞顺时针，
+  // 有向边：起点 -> 终点。方向统一取"内部在左手边"，于是外环与洞的绕向相反，
   // 靠 signedArea2 的符号就能分辨内外环，不用另写包含判定。
-  const next = new Map();               // "x,y" -> [x2, y2]
+  //
+  // ⚠️⚠️ 这里必须是**多重映射**（一个起点挂一串出边），不能是"起点 → 单条出边"。
+  //     两块地在对角相接时（十字细颈），公共的那个格点是**两条**边界边的起点。
+  //     v55 初版写成 Map<起点, 单边>、第二条塞进数组的 .alt 字段，而串环的循环
+  //     压根没读过 .alt —— 边被静默丢掉，链条于是从一条环的中间窜到另一条环上。
+  //     实测后果：冰封图应有 2 条环（两块大陆经桥连成一体 + 洞），实际串出 13 条，
+  //     其中 8 条是零面积的横向碎片，环面积代数和 -4275，而正确值必须等于
+  //     可走格数 20113。表现就是崖壁"在图上乱飘"—— 一半的崖壁块脚下没有地面。
+  const out = new Map();                // "x,y" -> [[x2, y2], ...]
   const key = (x, y) => x + ',' + y;
   const push = (x1, y1, x2, y2) => {
     const k = key(x1, y1);
-    // 十字细颈处一个格点会有两条出边（两块地在对角相接）。取先入的那一条即可：
-    // 两条都会被走到，只是分属两个环 —— 这正是"对角相接的两块地算两块"的合理解释。
-    if (!next.has(k)) next.set(k, [x2, y2]);
-    else { const alt = next.get(k); if (!alt.alt) alt.alt = [x2, y2]; }
+    const a = out.get(k);
+    if (a) a.push([x2, y2]); else out.set(k, [[x2, y2]]);
   };
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
@@ -64,20 +71,45 @@ export function traceLoops(bits, n) {
       if (!at(x - 1, y)) push(x, y, x, y + 1);          // 左缝：向 +y
     }
   }
-  const used = new Set();
+  // ⚠️ 消费的是**边**不是点：同一个格点会被两条环各经过一次，按点标记会让第二条环
+  //    刚起步就撞上"已用"而中断。
+  const usedEdge = new Set();           // "x1,y1>x2,y2"
   const loops = [];
-  for (const [k0] of next) {
-    if (used.has(k0)) continue;
-    const loop = [];
-    let k = k0, guard = 0;
-    while (!used.has(k) && next.has(k) && guard++ < next.size + 4) {
-      used.add(k);
-      const [x, y] = k.split(',').map(Number);
-      loop.push([x, y]);
-      const nx = next.get(k);
-      k = key(nx[0], nx[1]);
+  for (const [k0, list] of out) {
+    for (const e0 of list) {
+      if (usedEdge.has(k0 + '>' + key(e0[0], e0[1]))) continue;
+      const loop = [];
+      let [cx, cy] = k0.split(',').map(Number);
+      let tx = e0[0], ty = e0[1];
+      let guard = 0;
+      while (guard++ < 4 * n * n) {
+        const ek = key(cx, cy) + '>' + key(tx, ty);
+        if (usedEdge.has(ek)) break;
+        usedEdge.add(ek);
+        loop.push([cx, cy]);
+        const dx = tx - cx, dy = ty - cy;
+        const cand = out.get(key(tx, ty));
+        if (!cand || !cand.length) break;
+        let pick = null;
+        if (cand.length === 1) {
+          pick = cand[0];
+        } else {
+          // 十字细颈：公共格点有两条出边，选哪条决定了"对角相接的两块地"算一块还是两块。
+          // 固定取**最右转**（叉积最小）：在"内部在左手边"的绕向下，最右转让每块地
+          // 各自闭合成一环；取最左转会把两块串成一个 8 字，面积互相抵消。
+          let best = Infinity;
+          for (const c of cand) {
+            const ex = c[0] - tx, ey = c[1] - ty;
+            if (ex === -dx && ey === -dy) continue;     // 不原路折返
+            const cross = dx * ey - dy * ex;            // >0 左转，0 直行，<0 右转
+            if (cross < best) { best = cross; pick = c; }
+          }
+          if (!pick) pick = cand[0];
+        }
+        cx = tx; cy = ty; tx = pick[0]; ty = pick[1];
+      }
+      if (loop.length >= 4) loops.push(loop);
     }
-    if (loop.length >= 4) loops.push(loop);
   }
   return loops;
 }
@@ -121,16 +153,27 @@ export function simplify(pts, eps) {
 /**
  * Chaikin 圆角（闭合环版）。每跑一遍，每条边被 1/4、3/4 两点取代，拐角变钝。
  * 跑太多遍环会整体缩水且顶点爆炸，默认只跑 1 遍。
+ *
+ * @param {(p:[number,number]) => boolean} [locked] 返回 true 的顶点**原样保留**，不被磨圆。
+ *        用途见 navOutline：贴着地图边界的那些直角不是真实地形边缘，是地图自身的裁剪线，
+ *        磨圆它们会把两个基地的角啃掉一块（实测漏掉 417 个可走格，全在两个角上）。
+ *        不传则行为与原来逐位一致。
  */
-export function chaikinClosed(pts, passes = 1) {
+export function chaikinClosed(pts, passes = 1, locked = null) {
   let cur = pts;
   for (let p = 0; p < passes; p++) {
     if (cur.length < 3) return cur;
     const out = [];
-    for (let i = 0; i < cur.length; i++) {
-      const a = cur[i], b = cur[(i + 1) % cur.length];
+    const m = cur.length;
+    // 逐**顶点**产出它的替代点，而不是逐边产出两点 —— 两者在无锁定时完全等价
+    // （顶点 a 被"前一条边的 3/4 点"和"后一条边的 1/4 点"取代），但只有按顶点写
+    // 才能对单个顶点做"锁定"。
+    for (let i = 0; i < m; i++) {
+      const a = cur[i];
+      if (locked && locked(a)) { out.push([a[0], a[1]]); continue; }
+      const prev = cur[(i - 1 + m) % m], b = cur[(i + 1) % m];
+      out.push([prev[0] * 0.25 + a[0] * 0.75, prev[1] * 0.25 + a[1] * 0.75]);
       out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
-      out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
     }
     cur = out;
   }
@@ -209,7 +252,12 @@ export function navOutline(bits, n, world, opt = {}) {
     let s = simplify(open, simplifyCells);
     if (s.length > 1 && s[0][0] === s[s.length - 1][0] && s[0][1] === s[s.length - 1][1]) s.pop();
     if (s.length < 3) continue;
-    if (smoothPasses > 0) s = chaikinClosed(s, smoothPasses);
+    // 贴着地图边界的顶点锁死：那条边是地图自身的裁剪线，不是地形边缘，磨圆它
+    // 等于把基地的角啃掉（见 chaikinClosed 的 locked 参数头注）。
+    const EDGE_EPS = 1e-6;
+    const onBorder = (q) => q[0] <= EDGE_EPS || q[1] <= EDGE_EPS
+                         || q[0] >= n - EDGE_EPS || q[1] >= n - EDGE_EPS;
+    if (smoothPasses > 0) s = chaikinClosed(s, smoothPasses, onBorder);
     // 格点 → 世界。注意这里是**格点**（格与格的缝）不是格中心：
     // 边界本来就落在缝上，用格中心会让崖壁整体内缩半格。
     const pts = s.map(([gx, gy]) => [gx * cell, gy * cellY]);
@@ -217,4 +265,55 @@ export function navOutline(bits, n, world, opt = {}) {
   }
   out.sort((a, b) => b.area - a.area);
   return out;
+}
+
+/**
+ * `mapOutline` 的默认参数。**只此一份**——地面底图和崖壁必须用同一条边界，
+ * 各自带一套默认值迟早会飘。地图可以在 `terrainEdge` 里覆写。
+ */
+export const OUTLINE_DEF = { simplifyCells: 2.2, smoothPasses: 1 };
+
+const _outlineCache = new Map();   // map.id -> { map, loops }
+
+/**
+ * 地图 → 陆地轮廓（世界坐标闭合环），**全工程唯一的一条陆地边界**。
+ *
+ * ==================== 为什么必须共用 ====================
+ * v55 初版让三处各画各的边界，实测后果（都是量出来的，不是猜的）：
+ *   · 能不能走：`map.navgrid`，256 格 = 9.08 世界单位/格；
+ *   · 地面底图：`WallLayer` 的 CELL=8 采样网格，从 256 格最近邻重采样
+ *     —— 9.08 与 8 两次量化频率不同，会打出**拍频**，锯齿比单纯的台阶更难看；
+ *   · 崖壁：在 256 格上追边 → DP → Chaikin 的平滑折线。
+ * 平滑折线与 8 单位台阶最大偏离 23 世界单位，而崖壁块厚度只有 16 —— 沿轮廓密采样
+ * 2620 点，**29.6% 落在被挖空的地方**，也就是崖壁脚下没有地面。用户看到的现象是
+ * "那个条在图上乱飘"。根子是"同一条边界存了三份"，不是参数没调好。
+ *
+ * 现在这个函数是唯一入口：`TerrainLayer`（画地面）与 `TerrainEdgeLayer`（摆崖壁）
+ * 都从这里取，物理上不可能再错开。
+ *
+ * 轮廓跟着**看得见的地面**走（`visualNavgrid`）而不是可走区域：这两者可以不同，
+ * 冰封图故意让视觉地面比可走区域宽一圈，好在墙外留一条不可走的檐。
+ *
+ * @param {object} map 地图定义；未声明 `terrainEdge` 的地图返回 null（老地图逐位不变）
+ * @returns {Array<{pts, area, length}>|null}
+ */
+export function mapOutline(map) {
+  if (!map || !map.terrainEdge) return null;
+  const hit = _outlineCache.get(map.id);
+  if (hit && hit.map === map) return hit.loops;
+  const g = map.visualNavgrid || map.navgrid;
+  if (!g || !g.bits || !g.n) return null;
+  const bits = unpackBits(g.bits, g.n);
+  if (!bits) return null;
+  const loops = navOutline(bits, g.n, map.world, {
+    simplifyCells: map.terrainEdge.simplifyCells ?? OUTLINE_DEF.simplifyCells,
+    smoothPasses: map.terrainEdge.smoothPasses ?? OUTLINE_DEF.smoothPasses,
+  });
+  _outlineCache.set(map.id, { map, loops });
+  return loops;
+}
+
+/** 编辑器改了地形要丢缓存（与 TerrainLayer 的 invalidateTerrain 同一时机）。 */
+export function invalidateMapOutline(mapId) {
+  if (mapId == null) _outlineCache.clear(); else _outlineCache.delete(mapId);
 }

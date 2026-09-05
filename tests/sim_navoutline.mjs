@@ -11,7 +11,8 @@
 import { CONFIG } from '../src/data/Config.js';
 import { srcOf, scoreboard } from './_harness.mjs';
 import { unpackBits, packBits, paintCircle } from '../src/data/navgrid.js';
-import { navOutline, traceLoops, simplify, chaikinClosed, signedArea2, perimeter } from '../src/data/navOutline.js';
+import { navOutline, traceLoops, simplify, chaikinClosed, signedArea2, perimeter,
+         mapOutline, invalidateMapOutline, OUTLINE_DEF } from '../src/data/navOutline.js';
 import { howling_abyss_frost } from '../src/data/maps/howling_abyss_frost.js';
 
 const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
@@ -114,9 +115,9 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
     /new TerrainEdgeLayer\(this\.scene\)/.test(tr) && /this\.terrainEdge\?\.setShadowLevel\?\.\(lv\)/.test(tr));
 
   const el = srcOf('src/presentation/TerrainEdgeLayer.js');
-  // 崖壁跟着**看得见的地面**走，不是跟着可走区域走 —— 冰封图故意让两者不同。
-  T('厚⑦-崖壁跟随 visualNavgrid（视觉地面），不是 navgrid（可走区域）',
-    /map\.visualNavgrid/.test(el));
+  // v55.1：崖壁不再自己追边。追边这件事只能有一处（见下面"共"组的头注）。
+  T('厚⑦-崖壁从共用轮廓 mapOutline 取边界，不自己调 navOutline',
+    /mapOutline\(map\)/.test(el) && !/navOutline\(/.test(el));
   // 静态几何必须合并，否则 300+ 个 mesh 的 draw call 顶不住。
   T('厚⑧-崖壁块合并成整块（draw call 回到个位数）', /mergeGeometries\(geos, false\)/.test(el));
   // 位置抖动必须是确定性的：几何进缓存，随机会让画面每次不同。
@@ -193,5 +194,106 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
   T(`桥①-桥中点的可走宽度未被收窄（${width}，期望 ≥ 300）`, width >= 300);
 }
 
-void CONFIG; void packBits; void paintCircle;
+// ==================== 六、一条边界，两处共用（v55.1） ====================
+// 用户反馈：「你新做的那个条在图上乱飘」「大陆的锯齿感太重」。查下来是同一个根因：
+// "陆地边界"被存了三份，量化粒度还各不相同（navgrid 9.08 单位/格、底图 CELL=8、
+// 平滑折线），平滑折线与底图台阶最大偏离 23 世界单位 > 崖壁块厚度 16，于是一半崖壁
+// 脚下没有地面。这一组钉的就是"从此只有一份"。
+{
+  const map = howling_abyss_frost;
+
+  // ① 轮廓提取本身的正确性守卫。这条是这一组里最重要的一条：
+  //    环面积的**代数和**必须等于位图里 1 的格数。初版 traceLoops 用 Map<起点, 单边>
+  //    存邻接，而十字细颈处一个格点有两条出边，第二条被静默丢掉、链条从一条环中间窜到
+  //    另一条环上 —— 冰封图串出 13 条环、代数和 -4275（正确值 20113）。
+  //    顶点数/环数这类断言完全钉不住这种错误，只有面积恒等式能。
+  const areaSumOf = (bits, n) => Math.abs(traceLoops(bits, n)
+    .reduce((a, lp) => a + signedArea2(lp) / 2, 0));
+  {
+    const n = 32;
+    // 两块地**对角相接**：正是初版丢边的那个形状。应算作两块，各自闭成一环。
+    const diag = new Uint8Array(n * n);
+    for (let y = 4; y < 10; y++) for (let x = 4; x < 10; x++) diag[y * n + x] = 1;
+    for (let y = 10; y < 16; y++) for (let x = 10; x < 16; x++) diag[y * n + x] = 1;
+    const lp = traceLoops(diag, n);
+    T(`环①-对角相接的两块地算两条环（得到 ${lp.length}）`, lp.length === 2);
+    T(`环②-环面积代数和 = 格数（${areaSumOf(diag, n)} = 72）`, areaSumOf(diag, n) === 72);
+  }
+  {
+    const vg = map.visualNavgrid;
+    const vb = unpackBits(vg.bits, vg.n);
+    const cells = vb.reduce((a, b) => a + b, 0);
+    T(`环③-真实地图上面积恒等式也成立（${areaSumOf(vb, vg.n)} = ${cells}）`,
+      areaSumOf(vb, vg.n) === cells);
+  }
+
+  // ② mapOutline 是唯一入口：老地图（没声明 terrainEdge）拿不到轮廓，逐位不变。
+  T('共①-未声明 terrainEdge 的地图返回 null（老地图不受影响）',
+    mapOutline({ id: 'x', navgrid: map.navgrid, world: map.world }) === null);
+
+  // ③ 缓存：同一张图两次调用必须是同一个对象，否则地面与崖壁各自重算一遍，
+  //    浮点/参数一有差别又会错开。作废后必须重新算。
+  const a1 = mapOutline(map), a2 = mapOutline(map);
+  T('共②-同一地图返回同一份轮廓（缓存命中）', a1 === a2 && Array.isArray(a1));
+  invalidateMapOutline(map.id);
+  T('共③-作废后重新计算（编辑器改地形要能刷新）', mapOutline(map) !== a1);
+
+  // ④ 轮廓跟着**看得见的地面**走，不是可走区域 —— 冰封图故意让两者不同。
+  //    换掉 visualNavgrid 轮廓就该跟着变；这比检查源码里有没有那个字段名结实。
+  const shrunk = { ...map, id: 'probe_vis', visualNavgrid: map.navgrid };
+  const A = mapOutline(map).reduce((s2, l) => s2 + l.area, 0);
+  const B = mapOutline(shrunk).reduce((s2, l) => s2 + l.area, 0);
+  T(`共④-轮廓跟随 visualNavgrid（视觉 ${A.toFixed(0)} > 可走 ${B.toFixed(0)}）`, A > B);
+
+  // ⑤ **可走区域必须被轮廓完全包住**。地面现在是照这条折线填的，凡是落在折线外的
+  //    可走格都会被挖空 —— 小兵会走在"空气"上。DP+Chaikin 会切凹角，贴着地图边界的
+  //    那些直角尤其危险（实测漏过 417 个格，全在两个基地的角上，修法是锁死边界顶点）。
+  {
+    const loops = mapOutline(map);
+    const ng = map.navgrid, nn = ng.n, nb = unpackBits(ng.bits, nn);
+    const W = map.world.w, H = map.world.h;
+    const insideEO = (x, y) => {
+      let c = false;
+      for (const lp of loops) {
+        const q = lp.pts;
+        for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
+          if ((q[i][1] > y) !== (q[j][1] > y)
+            && x < (q[j][0] - q[i][0]) * (y - q[i][1]) / (q[j][1] - q[i][1]) + q[i][0]) c = !c;
+        }
+      }
+      return c;
+    };
+    let outside = 0;
+    for (let gy = 0; gy < nn; gy++) for (let gx = 0; gx < nn; gx++) {
+      if (!nb[gy * nn + gx]) continue;
+      if (!insideEO((gx + 0.5) / nn * W, (gy + 0.5) / nn * H)) outside++;
+    }
+    T(`共⑤-可走格全部落在轮廓内（漏在外 ${outside}，必须为 0）`, outside === 0);
+  }
+
+  // ⑥ Chaikin 的顶点锁定：锁住的顶点必须原样出现在结果里。
+  {
+    const sq = [[0, 0], [10, 0], [10, 10], [0, 10]];
+    const free = chaikinClosed(sq, 1);
+    const lock = chaikinClosed(sq, 1, (q) => q[0] === 0 && q[1] === 0);
+    T('共⑥-未锁定时四个角全被磨圆（8 个顶点）', free.length === 8
+      && !free.some(q => q[0] === 0 && q[1] === 0));
+    T('共⑦-锁定的顶点原样保留', lock.some(q => q[0] === 0 && q[1] === 0));
+  }
+
+  // ⑦ 两个消费方都走同一个入口，且地面确实改成了"填多边形"而不是逐格填色。
+  const tl = srcOf('src/presentation/TerrainLayer.js');
+  T('共⑧-地面底图从 mapOutline 取边界', /mapOutline\(map\)/.test(tl));
+  T('共⑨-挖空型地图用多边形填充（even-odd，能同时处理洞）',
+    /fill\('evenodd'\)/.test(tl) && /clip\('evenodd'\)/.test(tl));
+  // 老地图仍走逐格路径：那段 imageData 循环不能被删掉。
+  T('共⑩-非挖空地图仍走逐格填色（三张老地图逐位不变）',
+    /createImageData\(nx, ny\)/.test(tl) && /putImageData/.test(tl));
+  // 编辑器改地形要连轮廓缓存一起丢，否则画完地形看到的还是旧边界。
+  T('共⑪-地形缓存作废时一并丢弃轮廓缓存', /invalidateMapOutline\(mapId\)/.test(tl));
+  T('共⑫-简化容差/平滑遍数只有一份默认值（OUTLINE_DEF）',
+    OUTLINE_DEF.simplifyCells > 0 && !/simplifyCells:\s*[\d.]+/.test(srcOf('src/presentation/TerrainEdgeLayer.js')));
+}
+
+void CONFIG; void packBits; void paintCircle; void navOutline; void simplify; void perimeter;
 done();
