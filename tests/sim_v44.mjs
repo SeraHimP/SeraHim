@@ -663,19 +663,22 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     if (!m) return false;
     const spec = {};
     for (const line of m[1].split('\n')) {
-      // v45：`orbs`（绕塔顶的悬浮碎晶）已删 —— 用户："顶部元素别整的太多了，堆在一起不好看。"
-      // 它与顶部水晶抢同一片视觉位置。递增性改看 topScale（顶盖高度），
-      // 那是它的替代者：层级差异从"再堆一件"改成"同一件长高"。
-      const g = line.match(/(\w+):\s*\{ tiers: (\d+), buttress: (\d+), shaft: ([\d.]+), crown: [\d.]+, balcony: (\w+),\s*turrets: (\d+), topScale: ([\d.]+)/);
-      if (g) spec[g[1]] = { tiers: +g[2], buttress: +g[3], shaft: +g[4],
-                            balcony: g[5] === 'true', turrets: +g[6], topScale: +g[7] };
+      // v52：塔模型推倒重做（红蓝两套完全不同的造型语言），字段跟着换了一轮。
+      // 旧的 tiers/shaft/balcony/topScale 已经没有任何部件读得到 —— 死字段比缺字段更能骗人
+      //（v45 删 spikes 时吃过一次亏：配置里写着 8，没人读它，"红蓝没区别"因此查了很久）。
+      // 这条断言守的**意图没变**：档次越高越大只手。现在的口径是
+      //   段数 segs ↑、塔身总高 segs×seg ↑、塔身半宽 shaftHalf ↑、台基 base ↑、水晶 crystal ↑。
+      // 钉的是"单调递增"这个形状，不是某一档具体多高 —— 数字随时会调。
+      const g = line.match(/(\w+):\s*\{ segs: (\d+), seg: ([\d.]+), shaftHalf: ([\d.]+), base: ([\d.]+), crystal: ([\d.]+), fins: (\d+), spikes: (\d+)/);
+      if (g) spec[g[1]] = { segs: +g[2], seg: +g[3], shaftHalf: +g[4], base: +g[5],
+                            crystal: +g[6], fins: +g[7], spikes: +g[8] };
     }
     const order = ['outer', 'inner', 'base', 'hq_tower'];
     if (order.some(k => !spec[k])) return false;
     for (let i = 1; i < order.length; i++) {
       const a = spec[order[i - 1]], b = spec[order[i]];
-      if (!(b.shaft > a.shaft && b.tiers >= a.tiers && b.buttress >= a.buttress
-            && b.turrets >= a.turrets && b.topScale > a.topScale)) return false;
+      if (!(b.segs > a.segs && b.segs * b.seg > a.segs * a.seg && b.shaftHalf > a.shaftHalf
+            && b.base > a.base && b.crystal > a.crystal && b.spikes > a.spikes)) return false;
     }
     return true;
   })());

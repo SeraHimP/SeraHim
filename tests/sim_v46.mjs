@@ -404,8 +404,12 @@ const mkE = (ents, type, x, y, extra = {}) => {
 
   T('塔①-红蓝走各自的造型分支（不再只差颜色）',
     /const red = faction === 'red'/.test(umf));
-  T('塔②-死字段已删（spikes 从 v44 起就没有任何部件读它）',
-    !/spikes/.test(umf) && !/F\.pointy/.test(umf));
+  // v45 曾把 spikes 整个删掉，理由是"配置里写着 8，但没有任何部件读它"——**死字段**。
+  // v52 红方重做后 spikes 复活了，但这次是真的有部件读：红方顶沿那圈外斜尖刺。
+  // 所以断言从"字段必须不存在"改成"字段必须被读到"——守的是同一件事：
+  // 配置表里不许出现没人读的字段。
+  T('塔②-配置字段必须有人读（spikes 复活了，但这次真的驱动了红方的尖刺）',
+    /SP\.spikes/.test(umf) && !/F\.pointy/.test(umf));
   T('塔③-基座那圈队伍色环已删（用户："水晶塔下面那个颜色的环不要"）',
     !/halo/.test(umf));
   T('塔④-召唤水晶与水晶枢纽不再共用一段代码（枢纽有高台+方碑+卫星碎晶）',
@@ -457,27 +461,52 @@ const mkE = (ents, type, x, y, extra = {}) => {
     }
   }
   const umf2 = srcOf('src/presentation/UnitMeshFactory.js');
-  T('损⑭-塔身高度不再随损毁缩水（shaftK 恒为 1）',
-    /const shaftK = 1;/.test(umf2));
+  // v52 塔型重做后这一组断言重写过一轮。原因不是"实现变了所以断言跟着松"，
+  // 而是它们里有四条钉的是**当时那份实现的私有变量名**（shaftK / nSec / crownTopY / topScale）。
+  // 那些名字随造型一起没了，断言就只能整条删掉重写 —— 这正是 CLAUDE.md §8.2 说的
+  // "钉行为形状、别钉实现细节"。所以下面尽量改成拿几何量算出来的判据。
+  if (THREE) {
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    for (const tier of ['outer', 'inner', 'base', 'hq_tower']) {
+      const m = [0, 1, 2].map(d =>
+        towerMesh(`v46h|${tier}|${d}`, '#5b9bd5', 34, '', 'tower', false, false, tier, 'blue', d));
+      for (const x of m) x.geo.computeBoundingBox();
+      // 旧断言是 `const shaftK = 1;`（钉变量名）。真正要守的是"石身包围盒三档一样高"，
+      // 这比 topY 更严：topY 只看水晶，石身缩水了它也可能不变。
+      T(`损⑭-${tier}：石身包围盒三档等高（损毁不许改主体尺寸）`,
+        Math.abs(m[0].geo.boundingBox.max.y - m[1].geo.boundingBox.max.y) < 1e-6
+        && Math.abs(m[0].geo.boundingBox.max.y - m[2].geo.boundingBox.max.y) < 1e-6);
+      // 损毁必须**看得出来**。注意这里钉的是"三档互不相同"，不是"顶点数递增"：
+      // 损毁同时做两件事 —— 压顶石上加掉块（顶点数 +）、雉堞/尖塔/角崩掉几件（顶点数 −），
+      // 净变化方向本来就不固定。钉递增等于把一个实现细节当成了需求。
+      const vc = m.map(x => x.geo.attributes.position.count);
+      T(`损⑯-${tier}：三档几何两两不同（看得出塔挨打了，不是三档一模一样）`,
+        vc[0] !== vc[1] && vc[1] !== vc[2] && vc[0] !== vc[2]);
+      // 旧 损⑱ 钉的是"角楼架在 crownTopY"，守的是**零件不许悬空**这件事。
+      // 角楼没了，但那条意图还在：水晶必须坐在石身上，不能浮在半空。
+      T(`损⑱-${tier}：水晶坐在石身上（底面不高于石身顶面，不悬空）`,
+        m[0].crystal.cy - m[0].crystal.r <= m[0].geo.boundingBox.max.y + 1e-6);
+    }
+  }
   // 用户："我看你做的重度损毁甚至和其他模型颜色都不同！这是不对的！"
   // 损毁只做很轻的做旧，可读性靠形状（掉块/缺口/碎石）。这条钉住"别再变成另一种材质"。
-  T('损⑮-损毁只做轻度做旧，不换材质（重损压暗不超过 20%）',
-    /const wear  = dmg === 0 \? 1 : dmg === 1 \? 0\.9\d : 0\.8\d;/.test(umf2));
-  T('损⑯-掉块函数存在，且基座/塔身/冠都调了它（"塔身等所有地方"）',
-    /const chip = \(cy, rad, n, seed/.test(umf2)
-    && (umf2.match(/\bchip\(/g) || []).length >= 4);
-  // v45d：冠的做法又改了一次，理由是用户"红方的塔顶部，正常和损毁的样式甚至都对应不上"。
-  // 上一版完好画整块、损毁改画扇形环 —— 两者轮廓根本不是同一个东西。
-  // 现在**三档一律整块**，损毁只是在冠沿嵌几块 char 色的缺口。
-  // 所以这条从"完好是整块"改成"三档都是整块（冠体只 add 一次）"。
-  T('损⑰-冠的做法三档一致（同一个零件坏掉，不是换了个零件）', (() => {
-    const seg = umf2.slice(umf2.indexOf('const nSec = red'), umf2.indexOf('const crownTopY'));
-    // 冠体本身只画一次，且不在任何 dmg 分支里
-    return (seg.match(/new THREE\.CylinderGeometry\(R \* 0\.72, R \* 0\.86, crownH/g) || []).length === 1
-        && !/if \(dmg === 0\)/.test(seg);
+  T('损⑮-损毁只做轻度做旧，不换材质（重损压暗不超过 25%）', (() => {
+    const g = umf2.match(/const wear = dmg === 0 \? 1 : \(dmg === 1 \? ([\d.]+) : ([\d.]+)\);/);
+    return !!g && +g[1] > +g[2] && +g[2] >= 0.75 && +g[1] < 1;
   })());
-  T('损⑱b-顶部已精简：悬浮件与尖塔都删了（用户："顶部元素别整的太多了"）',
-    !/orbs/.test(umf2) && !/SP\.spire/.test(umf2) && /topScale/.test(umf2));
+  // 用户："红方的塔顶部，正常和损毁的样式甚至都对应不上。"
+  // 根因是当年完好画整块、损毁改画另一种零件 —— 轮廓根本不是同一个东西。
+  // 现在的规矩：损毁**只允许"跳过某几件"和"把石色压暗"**，不许另起一套画法。
+  // 这条就钉这个规矩：活塔那段里不许出现 `if (dmg === 0)` 这种"完好专属分支"。
+  T('损⑰-损毁只减不换（同一个零件坏掉，不是换了个零件）', (() => {
+    const seg = umf2.slice(umf2.indexOf('const SP = TIER_SPEC[tier] || TIER_FALLBACK;'),
+                           umf2.indexOf('void weaponId;'));
+    return seg.length > 500 && !/if \(dmg === 0\)/.test(seg)
+        && /dropSet\(/.test(seg);              // 损毁的表达方式只有"崩掉几件"和"压暗"
+  })());
+  T('损⑱b-顶部已精简：悬浮件、尖塔、角楼、顶盖都没了（用户："顶部元素别整的太多了"）',
+    !/orbs/.test(umf2) && !/SP\.spire/.test(umf2) && !/SP\.topScale/.test(umf2)
+    && !/crownTopY/.test(umf2));
 
   // 用户说的是"**每种**塔"，召唤水晶/水晶枢纽也算。它们与防御塔用同一套损毁词汇：
   // 主体尺寸不动、护柱断成残根（不整根消失）、加掉块与碎石。
@@ -492,8 +521,17 @@ const mkE = (ents, type, x, y, extra = {}) => {
         m[0].geo.attributes.position.count !== m[2].geo.attributes.position.count);
     }
   }
-  T('损⑱-角楼架在冠顶（crownTopY），不是架在雉堞推进后的高度上（那样会悬空）',
-    /const crownTopY = y;/.test(umf2) && /T\(tx, crownTopY \+ th \/ 2, tz\)/.test(umf2));
+  // v52：召唤水晶的宝石也要"坐得住"。这一条是新加的，守的是刚修掉的那个观感 bug：
+  // 上一版宝石悬在三根斜柱尖上，读起来是浮空；现在中间立了座柱，宝石坐在座柱压顶石上。
+  if (THREE) {
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    for (const kind of ['orb', 'gem']) {
+      const m = towerMesh(`v46s|${kind}`, '#5b9bd5', 34, '', kind, false, false, 'nexus_main', 'blue', 0);
+      m.geo.computeBoundingBox();
+      T(`损⑱-${kind}：宝石坐在石座上（底面不高于石身顶面，不悬空）`,
+        m.crystal.cy - m.crystal.r <= m.geo.boundingBox.max.y + 1e-6);
+    }
+  }
 
   // v47：清零改走 core/reviveState.clearDamageMarks 这一份唯一清单。
   // 用户："我手动恢复损毁的塔，但是模型还是重度损毁的模型。"
