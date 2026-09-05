@@ -1,0 +1,32 @@
+# v43：全仓库行尾统一为 LF、无 BOM。
+#
+# 这里原本是 `* -text` —— git 对任何文件都不做行尾转换，"仓库里存什么就是什么"。
+# 那份设定的代价是：CRLF+BOM / CRLF / LF+BOM / LF 四种行尾在仓库里长期并存
+#（还有 7 个文件在 CRLF 里夹着孤立 LF），于是每一次脚本改文件都必须先探测、
+# 再逐文件保留原样。为此已经出过三次事故：
+#   ① 往 CRLF 文件里混进几行 LF → diff 变成整段重写，真实改动被埋掉；
+#   ② 测试用 split('\n') 切 CRLF 文件，残留的 \r 让 /\/\/.*$/ 永远匹配不到整行注释，
+#      "检查未使用变量"的用例因此报了 7 个假阳性；
+#   ③ 写句柄没先算完新字符串就打开 → 文件被截成 0 字节。
+# 全部是行尾本身造成的，与产品逻辑无关。
+#
+# 现在归一之后：
+#   · text=auto —— git 按内容判断文本/二进制；
+#   · eol=lf    —— 检出与入库一律 LF（Windows 上也是 LF，本项目无构建步骤、
+#                  浏览器与 node 都不在乎行尾，不需要 CRLF 检出）。
+# 归一那一次提交只改行尾与 BOM，内容逐字节未变（已用"去掉行尾与BOM后比对"复核）。
+* text=auto eol=lf
+
+# 二进制：显式标出，免得 text=auto 探测失误把它们当文本改坏。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.glb binary
+*.gltf binary
+*.bin binary
+*.mp4 binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

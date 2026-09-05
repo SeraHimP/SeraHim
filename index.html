@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+<!-- PWA：安卓 Edge/Chrome 里"添加到手机"后，从桌面图标启动会按 display 全屏，
+     没有地址栏/标签栏；直接在浏览器标签页里打开则不受影响，manifest 不生效。 -->
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0d12">
+<title>防御塔自动战斗 - 重构版</title>
+<style>
+/* ==================== 统一设计语言（Design Tokens） ==================== */
+:root {
+  /* 表面层次 */
+  --bg:        #0b0e13;
+  --bg-deep:   #070a0e;
+  --surface:   rgba(22, 27, 34, 0.72);
+  --surface-2: rgba(28, 35, 43, 0.85);
+  --surface-3: rgba(38, 47, 58, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.04);
+  /* 文本 */
+  --text:      #e8eef5;
+  --text-dim:  #8b96a5;
+  --text-mute: #5a6472;
+  /* 主题色 */
+  --accent:      #4fd1c5;   /* 主青 */
+  --accent-2:    #5b9bd5;   /* 蓝 */
+  --warn:        #e0473f;   /* 红 */
+  --gold:        #f6c94a;   /* 金（增益/龙魂） */
+  --good:        #4caf50;
+  --purple:      #bb86fc;
+  /* 尺度 */
+  --radius:    12px;
+  --radius-sm: 8px;
+  --radius-xs: 5px;
+  --gap:       10px;
+  --gap-sm:    6px;
+  --shadow:    0 8px 28px rgba(0,0,0,0.45);
+  --shadow-sm: 0 3px 12px rgba(0,0,0,0.35);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(79,209,197,0.06), transparent 60%),
+    radial-gradient(1000px 500px at 100% 0%, rgba(91,155,213,0.05), transparent 55%),
+    var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px; height: 100vh; height: 100dvh; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+/* ==================== 顶栏 ==================== */
+/* v44：顶栏改为**悬浮**（用户："顶栏也可以做成悬浮那种"）。
+   与右下角工具栏、右上角世界小窗共用同一套玻璃面板参数（surface + blur + 圆角 + 边框 + 阴影），
+   三块浮层这才看起来是同一套东西 —— 这就是"UI 要统一"落到具体处的样子。
+   贴边的 border-bottom 换成整圈 border，否则悬浮起来之后底边那道线会很突兀。 */
+/* ==================== v47：浮层面板的**唯一**一套外观 ====================
+   顶栏左 / 顶栏右 / 右下工具栏 / 右上世界小窗，四块浮层共用 .hud-panel。
+   改动前它们各自把 surface + blur + 圆角 + 边框 + 阴影抄了一遍（#topbar 一份、
+   #canvasControls 一份、#worldHud 一份），于是"统一设计"这件事每次都只统一了两块。
+   现在只有这一处定义，改一次四块一起变 —— 与本仓库对逻辑的要求同一个道理。 */
+/* Q18 修复：用户"毛玻璃效果要统一到所有窗口……目前主界面四个角的工具条、单位属性
+   窗口等都没有应用这个效果。"——技术上这里本来就有 backdrop-filter，但用的是旧的
+   纯色 var(--surface)（0.72 不透明度、无高光），跟后来给弹窗/悬浮预览定下的那套
+   "渐变高光 + 更透的深色底"（.modal-box / .hover-tip）看起来完全是两种质感，
+   在用户眼里就是"没有这个效果"。这里改用与 .hover-tip 完全相同的配方（同一档
+   blur(14px)，弹窗 .modal-box 用的是更强的 22px——那是更突出的大面板，量级不同，
+   不该照抄），四块浮层与悬浮预览/弹窗从此是同一套玻璃质感。 */
+.hud-panel {
+  position: absolute; z-index: 20;
+  display: flex; align-items: center; gap: var(--gap-sm);
+  padding: 7px 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 50%), rgba(22,27,34,0.6);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+/* 面板内的分组竖线。用元素而不是 border-left，是为了让它跟着 flex 的 gap 走，
+   换行（窄屏 flex-wrap）时不会挂在行首。 */
+.hud-sep { width: 1px; height: 16px; background: var(--glass-border); flex: none; }
+.hud-panel .stat {
+  color: var(--text-dim); font-size: 12.5px; letter-spacing: 0.2px;
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+.hud-panel .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* 左上角那一块现在装两样东西（局势读数 + 世界状态条），所以它是**竖**排的；
+   右上角只有按钮，保持横排。 */
+#topbarLeft  {
+  top: 10px; left: 12px; flex-direction: column; align-items: stretch; gap: 7px;
+  max-width: calc(50% - 18px);
+}
+#topbarLeft .tl-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#topbarRight { top: 10px; right: 12px; }
+
+/* 图标方钮：顶栏右侧与右下工具栏共用同一个尺寸/形状，两块浮层这才像一套东西。 */
+.icon-btn {
+  width: 30px; height: 30px; padding: 0; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; line-height: 1; border-radius: var(--radius-xs);
+}
+
+.btn-group { display: flex; gap: var(--gap-sm); flex-wrap: wrap; align-items: center; }
+
+button {
+  background: var(--surface-3); border: 1px solid var(--glass-border); color: var(--text);
+  font-family: inherit; font-size: 12px; padding: 6px 12px;
+  border-radius: var(--radius-xs); cursor: pointer;
+  transition: transform 0.12s ease, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+button:hover { background: rgba(58,70,86,0.95); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+button:active { transform: translateY(0); }
+button.primary { background: linear-gradient(135deg, rgba(79,209,197,0.22), rgba(91,155,213,0.22)); border-color: rgba(79,209,197,0.4); color: #cffcf6; }
+button.primary:hover { background: linear-gradient(135deg, rgba(79,209,197,0.34), rgba(91,155,213,0.34)); }
+button.success { background: rgba(42,122,74,0.28); border-color: rgba(76,175,80,0.4); color: #b6f0c4; }
+button.success:hover { background: rgba(42,122,74,0.45); }
+button.danger { background: rgba(179,58,58,0.24); border-color: rgba(224,71,63,0.4); color: #ffc9c5; }
+button.danger:hover { background: rgba(179,58,58,0.4); }
+button.dragon { background: linear-gradient(135deg, rgba(246,201,74,0.25), rgba(230,126,34,0.22)); border-color: rgba(246,201,74,0.45); color: #ffe9a8; }
+button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38), rgba(230,126,34,0.34)); }
+
+/* ==================== 龙魂提示条 ==================== */
+#dragonBanner {
+  display: none; align-items: center; gap: 12px;
+  padding: 7px 18px; font-size: 12.5px; font-weight: 600;
+  background: linear-gradient(90deg, rgba(230,126,34,0.2), rgba(246,201,74,0.12), transparent);
+  border-bottom: 1px solid rgba(246,201,74,0.25);
+  color: var(--gold); flex-shrink: 0; z-index: 15;
+  animation: dragonPulse 2s ease-in-out infinite;
+}
+#dragonBanner.show { display: flex; }
+@keyframes dragonPulse { 0%,100% { opacity: 0.85; } 50% { opacity: 1; } }
+#dragonBanner .db-timer { color: var(--text); font-variant-numeric: tabular-nums; }
+
+#main { display: flex; flex: 1; min-height: 0; }
+
+/* ==================== 侧栏 ==================== */
+/* ==================== 点选属性面板（替代常驻侧栏） ==================== */
+/* v44：顶栏改悬浮之后要给它让位（原来 top:12px 会盖住顶栏左半边的波次/塔数）。
+   玻璃参数也与另外三块浮层统一 —— 四块浮层同一套 surface + blur(14) + 圆角 + 边框。 */
+#selectionPanel {
+  /* v47：世界状态条并进左上角之后那块面板变高了，属性面板要给它让位。
+     这里的 81px 只是**静态兜底**（读数一行 + 状态胶囊一行的常见高度）——
+     真正的值由 UIManager._bindPanelOffset 用 ResizeObserver 量出来后逐帧修正。
+     用户："别忘了点开单位属性栏可能出现遮挡的情况。"
+     写死一个数只能挡住我当时想到的那一种情形：熵段一显示、或者窗口一窄导致读数换行，
+     左上角就变高，属性面板又被压在底下。量出来才是与布局无关的做法。 */
+  position: absolute; top: 81px; left: 12px; width: 352px; max-width: 82vw;
+  max-height: calc(100% - 93px); overflow-y: auto; z-index: 30;
+  /* Q18：与 .hud-panel 同一套玻璃配方（理由见那边的注释），不再是更不透明的旧版 var(--surface)。 */
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 50%), rgba(22,27,34,0.6);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); display: none;
+  box-shadow: var(--shadow-sm);
+}
+#selectionPanel.show { display: block; }
+#selectionHeader {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+  font-size: 13px; color: var(--accent, #6fd3c7); position: sticky; top: 0;
+  background: inherit; z-index: 1;
+}
+#selectionActions button {
+  background: var(--surface-3, rgba(255,255,255,0.06)); border: 1px solid var(--glass-border, rgba(255,255,255,0.10));
+  color: var(--text-dim, #8a93a3); cursor: pointer; font-size: 12px; padding: 2px 7px; border-radius: 6px;
+}
+#selectionActions button:hover { color: #fff; border-color: rgba(255,255,255,0.3); }
+/* v45：标题里的阵营色圆点（取代了原来右侧的【🔵 蓝方 · 外塔】徽标） */
+#selectionTitle { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text, #e6ebf2); }
+#selectionTitle .fac-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  box-shadow: 0 0 6px currentColor;
+}
+#selectionCard { padding: 8px; }
+#selectionCard .unit-card { margin: 0; }
+#perfHud {
+  position: absolute; right: 12px; top: 54px; z-index: 30; display: none; /* v33：右上角让给天气条 */
+  font: 11px/1.6 ui-monospace, monospace; color: #9fe8dc; text-align: right;
+  background: rgba(10,13,18,0.75); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px; padding: 6px 10px; pointer-events: none; white-space: pre;
+}
+#perfHud.show { display: block; }
+
+/* 常驻侧栏（leftPanel/rightPanel）已随点选面板改造彻底移除，死 CSS 已清除 */
+
+/* ==================== 单位属性面板：天气影响（三角形·外边框分段点亮，v33） ==================== */
+/* 档位由三角形【外边框的分段点亮】表达（逆时针 右→底→左）：
+   轻微 = 不点亮 / 有限 = 1 条边 / 中等 = 2 条边 / 严重 = 3 条边全亮。
+   极端天气自带辉光，第 5 档"极端"叠加重辉光。下方 3 格进度已删除（v33）。 */
+.weather-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.wx-tri {
+  position: relative; width: 34px; height: 32px;
+  cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: flex-start; justify-content: center;
+  transition: transform 0.12s;
+}
+.wx-tri:hover { transform: translateY(-1px); }
+/* 极端天气：只要出现就自带辉光 */
+.wx-tri.extreme { filter: drop-shadow(0 0 4px rgba(255,215,94,0.55)); }
+/* 第 5 档"极端"（充能≥88%）：重辉光 */
+.wx-tri.tier-extreme { filter: drop-shadow(0 0 8px rgba(255,215,94,0.95)) drop-shadow(0 0 3px rgba(255,255,255,0.5)); }
+.wx-tri-svg {
+  position: absolute; top: 0; left: 0;
+  width: 34px; height: 30px; pointer-events: none;
+}
+.wx-tri-ic {
+  position: absolute; top: 13px; left: 0; right: 0;
+  text-align: center; font-size: 12px; line-height: 1;
+  pointer-events: none;
+}
+
+/* ==================== 单位属性面板：世界影响（昼夜/熵/龙魂）====================
+   与上面的天气行【共用同一套视觉语言】：同款 34px 三角格 + 边框点亮 + 图标，
+   悬停看明细。区别只在颜色语义：蓝=秩序侧受益 / 红=混乱侧受益 / 灰=无修正。
+   为什么复用而不是新做一种：天气与熵都是"世界给这个单位的修正"，
+   同一类信息用两种控件表达，用户得学两遍。 */
+/* v44：天气行与世界行合并成**一栏**（用户："属性栏的天气显示应该和天气是在同一栏的，
+   而不是像现在的两栏"）。两者本来就是同一类信息（世界给这个单位的修正）、
+   用的也是同一套三角格控件，分成上下两行只会让人以为是两回事。
+   DOM 上仍保留两个盒子（各自有独立的刷新节流与脏检查），
+   外面套一个 .state-row 让它们排在同一行 —— 合的是版式，不是刷新逻辑。 */
+/* v44：可点击的属性行（点开看该属性的结算规则）。
+   只给下划虚线 + 手型，不改颜色 —— 属性面板一屏十几行，
+   全部高亮反而让人不知道该看哪一行。 */
+/* 可点击的属性 chip。v44 chip 化之后不再给标签画虚线下划线（每格都有边框反而更乱），
+   改成整格 hover 变亮 —— 与技能/状态图标的交互语言一致。 */
+.a.stat-doc { cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+
+.state-row {
+  margin-top: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+}
+.state-row .weather-row,
+.state-row .world-row { margin-top: 0; }
+.world-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.wx-tri.wx-order  { filter: drop-shadow(0 0 4px rgba(91,155,213,0.45)); }
+.wx-tri.wx-chaos  { filter: drop-shadow(0 0 4px rgba(224,71,63,0.45)); }
+
+/* ==================== 世界状态小窗（时间 · 天气 · 熵）====================
+   三段共用一个玻璃面板、逐行显示。统一设计语言的三条：
+     ① 每行都是 [固定宽标签] [等宽色带] [固定宽读数] —— 三列纵向对齐，
+        数值长短变化不会让色带左右跳动（天气条以前就吃过这个亏）；
+     ② 色带尺寸/行高/字号三段完全一致，一眼看出是同一组信息；
+     ③ 只有"当前值"上主界面，所有明细都在各自的配置面板里。 */
+/* v44：顶栏改成悬浮之后要给它让位（原来 top:12px 会被压在顶栏底下）。
+   玻璃参数也与顶栏/右下角工具栏统一 —— 三块浮层同一套 surface + blur(14) + 圆角 + 边框。
+   之前三块各写各的（0.90 实心底 / blur10 / 8px 圆角），并排看得出来不是一套。 */
+/* v47：世界状态条并进左上角那块面板并重做成一行胶囊（见那段 HTML 的注释）。
+   横排而不是竖排：三段并成一行之后左上角这一块只有两行高，
+   属性面板能从更靠上的位置开始 —— 竖排时它要往下让近 60px。 */
+#worldHud { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.wh-chip {
+  position: relative; display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px 6px; border-radius: var(--radius-xs);
+  background: rgba(255,255,255,0.045); border: 1px solid transparent;
+  white-space: nowrap; line-height: 1;
+}
+/* 可点的那两段（天气 / 熵）给手型与 hover 反馈。时间段不可点，所以排除它 ——
+   这一条是老 bug 的遗产：并排那一版把天气裹进了 #whTimeRow，于是它被这条选择器
+   一起排除掉，"天气可点"没有任何视觉提示（用户当时报的"天气那个无法点击"）。 */
+.wh-chip[title]:not(#whTimeRow) { cursor: pointer; }
+.wh-chip:not(#whTimeRow):hover { background: rgba(255,255,255,0.09); border-color: var(--glass-border); }
+.wh-chip .wh-label {
+  font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 3px;
+}
+.wh-chip .wh-val {
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-dim);
+}
+/* 色带：胶囊底边一条 3px 细线。宽度跟着胶囊走（不再是写死的 150px），
+   画布像素尺寸取自 clientWidth（WorldHud._ctx），所以这里改就够了。 */
+/* ⚠️ canvas 是**替换元素**：绝对定位时 `left + right + width:auto` 不会像普通元素那样
+   拉伸，而是取内在宽度（300px），right 被当作过约束丢弃 —— 结果是画布伸到胶囊外面，
+   只能看见最左边那一小截。所以宽度必须显式算出来，不能靠 left/right 撑。 */
+.wh-chip .wh-bar {
+  position: absolute; left: 7px; bottom: 2px;
+  width: calc(100% - 14px); height: 3px; display: block; border-radius: 2px;
+}
+
+.panel-header {
+  padding: 11px 16px; border-bottom: 1px solid var(--glass-border);
+  font-size: 13px; font-weight: 700; flex-shrink: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  letter-spacing: 0.3px;
+}
+#leftPanel .panel-header { color: var(--accent); }
+#rightPanel .panel-header { color: #f2795c; }
+.panel-header .count {
+  color: var(--text-dim); font-weight: 500; font-size: 11px;
+  background: var(--surface-2); padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--glass-border);
+}
+#towerCards, #unitCards {
+  flex: 1; overflow-y: auto; padding: 10px 12px 14px;
+  display: flex; flex-direction: column; gap: var(--gap);
+}
+
+/* ==================== 画布 ==================== */
+#canvasWrapper { flex: 1; position: relative; background: var(--bg-deep); overflow: hidden; }
+#canvasWrap { width: 100%; height: 100%; cursor: grab; position: relative; touch-action: none; -webkit-touch-callout: none; user-select: none; }
+#canvasWrap:active { cursor: grabbing; }
+#canvasWrap canvas { display: block; width: 100%; height: 100%; background: #0a0d12; }
+/* v2.5D 第5步：唯一画布是 glCanvas，它既是画面也是输入面。
+   绝对定位铺满 #canvasWrap；面板类覆盖层 z-index 10~30，仍在最上。 */
+#canvasWrap canvas { position: absolute; left: 0; top: 0; }
+#glCanvas { background: #0a0d12; }
+/* 右下角工具栏。v44：blur/padding 与顶栏对齐（原来是 10px/6px，顶栏是 14px/8px，
+   两块浮层的玻璃厚度肉眼能看出差别）。三块浮层现在用同一组参数。 */
+/* ==================== v47：右下工具栏重做 ====================
+   用户："主界面右上角，右下角的栏不好看。……右下角工具栏重做。"
+
+   上一版（同样是本轮做的）把 8 个控件从一长条拆成了三行，但**没解决真正难看的那一处**：
+   两个 `input[type=range]` 用的是浏览器默认外观 —— Chrome 的蓝色轨道 + 白色圆钮，
+   与整套深色玻璃 UI 完全不是一个东西。旁边再配上"俯仰""方位"两个中文标签，
+   一块 190px 宽的板子里塞了两种视觉语言。诊断错了就会一直重排版而不解决问题，
+   这里如实记一下：上一版我以为是排布问题，其实是控件外观问题。
+
+   这一版三件事：
+     ① 滑杆**完全自绘**（轨道 3px、已填充段用主题青、拇指 11px 圆点带描边），
+        与面板同一套配色；
+     ② 文字标签换成图标（⛰ 俯仰 / 🧭 方位），一列 18px，两行天然对齐；
+     ③ 整体收窄到 168px：滑杆 84px，读数 30px。
+
+   ==================== v51.6：三行控件样式统一 ====================
+   用户："三个调节的样式统一，都为：【名称】【-】【滑块条】【+】【当前数值（视角大小
+   不需要数值，放重置视角按钮）】。"——缩放那一行原来是 [−] 值 [+] ｜ 🎯 的独立形状，
+   和俯仰/方位两行（图标+滑杆+读数，没有 −/+ 步进按钮）根本不是同一种控件，只是碰巧
+   都在这块板子里。现在三行统一成【图标】【−】【滑杆】【+】【读数】，缩放行的读数位
+   换成 🎯 重置视角按钮（缩放本身不需要精确数值，看画面大小就够）。 */
+/* 追加需求："右下角工具条做的扁一些，目前右下角工具条的高度太高了。"——三行
+   （后来四行）控件用的是全局 .icon-btn（30×30），是给顶栏那种单行按钮条设计的
+   尺寸，堆到四行纵向排列就显得又高又占地方。这里单独给这块面板的按钮/行距/
+   内边距一套更矮的尺寸，不动全局 .icon-btn（顶栏右侧那种单行场景还是需要
+   30×30 的点击热区），两处各自适配自己的排布形状。 */
+#canvasControls {
+  bottom: 12px; right: 12px; z-index: 10;
+  flex-direction: column; align-items: stretch; gap: 3px;
+  padding: 6px 9px;
+}
+#canvasControls .ctl-row { display: flex; align-items: center; gap: 6px; height: 20px; }
+#canvasControls button { background: var(--surface-3); }
+#canvasControls .icon-btn {
+  width: 20px; height: 20px; font-size: 12px; border-radius: 5px;
+}
+#canvasControls .zoom-label {
+  font-size: 11px; color: var(--text-dim); min-width: 30px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* 图标标签位：固定宽度，各行的滑杆因此左对齐，不会一行一个起点 */
+#canvasControls .ctl-name { font-size: 11px; width: 16px; flex: none; text-align: center; }
+
+/* 滑杆自绘。Chrome/Edge 走 ::-webkit-slider-*，Firefox 走 ::-moz-range-*；
+   两套选择器不能合并写（任何一个不认识的选择器会让整条规则被丢弃）。 */
+#canvasControls input[type=range] {
+  -webkit-appearance: none; appearance: none;
+  width: 84px; height: 14px; flex: none; background: transparent; cursor: pointer;
+}
+#canvasControls input[type=range]::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px;
+  background: rgba(255,255,255,0.14);
+}
+#canvasControls input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; margin-top: -4px; border-radius: 50%;
+  background: var(--accent); border: 1px solid rgba(0,0,0,0.45);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+#canvasControls input[type=range]:hover::-webkit-slider-thumb { background: #7fe3d9; }
+#canvasControls input[type=range]::-moz-range-track {
+  height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14);
+}
+#canvasControls input[type=range]::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--accent); border: 1px solid rgba(0,0,0,0.45);
+}
+
+/* ==================== 日志 ==================== */
+#logArea {
+  height: 112px; background: var(--surface); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--glass-border);
+  overflow-y: auto; padding: 6px 16px; font-size: 11px;
+  color: var(--text-dim); flex-shrink: 0;
+  font-family: 'Consolas', 'SF Mono', monospace;
+  display: none;
+}
+#logArea.show { display: block; }
+#logArea .log-entry { margin-bottom: 2px; line-height: 1.5; }
+#logArea .log-entry .time { color: var(--text-mute); margin-right: 8px; }
+#logArea .hit-tower { color: #f2795c; }
+#logArea .hit-minion { color: var(--accent); }
+#logArea .spawn { color: var(--gold); }
+#logArea .death { color: var(--text-mute); }
+
+/* ==================== 单位卡片 ==================== */
+.unit-card {
+  background: var(--surface-2); border: 1px solid var(--glass-border);
+  border-radius: var(--radius); padding: 12px 14px; font-size: 12px;
+  transition: opacity 0.2s, border-color 0.2s, box-shadow 0.2s;
+  box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+  flex-shrink: 0;
+}
+.unit-card::before {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--glass-highlight), transparent);
+}
+.unit-card:hover { border-color: rgba(255,255,255,0.16); }
+.unit-card.dead { opacity: 0.38; background: rgba(13,16,19,0.7); border-color: rgba(74,58,58,0.6); }
+.unit-card .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.unit-card .card-header .id { color: var(--text-dim); font-size: 11px; font-weight: 600; }
+.unit-card .type-tag {
+  font-size: 10px; padding: 2px 9px; border-radius: 999px;
+  letter-spacing: 0.5px; font-weight: 600;
+}
+.type-tower { background: rgba(79,209,197,0.16); color: var(--accent); }
+.type-melee { background: rgba(242,121,92,0.16); color: #f2795c; }
+.type-ranged { background: rgba(224,194,91,0.16); color: #e0c25b; }
+.type-siege { background: rgba(176,124,240,0.16); color: #b07cf0; }
+.type-totem { background: rgba(142,68,173,0.22); color: var(--purple); }
+.type-super { background: rgba(192,57,43,0.22); color: #e74c3c; }
+.type-shield { background: rgba(91,155,213,0.18); color: var(--accent-2); }
+.type-warlock { background: rgba(142,68,173,0.2); color: #c9a0ff; }
+.type-corrupt { background: rgba(107,142,35,0.2); color: #a8c964; }
+.type-dragon { background: rgba(246,201,74,0.2); color: var(--gold); }
+
+/* 血条 */
+/* ==================== v44：左上角属性面板重做 ====================
+   用户："左上角属性面板UI我觉得过时了。重做一下。"
+
+   过时在哪（具体的，不是"感觉"）：
+     · 血条只有 14px 高、数值另起一行 —— 最重要的信息占了两行还不显眼；
+     · 属性是一张 11px 的两列密排网格，标签与数值靠 space-between 拉开，
+       行与行之间没有节奏，十几行糊成一片；
+     · 技能/状态/世界影响三组图标直接堆在一起，没有任何分组标题 ——
+       "这一排是什么"要靠悬停才知道；
+     · 「▼ 展开更多」是个裸文字按钮，与面板里其它控件不是一套。
+
+   重做的四条：
+     ① 血条加高到 18px，数值**压在条上**（一行解决），护盾段仍然分色；
+     ② 属性行做成一格一格的 chip：标签在上、数值在下，等宽数字，
+        行距按 8px 节奏；修正过的值按符号着色（橙/红，见 UIManager._statParts）；
+     ③ 每组前面加一条小标题（属性 / 技能 / 状态 / 世界影响）；
+     ④ 展开按钮做成整宽的分隔条，与卡片同一套边框语言。 */
+.stat-up   { color: #f0a03c; }   /* 有正向修正 */
+.stat-down { color: #ef6b6b; }   /* 有负向修正 */
+.stat-break { color: var(--text-mute); font-size: 0.82em; margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+.panel-sec {
+  font-size: 10px; letter-spacing: 1.2px; color: var(--text-mute);
+  margin: 12px 0 5px; display: flex; align-items: center; gap: 8px;
+}
+.panel-sec::after { content: ''; flex: 1; height: 1px; background: var(--glass-border); }
+
+.bar-row { display: flex; align-items: stretch; height: 18px; margin-bottom: 3px; }
+.bar-track { position: relative; flex: 1; height: 100%; background: var(--bg-deep); border: 1px solid var(--glass-border); border-radius: 4px; overflow: hidden; }
+/* v47：与画面中的拖尾统一（用户："统一为画面中的拖尾特效"）。
+   ① 颜色改成画面里那条的 rgba(255,150,150,0.6)（原来是暗黄 #a68a2e）；
+   ② **去掉 transition** —— 宽度已经由 JS 每帧缓动（barTrail.stepTrail），
+      再套一层 0.45s 的 CSS 缓动等于把两层缓动串起来，
+      面板里的残段会比画面里的慢三四倍才收完。 */
+.bar-hp-trail { position: absolute; top: 0; left: 0; height: 100%; background: rgba(255,150,150,0.6); pointer-events: none; }
+.bar-hp { position: absolute; top: 0; left: 0; height: 100%; background: linear-gradient(180deg, #5cc85f, #43a047); transition: width 0.08s linear; }
+.tower-bar .bar-hp { background: linear-gradient(180deg, #6bb8f0, #3d8fd1); }
+/* 阵营血条颜色：统一 2D 画布与卡片UI的配色，取代此前的"低血量变红" */
+.bar-hp.faction-blue { background: linear-gradient(180deg, #6bb8f0, #3d8fd1); }
+.bar-hp.faction-red { background: linear-gradient(180deg, #ff8a7a, #d0453b); }
+/* v51：资源条（法力/能量/充能，统一叫"资源条"）。用户要求"高度做成和血条一样"——
+   直接复用 .bar-row/.bar-track，不新起一套尺寸，天然一样高。*/
+.bar-res-row { display: none; }
+.bar-res-row.show { display: flex; }
+/* 具体颜色按资源类型（法力/升温/闪电充能/通用充能）由 JS 现读 RESOURCE_COLORS 写 background，
+   这里只给一个兜底色，防止 JS 还没跑到时是空白色块。 */
+/* 追加需求：法力/充能条缓动改走 barTrail.stepEase（JS 逐帧计算，与画板同一份
+   参数），这里的 width 不再需要 CSS transition——留着的话会跟 JS 缓动叠成两层
+   缓动（barTrail.js 头注点过名的老毛病："JS 每帧改一次 width、CSS 再对每次
+   改动做 transition，两层缓动叠起来"），只保留颜色切换（法力/充能/升温等不同
+   资源类型换色）的过渡。 */
+.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: background 0.2s; }
+.bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
+.bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
+/* 追加需求 Q2："护盾在血条的显示就应该是灰白色系，你目前的【护盾】是用黄色代替
+   的……在单位属性窗口中，可以用颜色深浅和是否有斜线来区分这三个。"
+   之前特意挑了暖金色去跟另外两种护盾的白色斜纹拉开——但用户的口径是"三种护盾
+   都该待在白/灰白色系里"，色相不该跳出去，只能在【深浅】和【是否带斜纹】这两个
+   维度上做区分。改成纯色（不带斜纹，呼应它"不会像固定/临时护盾那样波动"的静态
+   性质）、灰白色调，取一个与上面两条斜纹色调都不同的深浅——固定用的 0.5 透明度
+   白色纹理、临时用的 0.3，这里挑 0.62（纯色块，比临时的斜纹底色更亮，比固定的
+   纹理亮部更暗），三者一眼就能分开，同时没有一个是跳出白/灰白系的杂色。
+   贴在血条最内侧（挨着生命值），与承伤顺序①临时②固定③护盾互为镜像——
+   见 updateTowerCard/updateMinionCard 的排列注释。 */
+.bar-shield-plain { position: absolute; top: 0; height: 100%; background: rgba(225,228,232,0.62); transition: width 0.1s, left 0.1s; }
+.bar-track { border-radius: 5px; }
+/* ==================== v47：血条上的读数 ====================
+   用户："进度条上的 HP XX/XXX 居中显示为 XX/XX（没有 HP 了），护盾那个靠右
+          （还是显示图标+文字）。注意文字也要上下居中，目前就有些靠下了。"
+
+   三点各自的做法：
+     · 居中 + 靠右 —— 从 `flex + space-between`（两端对齐）改成 **三列网格**
+       `1fr auto 1fr`：血量放第 2 列 → 相对整条**真正居中**，
+       护盾放第 3 列右对齐。用 space-between 是做不到的：那样血量的位置
+       会随护盾读数的字宽左右漂。
+     · 去掉 "HP " 前缀 —— 在 UIManager 里改文本（血条上写 HP 属于冗余，
+       条本身就是血条）。
+     · 上下居中 —— 原来靠 `margin: -17px` 把一行 11px 的文字**估**到 18px 高的
+       条上，差的那 1px 就是用户看到的"有些靠下"。现在给读数行一个与条**等高**
+       的行盒（height: 18px）+ align-items: center，上移量也改成整 18px，
+       于是垂直居中是算出来的、不是估出来的：条的高度改多少，这里跟着改多少。 */
+/* v51.3：血条读数（.bar-text）与资源条读数（.bar-res-text）合并成同一套规则——
+   用户："血条还有技能条的文字，位置/样式/大小都不统一。都改为居中+右侧。"
+   之前 .bar-res-text 是另起的 flex + space-between（主值贴左），跟血条这套
+   "网格居中主值 + 右列副值"的做法根本不是一回事，字号（10px vs 11px）、颜色
+   （--text vs #f2f6fa）也各写各的。现在两个选择器完全共用一份声明，字号/颜色/
+   位置/投影全部同源，以后只会漂移出一份。 */
+.bar-text, .bar-res-text {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  height: 18px; line-height: 1; font-size: 11px;
+  color: #f2f6fa; margin: -18px 0 6px; padding: 0 7px;
+  position: relative; z-index: 1; pointer-events: none;
+  font-variant-numeric: tabular-nums; font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+}
+.bar-text > :first-child, .bar-res-text > :first-child { grid-column: 2; justify-self: center; }
+.bar-text .shield-total, .bar-res-text .bar-res-regen { grid-column: 3; justify-self: end; color: #cfd6dd; }
+
+/* 属性 */
+/* 属性 chip：标签在上、数值在下。两列网格。
+   v51.6：用户"属性面板每个属性占的空间太大了，优化一下，缩小一下空间"——
+   格子间距/内边距/字号整体收紧一档（gap 6→4、padding 5px8px→3px6px、
+   数值字号 14→12），同一屏能放下更多属性，不用来回滚动才能看全。 */
+.attrs, .attrs-ext { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 3px 0; }
+.attrs-ext { display: none; margin-top: 4px; }
+.attrs-ext.open { display: grid; }
+.attrs .a, .attrs-ext .a {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 3px 6px; border-radius: var(--radius-xs);
+  background: rgba(255,255,255,0.028); border: 1px solid transparent;
+}
+.attrs .a label, .attrs-ext .a label {
+  font-size: 9px; color: var(--text-mute); letter-spacing: 0.2px; line-height: 1.15;
+}
+.attrs .a > span:last-child, .attrs-ext .a > span:last-child {
+  font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums;
+  font-weight: 600; line-height: 1.15;
+}
+.a.stat-doc:hover { background: rgba(255,255,255,0.07); border-color: var(--glass-border); }
+
+/* v47：展开更多按"方面"分组。标题占整行；组内条目为奇数时最后一格横跨两列，
+   否则下一组的第一格会被塞进上一组留下的空位里，分组就白做了。 */
+.attrs-ext .attr-group {
+  grid-column: 1 / -1; margin: 4px 0 0;
+  font-size: 9px; color: var(--text-mute); letter-spacing: 1px;
+  display: flex; align-items: center; gap: 6px;
+}
+.attrs-ext .attr-group::after {
+  content: ''; flex: 1; height: 1px; background: var(--glass-border);
+}
+.attrs-ext .attr-group:first-child { margin-top: 0; }
+.attrs-ext .a.span2 { grid-column: 1 / -1; }
+
+.toggle-ext {
+  width: 100%; margin-top: 8px; font-size: 11px; color: var(--text-dim);
+  cursor: pointer; background: rgba(255,255,255,0.03);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-xs); padding: 5px 8px;
+}
+.toggle-ext:hover { color: var(--text); background: rgba(255,255,255,0.07); }
+
+/* 技能栏 */
+/* ==================== v47：图标行铺满整宽，不留死角 ====================
+   用户："属性栏宽度优化，画红圈那里都是空着的，然后就跑到下一行了。"
+
+   算一遍就知道那块空白是必然的：面板 320 − 边框 2 − #selectionCard 内边距 16
+   − .unit-card 边框 2 − .unit-card 内边距 28 = **可用 272px**；
+   图标 34 + 间距 6 → 一行放得下 ⌊(272+6)/40⌋ = 6 个，用掉 234，
+   **剩下 38px 永远空着**（差 2px 就够第 7 个），第 7 个图标只能换行。
+   flex + 固定 gap 的排版必然如此：多出来的零头没有任何东西去消化它。
+
+   改法两条，缺一不可：
+     ① 面板加宽到 352 → 可用 304px，一行放得下 7 个（多一个，正好覆盖常见的状态数）；
+     ② 排版换成 grid：列宽仍固定 34px（图标必须是正方/正圆，用 1fr 会被拉成长方形），
+        auto-fill 铺满整行，**零头由 justify-content: space-between 摊进列间距**。
+   于是无论面板多宽、图标多少，行尾都不会再出现那一块空白。 */
+.skill-slot-row {
+  display: grid; grid-template-columns: repeat(auto-fill, 34px);
+  gap: var(--gap-sm); justify-content: space-between;
+  margin: 5px 0 4px; padding: 2px 0;
+}
+.skill-slot {
+  width: 34px; height: 34px; border-radius: 50%; background: var(--surface-3);
+  border: 2px solid var(--glass-border); display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color: var(--text-dim); flex-shrink: 0; position: relative; cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.15s;
+}
+.skill-slot:hover { transform: scale(1.1); box-shadow: 0 0 0 2px rgba(91,155,213,0.3); z-index: 2; }
+.skill-slot.has-skill { border-style: solid; border-color: var(--accent-2); background: rgba(30,42,58,0.9); }
+.skill-slot.disabled { opacity: 0.4; filter: grayscale(1); border-color: var(--text-mute) !important; }
+/* 远古之力（唯一限时的技能，240s）专用倒计时圆环——和效果栏 .effect-cd-ring 同一套
+   conic-gradient 手法，套在圆形格子上；其余技能都是永久装备，不需要这个。 */
+.skill-slot .skill-cd-ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; border-radius: 50%; background: none; }
+/* v37（Q1）：嵌套分组样式已删除——技能栏回归平铺（加固城防+成长仅在身份技能描述中合并显示） */
+
+.skill-placeholder { width: 34px; height: 34px; border-radius: 50%; background: var(--surface-3); border: 2px dashed var(--glass-border); opacity: 0.3; flex-shrink: 0; }
+
+/* 效果栏 */
+.effect-row {
+  display: grid; grid-template-columns: repeat(auto-fill, 34px);
+  gap: var(--gap-sm); justify-content: space-between;
+  margin: 5px 0 4px; align-items: center; padding: 2px 0;
+}
+.effect-icon {
+  width: 34px; height: 34px; border-radius: var(--radius-xs); background: var(--surface-3);
+  border: 1.5px solid var(--glass-border); display: flex; align-items: center; justify-content: center;
+  font-size: 14px; flex-shrink: 0; position: relative; cursor: pointer; overflow: hidden;
+  transition: transform 0.12s, box-shadow 0.15s;
+}
+.effect-icon:hover { transform: scale(1.1); box-shadow: 0 0 0 2px rgba(91,155,213,0.3); z-index: 2; }
+.effect-icon.debuff { border-color: rgba(192,57,43,0.6); }
+.effect-icon .effect-icon-glyph { position: relative; z-index: 1; pointer-events: none; }
+.effect-icon .effect-cd-ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; border-radius: var(--radius-xs); background: none; }
+.effect-icon .effect-badge-value { position: absolute; right: -3px; bottom: -3px; min-width: 15px; height: 14px; padding: 0 2px; border-radius: 4px; background: var(--bg-deep); border: 1px solid var(--glass-border); font-size: 9px; line-height: 14px; text-align: center; color: var(--text); z-index: 2; pointer-events: none; }
+.effect-placeholder { width: 34px; height: 34px; border-radius: var(--radius-xs); background: var(--surface-3); border: 1.5px dashed var(--glass-border); opacity: 0.3; flex-shrink: 0; }
+
+.card-actions { display: flex; gap: var(--gap-sm); margin-top: 6px; flex-wrap: wrap; }
+.card-actions button { font-size: 11px; padding: 4px 10px; }
+
+/* ==================== 统一"可选卡片"组件 ====================
+   取代此前并行的 build-skill-icon / weapon-option / skill-option / ds-card 四套样式。
+   武器/被动技能/龙魂/所有选择类tab 统一使用这一套，保证视觉语言一致。 */
+.pick-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.pick-card {
+  background: var(--surface-3); border: 1px solid var(--glass-border); border-radius: 999px;
+  display: inline-flex; flex-direction: row; align-items: center; justify-content: center;
+  cursor: pointer; gap: 5px; padding: 5px 12px; text-align: center; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.pick-card:hover { background: rgba(58,70,86,0.9); border-color: var(--accent-2); }
+.pick-card.selected {
+  background: rgba(79,209,197,0.16); border-color: var(--accent); color: var(--text);
+}
+.pick-card.has-stacks {
+  background: rgba(246,201,74,0.14); border-color: var(--gold); color: var(--text);
+}
+.pick-card .pick-icon { font-size: 14px; line-height: 1; }
+.pick-card .pick-label { font-size: 12px; color: var(--text-dim); }
+.pick-card.selected .pick-label, .pick-card.has-stacks .pick-label { color: var(--text); }
+.pick-desc-box {
+  margin-top: 8px; padding: 9px 12px; background: var(--bg-deep); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xs); font-size: 12px; color: var(--text-dim); min-height: 36px; line-height: 1.55;
+}
+/* ==================== v51.6：悬浮预览（属性/技能/状态/天气等） ====================
+   用户："鼠标移到上面，就在鼠标旁边显示出窗口，就是不需要再点开就能看了（目前
+   点开查看也保留）。" 固定定位、不吃鼠标事件（pointer-events:none，否则会挡住
+   鼠标移出目标元素的判定，出现"移到提示框上卡住不消失"）；跟随鼠标出现在旁边，
+   贴近视口边缘时 UIManager._positionHoverTip 会翻到另一侧，不会被裁掉。 */
+/* v51.6 修复：用户报"Q8 我指的是这个小窗口"（指着悬浮预览的截图）——这个框原来
+   background 用的是接近不透明的 --surface-2（0.85 alpha），且完全没有 backdrop-filter，
+   跟"毛玻璃"完全不沾边，是一块纯色实底的小卡片。改成半透明 + 模糊，与技能详情弹窗
+   （.modal-box）同一套玻璃质感，风格统一。 */
+.hover-tip {
+  position: fixed; z-index: 9999; display: none; pointer-events: none;
+  max-width: 320px; padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 50%), rgba(22,27,34,0.6);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow); font-size: 12px; line-height: 1.6; color: var(--text);
+}
+.hover-tip .attrs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; margin-top: 4px; }
+/* ==================== v51.6：技能详情的简洁/详细切换 ====================
+   参考 LoL 技能数值说明：详细模式把公式里认得出的属性上色（DetailModal.STAT_COLORS），
+   简洁模式只留最终数值。用户定稿："简洁详细按钮合并成一个，显示当前的模式，点一下
+   切换到另一个模式。位置改到左下角。"——一颗按钮，文字就是当前模式，塞进
+   .modal-actions（原来只放"关闭"）靠 margin-right:auto 推到最左边。 */
+.skill-mode-toggle-single {
+  padding: 4px 12px; font-size: 12px; border-radius: var(--radius-xs);
+  border: 1px solid var(--glass-border); background: rgba(79,209,197,0.1); color: var(--text-dim); cursor: pointer;
+}
+.skill-mode-toggle-single:hover { background: rgba(79,209,197,0.18); color: var(--text); }
+
+/* 游戏性·批量加技能/加状态：阵营×单位类型矩阵——用户定稿"铺平成一张表直接勾格子"。 */
+.gp-matrix-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: var(--radius-xs); }
+.gp-matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
+.gp-matrix th, .gp-matrix td { padding: 4px 8px; text-align: center; border-bottom: 1px solid var(--glass-border); }
+.gp-matrix th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-dim); font-weight: 400; }
+.gp-row-label { text-align: left !important; color: var(--text-dim); white-space: nowrap; }
+
+/* ==================== v50：批量选择组件（技能页 / 状态页共用）====================
+   用户："复选框按照分类显示，弄成那种一二级菜单，右侧列添加全选的按钮。
+          共有的显示选中（实线），有的没有的显示半选中（虚线），都没有的显示未选中。"
+
+   三态用**一个 span** 自绘而不是原生 <input type=checkbox>：
+   原生复选框的 indeterminate 只能用 JS 设、没法用 CSS 表达，而且各浏览器画法不一 ——
+   这里三种状态要有明确的视觉差（实线勾 / 虚线框 / 空框），自绘反而更简单也更可控。 */
+.gp-chk {
+  display: inline-block; width: 14px; height: 14px; flex: none;
+  border: 1.5px solid var(--text-mute); border-radius: 3px;
+  cursor: pointer; position: relative; vertical-align: middle;
+  transition: border-color 0.12s, background 0.12s;
+}
+.gp-chk:hover { border-color: var(--accent); }
+.gp-chk.on { background: var(--accent); border-color: var(--accent); }
+.gp-chk.on::after {
+  content: ''; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px;
+  border: solid #0b0e13; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* 半选 = **虚线**框 + 中间一条横杠（用户明确要求虚线） */
+.gp-chk.partial { border-style: dashed; border-color: var(--accent); }
+.gp-chk.partial::after {
+  content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px;
+  background: var(--accent); border-radius: 1px;
+}
+.gp-matrix tr.gp-group td {
+  text-align: left; background: rgba(255,255,255,0.04);
+  color: var(--text); font-size: 11px; letter-spacing: 0.5px;
+}
+.gp-fold {
+  background: none; border: none; color: var(--text-dim); padding: 0 6px 0 0;
+  font-size: 11px; cursor: pointer;
+}
+.gp-all {
+  background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border);
+  color: var(--text-dim); font-size: 10px; padding: 1px 6px; margin-left: 8px;
+  border-radius: 4px; cursor: pointer;
+}
+.gp-all:hover { color: var(--text); border-color: var(--accent); }
+
+.gp-pool { max-height: 300px; overflow-y: auto; margin-top: 8px; }
+.gp-pool-group {
+  display: flex; align-items: center; gap: 4px; margin: 8px 0 4px;
+  font-size: 11px; color: var(--text-mute); letter-spacing: 0.5px;
+}
+/* v51：技能/状态改成横向排布的一个个块（用户："上下两个都是列表就看不过来了，
+   要横向排班的一个个块"）——从纵向 label 列表改成 flex-wrap 的卡片墙，
+   每张卡片固定住自己的尺寸，不再占满一整行。 */
+.gp-pool-body { display: flex; flex-wrap: wrap; gap: 6px; }
+.gp-pool-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border-radius: var(--radius-xs); cursor: pointer; font-size: 12px;
+  flex: 0 0 auto; width: 152px; box-sizing: border-box;
+  border: 1px solid var(--glass-border); background: rgba(255,255,255,0.02);
+}
+.gp-pool-item:hover { background: rgba(255,255,255,0.05); }
+.gp-pool-ic { font-size: 14px; width: 18px; text-align: center; flex: 0 0 auto; }
+.gp-pool-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-pool-cnt { font-size: 10px; color: var(--text-mute); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.gp-matrix tr:hover td { background: rgba(255,255,255,0.03); }
+.uad-section-label { color: var(--text-dim); font-size: 12px; display: block; margin-bottom: 6px; }
+.uad-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.uad-card {
+  background: var(--surface-3); border: 1.5px solid var(--glass-border); border-radius: var(--radius-sm);
+  padding: 18px 10px; text-align: center; cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.uad-card:hover { transform: translateY(-3px); border-color: var(--accent-2); box-shadow: 0 6px 16px rgba(0,0,0,0.35); }
+.uad-card .uad-icon { font-size: 32px; line-height: 1.2; }
+.uad-card .uad-label { font-size: 13px; font-weight: 600; margin-top: 6px; color: var(--text); }
+.uad-queue-box { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--glass-border); }
+.uad-queue-title { font-size: 12px; color: var(--gold); font-weight: 600; margin-bottom: 8px; }
+.uad-queue-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+.uad-queue-empty { font-size: 12px; color: var(--text-mute); padding: 10px 4px; }
+.uad-queue-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-3); border-radius: var(--radius-xs); font-size: 12px; }
+.uad-queue-item .uad-queue-icon { font-size: 16px; }
+.uad-queue-item .uad-queue-label { font-weight: 600; min-width: 60px; }
+.uad-queue-item .uad-queue-summary { flex: 1; color: var(--text-dim); }
+.uad-queue-item .uad-queue-remove { background: none; border: none; color: var(--warn); cursor: pointer; font-size: 13px; padding: 2px 6px; }
+.build-options .option-group { margin-bottom: 8px; }
+
+/* 编辑器 */
+.editor-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 12px; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px; }
+.editor-tab { padding: 6px 14px; border-radius: 999px; font-size: 12px; cursor: pointer; background: var(--surface-3); border: 1px solid var(--glass-border); color: var(--text-dim); transition: all 0.15s; }
+.editor-tab:hover { color: var(--text); }
+.editor-tab.active { background: linear-gradient(135deg, rgba(37,74,92,0.9), rgba(91,155,213,0.3)); border-color: var(--accent-2); color: var(--text); }
+.editor-mode-switch { display: flex; gap: var(--gap-sm); margin-bottom: 12px; }
+.editor-section { margin-bottom: 14px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); }
+.editor-section h4 { margin: 0 0 8px; font-size: 12px; color: #8fd0ff; }
+
+.slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; font-size: 12px; }
+.slider-row label { width: 130px; flex-shrink: 0; color: var(--text-dim); }
+.slider-wrap { display: flex; align-items: center; gap: 8px; flex: 1; }
+.slider-row input[type="range"] { flex: 1; accent-color: var(--accent-2); height: 4px; }
+.editor-slider { flex: 1; accent-color: var(--accent-2); }
+.slider-row input[type="number"], .editor-number { width: 82px; flex-shrink: 0; background: var(--bg-deep); border: 1px solid var(--glass-border); color: var(--text); padding: 4px 7px; border-radius: var(--radius-xs); font-variant-numeric: tabular-nums; }
+.slider-row select, .editor-select { flex: 1; background: var(--bg-deep); border: 1px solid var(--glass-border); color: var(--text); padding: 4px 7px; border-radius: var(--radius-xs); }
+
+.editor-checkbox-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 8px; color: var(--text-dim); }
+.status-list-item { display: flex; align-items: center; gap: 8px; padding: 6px 9px; background: var(--surface-3); border-radius: var(--radius-xs); margin-bottom: 5px; font-size: 12px; }
+.status-list-item span.name { flex: 1; }
+.status-list-item button { padding: 3px 9px; font-size: 11px; }
+
+/* ==================== 模板编辑器：左树 + 右表单 ====================
+   原来是三层横向页签（大类 → 类型 → 内容页），一屏最多能出现四行胶囊按钮，
+   而且"我现在在编辑谁"要横着读三行才拼得出来。改为左侧固定导航树：
+   位置感由纵向层级承担，右侧只剩"当前页在编辑什么"这一件事。 */
+.tpl-layout { display: flex; gap: 14px; align-items: flex-start; }
+.tpl-nav {
+  width: 168px; flex-shrink: 0; height: 58vh; overflow-y: auto;
+  border-right: 1px solid var(--glass-border); padding-right: 10px;
+}
+.tpl-nav-group { margin-bottom: 10px; }
+.tpl-nav-title {
+  font-size: 10px; letter-spacing: 0.06em; color: var(--text-mute);
+  text-transform: uppercase; padding: 0 6px 4px;
+}
+.tpl-nav-item {
+  display: block; width: 100%; text-align: left; padding: 5px 9px; margin-bottom: 2px;
+  font-size: 12px; border-radius: var(--radius-xs); cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: var(--text-dim);
+  transition: all 0.12s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tpl-nav-item:hover { color: var(--text); background: var(--surface-3); }
+.tpl-nav-item.active {
+  background: linear-gradient(135deg, rgba(37,74,92,0.9), rgba(91,155,213,0.28));
+  border-color: var(--accent-2); color: var(--text);
+}
+.tpl-nav-item.child { padding-left: 22px; font-size: 11.5px; }
+.tpl-nav-item.open { color: var(--text); font-weight: 600; }
+.tpl-caret { display: inline-block; width: 10px; font-size: 9px; color: var(--text-mute); }
+.tpl-pane { flex: 1; min-width: 0; max-height: 58vh; overflow-y: auto; padding-right: 4px; }
+/* v51.6 Q4：用户"所有窗口都改为固定大小，因为目前都是窗口大小动态变化的"——
+   之前 .tpl-pane 用 max-height 只是封顶，短页面会让整个弹窗跟着缩小，切页/切 tab
+   时弹窗肉眼可见地一跳一跳。只对"带左侧导航"的窗口（.tpl-layout 内）改成固定
+   height——右侧内容区从此不管这一页内容多短都占满同样的高度，长内容仍在内部滚动。
+   不带导航的单页信息弹窗（详情框/属性说明等，.tpl-pane 单独出现，没有 .tpl-layout
+   包着）本来就没有"切页跳变"这个问题，维持随内容长短自适应，强行撑大反而难看。 */
+.tpl-layout .tpl-pane { height: 58vh; }
+.tpl-pane-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.tpl-pane-head .tpl-crumb { font-size: 13px; font-weight: 600; }
+.tpl-pane-head .tpl-crumb-sub { font-size: 11px; color: var(--text-mute); }
+/* 即时生效角标：区分"点了就生效"与"改完要点应用"。两种控件混在一页而不加区分，
+   是用户反复问"我改了到底生效没有"的直接原因。 */
+.tpl-instant {
+  font-size: 9px; color: #f6c94a; border: 1px solid rgba(246,201,74,0.5);
+  border-radius: 3px; padding: 0 4px; white-space: nowrap;
+}
+.tpl-scope-note { font-size: 11px; color: var(--text-mute); margin: 6px 0 4px; }
+/* v51.1：作用域条（阵营/应用范围）单独包一层浅色卡片，与上面的页签、下面内容自己的
+   分类 tab 拉开视觉权重——三排本来长得一模一样，读起来是一整墙同款按钮。 */
+.tpl-scope-bars {
+  background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xs); padding: 8px 10px; margin-bottom: 10px;
+}
+.tpl-scope-bars .editor-tabs { margin: 0; border-bottom: none; padding-bottom: 0; }
+.tpl-scope-bars .editor-tabs + .editor-tabs { margin-top: 6px; }
+.tpl-scope-bars .editor-tab { font-size: 11px; padding: 4px 10px; }
+
+
+/* 出兵编排表：表头与数据行共用同一套列宽，两边各写一串 px 必然错位 */
+.wo-row {
+  display: grid;
+  grid-template-columns: 54px minmax(88px, 1.1fr) 56px 56px 56px minmax(140px, 2.2fr) 26px;
+  gap: 6px; align-items: center; margin-bottom: 6px; font-size: 12px;
+}
+.wo-row.wo-head { font-size: 10px; color: var(--text-mute); margin-bottom: 4px; padding: 0 2px; }
+.wo-row.wo-off { opacity: 0.45; }
+.wo-row > select, .wo-row > input, .wo-when-cell select, .wo-when-cell input {
+  min-width: 0; width: 100%;
+  background: var(--bg-deep); border: 1px solid var(--glass-border); color: var(--text);
+  padding: 4px 6px; border-radius: var(--radius-xs); font-size: 11.5px;
+}
+.wo-move-cell { display: flex; gap: 2px; }
+.wo-move-cell .wo-move {
+  width: 24px; padding: 3px 0; font-size: 10px; line-height: 1;
+  background: var(--surface-3); border: 1px solid var(--glass-border);
+  color: var(--text-dim); border-radius: var(--radius-xs); cursor: pointer;
+}
+.wo-move-cell .wo-move:disabled { opacity: 0.3; cursor: default; }
+/* 条件列：下拉占满，带参数的条件才追加一个窄数字框 */
+.wo-when-cell { display: flex; gap: 4px; min-width: 0; }
+.wo-when-cell select { flex: 1; }
+.wo-when-cell .wo-arg { flex: 0 0 62px; width: 62px; }
+.wo-row .wo-del {
+  width: 26px; padding: 4px 0; background: #b33a3a; border: none;
+  color: #fff; border-radius: var(--radius-xs); cursor: pointer; font-size: 11px; line-height: 1;
+}
+
+/* ==================== 弹窗 ==================== */
+/* v51.6 修复：用户报"弹出的窗口背景并不是毛玻璃材质的"——原来外层 .modal-overlay
+   先把整个场景压到 68% 暗（rgba(4,6,9,0.68)），.modal-box 又在这份已经压暗的背景上
+   再叠一层 72% 暗色 tint，两层暗色叠加后场景颜色基本被吃光，backdrop-filter 的模糊
+   算是"技术上生效了"，肉眼却只看到一块近乎纯黑的板子，读不出"毛玻璃"的通透感。
+   外层暗度降到 0.45、内层 tint 降到 0.55，让更多场景颜色透进来给 blur 处理；
+   再加一条极淡的顶部高光（模拟玻璃反光），即便个别环境 backdrop-filter 被浏览器
+   降级成不生效，这条高光也能让人一眼看出"这是一块玻璃面板"而不是纯色卡片。 */
+.modal-overlay { position: fixed; inset: 0; background: rgba(4,6,9,0.45); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 300; display: none; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0) 40%), rgba(22,27,34,0.55);
+  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  border: 1px solid var(--glass-border); border-radius: var(--radius);
+  padding: 22px 26px; max-width: 620px; width: 92%;
+  max-height: 86vh; overflow-y: auto; box-shadow: var(--shadow);
+}
+/* v51.6：无侧边栏的单页弹窗（技能详情/效果详情/属性说明/天气详情/世界详情……）
+   改成按内容自适应宽度，不再统一撑到 92% 视口宽——同时给一个最小尺寸兜底，
+   避免只有一两个字时缩成一个挤扁的小方块。shellHtml() 按 hasNav 自动加这个类，
+   带侧边栏的编辑器弹窗（.modal-box 不带 .compact）维持原来撑满两栏的宽度不变。 */
+.modal-box.compact { width: fit-content; min-width: 320px; min-height: 120px; }
+/* 地图编辑器弹窗单独放大：全局 620px 上限是给"文字为主"的弹窗（属性/技能详情等）
+   定的，画布类内容按这个上限挤会导致画布分辨率被迫调小（曾经的 CANVAS_DISPLAY_PX=380
+   就是被这道上限逼出来的将就值）。用户："窗口做的大一些"——加一档更大的尺寸变体，
+   只给地图编辑器这一个用途用，不动其它弹窗共用的默认上限。 */
+.modal-box.mapEditorWide { max-width: 960px; max-height: 92vh; }
+.modal-box h3 { margin-bottom: 14px; font-size: 16px; font-weight: 700; }
+#modalTitle { margin-bottom: 14px; font-size: 16px; font-weight: 700; }
+.modal-box .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; gap: 12px; }
+.modal-box .row label { color: var(--text-dim); flex-shrink: 0; min-width: 70px; }
+.modal-box .row input, .modal-box .row select { flex: 1; text-align: left; }
+.modal-box .row input[type="number"] { width: 100px; }
+.modal-actions, .modal-box .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+.modal-actions button, .modal-box .modal-actions button { padding: 7px 18px; }
+
+/* ==================== 穿梭框（龙魂等"选择生效项"通用组件） ==================== */
+.transfer-box { display: flex; flex-direction: column; gap: 12px; }
+.transfer-active-zone {
+  padding: 10px 12px; background: rgba(246,201,74,0.06); border: 1px solid rgba(246,201,74,0.22);
+  border-radius: var(--radius-sm); min-height: 64px;
+}
+.transfer-active-title { font-size: 12px; color: var(--gold); font-weight: 600; margin-bottom: 8px; }
+.transfer-active-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.transfer-active-empty { font-size: 12px; color: var(--text-mute); padding: 6px 2px; }
+.transfer-chip {
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px 5px 8px;
+  background: var(--surface-3); border: 1.5px solid var(--gold); border-radius: 999px;
+  font-size: 12px; cursor: pointer; transition: background 0.15s;
+}
+.transfer-chip:hover { background: rgba(224,71,63,0.18); border-color: var(--warn); }
+.transfer-chip .chip-icon { font-size: 15px; }
+.transfer-chip .chip-remove { color: var(--text-mute); font-size: 11px; }
+.transfer-chip:hover .chip-remove { color: var(--warn); }
+.transfer-pool-section { margin-top: 4px; }
+.transfer-pool-title { font-size: 11.5px; color: var(--text-dim); font-weight: 600; margin: 10px 0 6px; }
+
+@media (max-width: 1024px) {
+}
+@media (max-width: 768px) {
+  #main { flex-direction: column-reverse; }
+  #canvasWrapper { height: 100vh; height: 100dvh; }
+  #selectionPanel { width: 88vw; }
+}
+</style>
+</head>
+<body>
+<!-- ==================== v47：顶边栏拆成左右两块 ====================
+     用户："顶边栏分成两部分。要不然中间空那一块不好看。顶边栏两侧都进行简化，
+            删除右侧的日志按钮，移动到设置里。"
+
+     改动前是一条**横贯全屏**的玻璃条，中间靠 `.spacer{flex:1}` 撑开 ——
+     于是 1920 宽的屏幕上有一大片什么都没有的毛玻璃横在画面正上方，
+     既挡住地图顶边，又让"左边是数据、右边是操作"这件事读不出来。
+     现在是两块各自贴边的独立面板，中间露出画布本身。
+
+     简化的口径是**去掉装饰、不去掉信息**：
+       · 竖线分隔符 `|` 全删，改用图标前缀（🌊波次 ⏱倒计时 🏯塔数 ⚔小兵）区分；
+       · 文字标签"波次/下一波/塔数/小兵"删掉，图标本身就是标签，鼠标悬停有 title；
+       · 右侧四个按钮统一成图标方钮（.icon-btn），只有模式钮保留文字——
+         它显示的是**当前状态**（沙盒/对战），图标化会让人不知道点了会变成什么。
+     日志按钮已删，改由【设置 → 调试】里的开关控制（同一个 #logArea）。 -->
+<div id="topbarLeft" class="hud-panel">
+  <!-- 第一行：局势读数 -->
+  <div class="tl-row">
+    <span class="stat" title="当前波次">🌊 <b id="waveNum">0</b></span>
+    <span class="stat" title="下一波倒计时">⏱ <b id="waveTimer">0.0s</b></span>
+    <span class="stat" title="场上防御塔数">🏯 <b id="towerCount">0</b></span>
+    <span class="stat" title="场上小兵数">⚔ <b id="minionCount">0</b></span>
+    <span class="hud-sep"></span>
+    <!-- v44：击杀数不再上顶栏（用户："杀了多少个兵就不要显示了，只显示塔数就行"）。
+         击杀仍然照常统计（CTX.__score.*.kills），只是不占顶栏这一格 —— 那是最贵的一块地方。
+         v51.6：这一格在【有龙的地图】上改显示巨龙信息（用户定稿），见下面 dragonStatBoard——
+         两块各管一种地图，updateTopBar() 按 mapAllowsDragon() 切换显隐，不会同时出现。 -->
+    <span class="stat" id="scoreBoard" title="推塔数">🔵 <b id="scoreBlue">0</b> · 🔴 <b id="scoreRed">0</b></span>
+    <!-- v51.6：巨龙下次刷新倒计时 + 红蓝双方巨龙之力层数；某方已成魂则改显示该方
+         龙魂名称（用户："左上角UI，画圈的地方改为巨龙下次刷新时间和红蓝方巨龙之力
+         数量统计（如果某一方获得了龙魂旧显示某一方都获得了什么龙魂），如果该地图中
+         不主动刷新巨龙旧还是显示原来的"）。默认隐藏，只有 mapAllowsDragon() 为真的
+         地图（目前只有召唤师峡谷）才会显示出来，见 UIManager.updateTopBar()。 -->
+    <span class="stat" id="dragonStatBoard" title="巨龙" style="display:none;">
+      🐉 <b id="dragonNextTimer">--</b>
+      <span class="hud-sep"></span>
+      🔵 <b id="dragonPowerBlue">0</b> · 🔴 <b id="dragonPowerRed">0</b>
+    </span>
+  </div>
+  <!-- ==================== v47：世界状态条搬到左上角并重做 ====================
+       用户："主界面右上角，右下角的栏不好看。不行把天气时间条移动到左上角，宽度也降低一些。"
+       追加："你自己看看左上角那个条好看吗？？？不行就重做。"
+
+       第一版我只是把它整块搬了过来 —— 位置对了，难看的地方一点没动，被打回是应该的。
+       难看在哪，说清楚：三条 150×14 的彩色色带竖着摞在读数行下面，每条自带边框、
+       刻度线、夜段压暗和一个白三角游标。那是**调试控件**的信息密度，
+       放在主界面上就是三条花花绿绿的横杠，跟旁边那排干净的读数完全不是一套东西。
+
+       重做成与读数同一套语言：一行**胶囊**，每个胶囊 = [图标] [名字] [读数]，
+       色带缩成胶囊底边一条 3px 的细线（渐变仍在、游标仍在，信息一条没少，
+       但它现在是"进度提示"而不是画面主体）。三段从三行并成一行，
+       左上角这一块因此矮了一半 —— 这也顺带缓解了属性面板的遮挡问题。 -->
+  <div id="worldHud">
+    <div class="wh-chip" id="whTimeRow" title="游戏时间 · 昼夜相位">
+      <span class="wh-label" id="whPhaseIcon">☀️</span>
+      <span class="wh-val" id="whClock">0:00</span>
+      <canvas id="whTimeBar" class="wh-bar"></canvas>
+    </div>
+    <div class="wh-chip" id="whWeatherRow" style="display:none;" title="当前天气 · 点击打开天气配置">
+      <span class="wh-label" id="weatherNow"></span>
+      <span class="wh-val" id="whWeatherVal"></span>
+      <canvas id="weatherBar" class="wh-bar"></canvas>
+    </div>
+    <div class="wh-chip" id="whEntropyRow" style="display:none;" title="三核总数恒为 8 · 点击打开世界设置">
+      <span class="wh-label" id="whEntIcon">🌀</span>
+      <span class="wh-val" id="whEntVal"></span>
+      <canvas id="whEntBar" class="wh-bar"></canvas>
+    </div>
+  </div>
+</div>
+<div id="topbarRight" class="hud-panel">
+  <button id="modeBtn" class="dragon">🗺️ 游戏地图</button>
+  <button class="icon-btn" id="mapEditorBtn" title="地图编辑器（弹窗）">🖌️</button>
+  <button class="icon-btn" id="mapEditorBoardBtn" title="地图编辑器（直接在画面上编辑）">🎨</button>
+  <span class="hud-sep"></span>
+  <button class="icon-btn primary" id="addUnitBtn" title="添加单位">➕</button>
+  <button class="icon-btn primary" id="templateEditorBtn" title="模板编辑器">📐</button>
+  <button class="icon-btn" id="fullscreenBtn" title="全屏（收起浏览器地址栏）">⛶</button>
+  <button class="icon-btn" id="settingsBtn" title="设置">⚙️</button>
+</div>
+
+<div id="dragonBanner">
+  <span id="dragonBannerText">🐉 巨龙即将降临</span>
+  <span class="db-timer" id="dragonBannerTimer"></span>
+</div>
+
+<div id="main">
+  <!-- 两侧常驻属性栏已移除（性能：每帧 O(单位数) 的 DOM 读写是主线程最大杀手之一）。
+       改为 LoL 式点选：点击画布上的单位，左上角弹出属性面板（selectionPanel），
+       实时刷新、保留原有的编辑/删除/击杀按钮与技能/效果图标交互。 -->
+  <div id="canvasWrapper">
+    <!-- 世界状态小窗（右上角）：时间/昼夜 · 天气 · 熵 三段合并在一个窗口里分开显示。
+         统一设计语言：同一块玻璃面板、同样的行高与字号，每段一行、左侧固定宽度的标签位。
+         点天气段开天气配置，点熵段开世界设置。 -->
+    </div>
+
+    <div id="canvasWrap">
+      <canvas id="glCanvas"></canvas>
+      <!-- v47：右下工具栏与顶栏右侧统一为同一套（.hud-panel + .icon-btn），
+           并按"缩放 / 复位 / 角度"分成两行三组。控件 id 一个没变 ——
+           main.js 与 CanvasController 按 id 接线，改 id 会静默断掉一批按钮。 -->
+      <!-- v51.6：三行控件统一成同一种形状——【名称】【-】【滑块】【+】【当前数值】，
+           唯独缩放那一行的"当前数值"位换成重置视角按钮（用户定稿："视角大小不需要
+           数值，放重置视角按钮"）。缩放原来只有 −/+ 两个按钮、没有滑杆，这次给它也
+           配一条滑杆，三行才是真的同一种控件反复三次，不是"看起来像"而已。 -->
+      <div id="canvasControls" class="hud-panel">
+        <div class="ctl-row">
+          <span class="ctl-name" title="缩放">🔍</span>
+          <button class="icon-btn" id="zoomOutBtn" title="缩小">−</button>
+          <input id="zoomSlider" type="range" min="0.15" max="3" step="0.05" value="1" title="缩放">
+          <button class="icon-btn" id="zoomInBtn" title="放大">+</button>
+          <button class="icon-btn" id="resetViewBtn" title="重置视角（全图）">🎯</button>
+        </div>
+        <div class="ctl-row">
+          <span class="ctl-name" title="视角俯仰角">⛰</span>
+          <button class="icon-btn" id="elevDownBtn" title="降低俯仰角">−</button>
+          <input id="elevSlider" type="range" min="0" max="90" step="1" value="45" title="视角俯仰角（0°=贴地平视，90°=正俯视）">
+          <button class="icon-btn" id="elevUpBtn" title="提高俯仰角">+</button>
+          <span class="zoom-label" id="elevLabel" title="视角俯仰角">45°</span>
+        </div>
+        <div class="ctl-row">
+          <span class="ctl-name" title="视角方位">🧭</span>
+          <button class="icon-btn" id="azimDownBtn" title="逆时针转">−</button>
+          <input id="azimSlider" type="range" min="0" max="360" step="1" value="0" title="视角方位角（0北 / 90东 / 180南 / 270西）· 靠近四方向自动吸附">
+          <button class="icon-btn" id="azimUpBtn" title="顺时针转">+</button>
+          <span class="zoom-label" id="azimLabel" title="视角方位（东南西北）">北</span>
+        </div>
+        <!-- 追加需求："新增视角高度的调节选项，也是按照同样的设计语言来做。"——
+             不是俯仰角（那是转角度），也不是镜头远近（正交摄像机下移动机位对成像
+             没有视觉影响）；是"看的位置上下移，镜头角度不变"，与上面三行同一种
+             【图标】【−】【滑杆】【+】【读数】形状。 -->
+        <div class="ctl-row">
+          <span class="ctl-name" title="视角高度">↕</span>
+          <button class="icon-btn" id="lookHeightDownBtn" title="视角压低">−</button>
+          <input id="lookHeightSlider" type="range" min="-250" max="250" step="5" value="0" title="视角高度（把镜头角度/朝向不变地整体抬高或压低——正值看得更高，比如塔顶；负值看得更低，比如地面）">
+          <button class="icon-btn" id="lookHeightUpBtn" title="视角抬高">+</button>
+          <span class="zoom-label" id="lookHeightLabel" title="视角高度">0</span>
+        </div>
+      </div>
+      <div id="selectionPanel">
+        <!-- v33（Q11）：✕ 关闭按钮已删（点击画布空白处即取消选中）。
+             v45：左 = 阵营色圆点 + 单位类型（原「#id 防御塔」与右侧「蓝方·外塔」合并成这一处），
+                  右 = 图标化的编辑/删除按钮。 -->
+        <div id="selectionHeader">
+          <span id="selectionTitle">单位详情</span>
+          <span style="display:flex;align-items:center;gap:6px;">
+            <span id="selectionActions"></span>
+          </span>
+        </div>
+        <div id="selectionCard"></div>
+      </div>
+      <div id="perfHud"></div>
+    </div>
+  </div>
+</div>
+
+<div id="logArea"></div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box" id="modalBox">
+    <h3 id="modalTitle">提示</h3>
+    <div id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
