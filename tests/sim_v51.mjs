@@ -3349,6 +3349,14 @@ async function world() {
 // 依赖 document 不能无头实例化（sim_lightring.mjs 头注记过这条约束），这半按同一
 // 惯例走源码正则断言。
 {
+  const ulSrc = srcOf('src/presentation/UnitLayer.js');
+  // 2026-09-05 用户："单位的血条也不要因为这个色调而变色，要保持原色。"
+  // 根因是 three 的 SpriteMaterial.fog 默认 true，而场景雾色取自被昼夜染色的
+  // scene.background，血条于是按距离被混向天色。HUD 不该参与大气透视。
+  T('HUD①-血条/护盾的 SpriteMaterial 显式关掉 fog（否则会被昼夜染色的场景雾混色）',
+    /map: barTex, depthTest: false, depthWrite: false, fog: false/.test(ulSrc)
+    && /map: this\._shieldTexture\(\),[\s\S]{0,160}?fog: false/.test(ulSrc));
+
   const trSrc = srcOf('src/presentation/ThreeRenderer.js');
   const invalidateBlock = trSrc.match(/invalidateTerrain\(\) \{[\s\S]{0,400}?\n  \}/)?.[0] || '';
   T('渲①-invalidateTerrain() 会清 TerrainLayer 的离屏画布缓存（之前从未被清过的那处）',
@@ -3384,6 +3392,13 @@ async function world() {
   // 2026-09-05 新增：粒子/薄纱也必须排除出预渲染。这是描边 bug 的真根因——
   // overrideMaterial 会无视原材质透明度，把雨/雪/尘/雾当成不透明面渲进法线深度图，
   // 描边就在每一颗粒子上触发（满屏黑麻点），SSAO 读同一张图也一起被污染。
+  // 2026-09-05：光挂 layer 迟早漏（用户实测漏了弹道——EffectsLayer 是一整个
+  // transparent 的批次网格，被预渲染当成不透明面，描边沿着每颗子弹的公告板描出黑框）。
+  // 加一条通用规则：材质 transparent 的一律不进预渲染。半透明物体本来就既不该产生
+  // 轮廓、也不该在 SSAO 里遮蔽别人。
+  T('SSAO②c-预渲染前把所有 transparent 材质的物体临时隐藏、渲完恢复（通用兜底，不靠逐个挂 layer）',
+    /o\.visible = false; hidden\.push\(o\);/.test(prepassBlock)
+    && /for \(const o of hidden\) o\.visible = true;/.test(prepassBlock));
   T('SSAO②b-粒子/薄纱层（FX_PARTICLE_LAYER）同样在预渲染时临时关掉、之后恢复',
     /this\.camera\.layers\.disable\(FX_PARTICLE_LAYER\)/.test(prepassBlock)
     && /if \(hadFxLayer\) this\.camera\.layers\.enable\(FX_PARTICLE_LAYER\)/.test(prepassBlock));

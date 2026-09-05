@@ -435,7 +435,15 @@ export class UnitLayer {
     const unit = new THREE.Mesh(_EMPTY_GEO, unitMaterial(false));
     unit.renderOrder = ORDER_UNIT;
 
-    const barMat = new THREE.SpriteMaterial({ map: barTex, depthTest: false, depthWrite: false });
+    // ==================== 2026-09-05：血条不吃场景雾 ====================
+    // 用户："单位的血条也不要因为这个色调而变色，要保持原色。"
+    // 根因不是染色代码碰了血条——`setUnitTint` 只染 unitMaterial 的 solid/ghost
+    // 两份共享材质，压根没碰血条。真正的原因是 three 的 `SpriteMaterial.fog`
+    // **默认为 true**：场景雾（`ThreeRenderer._autoFog`）的颜色取自 `scene.background`，
+    // 而背景色是跟着昼夜被染色的，于是血条按距离被混向当前的天色 → 看着像"变色"。
+    // 血条是 HUD 元素，本来就不该参与大气透视，关掉 fog 即可保持原色。
+    // （护盾图标同理，见下面 _shieldTexture 那处。）
+    const barMat = new THREE.SpriteMaterial({ map: barTex, depthTest: false, depthWrite: false, fog: false });
     const bar = new THREE.Sprite(barMat);
     bar.renderOrder = ORDER_BAR;
     // v51.33 修复（任务 #104）：血条不参与 SSAO/描边的深度预渲染——见 PostFX.js
@@ -793,7 +801,8 @@ export class UnitLayer {
     if (isStructureProtected(entities, e)) {
       if (!en.shield) {
         const mat = new THREE.SpriteMaterial({ map: this._shieldTexture(),
-                                               depthTest: false, depthWrite: false });
+                                               depthTest: false, depthWrite: false,
+                                               fog: false });  // 同血条：HUD 不吃雾，见上方注释
         en.shield = new THREE.Sprite(mat);
         en.shield.renderOrder = ORDER_SHIELD;
         en.shield.scale.set(16, 16, 1);

@@ -103,9 +103,26 @@ class NormalDepthPrepass extends Pass {
     // 见 FX_PARTICLE_LAYER 的头注（描边 bug 的真根因）。
     const hadFxLayer = this.camera.layers.isEnabled(FX_PARTICLE_LAYER);
     this.camera.layers.disable(FX_PARTICLE_LAYER);
+    // ==================== 2026-09-05：透明物体一律不参与预渲染 ====================
+    // 上面的 layer 机制解决的是"我知道它是粒子"的那些；但 overrideMaterial 会**无视
+    // 原材质的透明度**这件事，对**所有**半透明物体都成立，逐个去挂 layer 迟早漏。
+    // 用户实测漏掉的就是弹道：`EffectsLayer` 是一整个 `transparent:true` 的批次网格，
+    // 预渲染把它当成不透明面，描边于是沿着每颗子弹的公告板四边形描出一圈黑框。
+    // 改成一条通用规则——**材质 transparent 的就不进预渲染**。这条规则本身也是对的：
+    // 半透明物体既不该产生轮廓、也不该在 SSAO 里遮蔽别人（两者读的是同一张预渲染图）。
+    // 好处是以后新加的特效自动就对，不需要记得挂 layer。
+    const hidden = [];
+    this.scene.traverse((o) => {
+      if (!o.visible) return;
+      if (!o.isMesh && !o.isPoints && !o.isLine && !o.isSprite) return;
+      const m = o.material;
+      const tr = Array.isArray(m) ? m.some((x) => x && x.transparent) : !!(m && m.transparent);
+      if (tr) { o.visible = false; hidden.push(o); }
+    });
     renderer.setRenderTarget(this.renderTarget);
     renderer.clear();
     renderer.render(this.scene, this.camera);
+    for (const o of hidden) o.visible = true;
     if (hadHudLayer) this.camera.layers.enable(HUD_SPRITE_LAYER);
     if (hadFxLayer) this.camera.layers.enable(FX_PARTICLE_LAYER);
     this.scene.overrideMaterial = prevOverride;
