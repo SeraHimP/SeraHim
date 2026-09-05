@@ -126,10 +126,8 @@ export class HowlingAbyssDecor {
     });
 
     const rubbleGeo = new THREE.IcosahedronGeometry(1, 0);
-    // sideSign：+1=left（P(d,off) 里 off=+140 那侧），-1=right（off=-140）——
-    // 用来算"朝向桥中线"的方向，见 _buildPillarsAndTorches 头注。
-    for (const [side, sideSign] of [[map.frostBridge.left, +1], [map.frostBridge.right, -1]]) {
-      this._buildPillarsAndTorches(group, side.pillars, side.segments, stoneMat, snowMat, sideSign);
+    for (const side of [map.frostBridge.left, map.frostBridge.right]) {
+      this._buildPillarsAndTorches(group, side.pillars, stoneMat, snowMat);
       this._buildWallSegments(group, side.segments, stoneShadeMats, stoneDarkMat, rubbleGeo);
     }
 
@@ -138,16 +136,15 @@ export class HowlingAbyssDecor {
   }
 
   /**
-   * 柱子 + 直接贴在柱身上的火盆（不再用支架挑出去）。
+   * 柱子 + 顶在柱子最上面的火盆（不贴柱身侧面，也不用支架）。
    *
-   * ==================== 2026-09-05 用户反馈（第二轮）：不要挂着，直接放柱子上 ====================
-   * 上一版做了个从柱子中心量出去的支架+火盆，结果支架起点算错、离柱子太近，
-   * 看着像"一团东西贴着柱子飘"。用户看完直接否掉了整个"支架挑出去"的思路：
-   * "那个火盆应该就是在原来的柱子上，不要挂着！"——不是"支架量准了没有"的问题，
-   * 是压根不该有支架。现在火盆的近侧边缘直接贴住柱身表面（偏移量＝柱身半径+
-   * 火盆自己的半径，不多留缝隙），中间不再有一根杆子/横臂。
+   * ==================== 2026-09-05 用户反馈（第三轮）：顶在柱子上面，不是贴在侧面 ====================
+   * 上一版把火盆贴到了柱身侧面（偏上方、雪冠下面）。用户明确否掉："火盆不是
+   * 贴在柱子身上，而是顶在柱子的上面！！！！"——即摞在柱顶，跟雪冠同一根竖直
+   * 中轴线上，不做任何侧向偏移。现在顺序是：柱身 → 雪冠 → 火盆 → 火焰，
+   * 全部摞在 (p.x, p.y) 这条竖直线上。
    */
-  _buildPillarsAndTorches(group, pillars, segments, stoneMat, snowMat, sideSign) {
+  _buildPillarsAndTorches(group, pillars, stoneMat, snowMat) {
     const pillarGeo = new THREE.CylinderGeometry(PILLAR_R_TOP, PILLAR_R_BOT, PILLAR_H, 6);
     const capGeo = new THREE.ConeGeometry(PILLAR_R_TOP * 1.15, 6, 6);
     const bowlGeo = new THREE.CylinderGeometry(BRAZIER_BOWL_R_TOP, BRAZIER_BOWL_R_BOT, BRAZIER_BOWL_H, 8);
@@ -157,39 +154,28 @@ export class HowlingAbyssDecor {
     const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8a3d });
     const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe08a });
 
-    // 火盆贴在柱身这个高度上的半径（柱子上窄下宽，这里按插值取该高度的实际半径）。
-    const BOWL_HEIGHT_FRAC = 0.68;   // 贴在柱子偏上方（雪冠下面），不是柱顶
-    const pillarRAtBowl = PILLAR_R_BOT + (PILLAR_R_TOP - PILLAR_R_BOT) * BOWL_HEIGHT_FRAC;
-
     for (let i = 0; i < pillars.length; i++) {
       const p = pillars[i];
       const pillar = new THREE.Mesh(pillarGeo, stoneMat);
       pillar.position.copy(toScene(p.x, p.y, -2 + PILLAR_H / 2));
       group.add(pillar);
 
+      const capH = -2 + PILLAR_H + 2;
       const cap = new THREE.Mesh(capGeo, snowMat);
-      cap.position.copy(toScene(p.x, p.y, -2 + PILLAR_H + 2));
+      cap.position.copy(toScene(p.x, p.y, capH));
       group.add(cap);
 
-      // 拿相邻墙段的角度：优先用"从这根柱子出发"的那段，最后一根柱子没有
-      // "出发"的段，就用"到达"它的那段——两段在同一根柱子处角度本来就接近。
-      const seg = segments[Math.min(i, segments.length - 1)];
-      const nx = -Math.sin(seg.angle), ny = Math.cos(seg.angle);
-      const inX = -sideSign * nx, inY = -sideSign * ny;   // 指向桥中线（=桥面那侧）
-
-      const bowlDist = pillarRAtBowl + BRAZIER_BOWL_R_BOT * 0.7;   // 贴住柱身，不留支架
-      const bowlX = p.x + inX * bowlDist, bowlY = p.y + inY * bowlDist;
-      const bowlH = -2 + PILLAR_H * BOWL_HEIGHT_FRAC;
+      const bowlH = capH + 4 + BRAZIER_BOWL_H / 2;
       const bowl = new THREE.Mesh(bowlGeo, bowlMat);
-      bowl.position.copy(toScene(bowlX, bowlY, bowlH));
+      bowl.position.copy(toScene(p.x, p.y, bowlH));
       group.add(bowl);
 
       const flameY = bowlH + BRAZIER_BOWL_H / 2 + TORCH_FLAME_H / 2 - 1;
       const flameOuter = new THREE.Mesh(flameOuterGeo, flameOuterMat);
-      flameOuter.position.copy(toScene(bowlX, bowlY, flameY));
+      flameOuter.position.copy(toScene(p.x, p.y, flameY));
       group.add(flameOuter);
       const flameInner = new THREE.Mesh(flameInnerGeo, flameInnerMat);
-      flameInner.position.copy(toScene(bowlX, bowlY, flameY - 1));
+      flameInner.position.copy(toScene(p.x, p.y, flameY - 1));
       group.add(flameInner);
     }
   }

@@ -148,8 +148,9 @@ const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
   T('冰①-clearOfBridge 用整圆网格采样（不再是几个固定方向的采样点），能覆盖任意弯曲边界',
     /for \(let dx = -r; dx <= r \+ 1e-6; dx \+= step\)/.test(decor)
     && /dx \* dx \+ dy \* dy > r \* r/.test(decor));
-  T('火①-火盆直接贴住柱身（没有支架/横臂几何体），用户否掉"挑出去"的方案后改的',
-    !/BoxGeometry\(BRAZIER_ARM_LEN/.test(decor) && /pillarRAtBowl/.test(decor));
+  T('火①-火盆摞在柱顶（雪冠上方），没有支架/横臂几何体、也不贴柱身侧面——用户先后否掉"挑出去"和"贴侧面"两版方案后定的',
+    !/BoxGeometry\(BRAZIER_ARM_LEN/.test(decor) && !/pillarRAtBowl/.test(decor)
+    && /const bowlH = capH \+ 4 \+ BRAZIER_BOWL_H \/ 2/.test(decor));
 }
 
 done();
