@@ -80,7 +80,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // Q4：navgrid 地图的底图改由【真实可走网格】生成，与走廊模型产出的底图不是一回事，
   // 故缓存键要带上模式，切换时不会拿到上一版。
   const navMode = !!(map.useNavgrid && grid && grid.walk);
-  const key = map.id + (navMode ? '#nav' : '');
+  const key = map.id + (navMode ? '#nav' : '') + (map.terrainEdge ? '#cut' : '');
   let c = _terrainCache.get(key);
   if (c) return c;
   const { w: WW, h: WH } = map.world;
@@ -153,12 +153,19 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
     // 画地面用的形状可以与"能不能走"分开（见 visualWalkOf 头注）；没声明就还是照抄可走网格。
     const paint = visualWalkOf(map, grid) || walk;
+    // v55：声明了 terrainEdge 的地图，**不可走格直接挖空**（alpha=0），
+    // 由 TerrainEdgeLayer 在更低的高度另铺一张深渊面 —— 陆地才读得出"有厚度"。
+    // 见 docs/MAP-DESIGN-howling-abyss-frost.md §8.2.3 的路线 B。
+    // ⚠️ 必须做成按地图声明开启，否则三张老地图会一起变透明。
+    // ⚠️ 材质那边要配 alphaTest（discard）而不是混合：discard 的深度写入是正确的，
+    //    SSAO / 描边的法线深度预渲染不会被半透明搞乱，也没有渲染排序问题。
+    const cutout = !!map.terrainEdge;
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
       im.data[k * 4]     = on ? corR : gndR;
       im.data[k * 4 + 1] = on ? corG : gndG;
       im.data[k * 4 + 2] = on ? corB : gndB;
-      im.data[k * 4 + 3] = 255;
+      im.data[k * 4 + 3] = (cutout && !on) ? 0 : 255;
     }
     cg.putImageData(im, 0, 0);
     g.imageSmoothingEnabled = false;                  // 最近邻：格边界与 navgrid 严格对齐

@@ -203,6 +203,23 @@ export const howling_abyss_frost = {
   factions: [FACTIONS.BLUE, FACTIONS.RED],
   visualStyle: 'stylized',   // 复用风格化渲染分支（TerrainLayer/VegetationLayer 的 stylized 分支）
   paletteId: 'frost',        // 见 CONFIG.stylizedPalettes.frost
+  // ==================== v55：陆地/桥的厚度（通用件 TerrainEdgeLayer 的声明）====================
+  // 用户："两方基地变成不规则的大陆，中间用桥连接！应该大陆和桥要做出立体感！
+  //        就像是你做旁边那个冰的装饰一样！"
+  // 声明了这一项，地形的不可走区域会被挖空（alpha=0），另在更低处铺一张深渊面，
+  // 沿可见地面的轮廓摆一圈崖壁 —— 陆地与桥因此读成"浮在深渊之上的板"。
+  // 三张老地图没有这一项，画面逐位不变。参数全部可调，见 TerrainEdgeLayer 的 DEF。
+  terrainEdge: {
+    cliffHeight: 18,
+    abyssDrop: 24,      // 必须 > cliffHeight，否则崖壁踩不到深渊面（会悬空）
+    segLen: 46,
+    thickness: 16,
+    jitter: 0.22,       // 崖顶参差，不齐平（参考图里的崖都是碎的）
+    capHeight: 5,
+    cliffColor: '#3d5470',
+    capColor: '#8ea6b8',   // 与城墙压顶同色，崖与墙因此同源
+    abyssColor: '#16233d', // 与调色板的 groundColor 同值：深渊就是原来那片"不可走"的底色
+  },
 
   world: { w: 2325, h: 2325 },
   useNavgrid: true,

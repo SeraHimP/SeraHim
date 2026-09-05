@@ -213,7 +213,13 @@ export class HowlingAbyssDecor {
       this._buildWallSegments(group, side, wallBodyMat, wallCapMat, stoneDarkMat, rubbleGeo);
     }
 
-    this._buildWaterDecor(group, map, SV);
+    // v55：陆地有厚度之后，水域装饰要**整体沉到深渊面那一层**。
+    // 不沉的话浮冰会停在陆地高度，等于悬在水面上方 abyssDrop 那么高 ——
+    // 近看是"冰块浮在半空"。设计文档 §8.2 的改动面第 3 条写的就是这一步。
+    const waterGroup = new THREE.Group();
+    waterGroup.position.y = -(map.terrainEdge?.abyssDrop ?? 0);
+    group.add(waterGroup);
+    this._buildWaterDecor(waterGroup, map, SV);
     this.setShadowLevel(this.shadowLevel);   // 新建的网格套用当前阴影档位
   }
 

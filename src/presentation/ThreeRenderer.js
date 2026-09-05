@@ -60,6 +60,7 @@ const SKY_COLOR_OF = () => LIGHT().skyColor ?? '#a8c4e0';
 const GROUND_COLOR_OF = () => LIGHT().groundColor ?? '#40485a';
 const SUN_DIST = 2000;                   // 光源到视野中心的距离（仅影响阴影相机 near/far 余量）
 import { EffectsLayer } from './EffectsLayer.js';
+import { TerrainEdgeLayer } from './TerrainEdgeLayer.js';
 // P1 视觉优化：后处理管线（Bloom 辉光 + ACES 色调映射 + FXAA 抗锯齿）。插件本地 vendor（离线）。
 import { EffectComposer } from '../../vendor/postprocessing/EffectComposer.js';
 import { RenderPass } from '../../vendor/postprocessing/RenderPass.js';
@@ -174,6 +175,7 @@ export class ThreeRenderer {
     // 2026-09-04：嚎哭深渊·冰封版专属装饰（石柱/分段墙/豁口瓦砾/火炬/浮冰/孤灵
     // 小岛），只在 paletteId==='frost' 时建东西，见 HowlingAbyssDecor.js 头注。
     this.frostDecor = new HowlingAbyssDecor(this.scene);
+    this.terrainEdge = new TerrainEdgeLayer(this.scene);   // v55：陆地厚度（崖壁 + 下沉深渊面），通用件
     if (this.mapSystem?.isWalkable) {
       this.frostDecor.setWalkableFn((x, y) => this.mapSystem.isWalkable(x, y));
     }
@@ -434,6 +436,7 @@ export class ThreeRenderer {
     this.units?.setShadowLevel?.(lv);
     this.walls?.setShadowLevel?.(lv);
     this.frostDecor?.setShadowLevel?.(lv);
+    this.terrainEdge?.setShadowLevel?.(lv);
     this.gl.shadowMap.needsUpdate = true;
     return lv;
   }
@@ -960,7 +963,11 @@ export class ThreeRenderer {
     }
     // 第 6.1 步：改为受光材质。灯组标定到总辐照度 = π，故平面地面的出射色
     // 与此前 MeshBasicMaterial 时代逐像素相同——本步是刻意的"视觉空操作"。
-    const mat = new THREE.MeshLambertMaterial({ map: tex });
+    // v55：声明 terrainEdge 的地图，地形贴图的不可走区域是 alpha=0（见 TerrainLayer）。
+    // 用 alphaTest（片元 discard）而不是 transparent：discard 的深度写入是正确的，
+    // 半透明混合会把 SSAO / 描边的法线深度预渲染搞乱，还会引入排序问题。
+    const cutout = !!map.terrainEdge;
+    const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: cutout ? 0.5 : 0 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = this.shadowLevel !== 'off';
     mesh.position.set(WW / 2, 0, WH / 2);
@@ -973,6 +980,7 @@ export class ThreeRenderer {
       this.walls.top.material.needsUpdate = true;
     }
     if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
+    this.terrainEdge.build(this.mapSystem);   // v55：先建崖壁与深渊面（其它装饰要坐在它上面）
     this.frostDecor.build(this.mapSystem);   // 嚎哭深渊·冰封版专属装饰（自带 paletteId 判断+同图跳过守卫）
     if (this.skirtOn) this.skirt.build(this.mapSystem); // v51.27：地图外围裙边（自己的贴图/纯色，见 MapSkirtLayer）
     this.water.build(this.mapSystem);                 // P1：河道水面同上

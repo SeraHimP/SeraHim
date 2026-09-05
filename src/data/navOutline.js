@@ -1,0 +1,220 @@
+/**
+ * navOutline.js —— navgrid 位图 → 边界多边形 → 简化/平滑后的折线
+ *
+ * 设计文档：docs/MAP-DESIGN-howling-abyss-frost.md §8.2.5。
+ * 与 `navgrid.js` 同一层的定位：**不依赖 DOM / three / canvas 的纯函数**，
+ * 可以在无头 Node 里直接跑断言。渲染是上面一层（TerrainEdgeLayer）的事，
+ * 这里只回答一个问题：「可走区域的边界，画成折线长什么样」。
+ *
+ * ==================== 为什么必须简化，不能逐格摆 ====================
+ * navgrid 是 2325/256 ≈ 9 世界单位一格的位图，逐格描出来的边界是**锯齿台阶**
+ *（实机截图里肉眼可见）。设计文档 §8.2.4 写死了这条要求：
+ *
+ *   > 崖壁**绝不能逐 navgrid 格摆**，那样只会把锯齿放大成锯齿墙。
+ *
+ * 所以这里的流水线是三段，缺一不可：
+ *   ① 边界跟踪（Moore 邻域）→ 得到逐格的闭合环，带一圈锯齿；
+ *   ② Douglas–Peucker 简化 → 把台阶压成干净的斜切直线（这一步才是消锯齿的关键）；
+ *   ③ Chaikin 圆角（可选）→ 拐角轻微倒角，避免简化后过于生硬。
+ *
+ * ==================== 坐标约定 ====================
+ * 与 `MapSystem._navgrid()` / `paintCircle` 一致：格 (gx, gy) 的**中心**对应世界坐标
+ *   wx = (gx + 0.5) * world / n,  wy = (gy + 0.5) * world / n
+ * 输出一律是**世界坐标**的点列，调用方不用再自己换算（换算写两遍必然会错一遍）。
+ */
+
+/**
+ * 边界跟踪：**先收集"内外分界的单位边"，再把边串成环**。
+ *
+ * ⚠️ 这里原本写的是 Moore 邻域跟踪（沿着格子走），实测**顶点数是应有的 9 倍**
+ *    —— 环在细颈处会沿原路折返，同一段边被走两遍，于是 Douglas–Peucker 完全失效
+ *   （eps 从 1.2 调到 4.0，顶点只从 16264 掉到 13166，等于没简化）。
+ *    根因是"沿格子走"这件事本身：一个格可能被边界经过两次，而折返段的弦长为 0，
+ *    DP 对它无能为力。
+ *
+ * 换成现在这个做法就没有这个问题：边界是**格子之间的缝**，每条缝只存在一次，
+ * 天然不会重复；串起来的环每个顶点度数为 2，走一遍就闭合。
+ *
+ * 顶点用**格点坐标**（0..n），不是格中心：边界本来就落在格与格的缝上。
+ *
+ * @param {Uint8Array|number[]} bits 每格 0/1，长度 n*n
+ * @param {number} n 边长（格）
+ * @returns {Array<Array<[number, number]>>} 每条环是格点坐标数组（首尾不重复）
+ */
+export function traceLoops(bits, n) {
+  if (!bits || !n) return [];
+  const at = (x, y) => (x < 0 || y < 0 || x >= n || y >= n) ? 0 : bits[y * n + x];
+  // 有向边：起点 -> 终点。方向统一取"内部在左手边"，于是外环逆时针、洞顺时针，
+  // 靠 signedArea2 的符号就能分辨内外环，不用另写包含判定。
+  const next = new Map();               // "x,y" -> [x2, y2]
+  const key = (x, y) => x + ',' + y;
+  const push = (x1, y1, x2, y2) => {
+    const k = key(x1, y1);
+    // 十字细颈处一个格点会有两条出边（两块地在对角相接）。取先入的那一条即可：
+    // 两条都会被走到，只是分属两个环 —— 这正是"对角相接的两块地算两块"的合理解释。
+    if (!next.has(k)) next.set(k, [x2, y2]);
+    else { const alt = next.get(k); if (!alt.alt) alt.alt = [x2, y2]; }
+  };
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (!at(x, y)) continue;
+      if (!at(x, y - 1)) push(x + 1, y, x, y);          // 上缝：向 -x
+      if (!at(x + 1, y)) push(x + 1, y + 1, x + 1, y);  // 右缝：向 -y
+      if (!at(x, y + 1)) push(x, y + 1, x + 1, y + 1);  // 下缝：向 +x
+      if (!at(x - 1, y)) push(x, y, x, y + 1);          // 左缝：向 +y
+    }
+  }
+  const used = new Set();
+  const loops = [];
+  for (const [k0] of next) {
+    if (used.has(k0)) continue;
+    const loop = [];
+    let k = k0, guard = 0;
+    while (!used.has(k) && next.has(k) && guard++ < next.size + 4) {
+      used.add(k);
+      const [x, y] = k.split(',').map(Number);
+      loop.push([x, y]);
+      const nx = next.get(k);
+      k = key(nx[0], nx[1]);
+    }
+    if (loop.length >= 4) loops.push(loop);
+  }
+  return loops;
+}
+
+/** 点到线段的距离平方（Douglas–Peucker 内部用）。 */
+function distSq(p, a, b) {
+  const vx = b[0] - a[0], vy = b[1] - a[1];
+  const wx = p[0] - a[0], wy = p[1] - a[1];
+  const L2 = vx * vx + vy * vy;
+  let t = L2 > 0 ? (wx * vx + wy * vy) / L2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const dx = a[0] + t * vx - p[0], dy = a[1] + t * vy - p[1];
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Douglas–Peucker 简化。**这一步才是消锯齿的关键**——把逐格台阶压成斜切直线。
+ * @param {Array<[number, number]>} pts 折线（不闭合）
+ * @param {number} eps 容差（与点坐标同单位）
+ */
+export function simplify(pts, eps) {
+  if (!pts || pts.length < 3 || !(eps > 0)) return pts ? pts.slice() : [];
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const e2 = eps * eps;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop();
+    let best = -1, bd = e2;
+    for (let k = i + 1; k < j; k++) {
+      const d = distSq(pts[k], pts[i], pts[j]);
+      if (d > bd) { bd = d; best = k; }
+    }
+    if (best > 0) { keep[best] = 1; stack.push([i, best], [best, j]); }
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
+  return out;
+}
+
+/**
+ * Chaikin 圆角（闭合环版）。每跑一遍，每条边被 1/4、3/4 两点取代，拐角变钝。
+ * 跑太多遍环会整体缩水且顶点爆炸，默认只跑 1 遍。
+ */
+export function chaikinClosed(pts, passes = 1) {
+  let cur = pts;
+  for (let p = 0; p < passes; p++) {
+    if (cur.length < 3) return cur;
+    const out = [];
+    for (let i = 0; i < cur.length; i++) {
+      const a = cur[i], b = cur[(i + 1) % cur.length];
+      out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+      out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    cur = out;
+  }
+  return cur;
+}
+
+/** 闭合环的有符号面积×2（>0 = 逆时针）。用来剔掉太小的环、以及判定内外环。 */
+export function signedArea2(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s;
+}
+
+/** 闭合环的周长。 */
+export function perimeter(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    s += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return s;
+}
+
+/**
+ * 主入口：navgrid 位图 → **世界坐标**的平滑闭合轮廓。
+ *
+ * @param {Uint8Array|number[]} bits
+ * @param {number} n
+ * @param {number} world 地图世界边长（正方形）
+ * @param {object} [opt]
+ * @param {number} [opt.simplifyCells=2.2] DP 容差，单位是**格**（换算成世界单位后再用）
+ * @param {number} [opt.smoothPasses=1]    Chaikin 遍数
+ * @param {number} [opt.minAreaCells=64]   小于这个面积（格²）的环丢掉（噪点/孤格）
+ * @param {number} [opt.minLoopCells=8]    环的最小格数
+ * @returns {Array<{ pts: Array<[number, number]>, area: number, length: number }>}
+ *          按面积从大到小排序，pts 为世界坐标闭合环（首尾不重复）
+ */
+export function navOutline(bits, n, world, opt = {}) {
+  // world 允许是数字，也允许是地图里那种 { w, h }（本仓库的地图都写成后者）。
+  // 这里踩过：直接 world / n 会得到 NaN，而 NaN 会一路传到几何里，
+  // 表现是"崖壁一块都没有"而不是报错 —— 静默失败最难查，所以显式兼容两种形状。
+  const W = (typeof world === 'number') ? world : (world?.w ?? 0);
+  const H = (typeof world === 'number') ? world : (world?.h ?? W);
+  const cell = W / n, cellY = H / n;
+  const simplifyCells = opt.simplifyCells ?? 2.2;
+  const smoothPasses = opt.smoothPasses ?? 1;
+  const minAreaCells = opt.minAreaCells ?? 64;
+  const loops = traceLoops(bits, n);
+  const out = [];
+  for (const loop of loops) {
+    // 面积按**格坐标**算，阈值才好写成"多少格²"，与分辨率无关。
+    if (Math.abs(signedArea2(loop)) / 2 < minAreaCells) continue;
+    // 简化在格坐标下做，容差直接就是"几格"，直观。
+    // ⚠️ DP 对**闭合环**要先断开成折线，否则首尾那一段永远不会被简化。
+    //    这里把起点复制到末尾当锚点，简化完再去掉。
+    //
+    // ⚠️⚠️ 接缝点不能随便取。DP 恒定保留首尾两点，而首尾就是接缝 ——
+    //     接缝落在一条直边中间时，**紧挨着它的那个真角会被并进闭合段里丢掉**。
+    //     实测：一个 320×240 的矩形，顶点数对（4 个）、包围盒也对，但第一个点是
+    //     [170,200] 而不是角点 [160,200]，周长 1110 而不是 1120 —— 角被切了。
+    //     修法：先把环旋到「离质心最远的点」当接缝。那个点必定在凸包上、必定是角，
+    //     DP 一定会保留它，于是不会有角被接缝吃掉。
+    let cx0 = 0, cy0 = 0;
+    for (const q of loop) { cx0 += q[0]; cy0 += q[1]; }
+    cx0 /= loop.length; cy0 /= loop.length;
+    let far = 0, farD = -1;
+    for (let i = 0; i < loop.length; i++) {
+      const d = (loop[i][0] - cx0) ** 2 + (loop[i][1] - cy0) ** 2;
+      if (d > farD) { farD = d; far = i; }
+    }
+    const rot = loop.slice(far).concat(loop.slice(0, far));
+    const open = rot.concat([rot[0]]);
+    let s = simplify(open, simplifyCells);
+    if (s.length > 1 && s[0][0] === s[s.length - 1][0] && s[0][1] === s[s.length - 1][1]) s.pop();
+    if (s.length < 3) continue;
+    if (smoothPasses > 0) s = chaikinClosed(s, smoothPasses);
+    // 格点 → 世界。注意这里是**格点**（格与格的缝）不是格中心：
+    // 边界本来就落在缝上，用格中心会让崖壁整体内缩半格。
+    const pts = s.map(([gx, gy]) => [gx * cell, gy * cellY]);
+    out.push({ pts, area: Math.abs(signedArea2(pts)) / 2, length: perimeter(pts) });
+  }
+  out.sort((a, b) => b.area - a.area);
+  return out;
+}
