@@ -1,6 +1,6 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
 import { HA_NAVGRID_FROST_WIDE } from './map_navgrids.js';
-import { unpackBits } from '../navgrid.js';
+import { unpackBits, packBits } from '../navgrid.js';
 
 /**
  * howling_abyss_frost.js —— 嚎哭深渊·冰封风格重做
@@ -51,69 +51,121 @@ const B = {
 const GAP_D = [280, 440, 600, 760, 920, 1080, 1240, 1400, 1560, 1720, 1880, 2040, 2180];
 const BASE_GAP_OFF = 140; // 原始偏移——obstacles 数组的破口位置仍然对齐这个（缺口数据本身不改）
 
-// ==================== v0.6→v0.7：桥面拓宽，墙跟着外移，墙即碰撞边界（用户拍板方案） ====================
-// 用户："把桥的宽度向两边略微扩大，墙也跟着外移，把墙作为体积碰撞的边界"。
-// 已用 AskUserQuestion 跟用户对齐技术方案：新描一份更宽的 navgrid 只给冰封版用
-// （`HA_NAVGRID_FROST_WIDE`，原图 navgrid 完全不动，见 map_navgrids.js 头注）。
+// ==================== v0.7：墙线内收 + 可走区域收到墙线 + 缺口处断墙（用户拍板方案） ====================
+// 用户："把桥的宽度向两边略微扩大，墙也跟着外移，把墙作为体积碰撞的边界"（v0.6），
+// 之后连续三轮实机反馈把这套做法逐条修正到现在这个样子，每一条都是用户明确
+// 拍板过的，不是猜的：
 //
-// v0.6 的第一版做法是"每根柱子单独量一次真实边界，各自贴边"——手描的真实桥形
-// 本来就不是恒定半宽（中段本身有 ±20~50 的自然起伏，两个基地附近明显更宽），
-// 按每个弧长各自的真实边界摆，理论上贴合度最高。但用户看完实机截图直接炸了：
-// "你他妈的做的什么破墙，要原先那样的平直的"——手描位图本身在像素级别不平滑，
-// 相邻弧长量出来的边界值来回跳（实测 217.8→234.1→217.8 这种量级的摆动），
-// 墙因此一段一段地扭来扭去，不是一条直线。用户要的是"原先那样"——柱子在一条
-// 直线上，不是逐段贴合每一像素的凹凸。
+// ① 墙必须是直线，不能逐根柱子去贴真实边界
+//    v0.6 第一版让每根柱子各自量一次 navgrid 上的真实边界（`edgeOffset`），
+//    贴合度最高，但手描位图在像素级别不平滑，相邻弧长量出来的值来回跳，
+//    墙因此一段段拐来拐去。用户："要原先那样的平直的"。
+//    → 每一侧只用**一个**偏移量，整条墙是一条直线。
 //
-// 改成**每一侧用同一个常量偏移**（不再逐柱子各自量），常量本身还是从
-// navgrid **量出来的**，不是拍脑袋写死：取桥身中段（排除两端两个因为贴近
-// 基地而明显更宽的弧长）里各自的真实边界，两侧分别取平均值。
+// ② 这个偏移量取中位数，不取平均值，更不取最大值
+//    取最大值墙会离水岸老远（用户："墙都浮在水面上了"）；取平均值会被那一处
+//    真实缺口（见③）往下拽。取**中位数**对少数极端值免疫，量出来的就是"这条桥
+//    绝大多数地方的半宽"——实测 sign+1 侧 233、sign-1 侧 214。
 //
-// ==================== 用户反馈（第二轮）：墙飘在水面上了 ====================
-// 第一版取的是"两侧最宽的那个真实边界"（最大值）——用最大值能**严格保证**
-// 墙不会切进可走的桥面，但代价是：真实边界本身摆动幅度不小（右侧中段测出
-// 179.6~236.2，接近 60 个单位的落差），用最大值当唯一常量，意味着在真实
-// 边界比较窄的那些弧长处，墙会离水岸有一大截明显的空隙——用户原话："墙都
-// 浮在水面上了"，就是这个空隙看着像悬空。改成取平均值：多数弧长处墙会紧贴
-// 或非常接近真实边界，只有边界局部收窄到比平均值还窄的少数几处，墙的某一
-// 小段可能比真实边界略靠内几个单位——这一点点重叠不会露出明显的破绽（用户
-// 没有反馈"墙切进路里"这个方向的问题，只反馈了"浮在水上"这一个方向），而且
-// 缺口处的瓦砾/崩块本来就各自单独查过 isWalkable（见 HowlingAbyssDecor.js
-// 的 _buildRubbleAt/_buildWeatherChips 头注），墙体本身即使有一两处轻微
-// 贴线也不会让散落物滚到路上。
+// ③ 墙往桥内侧回收 `WALL_INSET`，不贴着水岸走
+//    用户："墙再往回收一些！现在贴着桥的边缘不好看！"。回收量经用户选定为 25。
+//    回收还顺带解决了一个画面问题：墙线正好压在中位半宽上时，位图本身的锯齿
+//    会让真实边界在十来处地方微微低于墙线，墙看起来是毛的；回收 25 之后这些
+//    锯齿全部落在墙线外侧，墙是干净的一条直线（实测：内收 0 会碎出 10 段假
+//    断口，内收 15 以上就只剩下③说的那一处真缺口）。
+//
+// ④ 可走区域收到墙线——"墙即碰撞边界"这条要求在回收之后依然成立
+//    用户选定"不能走，可走区域收到墙线"。于是墙外侧那圈桥沿是看得见、走不上去
+//    的装饰地面，墙重新是真正的碰撞边界。注意内收 25 之后的墙线（208/189）
+//    与**原图**的桥半宽（207/188）几乎重合——也就是说可走宽度回到了原图水平，
+//    并没有因为这次回收而比原来更窄，v0.6 拓宽出来的那一圈正好变成墙外的桥沿。
+//    两个基地圈（半径 `BASE_CIRCLE_R`）不参与收边，否则圆形基地平台会被削成条状。
+//
+// ⑤ 断墙位置由几何决定，不再是概率
+//    这是这一轮最大的认知纠正：**全桥只有一处真正的"缺口"**——sign-1 侧弧长
+//    1240~1400 处，桥沿向内凹进去 67 个单位（原图就有，v0.6 的膨胀完整保留了
+//    它）。用户圈红的就是这一处。此前几版把 `GAP_D` 这 13 个**柱子间距**弧长
+//    误当成"13 处缺口"，先按 55% 概率、后按 100% 必断地在每根柱子旁边拆墙，
+//    完全是建立在错误前提上的机制（用户："我指的桥上的缺口是我画红圈的地方"）。
+//    正确的规则只有一句话：**墙脚下没有桥的地方，这段墙就不摆**。墙沿直线走，
+//    走到那处凹进去的缺口上方时下面是水，于是那一段自然断开——其余地方墙连续
+//    不断、与柱子严丝合缝（`WALL_GAP_CHANCE`/`WALL_GAP_BLOCKS` 两个常量连同
+//    整套概率机制已删除）。判定放在渲染层逐块做（见 HowlingAbyssDecor.js），
+//    这里只负责把判定需要的两样东西算好交出去：`inward`（指向桥内侧的单位
+//    法向）和 `groundProbe`（往内侧探多远去采样地面）。
 const NAV_N = HA_NAVGRID_FROST_WIDE.n;
 const NAV_BITS = unpackBits(HA_NAVGRID_FROST_WIDE.bits, NAV_N);
 const WORLD = 2325;
-function navWalkable(x, y) {
+const RED_NEXUS = R(BLUE_NEXUS);
+const BRIDGE_LEN = Math.hypot(RED_NEXUS.x - BLUE_NEXUS.x, RED_NEXUS.y - BLUE_NEXUS.y);
+// 基地圈半径——与下面 map.baseCircleRadius 是同一个数，必须共用一个常量：
+// 收边逻辑要靠它避开基地平台，两处各写一份迟早会漂移。
+const BASE_CIRCLE_R = 330;
+const WALL_INSET = 25;        // 墙线从中位半宽往桥内侧回收多少（用户选定）
+const WALL_GROUND_PROBE = 12; // 判"墙脚下有没有桥"时往内侧探的距离（约 1.3 个 navgrid 格）
+
+function bitsWalkable(bits, x, y) {
   const gx = Math.floor(x / WORLD * NAV_N), gy = Math.floor(y / WORLD * NAV_N);
   if (gx < 0 || gy < 0 || gx >= NAV_N || gy >= NAV_N) return false;
-  return NAV_BITS[gy * NAV_N + gx] === 1;
+  return bits[gy * NAV_N + gx] === 1;
 }
 /** 沿弧长 d 处的法向，从中线向 sign（+1/-1）方向扫描，找可走区域的真实边界（世界单位）。 */
 function edgeOffset(d, sign) {
-  const STEP = 2, MAX_OFF = 380;
+  const STEP = 2, MAX_OFF = 420;
   let off = 0;
   while (off < MAX_OFF) {
     const p = P(d, sign * (off + STEP));
-    if (!navWalkable(p.x, p.y)) break;
+    if (!bitsWalkable(NAV_BITS, p.x, p.y)) break;
     off += STEP;
   }
   return off;
 }
-const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
-// 中段弧长（排掉首尾两个——那两个紧贴基地，真实边界会跳到 350+，用它们会把
-// 整条墙的偏移量拉得离桥面老远）。两侧各自的中段真实边界取平均值，分别当
-// 这一侧的常量——单一数值，保证每一侧都是直线，同时尽量贴近这一侧的真实水岸。
-const MID_GAP_D = GAP_D.slice(1, -1);
-const WALL_OFF_LEFT = avg(MID_GAP_D.map((d) => edgeOffset(d, +1)));
-const WALL_OFF_RIGHT = avg(MID_GAP_D.map((d) => edgeOffset(d, -1)));
+
+// 桥身中段的采样弧长：两端各让开一个基地圈 + 一段过渡带（基地圈与桥交接处
+// 边界是斜着收进来的，采到那一段会把中位数拉高）。
+const EDGE_SAMPLE_MARGIN = 30, EDGE_SAMPLE_STEP = 10;
+const MID_SAMPLE_D = [];
+for (let d = BASE_CIRCLE_R + EDGE_SAMPLE_MARGIN; d <= BRIDGE_LEN - BASE_CIRCLE_R - EDGE_SAMPLE_MARGIN; d += EDGE_SAMPLE_STEP) {
+  MID_SAMPLE_D.push(d);
+}
+const median = (arr) => { const s = arr.slice().sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+const WALL_OFF_LEFT = median(MID_SAMPLE_D.map((d) => edgeOffset(d, +1))) - WALL_INSET;
+const WALL_OFF_RIGHT = median(MID_SAMPLE_D.map((d) => edgeOffset(d, -1))) - WALL_INSET;
+
+// ==================== 可走区域收到墙线（见头注④）====================
+// 只削桥身段，两个基地圈原样保留。削出来的这份才是地图真正发布的 navgrid，
+// `HA_NAVGRID_FROST_WIDE` 从此只是它的原料（也仍然是量墙线用的那份底图）。
+const TRIMMED_BITS = NAV_BITS.slice();
+for (let gy = 0; gy < NAV_N; gy++) {
+  for (let gx = 0; gx < NAV_N; gx++) {
+    const i = gy * NAV_N + gx;
+    if (!TRIMMED_BITS[i]) continue;
+    const wx = (gx + 0.5) / NAV_N * WORLD, wy = (gy + 0.5) / NAV_N * WORLD;
+    const rx = wx - BLUE_NEXUS.x, ry = wy - BLUE_NEXUS.y;
+    const d = rx * U.x + ry * U.y;
+    if (d <= BASE_CIRCLE_R || d >= BRIDGE_LEN - BASE_CIRCLE_R) continue;   // 基地圈不动
+    const off = rx * Nrm.x + ry * Nrm.y;
+    if (Math.abs(off) > (off >= 0 ? WALL_OFF_LEFT : WALL_OFF_RIGHT)) TRIMMED_BITS[i] = 0;
+  }
+}
+const HA_NAVGRID_FROST = { n: NAV_N, bits: packBits(TRIMMED_BITS) };
 
 /**
- * 生成一侧（sign=+1 或 -1）的柱子序列与相邻柱子间的墙段——每侧统一用
- * `off` 这一个偏移量（见上面头注：改成直线，不再逐柱子各自贴合）。
- * @returns { pillars: [{x,y,d}], segments: [{from,to,mid,angle}] }
+ * 生成一侧（sign=+1 或 -1）的柱子序列与相邻柱子间的墙段——整侧统一用 `off`
+ * 这一个偏移量（见头注①：墙是直线，不逐柱子贴合每一像素的凹凸）。
+ *
+ * 柱子本身也过一遍"脚下有没有桥"（用发布版 navgrid 判，与渲染层同一份数据）：
+ * 当前这份地形下 13 根柱子全部站得住（缺口两端那两根正好踩在凹口的唇边上，
+ * 于是"柱子还立着、中间的墙塌了"这个观感是几何自然出来的，不是摆出来的），
+ * 这道过滤是防止以后改 navgrid 时悄悄冒出一根浮在水面上的柱子。
+ * @returns { pillars: [{x,y,d}], segments: [{from,to,mid,len,angle}], inward, groundProbe }
  */
 function bridgeSide(sign, off) {
-  const pillars = GAP_D.map((d) => ({ ...P(d, sign * off), d }));
+  const inward = { x: -sign * Nrm.x, y: -sign * Nrm.y };
+  const pillars = GAP_D
+    .map((d) => ({ ...P(d, sign * off), d }))
+    .filter((p) => bitsWalkable(TRIMMED_BITS,
+      p.x + inward.x * WALL_GROUND_PROBE, p.y + inward.y * WALL_GROUND_PROBE));
   const segments = [];
   for (let i = 0; i < pillars.length - 1; i++) {
     const a = pillars[i], b = pillars[i + 1];
@@ -124,7 +176,7 @@ function bridgeSide(sign, off) {
       angle: Math.atan2(b.y - a.y, b.x - a.x), // 世界坐标系里的朝向（弧度），渲染层换算成 Three.js 的 rotation.y
     });
   }
-  return { pillars, segments };
+  return { pillars, segments, inward, groundProbe: WALL_GROUND_PROBE };
 }
 
 const leftSide = bridgeSide(+1, WALL_OFF_LEFT);
@@ -148,7 +200,13 @@ export const howling_abyss_frost = {
   // v0.6 起改用略微加宽的位图（原图的形态学膨胀版本，只给这张图用，见
   // map_navgrids.js 里 HA_NAVGRID_FROST_WIDE 的头注）——原图 howling_abyss_v1
   // 的 navgrid 完全不受影响，这张图从此不再"逐位复用原图"，是它自己的一份数据。
-  navgrid: HA_NAVGRID_FROST_WIDE,
+  // v0.7 起发布的是在它基础上"收到墙线"的版本（见上面头注④）：墙外侧那圈桥沿
+  // 看得见但走不上去，墙重新是真正的碰撞边界。
+  navgrid: HA_NAVGRID_FROST,
+  // 只用来画地面形状的位图（见 TerrainLayer.visualWalkOf 头注）：地面按**收边前**
+  // 的宽度画，可走判定按上面收过边的 navgrid 走——于是石墙外侧留着一圈看得见、
+  // 走不上去的桥沿，墙看起来是站在桥面上的，不是贴在桥的最外沿。
+  visualNavgrid: HA_NAVGRID_FROST_WIDE,
   walls: { river: false },
   highground: {},            // 本图无高低差，逐位照抄原图
 
@@ -166,7 +224,7 @@ export const howling_abyss_frost = {
   torches: [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars].map((p) => ({ x: p.x, y: p.y })),
 
   baseCenters: { blue: { x: 292, y: 2033 }, red: { x: 2033, y: 292 } },
-  baseCircleRadius: 330,
+  baseCircleRadius: BASE_CIRCLE_R,
 
   neutralCamps: [{
     id: 'dragon', unitType: 'dragon', label: '巨龙',

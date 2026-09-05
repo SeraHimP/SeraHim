@@ -17,6 +17,7 @@
  */
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
+import { unpackBits } from '../data/navgrid.js';
 
 const _terrainCache = new Map();
 
@@ -45,6 +46,36 @@ export function invalidateTerrainCache(mapId) {
  * @param grid       WallLayer 的可走网格 { walk, nx, ny }（navgrid 地图才有意义）
  * @param mapSystem  用于取河道强度场（riverFactor）；缺省则不画河
  */
+/**
+ * 可选的"只用来画地面形状"的位图（`map.visualNavgrid`）→ 与 grid 同分辨率的 0/1 表。
+ *
+ * 为什么需要它：嚎哭深渊·冰封版把可走区域收到了石墙那条线上（"墙即碰撞边界"），
+ * 但用户要的画面是**墙站在桥面上**，墙外侧还留着一圈看得见、走不上去的桥沿
+ * （见 howling_abyss_frost.js 头注④）。地面底图本来逐格照抄可走网格，收边之后
+ * 桥面跟着一起缩了，墙看上去依旧贴在桥的最外沿——正是用户反馈"墙贴着桥的边缘
+ * 不好看"没被解决的原因。于是把"画多大"和"能走多远"拆成两份数据：地图声明
+ * `visualNavgrid` 就按它画地面，可走判定仍然只认 `map.navgrid`。
+ *
+ * 没有声明这个字段的地图（除冰封版外的所有图）返回 null，走原来的分支，逐位不变。
+ */
+function visualWalkOf(map, grid) {
+  const vg = map.visualNavgrid;
+  if (!vg || !vg.bits || !vg.n || !grid) return null;
+  const bits = unpackBits(vg.bits, vg.n);
+  if (!bits) return null;
+  const { nx, ny } = grid;
+  const { w: WW, h: WH } = map.world;
+  const out = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const gx = Math.floor((i + 0.5) / nx * vg.n), gy = Math.floor((j + 0.5) / ny * vg.n);
+      const inside = gx >= 0 && gy >= 0 && gx < vg.n && gy < vg.n;
+      out[j * nx + i] = (inside && bits[gy * vg.n + gx]) ? 1 : 0;
+    }
+  }
+  return out;
+}
+
 export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // Q4：navgrid 地图的底图改由【真实可走网格】生成，与走廊模型产出的底图不是一回事，
   // 故缓存键要带上模式，切换时不会拿到上一版。
@@ -120,8 +151,10 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     };
     const [corR, corG, corB] = stylized ? hex2rgb(SV.corridorColor, 'c9a06b') : [0x2b, 0x36, 0x47];
     const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
+    // 画地面用的形状可以与"能不能走"分开（见 visualWalkOf 头注）；没声明就还是照抄可走网格。
+    const paint = visualWalkOf(map, grid) || walk;
     for (let k = 0; k < nx * ny; k++) {
-      const on = walk[k];
+      const on = paint[k];
       im.data[k * 4]     = on ? corR : gndR;
       im.data[k * 4 + 1] = on ? corG : gndG;
       im.data[k * 4 + 2] = on ? corB : gndB;

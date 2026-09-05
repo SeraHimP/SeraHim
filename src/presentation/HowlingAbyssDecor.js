@@ -53,23 +53,24 @@ const TORCH_FLAME_H = 10;
 const WALL_H = 26, WALL_THICK = 13;          // 用户："厚度减少一些"——22→13
 const WALL_CAP_H = 7, WALL_CAP_INSET = 2.5;  // 压顶石：更矮更窄，收边观感
 const WALL_BLOCK_LEN = 20;                   // 每块石头的目标长度（实际按段长整除微调）
-// ==================== 2026-09-05 用户反馈第三轮：缺口必须每处都断，而且要断得明显 ====================
-// 上一版这里是 0.55——"每个缺口位置各自独立掷概率，是否表现出损毁"，也就是
-// 13×2=26 个缺口里大约只有一半会真的显示断墙，另一半照样是完整的墙。用户
-// 拿一张截图，在其中一处缺口上画了红叉+加粗红线，原话："我让你把桥墙断掉，
-// 你听不懂人话？？X是断的地方，红色加粗是没有桥的地方"——这句话里没有"随机
-// 一部分"的余地，字面意思就是"这些缺口位置本来就该没有桥/墙"，是桥本身固定
-// 的地理特征（跟 HA_TERRAIN.obstacles 13 个固定弧长位置的设计意图一致，见
-// howling_abyss_frost.js 头注），不是一次随机装饰。改成 1（=100%，每个缺口
-// 必断），不再有"运气不好摊到完整墙"这种情况——用户圈的具体是哪一处根本不
-// 重要，改成必断之后所有缺口位置都会一致地断开。
-// 另外"红色加粗"（粗线，不是一个点）也提示：原来每处缺口只拆一块墙体
-// （约 19 个世界单位宽），在缩小的战场视角下太窄，读不出"这里没有桥"的观感，
-// 容易被当成普通的墙面纹理瑕疵。改成拆两块（见下面 WALL_GAP_BLOCKS），断口
-// 宽度翻倍，视觉上才撑得起"加粗"这个词描述的效果。
-const WALL_GAP_CHANCE = 1;
-// 每处缺口拆除的墙块数（从柱子往段内数）——见上面 2026-09-05 头注。
-const WALL_GAP_BLOCKS = 2;
+// ==================== 2026-09-05 用户反馈第四轮：缺口是几何事实，不是概率 ====================
+// 此前这里有 WALL_GAP_CHANCE（先 0.55 后 1）和 WALL_GAP_BLOCKS 两个常量，用来
+// 在**每根柱子**旁边拆墙。那套机制建立在一个错误前提上：把地图里 `GAP_D` 那
+// 13 个**柱子间距**弧长当成了"桥上的 13 处缺口"。用户拿地形位图截图圈出真相：
+// 全桥真正凹进去的缺口**只有一处**（sign-1 侧弧长 1240~1400，内凹 67 个单位），
+// 用户原话："我指的桥上的缺口是我画红圈的地方，墙在桥的两侧，正好有一块的墙
+// 会穿过桥的缺口那里，所以那部分的墙就断掉"。
+//
+// 于是两个常量连同整套概率机制一起删掉，换成一句几何判据：
+//   **墙脚下没有桥的地方，这块墙就不摆**（改摆瓦砾）。
+// 墙沿直线走，走到那处凹口上方时脚下是水，那一段自然断开；其余地方墙连续
+// 不断、与柱子严丝合缝——用户这一轮同时要求"柱子和墙是一体的"，而"一体"和
+// "缺口处断开"在这套判据下不再矛盾：不需要为了做出断口而在柱子旁边硬拆砖。
+//
+// 判据用的两样东西都由地图数据给（`map.frostBridge.left/right`）：`inward`
+// 指向桥内侧的单位法向，`groundProbe` 是往内侧探多远采样——不能直接采墙块
+// 中心点，因为可走区域正好收到墙线上（见 howling_abyss_frost.js 头注④），
+// 中心点落在边界格上，结果会随取整方向抖动。
 const WALL_STONE_SHADES = 3;                 // 石块用几种深浅色，垒砌感靠这个，不是纹理贴图
 
 export class HowlingAbyssDecor {
@@ -141,7 +142,7 @@ export class HowlingAbyssDecor {
     const rubbleGeo = new THREE.IcosahedronGeometry(1, 0);
     for (const side of [map.frostBridge.left, map.frostBridge.right]) {
       this._buildPillarsAndTorches(group, side.pillars, stoneMat, snowMat);
-      this._buildWallSegments(group, side.segments, stoneShadeMats, stoneDarkMat, rubbleGeo);
+      this._buildWallSegments(group, side, stoneShadeMats, stoneDarkMat, rubbleGeo);
     }
 
     this._buildWaterDecor(group, map, SV);
@@ -196,42 +197,46 @@ export class HowlingAbyssDecor {
   /**
    * 分块砌墙：每段墙（两根柱子之间）按 WALL_BLOCK_LEN 切成 n 块石头。
    *
-   * ==================== 2026-09-04 用户反馈重做：缺损位置要对应桥的缺口 ====================
-   * 上一版缺损块是"整段墙里随机挑一块中间的"，跟桥面本来就有的 13×2 处缺口
-   * （`HA_TERRAIN.obstacles`，桥在这些弧长位置本来就变窄）完全没关系，两处
-   * 缺损各画各的，看着不像同一次损毁。用户原话（带四个感叹号）："桥中间那里
-   * 的缺口，对应的那块的墙也要损毁"——柱子的位置本来就是这 13 个缺口弧长，
-   * 所以正确的做法是：**贴着柱子的那一块墙**才是要损毁的块，不是段中间随便
-   * 一块。这也是设计文档 v0.2 原本就定好的方案（"豁口本身落在柱子的位置上，
-   * 柱子还立着、柱子两侧的墙/桥面塌了一块"）——上一版重做分块墙时为了解决
-   * "墙接不上柱子"的问题把首尾块改成"必须画"，结果连带把缺损位置也一起挪没了，
-   * 这次把"必须贴住柱子"和"缺损在哪"两件事分开处理：块的位置永远贴到底
-   * （不留几何缝隙），但贴着柱子的那一块用瓦砾代替石块本体——缺损和"贴住"
-   * 并不矛盾，瓦砾堆本身就摆在贴着柱子的位置上，不会显得断开。
-   * 每段墙两端都紧邻一根柱子（=一个缺口），所以两端各自独立判定是否损毁；
-   * 段太短（n<3）时只留一端损毁，否则整段墙可能一块实体都不剩。
+   * ==================== 2026-09-05 用户反馈第四轮：断口由地形决定 ====================
+   * 缺损位置的判据经历了三次错误的迭代（段中间随机一块 → 贴着柱子的一块 →
+   * 每根柱子必断两块），根子上都错在同一个前提：以为桥上有 13 处缺口。
+   * 实际全桥只有一处真凹口（见文件头 WALL_GAP_CHANCE 那段被删掉的常量的头注）。
+   *
+   * 现在的规则只有一句：**逐块查这块墙脚下有没有桥，没有就不摆这块**。
+   *   · 采样点不取墙块中心，而是从中心沿 `inward` 往桥内侧探 `groundProbe`——
+   *     可走区域正好收到墙线上，中心点落在边界格上，取整方向一变结果就抖。
+   *   · 判不到 isWalkable（渲染器没注入）时一律按"有桥"处理，退化成一条完整
+   *     的墙，不会因为缺少地形信息就把墙拆得七零八落。
+   * 于是断口出现在且只出现在真凹口上方，其余地方墙连续、与柱子严丝合缝，
+   * 满足用户这一轮的两条要求（"缺口那里断掉" + "柱子和墙是一体的"）。
+   * 断口两端仅存的那块完好砖照旧补崩裂痕迹（_buildWeatherChips），断口本身
+   * 摆瓦砾（_buildRubbleAt，其内部也各自查过 isWalkable，不会掉到桥面上）。
    */
-  _buildWallSegments(group, segments, stoneShadeMats, stoneDarkMat, rubbleGeo) {
+  _buildWallSegments(group, side, stoneShadeMats, stoneDarkMat, rubbleGeo) {
     const capMat = stoneShadeMats[stoneShadeMats.length - 1];
-    for (const seg of segments) {
+    const inward = side.inward || { x: 0, y: 0 };
+    const probe = side.groundProbe || 0;
+    // 这块墙脚下有没有桥（没注入 isWalkable 时按"有"算，见方法头注）。
+    const onBridge = (cx, cy) => !this._isWalkable
+      || this._isWalkable(cx + inward.x * probe, cy + inward.y * probe);
+
+    for (const seg of side.segments) {
       const n = Math.max(2, Math.round(seg.len / WALL_BLOCK_LEN));
       const blockLen = seg.len / n;
       const ux = Math.cos(seg.angle), uy = Math.sin(seg.angle);
       const nx = -Math.sin(seg.angle), ny = Math.cos(seg.angle);
-      // 两端各自对应一个缺口（柱子位置）：按该端柱子坐标独立掷概率，不是整段共用一个判定。
-      // WALL_GAP_CHANCE 现在恒为 1（见常量头注），两端只要几何上留得下就必断；
-      // gapAtEnd 仍然要求段够长（>=2*WALL_GAP_BLOCKS 块），避免跟起始端的缺口
-      // 重叠成"整段墙一块不剩"。
-      const gapAtStart = hash(seg.from.x, seg.from.y) < WALL_GAP_CHANCE;
-      const gapAtEnd = n >= WALL_GAP_BLOCKS * 2 && hash(seg.to.x, seg.to.y) < WALL_GAP_CHANCE;
-      const startGapN = gapAtStart ? WALL_GAP_BLOCKS : 0;
-      const endGapN = gapAtEnd ? WALL_GAP_BLOCKS : 0;
+      // 先把整段的"脚下有没有桥"一次算完：后面补崩裂痕迹要知道自己是不是紧挨着断口。
+      const solid = [];
+      for (let i = 0; i < n; i++) {
+        solid.push(onBridge(seg.from.x + ux * blockLen * (i + 0.5),
+                            seg.from.y + uy * blockLen * (i + 0.5)));
+      }
 
       for (let i = 0; i < n; i++) {
         const cx = seg.from.x + ux * blockLen * (i + 0.5);
         const cy = seg.from.y + uy * blockLen * (i + 0.5);
 
-        if (i < startGapN || i >= n - endGapN) {
+        if (!solid[i]) {                       // 脚下没桥：这块墙塌了，只留瓦砾
           this._buildRubbleAt(group, cx, cy, stoneDarkMat, rubbleGeo);
           continue;
         }
@@ -252,13 +257,13 @@ export class HowlingAbyssDecor {
         cap.rotation.y = worldAngleToRotY(seg.angle);
         group.add(cap);
 
-        // 用户反馈："断掉的这两边的墙体会有损毁痕迹"——紧贴缺口的那块完好砖，
-        // 朝缺口那一侧的边缘嵌几块崩块，跟缺口处地上的瓦砾堆（_buildRubbleAt）
+        // 用户反馈："断掉的这两边的墙体会有损毁痕迹"——紧贴断口的那块完好砖，
+        // 朝断口那一侧的边缘嵌几块崩块，跟断口处地上的瓦砾堆（_buildRubbleAt）
         // 区分开：那是"塌掉的石头"，这是"没塌但被震裂"的痕迹。
-        const nearStartGap = i === startGapN;
-        const nearEndGap = i === n - 1 - endGapN;
-        if (nearStartGap || nearEndGap) {
-          const edgeSign = nearStartGap ? -1 : 1;
+        const gapBefore = i > 0 && !solid[i - 1];
+        const gapAfter = i < n - 1 && !solid[i + 1];
+        if (gapBefore || gapAfter) {
+          const edgeSign = gapBefore ? -1 : 1;
           const ex = cx + ux * edgeSign * (blockLen * 0.94 / 2 - 1.5);
           const ey = cy + uy * edgeSign * (blockLen * 0.94 / 2 - 1.5);
           this._buildWeatherChips(group, ex, ey, stoneDarkMat, rubbleGeo);
