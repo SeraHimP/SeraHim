@@ -122,6 +122,34 @@ const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
   T('接⑧-ThreeRenderer 实例化了 HowlingAbyssDecor 并接入 _rebuildTerrain 的重建流程',
     /this\.frostDecor = new HowlingAbyssDecor\(this\.scene\)/.test(renderer)
     && /this\.frostDecor\.build\(this\.mapSystem\)/.test(renderer));
+  T('接⑨-ThreeRenderer.setShadowLevel 接入了 frostDecor（用户反馈"没有光影"后补的）',
+    /this\.frostDecor\?\.setShadowLevel\?\.\(lv\)/.test(renderer));
+  T('接⑩-HowlingAbyssDecor 有 setShadowLevel 方法，且不给火焰（MeshBasicMaterial）开阴影',
+    /setShadowLevel\(level\)/.test(decor) && /MeshBasicMaterial/.test(decor)
+    && /o\.material\.type !== 'MeshBasicMaterial'/.test(decor));
+}
+
+// ==================== 六、v0.5：火炬接入地图光池 + 冰块防穿模的采样方式 ====================
+{
+  const decor = srcOf('src/presentation/HowlingAbyssDecor.js');
+
+  T('炬①-howling_abyss_frost_v1 声明了 map.torches，且数量等于 26 根柱子（两侧各 13）',
+    Array.isArray(howling_abyss_frost.torches) && howling_abyss_frost.torches.length === 26);
+  T('炬②-torches 坐标就是两侧柱子坐标（不是另起一套点位）',
+    howling_abyss_frost.torches.every((t, i) => {
+      const all = [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars];
+      return all.some(p => p.x === t.x && p.y === t.y);
+    }));
+  T('墙①-缺损判定按"贴着柱子的那一端"独立掷概率（gapAtStart/gapAtEnd 各自算 hash），不是段中间随机挑一块',
+    /const gapAtStart = hash\(seg\.from\.x, seg\.from\.y\)/.test(decor)
+    && /const gapAtEnd = n >= 3 && hash\(seg\.to\.x, seg\.to\.y\)/.test(decor));
+  T('墙②-缺口相邻的完好块会补损毁痕迹（_buildWeatherChips），不是只有缺口本身有瓦砾',
+    /_buildWeatherChips/.test(decor));
+  T('冰①-clearOfBridge 用整圆网格采样（不再是几个固定方向的采样点），能覆盖任意弯曲边界',
+    /for \(let dx = -r; dx <= r \+ 1e-6; dx \+= step\)/.test(decor)
+    && /dx \* dx \+ dy \* dy > r \* r/.test(decor));
+  T('火①-火盆直接贴住柱身（没有支架/横臂几何体），用户否掉"挑出去"的方案后改的',
+    !/BoxGeometry\(BRAZIER_ARM_LEN/.test(decor) && /pillarRAtBowl/.test(decor));
 }
 
 done();

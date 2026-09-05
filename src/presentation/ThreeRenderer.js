@@ -403,6 +403,7 @@ export class ThreeRenderer {
     if (this._terrainMesh) this._terrainMesh.receiveShadow = lv !== 'off';
     this.units?.setShadowLevel?.(lv);
     this.walls?.setShadowLevel?.(lv);
+    this.frostDecor?.setShadowLevel?.(lv);
     this.gl.shadowMap.needsUpdate = true;
     return lv;
   }

@@ -94,6 +94,12 @@ export const howling_abyss_frost = {
   obstacles: GAP_D.flatMap((d) => [{ ...P(d, +GAP_OFF), r: 26 }, { ...P(d, -GAP_OFF), r: 26 }]),
 
   frostBridge: FROST_BRIDGE,
+  // 火炬光源坐标——直接复用 26 根石柱的位置。`torchPoints()`（见
+  // src/presentation/torchPlacement.js）"地图自己声明的优先"，声明了这个字段
+  // 之后就不会再对本图做程序化撒点（程序化撒点只会撒在可走区域=桥面上，
+  // 跟火炬实际挂在墙上的位置对不上）。这样火炬的光照直接接入现成的
+  // 火炬灯光池（ThreeRenderer.torchLights/_syncTorchLights），不用另起一套。
+  torches: [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars].map((p) => ({ x: p.x, y: p.y })),
 
   baseCenters: { blue: { x: 292, y: 2033 }, red: { x: 2033, y: 292 } },
   baseCircleRadius: 330,

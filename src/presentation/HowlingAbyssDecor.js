@@ -32,7 +32,14 @@ const toScene = (x, y, h = 0) => new THREE.Vector3(x, h, y);
 const worldAngleToRotY = (angle) => -angle;
 
 const PILLAR_H = 46, PILLAR_R_TOP = 9, PILLAR_R_BOT = 12;
-const TORCH_POLE_H = 14, TORCH_FLAME_H = 12;
+// ==================== 2026-09-05 用户反馈重做：火炬（两轮） ====================
+// 第一轮是"柱子顶端插一根杆子+火苗"，用户原话："应该是火盆承载着火焰在石墙上"。
+// 改成"支架从墙面探出+火盆"后，支架起点算错（离柱心太近，糊在柱子雪冠上）+
+// 用户看完直接否掉了"挑出去"这个思路："那个火盆应该就是在原来的柱子上，
+// 不要挂着！"——现在是第三版：火盆直接贴住柱身表面，中间没有支架，
+// 见 _buildPillarsAndTorches 方法头注。
+const BRAZIER_BOWL_R_TOP = 5.6, BRAZIER_BOWL_R_BOT = 3.8, BRAZIER_BOWL_H = 4.4;
+const TORCH_FLAME_H = 10;
 
 // ==================== 2026-09-04 用户反馈重做：石墙 ====================
 // 第一版是"两根柱子中间摆一个两端内缩的长方体"——用户原话："我看起来就是个
@@ -57,6 +64,27 @@ export class HowlingAbyssDecor {
     this.scene = scene;
     this.group = null;
     this._mapId = null;
+    this.shadowLevel = 'off';
+  }
+
+  /**
+   * 用户反馈"目前的石墙并没有体积碰撞和光影"——光影这半句跟拓宽桥面/体积碰撞
+   * 是两件独立的事（后者要动 navgrid，见设计文档第 6 节待确认清单），这半句
+   * 纯粹是渲染开关，跟 `WallLayer.setShadowLevel` 走一样的模式，可以先落地。
+   * 只给石头类实体开（柱子/墙体/压顶石/火盆），不给火焰（MeshBasicMaterial，
+   * 自发光，开了阴影没有意义）、冰面/水面（这次不追加，避免不必要的阴影贴图
+   * 开销——那一片本来就在场景边缘，投影收益很小）。
+   */
+  setShadowLevel(level) {
+    this.shadowLevel = level;
+    if (!this.group) return;
+    const on = level !== 'off';
+    this.group.traverse((o) => {
+      if (o.isMesh && o.material && o.material.type !== 'MeshBasicMaterial') {
+        o.castShadow = on;
+        o.receiveShadow = on;
+      }
+    });
   }
 
   clear() {
@@ -98,25 +126,43 @@ export class HowlingAbyssDecor {
     });
 
     const rubbleGeo = new THREE.IcosahedronGeometry(1, 0);
-    for (const side of [map.frostBridge.left, map.frostBridge.right]) {
-      this._buildPillarsAndTorches(group, side.pillars, stoneMat, snowMat);
+    // sideSign：+1=left（P(d,off) 里 off=+140 那侧），-1=right（off=-140）——
+    // 用来算"朝向桥中线"的方向，见 _buildPillarsAndTorches 头注。
+    for (const [side, sideSign] of [[map.frostBridge.left, +1], [map.frostBridge.right, -1]]) {
+      this._buildPillarsAndTorches(group, side.pillars, side.segments, stoneMat, snowMat, sideSign);
       this._buildWallSegments(group, side.segments, stoneShadeMats, stoneDarkMat, rubbleGeo);
     }
 
     this._buildWaterDecor(group, map, SV);
+    this.setShadowLevel(this.shadowLevel);   // 新建的网格套用当前阴影档位
   }
 
-  _buildPillarsAndTorches(group, pillars, stoneMat, snowMat) {
+  /**
+   * 柱子 + 直接贴在柱身上的火盆（不再用支架挑出去）。
+   *
+   * ==================== 2026-09-05 用户反馈（第二轮）：不要挂着，直接放柱子上 ====================
+   * 上一版做了个从柱子中心量出去的支架+火盆，结果支架起点算错、离柱子太近，
+   * 看着像"一团东西贴着柱子飘"。用户看完直接否掉了整个"支架挑出去"的思路：
+   * "那个火盆应该就是在原来的柱子上，不要挂着！"——不是"支架量准了没有"的问题，
+   * 是压根不该有支架。现在火盆的近侧边缘直接贴住柱身表面（偏移量＝柱身半径+
+   * 火盆自己的半径，不多留缝隙），中间不再有一根杆子/横臂。
+   */
+  _buildPillarsAndTorches(group, pillars, segments, stoneMat, snowMat, sideSign) {
     const pillarGeo = new THREE.CylinderGeometry(PILLAR_R_TOP, PILLAR_R_BOT, PILLAR_H, 6);
     const capGeo = new THREE.ConeGeometry(PILLAR_R_TOP * 1.15, 6, 6);
-    const poleGeo = new THREE.CylinderGeometry(1.6, 1.8, TORCH_POLE_H, 5);
-    const flameOuterGeo = new THREE.ConeGeometry(4.4, TORCH_FLAME_H, 6);
-    const flameInnerGeo = new THREE.ConeGeometry(2.2, TORCH_FLAME_H * 0.65, 5);
-    const poleMat = new THREE.MeshLambertMaterial({ color: 0x2b2f36 });
+    const bowlGeo = new THREE.CylinderGeometry(BRAZIER_BOWL_R_TOP, BRAZIER_BOWL_R_BOT, BRAZIER_BOWL_H, 8);
+    const flameOuterGeo = new THREE.ConeGeometry(3.6, TORCH_FLAME_H, 6);
+    const flameInnerGeo = new THREE.ConeGeometry(1.8, TORCH_FLAME_H * 0.6, 5);
+    const bowlMat = new THREE.MeshLambertMaterial({ color: 0x33383f, flatShading: true });
     const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8a3d });
     const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe08a });
 
-    for (const p of pillars) {
+    // 火盆贴在柱身这个高度上的半径（柱子上窄下宽，这里按插值取该高度的实际半径）。
+    const BOWL_HEIGHT_FRAC = 0.68;   // 贴在柱子偏上方（雪冠下面），不是柱顶
+    const pillarRAtBowl = PILLAR_R_BOT + (PILLAR_R_TOP - PILLAR_R_BOT) * BOWL_HEIGHT_FRAC;
+
+    for (let i = 0; i < pillars.length; i++) {
+      const p = pillars[i];
       const pillar = new THREE.Mesh(pillarGeo, stoneMat);
       pillar.position.copy(toScene(p.x, p.y, -2 + PILLAR_H / 2));
       group.add(pillar);
@@ -125,16 +171,25 @@ export class HowlingAbyssDecor {
       cap.position.copy(toScene(p.x, p.y, -2 + PILLAR_H + 2));
       group.add(cap);
 
-      const pole = new THREE.Mesh(poleGeo, poleMat);
-      pole.position.copy(toScene(p.x, p.y, -2 + PILLAR_H + 4 + TORCH_POLE_H / 2));
-      group.add(pole);
+      // 拿相邻墙段的角度：优先用"从这根柱子出发"的那段，最后一根柱子没有
+      // "出发"的段，就用"到达"它的那段——两段在同一根柱子处角度本来就接近。
+      const seg = segments[Math.min(i, segments.length - 1)];
+      const nx = -Math.sin(seg.angle), ny = Math.cos(seg.angle);
+      const inX = -sideSign * nx, inY = -sideSign * ny;   // 指向桥中线（=桥面那侧）
 
-      const flameY = -2 + PILLAR_H + 4 + TORCH_POLE_H + TORCH_FLAME_H / 2;
+      const bowlDist = pillarRAtBowl + BRAZIER_BOWL_R_BOT * 0.7;   // 贴住柱身，不留支架
+      const bowlX = p.x + inX * bowlDist, bowlY = p.y + inY * bowlDist;
+      const bowlH = -2 + PILLAR_H * BOWL_HEIGHT_FRAC;
+      const bowl = new THREE.Mesh(bowlGeo, bowlMat);
+      bowl.position.copy(toScene(bowlX, bowlY, bowlH));
+      group.add(bowl);
+
+      const flameY = bowlH + BRAZIER_BOWL_H / 2 + TORCH_FLAME_H / 2 - 1;
       const flameOuter = new THREE.Mesh(flameOuterGeo, flameOuterMat);
-      flameOuter.position.copy(toScene(p.x, p.y, flameY));
+      flameOuter.position.copy(toScene(bowlX, bowlY, flameY));
       group.add(flameOuter);
       const flameInner = new THREE.Mesh(flameInnerGeo, flameInnerMat);
-      flameInner.position.copy(toScene(p.x, p.y, flameY - 1));
+      flameInner.position.copy(toScene(bowlX, bowlY, flameY - 1));
       group.add(flameInner);
     }
   }
@@ -192,7 +247,35 @@ export class HowlingAbyssDecor {
         cap.position.copy(toScene(cx + nx * capOffset, cy + ny * capOffset, -2 + WALL_H + WALL_CAP_H / 2));
         cap.rotation.y = worldAngleToRotY(seg.angle);
         group.add(cap);
+
+        // 用户反馈："断掉的这两边的墙体会有损毁痕迹"——紧贴缺口的那块完好砖，
+        // 朝缺口那一侧的边缘嵌几块崩块，跟缺口处地上的瓦砾堆（_buildRubbleAt）
+        // 区分开：那是"塌掉的石头"，这是"没塌但被震裂"的痕迹。
+        const nearStartGap = i === 1 && gapAtStart;
+        const nearEndGap = i === n - 2 && gapAtEnd;
+        if (nearStartGap || nearEndGap) {
+          const edgeSign = nearStartGap ? -1 : 1;
+          const ex = cx + ux * edgeSign * (blockLen * 0.94 / 2 - 1.5);
+          const ey = cy + uy * edgeSign * (blockLen * 0.94 / 2 - 1.5);
+          this._buildWeatherChips(group, ex, ey, stoneDarkMat, rubbleGeo);
+        }
       }
+    }
+  }
+
+  /** 完好墙块紧贴缺口一侧的崩裂痕迹（不是缺口本身的瓦砾堆）。 */
+  _buildWeatherChips(group, x, y, stoneDarkMat, geo) {
+    const n = 2 + Math.floor(hash(x, y) * 2);   // 2~3 块崩块，比缺口的瓦砾堆少
+    for (let i = 0; i < n; i++) {
+      const s = 1.2 + hash(x + i, y - i) * 1.6;
+      const chip = new THREE.Mesh(geo, stoneDarkMat);
+      chip.position.copy(toScene(
+        x + (hash(x + i * 3, y) - 0.5) * 3,
+        y + (hash(x, y + i * 3) - 0.5) * 3,
+        -2 + WALL_H * (0.25 + hash(x + i, y + i) * 0.55)));
+      chip.scale.set(s, s, s);
+      chip.rotation.y = hash(x + i * 5, y + i * 5) * Math.PI * 2;
+      group.add(chip);
     }
   }
 
@@ -251,10 +334,24 @@ export class HowlingAbyssDecor {
     // 保守地整段跳过散布，宁可这次不摆冰，也不摆错在桥上挡视线。
     const canPlace = this._isWalkable;
     if (!canPlace) return;
-    // 中心 + 四个方向的边缘采样点都不能落在桥上，避免大块冰的边缘"穿模"进桥面
-    // （只查中心点是上一轮出问题的根源，见头注①）。
-    const clearOfBridge = (x, y, r) =>
-      !canPlace(x, y) && !canPlace(x + r, y) && !canPlace(x - r, y) && !canPlace(x, y + r) && !canPlace(x, y - r);
+    // 判"这块冰的整个圆形范围是否完全落在不可走区域"，不是只查几个采样点。
+    // ==================== 2026-09-05 用户反馈（第二轮）：红蓝方水晶塔那边还是有冰 ====================
+    // 上一轮把"只查中心点"改成"查 8 个方向的边缘点"，在笔直的桥身段上够用，
+    // 但两个基地附近的可走区域是"桥身 + 圆形基地圈"融合出来的形状，边界在
+    // 那里是**弯的**——弯曲的边界完全可能从两个相邻采样方向之间的空隙"钻"
+    // 进冰块范围，8 个点覆盖不到所有弯曲情况。改成整圆网格采样：以
+    // `r*0.4` 为格距在冰块的外接正方形里打网格，只保留落在圆内的格点，
+    // 要求这些点全部不可走才摆放——网格足够密时不再有遗漏的"缝隙"。
+    const clearOfBridge = (x, y, r) => {
+      const step = Math.max(6, r * 0.4);
+      for (let dx = -r; dx <= r + 1e-6; dx += step) {
+        for (let dy = -r; dy <= r + 1e-6; dy += step) {
+          if (dx * dx + dy * dy > r * r) continue;
+          if (canPlace(x + dx, y + dy)) return false;
+        }
+      }
+      return true;
+    };
 
     const bridgePts = [...map.frostBridge.left.pillars, ...map.frostBridge.right.pillars];
     const distToBridge = (x, y) => {

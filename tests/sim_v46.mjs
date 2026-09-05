@@ -294,9 +294,16 @@ const mkE = (ents, type, x, y, extra = {}) => {
       pts.length >= CONFIG.ui.torch.poolSize);
     T(`炬⑦-${map.id}：点都落在世界范围内`,
       pts.every(p => p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H));
-    // 覆盖面：点必须散布到地图**右下半区**，而不是全挤在左上角（那正是 bug 的形状）
-    T(`炬⑧-${map.id}：右下半区也有点（不是全挤在左上角）`,
-      pts.some(p => p.x > W * 0.6 && p.y > H * 0.6));
+    // 覆盖面：点必须散布到地图**右下半区**，而不是全挤在左上角（那正是 bug 的形状）——
+    // 但这条只对**走程序化撒点**的地图有意义。声明了 `map.torches` 的地图（比如
+    // howling_abyss_frost_v1：26 个点精确对应桥两侧的石柱，见 HowlingAbyssDecor.js）
+    // 是作者钦定的位置，天然不需要"覆盖全图象限"——嚎哭深渊的桥本来就是从左下到
+    // 右上的反对角线，任何贴着这条线的点都不可能同时 x>0.6W 且 y>0.6H（这两个
+    // 条件在反对角线上互斥），这不是 bug，是这条对角线的几何形状决定的。
+    if (!Array.isArray(map.torches) || !map.torches.length) {
+      T(`炬⑧-${map.id}：右下半区也有点（不是全挤在左上角）`,
+        pts.some(p => p.x > W * 0.6 && p.y > H * 0.6));
+    }
   }
   T('炬⑨-地图声明的 torches 优先于自动布点（用户定稿"两者都要"）', (() => {
     const fake = { world: { w: 1000, h: 1000 }, torches: [{ x: 5, y: 7 }] };
