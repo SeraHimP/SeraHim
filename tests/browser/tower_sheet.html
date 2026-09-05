@@ -28,6 +28,7 @@ const COLS = [
 ];
 
 const CELL = 200, PER_ROW = 8;
+const SHEET_D = 96;   // 全表统一的正交半宽（≈ 最高那座塔刚好装得下）
 const rows = Math.ceil(COLS.length / PER_ROW);
 const W = CELL * PER_ROW, H = CELL * rows;
 const cv = document.getElementById('c');
@@ -63,9 +64,13 @@ for (let i = 0; i < COLS.length; i++) {
   }
   // 摄像机对准这一格
   const cx = (i % PER_ROW) * CELL, cy = Math.floor(i / PER_ROW) * CELL;
+  // ⚠️ 统一取景比例。原来 d 是按每座塔自己的 topY 算的 —— 每格都把模型撑满，
+  // 于是**四个档次在对照图上一样大**，"等级越高越气派"这件事根本没法用眼睛验。
+  // 这不是模型的问题，是这张图的问题，v52 因此白调了一轮参数。现在固定比例，
+  // 谁高谁矮一目了然。
   const top = m.topY || 80;
-  group.position.set(0, -top * 0.5, 0);
-  const d = Math.max(top * 0.72, 46);
+  group.position.set(0, -SHEET_D * 0.62, 0);
+  const d = SHEET_D;
   cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
   cam.position.set(d * 2.2, d * 1.7, d * 2.2);
   cam.lookAt(0, 0, 0);
