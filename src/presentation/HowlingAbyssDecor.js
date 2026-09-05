@@ -44,7 +44,15 @@ const worldAngleToRotY = (angle) => -angle;
 //   墙：WALL_THICK 厚、WALL_H 高（比柱矮、比柱薄）
 // 圆锥雪冠去掉了——它是整套里最不"矩形"的一块，留着就谈不上风格统一。火盆/火焰
 // 仍旧摞在柱顶正上方（用户返工三轮才定下的关系），只是锚点从雪冠改成柱子的压顶石。
-const POST_H = 22, POST_W = 11;   // 柱子：明显高过墙板、粗过墙板，但不再是原来 46 那种塔
+// v55.2：柱和墙一起降权重。用户与外部评审都指到同一点——这道墙在画面里
+// "几乎在跟桥面抢视觉中心"，读成人工护栏而不是地形的一部分。
+// 墙板 13→7（×0.55）、厚 6→8.4（×1.4）、柱高 22→12（×0.55）：矮而厚，
+// 轮廓权重降下来，但柱仍明显高过墙、粗过墙，柱墙节奏还读得出来。
+const POST_H = 12, POST_W = 12;   // 柱子：仍高过墙板、粗过墙板，但不再是一根根路灯杆
+// 柱高的**块状起伏**：柱距是死板的 160，等高等距 = 节拍器。
+// 按柱子自身的弧长 d 派生一个确定性系数，让相邻几根高矮不齐，节奏被打散。
+// 不挪柱子位置——那是地图的结构数据（标的是桥原本变窄的地方），有断言钉着。
+const POST_H_VARY = 0.18;
 const CAP_H = 3, CAP_OVERHANG = 1.5;  // 压顶石——柱和墙共用同一套厚度与探出量
 // ==================== 2026-09-05 用户反馈重做：火炬（两轮） ====================
 // 第一轮是"柱子顶端插一根杆子+火苗"，用户原话："应该是火盆承载着火焰在石墙上"。
@@ -69,8 +77,8 @@ const TORCH_FLAME_H = 10;
 // _buildWallSegments 头注），侵蚀感改由顶部压顶石的缺失与高低不齐来表达——
 // 墙身本身是完整的一条，顶边是啃过的（用户在选项里明确选了"只在顶边啃出缺口"，
 // 不是整跨塌掉；整跨塌掉只发生在桥面真凹口那一处，两者是两回事）。
-const WALL_H = 13;            // 墙板高：用户"墙体的高度降低到 50%"——26→13
-const WALL_THICK = 6;         // 墙板厚：用户"墙体别太宽"——8→6，比柱子(11)明显薄一圈，柱墙节奏才读得出来
+const WALL_H = 7;             // 墙板高：v55.2 再降一半（13→7），见 POST_H 上面的头注
+const WALL_THICK = 8.4;       // 墙板厚：v55.2 加厚（6→8.4）——矮而厚，读成路肩而不是栏杆
 const WALL_CAP_PITCH = 14;    // 压顶石的节奏间距——墙身连续，靠这一层的重复制造韵律
 const WALL_EROSION_CHANCE = 0.1;  // 压顶石按坐标哈希缺失的比例＝顶边"被风化啃掉"的缺口。
                               // 0.22 时平均每四五块就缺一块、加上每块还各自缩了 8%，
@@ -214,10 +222,10 @@ export class HowlingAbyssDecor {
     }
 
     // v55：陆地有厚度之后，水域装饰要**整体沉到深渊面那一层**。
-    // 不沉的话浮冰会停在陆地高度，等于悬在水面上方 abyssDrop 那么高 ——
+    // 不沉的话浮冰会停在陆地高度，等于悬在水面上方 |waterY| 那么高 ——
     // 近看是"冰块浮在半空"。设计文档 §8.2 的改动面第 3 条写的就是这一步。
     const waterGroup = new THREE.Group();
-    waterGroup.position.y = -(map.terrainEdge?.abyssDrop ?? 0);
+    waterGroup.position.y = map.terrainEdge?.waterY ?? 0;
     group.add(waterGroup);
     this._buildWaterDecor(waterGroup, map, SV);
     this.setShadowLevel(this.shadowLevel);   // 新建的网格套用当前阴影档位
@@ -249,15 +257,22 @@ export class HowlingAbyssDecor {
     const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe08a });
 
     for (const p of pillars) {
+      // 柱高按弧长派生一个确定性系数（同一张图每次一样），打散"等高等距"的节拍器感。
+      const hK = 1 + (hash(Math.round(p.d ?? 0), 7717) - 0.5) * 2 * POST_H_VARY;
+      const ph = POST_H * hK;
       const post = new THREE.Mesh(postGeo, postMat);
-      post.position.copy(toScene(p.x, p.y, -2 + POST_H / 2));
+      post.scale.y = hK;
+      post.position.copy(toScene(p.x, p.y, -2 + ph / 2));
       group.add(post);
 
-      const capH = -2 + POST_H + CAP_H / 2;
+      const capH = -2 + ph + CAP_H / 2;
       const cap = new THREE.Mesh(postCapGeo, capMat);
       cap.position.copy(toScene(p.x, p.y, capH));
       group.add(cap);
 
+      // 火炬只挂在带标记的柱子上（标记由地图数据给，见 howling_abyss_frost.js
+      // 的 TORCH_PILLAR_STRIDE）。灯的位置读同一个标记，两边不可能错位。
+      if (p.torch === false) continue;
       const bowlH = capH + CAP_H / 2 + BRAZIER_BOWL_H / 2;
       const bowl = new THREE.Mesh(bowlGeo, bowlMat);
       bowl.position.copy(toScene(p.x, p.y, bowlH));

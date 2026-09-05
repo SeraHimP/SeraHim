@@ -48,6 +48,7 @@ const B = {
 };
 
 // 与 HA_TERRAIN.obstacles 用的是同一组弧长值（见 howling_abyss.js 头注"缺口"）。
+const TORCH_PILLAR_STRIDE = 2;   // 每几根柱子挂一盏火炬（1 = 每根都挂，即 v55.1 的老行为）
 const GAP_D = [280, 440, 600, 760, 920, 1080, 1240, 1400, 1560, 1720, 1880, 2040, 2180];
 const BASE_GAP_OFF = 140; // 原始偏移——obstacles 数组的破口位置仍然对齐这个（缺口数据本身不改）
 
@@ -281,6 +282,17 @@ function bridgeSide(sign, off) {
     .map((d) => ({ ...P(d, sign * off), d }))
     .filter((p) => bitsWalkable(TRIMMED_BITS,
       p.x + inward.x * WALL_GROUND_PROBE, p.y + inward.y * WALL_GROUND_PROBE));
+  // v55.2：**不是每根柱子都挂火炬**。
+  // 柱距是死板的 160（GAP_D），每根还各挂一盏灯，整道墙于是读成"人工护栏 + 路灯阵列"，
+  // 而不是"地形边上偶尔有个火"。柱子的位置是地图的结构数据（标的是桥原本变窄的地方），
+  // 不能为了好看去挪，所以改动落在**火炬密度**上：每 TORCH_PILLAR_STRIDE 根挂一盏，
+  // 两端那两根一定挂（端点需要光，否则桥头是黑的）。
+  // ⚠️ 这个标记是**唯一真相**：下面 map.torches（灯的位置）和渲染层的火盆几何
+  //    都读它，两边不可能再对不上。
+  for (let i = 0; i < pillars.length; i++) {
+    pillars[i].torch = (i % TORCH_PILLAR_STRIDE === 0)
+      || i === 0 || i === pillars.length - 1;
+  }
   const segments = [];
   for (let i = 0; i < pillars.length - 1; i++) {
     const a = pillars[i], b = pillars[i + 1];
@@ -316,14 +328,17 @@ export const howling_abyss_frost = {
   // 沿可见地面的轮廓摆一圈崖壁 —— 陆地与桥因此读成"浮在深渊之上的板"。
   // 三张老地图没有这一项，画面逐位不变。参数全部可调，见 TerrainEdgeLayer 的 DEF。
   terrainEdge: {
-    cliffHeight: 18,
-    abyssDrop: 24,      // 必须 > cliffHeight，否则崖壁踩不到深渊面（会悬空）
+    // v55.2：竖直崖壁 → 外倾岸坡。数字是 A/B 实测选出来的，见设计文档 §13。
+    waterY: -22,        // 水面。**这是唯一决定"陆地看起来高多少"的数**
+    slopeDepth: 14,     // 岸坡落差
+    slopeRun: 10,       // 外扩。实测桥两侧各有约 1400 单位的开阔水面，10 只吃掉 0.7%
+    edgeDepth: 0,       // 0 = 纯斜坡。两段式在 A/B 里只会挤出第二条轮廓线（见 §13）
     segLen: 46,
-    thickness: 16,
-    jitter: 0.22,       // 崖顶参差，不齐平（参考图里的崖都是碎的）
-    capHeight: 5,
-    cliffColor: '#3d5470',
-    capColor: '#8ea6b8',   // 与城墙压顶同色，崖与墙因此同源
+    blockLen: 3,        // 每 3 段共用一次抖动 → 大块段落，不是逐段噪声
+    jitter: 0.22,
+    runJitter: 0.25,
+    slopeColor: '#a8c2d4',   // 桥面色 #dce9f2 压暗一档 —— 读成"地的背光面"，不是"墙"
+    edgeColor: '#5f7d94',
     // 深渊就是原来那片"不可走"的底色，取调色板的 groundColor 同值。
     // ⚠️ 待查（v55 遗留）：地图边界处仍有一条**矩形色阶**——界内 (2,22,50)、
     //    界外裙边 (4,36,76)。我一度以为界内那片是本层铺的深渊面，把 abyssColor
@@ -359,7 +374,10 @@ export const howling_abyss_frost = {
   // 之后就不会再对本图做程序化撒点（程序化撒点只会撒在可走区域=桥面上，
   // 跟火炬实际挂在墙上的位置对不上）。这样火炬的光照直接接入现成的
   // 火炬灯光池（ThreeRenderer.torchLights/_syncTorchLights），不用另起一套。
-  torches: [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars].map((p) => ({ x: p.x, y: p.y })),
+  // 灯的位置 = **挂了火炬的那些柱子**（见 bridgeSide 里的 torch 标记）。
+  // 读同一个标记，灯与火盆几何不可能错位。
+  torches: [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars]
+    .filter((p) => p.torch).map((p) => ({ x: p.x, y: p.y })),
 
   baseCenters: { blue: { x: 292, y: 2033 }, red: { x: 2033, y: 292 } },
   baseCircleRadius: BASE_CIRCLE_R,

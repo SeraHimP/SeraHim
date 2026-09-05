@@ -258,8 +258,21 @@ const halfWidth = (bits, d, sign) => {
   const renderer = srcOf('src/presentation/ThreeRenderer.js');
   const FROST_PAL = CONFIG.stylizedPalettes.frost;
 
-  T('炬①-howling_abyss_frost_v1 声明了 map.torches，且数量等于 26 根柱子（两侧各 13）',
-    Array.isArray(howling_abyss_frost.torches) && howling_abyss_frost.torches.length === 26);
+  // v55.2：**不再是每根柱子一盏灯**。柱距是死板的 160，每根挂一盏读成"路灯阵列"，
+  // 是这道墙最像人工护栏的地方。柱子位置是地图的结构数据不能挪（见 桥⑥），
+  // 所以改动落在火炬密度上。这条钉的是"灯是柱子的**子集**，且两端一定有灯"。
+  const ALL_PILLARS = [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars];
+  T(`炬①-torches 是柱子的真子集（${howling_abyss_frost.torches.length} 盏 < ${ALL_PILLARS.length} 根柱）`,
+    Array.isArray(howling_abyss_frost.torches)
+    && howling_abyss_frost.torches.length > 0
+    && howling_abyss_frost.torches.length < ALL_PILLARS.length);
+  T('炬①b-两端的柱子一定挂灯（否则桥头是黑的）',
+    [FROST_BRIDGE.left, FROST_BRIDGE.right].every((s2) =>
+      s2.pillars[0].torch === true && s2.pillars[s2.pillars.length - 1].torch === true));
+  T('炬①c-灯与火盆几何读同一个 torch 标记（不是两套规则，不可能对不上）',
+    howling_abyss_frost.torches.length
+      === ALL_PILLARS.filter((p) => p.torch).length
+    && /if \(p\.torch === false\) continue;/.test(srcOf('src/presentation/HowlingAbyssDecor.js')));
   T('炬②-torches 坐标就是两侧柱子坐标（不是另起一套点位）',
     howling_abyss_frost.torches.every((t, i) => {
       const all = [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars];
@@ -311,11 +324,19 @@ const halfWidth = (bits, d, sign) => {
     !/const WALL_BLOCK_LEN\s*=/.test(decor) && !/const WALL_STONE_SHADES\s*=/.test(decor));
   T('墙④-每个连续跑段只建一根墙身（长度＝整段长，不是按块长切出来的）',
     /new THREE\.BoxGeometry\(len, WALL_H, WALL_THICK\)/.test(decor));
-  T('墙⑤-墙高降到原来的一半（26→13），压顶石跟着压扁',
-    /const WALL_H = 13;/.test(decor) && /const CAP_H = 3,/.test(decor));
+  // v55.2：再降一半（13→7）并加厚（6→8.4）。这里钉的是**关系**不是具体数字：
+  // 墙必须明显矮于柱、薄于柱，柱墙节奏才读得出来；而墙相对原始的 26 必须降到
+  // 三分之一以下——用户与外部评审都指到"这道墙在跟桥面抢视觉中心"。
+  T('墙⑤-墙体权重降下来了（矮于柱、薄于柱，且不到原始 26 的三分之一）', (() => {
+    const wh = Number(/const WALL_H = ([\d.]+);/.exec(decor)?.[1]);
+    const wt = Number(/const WALL_THICK = ([\d.]+);/.exec(decor)?.[1]);
+    const ph = Number(/const POST_H = ([\d.]+), POST_W = ([\d.]+);/.exec(decor)?.[1]);
+    const pw = Number(/const POST_H = [\d.]+, POST_W = ([\d.]+);/.exec(decor)?.[1]);
+    return wh > 0 && wh < 26 / 3 && wh < ph && wt < pw && /const CAP_H = 3,/.test(decor);
+  })());
   T('墙⑧-柱与墙是同一套构造：同一对材质 + 同规格压顶石（CAP_H/CAP_OVERHANG 共用），柱更高更厚',
     /_buildPillarsAndTorches\(group, side\.pillars, wallBodyMat, wallCapMat\)/.test(decor)
-    && /const POST_H = 22, POST_W = 11;/.test(decor)
+    && /const POST_H = [\d.]+, POST_W = [\d.]+;/.test(decor)
     && /new THREE\.BoxGeometry\(POST_W, POST_H, POST_W\)/.test(decor)
     && /POST_W \+ CAP_OVERHANG \* 2, CAP_H, POST_W \+ CAP_OVERHANG \* 2/.test(decor));
   T('墙⑨-圆锥雪冠/棱柱柱身整套已删除（那是与矩形墙板冲突的另一套形状语言）',
@@ -458,7 +479,7 @@ const halfWidth = (bits, d, sign) => {
   // ⚠️ 几何按 key 全局缓存。paletteId 不进 key 的话，换到另一张调色板的地图会直接
   //    命中上一张图的几何，颜色跟着错 —— 而且**只在切图时复现**，最难查的一类 bug。
   T('塔⑤-paletteId 进了塔几何缓存 key（否则切图会命中上一张图的几何）',
-    /\$\{palId\}/.test(ul) && /stylizedPaletteOf\(this\.mapSystem\?\.currentMap\)/.test(ul));
+    /\$\{palId\}/.test(ul) && /stylizedPaletteOf\(map\)/.test(ul));
 }
 
 done();

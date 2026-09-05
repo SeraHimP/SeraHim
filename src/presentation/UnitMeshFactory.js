@@ -119,6 +119,8 @@ function pack(parts) {
 
 const T = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
 const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+/** 两色之间线性插值（k=0 取 a，k=1 取 b）。塔基要的是"地面与塔身之间的中间色"。 */
+const mixHex = (a, b, k) => '#' + new THREE.Color(a).lerp(new THREE.Color(b), k).getHexString();
 /**
  * 褪色：把颜色往灰里拉再压暗。v44 用于**废墟**。
  * 用户："召唤水晶/水晶枢纽被摧毁的模型，上面的水晶碎片没有更改材质，看起来不好看。"
@@ -875,6 +877,29 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       crystalCy = y + pedH + crystalR * 0.62;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
+    }
+    // ==================== v55.2：塔基（地面 → 石台 → 塔）====================
+    // 见 CONFIG.ui.towerFoundation 的头注。三件事必须一起成立才读得出"属于地形"：
+    //   ① 颜色是**地面色与塔身石色之间的中间色**，不是"地面压暗一档"；
+    //   ② 比塔身宽出去一圈（spread），剪影上先有一个台座；
+    //   ③ 几何加在 y<0 一侧 —— pack() 会把底面对齐回 y=0，塔身因此整体上抬一个
+    //      塔基高度，不必去动塔身里每一处写死的 y（也就不会漏改某一档）。
+    // 废墟不加：废墟是"塔没了"，再垫个完好的台座会读成"台座上摆了一堆碎石"。
+    if (!ruin && pal && pal.foundation) {
+      const FD = pal.foundation;
+      const fh = R * (FD.height ?? 0.22);
+      const fr = R * (FD.spread ?? 1.34);
+      const fc = mixHex(F.stone, FD.ground || F.stone, FD.groundMix ?? 0.45);
+      // 两层：下宽上窄。侧面是斜的（下大上小），读作"垒在地上的台"而不是"一块饼"。
+      // ⚠️ 形状必须跟阵营的塔身走：蓝方塔身是方的（秩序），红方是多棱的（混沌）。
+      //    第一版一律用 F.crownSides 拉圆柱，蓝方就出现了"方塔配六边形台座"，
+      //    正是用户反复强调的"设计语言不统一"。
+      const fRed = faction === 'red';
+      const fBase = (r, h) => fRed
+        ? new THREE.CylinderGeometry(r * 0.92, r, h, F.crownSides)
+        : new THREE.BoxGeometry(r * 1.78, h, r * 1.78);
+      add(fBase(fr, fh * 0.42), T(0, -fh + fh * 0.21, 0), shade(fc, 0.86));
+      add(fBase(fr * 0.86, fh * 0.58), T(0, -fh * 0.58 + fh * 0.29, 0), fc);
     }
     hit = pack(parts);
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。

@@ -27,18 +27,22 @@ import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { mapOutline } from '../data/navOutline.js';
 
 const DEF = {
-  cliffHeight: 28,      // 崖壁高度（陆地面 y=0 往下伸多少）
-  abyssDrop: 44,        // 深渊面比陆地面低多少。必须 > cliffHeight，否则崖壁踩不到底
-  segLen: 46,           // 崖壁块的目标长度（世界单位）
-  thickness: 16,        // 崖壁块朝内的厚度
-  jitter: 0.22,         // 每块的高度抖动比例（0 = 齐平，参考图里崖顶是参差的）
-  capHeight: 5,         // 崖顶那道亮边的厚度
-  // ⚠️ 轮廓的简化容差 / 平滑遍数**不在这里**：它们决定的是"陆地边界长什么样"，
-  //    地面底图和崖壁必须用同一条，所以统一由 navOutline.mapOutline 读地图声明
-  //    （`terrainEdge.simplifyCells` / `.smoothPasses`，默认见 OUTLINE_DEF）。
-  //    v55 初版在这里另存了一份，是"同一条边界存了三份"那个 bug 的一部分。
-  cliffColor: '#3d5470',
-  capColor: '#8ea6b8',
+  // ==================== 落差（全是 y 坐标，陆地面 = 0）====================
+  waterY: -22,          // 水面（深渊面）的 y。这是**唯一决定"陆地看起来高多少"的数**
+  slopeDepth: 14,       // 岸坡从陆地面往下落多少
+  slopeRun: 10,         // 岸坡朝外扩多少（水平）。slopeDepth/slopeRun 决定坡角
+  edgeDepth: 0,         // 岸坡底再垂直往下多少（>0 就是"短斜坡 + 厚边"的两段式）
+  // ==================== 形状 ====================
+  segLen: 46,           // 沿轮廓的采样间距
+  blockLen: 3,          // 每几段共用一次抖动 —— 做出"大块段落"而不是逐段噪声
+  jitter: 0.22,         // 落差的抖动比例
+  runJitter: 0.25,      // 外扩的抖动比例
+  // ==================== 颜色 ====================
+  // ⚠️ 岸坡的颜色必须取**地面色压暗一档**，不能取墙/柱子的石色。
+  //    实测第一版用了石色（#6f89a6，介于 rockColor 与 wallCapColor 之间），
+  //    画面上岸坡读成"更多的墙"而不是"这块地的背光面"——正是这一轮要消灭的建筑感。
+  slopeColor: '#a8c2d4',   // = corridorColor #dce9f2 压暗约 25%
+  edgeColor: '#5f7d94',    // 厚边/暗面：再压暗一档（edgeDepth=0 时不生成）
   abyssColor: '#16233d',
   // 深渊面要**比地图大**。只做地图那么大的话，地图边界处会露出一条硬直角边：
   // 边界内是深渊面、边界外是裙边层（MapSkirtLayer，3 倍地图边长、y=-15、
@@ -94,7 +98,7 @@ export class TerrainEdgeLayer {
     this.group = new THREE.Group();
     this.group.name = 'terrainEdge';
 
-    // ① 深渊面：比陆地低 abyssDrop 的一张大平面。
+    // ① 深渊面（= 水面）：铺在 waterY 的一张大平面。
     //    不复用 MapSkirtLayer —— 那是 3 倍地图边长、带 fadeAlpha 着色器补丁、
     //    MeshBasicMaterial 不吃光照的氛围层，职责完全不同（§8.2 的改动面第 2 条）。
     const W = map.world?.w ?? map.world, H = map.world?.h ?? W;
@@ -103,56 +107,126 @@ export class TerrainEdgeLayer {
       new THREE.PlaneGeometry(W * AS, H * AS).rotateX(-Math.PI / 2),
       new THREE.MeshLambertMaterial({ color: new THREE.Color(P.abyssColor) })
     );
-    abyss.position.set(W / 2, -P.abyssDrop, H / 2);
+    abyss.position.set(W / 2, P.waterY, H / 2);
     abyss.receiveShadow = this.shadowOn;
     abyss.renderOrder = -1;
     this.group.add(abyss);
 
-    // ② 崖壁：沿轮廓每 segLen 摆一块，块高带抖动（参考图里崖顶是参差的，不是齐平的）。
-    const cliffGeos = [], capGeos = [];
+    // ② 岸坡：沿轮廓挤出的**连续外倾带**，不是一圈竖直方块。
+    //
+    // ==================== 为什么必须是斜面 ====================
+    // 45° 正交俯视下，**竖直面只有朝相机的那两条边看得见**：背向相机的那两条
+    // 被陆地自己挡住，做多高都看不到。v55 的竖直崖壁就栽在这儿——用户反馈
+    // 「桥下面的高度差是可以被看到的，上面的看不到」，说的正是这件事，
+    // 跟崖壁高度无关。斜面有朝上的法线分量，任何方位角都能吃到光。
+    //
+    // ⚠️ 但别把话说满：单靠法线不等于"读得出高差"。真正起作用的是
+    //    斜面 + 深度对比 + 轮廓 + 水面对比四件一起。这里只负责前两件。
+    //
+    // ==================== 为什么去掉了原来的"崖顶亮边" ====================
+    // 它当初的职责是盖住地面底图那圈最近邻锯齿。v55.1 地面改成按同一条折线
+    // 矢量填充之后锯齿已经没了，再留着只会在斜面顶部多出**第二条轮廓线**——
+    // 在强描边下会读成"两条栏杆"，正是这一轮要消灭的东西。
+    //
+    // ==================== 抖动为什么按"块"而不是按"段" ====================
+    // 逐段独立随机 = 噪声，看起来像锯齿而不是地形。改成每 blockLen 段共用一个
+    // 抖动值，边缘于是呈现"大块段落"（████ █████ ████），这才是低模地形的读法。
+    const slopeGeos = [], edgeGeos = [];
     let seed = 0;
     for (const loop of loops) {
-      const pts = loop.pts;
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], b = pts[(i + 1) % pts.length];
-        const dx = b[0] - a[0], dz = b[1] - a[1];
-        const len = Math.hypot(dx, dz);
-        if (len < 1e-3) continue;
-        const nSeg = Math.max(1, Math.round(len / P.segLen));
-        const ux = dx / len, uz = dz / len;
-        // 法线朝**外**（内部在左手边 → 外法线是右手边）
-        const nxv = uz, nzv = -ux;
-        for (let k = 0; k < nSeg; k++) {
-          const t0 = k / nSeg, t1 = (k + 1) / nSeg;
-          const cx = a[0] + dx * (t0 + t1) / 2, cz = a[1] + dz * (t0 + t1) / 2;
-          const segW = len / nSeg;
-          const h = P.cliffHeight * (1 + (rnd(seed++) - 0.5) * 2 * P.jitter);
-          const ang = Math.atan2(dx, dz);   // 让块的 +Z 对齐边的方向
-          // 块朝内偏半个厚度，免得崖壁整体悬在地面外侧
-          const ox = -nxv * P.thickness * 0.5, oz = -nzv * P.thickness * 0.5;
-          const box = new THREE.BoxGeometry(P.thickness, h, segW * 1.02);
-          box.rotateY(ang);
-          box.translate(cx + ox, -h / 2, cz + oz);
-          cliffGeos.push(box);
-          // 崖顶亮边：贴在陆地面高度上，把地面那圈最近邻锯齿盖掉（§8.2.4）
-          const cap = new THREE.BoxGeometry(P.thickness * 1.25, P.capHeight, segW * 1.02);
-          cap.rotateY(ang);
-          cap.translate(cx + ox, -P.capHeight * 0.35, cz + oz);
-          capGeos.push(cap);
+      // ①-a 把折线按 segLen 重采样成等距点列（闭合）。直接用折线顶点的话，
+      //     DP 之后长短悬殊，抖动块的尺度会跟着乱。
+      const src = loop.pts;
+      const ring = [];
+      let acc = 0, target = 0;
+      const total = (() => { let t = 0; for (let i = 0; i < src.length; i++) {
+        const a = src[i], b = src[(i + 1) % src.length];
+        t += Math.hypot(b[0] - a[0], b[1] - a[1]); } return t; })();
+      if (total < P.segLen * 3) continue;
+      const nSample = Math.max(8, Math.round(total / P.segLen));
+      const step = total / nSample;
+      for (let i = 0; i < src.length && ring.length < nSample; i++) {
+        const a = src[i], b = src[(i + 1) % src.length];
+        const segLen2 = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        while (target < acc + segLen2 && ring.length < nSample) {
+          const t = (target - acc) / segLen2;
+          ring.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+          target += step;
+        }
+        acc += segLen2;
+      }
+      const m = ring.length;
+      if (m < 8) continue;
+
+      // ①-b 每个采样点的外法线。用前后邻居求切线（不是单边），
+      //     否则拐角处两侧法线打架，挤出来的带会自交出一个尖刺。
+      const prof = [];
+      const base = seed;
+      for (let i = 0; i < m; i++) {
+        const a = ring[(i - 1 + m) % m], b = ring[(i + 1) % m];
+        const tx = b[0] - a[0], tz = b[1] - a[1];
+        const L = Math.hypot(tx, tz) || 1;
+        // 外法线。⚠️ 方向踩过一次：v55 的竖直崖壁用的是 (tz, -tx)，实测在这条环上
+        // **50/58 个顶点指向陆地内侧**——竖直方块因为跨在边界上，插反了看不太出来；
+        // 换成挤出的斜面之后整条带子被陆地盖住，画面上"岸坡完全不见了"。
+        // 正确的是 (-tz, tx)：traceLoops 的绕向是"内部在左手边"，外侧在右手边的**反**向。
+        // 洞环绕向相反，同一个公式自动给出"背离陆地"的方向，不用另写分支。
+        const nx = -tz / L, nz = tx / L;
+        // 按块取抖动：同一块内所有采样点共用一个值 → 大块段落而不是噪声
+        const blk = Math.floor(i / Math.max(1, P.blockLen));
+        const jd = (rnd(base + blk * 2) - 0.5) * 2 * P.jitter;
+        const jr = (rnd(base + blk * 2 + 1) - 0.5) * 2 * P.runJitter;
+        const depth = P.slopeDepth * (1 + jd);
+        const run = P.slopeRun * (1 + jr);
+        prof.push({
+          x: ring[i][0], z: ring[i][1],
+          fx: ring[i][0] + nx * run, fz: ring[i][1] + nz * run,
+          depth,
+        });
+      }
+      seed += Math.ceil(m / Math.max(1, P.blockLen)) * 2 + 1;
+
+      // ①-c 逐段拉两个三角形。顶环恒在 y=0 且**就是地面那条折线的点**，
+      //     所以坡顶与地面边缘逐点重合，不可能出现缝（这是 v55.1 共用轮廓的直接红利）。
+      const quad = (out, ax, ay, az, bx, by, bz, cx2, cy2, cz2, dx2, dy2, dz2) => {
+        const g2 = new THREE.BufferGeometry();
+        g2.setAttribute('position', new THREE.Float32BufferAttribute(
+          [ax, ay, az, bx, by, bz, cx2, cy2, cz2,
+           ax, ay, az, cx2, cy2, cz2, dx2, dy2, dz2], 3));
+        g2.computeVertexNormals();
+        out.push(g2);
+      };
+      for (let i = 0; i < m; i++) {
+        const p0 = prof[i], p1 = prof[(i + 1) % m];
+        // 斜面：陆地边缘 (y=0) → 坡脚 (y=-depth，外扩 run)
+        quad(slopeGeos,
+          p0.x, 0, p0.z,   p1.x, 0, p1.z,
+          p1.fx, -p1.depth, p1.fz,   p0.fx, -p0.depth, p0.fz);
+        // 厚边：坡脚再垂直往下 edgeDepth（edgeDepth=0 就是纯斜坡，不生成这一段）
+        if (P.edgeDepth > 0) {
+          quad(edgeGeos,
+            p0.fx, -p0.depth, p0.fz,   p1.fx, -p1.depth, p1.fz,
+            p1.fx, -p1.depth - P.edgeDepth, p1.fz,
+            p0.fx, -p0.depth - P.edgeDepth, p0.fz);
         }
       }
     }
+    // 静态几何合并：斜面按采样点逐段拉三角形，环上有 ~180 段，
+    // 不合并就是 180+ 个 mesh 的 draw call。合完是 1~2 个。
     const addMerged = (geos, color) => {
       if (!geos.length) return;
       const merged = mergeGeometries(geos, false);
       for (const gg of geos) gg.dispose();
       if (!merged) return;
-      const m = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: new THREE.Color(color) }));
-      m.castShadow = this.shadowOn; m.receiveShadow = this.shadowOn;
-      this.group.add(m);
+      // 双面：凹角处相邻两段会轻微自交，单面会漏出背面。
+      const m2 = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({
+        color: new THREE.Color(color), side: THREE.DoubleSide }));
+      m2.castShadow = this.shadowOn; m2.receiveShadow = this.shadowOn;
+      this.group.add(m2);
     };
-    addMerged(cliffGeos, P.cliffColor);
-    addMerged(capGeos, P.capColor);
+    // 斜面/厚边分成两个 mesh：两档颜色，低模世界里靠色阶而不是贴图表达体积。
+    addMerged(slopeGeos, P.slopeColor);
+    addMerged(edgeGeos, P.edgeColor);
 
     this.scene.add(this.group);
     this._mapId = map.id;

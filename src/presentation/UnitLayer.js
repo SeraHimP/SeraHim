@@ -191,11 +191,21 @@ export class UnitLayer {
       // ⚠️ paletteId 必须进 key —— 几何是按 key 全局缓存的，不进 key 的话换到另一张
       //    调色板的地图后会直接命中上一张图的几何，颜色跟着错，而且**只在切图时复现**，
       //    是最难查的一类 bug。
-      const pal = stylizedPaletteOf(this.mapSystem?.currentMap);
-      const palId = this.mapSystem?.currentMap?.paletteId || 'default';
-      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${palId}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
+      const map = this.mapSystem?.currentMap;
+      const pal = stylizedPaletteOf(map);
+      const palId = map?.paletteId || 'default';
+      // v55.2：塔基要取"地面色与塔身石色之间的中间色"，所以得知道**这张图的地面是什么颜色**。
+      // ⚠️ 地面色不能一律读调色板：只有 visualStyle==='stylized' 的图才按调色板画地面，
+      //    三张老地图的走廊是写死的 #2b3647（见 TerrainLayer 的 navMode 分支）。
+      //    读错的话塔基会按一个画面上根本不存在的颜色去配，等于白配。
+      const fd = CONFIG.ui?.towerFoundation;
+      const groundHex = map?.visualStyle === 'stylized' ? (pal.corridorColor || '#2b3647') : '#2b3647';
+      const foundation = fd?.enabled ? { ...fd, ground: groundHex } : null;
+      // 塔基的颜色由 groundHex 决定，而 groundHex 随地图变 —— 必须进 key，
+      // 否则切图后会命中上一张图的几何（与下面 paletteId 同一个坑）。
+      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${palId}|${foundation ? groundHex : 'nf'}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
       const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac, dmg,
-                          { stone: pal.towerStone, trim: pal.towerTrim });
+                          { stone: pal.towerStone, trim: pal.towerTrim, foundation });
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,

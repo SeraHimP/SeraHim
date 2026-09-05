@@ -93,10 +93,13 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
 {
   const te = howling_abyss_frost.terrainEdge;
   T('厚①-冰封图声明了 terrainEdge（通用件靠地图声明启用）', !!te);
-  // 崖壁从陆地面往下伸 cliffHeight，深渊面在 -abyssDrop。
-  // 前者 ≥ 后者的话崖壁踩不到底，会悬空 —— 这是这两个数唯一的硬约束。
-  T(`厚②-abyssDrop(${te.abyssDrop}) > cliffHeight(${te.cliffHeight})，崖壁才踩得到深渊面`,
-    te.abyssDrop > te.cliffHeight);
+  // v55.2：竖直崖壁换成外倾岸坡。落差这件事只由 waterY 一个数决定
+  // ——45° 正交下屏幕高差 = |waterY|·sin45°·视图缩放，全图视角约 0.34 像素/单位，
+  // 也就是说 waterY=-12 只有 2.9 像素、基本读不出来。这条钉的是"别再往回调"。
+  T(`厚②-水面落差够读得出来（waterY=${te.waterY}，屏幕高差 ≈ ${(Math.abs(te.waterY)*0.707*0.344).toFixed(1)}px ≥ 4px）`,
+    Math.abs(te.waterY) * 0.707 * 0.344 >= 4);
+  T(`厚②b-岸坡是坡不是墙（slopeRun=${te.slopeRun} > 0，有水平外扩才有朝上的法线分量）`,
+    te.slopeRun > 0 && te.slopeDepth > 0);
 
   const tl = srcOf('src/presentation/TerrainLayer.js');
   // 挖空必须按地图声明开启，否则三张老地图会一起变透明。
@@ -119,13 +122,19 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
   T('厚⑦-崖壁从共用轮廓 mapOutline 取边界，不自己调 navOutline',
     /mapOutline\(map\)/.test(el) && !/navOutline\(/.test(el));
   // 静态几何必须合并，否则 300+ 个 mesh 的 draw call 顶不住。
-  T('厚⑧-崖壁块合并成整块（draw call 回到个位数）', /mergeGeometries\(geos, false\)/.test(el));
+  T('厚⑧-岸坡三角带合并成整块（draw call 回到个位数）', /mergeGeometries\(geos, false\)/.test(el));
+  // ⚠️ 外法线方向踩过一次：(tz,-tx) 在真实环上 50/58 个顶点指向陆地**内**侧，
+  //    整条岸坡被陆地盖住，画面上"岸坡完全不见了"。这条守着别再插反。
+  T('厚⑧b-外法线用 (-tz, tx)（(tz,-tx) 是朝内的，会把岸坡埋进陆地）',
+    /const nx = -tz \/ L, nz = tx \/ L;/.test(el));
+  // 抖动按块共用，逐段独立随机会读成噪声而不是地形。
+  T('厚⑧c-抖动按块共用（大块段落，不是逐段噪声）', /Math\.floor\(i \/ Math\.max\(1, P\.blockLen\)\)/.test(el));
   // 位置抖动必须是确定性的：几何进缓存，随机会让画面每次不同。
   T('厚⑨-抖动是确定性伪随机，不用 Math.random', !/Math\.random/.test(el));
 
   const hd = srcOf('src/presentation/HowlingAbyssDecor.js');
-  T('厚⑩-水域装饰随深渊面一起下沉（不沉的话浮冰会悬在水面上方）',
-    /waterGroup\.position\.y = -\(map\.terrainEdge\?\.abyssDrop \?\? 0\)/.test(hd));
+  T('厚⑩-水域装饰随水面一起下沉（不沉的话浮冰会悬在水面上方）',
+    /waterGroup\.position\.y = map\.terrainEdge\?\.waterY \?\? 0/.test(hd));
 }
 
 // ==================== 四、老地图不受影响 ====================
