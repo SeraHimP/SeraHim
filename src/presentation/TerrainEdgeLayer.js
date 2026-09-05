@@ -39,6 +39,11 @@ const DEF = {
   cliffColor: '#3d5470',
   capColor: '#8ea6b8',
   abyssColor: '#16233d',
+  // 深渊面要**比地图大**。只做地图那么大的话，地图边界处会露出一条硬直角边：
+  // 边界内是深渊面、边界外是裙边层（MapSkirtLayer，3 倍地图边长、y=-15、
+  // 中心透明向外渐显），两者颜色不同就成了一个矩形框。做成同样 3 倍之后，
+  // 裙边只是在同一张深色面上淡入，接缝变成软过渡而不是硬边。
+  abyssScale: 3,
 };
 
 /** 确定性伪随机：同一条边界每次生成必须一模一样（几何要进缓存，随机会让画面每次不同）。 */
@@ -102,8 +107,9 @@ export class TerrainEdgeLayer {
     //    不复用 MapSkirtLayer —— 那是 3 倍地图边长、带 fadeAlpha 着色器补丁、
     //    MeshBasicMaterial 不吃光照的氛围层，职责完全不同（§8.2 的改动面第 2 条）。
     const W = map.world?.w ?? map.world, H = map.world?.h ?? W;
+    const AS = P.abyssScale ?? 3;
     const abyss = new THREE.Mesh(
-      new THREE.PlaneGeometry(W, H).rotateX(-Math.PI / 2),
+      new THREE.PlaneGeometry(W * AS, H * AS).rotateX(-Math.PI / 2),
       new THREE.MeshLambertMaterial({ color: new THREE.Color(P.abyssColor) })
     );
     abyss.position.set(W / 2, -P.abyssDrop, H / 2);

@@ -25,6 +25,8 @@ const NAV_N = howling_abyss_frost.navgrid.n;
 const NAV_ORIG = unpackBits(HA_NAVGRID.bits, NAV_N);
 const NAV_WIDE = unpackBits(HA_NAVGRID_FROST_WIDE.bits, NAV_N);
 const NAV_PUB = unpackBits(howling_abyss_frost.navgrid.bits, NAV_N);
+// v55：实际用来画地面的那份（不再等于 WIDE —— 大陆改不规则形之后它跟着一起变形放大）。
+const NAV_VIS = unpackBits(howling_abyss_frost.visualNavgrid.bits, NAV_N);
 const navSum = (a) => a.reduce((x, y) => x + y, 0);
 
 // 桥体几何：把 navgrid 当作可查询的地形，验证"收到墙线"这件事真的发生了。
@@ -71,8 +73,27 @@ const halfWidth = (bits, d, sign) => {
     && howling_abyss_frost.navgrid.n === HA_NAVGRID.n);
   T('注④b-WIDE 是原图的超集（形态学膨胀只增不减，不会把原本能走的地方变不可走）',
     NAV_WIDE.length === NAV_ORIG.length && NAV_ORIG.every((v, i) => v !== 1 || NAV_WIDE[i] === 1));
-  T('注④c-发布版是 WIDE 的子集（收边只削不加，不会凭空多出可走区域）',
-    NAV_PUB.length === NAV_WIDE.length && NAV_PUB.every((v, i) => v !== 1 || NAV_WIDE[i] === 1));
+  // v55：这条从"整张图"收窄到"**桥身段**"。
+  // 原来的口径是"收边只削不加"，那时两个基地区确实原样不动。
+  // 现在用户要求把基地做成不规则大陆，且"可走区域面积不要差太多"——
+  // 面积要保住，形状就必然在某些方向**长出 WIDE 之外**（凹进去的地方要在别处补回来）。
+  // 所以"只削不加"这条规则现在只对桥身成立，那也正是它当初想守的东西
+  //（墙即碰撞边界，桥不能凭空变宽）。基地区改由 陆① 那组断言把关。
+  T('注④c-桥身段是 WIDE 的子集（墙即碰撞边界，桥不会凭空变宽）',
+    (() => {
+      const LEN = Math.hypot(2325 - 2 * BLUE.x, 2325 - 2 * BLUE.y);
+      const R0 = howling_abyss_frost.baseCircleRadius;
+      for (let gy = 0; gy < NAV_N; gy++) {
+        for (let gx = 0; gx < NAV_N; gx++) {
+          const wx = (gx + 0.5) / NAV_N * W_SZ, wy = (gy + 0.5) / NAV_N * W_SZ;
+          const d = (wx - BLUE.x) * AX.x + (wy - BLUE.y) * AX.y;
+          if (d <= R0 || d >= LEN - R0) continue;          // 基地区不归这条管
+          const i = gy * NAV_N + gx;
+          if (NAV_PUB[i] === 1 && NAV_WIDE[i] !== 1) return false;
+        }
+      }
+      return true;
+    })());
   T('注④d-发布版确实被削过（墙内收之后可走区域必然比 WIDE 少）',
     navSum(NAV_PUB) < navSum(NAV_WIDE));
   T('注④e-发布版仍然比原图宽（内收 25 之后桥面没有比原来更窄，这是选这个内收量的前提）',
@@ -98,17 +119,24 @@ const halfWidth = (bits, d, sign) => {
       const inNotch = SPAN.filter((d) => d >= 1240 && d <= 1400).map((d) => halfWidth(NAV_PUB, d, -1));
       return inNotch.length > 0 && Math.min(...inNotch) <= medR - 25;
     })());
-  T('形④-两个基地圈没有被收边动过（圆形基地平台不能被削成条状）',
+  // v55：这条原来是"基地区与 WIDE 逐格相同"。用户要求基地改成不规则大陆之后，
+  // 逐格相同不可能再成立。但它当初想守的东西还在：**基地平台不能被削成条状**。
+  // 现在直接钉那件事本身 —— 沿八个方向量半径，最短的那条不许比最长的那条小太多
+  //（团状 ≈ 各方向半径接近；条状 = 某个方向明显塌陷）。
+  T('形④-两个基地仍是"团"而不是"条"（各方向半径不许塌陷）',
     (() => {
-      const LEN = Math.hypot(2325 - 2 * BLUE.x, 2325 - 2 * BLUE.y);
       const R0 = howling_abyss_frost.baseCircleRadius;
-      for (let gy = 0; gy < NAV_N; gy++) {
-        for (let gx = 0; gx < NAV_N; gx++) {
-          const wx = (gx + 0.5) / NAV_N * W_SZ, wy = (gy + 0.5) / NAV_N * W_SZ;
-          const d = (wx - BLUE.x) * AX.x + (wy - BLUE.y) * AX.y;
-          if (d > R0 && d < LEN - R0) continue;
-          if (NAV_PUB[gy * NAV_N + gx] !== NAV_WIDE[gy * NAV_N + gx]) return false;
+      for (const C of [BLUE, { x: 2325 - BLUE.x, y: 2325 - BLUE.y }]) {
+        const radii = [];
+        for (let k = 0; k < 8; k++) {
+          const a = k / 8 * Math.PI * 2;
+          let r = 0;
+          while (r < R0 * 1.8 && navWalk(NAV_PUB, C.x + Math.cos(a) * (r + 4), C.y + Math.sin(a) * (r + 4))) r += 4;
+          radii.push(r);
         }
+        const lo = Math.min(...radii), hi = Math.max(...radii);
+        if (lo < hi * 0.45) return false;     // 最短方向不得塌到最长方向的一半以下
+        if (hi < R0 * 0.7) return false;      // 整体也不许缩水成一个小圆
       }
       return true;
     })());
@@ -332,14 +360,27 @@ const halfWidth = (bits, d, sign) => {
   // 收边之后地面底图跟着一起缩了，墙看上去依旧贴在桥最外沿——用户"墙贴着桥的边缘
   // 不好看"这条其实没被解决。于是新增可选字段 map.visualNavgrid：地面按它画，
   // 可走判定仍然只认 map.navgrid，墙外侧那圈桥沿于是看得见、走不上去。
-  T('沿①-冰封版声明了 visualNavgrid，且用的是收边前那份（画地面按原宽度）',
-    howling_abyss_frost.visualNavgrid === HA_NAVGRID_FROST_WIDE);
+  // v55：visualNavgrid 不再直接等于 WIDE —— 大陆改成不规则形之后，视觉地面要跟着
+  // 同一套形状放大一圈，否则地面画的是圆、可走的是不规则形，两者对不上。
+  // 这条改成钉**关系**而不是钉具体是哪份数据：视觉地面必须是可走区域的超集，
+  // 且严格更大（那圈"看得见走不上去"的桥沿就是靠这个关系存在的）。
+  T('沿①-冰封版声明了 visualNavgrid，且严格包含可走区域（地面比能走的宽一圈）',
+    (() => {
+      const vg = howling_abyss_frost.visualNavgrid;
+      if (!vg || vg.n !== NAV_N) return false;
+      const VIS = unpackBits(vg.bits, NAV_N);
+      for (let i = 0; i < NAV_PUB.length; i++) if (NAV_PUB[i] === 1 && VIS[i] !== 1) return false;
+      return navSum(VIS) > navSum(NAV_PUB);
+    })());
+  // v55：这两条原来拿 NAV_WIDE 当"画地面的那份"。visualNavgrid 改成 VIS 之后
+  // WIDE 只是它的原料，不再是实际画地面的数据 —— 继续拿它当替身，测的就是个
+  // 已经不成立的假设（会出现"断言全绿但画面不对"）。改成直接读 map.visualNavgrid。
   T('沿②-画地面的那份严格比可走的那份宽（墙外侧确实留得出一圈桥沿）',
-    navSum(NAV_WIDE) > navSum(NAV_PUB));
+    navSum(NAV_VIS) > navSum(NAV_PUB));
   T('沿③-墙线外侧确实存在"看得见但走不上去"的格子（这就是那圈桥沿本身）',
     (() => {
       let ledge = 0;
-      for (let i = 0; i < NAV_PUB.length; i++) if (!NAV_PUB[i] && NAV_WIDE[i]) ledge++;
+      for (let i = 0; i < NAV_PUB.length; i++) if (!NAV_PUB[i] && NAV_VIS[i]) ledge++;
       return ledge > 0;
     })());
   T('沿④-其余地图都没有声明 visualNavgrid（这条接缝是可选的，不影响任何老地图）',

@@ -154,7 +154,113 @@ for (let gy = 0; gy < NAV_N; gy++) {
     if (Math.abs(off) > (off >= 0 ? WALL_OFF_LEFT : WALL_OFF_RIGHT)) TRIMMED_BITS[i] = 0;
   }
 }
+
+// ==================== v55：两侧基地改成"不规则大陆"（用户定稿）====================
+// 用户："两方基地变成不规则的大陆，中间用桥连接！"
+// 追问后定的口径：「**也改可走区域**，但是不要影响游戏平衡，就是**可走区域面积不要差太多**」
+//                「**桥不要收窄**」。
+//
+// 所以这里做的是：把两个基地**圆**换成同面积的**不规则形状**，桥体一格不动。
+//
+// 形状：极坐标下的低阶谐波叠加 r(θ) = R·s·(1 + Σ aₖ·sin(kθ+φₖ))。
+//   · 只用 2/3/5 三个低阶谐波：阶数再高就变成"锯齿圆"而不是"大陆"，
+//     而且高频起伏落到 9 单位一格的 navgrid 上会被量化成毛刺。
+//   · 参数写死、无随机 —— navgrid 是**编译期常量**，随机会让每次构建出的地图不同。
+//
+// ⚠️ 面积必须归一，不能凭感觉调系数。极坐标面积 A = ½∫r²dθ，
+//    令 A 等于原来的 πR² 可解出唯一的缩放 s = √(2π / ∫(1+Σaₖsin)²dθ)。
+//    数值积分算一次即可。不做这一步的话，光是"看起来差不多"就能把可走面积改掉 10%+，
+//    直接影响兵线长度与塔的覆盖面 —— 那就违背了用户"不要影响游戏平衡"的要求。
+const CONT_HARMONICS = [
+  { k: 2, a: 0.155, p: 0.70 },
+  { k: 3, a: 0.100, p: 2.15 },
+  { k: 5, a: 0.055, p: 4.30 },
+];
+const contShape = (theta) => {
+  let f = 1;
+  for (const h of CONT_HARMONICS) f += h.a * Math.sin(h.k * theta + h.p);
+  return f;
+};
+const CONT_SCALE = (() => {
+  const N = 2048;
+  let acc = 0;
+  for (let i = 0; i < N; i++) {
+    const t = (i + 0.5) / N * Math.PI * 2;
+    const v = contShape(t);
+    acc += v * v;
+  }
+  acc *= (Math.PI * 2) / N;                 // ∫(shape)²dθ
+  return Math.sqrt((Math.PI * 2) / acc);    // 使 ½R²s²·acc == πR²
+})();
+/** 大陆在角度 θ 处的半径（世界单位）。grow>1 用来生成"比可走区域宽一圈"的视觉地面。 */
+const contRadius = (theta, grow = 1) => BASE_CIRCLE_R * CONT_SCALE * contShape(theta) * grow;
+
+// 桥口必须留通：大陆边界在朝桥那一侧若正好凹进去，大陆与桥会断开，寻路直接废掉。
+// 保底沿桥轴留一条不窄于桥的走廊。
+const BRIDGE_KEEP = Math.min(WALL_OFF_LEFT, WALL_OFF_RIGHT);
+
+/**
+ * 把一份位图里的两个基地区域重写成不规则大陆。桥体（两个基地区之间那段）原样不动。
+ * @param {Uint8Array} bits 会被就地修改
+ * @param {number} grow 半径放大系数（1 = 可走区域；>1 = 视觉地面）
+ */
+function reshapeContinents(bits, grow) {
+  for (let gy = 0; gy < NAV_N; gy++) {
+    for (let gx = 0; gx < NAV_N; gx++) {
+      const i = gy * NAV_N + gx;
+      const wx = (gx + 0.5) / NAV_N * WORLD, wy = (gy + 0.5) / NAV_N * WORLD;
+      const rx = wx - BLUE_NEXUS.x, ry = wy - BLUE_NEXUS.y;
+      const d = rx * U.x + ry * U.y;               // 沿桥轴的弧长
+      const off = rx * Nrm.x + ry * Nrm.y;         // 离桥轴的横向偏移
+      let c = null;
+      if (d <= BASE_CIRCLE_R) c = BLUE_NEXUS;
+      else if (d >= BRIDGE_LEN - BASE_CIRCLE_R) c = RED_NEXUS;
+      else continue;                                // 桥体：一格不动（用户："桥不要收窄"）
+      const ex = wx - c.x, ey = wy - c.y;
+      const inside = Math.hypot(ex, ey) <= contRadius(Math.atan2(ey, ex), grow);
+      bits[i] = (inside || Math.abs(off) <= BRIDGE_KEEP) ? 1 : 0;
+    }
+  }
+}
+// ⚠️ 面积标定：不能直接用"等圆面积"那个 s 就完事。
+// 原来的基地区**并不是标准圆** —— 它还带着与桥交接处的喇叭口，实测比 πR² 大。
+// 直接换成等圆面积的不规则形，可走格数掉 6%（实测 18427 → 17319），
+// 而用户明确要求"可走区域面积不要差太多"。
+// 所以这里**用原图实测的格数当目标**，二分出一个整体放大系数，把面积找回来。
+// 这样即使以后有人改了底图或桥宽，面积也会自己对齐，不会悄悄漂走。
+const baseZoneCount = (bits) => {
+  let c = 0;
+  for (let gy = 0; gy < NAV_N; gy++) {
+    for (let gx = 0; gx < NAV_N; gx++) {
+      const i = gy * NAV_N + gx;
+      if (!bits[i]) continue;
+      const wx = (gx + 0.5) / NAV_N * WORLD, wy = (gy + 0.5) / NAV_N * WORLD;
+      const d = (wx - BLUE_NEXUS.x) * U.x + (wy - BLUE_NEXUS.y) * U.y;
+      if (d <= BASE_CIRCLE_R || d >= BRIDGE_LEN - BASE_CIRCLE_R) c++;
+    }
+  }
+  return c;
+};
+const CONT_TARGET = baseZoneCount(TRIMMED_BITS);      // 原图两个基地区的可走格数
+const CONT_AREA_K = (() => {
+  let lo = 0.8, hi = 1.5;
+  for (let it = 0; it < 24; it++) {
+    const mid = (lo + hi) / 2;
+    const probe = TRIMMED_BITS.slice();
+    reshapeContinents(probe, mid);
+    if (baseZoneCount(probe) < CONT_TARGET) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+})();
+reshapeContinents(TRIMMED_BITS, CONT_AREA_K);
+
+// 视觉地面（崖壁与地面贴图跟着它走）比可走区域宽一圈，好在墙外留一条不可走的檐。
+// 桥体那一段沿用原来的宽版底图，只有两个大陆按同一套形状放大。
+const VISUAL_BITS = NAV_BITS.slice();
+reshapeContinents(VISUAL_BITS, CONT_AREA_K * 1.075);
+
 const HA_NAVGRID_FROST = { n: NAV_N, bits: packBits(TRIMMED_BITS) };
+const HA_NAVGRID_FROST_VIS = { n: NAV_N, bits: packBits(VISUAL_BITS) };
 
 /**
  * 生成一侧（sign=+1 或 -1）的柱子序列与相邻柱子间的墙段——整侧统一用 `off`
@@ -218,7 +324,13 @@ export const howling_abyss_frost = {
     capHeight: 5,
     cliffColor: '#3d5470',
     capColor: '#8ea6b8',   // 与城墙压顶同色，崖与墙因此同源
-    abyssColor: '#16233d', // 与调色板的 groundColor 同值：深渊就是原来那片"不可走"的底色
+    // 深渊就是原来那片"不可走"的底色，取调色板的 groundColor 同值。
+    // ⚠️ 待查（v55 遗留）：地图边界处仍有一条**矩形色阶**——界内 (2,22,50)、
+    //    界外裙边 (4,36,76)。我一度以为界内那片是本层铺的深渊面，把 abyssColor
+    //    按实测比例提亮后**画面毫无变化**，说明那片暗区另有来源
+    //   （疑似 MapSkirtLayer 的中心透明区、或自动雾把远处压暗），不是这一层。
+    //    结论先记在这里，不要再照着"调深渊色"这条错路走一遍。
+    abyssColor: '#16233d',
   },
 
   world: { w: 2325, h: 2325 },
@@ -232,7 +344,7 @@ export const howling_abyss_frost = {
   // 只用来画地面形状的位图（见 TerrainLayer.visualWalkOf 头注）：地面按**收边前**
   // 的宽度画，可走判定按上面收过边的 navgrid 走——于是石墙外侧留着一圈看得见、
   // 走不上去的桥沿，墙看起来是站在桥面上的，不是贴在桥的最外沿。
-  visualNavgrid: HA_NAVGRID_FROST_WIDE,
+  visualNavgrid: HA_NAVGRID_FROST_VIS,
   walls: { river: false },
   highground: {},            // 本图无高低差，逐位照抄原图
 

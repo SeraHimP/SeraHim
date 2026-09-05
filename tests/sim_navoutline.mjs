@@ -135,5 +135,63 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
     others.every(m => !m.terrainEdge));
 }
 
+// ==================== 五、不规则大陆：形状变了，但玩法量不许变 ====================
+// 用户定稿："**也改可走区域**，但是不要影响游戏平衡，就是**可走区域面积不要差太多**"、
+//          "**桥不要收窄**"。
+// 所以这一组钉的全是"玩法量没被改坏"，不是形状本身长什么样（形状还会调）。
+{
+  const map = howling_abyss_frost;
+  const g = map.navgrid;
+  const bits = unpackBits(g.bits, g.n);
+  const N = g.n, W = map.world.w, cell = W / N;
+  const walkAt = (x, y) => {
+    const gx = Math.floor(x / cell), gy = Math.floor(y / cell);
+    return gx >= 0 && gy >= 0 && gx < N && gy < N && bits[gy * N + gx] === 1;
+  };
+
+  // ① 面积：形状换成不规则多边形，但可走格数必须基本不变。
+  //    实现上不是靠手调系数，是**二分标定**到原图实测的格数（见地图文件的注释）——
+  //    这条断言就是那个标定的守门员。
+  let count = 0;
+  for (const v of bits) count += v;
+  T(`陆①-可走格数与原图基本一致（${count}，容差 2%）`,
+    Math.abs(count - 18427) / 18427 < 0.02);
+
+  // ② 连通：形状凹进去太多会把大陆和桥切断，寻路直接废掉。
+  //    BFS 一遍，要求"能从蓝方枢纽走到红方枢纽"且"没有孤岛"。
+  const gi = (x, y) => Math.floor(y / cell) * N + Math.floor(x / cell);
+  const start = gi(292, 2033), goal = gi(2033, 292);
+  const seen = new Uint8Array(N * N);
+  const q = [start]; seen[start] = 1;
+  for (let h = 0; h < q.length; h++) {
+    const c = q[h], cx = c % N, cy = (c / N) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      const k = ny * N + nx;
+      if (seen[k] || !bits[k]) continue;
+      seen[k] = 1; q.push(k);
+    }
+  }
+  T('陆②-蓝方枢纽能走到红方枢纽（大陆与桥没被切断）', seen[goal] === 1);
+  T(`陆③-没有孤岛（连通区域 ${q.length} = 全部可走格 ${count}）`, q.length === count);
+
+  // ③ 所有建筑仍站在可走格上。塔被挤到不可走格上的话，攻击/寻路都会出怪事。
+  const off = map.buildings.filter(b => !walkAt(b.pos.x, b.pos.y));
+  T(`建①-12 座建筑全部落在可走格上（越界 ${off.length}）`, off.length === 0);
+
+  // ④ 兵线端点仍可走。
+  const wps = map.lanes.flatMap(l => l.waypoints);
+  T('兵①-兵线路点全部落在可走格上', wps.every(w => walkAt(w.x, w.y)));
+
+  // ⑤ 桥没被收窄（用户："桥不要收窄"）。量桥中点的横向可走宽度。
+  const mid = { x: (292 + 2033) / 2, y: (2033 + 292) / 2 };
+  const ux = (2033 - 292), uy = (292 - 2033);
+  const L = Math.hypot(ux, uy), nx = -uy / L, ny = ux / L;   // 桥的法向
+  let width = 0;
+  for (let t = -400; t <= 400; t += 2) if (walkAt(mid.x + nx * t, mid.y + ny * t)) width += 2;
+  T(`桥①-桥中点的可走宽度未被收窄（${width}，期望 ≥ 300）`, width >= 300);
+}
+
 void CONFIG; void packBits; void paintCircle;
 done();
