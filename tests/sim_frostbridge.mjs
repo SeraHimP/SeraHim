@@ -14,6 +14,8 @@ import { MAPS } from '../src/data/maps/index.js';
 import { howling_abyss } from '../src/data/maps/howling_abyss.js';
 import { howling_abyss_frost, FROST_BRIDGE } from '../src/data/maps/howling_abyss_frost.js';
 import { CONFIG, stylizedPaletteOf } from '../src/data/Config.js';
+import { HA_NAVGRID, HA_NAVGRID_FROST_WIDE } from '../src/data/maps/map_navgrids.js';
+import { unpackBits } from '../src/data/navgrid.js';
 
 const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
 
@@ -31,9 +33,32 @@ const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
   T('注①-howling_abyss_frost_v1 已注册进 MAPS', MAPS['howling_abyss_frost_v1'] === howling_abyss_frost);
   T('注②-Object.keys(MAPS).length === 5（原4 张 + 这次新增1 张）', Object.keys(MAPS).length === 5);
   T('注③-visualStyle/paletteId 正确声明', howling_abyss_frost.visualStyle === 'stylized' && howling_abyss_frost.paletteId === 'frost');
-  T('注④-navgrid 与原图共用同一份位图（占位判定逐位不变，不是另描了一份）',
-    howling_abyss_frost.navgrid === howling_abyss.navgrid);
-  T('注⑤-useNavgrid/walls/highground 与原图逐字段相同',
+  // ==================== v0.6：桥面拓宽，navgrid 从"逐位复用原图"改成"专属更宽的一份" ====================
+  // 用户拍板方案（AskUserQuestion）：新描一份更宽的 navgrid，只给冰封版用，原图
+  // 完全不动。注④原本断言"逐位复用"，现在故意反过来：断言两者不是同一份数据，
+  // 但新的这份必须是原图的**超集**（只增不减，不能把原图能走的地方走没了）。
+  T('原④-howling_abyss_v1 的 navgrid 还是 HA_NAVGRID 本身，没有被这次改动动过',
+    howling_abyss.navgrid === HA_NAVGRID);
+  T('注④-冰封版现在用专属的 HA_NAVGRID_FROST_WIDE，不再逐位复用原图（用户拍板"新描一份更宽的"）',
+    howling_abyss_frost.navgrid === HA_NAVGRID_FROST_WIDE && howling_abyss_frost.navgrid !== howling_abyss.navgrid);
+  T('注④b-新 navgrid 是原图的超集（对原图做形态学膨胀，只增不减，不会把原本能走的地方变不可走）',
+    (() => {
+      const n = HA_NAVGRID.n;
+      const orig = unpackBits(HA_NAVGRID.bits, n);
+      const wide = unpackBits(HA_NAVGRID_FROST_WIDE.bits, n);
+      if (wide.length !== orig.length) return false;
+      for (let i = 0; i < orig.length; i++) if (orig[i] === 1 && wide[i] !== 1) return false;
+      return true;
+    })());
+  T('注④c-新 navgrid 确实比原图宽（可走格数变多，不是原样复制了一份）',
+    (() => {
+      const n = HA_NAVGRID.n;
+      const orig = unpackBits(HA_NAVGRID.bits, n);
+      const wide = unpackBits(HA_NAVGRID_FROST_WIDE.bits, n);
+      const sum = (a) => a.reduce((x, y) => x + y, 0);
+      return sum(wide) > sum(orig);
+    })());
+  T('注⑤-useNavgrid/walls/highground 与原图逐字段相同（navgrid 本身除外，上面单独断言过）',
     howling_abyss_frost.useNavgrid === howling_abyss.useNavgrid
     && JSON.stringify(howling_abyss_frost.walls) === JSON.stringify(howling_abyss.walls)
     && JSON.stringify(howling_abyss_frost.highground) === JSON.stringify(howling_abyss.highground));

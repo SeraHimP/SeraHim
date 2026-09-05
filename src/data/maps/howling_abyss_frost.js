@@ -1,5 +1,6 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
-import { HA_NAVGRID } from './map_navgrids.js';
+import { HA_NAVGRID_FROST_WIDE } from './map_navgrids.js';
+import { unpackBits } from '../navgrid.js';
 
 /**
  * howling_abyss_frost.js —— 嚎哭深渊·冰封风格重做
@@ -48,14 +49,49 @@ const B = {
 
 // 与 HA_TERRAIN.obstacles 用的是同一组弧长值（见 howling_abyss.js 头注"缺口"）。
 const GAP_D = [280, 440, 600, 760, 920, 1080, 1240, 1400, 1560, 1720, 1880, 2040, 2180];
-const GAP_OFF = 140; // 与 obstacles 的 ±140 偏移一致（贴桥沿内侧）
+const BASE_GAP_OFF = 140; // 原始偏移——obstacles 数组的破口位置仍然对齐这个（缺口数据本身不改）
+
+// ==================== v0.6：桥面拓宽，墙跟着外移，墙即碰撞边界（用户拍板方案） ====================
+// 用户："把桥的宽度向两边略微扩大，墙也跟着外移，把墙作为体积碰撞的边界"。
+// 已用 AskUserQuestion 跟用户对齐技术方案：新描一份更宽的 navgrid 只给冰封版用
+// （`HA_NAVGRID_FROST_WIDE`，原图 navgrid 完全不动，见 map_navgrids.js 头注）。
+//
+// 柱子/墙的偏移量**不是**一个写死的常量（比如"140+27"）——手描的真实桥形本来
+// 就不是恒定半宽（越靠近两个基地越宽，中段本身也有 ±20 左右的自然起伏，
+// 见设计文档 v0.5 的实测记录），钉死一个常量会让墙在某些弧长位置贴着可走区域
+// （太挤，看着像在桥面上），在另一些位置又离得老远（太空，起不到"边界"作用）。
+// 改成**直接从新 navgrid 数据里量出每个缺口弧长处的真实可走边界**：沿 `P(d, ·)`
+// 的法向从中线向外扫描，扫到第一个不可走格就是这个弧长处的真实半宽——柱子/
+// 墙紧贴这条量出来的边界摆，天然贴合每一段桥自己的宽度，不需要单独维护一份
+// "每个缺口该留多少偏移"的表。这份量出来的边界只在**模块加载时算一次**（13
+// 个弧长 × 2 侧 = 26 次扫描，每次最多几百步，可忽略的开销），不是每帧算。
+const NAV_N = HA_NAVGRID_FROST_WIDE.n;
+const NAV_BITS = unpackBits(HA_NAVGRID_FROST_WIDE.bits, NAV_N);
+const WORLD = 2325;
+function navWalkable(x, y) {
+  const gx = Math.floor(x / WORLD * NAV_N), gy = Math.floor(y / WORLD * NAV_N);
+  if (gx < 0 || gy < 0 || gx >= NAV_N || gy >= NAV_N) return false;
+  return NAV_BITS[gy * NAV_N + gx] === 1;
+}
+/** 沿弧长 d 处的法向，从中线向 sign（+1/-1）方向扫描，找可走区域的真实边界（世界单位）。 */
+function edgeOffset(d, sign) {
+  const STEP = 2, MAX_OFF = 380;
+  let off = 0;
+  while (off < MAX_OFF) {
+    const p = P(d, sign * (off + STEP));
+    if (!navWalkable(p.x, p.y)) break;
+    off += STEP;
+  }
+  return off;
+}
 
 /**
- * 生成一侧（off=+140 或 -140）的柱子序列与相邻柱子间的墙段。
+ * 生成一侧（sign=+1 或 -1）的柱子序列与相邻柱子间的墙段——每根柱子的偏移量
+ * 都是从新 navgrid 单独量出来的（见上面 edgeOffset），不是统一的常量。
  * @returns { pillars: [{x,y,d}], segments: [{from,to,mid,angle}] }
  */
-function bridgeSide(off) {
-  const pillars = GAP_D.map((d) => ({ ...P(d, off), d }));
+function bridgeSide(sign) {
+  const pillars = GAP_D.map((d) => ({ ...P(d, sign * edgeOffset(d, sign)), d }));
   const segments = [];
   for (let i = 0; i < pillars.length - 1; i++) {
     const a = pillars[i], b = pillars[i + 1];
@@ -69,8 +105,8 @@ function bridgeSide(off) {
   return { pillars, segments };
 }
 
-const leftSide = bridgeSide(+GAP_OFF);
-const rightSide = bridgeSide(-GAP_OFF);
+const leftSide = bridgeSide(+1);
+const rightSide = bridgeSide(-1);
 
 export const FROST_BRIDGE = {
   // 两侧分开存（渲染层需要区分"墙面朝哪个方向"来贴合桥沿，不能揉成一个数组）。
@@ -87,11 +123,17 @@ export const howling_abyss_frost = {
 
   world: { w: 2325, h: 2325 },
   useNavgrid: true,
-  navgrid: HA_NAVGRID,       // 与原图完全相同的可走位图——占位判定逐位不变
+  // v0.6 起改用略微加宽的位图（原图的形态学膨胀版本，只给这张图用，见
+  // map_navgrids.js 里 HA_NAVGRID_FROST_WIDE 的头注）——原图 howling_abyss_v1
+  // 的 navgrid 完全不受影响，这张图从此不再"逐位复用原图"，是它自己的一份数据。
+  navgrid: HA_NAVGRID_FROST_WIDE,
   walls: { river: false },
   highground: {},            // 本图无高低差，逐位照抄原图
 
-  obstacles: GAP_D.flatMap((d) => [{ ...P(d, +GAP_OFF), r: 26 }, { ...P(d, -GAP_OFF), r: 26 }]),
+  // obstacles 仍然对齐 BASE_GAP_OFF（原始 140，跟原图完全一致）——这份数据描述的是
+  // "桥本来在哪变窄"，是原始桥形的属性，不随这次装饰用的墙外移而改变（而且这个
+  // 字段本身当前没有被任何仿真/渲染代码消费，纯粹是历史沿革数据，见设计文档 v0.2）。
+  obstacles: GAP_D.flatMap((d) => [{ ...P(d, +BASE_GAP_OFF), r: 26 }, { ...P(d, -BASE_GAP_OFF), r: 26 }]),
 
   frostBridge: FROST_BRIDGE,
   // 火炬光源坐标——直接复用 26 根石柱的位置。`torchPoints()`（见
