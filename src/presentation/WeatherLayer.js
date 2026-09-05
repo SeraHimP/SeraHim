@@ -26,6 +26,7 @@
  * 不 new 任何对象、不重建几何 —— 长跑不产生 GC 压力（与 EffectsLayer 同一条纪律）。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 
 /** 雪花/尘埃用的软圆点纹理（一次性程序生成，无外部素材） */
@@ -78,6 +79,9 @@ export class WeatherLayer {
       color: 0xbcd6f0, transparent: true, opacity: 0, depthWrite: false,
     });
     this._rain = new THREE.LineSegments(rg, this._rainMat);
+    // 粒子必须排除出法线深度预渲染，否则描边会在每一颗雨/雪上触发（满屏黑麻点）。
+    // 真根因与证据见 PostFX.js 里 FX_PARTICLE_LAYER 的头注。
+    this._rain.layers.set(FX_PARTICLE_LAYER);
     this._rain.frustumCulled = false;           // 盒子跟着镜头走，包围盒没意义
     this._rain.renderOrder = 30;
     this.scene.add(this._rain);
@@ -93,6 +97,7 @@ export class WeatherLayer {
         depthWrite: false, sizeAttenuation: true,
       });
       const p = new THREE.Points(g, m);
+      p.layers.set(FX_PARTICLE_LAYER);   // 同雨：排除出法线深度预渲染，见 PostFX.js 头注
       p.frustumCulled = false;
       p.renderOrder = 30;
       this.scene.add(p);
@@ -111,6 +116,8 @@ export class WeatherLayer {
       color: 0xc8d2dc, transparent: true, opacity: 0, depthWrite: false, depthTest: false,
     });
     this._fog = new THREE.Mesh(fg, this._fogMat);
+    // 雾是一整块半透明薄纱，被预渲染当成不透明面的话会在雾的边界描出一圈假轮廓。
+    this._fog.layers.set(FX_PARTICLE_LAYER);
     this._fog.frustumCulled = false;
     this._fog.renderOrder = 31;
     this.scene.add(this._fog);

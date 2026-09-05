@@ -19,8 +19,21 @@ const settings = srcOf('src/ui/SettingsDialog.js');
 
 // ==================== ThreeRenderer 开关方法 ====================
 // v51.28：outline 有画面 bug，默认值改成了 false（禁用），bug 修好前不该被这条断言逼着改回 true。
-T('渲①-ThreeRenderer 声明 outlineOn/ssaoOn 默认状态字段（outline 因 bug 默认关，ssao 仍默认开）',
-  /this\.outlineOn\s*=\s*false/.test(renderer) && /this\.ssaoOn\s*=\s*true/.test(renderer));
+// 2026-09-05：描边那个"画面 bug"已查实真根因并修复（雨/雪/尘/雾被法线深度预渲染
+// 当成不透明物体 → 满屏黑麻点，见 PostFX.js 里 FX_PARTICLE_LAYER 的头注），
+// 所以这条断言从"默认关"翻过来钉"默认开、且默认值走 CONFIG 软编码"。
+T('渲①-描边默认开启且默认值走 CONFIG.outline.enabled（bug 已修，不再硬编码 false）',
+  /this\.outlineOn\s*=\s*CONFIG\.outline\?\.enabled\s*!==\s*false/.test(renderer)
+  && !/this\.outlineOn\s*=\s*false/.test(renderer)
+  && /this\.ssaoOn\s*=\s*true/.test(renderer));
+T('渲①b-描边的观感参数（颜色/强度/线宽/阈值）全部从 CONFIG.outline 取，不写死在着色器里',
+  (() => {
+    const c = CONFIG.outline || {};
+    const okCfg = c.enabled === true && typeof c.color === 'string'
+      && typeof c.strength === 'number' && typeof c.lineWidth === 'number';
+    return okCfg && /pass\.uniforms\.outlineColor\.value\.set\(c\.color\)/.test(postfx)
+      && /pass\.uniforms\.outlineStrength\.value = c\.strength/.test(postfx);
+  })());
 T('渲②-setOutline(on) 方法存在且写回 outlinePass.enabled', /setOutline\(on\)\s*\{[^}]*outlinePass[^}]*enabled[^}]*\}/.test(renderer));
 T('渲③-setSSAO(on) 方法存在且写回 ssaoPass.enabled', /setSSAO\(on\)\s*\{[^}]*ssaoPass[^}]*enabled[^}]*\}/.test(renderer));
 T('渲④-_buildComposer 里描边/SSAO 的 enabled 初值来自 outlineOn/ssaoOn（不是永远开）',

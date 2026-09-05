@@ -3376,10 +3376,17 @@ async function world() {
   const pfxSrc = srcOf('src/presentation/PostFX.js');
   T('SSAO①-PostFX.js 导出了 HUD_SPRITE_LAYER 常量（血条/护盾图标专用 layer）',
     /export const HUD_SPRITE_LAYER = 1;/.test(pfxSrc));
-  const prepassBlock = pfxSrc.match(/render\(renderer[\s\S]{0,900}?\n  \}/)?.[0] || '';
-  T('SSAO②-NormalDepthPrepass.render() 渲染前临时关掉这个 layer、渲染后恢复（不是永久改相机状态）',
+  // 上限从 900 提到 1800：render() 里新增了粒子层的排除逻辑与说明注释，900 字符截断在中间。
+  const prepassBlock = pfxSrc.match(/render\(renderer[\s\S]{0,1800}?\n  \}/)?.[0] || '';
+  T('SSAO②-NormalDepthPrepass.render() 渲染前临时关掉这些 layer、渲染后恢复（不是永久改相机状态）',
     /this\.camera\.layers\.disable\(HUD_SPRITE_LAYER\)/.test(prepassBlock)
-    && /this\.camera\.layers\.enable\(HUD_SPRITE_LAYER\)/.test(prepassBlock));
+    && /if \(hadHudLayer\) this\.camera\.layers\.enable\(HUD_SPRITE_LAYER\)/.test(prepassBlock));
+  // 2026-09-05 新增：粒子/薄纱也必须排除出预渲染。这是描边 bug 的真根因——
+  // overrideMaterial 会无视原材质透明度，把雨/雪/尘/雾当成不透明面渲进法线深度图，
+  // 描边就在每一颗粒子上触发（满屏黑麻点），SSAO 读同一张图也一起被污染。
+  T('SSAO②b-粒子/薄纱层（FX_PARTICLE_LAYER）同样在预渲染时临时关掉、之后恢复',
+    /this\.camera\.layers\.disable\(FX_PARTICLE_LAYER\)/.test(prepassBlock)
+    && /if \(hadFxLayer\) this\.camera\.layers\.enable\(FX_PARTICLE_LAYER\)/.test(prepassBlock));
 
   const trSrc = srcOf('src/presentation/ThreeRenderer.js');
   T('SSAO③-ThreeRenderer 建主相机时把这个 layer 加入可见集合（否则 beauty pass 也会漏画血条）',

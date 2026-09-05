@@ -16,6 +16,7 @@
  * 关掉时对帧时间零影响（NormalDepthPrepass 也会跟着两个开关一起短路，不白渲染）。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { CONFIG } from '../data/Config.js';
 import { Pass } from '../../vendor/postprocessing/Pass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 
@@ -41,6 +42,31 @@ import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
  * 默认可见集合（否则主渲染也会漏画它们）。
  */
 export const HUD_SPRITE_LAYER = 1;
+
+/**
+ * 粒子/薄纱专用层——**必须排除出法线深度预渲染**（见下面 NormalDepthPrepass.render）。
+ *
+ * ==================== 2026-09-05：描边 bug 的真根因（已确诊，不是猜测）====================
+ * v51.28 用户报了"轮廓描边有画面 bug"，当时没查根因，直接把 `outlineOn` 默认关掉挂了很久。
+ * 这次查实了，证据链三条：
+ *  ① 像素差分：把"描边开/关"两张图逐像素比对，水面上那些黑点**只在描边开启时出现**
+ *    （水色 (2,29,66) → 近黑 (4,2,18)），描边关闭时那里根本没有东西——所以它们是描边
+ *    Pass 造出来的，不是真实几何。
+ *  ② 位置固定的原因：`WeatherLayer.setEnabled(false)` 只把材质 opacity 设成 0，
+ *    **粒子对象仍然留在场景里**，只是停止移动——所以"关掉天气"前后黑点在同一位置，
+ *    这一开始误导我以为跟天气无关。
+ *  ③ 机制：`NormalDepthPrepass` 用 `scene.overrideMaterial = MeshNormalMaterial` 整场景
+ *    重渲一遍，而 three 的 overrideMaterial 会替换**所有**可渲染对象的材质、并且
+ *    **无视原材质的透明度**。于是雨（LineSegments）、雪/尘（Points）、雾（半透明薄纱）
+ *    在法线深度图里全是**完全不透明**的，满屏散布着深度与法线的突变，描边的边缘检测
+ *    就在每一个粒子上触发 → 满屏黑麻点。SSAO 读的是同一张预渲染图，一起被污染。
+ *
+ * 修法沿用本文件已有的先例（HUD_SPRITE_LAYER 就是这么把血条精灵排除出预渲染的）：
+ * 把这些"不该产生轮廓/遮蔽"的东西挪到本层，预渲染时 disable 掉。
+ * ⚠️ 用了这一层的对象，主相机必须 `camera.layers.enable(FX_PARTICLE_LAYER)`，
+ * 否则它们在正式渲染里也会一起消失（layers 是掩码，`layers.set` 会清掉默认的 0 层）。
+ */
+export const FX_PARTICLE_LAYER = 2;
 
 // ==================== 法线+深度预渲染 Pass ====================
 class NormalDepthPrepass extends Pass {
@@ -73,10 +99,15 @@ class NormalDepthPrepass extends Pass {
     // 血条/护盾图标这类"永远画在最上层"的 HUD 精灵不该参与深度/遮蔽判定——见上方头注。
     const hadHudLayer = this.camera.layers.isEnabled(HUD_SPRITE_LAYER);
     this.camera.layers.disable(HUD_SPRITE_LAYER);
+    // 粒子/薄纱同理，而且比 HUD 更要紧——它们满屏散布，不排除就是满屏黑麻点。
+    // 见 FX_PARTICLE_LAYER 的头注（描边 bug 的真根因）。
+    const hadFxLayer = this.camera.layers.isEnabled(FX_PARTICLE_LAYER);
+    this.camera.layers.disable(FX_PARTICLE_LAYER);
     renderer.setRenderTarget(this.renderTarget);
     renderer.clear();
     renderer.render(this.scene, this.camera);
     if (hadHudLayer) this.camera.layers.enable(HUD_SPRITE_LAYER);
+    if (hadFxLayer) this.camera.layers.enable(FX_PARTICLE_LAYER);
     this.scene.overrideMaterial = prevOverride;
     this.scene.background = prevBackground;
     renderer.setRenderTarget(prevTarget);
@@ -290,7 +321,9 @@ const OutlineShader = {
     tNormal: { value: null },
     tDepth: { value: null },
     resolution: { value: new THREE.Vector2(1, 1) },
-    outlineColor: { value: new THREE.Color(0x1a1410) }, // 暖黑（呼应现有塔灯暖光调性，不用冷纯黑）
+    // 颜色/强度/线宽都从 CONFIG.outline 取（第 2 条铁律：不硬编码），这里只是 uniform
+    // 的初值，createOutlinePass 会按配置覆盖。
+    outlineColor: { value: new THREE.Color(0x1a1410) },
     // depthBias 踩过一个坑：相机 near=1/far=60000（见 ThreeRenderer.syncCameraFrom），
     // 但场景内容实际只占其中很小一段（近似几千个世界单位内），深度缓冲的精度被
     // 这段"浪费在空气里"的巨大 far 挤占——调低这个阈值想多抓边缘，结果在完全平坦
@@ -350,6 +383,13 @@ export function createOutlinePass(prepass, width, height) {
   pass.uniforms.tNormal.value = prepass.renderTarget.texture;
   pass.uniforms.tDepth.value = prepass.renderTarget.depthTexture;
   pass.uniforms.resolution.value.set(width, height);
+  // 描边的观感参数全部走 CONFIG.outline（第 2 条铁律），改配置即可，不用动着色器。
+  const c = CONFIG.outline || {};
+  if (c.color !== undefined) pass.uniforms.outlineColor.value.set(c.color);
+  if (c.strength !== undefined) pass.uniforms.outlineStrength.value = c.strength;
+  if (c.lineWidth !== undefined) pass.uniforms.lineWidth.value = c.lineWidth;
+  if (c.depthBias !== undefined) pass.uniforms.depthBias.value = c.depthBias;
+  if (c.normalBias !== undefined) pass.uniforms.normalBias.value = c.normalBias;
   pass.setSize = (w, h) => { pass.uniforms.resolution.value.set(w, h); };
   return pass;
 }

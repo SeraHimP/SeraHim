@@ -18,6 +18,7 @@
  * 骨骼（Buffbone_Glb_Weapon_1）提供，程序化塔仅作为模型未加载时的回退，炮口取塔冠顶端。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 
 const _geoCache = new Map();
@@ -1351,6 +1352,8 @@ export function crystalParticles(color, r) {
     depthWrite: false, sizeAttenuation: false,
   });
   const pts = new THREE.Points(geo, mat);
+    // 水晶粒子同样排除出法线深度预渲染（描边 bug 根因之一，见 PostFX.js 头注）。
+    pts.layers.set(FX_PARTICLE_LAYER);
   pts.userData.worldSize = r * 0.5;   // 期望的世界尺寸（UnitLayer 换算用）
   return pts;
 }

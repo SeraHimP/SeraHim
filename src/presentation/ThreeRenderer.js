@@ -63,7 +63,7 @@ import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
 import { setUnitTint } from './UnitMeshFactory.js';
 // 渲染重构 Week2·Day8-10：轮廓描边 + SSAO，见 PostFX.js 头注。
-import { NormalDepthPrepass, createSSAOPass, createOutlinePass, HUD_SPRITE_LAYER } from './PostFX.js';
+import { NormalDepthPrepass, createSSAOPass, createOutlinePass, HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
@@ -139,10 +139,11 @@ export class ThreeRenderer {
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
     this.toneMapOn = true;   // 色调映射（曲线见 CONFIG.toneMapping.mode）
-    // v51.28：用户报了轮廓描边的画面 bug，先禁用，bug 以后再查再修——不要因为这里
-    // 顺手把默认值改回 true。OutlinePass 本身（createOutlinePass）没删，setOutline(true)
-    // 仍然能手动开，只是不再默认开。
-    this.outlineOn = false;
+    // v51.28 因为一个画面 bug 把描边默认关掉，挂了很久。2026-09-05 查实真根因并修复
+    // （雨/雪/尘/雾被法线深度预渲染当成不透明物体 → 满屏黑麻点，见 PostFX.js 里
+    // FX_PARTICLE_LAYER 的头注，那里记了完整的证据链），因此重新默认开启。
+    // 默认值走 CONFIG.outline.enabled，跟其它观感参数一起软编码。
+    this.outlineOn = CONFIG.outline?.enabled !== false;
     this.ssaoOn = true;      // Week2·Day9-10：SSAO，默认开
 
     this.scene = new THREE.Scene();
@@ -153,6 +154,9 @@ export class ThreeRenderer {
     // 主相机（beauty pass）要能看见血条/护盾图标这类 HUD 精灵——只有法线/深度预渲染
     // 那个专用相机会在渲染时临时关掉这个 layer（PostFX.js 头注），不影响这里。
     this.camera.layers.enable(HUD_SPRITE_LAYER);
+    // ⚠️ 粒子/薄纱用 layers.set(FX_PARTICLE_LAYER) 把自己从默认的 0 层挪走了，
+    // 主相机必须显式 enable，否则它们在正式渲染里也会一起消失（不只是描边预渲染）。
+    this.camera.layers.enable(FX_PARTICLE_LAYER);
     this.elevationDeg = CAM_ELEVATION_DEG;
     this.azimuthDeg = 0;   // C 组·方位角（绕 Y 偏航）。0 = 原视角（无偏航）。
     this.lookHeightOffset = 0;   // 视角高度：机位+目标点同步沿世界 Y 轴平移的偏移量，见 setLookHeight 头注。
