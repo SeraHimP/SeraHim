@@ -102,7 +102,13 @@ const BRIDGE_LEN = Math.hypot(RED_NEXUS.x - BLUE_NEXUS.x, RED_NEXUS.y - BLUE_NEX
 // 收边逻辑要靠它避开基地平台，两处各写一份迟早会漂移。
 const BASE_CIRCLE_R = 330;
 const WALL_INSET = 25;        // 墙线从中位半宽往桥内侧回收多少（用户选定）
+// 墙的两端停在哪：用户"墙略微短一些，不要超过桥面部分"——`GAP_D` 的首尾两个
+// 弧长（280 / 2180）落在基地圈半径 330 以内，也就是说上一版两端的墙其实压在
+// 圆形基地平台上，不在桥上。改成两端各补一根"端柱"，正好立在桥与基地平台的
+// 交界处（基地圈边缘再往桥内让 WALL_END_MARGIN），墙到此为止；落在基地圈里的
+// 那两个原始弧长不再生成柱子。
 const WALL_GROUND_PROBE = 12; // 判"墙脚下有没有桥"时往内侧探的距离（约 1.3 个 navgrid 格）
+const WALL_END_MARGIN = 14;   // 端柱从基地圈边缘再往桥内让这么多（见 WALL_INSET 上面的头注）
 
 function bitsWalkable(bits, x, y) {
   const gx = Math.floor(x / WORLD * NAV_N), gy = Math.floor(y / WORLD * NAV_N);
@@ -162,7 +168,10 @@ const HA_NAVGRID_FROST = { n: NAV_N, bits: packBits(TRIMMED_BITS) };
  */
 function bridgeSide(sign, off) {
   const inward = { x: -sign * Nrm.x, y: -sign * Nrm.y };
-  const pillars = GAP_D
+  const startD = BASE_CIRCLE_R + WALL_END_MARGIN;
+  const endD = BRIDGE_LEN - BASE_CIRCLE_R - WALL_END_MARGIN;
+  const pillarD = [startD, ...GAP_D.filter((d) => d > startD && d < endD), endD];
+  const pillars = pillarD
     .map((d) => ({ ...P(d, sign * off), d }))
     .filter((p) => bitsWalkable(TRIMMED_BITS,
       p.x + inward.x * WALL_GROUND_PROBE, p.y + inward.y * WALL_GROUND_PROBE));

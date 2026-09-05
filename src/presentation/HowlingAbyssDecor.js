@@ -41,18 +41,29 @@ const PILLAR_H = 46, PILLAR_R_TOP = 9, PILLAR_R_BOT = 12;
 const BRAZIER_BOWL_R_TOP = 5.6, BRAZIER_BOWL_R_BOT = 3.8, BRAZIER_BOWL_H = 4.4;
 const TORCH_FLAME_H = 10;
 
-// ==================== 2026-09-04 用户反馈重做：石墙 ====================
-// 第一版是"两根柱子中间摆一个两端内缩的长方体"——用户原话："我看起来就是个
-// 雷霆方块吧？"（雷霆方块＝第 4.3 节里那种统一抬高的岩壁台地，正是这条风格化
-// 路线一开始就要摆脱的东西）。问题有三个：①端头内缩造出的缝看着像"没接上"，
-// 不是"缺损"；②单个光滑长方体没有"一块块石头垒起来"的纹理感；③太厚太满。
-// 重做成"分块砌墙"：每段墙按 WALL_BLOCK_LEN 切成若干石块（不是一整根），
-// 主体一层 + 顶部一层收窄的"压顶石"错缝排列（真实砌墙的收边做法）。缺损位置
-// 后来又按用户反馈从"段中间随机一块"改成"贴着柱子（=桥本来的缺口）的那一块"，
-// 见 _buildWallSegments 方法头注的完整说明。
-const WALL_H = 26, WALL_THICK = 13;          // 用户："厚度减少一些"——22→13
-const WALL_CAP_H = 7, WALL_CAP_INSET = 2.5;  // 压顶石：更矮更窄，收边观感
-const WALL_BLOCK_LEN = 20;                   // 每块石头的目标长度（实际按段长整除微调）
+// ==================== 2026-09-05 用户反馈第五轮：按 Thronefall 的设计语言重做石墙 ====================
+// 用户发来 16 张 Thronefall 实机截图当参考，并明确"一定要有统一的设计语言"。
+// 从参考里读到的墙的规则（用户已确认）：**低矮细长的一条带**，规律的细节靠
+// 顶部压顶石的节奏体现，间隔立较粗的柱子/门楼，顶边有不规则的细锯齿；
+// 绝不是一块块砖垒出来的。用户原话："目前的墙太复杂了不适配简洁风格"
+// "每个墙的除了用柱子分割之外，每一块都是一体的""墙体的高度降低到 50%"
+// "做成石栅栏那种感觉""可以在墙上加一些缺口模拟环境侵蚀"。
+//
+// 相应地，上一版"分块砌墙"（每段切成 n 块 BoxGeometry + 3 档深浅色随机错缝）
+// 整套拆掉：那套做法的复杂度全用在"垒砌纹理感"上，而这正是用户要去掉的东西。
+// 现在每两根柱子之间**只有一根连续的墙体**（脚下没桥的那一段除外，见
+// _buildWallSegments 头注），侵蚀感改由顶部压顶石的缺失与高低不齐来表达——
+// 墙身本身是完整的一条，顶边是啃过的（用户在选项里明确选了"只在顶边啃出缺口"，
+// 不是整跨塌掉；整跨塌掉只发生在桥面真凹口那一处，两者是两回事）。
+const WALL_H = 13;            // 用户："墙体的高度降低到 50%"——26→13
+const WALL_THICK = 8;         // 高度减半后 13×13 的方截面读起来是根粗梁，不是栅栏；收到 8 让它明显"扁而矮"
+const WALL_CAP_H = 3;         // 压顶石随墙身一起压扁（7 在 13 高的墙上占比过半，喧宾夺主）
+const WALL_CAP_OVERHANG = 1.5;// 压顶石比墙身两侧各宽出这么多（参考图里压顶是往外探的，不是内缩）
+const WALL_CAP_PITCH = 14;    // 压顶石的节奏间距——墙身连续，靠这一层的重复制造韵律
+const WALL_EROSION_CHANCE = 0.22; // 压顶石按坐标哈希缺失的比例＝顶边"被风化啃掉"的缺口
+const WALL_RUN_STEP = 6;      // 沿墙扫"脚下有没有桥"的采样步长（决定断口两端的精度）
+const WALL_RUBBLE_PITCH = 20; // 断口里每隔多远摆一堆瓦砾——扫描步长是 6，若逐个采样点都摆，
+                              // 瓦砾密度会是上一版的三倍多，堆成一条碎石带，与简洁风格相悖
 // ==================== 2026-09-05 用户反馈第四轮：缺口是几何事实，不是概率 ====================
 // 此前这里有 WALL_GAP_CHANCE（先 0.55 后 1）和 WALL_GAP_BLOCKS 两个常量，用来
 // 在**每根柱子**旁边拆墙。那套机制建立在一个错误前提上：把地图里 `GAP_D` 那
@@ -64,14 +75,13 @@ const WALL_BLOCK_LEN = 20;                   // 每块石头的目标长度（�
 // 于是两个常量连同整套概率机制一起删掉，换成一句几何判据：
 //   **墙脚下没有桥的地方，这块墙就不摆**（改摆瓦砾）。
 // 墙沿直线走，走到那处凹口上方时脚下是水，那一段自然断开；其余地方墙连续
-// 不断、与柱子严丝合缝——用户这一轮同时要求"柱子和墙是一体的"，而"一体"和
+// 不断、与柱子严丝合缝——用户同时要求"柱子和墙是一体的"，而"一体"和
 // "缺口处断开"在这套判据下不再矛盾：不需要为了做出断口而在柱子旁边硬拆砖。
 //
 // 判据用的两样东西都由地图数据给（`map.frostBridge.left/right`）：`inward`
-// 指向桥内侧的单位法向，`groundProbe` 是往内侧探多远采样——不能直接采墙块
-// 中心点，因为可走区域正好收到墙线上（见 howling_abyss_frost.js 头注④），
-// 中心点落在边界格上，结果会随取整方向抖动。
-const WALL_STONE_SHADES = 3;                 // 石块用几种深浅色，垒砌感靠这个，不是纹理贴图
+// 指向桥内侧的单位法向，`groundProbe` 是往内侧探多远采样——不能直接采墙身
+// 中线，因为可走区域正好收到墙线上（见 howling_abyss_frost.js 头注④），
+// 中线落在边界格上，结果会随取整方向抖动。
 
 export class HowlingAbyssDecor {
   constructor(scene) {
@@ -131,18 +141,17 @@ export class HowlingAbyssDecor {
     const stoneMat = new THREE.MeshLambertMaterial({ color: stoneColor, flatShading: true });
     const stoneDarkMat = new THREE.MeshLambertMaterial({ color: stoneColorDark, flatShading: true });
     const snowMat = new THREE.MeshLambertMaterial({ color: snowCapColor, flatShading: true });
-    // 石块深浅色阶（垒砌感的主要来源，见 WALL_STONE_SHADES 头注）——每种色阶单独
-    // 一份材质，同一石块几何体在不同 Mesh 间共享，不逐块新建材质（省内存/draw call）。
-    const stoneShadeMats = Array.from({ length: WALL_STONE_SHADES }, (_, i) => {
-      const t = WALL_STONE_SHADES > 1 ? i / (WALL_STONE_SHADES - 1) : 0;
-      const c = new THREE.Color(stoneColor).lerp(new THREE.Color(stoneColorDark), t * 0.85);
-      return new THREE.MeshLambertMaterial({ color: c, flatShading: true });
-    });
+    // 墙只用两个色：墙身一色 + 压顶石一色（比墙身亮一档）。
+    // 上一版是 3 档深浅按坐标哈希随机错缝，那是在堆"垒砌纹理感"——正是用户要
+    // 去掉的复杂度（"太复杂了不适配简洁风格"）。参考图里的墙也就是两个色。
+    const wallBodyMat = new THREE.MeshLambertMaterial({ color: stoneColor, flatShading: true });
+    const wallCapMat = new THREE.MeshLambertMaterial({
+      color: new THREE.Color(stoneColor).lerp(new THREE.Color(0xffffff), 0.28), flatShading: true });
 
     const rubbleGeo = new THREE.IcosahedronGeometry(1, 0);
     for (const side of [map.frostBridge.left, map.frostBridge.right]) {
       this._buildPillarsAndTorches(group, side.pillars, stoneMat, snowMat);
-      this._buildWallSegments(group, side, stoneShadeMats, stoneDarkMat, rubbleGeo);
+      this._buildWallSegments(group, side, wallBodyMat, wallCapMat, stoneDarkMat, rubbleGeo);
     }
 
     this._buildWaterDecor(group, map, SV);
@@ -195,78 +204,89 @@ export class HowlingAbyssDecor {
   }
 
   /**
-   * 分块砌墙：每段墙（两根柱子之间）按 WALL_BLOCK_LEN 切成 n 块石头。
+   * 砌墙：每两根柱子之间**一根连续的墙体**，顶部一层压顶石按节奏排列、
+   * 随机缺几块来表达风化侵蚀。
    *
-   * ==================== 2026-09-05 用户反馈第四轮：断口由地形决定 ====================
-   * 缺损位置的判据经历了三次错误的迭代（段中间随机一块 → 贴着柱子的一块 →
-   * 每根柱子必断两块），根子上都错在同一个前提：以为桥上有 13 处缺口。
-   * 实际全桥只有一处真凹口（见文件头 WALL_GAP_CHANCE 那段被删掉的常量的头注）。
+   * ==================== 2026-09-05 第五轮：每跨一体，不再分块 ====================
+   * 上一版把每段切成 n 块 BoxGeometry、按 3 档深浅色错缝排列，堆的是"一块块石头
+   * 垒起来"的纹理感。用户看完 Thronefall 参考后否掉了这条路："目前的墙太复杂了
+   * 不适配简洁风格""每个墙的除了用柱子分割之外，每一块都是一体的"。
+   * 现在墙身是整根，柱子是唯一的分割点。
    *
-   * 现在的规则只有一句：**逐块查这块墙脚下有没有桥，没有就不摆这块**。
-   *   · 采样点不取墙块中心，而是从中心沿 `inward` 往桥内侧探 `groundProbe`——
-   *     可走区域正好收到墙线上，中心点落在边界格上，取整方向一变结果就抖。
-   *   · 判不到 isWalkable（渲染器没注入）时一律按"有桥"处理，退化成一条完整
-   *     的墙，不会因为缺少地形信息就把墙拆得七零八落。
-   * 于是断口出现在且只出现在真凹口上方，其余地方墙连续、与柱子严丝合缝，
-   * 满足用户这一轮的两条要求（"缺口那里断掉" + "柱子和墙是一体的"）。
-   * 断口两端仅存的那块完好砖照旧补崩裂痕迹（_buildWeatherChips），断口本身
-   * 摆瓦砾（_buildRubbleAt，其内部也各自查过 isWalkable，不会掉到桥面上）。
+   * ==================== 断口 vs 侵蚀：两回事，不要混 ====================
+   * ① **断口**（整跨没有墙）：只发生在墙脚下真的没有桥的地方——全桥仅桥中段
+   *    sign-1 侧那一处真凹口。判据见下面的 onBridge，与上一版完全一致，没有改。
+   *    一段墙因此可能被凹口切成若干"跑段"(run)，每个 run 各自是一根连续墙体。
+   * ② **侵蚀缺口**（顶边啃掉一块）：墙身依旧连续，只是顶上的压顶石缺了几块、
+   *    高低不齐。用户在选项里明确选的是这一种，不是"整跨塌掉"。
+   * 两者叠在一起就是"完好的地方墙是连续的、顶边被风啃过；真凹口那一处整段没有"。
    */
-  _buildWallSegments(group, side, stoneShadeMats, stoneDarkMat, rubbleGeo) {
-    const capMat = stoneShadeMats[stoneShadeMats.length - 1];
+  _buildWallSegments(group, side, wallBodyMat, wallCapMat, stoneDarkMat, rubbleGeo) {
     const inward = side.inward || { x: 0, y: 0 };
     const probe = side.groundProbe || 0;
-    // 这块墙脚下有没有桥（没注入 isWalkable 时按"有"算，见方法头注）。
+    // 这一点的墙脚下有没有桥（没注入 isWalkable 时按"有"算，退化成一条完整的墙）。
     const onBridge = (cx, cy) => !this._isWalkable
       || this._isWalkable(cx + inward.x * probe, cy + inward.y * probe);
 
     for (const seg of side.segments) {
-      const n = Math.max(2, Math.round(seg.len / WALL_BLOCK_LEN));
-      const blockLen = seg.len / n;
       const ux = Math.cos(seg.angle), uy = Math.sin(seg.angle);
       const nx = -Math.sin(seg.angle), ny = Math.cos(seg.angle);
-      // 先把整段的"脚下有没有桥"一次算完：后面补崩裂痕迹要知道自己是不是紧挨着断口。
-      const solid = [];
-      for (let i = 0; i < n; i++) {
-        solid.push(onBridge(seg.from.x + ux * blockLen * (i + 0.5),
-                            seg.from.y + uy * blockLen * (i + 0.5)));
-      }
+      const rotY = worldAngleToRotY(seg.angle);
+      const at = (t) => ({ x: seg.from.x + ux * t, y: seg.from.y + uy * t });
 
-      for (let i = 0; i < n; i++) {
-        const cx = seg.from.x + ux * blockLen * (i + 0.5);
-        const cy = seg.from.y + uy * blockLen * (i + 0.5);
-
-        if (!solid[i]) {                       // 脚下没桥：这块墙塌了，只留瓦砾
-          this._buildRubbleAt(group, cx, cy, stoneDarkMat, rubbleGeo);
-          continue;
+      // 沿这一段扫出若干"脚下有桥"的连续区间（多数情况就是整段一个 run）。
+      const runs = [];
+      let open = null, lastRubbleT = -Infinity;
+      for (let t = 0; t <= seg.len + 1e-6; t += WALL_RUN_STEP) {
+        const p = at(Math.min(t, seg.len));
+        if (onBridge(p.x, p.y)) {
+          if (!open) open = { from: t, to: t }; else open.to = t;
+        } else {
+          if (open) { runs.push(open); open = null; }
+          // 塌掉的那一段留瓦砾——按 WALL_RUBBLE_PITCH 稀疏地摆，不是每个采样点都摆。
+          if (t - lastRubbleT >= WALL_RUBBLE_PITCH) {
+            this._buildRubbleAt(group, p.x, p.y, stoneDarkMat, rubbleGeo);
+            lastRubbleT = t;
+          }
         }
+      }
+      if (open) runs.push(open);
 
-        const shade = stoneShadeMats[Math.floor(hash(cx, cy) * stoneShadeMats.length) % stoneShadeMats.length];
-        const bodyGeo = new THREE.BoxGeometry(blockLen * 0.94, WALL_H, WALL_THICK);
-        const body = new THREE.Mesh(bodyGeo, shade);
-        body.position.copy(toScene(cx, cy, -2 + WALL_H / 2));
-        body.rotation.y = worldAngleToRotY(seg.angle);
+      for (const run of runs) {
+        // 端点吸到段首/段尾，保证墙与柱子严丝合缝（用户："柱子和墙是一体的"）。
+        const a = run.from <= WALL_RUN_STEP ? 0 : run.from;
+        const b = run.to >= seg.len - WALL_RUN_STEP ? seg.len : run.to;
+        const len = b - a;
+        if (len < WALL_CAP_PITCH * 0.5) continue;           // 太短的碎渣不摆，交给瓦砾表现
+        const mid = at((a + b) / 2);
+
+        // ① 墙身：整根一条，不分块。
+        const body = new THREE.Mesh(new THREE.BoxGeometry(len, WALL_H, WALL_THICK), wallBodyMat);
+        body.position.copy(toScene(mid.x, mid.y, -2 + WALL_H / 2));
+        body.rotation.y = rotY;
         group.add(body);
 
-        // 压顶石：奇偶块左右交替错缝，比主体窄一圈，制造"一层层垒起来"的观感。
-        const capOffset = (i % 2 === 0 ? 1 : -1) * WALL_CAP_INSET * 0.3;
-        const capGeo = new THREE.BoxGeometry(
-          Math.max(2, blockLen * 0.94 - WALL_CAP_INSET), WALL_CAP_H, Math.max(2, WALL_THICK - WALL_CAP_INSET));
-        const cap = new THREE.Mesh(capGeo, capMat);
-        cap.position.copy(toScene(cx + nx * capOffset, cy + ny * capOffset, -2 + WALL_H + WALL_CAP_H / 2));
-        cap.rotation.y = worldAngleToRotY(seg.angle);
-        group.add(cap);
+        // ② 压顶石：按 WALL_CAP_PITCH 的节奏排一层，按坐标哈希缺掉一部分（侵蚀），
+        //    留下的也各自有一点高低差——顶边于是是啃过的，而不是一条直线。
+        const capN = Math.max(1, Math.round(len / WALL_CAP_PITCH));
+        const capLen = len / capN;
+        for (let i = 0; i < capN; i++) {
+          const c = at(a + capLen * (i + 0.5));
+          if (hash(c.x, c.y) < WALL_EROSION_CHANCE) continue;              // 这一块被风化掉了
+          const h = WALL_CAP_H * (0.7 + hash(c.x + i, c.y - i) * 0.6);     // 高低不齐
+          const cap = new THREE.Mesh(new THREE.BoxGeometry(
+            capLen * 0.92, h, WALL_THICK + WALL_CAP_OVERHANG * 2), wallCapMat);
+          cap.position.copy(toScene(c.x, c.y, -2 + WALL_H + h / 2));
+          cap.rotation.y = rotY;
+          group.add(cap);
+        }
 
-        // 用户反馈："断掉的这两边的墙体会有损毁痕迹"——紧贴断口的那块完好砖，
-        // 朝断口那一侧的边缘嵌几块崩块，跟断口处地上的瓦砾堆（_buildRubbleAt）
-        // 区分开：那是"塌掉的石头"，这是"没塌但被震裂"的痕迹。
-        const gapBefore = i > 0 && !solid[i - 1];
-        const gapAfter = i < n - 1 && !solid[i + 1];
-        if (gapBefore || gapAfter) {
-          const edgeSign = gapBefore ? -1 : 1;
-          const ex = cx + ux * edgeSign * (blockLen * 0.94 / 2 - 1.5);
-          const ey = cy + uy * edgeSign * (blockLen * 0.94 / 2 - 1.5);
-          this._buildWeatherChips(group, ex, ey, stoneDarkMat, rubbleGeo);
+        // ③ 断口两端仅存的墙体补一点崩裂痕迹（用户早前明确要过："断掉的这两边
+        //    的墙体会有损毁痕迹"）。只在真断口那一侧补，段首/段尾贴着柱子的不补。
+        for (const [edgeT, isBreak] of [[a, run.from > WALL_RUN_STEP], [b, run.to < seg.len - WALL_RUN_STEP]]) {
+          if (!isBreak) continue;
+          const e = at(edgeT);
+          this._buildWeatherChips(group, e.x, e.y, stoneDarkMat, rubbleGeo);
         }
       }
     }

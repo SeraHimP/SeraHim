@@ -158,8 +158,17 @@ const halfWidth = (bits, d, sign) => {
       // 两侧到桥中线的垂直距离应相等（偏移量的绝对值相同），但坐标不同（不是同一侧抄了两遍）
       return (p.x !== q.x || p.y !== q.y);
     }));
-  T('桥⑥-柱子的 d 值与 obstacles 数组用的弧长完全一致（同一份数据，不是重新定义了一套间距）',
-    FROST_BRIDGE.left.pillars.map(p => p.d).join(',') === [280, 440, 600, 760, 920, 1080, 1240, 1400, 1560, 1720, 1880, 2040, 2180].join(','));
+  // v0.9：两端各换成一根立在桥/基地交界处的"端柱"（用户："墙略微短一些，不要
+  // 超过桥面部分"）——原始弧长 280 / 2180 落在基地圈半径 330 以内，墙会压到
+  // 圆形基地平台上。中间那 11 个仍然逐位取自 obstacles 那同一组弧长，没有另起一套。
+  T('桥⑥-中段柱子的 d 值仍逐位取自 obstacles 用的那组弧长（没有重新定义一套间距）',
+    FROST_BRIDGE.left.pillars.slice(1, -1).map(p => p.d).join(',')
+      === [440, 600, 760, 920, 1080, 1240, 1400, 1560, 1720, 1880, 2040].join(','));
+  T('桥⑥b-两端是额外补的端柱，落在原始弧长 280/2180 之外（即不在基地圈里）',
+    (() => {
+      const ds = FROST_BRIDGE.left.pillars.map(p => p.d);
+      return ds[0] > 280 && ds[ds.length - 1] < 2180;
+    })());
 }
 
 // ==================== 四、调色板架构：default 逐位不变 + frost 新增 ====================
@@ -240,21 +249,20 @@ const halfWidth = (bits, d, sign) => {
     /!this\._isWalkable\s*\r?\n?\s*\|\|/.test(decor));
   T('墙①d-断口只有一处，且落在 sign=-1 侧那个真凹口上（复刻渲染层判据实算）',
     (() => {
-      const BLOCK_LEN = 20;                        // = HowlingAbyssDecor 的 WALL_BLOCK_LEN
+      const RUN_STEP = 6;                          // = HowlingAbyssDecor 的 WALL_RUN_STEP
       const found = [];
       for (const side of [FROST_BRIDGE.left, FROST_BRIDGE.right]) {
         const runs = [];
         for (const seg of side.segments) {
-          const n = Math.max(2, Math.round(seg.len / BLOCK_LEN));
-          const bl = seg.len / n;
           const ux = Math.cos(seg.angle), uy = Math.sin(seg.angle);
-          for (let i = 0; i < n; i++) {
-            const cx = seg.from.x + ux * bl * (i + 0.5), cy = seg.from.y + uy * bl * (i + 0.5);
+          for (let t = 0; t <= seg.len + 1e-6; t += RUN_STEP) {
+            const tt = Math.min(t, seg.len);
+            const cx = seg.from.x + ux * tt, cy = seg.from.y + uy * tt;
             const px = cx + side.inward.x * side.groundProbe, py = cy + side.inward.y * side.groundProbe;
             if (navWalk(NAV_PUB, px, py)) continue;
             const d = (cx - BLUE.x) * AX.x + (cy - BLUE.y) * AX.y;
             const last = runs[runs.length - 1];
-            if (last && d - last.to <= bl * 1.6) last.to = d; else runs.push({ from: d, to: d });
+            if (last && d - last.to <= RUN_STEP * 2) last.to = d; else runs.push({ from: d, to: d });
           }
         }
         found.push(runs);
@@ -265,6 +273,52 @@ const halfWidth = (bits, d, sign) => {
       const g = runsR[0];
       return g.from >= 1200 && g.to <= 1450 && (g.to - g.from) >= 80;
     })());
+
+  // ==================== v0.9：按 Thronefall 参考重做——矮、一体、顶边侵蚀 ====================
+  // 用户发来 16 张参考图并确认了三条：墙身每跨一体（柱子是唯一分割）、高度降到
+  // 50%、侵蚀只啃顶边不整跨塌。下面钉的是这三条的形状，不是具体数值。
+  T('墙③-分块砌墙整套已删除（不再有 WALL_BLOCK_LEN / WALL_STONE_SHADES 这两个常量）',
+    !/const WALL_BLOCK_LEN\s*=/.test(decor) && !/const WALL_STONE_SHADES\s*=/.test(decor));
+  T('墙④-每个连续跑段只建一根墙身（长度＝整段长，不是按块长切出来的）',
+    /new THREE\.BoxGeometry\(len, WALL_H, WALL_THICK\)/.test(decor));
+  T('墙⑤-墙高降到原来的一半（26→13），压顶石跟着压扁',
+    /const WALL_H = 13;/.test(decor) && /const WALL_CAP_H = 3;/.test(decor));
+  T('墙⑥-侵蚀只作用在压顶石上（跳过的是 cap，不是墙身）——顶边啃缺口，墙身仍连续',
+    (() => {
+      const i = decor.indexOf('WALL_EROSION_CHANCE) continue;');
+      if (i < 0) return false;
+      const around = decor.slice(Math.max(0, i - 700), i);
+      return /const capN = /.test(around) && /const capLen = /.test(around);
+    })());
+  T('墙⑦-墙只用两个色（墙身一色 + 压顶一色），不再按哈希随机取深浅档',
+    /const wallBodyMat = /.test(decor) && /const wallCapMat = /.test(decor)
+    && !/stoneShadeMats/.test(decor));
+
+  // 端柱：用户"墙略微短一些，不要超过桥面部分"——柱子不能落进基地圈。
+  T('端①-两侧所有柱子都在桥身段内，没有一根落进基地圈（墙因此不会压在基地平台上）',
+    (() => {
+      const LEN = Math.hypot(2325 - 2 * BLUE.x, 2325 - 2 * BLUE.y);
+      const R0 = howling_abyss_frost.baseCircleRadius;
+      for (const side of [FROST_BRIDGE.left, FROST_BRIDGE.right]) {
+        for (const p of side.pillars) {
+          const d = (p.x - BLUE.x) * AX.x + (p.y - BLUE.y) * AX.y;
+          if (d <= R0 || d >= LEN - R0) return false;
+        }
+      }
+      return true;
+    })());
+  T('端②-墙确实覆盖到桥的两端（首尾柱子离基地圈边缘不超过 30，不是缩在中间一小截）',
+    (() => {
+      const LEN = Math.hypot(2325 - 2 * BLUE.x, 2325 - 2 * BLUE.y);
+      const R0 = howling_abyss_frost.baseCircleRadius;
+      for (const side of [FROST_BRIDGE.left, FROST_BRIDGE.right]) {
+        const ds = side.pillars.map((p) => (p.x - BLUE.x) * AX.x + (p.y - BLUE.y) * AX.y);
+        if (Math.min(...ds) - R0 > 30) return false;
+        if ((LEN - R0) - Math.max(...ds) > 30) return false;
+      }
+      return true;
+    })());
+
   // ==================== v0.7：画多宽 / 能走多远，拆成两份数据 ====================
   // 收边之后地面底图跟着一起缩了，墙看上去依旧贴在桥最外沿——用户"墙贴着桥的边缘
   // 不好看"这条其实没被解决。于是新增可选字段 map.visualNavgrid：地面按它画，
