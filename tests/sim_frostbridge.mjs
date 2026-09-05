@@ -167,7 +167,9 @@ const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
     }));
   T('墙①-缺损判定按"贴着柱子的那一端"独立掷概率（gapAtStart/gapAtEnd 各自算 hash），不是段中间随机挑一块',
     /const gapAtStart = hash\(seg\.from\.x, seg\.from\.y\)/.test(decor)
-    && /const gapAtEnd = n >= 3 && hash\(seg\.to\.x, seg\.to\.y\)/.test(decor));
+    && /const gapAtEnd = n >= WALL_GAP_BLOCKS \* 2 && hash\(seg\.to\.x, seg\.to\.y\)/.test(decor));
+  T('墙①b-缺口现在是必断（WALL_GAP_CHANCE=1），不再是 0.55 的概率抽样',
+    /const WALL_GAP_CHANCE = 1;/.test(decor));
   T('墙②-缺口相邻的完好块会补损毁痕迹（_buildWeatherChips），不是只有缺口本身有瓦砾',
     /_buildWeatherChips/.test(decor));
   T('冰①-clearOfBridge 用整圆网格采样（不再是几个固定方向的采样点），能覆盖任意弯曲边界',

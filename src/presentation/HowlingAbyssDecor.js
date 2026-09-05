@@ -53,10 +53,23 @@ const TORCH_FLAME_H = 10;
 const WALL_H = 26, WALL_THICK = 13;          // 用户："厚度减少一些"——22→13
 const WALL_CAP_H = 7, WALL_CAP_INSET = 2.5;  // 压顶石：更矮更窄，收边观感
 const WALL_BLOCK_LEN = 20;                   // 每块石头的目标长度（实际按段长整除微调）
-// 每个"缺口"（=柱子位置，见 _buildWallSegments 头注）旁边的墙块损毁的概率——
-// 用户要求缺损必须对应桥本来就有的缺口位置，这条概率只决定"这处缺口是否
-// 表现出损毁"，不再是随机挑段中间某块（那是上一版的错误做法）。
-const WALL_GAP_CHANCE = 0.55;
+// ==================== 2026-09-05 用户反馈第三轮：缺口必须每处都断，而且要断得明显 ====================
+// 上一版这里是 0.55——"每个缺口位置各自独立掷概率，是否表现出损毁"，也就是
+// 13×2=26 个缺口里大约只有一半会真的显示断墙，另一半照样是完整的墙。用户
+// 拿一张截图，在其中一处缺口上画了红叉+加粗红线，原话："我让你把桥墙断掉，
+// 你听不懂人话？？X是断的地方，红色加粗是没有桥的地方"——这句话里没有"随机
+// 一部分"的余地，字面意思就是"这些缺口位置本来就该没有桥/墙"，是桥本身固定
+// 的地理特征（跟 HA_TERRAIN.obstacles 13 个固定弧长位置的设计意图一致，见
+// howling_abyss_frost.js 头注），不是一次随机装饰。改成 1（=100%，每个缺口
+// 必断），不再有"运气不好摊到完整墙"这种情况——用户圈的具体是哪一处根本不
+// 重要，改成必断之后所有缺口位置都会一致地断开。
+// 另外"红色加粗"（粗线，不是一个点）也提示：原来每处缺口只拆一块墙体
+// （约 19 个世界单位宽），在缩小的战场视角下太窄，读不出"这里没有桥"的观感，
+// 容易被当成普通的墙面纹理瑕疵。改成拆两块（见下面 WALL_GAP_BLOCKS），断口
+// 宽度翻倍，视觉上才撑得起"加粗"这个词描述的效果。
+const WALL_GAP_CHANCE = 1;
+// 每处缺口拆除的墙块数（从柱子往段内数）——见上面 2026-09-05 头注。
+const WALL_GAP_BLOCKS = 2;
 const WALL_STONE_SHADES = 3;                 // 石块用几种深浅色，垒砌感靠这个，不是纹理贴图
 
 export class HowlingAbyssDecor {
@@ -206,14 +219,19 @@ export class HowlingAbyssDecor {
       const ux = Math.cos(seg.angle), uy = Math.sin(seg.angle);
       const nx = -Math.sin(seg.angle), ny = Math.cos(seg.angle);
       // 两端各自对应一个缺口（柱子位置）：按该端柱子坐标独立掷概率，不是整段共用一个判定。
+      // WALL_GAP_CHANCE 现在恒为 1（见常量头注），两端只要几何上留得下就必断；
+      // gapAtEnd 仍然要求段够长（>=2*WALL_GAP_BLOCKS 块），避免跟起始端的缺口
+      // 重叠成"整段墙一块不剩"。
       const gapAtStart = hash(seg.from.x, seg.from.y) < WALL_GAP_CHANCE;
-      const gapAtEnd = n >= 3 && hash(seg.to.x, seg.to.y) < WALL_GAP_CHANCE;
+      const gapAtEnd = n >= WALL_GAP_BLOCKS * 2 && hash(seg.to.x, seg.to.y) < WALL_GAP_CHANCE;
+      const startGapN = gapAtStart ? WALL_GAP_BLOCKS : 0;
+      const endGapN = gapAtEnd ? WALL_GAP_BLOCKS : 0;
 
       for (let i = 0; i < n; i++) {
         const cx = seg.from.x + ux * blockLen * (i + 0.5);
         const cy = seg.from.y + uy * blockLen * (i + 0.5);
 
-        if ((i === 0 && gapAtStart) || (i === n - 1 && gapAtEnd)) {
+        if (i < startGapN || i >= n - endGapN) {
           this._buildRubbleAt(group, cx, cy, stoneDarkMat, rubbleGeo);
           continue;
         }
@@ -237,8 +255,8 @@ export class HowlingAbyssDecor {
         // 用户反馈："断掉的这两边的墙体会有损毁痕迹"——紧贴缺口的那块完好砖，
         // 朝缺口那一侧的边缘嵌几块崩块，跟缺口处地上的瓦砾堆（_buildRubbleAt）
         // 区分开：那是"塌掉的石头"，这是"没塌但被震裂"的痕迹。
-        const nearStartGap = i === 1 && gapAtStart;
-        const nearEndGap = i === n - 2 && gapAtEnd;
+        const nearStartGap = i === startGapN;
+        const nearEndGap = i === n - 1 - endGapN;
         if (nearStartGap || nearEndGap) {
           const edgeSign = nearStartGap ? -1 : 1;
           const ex = cx + ux * edgeSign * (blockLen * 0.94 / 2 - 1.5);
@@ -250,15 +268,25 @@ export class HowlingAbyssDecor {
   }
 
   /** 完好墙块紧贴缺口一侧的崩裂痕迹（不是缺口本身的瓦砾堆）。 */
+  /**
+   * ==================== 2026-09-05 用户反馈：路上还有穿模的东西 ====================
+   * 真根因跟冰块那次不一样：这次不是冰块本身的摆放算法有洞，是瓦砾/崩块压根
+   * 没查过 isWalkable——v0.6 把柱子/墙移到了真实边界上（"墙即边界"），意味着
+   * 柱子周围随手一撒的瓦砾，有近一半的随机方向会撒到边界的可走一侧。以前
+   * 柱子离边界还有 40~70 个单位的余量，撒偏了也摔不到路上；现在贴着边界，
+   * 每一块瓦砾摆放前都必须单独查一次 isWalkable，查到就跳过这一块（宁可
+   * 这簇瓦砾少一块，也不能有任何一块落在能走的地方——这跟冰块那边"绝不允许
+   * 伸进桥面"是同一条底线，不是新规矩）。
+   */
   _buildWeatherChips(group, x, y, stoneDarkMat, geo) {
     const n = 2 + Math.floor(hash(x, y) * 2);   // 2~3 块崩块，比缺口的瓦砾堆少
     for (let i = 0; i < n; i++) {
+      const cx = x + (hash(x + i * 3, y) - 0.5) * 3;
+      const cy = y + (hash(x, y + i * 3) - 0.5) * 3;
+      if (this._isWalkable && this._isWalkable(cx, cy)) continue;   // 落在可走区域就跳过，不摆
       const s = 1.2 + hash(x + i, y - i) * 1.6;
       const chip = new THREE.Mesh(geo, stoneDarkMat);
-      chip.position.copy(toScene(
-        x + (hash(x + i * 3, y) - 0.5) * 3,
-        y + (hash(x, y + i * 3) - 0.5) * 3,
-        -2 + WALL_H * (0.25 + hash(x + i, y + i) * 0.55)));
+      chip.position.copy(toScene(cx, cy, -2 + WALL_H * (0.25 + hash(x + i, y + i) * 0.55)));
       chip.scale.set(s, s, s);
       chip.rotation.y = hash(x + i * 5, y + i * 5) * Math.PI * 2;
       group.add(chip);
@@ -272,6 +300,7 @@ export class HowlingAbyssDecor {
       const a = hash(x + i * 7, y - i * 3) * Math.PI * 2;
       const dist = 3 + hash(x - i * 5, y + i * 11) * 9;
       const sx = x + Math.cos(a) * dist, sy = y + Math.sin(a) * dist;
+      if (this._isWalkable && this._isWalkable(sx, sy)) continue;   // 落在可走区域就跳过，见头注
       const s = 2 + hash(x + i, y + i) * 3.2;
       const rock = new THREE.Mesh(geo, stoneDarkMat);
       rock.position.copy(toScene(sx, sy, -1 + s * 0.4));
@@ -398,12 +427,20 @@ export class HowlingAbyssDecor {
     this._buildSpiritIslands(group);
   }
 
-  /** 孤灵小岛：只放 2 座（用户拍板"1~2个"），幽灵/亡灵主题——墓碑+幽蓝鬼火+灵魂光点。 */
+  /**
+   * 孤灵小岛：只放 2 座（用户拍板"1~2个"），幽灵/亡灵主题——墓碑+幽蓝鬼火+灵魂光点。
+   *
+   * ==================== 2026-09-05 用户反馈：路上还有穿模的东西 ====================
+   * 原来的两个坐标 (700,1650)/(1650,700) 是"手动挑的、估计离桥有余量"——实际算下来
+   * 离桥中线只有约 18 个世界单位，压根就在桥面正中间，从一开始就是错的（v0.6
+   * 拓宽桥面之前凑巧没被拆穿，因为窄桥+这两点又跟某个格子的采样点没对上）。
+   * 这次不再手动猜坐标，直接在新 navgrid 上量出两块半径 75（岛屿本体 64 + 安全
+   * 余量）范围内全部不可走的开阔水域，两侧各挑一块。
+   */
   _buildSpiritIslands(group) {
-    // 手动挑的两个位置：离桥有余量、落在开阔水域，世界 2325×2325，桥沿对角线附近。
     const spots = [
-      { x: 700, y: 1650 },
-      { x: 1650, y: 700 },
+      { x: 550, y: 1250 },
+      { x: 1775, y: 1075 },
     ];
     const islandMat = new THREE.MeshLambertMaterial({ color: '#4c6270', flatShading: true });
     const snowMat = new THREE.MeshLambertMaterial({ color: '#e7eff4', flatShading: true });
