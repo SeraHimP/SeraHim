@@ -75,6 +75,24 @@ const DEG = Math.PI / 180;
 // 取一个远大于世界尺寸（3552）的值，保证任何仰角下地面都落在 near/far 之间。
 const CAM_DIST = 20000;
 
+
+/**
+ * CONFIG.toneMapping.mode（字符串）→ three 的色调映射枚举。
+ * 认不出来的值退回 Neutral 而不是抛错——配置写错了不该让整个渲染器起不来。
+ * 见 Config.js 里 toneMapping 那段头注：为什么从 ACES 换成 Neutral。
+ */
+function toneMappingModeOf(mode) {
+  switch (String(mode || '').toLowerCase()) {
+    case 'none':     return THREE.NoToneMapping;
+    case 'aces':     return THREE.ACESFilmicToneMapping;
+    case 'reinhard': return THREE.ReinhardToneMapping;
+    case 'cineon':   return THREE.CineonToneMapping;
+    case 'agx':      return THREE.AgXToneMapping;
+    case 'neutral':
+    default:         return THREE.NeutralToneMapping;
+  }
+}
+
 export class ThreeRenderer {
   /**
    * 两层探测的静态工厂——探测不过一律返回 null，调用方用 renderer3d?.render() 兜底。
@@ -110,15 +128,17 @@ export class ThreeRenderer {
     this.qualityPreset = null;
     this.qualityAuto = false;
     this.gl.setPixelRatio(this._devicePixelRatio);
-    // P1 画质选项。电影级色调（ACES）默认【开启】（用户定稿）；可在设置里关。
-    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1.0;
+    // P1 画质选项。色调映射默认【开启】（用户定稿），曲线由 CONFIG.toneMapping.mode
+    // 决定——2026-09-05 从 ACES 换成 Khronos PBR Neutral，理由见 Config.js 那段头注
+    // （ACES 把饱和冷色压成灰绿，与这套平涂高饱和的美术方向相冲）。
+    this.gl.toneMapping = toneMappingModeOf(CONFIG.toneMapping?.mode);
+    this.gl.toneMappingExposure = CONFIG.toneMapping?.exposure ?? 1.0;
     this.composer = null; this.bloomPass = null; this.fxaaPass = null;
     this.normalDepthPrepass = null; this.ssaoPass = null; this.outlinePass = null;
     this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA/描边/SSAO 一并失效）
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
-    this.toneMapOn = true;   // 电影级色调（ACES）
+    this.toneMapOn = true;   // 色调映射（曲线见 CONFIG.toneMapping.mode）
     // v51.28：用户报了轮廓描边的画面 bug，先禁用，bug 以后再查再修——不要因为这里
     // 顺手把默认值改回 true。OutlinePass 本身（createOutlinePass）没删，setOutline(true)
     // 仍然能手动开，只是不再默认开。
@@ -642,7 +662,7 @@ export class ThreeRenderer {
     // 曝光只在**真 HDR**（rec2100-*）下顶高光。退到 display-p3 时顶上去只会过曝 ——
     // 那一档没有 SDR 白点之上的余量可用。
     const trueHDR = this.hdrOn && /^rec2100/.test(this.hdrMode || '');
-    this.gl.toneMappingExposure = trueHDR ? (c.headroom ?? 2.0) : 1.0;
+    this.gl.toneMappingExposure = trueHDR ? (c.headroom ?? 2.0) : (CONFIG.toneMapping?.exposure ?? 1.0);
     if (this.outputPass) { this.outputPass.material.needsUpdate = true; }
     return this.hdrOn;
   }
@@ -742,7 +762,7 @@ export class ThreeRenderer {
   }
   setToneMapping(on) {
     this.toneMapOn = !!on;
-    this.gl.toneMapping = this.toneMapOn ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    this.gl.toneMapping = this.toneMapOn ? toneMappingModeOf(CONFIG.toneMapping?.mode) : THREE.NoToneMapping;
     // OutputPass 的着色器按 toneMapping 编译，改后必须让它重编（否则切换不生效）。
     if (this.outputPass) this.outputPass.material.needsUpdate = true;
     return this.toneMapOn;

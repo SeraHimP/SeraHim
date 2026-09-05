@@ -227,6 +227,8 @@ const halfWidth = (bits, d, sign) => {
 {
   const decor = srcOf('src/presentation/HowlingAbyssDecor.js');
   const terrain = srcOf('src/presentation/TerrainLayer.js');
+  const renderer = srcOf('src/presentation/ThreeRenderer.js');
+  const FROST_PAL = CONFIG.stylizedPalettes.frost;
 
   T('炬①-howling_abyss_frost_v1 声明了 map.torches，且数量等于 26 根柱子（两侧各 13）',
     Array.isArray(howling_abyss_frost.torches) && howling_abyss_frost.torches.length === 26);
@@ -282,7 +284,14 @@ const halfWidth = (bits, d, sign) => {
   T('墙④-每个连续跑段只建一根墙身（长度＝整段长，不是按块长切出来的）',
     /new THREE\.BoxGeometry\(len, WALL_H, WALL_THICK\)/.test(decor));
   T('墙⑤-墙高降到原来的一半（26→13），压顶石跟着压扁',
-    /const WALL_H = 13;/.test(decor) && /const WALL_CAP_H = 3;/.test(decor));
+    /const WALL_H = 13;/.test(decor) && /const CAP_H = 3,/.test(decor));
+  T('墙⑧-柱与墙是同一套构造：同一对材质 + 同规格压顶石（CAP_H/CAP_OVERHANG 共用），柱更高更厚',
+    /_buildPillarsAndTorches\(group, side\.pillars, wallBodyMat, wallCapMat\)/.test(decor)
+    && /const POST_H = 22, POST_W = 11;/.test(decor)
+    && /new THREE\.BoxGeometry\(POST_W, POST_H, POST_W\)/.test(decor)
+    && /POST_W \+ CAP_OVERHANG \* 2, CAP_H, POST_W \+ CAP_OVERHANG \* 2/.test(decor));
+  T('墙⑨-圆锥雪冠/棱柱柱身整套已删除（那是与矩形墙板冲突的另一套形状语言）',
+    !/PILLAR_H|PILLAR_R_TOP|PILLAR_R_BOT/.test(decor) && !/ConeGeometry\(PILLAR/.test(decor));
   T('墙⑥-侵蚀只作用在压顶石上（跳过的是 cap，不是墙身）——顶边啃缺口，墙身仍连续',
     (() => {
       const i = decor.indexOf('WALL_EROSION_CHANCE) continue;');
@@ -338,14 +347,49 @@ const halfWidth = (bits, d, sign) => {
   T('沿⑤-TerrainLayer 只在地图声明了 visualNavgrid 时才改用它画地面，否则照抄可走网格',
     /const paint = visualWalkOf\(map, grid\) \|\| walk;/.test(terrain)
     && /if \(!vg \|\| !vg\.bits \|\| !vg\.n \|\| !grid\) return null;/.test(terrain));
+  // ==================== v1.0 阶段二：配色 / 色调映射 / 水域环境 ====================
+  // 用户确认的三件事：往 Thronefall 雪地那张靠、顺手修"冷色被压成灰绿"的老问题、
+  // 空白水域补山体装饰。下面钉的是"这几件事确实落地了且都是软编码"，不钉具体色值。
+  T('色①-色调映射做成了软编码，且默认已从 ACES 换走（ACES 会把饱和冷色压成灰绿）',
+    typeof CONFIG.toneMapping?.mode === 'string' && CONFIG.toneMapping.mode !== 'aces');
+  T('色②-渲染器按 CONFIG 取曲线，不再把 ACESFilmicToneMapping 写死在代码里',
+    /toneMappingModeOf\(CONFIG\.toneMapping\?\.mode\)/.test(renderer)
+    && !/toneMapping = THREE\.ACESFilmicToneMapping/.test(renderer));
+  T('色③-frost 调色板补齐了冰/水/墙/岛/冰刺的颜色（原来散在装饰层里硬编码）',
+    ['iceColorA', 'iceColorB', 'waterColor', 'wallCapColor', 'islandColor', 'spikeColor']
+      .every((k) => typeof FROST_PAL[k] === 'string' && /^#[0-9a-f]{6}$/i.test(FROST_PAL[k])));
+  T('色④-装饰层这些颜色一律读调色板，源码里不再出现写死的十六进制冰/水色',
+    /SV\.iceColorA/.test(decor) && /SV\.waterColor/.test(decor) && /SV\.spikeColor/.test(decor));
+  T('色⑤-桥面比深渊底色明显更亮（参考图的结构：地面亮、环境暗，靠这个反差撑画面）',
+    (() => {
+      const lum = (hex) => { const v = parseInt(hex.slice(1), 16);
+        return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255); };
+      return lum(FROST_PAL.corridorColor) - lum(FROST_PAL.groundColor) > 100;
+    })());
+  T('色⑥-墙体明显暗于桥面（墙要能从地面上读出来——用户"我咋看不懂呢"的一半原因）',
+    (() => {
+      const lum = (hex) => { const v = parseInt(hex.slice(1), 16);
+        return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255); };
+      return lum(FROST_PAL.corridorColor) - lum(FROST_PAL.rockColor) > 60;
+    })());
+  T('环①-冰块用不规则棱柱（icePrismGeo 逐顶点抖半径），不再是清一色的规则六边形',
+    /function icePrismGeo\(sides, seed\)/.test(decor)
+    && /pos\.setX\(i, x \* k\); pos\.setZ\(i, z \* k\);/.test(decor));
+  T('环②-水域分三档：冰脊（成坨的山）+ 冰刺丛 + 平浮冰，尺度拉开',
+    /const RIDGE_STEP = /.test(decor) && /const SPIKE_PER_RIDGE = /.test(decor)
+    && /const RIDGE_R = /.test(decor));
+  T('环③-冰脊只长在离桥足够远的地方，且每一块仍旧逐个查 clearOfBridge（不许压到桥上）',
+    /distToBridge\(cx, cy\) < RIDGE_MIN_DIST/.test(decor)
+    && /if \(!clearOfBridge\(sx, sy, r\)\) continue;/.test(decor));
+
   T('墙②-断口相邻的完好块会补损毁痕迹（_buildWeatherChips），不是只有断口本身有瓦砾',
     /_buildWeatherChips/.test(decor));
   T('冰①-clearOfBridge 用整圆网格采样（不再是几个固定方向的采样点），能覆盖任意弯曲边界',
     /for \(let dx = -r; dx <= r \+ 1e-6; dx \+= step\)/.test(decor)
     && /dx \* dx \+ dy \* dy > r \* r/.test(decor));
-  T('火①-火盆摞在柱顶（雪冠上方），没有支架/横臂几何体、也不贴柱身侧面——用户先后否掉"挑出去"和"贴侧面"两版方案后定的',
+  T('火①-火盆摞在柱顶（压顶石上方），没有支架/横臂几何体、也不贴柱身侧面——用户先后否掉"挑出去"和"贴侧面"两版方案后定的',
     !/BoxGeometry\(BRAZIER_ARM_LEN/.test(decor) && !/pillarRAtBowl/.test(decor)
-    && /const bowlH = capH \+ 4 \+ BRAZIER_BOWL_H \/ 2/.test(decor));
+    && /const bowlH = capH \+ CAP_H \/ 2 \+ BRAZIER_BOWL_H \/ 2/.test(decor));
 }
 
 done();

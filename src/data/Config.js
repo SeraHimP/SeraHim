@@ -1178,6 +1178,26 @@ export const CONFIG = {
   // 逐字段相同——demo_stylized_v1 不声明 `paletteId`，画面因此逐位不变（第 3 条
   // 铁律要求的"参数化默认值不变"）。渲染代码统一改用 `stylizedPaletteOf(map)`
   // （见下方函数）取值，不再直接读某个写死的字段名。
+  // ==================== 色调映射（tone mapping）====================
+  // 2026-09-05：用户确认修的一个老问题——"冰和水一直发灰发绿"。查下来不是颜色
+  // 数据错了（直接读 three 材质对象核对过，写的确实是蓝色），是渲染器一直用
+  // `ACESFilmicToneMapping`：那条曲线是给写实 HDR 影视流程设计的，会把饱和的
+  // 冷色往灰、往青绿方向压，同时压低整体饱和度。对这套"平涂 + 硬切面 + 高饱和"
+  // 的美术方向（见 docs/MAP-DESIGN-howling-abyss-frost.md 里从 Thronefall 参考
+  // 提取的设计语言）来说，这正好是要避开的东西。
+  //
+  // 改成 Khronos PBR Neutral（three r166+ 的 `NeutralToneMapping`）：它同样会把
+  // 高光平滑地滚降下来、不至于死白，但**不做 ACES 那种色相偏移与去饱和**，
+  // 作者写什么颜色画面上就基本是什么颜色。
+  //
+  // 做成软编码（第 2 条铁律）：改这一个字符串就能换曲线，不用动渲染代码。
+  // 设置面板里那个"电影级色调"开关仍然有效——开＝用这里配的曲线，关＝完全不做
+  // 色调映射（`none`）。
+  toneMapping: {
+    mode: 'neutral',       // 'neutral' | 'aces' | 'reinhard' | 'cineon' | 'agx' | 'none'
+    exposure: 1.0,         // SDR 下的曝光；真 HDR 时由 headroom 接管（见 ThreeRenderer）
+  },
+
   stylizedPalettes: {
     default: {
       // 地面/走廊纯色（TerrainLayer 在 visualStyle==='stylized' 时跳过材质贴图叠加，
@@ -1200,13 +1220,28 @@ export const CONFIG = {
     // 跳过它默认的树/岩/灌木散布——那套散布逻辑是为"野区=森林"设计的，冰封水域
     // 硬套上去会变成"水里长树"，不对。水域装饰改由该图专用的
     // `HowlingAbyssDecor.js` 负责（石柱/分段墙/豁口瓦砾/火炬/浮冰/孤灵小岛）。
+    // 2026-09-05 按 Thronefall 雪地那张实机截图重调（用户确认的方向）：
+    // 整张图压到 4 个色相——【近白的亮地面】【深藏蓝的暗环境】【一档中蓝的冰】
+    // 【一档冷石灰的建造物】，其余全靠明度分层，不再各处各调各的。
+    // 关键取舍两条：
+    //  ① 桥面不用纯白而用**带蓝的近白**：太阳光本身偏暖，纯白被暖光一乘就发米黄
+    //     （之前实机截图里桥面看着像沙子就是这个原因，不是调色板写错了）。
+    //     预先往蓝偏一点，被暖光乘回来正好落在冷白上。
+    //  ② 墙/柱子明显**比桥面暗**：参考图里雪地上的墙是深色的，靠明度差把结构从
+    //     地面上"读"出来。之前墙和桥面几乎同明度，是用户"我咋看不懂呢"的一半原因。
     frost: {
-      groundColor: '#33566e',     // 不可走区域（冰下水体）基底：深冷蓝
-      corridorColor: '#eef4f8',   // 桥面：近白的雪色
+      groundColor: '#16233d',     // 不可走区域（深渊/冰下水体）基底：深藏蓝，整张图的暗部锚点
+      corridorColor: '#dce9f2',   // 桥面：带蓝的近白（见上面取舍①）
       treeTrunkColor: '#6b7a85',  // 本图不生成树，保留字段仅为结构完整
       treeCrownColorA: '#8fa3b0',
       treeCrownColorB: '#a9bfc9',
-      rockColor: '#8fa3b0',       // 石柱/墙体材质取色的兜底值（HowlingAbyssDecor 也可直接引用）
+      rockColor: '#5c7387',       // 柱子/墙体块：冷石灰，明显暗于桥面（见上面取舍②）
+      wallCapColor: '#8ea6b8',    // 压顶石：比墙体亮一档，柱和墙共用
+      iceColorA: '#b6d3e6',       // 浮冰亮档：接近桥面的冷白蓝——参考图里冰原是【亮】的，深渊是暗的，靠这个反差撑结构
+      iceColorB: '#9dbdd6',       // 浮冰暗档：只比亮档暗一点点，相邻块的边界当裂纹用，不是用来做明暗层次的
+      waterColor: '#24558a',      // 裸露水面：比冰暗、比深渊基底亮，三者拉开层次
+      islandColor: '#c8dcea',     // 孤灵小岛台面：接近桥面但略冷一点
+      spikeColor: '#b9d5e6',      // 冰刺：整张图最亮的一档冷色，参考图里最抓眼的母题
       outlineOnByDefault: false,
       vegetationMode: 'none',
     },

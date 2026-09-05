@@ -31,7 +31,21 @@ const toScene = (x, y, h = 0) => new THREE.Vector3(x, h, y);
 // 使物体局部 +X 轴对齐到该方向在场景 XZ 平面上的投影。
 const worldAngleToRotY = (angle) => -angle;
 
-const PILLAR_H = 46, PILLAR_R_TOP = 9, PILLAR_R_BOT = 12;
+// ==================== 2026-09-05 用户反馈：推倒重做成【柱子】【墙】【柱子】 ====================
+// 上一版是"6 棱锥台柱身 + 圆锥雪冠"配"矩形墙板 + 压顶石"——两套完全不同的形状
+// 语言拼在一起，加上柱子 46 高、墙只有 13 高，比例也垮了。用户连续两条反馈：
+// "你这做的啥墙啊，我咋看不懂呢，而且对应的柱子也要变短啊"
+// "你能不能把墙完全推倒重做？？？做成【柱子】【墙】【柱子】这种。并且墙体别太宽，
+//  柱子和墙要风格统一"
+//
+// 现在柱和墙是**同一套构造**，只差尺寸：都是矩形体块 + 同一种压顶石（同高、同探出、
+// 同材质）。柱子比墙板【高一截、厚一圈】，柱-墙-柱的节奏因此一眼读得出来：
+//   柱：POST_W 见方、POST_H 高
+//   墙：WALL_THICK 厚、WALL_H 高（比柱矮、比柱薄）
+// 圆锥雪冠去掉了——它是整套里最不"矩形"的一块，留着就谈不上风格统一。火盆/火焰
+// 仍旧摞在柱顶正上方（用户返工三轮才定下的关系），只是锚点从雪冠改成柱子的压顶石。
+const POST_H = 22, POST_W = 11;   // 柱子：明显高过墙板、粗过墙板，但不再是原来 46 那种塔
+const CAP_H = 3, CAP_OVERHANG = 1.5;  // 压顶石——柱和墙共用同一套厚度与探出量
 // ==================== 2026-09-05 用户反馈重做：火炬（两轮） ====================
 // 第一轮是"柱子顶端插一根杆子+火苗"，用户原话："应该是火盆承载着火焰在石墙上"。
 // 改成"支架从墙面探出+火盆"后，支架起点算错（离柱心太近，糊在柱子雪冠上）+
@@ -55,12 +69,12 @@ const TORCH_FLAME_H = 10;
 // _buildWallSegments 头注），侵蚀感改由顶部压顶石的缺失与高低不齐来表达——
 // 墙身本身是完整的一条，顶边是啃过的（用户在选项里明确选了"只在顶边啃出缺口"，
 // 不是整跨塌掉；整跨塌掉只发生在桥面真凹口那一处，两者是两回事）。
-const WALL_H = 13;            // 用户："墙体的高度降低到 50%"——26→13
-const WALL_THICK = 8;         // 高度减半后 13×13 的方截面读起来是根粗梁，不是栅栏；收到 8 让它明显"扁而矮"
-const WALL_CAP_H = 3;         // 压顶石随墙身一起压扁（7 在 13 高的墙上占比过半，喧宾夺主）
-const WALL_CAP_OVERHANG = 1.5;// 压顶石比墙身两侧各宽出这么多（参考图里压顶是往外探的，不是内缩）
+const WALL_H = 13;            // 墙板高：用户"墙体的高度降低到 50%"——26→13
+const WALL_THICK = 6;         // 墙板厚：用户"墙体别太宽"——8→6，比柱子(11)明显薄一圈，柱墙节奏才读得出来
 const WALL_CAP_PITCH = 14;    // 压顶石的节奏间距——墙身连续，靠这一层的重复制造韵律
-const WALL_EROSION_CHANCE = 0.22; // 压顶石按坐标哈希缺失的比例＝顶边"被风化啃掉"的缺口
+const WALL_EROSION_CHANCE = 0.1;  // 压顶石按坐标哈希缺失的比例＝顶边"被风化啃掉"的缺口。
+                              // 0.22 时平均每四五块就缺一块、加上每块还各自缩了 8%，
+                              // 整道墙读成一排碎块而不是一道墙（用户："我咋看不懂呢"）
 const WALL_RUN_STEP = 6;      // 沿墙扫"脚下有没有桥"的采样步长（决定断口两端的精度）
 const WALL_RUBBLE_PITCH = 20; // 断口里每隔多远摆一堆瓦砾——扫描步长是 6，若逐个采样点都摆，
                               // 瓦砾密度会是上一版的三倍多，堆成一条碎石带，与简洁风格相悖
@@ -82,6 +96,50 @@ const WALL_RUBBLE_PITCH = 20; // 断口里每隔多远摆一堆瓦砾——扫�
 // 指向桥内侧的单位法向，`groundProbe` 是往内侧探多远采样——不能直接采墙身
 // 中线，因为可走区域正好收到墙线上（见 howling_abyss_frost.js 头注④），
 // 中线落在边界格上，结果会随取整方向抖动。
+
+/**
+ * 不规则冰棱柱几何体：在标准棱柱的基础上，按角度槽位给每个顶点一个一致的半径
+ * 抖动，做出参考图里那种歪歪扭扭的冰原轮廓。
+ *
+ * 为什么必须做这个：上一版所有冰块都是 `CylinderGeometry(1, .88, 1, 6)`，也就是
+ * 规则六边形——尺寸和概率怎么调都改变不了"一地大小雷同的硬币"这个观感
+ * （用户："这算啥环境层次啊，做的一点都不好看"）。参考图里的冰原是不规则多边形、
+ * 而且明显被拉长过，两块挨着能读成一整片，规则六边形永远做不到。
+ *
+ * 同一个角度槽位的上下环共用同一个抖动系数，侧面才不会扭成麻花。
+ * @param {number} sides 边数 @param {number} seed 决定这一块长什么样（同 seed 同形状）
+ */
+function icePrismGeo(sides, seed) {
+  const g = new THREE.CylinderGeometry(1, 0.88, 1, sides, 1);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < 1e-6) continue;
+    const slot = Math.round((Math.atan2(z, x) + Math.PI) / (Math.PI * 2) * sides);
+    const k = 0.5 + hash(seed * 131 + slot * 37, seed * 17 + slot * 91) * 0.85;  // 0.50~1.35
+    pos.setX(i, x * k); pos.setZ(i, z * k);
+  }
+  pos.needsUpdate = true;
+  g.computeVertexNormals();
+  return g;
+}
+
+// ==================== 2026-09-05 阶段二：水域按 Thronefall 参考重做 ====================
+// 参考图（雪地那几张）里，可玩区域之外不是一片均匀的碎块，而是**成组的冰脊**
+// （大块平顶多边形，亮顶面 + 暗侧面，几块叠在一起成为一坨）加上**冰刺丛**
+// （那些细高的浅色锥体，是这套美术里辨识度最高的母题），再零星点缀平浮冰。
+// 上一版只有一档"接近格距的平六边形"，大小雷同、铺满整片水面，读成一张瓷砖贴图。
+// 现在分三档，靠**尺度差**拉开层次（这也是参考图里唯一的层次手段——它没有贴图）：
+const RIDGE_STEP = 330;        // 冰脊的布点格距：比浮冰稀疏得多，成组出现才像山
+const RIDGE_CHANCE = 0.8;      // 每个格子长冰脊的概率——参考图里环境是被冰脊填满的，不是空旷的水面
+const RIDGE_MIN_DIST = 300;    // 离桥至少这么远才长冰脊——近处留给平浮冰，别挡视线/压桥
+const RIDGE_SLABS = [2, 4];    // 每坨冰脊由几块平顶多边形叠成（闭区间）
+const RIDGE_R = [40, 132];     // 单块平顶多边形的半径范围——上限拉大，才会出现几坨明显更大的冰川
+const RIDGE_H = [18, 38];      // 冰脊高度范围——够厚，侧面才压得出明显的暗部（参考图的层次全靠这个）
+const SPIKE_PER_RIDGE = [9, 18];// 每坨冰脊上插几根冰刺——参考图里是成丛的冰针，不是零星几根
+const SPIKE_R = [2.6, 6.5];    // 冰刺底半径：细，成丛之后才读成冰针而不是木桩
+const SPIKE_H = [16, 58];      // 冰刺高度：高低差要大，一丛里参差不齐才自然
 
 export class HowlingAbyssDecor {
   constructor(scene) {
@@ -132,25 +190,26 @@ export class HowlingAbyssDecor {
     const SV = stylizedPaletteOf(map);
     const stoneColor = SV.rockColor || '#8fa3b0';
     const stoneColorDark = new THREE.Color(stoneColor).multiplyScalar(0.78).getHex();
-    const snowCapColor = 0xf3f8fb;
 
     const group = new THREE.Group();
     this.group = group;
     this.scene.add(group);
 
-    const stoneMat = new THREE.MeshLambertMaterial({ color: stoneColor, flatShading: true });
     const stoneDarkMat = new THREE.MeshLambertMaterial({ color: stoneColorDark, flatShading: true });
-    const snowMat = new THREE.MeshLambertMaterial({ color: snowCapColor, flatShading: true });
-    // 墙只用两个色：墙身一色 + 压顶石一色（比墙身亮一档）。
+    // 柱和墙一共只用两个色：体块一色 + 压顶石一色（比体块亮一档）。
+    // 圆锥雪冠连同它那份 snowMat 一起删掉了（见 POST_H 上面的头注：雪冠是整套里
+    // 最不"矩形"的一块，留着就谈不上柱墙风格统一）。
     // 上一版是 3 档深浅按坐标哈希随机错缝，那是在堆"垒砌纹理感"——正是用户要
     // 去掉的复杂度（"太复杂了不适配简洁风格"）。参考图里的墙也就是两个色。
     const wallBodyMat = new THREE.MeshLambertMaterial({ color: stoneColor, flatShading: true });
     const wallCapMat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color(stoneColor).lerp(new THREE.Color(0xffffff), 0.28), flatShading: true });
+      color: SV.wallCapColor || new THREE.Color(stoneColor).lerp(new THREE.Color(0xffffff), 0.28),
+      flatShading: true });
 
     const rubbleGeo = new THREE.IcosahedronGeometry(1, 0);
     for (const side of [map.frostBridge.left, map.frostBridge.right]) {
-      this._buildPillarsAndTorches(group, side.pillars, stoneMat, snowMat);
+      // 柱子与墙共用同一对材质，这是"风格统一"最直接的一半（另一半是同样的压顶石构造）。
+      this._buildPillarsAndTorches(group, side.pillars, wallBodyMat, wallCapMat);
       this._buildWallSegments(group, side, wallBodyMat, wallCapMat, stoneDarkMat, rubbleGeo);
     }
 
@@ -159,17 +218,23 @@ export class HowlingAbyssDecor {
   }
 
   /**
-   * 柱子 + 顶在柱子最上面的火盆（不贴柱身侧面，也不用支架）。
+   * 柱子（方柱 + 压顶石）+ 顶在柱子最上面的火盆。
    *
-   * ==================== 2026-09-05 用户反馈（第三轮）：顶在柱子上面，不是贴在侧面 ====================
-   * 上一版把火盆贴到了柱身侧面（偏上方、雪冠下面）。用户明确否掉："火盆不是
-   * 贴在柱子身上，而是顶在柱子的上面！！！！"——即摞在柱顶，跟雪冠同一根竖直
-   * 中轴线上，不做任何侧向偏移。现在顺序是：柱身 → 雪冠 → 火盆 → 火焰，
-   * 全部摞在 (p.x, p.y) 这条竖直线上。
+   * ==================== 与墙用同一套构造 ====================
+   * 柱子＝ POST_W 见方的矩形体块 + 一块与墙板完全相同规格的压顶石（同高 CAP_H、
+   * 同探出 CAP_OVERHANG、同材质）。跟墙板的差别只有尺寸：更高一截、更厚一圈。
+   * 于是沿桥看过去就是【柱】【墙】【柱】【墙】的节奏，而不是两套形状拼在一起。
+   *
+   * ==================== 火盆的位置：三轮返工定下来的，不要再动 ====================
+   * 用户先后否掉了"从墙面挑出支架挂火盆"和"火盆贴柱身侧面"两版，最终定的是
+   * **摞在柱子最上面**（"火盆不是贴在柱子身上，而是顶在柱子的上面！！！！"）。
+   * 这里只是把锚点从原来的圆锥雪冠换成了柱子的压顶石，火盆仍旧在柱子正上方、
+   * 同一根竖直中轴线上，关系没有变。
    */
-  _buildPillarsAndTorches(group, pillars, stoneMat, snowMat) {
-    const pillarGeo = new THREE.CylinderGeometry(PILLAR_R_TOP, PILLAR_R_BOT, PILLAR_H, 6);
-    const capGeo = new THREE.ConeGeometry(PILLAR_R_TOP * 1.15, 6, 6);
+  _buildPillarsAndTorches(group, pillars, postMat, capMat) {
+    const postGeo = new THREE.BoxGeometry(POST_W, POST_H, POST_W);
+    const postCapGeo = new THREE.BoxGeometry(
+      POST_W + CAP_OVERHANG * 2, CAP_H, POST_W + CAP_OVERHANG * 2);
     const bowlGeo = new THREE.CylinderGeometry(BRAZIER_BOWL_R_TOP, BRAZIER_BOWL_R_BOT, BRAZIER_BOWL_H, 8);
     const flameOuterGeo = new THREE.ConeGeometry(3.6, TORCH_FLAME_H, 6);
     const flameInnerGeo = new THREE.ConeGeometry(1.8, TORCH_FLAME_H * 0.6, 5);
@@ -177,18 +242,17 @@ export class HowlingAbyssDecor {
     const flameOuterMat = new THREE.MeshBasicMaterial({ color: 0xff8a3d });
     const flameInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe08a });
 
-    for (let i = 0; i < pillars.length; i++) {
-      const p = pillars[i];
-      const pillar = new THREE.Mesh(pillarGeo, stoneMat);
-      pillar.position.copy(toScene(p.x, p.y, -2 + PILLAR_H / 2));
-      group.add(pillar);
+    for (const p of pillars) {
+      const post = new THREE.Mesh(postGeo, postMat);
+      post.position.copy(toScene(p.x, p.y, -2 + POST_H / 2));
+      group.add(post);
 
-      const capH = -2 + PILLAR_H + 2;
-      const cap = new THREE.Mesh(capGeo, snowMat);
+      const capH = -2 + POST_H + CAP_H / 2;
+      const cap = new THREE.Mesh(postCapGeo, capMat);
       cap.position.copy(toScene(p.x, p.y, capH));
       group.add(cap);
 
-      const bowlH = capH + 4 + BRAZIER_BOWL_H / 2;
+      const bowlH = capH + CAP_H / 2 + BRAZIER_BOWL_H / 2;
       const bowl = new THREE.Mesh(bowlGeo, bowlMat);
       bowl.position.copy(toScene(p.x, p.y, bowlH));
       group.add(bowl);
@@ -273,10 +337,12 @@ export class HowlingAbyssDecor {
         for (let i = 0; i < capN; i++) {
           const c = at(a + capLen * (i + 0.5));
           if (hash(c.x, c.y) < WALL_EROSION_CHANCE) continue;              // 这一块被风化掉了
-          const h = WALL_CAP_H * (0.7 + hash(c.x + i, c.y - i) * 0.6);     // 高低不齐
+          // 长度取满 capLen、相邻块首尾相接：压顶因此是**连续**的一条，只有被
+          // 风化掉的那几处才真的断开。上一版每块缩到 0.92 留出等间距的缝，再叠上
+          // 逐块的高低抖动，顶边就成了一排碎块，读不出"一道墙"（用户原话）。
           const cap = new THREE.Mesh(new THREE.BoxGeometry(
-            capLen * 0.92, h, WALL_THICK + WALL_CAP_OVERHANG * 2), wallCapMat);
-          cap.position.copy(toScene(c.x, c.y, -2 + WALL_H + h / 2));
+            capLen, CAP_H, WALL_THICK + CAP_OVERHANG * 2), wallCapMat);
+          cap.position.copy(toScene(c.x, c.y, -2 + WALL_H + CAP_H / 2));
           cap.rotation.y = rotY;
           group.add(cap);
         }
@@ -358,9 +424,10 @@ export class HowlingAbyssDecor {
    *    雪白/冰的浅蓝/水的中蓝三级拉开可读的色差。
    */
   _buildWaterDecor(group, map, SV) {
-    const iceMatA = new THREE.MeshLambertMaterial({ color: '#7fb2cc', flatShading: true });
-    const iceMatB = new THREE.MeshLambertMaterial({ color: '#5f9ab8', flatShading: true }); // 邻块用不同色阶，边界当裂纹
-    const waterMat = new THREE.MeshLambertMaterial({ color: '#1f6f95', flatShading: true }); // 裸露水面，明显的中蓝色，不是灰黑
+    // 颜色全部走调色板（第 2 条铁律：不硬编码），改一处即可整张图统一换色。
+    const iceMatA = new THREE.MeshLambertMaterial({ color: SV.iceColorA || '#8ab4d4', flatShading: true });
+    const iceMatB = new THREE.MeshLambertMaterial({ color: SV.iceColorB || '#77a2c4', flatShading: true }); // 邻块用不同色阶，边界当裂纹
+    const waterMat = new THREE.MeshLambertMaterial({ color: SV.waterColor || '#2a5f8f', flatShading: true }); // 裸露水面，比冰暗、比深渊基底亮
     // 冰面不用二十面体：subdivision-0 的二十面体只有 20 个朝向各异的三角面，
     // 就算把高度压扁也没有一块"正对着镜头的平顶"，斜射光下每块小面都单独明暗，
     // 看着像碎石堆/山地而不是一整块平铺的冰。改用矮圆柱（真正有一个水平顶面）：
@@ -369,7 +436,6 @@ export class HowlingAbyssDecor {
     // r 都是"目标半径"，不是直径，别再算错成两倍大。
     const iceGeo = new THREE.CylinderGeometry(1, 0.92, 0.16, 7, 1);
     const shardGeo = new THREE.CylinderGeometry(1, 0.85, 0.22, 6, 1);
-    const { w: WW, h: WH } = map.world;
     // 用 ThreeRenderer 注入的 isWalkable（见 setWalkableFn）避开桥面；没注入时
     // 保守地整段跳过散布，宁可这次不摆冰，也不摆错在桥上挡视线。
     const canPlace = this._isWalkable;
@@ -401,13 +467,75 @@ export class HowlingAbyssDecor {
     };
     const WATER_NEAR_BRIDGE_R = 260;   // 这个半径内才有机会露水，见头注
     const WATER_EXPOSE_CHANCE = 0.32;  // "偶尔"——不是靠近桥就一定露水
-    const ICE_FILL_CHANCE = 0.58;      // 非靠桥区域摆冰的概率，留出可见水面（不是铺满）
+    const ICE_FILL_CHANCE = 0.42;      // 非靠桥区域摆平浮冰的概率——0.58→0.42，给第一档的冰脊让出空间
 
+    // ==================== 第一档：冰脊（成坨的"山"）====================
+    // 稀疏布点，每个点长一坨（若干块平顶多边形互相叠着），只长在离桥足够远的地方。
+    const spikeMat = new THREE.MeshLambertMaterial({ color: SV.spikeColor || '#b9d5e6', flatShading: true });
+    const slabGeo = new THREE.CylinderGeometry(1, 0.88, 1, 6, 1);   // 6 边平顶块，高度靠 scale 给
+    const spikeGeo = new THREE.ConeGeometry(1, 1, 5);               // 5 棱锥，细高的冰刺
+    const rnd = (h, [lo, hi]) => lo + h * (hi - lo);
+    const ridges = [];                                              // 记下冰脊占位，平浮冰要避开
+    const { w: WW, h: WH } = map.world;
+
+    for (let gx = 120; gx < WW - 120; gx += RIDGE_STEP) {
+      for (let gy = 120; gy < WH - 120; gy += RIDGE_STEP) {
+        if (hash(gx + 31, gy + 31) > RIDGE_CHANCE) continue;
+        const cx = gx + (hash(gx + 5, gy) - 0.5) * RIDGE_STEP * 0.5;
+        const cy = gy + (hash(gx, gy + 5) - 0.5) * RIDGE_STEP * 0.5;
+        if (distToBridge(cx, cy) < RIDGE_MIN_DIST) continue;
+
+        const slabN = Math.round(rnd(hash(cx + 2, cy + 2), RIDGE_SLABS));
+        const placed = [];
+        for (let i = 0; i < slabN; i++) {
+          const a = hash(cx + i * 11, cy - i * 7) * Math.PI * 2;
+          const off = hash(cx - i * 3, cy + i * 9) * RIDGE_R[0];
+          const sx = cx + Math.cos(a) * off, sy = cy + Math.sin(a) * off;
+          const r = rnd(hash(sx, sy), RIDGE_R);
+          if (!clearOfBridge(sx, sy, r)) continue;
+          const h = rnd(hash(sx + 1, sy - 1), RIDGE_H);
+          // 不规则轮廓 + 两轴不等比拉长：这两件事一起做，冰原才不像一地硬币。
+          const ex = 0.62 + hash(sx + 8, sy) * 0.85, ez = 0.62 + hash(sx, sy + 8) * 0.85;
+          const slab = new THREE.Mesh(
+            icePrismGeo(6 + Math.floor(hash(sx + 4, sy + 4) * 3), Math.round(sx + sy)),
+            hash(sx + 5, sy + 5) < 0.5 ? iceMatA : iceMatB);
+          slab.position.copy(toScene(sx, sy, h / 2));
+          slab.scale.set(r * ex, h, r * ez);
+          slab.rotation.y = hash(sx + 2, sy + 2) * Math.PI * 2;
+          group.add(slab);
+          placed.push({ x: sx, y: sy, r, h });
+        }
+        if (!placed.length) continue;
+        ridges.push({ x: cx, y: cy, r: RIDGE_R[1] });
+
+        // 冰刺：插在刚摆下的那些平顶块上，底部埋进块里一点，不会看到浮空的锥底。
+        const spikeN = Math.round(rnd(hash(cx + 4, cy + 4), SPIKE_PER_RIDGE));
+        for (let i = 0; i < spikeN; i++) {
+          const base = placed[Math.floor(hash(cx + i * 13, cy + i * 5) * placed.length) % placed.length];
+          const a = hash(cx + i * 17, cy - i * 11) * Math.PI * 2;
+          // 往块中心聚（乘方压低外圈概率），成丛而不是均匀撒一圈。
+          const off = Math.pow(hash(cx - i * 5, cy + i * 3), 1.6) * base.r * 0.8;
+          const sx = base.x + Math.cos(a) * off, sy = base.y + Math.sin(a) * off;
+          const r = rnd(hash(sx + 3, sy + 3), SPIKE_R);
+          if (!clearOfBridge(sx, sy, r)) continue;
+          const h = rnd(hash(sx - 3, sy - 3), SPIKE_H);
+          const spike = new THREE.Mesh(spikeGeo, spikeMat);
+          spike.position.copy(toScene(sx, sy, base.h - 2 + h / 2));
+          spike.scale.set(r, h, r);
+          spike.rotation.y = hash(sx + 7, sy + 7) * Math.PI * 2;
+          group.add(spike);
+        }
+      }
+    }
+    const onRidge = (x, y) => ridges.some((g) => Math.hypot(x - g.x, y - g.y) < g.r);
+
+    // ==================== 第二/三档：平浮冰 + 靠桥处偶尔露水 ====================
     const STEP = 190, edge = 90;
     for (let gx = edge; gx < WW - edge; gx += STEP) {
       for (let gy = edge; gy < WH - edge; gy += STEP) {
         const x = gx + (hash(gx + 3, gy) - 0.5) * STEP * 0.3;
         const y = gy + (hash(gx, gy + 3) - 0.5) * STEP * 0.3;
+        if (onRidge(x, y)) continue;                 // 冰脊底下不再叠平浮冰
 
         const nearBridge = distToBridge(x, y) <= WATER_NEAR_BRIDGE_R;
         if (nearBridge && hash(gx + 9, gy + 9) < WATER_EXPOSE_CHANCE) {
@@ -433,23 +561,23 @@ export class HowlingAbyssDecor {
           continue;
         }
 
-        // 常规冰块：半径略小于格距一半，相邻块只轻微咬合（不再是 2 倍暴涨的重叠）。
-        // ICE_FILL_CHANCE 故意不是 1——参考图里装饰物是"疏落的强调色块"，不是铺满，
-        // 留出的空格直接露出底下的水色（groundColor），读成"水面上飘着冰"而不是
-        // "一整块看不出下面是水的白毯子"。
+        // 平浮冰：半径范围拉大（0.38~0.98 倍格半距，上一版是 0.72~0.98），
+        // 大小差别明显了才不像一张瓷砖贴图；密度也降下来给冰脊让位。
         if (hash(gx + 7, gy + 7) > ICE_FILL_CHANCE) continue;
-        const r = (STEP / 2) * (0.72 + hash(x, y) * 0.26);
+        const r = (STEP / 2) * (0.38 + hash(x, y) * 0.6);
         if (!clearOfBridge(x, y, r)) continue;
         const mat = hash(x + 5, y + 5) < 0.5 ? iceMatA : iceMatB;
-        const ice = new THREE.Mesh(iceGeo, mat);
+        const ex = 0.6 + hash(x + 8, y) * 0.9, ez = 0.6 + hash(x, y + 8) * 0.9;
+        const ice = new THREE.Mesh(
+          icePrismGeo(6 + Math.floor(hash(x + 4, y + 4) * 3), Math.round(x + y * 3)), mat);
         ice.position.copy(toScene(x, y, 0.5));
-        ice.scale.set(r, r, r);
+        ice.scale.set(r * ex, r * 0.9, r * ez);
         ice.rotation.y = hash(x + 1, y + 1) * Math.PI * 2;
         group.add(ice);
       }
     }
 
-    this._buildSpiritIslands(group);
+    this._buildSpiritIslands(group, SV);
   }
 
   /**
@@ -462,13 +590,13 @@ export class HowlingAbyssDecor {
    * 这次不再手动猜坐标，直接在新 navgrid 上量出两块半径 75（岛屿本体 64 + 安全
    * 余量）范围内全部不可走的开阔水域，两侧各挑一块。
    */
-  _buildSpiritIslands(group) {
+  _buildSpiritIslands(group, SV = {}) {
     const spots = [
       { x: 550, y: 1250 },
       { x: 1775, y: 1075 },
     ];
     const islandMat = new THREE.MeshLambertMaterial({ color: '#4c6270', flatShading: true });
-    const snowMat = new THREE.MeshLambertMaterial({ color: '#e7eff4', flatShading: true });
+    const snowMat = new THREE.MeshLambertMaterial({ color: SV.islandColor || '#c8dcea', flatShading: true });
     const graveMat = new THREE.MeshLambertMaterial({ color: '#5a6570', flatShading: true });
     const wispMat = new THREE.MeshBasicMaterial({ color: '#7fd8ff', transparent: true, opacity: 0.85 });
 
