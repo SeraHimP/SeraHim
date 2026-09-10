@@ -550,114 +550,180 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       // 这次改成一整块歪的，几何体数量才压得下来。
       // 两边**几何体数量相等**（各 4 个），延续 v45 定下的"部件数量对等"原则。
       //
-      // ==================== v56.1：红方"大圆盘"位置对调 ====================
-      // 用户："红方的不好看，上面那个大圆盘移到下面，上面做个小圆盘。"
-      // 首版把宽窄跳变最夸张的一段（大圆盘）放在塔身顶端、紧贴水晶下方（塔身顶
-      // 0.62R 骤然跳到檐口底 0.98R），读起来像扣了一顶飞碟状的宽檐帽，跟"锥形
-      // 收拢"的直觉相反。现在倒过来：大圆盘挪到最下面撑住整根塔身（基座
-      // 0.62R→1.08R，一步到位的宽台），塔身/檐口都收窄成"下粗上细"的连续锥形，
-      // 檐口只比塔身顶部略宽一圈（0.60R→0.64R）——是"小圆盘"，不是第二个大圆盘。
+      // ==================== v56.2：三条实机反馈，重新审视后的方案 ====================
+      // 用户看完 v56.1 的实机截图，指出三处问题，逐条对应修法：
       //
-      // ==================== 三档损毁：主体高度绝不能变（v45c 的教训不能再犯）====================
-      // 基座/塔身/檐口/底座的尺寸与位置在 dmg 0/1/2 里**完全一致**——这不是可选项，
-      // 是断言钉死的：损⑪/⑫ 要求三档 topY/muzzleY 逐位相等，否则弹道原点会随
-      // 掉血跳动，读起来像换了把武器。损毁只做两件事，且都不碰主体尺寸：
-      //   ① 颜色按 wear 轻微做旧（跟旧代码同一套 desat 幅度，不换材质）；
-      //   ② 嵌几块凹坑（复用旧代码 chip() 的"暗腔+破边"手法）。
+      // ①「破损的塔颜色为什么改变了，不能改变颜色！！！」
+      //   v56.1 里 cSt/cTr 会随 dmg 整体调暗/褪色（wear/desat），是从旧代码原样
+      //   继承的"做旧"逻辑——但那是**全身**跟着变暗，不是缺口那一小块变色，
+      //   用户看到的是"整座塔换了个色号"。这次彻底删掉：cSt/cTr 永远等于
+      //   F.stone/F.trim，三档 dmg 用同一套颜色，损毁只靠**几何**表达。
       //
-      // v56.1：用户反馈"损毁跟挠痒痒一样，应该能掉大块（类似 lol），但塔的高度
-      // 不能变"。首版凹坑只有 0.30R 宽，趴在一整块大平面中间，几乎看不出来。
-      // 这次换成 bigNick()：暗腔放大到 0.52R 起步、深度加到 0.34R，且刻意摆在
-      // 主体的**边角**而不是面中间——缺口的一半会探出主体自身的棱线之外，
-      // 从剪影上就能咬掉一口，不再是"贴在表面的一块暗色补丁"。轻损一处、
-      // 重损两处（不同边角）+ 3 块明显更大的脚下碎石，且都不影响任何主体尺寸——
-      // 仍是加在主体之外的额外几何体，不是真的布尔挖空（本项目未接 CSG 库）。
+      // ②「损毁应该是塔身上缺块了，掉在地面上变成小碎块了，我没看懂」
+      //   v56.1 的 bigNick() 是往表面**贴**一块深色箱体 + 一块浅色破边——本质是
+      //   "画一块颜色上去"，不是真的从塔身上拿走什么，所以读不出"缺了一块"。
+      //   这次改用真正的减法：塔身（柱子）不再是一整块箱体/圆柱，而是
+      //   "内核（永远都在）+ 一圈贴皮小块"拼成——dmg=0 时贴皮块全部在，外观
+      //   跟一整块柱子完全一样；损毁时**直接不画**其中几块贴皮，露出的是内核
+      //   本身的表面（跟贴皮同色，不需要另外画补丁色），剪影上是真的凹进去
+      //   一块。被拿掉的贴皮块等比缩小后摆到塔脚下的地面，同色（不做旧），
+      //   读作"真掉下来的那一块，摔碎了"。
+      //   用户追加要求："缺块可以很多很小，不用非得缺一块缺两块这种，但是
+      //   一定要显示出三种层级的区别"——所以贴皮块切得比较碎（12 块：4 面×
+      //   3 层），三档损毁靠**缺几块**的数量拉开差距（0/3/8 块），不是靠单个
+      //   缺口的大小。
+      //
+      // ③「红方也没按照我说的做」
+      //   重新看下来，问题不是"大圆盘的位置"，是 v56.1 给红方三节写的都是
+      //   CylinderGeometry(上半径, 下半径, ...) 的**锥形**（上下不同宽）——锥形
+      //   不管挪到哪一层都读不出"圆盘"，圆盘应该是上下一样宽的扁鼓形，跟蓝方
+      //   箱体"每一节自己直上直下、节与节之间宽度不同"是同一种语言。这次红方
+      //   三节全部改成无锥度的鼓形圆柱，逐节对应蓝方的方案：大鼓在下（塔基）
+      //   → 细鼓在中（柱子）→ 小鼓在上（帽子），只是方/圆之分。
+      //
+      // 三档损毁下基座/塔身/檐口/水晶底座的尺寸与位置依旧**完全一致**——贴皮块
+      // 只是柱子表面的可选装饰层，缺几块不影响柱子本身的高度/半径，v45c 的
+      // topY/muzzleY 不变量继续成立（损⑪/⑫）。
       const red = faction === 'red';
-      const wear = dmg === 0 ? 1 : dmg === 1 ? 0.94 : 0.85;
-      const cSt  = dmg === 0 ? F.stone : desat(F.stone, dmg === 1 ? 0.94 : 0.88, 1);
-      const cTr  = dmg === 0 ? F.trim  : desat(F.trim,  dmg === 1 ? 0.93 : 0.86, 1);
-      const char = desat(F.stone, 0.34, 0.42);
+      const cSt = F.stone, cTr = F.trim;   // v56.2：颜色三档恒定，不再随 dmg 变
       const SPr = TIER_SPEC[tier] || TIER_FALLBACK;   // 只用 SPr.tiers 算水晶半径，跟旧公式对齐
 
-      // v56.1：用户反馈"损毁跟挠痒痒一样"——原来的小凹坑只有 0.30R 宽，在整座塔的
-      // 尺度上几乎看不见。改成**真的能读出"掉了一大块"**的缺口：暗腔更大更深，
-      // 断面（破边那块）更陡更宽，直接顶到主体边缘外侧一截——这样缺口才会咬穿
-      // 剪影的边线，而不是趴在一整块平面中间看不出来。scale 参数控制这一处缺口
-      // 有多大，轻损/重损用不同 scale，重损额外再摆一处（见下方 dmg===2 分支）。
-      const bigNick = (px, py, pz, rotY, scale = 1) => {
-        const w = R * 0.52 * scale, h = R * 0.46 * scale, d = R * 0.34 * scale;
-        add(new THREE.BoxGeometry(w, h, d), compose(T(px, py, pz), R_Y(rotY)), char);
-        add(new THREE.BoxGeometry(w * 0.92, h * 0.34, d * 0.9),
-            compose(T(px, py - h * 0.46, pz), R_Y(rotY), R_Z(0.55)), shade(cSt, 0.55 * wear));
+      // 掉落的碎块：数量＝缺口数 × 3，同色、不做旧，固定角度表摆放（不用随机数，
+      // 保证几何可缓存）。数量直接对应损毁程度，天然满足"三档要看得出层级差异"
+      // ——缺得越多，地上摔碎的也越多。
+      // ⚠️ 倍数不是随手定的：红方贴皮块是"扇形"CylinderGeometry，三角面数只看
+      // radialSegments，跟 thetaLength（扇形张角）无关——一个 90° 扇形跟一个
+      // 完整圆的顶点数**完全一样**。之前用 ×2 时，扇形（72 顶点）与两块碎石箱体
+      // （36×2=72 顶点）刚好互相抵消，实测三档损毁的总顶点数纹丝不动（缺口越多
+      // 顶点数应该越多，那次却怎么缺都是同一个数）。×3 留出安全余量，保证
+      // "缺口越多、总几何量越大"这条关系不会被巧合抵消。
+      const scatterDebris = (n, unit) => {
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + 0.37;
+          const rr = R * (1.05 + 0.22 * (i % 3));
+          const s = unit * (0.75 + 0.22 * ((i * 7) % 3));
+          add(new THREE.BoxGeometry(s, s * 0.8, s * 0.9),
+              compose(T(Math.cos(a) * rr, s * 0.4, Math.sin(a) * rr),
+                      R_Y(a * 1.7), R_Z(0.2 + 0.16 * (i % 2)), R_X(0.12 * ((i + 1) % 3))),
+              cSt);
+        }
+      };
+
+      // v56.3：用户看完 v56.2 的截图直接指出——"这个不叫损毁，这个叫剥皮"。
+      // 诊断：v56.2 只是把一块贴皮**整块拿掉**，露出的是内核一块完全平整、
+      // 跟贴皮严丝合缝平行的表面——干净利落的一整块不见了，读出来就是
+      // "揭掉一层皮"，不是"被打坏了"。真实的损毁应该是**参差不齐**的：
+      // 缺口边缘不平、深浅不一、还留着几片没掉干净、斜挂着的破角。
+      // 这里在每处贴皮缺口的原位置补两块不同角度的碎片（同色，靠 shade() 的
+      // 朝向明暗差异读出立体感，不是按损毁程度做旧）——一块顶着缺口边缘、
+      // 明显歪斜地探出来，一块更小更歪、像是"还没掉下去、勉强挂着"。
+      // 两块都不对齐任何一面墙的方向，专门用来打破"平行层"的干净感。
+      const addBrokenEdge = (px, py, pz, h) => {
+        add(new THREE.BoxGeometry(R * 0.26, h * 0.5, R * 0.22),
+            compose(T(px, py + h * 0.08, pz), R_Y(0.5), R_Z(0.34), R_X(0.24)), shade(cSt, 0.82));
+        add(new THREE.BoxGeometry(R * 0.15, h * 0.30, R * 0.13),
+            compose(T(px, py - h * 0.22, pz), R_Y(-0.35), R_Z(-0.6), R_X(0.42)), shade(cSt, 0.60));
       };
 
       let oy = 0;
       if (red) {
-        // v56.1："红方的不好看"——原版把最夸张的宽窄跳变（大圆盘）放在塔身顶端、
-        // 紧贴水晶下面，读起来像扣了一顶飞碟状的宽檐帽。这次把"大圆盘"挪到最下面
-        // 撑住整根塔身（基座），塔顶只留一个比塔身略宽的小圆盘——层次感来自
-        // "下面粗、上面细"这种更自然的锥形关系，不是顶端凭空炸开一圈宽边。
+        // 大鼓（塔基）：无锥度，上下同宽——是真正的"圆盘"，不是锥形。
         const baseH = R * 0.30, baseR = R * 1.08;
-        add(new THREE.CylinderGeometry(baseR * 0.62, baseR, baseH, 5),
-            compose(T(R * 0.05, oy + baseH / 2, -R * 0.04), R_Z(0.05), R_X(0.03)), shade(cSt, 0.55 * wear));
-        if (dmg > 0) bigNick(baseR * 0.78, oy + baseH * 0.55, baseR * 0.32, 0.6, dmg === 2 ? 1.6 : 1.15);
+        add(new THREE.CylinderGeometry(baseR, baseR, baseH, 6),
+            compose(T(R * 0.05, oy + baseH / 2, -R * 0.04), R_Z(0.05), R_X(0.03)), shade(cSt, 0.55));
         oy += baseH;
 
-        const bodyH = R * 1.55;
-        add(new THREE.CylinderGeometry(R * 0.60, R * 0.66, bodyH, 6),
-            compose(T(0, oy + bodyH / 2, 0), R_Z(0.045)), shade(cSt, wear));
-        if (dmg === 2) bigNick(-R * 0.62, oy + bodyH * 0.62, -R * 0.40, -1.1, 1.8);
+        // 细鼓（柱子）：内核 + 12 块贴皮（4 个方位 × 3 层），损毁按缺皮块数量分档。
+        const bodyH = R * 1.55, fullR = R * 0.64;
+        const coreR = fullR * 0.84;
+        add(new THREE.CylinderGeometry(coreR, coreR, bodyH, 6), T(0, oy + bodyH / 2, 0), shade(cSt, 1));
+        const bandH = bodyH / 3;
+        const MISSING = dmg === 1 ? [1, 5, 9] : dmg === 2 ? [0, 1, 2, 4, 5, 7, 9, 10] : [];
+        let skinIdx = 0;
+        for (let side = 0; side < 4; side++) {
+          for (let row = 0; row < 3; row++) {
+            const idx = skinIdx++;
+            const py = oy + bandH * (row + 0.5);
+            if (MISSING.includes(idx)) {
+              // 缺口原位置补两块参差不齐的破角碎片——见上面 addBrokenEdge 的注释。
+              const a = idx * (Math.PI / 2) + Math.PI / 4;   // 落在该贴皮块角度范围内
+              addBrokenEdge(Math.cos(a) * fullR * 0.94, py, Math.sin(a) * fullR * 0.94, bandH);
+              continue;
+            }
+            // ⚠️ 扇形贴皮块的分段数用 2（不是 6）：CylinderGeometry 的三角面数只看
+            // radialSegments，跟 thetaLength（扇形张角）无关——若用 6 段，4 个 90°
+            // 扇形拼起来就是 24 段的近似圆柱，比上下六棱柱的塔基/帽子圆得多，剪影
+            // 会在柱子这一段突然变圆又变回六边形。2 段更接近八边形，跟六棱柱的
+            // 棱面感更协调。
+            add(new THREE.CylinderGeometry(fullR, fullR, bandH, 2, 1, false, side * (Math.PI / 2), Math.PI / 2),
+                T(0, py, 0), shade(cSt, 1));
+          }
+        }
+        if (MISSING.length) scatterDebris(MISSING.length * 3, R * 0.14);
         oy += bodyH;
 
-        // 檐口：小圆盘——只比塔身顶部宽一圈的矮台面，戴一顶"小帽子"，
-        // 不再是比塔身宽出一大截的夸张飞碟盘。
-        const capH = R * 0.20;
-        add(new THREE.CylinderGeometry(R * 0.60, R * 0.64, capH, 6),
-            compose(T(R * 0.03, oy + capH / 2, R * 0.02), R_Z(0.05)), shade(cTr, wear));
+        // 小鼓（帽子）：无锥度的扁鼓，比柱子宽出一大截——用户反馈"帽子大一些"，
+        // 半径从 0.72R 提到 0.85R，读起来才是一顶实打实的"帽子"，不是可有可无
+        // 的收边线。
+        const capH = R * 0.24;
+        add(new THREE.CylinderGeometry(R * 0.85, R * 0.85, capH, 6),
+            compose(T(R * 0.03, oy + capH / 2, R * 0.02), R_Z(0.05)), shade(cTr, 1));
         oy += capH;
       } else {
-        // 基座：宽、矮、厚，直上直下——秩序感来自"方方正正"，不需要额外的收边线。
+        // 大方块（塔基）：宽、矮、厚，直上直下——秩序感来自"方方正正"。
         const baseH = R * 0.30;
-        add(new THREE.BoxGeometry(R * 1.90, baseH, R * 1.90), T(0, oy + baseH / 2, 0), shade(cSt, 0.55 * wear));
-        if (dmg > 0) bigNick(R * 0.85, oy + baseH * 0.55, R * 0.85, 0.8, dmg === 2 ? 1.6 : 1.15);
+        add(new THREE.BoxGeometry(R * 1.90, baseH, R * 1.90), T(0, oy + baseH / 2, 0), shade(cSt, 0.55));
         oy += baseH;
 
-        const bodyH = R * 1.55;
-        add(new THREE.BoxGeometry(R * 1.05, bodyH, R * 1.05), T(0, oy + bodyH / 2, 0), shade(cSt, wear));
-        if (dmg === 2) bigNick(-R * 0.60, oy + bodyH * 0.58, -R * 0.55, 2.2, 1.8);
+        // 柱子：内核 + 12 块贴皮（4 个面 × 3 层），损毁按缺皮块数量分档。
+        const bodyH = R * 1.55, fullW = R * 1.05;
+        const coreW = fullW * 0.84;
+        const skinT = (fullW - coreW) / 2;
+        add(new THREE.BoxGeometry(coreW, bodyH, coreW), T(0, oy + bodyH / 2, 0), shade(cSt, 1));
+        const bandH = bodyH / 3;
+        const MISSING = dmg === 1 ? [1, 5, 9] : dmg === 2 ? [0, 1, 2, 4, 5, 7, 9, 10] : [];
+        const FACES = [
+          { axis: 'x', sign: 1 }, { axis: 'x', sign: -1 },
+          { axis: 'z', sign: 1 }, { axis: 'z', sign: -1 },
+        ];
+        let skinIdx = 0;
+        for (const { axis, sign } of FACES) {
+          for (let row = 0; row < 3; row++) {
+            const idx = skinIdx++;
+            const py = oy + bandH * (row + 0.5);
+            const px = axis === 'x' ? sign * (coreW / 2 + skinT / 2) : 0;
+            const pz = axis === 'z' ? sign * (coreW / 2 + skinT / 2) : 0;
+            if (MISSING.includes(idx)) {
+              // 缺口原位置补两块参差不齐的破角碎片——见上面 addBrokenEdge 的注释。
+              addBrokenEdge(px, py, pz, bandH);
+              continue;
+            }
+            const w = axis === 'x' ? skinT : fullW;
+            const d = axis === 'z' ? skinT : fullW;
+            add(new THREE.BoxGeometry(w, bandH, d), T(px, py, pz), shade(cSt, 1));
+          }
+        }
+        if (MISSING.length) scatterDebris(MISSING.length * 3, R * 0.14);
         oy += bodyH;
 
-        // 檐口：比塔身宽、比基座窄的矮箱体，读作"塔身收口的台面"，不是一圈雉堞。
+        // 小方块（帽子）：比柱子宽、比塔基窄的矮箱体，读作"柱子收口的台面"。
         const capH = R * 0.30;
-        add(new THREE.BoxGeometry(R * 1.35, capH, R * 1.35), T(0, oy + capH / 2, 0), shade(cTr, wear));
+        add(new THREE.BoxGeometry(R * 1.35, capH, R * 1.35), T(0, oy + capH / 2, 0), shade(cTr, 1));
         oy += capH;
       }
 
       // 水晶底座（火盆，沿用 v54 定下的"不用很大、不给队伍色"）——两档色阶（deco 之外
       // 的第 4 个几何体），塔身与檐口已经用了 stone/trim 两档，这里再暗一档收尾。
       //
-      // v56.1 修穿模：上一版碗口太宽（顶部半径 0.51R）、嵌得太深（水晶下沉 0.38R），
-      // 水晶大半个身位陷进了这块实心圆柱里，从外面看就是"水晶穿模进石座"。
-      // 八面体的水平截面半径随高度线性收窄（离底尖 h' 处截面半径＝h'），所以只要
-      // 碗口半径跟"嵌入深度处水晶自身的截面半径"相当，水晶尖端卡进碗口就不会露怯——
-      // 现在只嵌入尖端 ~0.16R，碗口顶部半径收到 0.20R 左右，两者量级匹配。
+      // v56.1 修穿模：碗口收窄到跟"嵌入深度处水晶自身的截面半径"相当的量级，
+      // 水晶尖端卡进碗口，不会陷进大半个身位（八面体截面半径随高度线性收窄，
+      // 离底尖 h' 处截面半径就是 h'，碗口半径跟嵌入深度处的截面半径量级匹配
+      // 即可，见 docs §19.3 的推导）。
       crystalR = R * (0.34 + SPr.tiers * 0.035);
       const pedR = crystalR * 0.60, pedH = crystalR * 0.40;
       add(new THREE.CylinderGeometry(pedR * 0.34, pedR, pedH, 8),
-          T(red ? R * 0.02 : 0, oy + pedH / 2, red ? R * 0.02 : 0), shade(cTr, 0.72 * wear));
+          T(red ? R * 0.02 : 0, oy + pedH / 2, red ? R * 0.02 : 0), shade(cTr, 0.72));
       oy += pedH;
-
-      // 脚下碎石：只有重损才有，且**加在主体之外**，不改变任何主体尺寸——与旧代码
-      // 同一条原则（v45c）。v56.1 配合上面放大的缺口一起加大/加多（2→3 块），
-      // 读作"缺口处真的掉下来的那一块"，不是随手撒的碎渣。
-      if (dmg === 2) {
-        add(new THREE.BoxGeometry(R * 0.44, R * 0.34, R * 0.38),
-            compose(T(R * 1.18, R * 0.17, R * 0.32), R_Z(0.42), R_X(0.16)), shade(cSt, 0.5 * wear));
-        add(new THREE.BoxGeometry(R * 0.36, R * 0.30, R * 0.32),
-            compose(T(-R * 1.08, R * 0.15, -R * 0.52), R_Z(-0.52), R_X(-0.12)), shade(cSt, 0.5 * wear));
-        add(new THREE.BoxGeometry(R * 0.28, R * 0.22, R * 0.26),
-            compose(T(R * 0.20, R * 0.11, R * 1.05), R_Z(0.7), R_X(0.30)), shade(cSt, 0.5 * wear));
-      }
 
       crystalCy = oy + crystalR * 0.84;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
