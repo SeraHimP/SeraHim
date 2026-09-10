@@ -528,6 +528,112 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
               compose(T(Math.cos(a) * orbit, shardY, Math.sin(a) * orbit), R_Z(a)), shade(color, 1.1));
         }
       }
+    } else if (tier === 'outer') {
+      // ==================== 外塔：v56 大体块重做（评审：8.5/10 之后转向形体）====================
+      // 用户 + 外部评审两边这次都确认了同一个判断：塔色/地形已经改到位，剩下的割裂感
+      // 是塔的**形体**——即使颜色对了，外塔旧模型仍然是"传统塔防建筑"：基座+台阶+
+      // 方柱+四角立柱+一圈雉堞(10块)+冠+4组两件装饰+顶盖+尖顶+底座，逐个数下来
+      // 有 29 个几何体，跟 docs §17.3 定的硬约束（4~6 个主要几何体、不加小装饰、
+      // 大块面、2~3 个色阶）完全对不上——不是"哪个装饰丑"，是数量级错了。
+      //
+      // ==================== 这次只做外塔（一贯的节奏）====================
+      // 用户历来的做法是"先做一个，做好了再推广"（v54/v55 都是这样），这次也一样：
+      // 只替换 tier==='outer' 这一档；内塔/水晶塔/枢纽塔仍然走下面那段旧代码，
+      // 逐位不变。三档**升级**时剪影必须明显变化这条硬约束要等把另外三档也按
+      // 同一套语言重做时才谈得上，现在只有外塔一档，无法验证也不需要验证。
+      //
+      // ==================== 新造型：4 个石身几何体 + 1 个水晶 ====================
+      // 蓝方＝秩序：三块方正的箱体直上直下地摞起来（宽底座 → 窄身 → 宽一档的檐口），
+      // 没有斜切、没有錾边，靠"宽窄交替"读出层次，不靠雕花。
+      // 红方＝混沌：同样三段，但用低分段圆台（5~6 边）+ 轻微倾斜/偏心，
+      // 不对称感来自"歪"而不是"多堆了几块石头"——旧版红方基座是三块碎石拼起来，
+      // 这次改成一整块歪的，几何体数量才压得下来。
+      // 两边**几何体数量相等**（各 4 个），延续 v45 定下的"部件数量对等"原则。
+      //
+      // ==================== 三档损毁：主体高度绝不能变（v45c 的教训不能再犯）====================
+      // 基座/塔身/檐口/底座的尺寸与位置在 dmg 0/1/2 里**完全一致**——这不是可选项，
+      // 是断言钉死的：损⑪/⑫ 要求三档 topY/muzzleY 逐位相等，否则弹道原点会随
+      // 掉血跳动，读起来像换了把武器。损毁只做两件事，且都不碰主体尺寸：
+      //   ① 颜色按 wear 轻微做旧（跟旧代码同一套 desat 幅度，不换材质）；
+      //   ② 嵌几块小凹坑（复用旧代码 chip() 的"暗腔+破边"手法，但数量砍到
+      //      2/4 块——新造型的大平面禁得起几个凹坑，禁不起旧版那种一圈十几块。
+      const red = faction === 'red';
+      const wear = dmg === 0 ? 1 : dmg === 1 ? 0.94 : 0.85;
+      const cSt  = dmg === 0 ? F.stone : desat(F.stone, dmg === 1 ? 0.94 : 0.88, 1);
+      const cTr  = dmg === 0 ? F.trim  : desat(F.trim,  dmg === 1 ? 0.93 : 0.86, 1);
+      const char = desat(F.stone, 0.34, 0.42);
+      const SPr = TIER_SPEC[tier] || TIER_FALLBACK;   // 只用 SPr.tiers 算水晶半径，跟旧公式对齐
+
+      // 小凹坑：嵌在一块平面上的暗腔 + 一条破边，比旧版 chip() 简化（旧版每处
+      // 凹坑还带两块破边碎块，这里的面本来就大，一块破边足够读出"崩了一角"）。
+      const nick = (px, py, pz, rotY) => {
+        const w = R * 0.30, h = R * 0.22, d = R * 0.16;
+        add(new THREE.BoxGeometry(w, h, d), compose(T(px, py, pz), R_Y(rotY)), char);
+        add(new THREE.BoxGeometry(w * 0.9, h * 0.28, d * 0.8),
+            compose(T(px, py - h * 0.5, pz), R_Y(rotY), R_Z(0.3)), shade(cSt, 0.55 * wear));
+      };
+
+      let oy = 0;
+      if (red) {
+        // 基座：一块矮胖的偏心圆台，微微倾斜——"歪"就是红方的全部识别信息，
+        // 不需要再拼三块碎石。
+        const baseH = R * 0.32, baseR = R * 0.95;
+        add(new THREE.CylinderGeometry(baseR * 0.90, baseR, baseH, 5),
+            compose(T(R * 0.05, oy + baseH / 2, -R * 0.04), R_Z(0.05), R_X(0.03)), shade(cSt, 0.55 * wear));
+        if (dmg > 0) nick(baseR * 0.7, oy + baseH * 0.5, baseR * 0.4, 0.6);
+        oy += baseH;
+
+        const bodyH = R * 1.55;
+        add(new THREE.CylinderGeometry(R * 0.62, R * 0.80, bodyH, 6),
+            compose(T(0, oy + bodyH / 2, 0), R_Z(0.045)), shade(cSt, wear));
+        if (dmg === 2) nick(-R * 0.55, oy + bodyH * 0.6, R * 0.4, -1.1);
+        oy += bodyH;
+
+        // 檐口：比塔身宽一档的矮圆台，同样带一点倾斜——是"戴歪的帽子"，不是雉堞。
+        const capH = R * 0.30;
+        add(new THREE.CylinderGeometry(R * 0.58, R * 0.98, capH, 6),
+            compose(T(R * 0.03, oy + capH / 2, R * 0.02), R_Z(0.05)), shade(cTr, wear));
+        oy += capH;
+      } else {
+        // 基座：宽、矮、厚，直上直下——秩序感来自"方方正正"，不需要额外的收边线。
+        const baseH = R * 0.30;
+        add(new THREE.BoxGeometry(R * 1.90, baseH, R * 1.90), T(0, oy + baseH / 2, 0), shade(cSt, 0.55 * wear));
+        if (dmg > 0) nick(R * 0.7, oy + baseH * 0.5, R * 0.7, 0.8);
+        oy += baseH;
+
+        const bodyH = R * 1.55;
+        add(new THREE.BoxGeometry(R * 1.05, bodyH, R * 1.05), T(0, oy + bodyH / 2, 0), shade(cSt, wear));
+        if (dmg === 2) nick(-R * 0.53, oy + bodyH * 0.55, R * 0.1, 2.2);
+        oy += bodyH;
+
+        // 檐口：比塔身宽、比基座窄的矮箱体，读作"塔身收口的台面"，不是一圈雉堞。
+        const capH = R * 0.30;
+        add(new THREE.BoxGeometry(R * 1.35, capH, R * 1.35), T(0, oy + capH / 2, 0), shade(cTr, wear));
+        oy += capH;
+      }
+
+      // 水晶底座（火盆，沿用 v54 定下的"不用很大、不给队伍色"）——两档色阶（deco 之外
+      // 的第 4 个几何体），塔身与檐口已经用了 stone/trim 两档，这里再暗一档收尾。
+      crystalR = R * (0.34 + SPr.tiers * 0.035);
+      const pedR = crystalR * 0.62, pedH = crystalR * 0.42;
+      add(new THREE.CylinderGeometry(pedR * 0.82, pedR, pedH, 8),
+          T(red ? R * 0.02 : 0, oy + pedH / 2, red ? R * 0.02 : 0), shade(cTr, 0.72 * wear));
+      oy += pedH;
+
+      // 脚下碎石：只有重损才有，且**加在主体之外**，不改变任何主体尺寸——与旧代码
+      // 同一条原则（v45c）。数量压到 2 块（旧版重损是 6 块）。
+      if (dmg === 2) {
+        add(new THREE.BoxGeometry(R * 0.30, R * 0.24, R * 0.26),
+            compose(T(R * 1.05, R * 0.12, R * 0.30), R_Z(0.4), R_X(0.15)), shade(cSt, 0.5 * wear));
+        add(new THREE.BoxGeometry(R * 0.24, R * 0.20, R * 0.22),
+            compose(T(-R * 0.95, R * 0.10, -R * 0.45), R_Z(-0.5), R_X(-0.1)), shade(cSt, 0.5 * wear));
+      }
+
+      crystalCy = oy + crystalR * 0.62;
+      crystalGeo = new THREE.OctahedronGeometry(crystalR);
+      // weaponId 不驱动这套几何（炮口＝顶部水晶，与下面旧分支同一约定）。
+      // ⚠️ 故意不写 `void weaponId;`：下面 sim_v46.mjs 的"损⑱"断言用这行字面量
+      // 当切片终点定位旧分支的范围，这里重复一遍会让它切到自己头上，切出空区间。
     } else {
       // ==================== 防御塔（v45 按阵营彻底分家）====================
       // 用户："新模型的塔我觉得一般，并没有做出差异化，红蓝方，外/内等。"

@@ -16,6 +16,7 @@
  */
 import { CONFIG, stylizedPaletteOf, adaptiveTowerColors } from '../src/data/Config.js';
 import { howling_abyss_frost } from '../src/data/maps/howling_abyss_frost.js';
+import { towerMesh } from '../src/presentation/UnitMeshFactory.js';
 import { srcOf, scoreboard } from './_harness.mjs';
 
 const { T, done } = scoreboard('塔基 + 塔色自适应地面');
@@ -165,6 +166,57 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   T('适⑨-关掉开关后，没声明塔色的调色板就不再补（一处开关能整体回退）',
     off.towerStone === undefined && off.towerTrim === undefined);
   CONFIG.ui.towerColorAdapt.enabled = true;   // 还原，虽然本文件到此就结束了，留个干净收尾
+}
+
+// ==================== 六、外塔（tier==='outer'）v56 大体块重做 ====================
+// 用户 2026-09-10 看完第四轮评审（8.5/10，建议冻结塔色/岸坡、转攻塔的形体）后
+// 明确说"现在开工"。旧外塔模型数下来有 29 个几何体，跟 docs §17.3 定的硬约束
+// （4~6 个主要几何体）差了一个数量级——这组断言不钉具体顶点数（换个 THREE.js
+// 版本或分段数就会变），钉的是**行为形状**：
+//   ① v45c 的老教训不能再犯——三档损毁下主体高度（topY/muzzleY）必须逐位相等，
+//      水晶同时是炮口，弹道原点不能随掉血跳动；
+//   ② 损毁确实改了几何（顶点数递增），不是纯换色的空转；
+//   ③ 两阵营确实分了形（顶点数不同），不是共用同一份缓存命中；
+//   ④ 只动了 outer 这一档（一贯的"先做一个，做好了再推广"节奏），
+//      其余三档仍走旧代码，顶点数应明显更高（守住"没有误路由"）。
+{
+  const build = (faction, dmg, tag) => towerMesh(
+    `test-outer-${tag}-${faction}-${dmg}`, faction === 'red' ? '#e0473f' : '#5b9bd5',
+    30, '', 'tower', false, false, 'outer', faction, dmg, null);
+
+  for (const faction of ['blue', 'red']) {
+    const m0 = build(faction, 0, 'h');
+    const m1 = build(faction, 1, 'h');
+    const m2 = build(faction, 2, 'h');
+    T(`外①-${faction}方三档损毁下 topY 逐位相等（v45c 教训：主体高度绝不能随掉血变）`,
+      m0.topY === m1.topY && m1.topY === m2.topY);
+    T(`外②-${faction}方三档损毁下 muzzleY 逐位相等（水晶＝炮口，弹道原点不能跳）`,
+      m0.muzzleY === m1.muzzleY && m1.muzzleY === m2.muzzleY);
+    const n0 = m0.geo.attributes.position.count;
+    const n1 = m1.geo.attributes.position.count;
+    const n2 = m2.geo.attributes.position.count;
+    T(`外③-${faction}方顶点数随损毁递增而非不变（凹坑/碎石确实加了几何，不是纯换色）`,
+      n0 < n1 && n1 < n2);
+  }
+
+  const blue0 = build('blue', 0, 'f').geo.attributes.position.count;
+  const red0 = build('red', 0, 'f').geo.attributes.position.count;
+  T(`外④-两阵营顶点数不同（${blue0} vs ${red0}，确实分了形，不是共用一份几何）`,
+    blue0 !== red0);
+
+  // 只动了 outer 这一档：另外三档仍是旧代码那套（几十个几何体），顶点数应明显更高。
+  for (const tier of ['inner', 'base', 'hq_tower']) {
+    const n = towerMesh(`test-tier-guard-${tier}`, '#5b9bd5', 30, '', 'tower', false, false, tier, 'blue', 0, null)
+      .geo.attributes.position.count;
+    T(`外⑤-${tier} 档未被误路由进新造型（顶点数 ${n} 明显高于 outer 的 ${blue0}，仍是旧的大体量设计）`,
+      n > blue0 * 1.5);
+  }
+
+  // 纯函数/可缓存：同样入参（不同 key，绕开缓存命中）应该产出同样的几何形状。
+  const a = build('blue', 0, 'x1');
+  const b = build('blue', 0, 'x2');
+  T('外⑥-outer 造型是确定性的（同样入参、不同 key 两次生成，顶点数/topY 完全一致）',
+    a.geo.attributes.position.count === b.geo.attributes.position.count && a.topY === b.topY);
 }
 
 done();
