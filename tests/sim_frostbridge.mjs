@@ -486,11 +486,17 @@ const halfWidth = (bits, d, sign) => {
 
   // ① 与城墙同族：都必须是冷调（蓝分量高于红分量）。塔用暖灰是被否掉的那一版。
   T(`塔②-塔石色是冷调（与城墙同族，蓝-红 = ${cool(P.towerStone)}）`, cool(P.towerStone) > 12);
-  // ② 必须明显暗于桥面，否则塔在近白的桥上"压不住"，看起来是浮的。
-  T(`塔③-塔石色明显暗于桥面（塔 ${lum(P.towerStone).toFixed(0)} < 桥面 ${lum(P.corridorColor).toFixed(0)}）`,
-    lum(P.towerStone) < lum(P.corridorColor) - 40);
-  // ③ 亮部要比石身亮，塔身上才有明暗层次（全一个值就是一块剪影）。
-  T('塔④-塔的亮部亮于石身', lum(P.towerTrim) > lum(P.towerStone) + 20);
+  // ② 2026-09-10：用户看完第一版实机说"还是很暗，调高点，让塔也变白，可以激进些"——
+  //    这条原来钉的是"塔必须明显暗于桥面（差 ≥40）"，是 v54 时代"塔会像浮在桥上"
+  //    的反向约束，跟这次的要求正好相反，故意放弃。现在只钉"塔身仍然比桥面暗"
+  //    这个最基本的关系（差 > 0，留一点余量避免浮点误差把两者判成完全相等）——
+  //    差多少由 darken 这个系数决定，不钉具体数字，改配色不用来改这条断言。
+  T(`塔③-塔石色仍比桥面暗（塔 ${lum(P.towerStone).toFixed(0)} < 桥面 ${lum(P.corridorColor).toFixed(0)}），但差距不再要求"明显"`,
+    lum(P.towerStone) < lum(P.corridorColor) - 3);
+  // ③ 亮部要比石身亮，塔身上才有明暗层次（全一个值就是一块剪影）。同一次实验里
+  //    整体调亮之后，这条也从"差 ≥20"松到"差 > 0"——层次仍要有，但不再要求很陡。
+  T('塔④-塔的亮部仍亮于石身（层次仍在，但不再要求差距很大）',
+    lum(P.towerTrim) > lum(P.towerStone) + 3);
 
   const ul = srcOf('src/presentation/UnitLayer.js');
   // ⚠️ 几何按 key 全局缓存。paletteId 不进 key 的话，换到另一张调色板的地图会直接
