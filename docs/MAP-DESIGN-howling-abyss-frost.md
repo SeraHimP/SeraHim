@@ -1028,3 +1028,75 @@ const fBase = (r, h) => fRed ? new THREE.CylinderGeometry(...) : new THREE.BoxGe
 > **先证明 feature 真的在 render graph 里，再评价效果。**
 > 手段：把参数调夸张到不可能看不见（接地暗斑那次用对过），或者补一条源码/配置断言
 > （岸坡与塔基这两次都是被断言而不是被眼睛抓出来的）。
+
+---
+
+## 15. 塔色自适应地面 + 暂时关闭塔基（v55.3，用户主动要求的实验）
+
+用户限额恢复后主动提出，绕开了 §14 排的顺序，先做一个隔离实验：
+
+> 「把塔的颜色自适应成地面的颜色，然后把塔基（含修圆/方不匹配）暂时删除，我看看效果如何」
+
+### 15.1 塔色自适应地面
+
+**问题**：`stylizedPalettes.frost.towerStone/towerTrim` 是 v54 手写的两个定值。地图调色板
+一改地面色，这两个值不会跟着变——手写值与自动派生值必然先后脱节，是 §13.6/§14.2
+里"统一 WORLD_PALETTE"那条要解决的问题的一个子集。这次先只做塔这一件。
+
+**做法**：新增 `CONFIG.ui.towerColorAdapt`（软编码，`enabled/coolBoost/darken/trimLighten`
+四个系数）与纯函数 `adaptiveTowerColors(groundHex, cfg)`（`src/data/Config.js`）。
+`stylizedPaletteOf(map)` 在调色板**没有显式声明** `towerStone/towerTrim` 时，用这个函数
+从 `corridorColor`（塔脚下真正站着的那张地面）现算，返回**浅拷贝**（不会就地改
+`CONFIG.stylizedPalettes` 里的原始对象——直接改的话，"调用过一次之后原始数据被悄悄
+改写"会是下一个查起来最难受的 bug）。显式声明的值永远优先，保留手工微调的出路。
+
+**公式踩到的一个坑**：第一版"先把红/蓝各推 `coolBoost`、再乘 `darken`"在暖色地面上
+不成立——推的幅度是固定值，地面本身越暖（B−R 越负），推完仍可能是暖的。
+用跨度很大的样本测（冷/暖/亮/暗六种地面色）才测出这条：`#c9a06b`（demo_stylized 的
+桥面色）推完 B−R 还剩 −58，明显不冷。修法是加一道地板——不够冷就对称地继续推，
+直到 `B−R` 至少等于 `coolBoost` 本身。这类"只在某一张具体图上凑巧成立"的 bug，
+只测冰封图这一份颜色是测不出来的，这也是为什么 `sim_towerbase.mjs` 新增的
+"适③"组要跑六个跨度很大的样本，而不是只测 frost 那一份。
+
+**⚠️ 必须报告的行为变化**：这个机制是通用的，不是只接给 frost。全仓库只有两张地图
+声明 `visualStyle:'stylized'`——`howling_abyss_frost`（本来就手写了塔色，这次删掉手写值
+换成自适应）和 `demo_stylized_v1`（探路用 demo，之前没声明塔色、一直用
+`FACTION_STYLE` 里与地图无关的暖中性灰，**现在也会自动跟着自己的地面色走**）。
+三张老地图（召唤师峡谷/绞杀深渊/扭曲丛林）没有声明 `visualStyle:'stylized'`，
+不吃这条分支，逐位不变——实机截图核对过。
+
+**验证**：用 noon（`phase=0.25`，太阳色接近纯白）截图核对，排除了黎明那种强暖光
+把冷色调乘出暖调错觉的干扰——采样塔身两个面 `(40,50,55)` / `(3,25,36)`，
+均 B≥G>R，冷调成立，且都暗于同一帧的地面 `(40,81,113)`。
+
+### 15.2 塔基：临时关闭，不是删除代码
+
+**用户说的是"暂时删除"**，理解为要隔离变量、单独看塔色自适应的效果，不是要推翻
+塔基这个方向本身（§13.5 已经证明"地面→石台→塔"三段色阶是有效的）。所以只翻了
+`CONFIG.ui.towerFoundation.enabled: true → false` 这一个开关，代码、注释、断言
+（`sim_towerbase.mjs` 第二~四组）全部原样留着——包括 §14.1 记的那个圆/方不匹配 bug，
+它现在不生效，不代表已经修好，重新打开这一行时那个 bug 会原样出现，还是要按 §14.1
+的修法（判据同时看 `kind`）处理。
+
+**为什么不直接删代码**：塔基这个功能本身是验证过有效的（§13.5 的三层色阶实测），
+用户明确说的是"暂时"，一个开关能完整恢复远比"删代码 → 以后再翻出来重写"划算，
+也符合"参数化/可回退"的一贯做法。
+
+### 15.3 期望常量：逐项报告
+
+* `towerFoundation.enabled`：`true` → **`false`**（临时，理由见 15.2）。
+* `stylizedPalettes.frost.towerStone/towerTrim`：**从手写定值改为不声明**，
+  运行时改由 `adaptiveTowerColors(corridorColor='#dce9f2', …)` 现算，
+  实测结果 stone≈`#454f58`、trim≈`#a3aeb7`（与旧手写值 `#6d8aa6`/`#c3d8e6` 同属
+  冷蓝灰族，但更暗——`darken` 系数目前取的是"看得出冷调"优先，不是"贴近旧手写值"，
+  如果用户觉得整体偏暗，第一个该调的系数是 `darken`）。
+* 新增 `CONFIG.ui.towerColorAdapt = { enabled:true, coolBoost:18, darken:0.34, trimLighten:0.62 }`。
+* **副作用（已在 15.1 报告过，这里再提一次防止漏看）**：`demo_stylized_v1` 的塔从
+  `FACTION_STYLE` 暖中性灰变成了跟随自己地面色的冷调深色。
+
+### 15.4 验证
+
+`node tests/run_all.mjs` 全量跑通（`sim_frostbridge.mjs`：87 条，塔①~⑤ 按新数据源重写；
+`sim_towerbase.mjs`：42 条，新增"五、塔色自适应地面"整组）。实机核对了三张图：
+冰封图（塔基消失、塔色变冷调深灰）、demo_stylized（塔色从暖灰变冷调深色）、
+召唤师峡谷（逐位不变）。

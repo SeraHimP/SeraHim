@@ -211,12 +211,22 @@ const halfWidth = (bits, d, sign) => {
     && CONFIG.stylizedPalettes.default.outlineOnByDefault === false);
   T('调③-frost 调色板存在，且带 vegetationMode:"none"（关掉树/岩/灌木散布）',
     !!CONFIG.stylizedPalettes.frost && CONFIG.stylizedPalettes.frost.vegetationMode === 'none');
+  // v55.3：stylizedPaletteOf 不再保证返回**同一个对象**——调色板没有显式声明塔色时，
+  // 它会补上 CONFIG.ui.towerColorAdapt 算出来的 towerStone/towerTrim，且必须返回浅拷贝
+  // （直接改原对象等于让"调用过一次之后 CONFIG 里的原始数据被悄悄改写"，见该函数头注）。
+  // 所以这三条从"同一个引用"改钉"取到的确实是那份调色板"——逐字段值相等，
+  // 且补的塔色字段必须存在。
+  const sameData = (a, b) => Object.keys(b).every((k) => k === 'towerStone' || k === 'towerTrim' || a[k] === b[k]);
   T('调④-stylizedPaletteOf(map) 未声明 paletteId 时退回 default（demo_stylized_v1 走这条）',
-    stylizedPaletteOf({}) === CONFIG.stylizedPalettes.default);
+    sameData(stylizedPaletteOf({}), CONFIG.stylizedPalettes.default)
+    && !!stylizedPaletteOf({}).towerStone);
   T('调⑤-stylizedPaletteOf(map) 按 paletteId 取对应的调色板',
-    stylizedPaletteOf({ paletteId: 'frost' }) === CONFIG.stylizedPalettes.frost);
+    sameData(stylizedPaletteOf({ paletteId: 'frost' }), CONFIG.stylizedPalettes.frost));
   T('调⑥-stylizedPaletteOf(map) 声明了不存在的 paletteId 时兜底回 default（不炸）',
-    stylizedPaletteOf({ paletteId: 'not-a-real-one' }) === CONFIG.stylizedPalettes.default);
+    sameData(stylizedPaletteOf({ paletteId: 'not-a-real-one' }), CONFIG.stylizedPalettes.default));
+  T('调⑦-stylizedPaletteOf 不会污染 CONFIG 里的原始调色板对象（浅拷贝，不是就地改）',
+    stylizedPaletteOf({ paletteId: 'frost' }) !== CONFIG.stylizedPalettes.frost
+    && CONFIG.stylizedPalettes.frost.towerStone === undefined);
 }
 
 // ==================== 五、渲染层接线（源码正则钉 JS/DOM 胶水，不测 WebGL 画面本身）====================
@@ -454,15 +464,22 @@ const halfWidth = (bits, d, sign) => {
     && /const bowlH = capH \+ CAP_H \/ 2 \+ BRAZIER_BOWL_H \/ 2/.test(decor));
 }
 
-// ==================== v54：塔的石色归地图调色板管 ====================
-// 用户："目前的塔模型根本无法融入地形……最重要的就是塔/小兵和环境的割裂感！"
+// ==================== v54/v55.3：塔的石色归地图调色板管，后改为从地面色算 ====================
+// 用户 v54："目前的塔模型根本无法融入地形……最重要的就是塔/小兵和环境的割裂感！"
 // 放大到实机看得很清楚：城墙用的是本表的 rockColor/wallCapColor（冷蓝灰、暗于桥面，
 // 读起来是"长在桥上的"），而塔用的是 FACTION_STYLE 里那套与本图无关的暖中性灰。
-// 这一组钉住"塔与城墙同源"这件事本身，而不是某个具体色值。
+// v54 的修法是在 frost palette 里手写两个定值；v55.3 用户主动要求把这两个定值删掉，
+// 改成由 CONFIG.ui.towerColorAdapt 从 corridorColor 现算（"把塔的颜色自适应成地面的
+// 颜色……我看看效果如何"）——地面调色板一改，塔色自动跟着变，不用两处手动同步。
+// 这一组钉住"塔与城墙（进而与地面）同源"这件事本身，不钉哪一版实现、不钉具体色值。
 {
-  const P = CONFIG.stylizedPalettes.frost;
-  T('塔①-冰封调色板声明了塔的石色/亮色', !!P.towerStone && !!P.towerTrim);
+  T('塔①-frost 调色板不再手写塔色（已交给 CONFIG.ui.towerColorAdapt 从地面色现算）',
+    CONFIG.stylizedPalettes.frost.towerStone === undefined
+    && CONFIG.stylizedPalettes.frost.towerTrim === undefined);
 
+  // 实际消费方读的是 stylizedPaletteOf(map) 的结果，不是原始 CONFIG 对象——
+  // 这才是"塔最终用什么颜色"的真相来源。
+  const P = stylizedPaletteOf(howling_abyss_frost);
   const hex = (h) => { const v = parseInt(h.slice(1), 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
   const lum = (h) => { const [r, g, b] = hex(h); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
   const cool = (h) => { const [r, , b] = hex(h); return b - r; };   // 蓝多于红 = 冷调

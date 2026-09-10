@@ -1040,7 +1040,11 @@ export const CONFIG = {
     // ⚠️ 几何要加在 y<0 一侧：pack() 会把模型底面强制对齐到 y=0，于是塔基自然落到
     //    地面上、塔身整体上抬一个塔基高度，不用去改塔身里每一处写死的 y。
     towerFoundation: {
-      enabled: true,
+      // 2026-09-10：用户要求先关掉塔基、单独看"塔色自适应地面色"这一项改动的效果
+      // ——两个变量一起看分不清是哪个在起作用。这是**临时**状态：塔基本身没有问题，
+      // 待办（圆/方不匹配，见 docs/MAP-DESIGN-howling-abyss-frost.md §14.1）还在，
+      // 后续要接着修，不是要砍掉这个功能。改这一行就能整体恢复，代码与断言都留着。
+      enabled: false,
       // ⚠️ 高而窄的台座在 45° 下只露**侧面**，而侧面吃不到光 —— 实测第一版
       //    （height 0.22 / spread 1.34）采样出来是 (42,43,58)，比塔身侧面 (93,66,38)
       //    还暗，等于在塔下面又垫了一块黑砖，正是要避免的结果。
@@ -1048,6 +1052,28 @@ export const CONFIG = {
       height: 0.16,     // × 建筑半径 R
       spread: 1.52,     // 最底那层的半径 × R —— 比塔身宽出去才读得出"台座"
       groundMix: 0.60,  // 塔基色 = 塔身石色 与 地面色 的插值系数（越大越靠近地面色）
+    },
+
+
+    // ==================== 塔色自适应地面（v55.3，用户主动要求的实验）====================
+    // 用户："把塔的颜色自适应成地面的颜色，然后把塔基暂时删除，我看看效果如何"。
+    //
+    // 在这之前，冰封图的塔石色（`stylizedPalettes.frost.towerStone/towerTrim`）是
+    // 手工调的两个定值——地图调色板一改地面色，塔就得跟着手动重调，两者必然会先后脱节。
+    // 这里改成**从地面色算**：塔色不再单独存一份，而是 corridorColor（塔脚下真正站着
+    // 的那张桥面）的一个函数，地面怎么调塔就自动跟着变。
+    //
+    // 只在调色板**没有显式声明** towerStone/towerTrim 时才接管（见 `stylizedPaletteOf`）——
+    // 显式声明的值永远优先，保留手工微调的出路。这次为了看实验效果，把 frost palette
+    // 里原来手写的那两个值删掉了，所以 frost 现在走的就是这条自适应公式。
+    towerColorAdapt: {
+      enabled: true,
+      // 石身 = 地面色先把红/蓝各推 coolBoost（哪怕地面本身偏暖，塔身也要读成冷调石头，
+      // 呼应"石头不分四季"的直觉），再乘 darken 压暗。
+      coolBoost: 18,
+      darken: 0.34,
+      // 亮部 = 石身与地面色之间取插值，越接近 1 越亮、越接近地面色。
+      trimLighten: 0.62,
     },
 
     groundContact: {
@@ -1316,14 +1342,13 @@ export const CONFIG = {
       waterColor: '#24558a',      // 裸露水面：比冰暗、比深渊基底亮，三者拉开层次
       islandColor: '#c8dcea',     // 孤灵小岛台面：接近桥面但略冷一点
       spikeColor: '#b9d5e6',      // 冰刺：整张图最亮的一档冷色，参考图里最抓眼的母题
-      // v54：**塔与小兵的石色也归地图调色板管**。
-      // 用户："目前的塔模型根本无法融入地形……最重要的就是塔/小兵和环境的割裂感！"
-      // 放大到实机看得很清楚：城墙用的是这张表里的 rockColor/wallCapColor（冷蓝灰，
-      // 明显暗于桥面，读起来是"长在桥上的"），而塔用的是 FACTION_STYLE 里那套
-      // 与本图无关的暖中性灰 —— 于是墙融进去了、塔像贴纸。
-      // 这两项一给，塔就和城墙同源了。不声明的地图（峡谷/丛林）取值逐位不变。
-      towerStone: '#6d8aa6',      // 塔身：比 rockColor 略深一档，让塔在桥面上先"压得住"
-      towerTrim: '#c3d8e6',       // 塔的亮部：与 wallCapColor 同族，略亮
+      // v54：塔与小兵的石色曾经在这里手写两个定值（v54 起归调色板管，理由见下）。
+      // v55.3：**改成不声明**——不写 towerStone/towerTrim，`stylizedPaletteOf` 会自动
+      // 用 CONFIG.ui.towerColorAdapt 从 corridorColor（桥面）算出塔色（用户主动要求
+      // 的实验："把塔的颜色自适应成地面的颜色……我看看效果如何"）。手写值与自动算出的
+      // 值谁先生效见 `stylizedPaletteOf` 的头注：显式声明永远优先，这里不写就是让自适应
+      // 接管。v54 当时的诊断依旧成立：城墙用 rockColor/wallCapColor（冷蓝灰、暗于桥面），
+      // 塔原本用的是 FACTION_STYLE 里与本图无关的暖中性灰——那才是"塔像贴纸"的根因。
       outlineOnByDefault: false,
       vegetationMode: 'none',
     },
@@ -1822,7 +1847,59 @@ export const MINION_SIZES = {
  * 的 CONFIG.stylizedVisuals 逐字段相同）；渲染代码一律调这个函数，不直接读
  * CONFIG.stylizedPalettes[...] 或某个写死的字段名，避免以后加新主题时改漏一处。
  */
+function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+function hexOf(r, g, b) {
+  const h = (n) => clamp255(Math.round(n)).toString(16).padStart(2, '0');
+  return '#' + h(r) + h(g) + h(b);
+}
+function rgbOfHex(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  const v = m ? m[1] : '888888';
+  return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
+}
+
+/**
+ * 塔的石色/亮色由**地面色**算出来，不再是调色板里手写的两个定值。
+ * 见 CONFIG.ui.towerColorAdapt 的头注（用户主动要求的实验：地面一改，塔跟着自动变）。
+ *
+ * 纯函数，不读 CONFIG（系数由调用方传入）——方便在无头测试里对着任意地面色单独验证
+ * "石身必须比地面暗、必须偏冷、亮部必须比石身亮"这三条关系是否成立，不用先搭一张地图。
+ *
+ * @param {string} groundHex 塔脚下那张地面/地表的颜色（风格化地图通常传 corridorColor）
+ * @param {object} cfg CONFIG.ui.towerColorAdapt 的 { coolBoost, darken, trimLighten }
+ * @returns {{ stone: string, trim: string }}
+ */
+export function adaptiveTowerColors(groundHex, cfg) {
+  const [r, g, b] = rgbOfHex(groundHex);
+  const boost = cfg.coolBoost ?? 0;
+  // 先推冷：红减、蓝加。哪怕地面是暖色，塔身也读成冷调石头——参考图里的墙/塔从不跟着
+  // 地面的冷暖走，是靠"石头"这个材质本身的冷调把自己和有机地表分开的。
+  let r1 = r - boost, b1 = b + boost;
+  // ⚠️ 上面这步只是"往冷推"，推的幅度是固定的 boost——地面本身越暖（B-R 越负），
+  //    推完仍然可能是暖的（实测暖褐地面 #c9a06b 推完 B-R 还剩 -58）。
+  //    "哪怕地面是暖色，塔身也要读成冷调"是这条公式的硬承诺，所以再加一道地板：
+  //    不够冷就对称地继续推，直到 B-R 至少等于 boost 本身。
+  const gap = boost - (b1 - r1);
+  if (gap > 0) { r1 -= gap / 2; b1 += gap / 2; }
+  const k = cfg.darken ?? 0.34;
+  const stone = hexOf(r1 * k, g * k, b1 * k);
+  const tk = cfg.trimLighten ?? 0.62;
+  const [sr, sg, sb] = rgbOfHex(stone);
+  const trim = hexOf(sr + (r - sr) * tk, sg + (g - sg) * tk, sb + (b - sb) * tk);
+  return { stone, trim };
+}
+
 export function stylizedPaletteOf(map) {
   const id = (map && map.paletteId) || 'default';
-  return CONFIG.stylizedPalettes[id] || CONFIG.stylizedPalettes.default;
+  const pal = CONFIG.stylizedPalettes[id] || CONFIG.stylizedPalettes.default;
+  // ⚠️ 只在调色板**没有显式声明**塔色时才接管，且返回浅拷贝——不能就地改 pal 本身：
+  //    它是 CONFIG.stylizedPalettes[id] 的原始引用，直接改等于让"调用过一次
+  //    stylizedPaletteOf 之后 CONFIG 里的原始数据被悄悄改写"，其它直接读
+  //    CONFIG.stylizedPalettes.xxx 的地方（包括测试）会因为调用顺序不同看到不同的值。
+  const adapt = CONFIG.ui.towerColorAdapt;
+  if (adapt?.enabled && (!pal.towerStone || !pal.towerTrim) && pal.corridorColor) {
+    const { stone, trim } = adaptiveTowerColors(pal.corridorColor, adapt);
+    return { ...pal, towerStone: pal.towerStone || stone, towerTrim: pal.towerTrim || trim };
+  }
+  return pal;
 }
