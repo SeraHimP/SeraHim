@@ -424,4 +424,26 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     stackOf('fire') === 4 && stackOf('water') === 2);
 }
 
+// ==================== ⑮：手动建塔（"添加单位"）漏发龙魂/巨龙之力（真 bug）====================
+// 用户反馈"核查Bug，某阵营获得龙魂后，龙魂不再塔上生效"。排查发现：createBuilding()
+// （地图上的塔）和 createMinion()（含手动加的大型小兵）早就调用了
+// dragonSystem.equipExistingSoul(entity) 补发（factories.js:379/500），唯独
+// "添加单位"手动建塔这条路径（main.js 里 armPlaceMode 的回调，走 createTower()）
+// 漏了这一句——createTower() 本身不知道塔要归哪个阵营（faction 是回调外部传的），
+// 所以 equipExistingSoul 只能由调用方在设置完 tower._mapFaction 之后自己补。
+// 于是同一批"添加单位"操作里，手动加的大型小兵能补到龙魂/巨龙之力，手动建的塔却拿不到，
+// 跟用户描述的现象完全对得上。
+// srcOf 剥掉注释，钉的是**代码顺序**：先赋值 _mapFaction，再调 equipExistingSoul
+// （equipExistingSoul 读 entity._mapFaction || entity.faction，赋值前调用等于传一个
+// 还没归属阵营的塔进去，直接被 fac === NEUTRAL 的判断挡掉，什么都补不到）。
+{
+  const src = srcOf('src/main.js');
+  const idxFaction = src.indexOf('tower._mapFaction = faction;');
+  const idxEquip = src.indexOf('dragonSystem.equipExistingSoul(tower);');
+  T('⑮-main.js 手动建塔路径调用了 dragonSystem.equipExistingSoul(tower)（此前完全没调）',
+    idxEquip >= 0);
+  T('⑮-equipExistingSoul(tower) 在 tower._mapFaction 赋值之后调用（顺序反了会读到未归属的塔）',
+    idxFaction >= 0 && idxEquip > idxFaction);
+}
+
 board.done();

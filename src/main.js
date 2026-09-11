@@ -460,6 +460,23 @@ function _processNextTowerPlacement() {
     // EQ2：手动建塔归属阵营（蓝/红/中立）。中立=独立一方：打红蓝双方，也被双方打。
     tower._mapFaction = faction;
     tower.faction = faction;
+    // 修复：某阵营已经拿到龙魂之后，手动建的塔从不生效——createBuilding()/
+    // createMinion() 早就调用了 dragonSystem.equipExistingSoul(entity) 补发龙魂/
+    // 巨龙之力（factories.js:379/500），唯独这条"添加单位"手动建塔的路径漏了这一句
+    // （createTower() 本身也没调，它连 faction 都不知道，equipExistingSoul 读的
+    // _mapFaction 要等这里赋值之后才有）。必须放在上面两行 faction 赋值**之后**——
+    // equipExistingSoul 读 entity._mapFaction || entity.faction，赋值前调用等于
+    // 传一个还没有阵营的塔进去，直接被 fac === NEUTRAL 的判断挡掉。
+    const gotSoul = dragonSystem.equipExistingSoul(tower);
+    // v47 spawnAtFullHP 头注同一个坑：createTower() 内部已经按当时的 maxHP 把
+    // currentHP 打满了，但那时还没挂上龙魂/巨龙之力——如果补发的东西带
+    // maxHPPct（山之力这类），刚打满的血量转眼就变成"满血但不是真满血"的残血。
+    // 这里补一次跟下面 Q7 模型档位那段（512 行附近）同一套写法：重新取
+    // effectiveMaxHP() 再打满一次，不新增第二套算法。
+    if (gotSoul) {
+      const fullHP = effectiveMaxHP(tower);
+      if (fullHP > 0) tower.currentHP = fullHP;
+    }
     const oldWeapon = tower._skillInstances.find(s => s.skillId.startsWith('weapon_'));
     if (oldWeapon) {
       const oldDef = skillLibrary[oldWeapon.skillId];
