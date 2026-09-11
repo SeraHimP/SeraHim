@@ -80,6 +80,14 @@ const SR_CONFIG = {
   // 不写也不影响现有行为（FactionSystem.mapFactionsOf 未声明时兜底就是这两个）。
   factions: [FACTIONS.BLUE, FACTIONS.RED],
 
+  // ==================== v58：森林风格化 ====================
+  // 用户："召唤师峡谷是森林风格。"——接入风格化渲染分支（TerrainLayer/
+  // VegetationLayer 按 visualStyle==='stylized' 分支），配色走新增的 forest
+  // 调色板（CONFIG.stylizedPalettes.forest，见其头注：这份调色板不专属本图，
+  // 以后任何"森林风格"地图都能直接声明同一个 paletteId 复用）。
+  visualStyle: 'stylized',
+  paletteId: 'forest',
+
   // === Building tier stats (classic defaults, self-contained) ===
   // v51.6：用户定稿属性修正——"外塔HP5000，双抗40。内塔HP4000，双抗70。水晶塔HP3500，
   // 双抗55。"（"水晶塔"= tier:'base'，见 FactionSystem.js 的既定口径："水晶塔（高地塔，

@@ -67,6 +67,10 @@ export const CONFIG_FIELDS = [
   'tierStats', 'skillOverrides', 'excludeSkills',
   'waveInterval', 'firstWaveDelay', 'spawnGap', 'waveColumns', 'columnSpacing', 'nexusRespawnTime',
   'globalAura', 'spawnEnabled', 'laneWaveCompositionByLane', 'neutralCamps',
+  // v58：召唤师峡谷"森林风格化"新增——纯画面字段（不影响物理/仿真），归进这份
+  // "除物理几何外的一切顶层字段"的桶里。之前只有 howling_abyss_frost.js 这种
+  // 不走 composeMap 的手写地图用过，第一次有 TERRAIN/CONFIG 拆分的老地图要用。
+  'visualStyle', 'paletteId',
 ];
 
 /**

@@ -57,6 +57,25 @@ export function distToPolyline(waypoints, x, y) {
 }
 
 /**
+ * v58：该点到"最近一条兵线"的距离——森林风格地图的"走廊 vs 野区"二分（渲染层的
+ * TerrainLayer 地面着色、VegetationLayer 植被摆放）共用同一份实现，不各写一份
+ * 各投影一次 map.lanes，避免本模块头注说的那种"同一件事两份实现迟早互相漂移"。
+ * 没有声明 lanes 的地图返回 Infinity（永远判"离兵线很远"，调用方应先检查
+ * map.lanes 是否存在，不能只靠这个返回值兜底所有情形）。
+ * @param {object} map 地图定义，读它的 lanes 字段
+ * @param {number} x @param {number} y
+ * @returns {number}
+ */
+export function nearestLaneDist(map, x, y) {
+  let d = Infinity;
+  for (const lane of map.lanes || []) {
+    const dd = distToPolyline(lane.waypoints, x, y);
+    if (dd < d) d = dd;
+  }
+  return d;
+}
+
+/**
  * 沿折线的弧长位置（取最近投影点处的累计长度）。
  * @param {{x:number,y:number}[]} waypoints
  * @param {number} x @param {number} y

@@ -19,6 +19,7 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
+import { nearestLaneDist } from '../data/mapValidate.js';
 
 const _terrainCache = new Map();
 
@@ -158,6 +159,35 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
     // 画地面用的形状可以与"能不能走"分开（见 visualWalkOf 头注）；没声明就还是照抄可走网格。
     const paint = visualWalkOf(map, grid) || walk;
+
+    // ==================== v58：走廊 / 野区二分（森林风格地图新增）====================
+    // 用户："召唤师峡谷是森林风格。"——LoL 原图里可走区域并不是一片同色：兵线走廊是
+    // 夯实的泥土路，走廊两侧的野区虽然也能走，但视觉上是草地。之前 navMode 这条分支
+    // 从 HA-frost 继承来的假设是"可走=路，不可走=景"，套到召唤师峡谷这种"野区本身
+    // 也能走"的地图上就会整张图变成同一个颜色，读不出"路"。
+    // 只有调色板声明了 jungleColor 才走这条分支（目前只有 forest palette），其余
+    // 风格化地图（含 HA-frost 的 frost 调色板）逐位不变——用 corridorColor 兜底，
+    // 与"没有 jungleColor"时完全一样。
+    // 判据：可走格离最近兵线折线的距离 ≤ 走廊半宽 → 路（corridorColor），否则 → 野区
+    // （jungleColor）。半宽复用 map.walls.corridorHalfWidth——navgrid 地图虽然不再用
+    // 它判定"能不能走"（那已经交给位图了），但它仍然准确描述"这条路视觉上有多宽"，
+    // 没必要再单独声明一个数字。
+    const [jngR, jngG, jngB] = stylized && SV.jungleColor ? hex2rgb(SV.jungleColor, '4c9a5b') : [corR, corG, corB];
+    const jungleActive = stylized && !!SV.jungleColor && Array.isArray(map.lanes) && map.lanes.length > 0;
+    const laneHalfWidth = map.walls?.corridorHalfWidth ?? 130;
+    let laneColorAt = null;
+    if (jungleActive) {
+      const cellW = WW / nx, cellH = WH / ny;
+      laneColorAt = new Uint8Array(nx * ny);   // 1=路(corridor) / 0=野区(jungle)，只在 on 时读
+      for (let gy2 = 0; gy2 < ny; gy2++) {
+        for (let gx2 = 0; gx2 < nx; gx2++) {
+          const k2 = gy2 * nx + gx2;
+          if (!paint[k2]) continue;   // 不可走的格不需要分类，省一次距离计算
+          const wx = (gx2 + 0.5) * cellW, wy = (gy2 + 0.5) * cellH;
+          laneColorAt[k2] = nearestLaneDist(map, wx, wy) <= laneHalfWidth ? 1 : 0;
+        }
+      }
+    }
     // v55：声明了 terrainEdge 的地图，**不可走格直接挖空**（alpha=0），
     // 由 TerrainEdgeLayer 在更低的高度另铺一张深渊面 —— 陆地才读得出"有厚度"。
     // 见 docs/MAP-DESIGN-howling-abyss-frost.md §8.2.3 的路线 B。
@@ -228,9 +258,10 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
 
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
-      im.data[k * 4]     = on ? corR : gndR;
-      im.data[k * 4 + 1] = on ? corG : gndG;
-      im.data[k * 4 + 2] = on ? corB : gndB;
+      const isLane = !laneColorAt || laneColorAt[k];   // 未开野区二分时全部按老逻辑当"路"
+      im.data[k * 4]     = on ? (isLane ? corR : jngR) : gndR;
+      im.data[k * 4 + 1] = on ? (isLane ? corG : jngG) : gndG;
+      im.data[k * 4 + 2] = on ? (isLane ? corB : jngB) : gndB;
       im.data[k * 4 + 3] = (cutout && !on) ? 0 : 255;
     }
     cg.putImageData(im, 0, 0);

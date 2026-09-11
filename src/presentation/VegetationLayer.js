@@ -9,6 +9,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { WALL_H } from './WallLayer.js';
 import { stylizedPaletteOf } from '../data/Config.js';
+import { nearestLaneDist } from '../data/mapValidate.js';
 
 function withColor(geo, hex) {
   const c = new THREE.Color(hex), n = geo.getAttribute('position').count, col = new Float32Array(n * 3);
@@ -70,17 +71,31 @@ export class VegetationLayer {
     // 水域装饰改由该图专用的 HowlingAbyssDecor.js 负责。default 调色板没有这个
     // 字段，三张老地图和 demo_stylized_v1 都不受影响。
     if (stylized && stylizedPaletteOf(map).vegetationMode === 'none') { this.clear(); this._mapId = map.id; return; }
+    // ==================== v58：野区植被"jungle"分支（森林风格地图新增）====================
+    // 用户："召唤师峡谷是森林风格。"——default/frost 那套散布逻辑的前提是"野区=不可走"，
+    // 但召唤师峡谷这类 LoL 式地图的野区本身就是可走的（单位能在里面走、打野），
+    // 硬套旧逻辑会导致整片野区一棵树都不长（因为 walk(x,y) 恒为 true，第一条判据
+    // 就把它们全部跳过了）。调色板声明 vegetationMode:'jungle' 时改成"可走 + 离
+    // 兵线够远"当野区判据，用同一套采样网格与合并渲染，只换判据与树位高度。
+    const jungleMode = stylized && stylizedPaletteOf(map).vegetationMode === 'jungle';
     const { w: WW, h: WH } = map.world;
     const heightAt = mapSystem.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
+    const laneHalfWidth = map.walls?.corridorHalfWidth ?? 130;   // 与 TerrainLayer 的野区/走廊判据同一个数，两处不会各判各的
     const trees = [], rocks = [], bushes = [];
     // navgrid 地形下墙块较窄（野区可走、只有墙块不可走），内部余量过大会几乎选不出点 → 放宽到 26。
     const STEP = 62, margin = 26, edge = 90;   // 采样步长 / 内部余量(不贴车道边) / 离图边余量
     for (let gx = edge; gx < WW - edge; gx += STEP) for (let gy = edge; gy < WH - edge; gy += STEP) {
       const x = gx + (hash(gx + 11, gy) - 0.5) * STEP * 0.8;
       const y = gy + (hash(gx, gy + 11) - 0.5) * STEP * 0.8;
-      if (walk(x, y)) continue;                                             // 只在野区(不可走)放
-      if (walk(x + margin, y) || walk(x - margin, y) || walk(x, y + margin) || walk(x, y - margin)) continue; // 内部，不贴车道/高地边
+      if (jungleMode) {
+        if (!walk(x, y)) continue;                                          // 只在可走的野区放（本图野区本身能走）
+        if (nearestLaneDist(map, x, y) < laneHalfWidth + margin) continue;   // 离兵线够远才算野区，不贴路边种树
+        if (!walk(x + margin, y) || !walk(x - margin, y) || !walk(x, y + margin) || !walk(x, y - margin)) continue; // 内部，不贴地图外沿/基地墙
+      } else {
+        if (walk(x, y)) continue;                                             // 只在野区(不可走)放
+        if (walk(x + margin, y) || walk(x - margin, y) || walk(x, y + margin) || walk(x, y - margin)) continue; // 内部，不贴车道/高地边
+      }
       const gh = heightAt(x, y);
       if (gh < -2) continue;                                                // 河床不放
       // ⚠️ 摆放高度是【墙顶】，不是地面高度。用户："你这做的植被都跑到了贴图底下，

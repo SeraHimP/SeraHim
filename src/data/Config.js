@@ -1328,6 +1328,37 @@ export const CONFIG = {
       // 关掉这一项就能继续看其它风格化改动，不用连累整个 demo。
       outlineOnByDefault: false,
     },
+    // ==================== v58：森林风格（召唤师峡谷首个使用者）====================
+    // 用户："这次这些墙、柱子这种装饰品应该算是通用资产，每种风格地图都可以用……
+    // 以后要是做其他森林风格的地图，就可以直接套用召唤师峡谷中的资产。"——所以
+    // 这份调色板不叫 summonersRift，叫 forest：以后任何"森林风格"地图（不只是
+    // 召唤师峡谷）都声明 paletteId:'forest' 直接复用，不需要各画一份。
+    // 视觉方向用户确认贴近 LoL 原版："明亮草地+石头+金色"。
+    forest: {
+      // groundColor 在 navgrid 地图上是"整张 navgrid 之外"的底色（地图外形状之外
+      // 的真正虚空），平时几乎看不到，压暗压绿一档，不抢戏。
+      groundColor: '#1c3322',
+      // corridorColor 这次身兼两职：①未声明 jungleColor 的老用法（可走区整体一个色）；
+      // ②本图声明了 jungleColor 后专指"兵线走廊"本身——夯实的泥土路，比周围草地更暖。
+      corridorColor: '#c2a06a',
+      // jungleColor：声明了这个字段，TerrainLayer/VegetationLayer 才会触发
+      // "走廊 vs 野区"二分（v58 新增，见两处文件头注）——可走区域里离兵线够远的部分
+      // 画成草地而不是跟路面同色，野区里也才会真的长树而不是一马平川。
+      // 这是"森林风格"与"default"（单一可走色）的本质区别，其它字段大体相通。
+      jungleColor: '#4c9a5b',
+      treeTrunkColor: '#5a4326',
+      treeCrownColorA: '#3f8a4d',
+      treeCrownColorB: '#5cb168',
+      rockColor: '#8f8879',
+      // 城墙压顶石：暖金色——"石头+金色"里的金色就落在这里，城墙主体仍是 rockColor
+      // 那种暖石灰，压顶石一圈金属光泽做点缀，不是整面墙都镀金。
+      wallCapColor: '#c9a24a',
+      outlineOnByDefault: false,
+      // 触发 VegetationLayer 的"野区植被"新分支（v58）：走廊内不长树，走廊外的
+      // 可走野区才长——跟 default palette 的"只在不可走区域长树"是两套不同的
+      // 分类依据，森林风格地图的野区本身就是可走的，不能沿用 default 那套判据。
+      vegetationMode: 'jungle',
+    },
     // 嚎哭深渊·冰封版专用（见设计文档第 4.1 节）。这张图没有"树/野区"这个概念
     // （不可走区域是水/浮冰，不是森林），`vegetationMode:'none'` 让 VegetationLayer
     // 跳过它默认的树/岩/灌木散布——那套散布逻辑是为"野区=森林"设计的，冰封水域
