@@ -5,13 +5,8 @@
  * 「粉色那里应该是城墙（墙壁）」——兵线与野区交界处要有一圈石头+金色的"城墙"；
  * 「至于野区的墙壁你就想想怎么实现吧，用自然的感觉（树、石头、等）」——野区内部
  * 迷宫状不可走障碍物的边缘，用户把"怎么做"完全交给我判断：这里选的是"加密
- * 灌木/岩簇"而不是另建一圈人工墙——那些障碍物本来就是野区里天然长的地形阻挡，
+ * 树/岩簇"而不是另建一圈人工墙——那些障碍物本来就是野区里天然长的地形阻挡，
  * 围一圈人工建筑反而不像野区。
- *
- * v58.5：用户看完第一版反馈"看不出一点森林的样子……都是低矮的灌木丛和零星的
- * 石头"——召唤师峡谷的视觉方向从一开始就是用户定的"明亮草地+石头+金色"
- * （没有树），这里最初复用 VegetationLayer 的高大松树造型摆在障碍物边缘不合适，
- * 已改成矮扁的灌木团+岩石，不再用树。
  *
  * 设计上明确不采用多边形轮廓追踪（navOutline/traceLoops，见 docs/MAP-DESIGN-
  * howling-abyss-frost.md §12）——那套方案要正确算出每一段边界的切线方向才能把
@@ -34,7 +29,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { stylizedPaletteOf } from '../data/Config.js';
 import { isLaneCell } from '../data/mapValidate.js';
-import { withColor, hash } from './VegetationLayer.js';
+import { withColor, stylizedTreeGeo, hash } from './VegetationLayer.js';
 
 // ==================== 城墙（柱子）====================
 // 用户标注的"粉色"是墙，但不做真的墙体嵌板（做嵌板需要算切线方向摆正朝向，
@@ -52,9 +47,8 @@ function wallPostGeo(SV) {
 }
 
 // ==================== 野区内部障碍物边缘（自然感）====================
-// v58.5：灌木团+岩石，不用树——召唤师峡谷是"明亮草地+石头+金色"，没有树这个
-// 元素（用户原话）。灌木用与 VegetationLayer 同款的压扁二十面体，坐标哈希复用
-// VegetationLayer 导出的 hash，不重新写一份随机数生成。
+// 复用 VegetationLayer 已经导出的树/岩几何与坐标哈希，不重新写一份——用户原话
+// 里"树、石头"两样东西这套几何已经有了，缺的只是"往障碍物边上多撒一点"的判据。
 const NAT_SPACING = 55;     // 比普通野区植被(VegetationLayer 的 STEP=62)略密，边缘要"看起来更挤"
 const NAT_PROBE = 42;       // 比普通植被的 margin(26) 更大：要探到确实贴着障碍物才算数，不是随便挨着不可走区就算
 const NAT_JITTER = 0.8;     // 与 VegetationLayer 同量级的散布抖动，避免整排等距显得死板
@@ -99,7 +93,7 @@ export class BoundaryDecorLayer {
     }
 
     // ---- 自然边缘候选：野区里"可走但贴着不可走障碍物"的网格点 ----
-    const natBushes = [], natRocks = [];
+    const natTrees = [], natRocks = [];
     for (let gx = edge; gx < WW - edge; gx += NAT_SPACING) {
       for (let gy = edge; gy < WH - edge; gy += NAT_SPACING) {
         const x = gx + (hash(gx + 31, gy) - 0.5) * NAT_SPACING * NAT_JITTER;
@@ -108,8 +102,7 @@ export class BoundaryDecorLayer {
         if (isLaneCell(map, x, y)) continue;   // 只加密野区一侧，路面不摆
         const surrounded = walk(x + NAT_PROBE, y) && walk(x - NAT_PROBE, y) && walk(x, y + NAT_PROBE) && walk(x, y - NAT_PROBE);
         if (surrounded) continue;              // 四周都可走，说明没贴着障碍物，跳过
-        // v58.6：与 VegetationLayer 同一条权重修正——灌木为主、石头点缀。
-        (hash(gx + 3, gy) < 0.8 ? natBushes : natRocks).push([x, y]);
+        (hash(gx + 3, gy) < 0.6 ? natTrees : natRocks).push([x, y]);
       }
     }
 
@@ -130,7 +123,7 @@ export class BoundaryDecorLayer {
       this.scene.add(inst); this.meshes.push(inst);
     };
     place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), posts, 1.0, 0.15);
-    place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.6, 1), new THREE.MeshLambertMaterial({ color: SV.treeCrownColorB || '#6cbb5e', flatShading: true }), natBushes, 0.85, 0.5);
+    place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35);
     place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4);
   }
 }
