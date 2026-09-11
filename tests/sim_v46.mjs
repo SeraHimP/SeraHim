@@ -523,6 +523,14 @@ const mkE = (ents, type, x, y, extra = {}) => {
   // 断言钉的是"上一版那种「尖点+悬浮盘」的结构已经不在了"，不是随便钉几个数字。
   T('损⑱c-水晶座与塔身一体：顶盖不再收成尖点(Cone)，改用锥台(Cylinder双半径)承接水晶',
     /const topTopR = crystalR/.test(umf2) && !/水晶底座（火盆）/.test(umf2));
+  // v58.2：用户实机截图指出"水晶和底座穿模重合了"——损⑱d 第一版只钉了
+  // "嵌入量≥0.2×crystalR"这个下限，没钉上限，而 v58 定的嵌入系数 0.62
+  // （嵌入深度 0.38R）比卡口收边 lip 自己的高度（lipH=0.16R）还高出一大截，
+  // 水晶不是"嵌进卡口"，是直接扎穿卡口、插进下面的锥台里，就是用户看到的
+  // 穿模。这里补回上限：嵌入深度必须 ≤ lipH，水晶才可能真的停在卡口内部，
+  // 不会往下扎进锥台——这是这次真正该在第一版就钉住、但漏掉的那道关系。
+  const lipHRatioM = umf2.match(/const lipR = topTopR \* [\d.]+, lipH = crystalR \* ([\d.]+);/);
+  const lipHRatio = lipHRatioM ? Number(lipHRatioM[1]) : 0.16;
   if (THREE) {
     const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
     for (const fac of ['blue', 'red']) {
@@ -531,11 +539,11 @@ const mkE = (ents, type, x, y, extra = {}) => {
         m.geo.computeBoundingBox();
         T(`损⑱b-${fac}/${tier}：水晶坐在石身上（底面不高于石身顶面，不悬空）`,
           m.crystal.cy - m.crystal.r <= m.geo.boundingBox.max.y + 1e-6);
-        // v58：不只是"不高于"，还要"贴得上"——旧版尖点+悬浮盘会留一段明显空隙
-        // （盘子半径量级的空当）；新版锥台直接收到水晶卡口宽度，水晶嵌入的深度
-        // 应该有 crystalR 一个量级，不能只差一点点意思一下。
-        T(`损⑱d-${fac}/${tier}：水晶嵌入卡口有实际深度（不是勉强够着顶面），嵌入量≥0.2×水晶半径`,
-          m.geo.boundingBox.max.y - (m.crystal.cy - m.crystal.r) >= m.crystal.r * 0.2 - 1e-6);
+        const embed = m.geo.boundingBox.max.y - (m.crystal.cy - m.crystal.r);
+        // v58.2：嵌入深度必须在 (0, lipH] 之间——太浅读作"没嵌进去、贴着放"，
+        // 太深（超过 lipH）就会扎穿卡口插进锥台里，就是用户看到的穿模。
+        T(`损⑱d-${fac}/${tier}：水晶嵌入卡口有实际深度但不超过卡口本身高度（不穿模），0 < 嵌入量 ≤ lipH(${lipHRatio}×crystalR)`,
+          embed > 1e-6 && embed <= m.crystal.r * lipHRatio + 1e-6);
       }
     }
   }

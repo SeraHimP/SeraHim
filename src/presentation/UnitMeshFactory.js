@@ -883,7 +883,15 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       // 前一版让它缩小，等于损毁顺带改了炮口位置，弹道会看起来像换了把武器。
       //
       // 水晶下半嵌进卡口里（跟旧版坐进盆口同一个读法），不是架在卡口上方。
-      crystalCy = y + crystalR * 0.62;
+      //
+      // v58.2：用户实机截图指出"水晶和底座穿模重合了"——诊断：v58 把 0.62 这个
+      // 嵌入系数直接从旧版"两片圆盘叠起来的火盆"（高度 crystalR*0.34）抄过来，
+      // 但新版卡口收边（lip）只有 crystalR*0.16 高，嵌入深度 (1-0.62)*crystalR=
+      // 0.38*crystalR 比 lip 本身还高出一大截——水晶不是"嵌进卡口"，是直接
+      // 穿透卡口、扎进下面的锥台里，读出来就是穿模。改成 0.90：嵌入深度收到
+      // 0.10*crystalR，比 lipH(0.16R) 小，水晶下半截真的停在卡口内部，不会
+      // 再往下扎进锥台里。
+      crystalCy = y + crystalR * 0.90;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
     }
