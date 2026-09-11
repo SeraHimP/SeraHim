@@ -1062,6 +1062,14 @@ export class MapSystem {
     // 这就是用户要的"路面恢复原有地形高度"——河不再从三路底下横穿过去。
     const rf = this.riverFactor(x, z);
     if (rf > 0) h = Math.min(h, riverDepth * rf);
+    // ==================== v58：风格化地图不要高低差（高地/龙坑）====================
+    // 用户："把风格化地图中所有的高低差全部删除，不要高低差了没意义（高地、龙坑）。"
+    // 河床的下沉不算在内（用户只点名"高地、龙坑"，河道保留）。
+    // 做成 visualStyle==='stylized' 这一类地图的通用行为，不是给召唤师峡谷单独
+    // 清零 heightZones/pits 里的数值——这样任何一张未来的风格化地图都自动没有
+    // 这两种台阶，不用每张图各自记得声明成 0。三张老地图与 demo_stylized_v1
+    // （它本来就没声明 heightZones/pits）逐位不变。
+    if (m.visualStyle !== 'stylized') {
     // 高地。**两种形状，按地图声明选**：
     //
     // ① map.highground（半平面）—— 用户定稿："从水晶塔前方就开始有高低差
@@ -1119,6 +1127,7 @@ export class MapSystem {
         }
       }
     }
+    }   // end: !stylized（高地/龙坑台阶只在非风格化地图上生效）
     return h;
   }
 

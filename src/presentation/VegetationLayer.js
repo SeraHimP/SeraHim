@@ -10,8 +10,11 @@ import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { WALL_H } from './WallLayer.js';
 import { stylizedPaletteOf } from '../data/Config.js';
 import { nearestLaneDist } from '../data/mapValidate.js';
+import { isInBaseOpen } from '../data/baseCircle.js';
 
-function withColor(geo, hex) {
+// v58：导出给 BoundaryDecorLayer 复用——野区内部（不可走的迷宫墙块）边界的
+// "自然感"装饰要用同一套树/坐标哈希，不重新写一份几何生成逻辑。
+export function withColor(geo, hex) {
   const c = new THREE.Color(hex), n = geo.getAttribute('position').count, col = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -28,7 +31,7 @@ function treeGeo() {
 // 2026-09-04：风格化 demo（见 Config.stylizedPalettes 头注）——树冠换成圆润的
 // 球体团簇（参照实拍截图：Thronefall 的树是几个球挤在一起，不是锥形松树尖顶）。
 // 材质在 place() 那边套 flatShading:true，硬切面的观感靠材质标记，不靠这里加细分。
-function stylizedTreeGeo(map) {
+export function stylizedTreeGeo(map) {
   const SV = stylizedPaletteOf(map);
   // ⚠️ mergeGeometries 要求参与合并的几何"要么全带 index，要么全不带"（否则直接
   // 失败返回 null，下游 place() 拿到 null 几何再崩一次）。CylinderGeometry 默认带
@@ -44,7 +47,7 @@ function stylizedTreeGeo(map) {
   return mergeGeometries(parts);
 }
 // 坐标哈希 → [0,1)，确定性伪随机
-function hash(x, y) {
+export function hash(x, y) {
   let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
   return (h >>> 0) / 4294967295;
@@ -91,6 +94,7 @@ export class VegetationLayer {
       if (jungleMode) {
         if (!walk(x, y)) continue;                                          // 只在可走的野区放（本图野区本身能走）
         if (nearestLaneDist(map, x, y) < laneHalfWidth + margin) continue;   // 离兵线够远才算野区，不贴路边种树
+        if (isInBaseOpen(map, x, y)) continue;                              // 基地开放圈内是自己的地盘，不长树（与 TerrainLayer 同一份判定）
         if (!walk(x + margin, y) || !walk(x - margin, y) || !walk(x, y + margin) || !walk(x, y - margin)) continue; // 内部，不贴地图外沿/基地墙
       } else {
         if (walk(x, y)) continue;                                             // 只在野区(不可走)放

@@ -1,4 +1,4 @@
-import { baseCircleCenter } from './baseCircle.js';
+import { baseCircleCenter, isInBaseOpen } from './baseCircle.js';
 import { mapFactionsOf } from '../systems/FactionSystem.js';
 
 /**
@@ -73,6 +73,47 @@ export function nearestLaneDist(map, x, y) {
     if (dd < d) d = dd;
   }
   return d;
+}
+
+/**
+ * v58：单点判定"路"还是"野区"——离最近兵线够近，或者落在己方基地开放圈内，
+ * 两条判据取或。是 classifyLaneCells（批量/网格版）与 BoundaryDecorLayer
+ * （连续坐标逐点采样版）共用的**唯一**判据实现，不在两处各写一份。
+ * @param {object} map
+ * @param {number} x @param {number} y
+ * @returns {boolean} true=路，false=野区
+ */
+export function isLaneCell(map, x, y) {
+  const laneHalfWidth = map.walls?.corridorHalfWidth ?? 130;
+  return nearestLaneDist(map, x, y) <= laneHalfWidth || isInBaseOpen(map, x, y);
+}
+
+/**
+ * v58：把一份可走网格的每一格分类成"路"(1)还是"野区"(0)——森林风格地图的
+ * 走廊/野区二分。TerrainLayer 的地面着色、BoundaryDecorLayer 的边界围墙摆放
+ * 都要用**同一份**分类结果，不能各算各的：判据本身已经收在 isLaneCell 里，
+ * 这里只是把它铺到网格上，避免以后改一条判据只改了一处就会读出两种"哪里
+ * 是路"的答案，围墙会摆在跟地面颜色不一致的地方。
+ * @param {object} map
+ * @param {Uint8Array|number[]} paint 该分辨率下的可走位图（真值=可走）
+ * @param {number} nx @param {number} ny 网格分辨率（paint 长度 = nx*ny，行优先）
+ * @returns {Uint8Array|null} 与 paint 同长度，1=路/0=野区，只在 paint[k] 为真时
+ *   有意义；地图没有声明 lanes 时返回 null（调用方各自决定怎么兜底）
+ */
+export function classifyLaneCells(map, paint, nx, ny) {
+  if (!Array.isArray(map.lanes) || !map.lanes.length || !map.world) return null;
+  const { w: WW, h: WH } = map.world;
+  const cellW = WW / nx, cellH = WH / ny;
+  const out = new Uint8Array(nx * ny);
+  for (let gy = 0; gy < ny; gy++) {
+    for (let gx = 0; gx < nx; gx++) {
+      const k = gy * nx + gx;
+      if (!paint[k]) continue;
+      const wx = (gx + 0.5) * cellW, wy = (gy + 0.5) * cellH;
+      out[k] = isLaneCell(map, wx, wy) ? 1 : 0;
+    }
+  }
+  return out;
 }
 
 /**

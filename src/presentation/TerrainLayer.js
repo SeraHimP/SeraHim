@@ -19,7 +19,7 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
-import { nearestLaneDist } from '../data/mapValidate.js';
+import { classifyLaneCells } from '../data/mapValidate.js';
 
 const _terrainCache = new Map();
 
@@ -174,20 +174,10 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     // 没必要再单独声明一个数字。
     const [jngR, jngG, jngB] = stylized && SV.jungleColor ? hex2rgb(SV.jungleColor, '4c9a5b') : [corR, corG, corB];
     const jungleActive = stylized && !!SV.jungleColor && Array.isArray(map.lanes) && map.lanes.length > 0;
-    const laneHalfWidth = map.walls?.corridorHalfWidth ?? 130;
-    let laneColorAt = null;
-    if (jungleActive) {
-      const cellW = WW / nx, cellH = WH / ny;
-      laneColorAt = new Uint8Array(nx * ny);   // 1=路(corridor) / 0=野区(jungle)，只在 on 时读
-      for (let gy2 = 0; gy2 < ny; gy2++) {
-        for (let gx2 = 0; gx2 < nx; gx2++) {
-          const k2 = gy2 * nx + gx2;
-          if (!paint[k2]) continue;   // 不可走的格不需要分类，省一次距离计算
-          const wx = (gx2 + 0.5) * cellW, wy = (gy2 + 0.5) * cellH;
-          laneColorAt[k2] = nearestLaneDist(map, wx, wy) <= laneHalfWidth ? 1 : 0;
-        }
-      }
-    }
+    // v58.1：分类算法（离兵线够近 或 落在基地开放圈内 → 路，否则 → 野区）抽成了
+    // 共享函数 classifyLaneCells（mapValidate.js）——BoundaryDecorLayer 的边界围墙
+    // 要用同一份分类结果摆位，不能这里算一套、那边再算一套。
+    const laneColorAt = jungleActive ? classifyLaneCells(map, paint, nx, ny) : null;
     // v55：声明了 terrainEdge 的地图，**不可走格直接挖空**（alpha=0），
     // 由 TerrainEdgeLayer 在更低的高度另铺一张深渊面 —— 陆地才读得出"有厚度"。
     // 见 docs/MAP-DESIGN-howling-abyss-frost.md §8.2.3 的路线 B。

@@ -22,3 +22,23 @@ export function baseCircleCenter(map, faction) {
   const { w: WW, h: WH } = map.world;
   return faction === 'blue' ? { x: 0, y: WH } : { x: WW, y: 0 };
 }
+
+/**
+ * v58：该点是否落在任意一方的"基地开放圈"内（baseOpenRadius，未声明则退回
+ * baseCircleRadius）——森林风格地图的 TerrainLayer/VegetationLayer 都要用它
+ * 排除"基地广场本身也被判成野区"的问题：广场是一整片圆形开阔地，半径通常
+ * 远大于走廊半宽，广场中心离兵线折线的直线距离早就超过半宽，只靠"离兵线够
+ * 近才算路"这一条判据会把广场中心误判成野区（用户实机截图圈出的问题）。
+ * 两处渲染代码共用这一份实现，不各自重复一份基地圈判定。
+ * @returns {boolean}
+ */
+export function isInBaseOpen(map, x, y) {
+  if (!map?.world) return false;
+  const r = map.baseOpenRadius || map.baseCircleRadius;
+  if (!r) return false;
+  for (const f of ['blue', 'red']) {
+    const c = baseCircleCenter(map, f);
+    if (c && Math.hypot(x - c.x, y - c.y) <= r) return true;
+  }
+  return false;
+}

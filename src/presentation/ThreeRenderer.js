@@ -28,6 +28,7 @@ import { UnitLayer } from './UnitLayer.js';
 import { WallLayer } from './WallLayer.js';
 import { VegetationLayer } from './VegetationLayer.js';
 import { HowlingAbyssDecor } from './HowlingAbyssDecor.js';
+import { BoundaryDecorLayer } from './BoundaryDecorLayer.js';
 import { MapSkirtLayer } from './MapSkirtLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
@@ -175,6 +176,9 @@ export class ThreeRenderer {
     // 2026-09-04：嚎哭深渊·冰封版专属装饰（石柱/分段墙/豁口瓦砾/火炬/浮冰/孤灵
     // 小岛），只在 paletteId==='frost' 时建东西，见 HowlingAbyssDecor.js 头注。
     this.frostDecor = new HowlingAbyssDecor(this.scene);
+    // v58：森林风格地图·兵线/野区边界装饰（城墙柱子 + 野区障碍物边缘树石），通用件——
+    // 自带 jungleColor 判据+同图跳过守卫，见 BoundaryDecorLayer.js 头注。
+    this.boundaryDecor = new BoundaryDecorLayer(this.scene);
     this.terrainEdge = new TerrainEdgeLayer(this.scene);   // v55：陆地厚度（崖壁 + 下沉深渊面），通用件
     if (this.mapSystem?.isWalkable) {
       this.frostDecor.setWalkableFn((x, y) => this.mapSystem.isWalkable(x, y));
@@ -982,6 +986,7 @@ export class ThreeRenderer {
     if (this.vegOn) this.veg.build(this.mapSystem);   // P1：野区植被随地形一同重建（自带同图跳过守卫）
     this.terrainEdge.build(this.mapSystem);   // v55：先建崖壁与深渊面（其它装饰要坐在它上面）
     this.frostDecor.build(this.mapSystem);   // 嚎哭深渊·冰封版专属装饰（自带 paletteId 判断+同图跳过守卫）
+    this.boundaryDecor.build(this.mapSystem);   // v58：森林风格城墙柱子 + 野区边缘树石（自带 jungleColor 判断+同图跳过守卫）
     if (this.skirtOn) this.skirt.build(this.mapSystem); // v51.27：地图外围裙边（自己的贴图/纯色，见 MapSkirtLayer）
     this.water.build(this.mapSystem);                 // P1：河道水面同上
   }

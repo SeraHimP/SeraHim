@@ -105,12 +105,12 @@ const { T, done } = scoreboard('森林风格（forest palette）验收');
 // ==================== 六、TerrainLayer / VegetationLayer 接线（源码正则）====================
 {
   const tl = srcOf('src/presentation/TerrainLayer.js');
-  T('接①-TerrainLayer 引入了共享的 nearestLaneDist（不再自己复算一份点到折线距离）',
-    /import \{ nearestLaneDist \} from '\.\.\/data\/mapValidate\.js';/.test(tl));
+  T('接①-TerrainLayer 引入了共享的 classifyLaneCells（不再自己复算一份走廊/野区分类）',
+    /import \{ classifyLaneCells \} from '\.\.\/data\/mapValidate\.js';/.test(tl));
   T('接②-TerrainLayer 的野区二分只在调色板声明了 jungleColor 时触发（三张老地图/frost 逐位不变）',
     /jungleActive = stylized && !!SV\.jungleColor/.test(tl));
-  T('接③-TerrainLayer 走廊半宽复用 map.walls.corridorHalfWidth（不另开一个新字段）',
-    /laneHalfWidth = map\.walls\?\.corridorHalfWidth/.test(tl));
+  T('接③-classifyLaneCells 走廊半宽复用 map.walls.corridorHalfWidth（不另开一个新字段）',
+    /laneHalfWidth = map\.walls\?\.corridorHalfWidth/.test(srcOf('src/data/mapValidate.js')));
 
   const veg = srcOf('src/presentation/VegetationLayer.js');
   T('接④-VegetationLayer 引入了共享的 nearestLaneDist',
