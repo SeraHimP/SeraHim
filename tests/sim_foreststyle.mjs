@@ -117,10 +117,22 @@ const { T, done } = scoreboard('森林风格（forest palette）验收');
     /import \{ nearestLaneDist \} from '\.\.\/data\/mapValidate\.js';/.test(veg));
   T('接⑤-VegetationLayer 对 vegetationMode==="jungle" 的地图走"可走+离兵线够远"判据',
     /vegetationMode === 'jungle'/.test(veg) && /if \(jungleMode\)/.test(veg));
-  T('接⑥-jungleMode 下没有沿用"只在不可走区域长树"的旧判据（那条判据对可走的野区没有意义）',
+  // v58.3：用户反馈"野区里深色一块一块的太丑"——jungleMode 内部拆成两支：
+  // 不可走的障碍物内部整片盖森林（复用 default 分支"不可走=森林"的思路，
+  // 隐藏裸露的调色板底色），可走的野区一侧仍走原来的"离兵线够远"判据。
+  T('接⑥-jungleMode 内部按可走/不可走分成两支，不再是单一判据',
     (() => {
-      const seg = veg.slice(veg.indexOf('if (jungleMode) {'), veg.indexOf('} else {'));
-      return /if \(!walk\(x, y\)\) continue;/.test(seg) && !/if \(walk\(x, y\)\) continue;/.test(seg);
+      const start = veg.indexOf('if (jungleMode) {');
+      const innerElse = veg.indexOf('} else {', veg.indexOf('if (!walk(x, y)) {', start));
+      const outerElse = veg.indexOf('} else {', innerElse + 1);   // 第二个 "} else {" 才是 jungleMode/default 两支的外层分界
+      const seg = veg.slice(start, outerElse);
+      return /if \(!walk\(x, y\)\) \{/.test(seg) && /nearestLaneDist\(map, x, y\) < laneHalfWidth \+ margin/.test(seg);
+    })());
+  T('接⑦-jungleMode 障碍物内部（不可走）分支复用与 default 分支相同的"内部/贴边"过滤（walk(x±margin,y)）',
+    (() => {
+      const start = veg.indexOf('if (!walk(x, y)) {', veg.indexOf('if (jungleMode) {'));
+      const end = veg.indexOf('} else {', start);
+      return /walk\(x \+ margin, y\) \|\| walk\(x - margin, y\)/.test(veg.slice(start, end));
     })());
 }
 

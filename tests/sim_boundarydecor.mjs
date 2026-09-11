@@ -86,8 +86,10 @@ const mk = (id) => {
   const bd = srcOf('src/presentation/BoundaryDecorLayer.js');
   T('接①-BoundaryDecorLayer 引入了共享的 isLaneCell（不自己另算一套路/野区判据）',
     /import \{ isLaneCell \} from '\.\.\/data\/mapValidate\.js';/.test(bd));
-  T('接②-BoundaryDecorLayer 复用 VegetationLayer 导出的树/岩几何与哈希（不重新写一份几何生成）',
-    /import \{ withColor, stylizedTreeGeo, hash \} from '\.\/VegetationLayer\.js';/.test(bd));
+  T('接②-BoundaryDecorLayer 复用 VegetationLayer 导出的坐标哈希（不重新写一份随机数生成）',
+    /import \{ withColor, hash \} from '\.\/VegetationLayer\.js';/.test(bd));
+  T('接②b-野区边缘装饰不用树（用户："召唤师峡谷……都是低矮的灌木丛和零星的石头"）',
+    !/stylizedTreeGeo/.test(bd) && /natBushes/.test(bd) && /natRocks/.test(bd));
   T('接③-生效条件与 TerrainLayer 的 jungleActive 完全一致（同一句判据字符串）',
     /const active = stylized && !!SV\.jungleColor && Array\.isArray\(map\.lanes\) && map\.lanes\.length > 0;/.test(bd) &&
     /jungleActive = stylized && !!SV\.jungleColor && Array\.isArray\(map\.lanes\) && map\.lanes\.length > 0;/.test(srcOf('src/presentation/TerrainLayer.js')));
@@ -102,6 +104,38 @@ const mk = (id) => {
     /this\.boundaryDecor = new BoundaryDecorLayer\(this\.scene\);/.test(tr));
   T('接⑦-地形重建流程里调用了 boundaryDecor.build（否则接了线但从来不会真的建）',
     /this\.boundaryDecor\.build\(this\.mapSystem\);/.test(tr));
+
+  // v58.5：用户反馈"看不出一点森林的样子……都是低矮的灌木丛和零星的石头"——
+  // jungleMode（召唤师峡谷）不应该再摆树，只用灌木/岩石。
+  const veg = srcOf('src/presentation/VegetationLayer.js');
+  const rollStart = veg.indexOf('const sc = 0.65, rot = hash(gx + 5, gy + 5) * 6.2832;');
+  const rollJmStart = veg.indexOf('if (jungleMode) {', rollStart);
+  const rollJmEnd = veg.indexOf('} else {', rollJmStart);
+  const rollSeg = veg.slice(rollJmStart, rollJmEnd);
+  T('接⑧-VegetationLayer 主循环的摆放判据里，jungleMode 分支不摆树（trees.push），只出灌木/岩石',
+    !/trees\.push/.test(rollSeg) && /rocks\.push/.test(rollSeg) && /bushes\.push/.test(rollSeg));
+  const step2Start = veg.indexOf('const STEP2 = 30;');
+  const step2End = veg.indexOf('\n    }\n', step2Start);
+  const step2Seg = veg.slice(step2Start, step2End);
+  T('接⑨-障碍物内部加密填充（STEP2）同样不摆树，只出灌木/岩石',
+    step2Start >= 0 && !/trees\.push/.test(step2Seg) && /bushes\.push/.test(step2Seg) && /rocks\.push/.test(step2Seg));
+
+  // v58.6：用户原话"都是低矮的灌木丛和零星的石头"——灌木是主体("丛")，石头是
+  // "零星"点缀，第一版权重反过来了（石头占大头）。检查两趟采样都改成了灌木为主。
+  T('接⑩-jungleMode 稀疏采样：灌木权重高于岩石（石头判据阈值 < 0.5，不是岩石占大头）',
+    /if \(r < 0\.20\) rocks\.push/.test(rollSeg));
+  T('接⑪-障碍物加密填充：灌木权重高于岩石（同上）',
+    /if \(r2 < 0\.82\) bushes\.push/.test(step2Seg));
+
+  // v58.6：用户反馈"看不出灌木/石头的区分，全是一片白/一片橙"——根因是 setTint
+  // 直接用 material.color.set(hex) 整个覆盖掉风格化材质自带的颜色（石头/灌木/
+  // 城墙都没有 instanceColor，颜色全靠 material.color 本身），到了昼夜染色那一刻
+  // 所有装饰物被抹成同一个颜色。修法是存一份原始底色，染色时用"底色×tint"而不是
+  // 直接替换。
+  T('接⑫-place() 为每个材质记录了原始底色（setTint 要用它做乘法，不能直接覆盖）',
+    /inst\.userData\.baseColor = mat\.color\.clone\(\);/.test(veg));
+  T('接⑬-setTint 用"底色×tint"而不是直接 set(hex)（否则风格化石头/灌木的颜色会被昼夜染色整个吃掉）',
+    /m\.material\.color\.copy\(base\)\.multiply\(t\);/.test(veg));
 }
 
 done();

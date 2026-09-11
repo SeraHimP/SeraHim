@@ -92,10 +92,18 @@ export class VegetationLayer {
       const x = gx + (hash(gx + 11, gy) - 0.5) * STEP * 0.8;
       const y = gy + (hash(gx, gy + 11) - 0.5) * STEP * 0.8;
       if (jungleMode) {
-        if (!walk(x, y)) continue;                                          // 只在可走的野区放（本图野区本身能走）
-        if (nearestLaneDist(map, x, y) < laneHalfWidth + margin) continue;   // 离兵线够远才算野区，不贴路边种树
-        if (isInBaseOpen(map, x, y)) continue;                              // 基地开放圈内是自己的地盘，不长树（与 TerrainLayer 同一份判定）
-        if (!walk(x + margin, y) || !walk(x - margin, y) || !walk(x, y + margin) || !walk(x, y - margin)) continue; // 内部，不贴地图外沿/基地墙
+        if (!walk(x, y)) {
+          // v58.3：野区内部不可走的迷宫障碍物——用户反馈"深色一块一块的太丑"：这些格子
+          // 之前直接裸着调色板的"图外底色"（groundColor），跟正常地形没有任何区别，
+          // 读成了平地上挖出来的一块块洞，而不是"这里有东西挡着"。VegetationLayer
+          // 本来就是为了解决 default/frost 那套"野区空洞发黑"而写的（见文件头注），
+          // 这里按同一套思路处理：整片盖上树/岩，读成"进不去的密林"，不裸露底色。
+          if (walk(x + margin, y) || walk(x - margin, y) || walk(x, y + margin) || walk(x, y - margin)) continue; // 只盖障碍物内部，边缘更密的过渡交给 BoundaryDecorLayer
+        } else {
+          if (nearestLaneDist(map, x, y) < laneHalfWidth + margin) continue;   // 离兵线够远才算野区，不贴路边种树
+          if (isInBaseOpen(map, x, y)) continue;                              // 基地开放圈内是自己的地盘，不长树（与 TerrainLayer 同一份判定）
+          if (!walk(x + margin, y) || !walk(x - margin, y) || !walk(x, y + margin) || !walk(x, y - margin)) continue; // 内部，不贴地图外沿/基地墙
+        }
       } else {
         if (walk(x, y)) continue;                                             // 只在野区(不可走)放
         if (walk(x + margin, y) || walk(x - margin, y) || walk(x, y + margin) || walk(x, y - margin)) continue; // 内部，不贴车道/高地边
@@ -114,9 +122,44 @@ export class VegetationLayer {
       const y0 = stylized ? gh : WALL_H - 1.5;
       const r = hash(gx, gy);
       const sc = 0.65, rot = hash(gx + 5, gy + 5) * 6.2832;
-      if (r < 0.44) trees.push([x, y0, y, sc + hash(gx + 7, gy) * 0.7, rot]);
-      else if (r < 0.70) rocks.push([x, y0, y, sc + hash(gx + 3, gy) * 0.9, rot]);
-      else if (r < 0.88) bushes.push([x, y0, y, sc + hash(gx + 9, gy) * 0.8, rot]);
+      // v58.5：用户原话定的召唤师峡谷视觉方向是"明亮草地+石头+金色"，没有树；
+      // 用户看完树木版反馈"看不出一点森林的样子……都是低矮的灌木丛和零星的石头"——
+      // jungleMode（=召唤师峡谷这张森林风格图）改成只出灌木/岩石，不摆树，
+      // 树的造型（高大松树）本来就不是这张图的视觉方向。default/frost 的老逻辑
+      // （HA-frost、demo_stylized_v1 等）不受影响，仍然是树/岩/灌木三选一。
+      if (jungleMode) {
+        // v58.6：用户原话"都是低矮的灌木丛和零星的石头"——灌木是主体("丛")，
+        // 石头是"零星"(点缀、少数)，第一版权重反过来了（石头占大头），画面看着
+        // 全是亮白色岩石。改成灌木为主、石头为点缀。
+        if (r < 0.20) rocks.push([x, y0, y, sc + hash(gx + 3, gy) * 0.9, rot]);
+        else if (r < 0.85) bushes.push([x, y0, y, sc + hash(gx + 9, gy) * 0.8, rot]);
+        // r>=0.85：留空——野区地面本来就该露出草地，不必每一格都堆装饰物
+      } else {
+        if (r < 0.44) trees.push([x, y0, y, sc + hash(gx + 7, gy) * 0.7, rot]);
+        else if (r < 0.70) rocks.push([x, y0, y, sc + hash(gx + 3, gy) * 0.9, rot]);
+        else if (r < 0.88) bushes.push([x, y0, y, sc + hash(gx + 9, gy) * 0.8, rot]);
+      }
+    }
+    // v58.4：上面 STEP=62 那趟稀疏采样对"整片盖住障碍物"来说密度不够——网格
+    // 缝隙间还是能看到大片裸露的底色，用户看过第一版修复后反馈"还是有块状痕迹"。
+    // 障碍物内部单独再来一趟更密的采样（STEP2≈灌木团直径），且不留"什么都不摆"的
+    // 空档，专门把底色堵严实；可走野区那半的稀疏节奏（上面那趟）不受这次改动影响。
+    if (jungleMode) {
+      const STEP2 = 30;
+      for (let gx = edge; gx < WW - edge; gx += STEP2) for (let gy = edge; gy < WH - edge; gy += STEP2) {
+        const x = gx + (hash(gx + 41, gy) - 0.5) * STEP2 * 0.9;
+        const y = gy + (hash(gx, gy + 41) - 0.5) * STEP2 * 0.9;
+        if (walk(x, y)) continue;    // 只管障碍物内部，可走的野区/兵线不重复摆
+        if (walk(x + margin, y) || walk(x - margin, y) || walk(x, y + margin) || walk(x, y - margin)) continue; // 只填内部，贴边留给上面那趟稀疏采样与 BoundaryDecorLayer
+        const gh = heightAt(x, y);
+        if (gh < -2) continue;
+        const r2 = hash(gx + 17, gy + 17);
+        const sc2 = 0.55, rot2 = hash(gx + 5, gy + 5) * 6.2832;
+        // v58.5：填障碍物内部同样只用灌木/岩石，不摆树——原因同上。
+        // v58.6：灌木为主、石头点缀（同上一趟采样的权重修正），不留空档保证盖满底色。
+        if (r2 < 0.82) bushes.push([x, gh, y, sc2 + hash(gx + 9, gy) * 0.6, rot2]);
+        else rocks.push([x, gh, y, sc2 + hash(gx + 3, gy) * 0.7, rot2]);   // 不留空档，缝隙全部堵上
+      }
     }
 
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(),
@@ -132,6 +175,7 @@ export class VegetationLayer {
       inst.instanceMatrix.needsUpdate = true;
       if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
       inst.frustumCulled = false;   // 实例包围盒默认在原点，整片会被误剔除
+      inst.userData.baseColor = mat.color.clone();   // v58.6：setTint 要乘这个底色，不能直接覆盖掉（见 setTint 头注）
       this.scene.add(inst); this.meshes.push(inst);
     };
     if (stylized) {
@@ -161,9 +205,25 @@ export class VegetationLayer {
    *
    * ⚠️ 石头/灌木的 material.color 是白色**乘数**（真实颜色在 instanceColor 里），
    * 树是 vertexColors —— 三者都吃 material.color 的乘法，所以一句话全覆盖。
+   *
+   * v58.6 修正：上面这条注释只对"default/frost 那套白底+instanceColor"成立——
+   * 风格化分支（stylized，见 build() 里的 SV.rockColor/treeCrownColorB）的石头/
+   * 灌木/城墙没有 instanceColor，材质的 color 本身就是调色板声明的颜色，直接
+   * `material.color.set(hex)` 会把这份颜色整个覆盖掉，变成"所有种类的装饰物同一
+   * 个颜色"（用户反馈"看不出灌木/石头的区分，全是一片白/一片橙"，真根因就是这个）。
+   * 改成"乘底色"而不是"替换底色"：place() 里把每个材质创建时的原始 color 存进
+   * inst.userData.baseColor，这里用 底色×tint 而不是 tint 本身——对 default/frost
+   * 那套本来就是白色底（1×tint===tint），结果逐位不变；对 stylized 那套则保留了
+   * 调色板颜色，只被昼夜的明暗/冷暖乘调，不会被昼夜颜色整个吃掉。
    */
   setTint(hex) {
     this._tint = hex;
-    for (const m of this.meshes) if (m.material?.color) m.material.color.set(hex);
+    const t = new THREE.Color(hex);
+    for (const m of this.meshes) {
+      if (!m.material?.color) continue;
+      const base = m.userData.baseColor;
+      if (base) m.material.color.copy(base).multiply(t);
+      else m.material.color.set(hex);   // 兜底：没有记录底色的极端情况，保留旧行为
+    }
   }
 }
