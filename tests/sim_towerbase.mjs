@@ -168,26 +168,37 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   CONFIG.ui.towerColorAdapt.enabled = true;   // 还原，虽然本文件到此就结束了，留个干净收尾
 }
 
-// ==================== 六、外塔（tier==='outer'）v56 大体块重做 ====================
-// 用户 2026-09-10 看完第四轮评审（8.5/10，建议冻结塔色/岸坡、转攻塔的形体）后
-// 明确说"现在开工"。旧外塔模型数下来有 29 个几何体，跟 docs §17.3 定的硬约束
-// （4~6 个主要几何体）差了一个数量级——这组断言不钉具体顶点数（换个 THREE.js
-// 版本或分段数就会变），钉的是**行为形状**：
+// ==================== 六、外塔（tier==='outer'）v56/v57 全部撤销，v58 回退 ====================
+// 用户看完 v57.2 蓝方外塔实机截图："道心破碎……太失望了。"——明确要求整体回退：
+// outer 不再单独分支，重新并入通用防御塔造型（其余三档一直在用、从未离开过的
+// 那一套），只靠 TIER_SPEC 的数值级差（tiers/buttress/balcony/crown/topScale）
+// 表达档次差异，不再靠另起一套几何语言。这组断言原来钉的是"v56 新造型 vs 旧造型
+// 两套并存"，v58 撤销之后前提已经不成立，逐条改写：
 //   ① v45c 的老教训不能再犯——三档损毁下主体高度（topY/muzzleY）必须逐位相等，
-//      水晶同时是炮口，弹道原点不能随掉血跳动；
-//   ② 损毁确实改了几何（顶点数递增），不是纯换色的空转；
-//   ③ 两阵营确实分了形（顶点数不同），不是共用同一份缓存命中；
-//   ④ 只动了 outer 这一档（一贯的"先做一个，做好了再推广"节奏），
-//      其余三档仍走旧代码，顶点数应明显更高（守住"没有误路由"）。
+//      水晶同时是炮口，弹道原点不能随掉血跳动。这条与具体走哪套造型无关，继续钉。
+//   ② 损毁确实改了几何（顶点数递增），不是纯换色的空转。同样继续钉。
+//   ③ 两阵营确实分了形——原来用"顶点数不同"当代理指标，但 outer 回退共用通用
+//      分支后，蓝方（纯箱体+方柱）与红方（岩台+肋+圆柱+锥）的顶点数**恰好**都是
+//      1032（分别是 26 个 24 顶点箱体+2 个 28 顶点圆台 vs 13 箱体+4 锥+7 圆柱，
+//      算下来刚好撞了同一个总数）——两边部件类型、数量都完全不同，验证过并非
+//      共用同一份几何缓存，只是顶点总数这个代理指标凑巧相等。改用一个更贴合
+//      "秩序 vs 混沌"设计语言本身的指标：蓝方部件都以中轴对称摆放，包围盒在
+//      x/z 方向左右对称（min+max≈0）；红方基座三块岩台故意用不对称偏移
+//      （见"红方基座"那段的 rocks 数组），包围盒必然不对称。这比顶点数更贴近
+//      "两边是不是真的分了形"这个问题本身，也不会再被巧合撞上。
+//   ④ outer 现在与其余三档同源：不应该再有"两套代码"，应该验证的是反过来的
+//      事情——四档顶点数随 TIER_SPEC 的 tiers/buttress/balcony 级差单调不降
+//      （tiers 越多、扶壁越多，部件确实越多），而不是"outer 明显更小"（那是
+//      "另起一套语言"时代的产物，现在 outer 只是同一套语言里参数最小的一档）。
 {
-  const build = (faction, dmg, tag) => towerMesh(
-    `test-outer-${tag}-${faction}-${dmg}`, faction === 'red' ? '#e0473f' : '#5b9bd5',
-    30, '', 'tower', false, false, 'outer', faction, dmg, null);
+  const build = (tier, faction, dmg, tag) => towerMesh(
+    `test-outer-${tag}-${tier}-${faction}-${dmg}`, faction === 'red' ? '#e0473f' : '#5b9bd5',
+    30, '', 'tower', false, false, tier, faction, dmg, null);
 
   for (const faction of ['blue', 'red']) {
-    const m0 = build(faction, 0, 'h');
-    const m1 = build(faction, 1, 'h');
-    const m2 = build(faction, 2, 'h');
+    const m0 = build('outer', faction, 0, 'h');
+    const m1 = build('outer', faction, 1, 'h');
+    const m2 = build('outer', faction, 2, 'h');
     T(`外①-${faction}方三档损毁下 topY 逐位相等（v45c 教训：主体高度绝不能随掉血变）`,
       m0.topY === m1.topY && m1.topY === m2.topY);
     T(`外②-${faction}方三档损毁下 muzzleY 逐位相等（水晶＝炮口，弹道原点不能跳）`,
@@ -199,22 +210,24 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
       n0 < n1 && n1 < n2);
   }
 
-  const blue0 = build('blue', 0, 'f').geo.attributes.position.count;
-  const red0 = build('red', 0, 'f').geo.attributes.position.count;
-  T(`外④-两阵营顶点数不同（${blue0} vs ${red0}，确实分了形，不是共用一份几何）`,
-    blue0 !== red0);
+  const bbAsym = (m) => {
+    m.geo.computeBoundingBox();
+    const b = m.geo.boundingBox;
+    return Math.abs(b.max.x + b.min.x) + Math.abs(b.max.z + b.min.z);
+  };
+  T('外④-两阵营确实分了形：蓝方包围盒左右对称（秩序），红方明显不对称（混沌，rocks 数组故意偏移）',
+    bbAsym(build('outer', 'blue', 0, 'f')) < 1e-6 && bbAsym(build('outer', 'red', 0, 'f')) > 1);
 
-  // 只动了 outer 这一档：另外三档仍是旧代码那套（几十个几何体），顶点数应明显更高。
-  for (const tier of ['inner', 'base', 'hq_tower']) {
-    const n = towerMesh(`test-tier-guard-${tier}`, '#5b9bd5', 30, '', 'tower', false, false, tier, 'blue', 0, null)
-      .geo.attributes.position.count;
-    T(`外⑤-${tier} 档未被误路由进新造型（顶点数 ${n} 明显高于 outer 的 ${blue0}，仍是旧的大体量设计）`,
-      n > blue0 * 1.5);
-  }
+  // outer 现在与其余三档同源：顶点数应随 TIER_SPEC 的档次级差单调不降，
+  // 不应该再出现"某一档明显异常地小/大"（那意味着又混进了另一套语言）。
+  const counts = ['outer', 'inner', 'base', 'hq_tower'].map(tier =>
+    build(tier, 'blue', 0, 'tierguard').geo.attributes.position.count);
+  T(`外⑤-四档顶点数随 TIER_SPEC 级差单调不降（同源造型，只靠参数拉开差距：${counts.join(' < ')}）`,
+    counts[0] <= counts[1] && counts[1] <= counts[2] && counts[2] <= counts[3] && counts[0] < counts[3]);
 
   // 纯函数/可缓存：同样入参（不同 key，绕开缓存命中）应该产出同样的几何形状。
-  const a = build('blue', 0, 'x1');
-  const b = build('blue', 0, 'x2');
+  const a = build('outer', 'blue', 0, 'x1');
+  const b = build('outer', 'blue', 0, 'x2');
   T('外⑥-outer 造型是确定性的（同样入参、不同 key 两次生成，顶点数/topY 完全一致）',
     a.geo.attributes.position.count === b.geo.attributes.position.count && a.topY === b.topY);
 }

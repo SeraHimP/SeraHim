@@ -192,11 +192,13 @@ const STONE = '#948b7c';
 //   · `spire`（水晶之上再起一根细塔）删掉 —— 与顶盖功能重复，改为**把顶盖本身加高**，
 //     枢纽塔的"最高剪影"这一点靠 topScale 实现，不再靠多堆一件。
 // 层级差异改由"往下"走：环廊在塔身、角楼在冠上、顶盖高度递增 —— 分散开，不再全挤在顶上。
+// v58：turrets 字段删掉——角楼整段被拆掉（用户："删除不必要的装饰"），
+// 留着没人读的字段比删掉更危险（v44 的 spikes 就是教训）。
 const TIER_SPEC = {
-  outer:      { tiers: 1, buttress: 0, shaft: 1.35, crown: 0.30, balcony: false, turrets: 0, topScale: 1.00 },
-  inner:      { tiers: 2, buttress: 2, shaft: 1.70, crown: 0.34, balcony: true,  turrets: 0, topScale: 1.15 },
-  base:       { tiers: 3, buttress: 4, shaft: 2.05, crown: 0.38, balcony: true,  turrets: 4, topScale: 1.30 },
-  hq_tower:   { tiers: 3, buttress: 4, shaft: 2.45, crown: 0.44, balcony: true,  turrets: 4, topScale: 1.75 },
+  outer:      { tiers: 1, buttress: 0, shaft: 1.35, crown: 0.30, balcony: false, topScale: 1.00 },
+  inner:      { tiers: 2, buttress: 2, shaft: 1.70, crown: 0.34, balcony: true,  topScale: 1.15 },
+  base:       { tiers: 3, buttress: 4, shaft: 2.05, crown: 0.38, balcony: true,  topScale: 1.30 },
+  hq_tower:   { tiers: 3, buttress: 4, shaft: 2.45, crown: 0.44, balcony: true,  topScale: 1.75 },
 };
 const TIER_FALLBACK = TIER_SPEC.outer;
 
@@ -314,8 +316,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         //      粗细直接沿用活塔那一段的 rb（0.62R），不再另取 0.66/0.96；
         //   ③ 倒下的残段沿 LEAN 方向躺着，横截面同样按阵营分（方/圆），
         //      长度随 SP.shaft ——**档次越高的塔，倒下来的那一截越长**；
-        //   ④ 扶壁多的档次（内塔起）留下几根折断的扶壁根部，
-        //      角楼档（水晶塔起）在废墟里多两块碎角楼 —— 四档的废墟因此也各不相同；
+        //   ④ 扶壁多的档次（内塔起）留下几根折断的扶壁根部——四档的废墟因此
+        //      也各不相同（v58：角楼连同"废墟里多两块碎角楼"一起删了，见下方）；
         //   ⑤ 碎石量随档次递增，焦痕铺在倒塌方向上。
         // 角度全用固定值，保证同 key 几何稳定可缓存（不引入随机）。
         const SPr = TIER_SPEC[tier] || TIER_FALLBACK;
@@ -399,12 +401,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
               compose(T(Math.cos(a) * R * 0.86, baseHr + stumpH * hK / 2, Math.sin(a) * R * 0.86), R_Y(-a)),
               shade(dead, 0.72));
         }
-        // 碎角楼：只有带角楼的档次（水晶塔起）才会在废墟里出现
-        for (let i = 0; i < (SPr.turrets ? 2 : 0); i++) {
-          const sgn = i ? 1 : -1;
-          add(new THREE.CylinderGeometry(R * 0.20, R * 0.24, R * 0.26, F.crownSides),
-              compose(T(R * (0.95 + i * 0.55), R * 0.13, R * 0.62 * sgn), R_Z(1.2 * sgn), R_X(0.35)), char);
-        }
+        // v58：碎角楼一并删掉——活塔的角楼整段被拆掉了（TIER_SPEC.turrets 已删），
+        // 废墟不能留着"复用一个已经不存在的部件"这种死代码。
 
         // 碎石：顺着倒塌方向铺开，越远越小；档次越高瓦砾越多（tiers 1→3 对应 5→9 块）
         const chunks = [[0.42, 0.18, 0.10, 0.6, 0.34], [0.95, 0.15, -0.30, -0.8, 0.28],
@@ -528,295 +526,6 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
               compose(T(Math.cos(a) * orbit, shardY, Math.sin(a) * orbit), R_Z(a)), shade(color, 1.1));
         }
       }
-    } else if (tier === 'outer') {
-      // ==================== 外塔：v56 大体块重做（评审：8.5/10 之后转向形体）====================
-      // 用户 + 外部评审两边这次都确认了同一个判断：塔色/地形已经改到位，剩下的割裂感
-      // 是塔的**形体**——即使颜色对了，外塔旧模型仍然是"传统塔防建筑"：基座+台阶+
-      // 方柱+四角立柱+一圈雉堞(10块)+冠+4组两件装饰+顶盖+尖顶+底座，逐个数下来
-      // 有 29 个几何体，跟 docs §17.3 定的硬约束（4~6 个主要几何体、不加小装饰、
-      // 大块面、2~3 个色阶）完全对不上——不是"哪个装饰丑"，是数量级错了。
-      //
-      // ==================== 这次只做外塔（一贯的节奏）====================
-      // 用户历来的做法是"先做一个，做好了再推广"（v54/v55 都是这样），这次也一样：
-      // 只替换 tier==='outer' 这一档；内塔/水晶塔/枢纽塔仍然走下面那段旧代码，
-      // 逐位不变。三档**升级**时剪影必须明显变化这条硬约束要等把另外三档也按
-      // 同一套语言重做时才谈得上，现在只有外塔一档，无法验证也不需要验证。
-      //
-      // ==================== 新造型：4 个石身几何体 + 1 个水晶 ====================
-      // 蓝方＝秩序：三块方正的箱体直上直下地摞起来（宽底座 → 窄身 → 宽一档的檐口），
-      // 没有斜切、没有錾边，靠"宽窄交替"读出层次，不靠雕花。
-      // 红方＝混沌：同样三段，但用低分段圆台（5~6 边）+ 轻微倾斜/偏心，
-      // 不对称感来自"歪"而不是"多堆了几块石头"——旧版红方基座是三块碎石拼起来，
-      // 这次改成一整块歪的，几何体数量才压得下来。
-      // 两边**几何体数量相等**（各 4 个），延续 v45 定下的"部件数量对等"原则。
-      //
-      // ==================== v56.2：三条实机反馈，重新审视后的方案 ====================
-      // 用户看完 v56.1 的实机截图，指出三处问题，逐条对应修法：
-      //
-      // ①「破损的塔颜色为什么改变了，不能改变颜色！！！」
-      //   v56.1 里 cSt/cTr 会随 dmg 整体调暗/褪色（wear/desat），是从旧代码原样
-      //   继承的"做旧"逻辑——但那是**全身**跟着变暗，不是缺口那一小块变色，
-      //   用户看到的是"整座塔换了个色号"。这次彻底删掉：cSt/cTr 永远等于
-      //   F.stone/F.trim，三档 dmg 用同一套颜色，损毁只靠**几何**表达。
-      //
-      // ②「损毁应该是塔身上缺块了，掉在地面上变成小碎块了，我没看懂」
-      //   v56.1 的 bigNick() 是往表面**贴**一块深色箱体 + 一块浅色破边——本质是
-      //   "画一块颜色上去"，不是真的从塔身上拿走什么，所以读不出"缺了一块"。
-      //   这次改用真正的减法：塔身（柱子）不再是一整块箱体/圆柱，而是
-      //   "内核（永远都在）+ 一圈贴皮小块"拼成——dmg=0 时贴皮块全部在，外观
-      //   跟一整块柱子完全一样；损毁时**直接不画**其中几块贴皮，露出的是内核
-      //   本身的表面（跟贴皮同色，不需要另外画补丁色），剪影上是真的凹进去
-      //   一块。被拿掉的贴皮块等比缩小后摆到塔脚下的地面，同色（不做旧），
-      //   读作"真掉下来的那一块，摔碎了"。
-      //   用户追加要求："缺块可以很多很小，不用非得缺一块缺两块这种，但是
-      //   一定要显示出三种层级的区别"——所以贴皮块切得比较碎（12 块：4 面×
-      //   3 层），三档损毁靠**缺几块**的数量拉开差距（0/3/8 块），不是靠单个
-      //   缺口的大小。
-      //
-      // ③「红方也没按照我说的做」
-      //   重新看下来，问题不是"大圆盘的位置"，是 v56.1 给红方三节写的都是
-      //   CylinderGeometry(上半径, 下半径, ...) 的**锥形**（上下不同宽）——锥形
-      //   不管挪到哪一层都读不出"圆盘"，圆盘应该是上下一样宽的扁鼓形，跟蓝方
-      //   箱体"每一节自己直上直下、节与节之间宽度不同"是同一种语言。这次红方
-      //   三节全部改成无锥度的鼓形圆柱，逐节对应蓝方的方案：大鼓在下（塔基）
-      //   → 细鼓在中（柱子）→ 小鼓在上（帽子），只是方/圆之分。
-      //
-      // 三档损毁下基座/塔身/檐口/水晶底座的尺寸与位置依旧**完全一致**——贴皮块
-      // 只是柱子表面的可选装饰层，缺几块不影响柱子本身的高度/半径，v45c 的
-      // topY/muzzleY 不变量继续成立（损⑪/⑫）。
-      const red = faction === 'red';
-      const cSt = F.stone, cTr = F.trim;   // v56.2：颜色三档恒定，不再随 dmg 变
-      const SPr = TIER_SPEC[tier] || TIER_FALLBACK;   // 只用 SPr.tiers 算水晶半径，跟旧公式对齐
-
-      // v56.3 曾经在每处贴皮缺口补两块斜插的碎片箱体（"addBrokenEdge"），
-      // 想用来表现参差不齐的破口边缘。用户看完 LoL 塔（modelviewer.lol）的
-      // 实际拆件截图后明确指出这是错的："我说的破损的意思是让你往下减东西……
-      // 你插一堆莫名其妙的方块干嘛？" ——参考图里 Broken1/2/3 每一档都是纯粹
-      // 隐藏掉一部分部件，露出更朴素的下层结构，缺口原地**不放任何新东西**。
-      // v57.2 去掉 addBrokenEdge：buildRing() 缺口原样跳过（见下方），不再补
-      // 替代几何体；掉在地上的碎块（scatterDebris）保留，因为那是"东西掉落
-      // 之后应该出现在地面上"，跟"缺口处塞新方块"是两回事，用户在同一批
-      // 截图里对地面碎片本身是认可的（"确实看到了碎片"）。
-      //
-      // 掉落的碎块：数量＝三段缺口总数 × 3（不是 1，见下方原因），同色、不做旧，
-      // 固定角度表摆放（不用随机数，保证几何可缓存）。
-      // ⚠️ 系数怎么定不是随手拍的：红方贴皮块是"扇形"CylinderGeometry，三角面数
-      // 只看 radialSegments，跟 thetaLength（扇形张角）无关——一个 90° 扇形跟一个
-      // 完整圆的顶点数**完全一样**（都是 72）。去掉 addBrokenEdge 之后，缺一块
-      // 扇形贴皮＝净损失 72 顶点，缺口本身不再有任何东西弥补，必须完全靠地面
-      // 碎块（每块 36 顶点的 BoxGeometry）补回来还要净增——36×3=108 > 72，
-      // 系数 ×3 才能保证每多缺一块，总顶点数还是净增（蓝方缺的是箱体贴皮，
-      // 净损失只有 36，×3 更是绰绰有余）。×1/×2 都不够：×1 净减 36，×2 净减 0，
-      // 两者都会让 sim_towerbase.mjs 的"顶点数随损毁递增"断言失败。
-      const scatterDebris = (n, unit) => {
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2 + 0.37;
-          const rr = R * (1.05 + 0.22 * (i % 3));
-          const s = unit * (0.75 + 0.22 * ((i * 7) % 3));
-          add(new THREE.BoxGeometry(s, s * 0.8, s * 0.9),
-              compose(T(Math.cos(a) * rr, s * 0.4, Math.sin(a) * rr),
-                      R_Y(a * 1.7), R_Z(0.2 + 0.16 * (i % 2)), R_X(0.12 * ((i + 1) % 3))),
-              cSt);
-        }
-      };
-
-      // ==================== v56.4：塔基/帽子也要掉块，重损要"半塌" ====================
-      // 用户："我要的是塔各个部分掉块……重度损毁，上面的帽子肯定不会再完好如初了，
-      // 而是会缺了一大块，塔身有一半碎了并且消失了，塔基破烂不堪。"
-      // v56.2/v56.3 的"内核+贴皮缺口"只用在了柱子上，塔基和帽子三档都是
-      // 完好的——这次把同一套技术抽成 buildRing()，三节（塔基/柱子/帽子）都用它，
-      // 只是分段数、尺寸、颜色不同。三档缺口表按"越往上层数越少、越往重损缺越多"
-      // 分配，重损（dmg2）在柱子上刻意让**整整两个方位**（8 段里缺 8 段中的 6 段
-      // 落在同两side）连着缺，读出来是"半边真的塌了、不见了"，不是星星点点的小坑。
-      //
-      // isBox=true 时是蓝方箱体拼接（4 面 × rows 层），isBox=false 时是红方扇形
-      // 拼接（4 个方位 × rows 层）——两边分段方式一致，只是方/圆之分，逐节仍然
-      // 用同一套"内核永远在、贴皮可选"原则，topY/muzzleY 不受影响（v45c 不变量）。
-      const buildRing = (isBox, full, coreRatio, rows, y0, rowH, missing, color) => {
-        const core = full * coreRatio;
-        const totalH = rows * rowH;
-        if (isBox) add(new THREE.BoxGeometry(core, totalH, core), T(0, y0 + totalH / 2, 0), color);
-        else add(new THREE.CylinderGeometry(core, core, totalH, 6), T(0, y0 + totalH / 2, 0), color);
-        const skinT = (full - core) / 2;
-        const FACES = isBox
-          ? [{ axis: 'x', sign: 1 }, { axis: 'x', sign: -1 }, { axis: 'z', sign: 1 }, { axis: 'z', sign: -1 }]
-          : [0, 1, 2, 3];
-        let idx = 0;
-        for (const f of FACES) {
-          for (let row = 0; row < rows; row++) {
-            const i = idx++;
-            const py = y0 + rowH * (row + 0.5);
-            let px = 0, pz = 0;
-            if (isBox) {
-              px = f.axis === 'x' ? f.sign * (core / 2 + skinT / 2) : 0;
-              pz = f.axis === 'z' ? f.sign * (core / 2 + skinT / 2) : 0;
-            } else {
-              const a = f * (Math.PI / 2) + Math.PI / 4;
-              px = Math.cos(a) * full * 0.94; pz = Math.sin(a) * full * 0.94;
-            }
-            if (missing.includes(i)) continue;   // 纯移除：缺口原地什么都不放，露出内核
-            if (isBox) {
-              const w = f.axis === 'x' ? skinT : full;
-              const d = f.axis === 'z' ? skinT : full;
-              add(new THREE.BoxGeometry(w, rowH, d), T(px, py, pz), color);
-            } else {
-              // ⚠️ 扇形贴皮块的分段数用 2（不是 6）：CylinderGeometry 的三角面数
-              // 只看 radialSegments，跟 thetaLength（扇形张角）无关——若用 6 段，
-              // 4 个 90° 扇形拼起来就是 24 段的近似圆柱，比上下六棱柱更圆，剪影
-              // 会突然变圆又变回六边形。2 段更接近八边形，跟六棱柱棱面感协调。
-              add(new THREE.CylinderGeometry(full, full, rowH, 2, 1, false, f * (Math.PI / 2), Math.PI / 2),
-                  T(0, py, 0), color);
-            }
-          }
-        }
-        return idx;
-      };
-
-      // 三档缺口表：塔基/柱子/帽子各自的分段总数不同（8/12/4），缺口索引是各自
-      // 局部编号。重损时柱子的缺口刻意集中在 side 0/1 的全部 3 层（索引 0~5），
-      // 读作"半边真的塌了、消失了"；塔基缺大半、帽子缺连续两段（"缺了一大块"）。
-      const BASE_MISS  = { 0: [], 1: [1, 5], 2: [0, 1, 2, 3, 5, 6] };
-      const SHAFT_MISS = { 0: [], 1: [1, 5, 9], 2: [0, 1, 2, 3, 4, 5, 7, 10] };
-      const CAP_MISS   = { 0: [], 1: [1], 2: [1, 2] };
-
-      let oy = 0;
-      let missingTotal = 0;
-      if (red) {
-        // 大鼓（塔基）：无锥度，上下同宽——是真正的"圆盘"，不是锥形。
-        const baseH = R * 0.30, baseFull = R * 1.08;
-        buildRing(false, baseFull, 0.84, 2, oy, baseH / 2, BASE_MISS[dmg], shade(cSt, 0.55));
-        missingTotal += BASE_MISS[dmg].length;
-        oy += baseH;
-
-        // 细鼓（柱子）：内核 + 12 块贴皮（4 个方位 × 3 层），损毁按缺皮块数量分档。
-        const bodyH = R * 1.55, fullR = R * 0.64;
-        buildRing(false, fullR, 0.84, 3, oy, bodyH / 3, SHAFT_MISS[dmg], shade(cSt, 1));
-        missingTotal += SHAFT_MISS[dmg].length;
-        oy += bodyH;
-
-        // 小鼓（帽子）：无锥度的扁鼓，比柱子宽出一大截——用户反馈"帽子大一些"，
-        // 半径从 0.72R 提到 0.85R，读起来才是一顶实打实的"帽子"。
-        const capH = R * 0.24, capFull = R * 0.85;
-        buildRing(false, capFull, 0.84, 1, oy, capH, CAP_MISS[dmg], shade(cTr, 1));
-        missingTotal += CAP_MISS[dmg].length;
-        oy += capH;
-      } else {
-        // ==================== v57 原型：蓝方外塔（仅此一档，红方/其余三档不动）====================
-        // 用户看完 GPT 生成的参考图 + LoL 塔模型截图后明确指出：现在的塔是
-        // "基座→方柱→方台→水晶"，没有"水晶为什么长在这里"的结构关系。
-        // 完整设计报告见 docs/TOWER-REDESIGN-v57-DESIGN.md（已按用户第二轮
-        // 审阅的四点修正定稿），这里只按报告范围实现**蓝方外塔一档**，
-        // 验证 5 件事之后再决定要不要推广到红方/其余三档——用户原话
-        // "不要一口气把全套塔都写了"。
-        //
-        // 四层结构：基座（不变，沿用 v56.4 的 buildRing）→ 塔身（改成会
-        // 收分的方形棱台，不再是等宽箱体）→ 武器支撑结构（新增：2 根
-        // 主撑 + 水晶卡座）→ 水晶（位置固定，损毁只增加倾角，不重新
-        // 计算挂点——docs §8 的修正，避免切损毁档时水晶"跳一下"）。
-        // v57.1 原型反馈：①"底座太大了"——旧塔身是等宽 1.05R 的箱体，1.90R
-        // 的基座配上去比例还算克制；棱台塔身收分之后底部只有 0.877R 宽
-        // （0.62R×√2，四棱柱"角到角"半径转"面到面"宽度的换算），同一个
-        // 1.90R 的基座配上去比例明显超标，读成了"塔身插在一个远超它自己
-        // 宽度的托盘上"。改成 1.35R，约为塔身底宽的 1.5 倍，是"稳固但不
-        // 过量"的比例。
-        const baseH = R * 0.30, baseFull = R * 1.35;
-        buildRing(true, baseFull, 0.84, 2, oy, baseH / 2, BASE_MISS[dmg], shade(cSt, 0.55));
-        missingTotal += BASE_MISS[dmg].length;
-        oy += baseH;
-
-        // 塔身：上窄下宽的方形棱台。用 CylinderGeometry(radialSegments=4)
-        // 配合 45° 旋转得到真正会收分的方形截面，而不是恒定截面的
-        // BoxGeometry 竖起来——docs §3.1 明确要求"primitive 是实现手段，
-        // 不是最终形状"。
-        //
-        // v57.1 原型反馈："塔身怎么还是和正常的塔身一样"——第一版塔身是
-        // 单个整块棱台，三档 dmg 完全没有差异，是真实的疏漏（docs §5 的
-        // 损坏表明确要求塔身要能掉块）。改成两段：下 68% 是固定不变的
-        // 收分棱台（提供"上窄下宽"的大轮廓，不参与损毁——根基不会先垮）；
-        // 上 32% 是等宽的"衣领"，衔接处半径跟棱台顶部严丝合缝，用跟塔基
-        // 同一套 buildRing()"内核+分段贴皮，缺口纯移除"技术，可以真的掉块——
-        // 损毁集中在靠近武器支撑结构这一段，跟"支撑断裂→水晶歪"的叙事
-        // 在同一个视觉区域，读起来是一整套"上半段在遭殃"，不是东一块西
-        // 一块。
-        const bodyH = R * 1.55;
-        const bodyBotR = R * 0.62, bodyTopR = R * 0.42;
-        const taperH = bodyH * 0.68, collarH = bodyH * 0.32;
-        add(new THREE.CylinderGeometry(bodyTopR, bodyBotR, taperH, 4),
-            compose(T(0, oy + taperH / 2, 0), R_Y(Math.PI / 4)), shade(cSt, 1));
-        oy += taperH;
-        // 衣领宽度换算：CylinderGeometry(radialSegments=4) 的 radius 是"角到角"，
-        // 旋转 45° 对齐坐标轴之后，"面到面"全宽＝radius×√2——buildRing() 的
-        // isBox 分支要的正是"面到面"全宽，这里必须做这个换算，否则衣领会比
-        // 棱台顶端粗一圈，衔接处出现台阶。
-        const collarFull = bodyTopR * Math.SQRT2;
-        buildRing(true, collarFull, 0.84, 2, oy, collarH / 2, BASE_MISS[dmg], shade(cSt, 1));
-        missingTotal += BASE_MISS[dmg].length;
-        oy += collarH;
-        const bodyTopY = oy;
-
-        // 武器支撑结构：外塔档是"够用的最小武器架"（docs §3 分档表——外塔
-        // 2 根主撑+卡座，不是完整骨架），从塔顶两个相对的棱台角部升起、
-        // 向中心轴收拢。重损（dmg2）移除其中一根、只留一截断根——
-        // "支撑结构按根数递减"是这轮新增的损毁手法，比贴皮更彻底：
-        // 数量本来就少，少一根就是看得见的大变化。索引固定（不用随机数，
-        // 保几何可缓存），断的永远是同一根。
-        const strutH = R * 0.50;
-        const STRUT_ANGLES = [Math.PI / 4, Math.PI / 4 + Math.PI];
-        const brokenIdx = dmg === 2 ? 0 : -1;
-        STRUT_ANGLES.forEach((a, si) => {
-          const cx = Math.cos(a), cz = Math.sin(a);
-          const bx = cx * bodyTopR, bz = cz * bodyTopR;
-          const tiltZ = -cx * 0.42, tiltX = cz * 0.42;   // 顶端向中心轴收拢的倾角
-          const h = si === brokenIdx ? strutH * 0.22 : strutH;
-          add(new THREE.BoxGeometry(R * 0.11, h, R * 0.11),
-              compose(T(bx * 0.74, bodyTopY + h / 2, bz * 0.74), R_Z(tiltZ), R_X(tiltX)),
-              shade(cSt, 0.92));
-        });
-        if (brokenIdx >= 0) scatterDebris(1, R * 0.16);   // 断掉的那根撑杆掉在地上
-
-        // 水晶卡座：撑杆收拢的落点，水晶"卡"在这里，不是"放"在一个盘子上。
-        // 复用 v56.1 已验证的"碗口收窄避免穿模"公式（见 docs §19.3）。
-        crystalR = R * (0.34 + SPr.tiers * 0.035);
-        const pedR = crystalR * 0.55, pedH = crystalR * 0.32;
-        const pedCy = bodyTopY + strutH * 0.62;
-        add(new THREE.CylinderGeometry(pedR * 0.30, pedR, pedH, 8),
-            T(0, pedCy + pedH / 2, 0), shade(cTr, 0.72));
-
-        // 水晶位置固定：crystalCy 只由 tier 决定，三档 dmg 逐位不变——不能
-        // 让"撑杆是否健在"影响水晶的世界坐标，否则切损毁档时水晶会
-        // "跳一下"（用户明确指出的风险，docs §8 的修正）。损毁只体现在
-        // 水晶自身的倾角上：直接把旋转烘焙进几何体顶点（UnitLayer 每帧
-        // 只覆写 mesh.rotation.y 做自转，不会碰烘焙进几何体里的倾斜）。
-        crystalCy = pedCy + pedH + crystalR * 0.72;
-        const tiltRad = dmg === 0 ? 0 : dmg === 1 ? 0.09 : 0.21;   // 0° / ~5° / ~12°
-        crystalGeo = new THREE.OctahedronGeometry(crystalR);
-        if (tiltRad) crystalGeo.applyMatrix4(R_Z(tiltRad));
-      }
-      if (missingTotal) scatterDebris(missingTotal * 3, R * 0.14);
-
-      if (red) {
-        // 水晶底座（火盆，沿用 v54 定下的"不用很大、不给队伍色"）——两档色阶（deco 之外
-        // 的第 4 个几何体），塔身与檐口已经用了 stone/trim 两档，这里再暗一档收尾。
-        //
-        // v56.1 修穿模：碗口收窄到跟"嵌入深度处水晶自身的截面半径"相当的量级，
-        // 水晶尖端卡进碗口，不会陷进大半个身位（八面体截面半径随高度线性收窄，
-        // 离底尖 h' 处截面半径就是 h'，碗口半径跟嵌入深度处的截面半径量级匹配
-        // 即可，见 docs §19.3 的推导）。
-        crystalR = R * (0.34 + SPr.tiers * 0.035);
-        const pedR = crystalR * 0.60, pedH = crystalR * 0.40;
-        add(new THREE.CylinderGeometry(pedR * 0.34, pedR, pedH, 8),
-            T(R * 0.02, oy + pedH / 2, R * 0.02), shade(cTr, 0.72));
-        oy += pedH;
-
-        crystalCy = oy + crystalR * 0.84;
-        crystalGeo = new THREE.OctahedronGeometry(crystalR);
-      }
-      // weaponId 不驱动这套几何（炮口＝顶部水晶，与下面旧分支同一约定）。
-      // ⚠️ 故意不写 `void weaponId;`：下面 sim_v46.mjs 的"损⑱"断言用这行字面量
-      // 当切片终点定位旧分支的范围，这里重复一遍会让它切到自己头上，切出空区间。
-      // weaponId 不驱动这套几何（炮口＝顶部水晶，与下面旧分支同一约定）。
-      // ⚠️ 故意不写 `void weaponId;`：下面 sim_v46.mjs 的"损⑱"断言用这行字面量
-      // 当切片终点定位旧分支的范围，这里重复一遍会让它切到自己头上，切出空区间。
     } else {
       // ==================== 防御塔（v45 按阵营彻底分家）====================
       // 用户："新模型的塔我觉得一般，并没有做出差异化，红蓝方，外/内等。"
@@ -831,6 +540,16 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       //   蓝方＝秩序：正方基座、逐层内收的台阶、笔直的立柱、方齿雉堞、尖顶、悬浮法环
       //   红方＝混沌：不对称的岩基、外倾的骨架肋、歪斜的冠、成排骨刺、熔岩裂缝
       // 部件**数量对等**（不影响任何强弱读感），只是长得完全不同。
+      //
+      // ==================== v58：外塔的 v56/v57 结构实验整体撤销 ====================
+      // 用户看完 v57.2 蓝方外塔实机截图："道心破碎……太失望了。"——明确要求整体回退：
+      // 外塔不再单独分支，撤销 v56 大体块重做、v56.1~v56.3 的贴皮损毁、v57/v57.1/v57.2
+      // 的方形棱台+撑杆+水晶卡座这一整条实验线，重新并入本函数（其余三档一直在用、
+      // 从未离开过的通用防御塔造型）。如实记录：那一整条实验方向没有走通，不是
+      // 某一步写错了细节，是从"大体块重做"开始，方向本身就偏了。
+      // tier==='outer' 现在只通过下面的 TIER_SPEC.outer（tiers:1, buttress:0,
+      // balcony:false）走同一套代码，档次差异跟其余三档一样，靠 TIER_SPEC 的
+      // 数值级差表达，不再靠另起一套几何语言。
       const SP = TIER_SPEC[tier] || TIER_FALLBACK;
       const red = faction === 'red';
       const stone = F.stone, trim = F.trim;
@@ -1087,62 +806,65 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
                 T(px, y + R * 0.37, pz), shade(cTr, 0.72 * wear));
           }
         }
-        const crownTopY = y;      // 角楼架在冠顶上，不是架在装饰推进后的高度上（那样会悬空）
-        y += R * 0.34;
+        // v58：角楼（用户screenshot里那3个小尖顶）整段删掉——用户看完实机截图
+        // 明确要求删除不必要的装饰，角楼是这套造型里最孤立的一件：占地小、
+        // 跟冠体没有结构上的连续性，纯粹是加上去的点缀。之前有一版删过一次又被
+        // 用户纠正不要全部清掉，但那次针对的是雉堞/角楼**同时**清空、冠变成
+        // 光秃秃一个盒子；这次冠上的四角小装饰（下面的 nDeco）保留，只删角楼，
+        // 冠本身仍然有这是个建筑的读感，不是从太多跳到太空。
+        // TIER_SPEC.turrets 字段随之整体删除（含废墟里对应的碎角楼代码）——
+        // 死字段留着比删掉更危险（v44 的 spikes 就是教训）。
 
-        // 角楼（水晶防御塔起）：冠上四个小塔楼，是"这是一座要塞"的读感来源。**保留**。
-        // 轻损时缺一角；塌掉的留一截断根，不是整个消失（整个消失会让剪影缺一块，
-        // 那就变成"主体不一样了"，是用户当场推翻过的错误）。
-        for (let i = 0; i < SP.turrets; i++) {
-          const broken = (dmg === 1 && i === 0) || (dmg === 2 && i % 2 === 0);
-          const a = (i / Math.max(1, SP.turrets)) * Math.PI * 2 + Math.PI / 4;
-          const tx = Math.cos(a) * R * 0.52, tz = Math.sin(a) * R * 0.52;
-          const th = broken ? R * 0.16 : R * 0.42;
-          add(red ? new THREE.CylinderGeometry(R * (broken ? 0.16 : 0.13), R * 0.17, th, 5)
-                  : new THREE.BoxGeometry(R * 0.26, th, R * 0.26),
-              T(tx, crownTopY + th / 2, tz), broken ? char : shade(cSt, 0.66 * wear));
-          if (!broken) {
-            add(new THREE.ConeGeometry(R * 0.16, R * 0.22, red ? 5 : 4),
-                T(tx, crownTopY + R * 0.53, tz), shade(cTr, 0.70 * wear));
-          }
-        }
-
-        // 顶：蓝方尖顶（秩序），红方歪斜的熔岩冠（混沌）。轻度损毁时都塌掉。
-        // ==================== 顶盖：一件事只做一件 ====================
-        // 精简前这里是"顶盖"，上面还要再叠一根尖塔。现在合成一件，
-        // 高度按 topScale 随层级递增 —— 枢纽塔"全场最高的剪影"由它一件承担。
+        // ==================== v58：顶盖与水晶座合成一体 ====================
+        // 用户：这个水晶座应该是做到塔身上的，而不是给贴到水晶下面。
+        // 诊断：v54 的水晶底座（火盆）是两片薄圆盘，摆在顶盖尖顶的**尖端**上——
+        // 尖顶是 ConeGeometry，顶点是一个没有面积的点，圆盘等于悬空卡在一根针尖上，
+        // 剪影上读作水晶带着一个盘子飘在塔顶，跟塔身没有任何面的过渡，正是
+        // 用户说的贴到水晶下面。
+        // 改法：顶盖不再收成一个尖点，而是收成一段**锥台**（上窄下宽，上口宽度
+        // 直接收到跟水晶卡座同一个量级）——锥台的上口本身就是水晶的卡口，
+        // 中间只再补一圈很矮的收边（读作卡口的沿，不是另一个独立部件），
+        // 水晶嵌进这圈收边里。整条剪影从冠→锥台→卡口→水晶是连续收窄的一条线，
+        // 不再有细针+薄盘这种断层。
+        const topBotR = red ? R * 0.38 : R * 0.40;
+        crystalR = R * (0.34 + SP.tiers * 0.035);
+        const topTopR = crystalR * 0.50;      // 锥台顶口＝水晶卡口的量级，两者直接相接
         const topH = (red ? R * 0.50 : R * 0.66) * SP.topScale;
         if (dmg === 0) {
-          add(new THREE.ConeGeometry(red ? R * 0.38 : R * 0.40, topH, red ? 6 : 4),
+          add(new THREE.CylinderGeometry(topTopR, topBotR, topH, red ? 6 : 4),
               T(0, y + topH / 2, 0), shade(cTr, red ? 0.72 : 0.75));
         } else {
           // 断掉的顶：同一个位置上一截斜切残根 + 一块歪倒在冠上的碎顶。
           // y 仍按完整高度推进 —— 水晶（炮口）的高度三档必须一致，
           // 否则弹道起点会随掉血上下跳，看起来像换了一把武器。
           const stub = topH * (dmg === 1 ? 0.58 : 0.30);
-          add(new THREE.ConeGeometry(red ? R * 0.38 : R * 0.40, stub, red ? 6 : 4),
+          const stubTopR = topBotR - (topBotR - topTopR) * (stub / topH);   // 保持同一条收分线
+          add(new THREE.CylinderGeometry(stubTopR, topBotR, stub, red ? 6 : 4),
               compose(T(0, y + stub / 2, 0), R_Z(0.12)), shade(cTr, (red ? 0.72 : 0.75) * wear));
-          add(new THREE.CylinderGeometry(R * 0.20, R * 0.20, R * 0.05, red ? 6 : 4),
+          add(new THREE.CylinderGeometry(stubTopR, stubTopR, R * 0.05, red ? 6 : 4),
               compose(T(0, y + stub, 0), R_Z(0.26)), char);
           // 断下来的那截：**斜靠在冠上**，不是横着伸出去。
-          // 上一版给了近 90° 的横倒 + 0.58R 的偏移，在对照图上读起来像塔顶架了一根炮管。
-          // 现在改成 55° 斜倚、偏移收到 0.34R、长度砍到 0.30 —— 是"塌下来的一块"，
-          // 不是一件新装备。
           add(new THREE.ConeGeometry(R * 0.17, topH * 0.30, red ? 6 : 4),
               compose(T(R * 0.34, y + topH * 0.06, R * 0.12), R_Z(-0.96), R_Y(0.5)),
               shade(cTr, 0.62 * wear));
         }
         y += topH;
+        // 卡口收边：紧贴锥台顶端往外张一圈，矮而扁，读作卡口的沿，跟锥台
+        // 顶面严丝合缝（同一个 y、半径只在 topTopR 基础上外张），不留缝隙。
+        const lipR = topTopR * 1.35, lipH = crystalR * 0.16;
+        add(new THREE.CylinderGeometry(lipR * 0.80, lipR, lipH, red ? 6 : 4),
+            T(0, y + lipH / 2, 0), shade(cSt, 0.66 * wear));
+        y += lipH;
       }
 
       // 悬浮件：蓝方法环（水平圆环，秩序），红方碎岩（无序漂浮）。损毁时数量递减。
       // 注：这里原来还有「绕塔顶的悬浮碎晶(orbs)」与「水晶之上的尖塔(spire)」两件。
-      // 用户："顶部元素别整的太多了，堆在一起不好看。"—— 两件都删。
+      // 用户：顶部元素别整的太多了，堆在一起不好看。—— 两件都删。
       // orbs 与顶部水晶抢同一片视觉位置；spire 与顶盖功能重复。
-      // 层级差异改由环廊（塔身）、角楼（冠上）、顶盖高度（topScale）承担，分散开了。
-      // v45：**底座那圈队伍色光环已删**。用户："水晶塔下面那个颜色的环不要。"
+      // 层级差异改由环廊（塔身）、冠顶小装饰、顶盖高度（topScale）承担，分散开了。
+      // v45：**底座那圈队伍色光环已删**。用户：水晶塔下面那个颜色的环不要。
       // 它是 TIER_SPEC.halo 驱动的一圈 TorusGeometry（队伍色，贴在基座腰上），
-      // 全场只有枢纽塔有 —— 也是整座建筑上唯一"贴地的彩色圆环"，
+      // 全场只有枢纽塔有 —— 也是整座建筑上唯一贴地的彩色圆环，
       // 与地面上的射程圈/归属环/选中圈叠在一起时读起来就是一堆同心圆。
       // halo 这个字段一并从 TIER_SPEC 里删掉，不留一个没人读的开关
       //（v44 的 spikes 就是这么变成死字段的：配置里写着 8，没有任何部件读它）。
@@ -1150,20 +872,9 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       // 重度损毁时水晶变小 —— 它同时是炮口，不能直接删掉（删了炮口就没了）。
       // 水晶＝武器＝炮口。它的**大小与高度都不随损毁变** ——
       // 前一版让它缩小，等于损毁顺带改了炮口位置，弹道会看起来像换了把武器。
-      crystalR = R * (0.34 + SP.tiers * 0.035);
-      // ==================== v54：水晶底座（火盆）====================
-      // 用户："塔上面的水晶底下有个底座，要不然水晶直接放针上面太奇怪了……
-      //        这个底座不用很大（就像是火焰下面的火盆一样）。""不需要太显眼！"
-      // 所以刻意做小：外径不到水晶的六成、总高只有水晶半径的三分之一，
-      // 两片薄盘（下窄上宽）读作"盆"，水晶坐进盆口。
-      // 颜色跟塔身走（cTr 的暗一档），**不给队伍色** —— 饱和色只留给水晶本身。
-      const pedR = crystalR * 0.58, pedH = crystalR * 0.34;
-      add(new THREE.CylinderGeometry(pedR * 0.72, pedR * 0.92, pedH * 0.55, 8),
-          T(0, y + pedH * 0.275, 0), shade(cSt, 0.66 * wear));
-      add(new THREE.CylinderGeometry(pedR, pedR * 0.78, pedH * 0.45, 8),
-          T(0, y + pedH * 0.775, 0), shade(cTr, 0.62 * wear));
-      // 水晶坐进盆口：底面略陷（0.62 而不是原来的 0.75），读作"盛在盆里"而不是"架在杆上"。
-      crystalCy = y + pedH + crystalR * 0.62;
+      //
+      // 水晶下半嵌进卡口里（跟旧版坐进盆口同一个读法），不是架在卡口上方。
+      crystalCy = y + crystalR * 0.62;
       crystalGeo = new THREE.OctahedronGeometry(crystalR);
       void weaponId;    // weaponId 不再驱动几何（炮口＝顶部水晶）
     }

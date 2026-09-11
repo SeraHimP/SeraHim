@@ -666,16 +666,19 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
       // v45：`orbs`（绕塔顶的悬浮碎晶）已删 —— 用户："顶部元素别整的太多了，堆在一起不好看。"
       // 它与顶部水晶抢同一片视觉位置。递增性改看 topScale（顶盖高度），
       // 那是它的替代者：层级差异从"再堆一件"改成"同一件长高"。
-      const g = line.match(/(\w+):\s*\{ tiers: (\d+), buttress: (\d+), shaft: ([\d.]+), crown: [\d.]+, balcony: (\w+),\s*turrets: (\d+), topScale: ([\d.]+)/);
+      // v58：`turrets`（角楼）字段整体删除 —— 用户看完实机截图要求"删除不必要的
+      // 装饰"，角楼被拆掉，字段也跟着删（死字段比装饰更危险）。递增性判据里去掉
+      // turrets 这一项，其余不变。
+      const g = line.match(/(\w+):\s*\{ tiers: (\d+), buttress: (\d+), shaft: ([\d.]+), crown: [\d.]+, balcony: (\w+),\s*topScale: ([\d.]+)/);
       if (g) spec[g[1]] = { tiers: +g[2], buttress: +g[3], shaft: +g[4],
-                            balcony: g[5] === 'true', turrets: +g[6], topScale: +g[7] };
+                            balcony: g[5] === 'true', topScale: +g[6] };
     }
     const order = ['outer', 'inner', 'base', 'hq_tower'];
     if (order.some(k => !spec[k])) return false;
     for (let i = 1; i < order.length; i++) {
       const a = spec[order[i - 1]], b = spec[order[i]];
       if (!(b.shaft > a.shaft && b.tiers >= a.tiers && b.buttress >= a.buttress
-            && b.turrets >= a.turrets && b.topScale > a.topScale)) return false;
+            && b.topScale > a.topScale)) return false;
     }
     return true;
   })());

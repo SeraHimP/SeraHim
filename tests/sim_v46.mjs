@@ -502,14 +502,27 @@ const mkE = (ents, type, x, y, extra = {}) => {
   //      我据此把雉堞与角楼**整段删了**，断言也跟着改成"必须已删"。
   //   ② 用户随即纠正："小块块和角楼**不要全部清掉**啊。"
   //      —— 问题从来不是"有没有"，是"**太多太碎**"（外塔原本一圈 10 块小方齿）。
-  // 所以现在钉的是**数量上限**，不是有无：顶部装饰最多四个，且角楼仍然保留。
-  // 这样既挡住"又堆回一圈噪点"，也挡住"下次又一刀全删"。
-  T('损⑱-塔顶装饰是"减量保留"：最多四个，角楼仍在', (() => {
+  //      所以那之后钉的是**数量上限**，不是有无：顶部装饰最多四个，且角楼仍然保留。
+  //   ③ v58：用户看完 v57 系列实机截图后要求"删除不必要的装饰"，这次连角楼本身
+  //      也删了——但跟①不同的是，这次**只删角楼**，冠顶四角的小装饰（nDeco）
+  //      继续保留，冠不会变回①那次的"光秃秃一个盒子"。TIER_SPEC.turrets 字段
+  //      与 crownTopY 变量一并删除（死字段/死变量）。断言从"角楼必须还在"改成
+  //      "角楼确实已经不在了，但 nDeco 装饰还在"——这条历史本身留着，方便下一个人
+  //      看到"怎么这条又反过来了"时不用重新猜一遍前因后果。
+  T('损⑱-顶部装饰精简到位：角楼(turrets)已删，冠顶小装饰(nDeco)仍在且≤4', (() => {
     const alive = umf2.slice(umf2.indexOf('const SP = TIER_SPEC[tier] || TIER_FALLBACK;'),
                              umf2.indexOf('void weaponId;'));
     const m = alive.match(/const nDeco = (\d+);/);
-    return !!m && Number(m[1]) <= 4 && /SP\.turrets/.test(alive) && /crownTopY/.test(alive);
+    return !!m && Number(m[1]) <= 4 && !/SP\.turrets/.test(alive) && !/crownTopY/.test(alive);
   })());
+  // v58：水晶座重构。用户看完实机截图："这个水晶座应该是做到塔身上的，而不是
+  // 给贴到水晶下面。"——诊断：旧版顶盖收成一个 ConeGeometry 的尖点（零面积），
+  // 底座（火盆）的两片圆盘摆在这个尖点上，剪影上读作"水晶带着一个盘子飘在
+  // 塔顶"，跟塔身没有任何一个面的过渡。现在顶盖收成锥台（CylinderGeometry
+  // 双半径），锥台上口本身就是水晶卡口，只在上面再补一圈很矮的收边——
+  // 断言钉的是"上一版那种「尖点+悬浮盘」的结构已经不在了"，不是随便钉几个数字。
+  T('损⑱c-水晶座与塔身一体：顶盖不再收成尖点(Cone)，改用锥台(Cylinder双半径)承接水晶',
+    /const topTopR = crystalR/.test(umf2) && !/水晶底座（火盆）/.test(umf2));
   if (THREE) {
     const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
     for (const fac of ['blue', 'red']) {
@@ -518,6 +531,11 @@ const mkE = (ents, type, x, y, extra = {}) => {
         m.geo.computeBoundingBox();
         T(`损⑱b-${fac}/${tier}：水晶坐在石身上（底面不高于石身顶面，不悬空）`,
           m.crystal.cy - m.crystal.r <= m.geo.boundingBox.max.y + 1e-6);
+        // v58：不只是"不高于"，还要"贴得上"——旧版尖点+悬浮盘会留一段明显空隙
+        // （盘子半径量级的空当）；新版锥台直接收到水晶卡口宽度，水晶嵌入的深度
+        // 应该有 crystalR 一个量级，不能只差一点点意思一下。
+        T(`损⑱d-${fac}/${tier}：水晶嵌入卡口有实际深度（不是勉强够着顶面），嵌入量≥0.2×水晶半径`,
+          m.geo.boundingBox.max.y - (m.crystal.cy - m.crystal.r) >= m.crystal.r * 0.2 - 1e-6);
       }
     }
   }
