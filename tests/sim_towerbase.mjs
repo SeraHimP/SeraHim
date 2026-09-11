@@ -225,6 +225,21 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   T(`外⑤-四档顶点数随 TIER_SPEC 级差单调不降（同源造型，只靠参数拉开差距：${counts.join(' < ')}）`,
     counts[0] <= counts[1] && counts[1] <= counts[2] && counts[2] <= counts[3] && counts[0] < counts[3]);
 
+  // ==================== 七、红方骨架肋"悬空"修复（v58.1）====================
+  // 用户实机截图直接看出："红方塔四周那个东西怎么是悬空的？"——诊断：塔身是
+  // CylinderGeometry(rt,rb,segH,6) 六棱柱，radius 参数是**顶点到中心**的距离，
+  // 六边形"面"（两个顶点之间那段平面）到中心只有 cos(30°)≈0.866 倍那么远；
+  // 骨架肋是 5 根，跟六棱柱 6 个面对不上，大多数肋落在某个面中段——那里塔身
+  // 表面本来就往里收了，肋却还按"当成一根正圆柱"的 1.02 倍半径去摆，露出一圈
+  // 空隙。改成 0.84（比六边形面中点的 0.866 还再收进一点），保证不管肋落在
+  // 哪个角度，锚点都嵌进塔身表面以内——这条钉的是"肋的锚点半径必须小于六边形
+  // 面中点半径"这个几何关系本身，不钉 0.84 这个具体数字（换了分段数/形状还能用）。
+  const umfSrc = srcOf('src/presentation/UnitMeshFactory.js');
+  T('骨①-红方骨架肋锚点半径 < 六棱柱面中点半径（cos30°≈0.866），保证不悬空', (() => {
+    const m = umfSrc.match(/const ribAnchorR = rb \* ([\d.]+);/);
+    return !!m && Number(m[1]) < Math.cos(Math.PI / 6);
+  })());
+
   // 纯函数/可缓存：同样入参（不同 key，绕开缓存命中）应该产出同样的几何形状。
   const a = build('outer', 'blue', 0, 'x1');
   const b = build('outer', 'blue', 0, 'x2');

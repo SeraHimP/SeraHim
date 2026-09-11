@@ -653,10 +653,19 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
           add(new THREE.CylinderGeometry(rt, rb, segH, 6),
               compose(T(0, y + segH / 2, 0), R_Z(0.05 * (i % 2 ? 1 : -1))), shade(cSt, 0.78 * wear + i * 0.04));
           const ribs = 5;
+          // v58.1：用户实机看出"肋是悬空的"——六棱柱的 radius 参数是顶点到中心的
+          // 距离，六边形的**面**（两个顶点之间那段平面）到中心只有 cos(30°)≈0.866
+          // 倍那么远；肋是 5 根，跟六棱柱 6 个面对不上，大多数肋会落在某个面的
+          // 中段，那里塔身表面本来就往里收了，肋却还按"当成一根正圆柱"的 1.02
+          // 倍半径去摆，露出一圈空隙。改成 0.84（比 0.866 的面中点还再收进一点，
+          // 保证不管肋落在面上哪个角度，锚点都嵌进塔身表面以内，不会再悬空——
+          // 肋本身还有 R_Z/R_X 的外倾角度，尖端仍然会探出塔身之外，"外露"的
+          // 读感不受影响）。
+          const ribAnchorR = rb * 0.84;
           for (let k = 0; k < ribs; k++) {
             const a = (k / ribs) * Math.PI * 2 + i * 0.4;
             add(new THREE.BoxGeometry(R * 0.075, segH * 1.06, R * 0.11),
-                compose(T(Math.cos(a) * rb * 1.02, y + segH / 2, Math.sin(a) * rb * 1.02),
+                compose(T(Math.cos(a) * ribAnchorR, y + segH / 2, Math.sin(a) * ribAnchorR),
                         R_Z(Math.cos(a) * 0.16), R_X(-Math.sin(a) * 0.16)), shade(cTr, 0.52 * wear));
           }
         } else {
