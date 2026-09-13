@@ -54,7 +54,13 @@ export function applyHeal(entity, amount, power, maxHP, capHP) {
   const before = entity.currentHP || 0;
   if (before >= cap) return 0;
   entity.currentHP = Math.min(cap, before + amount * (power ?? 1));
-  return entity.currentHP - before;
+  const applied = entity.currentHP - before;
+  // v51.27（Q6）：单位属性窗口的"血条统计"要展示累计生命恢复——这是全仓库
+  // 唯一的回血入口（见文件头注"以后新增任何回血都必须走这个函数"），在这里
+  // 记一份累计值，不需要在每个调用点各自补一遍。永不清零，跟 Q6 里
+  // trackDamageTaken 同一惯例（见 CombatSystem.js 的说明）。
+  if (applied > 0) entity._healReceivedTotal = (entity._healReceivedTotal || 0) + applied;
+  return applied;
 }
 
 /** 临时护盾。amount 同样是未经加成的原始值。返回实际增加量。 */

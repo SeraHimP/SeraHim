@@ -18,6 +18,7 @@ export const FIELD_META = {
   attackSpeedRatio:   { label: '攻击速度收益率', min: 0, max: 2, step: 0.05 },
   attackRange:        { label: '攻击距离', min: 0, max: 800, step: 10 },
   bulletSpeed:        { label: '子弹速度', min: 0, max: 1200, step: 20 },
+  splashRadius:       { label: '溅射半径', min: 0, max: 400, step: 10 },
   armor:              { label: '护甲', min: -100, max: 500, step: 5 },
   magicResist:        { label: '魔法抗性', min: -100, max: 500, step: 5 },
   damageReduction:    { label: '伤害减免%', min: 0, max: 100, step: 1 },
@@ -59,8 +60,18 @@ export const FIELD_META = {
   evasionPct:         { label: '闪避率%', min: 0, max: 100, step: 1 },
   tenacityPct:        { label: '韧性%', min: 0, max: 100, step: 1 },
   maxMana:            { label: '最大法力', min: 0, max: 2000, step: 10 },
-  manaRegen:          { label: '法力回复/秒', min: 0, max: 200, step: 1 },
+  // v51.27（Q3/Q5）：与 healthRegen 同一套"回复(实际)/恢复(属性)"口径——这个键存的是
+  // 【属性】原始值（叠了技能/状态修正之后、乘 baseManaRegenMod/manaGainPct 之前），
+  // label 从"法力回复/秒"改回"法力恢复"，跟 healthRegen 的"生命恢复"对齐；
+  // 真正的"每秒实际回复多少"由面板另开一格（法力回复，见 statPanelLayout.js）显示。
+  manaRegen:          { label: '法力恢复', min: 0, max: 200, step: 1 },
   manaStart:          { label: '出场法力', min: 0, max: 2000, step: 10 },
   manaFloor:          { label: '法力下限', min: 0, max: 2000, step: 10 },
+  baseManaRegenMod:   { label: '基础法力恢复', min: 0, max: 5, step: 0.1 },
+  // v51.27（Q5）：原名 manaGainPct，面板显示名用户嫌"法力获得效率"不好听，改叫
+  // 【法力获取加成】——跟"伤害增幅/暴击伤害"这类"XX加成"的既有命名风格对齐，
+  // 语义仍是"该单位从任何渠道获得的法力值再乘这个百分比"，字段名不变（省得再迁移
+  // 一遍地图覆写/技能参数里已经写死的 manaGainPct 字符串）。
+  manaGainPct:        { label: '法力获取加成%', min: -100, max: 300, step: 5 },
 };
 export const fieldLabel = (k) => FIELD_META[k]?.label || k;

@@ -289,7 +289,12 @@ function createBuilding({ faction, tier, laneId, isNexus, pos, weapon, stats, sk
         // v39（Q5）：防御塔镀层从内塔移到水晶塔
         if (tier === 'inner') towerDefaults.push('passive_inner_fortify', 'passive_inner_bulwark');
         if (tier === 'base') towerDefaults.push('passive_base_fortify', 'passive_armor_plating'); // Q3：水晶塔不再默认装钢铁烈阳护盾(passive_base_bulwark)
-        if (tier === 'hq_tower') towerDefaults.push('passive_hq_fortify');   // 用户定稿：删除不生效的"绝望反击"
+        // v51.27：枢纽塔新增"钢铁烈阳护盾"变体（脱战每15秒+70护盾，封顶350）——
+        // 跟内塔那份（passive_inner_bulwark，300范围光环）走同一套"全局默认装配、
+        // 数值靠地图级 skillOverrides 覆写"套路，不单独给召唤师峡谷开一条显式
+        // skills 数组（那样会把 fortify/growth/overload 一并顶掉，见本函数下方
+        // "加固城防：任何一条整体替换towerDefaults的路径都必须补上"那段教训）。
+        if (tier === 'hq_tower') towerDefaults.push('passive_hq_fortify', 'passive_hq_bulwark');   // 用户定稿：删除不生效的"绝望反击"
         towerDefaults.push('passive_overload'); // v36 Q2：所有防御塔默认过载被动
       } else {
         towerDefaults.push('passive_nexus_regen'); // v36 Q4 修复：水晶/枢纽的生命恢复被动

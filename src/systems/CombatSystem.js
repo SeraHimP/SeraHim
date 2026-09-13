@@ -77,6 +77,22 @@ const DEFAULT_BULLET_SPEED = 400;
 function isTrueDamage(attackType) { return attackType === 'true'; }
 
 /**
+ * v51.27（Q6）：单位属性窗口的"血条统计"要展示"该单位受到的不同类型伤害统计"，
+ * 需要一份累计值——之前完全没有任何地方记录过这个。两条伤害路径
+ * （_resolveHit/performAttackDirect）各自的 `target.currentHP -= finalDamage`
+ * 后面都调这一个函数，口径统一（按 finalDamage，即实际掉的血，不是护盾吸收前的
+ * 原始伤害——跟血条上"掉了多少血"看到的是同一个数）。惯例做法：懒初始化在
+ * entity 上挂一个 _dmgTaken 累计表，永不清零（跟塔的其它累计类状态同一惯例，
+ * 没有指定要按"每条命"重置的需求就不额外造一层重置逻辑）。
+ */
+function trackDamageTaken(target, attackType, finalDamage) {
+  if (!(finalDamage > 0) || !target) return;
+  const key = attackType === 'physical' || attackType === 'magic' ? attackType : 'true';
+  const stats = target._dmgTaken || (target._dmgTaken = { physical: 0, magic: 0, true: 0 });
+  stats[key] += finalDamage;
+}
+
+/**
  * v51：一次攻击命中了几个目标——决定吸血按哪个效率算。
  * 用户："主单位+其他单位的溅射伤害，主单位吸血按100%算，其他单位的溅射伤害按20%算。
  *        如果是连锁，没有主目标，是直接的群体伤害，就全部按20%算。"
@@ -826,6 +842,7 @@ export class CombatSystem {
 
     const finalDamage = Math.min(remainingDamage, target.currentHP);
     target.currentHP -= finalDamage;
+    trackDamageTaken(target, attackType, finalDamage);
     if (damage > 0) target.lastDamageTime = window.gameTime || 0;
     // 记录巨龙的伤害来源塔（每塔独立龙魂击杀统计用）
     if (target.type === 'dragon' && finalDamage > 0) {
@@ -1475,6 +1492,7 @@ export class CombatSystem {
 
     const finalDamage = Math.min(remainingDamage, target.currentHP);
     target.currentHP -= finalDamage;
+    trackDamageTaken(target, attackType, finalDamage);
     if (damage > 0) target.lastDamageTime = window.gameTime || 0;
     // 伤害转化（v33 Q10）：防御向，两条伤害路径（performAttack/Direct）行为一致
     this._applyDamageConversion(target, defStats, finalDamage);

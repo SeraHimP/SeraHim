@@ -39,7 +39,7 @@ import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
 import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
 import { towerFacingRad } from './towerFacing.js';
-import { stepTrail, stepEase, TRAIL_COLOR } from './barTrail.js';
+import { stepTrail, previewFrac, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
@@ -875,11 +875,15 @@ export class UnitLayer {
     }
   }
 
-  // ============ 血条重绘（复刻 drawHealthBar 的配色与布局 + 掉血拖尾） ============
+  // ============ 血条重绘（复刻 drawHealthBar 的配色与布局 + 掉血拖尾 + 增加特效） ============
   // trailFrac = 显示血量（>真实血量时画一段淡红拖尾）；0 表示无拖尾。
   // resInfo = { frac, label } | null（v51）——世界空间的资源条，画在血条正下方那一细条；
   // 没有资源可显示时（大多数单位）整个条高度都归 HP，行为与改动前逐位一致。
-  _redrawBar(g, e, ghost, maxHP, trailFrac = 0, resInfo = null) {
+  // hpIncFrac/resIncFrac（v51.27，Q1）——"增加特效"预告条宽度（0~1），画在真实值
+  // 之后的空白区，与拖尾（画在真实值之前，掉血/掉法力那一侧）位置区分；
+  // resTrailFrac 是资源条自己的拖尾显示值（消耗法力时的淡红残段），跟 HP 的
+  // trailFrac 同一形状，用同一份 TRAIL_COLOR。
+  _redrawBar(g, e, ghost, maxHP, trailFrac = 0, resInfo = null, hpIncFrac = 0, resTrailFrac = 0, resIncFrac = 0) {
     g.clearRect(0, 0, BAR_W, BAR_H);
     if (ghost) {
       const prog = Math.max(0, Math.min(1, e._respawnProgress || 0));
@@ -921,10 +925,11 @@ export class UnitLayer {
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, hpH);
     g.fillStyle = hpColor; g.fillRect(0, 0, BAR_W * hpDraw, hpH);
     // 掉血拖尾：真实血量→显示血量之间的淡红残段（有界动画，追平即消失）。护盾在其后绘制会覆盖。
+    let hpTrailEnd = hpDraw;
     if (trailFrac > hpFrac) {
-      const tEnd = Math.min(1, trailFrac) * scale;
+      hpTrailEnd = Math.min(1, trailFrac) * scale;
       g.fillStyle = TRAIL_COLOR;
-      g.fillRect(BAR_W * hpDraw, 0, BAR_W * (tEnd - hpDraw), hpH);
+      g.fillRect(BAR_W * hpDraw, 0, BAR_W * (hpTrailEnd - hpDraw), hpH);
     }
     // 排列同 UIManager 卡片：HP、护盾（贴 HP，承伤顺序里最后吃）、固定护盾、
     // 临时护盾（最外层，最先吃）——与承伤顺序①临时②固定③护盾互为镜像。
@@ -934,6 +939,17 @@ export class UnitLayer {
     // 需要区分三类护盾的场景放在下面单位属性窗口（CSS 那三条 .bar-shield-*）。
     const shieldW = spW + sfW + stW;
     if (shieldW > 0.001) { g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(BAR_W * hpDraw, 0, BAR_W * shieldW, hpH); }
+    // v51.27（Q1）："增加特效"——预告接下来会回复的量，画在 HP+护盾都画完之后的
+    // 空白区（不盖护盾这个真实状态；拖尾在掉血侧偏低位，这个在回复侧偏高位，
+    // 两者位置天然不重叠；颜色也用区别于拖尾的暖黄，双重区分）。
+    if (hpIncFrac > 0.002) {
+      const incStart = Math.max(hpDraw + shieldW, hpTrailEnd) * BAR_W;
+      const incW = Math.min(BAR_W - incStart, hpIncFrac * BAR_W);
+      if (incW > 0.5) {
+        g.fillStyle = CONFIG.ui?.barIncreasePreview?.color || 'rgba(255, 205, 90, 0.65)';
+        g.fillRect(incStart, 0, incW, hpH);
+      }
+    }
     g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
     g.strokeRect(0.5, 0.5, BAR_W - 1, hpH - 1);
 
@@ -942,6 +958,22 @@ export class UnitLayer {
       g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, hpH, BAR_W, BAR_H - hpH);
       g.fillStyle = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.mana;
       g.fillRect(0, hpH, BAR_W * resInfo.frac, BAR_H - hpH);
+      // v51.27（Q1）：资源条自己的拖尾（消耗时的淡红残段）+ 增加特效预告，跟 HP
+      // 同一套形状，只是画在这条 2px 细条里。
+      let resTrailEnd = resInfo.frac;
+      if (resTrailFrac > resInfo.frac) {
+        resTrailEnd = Math.min(1, resTrailFrac);
+        g.fillStyle = TRAIL_COLOR;
+        g.fillRect(BAR_W * resInfo.frac, hpH, BAR_W * (resTrailEnd - resInfo.frac), BAR_H - hpH);
+      }
+      if (resIncFrac > 0.002) {
+        const rIncStart = Math.max(resInfo.frac, resTrailEnd) * BAR_W;
+        const rIncW = Math.min(BAR_W - rIncStart, resIncFrac * BAR_W);
+        if (rIncW > 0.5) {
+          g.fillStyle = CONFIG.ui?.barIncreasePreview?.color || 'rgba(255, 205, 90, 0.65)';
+          g.fillRect(rIncStart, hpH, rIncW, BAR_H - hpH);
+        }
+      }
     }
 
     // E1 镀层节点线：2D 是 1.5px 白线上下各溢出 1.5px；纹理内画 2px 竖线不出条（头注记档）
@@ -1250,11 +1282,12 @@ export class UnitLayer {
     }
     en.bar.visible = showBar;
     if (showBar) {
-      let barKey, maxHP = 1;
+      let barKey, maxHP = 1, hpIncFrac = 0, resIncFrac = 0, resTrailFrac = 0;
       if (ghost) {
         barKey = 'g|' + Math.round((e._respawnProgress || 0) * BAR_W);
       } else {
-        maxHP = attrCalc.calc(e, effects.getEffects(e.id)).maxHP || 1;
+        const stats = attrCalc.calc(e, effects.getEffects(e.id));
+        maxHP = stats.maxHP || 1;
         const realFrac = Math.max(0, Math.min(1, e.currentHP / maxHP));
         // 掉血拖尾：显示血量 dispFrac 向真实血量插值。仅掉血启动；回血/首帧直接贴齐。
         // 动画期内 dispFrac 量化值入 barKey → 每帧重绘；追平后去掉该项 → 停重绘（有界，非每帧）。
@@ -1267,28 +1300,49 @@ export class UnitLayer {
         // v51：资源条（法力/升温/闪电充能/攻城充能）跟着血条同一张纹理画——脏 key 必须
         // 把资源分数也算进去，否则只有资源在变、血量不变时永远不会触发重绘（见下面 _redrawBar）。
         var resInfo = resourceInfoOf(e, { skillLibrary: SkillLibrary, attrCalc, effects });
-        // 追加需求：法力/充能条也要有缓动，且与属性窗口那条统一（同一份 barTrail.
-        // stepEase，同一个 TRAIL_RATE）。资源种类切换（比如法力→充能）时不适合接着
-        // 从旧种类的数值缓过来，直接贴齐——en._resKind 记上一次是哪种资源。
+        // v51.27（Q1）：法力/充能条主体也改成"瞬时+拖尾"，跟 HP 同一形状——用户
+        // "进度条主体大幅削弱动画效果（几乎看不出来），用拖尾特效展示"。原来这里走
+        // stepEase 直接对主体做双向缓动，主体本身在肉眼可见地滑动，跟 HP 主体瞬时、
+        // 只有掉的那段拖尾的观感不统一。资源种类切换（法力→充能等）时直接贴齐。
+        // ⚠️ resInfo.frac 必须保持【真实值】不动——主体绘制要用它，跟 HP 那边
+        // _redrawBar 直接从 e.currentHP 现算 hpFrac 是同一个道理；拖尾后的显示值
+        // 单独存 en.dispResFrac、单独传参给 _redrawBar（resTrailFrac），不能覆盖
+        // 回 resInfo.frac——覆盖了就等于主体也在跟着拖尾值走，重新变回"整条在滑动"。
         if (resInfo) {
           if (en._resKind !== resInfo.kind) { en.dispResFrac = resInfo.frac; en._resKind = resInfo.kind; }
-          const rt = stepEase(en.dispResFrac ?? resInfo.frac, resInfo.frac, dt, 1 / BAR_W);
-          en.dispResFrac = rt.disp; en.resEasing = rt.easing;
-          resInfo = { ...resInfo, frac: en.dispResFrac };
-        } else { en._resKind = null; en.resEasing = false; }
+          const rt2 = stepTrail(en.dispResFrac ?? resInfo.frac, resInfo.frac, dt, 1 / BAR_W);
+          en.dispResFrac = rt2.disp; en.resTrailing = rt2.trailing;
+        } else { en._resKind = null; en.resTrailing = false; }
+        resTrailFrac = en.resTrailing ? en.dispResFrac : 0;
+
+        // v51.27（Q1）："增加特效"——接下来 windowSec 秒内按当前实际回复速率能回到
+        // 的量，画在真实值高位一侧（拖尾画在低位/掉血侧，两者位置天然区分；颜色
+        // 再配一份区别于拖尾的暖黄，双重区分，见 CONFIG.ui.barIncreasePreview）。
+        // 只覆盖生命/法力的【被动回复】，主动技能的瞬间治疗没有稳定的"未来速率"
+        // 可供预告，不在这条特效的能力范围内。
+        const incCfg = CONFIG.ui?.barIncreasePreview;
+        if (incCfg?.enabled) {
+          const hpRegenMod = e.baseStats?.baseHealthRegenMod ?? 1;
+          const hpHealPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
+          hpIncFrac = previewFrac((stats.healthRegen || 0) * hpRegenMod * hpHealPower, maxHP, realFrac, incCfg.windowSec);
+          if (resInfo && resInfo.kind === 'mana') {
+            resIncFrac = previewFrac(resInfo.effRegen || 0, resInfo.max || 0, resInfo.frac, incCfg.windowSec);
+          }
+        }
+
         barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
                + q((e.tempShield || 0) / maxHP) + '|' + q((e.plainShield || 0) / maxHP) + '|'
                + (e._mapFaction || e.faction || '')
                + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
                + (en.trailing ? '|t' + q(en.dispFrac) : '')
-               + (resInfo ? '|r' + q(resInfo.frac) + resInfo.kind : '');
-        // 注意：resInfo.frac 这里已经是缓动后的 en.dispResFrac（上面重新赋值过），
-        // 缓动进行中它本身逐帧变化，量化值自然跟着变，barKey 天然逐帧不同、
-        // 天然触发重绘——不需要再额外拼一个"是否在缓动"的标记位。
+               + (resInfo ? '|r' + q(resInfo.frac) + resInfo.kind : '')
+               + (en.resTrailing ? '|rt' + q(en.dispResFrac) : '')
+               + '|i' + q(hpIncFrac) + '|ri' + q(resIncFrac);
       }
       if (en.barKey !== barKey) {
         en.barKey = barKey;
-        this._redrawBar(en.barCanvas.getContext('2d'), e, ghost, maxHP, (!ghost && en.trailing) ? en.dispFrac : 0, resInfo);
+        this._redrawBar(en.barCanvas.getContext('2d'), e, ghost, maxHP,
+          (!ghost && en.trailing) ? en.dispFrac : 0, resInfo, hpIncFrac, resTrailFrac, resIncFrac);
         en.barTex.needsUpdate = true;   // 脏标记：只有走到这里才触发纹理上传
       }
     }

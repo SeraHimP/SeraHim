@@ -79,13 +79,21 @@ export function resourceInfoOf(entity, ctx) {
     const max = stats.maxMana || 0;
     if (max <= 0) return null;
     const cur = Math.max(0, Math.min(max, entity._mana || 0));
+    // v51.27（Q1/Q5）：右侧数字与"增加特效"预告都要用【实际每秒回复值】
+    // （法力恢复属性 × 基础法力恢复 × (1+法力获取加成%)），不是原始属性——
+    // 跟 UIManager._effectiveManaRegenHtml 同一公式（ManaSystem.update() 的被动
+    // 回复分支也是这个公式），三处不再各算各的。
     const regen = stats.manaRegen || 0;
+    const regenMod = entity.baseStats?.baseManaRegenMod ?? 1;
+    const gainPct = Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+    const effRegen = regen * regenMod * gainPct;
     return {
-      frac: max > 0 ? cur / max : 0, kind: 'mana',
+      frac: max > 0 ? cur / max : 0, kind: 'mana', max,
       label: `${Math.round(cur)}/${Math.round(max)}`,
       // 用户："法力条右侧显示每秒被动获得法力的值，如果没有就显示为0"，
       // 格式定稿为 💧X（v51.2 从 "+X/s" 改过来）。
-      regenText: `💧${Math.round(regen * 10) / 10}`,
+      regenText: `💧${Math.round(effRegen * 10) / 10}`,
+      effRegen,
     };
   }
   const pierce = insts.find(i => i.skillId === 'weapon_piercing');
@@ -119,5 +127,5 @@ export function resourceInfoOf(entity, ctx) {
   }
   // v51.3：用户定稿"单位无论有没有法力等都要显示法力条"——不再对"什么资源都
   // 没有的单位"整行隐藏，退化成一条空的法力条，视觉语言统一。
-  return { frac: 0, kind: 'mana', label: '0/0', regenText: '💧0' };
+  return { frac: 0, kind: 'mana', label: '0/0', regenText: '💧0', max: 0, effRegen: 0 };
 }

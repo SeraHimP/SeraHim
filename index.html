@@ -463,7 +463,8 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .panel-sec::after { content: ''; flex: 1; height: 1px; background: var(--glass-border); }
 
 .bar-row { display: flex; align-items: stretch; height: 18px; margin-bottom: 3px; }
-.bar-track { position: relative; flex: 1; height: 100%; background: var(--bg-deep); border: 1px solid var(--glass-border); border-radius: 4px; overflow: hidden; }
+/* v51.27（Q6）：HP/法力条也可点击，打开统计窗口——cursor:pointer 让这一点可被发现。 */
+.bar-track { position: relative; flex: 1; height: 100%; background: var(--bg-deep); border: 1px solid var(--glass-border); border-radius: 4px; overflow: hidden; cursor: pointer; }
 /* v47：与画面中的拖尾统一（用户："统一为画面中的拖尾特效"）。
    ① 颜色改成画面里那条的 rgba(255,150,150,0.6)（原来是暗黄 #a68a2e）；
    ② **去掉 transition** —— 宽度已经由 JS 每帧缓动（barTrail.stepTrail），
@@ -475,18 +476,24 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 /* 阵营血条颜色：统一 2D 画布与卡片UI的配色，取代此前的"低血量变红" */
 .bar-hp.faction-blue { background: linear-gradient(180deg, #6bb8f0, #3d8fd1); }
 .bar-hp.faction-red { background: linear-gradient(180deg, #ff8a7a, #d0453b); }
+/* v51.27（Q1）："增加特效"——预告接下来会回复多少，颜色由 JS 现读
+   CONFIG.ui.barIncreasePreview.color 写 background；默认 display:none，
+   只有算出预告宽度 >0 时才显示（见 UIManager._updateHpIncBar）。
+   pointer-events:none 同 .bar-hp-trail，纯展示，不吃鼠标事件。 */
+.bar-hp-inc { position: absolute; top: 0; height: 100%; display: none; pointer-events: none; }
 /* v51：资源条（法力/能量/充能，统一叫"资源条"）。用户要求"高度做成和血条一样"——
-   直接复用 .bar-row/.bar-track，不新起一套尺寸，天然一样高。*/
+   直接复用 .bar-row/.bar-track，不新起一份尺寸，天然一样高。*/
 .bar-res-row { display: none; }
 .bar-res-row.show { display: flex; }
 /* 具体颜色按资源类型（法力/升温/闪电充能/通用充能）由 JS 现读 RESOURCE_COLORS 写 background，
    这里只给一个兜底色，防止 JS 还没跑到时是空白色块。 */
-/* 追加需求：法力/充能条缓动改走 barTrail.stepEase（JS 逐帧计算，与画板同一份
-   参数），这里的 width 不再需要 CSS transition——留着的话会跟 JS 缓动叠成两层
-   缓动（barTrail.js 头注点过名的老毛病："JS 每帧改一次 width、CSS 再对每次
-   改动做 transition，两层缓动叠起来"），只保留颜色切换（法力/充能/升温等不同
-   资源类型换色）的过渡。 */
-.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: background 0.2s; }
+/* v51.27（Q1）：用户"进度条主体大幅削弱动画效果（几乎看不出来），用拖尾特效展示"
+   ——法力/充能条主体改回瞬时贴齐（跟 .bar-hp 同一形状：JS 每帧算好宽度 + 一个
+   很短的 CSS transition，不再叠 stepEase 那种"整条明显滑动"的双向缓动）。
+   掉法力时的拖尾单独交给新增的 .bar-res-trail（结构对齐 .bar-hp-trail/.bar-hp）。 */
+.bar-res-trail { position: absolute; top: 0; left: 0; height: 100%; background: rgba(255,150,150,0.6); pointer-events: none; }
+.bar-res { position: absolute; top: 0; left: 0; height: 100%; background: #6c8cf5; transition: width 0.08s linear, background 0.2s; }
+.bar-res-inc { position: absolute; top: 0; height: 100%; display: none; pointer-events: none; }
 .bar-shield-fixed { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.5) 3px, rgba(255,255,255,0.5) 6px); transition: width 0.1s, left 0.1s; }
 .bar-shield-temp { position: absolute; top: 0; height: 100%; background: repeating-linear-gradient(45deg, #ffffff, #ffffff 3px, rgba(255,255,255,0.3) 3px, rgba(255,255,255,0.3) 6px); transition: width 0.1s, left 0.1s; }
 /* 追加需求 Q2："护盾在血条的显示就应该是灰白色系，你目前的【护盾】是用黄色代替

@@ -110,12 +110,16 @@ const SR_CONFIG = {
   //   内塔：maxHP 4000→3750
   //   高地塔（base）：maxHP 3500→4000，攻速 2.5→4.0
   //   枢纽塔（hq_tower）：+7 格挡（damageBlock，直接进默认属性，见下方那一行）
+  // v51.27：用户定稿外/内塔血量对调式调整——"外塔HP3300→3500，内塔HP3750→3300"
+  // （外塔更肉一点扛前期，内塔略脆——双抗差距本来就已经把两者的真实生存拉开了）。
+  // 枢纽塔 damageBlock:7 已删除，移植进 passive_hq_fortify（见下方 skillOverrides
+  // 和 towerPassives.js 的说明）——不再是塔的无条件固有属性，要装了那条技能才有。
   tierStats: {
-    outer:      { maxHP: 3300, shieldFixedMax: 0, healthRegen: 0, armor: 15, magicResist: 15, attackDamage: 152, baseAttackSpeed: 0.833 },
-    inner:      { maxHP: 3750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
+    outer:      { maxHP: 3500, shieldFixedMax: 0, healthRegen: 0, armor: 15, magicResist: 15, attackDamage: 152, baseAttackSpeed: 0.833 },
+    inner:      { maxHP: 3300, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 70, attackDamage: 170, baseAttackSpeed: 0.833 },
     base:       { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 55, magicResist: 55, attackDamage: 170, baseAttackSpeed: 4.00 },
     nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
-    hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 110, attackDamage: 150, baseAttackSpeed: 4.00, damageBlock: 7 },
+    hq_tower:   { maxHP: 4750, shieldFixedMax: 0, healthRegen: 0, armor: 70, magicResist: 110, attackDamage: 150, baseAttackSpeed: 4.00 },
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,  attackDamage: 0,   baseAttackSpeed: 0 },
   },
 

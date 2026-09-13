@@ -21,7 +21,9 @@ export const STAT_LABELS = {
   abilityPower: '法术强度', skillAmpPct: '技能增幅', critChance: '暴击率', critDamagePct: '暴击伤害',
   adaptiveForce: '适应之力', physicalVampPct: '物理吸血', spellVampPct: '法术吸血',
   evasionPct: '闪避率', tenacityPct: '韧性',
-  maxMana: '最大法力', manaRegen: '法力回复',
+  maxMana: '最大法力', manaRegen: '法力恢复',
+  baseManaRegenMod: '基础法力恢复', manaGainPct: '法力获取加成',
+  splashRadius: '溅射半径',
   // v51.6 修复：这四个键在龙之力/龙魂常驻加持里都用得到（风龙之力的 attackSpeedRatio、
   // 霜龙/龙魂的 damageBlock、血龙之力的 damageConvertPct、星龙之力的 bulletSpeed），
   // 之前这张表没覆盖，落进 modsGridHtml 的 `STAT_LABELS[k] || k` 兜底，原样显示了英文

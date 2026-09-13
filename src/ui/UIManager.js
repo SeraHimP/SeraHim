@@ -8,7 +8,7 @@ import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
 import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES } from '../core/resourceBar.js';
-import { stepTrail, stepEase } from '../presentation/barTrail.js';
+import { stepTrail, previewFrac } from '../presentation/barTrail.js';
 
 export class UIManager {
   constructor(entityContainer, effectRegistry, attrCalc) {
@@ -202,22 +202,6 @@ export class UIManager {
     const dt = Math.min(0.05, (nowTs - (el._lastTs || nowTs)) / 1000);
     el._lastTs = nowTs;
     const tr = stepTrail(el._frac, hpFrac, dt, 1 / 300);
-    el._frac = tr.disp;
-    el.style.width = (Math.max(0, Math.min(1, el._frac)) * 100) + '%';
-  }
-
-  /**
-   * 属性面板法力/充能条的缓动——同 _stepTrailBar，但走 barTrail.stepEase（双向
-   * 缓动，见该函数头注）。用户："画板上进度条和属性窗口进度条的缓动效果是
-   * 统一的"——两处现在都调同一个模块的函数，参数（TRAIL_RATE）也是同一份。
-   */
-  _stepEaseBar(el, frac) {
-    if (!el) return;
-    const nowTs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    if (el._frac === undefined) { el._frac = frac; el._lastTs = nowTs; }
-    const dt = Math.min(0.05, (nowTs - (el._lastTs || nowTs)) / 1000);
-    el._lastTs = nowTs;
-    const tr = stepEase(el._frac, frac, dt, 1 / 300);
     el._frac = tr.disp;
     el.style.width = (Math.max(0, Math.min(1, el._frac)) * 100) + '%';
   }
@@ -725,6 +709,8 @@ export class UIManager {
     // 点开这一格的说明弹窗时，里面的"生命回复"仍然显示这个原始值本身是什么——
     // 两处口径不同是有意的，见 _showStatDoc 的关联属性小节。
     if (key === 'healthRegen') return this._effectiveHealthRegenHtml(entity, stats);
+    // v51.27（Q5）：法力回复同理——面板主格子显示实际每秒回复值，不是原始属性。
+    if (key === 'manaRegen') return this._effectiveManaRegenHtml(entity, stats);
     const p = this._statParts(key, entity, stats);
     if (!p) return '';
     return `<span class="${p.cls}">${p.now}${suffix}</span>`;
@@ -737,6 +723,21 @@ export class UIManager {
     const healPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
     const effective = Math.round(regen * regenMod * healPower * 100) / 100;
     const baseline = entity.baseStats?.healthRegen;
+    const cls = Number.isFinite(baseline) && Math.abs(effective - baseline) > 0.005
+      ? (effective > baseline ? 'stat-up' : 'stat-down') : '';
+    return `<span class="${cls}">${effective}</span>`;
+  }
+
+  // v51.27（Q5）：与 _effectiveHealthRegenHtml 同一形状——法力恢复(属性) ×
+  // 基础法力恢复 × (1+法力获取加成%)，跟 ManaSystem.update() 里被动回复那一行
+  // 同源公式（不含攻击/受击瞬时获得的法力，那部分是事件触发不是每秒常量）。
+  _effectiveManaRegenHtml(entity, stats) {
+    if (!entity || !stats) return '';
+    const regen = stats.manaRegen || 0;
+    const regenMod = entity.baseStats?.baseManaRegenMod ?? 1;
+    const gainPct = Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+    const effective = Math.round(regen * regenMod * gainPct * 100) / 100;
+    const baseline = entity.baseStats?.manaRegen;
     const cls = Number.isFinite(baseline) && Math.abs(effective - baseline) > 0.005
       ? (effective > baseline ? 'stat-up' : 'stat-down') : '';
     return `<span class="${cls}">${effective}</span>`;
@@ -791,10 +792,38 @@ export class UIManager {
     const info = resourceInfoOf(entity, { skillLibrary: SkillLibrary, attrCalc: this.attrCalc, effects: this.effects });
     row.classList.toggle('show', !!info);
     if (!info) return;
+    // v51.27（Q1）：法力/充能条主体也改成"瞬时+拖尾"，跟 HP 同一形状——用户
+    // "进度条主体大幅削弱动画效果（几乎看不出来），用拖尾特效展示"。原来这里走
+    // stepEase 对主体本身做双向缓动，主体在肉眼可见地滑动，跟血条（瞬时+仅掉血
+    // 拖尾）的观感不统一。主体瞬时贴齐真实值，拖尾单独用 .bar-res-trail 这个
+    // 新增元素承接（结构对齐 .bar-hp-trail/.bar-hp 那一对）。
     const fill = row.querySelector('.bar-res');
     if (fill) {
-      this._stepEaseBar(fill, info.frac);
+      fill.style.width = (Math.max(0, Math.min(1, info.frac)) * 100) + '%';
       fill.style.background = RESOURCE_COLORS[info.kind] || RESOURCE_COLORS.mana;
+    }
+    const trailEl = row.querySelector('.bar-res-trail');
+    if (trailEl) this._stepTrailBar(trailEl, info.frac);
+    // v51.27（Q1）："增加特效"——只有法力类型有稳定的"每秒回复速率"概念（充能/
+    // 升温/闪电充能都是无被动速率的"进度"，不预告）。位置紧接主体真实值之后，
+    // 与拖尾（主体之前，掉法力那侧）区分；颜色也区分，见 CONFIG.ui.barIncreasePreview。
+    const incEl = row.querySelector('.bar-res-inc');
+    if (incEl) {
+      const incCfg = CONFIG.ui?.barIncreasePreview;
+      const incFrac = (incCfg?.enabled && info.kind === 'mana')
+        ? previewFrac(info.effRegen || 0, info.max || 0, info.frac, incCfg.windowSec) : 0;
+      if (incFrac > 0.002) {
+        // 起点取"真实值"与"拖尾当前显示值"里较大的那个——避免掉法力时拖尾（低位）
+        // 与增加特效（高位）在同一段区间里正面重叠，两段改成前后相邻。
+        const trailFracVal = trailEl?._frac ?? info.frac;
+        const incStart = Math.max(0, Math.min(1, Math.max(info.frac, trailFracVal)));
+        incEl.style.display = '';
+        incEl.style.left = (incStart * 100) + '%';
+        incEl.style.width = (Math.min(1 - incStart, incFrac) * 100) + '%';
+        incEl.style.background = incCfg.color;
+      } else {
+        incEl.style.display = 'none';
+      }
     }
     if (textEl) textEl.textContent = info.label;
     // 用户："法力条右侧显示每秒被动获得法力的值，如果没有就显示为0。"——只有法力
@@ -802,13 +831,62 @@ export class UIManager {
     if (regenEl) regenEl.textContent = info.regenText || '';
   }
 
+  /**
+   * v51.27（Q1）："增加特效"——HP 版，塔/兵卡片共用一份实现（跟 _updateResourceBar
+   * 同一个理由：同一件事不写两遍）。位置紧接在真实血量/拖尾之后的空白区，
+   * 不会盖住护盾（.bar-shield-* 三个元素在 DOM 里排在这个元素之后，后画的盖住
+   * 先画的，护盾这个真实状态天然盖住这条纯预告性质的特效）。
+   */
+  _updateHpIncBar(card, prefix, id, entity, stats, hpFrac, maxHP) {
+    const incEl = card.querySelector(`#${prefix}-hpinc-${id}`);
+    if (!incEl) return;
+    const incCfg = CONFIG.ui?.barIncreasePreview;
+    let incFrac = 0;
+    if (incCfg?.enabled) {
+      const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
+      const healPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
+      incFrac = previewFrac((stats.healthRegen || 0) * regenMod * healPower, maxHP, hpFrac, incCfg.windowSec);
+    }
+    if (incFrac > 0.002) {
+      const trailEl = card.querySelector(`#${prefix}-trail-${id}`);
+      const trailFracVal = trailEl?._frac ?? hpFrac;
+      const incStart = Math.max(0, Math.min(1, Math.max(hpFrac, trailFracVal)));
+      incEl.style.display = '';
+      incEl.style.left = (incStart * 100) + '%';
+      incEl.style.width = (Math.min(1 - incStart, incFrac) * 100) + '%';
+      incEl.style.background = incCfg.color;
+    } else {
+      incEl.style.display = 'none';
+    }
+  }
+
   _baseAttrsHtml(E, stats) {
     return BASE_ATTR_ROWS.map(({ key, label }) => {
       const val = key === 'bonusAttackSpeedPct' ? this._attackSpeedHtml(E, stats)
         : key === 'critChance' ? this._statValueHtml(key, E, stats, '%')
+        : key === 'attackDamage' ? this._attackDamageHtml(E, stats)
         : this._statValueHtml(key, E, stats);
       return `<div class="a stat-doc" data-stat="${key}"><label>${label}</label><span>${val}</span></div>`;
     }).join('');
+  }
+
+  /**
+   * v51.27（Q4）：用户"属性窗口的'攻击力'应该也改成自适应显示目前的伤害类型和
+   * 可以造成的伤害（左侧伤害类型图标+数值）"。数值本身不变（还是原来那套
+   * p.now/基础值+修正的着色逻辑，见 _statParts），只是左边多一个当前伤害类型的
+   * 图标——跟点开攻击力详情弹窗里"伤害类型"那一节（见 _showStatDoc 的 dmgType
+   * 分支）用同一套图标语义（物理/魔法/真实），自适应类型现读 resolveAttackType
+   * 取【这一刻】真实解析出的类型，不是"自适应"这四个字本身。
+   */
+  _attackDamageHtml(entity, stats) {
+    const p = this._statParts('attackDamage', entity, stats);
+    if (!p) return '';
+    const TYPE_ICON = { physical: '⚔️', magic: '✨', true: '💠' };
+    const rawType = entity?.baseStats?.attackType;
+    const icon = rawType === 'adaptive'
+      ? (TYPE_ICON[this.attrCalc.resolveAttackType(stats)] || TYPE_ICON.physical)
+      : (TYPE_ICON[rawType] || TYPE_ICON.physical);
+    return `${icon} <span class="${p.cls}">${p.now}</span>`;
   }
 
   _attackSpeedHtml(entity, stats) {
@@ -898,6 +976,37 @@ export class UIManager {
         } else {
           live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">攻速：<b>${total}</b></div>`;
         }
+      } else if (key === 'healthRegen' || key === 'manaRegen') {
+        // v51.27（Q3）：用户"点开的生命恢复/秒（上面大字）应该是实际的，并且括号里
+        // 也应该是（基础+所有修正后的数值）。如果生命恢复为负值的话也要显示，
+        // 目前如果是负值就显示0了。" —— 这一格此前直接走下面的通用分支，显示的是
+        // 【原始属性】stats.healthRegen（还没乘 regenMod/治疗强度），跟面板主格子
+        // 显示的实际值（_effectiveHealthRegenHtml）口径不一致；也不存在"负值被
+        // clamp成0"这件事本身（那是别处的误解——真正的问题是这里从来没显示过
+        // 实际值）。这里改成显示实际值本身，不做任何 clamp，负数正常显示。
+        // 括号里的"基础"是【原始属性的基础值】同样乘 regenMod/治疗强度后的效果，
+        // 这样 现在值=基础+差值 这条通用规律仍然成立（regenMod/治疗强度对基础值
+        // 与修正值是同一个乘数，可以正确分配）。法力回复同理，只是系数换成
+        // baseManaRegenMod/manaGainPct，不含治疗强度。
+        const isHp = key === 'healthRegen';
+        const regen = stats[key] || 0;
+        const baseRegen = entity.baseStats?.[key];
+        const mulNow = isHp
+          ? (entity.baseStats?.baseHealthRegenMod ?? 1) * Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100)
+          : (entity.baseStats?.baseManaRegenMod ?? 1) * Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+        const r2 = (v) => Math.round(v * 100) / 100;
+        const effective = r2(regen * mulNow);
+        const label = isHp ? '生命回复/秒' : '法力回复/秒';
+        let paren = '', cls = '';
+        if (Number.isFinite(baseRegen)) {
+          const effBase = r2(baseRegen * mulNow);
+          const effDelta = r2(effective - effBase);
+          cls = effDelta > 0.005 ? 'stat-up' : effDelta < -0.005 ? 'stat-down' : '';
+          paren = Math.abs(effDelta) < 0.005 ? '' : `<span class="stat-break">（${effBase}${effDelta > 0 ? '+' : '−'}${Math.abs(effDelta)}）</span>`;
+        }
+        live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
+            ${label}：<b class="${cls}">${effective}</b>${paren}
+          </div>`;
       } else {
         const p = this._statParts(key, entity, stats);
         if (p) {
@@ -921,10 +1030,21 @@ export class UIManager {
       const rows = relatedKeys.map((rk) => {
         const rdoc = statDoc(rk);
         if (!rdoc) return '';
-        const rowHtml = (valueHtml) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
-          <span style="color:var(--text-dim);">${rdoc.label}</span><span>${valueHtml}</span>
+        const rowHtml = (valueHtml, labelOverride) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
+          <span style="color:var(--text-dim);">${labelOverride || rdoc.label}</span><span>${valueHtml}</span>
         </div>`;
         if (entity && liveStats) {
+          // v51.27（Q3/Q5）：healthRegen/manaRegen 自引用进自己的关联属性区块——
+          // 展示的是【未经 regenMod/治疗强度加工的原始属性值】，用户定稿的命名是
+          // "生命恢复"/"法力恢复"（跟主格子显示的"生命回复/秒"/"法力回复/秒"
+          // 是两个概念，statDoc 里这两个 key 的 label 是给主格子用的，这里要覆写）。
+          if (rk === 'healthRegen' || rk === 'manaRegen') {
+            const rp = this._statParts(rk, entity, liveStats);
+            if (rp) {
+              const rParen = rp.delta === 0 ? '' : ` <span class="stat-break">（${rp.base}${rp.delta > 0 ? '+' : '−'}${Math.abs(rp.delta)}）</span>`;
+              return rowHtml(`<b class="${rp.cls}">${rp.now}</b>${rParen}`, rk === 'healthRegen' ? '生命恢复' : '法力恢复');
+            }
+          }
           // v51.6：暴击伤害——用户"直接显示当前暴击造成的总伤害（假设暴击初始伤害
           // 200%），就写230%（相当于+30%暴击伤害），150%（暴击伤害减少50%）"。
           // critDamagePct 本身存的是【相对 200% 基准的加成】（见 CombatSystem 的
@@ -942,8 +1062,8 @@ export class UIManager {
           // 这件事挪到了面板主格（见 _effectiveHealthRegenHtml），这里只单纯展示
           // baseHealthRegenMod 这个系数本身（百分比，默认 100%），不掺治疗与护盾
           // 强度等其它渠道——用户定稿："对该单位基础的生命回复的修正，不包含其他的"。
-          if (rk === 'baseHealthRegenMod') {
-            const mod = entity.baseStats?.baseHealthRegenMod ?? 1;
+          if (rk === 'baseHealthRegenMod' || rk === 'baseManaRegenMod') {
+            const mod = entity.baseStats?.[rk] ?? 1;
             const pct = Math.round(mod * 1000) / 10;
             const cls = Math.abs(mod - 1) > 0.005 ? (mod > 1 ? 'stat-up' : 'stat-down') : '';
             return rowHtml(`<b class="${cls}">${pct}%</b>`);
@@ -1009,6 +1129,126 @@ export class UIManager {
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     overlay.querySelector('.stat-doc-close').addEventListener('click', close);
+  }
+
+  /** 统计弹窗通用一行（标签靠左、值靠右），HP/法力两个统计窗口共用。 */
+  _statsRowHtml(label, valueHtml) {
+    return `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;">
+      <span style="color:var(--text-dim);">${label}</span><span>${valueHtml}</span>
+    </div>`;
+  }
+
+  /**
+   * v51.27（Q6）：生命值统计窗口——用户"属性窗口中生命值/法力条也可点击……点开可以
+   * 看到详细的数据，包括经抗性/伤害减免结算后的实际生命值（例子：HP500，双抗100，
+   * 实际生命值就为1000），还有该单位受到的不同类型的伤害统计/生命恢复的统计，
+   * 各种和生命恢复相关联的属性都移动到里面，还有护盾别忘了，护盾的组成和刚才说
+   * 那个实际生命值结算等。这个应该是个非常强大的统计窗口。"
+   *
+   * 范围说明（如实记录，别假装覆盖了用户描述的每一个字）：
+   * ①"实际生命值"这里按用户给的例子（HP×damageMultiplier的倒数）分别算【对物理】
+   *   【对魔法】两个方向——不做"混合"成一个数，因为真正挨的是哪种伤害要看对手，
+   *   没有唯一答案；也没有把穿透算进去（穿透是攻击方属性，这个窗口是防御方视角，
+   *   没有一个特定的"对手"可以拿来算穿透）。
+   * ②"生命恢复相关联的属性"目前只挪了 baseHealthRegenMod 这一条到这里（healthRegen
+   *   本身、生命恢复相关的说明仍然可以从"生命恢复"那一格点开看到，两处不冲突）。
+   * ③"受到的伤害统计"是从这次改动才开始计的累计值（CombatSystem.trackDamageTaken），
+   *   没有历史存档，重开一局/新造的单位从 0 开始计，永不清零（没有指定要按"每条命"
+   *   重置，不额外造一层重置逻辑）。
+   */
+  _showHpStatsModal(entity) {
+    if (!entity) return;
+    const old = document.getElementById('hpStatsOverlay');
+    if (old) old.remove();
+    const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
+    const maxHP = stats.maxHP || 1;
+    const cur = Math.max(0, entity.currentHP || 0);
+    const armorMult = this.attrCalc.calcDamageMultiplier(Math.max(0, stats.armor || 0));
+    const mrMult = this.attrCalc.calcDamageMultiplier(Math.max(0, stats.magicResist || 0));
+    const ehpPhys = Math.round(cur / armorMult);
+    const ehpMagic = Math.round(cur / mrMult);
+    const sf = entity.shieldFixedCurrent || 0, st = entity.tempShield || 0, sp = entity.plainShield || 0;
+    const shieldTotal = sf + st + sp;
+    const dmg = entity._dmgTaken || { physical: 0, magic: 0, true: 0 };
+    const dmgTotal = dmg.physical + dmg.magic + dmg.true;
+    const healTotal = entity._healReceivedTotal || 0;
+    const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
+
+    const body = `
+      <div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
+        生命值：<b>${Math.round(cur)}</b> / ${Math.round(maxHP)}
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">经双抗结算后的实际生命值（未计穿透）</div>
+      <div style="font-size:12px;margin-bottom:10px;">
+        ${this._statsRowHtml('对物理伤害', `<b>${ehpPhys}</b>`)}
+        ${this._statsRowHtml('对魔法伤害', `<b>${ehpMagic}</b>`)}
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">护盾构成（合计 ${Math.round(shieldTotal)}）</div>
+      <div style="font-size:12px;margin-bottom:10px;">
+        ${this._statsRowHtml('护盾（不衰减不回复）', `<b>${Math.round(sp)}</b>`)}
+        ${this._statsRowHtml('固定护盾（脱战后回满）', `<b>${Math.round(sf)}</b>`)}
+        ${this._statsRowHtml('临时护盾（不会回满）', `<b>${Math.round(st)}</b>`)}
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">累计承受伤害（合计 ${Math.round(dmgTotal)}）</div>
+      <div style="font-size:12px;margin-bottom:10px;">
+        ${this._statsRowHtml('物理伤害', `<b>${Math.round(dmg.physical)}</b>`)}
+        ${this._statsRowHtml('魔法伤害', `<b>${Math.round(dmg.magic)}</b>`)}
+        ${this._statsRowHtml('真实伤害', `<b>${Math.round(dmg.true)}</b>`)}
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">生命恢复</div>
+      <div style="font-size:12px;">
+        ${this._statsRowHtml('累计生命恢复量', `<b>${Math.round(healTotal)}</b>`)}
+        ${this._statsRowHtml('基础生命值恢复', `<b>${Math.round(regenMod * 1000) / 10}%</b>`)}
+      </div>
+    `;
+    const overlay = document.createElement('div');
+    overlay.id = 'hpStatsOverlay';
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = shellHtml({
+      title: '❤️ 生命统计', body, crumb: '', width: '420px',
+      footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
+    });
+    document.body.appendChild(overlay);
+    overlay.querySelector('.stat-doc-close').addEventListener('click', () => overlay.remove());
+  }
+
+  /**
+   * v51.27（Q6）：法力统计窗口——用户"法力值窗口同理"。法力没有"受到伤害"这个
+   * 概念，所以形状比生命值窗口简单：当前/上限 + 三个关联系数一次性摆全
+   * （原来分散在【法力恢复】主格子的关联属性区块里，这里再聚一份方便一眼看全）。
+   * 非法力类资源（升温/闪电充能/通用充能）没有这些系数，只显示进度本身。
+   */
+  _showManaStatsModal(entity) {
+    if (!entity) return;
+    const old = document.getElementById('hpStatsOverlay');
+    if (old) old.remove();
+    const info = resourceInfoOf(entity, { skillLibrary: SkillLibrary, attrCalc: this.attrCalc, effects: this.effects });
+    if (!info) return;
+    const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
+    let body = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
+      ${info.kind === 'mana' ? '法力值' : '进度'}：<b>${info.label}</b>
+    </div>`;
+    if (info.kind === 'mana') {
+      const regenMod = entity.baseStats?.baseManaRegenMod ?? 1;
+      body += `
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">法力回复相关属性</div>
+        <div style="font-size:12px;">
+          ${this._statsRowHtml('法力恢复（属性）', `<b>${Math.round((stats.manaRegen || 0) * 10) / 10}</b>`)}
+          ${this._statsRowHtml('基础法力恢复', `<b>${Math.round(regenMod * 1000) / 10}%</b>`)}
+          ${this._statsRowHtml('法力获取加成', `<b>${Math.round((stats.manaGainPct || 0) * 10) / 10}%</b>`)}
+          ${this._statsRowHtml('法力回复（实际每秒）', `<b>${Math.round((info.effRegen || 0) * 10) / 10}</b>`)}
+        </div>
+      `;
+    }
+    const overlay = document.createElement('div');
+    overlay.id = 'hpStatsOverlay';
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = shellHtml({
+      title: '💧 法力统计', body, crumb: '', width: '380px',
+      footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
+    });
+    document.body.appendChild(overlay);
+    overlay.querySelector('.stat-doc-close').addEventListener('click', () => overlay.remove());
   }
 
   /** 该天气的效果表里是否有条目命中此单位 */
@@ -1277,6 +1517,7 @@ export class UIManager {
         <div class="bar-track tower-bar" id="tower-bar-${tower.id}">
           <div class="bar-hp-trail" id="tower-trail-${tower.id}"></div>
           <div class="bar-hp" id="tower-hp-${tower.id}"></div>
+          <div class="bar-hp-inc" id="tower-hpinc-${tower.id}"></div>
           <div class="bar-shield-fixed" id="tower-sf-${tower.id}"></div>
           <div class="bar-shield-temp" id="tower-st-${tower.id}"></div>
           <div class="bar-shield-plain" id="tower-sp-${tower.id}"></div>
@@ -1287,7 +1528,11 @@ export class UIManager {
         <span class="shield-total" id="tower-shieldtext-${tower.id}"></span>
       </div>
       <div class="bar-row bar-res-row" id="tower-resrow-${tower.id}">
-        <div class="bar-track"><div class="bar-res" id="tower-res-${tower.id}"></div></div>
+        <div class="bar-track">
+          <div class="bar-res-trail" id="tower-restrail-${tower.id}"></div>
+          <div class="bar-res" id="tower-res-${tower.id}"></div>
+          <div class="bar-res-inc" id="tower-resinc-${tower.id}"></div>
+        </div>
       </div>
       <div class="bar-res-text">
         <span id="tower-restext-${tower.id}"></span>
@@ -1308,6 +1553,15 @@ export class UIManager {
       </div>
     `;
     // v33（Q11）：底部"编辑/删除"按钮行已删除——图标化后移至面板右上角（selectionActions）
+    // v51.27（Q6）：HP/法力条可点击，打开统计窗口。用 tower.id 现查最新实体
+    // （this.entities.get），不捕获这一刻的 tower 引用——卡片创建一次、复用很久，
+    // 捕获的旧引用可能早就是别的（甚至已死亡的）单位快照。
+    card.querySelector(`#tower-bar-${tower.id}`)?.addEventListener('click', () => {
+      this._showHpStatsModal(this.entities.get(tower.id));
+    });
+    card.querySelector(`#tower-resrow-${tower.id}`)?.addEventListener('click', () => {
+      this._showManaStatsModal(this.entities.get(tower.id));
+    });
     return card;
   }
 
@@ -1320,6 +1574,7 @@ export class UIManager {
     // 拖尾（血条宽度由下方比例逻辑统一设置）。v47：缓动/贴齐/配色与画面里那条统一，
     // 实现只剩 barTrail.stepTrail 一处（见 _stepTrailBar 与 barTrail.js 的对照表）。
     this._stepTrailBar(card.querySelector(`#tower-trail-${id}`), hpFrac);
+    this._updateHpIncBar(card, 'tower', id, tower, stats, hpFrac, maxHP);
 
     const sfCur = tower.shieldFixedCurrent || 0, stCur = tower.tempShield || 0;
     // v51.6：第三种护盾"护盾"——entity.plainShield 是 CombatSystem 每帧缓存的汇总值
@@ -1414,6 +1669,7 @@ export class UIManager {
         <div class="bar-track" id="minion-bar-${minion.id}">
           <div class="bar-hp-trail" id="minion-trail-${minion.id}"></div>
           <div class="bar-hp" id="minion-hp-${minion.id}"></div>
+          <div class="bar-hp-inc" id="minion-hpinc-${minion.id}"></div>
           <div class="bar-shield-fixed" id="minion-sf-${minion.id}"></div>
           <div class="bar-shield-temp" id="minion-st-${minion.id}"></div>
           <div class="bar-shield-plain" id="minion-sp-${minion.id}"></div>
@@ -1424,7 +1680,11 @@ export class UIManager {
         <span class="shield-total" id="minion-shieldtext-${minion.id}"></span>
       </div>
       <div class="bar-row bar-res-row" id="minion-resrow-${minion.id}">
-        <div class="bar-track"><div class="bar-res" id="minion-res-${minion.id}"></div></div>
+        <div class="bar-track">
+          <div class="bar-res-trail" id="minion-restrail-${minion.id}"></div>
+          <div class="bar-res" id="minion-res-${minion.id}"></div>
+          <div class="bar-res-inc" id="minion-resinc-${minion.id}"></div>
+        </div>
       </div>
       <div class="bar-res-text">
         <span id="minion-restext-${minion.id}"></span>
@@ -1445,6 +1705,13 @@ export class UIManager {
       </div>
     `;
     // v33（Q11）：底部按钮行已删除——图标化后移至面板右上角
+    // v51.27（Q6）：HP/法力条可点击，打开统计窗口，同塔卡片那一份逻辑。
+    card.querySelector(`#minion-bar-${minion.id}`)?.addEventListener('click', () => {
+      this._showHpStatsModal(this.entities.get(minion.id));
+    });
+    card.querySelector(`#minion-resrow-${minion.id}`)?.addEventListener('click', () => {
+      this._showManaStatsModal(this.entities.get(minion.id));
+    });
     return card;
   }
 
@@ -1458,6 +1725,7 @@ export class UIManager {
     const shieldTotal = sfCur + stCur + spCur;
 
     this._stepTrailBar(card.querySelector(`#minion-trail-${id}`), hpFrac);
+    this._updateHpIncBar(card, 'minion', id, minion, stats, hpFrac, maxHP);
 
     // 与 2D 画板一致：HP+护盾同条，超过最大值整体按比例压缩
     const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP, spFracRaw = spCur / maxHP;

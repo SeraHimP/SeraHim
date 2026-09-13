@@ -66,6 +66,12 @@ export function extAttrGroups() {
       { key: 'damageConvertPct', label: '伤害转化%', suffix: '%' },
       { key: 'healShieldPowerPct', label: '治疗与护盾强度%', suffix: '%' },
     ] },
+    // v51.27（Q5）：用户"关于法力的状态目前没有"——法力相关三项（基础法力恢复/
+    // 法力回复/法力获取加成）之前完全没有面板入口，只能去编辑器里翻。跟【生命恢复】
+    // 同一处理方式：主格子显示实际每秒回复值，关联属性区块带出另外两项系数。
+    { title: '法力', rows: [
+      { key: 'manaRegen', label: '法力回复', suffix: '' },
+    ] },
     { title: '增益与机动', rows: [
       // v51.22：用户"属性面板中全属性加成那个改成核心属性加成，全属性加成塞到
       // 点开的窗口里面（两者互换一下位置）"——这一格与下面 RELATED_STATS 的
@@ -125,8 +131,17 @@ export function allPanelStatKeys() {
 export const RELATED_STATS = {
   critChance: ['critDamagePct'],
   lifeStealPct: ['physicalVampPct', 'spellVampPct'],
-  healthRegen: ['baseHealthRegenMod'],
+  // v51.27（Q3）：用户"下面的关联属性才显示未经修正后的生命恢复（生命回复是实际
+  // 数值，生命恢复是属性）"——主格子/点开大字现在显示的是【生命回复】（实际每秒
+  // 回复值，见 UIManager._effectiveHealthRegenHtml），这里补一条 healthRegen 自身，
+  // 在关联属性区块里用【生命恢复】这个名字展示未经 regenMod/治疗强度加工的原始属性
+  // 值——同一个 statKey 在两处显示不同口径是有意的，UIManager._showStatDoc 对
+  // healthRegen 出现在 RELATED_STATS 里的这一份做了特判（label 覆写成"生命恢复"）。
+  healthRegen: ['healthRegen', 'baseHealthRegenMod'],
   abilityPower: ['skillAmpPct'],
+  // v51.27（Q5）：法力回复同理——主格子显示实际值，这里带出原始属性（法力恢复）
+  // 与另外两个系数（基础法力恢复/法力获取加成）。
+  manaRegen: ['manaRegen', 'baseManaRegenMod', 'manaGainPct'],
   // v51.6：用户"子弹速度是写到攻击力点开的窗口里的"——bulletSpeed 本身已经在
   // extAttrGroups 的"进攻"组里有自己的格子（塔专属），这里额外把它也带进攻击力
   // 的关联属性区块，方便点开攻击力时一并看到。

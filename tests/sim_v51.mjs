@@ -1629,14 +1629,14 @@ async function world() {
 {
   const { summoners_rift } = await import('../src/data/maps/summoners_rift.js');
   const ts = summoners_rift.tierStats;
-  T('峡①-外塔：HP 3300，双抗15（v51.18：5000→3300，40→15，靠"前期城防"补前期）',
-    ts.outer.maxHP === 3300 && ts.outer.armor === 15 && ts.outer.magicResist === 15);
-  T('峡②-内塔：HP 3750，双抗70不变（v51.18：4000→3750）',
-    ts.inner.maxHP === 3750 && ts.inner.armor === 70 && ts.inner.magicResist === 70);
+  T('峡①-外塔：HP 3500（v51.27：3300→3500），双抗15不变',
+    ts.outer.maxHP === 3500 && ts.outer.armor === 15 && ts.outer.magicResist === 15);
+  T('峡②-内塔：HP 3300（v51.27：3750→3300），双抗70不变',
+    ts.inner.maxHP === 3300 && ts.inner.armor === 70 && ts.inner.magicResist === 70);
   T('峡③-水晶塔（tier:base）：HP 4000，攻速4.0（v51.18：3500→4000，2.5→4.0，双抗55不变）',
     ts.base.maxHP === 4000 && ts.base.armor === 55 && ts.base.magicResist === 55 && ts.base.baseAttackSpeed === 4.0);
-  T('峡④-枢纽塔（hq_tower）：+7格挡（v51.18新增，直接进默认属性），HP/双抗维持原值',
-    ts.hq_tower.maxHP === 4750 && ts.hq_tower.damageBlock === 7);
+  T('峡④-枢纽塔（hq_tower）：HP/双抗维持原值，+7格挡已从固有属性移除（v51.27：改走加固城防技能，见 sim_qualitybatch.mjs）',
+    ts.hq_tower.maxHP === 4750 && ts.hq_tower.damageBlock === undefined);
   T('峡⑤-召唤水晶本体（nexus_main）不在本次修正范围内，维持原值',
     ts.nexus_main.maxHP === 5500);
   // v51.26：前期城防不再是地图级 tierEffects（无条件糊在外塔身上），收进了
@@ -2855,30 +2855,38 @@ async function world() {
 // ==================== 追加 Q3：画板法力/充能条没有缓动，且要和属性窗口统一 ====================
 // 用户："画板上显示的的法力条/充能条没有缓动效果。增加缓动效果。画板上进度条和
 // 属性窗口进度条的缓动效果是统一的。"
+//
+// v51.27（Q1）撤销说明：这里原来钉的是"双向缓动"（stepEase）方案——法力条主体
+// 本身平滑滑向真实值。用户这一轮反过来定稿"进度条主体大幅削弱动画效果（几乎看
+// 不出来），用拖尾特效展示"：主体本身明显滑动的观感跟血条（瞬时贴齐+仅掉血
+// 拖尾）不统一。所以法力/充能条改回跟 HP 同一形状——stepEase 被删除（全仓库
+// 排查确认无第三处调用，见 barTrail.js 头注的新说明），下面这一套断言随之
+// 重写，钉的是新形状：主体瞬时、消耗方向走 stepTrail 拖尾，见 sim_qualitybatch.mjs
+// 的 Q1 部分——那边测的是"增加特效"这个新增部分，这里继续测"统一化"本身。
 {
   const bt = srcOf('src/presentation/barTrail.js');
-  T('缓①-barTrail.js 新增 stepEase（双向缓动，不同于只在【减少】方向缓动的 stepTrail）',
-    /export function stepEase\(disp, real, dt, snapEps\)/.test(bt));
+  T('缓①-barTrail.js 不再有 stepEase（双向缓动，v51.27 撤销，改回统一走 stepTrail）',
+    !/export function stepEase/.test(bt));
 
   const ul = srcOf('src/presentation/UnitLayer.js');
-  T('缓②-画板（UnitLayer）法力/充能条改用 stepEase 缓动出 en.dispResFrac，不再直接画瞬时值',
-    /import \{ stepTrail, stepEase, TRAIL_COLOR \} from '\.\/barTrail\.js';/.test(ul)
-    && /const rt = stepEase\(en\.dispResFrac \?\? resInfo\.frac, resInfo\.frac, dt, 1 \/ BAR_W\);/.test(ul)
-    && /resInfo = \{ \.\.\.resInfo, frac: en\.dispResFrac \};/.test(ul));
+  T('缓②-画板（UnitLayer）法力/充能条主体改回 stepTrail 拖尾（跟 HP 同一形状），resInfo.frac 保持真实值不被覆盖',
+    /import \{ stepTrail, previewFrac, TRAIL_COLOR \} from '\.\/barTrail\.js';/.test(ul)
+    && /const rt2 = stepTrail\(en\.dispResFrac \?\? resInfo\.frac, resInfo\.frac, dt, 1 \/ BAR_W\);/.test(ul)
+    && !/resInfo = \{ \.\.\.resInfo, frac: en\.dispResFrac \};/.test(ul));
   T('缓③-资源种类切换时直接贴齐，不从旧种类的数值缓过来（比如法力条切充能条不该有一条"跨种类"的缓动）',
     /if \(en\._resKind !== resInfo\.kind\) \{ en\.dispResFrac = resInfo\.frac; en\._resKind = resInfo\.kind; \}/.test(ul));
 
   const um = srcOf('src/ui/UIManager.js');
-  T('缓④-属性窗口（UIManager）法力/充能条也改走同一个 stepEase（_stepEaseBar），与画板同一份 TRAIL_RATE',
-    /import \{ stepTrail, stepEase \} from '\.\.\/presentation\/barTrail\.js';/.test(um)
-    && /_stepEaseBar\(el, frac\) \{/.test(um)
-    && /const tr = stepEase\(el\._frac, frac, dt, 1 \/ 300\);/.test(um)
-    && /this\._stepEaseBar\(fill, info\.frac\);/.test(um));
+  T('缓④-属性窗口（UIManager）法力/充能条主体改瞬时贴齐 + .bar-res-trail 拖尾，不再有 _stepEaseBar',
+    !/_stepEaseBar/.test(um)
+    && /fill\.style\.width = \(Math\.max\(0, Math\.min\(1, info\.frac\)\) \* 100\) \+ '%';/.test(um)
+    && /const trailEl = row\.querySelector\('\.bar-res-trail'\);/.test(um)
+    && /this\._stepTrailBar\(trailEl, info\.frac\);/.test(um));
 
   const html = srcOf('index.html');
   const mRes = html.match(/\.bar-res \{[\s\S]*?\}/);
-  T('缓⑤-CSS 里 .bar-res 不再有 transition: width（JS 逐帧算好的宽度不该再叠一层 CSS 缓动，barTrail.js 头注点过这个老毛病）',
-    !!mRes && !/transition:[^;]*width/.test(mRes[0]));
+  T('缓⑤-CSS 里 .bar-res 改回跟 .bar-hp 一样的短 transition: width（瞬时+极短过渡，不是无过渡也不是长缓动）',
+    !!mRes && /transition:[^;]*width 0\.08s linear/.test(mRes[0]));
 }
 
 // ==================== 追加：钢铁烈阳护盾数值改走 defaultParams 后，getDescTemplate 也要带出新参数 ====================

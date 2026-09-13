@@ -603,8 +603,10 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 这条规则，不是method具体多少字符。
   // v51.6：又加了一段"关联属性"渲染（RELATED_STATS，见 statPanelLayout.js），窗口
   // 再次放宽——同样的道理，这条只钉"最终确实调了 shellHtml"，不钉方法体多长。
+  // v51.27：生命回复/法力回复改成显示实际值（Q3/Q5，见 UIManager 里那段特判
+  // 分支），方法体又变长了一截，窗口再放宽到 10000——道理不变。
   T('界④-属性说明弹窗也走同一个外壳',
-    /_showStatDoc\(key, entity\) \{[\s\S]{0,6000}shellHtml\(\{/.test(um));
+    /_showStatDoc\(key, entity\) \{[\s\S]{0,10000}shellHtml\(\{/.test(um));
 
   // ④ 属性可点击
   const { STAT_DOCS, statDoc } = await import('../src/data/statDocs.js');

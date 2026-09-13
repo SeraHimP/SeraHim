@@ -1,3 +1,5 @@
+import { CONFIG } from '../../data/Config.js';
+
 /**
  * Q6：重甲联防计层口径——"正在攻击本塔"的敌人：以本塔为目标（targetId 匹配）
  * 且本塔已进入该敌人的攻击射程（即它已停下开打或下一步就开打）。
@@ -92,10 +94,14 @@ function _fortifyRecalc(entityId, instance, ctx, nodes, meta) {
   }
 }
 
-function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel, earlyDefenseBonus = 0, earlyDefenseDuration = 600 }) {
+function _makeFortify({ id, name, icon, regen, shield = 0, damageBlock = 0, nodes, tierLabel, earlyDefenseBonus = 0, earlyDefenseDuration = 600 }) {
   const nodesTxt = nodes.map(n => Math.round(n * 100) + '%').join('/');
   // v37：regen 可为 0（外/内塔版加固城防：只有节点封顶，不提供恢复数值）
-  const regenTxt = regen > 0 ? `${tierLabel}获得${regen}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
+  // v51.27：damageBlock 可为 0（原来枢纽塔的+7格挡是无条件塔身固有属性，用户定稿
+  // "移植到枢纽防御塔加固城防里"——挂上这条技能才有，跟 shield/regen 走同一套
+  // "defaultParams 声明成员 0 = 不生效"的口径，只有枢纽版调用处传了 7）。
+  const blockTxt = damageBlock > 0 ? `、${damageBlock}伤害格挡` : '';
+  const regenTxt = regen > 0 ? `${tierLabel}获得${regen}生命恢复${shield ? `和${shield}固定护盾` : ''}${blockTxt}，` : `${tierLabel}拥有三个生命节点${blockTxt}，`;
   const meta = { id, name, icon, regen, nodesTxt, earlyDefenseBonus, earlyDefenseDuration };
   // v51.26：前期城防文案片段——出厂默认 earlyDefenseBonus=0 时不出现这句，
   // 只有地图覆写把它调大于 0（目前只有召唤师峡谷外塔）才会加上这句。
@@ -115,7 +121,7 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel, ear
       const r = typeof p.regen === 'number' ? p.regen : regen;
       const b = typeof p.earlyDefenseBonus === 'number' ? p.earlyDefenseBonus : earlyDefenseBonus;
       const d = typeof p.earlyDefenseDuration === 'number' ? p.earlyDefenseDuration : earlyDefenseDuration;
-      const t = r > 0 ? `${tierLabel}获得${r}生命恢复${shield ? `和${shield}固定护盾` : ''}，` : `${tierLabel}拥有三个生命节点，`;
+      const t = r > 0 ? `${tierLabel}获得${r}生命恢复${shield ? `和${shield}固定护盾` : ''}${blockTxt}，` : `${tierLabel}拥有三个生命节点${blockTxt}，`;
       return `唯一被动——${name}：${earlyTxt(b, d)}${t}生命恢复不超过生命值节点（{val}为当前封顶节点）。`;
     },
     description: `${earlyTxt(earlyDefenseBonus, earlyDefenseDuration)}${regenTxt}生命恢复不超过生命值节点（${nodesTxt}）。`,
@@ -131,6 +137,15 @@ function _makeFortify({ id, name, icon, regen, shield = 0, nodes, tierLabel, ear
           duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
           description: `固定护盾+${shield}`,
         }, id + '_shield');
+      }
+      // v51.27：枢纽塔的+7格挡从"塔身固有属性"移植成这条技能自带的效果——装了
+      // 才有，卸了就没有（onUnequip 靠同一个 name 一并摘除，见下方那段）。
+      if (damageBlock) {
+        ctx.effectRegistry.apply(entityId, {
+          name, icon, kind: 'stat', statKey: 'damageBlock', flatValue: damageBlock,
+          duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `伤害格挡+${damageBlock}`,
+        }, id + '_block');
       }
       _fortifyRecalc(entityId, instance, ctx, nodes, meta); // v36 Q1：装备即算初始节点（修显示 0 的 bug）
     },
@@ -192,9 +207,11 @@ export const towerPassives = {
   }),
 
   // 枢纽塔：+5 恢复，节点 40/70/100%
+  // v51.27：+7伤害格挡从塔身固有属性（tierStats.hq_tower.damageBlock）移植过来
+  // ——用户定稿"枢纽防御塔固有属性+7伤害格挡删除，移植到枢纽防御塔加固城防里"。
   passive_hq_fortify: _makeFortify({
     id: 'passive_hq_fortify', name: '枢纽防御塔加固城防', icon: '🏯',
-    regen: 3, nodes: [0.40, 0.70, 1.0], tierLabel: '枢纽防御塔', // 用户定稿：5→3
+    regen: 3, damageBlock: 7, nodes: [0.40, 0.70, 1.0], tierLabel: '枢纽防御塔', // 用户定稿：5→3
   }),
 
   // 水晶塔：+2 恢复 + 800 固定护盾，节点 33/67/100%
@@ -280,6 +297,92 @@ export const towerPassives = {
           aura: true, auraGrace: 1.0, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
           description: `护盾+${allyPlain}（内塔光环）`,
         }, 'inner_bulwark_ally');
+      }
+    },
+  },
+
+  // ==================== v51.27：枢纽塔版"钢铁烈阳护盾"（脱战定期回盾）====================
+  // 用户："召唤师峡谷，枢纽他新增钢铁烈阳护盾技能，但是和内塔的不同，枢纽塔的为：
+  //        脱离战斗状态后，每15秒获得70护盾（最高350）。"
+  // 与内塔那份（300范围光环+固定护盾）机制完全不同——这条是"自身定期回盾"。
+  // "脱离战斗状态"的判据**不用** entity._inCombat/_combatTimer——那个只在这座塔
+  // 自己主动攻击时才置真（performAttack/performAttackDirect 只标记 attacker），
+  // 塔被打但没还手（比如没目标、正在换目标）时不会置真，语义是"攻击者视角"。
+  // 这里要的是"防御方视角"的脱战：跟已有的固定护盾回满机制
+  // （CombatSystem 里 entity.lastDamageTime + CONFIG.gameRules.shieldRegenDelay，
+  // 见 performAttack/performAttackDirect 结算处 `target.lastDamageTime = ...` 和
+  // 上面 `shieldMax > 0` 那段）完全同一个判据——只要有段时间没挨打就算脱战，
+  // 不管这座塔自己有没有在还手，两条"脱战回X"机制口径统一。
+  // 护盾用 kind:'shield'（不衰减不回复，见 EffectRegistry._recalcEffectValues 的
+  // 头注）——**靠框架原生的 stackPolicy:'stack' + perStackFlat 叠层机制**攒护盾
+  // 上限，每 15s 脱战就在同一个 sourceId 上叠一层（flatValue/perStackFlat 都固定
+  // 是 perTick，永不改变；层数上限 maxStacks=cap/perTick），totalFlat（=当前护盾
+  // 上限）由 EffectRegistry 自己按层数算，不用像"直接改写 flatValue 到累计值"那样
+  // 自己维护一个会无限增长的数字。
+  // 这不只是少写代码——sim_skilldesc.mjs 会抓"技能实际施加的每个数值"去反查能不能从
+  // 静态文案里解释出来，如果 flatValue 直接写成累计值（70→140→210→…），文案就得
+  // 把每一个可能出现的中间值都列出来，根本不可能维护。用叠层，施加的 flatValue
+  // 永远只有 perTick 这一个数字（=70，文案里现成写着），累计值是引擎内部算出来的
+  // 派生量，不需要在文案里单独解释——跟 passive_growth_*/passive_frost_plating
+  // 这些"会成长"的被动是同一个道理，见它们 perStackFlat 的用法。
+  // 脱战计时器一旦被打断（挨打）立刻清零重算（不是"暂停"，用户原话是"脱离战斗
+  // 状态后每15秒"，没打断才计这 15 秒）。已经攒到手的护盾不会因为重新挨打而消失
+  // （已叠的层数不会因为战斗状态变化而掉层，只是不再新增层）。
+  passive_hq_bulwark: {
+    id: 'passive_hq_bulwark', name: '钢铁烈阳护盾', icon: '☀️',
+    applicableTypes: ['tower'],
+    category: 'passive',
+    defaultParams: { perTick: 70, cap: 350, tickInterval: 15 },
+    description: '脱离战斗状态后，每15秒获得70护盾（不衰减不回复，最高叠加至350）。',
+    descTemplate: '唯一被动——钢铁烈阳护盾：脱离战斗状态后，每15秒获得70护盾（{val}为当前护盾上限，最高350）。',
+    getDescTemplate: (entity, instance) => {
+      const p = (instance && instance._params) || {};
+      const perTick = typeof p.perTick === 'number' ? p.perTick : 70;
+      const cap = typeof p.cap === 'number' ? p.cap : 350;
+      const interval = typeof p.tickInterval === 'number' ? p.tickInterval : 15;
+      return `唯一被动——钢铁烈阳护盾：脱离战斗状态后，每${interval}秒获得${perTick}护盾（{val}为当前护盾上限，最高${cap}）。`;
+    },
+    computeCurrent: (entity, ctx) => {
+      const eff = ctx.effectRegistry?.getEffects(entity.id).find(e => e.sourceId === 'passive_hq_bulwark');
+      return Math.round(eff?.totalFlat || 0);
+    },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = instance.state || {};
+      instance.state.timer = 0;
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return;
+      const p = instance._params || {};
+      const perTick = typeof p.perTick === 'number' ? p.perTick : 70;
+      const cap = typeof p.cap === 'number' ? p.cap : 350;
+      const interval = typeof p.tickInterval === 'number' ? p.tickInterval : 15;
+      const maxStacks = Math.max(1, Math.floor(cap / perTick));
+      const state = instance.state || (instance.state = { timer: 0 });
+      // 脱战判据跟固定护盾回满共用同一套（lastDamageTime + shieldRegenDelay），
+      // 见上方大段注释——挨打就清零重算，不管这座塔自己有没有在还手。
+      const now = window.gameTime || 0;
+      const lastDamage = self.lastDamageTime ?? -Infinity;
+      const regenDelay = CONFIG.gameRules?.shieldRegenDelay ?? 8;
+      if (now - lastDamage < regenDelay) { state.timer = 0; return; }
+      const curStacks = () => ctx.effectRegistry.getEffects(entityId).find(e => e.sourceId === 'passive_hq_bulwark')?.stacks || 0;
+      if (curStacks() >= maxStacks) return;
+      state.timer = (state.timer || 0) + dt;
+      // while 而不是单次 if：dt 偶尔会很大（掉帧、长时间没挨打后一次性补齐），
+      // 用 if 只扣一次会悄悄漏掉本该到账的那几跳（对比 passive_overload 同类做法）。
+      while (state.timer >= interval && curStacks() < maxStacks) {
+        state.timer -= interval;
+        ctx.effectRegistry.apply(entityId, {
+          name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: perTick, perStackFlat: perTick,
+          duration: 0, permanent: true, stackable: true, maxStacks, stackPolicy: 'stack', uniquePassive: true,
+          description: `护盾（脱战每${interval}秒+${perTick}，最高${cap}）`,
+        }, 'passive_hq_bulwark');
+      }
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '钢铁烈阳护盾' && eff.sourceId === 'passive_hq_bulwark') ctx.effectRegistry.remove(eff.id);
       }
     },
   },
