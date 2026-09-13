@@ -1346,9 +1346,20 @@ export const CONFIG = {
       // 画成草地而不是跟路面同色，野区里也才会真的长树而不是一马平川。
       // 这是"森林风格"与"default"（单一可走色）的本质区别，其它字段大体相通。
       jungleColor: '#4c9a5b',
+      // v59：野区不再是"路/野区"二选一的平面色块——用户反馈"没有峡谷的空间结构，
+      // 只有峡谷的颜色"。改成沿离兵线距离分级的森林梯度（见 mapValidate.js 的
+      // forestZoneAt）：越靠近兵线越浅、越靠近野区深处/障碍物越深，颜色和高度
+      // 一起变化，读出"这里是道路的自然延伸"到"这里是密林深处"的层次。
+      // forestEdgeColor＝林缘（贴着兵线的浅色过渡带），jungleColor 本身现在专指
+      // "普通森林"这一档，forestDeepColor＝深林（贴近不可走障碍物/离兵线最远）。
+      forestEdgeColor: '#6bab63',
+      forestDeepColor: '#2f6b3d',
       treeTrunkColor: '#5a4326',
       treeCrownColorA: '#3f8a4d',
       treeCrownColorB: '#5cb168',
+      // 深林树冠用更暗更饱和的绿，跟普通森林拉开一档，堆起来才读得出"更密更深"。
+      treeCrownDeepA: '#245a30',
+      treeCrownDeepB: '#3a7a44',
       rockColor: '#8f8879',
       // 城墙压顶石：暖金色——"石头+金色"里的金色就落在这里，城墙主体仍是 rockColor
       // 那种暖石灰，压顶石一圈金属光泽做点缀，不是整面墙都镀金。

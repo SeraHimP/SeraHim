@@ -1,6 +1,7 @@
 import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
 import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode } from '../data/maps/modeTransforms.js';
-import { CONFIG } from '../data/Config.js';
+import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
+import { forestZoneAt } from '../data/mapValidate.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected, mapFactionsOf } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
@@ -1128,6 +1129,24 @@ export class MapSystem {
       }
     }
     }   // end: !stylized（高地/龙坑台阶只在非风格化地图上生效）
+    // ==================== v59：森林深度分级的轻微地形梯度 ====================
+    // 用户看了 GPT 对召唤师峡谷的评价后定的方向："加回轻微高低差"——不是恢复
+    // 上面删掉的"基地高地/龙坑"那种台阶（两者是完全不同的机制，互不冲突），
+    // 而是让森林深度分级（forestZoneAt：道路/林缘/普通森林/深林，见 mapValidate.js
+    // 头注）本身带一点点高度差，读出"越往野区深处走地势越高"的层次感。
+    // 只在声明了 jungleColor 的森林风格地图上生效（与 TerrainLayer/VegetationLayer
+    // 判定 jungleActive 用的同一个条件），级差刻意压得很小（0/3/6/10），
+    // 不是要做真山地——用户原话"轻微"。
+    // rf<=0 才叠加：河道横穿野区时河床下沉必须赢（河不能因为穿过"深林"格
+    // 就被垫高填平），森林梯度只管河道之外的地面。
+    if (rf <= 0 && m.visualStyle === 'stylized' && Array.isArray(m.lanes) && m.lanes.length) {
+      const SV = stylizedPaletteOf(m);
+      if (SV.jungleColor) {
+        const zone = forestZoneAt(m, x, z);
+        const ZONE_H = [0, 3, 6, 10];
+        h = Math.max(h, ZONE_H[zone] ?? 0);
+      }
+    }
     return h;
   }
 

@@ -29,6 +29,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { stylizedPaletteOf } from '../data/Config.js';
 import { isLaneCell } from '../data/mapValidate.js';
+import { baseCircleCenter } from '../data/baseCircle.js';
 import { withColor, stylizedTreeGeo, hash } from './VegetationLayer.js';
 
 // ==================== 城墙（柱子）====================
@@ -52,6 +53,17 @@ function wallPostGeo(SV) {
 const NAT_SPACING = 55;     // 比普通野区植被(VegetationLayer 的 STEP=62)略密，边缘要"看起来更挤"
 const NAT_PROBE = 42;       // 比普通植被的 margin(26) 更大：要探到确实贴着障碍物才算数，不是随便挨着不可走区就算
 const NAT_JITTER = 0.8;     // 与 VegetationLayer 同量级的散布抖动，避免整排等距显得死板
+
+// ==================== v59.1：基地高地围墙 ====================
+// 用户看截图标注反馈："地面留下的深绿色丑的要死的块……我粉色画圈的地方应该是
+// 高地的围墙（石墙）"——sr_navgrid.js 描过这一圈几何："在基地圈半径处筑一圈
+// 厚 45 的墙，兵线走廊穿过处不筑，留三个口子"。这圈墙体的不可走格子之前被
+// VegetationLayer 的"基地开放圈内不用管"判据（isInBaseOpen）连带跳过了，
+// 裸露着图外底色；现在改成这一圈单独摆真正的墙体（复用同一套石柱+金顶几何，
+// 跟"粉色=城墙"的既有装饰语言统一），VegetationLayer 那边对应跳过
+// （isInBaseWallRing），两处不会在同一块地皮上打架。
+const WALL_RING_ARC_SPACING = 130;   // 沿环形弧长的柱间距，跟城墙柱大致同一密度
+const WALL_RING_OFFSET = 25;         // 环带厚度(~45~60)取中点附近，柱子稳稳落在墙体里
 
 export class BoundaryDecorLayer {
   constructor(scene) { this.scene = scene; this.meshes = []; this._mapId = null; }
@@ -106,6 +118,23 @@ export class BoundaryDecorLayer {
       }
     }
 
+    // ---- 基地高地围墙候选：沿 baseOpenRadius 环形采样，只在不可走的墙体格子上摆 ----
+    const wallRingPosts = [];
+    for (const f of ['blue', 'red']) {
+      const c = baseCircleCenter(map, f);
+      const r = map.baseOpenRadius || map.baseCircleRadius;
+      if (!c || !r) continue;
+      const ringR = r + WALL_RING_OFFSET;
+      const steps = Math.max(8, Math.round((2 * Math.PI * ringR) / WALL_RING_ARC_SPACING));
+      for (let i = 0; i < steps; i++) {
+        const ang = (i / steps) * Math.PI * 2;
+        const x = c.x + Math.cos(ang) * ringR, y = c.y + Math.sin(ang) * ringR;
+        if (x < edge || x > WW - edge || y < edge || y > WH - edge) continue;
+        if (walk(x, y)) continue;   // 兵线穿过处是可走的入口，天然跳过——sr_navgrid.js 定的"只有三座高地塔那里开口"
+        wallRingPosts.push([x, y]);
+      }
+    }
+
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(),
           S = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
     const place = (geo, mat, arr, scaleBase, scaleVary) => {
@@ -123,6 +152,9 @@ export class BoundaryDecorLayer {
       this.scene.add(inst); this.meshes.push(inst);
     };
     place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), posts, 1.0, 0.15);
+    // 围墙用同一套柱子几何，尺寸略大一档——高地围墙是防御工事，视觉分量应该
+    // 比兵线/野区边界那圈装饰性城墙更重一些。
+    place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), wallRingPosts, 1.3, 0.1);
     place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35);
     place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4);
   }

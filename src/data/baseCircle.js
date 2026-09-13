@@ -42,3 +42,30 @@ export function isInBaseOpen(map, x, y) {
   }
   return false;
 }
+
+/**
+ * v59：该点是否落在任意一方"基地高地围墙"那一圈——sr_navgrid.js 里描的
+ * "在基地圈半径处筑一圈厚 45 的墙，兵线走廊穿过处不筑，留三个口子"那圈围墙，
+ * 几何上就贴着 baseOpenRadius 往外扩一段厚度。用户看截图指出：这一圈墙体的
+ * 不可走格子被森林风格的野区植被逻辑当成"基地开放圈内，不用管"跳过了，
+ * 露出裸的图外底色，"丑的要死"；而这一圈本来就该是石墙，不是森林——
+ * "我粉色画圈的地方应该是高地的围墙（石墙）"。
+ * BoundaryDecorLayer 用它摆真正的墙体装饰，VegetationLayer 用它跳过（不在
+ * 这一圈里重复摆树），两处必须用同一份判定，否则墙和树会在同一块地皮上打架。
+ * @param {object} map @param {number} x @param {number} y
+ * @param {number} [thickness=60] 围墙判定带的厚度（比 sr_navgrid.js 描述的
+ *   45 略宽一点留余量，避免边缘漏判露底色）
+ * @returns {boolean}
+ */
+export function isInBaseWallRing(map, x, y, thickness = 60) {
+  if (!map?.world) return false;
+  const r = map.baseOpenRadius || map.baseCircleRadius;
+  if (!r) return false;
+  for (const f of ['blue', 'red']) {
+    const c = baseCircleCenter(map, f);
+    if (!c) continue;
+    const d = Math.hypot(x - c.x, y - c.y);
+    if (d >= r && d <= r + thickness) return true;
+  }
+  return false;
+}

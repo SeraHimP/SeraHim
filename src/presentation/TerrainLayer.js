@@ -16,10 +16,10 @@
  * 走廊外沿一圈"墙缘"高光，读起来就是 LoL 小地图的结构。
  */
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
-import { baseCircleCenter } from '../data/baseCircle.js';
+import { baseCircleCenter, isInBaseWallRing } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
-import { classifyLaneCells } from '../data/mapValidate.js';
+import { forestZoneCells } from '../data/mapValidate.js';
 
 const _terrainCache = new Map();
 
@@ -172,12 +172,21 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     // （jungleColor）。半宽复用 map.walls.corridorHalfWidth——navgrid 地图虽然不再用
     // 它判定"能不能走"（那已经交给位图了），但它仍然准确描述"这条路视觉上有多宽"，
     // 没必要再单独声明一个数字。
+    // v59：路/野区二分升级成森林深度四档（道路/林缘/普通森林/深林）——用户反馈
+    // "没有峡谷的空间结构，只有峡谷的颜色"：纯色块二分读不出层次，颜色要跟着
+    // 离兵线的距离逐档变化，才谈得上"越往深处越密越暗"。四档颜色都在 forest
+    // 调色板里声明（jungleColor=普通森林，新增 forestEdgeColor=林缘、
+    // forestDeepColor=深林），没声明 jungleColor 的老地图（HA-frost/demo）
+    // 逐位不变——仍然只有 corridorColor 一种可走色。
     const [jngR, jngG, jngB] = stylized && SV.jungleColor ? hex2rgb(SV.jungleColor, '4c9a5b') : [corR, corG, corB];
+    const [edgR, edgG, edgB] = stylized && SV.forestEdgeColor ? hex2rgb(SV.forestEdgeColor, '6bab63') : [jngR, jngG, jngB];
+    const [dpR, dpG, dpB] = stylized && SV.forestDeepColor ? hex2rgb(SV.forestDeepColor, '2f6b3d') : [jngR, jngG, jngB];
     const jungleActive = stylized && !!SV.jungleColor && Array.isArray(map.lanes) && map.lanes.length > 0;
-    // v58.1：分类算法（离兵线够近 或 落在基地开放圈内 → 路，否则 → 野区）抽成了
-    // 共享函数 classifyLaneCells（mapValidate.js）——BoundaryDecorLayer 的边界围墙
-    // 要用同一份分类结果摆位，不能这里算一套、那边再算一套。
-    const laneColorAt = jungleActive ? classifyLaneCells(map, paint, nx, ny) : null;
+    // v59：分级算法（森林深度 0~3，见 forestZoneAt 头注）抽成了共享函数
+    // forestZoneCells（mapValidate.js）——BoundaryDecorLayer 的边界围墙、
+    // VegetationLayer 的植被密度/类型都要用同一份分级结果，不能这里算一套、
+    // 那边再算一套（否则地面颜色说深林、植被却按普通森林的密度长）。
+    const zoneAt = jungleActive ? forestZoneCells(map, paint, nx, ny) : null;
     // v55：声明了 terrainEdge 的地图，**不可走格直接挖空**（alpha=0），
     // 由 TerrainEdgeLayer 在更低的高度另铺一张深渊面 —— 陆地才读得出"有厚度"。
     // 见 docs/MAP-DESIGN-howling-abyss-frost.md §8.2.3 的路线 B。
@@ -246,12 +255,33 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
       return c;
     }
 
+    // v59.1：基地高地围墙那一圈的不可走格子——用户看截图指出："地面留下的深绿色
+    // 丑的要死的块……我粉色画圈的地方应该是高地的围墙（石墙）"。这圈格子原来
+    // 跟野区内部迷宫障碍物一样一律画成 gndColor（图外底色），BoundaryDecorLayer
+    // 摆的石柱只是稀疏的点缀，柱间空隙还是会露出这块底色——单独给这一圈不可走
+    // 格子换成石头色（跟围墙柱同一个 SV.rockColor），读成连续的石墙地基，
+    // 不是裸露的虚空。只在森林风格+有兵线的地图上判定，与其它 v59 特性同一个开关。
+    const [wallR, wallG, wallB] = stylized && SV.rockColor ? hex2rgb(SV.rockColor, '8f8879') : [gndR, gndG, gndB];
+    const cellW2 = WW / nx, cellH2 = WH / ny;
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
-      const isLane = !laneColorAt || laneColorAt[k];   // 未开野区二分时全部按老逻辑当"路"
-      im.data[k * 4]     = on ? (isLane ? corR : jngR) : gndR;
-      im.data[k * 4 + 1] = on ? (isLane ? corG : jngG) : gndG;
-      im.data[k * 4 + 2] = on ? (isLane ? corB : jngB) : gndB;
+      // v59：0=道路 1=林缘 2=普通森林 3=深林；未开森林分级时 zoneAt 为 null，
+      // 全部按老逻辑当"路"（zone 0），三张老地图与 demo_stylized_v1 逐位不变。
+      const zone = zoneAt ? zoneAt[k] : 0;
+      let r, gg, b;
+      if (zone === 1) { r = edgR; gg = edgG; b = edgB; }
+      else if (zone === 2) { r = jngR; gg = jngG; b = jngB; }
+      else if (zone === 3) { r = dpR; gg = dpG; b = dpB; }
+      else { r = corR; gg = corG; b = corB; }
+      let gr = gndR, gg2 = gndG, gb2 = gndB;
+      if (!on && jungleActive) {
+        const gx = k % nx, gy = (k / nx) | 0;
+        const wx = (gx + 0.5) * cellW2, wy = (gy + 0.5) * cellH2;
+        if (isInBaseWallRing(map, wx, wy)) { gr = wallR; gg2 = wallG; gb2 = wallB; }
+      }
+      im.data[k * 4]     = on ? r : gr;
+      im.data[k * 4 + 1] = on ? gg : gg2;
+      im.data[k * 4 + 2] = on ? b : gb2;
       im.data[k * 4 + 3] = (cutout && !on) ? 0 : 255;
     }
     cg.putImageData(im, 0, 0);

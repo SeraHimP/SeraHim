@@ -71,8 +71,12 @@ const mk = (id) => {
   srMs.riverFactor = () => 0;
   const pitHeightNoRiver = dragonPit ? srMs.heightAt(dragonPit.x, dragonPit.y) : 0;
   srMs.riverFactor = savedRiverFactor;
-  T('高②-召唤师峡谷（风格化）龙坑坑心处高度=0（坑深度已按 visualStyle 清零，河床下沉另计不受影响）',
-    !dragonPit || pitHeightNoRiver === 0);
+  // v59：龙坑深处离兵线很远，会落进"深林"档，叠加了一点新引入的森林深度梯度
+  // （轻微正高度，用户定稿"加回轻微高低差"）——这是另一个独立机制，不是本条断言
+  // 要守的东西。本条只守"旧的坑深度机制（负值下沉）已经清零"：断言改成"不再是
+  // 老机制那种明显下沉"（远高于 pit.depth=-26 那个量级），而不是死抠等于 0。
+  T('高②-召唤师峡谷（风格化）龙坑坑心处不再有老的坑深度下沉（新的森林梯度轻微正高度是另一回事）',
+    !dragonPit || pitHeightNoRiver > -5);
 
   const ttMs = mk('twisted_treeline_v1');
   const tt = MAPS['twisted_treeline_v1'];
@@ -102,6 +106,45 @@ const mk = (id) => {
     /this\.boundaryDecor = new BoundaryDecorLayer\(this\.scene\);/.test(tr));
   T('接⑦-地形重建流程里调用了 boundaryDecor.build（否则接了线但从来不会真的建）',
     /this\.boundaryDecor\.build\(this\.mapSystem\);/.test(tr));
+}
+
+// ==================== 四、v59.1：野区结构化（可走路径通透+障碍物森林+基地围墙）====================
+// 用户连续反馈：「依旧没有结构，糊成一团。野区的道路上应该是没有任何障碍物的」
+// 「地面留下的深绿色丑的要死的块……我粉色画圈的地方应该是高地的围墙（石墙）」
+{
+  const bc = srcOf('src/data/baseCircle.js');
+  T('围①-baseCircle.js 新增 isInBaseWallRing（基地高地围墙那一圈的几何判定）',
+    /export function isInBaseWallRing\(map, x, y/.test(bc));
+
+  // isInBaseWallRing 是纯函数，直接用真实召唤师峡谷数据跑一遍几何行为。
+  const { isInBaseWallRing } = await import('../src/data/baseCircle.js');
+  const blueBase = baseCircleCenter(summoners_rift, 'blue');
+  const r = summoners_rift.baseOpenRadius || summoners_rift.baseCircleRadius;
+  T('围②-基地中心（开放广场核心）不属于围墙带',
+    !isInBaseWallRing(summoners_rift, blueBase.x, blueBase.y));
+  T('围③-刚好在 baseOpenRadius 处（围墙带内缘）属于围墙带',
+    isInBaseWallRing(summoners_rift, blueBase.x, blueBase.y - r));
+  T('围④-远超出围墙带厚度的地方（比如整张图对角）不属于围墙带',
+    !isInBaseWallRing(summoners_rift, summoners_rift.world.w / 2, summoners_rift.world.h / 2));
+
+  const veg = srcOf('src/presentation/VegetationLayer.js');
+  T('围⑤-VegetationLayer 引入了 isInBaseWallRing 并在 jungleMode 分支里用它跳过',
+    /import \{ isInBaseWallRing \} from '\.\.\/data\/baseCircle\.js';/.test(veg) &&
+    /if \(isInBaseWallRing\(map, x, y\)\) continue;/.test(veg));
+  T('围⑥-VegetationLayer 对可走的野区路径（onPath）用更高的跳过阈值，保持通透',
+    /skipThresh = onPath \? 0\.90/.test(veg));
+
+  const bd2 = srcOf('src/presentation/BoundaryDecorLayer.js');
+  T('围⑦-BoundaryDecorLayer 引入共享的 baseCircleCenter，新增围墙候选采样',
+    /import \{ baseCircleCenter \} from '\.\.\/data\/baseCircle\.js';/.test(bd2) &&
+    /const wallRingPosts = \[\];/.test(bd2));
+  T('围⑧-围墙候选只在不可走处摆（兵线穿过的入口是可走的，天然留出三个口子）',
+    /if \(walk\(x, y\)\) continue;.*wallRingPosts\.push/s.test(bd2));
+
+  const tl2 = srcOf('src/presentation/TerrainLayer.js');
+  T('围⑨-TerrainLayer 给基地围墙带的不可走格子换成石头色（不再是裸露的图外底色）',
+    /import \{ baseCircleCenter, isInBaseWallRing \} from '\.\.\/data\/baseCircle\.js';/.test(tl2) &&
+    /isInBaseWallRing\(map, wx, wy\)/.test(tl2));
 }
 
 done();

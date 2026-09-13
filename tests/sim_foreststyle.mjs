@@ -103,24 +103,26 @@ const { T, done } = scoreboard('森林风格（forest palette）验收');
 }
 
 // ==================== 六、TerrainLayer / VegetationLayer 接线（源码正则）====================
+// v59：路/野区二分升级成森林深度四档（forestZoneAt/forestZoneCells，见 mapValidate.js
+// 头注），TerrainLayer 与 VegetationLayer 都改用这套共享分级，不再各判各的。
 {
   const tl = srcOf('src/presentation/TerrainLayer.js');
-  T('接①-TerrainLayer 引入了共享的 classifyLaneCells（不再自己复算一份走廊/野区分类）',
-    /import \{ classifyLaneCells \} from '\.\.\/data\/mapValidate\.js';/.test(tl));
-  T('接②-TerrainLayer 的野区二分只在调色板声明了 jungleColor 时触发（三张老地图/frost 逐位不变）',
+  T('接①-TerrainLayer 引入了共享的 forestZoneCells（不再自己复算一份走廊/野区分类）',
+    /import \{ forestZoneCells \} from '\.\.\/data\/mapValidate\.js';/.test(tl));
+  T('接②-TerrainLayer 的森林分级只在调色板声明了 jungleColor 时触发（三张老地图/frost 逐位不变）',
     /jungleActive = stylized && !!SV\.jungleColor/.test(tl));
-  T('接③-classifyLaneCells 走廊半宽复用 map.walls.corridorHalfWidth（不另开一个新字段）',
+  T('接③-forestZoneCells 走廊半宽复用 map.walls.corridorHalfWidth（不另开一个新字段）',
     /laneHalfWidth = map\.walls\?\.corridorHalfWidth/.test(srcOf('src/data/mapValidate.js')));
 
   const veg = srcOf('src/presentation/VegetationLayer.js');
-  T('接④-VegetationLayer 引入了共享的 nearestLaneDist',
-    /import \{ nearestLaneDist \} from '\.\.\/data\/mapValidate\.js';/.test(veg));
-  T('接⑤-VegetationLayer 对 vegetationMode==="jungle" 的地图走"可走+离兵线够远"判据',
-    /vegetationMode === 'jungle'/.test(veg) && /if \(jungleMode\)/.test(veg));
-  T('接⑥-jungleMode 下没有沿用"只在不可走区域长树"的旧判据（那条判据对可走的野区没有意义）',
+  T('接④-VegetationLayer 引入了共享的 forestZoneAt',
+    /import \{ forestZoneAt \} from '\.\.\/data\/mapValidate\.js';/.test(veg));
+  T('接⑤-VegetationLayer 对 vegetationMode==="jungle" 的地图走森林深度分级判据',
+    /vegetationMode === 'jungle'/.test(veg) && /if \(jungleMode\)/.test(veg) && /zone = forestZoneAt\(map, x, y\)/.test(veg));
+  T('接⑥-jungleMode 下按 zone===0（道路/基地）跳过，不再沿用"只在不可走区域长树"的旧判据',
     (() => {
       const seg = veg.slice(veg.indexOf('if (jungleMode) {'), veg.indexOf('} else {'));
-      return /if \(!walk\(x, y\)\) continue;/.test(seg) && !/if \(walk\(x, y\)\) continue;/.test(seg);
+      return /if \(zone === 0\) continue;/.test(seg) && !/if \(walk\(x, y\)\) continue;/.test(seg);
     })());
 }
 

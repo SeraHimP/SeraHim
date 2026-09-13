@@ -88,6 +88,57 @@ export function isLaneCell(map, x, y) {
   return nearestLaneDist(map, x, y) <= laneHalfWidth || isInBaseOpen(map, x, y);
 }
 
+// v59：森林深度分级的带宽——从"离兵线够近/够远"这一刀切，改成沿离兵线距离
+// 分四档（道路/林缘/普通森林/深林），颜色、高度、植被密度一起逐档加深/加高。
+// 用户反馈原话："没有峡谷的空间结构，只有峡谷的颜色"——纯色块二分读不出层次，
+// 分级才能让"越往野区深处走越密越暗"这件事同时体现在地面色、地形高度、植被
+// 三处，而不是三处各判各的、各自另起一套阈值。
+const FOREST_EDGE_WIDTH = 150;     // 林缘带宽度：紧贴道路边缘的过渡带
+const FOREST_NORMAL_WIDTH = 400;   // 普通森林带宽度（从道路边缘往外算）；再往外算深林
+
+/**
+ * v59：单点森林深度分级——TerrainLayer 的地面着色、MapSystem.heightAt 的轻微
+ * 地形梯度、VegetationLayer 的植被密度/类型选择三处共用同一份分级，避免"地面
+ * 颜色说这里是深林、植被却按普通森林的密度长"这种三方各判各的漂移。
+ * @param {object} map
+ * @param {number} x @param {number} y
+ * @returns {0|1|2|3} 0=道路(含基地开放圈) 1=林缘 2=普通森林 3=深林
+ */
+export function forestZoneAt(map, x, y) {
+  if (isLaneCell(map, x, y)) return 0;
+  const laneHalfWidth = map.walls?.corridorHalfWidth ?? 130;
+  const d = nearestLaneDist(map, x, y) - laneHalfWidth;   // 到走廊边缘（不是中线）的距离
+  if (d <= FOREST_EDGE_WIDTH) return 1;
+  if (d <= FOREST_NORMAL_WIDTH) return 2;
+  return 3;
+}
+
+/**
+ * v59：把一份可走网格的每一格分类成森林深度档位（0~3，见 forestZoneAt）——
+ * 网格版，TerrainLayer 的地面着色要按格批量取值，不能每像素都单独调一次
+ * nearestLaneDist（性能上也吃不消，256×256 网格 = 6.5 万次多边形投影）。
+ * @param {object} map
+ * @param {Uint8Array|number[]} paint 该分辨率下的可走位图（真值=可走）
+ * @param {number} nx @param {number} ny 网格分辨率（paint 长度 = nx*ny，行优先）
+ * @returns {Uint8Array|null} 与 paint 同长度，值 0~3，只在 paint[k] 为真时有意义；
+ *   地图没有声明 lanes 时返回 null（调用方各自决定怎么兜底）
+ */
+export function forestZoneCells(map, paint, nx, ny) {
+  if (!Array.isArray(map.lanes) || !map.lanes.length || !map.world) return null;
+  const { w: WW, h: WH } = map.world;
+  const cellW = WW / nx, cellH = WH / ny;
+  const out = new Uint8Array(nx * ny);
+  for (let gy = 0; gy < ny; gy++) {
+    for (let gx = 0; gx < nx; gx++) {
+      const k = gy * nx + gx;
+      if (!paint[k]) continue;
+      const wx = (gx + 0.5) * cellW, wy = (gy + 0.5) * cellH;
+      out[k] = forestZoneAt(map, wx, wy);
+    }
+  }
+  return out;
+}
+
 /**
  * v58：把一份可走网格的每一格分类成"路"(1)还是"野区"(0)——森林风格地图的
  * 走廊/野区二分。TerrainLayer 的地面着色、BoundaryDecorLayer 的边界围墙摆放
