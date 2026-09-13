@@ -65,7 +65,15 @@ const SR_TERRAIN = {
   // C 组·台阶地形（用户 Q1）：高地平台抬升 + 明显陡台阶，边缘外扩到画线处（纯渲染，仿真不读）。
   // plateauFull/Edge 是 baseOpenRadius(1185) 的比例：满高核心到 0.97(≈1149)，陡降到 0 在 1.055(≈1250，红线处)；
   // 抬升高度 40（原默认 20，更"明显"）。窄坡宽(≈100)＝台阶感；河床沿用默认。
-  heightZones: { plateauHeight: 40, plateauFull: 0.97, plateauEdge: 1.055 },
+  heightZones: {
+    plateauHeight: 40, plateauFull: 0.97, plateauEdge: 1.055,
+    // v59.2：河道视觉加宽——用户看了 GPT 对第一版森林风格截图的评价后定的方向之一
+    // ("河道视觉加强"，见 P0 提案第2条)。默认 200 是给非风格化三张老图用的通用值，
+    // 召唤师峡谷单独声明更宽的 260（+30%），让河读起来更像"地图的地形骨架"而不是
+    // 细细一条装饰线。riverFactor 是河道判定唯一真源（地形高度/水面遮罩/地形底图
+    // 河色三处共用），改这一个数三处一起变宽，不会有的宽有的窄。
+    riverHalfWidth: 260,
+  },
   // 真实峡谷地形（navgrid）：可行走区改由 src/data/maps/sr_navgrid.js 的位图判定
   // （自 assets/maps/preview.jpg 导航图描出）——野区可走、野区墙体成形、河道连通，
   // 并带龙坑/男爵坑。置 false 可退回旧的"三路走廊"模型。

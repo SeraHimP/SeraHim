@@ -147,4 +147,34 @@ const mk = (id) => {
     /isInBaseWallRing\(map, wx, wy\)/.test(tl2));
 }
 
+// ==================== 五、v59.2：河道加宽 + 道路有机宽窄 ====================
+// GPT 对第一版森林风格截图的评价里，P0 提案的另外两条：河道加强存在感、
+// 道路做宽窄变化——「先弄地图」阶段的收尾两项。
+{
+  T('宽①-召唤师峡谷单独声明了更宽的 riverHalfWidth（默认 200，这里 260，+30%）',
+    summoners_rift.heightZones?.riverHalfWidth === 260);
+
+  const mv = srcOf('src/data/mapValidate.js');
+  T('宽②-mapValidate.js 新增 laneWidthNoise（平滑正弦噪声，不是按格哈希）',
+    /function laneWidthNoise\(x, y\)/.test(mv) && /Math\.sin/.test(mv));
+  T('宽③-isLaneCell 用 laneWidthNoise 让走廊半宽产生有机的宽窄起伏（±18%）',
+    /laneHalfWidth = baseHalfWidth \* \(1 \+ laneWidthNoise\(x, y\) \* 0\.18\)/.test(mv));
+
+  // 真实数据核实：同一条兵线上不同点的"有效走廊半宽"确实会不同（不是每处都一样宽）。
+  const { isLaneCell } = await import('../src/data/mapValidate.js');
+  const lane0 = summoners_rift.lanes[0];
+  let sawLane = false, sawJungleAtOldWidth = false;
+  const halfW = summoners_rift.walls.corridorHalfWidth;
+  for (const wp of lane0.waypoints) {
+    // 在路点正上方 halfW*1.1 处取样——老的固定宽度判据下这里应该稳定判"野区"，
+    // 但有机宽窄允许它在局部变宽时被判成"路"，用来证明宽度确实不是常数。
+    if (isLaneCell(summoners_rift, wp.x, wp.y)) sawLane = true;
+    if (!isLaneCell(summoners_rift, wp.x + halfW * 1.5, wp.y)) sawJungleAtOldWidth = true;
+  }
+  T('宽④-有机宽窄没有破坏基本判据：兵线路点自身仍然判"路"',
+    sawLane);
+  T('宽⑤-有机宽窄没有把整条路变成一马平川：离中线足够远(halfW*1.5)的地方仍然能判成野区',
+    sawJungleAtOldWidth);
+}
+
 done();

@@ -83,8 +83,19 @@ export function nearestLaneDist(map, x, y) {
  * @param {number} x @param {number} y
  * @returns {boolean} true=路，false=野区
  */
+// v59.2：道路视觉宽窄有机变化——用户看了 GPT 对第一版森林风格截图的评价后定的
+// 方向之一（P0 提案第3条："道路太像画出来的……做宽窄变化"）。用两个不同频率、
+// 不同轴向的正弦波叠加代替按格哈希——哈希是给散点装饰用的（要的是"每个点互不
+// 相关"），这里要的是沿着路连续、平滑地变宽变窄，用哈希会变成锯齿状抖动而不是
+// 自然的宽窄起伏。只影响渲染层怎么画这条路（isLaneCell 只是视觉分类，
+// navgrid/寻路/兵线路点逐位不变——用户确认过"只要不影响寻路/兵线"可以调）。
+function laneWidthNoise(x, y) {
+  return Math.sin(x * 0.0021 + y * 0.0013) * 0.5 + Math.sin(x * 0.0009 - y * 0.0027) * 0.5;
+}
+
 export function isLaneCell(map, x, y) {
-  const laneHalfWidth = map.walls?.corridorHalfWidth ?? 130;
+  const baseHalfWidth = map.walls?.corridorHalfWidth ?? 130;
+  const laneHalfWidth = baseHalfWidth * (1 + laneWidthNoise(x, y) * 0.18);   // ±18% 的有机宽窄
   return nearestLaneDist(map, x, y) <= laneHalfWidth || isInBaseOpen(map, x, y);
 }
 
