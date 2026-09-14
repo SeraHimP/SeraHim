@@ -9,6 +9,12 @@ import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
 import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES, FACTION_HP_COLORS } from '../core/resourceBar.js';
 import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor } from '../presentation/barTrail.js';
+import { ENV_CATEGORY } from '../core/damageAttribution.js';
+
+/** v51.29（Q3）：按来源统计环状图的调色板——环数多时循环使用。 */
+const DMG_SOURCE_PALETTE = ['#e0a458', '#8b7fe0', '#4fc3c7', '#e0708f', '#7fc98b', '#e0d158', '#7fa8e0', '#c98be0'];
+/** "环境/未知来源"固定用灰色，跟其它按来源分类的彩色调色板区分开。 */
+const ENV_SOURCE_COLOR = '#7b8291';
 
 export class UIManager {
   constructor(entityContainer, effectRegistry, attrCalc) {
@@ -1181,6 +1187,42 @@ export class UIManager {
   }
 
   /**
+   * v51.29（Q3）：统计弹窗的环状图——用户反馈"全是文字看着太累，可以适当用图表
+   * （环状图等）实现"。不引入任何图表库（本项目无构建步骤、零 npm 依赖），纯
+   * CSS conic-gradient 画环、radial-gradient 遮罩抠出中间的洞，legend 列在旁边。
+   * segments 里 value<=0 的项直接跳过；全部为 0 时返回空字符串，调用方自己决定
+   * 这种情况下要不要显示"暂无数据"之类的占位。
+   */
+  _donutChartHtml(segments, size = 84) {
+    const rows = segments.filter((s) => s.value > 0);
+    const total = rows.reduce((s, x) => s + x.value, 0);
+    if (!(total > 0)) return '';
+    let acc = 0;
+    const stops = rows.map((seg) => {
+      const start = (acc / total) * 100;
+      acc += seg.value;
+      const end = (acc / total) * 100;
+      return `${seg.color} ${start}% ${end}%`;
+    }).join(', ');
+    const legend = rows.map((seg) => {
+      const pct = Math.round((seg.value / total) * 1000) / 10;
+      return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;">
+        <span style="width:9px;height:9px;border-radius:2px;background:${seg.color};flex:none;"></span>
+        <span style="flex:1;min-width:0;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${seg.label}</span>
+        <span style="flex:none;"><b>${Math.round(seg.value)}</b> <span style="color:var(--text-mute);">(${pct}%)</span></span>
+      </div>`;
+    }).join('');
+    return `<div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;">
+      <div style="width:${size}px;height:${size}px;flex:none;border-radius:50%;
+        background:conic-gradient(${stops});
+        -webkit-mask:radial-gradient(circle, transparent 55%, #000 56%);
+                mask:radial-gradient(circle, transparent 55%, #000 56%);"></div>
+      <div style="flex:1;min-width:0;">${legend}</div>
+    </div>`;
+  }
+
+
+  /**
    * v51.27（Q6）：生命值统计窗口——用户"属性窗口中生命值/法力条也可点击……点开可以
    * 看到详细的数据，包括经抗性/伤害减免结算后的实际生命值（例子：HP500，双抗100，
    * 实际生命值就为1000），还有该单位受到的不同类型的伤害统计/生命恢复的统计，
@@ -1197,6 +1239,18 @@ export class UIManager {
    * ③"受到的伤害统计"是从这次改动才开始计的累计值（CombatSystem.trackDamageTaken），
    *   没有历史存档，重开一局/新造的单位从 0 开始计，永不清零（没有指定要按"每条命"
    *   重置，不额外造一层重置逻辑）。
+   *
+   * v51.29（Q3）重新设计：用户反馈"不强大"——追加三块新统计，并把"全是文字看着
+   * 太累"的部分改成环状图（见 _donutChartHtml 的头注，纯 CSS conic-gradient，
+   * 不引入图表库）：
+   *   · 承伤—按来源：按攻击者的阵营+兵种/塔层级/巨龙分类（用户举例"红方远程兵XX，
+   *     红方近战兵XX，巨龙XX"），数据来自 CombatSystem/EffectRegistry 在攻击者
+   *     存活那一刻快照的类别（见 damageAttribution.js 头注——攻击者死后依然按
+   *     快照的类别计入，不会退化成"环境/未知来源"）。类别数多时只列前 6 名，
+   *     其余合并成"其它"，避免图例把窗口撑爆。
+   *   · 减免与格挡：已缓和的伤害（抗性/减伤/格挡削减掉的量，不含护盾吸收——
+   *     护盾吸收已经有自己的构成小节）+ 减免率。
+   *   · 护盾构成小节追加"累计已获得护盾"（当前余量之外，历史上一共拿到过多少）。
    */
   _showHpStatsModal(entity) {
     if (!entity) return;
@@ -1211,10 +1265,25 @@ export class UIManager {
     const ehpMagic = Math.round(cur / mrMult);
     const sf = entity.shieldFixedCurrent || 0, st = entity.tempShield || 0, sp = entity.plainShield || 0;
     const shieldTotal = sf + st + sp;
+    const shieldGained = entity._shieldGainedTotal || 0;
     const dmg = entity._dmgTaken || { physical: 0, magic: 0, true: 0 };
     const dmgTotal = dmg.physical + dmg.magic + dmg.true;
     const healTotal = entity._healReceivedTotal || 0;
     const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
+    const mitigated = entity._dmgMitigatedTotal || 0;
+    const mitigatedRatio = (mitigated + dmgTotal) > 0 ? Math.round((mitigated / (mitigated + dmgTotal)) * 1000) / 10 : 0;
+
+    // 承伤—按来源：Map 转数组、按伤害量降序，前 6 名各占一环，其余合并成"其它"。
+    const byAtkMap = entity._dmgByAttacker;
+    const byAtkRows = byAtkMap ? [...byAtkMap.values()].sort((a, b) => b.total - a.total) : [];
+    const TOP_N = 6;
+    const top = byAtkRows.slice(0, TOP_N);
+    const restTotal = byAtkRows.slice(TOP_N).reduce((s, r) => s + r.total, 0);
+    const bySourceSegments = top.map((r, i) => ({
+      label: r.label, value: r.total,
+      color: r.label === ENV_CATEGORY.label ? ENV_SOURCE_COLOR : DMG_SOURCE_PALETTE[i % DMG_SOURCE_PALETTE.length],
+    }));
+    if (restTotal > 0) bySourceSegments.push({ label: '其它', value: restTotal, color: ENV_SOURCE_COLOR });
 
     const body = `
       <div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
@@ -1225,17 +1294,27 @@ export class UIManager {
         ${this._statsRowHtml('对物理伤害', `<b>${ehpPhys}</b>`)}
         ${this._statsRowHtml('对魔法伤害', `<b>${ehpMagic}</b>`)}
       </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">护盾构成（合计 ${Math.round(shieldTotal)}）</div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">承伤 — 按类型（合计 ${Math.round(dmgTotal)}）</div>
+      ${this._donutChartHtml([
+        { label: '物理伤害', value: dmg.physical, color: '#e0a458' },
+        { label: '魔法伤害', value: dmg.magic, color: '#8b7fe0' },
+        { label: '真实伤害', value: dmg.true, color: '#4fc3c7' },
+      ]) || `<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">暂无数据</div>`}
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">承伤 — 按来源（合计 ${Math.round(dmgTotal)}）</div>
+      ${this._donutChartHtml(bySourceSegments) || `<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">暂无数据</div>`}
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">减免与格挡</div>
       <div style="font-size:12px;margin-bottom:10px;">
-        ${this._statsRowHtml('护盾（不衰减不回复）', `<b>${Math.round(sp)}</b>`)}
-        ${this._statsRowHtml('固定护盾（脱战后回满）', `<b>${Math.round(sf)}</b>`)}
-        ${this._statsRowHtml('临时护盾（不会回满）', `<b>${Math.round(st)}</b>`)}
+        ${this._statsRowHtml('已缓和的伤害（抗性/减伤/格挡，不含护盾吸收）', `<b>${Math.round(mitigated)}</b>`)}
+        ${this._statsRowHtml('减免率', `<b>${mitigatedRatio}%</b>`)}
       </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">累计承受伤害（合计 ${Math.round(dmgTotal)}）</div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">护盾构成（当前合计 ${Math.round(shieldTotal)}）</div>
+      ${this._donutChartHtml([
+        { label: '护盾（不衰减不回复）', value: sp, color: '#c9cdd6' },
+        { label: '固定护盾（脱战后回满）', value: sf, color: '#8b93a3' },
+        { label: '临时护盾（不会回满）', value: st, color: '#5b6270' },
+      ]) || `<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">暂无护盾</div>`}
       <div style="font-size:12px;margin-bottom:10px;">
-        ${this._statsRowHtml('物理伤害', `<b>${Math.round(dmg.physical)}</b>`)}
-        ${this._statsRowHtml('魔法伤害', `<b>${Math.round(dmg.magic)}</b>`)}
-        ${this._statsRowHtml('真实伤害', `<b>${Math.round(dmg.true)}</b>`)}
+        ${this._statsRowHtml('累计已获得护盾', `<b>${Math.round(shieldGained)}</b>`)}
       </div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">生命恢复</div>
       <div style="font-size:12px;">
@@ -1247,7 +1326,7 @@ export class UIManager {
     overlay.id = 'hpStatsOverlay';
     overlay.className = 'modal-overlay open';
     overlay.innerHTML = shellHtml({
-      title: '❤️ 生命统计', body, crumb: '', width: '420px',
+      title: '❤️ 生命统计', body, crumb: '', width: '440px',
       footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);

@@ -68,6 +68,10 @@ export function grantTempShield(entity, amount, power) {
   if (!entity || !entity.alive || !(amount > 0)) return 0;
   const add = amount * (power ?? 1);
   entity.tempShield = (entity.tempShield || 0) + add;
+  // v51.29（Q3）：累计已获得护盾——跟上面 applyHeal 记 _healReceivedTotal 同一个
+  // 理由、同一个惯例。这是全仓库唯一的临时护盾发放入口，一处打点全覆盖
+  // （吸血转护盾、图腾兵主动技能、山魂等技能护盾都走它）。
+  entity._shieldGainedTotal = (entity._shieldGainedTotal || 0) + add;
   return add;
 }
 

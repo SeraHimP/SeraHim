@@ -5,6 +5,7 @@ import { chargeParamsFor } from '../core/skills/attackModes.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
 import { canFire } from './FacingSystem.js';
+import { attackerCategoryOf, ENV_CATEGORY } from '../core/damageAttribution.js';
 
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
@@ -84,12 +85,34 @@ function isTrueDamage(attackType) { return attackType === 'true'; }
  * 原始伤害——跟血条上"掉了多少血"看到的是同一个数）。惯例做法：懒初始化在
  * entity 上挂一个 _dmgTaken 累计表，永不清零（跟塔的其它累计类状态同一惯例，
  * 没有指定要按"每条命"重置的需求就不额外造一层重置逻辑）。
+ *
+ * v51.29（Q3）：追加两项统计，同一个函数一次性记完，不再新开调用点——
+ *   ① _dmgByAttacker：按【攻击者类别】（阵营+兵种/塔层级/巨龙）分桶的累计伤害，
+ *      用户："应该分类统计每种不同的单位对该单位造成的伤害。"attackerCategory
+ *      由调用方传入（攻击者存活那一刻算好的快照，见 damageAttribution.js 的头注，
+ *      解决"攻击者已经死了就归到未知来源"这个用户明确否掉的行为），本函数只管
+ *      按 category.key 分桶累加，不关心这份快照是怎么来的。
+ *   ② _dmgMitigatedTotal：已缓和的伤害（抗性/减伤/格挡等减少的量，不含护盾吸收——
+ *      护盾吸收已经有自己的统计，见 _absorbByShields）。跟 finalDamage 是否 >0
+ *      无关——伤害被完全格挡/减到 0 时，缓和量本身依然要计入。
  */
-function trackDamageTaken(target, attackType, finalDamage) {
-  if (!(finalDamage > 0) || !target) return;
-  const key = attackType === 'physical' || attackType === 'magic' ? attackType : 'true';
-  const stats = target._dmgTaken || (target._dmgTaken = { physical: 0, magic: 0, true: 0 });
-  stats[key] += finalDamage;
+function trackDamageTaken(target, attackerCategory, attackType, finalDamage, mitigated) {
+  if (!target) return;
+  if (finalDamage > 0) {
+    const key = attackType === 'physical' || attackType === 'magic' ? attackType : 'true';
+    const stats = target._dmgTaken || (target._dmgTaken = { physical: 0, magic: 0, true: 0 });
+    stats[key] += finalDamage;
+
+    const cat = attackerCategory || ENV_CATEGORY;
+    const byAtk = target._dmgByAttacker || (target._dmgByAttacker = new Map());
+    const bucket = byAtk.get(cat.key) || { total: 0, count: 0, label: cat.label };
+    bucket.total += finalDamage;
+    bucket.count += 1;
+    byAtk.set(cat.key, bucket);
+  }
+  if (mitigated > 0) {
+    target._dmgMitigatedTotal = (target._dmgMitigatedTotal || 0) + mitigated;
+  }
 }
 
 /**
@@ -248,6 +271,10 @@ export class CombatSystem {
       if (shieldMax > 0) {
         const lastDamage = entity.lastDamageTime ?? -Infinity;
         if (now - lastDamage >= shieldRegenDelay && entity.shieldFixedCurrent < shieldMax) {
+          // v51.29（Q3）：固定护盾"回满"是一次性跳变（不是逐帧线性增长），
+          // 累计打点必须放在"从不足变成满"的这一刻、只记差值，不能每帧都记
+          // 一次 shieldMax——否则同一次回满会被重复计数无数遍。
+          entity._shieldGainedTotal = (entity._shieldGainedTotal || 0) + (shieldMax - entity.shieldFixedCurrent);
           entity.shieldFixedCurrent = shieldMax;
         }
       }
@@ -684,6 +711,10 @@ export class CombatSystem {
       magicPenFlat: atkStats.magicPenFlat || 0,
       weaponId: weaponDef ? weaponDef.id : null,
       weaponInstId: weaponInst ? weaponInst.id : null,
+      // v51.29（Q3）：攻击者类别也在开火那一刻快照——原因与上面四项穿透同一条
+      // 注释：命中结算时攻击者可能已经死亡并被 EntityContainer.purgeDead() 移出
+      // 容器，届时再查就晚了。
+      attackerCategory: attackerCategoryOf(attacker, CONFIG.templates),
     };
 
     // ---- 弹道模型（v2.5D Q1）：所有单位统一 ----
@@ -732,14 +763,27 @@ export class CombatSystem {
     // 那一发就整个消失，哪怕目标还活得好好的。这就是用户报的"子弹没伤害"。
     // 攻击侧要用的数值全部在开火时快照进 hitInfo 了（含四项穿透），
     // 所以这里只需要攻击者**存在**（拿它的 id/阵营记归属、拿技能实例触发被动），不需要它活着。
-    if (!attacker || !target || !target.alive) return;
+    //
+    // v51.29（Q3 排查发现的遗留 bug）：上面这句话在 v49 只对了一半——塔死后会
+    // 变成"废墟"继续留在 EntityContainer 里（用户定稿"死亡的塔也应该能被选中"），
+    // 所以 entities.get 永远查得到；但**小兵/巨龙死亡后下一帧就被
+    // EntityContainer.purgeDead() 整个移出容器**（同一份文件里"塔留废墟、其余
+    // 单位直接清"的分支）。子弹飞行耗时通常有好几帧（远程兵/塔/术士兵都有弹速），
+    // 于是"攻击者是小兵、且在子弹落地前就死于别的伤害"时，entities.get 在这里
+    // 已经查不到人，这句 `!attacker → return` 会把这一发**整个丢弃**——正是
+    // v49 那条用户定稿本该修掉、却因为"塔不删、小兵会删"这个不对称而留了个缺口
+    // 的场景。既然 hitInfo 已经把攻击侧全部数值（含四项穿透、攻击者类别）在
+    // 开火那一刻快照完毕，这里不再要求 attacker 存在——下面所有还在读
+    // attacker.xxx 的地方全部改成 attacker?.xxx（找不到就按"没有攻击者"处理，
+    // 和 performAttackDirect 对无来源伤害的既有处理方式一致）。
+    if (!target || !target.alive) return;
     // Q7：全塔无敌开关（设置窗口）——建筑不再受到任何伤害
     if (target.type === 'tower' && window.__towerRuleFor?.('invincible', target._mapFaction)) return; // Q5：按阵营无敌
 
-    const atkStats = this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id));
+    const atkStats = attacker ? this.attrCalc.calc(attacker, this.effects.getEffects(attacker.id)) : {};
     const defStats = this.attrCalc.calc(target, this.effects.getEffects(target.id));
     const weaponInst = (hitInfo.weaponInstId != null)
-      ? attacker._skillInstances?.find(s => s.id === hitInfo.weaponInstId)
+      ? attacker?._skillInstances?.find(s => s.id === hitInfo.weaponInstId)
       : null;
     const weaponDef = hitInfo.weaponId ? this.skills[hitInfo.weaponId] : null;
 
@@ -748,7 +792,7 @@ export class CombatSystem {
     // 掷骰放在命中结算这一刻（用目标此刻的闪避率），不在开火时快照——闪避是防御方属性，
     // 应该用命中那一刻的实时数值，与护甲/护盾同一口径。
     if (Math.random() * 100 < (defStats.evasionPct || 0)) {
-      this.eventBus.emit('damage:evaded', { sourceId: attacker.id, targetId: target.id });
+      this.eventBus.emit('damage:evaded', { sourceId: attacker?.id ?? null, targetId: target.id });
       return;
     }
 
@@ -827,7 +871,7 @@ export class CombatSystem {
     // 原来那两个来源让炮兵在兵线互耗里也硬得离谱 —— 炮兵打炮兵、超级兵打炮兵都要吃 30% 减免，
     // 而它本来的设计意图只是"顶着塔往前推"。收窄之后它对塔仍然耐揍，兵线里恢复正常体量。
     // 条件减伤依赖攻击来源，stat 管线拿不到攻击者，必须在引擎结算处判断。
-    if (attacker.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
+    if (attacker?.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
       damage *= 0.7;
     }
     // 哀兵（条件加成，用户定稿）：每层 +4% 对敌方小兵伤害、+10% 减免来自敌方小兵的伤害。
@@ -836,13 +880,18 @@ export class CombatSystem {
     // 格挡同样：真伤跳过；为负时是加伤（damage − (−5) = damage + 5）。
     const block = trueDmg ? 0 : (defStats.damageBlock || 0);
     damage = Math.max(0, damage - block);
+    // v51.29（Q3）：已缓和的伤害 = 原始伤害 − 抗性/减伤/格挡等减免后、护盾吸收前的
+    // 伤害（用户原话"由于抗性/伤害减免等没有承受的生命值"，明确不含护盾吸收——
+    // 护盾吸收已经有自己的统计）。用 Math.max(0, …) 夹住：巨龙/哀兵等条件加成会让
+    // damage 反超 totalRaw（增伤而不是减伤），那种情况不算"缓和"。
+    const mitigated = Math.max(0, totalRaw - damage);
 
     // ---- 护盾吸收 ----
     let remainingDamage = this._absorbByShields(target, damage, defStats, trueDmg);
 
     const finalDamage = Math.min(remainingDamage, target.currentHP);
     target.currentHP -= finalDamage;
-    trackDamageTaken(target, attackType, finalDamage);
+    trackDamageTaken(target, hitInfo.attackerCategory, attackType, finalDamage, mitigated);
     if (damage > 0) target.lastDamageTime = window.gameTime || 0;
     // 记录巨龙的伤害来源塔（每塔独立龙魂击杀统计用）
     if (target.type === 'dragon' && finalDamage > 0) {
@@ -875,7 +924,7 @@ export class CombatSystem {
     for (const inst of target._skillInstances || []) {
       const def = this.skills[inst.skillId];
       if (def && def.onBeingAttacked) {
-        def.onBeingAttacked(target.id, attacker.id, inst, {
+        def.onBeingAttacked(target.id, attacker?.id ?? 0, inst, {
           entityContainer: this.entities,
           effectRegistry: this.effects,
           eventBus: this.eventBus,
@@ -897,7 +946,7 @@ export class CombatSystem {
     }
 
     this.eventBus.emit('damage:dealt', {
-      sourceId: attacker.id,
+      sourceId: attacker?.id ?? 0,
       targetId: target.id,
       amount: finalDamage,
       type: attackType,
@@ -910,7 +959,7 @@ export class CombatSystem {
 
     // ---- 爆炸溅射 ----
     if (weaponDef && weaponDef.id === 'weapon_explosive') {
-      this._applyExplosion(attacker, target, totalRaw, attackType);
+      this._applyExplosion(attacker, target, totalRaw, attackType, undefined, { attackerCategory: hitInfo.attackerCategory });
     }
     // 普攻自带溅射。闸门是"模板里写了 splashRadius 就溅射"（v43 放宽的）——
     // 原来它与攻城武器被动绑死，于是**巨龙的溅射从来没生效过**：
@@ -922,7 +971,7 @@ export class CombatSystem {
     // "额外增幅只对塔生效"，溅射打的是塔周围的别的单位，不该跟着吃。
     const R49 = CONFIG.gameRules?.ram || {};
     const ramR = ramSplashRadius(attacker, target);
-    const splashR = Math.max(attacker.baseStats?.splashRadius || 0, ramR);
+    const splashR = Math.max(attacker?.baseStats?.splashRadius || 0, ramR);
     if (splashR > 0) {
       // 溅射把"只对主目标生效"的那两档增幅除回去（口径一直是：额外增幅只作用于主目标）
       const siegeMult = (chargeP ? chargeP.damageMult : 1)
@@ -930,7 +979,7 @@ export class CombatSystem {
             ? (isStructureUnit(target) ? (R49.siegeDamagePct ?? 700) / 100
                                        : (1 + (R49.normalDamageAmpPct ?? -33) / 100))
             : 1);
-      this._applyExplosion(attacker, target, totalRaw / siegeMult, attackType, splashR);
+      this._applyExplosion(attacker, target, totalRaw / siegeMult, attackType, splashR, { attackerCategory: hitInfo.attackerCategory });
     }
   }
 
@@ -1108,8 +1157,13 @@ export class CombatSystem {
       if (dist > radius) continue;
       const splashFactor = 0.6 * Math.exp(-0.033 * dist);
       const splashDmg = baseDamage * splashFactor * 0.8;
-      this.performAttackDirect(attacker.id, t.id, splashDmg, attackType,
-        { basicAttack, vampGroup: true });
+      // v51.29（Q3 排查发现的遗留 bug）：攻击者已死时这里原来是 `attacker.id`，
+      // 直接读 null 会抛异常——溅射目标不应该因为主目标的攻击者已经死了就整个
+      // 报错丢失，跟 performAttackDirect 本来就允许"无攻击者的纯伤害来源"同一口径。
+      // attackerCategory 优先用调用方传下来的快照（_resolveHit 那份 hitInfo 在
+      // 开火那一刻就存好了，比这里现查 attacker 更可靠），没有才现算一次。
+      this.performAttackDirect(attacker?.id ?? 0, t.id, splashDmg, attackType,
+        { basicAttack, vampGroup: true, attackerCategory: opts.attackerCategory || attackerCategoryOf(attacker, CONFIG.templates) });
     }
   }
 
@@ -1416,6 +1470,10 @@ export class CombatSystem {
     //（v50 用户定稿："跳过护盾以及所有防御手段直接对生命值造成伤害"）。
     // 护盾那一段由 _absorbByShields 按 trueDmg 直接放行。
     const trueDmg = isTrueDamage(attackType);
+    // v51.29（Q3）：已缓和的伤害基线——与 _resolveHit 同一口径，取"进入
+    // 抗性/减伤/格挡结算前"的伤害，跟"结算完、护盾吸收前"的伤害作差。
+    // 真伤这条分支 damage 不变，差值天然是 0，不需要特判。
+    const preMitigation = damage;
     if (trueDmg) {
       // damage 保持不变（已含伤害增幅/破盾加成），直接打生命值
     } else {
@@ -1486,13 +1544,14 @@ export class CombatSystem {
       damage = ignoredDamage + mitigatedDamage;
       damage = Math.max(0, damage - Math.min(0, block));
     }
+    const mitigated = Math.max(0, preMitigation - damage);
 
     // 护盾吸收
     let remainingDamage = this._absorbByShields(target, damage, defStats, trueDmg);
 
     const finalDamage = Math.min(remainingDamage, target.currentHP);
     target.currentHP -= finalDamage;
-    trackDamageTaken(target, attackType, finalDamage);
+    trackDamageTaken(target, options.attackerCategory || attackerCategoryOf(attacker, CONFIG.templates), attackType, finalDamage, mitigated);
     if (damage > 0) target.lastDamageTime = window.gameTime || 0;
     // 伤害转化（v33 Q10）：防御向，两条伤害路径（performAttack/Direct）行为一致
     this._applyDamageConversion(target, defStats, finalDamage);

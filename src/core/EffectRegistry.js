@@ -7,6 +7,9 @@
  * - 效果描述支持 {stacks} 占位符动态替换
  * - 圆形进度条所需的 remainingTime/maxDuration 数据
  */
+import { CONFIG } from '../data/Config.js';
+import { attackerCategoryOf } from './damageAttribution.js';
+
 export class EffectRegistry {
   constructor(eventBus = null) {
     this._effects = new Map();        // effectId -> EffectInstance
@@ -218,6 +221,14 @@ export class EffectRegistry {
       // 治本方法：谁施加的 DOT，就把那个真实实体 id 单独存一份 casterId，
       // 不复用 sourceId（sourceId 的"标签"语义继续只服务堆叠判定，两件事分开存）。
       casterId: options.casterId ?? null,
+      // v51.29（Q3）：跟 casterId 同一个理由的同一份数据，多存一份"攻击者类别"
+      // 快照——DOT 逐帧 tick 结算伤害时（BuffSystem.update），施加者往往早就死了、
+      // 也从 EntityContainer 里被移出去了（见 damageAttribution.js 头注），届时
+      // entities.get(casterId) 只会拿到 null。这里趁施加 DOT 那一刻施法者还活着，
+      // 把类别现算好存进效果实例，之后每一跳都直接读这份快照，不用再查容器。
+      casterCategory: options.casterId && this._entities
+        ? attackerCategoryOf(this._entities.get(options.casterId), CONFIG.templates)
+        : null,
       stacks: Math.min(initStacks, bp.maxStacks || 1),
       remainingTime: permanent ? Infinity : duration,
       maxDuration: permanent ? Infinity : duration,
@@ -419,7 +430,15 @@ export class EffectRegistry {
     effect.totalFlat = (bp.flatValue || 0) + (bp.perStackFlat || 0) * (stacks - 1);
     effect.totalPercent = (bp.percentValue || 0) + (bp.perStackPercent || 0) * (stacks - 1);
     if (bp.kind === 'shield') {
-      effect.shieldRemaining = Math.max(0, (effect.shieldRemaining || 0) + (effect.totalFlat - prevFlat));
+      const delta = effect.totalFlat - prevFlat;
+      effect.shieldRemaining = Math.max(0, (effect.shieldRemaining || 0) + delta);
+      // v51.29（Q3）：累计已获得护盾——只在【新增/叠层】（delta>0）时计入，效果
+      // 到期或被别处消耗掉余量不算"获得"的反面，那是消耗，跟 healing.js 里
+      // _healReceivedTotal/_shieldGainedTotal"只增不减"的语义一致。
+      if (delta > 0 && this._entities) {
+        const entity = this._entities.get(effect.entityId);
+        if (entity) entity._shieldGainedTotal = (entity._shieldGainedTotal || 0) + delta;
+      }
     }
   }
 

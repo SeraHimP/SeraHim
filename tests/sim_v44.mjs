@@ -276,8 +276,12 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   const cs = srcOf('src/systems/CombatSystem.js');
   // v49：攻城车模板的 splashRadius 改成 0、半径改由模式给出，所以闸门取两者的较大值。
   // 龙那一半仍然靠模板的 splashRadius —— 这条断言原本就是为龙的溅射守的，继续守住。
+  // v51.29（Q3）：attacker 现在可能为 null（排查发现子弹飞行途中攻击者已死+被
+  // EntityContainer.purgeDead() 移出容器的遗留 bug，见 _resolveHit 头注），
+  // 这一句补了一个 `?.` 变成 attacker?.baseStats?.splashRadius，闸门本身的判据
+  // （"模板写了 splashRadius 就溅射"）没有变，断言跟着补上这个 `?`。
   T('Q2b④-溅射闸门仍认"模板写了 splashRadius"（巨龙的溅射靠这条才生效）',
-    /Math\.max\(attacker\.baseStats\?\.splashRadius \|\| 0, ramR\)/.test(cs));
+    /Math\.max\(attacker\?\.baseStats\?\.splashRadius \|\| 0, ramR\)/.test(cs));
   // v49b：要除回去的倍率变成两档（对建筑 siegeDamagePct / 对其余 normalDamageAmpPct），
   // 充能自己的 damagePct 也仍然要除。断言钉"两者都参与了 siegeMult"这件事。
   T('Q2b④-"额外增幅只对主目标"仍成立（溅射把倍率除回去）',

@@ -549,10 +549,12 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
   withShields._dmgTaken = { physical: 70, magic: 30, true: 5 };
   withShields._healReceivedTotal = 123;
   ui._showHpStatsModal(withShields);
-  T('Q6⑤-弹窗展示护盾构成三项+累计伤害统计三项+累计生命恢复',
+  // v51.29（Q3）：这块窗口重新设计过，"累计承受伤害"这个小标题改成了
+  // "承伤 — 按类型"（环状图形式），断言跟着改，其余数字口径不变。
+  T('Q6⑤-弹窗展示护盾构成三项+承伤统计三项+累计生命恢复',
     captured && /护盾构成/.test(captured._html)
     && />40</.test(captured._html) && />15</.test(captured._html) && />25</.test(captured._html)
-    && /累计承受伤害/.test(captured._html) && />70</.test(captured._html) && />30</.test(captured._html) && />5</.test(captured._html)
+    && /承伤 — 按类型/.test(captured._html) && />70</.test(captured._html) && />30</.test(captured._html) && />5</.test(captured._html)
     && /累计生命恢复量[\s\S]{0,20}>123</.test(captured._html));
 
   // ⑥ 法力统计弹窗：与 Q5 的三个系数同源，不另起一套计算
