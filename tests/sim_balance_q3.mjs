@@ -53,10 +53,10 @@ T('裸塔（无武器）abilityPower=0 < attackDamage，自适应解析仍是物
   attr.resolveAttackType({ ...CONFIG.templates.tower, attackType: 'adaptive' }) === 'physical');
 
 // ==================== ② 软编码落点：两把武器的新增百分比都在 CONFIG.tuning.weapons ====================
-T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 + 穿透型AD/AP系数）',
+T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 + 穿透型升温台阶的基础值/AP系数）',
   typeof CONFIG.tuning?.weapons?.lightningApConvertPct === 'number'
-  && typeof CONFIG.tuning?.weapons?.piercingStackAdPct === 'number'
-  && typeof CONFIG.tuning?.weapons?.piercingStackApPct === 'number');
+  && typeof CONFIG.tuning?.weapons?.piercingHeatBasePct === 'number'
+  && typeof CONFIG.tuning?.weapons?.piercingHeatApPct === 'number');
 
 // ==================== ③ 闪电杖：装备后攻击力全部转化为法术强度 ====================
 {
@@ -99,7 +99,11 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
     Math.abs(tickDmg - 36) < 1.5);
 }
 
-// ==================== ⑤ 穿透型：每层额外造成 AD/AP 混合加成伤害 ====================
+// ==================== ⑤ 穿透型（返工版）：升温每层的倍率台阶随法术强度变化 ====================
+// 用户否掉了"每层额外开一笔独立伤害"的第一版理解，纠正："我说的是法术强度影响每层
+// 增伤的数值，按照我的来"——法强影响的是升温本身这个倍率台阶有多高，不是另开一笔
+// 伤害。所以这里只钉一件事：台阶 = (piercingHeatBasePct + piercingHeatApPct%×AP)%，
+// 完全替换掉旧的写死 30%，不再有第二笔伤害叠加在普攻之上。
 {
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
   const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
@@ -108,23 +112,29 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
   const dmgs = [];
   for (let i = 0; i < 4; i++) { attr.tick(); const b = target.currentHP; combat.performAttack(tw, target); dmgs.push(b - target.currentHP); }
   const W = CONFIG.tuning.weapons;
-  const heatMult = (i) => 1 + i * (SkillLibrary.weapon_piercing.HEAT_PER_STACK ?? 0.30);
-  const bonus = (i) => i * (100 * W.piercingStackAdPct / 100 + 50 * W.piercingStackApPct / 100);
-  const want = [0, 1, 2, 3].map(i => 100 * heatMult(i) + bonus(i));
-  T(`每层命中总伤害 = 升温倍率×AD + 层数×(AD×${W.piercingStackAdPct}%+AP×${W.piercingStackApPct}%)（实际${dmgs.map(d => d.toFixed(1)).join(',')}，期望${want.map(w => w.toFixed(1)).join(',')}）`,
+  const per = (W.piercingHeatBasePct + (W.piercingHeatApPct / 100) * 50) / 100; // AP=50
+  // Q2（本轮，另一条改动）：塔是 attackType='adaptive'，基础伤害现在是 AD+AP
+  // （规则照搬LoL，见 CombatSystem.performAttack 头注），不再只是 AD。这座塔
+  // AD=100/AP=50，基础伤害 = 150，升温台阶仍然只乘在这个基础伤害上面。
+  const baseDmg = 100 + 50;
+  const want = [0, 1, 2, 3].map(i => baseDmg * (1 + i * per));
+  T(`每层命中伤害 = (AD+AP) × (1+层数×(${W.piercingHeatBasePct}%+${W.piercingHeatApPct}%×法术强度))（实际${dmgs.map(d => d.toFixed(1)).join(',')}，期望${want.map(w => w.toFixed(1)).join(',')}）`,
+    dmgs.every((d, i) => Math.abs(d - want[i]) < 1));
+  T('没有第二笔独立加成伤害（每次命中只有一条 performAttackDirect 轨迹，总伤害与上面单一公式吻合）',
     dmgs.every((d, i) => Math.abs(d - want[i]) < 1));
 
-  // 反证：法术强度=0 时，加成伤害只剩 AD 那一项（确认 AP 项确实在起作用，不是摆设）
+  // 反证：法术强度=0 时，台阶回落到基础值（20%），且基础伤害也回落到纯 AD——
+  // 确认 AP 项确实在起作用，不是摆设。
   const bus2 = new EventBus(), ents2 = new EntityContainer(bus2), fx2 = new EffectRegistry(bus2);
   const combat2 = new CombatSystem(ents2, fx2, bus2, SkillLibrary);
   const tw2 = mkTower(ents2, fx2, { ad: 100, ap: 0, weapon: 'weapon_piercing' });
   const target2 = mkTarget(ents2);
   const dmgs2 = [];
   for (let i = 0; i < 2; i++) { attr.tick(); const b = target2.currentHP; combat2.performAttack(tw2, target2); dmgs2.push(b - target2.currentHP); }
-  const bonusNoAp = 1 * (100 * W.piercingStackAdPct / 100);
-  const wantNoAp = 100 * heatMult(1) + bonusNoAp;
-  T(`法强=0时第2下伤害只含AD那一项加成（实际${dmgs2[1].toFixed(1)}，期望${wantNoAp.toFixed(1)}）`,
-    Math.abs(dmgs2[1] - wantNoAp) < 1);
+  const perNoAp = W.piercingHeatBasePct / 100;
+  const wantNoAp = 100 * (1 + 1 * perNoAp);
+  T(`法强=0时台阶回落到基础值${W.piercingHeatBasePct}%、基础伤害回落到纯AD（第2下实际${dmgs2[1].toFixed(1)}，期望${wantNoAp.toFixed(1)}，弱于AP=50时的${want[1].toFixed(1)}）`,
+    Math.abs(dmgs2[1] - wantNoAp) < 1 && dmgs2[1] < want[1]);
 }
 
 // ==================== ⑥ 塔成长：物理攻击与法术强度同步成长（同一曲线） ====================

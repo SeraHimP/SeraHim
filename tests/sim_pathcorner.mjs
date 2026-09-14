@@ -418,8 +418,13 @@ for (const map of Object.values(MAPS)) {
   CONFIG.tuning.waypointArriveRadius = save;
   const mins = ents.getAllMinions(true).filter(m => m._laneId && (window.gameTime - m._birth) > 25);
   seen = mins.length;
+  // Q2（本轮）：塔 attackType='adaptive'，普攻基础伤害从 AD 改成 AD+AP（规则照搬
+  // LoL），塔的输出普遍变高，150 秒模拟窗口内被塔清掉的兵变多，存活样本数从
+  // 十几个降到个位数——这条断言真正要钉的是"没有绕圈"（laps 这半从没受影响，
+  // 一直 <0.6），存活样本数只是"这批数据够不够看"的辅助门槛，往下调一点即可，
+  // 不用为了凑样本数硬跑更长时间。
   T(`[扭曲丛林实战] 没有兵绕着塔转圈（最多 ${laps.toFixed(2)} 圈 ${lapsAt} < 2，存活样本 ${seen}）`,
-    seen > 10 && laps < 2);
+    seen > 5 && laps < 2);
   // 到达半径必须真的把"路点被塔吃掉的那一截"算进去 —— 否则那个路点的索引永远推不过去。
   // ⚠️ 不要写死索引：兵线重描过（基地段加了两个路点），外塔挨着的那个路点就不再是 wp8 了。
   // 改成"找出离外塔最近的那个路点"，与兵线怎么改都无关。

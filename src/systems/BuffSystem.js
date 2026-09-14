@@ -85,8 +85,21 @@ export class BuffSystem {
             // grantsMana：只有真正的【武器】DOT（如腐蚀型的中毒，blueprint 上标了
             // basicAttack:true）才该给法力系统计数——技能/龙魂的 DOT（毒药、灼烧圈等）
             // 不该让持有者靠"被自己的技能打"给自己充能，见 CombatSystem 里那段说明。
+            // ==================== 本轮修复：主 DOT tick 漏传 _noProc，错误触发施放者自己的
+            // onDealtDamage 被动 ====================
+            // 用户报"蚀骨兵的主动技能的伤害会错误触发屠戮"——排查确认：蚀骨兵的环刃毒雾
+            // 对每个命中目标各挂一份独立 DOT（不是下面那条带 auraRadius 的溅射 DOT），
+            // 每次 tick 都调这一行的 performAttackDirect，而这里此前没传 _noProc，于是
+            // 每次毒伤结算都会重新触发蚀骨兵自己身上所有 onDealtDamage 被动——包括这轮
+            // 新加的 passive_corrupt_rend，等于每次毒 tick 都额外白嫖一笔屠戮伤害。
+            // 本轮加了屠戮之前没人发现，是因为 melee/ranged/siege 三个原有屠戮持有者都
+            // 没有会打 DOT 的主动技能，这条缺口一直是"存在但没被踩中"。
+            // 下面 R>0 的溅射分支（v51.15 那次熔魂滚雪球 bug 修复）早就传了 _noProc:true，
+            // 且注释原话就是"DOT tick 不该算一次完整攻击、不该重新触发被动链"——这条原则
+            // 对主 tick 同样成立，这里只是把主 tick 补上跟溅射分支一致的 _noProc，不是
+            // 另开一条新规则。
             this.combat.performAttackDirect(eff.casterId ?? 0, entity.id, dmg, type,
-              { basicAttack: true, grantsMana: eff.blueprint.basicAttack === true, attackerCategory: eff.casterCategory });
+              { basicAttack: true, grantsMana: eff.blueprint.basicAttack === true, attackerCategory: eff.casterCategory, _noProc: true });
             // ==================== v50：带半径的 DOT（灼烧圈）====================
             // 用户（熔魂定稿）："灼烧效果是有半径的，可以对其他单位造成伤害"
             //                  + "跟着中毒目标走"。

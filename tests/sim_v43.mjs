@@ -345,7 +345,10 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 {
   const wp = SkillLibrary.weapon_piercing;
   T('Q10① 穿透型保留固定 30% 双穿', /flatValue: 30/.test(String(wp.onEquip)));
-  T('Q10② 穿透型保留升温', wp.HEAT_MAX_STACKS === 4 && wp.HEAT_PER_STACK === 0.30);
+  // Q3（本轮返工）：HEAT_PER_STACK 这个写死常量已删——每层台阶改用
+  // _perStackFraction(atkStats) 动态算（随法术强度变化），钉住这个函数存在即可。
+  T('Q10② 穿透型保留升温（每层台阶现在是随法术强度变化的函数）',
+    wp.HEAT_MAX_STACKS === 4 && typeof wp._perStackFraction === 'function');
   // 同样要先剥注释：onDealtDamage 里留着一段"破甲为什么被删"的说明，直接匹配会打到自己。
   T('Q10③ 穿透型不再叠破甲', !/破甲/.test(stripComments(String(wp.onDealtDamage))));
   T('Q10④ 技能说明也去掉了破甲', !/削.*双抗|破甲/.test(wp.description + wp.descTemplate));

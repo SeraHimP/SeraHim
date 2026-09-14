@@ -1170,12 +1170,14 @@ async function world() {
     CONFIG.templates.melee.maxMana === 25 && CONFIG.templates.melee.manaRegen === 0
     && CONFIG.templates.ranged.maxMana === 70 && CONFIG.templates.ranged.manaRegen === 0.5);
 
-  // 近战兵：本能格挡
+  // 近战兵：本能防御（本轮：格挡+2 → +10%伤害转化，可叠加，见 actives.js 头注）
   const m = mkEntity(ents, 'melee', { skills: ['active_melee_block'] }, CONFIG);
   m._mana = 25;
   mana.update(1);
-  const blockEff = fx.getEffects(m.id).find(e => e.blueprint.name === '本能格挡');
-  T('主动②-近战兵满蓝后获得2点伤害格挡，持续2秒', blockEff && blockEff.blueprint.flatValue === 2 && Math.abs(blockEff.remainingTime - 2) < 1e-6);
+  const blockEff = fx.getEffects(m.id).find(e => e.blueprint.name === '本能防御');
+  T('主动②-近战兵满蓝后获得10%伤害转化，持续2秒',
+    blockEff && blockEff.blueprint.statKey === 'damageConvertPct' && blockEff.blueprint.flatValue === 10
+    && Math.abs(blockEff.remainingTime - 2) < 1e-6);
   T('主动③-施放后法力清零（普通主动技能，不是延迟消耗）', m._mana === 0);
 
   // 远程兵：强化射击（延迟消耗 + 魔法伤害，复用 _empowerNextAttack 通用机制）
@@ -1188,10 +1190,13 @@ async function world() {
   const before = tgt.currentHP;
   combat.performAttack(r, tgt);
   const dealt = before - tgt.currentHP;
-  // 10 基础攻击 + 40 法术强度×25% = 10 的额外魔法伤害 = 20 总量（真实伤害那条路径
-  // 已经在术士兵测试里验证过，这里换成验证 damageType 参数确实传成了 'magic'）
+  // Q2（本轮）：远程兵 attackType='adaptive'，普攻基础伤害现在是 AD+AP（规则照搬
+  // LoL 的 Adaptive damage，见 CombatSystem.performAttack 头注）——基础伤害从旧的
+  // 纯 AD(10) 变成 AD+AP(10+40=50)，加上强化射击的额外 25%×法强(40)=10 的魔法伤害，
+  // 总量约 60（真实伤害那条路径已经在术士兵测试里验证过，这里换成验证 damageType
+  // 参数确实传成了 'magic'）。
   T('主动⑤-下一次攻击命中后额外造成 25%×法术强度 的伤害，且法力才真正清零',
-    dealt > 15 && dealt < 25 && r._mana === 0 && !r._empowerNextAttack);
+    dealt > 55 && dealt < 65 && r._mana === 0 && !r._empowerNextAttack);
 
   T('主动⑥-CombatSystem 的延迟消耗点支持自定义伤害类型（不再永远是真实伤害）',
     /emp\.damageType \|\| 'true'/.test(srcOf('src/systems/CombatSystem.js')));

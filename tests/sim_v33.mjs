@@ -61,18 +61,22 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
     const st = attr.calc(tw, fx.getEffects(tw.id));
     return st.armorPenPercent === 30 && st.magicPenPercent === 30;
   })());
-  // 3 发打死近战（不能 2 发）
+  // Q3（本轮返工）：每层的倍率台阶从写死30%改成随法术强度变化的
+  // (piercingHeatBasePct + piercingHeatApPct%×法术强度)%——这座塔 AP=0（模板默认值，
+  // 没有装法强来源），台阶因此从旧的30%降到占位默认的20%，整体输出变弱，恰好
+  // 击杀所需的发数从3发变成4发。这不是回归，是公式改对之后的自然结果（见
+  // weapons.js weapon_piercing._perStackFraction 头注）。
   const hits = [];
-  for (let i = 0; i < 5 && melee.alive; i++) {
+  for (let i = 0; i < 6 && melee.alive; i++) {
     attr.tick();
     combat.performAttack(tw, melee);
     hits.push(melee.currentHP);
   }
-  T(`近战兵恰好3发打死（2发后剩 ${Math.round(hits[1] ?? -1)} HP，第 ${hits.length} 发死）`,
-    hits.length === 3 && hits[1] > 0 && !melee.alive);
-  // 升温层数（3 发后 = 3 层，最多 4）
+  T(`AP=0时恰好4发打死近战（第3发后剩 ${Math.round(hits[2] ?? -1)} HP，第 ${hits.length} 发死）`,
+    hits.length === 4 && hits[2] > 0 && !melee.alive);
+  // 升温层数（4 发后 = 4 层，已达上限）
   const heat = fx.getEffectByName(tw.id, '升温');
-  T('升温每次命中+1层（3发命中后=3层，display纯计数不影响属性）', !!heat && heat.stacks === 3 && heat.blueprint.kind === 'display');
+  T('升温每次命中+1层（4发命中后=4层，display纯计数不影响属性）', !!heat && heat.stacks === 4 && heat.blueprint.kind === 'display');
   // 换目标重置
   const m2 = mkMinion(ents, 'siege');
   attr.tick();

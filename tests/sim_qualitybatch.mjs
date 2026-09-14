@@ -563,9 +563,11 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
     currentHP: 100, _mana: 20, _skillInstances: [{ id: 601, skillId: 'active_corrupt_poison', state: {} }] };
   ents.add(mageLike);
   ui._showManaStatsModal(mageLike);
-  T('Q6⑥-法力统计弹窗展示法力恢复(属性)/基础法力恢复/法力获取加成/法力回复(实际) 四项',
-    captured && /法力恢复（属性）/.test(captured._html) && /基础法力恢复/.test(captured._html)
-    && /法力获取加成/.test(captured._html) && /法力回复（实际每秒）/.test(captured._html));
+  // 本轮：用户"没有的括号都给我删了"，这两行的标签去掉了括号（法力恢复（属性）→
+  // 法力恢复属性；法力回复（实际每秒）→实际每秒法力回复），断言跟着改。
+  T('Q6⑥-法力统计弹窗展示法力恢复属性/基础法力恢复/法力获取加成/实际每秒法力回复 四项',
+    captured && /法力恢复属性/.test(captured._html) && /基础法力恢复/.test(captured._html)
+    && /法力获取加成/.test(captured._html) && /实际每秒法力回复/.test(captured._html));
 
   delete globalThis.document;
 

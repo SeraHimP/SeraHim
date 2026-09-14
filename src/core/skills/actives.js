@@ -44,13 +44,21 @@ export const actives = {
   // 远程是延迟消耗但没有额外增益/叠层），不能照搬四条大型小兵那一档的强度。
 
   // ==================== 近战兵：本能格挡（自增益，固定格挡）====================
+  // ==================== 近战兵：本能格挡 → 伤害转化（用户本轮定稿）====================
+  // 用户："近战兵主动技能由格挡+2改为+10%伤害转化（2s，可叠加）。" 原来是固定
+  // 格挡 2 点（damageBlock，效果太小、后期几乎无感），改成 +10% 伤害转化
+  // （damageConvertPct，受击按比例转临时护盾，量级会随对手伤害自然放大）；
+  // "可叠加"走 stackPolicy:'stack'（每次施放 +1 层，刷新 2 秒时限），maxStacks
+  // 先给 5（50% 封顶）占位——用户没给上限，考虑到近战兵满血 25 点法力、无被动
+  // 回蓝，只靠攻击(+1)/受击(+2)全局法力攒，天然打不快，封顶数值本身待后续观察
+  // 是否需要放开。
   active_melee_block: {
-    id: 'active_melee_block', name: '本能格挡', icon: '🛡️', color: '#95a5a6', category: 'active',
+    id: 'active_melee_block', name: '本能防御', icon: '🛡️', color: '#95a5a6', category: 'active',
     applicableTypes: ['melee'],
-    defaultParams: { block: 2, durationSec: 2 },
+    defaultParams: { convertPct: 10, durationSec: 2, maxStacks: 5 },
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后，获得 ${p.block} 点伤害格挡，持续 ${p.durationSec} 秒。`;
+      return `法力攒满后，获得 ${p.convertPct}% 伤害转化，持续 ${p.durationSec} 秒，可叠加（最多 ${p.maxStacks} 层）。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
@@ -58,10 +66,13 @@ export const actives = {
       if (!self || !self.alive) return false;
       const p = instance._params || actives.active_melee_block.defaultParams;
       ctx.effectRegistry.apply(entityId, {
-        name: '本能格挡', icon: '🛡️', kind: 'stat', statKey: 'damageBlock',
-        flatValue: p.block ?? 2, duration: p.durationSec ?? 2,
-        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `伤害格挡+${p.block ?? 2}`,
+        name: '本能防御', icon: '🛡️', kind: 'stat', statKey: 'damageConvertPct',
+        // stackPolicy:'stack' 时 totalFlat = flatValue + perStackFlat×(stacks-1)——
+        // 两个都要给同一个值，否则第2层起不叠加任何数值（踩过的坑，见 EffectRegistry
+        // ._recalcEffectValues 的公式）。
+        flatValue: p.convertPct ?? 10, perStackFlat: p.convertPct ?? 10, duration: p.durationSec ?? 2,
+        stackable: true, maxStacks: p.maxStacks ?? 5, stackPolicy: 'stack', uniquePassive: true,
+        description: `伤害转化+${p.convertPct ?? 10}%（{stacks}层）`,
       }, 'active_melee_block', { casterId: entityId });
       return true;
     },

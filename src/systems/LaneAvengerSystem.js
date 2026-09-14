@@ -99,13 +99,17 @@ export class LaneAvengerSystem {
   }
 
   _applyTo(entityId, stacks) {
-    // 用户定稿：哀兵改为【只针对敌方小兵】的攻防加成——每层 +4% 对敌方小兵伤害、
-    // +10% 减免来自敌方小兵的伤害。区别于旧版的"通用增幅/减免"（那会连带强化对塔输出）。
-    // 这两项是【条件加成】：stat 管线只看防御方自身、拿不到攻击来源，故与"防御护盾"同款，
-    // 由 CombatSystem 在结算处读层数生效；此处只负责挂效果（携带层数 + 供 UI 展示）。
+    // 用户定稿：哀兵是【只针对敌方小兵】的攻防加成——+对敌方小兵伤害、-受敌方小兵
+    // 伤害。区别于旧版的"通用增幅/减免"（那会连带强化对塔输出）。这两项是【条件
+    // 加成】：stat 管线只看防御方自身、拿不到攻击来源，故与"防御护盾"同款，由
+    // CombatSystem 在结算处读层数生效；此处只负责挂效果（携带层数 + 供 UI 展示）。
+    //
+    // 本轮：数值从 4%/10% 改为 7%/3%（用户定稿），顺手把这两个原来写死在这里的
+    // 字面量软编码进 CONFIG.avenger（Iron Law 2）。范围仍只对小兵生效——用户这轮
+    // 把描述改成了"对敌方单位"，问过之后确认是换个说法，机制不含塔/龙。
     const base = [
-      ['avengerVsMinionAmpPct', 4, '对敌方小兵伤害'],
-      ['avengerVsMinionRedPct', 10, '减免敌方小兵伤害'],
+      ['avengerVsMinionAmpPct', CONFIG.avenger?.ampPctPerStack ?? 7, '对敌方小兵伤害'],
+      ['avengerVsMinionRedPct', CONFIG.avenger?.redPctPerStack ?? 3, '减免敌方小兵伤害'],
     ];
     for (const [key, per, label] of base) {
       this.fx.apply(entityId, {

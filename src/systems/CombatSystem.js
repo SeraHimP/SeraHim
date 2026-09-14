@@ -650,7 +650,9 @@ export class CombatSystem {
     let pierceHeat = 0;   // #10：穿透弹升温强度（0..1），仅作渲染提示挂到子弹上，不进伤害
 
     // v36（Q1）：穿透型升温倍率——【开火时刻】按"塔→当前目标"的已积层数结算。
-    // 第1下打某目标 = 100%（0层），第2下 = 130%（1层）… 每层 +30%。切目标/目标变化时重置。
+    // 第1下打某目标 = 100%（0层），第2下起每层 +台阶。切目标/目标变化时重置。
+    // Q3（本轮，返工版）：每层的台阶不再是写死的 30%，改成随法术强度变化，见
+    // weapon_piercing._perStackFraction 的头注（用户纠正"法术强度影响每层增伤的数值"）。
     if (weaponDef && weaponDef.id === 'weapon_piercing') {
       const st = weaponInst.state || (weaponInst.state = { heatTarget: null, heatStacks: 0 });
       // v51.1 bug 修复：用户："防御塔的升温条应该随着升温状态结束后清零。"
@@ -666,7 +668,7 @@ export class CombatSystem {
         st.heatTarget = null; st.heatStacks = 0;
         if (liveHeat) this.effects.remove(liveHeat.id);
       }
-      const per = weaponDef.HEAT_PER_STACK ?? 0.30;
+      const per = weaponDef._perStackFraction ? weaponDef._perStackFraction(atkStats) : 0.30;
       preDamageMult *= 1 + (st.heatStacks || 0) * per;
       pierceHeat = Math.min(1, (st.heatStacks || 0) / (weaponDef.HEAT_MAX_STACKS || 4));
     }
@@ -684,10 +686,29 @@ export class CombatSystem {
       }
     }
 
+    // ==================== Q2（本轮）：自适应伤害的基础伤害数值也按 LoL 真实规则算 ====================
+    // 用户查证 LoL Wiki 后定稿："如果法强远远大于攻击力，造成的伤害就是基于法强的
+    // 魔法伤害而不是物理伤害，规则照搬LoL"。真实规则原文（LoL Wiki "Adaptive damage"）：
+    //   "Adaptive damage deals either physical or magic damage depending on the damage
+    //   contribution from your attack damage and ability power to the effect's damage
+    //   formula. Greater bonus damage from the AD ratio results in physical damage,
+    //   while greater bonus damage from the AP ratio results in magic damage."
+    // 关键点：真实的自适应技能公式里 AD 项和 AP 项是**同时相加**进总伤害的（比如
+    // "25%额外攻击力+15%法术强度"），伤害类型只是看哪一项贡献更大来定，不是"赢家
+    // 通吃、另一项完全不算"。这游戏里没有"技能公式"这个概念——普攻的基础伤害就是
+    // 唯一的一条数字，所以按 1:1 直接把攻击力与法术强度相加，作为对这条真实规则
+    // 最贴近的移植：不引入任何新的权重配置，两个属性同等地位。
+    // 类型判定（resolveAttackType）沿用原有比较逻辑，读的是同一份 AD/AP，天然一致。
+    // 非自适应类型（塔/兵手动设成固定 physical/magic/true，或武器另有自己的伤害
+    // 结算如闪电杖/腐蚀型）不受影响——只在 attackType==='adaptive' 时才相加。
+    const isAdaptiveType = atkStats.attackType === 'adaptive';
+    const baseDamage = isAdaptiveType
+      ? (atkStats.attackDamage || 0) + (atkStats.abilityPower || 0)
+      : (atkStats.attackDamage || 0);
     const hitInfo = {
       attackerId: attacker.id,
       targetId: target.id,
-      baseDamage: atkStats.attackDamage || 0,
+      baseDamage,
       onHitFixed: atkStats.onHitDamage || 0,
       onHitPctBase: (atkStats.onHitPercentDamage || 0) / 100,
       dmgAmp: atkStats.damageAmpPct || 0,

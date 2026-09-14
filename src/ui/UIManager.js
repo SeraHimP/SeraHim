@@ -908,18 +908,37 @@ export class UIManager {
    * 这条改动会直接推翻这个已调好平衡的设计。所以这里没有改伤害公式，主格子
    * 数值仍然是 attackDamage 本身（跟点开窗口里的【物理攻击】数字暂时相等，
    * 如实反映当前引擎行为），只做了结构拆分：见上面 RELATED_STATS 的改动。
-   * 如果确实要让magic-resolved的自适应单位改吃法术强度，需要用户先确认这是
-   * 有意的数值改动（尤其是术士兵这个案例），而不是顺着这次显示修正一起做掉。
+   * v51.28（Q2 追加，本轮，作废）：上面那段判断当时是对的——那时 hitInfo.baseDamage
+   * 恒等于 attackDamage，法术强度确实从不参与基础伤害。这次用户查了 LoL Wiki 后
+   * 定稿"规则照搬LoL"：真实的 Adaptive damage 是【AD 项与 AP 项同时相加进总伤害】，
+   * 伤害类型只是看哪项贡献更大（不是赢家通吃）。CombatSystem.performAttack 的
+   * hitInfo.baseDamage 已经按这条规则改成 attackType==='adaptive' 时
+   * attackDamage+abilityPower（见那段头注）——伤害公式现在真的会用到法术强度了，
+   * 这里的显示跟着换成同一个和，不再是"暂时相等"的占位状态。
    */
   _attackDamageHtml(entity, stats) {
-    const p = this._statParts('attackDamage', entity, stats);
-    if (!p) return '';
     const TYPE_ICON = { physical: '⚔️', magic: '✨', true: '💠' };
     const rawType = entity?.baseStats?.attackType;
-    const icon = rawType === 'adaptive'
+    const isAdaptive = rawType === 'adaptive';
+    const icon = isAdaptive
       ? (TYPE_ICON[this.attrCalc.resolveAttackType(stats)] || TYPE_ICON.physical)
       : (TYPE_ICON[rawType] || TYPE_ICON.physical);
-    return `${icon} <span class="${p.cls}">${p.now}</span>`;
+    if (!isAdaptive) {
+      const p = this._statParts('attackDamage', entity, stats);
+      if (!p) return '';
+      return `${icon} <span class="${p.cls}">${p.now}</span>`;
+    }
+    // 自适应：显示值 = 攻击力+法术强度（与实际造成的基础伤害同一个数），基准同样
+    // 是基础攻击力+基础法术强度，两边口径一致，delta 着色才有意义。
+    const now = (stats?.attackDamage || 0) + (stats?.abilityPower || 0);
+    const baseAD = entity?.baseStats?.attackDamage, baseAP = entity?.baseStats?.abilityPower;
+    const r = (v) => (Math.abs(v) < 10 ? Math.round(v * 100) / 100 : Math.round(v));
+    if (!Number.isFinite(baseAD) && !Number.isFinite(baseAP)) return `${icon} <span>${r(now)}</span>`;
+    const base = (baseAD || 0) + (baseAP || 0);
+    const delta = now - base;
+    const clean = Math.abs(delta) < 0.005 ? 0 : delta;
+    const cls = clean > 0 ? 'stat-up' : clean < 0 ? 'stat-down' : '';
+    return `${icon} <span class="${cls}">${r(now)}</span>`;
   }
 
   _attackSpeedHtml(entity, stats) {
@@ -1221,6 +1240,35 @@ export class UIManager {
     </div>`;
   }
 
+  /**
+   * 本轮：环状图没有数据时的占位——用户"如果没有数据也要显示图标，不要只显示文字
+   * 暂无数据（占位）"。用一个和环状图同尺寸的圆圈占位（虚线描边，中间摆图标），
+   * 保持"这里本来是个环状图"的视觉连续性，而不是一行突兀的纯文字。
+   */
+  _emptyChartHtml(icon, label, size = 84) {
+    return `<div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;">
+      <div style="width:${size}px;height:${size}px;flex:none;border-radius:50%;
+        border:2px dashed var(--border-soft, rgba(255,255,255,0.15));
+        display:flex;align-items:center;justify-content:center;font-size:${Math.round(size * 0.36)}px;
+        opacity:0.5;">${icon}</div>
+      <div style="flex:1;min-width:0;color:var(--text-mute);font-size:12px;">${label}</div>
+    </div>`;
+  }
+
+  /**
+   * 本轮：统计窗口的分区卡片——用户"针对生命窗口的排版进行优化"。原来每个小节只是
+   * 一行小标题+一段内容平铺下去，视觉上分不出层次；现在每个小节包一层浅色卡片
+   * （轻微背景色+圆角+内边距），标题和内容之间有明确的容器边界，一眼能分清"这些
+   * 数字属于哪一组"。
+   */
+  _statsSectionHtml(title, innerHtml) {
+    return `<div style="background:var(--panel-soft, rgba(255,255,255,0.04));border-radius:8px;
+      padding:8px 10px;margin-bottom:8px;">
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">${title}</div>
+      ${innerHtml}
+    </div>`;
+  }
+
 
   /**
    * v51.27（Q6）：生命值统计窗口——用户"属性窗口中生命值/法力条也可点击……点开可以
@@ -1285,48 +1333,57 @@ export class UIManager {
     }));
     if (restTotal > 0) bySourceSegments.push({ label: '其它', value: restTotal, color: ENV_SOURCE_COLOR });
 
+    // 本轮：① 删掉所有小节标题/图例里的括号补充说明（用户"没有的括号都给我删了"）——
+    // 该信息要么并入正文措辞，要么干脆去掉，不再用括号夹注。② 每个小节包一层卡片
+    // （见 _statsSectionHtml），排版上分出层次。③ 环状图没数据时改成图标占位
+    // （见 _emptyChartHtml），不再是一行孤零零的"暂无数据"文字。④ 弹窗整体加宽，
+    // 环状图+图例横向排布时不再局促。
     const body = `
       <div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
         生命值：<b>${Math.round(cur)}</b> / ${Math.round(maxHP)}
       </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">经双抗结算后的实际生命值（未计穿透）</div>
-      <div style="font-size:12px;margin-bottom:10px;">
-        ${this._statsRowHtml('对物理伤害', `<b>${ehpPhys}</b>`)}
-        ${this._statsRowHtml('对魔法伤害', `<b>${ehpMagic}</b>`)}
-      </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">承伤 — 按类型（合计 ${Math.round(dmgTotal)}）</div>
-      ${this._donutChartHtml([
-        { label: '物理伤害', value: dmg.physical, color: '#e0a458' },
-        { label: '魔法伤害', value: dmg.magic, color: '#8b7fe0' },
-        { label: '真实伤害', value: dmg.true, color: '#4fc3c7' },
-      ]) || `<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">暂无数据</div>`}
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">承伤 — 按来源（合计 ${Math.round(dmgTotal)}）</div>
-      ${this._donutChartHtml(bySourceSegments) || `<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">暂无数据</div>`}
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">减免与格挡</div>
-      <div style="font-size:12px;margin-bottom:10px;">
-        ${this._statsRowHtml('已缓和的伤害（抗性/减伤/格挡，不含护盾吸收）', `<b>${Math.round(mitigated)}</b>`)}
-        ${this._statsRowHtml('减免率', `<b>${mitigatedRatio}%</b>`)}
-      </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">护盾构成（当前合计 ${Math.round(shieldTotal)}）</div>
-      ${this._donutChartHtml([
-        { label: '护盾（不衰减不回复）', value: sp, color: '#c9cdd6' },
-        { label: '固定护盾（脱战后回满）', value: sf, color: '#8b93a3' },
-        { label: '临时护盾（不会回满）', value: st, color: '#5b6270' },
-      ]) || `<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">暂无护盾</div>`}
-      <div style="font-size:12px;margin-bottom:10px;">
-        ${this._statsRowHtml('累计已获得护盾', `<b>${Math.round(shieldGained)}</b>`)}
-      </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">生命恢复</div>
-      <div style="font-size:12px;">
-        ${this._statsRowHtml('累计生命恢复量', `<b>${Math.round(healTotal)}</b>`)}
-        ${this._statsRowHtml('基础生命值恢复', `<b>${Math.round(regenMod * 1000) / 10}%</b>`)}
-      </div>
+      ${this._statsSectionHtml('经双抗结算后的实际生命值，未计穿透', `
+        <div style="font-size:12px;">
+          ${this._statsRowHtml('对物理伤害', `<b>${ehpPhys}</b>`)}
+          ${this._statsRowHtml('对魔法伤害', `<b>${ehpMagic}</b>`)}
+        </div>
+      `)}
+      ${this._statsSectionHtml(`承伤 — 按类型，合计 ${Math.round(dmgTotal)}`,
+        this._donutChartHtml([
+          { label: '物理伤害', value: dmg.physical, color: '#e0a458' },
+          { label: '魔法伤害', value: dmg.magic, color: '#8b7fe0' },
+          { label: '真实伤害', value: dmg.true, color: '#4fc3c7' },
+        ]) || this._emptyChartHtml('📊', '暂无数据'))}
+      ${this._statsSectionHtml(`承伤 — 按来源，合计 ${Math.round(dmgTotal)}`,
+        this._donutChartHtml(bySourceSegments) || this._emptyChartHtml('📊', '暂无数据'))}
+      ${this._statsSectionHtml('减免与格挡 · 不含护盾吸收', `
+        <div style="font-size:12px;">
+          ${this._statsRowHtml('已缓和的伤害', `<b>${Math.round(mitigated)}</b>`)}
+          ${this._statsRowHtml('减免率', `<b>${mitigatedRatio}%</b>`)}
+        </div>
+      `)}
+      ${this._statsSectionHtml(`护盾构成，当前合计 ${Math.round(shieldTotal)}`, `
+        ${this._donutChartHtml([
+          { label: '护盾 · 不衰减不回复', value: sp, color: '#c9cdd6' },
+          { label: '固定护盾 · 脱战后回满', value: sf, color: '#8b93a3' },
+          { label: '临时护盾 · 不会回满', value: st, color: '#5b6270' },
+        ]) || this._emptyChartHtml('🛡', '暂无护盾')}
+        <div style="font-size:12px;">
+          ${this._statsRowHtml('累计已获得护盾', `<b>${Math.round(shieldGained)}</b>`)}
+        </div>
+      `)}
+      ${this._statsSectionHtml('生命恢复', `
+        <div style="font-size:12px;">
+          ${this._statsRowHtml('累计生命恢复量', `<b>${Math.round(healTotal)}</b>`)}
+          ${this._statsRowHtml('基础生命值恢复', `<b>${Math.round(regenMod * 1000) / 10}%</b>`)}
+        </div>
+      `)}
     `;
     const overlay = document.createElement('div');
     overlay.id = 'hpStatsOverlay';
     overlay.className = 'modal-overlay open';
     overlay.innerHTML = shellHtml({
-      title: '❤️ 生命统计', body, crumb: '', width: '440px',
+      title: '❤️ 生命统计', body, crumb: '', width: '640px',
       footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);
@@ -1354,10 +1411,10 @@ export class UIManager {
       body += `
         <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px;">法力回复相关属性</div>
         <div style="font-size:12px;">
-          ${this._statsRowHtml('法力恢复（属性）', `<b>${Math.round((stats.manaRegen || 0) * 10) / 10}</b>`)}
+          ${this._statsRowHtml('法力恢复属性', `<b>${Math.round((stats.manaRegen || 0) * 10) / 10}</b>`)}
           ${this._statsRowHtml('基础法力恢复', `<b>${Math.round(regenMod * 1000) / 10}%</b>`)}
           ${this._statsRowHtml('法力获取加成', `<b>${Math.round((stats.manaGainPct || 0) * 10) / 10}%</b>`)}
-          ${this._statsRowHtml('法力回复（实际每秒）', `<b>${Math.round((info.effRegen || 0) * 10) / 10}</b>`)}
+          ${this._statsRowHtml('实际每秒法力回复', `<b>${Math.round((info.effRegen || 0) * 10) / 10}</b>`)}
         </div>
       `;
     }
@@ -1365,7 +1422,7 @@ export class UIManager {
     overlay.id = 'hpStatsOverlay';
     overlay.className = 'modal-overlay open';
     overlay.innerHTML = shellHtml({
-      title: '💧 法力统计', body, crumb: '', width: '380px',
+      title: '💧 法力统计', body, crumb: '', width: '460px',
       footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);

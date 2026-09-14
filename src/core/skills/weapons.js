@@ -29,13 +29,39 @@ export const weapons = {
     // （armorPenPercent/magicPenPercent 本来就是百分比穿透，不是固定值穿透），
     // "双穿"又是简写；onEquip 里实际挂的是 armorPenPercent+30 与 magicPenPercent+30
     // 两条独立效果（见下方 onEquip），文案直接照实际效果分开写成两个百分比。
-    // Q3（本轮）：补一条"升温·加成伤害"的独立被动描述——与升温倍率（放大普攻本身）
-    // 是两件事，这笔是命中后额外造成的一笔物理伤害，随层数、随攻击力与法术强度一起涨。
-    description: '唯一被动——升温：连续攻击同一目标，伤害逐次提升（100%→130%→160%…每层+30%，最高+120%），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。\n唯一被动——升温·加成伤害：每层额外造成一笔物理伤害（层数×(20%攻击力+20%法术强度)）。',
-    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（{val}%=100%+30%×层数），切换目标重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。\n唯一被动——升温·加成伤害：每层额外造成一笔物理伤害（层数×(20%攻击力+20%法术强度)）。',
-    computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '升温'); return 100 + 30 * (e ? e.stacks : 0); },
-    HEAT_MAX_STACKS: 4,          // 最多 4 层（+120% → 220% 上限），与旧上限一致
-    HEAT_PER_STACK: 0.30,
+    //
+    // ==================== Q3（本轮，返工版）：升温每层的倍率不再是固定 30% ====================
+    // 用户第一版原话"每层额外造成（20%+X%×法术强度）伤害"，我第一次理解成"额外开一笔
+    // 独立加成伤害"，被用户否掉并纠正："我说的是法术强度影响每层增伤的数值，按照我的来"
+    // ——意思是法术强度影响的是【每层这个倍率台阶本身有多高】，不是另开一笔伤害。所以
+    // 现在的实现是：每层的倍率台阶 = (piercingHeatBasePct + piercingHeatApPct%×法术强度)%，
+    // 替换掉原来写死的 30%；除此之外完全是同一套机制（preDamageMult，开火时刻按层数
+    // 结算，只放大普攻本身），没有新增第二笔伤害。具体计算见 _perStackFraction，两个
+    // 百分比占位在 CONFIG.tuning.weapons（用户原话"平衡先不用做"，数值待后续专项确认）。
+    get description() {
+      const W = CONFIG.tuning?.weapons || {};
+      const basePct = W.piercingHeatBasePct ?? 20;
+      const apCoefPct = W.piercingHeatApPct ?? 20;
+      return `唯一被动——升温：连续攻击同一目标，伤害逐次提升（每层+(${basePct}%+${apCoefPct}%×法术强度)，最多4层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。`;
+    },
+    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（{val}%，每层提升幅度随法术强度变化），切换目标重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。',
+    // 每层的倍率台阶（小数，0.30 = 30%）：基础值 + AP系数% × 法术强度，两个都是软编码，
+    // CombatSystem 的开火结算、这里的文案展示（computeCurrent/onDealtDamage 的升温效果）
+    // 三处共用同一个函数，不许各写一份——这正是屠戮那次"文案与结算必须同源"的教训。
+    _perStackFraction(atkStats) {
+      const W = CONFIG.tuning?.weapons || {};
+      const basePct = W.piercingHeatBasePct ?? 20;
+      const apCoefPct = W.piercingHeatApPct ?? 20;
+      return (basePct + (apCoefPct / 100) * (atkStats?.abilityPower || 0)) / 100;
+    },
+    computeCurrent: (entity, ctx) => {
+      const e = ctx.effectRegistry.getEffectByName(entity.id, '升温');
+      const stacks = e ? e.stacks : 0;
+      const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const per = weapons.weapon_piercing._perStackFraction(atkStats);
+      return Math.round((1 + stacks * per) * 100);
+    },
+    HEAT_MAX_STACKS: 4,          // 最多 4 层，与旧上限一致
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       instance.state = instance.state || {};
@@ -64,30 +90,6 @@ export const weapons = {
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive) return;
 
-      // ==================== Q3（本轮）：每层升温额外的一笔加成伤害 ====================
-      // 用户："穿透型是每层额外造成（20%+X%×法术强度）伤害"——这是在已有的升温倍率
-      // （preDamageMult，命中前按层数放大普攻本身，机制不变）之外，另开的一笔独立
-      // 加成伤害：层数 ×（攻击力×piercingStackAdPct% + 法术强度×piercingStackApPct%）。
-      // "20%"那部分读作攻击力（呼应用户原话"穿透型子弹和攻击力联动更高一些"），
-      // 具体两个百分比用户都没给最终数字，先各按 20% 占位（CONFIG.tuning.weapons，
-      // 平衡本轮不做，占位数值见那边注释）。用的层数是【这一下命中之前】已经叠好的
-      // 层数（与 preDamageMult 用的是同一份 st.heatStacks，在下面 +1 之前先取快照）——
-      // 直接造成物理伤害（_noProc 避免自己触发自己），不进塔的自适应判定。
-      const stacksThisHit = instance.state?.heatStacks || 0;
-      if (stacksThisHit > 0) {
-        const attacker = ctx.entityContainer.get(attackerId);
-        if (attacker && attacker.alive && ctx.combat && ctx.attrCalc) {
-          const atkStats = ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attackerId));
-          const W = CONFIG.tuning?.weapons || {};
-          const perStack = (atkStats.attackDamage || 0) * (W.piercingStackAdPct ?? 20) / 100
-            + (atkStats.abilityPower || 0) * (W.piercingStackApPct ?? 20) / 100;
-          const bonus = stacksThisHit * perStack;
-          if (bonus > 0) {
-            ctx.combat.performAttackDirect(attackerId, targetId, bonus, 'physical', { _noProc: true });
-          }
-        }
-      }
-
       // ---- 升温（命中后叠层，供【下一次】对同一目标的攻击提升伤害） ----
       // 注意：本次命中用的倍率已在 performAttack 开火时刻算好（读的是命中前的层数）；
       // 这里在命中后 +1 层，作用于下一次。切换目标由 performAttack 侧重置（见 CombatSystem）。
@@ -97,18 +99,24 @@ export const weapons = {
         instance.state.heatStacks = Math.min(maxS, (instance.state.heatStacks || 0) + 1);
       } else {
         instance.state.heatTarget = targetId;
-        instance.state.heatStacks = 1; // 第一次命中该目标后 → 下一下是第2下（+30%）
+        instance.state.heatStacks = 1; // 第一次命中该目标后 → 下一下是第2下
       }
       // 展示效果：纯计数，不含任何属性（statKey 用一个不存在于 stats 的 key，绝不影响数值）
       const st = instance.state.heatStacks;
+      // Q3（本轮，返工版）：每层的倍率台阶现在随法术强度变化（见上方 _perStackFraction
+      // 的头注——用户纠正"法术强度影响每层增伤的数值"），展示文案跟着用同一个函数算，
+      // 不能再写死 30。
+      const attacker = ctx.entityContainer.get(attackerId);
+      const atkStats = attacker ? ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attackerId)) : {};
+      const nextMultPct = Math.round((1 + st * weapons.weapon_piercing._perStackFraction(atkStats)) * 100);
       // 展示效果：纯计数。用 alwaysShowStacks + initialStacks 让状态栏直接显示层数徽标，
       // kind:'display' + 无 statKey → 绝不进属性合成管线（不影响任何数值）。
       ctx.effectRegistry.apply(attackerId, {
         name: '升温', icon: '🔥', kind: 'display',
         duration: 6, stackable: true, maxStacks: maxS, stackPolicy: 'refresh',
         alwaysShowStacks: true, uniquePassive: true,
-        descTemplate: `唯一被动——升温：对当前目标下次伤害倍率 ${100 + 30 * st}%（升温 ${st} 层）。`,
-        description: `升温 ${st} 层 → 下次 ${100 + 30 * st}% 伤害`,
+        descTemplate: `唯一被动——升温：对当前目标下次伤害倍率 ${nextMultPct}%（升温 ${st} 层）。`,
+        description: `升温 ${st} 层 → 下次 ${nextMultPct}% 伤害`,
       }, 'weapon_piercing_heat', { initialStacks: st });
 
       // ---- v43 Q10：破甲已删除 ----

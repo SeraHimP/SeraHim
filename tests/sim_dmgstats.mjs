@@ -198,10 +198,12 @@ async function world() {
   T('七⑤-环状图用 conic-gradient 画环、radial-gradient 遮罩抠洞（没有引入任何图表库）',
     /conic-gradient/.test(html) && /mask:radial-gradient/.test(html));
 
-  // 没有任何按来源数据时，不应该崩溃，应该显示"暂无数据"这类占位而不是空白/报错
+  // 没有任何按来源数据时，不应该崩溃，应该显示图标占位而不是纯文字（本轮：用户"如果
+  // 没有数据也要显示图标，不要只显示文字暂无数据"，见 _emptyChartHtml）。
   const empty = mkEntity(ents, 'tower', { stats: { maxHP: 1000 } }, CONFIG);
   ui._showHpStatsModal(empty);
-  T('七⑥-没有按来源数据时优雅降级，不抛异常且有占位文案', typeof captured._html === 'string' && /暂无数据/.test(captured._html));
+  T('七⑥-没有按来源数据时优雅降级，不抛异常且用图标占位（不只是纯文字）',
+    typeof captured._html === 'string' && /暂无数据/.test(captured._html) && /dashed/.test(captured._html));
 }
 
 done();

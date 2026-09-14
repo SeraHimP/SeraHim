@@ -54,8 +54,7 @@ function equip(e, skillId, ents, fx, bus) {
   const dmgs = [];
   for (let i = 0; i < 4; i++) { attr.tick(); const b = t1.currentHP; combat.performAttack(tw, t1); dmgs.push(b - t1.currentHP); }
   const ratios = dmgs.map(d => d / dmgs[0]);
-  // 期望值 = 升温倍率（作用于普攻本身） + Q3新增的"每层加成伤害"（独立一笔，命中后
-  // 随本次命中前的层数结算，与普攻同一次 performAttack 内发生，因此会累进同一个 dmgs[i]）。
+  // 期望值 = 升温倍率（唯一一套机制，作用于普攻本身，没有第二笔独立伤害）。
   //
   // 变更史（都留着，省得后人再推一遍）：
   //   ① 最早只钉升温那一半，因为削抗当时是**无效的**：calcEffectiveArmor 无条件
@@ -64,13 +63,16 @@ function equip(e, skillId, ents, fx, bus) {
   //   ③ v43（Q10）：用户"穿透型太强了……直接改为固定+30%双穿和原来的升温。剩下的都不要了。"
   //      → 破甲整条删除。于是期望回到纯升温倍率，与 ① 的形状相同但含义不同：
   //      ① 是"削抗坏了所以看不出来"，③ 是"削抗被明确删掉了"。
-  //   ④ Q3（本轮）：塔改自适应伤害，穿透型新增"每层额外造成（AD/AP混合）加成伤害"——
-  //      这笔伤害与升温倍率同一次攻击内一起结算，纯升温倍率不再是这个测试能单独看到的
-  //      形状了，改成钉"升温倍率 + 加成伤害"两项合起来的总倍率。
-  //      这里 AD=100（mkTower 写死）、AP=0（未装备任何法强来源），加成伤害每层 =
-  //      stacks×(100×20%+0×20%) = stacks×20，换算成倍率就是 +0.2×stacks，
-  //      与升温倍率 +0.3×stacks 相加 = +0.5×stacks。
-  const want = [0, 1, 2, 3].map(i => 1 + 0.3 * i + 0.2 * i);
+  //   ④ Q3（本轮，第一版，已作废）：曾按"穿透型每层额外造成独立加成伤害"理解实现过，
+  //      被用户否掉并纠正——"我说的是法术强度影响每层增伤的数值，按照我的来"。
+  //   ⑤ Q3（本轮，返工版）：改成"升温每层的倍率台阶本身随法术强度变化"，台阶 =
+  //      (piercingHeatBasePct + piercingHeatApPct%×法术强度)%，替换掉写死的 30%。
+  //      这里 AP=0（mkTower 未装法强来源），台阶回落到占位默认的 20%（而不是旧的
+  //      30%），所以期望值是 1+0.2×i，不再是 1+0.3×i——数值变化是公式改对后的
+  //      自然结果，不是回归（占位数值本身待后续平衡专项确认）。
+  const W = CONFIG.tuning.weapons;
+  const per0 = (W.piercingHeatBasePct + (W.piercingHeatApPct / 100) * 0) / 100;
+  const want = [0, 1, 2, 3].map(i => 1 + per0 * i);
   T(`升温倍率 = ${want.map(v => v.toFixed(2)).join(',')}（实际 ${ratios.map(r => r.toFixed(2)).join(',')}）`,
     ratios.every((r, i) => Math.abs(r - want[i]) < 0.01));
   T('破甲已删除：命中不再给目标叠双抗削减（v43 Q10）',
