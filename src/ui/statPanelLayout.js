@@ -145,7 +145,13 @@ export const RELATED_STATS = {
   // v51.6：用户"子弹速度是写到攻击力点开的窗口里的"——bulletSpeed 本身已经在
   // extAttrGroups 的"进攻"组里有自己的格子（塔专属），这里额外把它也带进攻击力
   // 的关联属性区块，方便点开攻击力时一并看到。
-  attackDamage: ['adaptiveForce', 'bulletSpeed'],
+  // v51.28（Q2）：用户否掉了 v51.27（Q4）那版"攻击力自适应显示"——用户原话
+  // "攻击力你理解错了……应该有【物理攻击（就是原攻击力）】，【攻击力（自适应
+  // 伤害造成的实际伤害）】……物理攻击就移动到点开的窗口里"。自引用进自己的
+  // 关联属性区块，跟上面 healthRegen 自引用同一个手法——UIManager._showStatDoc
+  // 对 rk==='attackDamage' 出现在这份关联属性区块里的这一条做了特判，label
+  // 覆写成"物理攻击"。
+  attackDamage: ['adaptiveForce', 'bulletSpeed', 'attackDamage'],
   // v51.12：Q8——用户"补充关联属性……韧性显示在移速里，闪避率显示在伤害减免"，
   // 这是用户自己重新指定的归属，跟上面 v51 注释写的"护甲→闪避、魔抗→韧性"那版
   // 分类是两回事：闪避率从护甲搬到伤害减免，韧性从魔抗搬到移速。damageReduction/

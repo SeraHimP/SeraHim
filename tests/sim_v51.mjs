@@ -1751,10 +1751,18 @@ async function world() {
   // v51.12（Q8）：armor/magicResist 原来各挂了一条（闪避率/韧性），用户后来
   // 重新指定了归属——闪避率→伤害减免，韧性→移速——护甲/魔抗这两组关联属性
   // 因此被搬空了，不再是回归，换成断言新宿主 damageReduction/moveSpeed。
-  for (const k of ['abilityPower', 'attackDamage', 'damageReduction', 'moveSpeed']) {
+  // v51.28（Q2）：attackDamage 是例外——用户否掉了"攻击力自适应显示"那版理解，
+  // 定稿【物理攻击】（原攻击力）要挪进【攻击力】点开的窗口，见 statPanelLayout.js
+  // 的改动头注 + UIManager._showStatDoc 对 rk==='attackDamage' 的特判（label
+  // 覆写成"物理攻击"）——这是唯一一处**故意**自指的关联组，不能套用"不自指"
+  // 这条通用规则，单独判。
+  for (const k of ['abilityPower', 'damageReduction', 'moveSpeed']) {
     const arr = RELATED_STATS[k];
     T(`关④-补充关联组「${k}」非空且不自指`, Array.isArray(arr) && arr.length > 0 && !arr.includes(k));
   }
+  T('关④-补充关联组「attackDamage」非空且自指（用于展示【物理攻击】，见 Q2）',
+    Array.isArray(RELATED_STATS.attackDamage) && RELATED_STATS.attackDamage.length > 0
+    && RELATED_STATS.attackDamage.includes('attackDamage'));
   T('关④b-护甲/魔抗不再挂关联属性（闪避率/韧性已搬去伤害减免/移速）',
     !RELATED_STATS.armor && !RELATED_STATS.magicResist);
 
@@ -2869,8 +2877,12 @@ async function world() {
     !/export function stepEase/.test(bt));
 
   const ul = srcOf('src/presentation/UnitLayer.js');
+  // v51.28（Q1返工）：previewFrac 换成了 bigRegenPreviewFrac（阈值触发而不是常驻
+  // 预告，见 barTrail.js 头注），import 列表跟着改了，这条断言只关心 stepTrail
+  // 还在（法力/充能条主体拖尾的统一化没有变），不再钉 previewFrac 这个已经被
+  // 替换掉的旧名字。
   T('缓②-画板（UnitLayer）法力/充能条主体改回 stepTrail 拖尾（跟 HP 同一形状），resInfo.frac 保持真实值不被覆盖',
-    /import \{ stepTrail, previewFrac, TRAIL_COLOR \} from '\.\/barTrail\.js';/.test(ul)
+    /import \{ stepTrail, bigRegenPreviewFrac, deriveIncreaseColor, TRAIL_COLOR \} from '\.\/barTrail\.js';/.test(ul)
     && /const rt2 = stepTrail\(en\.dispResFrac \?\? resInfo\.frac, resInfo\.frac, dt, 1 \/ BAR_W\);/.test(ul)
     && !/resInfo = \{ \.\.\.resInfo, frac: en\.dispResFrac \};/.test(ul));
   T('缓③-资源种类切换时直接贴齐，不从旧种类的数值缓过来（比如法力条切充能条不该有一条"跨种类"的缓动）',

@@ -31,7 +31,7 @@ const suites = [
   'sim_instancing.mjs', 'sim_navgrid.mjs', 'sim_mapeditor.mjs', 'sim_mapeditorlive.mjs', 'sim_waveaction.mjs',
   'sim_multifaction.mjs', 'sim_mapcomposition.mjs', 'sim_imageimport.mjs', 'sim_wavecompmap.mjs',
   'sim_neutralcamp.mjs', 'sim_lanealign.mjs', 'sim_globalaura.mjs', 'sim_frostbridge.mjs', 'sim_navoutline.mjs', 'sim_towerbase.mjs', 'sim_foreststyle.mjs', 'sim_boundarydecor.mjs',
-  'sim_qualitybatch.mjs',
+  'sim_qualitybatch.mjs', 'sim_barinc.mjs',
 ];
 
 const args = process.argv.slice(2);

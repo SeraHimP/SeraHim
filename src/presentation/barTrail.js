@@ -63,28 +63,122 @@ export function stepTrail(disp, real, dt, snapEps) {
  */
 
 /**
- * ==================== v51.27（Q1）："增加特效"预告条 ====================
- * 用户："进度条主体大幅削弱动画效果（几乎看不出来），用拖尾特效展示。……如果某
- * 单位在固定时间内要增加一定数额的值，就会在进度条高位出出现'拖尾特效'同款的
- * 一个显示（但是不要长得一样要做区分），就是告诉这个单位要回这么多血或者是法力。"
+ * ==================== v51.28（Q1返工）："增加特效"改为阈值触发 ====================
+ * 用户否掉了 v51.27 那版："增加特效不好！增加特效应该是短时间内获得大量百分比
+ * 才会触发！要不然太乱了看起来。" 举例："某状态是10秒内获得50%生命值，这个时候
+ * 就要10秒一直显示即将获得生命值。"
  *
- * 预告的量 = 接下来 windowSec 秒内、按【当前实际每秒回复速率】能回到的份额，
- * 换算成条的宽度分数。画在真实值的高位一侧（拖尾画在掉血/掉法力那侧的低位，
- * 这个画在回复方向的高位，位置天然区分；调用方再配一个跟拖尾色不同的颜色，
- * 双重区分——见 CONFIG.ui.barIncreasePreview.color）。
+ * 旧版的问题：只要被动生命/法力恢复 >0 就常驻显示"未来固定 1 秒能回多少"——
+ * 绝大多数单位一直挂着被动回复，等于绝大多数血条一直贴着这条特效，观感确实很乱，
+ * 而且这条特效根本没有反映"多久之后能回满/回到多少"，只是一小段固定宽度。
  *
- * 不需要维护帧间状态：纯粹是"当前速率 × 固定窗口"的即时值，速率变了下一帧
- * 自然跟着变，不存在"追不追得上"的动画收尾问题（拖尾才有那个问题）。
+ * 新规则：只统计**临时性**（remainingTime 有限、不是 Infinity 的永久属性）、
+ * 直接修正 healthRegen/manaRegen 这两个属性的效果实例（kind:'stat'，与
+ * AttributeCalculator._calc 里聚合属性用的是同一份数据，参见该文件对
+ * blueprint.statKey/totalFlat 的读法）——这类效果本来就是"限时内按某个速率
+ * 回复"的形状，不需要新开一套"限时内定量恢复"的效果种类。
+ * 对每个满足"限时"（remainingTime <= maxWindowSec，太长的不算"短时间"）的效果，
+ * 把它剩余时间内还能回复的总量（flat 速率 × 剩余秒数）算出来，换算成占上限的
+ * 比例；只有这个比例达到 thresholdFrac（默认 12%）才触发显示。
  *
- * @param effRegenPerSec 实际每秒回复速率（已经乘过 regenMod/治疗强度等系数）；
- *                        <=0 时不预告（掉血/掉法力没有"即将增加"这回事）。
- * @param max 该资源的上限（生命上限/法力上限）；<=0 时无意义。
- * @param realFrac 当前真实占比（0~1），预告条不能超过 1（顶到满就截断）。
- * @param windowSec 预告的时间窗口（秒），来自 CONFIG.ui.barIncreasePreview.windowSec。
- * @returns 预告条的宽度分数（0~1，已经夹到 [0, 1-realFrac]）。
+ * 效果本身的 remainingTime 每帧都在减少，这个函数每帧都用当前 remainingTime
+ * 重新算一遍，天然实现"10 秒内持续显示，随时间推移逐渐变窄，效果到期同时
+ * 消失"——不需要额外维护帧间状态（跟旧版一样是纯函数，只是输入换成了效果表）。
+ *
+ * 只看 flat（totalFlat），不看 percentValue：healthRegen/manaRegen 本身是
+ * 一个"每秒固定量"的属性，percent 类型的调整发生在别的乘法阶段，混进这里的
+ * flat×剩余秒数换算会破坏"总量"这个语义，索性不纳入——如果以后需要百分比形式
+ * 的临时恢复效果，需要另外的设计，不在这次返工范围内。
+ *
+ * @param effects 该实体当前的效果实例数组（EffectRegistry.getEffects(id)）。
+ * @param statKey 'healthRegen' | 'manaRegen'。
+ * @param mult 该资源的实际生效系数（baseHealthRegenMod × 治疗强度，或
+ *             baseManaRegenMod × 法力获取加成），与聚合速率用同一份系数，
+ *             保证"这份判定"和"面板上显示的实际回复速率"口径一致。
+ * @param max 该资源上限；<=0 时不触发。
+ * @param realFrac 当前真实占比（0~1）。
+ * @param thresholdFrac 触发所需的最小总量占比（来自 CONFIG.ui.barIncreasePreview.thresholdFrac）。
+ * @param maxWindowSec 效果剩余时间超过这个数就不算"短时间"，不触发。
+ * @returns 预告条宽度分数（0~1，已夹到 [0, 1-realFrac]）；不满足阈值返回 0。
  */
-export function previewFrac(effRegenPerSec, max, realFrac, windowSec) {
-  if (!(effRegenPerSec > 0) || !(max > 0)) return 0;
-  const raw = (effRegenPerSec * windowSec) / max;
-  return Math.max(0, Math.min(1 - realFrac, raw));
+export function bigRegenPreviewFrac(effects, statKey, mult, max, realFrac, thresholdFrac, maxWindowSec) {
+  if (!(max > 0) || !Array.isArray(effects)) return 0;
+  let total = 0;
+  for (const eff of effects) {
+    if (!eff || eff.blueprint?.kind !== 'stat' || eff.blueprint.statKey !== statKey) continue;
+    const rt = eff.remainingTime;
+    if (!(rt > 0) || !isFinite(rt) || rt > maxWindowSec) continue;
+    const flat = (eff.totalFlat || 0) * mult;
+    if (flat > 0) total += flat * rt;
+  }
+  if (total <= 0) return 0;
+  const frac = total / max;
+  if (frac < thresholdFrac) return 0;
+  return Math.max(0, Math.min(1 - realFrac, frac));
+}
+
+/**
+ * v51.28（Q1返工）："增加特效"颜色改为按该进度条自身颜色自适应——用户："而且
+ * 颜色不要做成红色啊！做成和该进度条颜色的自适应颜色（要做出区分）。"
+ * 把传入的基础色（HP 血条的阵营色 / 资源条的 RESOURCE_COLORS 色）转到 HSL，
+ * 提亮 + 略微提高饱和度后转回来——同一色相，但比真实血量段明显更亮更淡，
+ * 一眼能分清"这段是预告，不是真实血量"，同时颜色本身"属于这条血条"，不再是
+ * 一个跟所有血条都无关的固定暖黄。
+ *
+ * @param baseColor 该条的真实颜色，支持 '#rgb'/'#rrggbb' 或 'rgba?(...)'。
+ * @param lightenPct 提亮多少（HSL lightness 百分点），来自 CONFIG。
+ * @param alpha 预告段的透明度，来自 CONFIG。
+ */
+export function deriveIncreaseColor(baseColor, lightenPct, alpha) {
+  const [r, g, b] = _parseColor(baseColor);
+  let [h, s, l] = _rgbToHsl(r, g, b);
+  l = Math.min(0.96, l + lightenPct / 100);
+  s = Math.min(1, s + 0.15);
+  const [nr, ng, nb] = _hslToRgb(h, s, l);
+  return `rgba(${nr}, ${ng}, ${nb}, ${alpha})`;
+}
+
+function _parseColor(c) {
+  if (typeof c !== 'string') return [255, 255, 255];
+  if (c[0] === '#') {
+    const hex = c.slice(1);
+    const n = hex.length === 3 ? hex.split('').map((ch) => ch + ch).join('') : hex;
+    return [parseInt(n.slice(0, 2), 16), parseInt(n.slice(2, 4), 16), parseInt(n.slice(4, 6), 16)];
+  }
+  const m = c.match(/rgba?\(([^)]+)\)/i);
+  if (m) {
+    const parts = m[1].split(',').map((s) => parseFloat(s));
+    return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
+  }
+  return [255, 255, 255];
+}
+
+function _rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0; const l = (max + min) / 2;
+  const d = max - min;
+  if (d > 0) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  return [h, s, l];
+}
+
+function _hslToRgb(h, s, l) {
+  if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [Math.round(hue2rgb(p, q, h + 1 / 3) * 255), Math.round(hue2rgb(p, q, h) * 255), Math.round(hue2rgb(p, q, h - 1 / 3) * 255)];
 }

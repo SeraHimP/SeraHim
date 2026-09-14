@@ -345,24 +345,35 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
 // 削弱动画效果（几乎看不出来），用拖尾特效展示。……如果某单位在固定时间内要
 // 增加一定数额的值，就会在进度条高位出出现'拖尾特效'同款的一个显示（但是不要
 // 长得一样要做区分），就是告诉这个单位要回这么多血或者是法力。"
-// 范围说明：这里只覆盖【被动回复】的预告（healthRegen/manaRegen 效果值 × 固定
-// 时间窗口）——主动技能的瞬间治疗没有一个稳定的"未来速率"可供预告，不在这条
-// 特效的能力范围内，已在 CONFIG.ui.barIncreasePreview 的头注里说明。
+//
+// v51.28（Q1返工）：用户否掉了当初这版实现——"增加特效不好！增加特效应该是
+// 短时间内获得大量百分比才会触发！要不然太乱了看起来。而且颜色不要做成红色
+// 啊！做成和该进度条颜色的自适应颜色"。旧版 previewFrac/CONFIG.ui.barIncreasePreview
+// .{windowSec,color} 已被 bigRegenPreviewFrac/deriveIncreaseColor +
+// CONFIG.ui.barIncreasePreview.{thresholdFrac,maxWindowSec,lightenPct,alpha} 取代
+// （见 barTrail.js 头注 + tests/sim_barinc.mjs 的完整验收），这里的 Q1①-④/⑦
+// 改成钉新形状，不再钉已经被否掉的旧行为。
 {
-  const { previewFrac } = await import('../src/presentation/barTrail.js');
+  const { bigRegenPreviewFrac, deriveIncreaseColor } = await import('../src/presentation/barTrail.js');
   const { CONFIG } = await import('../src/data/Config.js');
 
-  T('Q1①-CONFIG.ui.barIncreasePreview 已软编码（enabled/windowSec/color）',
+  T('Q1①-CONFIG.ui.barIncreasePreview 已软编码（enabled/thresholdFrac/maxWindowSec/lightenPct/alpha）',
     !!CONFIG.ui?.barIncreasePreview
     && typeof CONFIG.ui.barIncreasePreview.enabled === 'boolean'
-    && typeof CONFIG.ui.barIncreasePreview.windowSec === 'number'
-    && typeof CONFIG.ui.barIncreasePreview.color === 'string');
+    && typeof CONFIG.ui.barIncreasePreview.thresholdFrac === 'number'
+    && typeof CONFIG.ui.barIncreasePreview.maxWindowSec === 'number'
+    && typeof CONFIG.ui.barIncreasePreview.lightenPct === 'number'
+    && typeof CONFIG.ui.barIncreasePreview.alpha === 'number');
 
-  T('Q1②-previewFrac：速率<=0 或 max<=0 时不预告', previewFrac(0, 100, 0.5, 1) === 0 && previewFrac(10, 0, 0.5, 1) === 0);
-  T('Q1③-previewFrac：速率×窗口/上限 换算成宽度分数（10/秒×1秒/100上限=10%）',
-    Math.abs(previewFrac(10, 100, 0, 1) - 0.1) < 1e-9);
-  T('Q1④-previewFrac：预告条不会超过"到满还剩多少"（真实值0.95时，预告12%应截断到5%）',
-    Math.abs(previewFrac(12, 100, 0.95, 1) - 0.05) < 1e-9);
+  T('Q1②-bigRegenPreviewFrac：永久（remainingTime=Infinity）的被动回复不触发',
+    bigRegenPreviewFrac([{ blueprint: { kind: 'stat', statKey: 'healthRegen' }, remainingTime: Infinity, totalFlat: 999 }],
+      'healthRegen', 1, 100, 0.5, 0.12, 20) === 0);
+  T('Q1③-bigRegenPreviewFrac：限时效果、总量达到阈值时触发，宽度=总量/上限',
+    Math.abs(bigRegenPreviewFrac([{ blueprint: { kind: 'stat', statKey: 'healthRegen' }, remainingTime: 10, totalFlat: 5 }],
+      'healthRegen', 1, 100, 0, 0.12, 20) - 0.5) < 1e-9);
+  T('Q1④-bigRegenPreviewFrac：预告条不会超过"到满还剩多少"',
+    Math.abs(bigRegenPreviewFrac([{ blueprint: { kind: 'stat', statKey: 'healthRegen' }, remainingTime: 10, totalFlat: 20 }],
+      'healthRegen', 1, 100, 0.95, 0.12, 20) - 0.05) < 1e-9);
 
   // resourceBar.js：effRegen（实际每秒回复速率，供预告用）+ max（法力上限，供换算宽度分数用）
   const { EventBus } = await import('../src/utils/EventBus.js');
@@ -391,9 +402,9 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
 
   // UnitLayer.js / UIManager.js 接线检查：确认改动落到了两处消费方
   const ul = srcOf('src/presentation/UnitLayer.js');
-  T('Q1⑦-UnitLayer._redrawBar 接收 hpIncFrac/resTrailFrac/resIncFrac 三个新参数并画出对应特效',
+  T('Q1⑦-UnitLayer._redrawBar 接收 hpIncFrac/resTrailFrac/resIncFrac 三个新参数并按该条真实颜色生成预告色',
     /_redrawBar\(g, e, ghost, maxHP, trailFrac = 0, resInfo = null, hpIncFrac = 0, resTrailFrac = 0, resIncFrac = 0\)/.test(ul)
-    && /CONFIG\.ui\?\.barIncreasePreview\?\.color/.test(ul));
+    && /deriveIncreaseColor\(hpColor,/.test(ul));
 
   const um = srcOf('src/ui/UIManager.js');
   T('Q1⑧-UIManager 新增 _updateHpIncBar（塔/兵卡片共用）并接入 .bar-hp-inc/.bar-res-inc',

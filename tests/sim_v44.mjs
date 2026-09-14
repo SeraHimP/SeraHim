@@ -289,9 +289,14 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
 // ==================== 四、中立单位 ====================
 {
   const ul = srcOf('src/presentation/UnitLayer.js');
+  // v51.28（Q1返工）：三色三元表达式收进了 resourceBar.js 的 FACTION_HP_COLORS
+  // 常量（UIManager 的"增加特效"预告色也要用同一份，抽出来避免两处各写一份），
+  // UnitLayer 这边改成查表 `FACTION_HP_COLORS[faction] || FACTION_HP_COLORS.neutral`，
+  // 判据挪去钉 resourceBar.js 里那份常量本身包含三个阵营值，UnitLayer 这边钉查表写法。
+  const rb = srcOf('src/core/resourceBar.js');
   T('中立①-血条颜色按阵营判定，中立走绿色（不再按 type 分叉）',
-    /faction === 'blue' \? '#4a9eff'/.test(ul) && /faction === 'red' \? '#ff5a5a'/.test(ul)
-    && /'#4caf50';\s*\/\/ 中立一律绿色/.test(ul));
+    /FACTION_HP_COLORS\s*=\s*\{\s*blue:\s*'#4a9eff',\s*red:\s*'#ff5a5a',\s*neutral:\s*'#4caf50'\s*\}/.test(rb)
+    && /FACTION_HP_COLORS\[faction\] \|\| FACTION_HP_COLORS\.neutral/.test(ul));
   const um = srcOf('src/ui/UIManager.js');
   // v45：徽标（FAC_BADGE）已被抬头的阵营色圆点（FAC_DOT）取代 —— 用户要求把
   // 左上角的「#1 防御塔」与右上角的「🔵 蓝方 · 外塔」合并成一处。

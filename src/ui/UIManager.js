@@ -7,8 +7,8 @@ import { DetailModal, STAT_LABELS, modsGridHtml, getSkillDescMode, effectGroupBr
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
-import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES } from '../core/resourceBar.js';
-import { stepTrail, previewFrac } from '../presentation/barTrail.js';
+import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES, FACTION_HP_COLORS } from '../core/resourceBar.js';
+import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor } from '../presentation/barTrail.js';
 
 export class UIManager {
   constructor(entityContainer, effectRegistry, attrCalc) {
@@ -810,8 +810,14 @@ export class UIManager {
     const incEl = row.querySelector('.bar-res-inc');
     if (incEl) {
       const incCfg = CONFIG.ui?.barIncreasePreview;
-      const incFrac = (incCfg?.enabled && info.kind === 'mana')
-        ? previewFrac(info.effRegen || 0, info.max || 0, info.frac, incCfg.windowSec) : 0;
+      let incFrac = 0;
+      if (incCfg?.enabled && info.kind === 'mana') {
+        const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
+        const regenMod = entity.baseStats?.baseManaRegenMod ?? 1;
+        const gainMult = Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+        incFrac = bigRegenPreviewFrac(this.effects.getEffects(entity.id), 'manaRegen', regenMod * gainMult,
+          info.max || 0, info.frac, incCfg.thresholdFrac, incCfg.maxWindowSec);
+      }
       if (incFrac > 0.002) {
         // 起点取"真实值"与"拖尾当前显示值"里较大的那个——避免掉法力时拖尾（低位）
         // 与增加特效（高位）在同一段区间里正面重叠，两段改成前后相邻。
@@ -820,7 +826,8 @@ export class UIManager {
         incEl.style.display = '';
         incEl.style.left = (incStart * 100) + '%';
         incEl.style.width = (Math.min(1 - incStart, incFrac) * 100) + '%';
-        incEl.style.background = incCfg.color;
+        incEl.style.background = deriveIncreaseColor(RESOURCE_COLORS[info.kind] || RESOURCE_COLORS.mana,
+          incCfg.lightenPct, incCfg.alpha);
       } else {
         incEl.style.display = 'none';
       }
@@ -845,7 +852,8 @@ export class UIManager {
     if (incCfg?.enabled) {
       const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
       const healPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
-      incFrac = previewFrac((stats.healthRegen || 0) * regenMod * healPower, maxHP, hpFrac, incCfg.windowSec);
+      incFrac = bigRegenPreviewFrac(this.effects.getEffects(entity.id), 'healthRegen', regenMod * healPower,
+        maxHP, hpFrac, incCfg.thresholdFrac, incCfg.maxWindowSec);
     }
     if (incFrac > 0.002) {
       const trailEl = card.querySelector(`#${prefix}-trail-${id}`);
@@ -854,7 +862,9 @@ export class UIManager {
       incEl.style.display = '';
       incEl.style.left = (incStart * 100) + '%';
       incEl.style.width = (Math.min(1 - incStart, incFrac) * 100) + '%';
-      incEl.style.background = incCfg.color;
+      const faction = entity._mapFaction || entity.faction;
+      incEl.style.background = deriveIncreaseColor(FACTION_HP_COLORS[faction] || FACTION_HP_COLORS.neutral,
+        incCfg.lightenPct, incCfg.alpha);
     } else {
       incEl.style.display = 'none';
     }
@@ -877,6 +887,23 @@ export class UIManager {
    * 图标——跟点开攻击力详情弹窗里"伤害类型"那一节（见 _showStatDoc 的 dmgType
    * 分支）用同一套图标语义（物理/魔法/真实），自适应类型现读 resolveAttackType
    * 取【这一刻】真实解析出的类型，不是"自适应"这四个字本身。
+   *
+   * v51.28（Q2）：用户否掉了这版理解，定稿【物理攻击】（原攻击力，移到点开的窗口，
+   * 见 RELATED_STATS.attackDamage 自引用那一条）与【攻击力】（自适应伤害造成的
+   * 实际伤害，留在主格子）是两个概念。但排查 CombatSystem 发现：resolveAttackType
+   * 只决定普攻结算时用护甲还是魔抗，并不改变伤害数字本身——hitInfo.baseDamage
+   * 恒等于 atkStats.attackDamage，无论解析成物理还是魔法，abilityPower 从不参与
+   * 基础伤害计算。也就是说，"魔法伤害时攻击力应该由法术强度算出"这件事目前的
+   * 引擎里并不成立，如果真按这个理解改伤害公式，会是一次实打实的数值改动而不是
+   * 显示修正——用现有配置试算：远程兵 AD6.5/AP10 会从 6.5 变 10（+54%），
+   * 图腾兵 AD7.5/AP8 变化不大，但术士兵 AD1/AP30 会从 1 直接跳到 30（30倍），
+   * 而术士兵模板本身的注释（Config.js templates.warlock）明确写着"攻击力极低"
+   * 是特意设计成让自适应稳定倒向魔法、真正的伤害靠主动技能叠层，不是靠普攻——
+   * 这条改动会直接推翻这个已调好平衡的设计。所以这里没有改伤害公式，主格子
+   * 数值仍然是 attackDamage 本身（跟点开窗口里的【物理攻击】数字暂时相等，
+   * 如实反映当前引擎行为），只做了结构拆分：见上面 RELATED_STATS 的改动。
+   * 如果确实要让magic-resolved的自适应单位改吃法术强度，需要用户先确认这是
+   * 有意的数值改动（尤其是术士兵这个案例），而不是顺着这次显示修正一起做掉。
    */
   _attackDamageHtml(entity, stats) {
     const p = this._statParts('attackDamage', entity, stats);
@@ -1067,6 +1094,21 @@ export class UIManager {
             const pct = Math.round(mod * 1000) / 10;
             const cls = Math.abs(mod - 1) > 0.005 ? (mod > 1 ? 'stat-up' : 'stat-down') : '';
             return rowHtml(`<b class="${cls}">${pct}%</b>`);
+          }
+          // v51.28（Q2）：attackDamage 自引用进自己的关联属性区块，展示【物理攻击】——
+          // 跟上面 healthRegen 自引用同一个手法，label 覆写。数值就是 attackDamage
+          // 这个属性本身（基础+修正），跟主格子【攻击力】目前显示的是同一份数字——
+          // 这是如实的：resolveAttackType 只决定用护甲还是魔抗结算，不改变伤害数字
+          // 本身（见 CombatSystem._resolveHit 的 hitInfo.baseDamage），所以"魔法
+          // 伤害时的攻击力"目前并不是一个由法术强度算出来的独立数字，仍然等于
+          // 这份物理攻击。这里先把两者在结构上拆开、各给一行，如果以后改动伤害
+          // 公式让两者分道扬镳，只需要改主格子那一份计算，这里不用再动。
+          if (rk === 'attackDamage') {
+            const rp = this._statParts('attackDamage', entity, liveStats);
+            if (rp) {
+              const rParen = rp.delta === 0 ? '' : ` <span class="stat-break">（${rp.base}${rp.delta > 0 ? '+' : '−'}${Math.abs(rp.delta)}）</span>`;
+              return rowHtml(`<b class="${rp.cls}">${rp.now}</b>${rParen}`, '物理攻击');
+            }
           }
           const rp = this._statParts(rk, entity, liveStats);
           if (rp) {

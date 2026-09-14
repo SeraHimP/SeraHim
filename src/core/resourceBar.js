@@ -64,6 +64,14 @@ export const RESOURCE_COLORS = {
 export const HIDDEN_STATUS_EFFECT_NAMES = new Set(['升温', '闪电充能', '充能']);
 
 /**
+ * v51.28（Q1返工）：HP 血条的阵营色——UnitLayer（画面血条）与 UIManager（"增加
+ * 特效"预告条要按血条自身颜色算出一个提亮变体）两处都要用同一份颜色，抽出来
+ * 放这里，跟上面 RESOURCE_COLORS 同一个理由，避免"同一件事写两遍、改的时候
+ * 只改中一处"。
+ */
+export const FACTION_HP_COLORS = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#4caf50' };
+
+/**
  * @param entity 实体
  * @param ctx { skillLibrary, attrCalc, effects }
  * @returns {{frac:number, kind:string, label:string, regenText?:string}|null} —

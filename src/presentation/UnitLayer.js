@@ -39,9 +39,9 @@ import { nextPlatingNode } from './UnitInfo.js';
 import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
 import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
 import { towerFacingRad } from './towerFacing.js';
-import { stepTrail, previewFrac, TRAIL_COLOR } from './barTrail.js';
+import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
-import { resourceInfoOf, RESOURCE_COLORS } from '../core/resourceBar.js';
+import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS } from '../core/resourceBar.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
 import { HUD_SPRITE_LAYER } from './PostFX.js';
 
@@ -905,9 +905,7 @@ export class UnitLayer {
     // 那时塔一定是自己人（蓝）、小兵一定是敌人（绿），颜色实际编码的是敌我而不是阵营。
     // 加入中立阵营之后这个假设就塌了 —— 中立**塔**掉进蓝色分支，看起来像己方建筑。
     // 现在：蓝=蓝方、红=红方、绿=中立。
-    const hpColor = faction === 'blue' ? '#4a9eff'
-                  : faction === 'red' ? '#ff5a5a'
-                  : '#4caf50';                                     // 中立一律绿色
+    const hpColor = FACTION_HP_COLORS[faction] || FACTION_HP_COLORS.neutral;
     // v51.6：第三种护盾"护盾"（entity.plainShield，CombatSystem 每帧缓存的汇总值，
     // 见 EffectRegistry.plainShieldOf 的头注）一并算进血条的护盾段。
     const shieldTotal = (e.shieldFixedCurrent || 0) + (e.tempShield || 0) + (e.plainShield || 0);
@@ -946,7 +944,8 @@ export class UnitLayer {
       const incStart = Math.max(hpDraw + shieldW, hpTrailEnd) * BAR_W;
       const incW = Math.min(BAR_W - incStart, hpIncFrac * BAR_W);
       if (incW > 0.5) {
-        g.fillStyle = CONFIG.ui?.barIncreasePreview?.color || 'rgba(255, 205, 90, 0.65)';
+        const incCfg = CONFIG.ui?.barIncreasePreview;
+        g.fillStyle = deriveIncreaseColor(hpColor, incCfg?.lightenPct ?? 32, incCfg?.alpha ?? 0.8);
         g.fillRect(incStart, 0, incW, hpH);
       }
     }
@@ -970,7 +969,9 @@ export class UnitLayer {
         const rIncStart = Math.max(resInfo.frac, resTrailEnd) * BAR_W;
         const rIncW = Math.min(BAR_W - rIncStart, resIncFrac * BAR_W);
         if (rIncW > 0.5) {
-          g.fillStyle = CONFIG.ui?.barIncreasePreview?.color || 'rgba(255, 205, 90, 0.65)';
+          const incCfg = CONFIG.ui?.barIncreasePreview;
+          const resBaseColor = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.mana;
+          g.fillStyle = deriveIncreaseColor(resBaseColor, incCfg?.lightenPct ?? 32, incCfg?.alpha ?? 0.8);
           g.fillRect(rIncStart, hpH, rIncW, BAR_H - hpH);
         }
       }
@@ -1315,18 +1316,21 @@ export class UnitLayer {
         } else { en._resKind = null; en.resTrailing = false; }
         resTrailFrac = en.resTrailing ? en.dispResFrac : 0;
 
-        // v51.27（Q1）："增加特效"——接下来 windowSec 秒内按当前实际回复速率能回到
-        // 的量，画在真实值高位一侧（拖尾画在低位/掉血侧，两者位置天然区分；颜色
-        // 再配一份区别于拖尾的暖黄，双重区分，见 CONFIG.ui.barIncreasePreview）。
-        // 只覆盖生命/法力的【被动回复】，主动技能的瞬间治疗没有稳定的"未来速率"
-        // 可供预告，不在这条特效的能力范围内。
+        // v51.28（Q1返工）："增加特效"——只在【限时效果】短时间内会带来大量百分比
+        // 回复时才触发（用户否掉了旧版"被动回复>0 就常驻显示未来1秒回复量"，见
+        // CONFIG.ui.barIncreasePreview 头注 + bigRegenPreviewFrac 的实现注释）。
         const incCfg = CONFIG.ui?.barIncreasePreview;
         if (incCfg?.enabled) {
+          const entEffects = effects.getEffects(e.id);
           const hpRegenMod = e.baseStats?.baseHealthRegenMod ?? 1;
           const hpHealPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
-          hpIncFrac = previewFrac((stats.healthRegen || 0) * hpRegenMod * hpHealPower, maxHP, realFrac, incCfg.windowSec);
+          hpIncFrac = bigRegenPreviewFrac(entEffects, 'healthRegen', hpRegenMod * hpHealPower,
+            maxHP, realFrac, incCfg.thresholdFrac, incCfg.maxWindowSec);
           if (resInfo && resInfo.kind === 'mana') {
-            resIncFrac = previewFrac(resInfo.effRegen || 0, resInfo.max || 0, resInfo.frac, incCfg.windowSec);
+            const resRegenMod = e.baseStats?.baseManaRegenMod ?? 1;
+            const manaGainMult = Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
+            resIncFrac = bigRegenPreviewFrac(entEffects, 'manaRegen', resRegenMod * manaGainMult,
+              resInfo.max || 0, resInfo.frac, incCfg.thresholdFrac, incCfg.maxWindowSec);
           }
         }
 
