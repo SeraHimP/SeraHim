@@ -29,8 +29,10 @@ export const weapons = {
     // （armorPenPercent/magicPenPercent 本来就是百分比穿透，不是固定值穿透），
     // "双穿"又是简写；onEquip 里实际挂的是 armorPenPercent+30 与 magicPenPercent+30
     // 两条独立效果（见下方 onEquip），文案直接照实际效果分开写成两个百分比。
-    description: '唯一被动——升温：连续攻击同一目标，伤害逐次提升（100%→130%→160%…每层+30%，最高+120%），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。',
-    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（{val}%=100%+30%×层数），切换目标重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。',
+    // Q3（本轮）：补一条"升温·加成伤害"的独立被动描述——与升温倍率（放大普攻本身）
+    // 是两件事，这笔是命中后额外造成的一笔物理伤害，随层数、随攻击力与法术强度一起涨。
+    description: '唯一被动——升温：连续攻击同一目标，伤害逐次提升（100%→130%→160%…每层+30%，最高+120%），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。\n唯一被动——升温·加成伤害：每层额外造成一笔物理伤害（层数×(20%攻击力+20%法术强度)）。',
+    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（{val}%=100%+30%×层数），切换目标重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。\n唯一被动——升温·加成伤害：每层额外造成一笔物理伤害（层数×(20%攻击力+20%法术强度)）。',
     computeCurrent: (entity, ctx) => { const e = ctx.effectRegistry.getEffectByName(entity.id, '升温'); return 100 + 30 * (e ? e.stacks : 0); },
     HEAT_MAX_STACKS: 4,          // 最多 4 层（+120% → 220% 上限），与旧上限一致
     HEAT_PER_STACK: 0.30,
@@ -61,6 +63,30 @@ export const weapons = {
     onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const target = ctx.entityContainer.get(targetId);
       if (!target || !target.alive) return;
+
+      // ==================== Q3（本轮）：每层升温额外的一笔加成伤害 ====================
+      // 用户："穿透型是每层额外造成（20%+X%×法术强度）伤害"——这是在已有的升温倍率
+      // （preDamageMult，命中前按层数放大普攻本身，机制不变）之外，另开的一笔独立
+      // 加成伤害：层数 ×（攻击力×piercingStackAdPct% + 法术强度×piercingStackApPct%）。
+      // "20%"那部分读作攻击力（呼应用户原话"穿透型子弹和攻击力联动更高一些"），
+      // 具体两个百分比用户都没给最终数字，先各按 20% 占位（CONFIG.tuning.weapons，
+      // 平衡本轮不做，占位数值见那边注释）。用的层数是【这一下命中之前】已经叠好的
+      // 层数（与 preDamageMult 用的是同一份 st.heatStacks，在下面 +1 之前先取快照）——
+      // 直接造成物理伤害（_noProc 避免自己触发自己），不进塔的自适应判定。
+      const stacksThisHit = instance.state?.heatStacks || 0;
+      if (stacksThisHit > 0) {
+        const attacker = ctx.entityContainer.get(attackerId);
+        if (attacker && attacker.alive && ctx.combat && ctx.attrCalc) {
+          const atkStats = ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attackerId));
+          const W = CONFIG.tuning?.weapons || {};
+          const perStack = (atkStats.attackDamage || 0) * (W.piercingStackAdPct ?? 20) / 100
+            + (atkStats.abilityPower || 0) * (W.piercingStackApPct ?? 20) / 100;
+          const bonus = stacksThisHit * perStack;
+          if (bonus > 0) {
+            ctx.combat.performAttackDirect(attackerId, targetId, bonus, 'physical', { _noProc: true });
+          }
+        }
+      }
 
       // ---- 升温（命中后叠层，供【下一次】对同一目标的攻击提升伤害） ----
       // 注意：本次命中用的倍率已在 performAttack 开火时刻算好（读的是命中前的层数）；
@@ -120,9 +146,11 @@ export const weapons = {
     name: '闪电杖 (魔法)',
     icon: '⚡',
     category: 'weapon',
-    description: '魔法伤害，每秒固定跳4次伤害（各20%攻击力），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
-    descTemplate: '唯一被动——闪电杖：每秒固定4次魔法伤害（各（{val}=20%攻击力×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
-    computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.attackDamage||0)*0.15); },
+    // Q3（本轮）：文案从"攻击力"改成"法术强度"——装备后攻击力已被转化归零，
+    // 跳伤害现在读的是转化出来的法术强度（见 AttributeCalculator 的转化注释）。
+    description: '魔法伤害，装备后攻击力全部转化为法术强度；每秒固定跳4次伤害（各20%法术强度），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
+    descTemplate: '唯一被动——闪电杖：装备后攻击力全部转化为法术强度；每秒固定4次魔法伤害（各（{val}=20%法术强度×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
+    computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.abilityPower||0)*0.15); },
     specialAttack: true,
     effects: [],
     // 参数取值：实例覆写（全局/地图级）→ 出厂值。所有数值都从这里过一遍，
@@ -253,9 +281,13 @@ export const weapons = {
       const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       const charge = instance.state.charge || 0;
       const P = weapons.weapon_lightning._p(instance);
-      // 每跳 tickPct × AD × 充能倍率（1.0 ~ maxMult）
+      // 每跳 tickPct × 充能倍率（1.0 ~ maxMult）
       const chargeMultiplier = 1 + charge * (P.maxMult - 1);
-      const tickDamage = P.tickPct * (atkStats.attackDamage || 0) * chargeMultiplier;
+      // Q3（本轮）：基数从 attackDamage 改成 abilityPower——闪电杖装备后攻击力已经
+      // 被 AttributeCalculator 转化成法术强度（"相当于攻击力归0"，见那边的注释），
+      // 这里跟着换成读转化后的法强，跳数/充能节奏（tickPerSec、chargeTimeAtAS1 等）
+      // 一律不改，用户原话"攻击方式不要改"。
+      const tickDamage = P.tickPct * (atkStats.abilityPower || 0) * chargeMultiplier;
 
       if (ctx.combat && typeof ctx.combat.performAttackDirect === 'function') {
         // 无视防御随充能【连续】增长至 maxPen（v43 定稿 67%，原 90%）；伤害类型固定魔法。

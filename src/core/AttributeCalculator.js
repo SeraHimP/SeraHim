@@ -4,6 +4,8 @@
  * 支持护甲穿透和魔法穿透分别计算
  * 帧级缓存：同一帧内、同一实体、同样的效果集合与选项，直接复用上次结果。
  */
+import { CONFIG } from '../data/Config.js';
+
 // 条件型战斗属性白名单：基值恒为 0、只由效果提供，由 CombatSystem 在结算处按条件读取。
 // 哀兵（LaneAvengerSystem）：avengerVsMinionAmpPct = 对敌方小兵伤害%，avengerVsMinionRedPct = 减免敌方小兵伤害%。
 const CONDITIONAL_ZERO_BASE = new Set(['avengerVsMinionAmpPct', 'avengerVsMinionRedPct']);
@@ -191,6 +193,23 @@ export const AttributeCalculator = {
       const goToAP = ap === ad ? stats.adaptiveDefault === 'ap' : ap > ad;
       if (goToAP) stats.abilityPower = ap + af;
       else stats.attackDamage = ad + af * 0.6;
+    }
+
+    // ==================== Q3（本轮）：闪电杖——攻击力全部转化为法术强度 ====================
+    // 塔的默认伤害类型已改自适应（不再固定 magic，见 templates.tower），但闪电杖这件
+    // 武器本身的身份必须锁死"打魔法"——不能因为装备之后 AD 还留着一部分而被自适应判定
+    // 判成物理。做法：装备闪电杖时，直接在属性计算管线里把塔的攻击力【转走】变成法术
+    // 强度（用户："相当于攻击力归0"），而不是让 resolveAttackType 去猜。转化比例
+    // 软编码在 CONFIG.tuning.weapons.lightningApConvertPct（占位 100%，即 1:1 全转化，
+    // 具体数值本轮不做平衡，见该配置项的注释）。
+    // 放在 adaptiveForce 之后、coreStatsPct/allStatsPct 之前——转化出来的这份法强和
+    // "天生"的法强同等对待，会被两层百分比加成一并放大，转化完不再有特殊身份，
+    // 与 adaptiveForce 的既有处理方式保持一致（见上面那段的同一条理由）。
+    if ((entity._skillInstances || []).some(s => s.skillId === 'weapon_lightning' && !s._disabled)) {
+      const convertPct = (CONFIG.tuning?.weapons?.lightningApConvertPct ?? 100) / 100;
+      const drainedAD = (stats.attackDamage || 0) * convertPct;
+      stats.attackDamage = (stats.attackDamage || 0) - drainedAD;
+      stats.abilityPower = (stats.abilityPower || 0) + drainedAD;
     }
 
     // 核心属性加成：只放大这六项，且放在全属性加成之前——如果两者同时存在（理论上

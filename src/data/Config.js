@@ -716,7 +716,7 @@ export const CONFIG = {
     _default: { hp: 8, ad: 0.375, res: 0.1 },
   },
 
-  // 屠戮（近战/远程/炮火）参数。base 决定【伤害基数取什么】：
+  // 屠戮（近战/远程/炮火/图腾/术士/蚀骨）参数。base 决定【伤害基数取什么】：
   //   'current'         = 攻击者自身当前生命            ← 用户定稿，现行默认（v51.30 回调）
   //   'templateByHpPct' = 模板基础生命 × (当前生命 / 最大生命)  （v51.27~v51.29 曾用）
   //   'template'        = 模板基础生命（不随波次成长膨胀，也不看当前血量）
@@ -739,10 +739,21 @@ export const CONFIG = {
   //
   // 地图覆写：map.skillOverrides['melee'].passive_melee_rend = { pct, base }，
   // 数值与机制都能改（base 可以在某张图上切回 'templateByHpPct' / 'template'）。
+  //
+  // ==================== 本轮：屠戮扩展到全部兵种（攻城车/超级兵除外） ====================
+  // 用户："除了攻城车/超级兵之外的所有兵种都要有屠戮，新加的的数值你自己定。"
+  // 攻城车专职破塔、不参与兵线互耗，超级兵体量远超普通兵且自带指挥官光环——这两类
+  // 用户明确排除。totem/warlock/corrupt 三个百分比是新加的、沿用 melee/ranged/siege
+  // 那条"越不是纯输出、pct 越低"的梯度类比定的（具体理由见 minionPassives.js 里
+  // 三个 _makeRendPassive 调用点旁边的注释），没跑过 balance_matrix，后续要调整
+  // 平衡就单独改这几行。
   rend: {
-    melee:  { pct: 0.04, base: 'current' },
-    ranged: { pct: 0.06, base: 'current' },
-    siege:  { pct: 0.07, base: 'current' },
+    melee:   { pct: 0.04, base: 'current' },
+    ranged:  { pct: 0.06, base: 'current' },
+    siege:   { pct: 0.07, base: 'current' },
+    totem:   { pct: 0.05, base: 'current' },
+    warlock: { pct: 0.06, base: 'current' },
+    corrupt: { pct: 0.07, base: 'current' },
   },
 
   // ==================== 世界状态（P3：天气/昼夜/熵/龙魂 的统一落点）====================
@@ -1502,6 +1513,26 @@ export const CONFIG = {
     // 技能/DOT/溅射不发——见 ManaSystem 头注），按这两个数给攻击方/受击方各自加法力。
     mana: { onAttack: 1, onHitTaken: 2 },
 
+    // ==================== Q3（本轮）：塔改自适应伤害后，两把特殊武器的伤害类型重做 ====================
+    // 用户："目前的塔强制魔法伤害，感觉不太好……穿透型子弹和攻击力联动更高一些，打的是
+    // 物理伤害，闪电杖和法强联动更好，打的是魔法。" 塔的 attackType 已从固定 'magic'
+    // 改成 'adaptive'（见 templates.tower），裸塔不受影响（AP=0 时天然选物理）；
+    // 这两把武器各自把自己的伤害"焊死"在一个具体的属性上，不再依赖塔身上 AP/AD
+    // 谁大谁小的自适应判定（武器本身的攻击方式——升温叠层节奏 / 每秒4跳充能节奏——
+    // 一律不改，用户原话"但是攻击方式不要改"）：
+    //   lightningApConvertPct —— 闪电杖装备后，把塔【全部】攻击力转化为法术强度
+    //     （用户："XX=攻击力×100%……相当于攻击力归0"，转化后攻击力=0，改走纯法伤）。
+    //     "转化出来能拿到多少法强"这个比例用户留了个占位"YY=攻击力×XX%"没给具体数，
+    //     先按 1:1（与"归零"那部分同一个 100%）处理，占位到下次平衡专项再调
+    //     （本轮用户原话"平衡先不用做"）。
+    //   piercingStackAdPct / piercingStackApPct —— 穿透型升温每层【额外】造成的一笔
+    //     物理加成伤害 = 当前层数 ×（AD×本值% + AP×本值%），用户原话"每层额外造成
+    //     （20%+X%×法术强度）伤害"：20% 那部分读作物理攻击力（呼应"和攻击力联动更高"），
+    //     "X%×法术强度"里的 X 用户没给数，先与前一项同取 20% 占位，同样留到平衡专项再调。
+    //     这笔伤害与已有的升温倍率（preDamageMult，作用于普攻本身）是两件独立的东西，
+    //     不改动、不替换原有的升温机制。
+    weapons: { lightningApConvertPct: 100, piercingStackAdPct: 20, piercingStackApPct: 20 },
+
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
     chaseDropFactor: 1.2,         // 追击放弃距离 = 仇恨半径 × 此系数
     collisionOverlapAllow: 0.85,  // 碰撞：重叠容忍（×半径和）
@@ -1657,13 +1688,15 @@ export const CONFIG = {
       onHitDamage: 0, onHitPercentDamage: 0,
       damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
       healShieldPowerPct: 0,
-      // ==================== v51.6：塔的默认伤害类型再改回魔法（第三次翻转，如实记录）====================
-      // 时间线：v43 定为 magic → v51 用户拍板推翻改回 physical（上面那段注释）→
-      // 这次（v51.6）用户又定稿"处了特殊说明外，所有单位的攻击方式都应该是自适应
-      // （推翻之前的）。塔默认造成魔法伤害（特殊说明）"——塔是这次改动里唯一**不**
-      // 走自适应的类型，直接固定为 magic。三次改动都是用户本人的明确定稿，不是
-      // 哪次判断错了，如实记录时间线，不做口味上的评判。
-      attackType: 'magic', bulletSpeed: 400,
+      // ==================== Q3（本轮）：塔的默认伤害类型改自适应（第四次翻转，如实记录）====================
+      // 时间线：v43 定为 magic → v51 改回 physical → v51.6 又定稿"塔是特殊说明，固定
+      // magic"（上面保留的旧注释）→ 这次用户反过来质疑"目前的塔强制魔法伤害，感觉
+      // 不太好"，取消这个特例：塔和其它单位一样走 adaptive（AP 与 AD 比大小，同分时
+      // 看 adaptiveDefault，UNIT_STAT_DEFAULTS 里塔的 adaptiveDefault='physical'）。
+      // 没装备武器的裸塔 abilityPower=0 < attackDamage=152，实际表现与改动前一致
+      // （仍打物理），行为差异只出现在"装了闪电杖"之后——闪电杖会把 AD 转成 AP，
+      // 这时塔的普攻伤害类型也要跟着切成魔法，而不是被写死。
+      attackType: 'adaptive', bulletSpeed: 400,
       ...UNIT_STAT_DEFAULTS,
     },
     melee: {

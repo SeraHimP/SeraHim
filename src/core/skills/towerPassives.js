@@ -956,15 +956,30 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
               ? `攻击力+${steps * effectiveStepAD}（已封顶 ${steps}/${effectiveTotalSteps} 层）`
               : `攻击力+${steps * effectiveStepAD}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
           }, id + '_ad', );
+          // Q3：塔默认改自适应伤害（不再强制魔法），成长也从"只涨攻击力"改成
+          // "物理攻击、法术强度同步涨"——数值与节奏跟攻击力那条完全一致（同一个
+          // effectiveStepAD、同一层数），不额外开一条独立配置，避免两条成长曲线
+          // 跑偏；哪支武器实际吃 AD 还是 AP，由武器自身的伤害类型决定。
+          ctx.effectRegistry.apply(entityId, {
+            name: name + '·法强', icon: '📈', kind: 'stat', statKey: 'abilityPower', flatValue: steps * effectiveStepAD,
+            duration: capped ? Infinity : 60, permanent: capped,
+            stackable: true, maxStacks: effectiveTotalSteps, stackPolicy: 'refresh',
+            alwaysShowStacks: true, uniquePassive: true,
+            description: capped
+              ? `法术强度+${steps * effectiveStepAD}（已封顶 ${steps}/${effectiveTotalSteps} 层）`
+              : `法术强度+${steps * effectiveStepAD}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
+          }, id + '_ap', );
           const eff = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === name);
           if (eff) eff.stacks = steps;
+          const effAp = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === name + '·法强');
+          if (effAp) effAp.stacks = steps;
         }
       }
       if (!capped) {
         // 层间：直写剩余时间 = 距下一层秒数（不 apply，环平滑倒数不闪）
         const remain = Math.max(0.5, 60 - ((elapsed - effectiveStartT) % 60));
         for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-          if ((eff.blueprint.name === name || eff.blueprint.name === name + '·双抗') && steps > 0) eff.remainingTime = remain;
+          if ((eff.blueprint.name === name || eff.blueprint.name === name + '·双抗' || eff.blueprint.name === name + '·法强') && steps > 0) eff.remainingTime = remain;
         }
       }
 

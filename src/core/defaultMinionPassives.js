@@ -29,7 +29,9 @@ export const DEFAULT_MINION_PASSIVES = {
   // 已经从 SkillLibrary 里整个删除（不再是"可手动装但不默认装"，是真的不存在了）。
   // v51.6：passive_totem_mend（被动"图腾涌泉"）与原主动"庇护波"（active_totem_shield）
   // 一并删除，合并成新的主动技能 active_totem_mend（同名"图腾涌泉"，改成主动施放）。
-  'totem': ['passive_totem_aura', 'passive_totem_bulwark', 'active_totem_mend'],
-  'warlock': ['passive_warlock_aura', 'passive_warlock_attune', 'active_warlock_empower'],
-  'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison'],
+  // 本轮：屠戮扩展到除攻城车/超级兵外的全部兵种（用户定稿，见 minionPassives.js
+  // 里 passive_totem_rend/passive_warlock_rend/passive_corrupt_rend 旁边的注释）。
+  'totem': ['passive_totem_aura', 'passive_totem_bulwark', 'active_totem_mend', 'passive_totem_rend'],
+  'warlock': ['passive_warlock_aura', 'passive_warlock_attune', 'active_warlock_empower', 'passive_warlock_rend'],
+  'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison', 'passive_corrupt_rend'],
 };

@@ -129,13 +129,15 @@ async function world() {
     Math.abs(s2.abilityPower - 100) < 1e-6 && Math.abs(s2.attackDamage - 0) < 1e-6);
 }
 
-// ==================== 五、塔的默认伤害类型改回物理 ====================
-// v51.6：用户又一次改稿——"处了特殊说明外，所有单位的攻击方式都应该是自适应，
-// 塔默认造成魔法伤害（特殊说明）"，把这里钉的 physical 再次翻成 magic。
+// ==================== 五、塔的默认伤害类型 ====================
+// v51.6：用户改稿——"处了特殊说明外，所有单位的攻击方式都应该是自适应，
+// 塔默认造成魔法伤害（特殊说明）"，曾把这里钉的 physical 翻成 magic。
+// Q3（本轮）：用户反过来取消这个特例——"目前的塔强制魔法伤害，感觉不太好"，
+// 塔和其它单位一样走 adaptive（第四次翻转）。
 // 完整时间线记在 Config.js 里 tower 模板 attackType 那段头注，这里不重复。
 {
   const { CONFIG } = await world();
-  T('塔①-默认伤害类型 = magic（v51.6 用户定稿"塔默认造成魔法伤害"，第三次翻转）', CONFIG.templates.tower.attackType === 'magic');
+  T('塔①-默认伤害类型 = adaptive（Q3 本轮用户定稿取消"塔固定魔法"的特例）', CONFIG.templates.tower.attackType === 'adaptive');
 }
 
 // ==================== 六、统一吸血（物理/法术/全能 + 群体折扣） ====================
@@ -1205,17 +1207,19 @@ async function world() {
     && CONFIG.templates.warlock.attackType === 'adaptive');
 }
 
-// ==================== 二十八、v51.6："所有单位攻击方式都自适应"（塔是唯一例外）====================
-// 用户："处了特殊说明外，所有单位的攻击方式都应该是自适应（推翻之前的）。修改为：
-//        术士兵攻击力极低，初始法强高（所以自适应直接造成魔法伤害）。塔默认造成
-//        魔法伤害（特殊说明）。"
+// ==================== 二十八、v51.6："所有单位攻击方式都自适应"（Q3 本轮：塔不再例外）====================
+// v51.6 用户原话："处了特殊说明外，所有单位的攻击方式都应该是自适应（推翻之前的）。
+//        修改为：术士兵攻击力极低，初始法强高（所以自适应直接造成魔法伤害）。塔默认
+//        造成魔法伤害（特殊说明）。"——当时塔是唯一写死类型的例外。
+// Q3（本轮）用户反过来质疑这个特例——"目前的塔强制魔法伤害，感觉不太好"，取消
+// 特例，塔现在和其它单位一样走 adaptive，全部单位类型统一，不再有例外。
 {
   const { CONFIG, attr } = await world();
-  const nonTower = ['melee', 'ranged', 'siege', 'totem', 'super', 'warlock', 'corrupt', 'ram', 'dragon'];
-  T('自适应①-除塔以外全部单位类型的默认攻击方式都是 adaptive',
-    nonTower.every(t => CONFIG.templates[t].attackType === 'adaptive'));
-  T('自适应②-塔是唯一写死类型的例外，且是魔法（不是 adaptive，也不是 physical）',
-    CONFIG.templates.tower.attackType === 'magic');
+  const allTypes = ['tower', 'melee', 'ranged', 'siege', 'totem', 'super', 'warlock', 'corrupt', 'ram', 'dragon'];
+  T('自适应①-全部单位类型（含塔）的默认攻击方式都是 adaptive，不再有例外',
+    allTypes.every(t => CONFIG.templates[t].attackType === 'adaptive'));
+  T('自适应②-裸塔（没装备武器）abilityPower=0 < attackDamage，自适应结果与改动前一致仍是物理',
+    attr.resolveAttackType({ ...CONFIG.templates.tower, attackType: 'adaptive' }) === 'physical');
   T('自适应③-龙的真实战斗字段（CONFIG.gameRules.dragon.combat.attackType）同一版一起改，不是只改了展示用的模板字段',
     CONFIG.gameRules.dragon.combat.attackType === 'adaptive');
   T('自适应④-resolveAttackType 对术士兵当前基础属性真的解析成魔法（不是"AP高但没高到能压过AD"的空调）',
