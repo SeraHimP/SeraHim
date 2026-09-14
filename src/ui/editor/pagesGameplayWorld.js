@@ -121,11 +121,19 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
    *      乱七八糟的UI"）——巨龙之力池点击即可直接叠层，不需要靠手填击杀数
    *      再点应用去间接触发。
    *
-   * ⚠️ 这是手动测试工具，不是真实的"击杀 4 条龙自动成魂"那条规则：广播只覆盖
-   * 【当前在场】的单位，不写 ds.souls[fac]/ds.soulOwner（那两个字段是自动成魂
-   * 规则的状态，手动操作覆盖它们会把"真实进度"污染成假数据）。所以后续新出生的
-   * 单位不会自动继承手动点的这些效果——真实的"这一局从此都有这条魂"要靠正常的
-   * 击杀积累触发 _resolveSoul。
+   * ⚠️ 这是手动测试工具，不是真实的"击杀 4 条龙自动成魂"那条规则：广播只
+   * 【立即】覆盖当前在场的单位，不写 ds.soulOwner（那是自动成魂规则专用的状态，
+   * 手动操作绝不能碰它，否则会把出兵条件里"是否真的成魂了"这类判断污染成假数据）。
+   *
+   * ==================== 本轮追加修复：大型小兵拿不到批量授予的魂 ====================
+   * 用户报告："批量设置某阵营获得龙魂，目前只有塔正常获得，大型小兵并未正常获得
+   * 龙魂！！！"——根因是上面这段注释曾经写的"不写 ds.souls[fac]"：塔是静态的，
+   * 广播那一刻装上就永久留着；大型小兵不断死亡重生，每一批新出生的替补全靠
+   * DragonSystem.equipExistingSoul() 补发，而它只认 ds.souls[fac] 这张表，从不知道
+   * 编辑器刚才手动装了什么——于是"塔正常、大型小兵不正常"就是这个不对称的必然
+   * 结果。现在批量授予/针对性移除都会调 ds._recordFactionSoul(fac, soulId, on) 同步
+   * 这张表（不碰 soulOwner，出兵条件的判断不受影响），新出生的大型小兵就能正常
+   * 补到手动授予的魂了。
    */
   // 当前所有可对战阵营——复选框组"全部生效"依赖这份列表。用户点名"以后可能涉及
   // 其他阵营"：这里单独列成一个数组而不是散着写 ['blue','red']，以后加阵营
@@ -332,6 +340,10 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
               const has = (e._skillInstances || []).some(i => i.skillId === soulId);
               if (turnOn === !has) { ds._toggleSoul(e, soulId); changed++; }
             });
+            // 修复：批量授予只对当场单位生效，没写进 ds.souls[fac]，后续新生成的
+            // 大型小兵（死亡重生频繁，塔几乎不会）永远补不到——见 DragonSystem.js
+            // equipExistingSoul 头注与 _recordFactionSoul 的详细说明。
+            ds._recordFactionSoul(fac, soulId, turnOn);
             changedTotal += changed; unitsTotal += total;
             dirs.push(`${fac === 'blue' ? '蓝方' : '红方'}${turnOn ? '装备' : '卸下'}`);
           }
@@ -384,6 +396,9 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
           ds._grantAll(fac, (e) => {
             if ((e._skillInstances || []).some(i => i.skillId === def.soul)) { ds._toggleSoul(e, def.soul); n++; }
           });
+          // 与上面批量授予对称：针对性移除也要把这条魂从 ds.souls[fac] 里摘掉，
+          // 否则移除后新生成的大型小兵还会被 equipExistingSoul 当成"仍在生效"补发回来。
+          ds._recordFactionSoul(fac, def.soul, false);
           logFn(`🚫 ${fac === 'blue' ? '蓝方' : '红方'} 已卸下龙魂【${SkillLibrary[def.soul]?.name || def.soul}】（${n} 个单位）`, 'spawn');
         }
         refresh();

@@ -128,8 +128,8 @@ T('红蓝攻击中立', ct('blue','neutral') && ct('red','neutral'));
   SkillLibrary.weapon_piercing.onUnequip(tw.id,wi,ctx3);
   const st4=AttributeCalculator.calc(tw,fx3.getEffects(tw.id));
   T('卸下武器后穿透脱落(不留缝合怪)', st4.armorPenPercent===0 && fx3.getEffects(tw.id).length===0);
-  // Q3（本轮返工）：每层倍率台阶随法术强度变化，文案不再写死具体百分比数列。
-  T('穿透描述含升温机制说明', SkillLibrary.weapon_piercing.description.includes('伤害逐次提升'));
+  // Q3（本轮返工）：文案改回用户原话的公式化表述"每层额外造成（YY%=...）伤害"。
+  T('穿透描述含升温机制说明', SkillLibrary.weapon_piercing.description.includes('每层额外造成'));
   T('增幅型武器已删除（v33）', SkillLibrary.weapon_normal===undefined);
 }
 console.log(`批次3验收: ${pass} 通过 / ${fail} 失败`); process.exit(fail?1:0);

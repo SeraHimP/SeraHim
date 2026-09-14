@@ -38,7 +38,8 @@ export function ramSplashRadius(e, target) {
 const isMeleeUnit = (e) => !!e && (e.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD;
 // v2.5D（Q1）：模板未声明 bulletSpeed 的远程单位取此默认弹速（与防御塔同值）。
 // 想给某兵种单独手感，在 Config 模板里补 bulletSpeed 即可覆盖，此处无需再改。
-const DEFAULT_BULLET_SPEED = 400;
+// 本轮搬进 CONFIG.tuning.defaultBulletSpeed（软编码唯一来源，属性面板也读同一个值，
+// 见 UIManager.js 里"子弹速度显示-"那条修复）。
 
 /**
  * ==================== v48：最后一击归属 ====================
@@ -762,7 +763,7 @@ export class CombatSystem {
         startY: attacker.pos.y,
         attackerId: attacker.id,   // v43 P0-③：渲染层按 id 取炮口高度（坐标反查已删）
         targetId: target.id,
-        speed: atkStats.bulletSpeed || DEFAULT_BULLET_SPEED,
+        speed: atkStats.bulletSpeed || (CONFIG.tuning?.defaultBulletSpeed ?? 400),
         color: bulletColor,
         size: attacker.type === 'tower' ? 20 : 12, // 渲染尺寸：小兵/巨龙弹丸比塔弹小一号
         heat: pierceHeat,                           // #10：升温可视化（0..1），渲染层据此变热

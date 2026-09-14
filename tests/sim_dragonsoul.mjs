@@ -446,4 +446,71 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
     idxFaction >= 0 && idxEquip > idxFaction);
 }
 
+// ==================== ⑯：编辑器批量授予龙魂，大型小兵拿不到（真 bug，本轮追加）====================
+// 用户报告："模板编辑器-巨龙与龙魂批量设置某阵营获得龙魂，目前只有塔正常获得，
+// 大型小兵并未正常获得龙魂！！！"——根因：塔静态永久存在，编辑器广播那一刻装上
+// 就一直留着；大型小兵不断死亡重生，新出生的替补全靠 equipExistingSoul 补发，
+// 而它原来只在 this.soulOwner === fac（只有**自动成魂**才会写）时才补龙魂——编辑器
+// 手动授予走 _toggleSoul，从不碰 soulOwner，于是这个补发分支对手动授予的魂永远
+// 不生效。修复：新增 _recordFactionSoul(fac, soulId, on) 把"该阵营现在应该有哪些
+// 魂"单独记进 this.souls[fac]（自动成魂与编辑器手动授予都写它，互不冲突），
+// equipExistingSoul 补发时只认这张表，不再依赖 soulOwner。
+{
+  const { ds, ents, fx } = mk();
+  const mkFresh = (type, fac) => {
+    const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+      _skillInstances: [], _mapFaction: fac, faction: fac };
+    ents.add(e); return e;
+  };
+  const tower = mkFresh('tower', 'blue');
+  const totem1 = mkFresh('totem', 'blue');
+  const soulId = 'dragonsoul_fire';
+
+  // 模拟编辑器"批量授予"点击：直接对当场单位 _toggleSoul，再调 _recordFactionSoul
+  // （对齐 pagesGameplayWorld.js 里巨龙之力池/龙魂池点击处理器的真实调用顺序）。
+  ds._grantAll('blue', (e) => {
+    const has = (e._skillInstances || []).some(i => i.skillId === soulId);
+    if (!has) ds._toggleSoul(e, soulId);
+  });
+  ds._recordFactionSoul('blue', soulId, true);
+  T('⑯-批量授予立即对当场的塔与大型小兵都生效',
+    hasSoul(tower, soulId) && hasSoul(totem1, soulId));
+  T('⑯-soulOwner 不受手动授予影响（出兵条件不能被污染成"已真实成魂"）',
+    ds.soulOwner === null);
+
+  // 大型小兵死亡重生：新totem要靠 equipExistingSoul 补发。
+  totem1.alive = false;
+  const totem2 = mkFresh('totem', 'blue');
+  T('⑯-新出生的大型小兵修复前拿不到（对照：此刻尚未补发）', !hasSoul(totem2, soulId));
+  const got = ds.equipExistingSoul(totem2);
+  T('⑯-equipExistingSoul 补发成功，新大型小兵拿到手动授予的魂（真正的 bug 修复点）',
+    got === true && hasSoul(totem2, soulId));
+
+  // 新塔同理也该补到（塔本来就不会死，这里额外验证"新建的塔"这条边界路径）。
+  const tower2 = mkFresh('tower', 'blue');
+  T('⑯-新建的塔同样补到手动授予的魂', ds.equipExistingSoul(tower2) === true && hasSoul(tower2, soulId));
+
+  // 针对性移除：chip 上点 ✕ 之后，新出生的单位不应该再补到。
+  ds._grantAll('blue', (e) => {
+    if ((e._skillInstances || []).some(i => i.skillId === soulId)) ds._toggleSoul(e, soulId);
+  });
+  ds._recordFactionSoul('blue', soulId, false);
+  const totem3 = mkFresh('totem', 'blue');
+  T('⑯-针对性移除后，新出生的单位不再补发这条魂', ds.equipExistingSoul(totem3) === false && !hasSoul(totem3, soulId));
+
+  // 敌方不受影响（_grantAll 已经按阵营过滤，_recordFactionSoul 也是按 fac 分开存）。
+  const redTotem = mkFresh('totem', 'red');
+  T('⑯-敌方阵营完全不受影响', !hasSoul(redTotem, soulId) && ds.equipExistingSoul(redTotem) === false);
+}
+
+// ==================== ⑰：编辑器"巨龙与龙魂"页两处调用点确实同步了 _recordFactionSoul ====================
+// 读源码钉住调用点存在，防止以后有人改批量授予/移除时漏掉这一步同步（本仓库已经
+// 因为同类"两处该一致的地方只改了一处"栽过好几次，见 minionPassives.js 的 rend 那段注释）。
+{
+  const src = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  const n = (src.match(/ds\._recordFactionSoul\(/g) || []).length;
+  T('⑰-批量授予与针对性移除都调用了 ds._recordFactionSoul（缺一处就是回到本轮修的那个 bug）', n === 2);
+}
+
 board.done();

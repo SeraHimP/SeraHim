@@ -2471,7 +2471,15 @@ async function world() {
         if (typeof v !== 'string') continue;
         // {val}/{amp}/{dr}/{blue}/{red} 这类占位符会在渲染时被替换成数值，不算残留；
         // 排除掉花括号占位符本身以后，正文里不该再剩任何英文单词。
-        const stripped = v.replace(/\{[a-zA-Z_]+\}/g, '');
+        // 本轮例外：闪电杖/穿透型两条描述按用户原话公式化表述写成"（XX=攻击力×100%）
+        // ……（YY%=ZZ%+X%×法术强度）伤害（最多T层）"——XX/YY/ZZ/X/T 是公式里的
+        // 变量标号（跟数学公式写字母变量是同一回事），不是没翻译的英文字段名，
+        // 这里只在它们紧贴着公式符号（=、%、层）出现时才当成标号剥掉，不放宽到
+        // 任意大写字母组合，不会漏掉真正的英文残留。
+        const stripped = v.replace(/\{[a-zA-Z_]+\}/g, '')
+          .replace(/\b(?:XX|YY|ZZ)(?=[=%])/g, '')
+          .replace(/\bX(?=%)/g, '')
+          .replace(/\bT(?=层)/g, '');
         if (/[A-Za-z]{2,}/.test(stripped)) leaks++;
       }
     }

@@ -562,9 +562,29 @@ export class DragonSystem {
       const ancientStacks = this.ancientPowerStacks[fac] || 0;
       for (let i = 0; i < ancientStacks; i++) { this._applyAncientPower(entity); any = true; }
     }
-    // ② 龙魂本体：仍然只给塔 + 大型小兵
-    if (DragonSystem.SOUL_REWARD_OK(entity) && this.soulOwner === fac && this.souls[fac]?.[0]) {
-      this._equipSoul(entity, this.souls[fac][0]); any = true;
+    // ② 龙魂本体：仍然只给塔 + 大型小兵。
+    // 用户报告（本轮追加）："模板编辑器-巨龙与龙魂批量设置某阵营获得龙魂，目前只有
+    // 塔正常获得，大型小兵并未正常获得龙魂！！！" —— 根因排查：塔是静态的，广播
+    // 那一刻装上就永远在；大型小兵会不断死亡重生，每个新生成的替补都全靠这里补发。
+    // 这里原来还多判了一句 `this.soulOwner === fac`——soulOwner 只在**自动成魂**
+    // （_resolveSoul，靠真实击杀攒够门槛）时才会写入，而编辑器"巨龙与龙魂"页签的
+    // 批量授予走的是 _toggleSoul 这条手动多选入口，从不touch soulOwner（soulOwner
+    // 还要给 waveComposition.js 的出兵条件判"真的成魂了没"用，手动操作绝不能污染
+    // 它）。这道门原本就是想借 soulOwner 顺便当"这个阵营有没有魂要补"的开关，
+    // 但编辑器手动授予的魂从来不会让 soulOwner 变成这个阵营——于是新出生的大型
+    // 小兵永远进不了这个 if，只有走自动成魂路径时才补得到，这正是"编辑器批量
+    // 授予对塔生效（装一次永久留着）、对大型小兵不生效（换一批就没了）"的根因。
+    // 现在把"该阵营现在应该有哪些魂"独立成 this.souls[fac] 这一张表（见下面新增的
+    // _recordFactionSoul：自动成魂与编辑器手动授予都写它，互不冲突），补发逻辑只
+    // 认这张表，不再关心是谁写进去的；改用逐条 _toggleSoul（仅在缺失时补），而不是
+    // _equipSoul 的"整体替换"，因为编辑器支持同一阵营叠加多条魂，替换语义会把
+    // 循环前面几条刚补上的魂又顶掉。
+    if (DragonSystem.SOUL_REWARD_OK(entity)) {
+      for (const soulId of (this.souls[fac] || [])) {
+        if (!(entity._skillInstances || []).some(i => i.skillId === soulId)) {
+          this._toggleSoul(entity, soulId); any = true;
+        }
+      }
     }
     // ③ v51 修复：远古之力是限时的，广播那一刻不在场的单位（大型小兵频繁死亡重生，
     // 塔几乎不会）会漏掉——这里补上，窗口期内新入场的塔/大型小兵按剩余时间补发。
@@ -856,6 +876,31 @@ export class DragonSystem {
       }, `soul_display_${soulId}`);
     }
     return true; // 已装备
+  }
+
+  /**
+   * 记录"该阵营现在应该保持装备哪些魂"，供 equipExistingSoul 补发给新生成的
+   * 塔/大型小兵（本轮新增，修"编辑器批量授予龙魂对大型小兵不生效"那个 bug 的
+   * 关键一环——只装到当前在场的实体上而不记进这张表，新出生的替补就永远补不到）。
+   *
+   * 刻意**只**由"编辑器手动批量授予/移除"这一条调用点写入，不塞进 _toggleSoul
+   * 本身——_toggleSoul 还被 _grantSlayer（击杀者限时 60s 的临时魂）、
+   * _expireSlayers（到期摘除那份临时魂）、applyDragonSelfBuffs（龙自己的自带魂）
+   * 复用，这几处都是"这一个单位的临时/自带状态"，不代表"这个阵营从此都该有这条
+   * 魂"——如果都记进来，临时魂到期后新出生的单位还会被 equipExistingSoul 当成
+   * "阵营永久魂"重新补上，变成永远收不回的假永久魂。
+   *
+   * 与 soulOwner（只由自动成魂 _resolveSoul 写入，供 waveComposition.js 的出兵
+   * 条件判断"真的成魂了没"）分开：这里只是"当前应装备哪些魂"的记录表，不管
+   * 来源是自动成魂还是编辑器手动授予都写这张表，但绝不碰 soulOwner——手动操作
+   * 不能让出兵条件误以为这个阵营已经靠真实击杀成魂了。
+   */
+  _recordFactionSoul(fac, soulId, on) {
+    if (!fac || !soulId) return;
+    const arr = this.souls[fac] || (this.souls[fac] = []);
+    const idx = arr.indexOf(soulId);
+    if (on && idx === -1) arr.push(soulId);
+    else if (!on && idx !== -1) arr.splice(idx, 1);
   }
 
   _ctx() {

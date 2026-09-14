@@ -30,21 +30,27 @@ export const weapons = {
     // "双穿"又是简写；onEquip 里实际挂的是 armorPenPercent+30 与 magicPenPercent+30
     // 两条独立效果（见下方 onEquip），文案直接照实际效果分开写成两个百分比。
     //
-    // ==================== Q3（本轮，返工版）：升温每层的倍率不再是固定 30% ====================
+    // ==================== Q3（本轮）：升温每层的倍率随法术强度变化 ====================
     // 用户第一版原话"每层额外造成（20%+X%×法术强度）伤害"，我第一次理解成"额外开一笔
     // 独立加成伤害"，被用户否掉并纠正："我说的是法术强度影响每层增伤的数值，按照我的来"
-    // ——意思是法术强度影响的是【每层这个倍率台阶本身有多高】，不是另开一笔伤害。所以
-    // 现在的实现是：每层的倍率台阶 = (piercingHeatBasePct + piercingHeatApPct%×法术强度)%，
-    // 替换掉原来写死的 30%；除此之外完全是同一套机制（preDamageMult，开火时刻按层数
-    // 结算，只放大普攻本身），没有新增第二笔伤害。具体计算见 _perStackFraction，两个
-    // 百分比占位在 CONFIG.tuning.weapons（用户原话"平衡先不用做"，数值待后续专项确认）。
+    // ——法术强度影响的是【每层这个倍率台阶本身有多高】，不是另开一笔伤害：台阶 =
+    // (piercingHeatBasePct + piercingHeatApPct%×法术强度)%，替换掉原来写死的 30%，
+    // preDamageMult 机制本身不变，没有新增第二笔伤害（具体计算见 _perStackFraction）。
+    //
+    // 本轮追加（返工）：用户否掉了上面的口语化文案改写——"别耍小聪明，我说咋写就是
+    // 咋写"，改回用户原话的公式化表述："穿透型是每层额外造成（YY%=ZZ%+X%×法术强度）
+    // 伤害（最多T层）"。YY/ZZ/X/T 是公式里的变量标号（跟闪电杖那条 XX/YY 同一个
+    // 道理），ZZ/X/T 直接代入 CONFIG 里的实际值；YY 是【每层这个台阶算出来的结果】，
+    // 静态 description 没有实体上下文算不出来，保留字母标号，装备后点开的 descTemplate
+    // 用 {val} 代入当前法术强度算出的真实数字。
     get description() {
       const W = CONFIG.tuning?.weapons || {};
       const basePct = W.piercingHeatBasePct ?? 20;
       const apCoefPct = W.piercingHeatApPct ?? 20;
-      return `唯一被动——升温：连续攻击同一目标，伤害逐次提升（每层+(${basePct}%+${apCoefPct}%×法术强度)，最多4层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。`;
+      const maxStacks = weapons.weapon_piercing.HEAT_MAX_STACKS ?? 4;
+      return `唯一被动——升温：连续攻击同一目标，每层额外造成（YY%=${basePct}%+${apCoefPct}%×法术强度）伤害（最多${maxStacks}层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。`;
     },
-    descTemplate: '唯一被动——升温：对当前目标连续命中的伤害倍率（{val}%，每层提升幅度随法术强度变化），切换目标重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。',
+    descTemplate: '唯一被动——升温：连续攻击同一目标，每层额外造成（{val}%=20%+20%×法术强度）伤害（最多4层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。',
     // 每层的倍率台阶（小数，0.30 = 30%）：基础值 + AP系数% × 法术强度，两个都是软编码，
     // CombatSystem 的开火结算、这里的文案展示（computeCurrent/onDealtDamage 的升温效果）
     // 三处共用同一个函数，不许各写一份——这正是屠戮那次"文案与结算必须同源"的教训。
@@ -54,12 +60,14 @@ export const weapons = {
       const apCoefPct = W.piercingHeatApPct ?? 20;
       return (basePct + (apCoefPct / 100) * (atkStats?.abilityPower || 0)) / 100;
     },
+    // computeCurrent 现在填的是 descTemplate 里的 {val}=YY（每层这一台阶本身的百分比，
+    // 例：法强50时 = 20+20%×50 = 30），不再是"当前层数下的总倍率"——那个总倍率已经
+    // 不是这版文案要表达的东西了，没有别处依赖旧的返回值（仓库内搜过，只有这份
+    // descTemplate 用到它）。
     computeCurrent: (entity, ctx) => {
-      const e = ctx.effectRegistry.getEffectByName(entity.id, '升温');
-      const stacks = e ? e.stacks : 0;
       const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       const per = weapons.weapon_piercing._perStackFraction(atkStats);
-      return Math.round((1 + stacks * per) * 100);
+      return Math.round(per * 100);
     },
     HEAT_MAX_STACKS: 4,          // 最多 4 层，与旧上限一致
     effects: [],
@@ -154,10 +162,23 @@ export const weapons = {
     name: '闪电杖 (魔法)',
     icon: '⚡',
     category: 'weapon',
-    // Q3（本轮）：文案从"攻击力"改成"法术强度"——装备后攻击力已被转化归零，
-    // 跳伤害现在读的是转化出来的法术强度（见 AttributeCalculator 的转化注释）。
-    description: '魔法伤害，装备后攻击力全部转化为法术强度；每秒固定跳4次伤害（各20%法术强度），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。',
-    descTemplate: '唯一被动——闪电杖：装备后攻击力全部转化为法术强度；每秒固定4次魔法伤害（各（{val}=20%法术强度×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
+    // 本轮：用户否掉了上一版的口语化改写（"装备后攻击力全部转化为法术强度"）——
+    // "别耍小聪明，我说咋写就是咋写"，改回用户原话的公式化表述："将（XX=攻击力×100%）
+    // 攻击力转化为（YY=攻击力×XX%）法术强度"。XX/YY 是公式里的变量标号（跟屠戮那条
+    // "（{val}=自身当前生命×4%）"是同一种写法——字母标号描述公式结构，数字是配置里
+    // 的实际值），不是要在界面上打印字面的"XX"/"YY"两个字母本身当成解释——这里两处
+    // 转化比例其实是同一个 CONFIG.tuning.weapons.lightningApConvertPct，用当前值
+    // 代入公式里的百分号。
+    get description() {
+      const W = CONFIG.tuning?.weapons || {};
+      const pct = W.lightningApConvertPct ?? 100;
+      return `魔法伤害，将（XX=攻击力×${pct}%）攻击力转化为（YY=攻击力×${pct}%）法术强度；`
+        + `每秒固定跳4次伤害（各20%法术强度），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，`
+        + `切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤`
+        + `（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；`
+        + `目标有护盾额外+7%伤害。`;
+    },
+    descTemplate: '唯一被动——闪电杖：将（XX=攻击力×100%）攻击力转化为（YY=攻击力×100%）法术强度；每秒固定4次魔法伤害（各（{val}=20%法术强度×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
     computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.abilityPower||0)*0.15); },
     specialAttack: true,
     effects: [],
