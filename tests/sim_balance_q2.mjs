@@ -33,7 +33,11 @@ T(`近战双抗 60 分钟(第120波) 达到 ~75（旧值 0.1/波 只有 27）`, 
 T('超级兵双抗【不跟这轮提升】（它只在收尾阶段出场，提了会让收尾更快）',
   CONFIG.battleGrowth.super.res <= 0.2);
 
-// ---- ③ 屠戮基数语义：不随生命成长膨胀 ----
+// ---- ③ 屠戮基数语义：v51.30 回调，改回随攻击者自身当前生命膨胀 ----
+// 这一节原来钉的是 'templateByHpPct'（基数用模板固定值，不随波次成长膨胀）——
+// 用户本轮反馈"后期屠戮的伤害太低了，后期基本就是一大批兵"，选择"回调"回最早的
+// 'current' 口径（基数=攻击者自身当前生命），本节断言整体翻转成新默认的形状，
+// 具体演变史见 CONFIG.rend 的长注释。
 const def = SkillLibrary.get('passive_melee_rend');
 function rendDamage(attackerHP, params) {
   const dealt = [];
@@ -58,8 +62,9 @@ function rendDamageAtHP(maxHP, curHP, params) {
 }
 const base = CONFIG.templates.melee.maxHP;
 const d1 = rendDamage(base), d2 = rendDamage(base * 3);
-T(`屠戮伤害不随自身生命膨胀（${d1} vs 生命×3 时 ${d2}）`, Math.abs(d1 - d2) < 1e-6);
-T(`屠戮伤害 = 模板基础生命 × ${CONFIG.rend.melee.pct * 100}%`,
+T(`屠戮伤害随攻击者自身当前生命膨胀（${d1} vs 生命×3 时 ${d2} ≈ 3倍）`,
+  Math.abs(d2 - d1 * 3) < 1e-6);
+T(`屠戮伤害 = 攻击者自身当前生命 × ${CONFIG.rend.melee.pct * 100}%`,
   Math.abs(d1 - base * CONFIG.rend.melee.pct) < 1e-6);
 
 // ---- ④ 地图覆写预留：数值与【机制】都能按地图改 ----
@@ -71,28 +76,28 @@ const combatSrc = fs.readFileSync(new URL('../src/systems/CombatSystem.js', impo
 T('地图覆写注入不再局限于 onFrame 技能（屠戮只有 onDealtDamage）',
   combatSrc.indexOf('_mapOverrides') < combatSrc.indexOf('if (def && def.onFrame)'));
 
-// ---- ⑤ 文案跟着基数走 ----
-// 期望常量更新：默认基数模式 'template' → 'templateByHpPct'（用户本轮定稿
-// "以当前生命值的百分比的基础生命值×XX%"），文案随之变成"基础生命×当前生命比例"。
-// 断言仍然只钉【形状】：写的是"基础生命"（不随波次膨胀那一半）而不是裸的"当前生命"。
-T('屠戮文案写的是"基础生命(×当前生命比例)"而不是裸的"自身当前生命"',
-  def.description.includes('基础生命') && !def.description.includes('自身当前生命'));
-T('屠戮默认基数模式 = 模板基础生命 × 当前血量比例',
-  CONFIG.rend.melee.base === 'templateByHpPct'
-  && CONFIG.rend.ranged.base === 'templateByHpPct'
-  && CONFIG.rend.siege.base === 'templateByHpPct');
-// 满血时与旧的 'template' 逐位相同 —— 这是本次改动"只往下调、不往上调"的证据
-T(`满血时与 'template' 逐位相同（${rendDamage(base)} = ${base * CONFIG.rend.melee.pct}）`,
+// ---- ⑤ 文案跟着基数走（v51.30：默认基数模式回调回 'current'）----
+T("屠戮文案写的是\"自身当前生命\"（current 模式的文案）",
+  def.description.includes('自身当前生命'));
+T('屠戮默认基数模式 = 攻击者自身当前生命',
+  CONFIG.rend.melee.base === 'current'
+  && CONFIG.rend.ranged.base === 'current'
+  && CONFIG.rend.siege.base === 'current');
+// 满血时与 'template'/'templateByHpPct' 两种旧模式都可能逐位不同——'current' 是
+// 三种模式里唯一一种会随攻击者自身生命膨胀的，这条断言钉住这个形状本身。
+T(`满血时基数就是攻击者自身当前生命（${rendDamage(base)} = ${base * CONFIG.rend.melee.pct}）`,
   Math.abs(rendDamage(base) - base * CONFIG.rend.melee.pct) < 1e-9);
-// 残血时按比例变软 —— 这正是用户要回来的那层手感
+// 残血时按比例变软——这一层手感三种模式都有（'current' 直接用当前生命本身，
+// 残血时当前生命本来就更低，天然满足）
 {
   const half = rendDamageAtHP(base, base / 2);
   T(`半血时打出一半（${half} = ${base * CONFIG.rend.melee.pct / 2}）`,
     Math.abs(half - base * CONFIG.rend.melee.pct / 2) < 1e-9);
 }
-// 而且【不随波次成长膨胀】：maxHP 涨到 3 倍且满血，伤害仍然不变
-T('波次成长后满血伤害不变（基数用的是模板值，不是成长后的 maxHP）',
-  Math.abs(rendDamage(base * 3) - base * CONFIG.rend.melee.pct) < 1e-9);
+// 而且【随波次成长膨胀】：maxHP 涨到 3 倍且满血，伤害跟着涨 3 倍——这正是这次
+// "回调"要恢复的行为（用户："后期屠戮的伤害太低了，后期基本就是一大批兵"）。
+T('波次成长后满血伤害同比例膨胀（基数用的是攻击者自身当前生命，会跟着 battleGrowth 涨）',
+  Math.abs(rendDamage(base * 3) - base * 3 * CONFIG.rend.melee.pct) < 1e-9);
 
 // ---- ⑥ 枢纽塔魔抗（用户定稿：护甲70 / 魔抗110）----
 T('枢纽塔 护甲70 / 魔抗110',

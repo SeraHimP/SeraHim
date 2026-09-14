@@ -231,9 +231,11 @@ function mkWorld() {
   T('[嚎哭深渊] 枢纽塔 HP 4750', ha.hq_tower.maxHP === 4750);
 }
 
-// ==================== 五、屠戮：模板基础生命 × 当前血量比例 × XX% ====================
-// 用户定稿："以当前生命值的百分比的基础生命值×XX%"。
-// 这一版同时保住了两件事：基数用模板值 → 不随波次成长膨胀；比例用当前血量 → 残血打得软。
+// ==================== 五、屠戮：基数模式（v51.30 默认回调回 'current'）====================
+// 这段原来钉的是 'templateByHpPct'（模板基础生命×当前血量比例）作为默认——用户
+// 本轮反馈"后期屠戮的伤害太低了"，把默认改回最早的 'current'（攻击者自身当前生命），
+// 演变全过程见 CONFIG.rend 的长注释。'templateByHpPct'/'template' 两种旧模式仍然
+//完整保留，可以通过地图覆写切回去，这里改成测"default=current，旧模式仍可用"。
 {
   const def = SkillLibrary.get('passive_melee_rend');
   const hit = (maxHP, curHP, params) => {
@@ -248,16 +250,17 @@ function mkWorld() {
     return dealt[0] || 0;
   };
   const M = CONFIG.templates.melee.maxHP, P = CONFIG.rend.melee.pct;
-  T('三个兵种的默认基数模式都是 templateByHpPct',
-    ['melee', 'ranged', 'siege'].every(k => CONFIG.rend[k].base === 'templateByHpPct'));
-  T(`满血：模板生命 × 100% × ${P * 100}% = ${M * P}`, Math.abs(hit(M, M) - M * P) < 1e-9);
+  T('三个兵种的默认基数模式都是 current',
+    ['melee', 'ranged', 'siege'].every(k => CONFIG.rend[k].base === 'current'));
+  T(`满血：攻击者当前生命 × ${P * 100}% = ${M * P}`, Math.abs(hit(M, M) - M * P) < 1e-9);
   T(`半血：正好减半 = ${M * P / 2}`, Math.abs(hit(M, M / 2) - M * P / 2) < 1e-9);
   T('残血 10%：只剩一成', Math.abs(hit(M, M * 0.1) - M * P * 0.1) < 1e-9);
-  T('波次成长（maxHP ×3）且满血 → 伤害不变（基数是模板值，不膨胀）',
-    Math.abs(hit(M * 3, M * 3) - M * P) < 1e-9);
-  T("旧模式 'template' 仍可按地图切回（满血时两者逐位相同）",
-    Math.abs(hit(M, M / 2, { pct: P, base: 'template' }) - M * P) < 1e-9);
-  T("旧模式 'current' 仍可按地图切回", Math.abs(hit(M, M / 2, { pct: P, base: 'current' }) - M / 2 * P) < 1e-9);
+  T('波次成长（maxHP ×3）且满血 → 伤害同比例膨胀（基数是攻击者自身当前生命，会跟着涨）',
+    Math.abs(hit(M * 3, M * 3) - M * 3 * P) < 1e-9);
+  T("旧模式 'template' 仍可按地图切回（不随波次成长膨胀）",
+    Math.abs(hit(M * 3, M * 3, { pct: P, base: 'template' }) - M * P) < 1e-9);
+  T("旧模式 'templateByHpPct' 仍可按地图切回（满血时与 'template' 逐位相同）",
+    Math.abs(hit(M, M / 2, { pct: P, base: 'templateByHpPct' }) - M * P / 2) < 1e-9);
   T('文案与结算共用同一个基数函数（不许两边各写一套）',
     /function _rendBase\(entity, casterType, mode\)/.test(fs.readFileSync('src/core/skills/minionPassives.js', 'utf8')));
 

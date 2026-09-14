@@ -9,13 +9,11 @@ const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
  * 屠戮的伤害【基数】。三种口径共用这一个函数 —— 文案（computeCurrent）与结算（onHit）
  * 必须读同一份，否则会出现"面板写 A、实际打 B"（ARCHITECTURE.md「技能文案规范」）。
  *
- *   'templateByHpPct'（用户定稿，现行默认）= 模板基础生命 × (当前生命 / 最大生命)
- *   'template'                             = 模板基础生命
- *   'current'                              = 自身当前生命
+ *   'current'（v51.30 回调，现行默认）      = 攻击者自身当前生命
+ *   'templateByHpPct'（v51.27~v51.29 曾用） = 模板基础生命 × (当前生命 / 最大生命)
+ *   'template'                              = 模板基础生命
  *
- * 为什么是"模板基础生命 × 血量比例"而不是"当前生命"：见 CONFIG.rend 的长注释。
- * 一句话——基数用模板值所以不随波次成长膨胀，比例用当前血量所以残血兵打得软。
- * 满血时与 'template' 逐位相同。
+ * 三种口径为什么会来回换、这次为什么又换回来：见 CONFIG.rend 的长注释（四段演变史）。
  */
 function _rendBase(entity, casterType, mode) {
   const tplHP = (CONFIG.templates?.[casterType]?.maxHP) || entity?.baseStats?.maxHP || 0;
@@ -45,7 +43,7 @@ function _makeRendPassive(casterType, name, pct) {
       // 现在 CONFIG.rend 是唯一来源，编辑器改它（它就写这里）立刻贯通到出厂值这一层。
       get defaultParams() {
         const cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
-        return { pct: cfg.pct != null ? cfg.pct : pct, base: cfg.base || 'templateByHpPct' };
+        return { pct: cfg.pct != null ? cfg.pct : pct, base: cfg.base || 'current' };
       },
       // 文案与结算共用同一份参数解析（_resolve），不许两边各写一套 —— 见 ARCHITECTURE.md
       //「技能文案规范」。基数模式变了，文案里的"自身当前生命 / 基础生命"也跟着变。
@@ -53,7 +51,7 @@ function _makeRendPassive(casterType, name, pct) {
         var cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
         var p = (instance && instance._params && instance._params.pct != null) ? instance._params.pct
               : (cfg.pct != null ? cfg.pct : pct);
-        var m = (instance && instance._params && instance._params.base) || cfg.base || 'template';
+        var m = (instance && instance._params && instance._params.base) || cfg.base || 'current';
         return { pct: p, base: m };
       },
       _text: function(instance) {
@@ -84,16 +82,13 @@ function _makeRendPassive(casterType, name, pct) {
         if (!attacker || !target || !target.alive) return;
         if (attacker.type !== casterType) return;   // 防止技能被错误装到其他兵种
         if (!isMinionUnit(target)) return;          // 只对小兵单位，不打塔/龙
-        // 伤害基数（Q2 定稿，见 CONFIG.rend 的长注释）：
-        //   'template' = 该兵种【模板基础生命】，不随波次成长膨胀 —— 现行默认
-        //   'current'  = 攻击者当前生命（旧行为，地图可切回）
-        // 改因：旧的 'current' 让屠戮与生命同步膨胀，兵杀兵所需时间永远恒定 14.4s，
-        // 两波兵总在半个波次周期内互相清完、永远聚不起来，高地就永远推不动。
-        // 取模板基础生命后，前期占比依旧很高（"加快前期互殴"的初衷保留），
-        // 后期随生命成长自然稀释，波次开始堆叠，防御塔参与的时间也随之变长。
+        // 伤害基数模式演变史见 CONFIG.rend 的长注释——v51.30 回调回 'current'
+        // （攻击者自身当前生命 × pct），天然跟着 battleGrowth 一起涨，解决"后期一大批
+        // 成长过的兵，屠戮伤害占比低到不痛不痒"这个问题；代价是可能重新出现"清波时间
+        // 恒定、波次容易堆叠"的旧现象，用户已确认接受这个取舍。
         const cfg = (CONFIG.rend && CONFIG.rend[casterType]) || {};
         const effectivePct = instance._params?.pct ?? cfg.pct ?? pct;
-        const mode = instance._params?.base ?? cfg.base ?? 'templateByHpPct';
+        const mode = instance._params?.base ?? cfg.base ?? 'current';
         const bonus = _rendBase(attacker, casterType, mode) * effectivePct;
         if (bonus <= 0 || !ctx.combat) return;
         ctx.combat.performAttackDirect(attackerId, targetId, bonus,
