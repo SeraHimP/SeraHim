@@ -855,6 +855,13 @@ function _fmtMin(sec) {
   const m = sec / 60;
   return Number.isInteger(m) ? String(m) : m.toFixed(1);
 }
+// 本轮 Q2：法术强度成长不再 1:1 镜像攻击力成长，改成按比例打折（用户定稿"暂定
+// 66.7%，非固定比例"）——结算（onFrame 的 AP 效果）与文案（description/
+// getDescTemplate）共用这一个函数，不许各写一份。
+function _towerApStepFor(stepAD) {
+  const ratio = CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667;
+  return Math.round(stepAD * ratio);
+}
 function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStartT, fixedSteps, armorPerStep = 0 }) {
   const totalSteps = fixedSteps || Math.round((capAD - startAD) / 9);
   return {
@@ -870,24 +877,33 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
     // 960 秒=16 分钟）凑巧数字对得上；改内塔的 resistGrowthStartT（960→600，
     // 见下面调用处）之后这三处文案就会跟实际生效时间对不上——同一类"文案写死、
     // 数值走参数"的口径不一致，改成从 resistGrowthStartT 动态换算分钟数。
-    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟攻击力+9（共${totalSteps}层至${capAD}封顶）` +
+    // 本轮 Q2：用户报"塔也会成长法强了，但加固城防（成长这条被动合并进去展示的）
+    // 里完全没提法强"——排查发现 a1d31f8 那轮只改了 onFrame 的结算（补了一条法强
+    // 成长效果），文案这三处（description/descTemplate/getDescTemplate）从来没跟着
+    // 改，玩家点开面板只看到"攻击力阶梯成长"，法强涨到多少全靠猜。这里把法强步进
+    // 值（_towerApStepFor(stepAD)）也写进文案，与 onFrame 实际结算共用同一个函数。
+    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟攻击力+9、法术强度+${_towerApStepFor(9)}` +
+      `（法强成长为攻击力成长的${Math.round((CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667) * 1000) / 10}%，共${totalSteps}层至${capAD}封顶）` +
       (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}分钟起双抗每分钟+1（不封顶）` : '') + '。',
-    descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成{val}），每分钟+9共${totalSteps}层至 ${capAD} 封顶` +
+    descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），` +
+     `每分钟+9/+${_towerApStepFor(9)}共${totalSteps}层至 ${capAD} 封顶` +
      (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}:00 起双抗 +1/分钟` : '') + '。',
    // v42: dynamic descTemplate that respects per-map inst._params overrides
    getDescTemplate: function(entity, instance) {
      var sv = this; // this === def
      var p = instance && instance._params || {};
      var stepAD = p.stepAD || 9;
+     var stepAP = _towerApStepFor(stepAD);
      var steps = p.totalSteps || totalSteps;
      var resistT = p.resistGrowthStartT ?? resistGrowthStartT;
-     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成{val}），每分钟+' + stepAD + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistT ? '；' + _fmtMin(resistT) + ':00起双抗+1/分钟' : '') + '。';
+     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），每分钟+' + stepAD + '/+' + stepAP + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistT ? '；' + _fmtMin(resistT) + ':00起双抗+1/分钟' : '') + '。';
    },
    computeCurrent: (entity, ctx) => {
       const inst = (entity._skillInstances || []).find(i => i.skillId === id);
       const t0 = inst?.state?.t0 || 0;
       const elapsed = Math.max(0, (window.gameTime || 0) - t0);
-      return Math.min(Math.max(0, Math.floor((elapsed - (inst?._params?.adStartT ?? adStartT)) / 60)), totalSteps) * 9;
+      const steps = Math.min(Math.max(0, Math.floor((elapsed - (inst?._params?.adStartT ?? adStartT)) / 60)), totalSteps);
+      return { val: steps * 9, apVal: steps * _towerApStepFor(9) };
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -929,6 +945,14 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
       const rawSteps = Math.floor((elapsed - effectiveStartT) / 60); // 起算点后每满一分钟一层
       const steps = Math.min(Math.max(0, rawSteps), effectiveTotalSteps);
       const capped = steps >= effectiveTotalSteps;
+      // 本轮追加：用户"把塔成长的各种属性的状态合并到一块显示，不要显示一堆状态
+      // 出来"——原来 AD/双抗/法强 三条成长各起一个独立的 blueprint.name，状态栏
+      // 就是三个并排的图标。UIManager._updateEffectIcons 本来就有"同名效果合并成
+      // 一个图标"的机制（Q1，供同一技能的多条属性修正共用），这里不用发明新机制，
+      // 只要让这四条效果（AD/AP/护甲/魔抗）全部共用同一个 blueprint.name（裸的
+      // `name`，不再拼 '·双抗'/'·法强' 后缀），加上统一的图标，就会自动合并成一个
+      // 状态格；点开/悬浮时 effectGroupBreakdown 也会把同名的多条 kind:'stat' 效果
+      // 汇总进同一张属性表格里，天然就是"合并展示"，不用再另写一份汇总逻辑。
       if (steps !== st.adSteps) {
         st.adSteps = steps;
         if (steps > 0) {
@@ -936,15 +960,12 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
             // Q2 修正（最新确认）：护甲与魔抗一块成长，每层各 +armorPerStep
             for (const [rk, rl] of [['armor', '护甲'], ['magicResist', '魔法抗性']]) {
               ctx.effectRegistry.apply(entityId, {
-                name: name + '·双抗', icon: '🛡', kind: 'stat', statKey: rk, flatValue: steps * effectiveArmorPerStep,
+                name, icon: '📈', kind: 'stat', statKey: rk, flatValue: steps * effectiveArmorPerStep,
                 duration: capped ? Infinity : 60, permanent: capped,
                 stackable: true, maxStacks: effectiveTotalSteps, stackPolicy: 'refresh',
                 alwaysShowStacks: true, uniquePassive: true,
                 description: `${rl}+${steps * effectiveArmorPerStep}（第 ${steps}/${effectiveTotalSteps} 层）`,
               }, id + '_step_' + rk);
-            }
-            for (const aEff of ctx.effectRegistry.getEffects(entityId)) {
-              if (aEff.blueprint.name === name + '·双抗') aEff.stacks = steps;
             }
           }
           ctx.effectRegistry.apply(entityId, {
@@ -957,33 +978,42 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
               : `攻击力+${steps * effectiveStepAD}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
           }, id + '_ad', );
           // Q3：塔默认改自适应伤害（不再强制魔法），成长也从"只涨攻击力"改成
-          // "物理攻击、法术强度同步涨"——数值与节奏跟攻击力那条完全一致（同一个
-          // effectiveStepAD、同一层数），不额外开一条独立配置，避免两条成长曲线
-          // 跑偏；哪支武器实际吃 AD 还是 AP，由武器自身的伤害类型决定。
+          // "物理攻击、法术强度同步涨"。本轮追加：法强步进不再 1:1 镜像攻击力
+          // 步进，改成按 CONFIG.tuning.towerGrowth.apRatioOfAd 打折（_towerApStepFor，
+          // 用户定稿"暂定66.7%"）；哪支武器实际吃 AD 还是 AP，由武器自身的伤害
+          // 类型决定，这里只管把两条数值都涨起来。
+          const stepAP = _towerApStepFor(effectiveStepAD);
           ctx.effectRegistry.apply(entityId, {
-            name: name + '·法强', icon: '📈', kind: 'stat', statKey: 'abilityPower', flatValue: steps * effectiveStepAD,
+            name, icon: '📈', kind: 'stat', statKey: 'abilityPower', flatValue: steps * stepAP,
             duration: capped ? Infinity : 60, permanent: capped,
             stackable: true, maxStacks: effectiveTotalSteps, stackPolicy: 'refresh',
             alwaysShowStacks: true, uniquePassive: true,
             description: capped
-              ? `法术强度+${steps * effectiveStepAD}（已封顶 ${steps}/${effectiveTotalSteps} 层）`
-              : `法术强度+${steps * effectiveStepAD}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
+              ? `法术强度+${steps * stepAP}（已封顶 ${steps}/${effectiveTotalSteps} 层）`
+              : `法术强度+${steps * stepAP}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
           }, id + '_ap', );
-          const eff = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === name);
-          if (eff) eff.stacks = steps;
-          const effAp = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === name + '·法强');
-          if (effAp) effAp.stacks = steps;
+          // 四条效果现在共用同一个 blueprint.name（纯粹为了状态栏合并成一个图标），
+          // 但 AD/AP 这条节奏（adStartT 起算、steps 封顶）与下面内塔双抗那条节奏
+          // （resistGrowthStartT 起算、rSteps 不封顶）各走各的计时器——如果同步
+          // stacks/remainingTime 时只按 blueprint.name 一把抓，会把这条刚算出来的
+          // steps 错误地写进内塔双抗那两条效果里（反之亦然）。改按 sourceId 精确
+          // 匹配【这一次 apply 的这几条】，不牵连另一条节奏上的效果。
+          const adApSourceIds = [id + '_ad', id + '_ap', id + '_step_armor', id + '_step_magicResist'];
+          for (const e2 of ctx.effectRegistry.getEffects(entityId)) {
+            if (adApSourceIds.includes(e2.sourceId)) e2.stacks = steps;
+          }
         }
       }
       if (!capped) {
         // 层间：直写剩余时间 = 距下一层秒数（不 apply，环平滑倒数不闪）
         const remain = Math.max(0.5, 60 - ((elapsed - effectiveStartT) % 60));
+        const adApSourceIds = [id + '_ad', id + '_ap', id + '_step_armor', id + '_step_magicResist'];
         for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-          if ((eff.blueprint.name === name || eff.blueprint.name === name + '·双抗' || eff.blueprint.name === name + '·法强') && steps > 0) eff.remainingTime = remain;
+          if (adApSourceIds.includes(eff.sourceId) && steps > 0) eff.remainingTime = remain;
         }
       }
 
-      // ---- 内塔双抗阶梯（不封顶，逻辑同上） ----
+      // ---- 内塔双抗阶梯（不封顶，逻辑同上，同样合并进同一个 name）----
       if (effectiveResistStartT) {
         const rSteps = Math.max(0, Math.floor((elapsed - effectiveResistStartT) / 60));
         if (rSteps !== st.resSteps) {
@@ -991,20 +1021,23 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
           if (rSteps > 0) {
             for (const [key, label] of [['armor', '护甲'], ['magicResist', '魔法抗性']]) {
               ctx.effectRegistry.apply(entityId, {
-                name: name + '·双抗', icon: '🛡', kind: 'stat', statKey: key, flatValue: rSteps,
+                name, icon: '📈', kind: 'stat', statKey: key, flatValue: rSteps,
                 duration: 60, stackable: true, maxStacks: 999, stackPolicy: 'refresh',
                 alwaysShowStacks: true, uniquePassive: true,
                 description: `${label}+${rSteps}（第 ${rSteps} 层，每分钟+1不封顶）`,
               }, id + '_' + key);
             }
-            for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-              if (eff.blueprint.name === name + '·双抗') eff.stacks = Math.min(rSteps, 999);
+            // 同上：只精确同步这一条节奏自己的两个 sourceId，不碰 AD/AP 那条。
+            const resistSourceIds = [id + '_armor', id + '_magicResist'];
+            for (const e2 of ctx.effectRegistry.getEffects(entityId)) {
+              if (resistSourceIds.includes(e2.sourceId)) e2.stacks = Math.min(rSteps, 999);
             }
           }
         }
         if (rSteps > 0) {
+          const resistSourceIds = [id + '_armor', id + '_magicResist'];
           for (const eff of ctx.effectRegistry.getEffects(entityId)) {
-            if (eff.blueprint.name === name + '·双抗') eff.remainingTime = Math.max(0.5, 60 - ((elapsed - effectiveResistStartT) % 60));
+            if (resistSourceIds.includes(eff.sourceId)) eff.remainingTime = Math.max(0.5, 60 - ((elapsed - effectiveResistStartT) % 60));
           }
         }
       }

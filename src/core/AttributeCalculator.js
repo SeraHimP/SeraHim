@@ -210,6 +210,15 @@ export const AttributeCalculator = {
       const drainedAD = (stats.attackDamage || 0) * convertPct;
       stats.attackDamage = (stats.attackDamage || 0) - drainedAD;
       stats.abilityPower = (stats.abilityPower || 0) + drainedAD;
+      // 本轮：用户报"闪电杖描述里的XX/YY看不懂"——排查发现描述文案里 XX/YY 只是
+      // 字面写死的两个字母，从没接到真实计算值上。要在文案里显示"这次转化掉了/
+      // 换到了多少"，就得把这个中间结果暴露出去，不能让 weapons.js 的 computeCurrent
+      // 自己重新按公式算一遍（那会变成"结算与文案各写一份同一个公式"的老毛病——
+      // 这里用的是【转化前】的 attackDamage，computeCurrent 只能拿到 calc() 返回的
+      // 【最终】stats，转化前的值早就没了）。stats._lightningDrainedAD 只是文案用
+      // 的只读旁路数据，不参与后续任何计算（后面的 coreStatsPct/allStatsPct 等只读
+      // attackDamage/abilityPower 两个字段，不会碰这个下划线前缀的旁路字段）。
+      stats._lightningDrainedAD = drainedAD;
     }
 
     // 核心属性加成：只放大这六项，且放在全属性加成之前——如果两者同时存在（理论上

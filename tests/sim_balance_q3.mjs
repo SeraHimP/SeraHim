@@ -152,10 +152,19 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
   attr.tick();
   const s = attr.calc(tw, fx.getEffects(tw.id));
   T('外塔第1层成长后：攻击力 = 基础152+9', Math.abs(s.attackDamage - (152 + 9)) < 1e-6);
-  T('外塔第1层成长后：法术强度也同步 +9（Q3新增，与攻击力同一条曲线）',
-    Math.abs(s.abilityPower - 9) < 1e-6);
-  const adEff = fx.getEffectByName(tw.id, '外塔成长');
-  const apEff = fx.getEffectByName(tw.id, '外塔成长·法强');
+  // 本轮：法强成长不再 1:1 镜像攻击力成长，改按 CONFIG.tuning.towerGrowth.apRatioOfAd
+  // 打折（用户定稿"暂定66.7%"）——9 × 0.667 四舍五入 = 6，不再是 9。
+  const apRatio = CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667;
+  const expectAP = Math.round(9 * apRatio);
+  T(`外塔第1层成长后：法术强度同步成长但打折（=${expectAP}，攻击力成长的${apRatio * 100}%）`,
+    Math.abs(s.abilityPower - expectAP) < 1e-6);
+  // 本轮追加：AD/AP 两条成长效果合并成同一个 blueprint.name（用户"把成长的各种
+  // 属性状态合并到一块显示"），不能再用 getEffectByName 区分——按 sourceId 找。
+  const allEffs = fx.getEffects(tw.id);
+  const adEff = allEffs.find(e => e.sourceId === 'passive_growth_outer_ad');
+  const apEff = allEffs.find(e => e.sourceId === 'passive_growth_outer_ap');
+  T('AD/AP 两条成长效果合并成同一个 blueprint.name（状态栏只显示一个图标）',
+    !!adEff && !!apEff && adEff.blueprint.name === apEff.blueprint.name);
   T('攻击力/法术强度两条成长效果层数一致', !!adEff && !!apEff && adEff.stacks === apEff.stacks);
 }
 
@@ -171,11 +180,15 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
     !DEFAULT_MINION_PASSIVES.ram.some(k => k.includes('_rend'))
     && !DEFAULT_MINION_PASSIVES.super.some(k => k.includes('_rend')));
   T('CONFIG.rend 里三个新百分比都声明了（数值本轮由AI自定，未跑balance_matrix）',
-    CONFIG.rend.totem.base === 'current' && CONFIG.rend.warlock.base === 'current' && CONFIG.rend.corrupt.base === 'current'
+    CONFIG.rend.totem.base === 'templateByHpPct' && CONFIG.rend.warlock.base === 'templateByHpPct' && CONFIG.rend.corrupt.base === 'templateByHpPct'
     && CONFIG.rend.totem.pct > 0 && CONFIG.rend.warlock.pct > 0 && CONFIG.rend.corrupt.pct > 0);
 
   // 结算形状验证：与 melee 屠戮同一套代码路径（_makeRendPassive 生成），只打小兵、
-  // 不打塔/龙，伤害基数=攻击者自身当前生命×对应pct。
+  // 不打塔/龙。这里 A 的 baseStats.maxHP 就是模板默认值、满血，templateByHpPct
+  // 的"模板固定生命×当前/最大比例"退化成与 CONFIG.templates.totem.maxHP 相同的
+  // 数值，跟 'current' 模式在这个特定场景下巧合地给出同一个数——不代表两种模式
+  // 等价，只是这条用例没有构造"生命被成长放大"的场景去区分它们（那条区分放在了
+  // sim_balance_q2.mjs / sim_v42.mjs 里）。
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
   const def = SkillLibrary.get('passive_totem_rend');
   const A = { id: ++window._uid, type: 'totem', alive: true, pos: { x: 0, y: 0 },
@@ -188,7 +201,7 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
   const dealt = [];
   const ctx = { entityContainer: ents, combat: { performAttackDirect: (a, b, dmg) => dealt.push(dmg) } };
   def.onDealtDamage(A.id, B.id, { state: {}, _params: {} }, ctx);
-  T('图腾屠戮命中小兵：伤害 = 攻击者自身当前生命 × ' + (CONFIG.rend.totem.pct * 100) + '%',
+  T('图腾屠戮命中小兵：伤害 = 模板固定生命 × 当前/最大生命比例(=1) × ' + (CONFIG.rend.totem.pct * 100) + '%',
     Math.abs(dealt[0] - CONFIG.templates.totem.maxHP * CONFIG.rend.totem.pct) < 1e-6);
   def.onDealtDamage(A.id, towerTarget.id, { state: {}, _params: {} }, ctx);
   T('图腾屠戮对塔无效（只打小兵单位）', dealt.length === 1);

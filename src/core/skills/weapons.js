@@ -37,27 +37,30 @@ export const weapons = {
     // (piercingHeatBasePct + piercingHeatApPct%×法术强度)%，替换掉原来写死的 30%，
     // preDamageMult 机制本身不变，没有新增第二笔伤害（具体计算见 _perStackFraction）。
     //
-    // 本轮追加（返工）：用户否掉了上面的口语化文案改写——"别耍小聪明，我说咋写就是
-    // 咋写"，改回用户原话的公式化表述："穿透型是每层额外造成（YY%=ZZ%+X%×法术强度）
-    // 伤害（最多T层）"。YY/ZZ/X/T 是公式里的变量标号（跟闪电杖那条 XX/YY 同一个
-    // 道理），ZZ/X/T 直接代入 CONFIG 里的实际值；YY 是【每层这个台阶算出来的结果】，
-    // 静态 description 没有实体上下文算不出来，保留字母标号，装备后点开的 descTemplate
-    // 用 {val} 代入当前法术强度算出的真实数字。
-    get description() {
+    // 本轮返工：用户否掉了上面的口语化文案改写——"别耍小聪明，我说咋写就是咋写"，
+    // 改回用户原话的公式化表述："穿透型是每层额外造成（YY%=ZZ%+X%×法术强度）伤害
+    // （最多T层）"。这套记号里 YY 是【左边的动态结果】、右边是计算公式——YY 必须
+    // 替换成装备后算出来的真实百分比数字，不能在界面上打印字面的"YY"两个字符
+    // （用户后续报的"看不懂XX/YY是什么意思"就是这个问题，闪电杖那条同样踩过，
+    // 一并改正）。descTemplate 原本就在用 {val} 填 YY（唯一没改对的是 description
+    // 那份静态兜底还写着字面"YY%"），这里让 description 直接复用 descTemplate 的
+    // 文本，两处不再各写一份、也不会再有"一处改对一处忘了改"。
+    // Q3（本轮）：apCoefPct 20% → 15%（用户定稿新公式"20%+15%×法术强度"）。
+    get descTemplate() {
       const W = CONFIG.tuning?.weapons || {};
       const basePct = W.piercingHeatBasePct ?? 20;
-      const apCoefPct = W.piercingHeatApPct ?? 20;
+      const apCoefPct = W.piercingHeatApPct ?? 15;
       const maxStacks = weapons.weapon_piercing.HEAT_MAX_STACKS ?? 4;
-      return `唯一被动——升温：连续攻击同一目标，每层额外造成（YY%=${basePct}%+${apCoefPct}%×法术强度）伤害（最多${maxStacks}层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。`;
+      return `唯一被动——升温：连续攻击同一目标，每层额外造成（{val}%=${basePct}%+${apCoefPct}%×法术强度）伤害（最多${maxStacks}层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。`;
     },
-    descTemplate: '唯一被动——升温：连续攻击同一目标，每层额外造成（{val}%=20%+20%×法术强度）伤害（最多4层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。',
+    get description() { return this.descTemplate; },
     // 每层的倍率台阶（小数，0.30 = 30%）：基础值 + AP系数% × 法术强度，两个都是软编码，
     // CombatSystem 的开火结算、这里的文案展示（computeCurrent/onDealtDamage 的升温效果）
     // 三处共用同一个函数，不许各写一份——这正是屠戮那次"文案与结算必须同源"的教训。
     _perStackFraction(atkStats) {
       const W = CONFIG.tuning?.weapons || {};
       const basePct = W.piercingHeatBasePct ?? 20;
-      const apCoefPct = W.piercingHeatApPct ?? 20;
+      const apCoefPct = W.piercingHeatApPct ?? 15;
       return (basePct + (apCoefPct / 100) * (atkStats?.abilityPower || 0)) / 100;
     },
     // computeCurrent 现在填的是 descTemplate 里的 {val}=YY（每层这一台阶本身的百分比，
@@ -162,24 +165,45 @@ export const weapons = {
     name: '闪电杖 (魔法)',
     icon: '⚡',
     category: 'weapon',
-    // 本轮：用户否掉了上一版的口语化改写（"装备后攻击力全部转化为法术强度"）——
-    // "别耍小聪明，我说咋写就是咋写"，改回用户原话的公式化表述："将（XX=攻击力×100%）
-    // 攻击力转化为（YY=攻击力×XX%）法术强度"。XX/YY 是公式里的变量标号（跟屠戮那条
-    // "（{val}=自身当前生命×4%）"是同一种写法——字母标号描述公式结构，数字是配置里
-    // 的实际值），不是要在界面上打印字面的"XX"/"YY"两个字母本身当成解释——这里两处
-    // 转化比例其实是同一个 CONFIG.tuning.weapons.lightningApConvertPct，用当前值
-    // 代入公式里的百分号。
-    get description() {
+    // 本轮返工：用户报"你在游戏里用XX/YY代替是什么意思，我根本看不懂"——排查发现
+    // 上一版虽然写对了公式结构，但 descTemplate 里的 "XX"/"YY" 是字面写死的两个
+    // 字母，从没接到 computeCurrent 上，玩家在游戏里看到的就是原原本本的"XX"两个
+    // 字符，当然看不懂。用户原话讲清楚了这套记号的含义："左面是动态结果，右面是
+    // 计算公式"——即"（{val}=公式）"这个记号里，左边的 {val} 必须替换成【装备后
+    // 算出来的真实数字】，不是字母本身。这里改用 {xx} 占位符（renderSkillDescription
+    // 支持 computeCurrent 返回 {key:value} 对象填充任意命名的占位符，不止 {val}
+    // 一个），同一个 {xx} 在模板里出现两次——XX（转化掉的攻击力）与 YY（转化出的
+    // 法术强度）本来就是同一个数（1:1 转化，两边公式都是"攻击力×同一个百分比"），
+    // 没必要开两个 key 存同一份值。
+    // 另外用户纠正了每跳伤害那句的表述："（72=20%法术强度×充能倍率）"读着别扭，
+    // 改成"每次造成（72=20%×法术强度×充能倍率）魔法伤害"，在"20%"和"法术强度"
+    // 之间显式补一个"×"。
+    // description（无实体上下文时的静态兜底）与 descTemplate 用同一份模板文本——
+    // 跟屠戮的 _text() 是同一个道理：静态展示时 {xx}/{val} 就原样是占位符文本，
+    // 不会被误当成两个真实存在的字母变量。
+    get descTemplate() {
       const W = CONFIG.tuning?.weapons || {};
       const pct = W.lightningApConvertPct ?? 100;
-      return `魔法伤害，将（XX=攻击力×${pct}%）攻击力转化为（YY=攻击力×${pct}%）法术强度；`
-        + `每秒固定跳4次伤害（各20%法术强度），完全独立于攻速；充能随攻速加快（攻速1.0约12秒充满，`
-        + `切换目标严格归零），伤害倍率随充能升至1.8倍、无视防御升至67%；满充能时对目标施加重伤`
-        + `（治疗与护盾强度-40%）；被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；`
-        + `目标有护盾额外+7%伤害。`;
+      return `唯一被动——闪电杖：将（{xx}=攻击力×${pct}%）攻击力转化为（{xx}=攻击力×${pct}%）法术强度；`
+        + `每秒固定4次魔法伤害，每次造成（{val}=20%×法术强度×充能倍率）魔法伤害，完全独立于攻速；`
+        + `充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、`
+        + `无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；`
+        + `被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。`;
     },
-    descTemplate: '唯一被动——闪电杖：将（XX=攻击力×100%）攻击力转化为（YY=攻击力×100%）法术强度；每秒固定4次魔法伤害（各（{val}=20%法术强度×充能倍率）），倍率随充能1.0→1.8、无视防御0→67%（攻速1.0约12秒充满）；满充能对目标施加40%重伤（治疗与护盾强度-40%）；被动对目标-15%移速/-15%伤害增幅/-20%攻速；目标有护盾额外+7%伤害。',
-    computeCurrent: (entity, ctx) => { const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id)); return Math.round((s.abilityPower||0)*0.15); },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const inst = (entity._skillInstances || []).find(i => i.skillId === 'weapon_lightning');
+      const P = weapons.weapon_lightning._p(inst);
+      const charge = inst?.state?.charge || 0;
+      // 与 _doTick 结算用的是同一个 chargeMultiplier 公式——文案与结算必须同源，
+      // 不能各写一份，否则以后改了充能曲线只会有一边跟着变（本仓库栽过这个坑）。
+      const chargeMultiplier = 1 + charge * (P.maxMult - 1);
+      return {
+        xx: Math.round(s._lightningDrainedAD || 0),
+        val: Math.round(P.tickPct * (s.abilityPower || 0) * chargeMultiplier),
+      };
+    },
     specialAttack: true,
     effects: [],
     // 参数取值：实例覆写（全局/地图级）→ 出厂值。所有数值都从这里过一遍，

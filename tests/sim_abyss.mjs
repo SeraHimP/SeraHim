@@ -172,8 +172,11 @@ window.gameTime=0;
 const gi={id:9010,skillId:'passive_growth_ha',state:{}};twr._skillInstances.push(gi);
 const G=SkillLibrary.passive_growth_ha; G.onEquip(twr.id,gi,{effectRegistry:fx,entityContainer:ents});
 while(window.gameTime<65){window.gameTime+=0.5;fx.update(0.5);G.onFrame(twr.id,0.5,gi,{effectRegistry:fx,entityContainer:ents});}
-const gAD=fx.getEffects(twr.id).find(e=>e.blueprint.name==='深渊塔成长');
-const gRes=fx.getEffects(twr.id).filter(e=>e.blueprint.name==='深渊塔成长·双抗');
+// 本轮：AD/AP/护甲/魔抗四条成长效果合并成同一个 blueprint.name（用户"把成长的
+// 各种属性状态合并到一块显示"），不能再靠不同的 name 后缀区分，改按 statKey 分。
+const gGroup=fx.getEffects(twr.id).filter(e=>e.blueprint.name==='深渊塔成长');
+const gAD=gGroup.find(e=>e.blueprint.statKey==='attackDamage');
+const gRes=gGroup.filter(e=>e.blueprint.statKey==='armor'||e.blueprint.statKey==='magicResist');
 T('HA成长1层:+9AD/+1护甲/+1魔抗(Q2最新确认)', gAD?.blueprint.flatValue===9 && gAD?.stacks===1
   && gRes.length===2 && gRes.every(e=>e.blueprint.flatValue===1)
   && gRes.some(e=>e.blueprint.statKey==='armor') && gRes.some(e=>e.blueprint.statKey==='magicResist'));

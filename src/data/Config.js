@@ -717,11 +717,11 @@ export const CONFIG = {
   },
 
   // 屠戮（近战/远程/炮火/图腾/术士/蚀骨）参数。base 决定【伤害基数取什么】：
-  //   'current'         = 攻击者自身当前生命            ← 用户定稿，现行默认（v51.30 回调）
-  //   'templateByHpPct' = 模板基础生命 × (当前生命 / 最大生命)  （v51.27~v51.29 曾用）
+  //   'current'         = 攻击者自身当前生命
+  //   'templateByHpPct' = 模板基础生命 × (当前生命 / 最大生命)  ← 用户定稿，现行默认（本轮回调）
   //   'template'        = 模板基础生命（不随波次成长膨胀，也不看当前血量）
   //
-  // 演变过程（两条都是踩出来的，记录在案，不是这次瞎改）：
+  // 演变过程（每一条都是踩出来的，记录在案，不是这次瞎改）：
   //   ① 最早就是 'current'：基数取攻击者当前生命，生命随波次成长，两者同步 →
   //      兵杀兵所需时间【永远恒定 14.4 秒】。波间隔 30 秒，两波兵永远在半个周期内
   //      互相清完、永远聚不起来，高地也就永远推不动——当时因为这个把它改掉了。
@@ -733,14 +733,19 @@ export const CONFIG = {
   //      伤害却纹丝不动，后期一大波成长过的兵，屠戮占目标血量的比例低到几乎不痛不痒。
   //   ④ v51.30：用户反馈"后期屠戮的伤害太低了，后期基本就是一大批兵"，回调回 ①的
   //      'current'——基数改回攻击者自身当前生命，天然跟着 battleGrowth 一起涨，后期
-  //      打得动。①那条"清波时间恒定"的旧问题理论上会重新出现，用户已经确认接受这个
-  //      取舍（"回调"就是要这份行为）；pct 暂时保持原样未动，先观察实际清波节奏是否
-  //      明显劣化，需要的话再单独下调。
+  //      打得动。
+  //   ⑤ 本轮：用户先说"屠戮目前回调为原先的计算方式"，我查提交历史看到 base 早已
+  //      是 'current'（④那次已经回调过），误判成"已经满足，不用改"。用户随后明确
+  //      纠正、给出具体公式："自身基础生命×当前生命比例×X%"——这就是③的
+  //      'templateByHpPct'，不是①④的 'current'，我把"最早出现的那版"和用户嘴里
+  //      "原先"想要的那版搞混了。这次按用户给的公式改回 'templateByHpPct'。
+  //      ①的"清波时间恒定"旧问题、③本身"后期占比偏低"的旧问题都可能重新出现，
+  //      用户这次给的是明确公式，不是含糊的"回调"，按公式落地；pct 数值不动。
   //
   // 地图覆写：map.skillOverrides['melee'].passive_melee_rend = { pct, base }，
-  // 数值与机制都能改（base 可以在某张图上切回 'templateByHpPct' / 'template'）。
+  // 数值与机制都能改（base 可以在某张图上切回 'current' / 'template'）。
   //
-  // ==================== 本轮：屠戮扩展到全部兵种（攻城车/超级兵除外） ====================
+  // ==================== 屠戮扩展到全部兵种（攻城车/超级兵除外） ====================
   // 用户："除了攻城车/超级兵之外的所有兵种都要有屠戮，新加的的数值你自己定。"
   // 攻城车专职破塔、不参与兵线互耗，超级兵体量远超普通兵且自带指挥官光环——这两类
   // 用户明确排除。totem/warlock/corrupt 三个百分比是新加的、沿用 melee/ranged/siege
@@ -748,12 +753,12 @@ export const CONFIG = {
   // 三个 _makeRendPassive 调用点旁边的注释），没跑过 balance_matrix，后续要调整
   // 平衡就单独改这几行。
   rend: {
-    melee:   { pct: 0.04, base: 'current' },
-    ranged:  { pct: 0.06, base: 'current' },
-    siege:   { pct: 0.07, base: 'current' },
-    totem:   { pct: 0.05, base: 'current' },
-    warlock: { pct: 0.06, base: 'current' },
-    corrupt: { pct: 0.07, base: 'current' },
+    melee:   { pct: 0.04, base: 'templateByHpPct' },
+    ranged:  { pct: 0.06, base: 'templateByHpPct' },
+    siege:   { pct: 0.07, base: 'templateByHpPct' },
+    totem:   { pct: 0.05, base: 'templateByHpPct' },
+    warlock: { pct: 0.06, base: 'templateByHpPct' },
+    corrupt: { pct: 0.07, base: 'templateByHpPct' },
   },
 
   // ==================== 哀兵（LaneAvengerSystem）====================
@@ -1551,7 +1556,18 @@ export const CONFIG = {
     //     30% 已作废），"X%×法术强度"里的 X 用户没给数，占位与基础值同取 20%，留到
     //     平衡专项再调（用户原话"平衡先不用做"）。这套台阶只影响 preDamageMult（放大
     //     普攻本身），不产生第二笔伤害，也不改动升温本身的叠层/重置节奏。
-    weapons: { lightningApConvertPct: 100, piercingHeatBasePct: 20, piercingHeatApPct: 20 },
+    // piercingHeatApPct：本轮 Q3 从 20 → 15（用户定稿新公式"每层额外造成
+    // （XX%=20%+15%×法术强度）伤害"）。piercingHeatBasePct/lightningApConvertPct
+    // 未变，仍是上面长注释里记的占位默认值。
+    weapons: { lightningApConvertPct: 100, piercingHeatBasePct: 20, piercingHeatApPct: 15 },
+
+    // ==================== 本轮 Q2：塔成长——法术强度成长的比例 ====================
+    // 用户："目前的塔也会成长法强了，成长的法强值为成长攻击力的66.7%（非固定比例，
+    // 目前暂定这个数值）。" 之前（a1d31f8）AP 成长是 AD 成长的 1:1 镜像（同一个
+    // effectiveStepAD），用户这次要求改成按比例打折，66.7% 只是暂定值，不是平衡
+    // 验证过的定数，软编码进来方便后续单独调（towerPassives.js 的 _makeTowerGrowth
+    // 读它，AD 每层的步进值 × 这个比例、四舍五入，就是 AP 每层的步进值）。
+    towerGrowth: { apRatioOfAd: 0.667 },
 
     acquisitionRange: 200,        // 小兵仇恨获取半径（≈ LoL 800 × 0.24）
     chaseDropFactor: 1.2,         // 追击放弃距离 = 仇恨半径 × 此系数
