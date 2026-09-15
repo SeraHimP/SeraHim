@@ -366,18 +366,37 @@ export const towerPassives = {
       const lastDamage = self.lastDamageTime ?? -Infinity;
       const regenDelay = CONFIG.gameRules?.shieldRegenDelay ?? 8;
       if (now - lastDamage < regenDelay) { state.timer = 0; return; }
-      const curStacks = () => ctx.effectRegistry.getEffects(entityId).find(e => e.sourceId === 'passive_hq_bulwark')?.stacks || 0;
-      if (curStacks() >= maxStacks) return;
+      // bug 修复：用户报"层数满了之后，护盾被打没了也不会再恢复"。根因是原来的
+      // 判据用【层数】（curStacks() >= maxStacks）当"护盾已满"的替身——层数只是
+      // EffectRegistry 用来推导护盾【上限】（totalFlat）的记账方式，层数封顶后
+      // totalFlat 就不再变化，_recalcEffectValues 的 shield delta 机制（护盾余量
+      // 按 totalFlat 的变化量增减）从此再也不会被触发，于是层数封顶之后哪怕护盾
+      // 被打光了，也永远等不到"层数变化"这个唯一能让余量回涨的时机——这就是"层数
+      // 满了就再也不回复"的真根因，不是脱战判定的问题。
+      // 改法：判据从"层数是否封顶"换成"当前护盾余量是否已经到 cap"。层数没封顶时
+      // 走法照旧（apply() 叠层，delta 机制自动把新增量并进余量）；层数已经封顶、
+      // 但余量被打低于 cap 时，直接把余量按 perTick 顶回去（封顶 cap）——这种情况
+      // totalFlat 已经不会再变，只能直接改 shieldRemaining，没有绕开的办法。
+      const curEff = () => ctx.effectRegistry.getEffects(entityId).find(e => e.sourceId === 'passive_hq_bulwark');
+      if ((curEff()?.shieldRemaining || 0) >= cap) return;
       state.timer = (state.timer || 0) + dt;
       // while 而不是单次 if：dt 偶尔会很大（掉帧、长时间没挨打后一次性补齐），
       // 用 if 只扣一次会悄悄漏掉本该到账的那几跳（对比 passive_overload 同类做法）。
-      while (state.timer >= interval && curStacks() < maxStacks) {
+      while (state.timer >= interval && (curEff()?.shieldRemaining || 0) < cap) {
         state.timer -= interval;
-        ctx.effectRegistry.apply(entityId, {
-          name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: perTick, perStackFlat: perTick,
-          duration: 0, permanent: true, stackable: true, maxStacks, stackPolicy: 'stack', uniquePassive: true,
-          description: `护盾（脱战每${interval}秒+${perTick}，最高${cap}）`,
-        }, 'passive_hq_bulwark');
+        const existing = curEff();
+        if (!existing || existing.stacks < maxStacks) {
+          // 还没建立过效果，或层数没封顶：正常走叠层，delta 机制自动把新增量
+          // 并入护盾余量（与改动前完全一样的路径，未封顶阶段行为不变）。
+          ctx.effectRegistry.apply(entityId, {
+            name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: perTick, perStackFlat: perTick,
+            duration: 0, permanent: true, stackable: true, maxStacks, stackPolicy: 'stack', uniquePassive: true,
+            description: `护盾（脱战每${interval}秒+${perTick}，最高${cap}）`,
+          }, 'passive_hq_bulwark');
+        } else {
+          // 层数已封顶（totalFlat=cap 不会再变）但余量被打低了——直接顶余量。
+          existing.shieldRemaining = Math.min(cap, (existing.shieldRemaining || 0) + perTick);
+        }
       }
     },
     onUnequip: (entityId, instance, ctx) => {
