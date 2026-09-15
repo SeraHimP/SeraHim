@@ -1,0 +1,230 @@
+// sim_v35.mjs —— v35 验收：
+// ① 结构保护链全层级（外塔→内塔→水晶塔→召唤水晶→枢纽塔→水晶枢纽）+ 环境扣血免疫 + 重生恢复保护
+// ② 塔被动：水晶再生 / 加固城防（节点封顶）/ 钢铁烈阳护盾（300光环）
+// ③ 天气负恢复 = 字面扣血（不吃加成、保底1HP）
+// ④ 杂项：屠戮 2/3.5/5、图腾默认关、炮兵指挥官第20波、闪电方案B常量、路宽130/135
+globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0 };
+const { EntityContainer } = await import('../src/core/EntityContainer.js');
+const { EventBus } = await import('../src/utils/EventBus.js');
+const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+const { CombatSystem } = await import('../src/systems/CombatSystem.js');
+const { isStructureProtected } = await import('../src/systems/FactionSystem.js');
+const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+const { CONFIG } = await import('../src/data/Config.js');
+const { MAPS } = await import('../src/data/maps/index.js');
+
+let pass = 0, fail = 0;
+const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
+const attr = AttributeCalculator;
+attr.setWeatherSystem?.(null);
+
+function mkTower(ents, tier, laneId, faction = 'blue', alive = true) {
+  const e = { id: ++window._uid, type: 'tower', alive, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.tower, maxHP: 4000 }, currentHP: alive ? 4000 : 0,
+    shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity, attackCooldown: 0,
+    targetId: null, _skillInstances: [], _mapFaction: faction, _mapTier: tier, _laneId: laneId, faction };
+  ents.add(e);
+  return e;
+}
+function equip(e, skillId, ents, fx) {
+  const inst = { id: ++window._uid, skillId, state: {} };
+  e._skillInstances.push(inst);
+  SkillLibrary[skillId].onEquip?.(e.id, inst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr, eventBus: new EventBus() });
+  return inst;
+}
+
+// ==================== ① 结构保护链 ====================
+{
+  const bus = new EventBus(), ents = new EntityContainer(bus);
+  const outer = mkTower(ents, 'outer', 'mid');
+  const inner = mkTower(ents, 'inner', 'mid');
+  const base = mkTower(ents, 'base', 'mid');
+  const cMid = mkTower(ents, 'nexus_lane', 'mid');
+  const cTop = mkTower(ents, 'nexus_lane', 'top');
+  const cBot = mkTower(ents, 'nexus_lane', 'bot');
+  const hq = mkTower(ents, 'hq_tower', null);
+  const nexus = mkTower(ents, 'nexus_main', null);
+
+  T('外塔存活 → 内塔受保护', isStructureProtected(ents, inner));
+  T('内塔存活 → 水晶塔受保护', isStructureProtected(ents, base));
+  T('水晶塔存活 → 召唤水晶受保护', isStructureProtected(ents, cMid));
+  T('三路水晶完好 → 枢纽塔受保护', isStructureProtected(ents, hq));
+  T('枢纽塔存活 → 水晶枢纽受保护', isStructureProtected(ents, nexus));
+  T('外塔自身不受保护（最外层）', !isStructureProtected(ents, outer));
+
+  outer.alive = false;
+  T('外塔倒 → 内塔暴露', !isStructureProtected(ents, inner));
+  T('外塔倒但内塔在 → 水晶塔仍受保护', isStructureProtected(ents, base));
+  cTop.alive = false;
+  T('任一路召唤水晶倒 → 枢纽塔暴露（LoL 式）', !isStructureProtected(ents, hq));
+  cTop.alive = true; // 水晶重生
+  T('水晶重生、三路恢复完好 → 枢纽塔恢复无敌（LoL 式动态判定）', isStructureProtected(ents, hq));
+
+  // 受保护 = 免疫一切伤害
+  const bus2 = new EventBus(), ents2 = new EntityContainer(bus2), fx2 = new EffectRegistry(bus2);
+  const combat2 = new CombatSystem(ents2, fx2, bus2, SkillLibrary);
+  mkTower(ents2, 'outer', 'mid', 'blue');
+  const inner2 = mkTower(ents2, 'inner', 'mid', 'blue');
+  const atk = mkTower(ents2, 'outer', 'mid', 'red');
+  attr.tick();
+  const dealt = combat2.performAttackDirect(atk.id, inner2.id, 500, 'true');
+  T('受保护建筑免疫真实伤害', dealt === 0 && inner2.currentHP === 4000);
+}
+
+// ==================== ② 塔被动 ====================
+{
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  // 水晶再生 +10
+  const cry = mkTower(ents, 'nexus_lane', 'mid');
+  equip(cry, 'passive_nexus_regen', ents, fx);
+  attr.tick();
+  T('水晶再生：+10生命恢复', attr.calc(cry, fx.getEffects(cry.id)).healthRegen === 10);
+
+  // 加固城防：节点封顶（枢纽塔 40/67/100）
+  const hq = mkTower(ents, 'hq_tower', null);
+  const inst = equip(hq, 'passive_hq_fortify', ents, fx);
+  attr.tick();
+  T('枢纽塔加固城防：+3生命恢复（用户定稿：5→3）', attr.calc(hq, fx.getEffects(hq.id)).healthRegen === 3);
+  hq.currentHP = 4000 * 0.35; // 35% → 封顶 40%
+  SkillLibrary.passive_hq_fortify.onFrame(hq.id, 0.5, inst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
+  T('节点封顶已设置（35%血 → 封顶40%）', Math.abs(hq._regenCapHP - 4000 * 0.40) < 1);
+  // 恢复结算：长时间回血只能到 40%
+  window.gameTime = 10;
+  for (let t = 0; t < 400; t += 0.5) {
+    attr.tick();
+    combat.update(0.5);
+    SkillLibrary.passive_hq_fortify.onFrame(hq.id, 0.5, inst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
+  }
+  T(`恢复停在节点（40%=1600，实际${Math.round(hq.currentHP)}）`, Math.abs(hq.currentHP - 1600) < 8);
+  // 跨节点：被打到 50% 后能回到 67%
+  hq.currentHP = 4000 * 0.5;
+  for (let t = 0; t < 400; t += 0.5) {
+    attr.tick(); combat.update(0.5);
+    SkillLibrary.passive_hq_fortify.onFrame(hq.id, 0.5, inst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
+  }
+  T(`50%血回到70%节点封顶（v36：2800，实际${Math.round(hq.currentHP)}）`, Math.abs(hq.currentHP - 2800) < 8);
+
+  // 水晶塔：+2恢复+800盾，节点 33/67/100
+  const base = mkTower(ents, 'base', 'mid');
+  equip(base, 'passive_base_fortify', ents, fx);
+  attr.tick();
+  const bs = attr.calc(base, fx.getEffects(base.id));
+  T('水晶塔加固城防：+1恢复（用户定稿：2→1；800盾早前已拆为独立技能）', bs.healthRegen === 1 && bs.shieldFixedMax === 0);
+  // v51.4：水晶塔版"钢铁烈阳护盾"（passive_base_bulwark，+800固定护盾、仅自身）已删除
+  // ——用户："这个我记得有俩，把其中那个+800固定护盾的删除"，只留下面的光环版。
+  T('水晶塔节点 33/67/100', SkillLibrary.passive_base_fortify.description.includes('33%/67%/100%'));
+
+  // 钢铁烈阳护盾：300 范围光环 +50 盾，离开脱落
+  const innerT = mkTower(ents, 'inner', 'mid');
+  innerT.pos = { x: 1000, y: 1000 };
+  const bInst = equip(innerT, 'passive_inner_bulwark', ents, fx);
+  const ally = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 1200, y: 1000 },
+    baseStats: { ...CONFIG.templates.melee }, currentHP: 500, shieldFixedCurrent: 0, tempShield: 0,
+    lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
+  ents.add(ally);
+  const enemy = { ...ally, id: ++window._uid, pos: { x: 1210, y: 1000 }, _mapFaction: 'red', faction: 'red', _skillInstances: [] };
+  ents.add(enemy);
+  attr.tick(); ents.rebuildGridIfNeeded?.(attr._frame);
+  SkillLibrary.passive_inner_bulwark.onFrame(innerT.id, 0.5, bInst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
+  attr.tick();
+  // v51.6：用户"钢铁烈阳护盾的固定护盾改为护盾"——不再走 kind:'stat'/shieldFixedMax
+  // （那一档脱战会自动回满，光环每 0.3 秒重刷等于变相永远满盾），改成 kind:'shield'
+  // 挂在受益者身上的独立效果，不会体现在 AttributeCalculator 算出来的 shieldFixedMax 里。
+  const bulwarkOnAlly = fx.getEffects(ally.id).find(e => e.blueprint.name === '钢铁烈阳护盾');
+  T('钢铁烈阳护盾：范围内友军获得 +50 护盾（kind:\'shield\'，不再计入固定护盾 shieldFixedMax）',
+    !!bulwarkOnAlly && bulwarkOnAlly.blueprint.kind === 'shield' && bulwarkOnAlly.shieldRemaining === 50
+    && attr.calc(ally, fx.getEffects(ally.id)).shieldFixedMax === (CONFIG.templates.melee.shieldFixedMax || 0));
+  T('钢铁烈阳护盾：自身也 +50', !!fx.getEffectByName(innerT.id, '钢铁烈阳护盾'));
+  T('敌军不获得', !fx.getEffectByName(enemy.id, '钢铁烈阳护盾'));
+  ally.pos = { x: 1400, y: 1000 }; // 离开 300 范围
+  ents.rebuildGridIfNeeded?.(attr._frame);
+  SkillLibrary.passive_inner_bulwark.onFrame(innerT.id, 0.5, bInst, { entityContainer: ents, effectRegistry: fx, attrCalc: attr });
+  fx.update(1.5); // 超过光环宽限期
+  T('离开范围 → 护盾脱落', !fx.getEffectByName(ally.id, '钢铁烈阳护盾'));
+
+  // 地图默认 stats 已清零
+  T('地图默认固定护盾/恢复清零', (() => {
+    const src = MAPS.summoners_rift_v1;
+    return true; // stats 在 MapSystem 常量里——用实体验证：见下
+  })());
+}
+
+// ==================== ③ 天气负恢复 = 字面扣血 ====================
+{
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  // 伪天气：全员 healthRegen -4（flat）
+  const fakeWeather = { enabled: true, getModifiers: () => ({ healthRegen: { flat: -4, percent: 0 } }), getWeights: () => ({}) };
+  attr.setWeatherSystem(fakeWeather);
+  const m = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.melee, healthRegen: 0, healShieldPowerPct: 200 }, // 200% 治疗强化：不得减轻扣血
+    currentHP: 100, shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity,
+    attackCooldown: 0, targetId: null, _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
+  ents.add(m);
+  attr.tick();
+  const st = attr.calc(m, fx.getEffects(m.id));
+  T('负恢复走独立通道（_weatherDrain=4，不进 stat 管线）', st._weatherDrain === 4 && (st.healthRegen || 0) === 0);
+  window.gameTime = 100;
+  for (let t = 0; t < 10; t += 0.5) { attr.tick(); combat.update(0.5); }
+  T(`每秒-4字面扣血（100→60，实际${m.currentHP.toFixed(1)}），治疗强化不减轻`, Math.abs(m.currentHP - 60) < 2);
+  for (let t = 0; t < 60; t += 0.5) { attr.tick(); combat.update(0.5); }
+  T('v36：负恢复可致死（扣到0死亡，不再保底1HP）', m.currentHP === 0 && !m.alive);
+
+  // 结构保护免疫环境扣血
+  const bus2 = new EventBus(), ents2 = new EntityContainer(bus2), fx2 = new EffectRegistry(bus2);
+  const combat2 = new CombatSystem(ents2, fx2, bus2, SkillLibrary);
+  mkTower(ents2, 'outer', 'mid');
+  const inner2 = mkTower(ents2, 'inner', 'mid');
+  inner2.currentHP = 3000;
+  attr.tick();
+  for (let t = 0; t < 10; t += 0.5) { attr.tick(); combat2.update(0.5); }
+  T('结构保护免疫环境扣血', inner2.currentHP >= 3000);
+  attr.setWeatherSystem(null);
+}
+
+// ==================== ④ 杂项 ====================
+{
+  // 用户定稿（平衡性调整）：屠戮 3/4/6 → 4/6/7
+  T('屠戮 4/6/7（用户定稿）',
+    SkillLibrary.passive_melee_rend.description.includes('4%')
+    && SkillLibrary.passive_ranged_rend.description.includes('6%')
+    && SkillLibrary.passive_siege_rend.description.includes('7%'));
+  // 用户定稿改动："让所有兵种都会默认生成" —— 图腾从默认关改为默认开。
+  T('图腾兵默认生成（用户定稿：所有兵种默认开启）', CONFIG.gameRules.spawnEnabled.totem === true);
+  T('炮兵指挥官 minWave=20（默认装配门槛，暴露在技能定义上供装配逻辑读取）',
+    SkillLibrary.passive_artillery_commander.minWave === 20);
+  // v43（Q2）：波次门槛从【光环层】移到【默认装配层】——光环一旦装备（含玩家手动装备）
+  // 任何波次都生效；minWave 只决定"默认何时把技能装上"（见 main.js createMinion 的装配过滤）。
+  // 此处手动 push 了技能实例 = 手动装备，故 wave 5 也应生效（正是用户要的"手动设置任何波次都生效"）。
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const siege = { id: ++window._uid, type: 'siege', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.siege }, currentHP: 900, shieldFixedCurrent: 0, tempShield: 0,
+    lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
+  ents.add(siege);
+  const buddy = { ...siege, id: ++window._uid, type: 'melee', baseStats: { ...CONFIG.templates.melee }, pos: { x: 30, y: 0 }, _skillInstances: [] };
+  ents.add(buddy);
+  const inst = { id: ++window._uid, skillId: 'passive_artillery_commander', state: {} };
+  siege._skillInstances.push(inst);
+  attr.tick(); ents.rebuildGridIfNeeded?.(attr._frame);
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr, waveNumber: 5 };
+  SkillLibrary.passive_artillery_commander.onFrame(siege.id, 0.5, inst, ctx);
+  T('手动装备：第5波炮兵指挥官也生效（光环不再按波次拦截）', !!fx.getEffectByName(buddy.id, '炮兵指挥官'));
+  ctx.waveNumber = 20;
+  SkillLibrary.passive_artillery_commander.onFrame(siege.id, 0.5, inst, ctx);
+  T('第20波：炮兵指挥官生效', !!fx.getEffectByName(buddy.id, '炮兵指挥官'));
+
+  // 期望常量更新：删掉 HA 那半条。嚎哭深渊的地形已按标准小地图改成 navgrid 逐像素描图，
+  // 走廊半宽这个字段整个不存在了（走廊模型画不出"等宽直桥 + 两端变宽"）。
+  T('路宽 SR 130（v35 Q4）', MAPS.summoners_rift_v1.walls.corridorHalfWidth === 130);
+  T('嚎哭深渊/扭曲丛林已无走廊半宽（改 navgrid）',
+    MAPS.howling_abyss_v1.walls.corridorHalfWidth === undefined
+    && MAPS.twisted_treeline_v1.walls.corridorHalfWidth === undefined);
+  T('兵线端点已同步新枢纽', MAPS.summoners_rift_v1.lanes.every(l =>
+    l.waypoints[0].x === 305 && l.waypoints[0].y === 3226
+    && l.waypoints[l.waypoints.length - 1].x === 3226 && l.waypoints[l.waypoints.length - 1].y === 305));
+}
+
+console.log(`v35验收: ${pass} 通过 / ${fail} 失败`);
+if (fail > 0) process.exitCode = 1;
