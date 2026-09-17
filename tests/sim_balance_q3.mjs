@@ -113,10 +113,11 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
   for (let i = 0; i < 4; i++) { attr.tick(); const b = target.currentHP; combat.performAttack(tw, target); dmgs.push(b - target.currentHP); }
   const W = CONFIG.tuning.weapons;
   const per = (W.piercingHeatBasePct + (W.piercingHeatApPct / 100) * 50) / 100; // AP=50
-  // Q2（本轮，另一条改动）：塔是 attackType='adaptive'，基础伤害现在是 AD+AP
-  // （规则照搬LoL，见 CombatSystem.performAttack 头注），不再只是 AD。这座塔
-  // AD=100/AP=50，基础伤害 = 150，升温台阶仍然只乘在这个基础伤害上面。
-  const baseDmg = 100 + 50;
+  // 本轮（数值平衡重做）：AD+AP 相加的规则被推翻，改成"赢家通吃"（见
+  // CombatSystem.performAttack 头注）。这座塔 AD=100/AP=50，法强×系数(0.6)=30<100，
+  // 判成物理，基础伤害 = 攻击力原始值 = 100（不再是 AD+AP=150），升温台阶仍然只
+  // 乘在这个基础伤害上面。
+  const baseDmg = 100;
   const want = [0, 1, 2, 3].map(i => baseDmg * (1 + i * per));
   T(`每层命中伤害 = (AD+AP) × (1+层数×(${W.piercingHeatBasePct}%+${W.piercingHeatApPct}%×法术强度))（实际${dmgs.map(d => d.toFixed(1)).join(',')}，期望${want.map(w => w.toFixed(1)).join(',')}）`,
     dmgs.every((d, i) => Math.abs(d - want[i]) < 1));

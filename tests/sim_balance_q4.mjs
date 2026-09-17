@@ -81,12 +81,13 @@ function mkMinion(ents, type, hp = 1e6) {
   const before = tgt.currentHP;
   combat.performAttack(atk, tgt);
   const dealt = before - tgt.currentHP;
-  // LoL Wiki 原文："Adaptive damage deals either physical or magic damage depending on
-  // the damage contribution from your attack damage and ability power to the effect's
-  // damage formula." ——AD 项与 AP 项同时相加进总伤害，类型只看哪项贡献更大。这游戏
-  // 里普攻只有一条数字，1:1 相加是对这条规则最贴近的移植：40+100=140。
-  T(`自适应普攻基础伤害 = 攻击力+法术强度（AD40+AP100=140，实际${dealt.toFixed(1)}）`,
-    Math.abs(dealt - 140) < 2);
+  // 本轮（数值平衡重做）：AD+AP 相加的规则被推翻，改成"赢家通吃"——用户查证
+  // LoL 后指出普通攻击的伤害本来就不该叠加另一项属性，判定用哪个类型，伤害就
+  // 直接取那个属性的原始值（见 CombatSystem.performAttack 头注）。AD40/AP100，
+  // AP×0.6(系数)=60>40，判成魔法，基础伤害 = 法术强度原始值 = 100，不再是
+  // AD+AP=140。
+  T(`自适应普攻基础伤害 = 判定胜出属性的原始值（AP100×0.6=60>AD40 → 取AP=100，实际${dealt.toFixed(1)}）`,
+    Math.abs(dealt - 100) < 2);
   T(`此时类型判成魔法（AP>AD，跟真实规则"哪项贡献更大决定类型"一致）`,
     attr.resolveAttackType(attr.calc(atk, fx.getEffects(atk.id))) === 'magic');
 

@@ -860,8 +860,13 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('魂①-九项数值全部软编码（八条魂 + 远古之力）',
     ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison', 'ancient']
       .every(k => S[k] && typeof S[k] === 'object'));
+  // 本轮（数值平衡重做）：参照基准从 ranged.attackDamage 换成 melee.attackDamage——
+  // 远程兵的攻击力这轮被压到 1（"极低"是刻意设计，它现在靠法术强度打魔法伤害，
+  // 已经不是"最小的一笔真实物理伤害"的代表了），继续拿它当参照会让这条断言恒假
+  // （damageBlock=1 不再小于 attackDamage=1）。近战兵的 AD 依旧是货真价实的
+  // 普通物理输出，换成它作参照才符合"对小 AD 单位不能等于免疫"这条原意。
   T('魂②-山魂的格挡压到很低（对小 AD 单位不能等于免疫）',
-    S.earth.damageBlock <= 3 && S.earth.damageBlock < CONFIG.templates.ranged.attackDamage);
+    S.earth.damageBlock <= 3 && S.earth.damageBlock < CONFIG.templates.melee.attackDamage);
   T('魂③-毒魂对建筑打折（百分比最大生命的 DoT 天然反建筑）',
     S.poison.vsBuildingPct > 0 && S.poison.vsBuildingPct < 100);
   // v51.6：durationSec 240→300（用户定稿"远古龙魂还是限时的，时长改为300s"）。

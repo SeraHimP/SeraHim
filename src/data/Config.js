@@ -692,27 +692,42 @@ export const CONFIG = {
   // Q2 定稿：双抗成长 0.1 → 近战0.5 / 远程0.4 / 超级兵0.5（炮车 0.30 保持上一轮的结论）。
   // 原来的 0.1/波 意味着 60 分钟（120波）近战双抗只从 15 涨到 27，等于没有成长；
   // 现在同期涨到 75，防御塔后期确实打不动小兵了，对应"30分钟后小兵占优"。
-  // v51.3（用户）："兵也是会随波次增长法强的（大型小兵）"——只有大型小兵
-  // （isLargeMinion:true 的类型：炮兵/图腾兵/术士兵/蚀骨兵/超级兵/攻城车）才有
-  // ap 这一档成长，普通兵（melee/ranged）与 _default 都不写 ap 字段，
-  // 合并逻辑是浅 spread（见 main.js battleGrowthFlat），没写就是 0，不会漏继承。
-  // 初始值先给统一的 0.5/波占位——用户这轮明确表示要拿 balance_matrix 实测校准，
-  // 具体数值不是这次改动要锁死的（该改哪个类型、改多少，等仿真数据出来再定）。
+  // 本轮（数值平衡重做）：用户定稿"兵/塔的成长平衡也要重做"，方向是"控制不同兵种
+  // 的物理攻击/法术强度的成长"（用户原话），不动 hp/res 的成长曲线（那两项这次
+  // 没有问题，不属于这轮范围）。
+  //
+  // 旧版本的问题（见 docs/BALANCE-ADAPTIVE-REWORK.md）：ap 成长按"是不是大型小兵"
+  // 分配，跟"这个兵种到底走物理还是魔法"完全没关系——物理系的炮兵/超级兵/攻城车
+  // 也在涨法强（在旧的 AD+AP 相加公式下是白给的额外伤害；改成"赢家通吃"公式后
+  // 虽然不再直接加伤害，但留着这条成长毫无意义，还有极小概率在很长的对局后把
+  // 单位的类型判定意外掀到魔法那边）。现在按"这个兵种当前是物理还是魔法输出"分：
+  //   物理系（melee/siege/super/ram）：法术强度成长清零（原本就用不上，清零只是
+  //     删掉一个不再有意义的成长维度），只保留攻击力成长。
+  //   魔法系（ranged/totem/warlock/corrupt）：攻击力成长清零（避免长局后攻击力
+  //     反超"法术强度×系数"、类型漂移回物理——这几个兵种的基础攻击力已经被压到
+  //     1，本来就不该再随波次上涨），改为拥有法术强度成长（原来只有大型小兵才有
+  //     这一档，现在按"打不打魔法伤害"重新分配，远程兵也补上了一条）。
+  // 数值本身（0.375/0.5 这些具体数字）延续上一轮"先给占位值，等 balance_matrix
+  // 实测校准"的说法，这轮不是重新拍数字，只是重新分配"谁该有哪一种成长"。
   battleGrowth: {
     melee:  { hp: 7,  ad: 0.3,   res: 0.5 },
-    ranged: { hp: 5,  ad: 0.375, res: 0.4 },
-    siege:  { hp: 10, ad: 0.9,   res: 0.30, ap: 0.5 },
+    // 远程兵：本轮从"没有ap成长"改成"没有ad成长、改配ap成长"（见上方头注）。
+    // ap 成长率延用原本 ad 成长率的数值（0.375，占位，不是重新拍的数）。
+    ranged: { hp: 5,  ad: 0,     res: 0.4, ap: 0.375 },
+    // 炮兵：ap 成长清零（原 0.5 删除，见上方头注"物理系法强成长清零"）。
+    siege:  { hp: 10, ad: 0.9,   res: 0.30 },
     // 超级兵【故意不跟这轮双抗提升】：它只在水晶陷落后才出场，正好是用户嫌"推上高地就马上结束"
     // 的那一段。给它同样的 0.5/波 等于把收尾推得更快，与目标相反。只从 0.1 微调到 0.15。
-    super:  { hp: 20, ad: 1.875, res: 0.15, ap: 0.5 },
-    // 攻城车：生命正常成长，攻击力成长极慢，双抗不成长（影响力随时间自然衰减）
-    ram:    { hp: 10, ad: 0.1,   res: 0, ap: 0.5 },
-    // 图腾兵/术士兵/蚀骨兵原来没有各自的行，一直落到 _default——现在要单独给 ap，
-    // 所以顺手把它们从 _default 落地成显式行（hp/ad/res 数值与 _default 逐位一致，
-    // 不是趁机改平衡）。
-    totem:   { hp: 8, ad: 0.375, res: 0.1, ap: 0.5 },
-    warlock: { hp: 8, ad: 0.375, res: 0.1, ap: 0.5 },
-    corrupt: { hp: 8, ad: 0.375, res: 0.1, ap: 0.5 },
+    // ap 成长清零（原 0.5 删除，超级兵是物理系，见上方头注）。
+    super:  { hp: 20, ad: 1.875, res: 0.15 },
+    // 攻城车：生命正常成长，攻击力成长极慢，双抗不成长（影响力随时间自然衰减）。
+    // ap 成长清零（原 0.5 删除，攻城车是物理系，见上方头注）。
+    ram:    { hp: 10, ad: 0.1,   res: 0 },
+    // 图腾兵/术士兵/蚀骨兵：魔法系，攻击力成长清零（原 0.375→0），法术强度成长
+    // 保留（0.5，与上一轮占位值一致，未重新拍）。
+    totem:   { hp: 8, ad: 0, res: 0.1, ap: 0.5 },
+    warlock: { hp: 8, ad: 0, res: 0.1, ap: 0.5 },
+    corrupt: { hp: 8, ad: 0, res: 0.1, ap: 0.5 },
     _default: { hp: 8, ad: 0.375, res: 0.1 },
   },
 
@@ -1592,6 +1607,39 @@ export const CONFIG = {
     // 未变，仍是上面长注释里记的占位默认值。
     weapons: { lightningApConvertPct: 100, piercingHeatBasePct: 20, piercingHeatApPct: 15 },
 
+    // ==================== 本轮：自适应伤害类型判定 + 数值结算规则重做（用户定稿）====================
+    // 起因：用户报"上次更改了攻击逻辑，导致目前小兵单位异常强大"——排查发现（见
+    // docs/BALANCE-ADAPTIVE-REWORK.md）根因是 resolveAttackType 判定完类型之后，
+    // CombatSystem 的基础伤害却不分青红皂白地把 AD 和 AP **相加**（1:1，两边都算满），
+    // 于是"两边都有一点"的兵种比"只有一边"的同类兵种白白多吃一截伤害。
+    //
+    // 用户查证 LoL 官方机制后纠正了两处：
+    //   ① 法强对普通攻击没有基线效果——真实 LoL 里"某单位AD/AP哪个高就把普攻打成
+    //      对应类型、且伤害用那个属性的原始值"这件事根本不存在（哪怕装备Nashor's
+    //      Tooth，也只是額外叠一笔独立的on-hit魔法伤害，基础普攻本身依然是纯AD的
+    //      物理伤害）。既然我们游戏的小兵没有独立的施法环节、普攻本来就兼职"技能"
+    //      角色，用户明确要求不照搬"普攻永远物理"这条，而是保留自适应判定，但要
+    //      重新定义"判定完之后伤害怎么算"。
+    //   ② 判定规则本身：用户原话——"攻击力和法术强度乘以一个系数做比较，当攻击力
+    //      大于法强乘系数时走物理攻击（以这个物理攻击力作为伤害依据），两者相等时
+    //      优先物理，法强乘系数大于攻击力时走魔法伤害"。即：
+    //        effectiveAP = 法术强度 × apToAdCompareCoefPct%
+    //        攻击力 >= effectiveAP → 物理，伤害 = 攻击力（不再叠加法强）
+    //        攻击力 <  effectiveAP → 魔法，伤害 = 法术强度（不再叠加攻击力）
+    //      "赢家通吃"，不是相加——这正好从根子上解决"两边都有就双份吃"的异常强大
+    //      问题（见 resolveAttackType / CombatSystem.performAttack 的调用点）。
+    //
+    // 系数 apToAdCompareCoefPct=60 的来源：用户要求"用英雄联盟里的经济参考，每100
+    // 金币等于多少攻击/法强"去推算，不是随手拍的数——查证 LoL 官方基础装的性价比
+    // 基准：长剑（350金/10攻击力=35金/点）、放大宝石（435金/20法强=21.75金/点），
+    // 21.75/35≈0.62，四舍五入取 0.6。巧的是这与 LoL"适应之力"机制本身换算成攻击力
+    // 时用的官方系数完全一致（见下方 AttributeCalculator.js 的 adaptiveForce 处理，
+    // 1点适应之力=0.6点攻击力）——两处系数同源，不是各自拍了一个数。
+    // resolveAttackType（判定用哪个类型）与 CombatSystem.performAttack（判定完之后
+    // 伤害数值怎么取）共用这一个系数，保证"判成什么类型"和"伤害用哪个属性的原始值"
+    // 永远是同一次比较的结果，不会自相矛盾。
+    adaptiveDamage: { apToAdCompareCoefPct: 60 },
+
     // ==================== 本轮 Q2：塔成长——法术强度成长的比例 ====================
     // 用户："目前的塔也会成长法强了，成长的法强值为成长攻击力的66.7%（非固定比例，
     // 目前暂定这个数值）。" 之前（a1d31f8）AP 成长是 AD 成长的 1:1 镜像（同一个
@@ -1794,7 +1842,15 @@ export const CONFIG = {
       isLargeMinion: false, isMonster: false,
       maxHP: 200, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 150,
-      attackDamage: 6.5, baseAttackSpeed: 0.667, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // 本轮（数值平衡重做）：用户定稿"远程兵……攻击力极低，走魔法攻击"——原来
+      // AD6.5/AP10 在旧的"自适应类型判定但伤害AD+AP相加"公式下，AP只是白给的
+      // 额外伤害（且没有专属AP成长，长局后AD会反超AP、类型意外漂移回物理，见
+      // docs/BALANCE-ADAPTIVE-REWORK.md）。改成 AD1（留1不留0，避免任何按AD百分比
+      // 结算的副作用——如onHit换算——因AD恰好为0出现除零/恒零，与warlock同款做法）
+      // /AP8（原10略降，量级仍在"不要太多"范围内），在新的"判定胜出属性取原始值"
+      // 规则下（AD1 < AP8×0.6=4.8）稳定解析成魔法，伤害基本等于原来AP项的量级，
+      // 不是凭空削弱。
+      attackDamage: 1, baseAttackSpeed: 0.667, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: 5,
       damageReduction: 0, damageBlock: 0,
@@ -1807,10 +1863,9 @@ export const CONFIG = {
       ...UNIT_STAT_DEFAULTS,
       // v51.6：用户定稿"远程兵，最大70，0.5/s，主动技能：下次攻击附带
       // （XX%=25%法强）魔法伤害"，见 actives.js 的 active_ranged_snipe。
-      // abilityPower：用户"远程兵……会自带一些法强，数值自己定但是不要太多"，
-      // 给 10（配 25% 系数，满蓄势时约 +2.5 魔法伤害，量级不大，主要靠后续
-      // 法术强度成长/龙魂叠加才会明显）。
-      maxMana: 70, manaRegen: 0.5, abilityPower: 10,
+      // abilityPower：本轮从10降到8（见上面attackDamage那段注释，两个数一起改的
+      // 同一次平衡决定）——用户"不要太多"这条上限依旧遵守（≤20）。
+      maxMana: 70, manaRegen: 0.5, abilityPower: 8,
     },
     siege: {
       label: '炮兵', type: 'siege',
@@ -1849,7 +1904,11 @@ export const CONFIG = {
       isLargeMinion: true, isMonster: false,
       maxHP: 150, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 180,
-      attackDamage: 7.5, baseAttackSpeed: 0.422, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // 本轮（数值平衡重做）：用户定稿"图腾兵……攻击力极低，走魔法攻击"，与远程兵
+      // 同一批改动、同一条理由（见 templates.ranged 的头注）。AD 7.5→1，AP=8 不变
+      // （原本就是"自带一些法强，不要太多"的量级，正好够格：AD1 < AP8×0.6=4.8，
+      // 稳定解析成魔法，伤害量级与原AD持平）。
+      attackDamage: 1, baseAttackSpeed: 0.422, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: -10,
       damageReduction: 0, damageBlock: 0,
@@ -1925,7 +1984,12 @@ export const CONFIG = {
       isLargeMinion: true, isMonster: false,
       maxHP: 620, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 20,
-      attackDamage: 13, baseAttackSpeed: 1.0, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      // 本轮（数值平衡重做）：用户定稿"蚀骨兵……攻击力极低，走魔法攻击"，与远程兵/
+      // 图腾兵同一批改动（见 templates.ranged 头注）。蚀骨兵原来没有 abilityPower
+      // 字段（恒0，一直是纯物理），这次新增基础法强并把攻击力压到 1——AP=12 与
+      // 原AD13量级基本持平（不是凭空削弱，只是换了类型），AD1 < AP12×0.6=7.2，
+      // 稳定解析成魔法。
+      attackDamage: 1, baseAttackSpeed: 1.0, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 25, magicResist: 25,
       damageReduction: 0, damageBlock: 0,
@@ -1939,6 +2003,8 @@ export const CONFIG = {
       // v51.1：用户定稿"蚀骨兵上限25，被动获得法力值0/s"（只靠攻击/受击的全局法力
       // 回复），见 actives.js 的 active_corrupt_poison。
       maxMana: 25, manaRegen: 0,
+      // 本轮新增：见上面 attackDamage 那段注释，与压低攻击力是同一次改动。
+      abilityPower: 12,
     },
     // v39（Q4 节奏）：攻城车——专职破塔的攻城单位。用户定稿数值。
     // 血 800（远高于远程兵，但双抗 0 且被近战克制）、AD 35、攻速 0.25（4秒一发）、

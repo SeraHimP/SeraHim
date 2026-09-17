@@ -687,24 +687,27 @@ export class CombatSystem {
       }
     }
 
-    // ==================== Q2（本轮）：自适应伤害的基础伤害数值也按 LoL 真实规则算 ====================
-    // 用户查证 LoL Wiki 后定稿："如果法强远远大于攻击力，造成的伤害就是基于法强的
-    // 魔法伤害而不是物理伤害，规则照搬LoL"。真实规则原文（LoL Wiki "Adaptive damage"）：
-    //   "Adaptive damage deals either physical or magic damage depending on the damage
-    //   contribution from your attack damage and ability power to the effect's damage
-    //   formula. Greater bonus damage from the AD ratio results in physical damage,
-    //   while greater bonus damage from the AP ratio results in magic damage."
-    // 关键点：真实的自适应技能公式里 AD 项和 AP 项是**同时相加**进总伤害的（比如
-    // "25%额外攻击力+15%法术强度"），伤害类型只是看哪一项贡献更大来定，不是"赢家
-    // 通吃、另一项完全不算"。这游戏里没有"技能公式"这个概念——普攻的基础伤害就是
-    // 唯一的一条数字，所以按 1:1 直接把攻击力与法术强度相加，作为对这条真实规则
-    // 最贴近的移植：不引入任何新的权重配置，两个属性同等地位。
-    // 类型判定（resolveAttackType）沿用原有比较逻辑，读的是同一份 AD/AP，天然一致。
+    // ==================== 本轮：自适应伤害改"赢家通吃"，不再 AD+AP 相加 ====================
+    // 上一轮（Q2）查证 LoL Wiki "Adaptive damage" 后把基础伤害做成 AD+AP 直接相加，
+    // 类型只用来决定扣护甲还是扣魔抗——这是"上次更改了攻击逻辑，导致目前小兵单位
+    // 异常强大"这个问题的根因（见 docs/BALANCE-ADAPTIVE-REWORK.md）：同时有 AD 又
+    // 有 AP 的兵种，两边都按满额计入总伤害，比"只有其中一种"的同类兵种白白多吃
+    // 一截。用户随后指出这条规则本身不对——真实 LoL 里法强对普通攻击没有基线效果
+    // （除非装备了像纳什之牙这种明确写着"额外叠一笔on-hit魔法伤害"的道具，而我们
+    // 的单位是 0 装备结算），并给出新规则（不照搬 LoL，是结合本游戏"普攻兼职技能"
+    // 这个结构定的）：判定类型时用的比较结果，直接决定伤害数值取哪个属性的原始值——
+    // 判成物理就是攻击力，判成魔法就是法术强度，不再相加。
+    // 类型判定与"数值取哪个属性"必须共用同一次 resolveAttackType 调用的结果（否则
+    // 会出现"判成魔法却按攻击力数值结算"的自相矛盾），所以这里提前解析好，hitInfo
+    // 里不再重复调用一次。
     // 非自适应类型（塔/兵手动设成固定 physical/magic/true，或武器另有自己的伤害
-    // 结算如闪电杖/腐蚀型）不受影响——只在 attackType==='adaptive' 时才相加。
+    // 结算如闪电杖/腐蚀型）不受影响——只在 attackType==='adaptive' 时才走这条规则。
     const isAdaptiveType = atkStats.attackType === 'adaptive';
+    const resolvedAttackType = isAdaptiveType
+      ? (this.attrCalc.resolveAttackType(atkStats) || 'physical')
+      : (atkStats.attackType || 'physical');
     const baseDamage = isAdaptiveType
-      ? (atkStats.attackDamage || 0) + (atkStats.abilityPower || 0)
+      ? (resolvedAttackType === 'magic' ? (atkStats.abilityPower || 0) : (atkStats.attackDamage || 0))
       : (atkStats.attackDamage || 0);
     const hitInfo = {
       attackerId: attacker.id,
@@ -716,7 +719,7 @@ export class CombatSystem {
       preDamageMult,
       // v51：'adaptive' 在开火那一刻就解析成 physical/magic 并快照——与其它攻击方数值
       // 同一个时序（见下面那段关于四项穿透"完全不需要活着的攻击者"的注释）。
-      attackType: this.attrCalc.resolveAttackType(atkStats) || 'physical',
+      attackType: resolvedAttackType,
       // v51：普攻默认能暴击（暴击率默认0，没有来源加成时恒不触发），在开火那一刻掷骰
       // 并快照——与其余攻击方数值同一时序，命中结算时不会因为攻击者已死而判不出来。
       isCrit: Math.random() * 100 < (atkStats.critChance || 0),

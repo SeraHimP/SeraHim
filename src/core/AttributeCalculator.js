@@ -358,17 +358,20 @@ export const AttributeCalculator = {
    * 计算伤害乘数（基于抗性）
    */
   /**
-   * v51：把 `attackType === 'adaptive'` 解析成 'physical' / 'magic'。
-   * 与适应之力用同一条 LoL 规则（AP 高就走魔法，打平按 adaptiveDefault），
-   * 但这里比较的是【结算那一刻】已经算好的属性表（含适应之力转化后的 AD/AP），
-   * 不是另开一套判据——"哪种伤害类型"与"适应之力加到哪"必须用同一个比较结果，
-   * 否则会出现"适应之力都加进了法术强度，却按物理伤害结算"这种自相矛盾。
+   * 本轮：把 `attackType === 'adaptive'` 解析成 'physical' / 'magic'。
+   * 用户定稿的新判据（不再是 AD/AP 原始值直接比大小、打平看 adaptiveDefault）：
+   *   effectiveAP = 法术强度 × CONFIG.tuning.adaptiveDamage.apToAdCompareCoefPct%
+   *   攻击力 >= effectiveAP → 物理；攻击力 < effectiveAP → 魔法（打平固定判物理）。
+   * 系数来源见 Config.js 里 adaptiveDamage 那段的头注（LoL 装备经济基准推出来的
+   * 0.6，与适应之力换算攻击力用的官方系数同源）。CombatSystem.performAttack 用
+   * 同一个系数、同一次比较结果去决定"伤害数值取哪个属性的原始值"（不再相加），
+   * 两处必须共用同一份判据，否则会出现"判成魔法却按物理数值结算"的自相矛盾。
    */
   resolveAttackType(stats) {
     if (!stats || stats.attackType !== 'adaptive') return stats ? stats.attackType : 'physical';
     const ap = stats.abilityPower || 0, ad = stats.attackDamage || 0;
-    const goToAP = ap === ad ? stats.adaptiveDefault === 'ap' : ap > ad;
-    return goToAP ? 'magic' : 'physical';
+    const coef = (CONFIG.tuning?.adaptiveDamage?.apToAdCompareCoefPct ?? 60) / 100;
+    return ap * coef > ad ? 'magic' : 'physical';
   },
 
   calcDamageMultiplier(resist) {

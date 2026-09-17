@@ -881,15 +881,15 @@ function _towerApStepFor(stepAD) {
   const ratio = CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667;
   return Math.round(stepAD * ratio);
 }
-function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStartT, fixedSteps, armorPerStep = 0 }) {
-  const totalSteps = fixedSteps || Math.round((capAD - startAD) / 9);
+function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStartT, fixedSteps, armorPerStep = 0, stepAD = 9 }) {
+  const totalSteps = fixedSteps || Math.round((capAD - startAD) / stepAD);
   return {
     id, name,
     icon: '📈',
     // 塔的成长曲线只按 id 分层（外/内/水晶/枢纽/深渊变体），永远只装在塔身上。
     applicableTypes: ['tower'],
     // v42: defaultParams enables CombatSystem to inject per-map overrides into inst._params
-    defaultParams: { adStartT: adStartT, stepAD: 9, totalSteps: totalSteps, armorPerStep: armorPerStep ?? 0, resistGrowthStartT: resistGrowthStartT ?? 0 },
+    defaultParams: { adStartT: adStartT, stepAD, totalSteps: totalSteps, armorPerStep: armorPerStep ?? 0, resistGrowthStartT: resistGrowthStartT ?? 0 },
     category: 'passive',
     // v51.18 修复：这三处原来把双抗成长的起算时间写成字面量"16分钟/16:00"，
     // 只有 passive_growth_inner（唯一传了 resistGrowthStartT 的调用点，当时是
@@ -901,11 +901,11 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
     // 成长效果），文案这三处（description/descTemplate/getDescTemplate）从来没跟着
     // 改，玩家点开面板只看到"攻击力阶梯成长"，法强涨到多少全靠猜。这里把法强步进
     // 值（_towerApStepFor(stepAD)）也写进文案，与 onFrame 实际结算共用同一个函数。
-    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟攻击力+9、法术强度+${_towerApStepFor(9)}` +
+    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟攻击力+${stepAD}、法术强度+${_towerApStepFor(stepAD)}` +
       `（法强成长为攻击力成长的${Math.round((CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667) * 1000) / 10}%，共${totalSteps}层至${capAD}封顶）` +
       (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}分钟起双抗每分钟+1（不封顶）` : '') + '。',
     descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），` +
-     `每分钟+9/+${_towerApStepFor(9)}共${totalSteps}层至 ${capAD} 封顶` +
+     `每分钟+${stepAD}/+${_towerApStepFor(stepAD)}共${totalSteps}层至 ${capAD} 封顶` +
      (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}:00 起双抗 +1/分钟` : '') + '。',
    // v42: dynamic descTemplate that respects per-map inst._params overrides
    getDescTemplate: function(entity, instance) {
@@ -922,7 +922,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
       const t0 = inst?.state?.t0 || 0;
       const elapsed = Math.max(0, (window.gameTime || 0) - t0);
       const steps = Math.min(Math.max(0, Math.floor((elapsed - (inst?._params?.adStartT ?? adStartT)) / 60)), totalSteps);
-      return { val: steps * 9, apVal: steps * _towerApStepFor(9) };
+      return { val: steps * stepAD, apVal: steps * _towerApStepFor(stepAD) };
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -1153,8 +1153,12 @@ export const TowerGrowthSkills = {
   passive_growth_ha: _makeTowerGrowth({ id: 'passive_growth_ha', name: '深渊塔成长', startAD: 0, capAD: 126, adStartT: 0, fixedSteps: 14, armorPerStep: 1 }), // 每分钟+9攻/+1护甲/+1魔抗，开局起算，14层封顶（Q1/Q2最新确认）
   passive_growth_outer: _makeTowerGrowth({ id: 'passive_growth_outer', name: '外塔成长', startAD: 152, capAD: 278, adStartT: 40 }),
   // v51.18：双抗成长起算时间 16:00→10:00（用户定稿，简单平衡性调整）。
-  passive_growth_inner: _makeTowerGrowth({ id: 'passive_growth_inner', name: '内塔成长', startAD: 170, capAD: 305, adStartT: 180, resistGrowthStartT: 600 }),
+  // 本轮：用户"高地塔/枢纽塔的成长可以做的强一点点（就只有一点点）"——只动这两条，
+  // 外塔/水晶塔（枢纽以外的基地塔）不变。杠杆选每分钟的攻击力步进（stepAD，默认9）：
+  // 内塔/枢纽塔 9→10，总层数（15层）不变，capAD 按 startAD+步进×层数 同步抬高
+  // （170+10×15=320，150+10×15=300），涨幅约 +5%——"一点点"，不是重做整条曲线。
+  passive_growth_inner: _makeTowerGrowth({ id: 'passive_growth_inner', name: '内塔成长', startAD: 170, capAD: 320, adStartT: 180, resistGrowthStartT: 600, stepAD: 10 }),
   passive_growth_base:  _makeTowerGrowth({ id: 'passive_growth_base',  name: '水晶塔成长', startAD: 170, capAD: 305, adStartT: 180 }),
-  passive_growth_hq:    _makeTowerGrowth({ id: 'passive_growth_hq',    name: '枢纽塔成长', startAD: 150, capAD: 285, adStartT: 180 }),
+  passive_growth_hq:    _makeTowerGrowth({ id: 'passive_growth_hq',    name: '枢纽塔成长', startAD: 150, capAD: 300, adStartT: 180, stepAD: 10 }),
 
 };

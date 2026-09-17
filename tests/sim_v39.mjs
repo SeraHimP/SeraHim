@@ -267,12 +267,12 @@ function battle() {
     Math.abs((h0 - R.currentHP) - 9) < 1.5);
   const rng = mkUnit(ents2, 'ranged', 'red', 40, 0);
   attr.tick(); h0 = R.currentHP; combat.performAttack(rng, R);
-  // Q2（本轮）：远程兵 attackType='adaptive'，普攻基础伤害改成"攻击力+法术强度"
-  // （规则照搬 LoL 的 Adaptive damage，见 CombatSystem.performAttack 头注）——远程兵
-  // 自带法术强度10（Config.js 模板定稿"不要太多"），期望值从旧的纯 AD(6.5) 涨到
-  // AD+AP(6.5+10=16.5)，这是公式改对后的自然结果，不是加成规则又回来了。
-  const _rngExp = CONFIG.templates.ranged.attackDamage + (CONFIG.templates.ranged.abilityPower || 0);
-  T(`③b 远程单位无攻城车专属加成（伤害=AD+AP，${Math.round(h0 - R.currentHP)} ≈ ${Math.round(_rngExp)}）`,
+  // 本轮（数值平衡重做）：远程兵基础数值改为 AD1/AP8（"攻击力极低，走魔法攻击"，
+  // 见 Config.js templates.ranged 头注），且 AD+AP 相加的公式被推翻，改成
+  // "赢家通吃"（见 CombatSystem.performAttack 头注）：AP×0.6=4.8>AD1，判成魔法，
+  // 伤害 = 法术强度原始值本身，不再相加攻击力。
+  const _rngExp = CONFIG.templates.ranged.abilityPower;
+  T(`③b 远程单位无攻城车专属加成（判成魔法，伤害=法术强度，${Math.round(h0 - R.currentHP)} ≈ ${Math.round(_rngExp)}）`,
     Math.abs((h0 - R.currentHP) - _rngExp) < 1.5);
 
   // 出兵波次 + 队尾

@@ -108,16 +108,20 @@ async function world() {
 
 // ==================== 四、适应之力 / 自适应伤害类型 ====================
 {
-  const { attr } = await world();
-  T('适①-AP明显更高 → 转武器伤害类型解析为魔法', attr.resolveAttackType(
-    { attackType: 'adaptive', abilityPower: 100, attackDamage: 10, adaptiveDefault: 'physical' }) === 'magic');
+  const { attr, CONFIG } = await world();
+  // 本轮（数值平衡重做）：判据从"AD/AP原始值直接比"改成"攻击力 vs 法术强度×系数"
+  // （系数见 CONFIG.tuning.adaptiveDamage.apToAdCompareCoefPct，默认60%），打平
+  // 固定判物理（不再看 adaptiveDefault——那个字段现在只服务于 adaptiveForce）。
+  const coef = (CONFIG.tuning?.adaptiveDamage?.apToAdCompareCoefPct ?? 60) / 100;
+  T('适①-法强×系数明显更高 → 解析为魔法', attr.resolveAttackType(
+    { attackType: 'adaptive', abilityPower: 100, attackDamage: 10 }) === 'magic'); // 100×0.6=60>10
   T('适②-AD明显更高 → 解析为物理', attr.resolveAttackType(
-    { attackType: 'adaptive', abilityPower: 10, attackDamage: 100, adaptiveDefault: 'physical' }) === 'physical');
-  T('适③-打平时按 adaptiveDefault', attr.resolveAttackType(
-    { attackType: 'adaptive', abilityPower: 50, attackDamage: 50, adaptiveDefault: 'ap' }) === 'magic');
+    { attackType: 'adaptive', abilityPower: 10, attackDamage: 100 }) === 'physical'); // 10×0.6=6<100
+  T('适③-攻击力恰好等于法强×系数（打平）时固定判物理，不再看 adaptiveDefault', attr.resolveAttackType(
+    { attackType: 'adaptive', abilityPower: 100, attackDamage: 100 * coef, adaptiveDefault: 'ap' }) === 'physical');
   T('适④-非 adaptive 类型原样返回', attr.resolveAttackType({ attackType: 'physical' }) === 'physical');
 
-  const { ents, CONFIG } = await world();
+  const { ents } = await world();
   const e1 = mkEntity(ents, 'tower', { stats: { adaptiveForce: 100, abilityPower: 0, attackDamage: 0, adaptiveDefault: 'physical' } }, CONFIG);
   const s1 = attr.calc(e1, []);
   T('适⑤-适应之力打平按物理方向：100 点 → +60 攻击力（0.6 换算比例）',
@@ -618,10 +622,14 @@ async function world() {
     mapSystem, dragonSystem: ds, uiManager: { log() {} },
   });
 
-  T('长①-大型小兵成长表配了 ap 字段（炮兵/图腾兵/术士兵/蚀骨兵/超级兵/攻城车）',
-    ['siege', 'totem', 'warlock', 'corrupt', 'super', 'ram'].every(t =>
-      typeof CONFIG.battleGrowth[t].ap === 'number' && CONFIG.battleGrowth[t].ap > 0));
-  T('长②-普通兵（近战/远程）没有法术强度成长', !CONFIG.battleGrowth.melee.ap && !CONFIG.battleGrowth.ranged.ap);
+  // 本轮（数值平衡重做）：ap 成长不再按"是不是大型小兵"分配，改按"这个兵种当前
+  // 走物理还是魔法输出"分配（见 Config.js battleGrowth 头注）。
+  T('长①-魔法系小兵成长表配了 ap 字段（远程兵/图腾兵/术士兵/蚀骨兵），且攻击力成长清零',
+    ['ranged', 'totem', 'warlock', 'corrupt'].every(t =>
+      typeof CONFIG.battleGrowth[t].ap === 'number' && CONFIG.battleGrowth[t].ap > 0
+      && !CONFIG.battleGrowth[t].ad));
+  T('长②-物理系小兵（近战/炮兵/超级兵/攻城车）法术强度成长清零，只保留攻击力成长',
+    ['melee', 'siege', 'super', 'ram'].every(t => !CONFIG.battleGrowth[t].ap && CONFIG.battleGrowth[t].ad >= 0));
 
   const noGrowth = F.createMinion('siege', 0, 0, 1, 1, { growthFlat: { hp: 0, ad: 0, res: 0, ap: 0 } });
   const withGrowth = F.createMinion('siege', 0, 0, 1, 1, { growthFlat: { hp: 0, ad: 0, res: 0, ap: 20 } });
@@ -1190,13 +1198,13 @@ async function world() {
   const before = tgt.currentHP;
   combat.performAttack(r, tgt);
   const dealt = before - tgt.currentHP;
-  // Q2（本轮）：远程兵 attackType='adaptive'，普攻基础伤害现在是 AD+AP（规则照搬
-  // LoL 的 Adaptive damage，见 CombatSystem.performAttack 头注）——基础伤害从旧的
-  // 纯 AD(10) 变成 AD+AP(10+40=50)，加上强化射击的额外 25%×法强(40)=10 的魔法伤害，
-  // 总量约 60（真实伤害那条路径已经在术士兵测试里验证过，这里换成验证 damageType
-  // 参数确实传成了 'magic'）。
+  // 本轮（数值平衡重做）：AD+AP 相加的规则被推翻，改成"赢家通吃"（见
+  // CombatSystem.performAttack 头注）——这个测试实体 AD10/AP40，AP×0.6=24>10，
+  // 判成魔法，基础伤害 = AP 原始值(40)，不再是 AD+AP(50)。加上强化射击的额外
+  // 25%×法强(40)=10 的魔法伤害，总量约 50（真实伤害那条路径已经在术士兵测试里
+  // 验证过，这里换成验证 damageType 参数确实传成了 'magic'）。
   T('主动⑤-下一次攻击命中后额外造成 25%×法术强度 的伤害，且法力才真正清零',
-    dealt > 55 && dealt < 65 && r._mana === 0 && !r._empowerNextAttack);
+    dealt > 45 && dealt < 55 && r._mana === 0 && !r._empowerNextAttack);
 
   T('主动⑥-CombatSystem 的延迟消耗点支持自定义伤害类型（不再永远是真实伤害）',
     /emp\.damageType \|\| 'true'/.test(srcOf('src/systems/CombatSystem.js')));

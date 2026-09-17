@@ -924,24 +924,34 @@ export class UIManager {
    * AD+AP 的改动走——三处显示同一件事、只改了一处，这仓库反复踩过的那个坑
    * （"两处都要画同一件事，写两遍必然某天只改对一处"）这次是三处。现在抽出
    * _attackDamageParts 作为唯一计算源，三处都改成调用它。
+   *
+   * 本轮（用户报"上次更改了攻击逻辑，导致小兵异常强大"排查后）：AD+AP 相加这条
+   * 规则本身被推翻了（见 CombatSystem.performAttack 头注与
+   * docs/BALANCE-ADAPTIVE-REWORK.md）——伤害改成"赢家通吃"，判成物理就是攻击力
+   * 原始值，判成魔法就是法术强度原始值，不再相加。这里的显示口径必须跟着换，
+   * 否则面板显示的数字会比实际造成的伤害大一截（还是按 AD+AP 的和显示）。
    */
   /**
-   * 攻击力显示值的唯一计算源——自适应类型是 攻击力+法术强度（照搬LoL Adaptive
-   * damage 规则，见上面头注），非自适应类型就是 attackDamage 本身。返回形状与
-   * _statParts 一致（{now, base, delta, cls}），供主格子/悬浮预览/点开窗口三处共用。
+   * 攻击力显示值的唯一计算源——自适应类型下，先用 resolveAttackType 解析出【当前】
+   * 真实会打出的类型，再取该类型对应属性的原始值（物理→攻击力，魔法→法术强度，
+   * 不再相加，与 CombatSystem.performAttack 的伤害结算共用同一条判据）；非自适应
+   * 类型就是 attackDamage 本身。base 取同一个属性键在 baseStats 上的值，保证
+   * "这次显示的数字从哪儿涨上来的"口径统一（不会出现 now 是法强、base 却是攻击力
+   * 这种对不上的情况）。返回形状与 _statParts 一致（{now, base, delta, cls}），
+   * 供主格子/悬浮预览/点开窗口三处共用。
    */
   _attackDamageParts(entity, stats) {
     const rawType = entity?.baseStats?.attackType;
     const isAdaptive = rawType === 'adaptive';
     if (!isAdaptive) return this._statParts('attackDamage', entity, stats);
-    const now = (stats?.attackDamage || 0) + (stats?.abilityPower || 0);
-    const baseAD = entity?.baseStats?.attackDamage, baseAP = entity?.baseStats?.abilityPower;
+    const statKey = this.attrCalc.resolveAttackType(stats) === 'magic' ? 'abilityPower' : 'attackDamage';
+    const now = stats?.[statKey] || 0;
+    const baseVal = entity?.baseStats?.[statKey];
     const r = (v) => (Math.abs(v) < 10 ? Math.round(v * 100) / 100 : Math.round(v));
-    if (!Number.isFinite(baseAD) && !Number.isFinite(baseAP)) return { now: r(now), base: null, delta: 0, cls: '' };
-    const base = (baseAD || 0) + (baseAP || 0);
-    const delta = now - base;
+    if (!Number.isFinite(baseVal)) return { now: r(now), base: null, delta: 0, cls: '' };
+    const delta = now - baseVal;
     const clean = Math.abs(delta) < 0.005 ? 0 : delta;
-    return { now: r(now), base: r(base), delta: r(clean), cls: clean > 0 ? 'stat-up' : clean < 0 ? 'stat-down' : '' };
+    return { now: r(now), base: r(baseVal), delta: r(clean), cls: clean > 0 ? 'stat-up' : clean < 0 ? 'stat-down' : '' };
   }
 
   _attackDamageHtml(entity, stats) {
@@ -1074,7 +1084,8 @@ export class UIManager {
             ${label}：<b class="${cls}">${effective}</b>${paren}
           </div>`;
       } else {
-        // v51.28（Q2 追加）：attackDamage 走 _attackDamageParts（自适应时=AD+AP），
+        // v51.28（Q2 追加，本轮更新口径）：attackDamage 走 _attackDamageParts（自适应
+        // 时取 resolveAttackType 判定胜出的那个属性原始值，不再是 AD+AP 相加），
         // 与主格子/悬浮预览同一个计算源，不能再各读各的 _statParts。
         const p = key === 'attackDamage' ? this._attackDamageParts(entity, stats) : this._statParts(key, entity, stats);
         if (p) {
