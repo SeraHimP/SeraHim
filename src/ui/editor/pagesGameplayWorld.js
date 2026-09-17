@@ -481,19 +481,19 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     { path: 'dayPeriodSec', label: '一天时长(秒)', step: 30 },
     // 本轮：昼夜加成重做成四档连续曲线（正午/极夜最强，随相位渐变，天气同款
     // 25/50/75/100%档位系数），下面这些是【满档（100%）】的数值，档位系数不在
-    // 这里改（复用 Weather.js 的 INTENSITY_TIERS，全局共用一套）。原来的
-    // "攻击力%"改成了"适应之力"（见 Config.js dayNightBonus 头注）。
-    { path: 'dayNightBonus.day.moveSpeedPct',      label: '白天·小兵移速(%)', step: 1 },
-    { path: 'dayNightBonus.day.attackRangeFlat',   label: '白天·小兵射程', step: 5 },
-    { path: 'dayNightBonus.day.adaptiveForce',     label: '白天·小兵适应之力', step: 1 },
-    { path: 'dayNightBonus.day.armorFlat',         label: '白天·小兵护甲', step: 1 },
-    { path: 'dayNightBonus.day.magicResistFlat',   label: '白天·小兵魔抗', step: 1 },
-    { path: 'dayNightBonus.day.manaGainPct',       label: '白天·小兵法力获取(%)', step: 5 },
-    { path: 'dayNightBonus.night.attackRangeFlat', label: '夜晚·塔射程', step: 5 },
-    { path: 'dayNightBonus.night.adaptiveForce',   label: '夜晚·塔适应之力', step: 1 },
-    { path: 'dayNightBonus.night.armorFlat',       label: '夜晚·塔护甲', step: 1 },
-    { path: 'dayNightBonus.night.magicResistFlat', label: '夜晚·塔魔抗', step: 1 },
-    { path: 'dayNightBonus.night.manaGainPct',     label: '夜晚·塔法力获取(%)', step: 5 },
+    // 这里改（复用 Weather.js 的 INTENSITY_TIERS，全局共用一套）。追加定稿：
+    // 小兵（白天·进攻）与防御塔（夜晚·防守）的属性清单不对称，不是同一份配置
+    // 套两次（见 Config.js dayNightBonus 头注）。
+    { path: 'dayNightBonus.day.moveSpeedPct',        label: '白天·小兵移速(%)', step: 1 },
+    { path: 'dayNightBonus.day.adaptiveForce',       label: '白天·小兵适应之力', step: 1 },
+    { path: 'dayNightBonus.day.manaGainPct',         label: '白天·小兵法力获取(%)', step: 5 },
+    { path: 'dayNightBonus.day.armorPenFlat',        label: '白天·小兵固定穿甲', step: 1 },
+    { path: 'dayNightBonus.day.magicPenFlat',        label: '白天·小兵固定法穿', step: 1 },
+    { path: 'dayNightBonus.night.attackRangeFlat',   label: '夜晚·塔射程', step: 5 },
+    { path: 'dayNightBonus.night.adaptiveForce',     label: '夜晚·塔适应之力', step: 1 },
+    { path: 'dayNightBonus.night.armorFlat',         label: '夜晚·塔护甲', step: 1 },
+    { path: 'dayNightBonus.night.magicResistFlat',   label: '夜晚·塔魔抗', step: 1 },
+    { path: 'dayNightBonus.night.bonusAttackSpeedPct', label: '夜晚·塔攻速(%)', step: 1 },
     { path: 'dayNightBonus.curveHalfSpan', label: '昼夜曲线半宽（黎明/黄昏过渡窗）', step: 0.01 },
     { path: 'entropyBonus.attackDamagePct', label: '熵·攻击幅度(%)', step: 1 },
     { path: 'entropyBonus.armorFlat',       label: '熵·护甲幅度',     step: 1 },

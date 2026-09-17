@@ -75,6 +75,11 @@ T(`正午：小兵移速 ${minionDay.moveSpeed.toFixed(1)} = 基准 ${baseMs} ×
   Math.abs(minionDay.moveSpeed - baseMs * (1 + g.day.moveSpeedPct / 100)) < 1e-6);
 T(`正午：小兵适应之力转攻击力 ≈ 基准+${g.day.adaptiveForce}×${afRatio}（近战AD天生更高，走AD分支）`,
   Math.abs(minionDay.attackDamage - (CONFIG.templates.melee.attackDamage + g.day.adaptiveForce * afRatio)) < 1e-3);
+// 追加定稿：白天/小兵是进攻向，防御类不再给小兵，改给固定穿甲/固定法穿。
+T(`正午：小兵固定穿甲/法穿 各+${g.day.armorPenFlat}/${g.day.magicPenFlat}（满档，不再有护甲/魔抗加成）`,
+  Math.abs(minionDay.armorPenFlat - g.day.armorPenFlat) < 1e-6
+  && Math.abs(minionDay.magicPenFlat - g.day.magicPenFlat) < 1e-6
+  && Math.abs(minionDay.armor - CONFIG.templates.melee.armor) < 1e-6);
 T(`正午：防御塔（夜晚侧，nightCloseness=0）无加成，攻击力/射程都是基准`,
   Math.abs(towerDay.attackDamage - CONFIG.templates.tower.attackDamage) < 1e-6
   && Math.abs(towerDay.attackRange - CONFIG.templates.tower.attackRange) < 1e-6);
@@ -97,6 +102,10 @@ T(`极夜：防御塔射程 +${g.night.attackRangeFlat}（满档）`,
 T(`极夜：防御塔护甲/魔抗 各+${g.night.armorFlat}/${g.night.magicResistFlat}（满档）`,
   Math.abs(towerNight.armor - (CONFIG.templates.tower.armor + g.night.armorFlat)) < 1e-6
   && Math.abs(towerNight.magicResist - (CONFIG.templates.tower.magicResist + g.night.magicResistFlat)) < 1e-6);
+// 追加定稿：夜晚/塔是防守向，法力获取不再给塔，改给攻速；小兵的移速/法力获取不给塔。
+T(`极夜：防御塔攻速 +${g.night.bonusAttackSpeedPct}%（满档，不再有法力获取加成）`,
+  Math.abs(towerNight.bonusAttackSpeedPct - g.night.bonusAttackSpeedPct) < 1e-6
+  && Math.abs((towerNight.manaGainPct || 0) - (CONFIG.templates.tower.manaGainPct || 0)) < 1e-6);
 T(`极夜：小兵（白天侧，dayCloseness=0）无加成，移速回到基准`,
   Math.abs(minionNight.moveSpeed - baseMs) < 1e-6);
 T('攻守易位：正午利兵、极夜利塔', minionDay.moveSpeed > minionNight.moveSpeed
@@ -144,13 +153,14 @@ console.log('  黎明·防御塔的修正来源：' + rows.map(r => `${r.source}
     towerRow.detail === '无增益' && !/本单位不吃这条/.test(towerRow.detail));
 
   const minionRow = world.getBreakdown(mkUnit('red')).find(r => r.source.startsWith('昼夜'));
-  T('⑤b-正午·小兵：favored=true，tier=严重（100%），mods 对应 dayNightBonus.day 配置',
+  T('⑤b-正午·小兵：favored=true，tier=严重（100%），mods 对应 dayNightBonus.day 配置（进攻向：移速/适应之力/法力获取/固定穿甲/固定法穿）',
     minionRow.favored === true && minionRow.tier.id === 'severe'
+    && (!g.day.moveSpeedPct || minionRow.mods.moveSpeed?.percent === g.day.moveSpeedPct)
     && (!g.day.adaptiveForce || minionRow.mods.adaptiveForce?.flat === g.day.adaptiveForce)
-    && (!g.day.attackRangeFlat || minionRow.mods.attackRange?.flat === g.day.attackRangeFlat)
-    && (!g.day.armorFlat || minionRow.mods.armor?.flat === g.day.armorFlat)
-    && (!g.day.magicResistFlat || minionRow.mods.magicResist?.flat === g.day.magicResistFlat)
-    && (!g.day.manaGainPct || minionRow.mods.manaGainPct?.flat === g.day.manaGainPct));
+    && (!g.day.manaGainPct || minionRow.mods.manaGainPct?.flat === g.day.manaGainPct)
+    && (!g.day.armorPenFlat || minionRow.mods.armorPenFlat?.flat === g.day.armorPenFlat)
+    && (!g.day.magicPenFlat || minionRow.mods.magicPenFlat?.flat === g.day.magicPenFlat)
+    && !('armor' in minionRow.mods) && !('attackRange' in minionRow.mods));
 
   // 黎明：两侧【同时】favored，各自最低档——本轮最核心的新行为。
   world.update(0.1, 0);

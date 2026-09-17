@@ -182,27 +182,38 @@ export class WorldState {
       e.flat += flat; e.pct += pct;
     };
 
-    // ---- 昼夜 → 兵种/建筑非对称（本轮重做：四档连续强度，见 Config.js 头注）----
-    // 上一版是按【阵营】给（白天蓝方 / 夜晚红方），那是先手优势；再上一版改成按
-    // 【单位类别】给但"非黑即白"（整个白天/夜晚恒定满值）。这次强度随相位连续
-    // 变化、量化成四档——小兵只读 dayTier（离正午越近越强），塔只读 nightTier
-    // （离极夜越近越强），两条独立，黎明/黄昏附近可以同时非零（各自最低档）。
-    // 巨龙两条都不吃（不属于任何一方的推进/防守）。
+    // ---- 昼夜 → 兵种/建筑非对称（本轮重做：四档连续强度 + 攻守方向不对称，见
+    // Config.js 头注）----
+    // 用户追加定稿："塔和兵的加成方向要不同！塔在夜晚是防守……兵在白天是进攻……"
+    // 小兵只读 dayTier（离正午越近越强），塔只读 nightTier（离极夜越近越强），
+    // 两条独立，黎明/黄昏附近可以同时非零（各自最低档）。两边的属性清单本身也
+    // 不对称——不是同一份"通用加成包"套两次。巨龙两条都不吃。
     if (cp.dayNight) {
       const g = cfg.dayNightBonus || {};
       const isTower = entity.type === 'tower';
       const isDragon = entity.type === 'dragon';
-      const applyBonus = (side, scale) => {
+      // 小兵·白天·进攻：移速 + 适应之力 + 法力获取 + 固定穿甲/法穿。
+      const applyDay = (side, scale) => {
         if (scale <= 0) return;
         if (side.moveSpeedPct) add('moveSpeed', 0, side.moveSpeedPct * scale);
+        if (side.adaptiveForce) add('adaptiveForce', side.adaptiveForce * scale, 0);
+        if (side.manaGainPct) add('manaGainPct', side.manaGainPct * scale, 0);
+        if (side.armorPenFlat) add('armorPenFlat', side.armorPenFlat * scale, 0);
+        if (side.magicPenFlat) add('magicPenFlat', side.magicPenFlat * scale, 0);
+      };
+      // 防御塔·夜晚·防守：攻击距离 + 适应之力 + 双抗 + 攻速。
+      const applyNight = (side, scale) => {
+        if (scale <= 0) return;
         if (side.attackRangeFlat) add('attackRange', side.attackRangeFlat * scale, 0);
         if (side.adaptiveForce) add('adaptiveForce', side.adaptiveForce * scale, 0);
         if (side.armorFlat) add('armor', side.armorFlat * scale, 0);
         if (side.magicResistFlat) add('magicResist', side.magicResistFlat * scale, 0);
-        if (side.manaGainPct) add('manaGainPct', side.manaGainPct * scale, 0);
+        // bonusAttackSpeedPct 本身就是个"百分比数值"型属性（跟 manaGainPct 同类），
+        // 塔的基础值通常是 0——按 pct 走乘法叠加会被"0×(1+x%)=0"吃掉，必须走 flat。
+        if (side.bonusAttackSpeedPct) add('bonusAttackSpeedPct', side.bonusAttackSpeedPct * scale, 0);
       };
-      if (!isTower && !isDragon) applyBonus(g.day || {}, this.daynight.dayTier.scale);
-      if (isTower) applyBonus(g.night || {}, this.daynight.nightTier.scale);
+      if (!isTower && !isDragon) applyDay(g.day || {}, this.daynight.dayTier.scale);
+      if (isTower) applyNight(g.night || {}, this.daynight.nightTier.scale);
     }
 
     // ---- 熵 → 全局（中性值 0.5 时下面全为 0，等价于未启用）----
@@ -244,12 +255,19 @@ export class WorldState {
       const mods = {};
       if (favored) {
         const s = tier.scale;
-        if (side.moveSpeedPct) mods.moveSpeed = { percent: Math.round(side.moveSpeedPct * s * 10) / 10 };
-        if (side.attackRangeFlat) mods.attackRange = { flat: Math.round(side.attackRangeFlat * s * 10) / 10 };
-        if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
-        if (side.armorFlat) mods.armor = { flat: Math.round(side.armorFlat * s * 10) / 10 };
-        if (side.magicResistFlat) mods.magicResist = { flat: Math.round(side.magicResistFlat * s * 10) / 10 };
-        if (side.manaGainPct) mods.manaGainPct = { flat: Math.round(side.manaGainPct * s * 10) / 10 };
+        if (isTower) {
+          if (side.attackRangeFlat) mods.attackRange = { flat: Math.round(side.attackRangeFlat * s * 10) / 10 };
+          if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
+          if (side.armorFlat) mods.armor = { flat: Math.round(side.armorFlat * s * 10) / 10 };
+          if (side.magicResistFlat) mods.magicResist = { flat: Math.round(side.magicResistFlat * s * 10) / 10 };
+          if (side.bonusAttackSpeedPct) mods.bonusAttackSpeedPct = { flat: Math.round(side.bonusAttackSpeedPct * s * 10) / 10 };
+        } else {
+          if (side.moveSpeedPct) mods.moveSpeed = { percent: Math.round(side.moveSpeedPct * s * 10) / 10 };
+          if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
+          if (side.manaGainPct) mods.manaGainPct = { flat: Math.round(side.manaGainPct * s * 10) / 10 };
+          if (side.armorPenFlat) mods.armorPenFlat = { flat: Math.round(side.armorPenFlat * s * 10) / 10 };
+          if (side.magicPenFlat) mods.magicPenFlat = { flat: Math.round(side.magicPenFlat * s * 10) / 10 };
+        }
       }
       rows.push({
         source: `昼夜 · ${isTower ? '夜晚' : '白天'}`,
