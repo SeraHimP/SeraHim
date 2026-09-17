@@ -26,12 +26,27 @@ import { CONFIG } from '../data/Config.js';
 import { DAY_PERIOD, resolveDayPhase } from '../presentation/DayNight.js';
 import { EntropySystem } from './EntropySystem.js';
 import { mapFactionsOf } from './FactionSystem.js';
+import { tierOf } from '../data/Weather.js';
 
 // 昼夜相位与 DayNight.js 的关键帧同口径：0=黎明 0.25=正午 0.5=黄昏 0.75=午夜。
 // 因此 [0, 0.5) 是白天（黎明→正午→黄昏），[0.5, 1) 是夜晚（黄昏→午夜→黎明）。
 // 相位在这里【自己算】而不是从 dayNightAt 取 —— 那个函数只返回光照参数，不含相位。
 const NIGHT_FROM = 0.5;
 const phaseOf = (t, period) => ((t / Math.max(1, period)) % 1 + 1) % 1;
+const PEAK_DAY = 0.25, PEAK_NIGHT = 0.75;   // 正午 / 极夜（午夜）
+
+// 本轮：昼夜加成从"非黑即白"改成"离散四档、随相位连续变化"（用户定稿，见
+// Config.js dayNightBonus 头注）。closenessTo 返回 0..1，1=正处于峰值（正午/极夜），
+// 沿相位轴线性衰减，衰减到 0 的距离由 halfSpan 控制（> 0.25 才能让黎明/黄昏这两个
+// 精确分界点落进"轻微"档而不是骤降到0，形成用户要的"过渡区双方都生效"）。
+// 直接喂给天气系统同款的 tierOf()，量化成 4 档（25/50/75/100%）——不用另开一套档位表。
+function cyclicDist(p, target) {
+  const d = Math.abs(p - target) % 1;
+  return Math.min(d, 1 - d);
+}
+function closenessTo(phase, peak, halfSpan) {
+  return Math.max(0, 1 - cyclicDist(phase, peak) / Math.max(1e-6, halfSpan));
+}
 
 export class WorldState {
   constructor({ weather = null, dragons = null, entities = null, bus = null } = {}) {
@@ -45,7 +60,12 @@ export class WorldState {
     // （P3 时期这里是个恒定中性的占位对象，读它的地方都已就位，改成快照后无需改调用方。）
     this.entropy = { value: 0.5, black: 0, white: 0, red: 8, total: 8, volatility: 1,
                      charge: { black: 0, white: 0 } };
-    this.daynight = { phase: 0.5, isNight: false, label: '正午' };
+    // dayTier/nightTier 必须在 update() 第一次跑之前就有安全的零效果默认值——
+    // getModifiers/getBreakdown 可能在 update() 之前就被调用（比如建筑创建时的
+    // effectiveMaxHP 计算），读到 undefined.scale 会直接炸掉整条属性计算管线。
+    const zeroTier = tierOf(0);
+    this.daynight = { phase: 0.5, isNight: false, label: '正午',
+                       dayCloseness: 0, nightCloseness: 0, dayTier: zeroTier, nightTier: zeroTier };
     this.souls = { blue: [], red: [] };   // 阵营 → 已获得的龙魂 id（DragonSystem.getSouls() 同款预置，见那边头注）
     this._enabled = true;
   }
@@ -112,6 +132,13 @@ export class WorldState {
     this.daynight.phase = phase;
     this.daynight.isNight = phase >= NIGHT_FROM;
     this.daynight.label = this.daynight.isNight ? '夜晚' : '白天';
+    // 本轮：白天/夜晚加成各自的连续强度 + 四档量化（见文件头 closenessTo/tierOf）。
+    // dayTier 只喂给小兵、nightTier 只喂给塔，两条完全独立，黎明/黄昏附近可以同时非零。
+    const halfSpan = (cfg.dayNightBonus || {}).curveHalfSpan ?? 0.32;
+    this.daynight.dayCloseness = closenessTo(phase, PEAK_DAY, halfSpan);
+    this.daynight.nightCloseness = closenessTo(phase, PEAK_NIGHT, halfSpan);
+    this.daynight.dayTier = tierOf(this.daynight.dayCloseness);
+    this.daynight.nightTier = tierOf(this.daynight.nightCloseness);
 
     // ---- ③ 熵 → 天气（熵越高，极端天气的均值回复目标越高）----
     if (cp.entropyToWeather && this.weather?.setEntropyBias) {
@@ -155,22 +182,27 @@ export class WorldState {
       e.flat += flat; e.pct += pct;
     };
 
-    // ---- 昼夜 → 兵种/建筑非对称（用户定稿改动：白天【小兵】占优，夜晚【防御塔】占优）----
-    // 注意这与上一版完全不同：上一版是按【阵营】给（白天蓝方 / 夜晚红方），
-    // 那是把昼夜做成了先手优势，双方都吃亏一半时间；现在按【单位类别】给，
-    // 双方对称，昼夜变成"什么时候适合推、什么时候适合守"的节奏开关。
+    // ---- 昼夜 → 兵种/建筑非对称（本轮重做：四档连续强度，见 Config.js 头注）----
+    // 上一版是按【阵营】给（白天蓝方 / 夜晚红方），那是先手优势；再上一版改成按
+    // 【单位类别】给但"非黑即白"（整个白天/夜晚恒定满值）。这次强度随相位连续
+    // 变化、量化成四档——小兵只读 dayTier（离正午越近越强），塔只读 nightTier
+    // （离极夜越近越强），两条独立，黎明/黄昏附近可以同时非零（各自最低档）。
+    // 巨龙两条都不吃（不属于任何一方的推进/防守）。
     if (cp.dayNight) {
       const g = cfg.dayNightBonus || {};
-      const side = this.daynight.isNight ? (g.night || {}) : (g.day || {});
       const isTower = entity.type === 'tower';
-      // 白天利兵、夜晚利塔；巨龙不吃这条（它不属于任何一方的推进/防守）
-      const favored = this.daynight.isNight ? isTower : (!isTower && entity.type !== 'dragon');
-      if (favored) {
-        if (side.moveSpeedPct) add('moveSpeed', 0, side.moveSpeedPct);
-        if (side.attackDamagePct) add('attackDamage', 0, side.attackDamagePct);
-        if (side.attackRangeFlat) add('attackRange', side.attackRangeFlat, 0);
-        if (side.armorFlat) add('armor', side.armorFlat, 0);
-      }
+      const isDragon = entity.type === 'dragon';
+      const applyBonus = (side, scale) => {
+        if (scale <= 0) return;
+        if (side.moveSpeedPct) add('moveSpeed', 0, side.moveSpeedPct * scale);
+        if (side.attackRangeFlat) add('attackRange', side.attackRangeFlat * scale, 0);
+        if (side.adaptiveForce) add('adaptiveForce', side.adaptiveForce * scale, 0);
+        if (side.armorFlat) add('armor', side.armorFlat * scale, 0);
+        if (side.magicResistFlat) add('magicResist', side.magicResistFlat * scale, 0);
+        if (side.manaGainPct) add('manaGainPct', side.manaGainPct * scale, 0);
+      };
+      if (!isTower && !isDragon) applyBonus(g.day || {}, this.daynight.dayTier.scale);
+      if (isTower) applyBonus(g.night || {}, this.daynight.nightTier.scale);
     }
 
     // ---- 熵 → 全局（中性值 0.5 时下面全为 0，等价于未启用）----
@@ -201,25 +233,28 @@ export class WorldState {
 
     if (cp.dayNight) {
       const g = cfg.dayNightBonus || {};
-      const night = this.daynight.isNight;
-      const side = night ? (g.night || {}) : (g.day || {});
       const isTower = entity.type === 'tower';
-      const favored = night ? isTower : (!isTower && entity.type !== 'dragon');
-      const who = night ? '防御塔' : '小兵';
-      // v51.6：结构化的逐项修正（{statKey: {flat, percent}}），供 UI 按天气弹窗那套
-      // 网格样式渲染——不再只给一句拼好的话。本单位吃不到这条时 mods 是空对象，
-      // UI 据此显示"无增益"，不再说"XX占优（本单位不吃这条）"（用户定稿：删掉这句）。
+      const isDragon = entity.type === 'dragon';
+      // 本轮重做：小兵只看 dayTier（白天），塔只看 nightTier（夜晚），巨龙两条都不吃。
+      // 档位（tierOf 的返回值，天气同款）：{name, scale, pips}，scale 0~1，pips 0~3。
+      const who = isTower ? '防御塔' : '小兵';
+      const side = isTower ? (g.night || {}) : (g.day || {});
+      const tier = isTower ? this.daynight.nightTier : this.daynight.dayTier;
+      const favored = !isDragon && tier.scale > 0;
       const mods = {};
       if (favored) {
-        if (side.moveSpeedPct) mods.moveSpeed = { percent: side.moveSpeedPct };
-        if (side.attackDamagePct) mods.attackDamage = { percent: side.attackDamagePct };
-        if (side.attackRangeFlat) mods.attackRange = { flat: side.attackRangeFlat };
-        if (side.armorFlat) mods.armor = { flat: side.armorFlat };
+        const s = tier.scale;
+        if (side.moveSpeedPct) mods.moveSpeed = { percent: Math.round(side.moveSpeedPct * s * 10) / 10 };
+        if (side.attackRangeFlat) mods.attackRange = { flat: Math.round(side.attackRangeFlat * s * 10) / 10 };
+        if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
+        if (side.armorFlat) mods.armor = { flat: Math.round(side.armorFlat * s * 10) / 10 };
+        if (side.magicResistFlat) mods.magicResist = { flat: Math.round(side.magicResistFlat * s * 10) / 10 };
+        if (side.manaGainPct) mods.manaGainPct = { flat: Math.round(side.manaGainPct * s * 10) / 10 };
       }
       rows.push({
-        source: `昼夜 · ${this.daynight.label}`,
-        detail: favored ? `${who}占优` : '无增益',
-        favored, mods,
+        source: `昼夜 · ${isTower ? '夜晚' : '白天'}`,
+        detail: isDragon ? '无增益（巨龙不吃这条）' : (favored ? `${who}占优（${tier.name}）` : '无增益'),
+        favored, tier, mods,
       });
     }
     if (cp.entropyToUnits && this._entropyCouplingApplies()) {

@@ -338,9 +338,9 @@ export class UIManager {
       const head = r.source.replace(/[ ·].*$/, '').slice(0, 2);
       const icon = ICONS[head] || (r.source.startsWith('熵') ? '🌀' : '🌍');
       // 边框点亮格数 = 这条修正的强弱（0~3）。熵按偏离中性的程度分级；
-      // 昼夜是非黑即白的"占优/不占优"，点亮全部或完全不亮——用户定稿："如果没有
-      // 增益的话，这个框就不要显示满（进度满），无增益就不显示进度，有增益才显示进度"。
       // 龙魂这一行只在本方确实有魂时才会被推进 rows，本身就等价于"有"，维持点满。
+      // 本轮：昼夜从"非黑即白"改成天气同款四档（见 WorldState.getBreakdown 头注），
+      // 直接读 row.tier.pips（0~3，tierOf() 的返回值），不再是二选一的 3/0。
       let lit = 3, cls = '';
       if (r.source.startsWith('熵')) {
         const v = ws.entropy?.value ?? 0.5;
@@ -350,7 +350,7 @@ export class UIManager {
         const favored = v > 0.5 ? 'red' : (v < 0.5 ? 'blue' : null);
         if (favored && fac) cls = (fac === favored) ? ' wx-chaos' : ' wx-order';
       } else if (r.source.startsWith('昼夜')) {
-        lit = r.favored ? 3 : 0;
+        lit = r.tier?.pips ?? 0;
       }
       const col = r.source.startsWith('熵')
         ? ((ws.entropy?.value ?? 0.5) > 0.5 ? '#e0473f' : '#5b9bd5')
@@ -399,10 +399,24 @@ export class UIManager {
   // v51.6：抽出纯 body 构建，弹窗与悬浮预览共用（同 _weatherDetailBody 的理由）。
   _worldDetailBody(row) {
     const modsHtml = this._modsGridHtml(row.mods);
+    // 本轮：昼夜行现在带 tier（天气同款 {name, scale, pips}），补一条跟天气详情窗
+    // 一样的"档位名 + 三格进度条 + 强度%"头（_hoverBodyForStat 那段的同款结构），
+    // 让用户能直接看出"现在是第几档、有多强"，不只是有没有加成。熵/龙魂两行没有
+    // tier 字段，保持原样不受影响。
+    const tierHtml = row.tier ? `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;
+        padding:7px 9px;background:rgba(255,255,255,0.04);border-radius:6px;">
+        <span style="font-size:12px;font-weight:600;color:#8ab4f8;">${row.tier.name}</span>
+        <span style="flex:1;display:flex;gap:3px;">
+          ${[0, 1, 2].map(i => `<span style="flex:1;height:4px;border-radius:2px;
+            background:${i < row.tier.pips ? '#8ab4f8' : 'rgba(255,255,255,0.10)'};"></span>`).join('')}
+        </span>
+        <span style="font-size:10px;color:var(--text-dim);">强度 ${Math.round(row.tier.scale * 100)}%</span>
+      </div>` : '';
     return modsHtml
-      ? `<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
+      ? `${tierHtml}<div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">对该单位的影响</div>
          <div class="attrs" style="display:grid;">${modsHtml}</div>`
-      : `<p style="font-size:12px;line-height:1.8;margin:0;">${row.detail}</p>`;
+      : `${tierHtml}<p style="font-size:12px;line-height:1.8;margin:0;">${row.detail}</p>`;
   }
 
   /**

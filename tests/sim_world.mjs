@@ -59,37 +59,67 @@ const mkTower = (fac) => ({
   _skillInstances: [], _mapFaction: fac, faction: fac, _mapTier: 'outer',
 });
 
-world.update(0.1, DAY_PERIOD * 0.25);            // 正午 → 小兵占优
+// 本轮（用户定稿）：昼夜加成从"非黑即白"改成随相位连续变化、量化成四档
+// （正午/极夜=严重100%，随距离衰减，档位系数直接复用天气的 INTENSITY_TIERS）。
+// 原来的"+攻击力%"也改成了"+适应之力"（会按 AD/AP 谁高转化，见 AttributeCalculator）。
+const { tierOf } = await import('../src/data/Weather.js');
+const afRatio = 0.6; // adaptiveForce 转攻击力的官方比例（AD 明显高于 AP 时走这条）
+
+world.update(0.1, DAY_PERIOD * 0.25);            // 正午 → dayCloseness=1（严重档，小兵满档）
 AttributeCalculator.tick();
 const minionDay = AttributeCalculator.calc(mkUnit('blue'), []);
 AttributeCalculator.tick();
 const towerDay = AttributeCalculator.calc(mkTower('blue'), []);
 const baseMs = CONFIG.templates.melee.moveSpeed;
-T(`白天：小兵移速 ${minionDay.moveSpeed.toFixed(1)} = 基准 ${baseMs} × (1+${g.day.moveSpeedPct}%)`,
+T(`正午：小兵移速 ${minionDay.moveSpeed.toFixed(1)} = 基准 ${baseMs} × (1+${g.day.moveSpeedPct}%)（满档）`,
   Math.abs(minionDay.moveSpeed - baseMs * (1 + g.day.moveSpeedPct / 100)) < 1e-6);
-T(`白天：防御塔攻击力 ${towerDay.attackDamage.toFixed(1)} 无加成`,
-  Math.abs(towerDay.attackDamage - CONFIG.templates.tower.attackDamage) < 1e-6);
+T(`正午：小兵适应之力转攻击力 ≈ 基准+${g.day.adaptiveForce}×${afRatio}（近战AD天生更高，走AD分支）`,
+  Math.abs(minionDay.attackDamage - (CONFIG.templates.melee.attackDamage + g.day.adaptiveForce * afRatio)) < 1e-3);
+T(`正午：防御塔（夜晚侧，nightCloseness=0）无加成，攻击力/射程都是基准`,
+  Math.abs(towerDay.attackDamage - CONFIG.templates.tower.attackDamage) < 1e-6
+  && Math.abs(towerDay.attackRange - CONFIG.templates.tower.attackRange) < 1e-6);
 
-// 双方对称：同为小兵，蓝红拿到的加成必须一模一样（这是与上一版最大的区别 ——
-// 上一版按阵营给，等于把昼夜做成了先手优势）
+// 双方对称：同为小兵，蓝红拿到的加成必须一模一样（这是与"按阵营给"版本最大的区别）
 AttributeCalculator.tick();
 const redMinionDay = AttributeCalculator.calc(mkUnit('red'), []);
-T('白天：蓝红小兵加成完全对称（不再是阵营优势）',
+T('正午：蓝红小兵加成完全对称（不再是阵营优势）',
   Math.abs(minionDay.moveSpeed - redMinionDay.moveSpeed) < 1e-9);
 
-world.update(0.1, DAY_PERIOD * 0.75);            // 午夜 → 防御塔占优
+world.update(0.1, DAY_PERIOD * 0.75);            // 午夜 → nightCloseness=1（严重档，塔满档）
 AttributeCalculator.tick();
 const minionNight = AttributeCalculator.calc(mkUnit('blue'), []);
 AttributeCalculator.tick();
 const towerNight = AttributeCalculator.calc(mkTower('blue'), []);
-T(`夜晚：防御塔攻击力 ${towerNight.attackDamage.toFixed(1)} = 基准 × (1+${g.night.attackDamagePct}%)`,
-  Math.abs(towerNight.attackDamage - CONFIG.templates.tower.attackDamage * (1 + g.night.attackDamagePct / 100)) < 1e-6);
-T(`夜晚：防御塔射程 +${g.night.attackRangeFlat}`,
+T(`极夜：防御塔适应之力转攻击力 ≈ 基准+${g.night.adaptiveForce}×${afRatio}（塔AD天生更高，走AD分支）`,
+  Math.abs(towerNight.attackDamage - (CONFIG.templates.tower.attackDamage + g.night.adaptiveForce * afRatio)) < 1e-3);
+T(`极夜：防御塔射程 +${g.night.attackRangeFlat}（满档）`,
   Math.abs(towerNight.attackRange - (CONFIG.templates.tower.attackRange + g.night.attackRangeFlat)) < 1e-6);
-T(`夜晚：小兵移速 ${minionNight.moveSpeed.toFixed(1)} 回到基准（不再占优）`,
+T(`极夜：防御塔护甲/魔抗 各+${g.night.armorFlat}/${g.night.magicResistFlat}（满档）`,
+  Math.abs(towerNight.armor - (CONFIG.templates.tower.armor + g.night.armorFlat)) < 1e-6
+  && Math.abs(towerNight.magicResist - (CONFIG.templates.tower.magicResist + g.night.magicResistFlat)) < 1e-6);
+T(`极夜：小兵（白天侧，dayCloseness=0）无加成，移速回到基准`,
   Math.abs(minionNight.moveSpeed - baseMs) < 1e-6);
-T('攻守易位：白天利兵、夜晚利塔', minionDay.moveSpeed > minionNight.moveSpeed
+T('攻守易位：正午利兵、极夜利塔', minionDay.moveSpeed > minionNight.moveSpeed
   && towerNight.attackDamage > towerDay.attackDamage);
+
+// ---- ③b 新特性：黎明/黄昏过渡区，小兵与防御塔的加成【同时】生效（各自最低档）----
+// 用户定稿："在黎明/黄昏的时候兵/塔的加成同时生效（最低档）"——这是本轮与上一版
+// 最大的行为差异：上一版在分界点是硬切换（非此即彼），现在两条曲线在边界附近
+// 有重叠窗口，双方都落在"轻微"档（25%）。
+world.update(0.1, 0);                            // 黎明（相位0，精确分界点）
+AttributeCalculator.tick();
+const minionDawn = AttributeCalculator.calc(mkUnit('blue'), []);
+AttributeCalculator.tick();
+const towerDawn = AttributeCalculator.calc(mkTower('blue'), []);
+const dawnTier = tierOf(world.daynight.dayCloseness);
+T(`黎明：白天/夜晚曲线在分界点精确对称（dayCloseness=${world.daynight.dayCloseness.toFixed(3)} = nightCloseness=${world.daynight.nightCloseness.toFixed(3)}）`,
+  Math.abs(world.daynight.dayCloseness - world.daynight.nightCloseness) < 1e-9);
+T(`黎明：两条曲线都落在"轻微"档（25%），不是骤降到0`,
+  dawnTier.id === 'slight' && Math.abs(dawnTier.scale - 0.25) < 1e-9);
+T('黎明：小兵拿到白天加成的最低档（移速比基准略高，但明显低于正午满档）',
+  minionDawn.moveSpeed > baseMs && minionDawn.moveSpeed < minionDay.moveSpeed);
+T('黎明：防御塔【同时】拿到夜晚加成的最低档（射程比基准略高，但明显低于极夜满档）',
+  towerDawn.attackRange > CONFIG.templates.tower.attackRange && towerDawn.attackRange < towerNight.attackRange);
 
 // ---- ④ 缓存键必须含世界状态：昼→夜切换后属性要跟着变（不能停在旧值）----
 // 上面 ③ 已隐含验证（同一个 AttributeCalculator 实例跨昼夜取到了不同值），这里显式钉住。
@@ -99,26 +129,37 @@ T('昼夜切换后属性缓存正确失效', Math.abs(minionDay.moveSpeed - mini
 const rows = world.getBreakdown(mkTower('red'));
 T('getBreakdown 返回逐项来源（可解释性）',
   Array.isArray(rows) && rows.length > 0 && rows.every(r => r.source && r.detail));
-console.log('  夜晚·防御塔的修正来源：' + rows.map(r => `${r.source} → ${r.detail}`).join(' ｜ '));
+console.log('  黎明·防御塔的修正来源：' + rows.map(r => `${r.source} → ${r.detail}`).join(' ｜ '));
 
-// ---- ⑤b v51.6：结构化 mods + favored，供 UI 走天气弹窗那套网格样式 ----
+// ---- ⑤b 结构化 mods + favored + tier，供 UI 走天气弹窗那套网格样式 ----
 // 用户定稿："在属性界面如果没有增益的话，这个框就不要显示满（进度满），无增益就
 // 不显示进度，有增益才显示进度"；"把'小兵占优（本单位不吃这条）'删掉"。
+// 本轮追加：昼夜行现在带 tier（天气同款四档），且黎明/黄昏两侧可以同时 favored。
 {
-  // 此刻是午夜（③ 那段末尾停在 DAY_PERIOD*0.75），塔占优、小兵不占优。
+  world.update(0.1, DAY_PERIOD * 0.25); // 挪回正午：night 侧精确为 0，适合验证"完全不吃这条"
   const towerRow = world.getBreakdown(mkTower('red')).find(r => r.source.startsWith('昼夜'));
-  T('⑤b-夜晚·塔：favored=true，detail 说"占优"',
-    towerRow.favored === true && /占优/.test(towerRow.detail));
-  T('⑤b-夜晚·塔：mods 里有实际数值（对应 dayNightBonus.night 配置）',
-    Object.keys(towerRow.mods).length > 0
-    && (!g.night.attackDamagePct || towerRow.mods.attackDamage?.percent === g.night.attackDamagePct)
-    && (!g.night.attackRangeFlat || towerRow.mods.attackRange?.flat === g.night.attackRangeFlat));
+  T('⑤b-正午·塔（夜晚侧 nightCloseness=0）：favored=false，mods 为空对象',
+    towerRow.favored === false && Object.keys(towerRow.mods).length === 0);
+  T('⑤b-正午·塔：detail 就是"无增益"，不再说"XX占优（本单位不吃这条）"',
+    towerRow.detail === '无增益' && !/本单位不吃这条/.test(towerRow.detail));
 
   const minionRow = world.getBreakdown(mkUnit('red')).find(r => r.source.startsWith('昼夜'));
-  T('⑤b-夜晚·小兵：favored=false，mods 为空对象（不再享受这条昼夜加成）',
-    minionRow.favored === false && Object.keys(minionRow.mods).length === 0);
-  T('⑤b-夜晚·小兵：detail 就是"无增益"，不再说"XX占优（本单位不吃这条）"',
-    minionRow.detail === '无增益' && !/本单位不吃这条/.test(minionRow.detail));
+  T('⑤b-正午·小兵：favored=true，tier=严重（100%），mods 对应 dayNightBonus.day 配置',
+    minionRow.favored === true && minionRow.tier.id === 'severe'
+    && (!g.day.adaptiveForce || minionRow.mods.adaptiveForce?.flat === g.day.adaptiveForce)
+    && (!g.day.attackRangeFlat || minionRow.mods.attackRange?.flat === g.day.attackRangeFlat)
+    && (!g.day.armorFlat || minionRow.mods.armor?.flat === g.day.armorFlat)
+    && (!g.day.magicResistFlat || minionRow.mods.magicResist?.flat === g.day.magicResistFlat)
+    && (!g.day.manaGainPct || minionRow.mods.manaGainPct?.flat === g.day.manaGainPct));
+
+  // 黎明：两侧【同时】favored，各自最低档——本轮最核心的新行为。
+  world.update(0.1, 0);
+  const towerDawnRow = world.getBreakdown(mkTower('red')).find(r => r.source.startsWith('昼夜'));
+  const minionDawnRow = world.getBreakdown(mkUnit('red')).find(r => r.source.startsWith('昼夜'));
+  T('⑤b-黎明：小兵与防御塔【同时】favored（用户定稿的过渡区双重生效）',
+    towerDawnRow.favored === true && minionDawnRow.favored === true);
+  T('⑤b-黎明：两侧的档位都是"轻微"（最低档），不是满档',
+    towerDawnRow.tier.id === 'slight' && minionDawnRow.tier.id === 'slight');
 
   // 熵：中性（0.5）时同理——favored=false、mods 空、detail 是"中性（无修正）"
   CONFIG.world.couplings.entropyToUnits = true;
@@ -133,15 +174,15 @@ console.log('  夜晚·防御塔的修正来源：' + rows.map(r => `${r.source}
   CONFIG.world.couplings.entropyToUnits = false;
   world.entropy.value = 0.5;
 
-  // UI 侧：_modsGridHtml 是唯一实现，天气/世界两个弹窗都走它；进度条按 favored 点亮。
+  // UI 侧：_modsGridHtml 是唯一实现，天气/世界两个弹窗都走它；进度条按 tier.pips 点亮。
   const { srcOf } = await import('./_harness.mjs');
   const um = srcOf('src/ui/UIManager.js');
   T('⑤b-UIManager 有共用的 _modsGridHtml，天气与世界弹窗都调用它',
     /_modsGridHtml\(mods\)/.test(um) && (um.match(/this\._modsGridHtml\(/g) || []).length >= 2);
   T('⑤b-世界效应弹窗不再显示"充能条/占优（本单位不吃这条）"这类旧文案',
     !/本单位不吃这条/.test(um));
-  T('⑤b-昼夜行的点亮格数按 favored 决定（0 或 3），不再恒定点满',
-    /lit = r\.favored \? 3 : 0/.test(um));
+  T('⑤b-昼夜行的点亮格数按 tier.pips 决定（天气同款四档），不再是二选一的 3/0',
+    /lit = r\.tier\?\.pips \?\? 0/.test(um));
 }
 
 // ---- ⑥ 熵未实现时保持中性（不产生任何修正）----
