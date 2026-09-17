@@ -261,14 +261,25 @@ export class WeatherLayer {
 
   // 晴：极淡的暖色浮尘。晴天要是什么都不画，切到晴就成了"天气关了"，
   // 而晴本身是有加成的 —— 得让人看得出"现在是晴"。
-  _updateDust(k, wind, top, C) {
+  //
+  // ==================== 本轮（Phase 4）：风的独立可视化信号 ====================
+  // 用户："风等也要有可视化效果。"以前风只是间接改雨/雪的偏移/摆动幅度，晴天/
+  // 无雨雪的时候完全看不出在刮风。复用这套现成的浮尘粒子（不新建系统）：
+  //   ① 可见度从"只看晴充能"改成"晴充能与风充能取较大者"——风大的雨天/雪天
+  //     也能看见浮尘被吹起来，不是只有晴天才有风的信号。
+  //   ② 风大时叠加一段【持续横移】（drift，跟时间线性累积，会绕着盒子转圈而
+  //     不是原地打转），跟原有的正弦左右摆（sway）是两回事——sway 在风小的时候
+  //     也有，读作"飘"；drift 只有风起来了才明显，读作"被吹跑"。
+  _updateDust(clearK, wind, top, C) {
     const P = this._dust, max = P.arr.length / 3;
-    const n = Math.round(max * k);
-    P.mat.opacity = (C.dustAlpha ?? 0.30) * Math.min(1, k * 1.6);
+    const driveK = Math.max(clearK, wind * (C.dustWindDriveFactor ?? 0.8));
+    const n = Math.round(max * driveK);
+    P.mat.opacity = (C.dustAlpha ?? 0.30) * Math.min(1, driveK * 1.6);
     P.obj.visible = n > 0;
     if (n <= 0) { P.geo.setDrawRange(0, 0); return; }
     const B = this._box;
     const ceil = top * 0.5;   // 浮尘只在低空飘，不铺满整个高度
+    const windPush = wind * (C.dustWindPushSpeed ?? 60);
     for (let i = 0; i < n; i++) {
       const ph = hash01(i, 11);
       // 上浮而不是下落 —— 逆着雨雪的方向，一眼能分辨
@@ -276,10 +287,11 @@ export class WeatherLayer {
       const bx = (hash01(i, 13) - 0.5) * B.hx * 2;
       const bz = (hash01(i, 14) - 0.5) * B.hz * 2;
       const s = Math.sin(this._t * 0.35 + ph * 6.28) * 24 * (1 + wind * 2);
+      const drift = (this._t * windPush * (0.7 + hash01(i, 15) * 0.6)) % (B.hx * 4);
       const o = i * 3;
-      P.arr[o] = this._wrap(B.cx + bx + s, B.cx, B.hx);
+      P.arr[o] = this._wrap(B.cx + bx + s + drift, B.cx, B.hx);
       P.arr[o + 1] = y;
-      P.arr[o + 2] = this._wrap(B.cz + bz + s * 0.5, B.cz, B.hz);
+      P.arr[o + 2] = this._wrap(B.cz + bz + s * 0.5 + drift * 0.6, B.cz, B.hz);
     }
     P.geo.setDrawRange(0, n);
     P.geo.attributes.position.needsUpdate = true;

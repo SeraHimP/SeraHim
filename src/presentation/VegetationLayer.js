@@ -11,6 +11,7 @@ import { WALL_H } from './WallLayer.js';
 import { stylizedPaletteOf } from '../data/Config.js';
 import { forestZoneAt } from '../data/mapValidate.js';
 import { isInBaseWallRing } from '../data/baseCircle.js';
+import { applyWindSway, updateWindSway, clearWindSwayRegistry } from './VegetationShaderPatch.js';
 
 // v58：导出给 BoundaryDecorLayer 复用——野区内部（不可走的迷宫墙块）边界的
 // "自然感"装饰要用同一套树/坐标哈希，不重新写一份几何生成逻辑。
@@ -65,6 +66,10 @@ export class VegetationLayer {
   clear() {
     for (const m of this.meshes) { this.scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
     this.meshes = [];
+    // 换图/重建时把风摆动注册表也清空——VegetationShaderPatch 的登记表是模块级
+    // 全局的（只有这个文件在用它），不清的话旧地图那批已经 dispose 掉的材质会
+    // 一直留在里面被 updateWindSway() 白白遍历，是个真实的内存/CPU 泄漏。
+    clearWindSwayRegistry();
   }
 
   build(mapSystem) {
@@ -160,18 +165,28 @@ export class VegetationLayer {
 
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(),
           S = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), C = new THREE.Color();
-    const place = (geo, mat, arr, vary) => {
+    // 本轮（Phase 2：风吹植被）：sway=true 的调用会额外给每个实例算一份"相位"
+    // （按树的世界坐标哈希，不是数组下标——见 VegetationShaderPatch.js 头注为什么
+    // 不能用下标），装成 InstancedBufferAttribute 喂给 applyWindSway。只对树/
+    // 深林树传 true——灌木/岩石这一轮先不摆，等树的效果验证过手感自然再考虑扩展。
+    const place = (geo, mat, arr, vary, sway) => {
       if (!arr.length) return;
       const inst = new THREE.InstancedMesh(geo, mat, arr.length);
       inst.castShadow = true; inst.receiveShadow = true;
+      const phase = sway ? new Float32Array(arr.length) : null;
       arr.forEach(([x, y, z, s, rot], i) => {
         Q.setFromAxisAngle(UP, rot); M.compose(P.set(x, y, z), Q, S.set(s, s, s)); inst.setMatrixAt(i, M);
         if (vary) { C.setHSL(vary.h + (hash(x + 1, z) - 0.5) * vary.dh, vary.s, vary.l + (hash(z + 1, x) - 0.5) * vary.dl); inst.setColorAt(i, C); }
+        if (phase) phase[i] = hash(x * 7 + 3, z * 7 + 3) * Math.PI * 2;
       });
       inst.instanceMatrix.needsUpdate = true;
       if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
       inst.frustumCulled = false;   // 实例包围盒默认在原点，整片会被误剔除
       inst.userData.baseColor = mat.color.clone();   // v59：setTint 要乘这个底色，不能直接覆盖掉（见 setTint 头注）
+      if (phase) {
+        inst.geometry.setAttribute('instancePhase', new THREE.InstancedBufferAttribute(phase, 1));
+        applyWindSway(inst.geometry, mat);
+      }
       this.scene.add(inst); this.meshes.push(inst);
     };
     if (stylized) {
@@ -179,13 +194,13 @@ export class VegetationLayer {
       // 色阶，不是平滑渐变），树/岩/灌木各自一个声明出来的纯色，不叠 HSL 随机抖动
       // ——克制色板是这条风格的核心，不是这里漏做了"多样性"。
       const SV = stylizedPaletteOf(map);
-      place(stylizedTreeGeo(map, false), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), trees, null);
+      place(stylizedTreeGeo(map, false), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), trees, null, true);
       // v59：深林树用更暗的深色变体（treeCrownDeepA/B），单独一个 InstancedMesh。
-      place(stylizedTreeGeo(map, true), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), deepTrees, null);
+      place(stylizedTreeGeo(map, true), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), deepTrees, null, true);
       place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), rocks, null);
       place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.6, 1), new THREE.MeshLambertMaterial({ color: SV.treeCrownColorB || '#6cbb5e', flatShading: true }), bushes, null);
     } else {
-      place(treeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true }), trees, null);
+      place(treeGeo(), new THREE.MeshLambertMaterial({ vertexColors: true }), trees, null, true);
       place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: 0xffffff }), rocks, { h: 0.08, s: 0.12, l: 0.52, dh: 0.03, dl: 0.10 });
       place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.55, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), bushes, { h: 0.27, s: 0.45, l: 0.40, dh: 0.05, dl: 0.08 });
     }
@@ -215,6 +230,14 @@ export class VegetationLayer {
    * （1×tint===tint），结果逐位不变；对 stylized 那套则保留了调色板颜色，
    * 只被昼夜的明暗/冷暖乘调，不会被昼夜颜色整个吃掉。
    */
+  /**
+   * 每帧调用：把风强度写进树/深林树的摆动 shader。dt 走墙钟（暂停时风也该继续
+   * 吹，跟 WeatherLayer/WaterLayer 同口径），windStrength 是风的 charge（0~1）。
+   */
+  update(dt, windStrength) {
+    updateWindSway(dt, Math.max(0, Math.min(1, windStrength || 0)));
+  }
+
   setTint(hex) {
     this._tint = hex;
     const t = new THREE.Color(hex);

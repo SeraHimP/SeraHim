@@ -33,6 +33,7 @@ import { MapSkirtLayer } from './MapSkirtLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
+import { RainRippleLayer } from './RainRippleLayer.js';
 import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
 import { torchPoints } from './torchPlacement.js';
 import { CONFIG } from '../data/Config.js';
@@ -187,6 +188,7 @@ export class ThreeRenderer {
     this.skirtOn = true;
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
     this.weatherFx = new WeatherLayer(this.scene); // 天气可视化（雨/雪/雾/风/晴的粒子与薄纱）
+    this.rainRipple = new RainRippleLayer(this.scene); // Phase 1：雨滴打在水面上的波纹（独立于水面材质）
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -785,6 +787,7 @@ export class ThreeRenderer {
     return this.toneMapOn;
   }
   setWeatherFx(on) { this.weatherFx?.setEnabled(on); }
+  setRainRipple(on) { this.rainRipple?.setEnabled(on); }
 
   setVegetation(on) {
     this.vegOn = on !== false;
@@ -1249,6 +1252,17 @@ export class ThreeRenderer {
       this.weatherFx.update(window.__weather || null, this._target,
                             this.width / z, (this.height / z) / sinP + depthPad,
                             this._lightDt || 0.016, this.azimuthDeg || 0);
+    }
+    // Phase 1：雨滴打在水面上的波纹——只在有水面的图上生成，dt 走墙钟（与水面/
+    // 天气可视化同口径，暂停时雨还在下、水波也该继续）。
+    if (this.rainRipple) {
+      this.rainRipple.update(this.water, this.mapSystem, window.__weather || null, this._lightDt || 0.016);
+    }
+    // Phase 2：风吹植被——只需要风的 charge，跟天气可视化读同一个量（see WeatherLayer 头注：
+    // 强度取充能不取占比），dt 走墙钟，暂停时风也该继续吹。
+    if (this.veg && this.vegOn) {
+      const windCharge = window.__weather?.getCharge ? (window.__weather.getCharge('wind') || 0) : 0;
+      this.veg.update(this._lightDt || 0.016, windCharge);
     }
     // P1：走后处理管线（Bloom+ACES+FXAA+描边+SSAO）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
