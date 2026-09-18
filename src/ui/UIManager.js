@@ -944,25 +944,34 @@ export class UIManager {
    * docs/BALANCE-ADAPTIVE-REWORK.md）——伤害改成"赢家通吃"，判成物理就是攻击力
    * 原始值，判成魔法就是法术强度原始值，不再相加。这里的显示口径必须跟着换，
    * 否则面板显示的数字会比实际造成的伤害大一截（还是按 AD+AP 的和显示）。
+   *
+   * 追加定稿（用户看到"AP20却直接显示攻击力20"追问后拍板）："AP打折，AD不打折"。
+   * CombatSystem 的魔法分支已经改成 法术强度×apMagicDamagePct%（见那边头注），
+   * 这里必须用同一个折扣，否则面板显示的数字会比实际造成的伤害虚高——又是一次
+   * "同一件事画两遍，早晚只改对一处"的坑，所以折扣系数直接从同一个 CONFIG 字段
+   * 读，不在这里另写一份。
    */
   /**
    * 攻击力显示值的唯一计算源——自适应类型下，先用 resolveAttackType 解析出【当前】
-   * 真实会打出的类型，再取该类型对应属性的原始值（物理→攻击力，魔法→法术强度，
-   * 不再相加，与 CombatSystem.performAttack 的伤害结算共用同一条判据）；非自适应
-   * 类型就是 attackDamage 本身。base 取同一个属性键在 baseStats 上的值，保证
-   * "这次显示的数字从哪儿涨上来的"口径统一（不会出现 now 是法强、base 却是攻击力
-   * 这种对不上的情况）。返回形状与 _statParts 一致（{now, base, delta, cls}），
-   * 供主格子/悬浮预览/点开窗口三处共用。
+   * 真实会打出的类型：物理→攻击力原始值；魔法→法术强度×apMagicDamagePct%（与
+   * CombatSystem.performAttack 的伤害结算共用同一条判据+同一个折扣系数，保证面板
+   * 数字与实际伤害永远一致）；非自适应类型就是 attackDamage 本身。base 同样按
+   * "现在的类型"折算 baseStats 上的对应值，保证"这次显示的数字从哪儿涨上来的"
+   * 口径统一。返回形状与 _statParts 一致（{now, base, delta, cls}），供主格子/
+   * 悬浮预览/点开窗口三处共用。
    */
   _attackDamageParts(entity, stats) {
     const rawType = entity?.baseStats?.attackType;
     const isAdaptive = rawType === 'adaptive';
     if (!isAdaptive) return this._statParts('attackDamage', entity, stats);
-    const statKey = this.attrCalc.resolveAttackType(stats) === 'magic' ? 'abilityPower' : 'attackDamage';
-    const now = stats?.[statKey] || 0;
-    const baseVal = entity?.baseStats?.[statKey];
+    const isMagic = this.attrCalc.resolveAttackType(stats) === 'magic';
+    const statKey = isMagic ? 'abilityPower' : 'attackDamage';
+    const magicCoef = isMagic ? (CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100 : 1;
+    const now = (stats?.[statKey] || 0) * magicCoef;
+    const rawBase = entity?.baseStats?.[statKey];
     const r = (v) => (Math.abs(v) < 10 ? Math.round(v * 100) / 100 : Math.round(v));
-    if (!Number.isFinite(baseVal)) return { now: r(now), base: null, delta: 0, cls: '' };
+    if (!Number.isFinite(rawBase)) return { now: r(now), base: null, delta: 0, cls: '' };
+    const baseVal = rawBase * magicCoef;
     const delta = now - baseVal;
     const clean = Math.abs(delta) < 0.005 ? 0 : delta;
     return { now: r(now), base: r(baseVal), delta: r(clean), cls: clean > 0 ? 'stat-up' : clean < 0 ? 'stat-down' : '' };

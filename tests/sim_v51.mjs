@@ -1200,11 +1200,13 @@ async function world() {
   const dealt = before - tgt.currentHP;
   // 本轮（数值平衡重做）：AD+AP 相加的规则被推翻，改成"赢家通吃"（见
   // CombatSystem.performAttack 头注）——这个测试实体 AD10/AP40，AP×0.6=24>10，
-  // 判成魔法，基础伤害 = AP 原始值(40)，不再是 AD+AP(50)。加上强化射击的额外
-  // 25%×法强(40)=10 的魔法伤害，总量约 50（真实伤害那条路径已经在术士兵测试里
-  // 验证过，这里换成验证 damageType 参数确实传成了 'magic'）。
+  // 判成魔法。追加定稿"AP打折，AD不打折"：基础伤害 = AP×apMagicDamagePct%
+  // = 40×0.6 = 24（不再是 AP 原始值 40，更不是 AD+AP=50）。加上强化射击这条
+  // 独立技能效果的额外 25%×法强(40)=10 的魔法伤害（这条是技能自己定义的系数，
+  // 不受普攻的折扣影响），总量约 34（真实伤害那条路径已经在术士兵测试里验证过，
+  // 这里换成验证 damageType 参数确实传成了 'magic'）。
   T('主动⑤-下一次攻击命中后额外造成 25%×法术强度 的伤害，且法力才真正清零',
-    dealt > 45 && dealt < 55 && r._mana === 0 && !r._empowerNextAttack);
+    dealt > 29 && dealt < 39 && r._mana === 0 && !r._empowerNextAttack);
 
   T('主动⑥-CombatSystem 的延迟消耗点支持自定义伤害类型（不再永远是真实伤害）',
     /emp\.damageType \|\| 'true'/.test(srcOf('src/systems/CombatSystem.js')));

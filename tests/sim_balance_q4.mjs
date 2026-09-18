@@ -83,11 +83,13 @@ function mkMinion(ents, type, hp = 1e6) {
   const dealt = before - tgt.currentHP;
   // 本轮（数值平衡重做）：AD+AP 相加的规则被推翻，改成"赢家通吃"——用户查证
   // LoL 后指出普通攻击的伤害本来就不该叠加另一项属性，判定用哪个类型，伤害就
-  // 直接取那个属性的原始值（见 CombatSystem.performAttack 头注）。AD40/AP100，
-  // AP×0.6(系数)=60>40，判成魔法，基础伤害 = 法术强度原始值 = 100，不再是
-  // AD+AP=140。
-  T(`自适应普攻基础伤害 = 判定胜出属性的原始值（AP100×0.6=60>AD40 → 取AP=100，实际${dealt.toFixed(1)}）`,
-    Math.abs(dealt - 100) < 2);
+  // 直接取那个属性（见 CombatSystem.performAttack 头注）。AD40/AP100，
+  // AP×0.6(判定系数)=60>40，判成魔法。追加定稿"AP打折，AD不打折"：伤害 =
+  // 法术强度×apMagicDamagePct%（默认60%）= 100×0.6 = 60，不再是原始值100，
+  // 更不是 AD+AP=140。
+  const apMagicPct = (CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100;
+  T(`自适应普攻基础伤害 = 判定胜出属性打折后的值（AP100×0.6折扣=60，实际${dealt.toFixed(1)}）`,
+    Math.abs(dealt - 100 * apMagicPct) < 2);
   T(`此时类型判成魔法（AP>AD，跟真实规则"哪项贡献更大决定类型"一致）`,
     attr.resolveAttackType(attr.calc(atk, fx.getEffects(atk.id))) === 'magic');
 

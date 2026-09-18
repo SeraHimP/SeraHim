@@ -695,8 +695,13 @@ export class CombatSystem {
     // 一截。用户随后指出这条规则本身不对——真实 LoL 里法强对普通攻击没有基线效果
     // （除非装备了像纳什之牙这种明确写着"额外叠一笔on-hit魔法伤害"的道具，而我们
     // 的单位是 0 装备结算），并给出新规则（不照搬 LoL，是结合本游戏"普攻兼职技能"
-    // 这个结构定的）：判定类型时用的比较结果，直接决定伤害数值取哪个属性的原始值——
+    // 这个结构定的）：判定类型时用的比较结果，直接决定伤害数值取哪个属性——
     // 判成物理就是攻击力，判成魔法就是法术强度，不再相加。
+    // 追加定稿：用户看到"AP20直接打出20点伤害"追问，拍板"AP打折、AD不打折"——
+    // 物理分支继续用攻击力原始值；魔法分支改用 法术强度 × apMagicDamagePct%
+    // （CONFIG.tuning.adaptiveDamage，默认60%，与判定阈值同源但字段独立，见
+    // Config.js 头注）。这个折扣只影响"数值"，不影响"判成什么类型"——类型判定
+    // 依然是 resolveAttackType 那套系数比较，两者是同一份法术强度的两次不同用途。
     // 类型判定与"数值取哪个属性"必须共用同一次 resolveAttackType 调用的结果（否则
     // 会出现"判成魔法却按攻击力数值结算"的自相矛盾），所以这里提前解析好，hitInfo
     // 里不再重复调用一次。
@@ -707,7 +712,9 @@ export class CombatSystem {
       ? (this.attrCalc.resolveAttackType(atkStats) || 'physical')
       : (atkStats.attackType || 'physical');
     const baseDamage = isAdaptiveType
-      ? (resolvedAttackType === 'magic' ? (atkStats.abilityPower || 0) : (atkStats.attackDamage || 0))
+      ? (resolvedAttackType === 'magic'
+          ? (atkStats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100)
+          : (atkStats.attackDamage || 0))
       : (atkStats.attackDamage || 0);
     const hitInfo = {
       attackerId: attacker.id,
