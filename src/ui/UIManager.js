@@ -50,7 +50,7 @@ export class UIManager {
       this.selCard.addEventListener('mouseover', (e) => {
         const row = e.target.closest?.('.stat-doc[data-stat]');
         if (row && this.selCard.contains(row)) {
-          this._showHoverTip(this._hoverBodyForStat(row.dataset.stat, this.entities.get(this.selectedId)), e.clientX, e.clientY);
+          this._showHoverTip(() => this._hoverBodyForStat(row.dataset.stat, this.entities.get(this.selectedId)), e.clientX, e.clientY);
         }
       });
       this.selCard.addEventListener('mousemove', (e) => {
@@ -163,7 +163,14 @@ export class UIManager {
           const unit = this.entities.get(unitId);
           const inst = unit?._skillInstances?.find(s => s.id === skillId);
           const def = inst && SkillLibrary[inst.skillId];
-          if (def) this._showHoverTip(this._hoverBodyForSkill(def, inst, unit), e.clientX, e.clientY);
+          // 取数函数每次都重新按 unitId/skillId 查一遍最新的 unit/inst/def——不是
+          // 复用这一刻捕获的引用，否则冷却/层数这些会变的字段就是刷不出来。
+          if (def) this._showHoverTip(() => {
+            const u2 = this.entities.get(unitId);
+            const i2 = u2?._skillInstances?.find(s => s.id === skillId);
+            const d2 = i2 && SkillLibrary[i2.skillId];
+            return d2 ? this._hoverBodyForSkill(d2, i2, u2) : '';
+          }, e.clientX, e.clientY);
         }
         return;
       }
@@ -174,7 +181,10 @@ export class UIManager {
         if (effName && unitCard) {
           const unitId = parseInt(unitCard.dataset.id, 10);
           const group = this.effects.getEffects(unitId).filter(x => x.blueprint.name === effName);
-          if (group.length) this._showHoverTip(this._hoverBodyForEffect(effName, group), e.clientX, e.clientY);
+          if (group.length) this._showHoverTip(() => {
+            const g2 = this.effects.getEffects(unitId).filter(x => x.blueprint.name === effName);
+            return g2.length ? this._hoverBodyForEffect(effName, g2) : '';
+          }, e.clientX, e.clientY);
         }
       }
     });
@@ -376,9 +386,15 @@ export class UIManager {
     // 走同一个 shellHtml 外壳，不是另起一套样式）——绑定一次，不随每帧重建
     box.querySelectorAll('[data-worldidx]').forEach(el => {
       // v51.6：悬浮预览——同一份 row 查找，只是不弹模态框，丢进跟随鼠标的浮层。
+      // 取数函数每次都重新 getBreakdown 一遍——不是复用这一刻捕获的 rows 数组，
+      // 否则悬浮着不动时看到的昼夜档位/熵值永远停在刚出现那一帧。
       el.addEventListener('mouseenter', (e) => {
-        const row = rows[Number(el.dataset.worldidx)];
-        if (row) this._showHoverTip(this._worldDetailBody(row), e.clientX, e.clientY);
+        const idx = Number(el.dataset.worldidx);
+        this._showHoverTip(() => {
+          const freshRows = (ws && ws.enabled) ? ws.getBreakdown(entity) : [];
+          const freshRow = freshRows[idx];
+          return freshRow ? this._worldDetailBody(freshRow) : '';
+        }, e.clientX, e.clientY);
       });
       el.addEventListener('mousemove', (e) => this._positionHoverTip(e.clientX, e.clientY));
       el.addEventListener('mouseleave', () => this._hideHoverTip());
@@ -506,10 +522,14 @@ export class UIManager {
     // 点击弹窗（像技能那样）——绑定一次，不随每帧重建
     box.querySelectorAll('[data-wxid]').forEach(el => {
       // v51.6：悬浮预览——同一份 row 查找逻辑，只是不弹模态框，丢进跟随鼠标的浮层。
+      // 取数函数每次都重新 getModifierBreakdown 一遍，悬浮着不动时天气档位/强度
+      // 能跟着实时变化，不是停在刚出现那一帧。
       el.addEventListener('mouseenter', (e) => {
         const id = el.dataset.wxid;
-        const row = ws.getModifierBreakdown(entity).find(r => r.def.id === id);
-        if (row) this._showHoverTip(this._weatherDetailBody(row), e.clientX, e.clientY);
+        this._showHoverTip(() => {
+          const freshRow = ws.getModifierBreakdown(entity).find(r => r.def.id === id);
+          return freshRow ? this._weatherDetailBody(freshRow) : '';
+        }, e.clientX, e.clientY);
       });
       el.addEventListener('mousemove', (e) => this._positionHoverTip(e.clientX, e.clientY));
       el.addEventListener('mouseleave', () => this._hideHoverTip());
@@ -569,8 +589,24 @@ export class UIManager {
    * pointer-events:none（见 index.html 的 .hover-tip 规则）——否则浮层本身会挡住
    * "鼠标移出目标元素"的判定，出现移到提示框上卡住不消失的问题。
    */
-  _showHoverTip(html, x, y) {
-    if (!html) return;
+  /**
+   * 本轮：悬浮窗口数据要实时更新（用户："悬浮窗口的数据也要实时更新！切记悬浮
+   * 窗口不要做成一刷新数据就窗口闪的bug"）。原来只在 mouseenter 那一刻算一次
+   * HTML 就再也不变——鼠标停着不动时，血条已经掉了、状态已经没了，浮层还停在
+   * 刚出现那一帧的旧数据上。
+   *
+   * 做法：改成接收一个**取数函数**（不是现成的 HTML 字符串），内部按跟
+   * _updateWorldRow 同一套"节流 500ms + 脏检查"的节奏重新算一遍、只在内容真的
+   * 变了才替换 innerHTML——不是每 tick 都无条件替换。这正是不闪的关键：
+   *   · 500ms 一次而不是每帧，減少替换次数本身；
+   *   · 脏检查（新旧 HTML 字符串比较）保证"内容没变就不碰 DOM"，大多数 tick
+   *     其实什么也不用做（数值没变化的属性、还没触发的技能冷却等）。
+   * 单一节点的 tip.innerHTML 整体替换本身不会产生"跳动"——它没有 tip 自身的
+   * 布局余量随内容变化（宽高本来就会随文字变化），会跳动的是"明明没变也硬替换"
+   * 导致的没必要的重排，脏检查已经堵掉了这条路。
+   */
+  _showHoverTip(getHtml, x, y) {
+    if (!getHtml) return;
     let tip = this._hoverTipEl;
     if (!tip) {
       tip = document.createElement('div');
@@ -578,9 +614,26 @@ export class UIManager {
       document.body.appendChild(tip);
       this._hoverTipEl = tip;
     }
+    const html = typeof getHtml === 'function' ? getHtml() : getHtml;
+    if (!html) return;
     tip.innerHTML = html;
+    tip.dataset.key = html;
     tip.style.display = 'block';
     this._positionHoverTip(x, y);
+
+    this._hoverTipGetHtml = typeof getHtml === 'function' ? getHtml : null;
+    if (this._hoverTipTimer) clearInterval(this._hoverTipTimer);
+    if (this._hoverTipGetHtml) {
+      this._hoverTipTimer = setInterval(() => {
+        const t = this._hoverTipEl;
+        const fn = this._hoverTipGetHtml;
+        if (!t || t.style.display === 'none' || !fn) return;
+        const next = fn();
+        if (!next || next === t.dataset.key) return;   // 脏检查：内容没变就不碰 DOM
+        t.innerHTML = next;
+        t.dataset.key = next;
+      }, 500);
+    }
   }
 
   _positionHoverTip(x, y) {
@@ -595,7 +648,11 @@ export class UIManager {
     tip.style.top = Math.max(4, top) + 'px';
   }
 
-  _hideHoverTip() { if (this._hoverTipEl) this._hoverTipEl.style.display = 'none'; }
+  _hideHoverTip() {
+    if (this._hoverTipEl) this._hoverTipEl.style.display = 'none';
+    if (this._hoverTipTimer) { clearInterval(this._hoverTipTimer); this._hoverTipTimer = null; }
+    this._hoverTipGetHtml = null;
+  }
 
   /** 属性行的悬浮预览：属性名 + 当前值（含正负着色与括号明细）+ 基础描述。 */
   _hoverBodyForStat(key, entity) {
@@ -1305,17 +1362,20 @@ export class UIManager {
   }
 
   /**
-   * 本轮返工：环状图没有数据时的占位。用户否掉了上一版的图标占位——"我说用图表
-   * 占位是指用进度为0的进度条占位，不是用个图表的图标占位"。改成一条进度为0%的
-   * 横条（跟环状图一样是"图表"，不是纯文字），视觉上就是"这里本来会有数据，
-   * 现在是空的"，不再摆图标。
+   * 环状图没有数据时的占位。上一版用了一条横向进度条——用户这轮否掉："生命统计
+   * 的窗口无数据的地方用进度条代替，应该是用同类型同大小的圆环空白进度条代替啊！
+   * 你弄个横向的进度条是什么意思"。这个占位是给 _donutChartHtml 的空数据兜底，
+   * 两者在同一张网格卡片里并排出现，长得不一样就很突兀；现在改成同款的环
+   * （同一个 size，同一套 radial-gradient 抠洞手法），只是不画 conic-gradient
+   * 分段、直接填一个中性灰色——读出来就是"这里本来会是一个环状图，现在是空的"。
    */
-  _emptyChartHtml(label) {
-    return `<div style="margin-bottom:4px;">
-      <div style="height:8px;border-radius:4px;background:var(--panel-soft, rgba(255,255,255,0.08));overflow:hidden;">
-        <div style="height:100%;width:0%;background:var(--text-mute);"></div>
-      </div>
-      <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">${label}</div>
+  _emptyChartHtml(label, size = 84) {
+    return `<div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;">
+      <div style="width:${size}px;height:${size}px;flex:none;border-radius:50%;
+        background:var(--panel-soft, rgba(255,255,255,0.08));
+        -webkit-mask:radial-gradient(circle, transparent 55%, #000 56%);
+                mask:radial-gradient(circle, transparent 55%, #000 56%);"></div>
+      <div style="flex:1;min-width:0;font-size:12px;color:var(--text-mute);">${label}</div>
     </div>`;
   }
 

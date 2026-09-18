@@ -2425,16 +2425,23 @@ async function world() {
   T('悬①-悬浮浮层的 CSS 存在且 pointer-events:none（否则挡住 mouseleave 判定，会卡住不消失）',
     /\.hover-tip \{[^}]*pointer-events:\s*none/.test(html));
   T('悬②-三个核心方法都存在（显示/跟随/隐藏）',
-    /_showHoverTip\(html, x, y\) \{/.test(um) && /_positionHoverTip\(x, y\) \{/.test(um) && /_hideHoverTip\(\) \{/.test(um));
+    /_showHoverTip\(getHtml, x, y\) \{/.test(um) && /_positionHoverTip\(x, y\) \{/.test(um) && /_hideHoverTip\(\) \{/.test(um));
   T('悬③-属性行用 mouseover/mouseout（会冒泡）而非 mouseenter/mouseleave，才能走事件委托（属性行每帧重建，逐行绑定会随旧节点一起丢失——技能栏/效果栏当年就是这个坑）',
     /selCard\.addEventListener\('mouseover', \(e\) => \{[\s\S]{0,300}_hoverBodyForStat/.test(um));
   T('悬④-点击查看依旧保留（悬浮预览是新增，不是替换）',
     /selCard\.addEventListener\('click', \(e\) => \{[\s\S]{0,300}_showStatDoc/.test(um));
   T('悬⑤-技能格/状态格的悬浮预览与点击共用同一份查找逻辑（inst/def、effName/group 的取法一致），不是另起一套',
-    /const inst = unit\?\._skillInstances\?\.find\(s => s\.id === skillId\);[\s\S]{0,120}_hoverBodyForSkill/.test(um)
-    && /group\.length\) this\._hoverBodyForEffect|group\.length\) this\._showHoverTip\(this\._hoverBodyForEffect/.test(um));
+    /const inst = unit\?\._skillInstances\?\.find\(s => s\.id === skillId\);[\s\S]{0,400}_hoverBodyForSkill/.test(um)
+    && /this\._hoverBodyForEffect\(effName, g2\)/.test(um));
   T('悬⑥-天气行/世界行的悬浮预览直接复用点击弹窗同一份 body 构建函数（_weatherDetailBody/_worldDetailBody），不是重新拼一份文案',
-    /_showHoverTip\(this\._worldDetailBody\(row\)/.test(um) && /_showHoverTip\(this\._weatherDetailBody\(row\)/.test(um));
+    /this\._worldDetailBody\(freshRow\)/.test(um) && /this\._weatherDetailBody\(freshRow\)/.test(um));
+  // 本轮：悬浮窗口数据要实时更新（用户定稿），取数函数每次都重新查，不是复用
+  // mouseenter 那一刻捕获的旧引用——否则鼠标停着不动时看到的永远是旧数据。
+  T('悬⑦-_showHoverTip 接收的是取数函数（每次都重新算），不是现成算好的 HTML 字符串',
+    /const html = typeof getHtml === 'function' \? getHtml\(\) : getHtml;/.test(um));
+  T('悬⑧-悬浮内容按节流+脏检查定期刷新（不是每帧无条件替换 DOM，避免闪烁）',
+    /this\._hoverTipTimer = setInterval\(\(\) => \{[\s\S]{0,300}next === t\.dataset\.key\) return;/.test(um));
+  T('悬⑨-_hideHoverTip 会清掉刷新定时器，不留后台泄漏', /_hideHoverTip\(\) \{[\s\S]{0,200}clearInterval\(this\._hoverTipTimer\)/.test(um));
 
   // 真的跑一遍：三个 _hoverBodyForXxx 在没有真实 DOM 的情况下也能拼出内容
   // （不依赖 document，只依赖 this.attrCalc / this.effects / statDoc，用假 this 直接调）。

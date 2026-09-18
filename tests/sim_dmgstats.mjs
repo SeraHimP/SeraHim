@@ -198,13 +198,18 @@ async function world() {
   T('七⑤-环状图用 conic-gradient 画环、radial-gradient 遮罩抠洞（没有引入任何图表库）',
     /conic-gradient/.test(html) && /mask:radial-gradient/.test(html));
 
-  // 没有任何按来源数据时，不应该崩溃，应该显示进度为0%的进度条占位（本轮返工：用户
-  // 否掉了上一版的图标占位——"我说用图表占位是指用进度为0的进度条占位，不是用个
-  // 图表的图标占位"，见 _emptyChartHtml）。
+  // 没有任何按来源数据时，不应该崩溃，应该显示一个空白圆环占位（用户先否掉了图标
+  // 占位——"我说用图表占位是指用进度为0的进度条占位，不是用个图表的图标占位"——
+  // 后来又否掉了横条占位——"生命统计的窗口无数据的地方用进度条代替，应该是用
+  // 同类型同大小的圆环空白进度条代替啊！你弄个横向的进度条是什么意思"，见
+  // _emptyChartHtml：现在跟有数据时的环状图同一个尺寸/同一套 mask 挖洞手法，
+  // 只是填灰色不画分段）。
   const empty = mkEntity(ents, 'tower', { stats: { maxHP: 1000 } }, CONFIG);
   ui._showHpStatsModal(empty);
-  T('七⑥-没有按来源数据时优雅降级，不抛异常且用0%进度条占位（不是图标、也不只是纯文字）',
-    typeof captured._html === 'string' && /暂无数据/.test(captured._html) && /width:0%/.test(captured._html));
+  T('七⑥-没有按来源数据时优雅降级，不抛异常且用同尺寸的空白圆环占位（不是横条、不是图标、也不只是纯文字）',
+    typeof captured._html === 'string' && /暂无数据/.test(captured._html)
+    && /border-radius:50%;[\s\S]{0,60}background:var\(--panel-soft/.test(captured._html)
+    && /width:84px;height:84px/.test(captured._html));
 }
 
 done();
