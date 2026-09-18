@@ -80,15 +80,28 @@ export function tierOfExtreme(charge) {
 // 效果表给出【严重档】数值；实际生效 = 满档值 × 档位系数（0.25/0.5/0.75/1.0）。
 export const BASE_WEATHERS = {
   // ☀️ 晴：全员轻微加成——阳光普照，人人受益，但不改变对局结构。
+  //
+  // ==================== 结构性机制（晴，Q4 天气重做落地）====================
+  // 用户："晴天不该是没有负面效果的天气，而应该是主动关闭上述几种天气各自的
+  // 结构性机制、只保留一条很小的全局增益（比如索敌半径微涨）"（见
+  // docs/Q4-WEATHER-REDESIGN.md §3.5）。"主动关闭"这半句不是晴天自己的效果表能
+  // 表达的（它是"压低别人"，不是"给自己加成"），实现在 WeatherSystem.
+  // getStructuralFactor() 里：雨/雾/风/雪四条的结构性数值会按晴天自身的档位系数
+  // 做乘法抑制（晴天越盛，其它天气的结构性机制越接近失效）；这里的 structural
+  // 字段只承担"很小的全局增益"那半句。
   clear: {
     id: 'clear', name: '晴', icon: '☀️', color: '#f6c94a',
     mu: 0.5,
-    desc: '阳光普照。全体单位获得轻微加成，战场生机勃勃。',
+    desc: '阳光普照。全体单位获得轻微加成，视野与索敌恢复正常水准，战场生机勃勃。',
     effects: [
       { targets: 'all', statKey: 'damageAmpPct', flat: 8 },
       { targets: 'all', statKey: 'healthRegen', flat: 2 },
       { targets: 'minions', statKey: 'moveSpeed', percent: 8 },
     ],
+    structural: {
+      // 很小的全局增益：索敌半径微涨（满档 +8%）。
+      aggroRangeScalePct: 8,
+    },
   },
   // 🌧️ 雨：塔优势——塔在雨幕中愈战愈勇，兵线泥泞迟缓、装甲锈蚀。
   rain: {
@@ -105,28 +118,63 @@ export const BASE_WEATHERS = {
     ],
   },
   // 🌫️ 雾：兵优势——塔变瞎，小兵在雾中变硬变凶。
+  //
+  // ==================== 结构性机制（雾，Q4 天气重做落地）====================
+  // 用户否决了"雾天让双方擦肩而过"的方向，要求"改成让远程单位攻击距离大幅度降低"，
+  // 并追加一条候选一起上（见 docs/Q4-WEATHER-REDESIGN.md §3.2，已定稿）：
+  //   A：远程/炮兵攻击距离大幅缩水，近战不受影响——挂在已有的 attackRange 属性上，
+  //      走的是 AttributeCalculator 的通用 flat/percent 合并管线（与其它天气数值
+  //      效果同一条路），不需要新增任何管线。-55% 是按"砍到接近近战射程量级"这句
+  //      话反推的：远程 150→67.5、炮兵 127.5→57.4，后者已经落到
+  //      MELEE_RANGE_THRESHOLD(60) 以内，前者也远比原来贴近近战。
+  //   B：索敌半径也跟着一起收缩到接近攻击距离的量级——这个不是任何单位的
+  //      "属性"，是 LaneMovementSystem 里的全局仇恨获取半径常量，走不了 A 那条
+  //      属性合并管线，所以单独开一张 structural 表，由 WeatherSystem.
+  //      getStructuralFactor() 统一读出（见该方法的头注）。
   fog: {
     id: 'fog', name: '雾', icon: '🌫️', color: '#9aa3ae',
     mu: 0.1,
-    desc: '能见度极低。防御塔难以瞄准，小兵借雾掩护变得坚硬凶悍。',
+    desc: '能见度极低。防御塔难以瞄准，小兵借雾掩护变得坚硬凶悍，且必须靠得很近才能发现彼此。',
     effects: [
       { targets: 'towers', statKey: 'attackDamage', percent: -30 },
       { targets: 'minions', statKey: 'armor', flat: 25 },
       { targets: 'minions', statKey: 'magicResist', flat: 25 },
       { targets: 'minions', statKey: 'healthRegen', flat: 2 },
       { targets: 'minions', statKey: 'damageAmpPct', flat: 10 },
+      // A：远程/炮兵攻击距离大幅缩水，近战不受影响。
+      { targets: 'minion_ranged_siege', statKey: 'attackRange', percent: -55 },
     ],
+    structural: {
+      // B：索敌半径整体收缩（满档时 -60%），单位是"占满档效果的百分比"，
+      // 由 getStructuralFactor() 按当前档位系数（25/50/75/100%）再打折。
+      aggroRangeScalePct: -60,
+    },
   },
   // 💨 风：平衡·节奏加快——大家一起快，谁也不占谁便宜。
+  //
+  // ==================== 结构性机制（风，Q4 天气重做落地）====================
+  // 用户弃用了"弹道偏移"（观感偏随机），定稿两条同时生效（见
+  // docs/Q4-WEATHER-REDESIGN.md §3.3）：
+  //   A：子弹飞行速度变慢（风阻，不改落点只改飞行时长）——挂在已有的 bulletSpeed
+  //      属性上，同样走通用 flat/percent 合并管线，零新增管线。塔的子弹也一起打折
+  //      （用户原话没有排除塔，"风阻"对谁都成立）。
+  //   B：转身速度大幅下降（顶风转身费力）——FacingSystem 直接读
+  //      baseStats.turnRateDeg，不经过属性合并管线，同样开 structural 表。
   wind: {
     id: 'wind', name: '风', icon: '💨', color: '#7ee0c0',
     mu: 0.15,
-    desc: '大风席卷战场。塔与兵线全面提速，战斗节奏加快。',
+    desc: '大风席卷战场。塔与兵线全面提速，子弹被吹得又慢又飘，顶风转身也更费力。',
     effects: [
       { targets: 'towers', statKey: 'bonusAttackSpeedPct', flat: 25 },
       { targets: 'minions', statKey: 'moveSpeed', percent: 25 },
       { targets: 'minions', statKey: 'bonusAttackSpeedPct', flat: 15 },
+      // A：子弹飞行速度变慢（全体，塔与兵都吃风阻）。
+      { targets: 'all', statKey: 'bulletSpeed', percent: -30 },
     ],
+    structural: {
+      // B：转身速度下降（满档时 -40%），由 getStructuralFactor() 按档位系数缩放。
+      turnRateScalePct: -40,
+    },
   },
   // ❄️ 雪：平衡·节奏减慢——全场冻结，战线凝滞。
   snow: {

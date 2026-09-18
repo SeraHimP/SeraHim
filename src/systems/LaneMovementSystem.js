@@ -72,16 +72,27 @@ const DEADLOCK_DOT = 0.6;  // 双方"朝着对方"的方向余弦阈值（越大
 const YIELD_K = 0.9;       // 让位力权重（略小于期望力 1.0：让路但不放弃推进）
 
 export class LaneMovementSystem {
-  constructor(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem) {
+  constructor(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem, weatherSystem = null) {
     this.entities = entityContainer;
     this.effects = effectRegistry;
     this.attrCalc = attrCalc;
     this.combat = combatSystem;
     this.mapSystem = mapSystem;
+    // Q4 天气重做·雾的结构性机制 B（索敌半径收缩）：weatherSystem 是可选注入
+    // （测试/无头场景可以不传，行为与接入前一致——getStructuralFactor 在天气
+    // 关闭时恒返回 0，acqScale 恒为 1）。
+    this.weather = weatherSystem;
   }
 
   update(dt) {
     const minions = this.entities.getAllMinions(true).filter(m => m._mapFaction && m._laneId);
+
+    // Q4 天气重做（雾的结构性机制 B）：索敌半径的全局收缩系数，整帧只算一次
+    // （与天气强度一样是"这一帧的全局状态"，不是逐单位的属性，参见
+    // WeatherSystem.getModifiers 头注里同一条"O(1) 全局修正层"的理由）。
+    // 0.15 是安全下限——不让索敌半径被极端天气压到接近 0（那会导致双方永远
+    // 发现不了对方，战斗直接停摆，不是"逼近才能开战"这句话的本意）。
+    const acqScale = Math.max(0.15, 1 + (this.weather?.getStructuralFactor('aggroRangeScalePct') || 0) / 100);
 
     // ==================== 守家优先（每帧每阵营只查一次圈）====================
     // 圈：己方水晶枢纽为圆心，半径 = 枢纽到枢纽塔距离 + 塔射程（MapSystem.getDefenseZone）。
@@ -130,7 +141,7 @@ export class LaneMovementSystem {
       // v43 Q4：索敌半径不能小于自己的攻击射程。攻城车射程 312 > ACQUISITION_RANGE(200)，
       // 旧写法把它的索敌硬砍到 200 —— 它必须先走进 200px 才"看得见"塔，
       // 312 的越塔射程完全作废，表现出来就是"攻城模式好像没生效"。
-      const acqR = Math.max(ACQUISITION_RANGE, range);
+      const acqR = Math.max(ACQUISITION_RANGE * acqScale, range);
       const scan = AISystem.scanEnemies(this.entities, this.mapSystem, minion, acqR, range);
 
       // ---- 3. 守家优先：己方防守圈内有敌人且自己也在圈内 → 锁定圈内最近敌人。

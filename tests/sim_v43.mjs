@@ -137,8 +137,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // ==================== 三、Q4 攻城车：索敌半径不得小于射程 ====================
 {
   const lms = srcOf(('../src/systems/LaneMovementSystem.js'));
+  // Q4 天气重做：这行本轮加了 acqScale（雾的索敌半径收缩系数），仍然保持
+  // "取 max(仇恨半径×天气系数, 自身射程)"这条不变式——正则放宽到容忍中间那个
+  // 乘数因子，但 max(...) 的两个骨架参数（ACQUISITION_RANGE 打头、range 收尾）
+  // 不能松。
   T('Q4① 索敌半径取 max(仇恨半径, 自身射程)',
-    /const acqR = Math\.max\(ACQUISITION_RANGE, range\);/.test(lms)
+    /const acqR = Math\.max\(ACQUISITION_RANGE[^,]*, range\);/.test(lms)
     && /scanEnemies\(this\.entities, this\.mapSystem, minion, acqR, range\)/.test(lms));
   const ram = CONFIG.templates.ram;
   T('Q4② 攻城车射程确实大于默认仇恨半径（否则这条修复没有意义）',

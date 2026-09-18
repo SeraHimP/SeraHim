@@ -627,5 +627,77 @@ import fs from 'fs';
     /getChargeDominant\(\)/.test(panelSrc) && !/\.getDominant\(\)/.test(panelSrc));
 }
 
+// ==================== Q4 天气重做：结构性机制（雾/风/晴/极端天气自动组合） ====================
+// 用户："继续完成天气可视化。以及对天气机制的修改。" 方案见
+// docs/Q4-WEATHER-REDESIGN.md §3.2/§3.3/§3.5（已定稿）。这里只钉行为形状：
+// "雾天远程/炮兵射程和索敌半径都缩" / "风天子弹变慢转身变慢" /
+// "晴天压低其它天气的结构性机制、自己只加一点索敌半径" /
+// "极端天气自动继承其组成基础天气的结构性机制，不需要逐条手写"。
+{
+  const { MELEE_RANGE_THRESHOLD } = await import('../src/data/Config.js');
+  const setCharge = (ws2, id, v) => { ws2._charge[id] = v; ws2._invalidateWeatherReadout(); };
+  const setExtCharge = (ws2, id, v) => { ws2._extremeCharge[id] = v; ws2._invalidateWeatherReadout(); };
+
+  // ---- 雾 A：远程/炮兵攻击距离大幅缩水，近战不受影响（走通用属性合并管线）----
+  const ws3 = new WeatherSystem(null); ws3.setEnabled(true);
+  AttributeCalculator.setWeatherSystem(ws3);
+  setCharge(ws3, 'fog', 0.9); // 严重档
+  const ranged = { id: ++window._uid, type: 'ranged', baseStats: { attackRange: 150 }, currentHP: 1, _skillInstances: [] };
+  const melee = { id: ++window._uid, type: 'melee', baseStats: { attackRange: 20 }, currentHP: 1, _skillInstances: [] };
+  AttributeCalculator.tick();
+  const rangedStats = AttributeCalculator.calc(ranged, []);
+  const meleeStats = AttributeCalculator.calc(melee, []);
+  T('雾①-严重雾天下，远程兵攻击距离被大幅砍到接近近战射程量级',
+    rangedStats.attackRange < 150 && rangedStats.attackRange <= MELEE_RANGE_THRESHOLD * 1.2);
+  T('雾②-近战兵攻击距离不受雾影响', Math.abs(meleeStats.attackRange - 20) < 1e-6);
+
+  // ---- 雾 B：索敌半径收缩（走 structural 表，不经过属性合并管线）----
+  T('雾③-严重雾天下 getStructuralFactor(aggroRangeScalePct) 为负（索敌半径收缩）',
+    ws3.getStructuralFactor('aggroRangeScalePct') < 0);
+  setCharge(ws3, 'fog', 0);
+  T('雾④-雾退散后索敌半径收缩归零', ws3.getStructuralFactor('aggroRangeScalePct') === 0);
+
+  // ---- 风 A：子弹飞行速度变慢（塔与兵都吃风阻，走属性合并管线）----
+  setCharge(ws3, 'wind', 0.9);
+  const tower = { id: ++window._uid, type: 'tower', baseStats: { bulletSpeed: 400 }, currentHP: 1, _skillInstances: [] };
+  const windMinion = { id: ++window._uid, type: 'ranged', baseStats: { bulletSpeed: 500 }, currentHP: 1, _skillInstances: [] };
+  const towerStats = AttributeCalculator.calc(tower, []);
+  const windMinionStats = AttributeCalculator.calc(windMinion, []);
+  T('风①-严重风天下，塔的子弹速度被吹慢', towerStats.bulletSpeed < 400);
+  T('风②-严重风天下，兵的子弹速度也被吹慢（风阻对谁都成立）', windMinionStats.bulletSpeed < 500);
+
+  // ---- 风 B：转身速度下降（走 FacingSystem，不经过属性合并管线）----
+  T('风③-严重风天下 getStructuralFactor(turnRateScalePct) 为负（转身变慢）',
+    ws3.getStructuralFactor('turnRateScalePct') < 0);
+  const { facingParams, setWeatherSystem: setFacingWeatherSystem } = await import('../src/systems/FacingSystem.js');
+  setFacingWeatherSystem(ws3);
+  const normalTurn = 220; // CONFIG.tuning.facing.turnRateDeg 默认值
+  const p = facingParams(null);
+  T('风④-FacingSystem 真的接到了风的转身惩罚（turnRateDeg 明显低于默认 220）',
+    p.turnRateDeg < normalTurn * 0.8);
+  setFacingWeatherSystem(null); // 还原，避免影响本文件后续/其它套件
+
+  // ---- 晴：压低其它天气的结构性机制 + 自己一条很小的正向增益 ----
+  setCharge(ws3, 'wind', 0);
+  setCharge(ws3, 'fog', 0.9);
+  const fogAlone = ws3.getStructuralFactor('aggroRangeScalePct');
+  setCharge(ws3, 'clear', 0.9);
+  const fogWithClear = ws3.getStructuralFactor('aggroRangeScalePct');
+  T('晴①-晴天充能拉满时，雾对索敌半径的收缩被明显压低', fogWithClear > fogAlone);
+  setCharge(ws3, 'fog', 0);
+  T('晴②-没有其它天气时，晴天自己贡献一条很小的正向索敌半径增益',
+    ws3.getStructuralFactor('aggroRangeScalePct') > 0);
+  setCharge(ws3, 'clear', 0);
+
+  // ---- 极端天气自动继承：不需要为每条极端天气手写 structural ----
+  T('极①-EXTREME_WEATHERS 里没有任何一条手写了 structural 字段（应由 trigger 自动派生）',
+    Object.values(EXTREME_WEATHERS).every(def => !def.structural));
+  // haze_surge（霾潮）由 fog+wind 触发，理应同时继承两者的 structural。
+  setExtCharge(ws3, 'haze_surge', 0.9);
+  T('极②-霾潮（雾+风组合）充满能时，同时继承了雾的索敌收缩和风的转身惩罚',
+    ws3.getStructuralFactor('aggroRangeScalePct') < 0 && ws3.getStructuralFactor('turnRateScalePct') < 0);
+  setExtCharge(ws3, 'haze_surge', 0);
+}
+
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail?1:0);

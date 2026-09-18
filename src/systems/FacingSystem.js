@@ -1,5 +1,12 @@
 import { CONFIG } from '../data/Config.js';
 
+// Q4 天气重做（风的结构性机制 B："转身速度大幅下降，顶风转身费力"）：
+// facingParams/canFire 都是模块级纯函数（没有实例可以挂 this.weather），
+// 沿用本仓库已有的"模块级延迟绑定"惯例（同 skills/_helpers.js 的
+// setSkillLookup/lookupSkill，那是给身份技能查子技能定义用的同一个形状）。
+let _weather = null;
+export function setWeatherSystem(ws) { _weather = ws; }
+
 /**
  * FacingSystem.js —— 朝向与转身（v45）
  *
@@ -37,10 +44,14 @@ export function facingExempt(e) {
 export function facingParams(e = null) {
   const g = CONFIG.tuning?.facing || {};
   const b = e?.baseStats || {};
+  const baseTurnRate = b.turnRateDeg ?? g.turnRateDeg ?? 220;
+  // 风天转身变慢：0.15 安全下限同 LaneMovementSystem 的 acqScale，防止极端天气
+  // 把转身速度压到接近 0（那会变成"转不动"而不是"转身费力"）。
+  const windScale = Math.max(0.15, 1 + (_weather?.getStructuralFactor('turnRateScalePct') || 0) / 100);
   return {
     enabled: g.enabled !== false,
     arcDeg: b.attackArcDeg ?? g.arcDeg ?? 35,        // 半角：目标必须落在 ±arcDeg 内
-    turnRateDeg: b.turnRateDeg ?? g.turnRateDeg ?? 220,  // 度/秒
+    turnRateDeg: baseTurnRate * windScale,           // 度/秒
   };
 }
 

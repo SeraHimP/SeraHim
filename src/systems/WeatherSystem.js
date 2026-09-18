@@ -572,6 +572,53 @@ export class WeatherSystem {
     return (this._extStrCache = out);
   }
 
+  // ==================== 结构性机制读数（Q4 天气重做） ====================
+  /**
+   * 读出某条"结构性机制"（不是普通的 statKey 数值修正，是索敌半径/转身速度这类
+   * 不经过 AttributeCalculator 合并管线的全局杠杆）当前的生效百分比。
+   *
+   * 与 getModifiers() 同一套强度模型（基础天气档位系数 + 极端天气档位系数相加），
+   * 只是读的是 Weather.js 里每条基础天气的 def.structural[key]（满档值），
+   * 不是 def.effects。
+   *
+   * 极端天气【不需要】自己再写一份 structural——组合/单基础极端天气的 trigger
+   * 字段本来就写明了它由哪些基础天气构成（如 haze_surge 的 trigger 是
+   * {fog:0.26, wind:0.26}），这里直接按 trigger 里出现的基础天气 id 去查它们
+   * 各自的 structural[key]，用极端天气自己的档位强度缩放——组合极端天气因此
+   * 自动叠加两条基础机制，单基础极端天气自动继承并放大（因为极端档能到 150%）
+   * 唯一的一条，完全对应文档"组合现有5套即可，不需要为15种极端天气各写一套"
+   * 那句话，不用在 EXTREME_WEATHERS 里手写 15 份重复数据。
+   *
+   * 晴天的"主动关闭"：用户定稿"晴天……主动关闭上述几种天气各自的结构性机制"——
+   * 这半句不是"晴天自己贡献了什么"，是"晴天压低了别人"，所以晴天自身的贡献
+   * （clear.structural[key]）不参与下面这个抑制，只有雨/雾/风/雪四条会被晴天的
+   * 当前档位系数做乘法抑制（晴天越盛，其它天气的结构性机制越接近失效）。
+   */
+  getStructuralFactor(key) {
+    if (!this.enabled) return 0;
+    let clearTotal = 0;
+    let othersTotal = 0;
+    for (const [id, scale] of Object.entries(this.getEffectiveStrengths())) {
+      const v = BASE_WEATHERS[id]?.structural?.[key];
+      if (!v) continue;
+      if (id === 'clear') clearTotal += v * scale;
+      else othersTotal += v * scale;
+    }
+    for (const [id, scale] of Object.entries(this.getExtremeStrengths())) {
+      const def = EXTREME_WEATHERS[id];
+      for (const baseId of Object.keys(def.trigger || {})) {
+        if (baseId === 'clear') continue; // 晴天没有会被"极化/组合"进极端天气的结构性机制
+        const v = BASE_WEATHERS[baseId]?.structural?.[key];
+        if (v) othersTotal += v * scale;
+      }
+    }
+    // 晴天的抑制系数：直接复用 getEffectiveStrengths() 里 clear 的档位系数
+    // （0~1，禁用晴天时该值为 undefined→0，抑制自动失效，与其它读数口径一致），
+    // 封顶在 1（不会出现"压成负数反而增益"的怪异结果）。
+    const suppress = Math.min(1, this.getEffectiveStrengths().clear || 0);
+    return othersTotal * (1 - suppress) + clearTotal;
+  }
+
   // ==================== 属性注入 ====================
   /**
    * 计算某个实体当前受到的天气属性修正。

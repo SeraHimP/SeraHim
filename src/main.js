@@ -13,7 +13,7 @@ import { WeatherSystem } from './systems/WeatherSystem.js';
 import { WorldState } from './systems/WorldState.js';
 import { WeatherPanel } from './ui/WeatherPanel.js';
 import { LaneMovementSystem } from './systems/LaneMovementSystem.js';
-import { FacingSystem } from './systems/FacingSystem.js';
+import { FacingSystem, setWeatherSystem as setFacingWeatherSystem } from './systems/FacingSystem.js';
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
 import { CollisionSystem } from './systems/CollisionSystem.js';
 import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
@@ -103,6 +103,9 @@ mapSystem.setEffectRegistry(effectRegistry); // Q5：召唤水晶"重生中"状�
 // 默认关闭（独立总开关，在设置面板里开）。
 const weatherSystem = new WeatherSystem(eventBus);
 attrCalc.setWeatherSystem(weatherSystem);
+// Q4 天气重做：风的结构性机制（转身变慢）不经过 AttributeCalculator 的合并管线，
+// FacingSystem 是模块级函数，用同一套"延迟绑定"注入天气引用（见 FacingSystem.js 头注）。
+setFacingWeatherSystem(weatherSystem);
 
 // P3：世界状态聚合层（天气/昼夜/熵/龙魂 的统一落点）。
 // 所有耦合默认关闭（CONFIG.world.couplings），全关时行为与接入前逐位一致；
@@ -257,7 +260,7 @@ CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=�
 CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== false); };
 CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || CONFIG.world?.dayPeriodSec || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
-const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem);
+const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem, weatherSystem);
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
 // v51.33：出兵编排"广播"需要的依赖，见 LaneWaveSystem 构造函数头注。
 laneWaveSystem.setBroadcastDeps({ effectRegistry, attrCalc, combat: combatSystem, dragonSystem, worldState });
