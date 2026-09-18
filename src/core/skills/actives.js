@@ -113,29 +113,42 @@ export const actives = {
   // ==================== 炮兵：急速装填（自增益，攻速）====================
   // 用户："炮兵……主动技能，获得（XX%=30%+50%法术强度）攻速，持续6秒，可叠加。"
   // v51.6：用户改稿"炮车主动技能的数值修改为恒定30%，持续6秒"——推翻 v51.1 那版
-  // "30% + 50%×法术强度、可叠加"的设计。炮兵本来就没有稳定的法强来源，AP 联动
-  // 那部分形同虚设；"可叠加"叠到 99 层也和"恒定"这个词矛盾——改成与
-  // active_melee_block/passive_armor_plating 爆发同一形状：固定数值、不叠加、
-  // 到点刷新，简单直接。
+  // "30% + 50%×法术强度、可叠加"的设计，理由是"炮兵本来就没有稳定的法强来源"。
+  // 本轮：用户再次改稿，推翻 v51.6 那版恒定值——"炮兵主动技能更新，获得
+  // （XX%=30%+20%×法术强度）攻速。"与 v51.1 的形状相同（基础值+AP联动），
+  // 但系数从 50% 降到 20%（用户这次给的新数），且不再提"可叠加"，沿用 v51.6
+  // 定下的"不叠加、到点刷新"的施放节奏（与 active_melee_block 等同形状）——
+  // 两版改动叠加取交集：数值走 AP 联动，机制维持不叠加。
   active_siege_haste: {
     id: 'active_siege_haste', name: '急速装填', icon: '⚡', color: '#e8a23a', category: 'active',
     applicableTypes: ['siege'],
-    defaultParams: { pct: 30, durationSec: 6 },
-    get description() {
+    defaultParams: { basePct: 30, apScalePct: 20, durationSec: 6 },
+    // {val} 由 computeCurrent 现算真实数字填入——不能把 "XX" 这两个字母原样写进模板，
+    // 那是本仓库已经踩过的坑（见 weapons.js weapon_lightning 头注：玩家在游戏里
+    // 看到的是原原本本的"XX"两个字符，根本看不懂）。
+    get descTemplate() {
       const p = this.defaultParams;
-      return `法力攒满后，获得 ${p.pct}% 攻速，持续 ${p.durationSec} 秒（固定数值，不可叠加）。`;
+      return `法力攒满后，获得（{val}=${p.basePct}%+${p.apScalePct}%×法术强度）攻速，`
+        + `持续 ${p.durationSec} 秒（固定不叠加，到点刷新）。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const p = actives.active_siege_haste.defaultParams;
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      return Math.round((p.basePct ?? 30) + (p.apScalePct ?? 20) * (stats.abilityPower || 0) / 100);
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
       const self = ctx.entityContainer.get(entityId);
       if (!self || !self.alive) return false;
       const p = instance._params || actives.active_siege_haste.defaultParams;
-      const pct = p.pct ?? 30;
+      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
+      const pct = (p.basePct ?? 30) + (p.apScalePct ?? 20) * (stats.abilityPower || 0) / 100;
       ctx.effectRegistry.apply(entityId, {
         name: '急速装填', icon: '⚡', kind: 'stat', statKey: 'bonusAttackSpeedPct',
         flatValue: pct,
         duration: p.durationSec ?? 6, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `急速装填：攻速 +${pct}%`,
+        description: `急速装填：攻速 +${Math.round(pct)}%`,
       }, 'active_siege_haste', { casterId: entityId });
       return true;
     },

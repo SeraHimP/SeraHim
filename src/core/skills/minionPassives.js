@@ -138,6 +138,47 @@ export const minionPassives = {
     effects: [],
   },
 
+  // ==================== 炮兵：破城疾射（新增被动，打塔时加攻速）====================
+  // 用户："新增被动技能：唯一被动：炮兵在攻击防御塔时，获得30%攻速。"
+  // 与 passive_ram_cannon 的模式判定同一个思路——判据是【当前锁定/攻击的目标是不是
+  // 防御塔】，不走 CombatSystem 的伤害结算钩子（那条路径是给"条件减伤"这类拿不到
+  // 攻击来源信息的效果用的，这里只是给自己加一条 stat 效果，属于 stat 管线能处理的
+  // 范畴），改在 onFrame 里每帧判一次目标类型、用【有没有已经挂上这条效果】做开关：
+  // 目标是塔就补上（没有才补，避免每帧重复 apply 导致图标刷新/进度条跳动），
+  // 目标不是塔就摘掉。数值放 CONFIG.gameRules.siege，不写死在技能对象上。
+  passive_siege_vs_tower_haste: {
+    id: 'passive_siege_vs_tower_haste', name: '破城疾射', icon: '💨', category: 'passive',
+    applicableTypes: ['siege'], color: '#e8a23a',
+    get description() {
+      const pct = CONFIG.gameRules?.siege?.vsTowerHastePct ?? 30;
+      return `唯一被动——破城疾射：攻击防御塔时，获得 ${pct}% 攻速。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive) return;
+      const pct = CONFIG.gameRules?.siege?.vsTowerHastePct ?? 30;
+      const tgt = e.targetId ? ctx.entityContainer.get(e.targetId) : null;
+      const targetingTower = !!(tgt && tgt.alive && tgt.type === 'tower');
+      const has = ctx.effectRegistry.getEffects(entityId).some(x => x.blueprint.name === '破城疾射');
+      if (targetingTower) {
+        if (!has) {
+          ctx.effectRegistry.apply(entityId, {
+            name: '破城疾射', icon: '💨', kind: 'stat', statKey: 'bonusAttackSpeedPct',
+            flatValue: pct, duration: Infinity, permanent: true,
+            stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+            description: `破城疾射：攻速 +${pct}%`,
+          }, 'passive_siege_vs_tower_haste');
+        }
+      } else if (has) {
+        for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+          if (eff.blueprint.name === '破城疾射') ctx.effectRegistry.remove(eff.id);
+        }
+      }
+    },
+  },
+
   // ==================== 兵对兵百分比伤害被动（缩短兵线互耗，让塔更多参战）====================
   // 规则：只对"小兵单位"生效（塔与巨龙除外），伤害类型与攻击者的普攻类型一致，
   // 走正常减免管线（物理被护甲减免、魔法被魔抗减免）。

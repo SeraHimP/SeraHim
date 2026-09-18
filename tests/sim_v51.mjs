@@ -1304,23 +1304,63 @@ async function world() {
     (await import('../src/core/defaultMinionPassives.js')).DEFAULT_MINION_PASSIVES.ram.includes('atkmode_charge'));
 }
 
-// ==================== 三十一、v51.6：炮车主动技能改成恒定30%、不叠加 ====================
-// 用户："炮车主动技能的数值修改为恒定30%，持续6秒。" 推翻 v51.1 那版"30%+50%×法强、
-// 可叠加"的设计。
+// ==================== 三十一、v51.9：炮车主动技能改回"基础值+法强联动"公式 ====================
+// 用户最新定稿："炮兵主动技能更新，获得（XX%=30%+20%×法术强度）攻速。" 推翻 v51.6
+// 那版"恒定30%"的设计，公式形状回到 v51.1（只是联动系数从50%改成本轮的20%），
+// 机制（不叠加、到点刷新）则沿用 v51.6 定下的那版，两次改动取交集。
 {
   const { ents, fx, attr, SkillLibrary, CONFIG } = await world();
   const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr };
   const siege = mkEntity(ents, 'siege', { faction: 'blue' }, CONFIG);
-  siege.baseStats.abilityPower = 100; // 给它法强，确认恒定值真的不受法强影响
+  const p = SkillLibrary.active_siege_haste.defaultParams;
+  siege.baseStats.abilityPower = 100; // 给它法强，确认真的按公式联动（不再是恒定值）
   const inst = { id: ++window._uid, skillId: 'active_siege_haste', state: {} };
   siege._skillInstances.push(inst);
   SkillLibrary.active_siege_haste.onCast(siege.id, inst, ctx);
   const eff1 = fx.getEffects(siege.id).find(e => e.sourceId === 'active_siege_haste');
-  T('炮①-急速装填是固定30%攻速，不随法术强度缩放', eff1 && eff1.blueprint.flatValue === 30 && !eff1.blueprint.perStackFlat);
+  const expectPct = p.basePct + p.apScalePct * 100 / 100;
+  T('炮①-急速装填 = 基础值+法强联动（法强100时应比基础值高）',
+    eff1 && Math.abs(eff1.blueprint.flatValue - expectPct) < 0.01 && eff1.blueprint.flatValue > p.basePct);
   T('炮②-不可叠加，到点刷新（stackable:false）', eff1 && eff1.blueprint.stackable === false);
   SkillLibrary.active_siege_haste.onCast(siege.id, inst, ctx); // 再施放一次
   const stillOne = fx.getEffects(siege.id).filter(e => e.sourceId === 'active_siege_haste').length;
   T('炮③-连续两次施放不会叠成两份效果', stillOne === 1);
+  T('炮④-technicalName 占位符 XX 已接到 computeCurrent，不会原样显示在描述里（用户点名的老坑）',
+    !/(^|[^a-zA-Z])XX([^a-zA-Z]|$)/.test(SkillLibrary.active_siege_haste.descTemplate));
+}
+
+// ==================== 三十二、v51.9：新增被动【破城疾射】====================
+// 用户："新增被动技能：唯一被动：炮兵在攻击防御塔时，获得30%攻速。"
+{
+  const { ents, fx, attr, SkillLibrary, CONFIG } = await world();
+  const ctx = { entityContainer: ents, effectRegistry: fx, attrCalc: attr };
+  const siege = mkEntity(ents, 'siege', { faction: 'blue' }, CONFIG);
+  const tower = mkEntity(ents, 'tower', { faction: 'red' }, CONFIG);
+  const melee = mkEntity(ents, 'melee', { faction: 'red' }, CONFIG);
+  const inst = { id: ++window._uid, skillId: 'passive_siege_vs_tower_haste', state: {} };
+  siege._skillInstances.push(inst);
+  const pct = CONFIG.gameRules.siege.vsTowerHastePct;
+
+  siege.targetId = tower.id;
+  SkillLibrary.passive_siege_vs_tower_haste.onFrame(siege.id, 0.1, inst, ctx);
+  const buffOnTower = fx.getEffects(siege.id).find(e => e.blueprint.name === '破城疾射');
+  T('破①-打塔时获得攻速加成（数值取自 CONFIG.gameRules.siege.vsTowerHastePct）',
+    buffOnTower && buffOnTower.blueprint.flatValue === pct);
+
+  siege.targetId = melee.id;
+  SkillLibrary.passive_siege_vs_tower_haste.onFrame(siege.id, 0.1, inst, ctx);
+  T('破②-换成打小兵后加成立刻摘掉（不是打过塔就永久生效）',
+    !fx.getEffects(siege.id).some(e => e.blueprint.name === '破城疾射'));
+
+  siege.targetId = tower.id;
+  SkillLibrary.passive_siege_vs_tower_haste.onFrame(siege.id, 0.1, inst, ctx);
+  SkillLibrary.passive_siege_vs_tower_haste.onFrame(siege.id, 0.1, inst, ctx);
+  const stillOne = fx.getEffects(siege.id).filter(e => e.blueprint.name === '破城疾射').length;
+  T('破③-连续多帧都打塔不会重复叠加出多份效果', stillOne === 1);
+
+  T('破④-已注册进炮兵的出厂默认技能清单',
+    (await import('../src/core/defaultMinionPassives.js')).DEFAULT_MINION_PASSIVES.siege
+      .includes('passive_siege_vs_tower_haste'));
 }
 
 // ==================== 三十二、v51.6：加状态面板重做（现代化 UI，Q1）====================

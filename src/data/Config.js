@@ -194,6 +194,13 @@ export const CONFIG = {
       recoverLayers: 1,         // 每次恢复几层
       normalDamageAmpPct: -33,  // 普通模式的伤害增幅
     },
+    // ==================== 炮兵：破城疾射（新增被动）====================
+    // 用户："新增被动技能：唯一被动：炮兵在攻击防御塔时，获得30%攻速。"
+    // 见 minionPassives.js 的 passive_siege_vs_tower_haste——判据同 ram.siege 那一档
+    // 的"当前锁定/攻击目标是不是防御塔"，数值放这里而不是技能对象上（同一条硬约束）。
+    siege: {
+      vsTowerHastePct: 30,
+    },
     dragon: {
       // v43（用户定稿）："龙改为每5分钟一条。第一条龙1分钟就刷。"
       // 且"改为龙死亡后下一条龙的倒计时才开始计时"—— 这条在 DragonSystem.update 里
