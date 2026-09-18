@@ -3785,4 +3785,35 @@ async function world() {
   window.CTX.__app = prevApp;
 }
 
+// ==================== Q5：排查"闪电杖对带格挡的目标格挡失效" ====================
+// 用户报的bug。追根溯源：performAttackDirect（闪电杖走这条路径，见weapons.js的
+// weapon_lightning._doTick）把伤害拆成 ignoredDamage（被 ignoreDefenseRatio 无视
+// 防御的那一股）和 mitigatedDamage（走双抗/减伤/格挡的那一股），damageBlock 只
+// 从 mitigatedDamage 里扣。CombatSystem.js 那段注释原文写的是"这一部分伤害跳过
+// 双抗/伤害减免/格挡直接命中"——即"无视防御"这个机制被【设计成】连格挡也一起
+// 无视，充能越高、无视比例越高，格挡就越不起作用。这不是代码写错，是这条已有
+// 机制本身的设计（与双抗/减伤走的是同一套"只保留放大、跳过削减"的对称处理，见
+// CombatSystem.js 1525行那段注释），本轮不改这个设计，只钉住实际行为、把"charge=0
+// 时格挡依然完整生效、charge拉满后格挡对被无视的那部分不起作用"这个形状测出来，
+// 免得以后有人真把它当bug"修"掉，或者反过来真被静默改坏都测不出来。
+{
+  const { ents, fx, combat, CONFIG } = await world();
+  // block=40，比"被无视比例削剩下的那一股"(100×0.33=33) 更大，才能真的看出
+  // "格挡在高充能下不够用"这个现象——block=20 太小，即使33那一股也够扣满，
+  // 两种充能算出来的总伤害会巧合地一样，测不出差异（踩过这个坑，如实记录）。
+  const target = mkEntity(ents, 'melee', { stats: { armor: 0, magicResist: 0, damageBlock: 40, maxHP: 100000 } }, CONFIG);
+
+  target.currentHP = target.baseStats.maxHP;
+  combat.performAttackDirect(null, target.id, 100, 'magic', { ignoreDefenseRatio: 0 });
+  const dealtNoCharge = target.baseStats.maxHP - target.currentHP;
+  T(`格挡①-无视防御比例=0时，格挡完整生效（100点伤害-40格挡=60，实际${dealtNoCharge}）`,
+    Math.abs(dealtNoCharge - 60) < 1e-6);
+
+  target.currentHP = target.baseStats.maxHP;
+  combat.performAttackDirect(null, target.id, 100, 'magic', { ignoreDefenseRatio: 0.67 });
+  const dealtHighCharge = target.baseStats.maxHP - target.currentHP;
+  T(`格挡②-无视防御比例拉高后（闪电杖满充=0.67），格挡对被无视的那一股不起作用，实际扣血比无充能时更多（实际${dealtHighCharge} > ${dealtNoCharge}）`,
+    dealtHighCharge > dealtNoCharge);
+}
+
 done();
