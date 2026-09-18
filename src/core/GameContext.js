@@ -33,6 +33,7 @@ const _state = {
   __uiManager: null, __weatherPanel: null, __entityContainer: null,
   __perf: null, __score: null, __gameLoop: null,
   __three: null,   // v2.5D：Three 渲染器（设置面板的阴影档位入口）
+  __groundTrace: null, // Q4 天气重做：地面痕迹层（GroundTraceSystem 实例）
 };
 
 export const CTX = {};
@@ -45,7 +46,7 @@ const SYNC_KEYS = [
   'createMinion', 'createTower',
   '__app', '__weather', '__world', '__mapSystem', '__uiManager', '__weatherPanel',
   '__entityContainer', '__perf', '__score', '__gameLoop',
-  '__three',
+  '__three', '__groundTrace', // Q4 天气重做：地面痕迹层，渲染层用同一套 window.__xxx 读法
 ];
 
 for (const key of SYNC_KEYS) {

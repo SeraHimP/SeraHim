@@ -13,6 +13,7 @@ import { WeatherSystem } from './systems/WeatherSystem.js';
 import { WorldState } from './systems/WorldState.js';
 import { WeatherPanel } from './ui/WeatherPanel.js';
 import { LaneMovementSystem } from './systems/LaneMovementSystem.js';
+import { GroundTraceSystem } from './systems/GroundTraceSystem.js';
 import { FacingSystem, setWeatherSystem as setFacingWeatherSystem } from './systems/FacingSystem.js';
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
 import { CollisionSystem } from './systems/CollisionSystem.js';
@@ -261,6 +262,9 @@ CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== fal
 CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || (CONFIG.world?.dayLenSec ?? 0) + (CONFIG.world?.nightLenSec ?? 0) || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem, weatherSystem);
+// Q4 天气重做：地面痕迹层（水洼/雪痕），见 GroundTraceSystem.js 头注。
+const groundTraceSystem = new GroundTraceSystem(entityContainer, effectRegistry, mapSystem, weatherSystem);
+CTX.__groundTrace = groundTraceSystem; // 渲染层/调试入口
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
 // v51.33：出兵编排"广播"需要的依赖，见 LaneWaveSystem 构造函数头注。
 laneWaveSystem.setBroadcastDeps({ effectRegistry, attrCalc, combat: combatSystem, dragonSystem, worldState });
@@ -401,6 +405,7 @@ eventBus.on('map:loading', () => {
 eventBus.on('map:loaded', (d) => {
   CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
   weatherSystem.reset(); // 每次载图重新随机：起始权重、变化快慢（θ）全部重抽
+  groundTraceSystem.reset(); // 上一局的水洼/雪痕不带到新的一局
   // v42: full state reset on map switch
   // 时钟三项已在上面的 map:loading 里归零（必须早于建筑创建，见那段注释）。
   // 这里保留一次幂等重置，兜住"有人直接 emit map:loaded"的路径。
@@ -730,6 +735,7 @@ function stepSimulation(dt) {
       collisionSystem.update(dt);
   facingSystem.update(dt);      // v45：朝向必须在移动/碰撞之后，才用得上这一帧的位置
   laneAvengerSystem.update(dt); // v33 Q20：哀兵光环（0.5s 节奏内部节流）
+  groundTraceSystem.update(dt); // Q4 天气重做：水洼/雪痕生成+消退+效果应用，排在移动之后用当帧新位置
   projectileSystem.update(dt);
 }
 

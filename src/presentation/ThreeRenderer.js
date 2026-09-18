@@ -34,6 +34,7 @@ import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
 import { RainRippleLayer } from './RainRippleLayer.js';
+import { GroundTraceLayer } from './GroundTraceLayer.js';
 import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
 import { torchPoints } from './torchPlacement.js';
 import { CONFIG } from '../data/Config.js';
@@ -189,6 +190,7 @@ export class ThreeRenderer {
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
     this.weatherFx = new WeatherLayer(this.scene); // 天气可视化（雨/雪/雾/风/晴的粒子与薄纱）
     this.rainRipple = new RainRippleLayer(this.scene); // Phase 1：雨滴打在水面上的波纹（独立于水面材质）
+    this.groundTrace = new GroundTraceLayer(this.scene); // Q4 天气重做：水洼/雪痕贴花
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -1257,6 +1259,11 @@ export class ThreeRenderer {
     // 天气可视化同口径，暂停时雨还在下、水波也该继续）。
     if (this.rainRipple) {
       this.rainRipple.update(this.water, this.mapSystem, window.__weather || null, this._lightDt || 0.016);
+    }
+    // Q4 天气重做：水洼/雪痕贴花——GroundTraceSystem 自己管生成/合并/消退的节奏
+    // （在 main.js 的仿真步进里推进，不是墙钟驱动），这里只负责按它的当前状态画。
+    if (this.groundTrace) {
+      this.groundTrace.update(window.__groundTrace || null, this.mapSystem);
     }
     // Phase 2：风吹植被——只需要风的 charge，跟天气可视化读同一个量（see WeatherLayer 头注：
     // 强度取充能不取占比），dt 走墙钟，暂停时风也该继续吹。
