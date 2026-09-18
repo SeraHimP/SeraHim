@@ -29,9 +29,16 @@ export const DRAGON_DEFAULTS = {
     // 引擎只支持两段折线（base+step 到 knee，之后换 lateStep），三个点里只要
     // 中间那个不在正中央，两段斜率就很难差很多；如果要更明显的减速增长需要
     // 三段式或非线性曲线，那是另一次改动，这次先按给定的三个校准点原样实现。
-    maxHP:        { base: 1600, step: 600,     knee: 4, lateStep: 500, cap: null },
-    resist:       { base: -15,  step: 80,      knee: 4, lateStep: 30,  cap: 500 },
-    attackDamage: { base: 102,  step: 56,      knee: 4, lateStep: 57.5, cap: null },
+    //
+    // 本轮追加：用户"提升初始巨龙的属性"——只动 base（第1条龙的起点数值），
+    // step/lateStep/knee/cap 都不改，后续龙的成长斜率和封顶不变，只是整条曲线
+    // 的起跑线抬高一截：maxHP 1600→2000（+25%）、resist -15→15（从"比一般单位
+    // 双抗还低"翻正到小幅正值，第一条龙不再是纯软柿子）、attackDamage 102→130
+    // （+27%）。没有给具体数字，按跟前一次"整体调高"同一个量级（20~30%）估的，
+    // 不是平衡定案，需要的话后续用 balance_matrix 或直接试玩再调。
+    maxHP:        { base: 2000, step: 600,     knee: 4, lateStep: 500, cap: null },
+    resist:       { base: 15,   step: 80,      knee: 4, lateStep: 30,  cap: 500 },
+    attackDamage: { base: 130,  step: 56,      knee: 4, lateStep: 57.5, cap: null },
   },
   ancient: { hpMult: 1.15, resistAdd: 40, adMult: 1.1 },
 };

@@ -202,15 +202,14 @@ export class WorldState {
         if (side.magicPenFlat) add('magicPenFlat', side.magicPenFlat * scale, 0);
       };
       // 防御塔·夜晚·防守：攻击距离 + 适应之力 + 双抗 + 攻速。
+      // 用户追加定稿"昼夜加成防御塔不再加攻速"——原来这里还有一条
+      // bonusAttackSpeedPct，已拿掉，不用别的属性顶替。
       const applyNight = (side, scale) => {
         if (scale <= 0) return;
         if (side.attackRangeFlat) add('attackRange', side.attackRangeFlat * scale, 0);
         if (side.adaptiveForce) add('adaptiveForce', side.adaptiveForce * scale, 0);
         if (side.armorFlat) add('armor', side.armorFlat * scale, 0);
         if (side.magicResistFlat) add('magicResist', side.magicResistFlat * scale, 0);
-        // bonusAttackSpeedPct 本身就是个"百分比数值"型属性（跟 manaGainPct 同类），
-        // 塔的基础值通常是 0——按 pct 走乘法叠加会被"0×(1+x%)=0"吃掉，必须走 flat。
-        if (side.bonusAttackSpeedPct) add('bonusAttackSpeedPct', side.bonusAttackSpeedPct * scale, 0);
       };
       if (!isTower && !isDragon) applyDay(g.day || {}, this.daynight.dayTier.scale);
       if (isTower) applyNight(g.night || {}, this.daynight.nightTier.scale);
@@ -260,7 +259,6 @@ export class WorldState {
           if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
           if (side.armorFlat) mods.armor = { flat: Math.round(side.armorFlat * s * 10) / 10 };
           if (side.magicResistFlat) mods.magicResist = { flat: Math.round(side.magicResistFlat * s * 10) / 10 };
-          if (side.bonusAttackSpeedPct) mods.bonusAttackSpeedPct = { flat: Math.round(side.bonusAttackSpeedPct * s * 10) / 10 };
         } else {
           if (side.moveSpeedPct) mods.moveSpeed = { percent: Math.round(side.moveSpeedPct * s * 10) / 10 };
           if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };

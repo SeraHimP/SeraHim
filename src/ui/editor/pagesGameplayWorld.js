@@ -493,7 +493,6 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     { path: 'dayNightBonus.night.adaptiveForce',     label: '夜晚·塔适应之力', step: 1 },
     { path: 'dayNightBonus.night.armorFlat',         label: '夜晚·塔护甲', step: 1 },
     { path: 'dayNightBonus.night.magicResistFlat',   label: '夜晚·塔魔抗', step: 1 },
-    { path: 'dayNightBonus.night.bonusAttackSpeedPct', label: '夜晚·塔攻速(%)', step: 1 },
     { path: 'dayNightBonus.curveHalfSpan', label: '昼夜曲线半宽（黎明/黄昏过渡窗）', step: 0.01 },
     { path: 'entropyBonus.attackDamagePct', label: '熵·攻击幅度(%)', step: 1 },
     { path: 'entropyBonus.armorFlat',       label: '熵·护甲幅度',     step: 1 },

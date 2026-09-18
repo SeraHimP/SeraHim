@@ -102,10 +102,11 @@ T(`极夜：防御塔射程 +${g.night.attackRangeFlat}（满档）`,
 T(`极夜：防御塔护甲/魔抗 各+${g.night.armorFlat}/${g.night.magicResistFlat}（满档）`,
   Math.abs(towerNight.armor - (CONFIG.templates.tower.armor + g.night.armorFlat)) < 1e-6
   && Math.abs(towerNight.magicResist - (CONFIG.templates.tower.magicResist + g.night.magicResistFlat)) < 1e-6);
-// 追加定稿：夜晚/塔是防守向，法力获取不再给塔，改给攻速；小兵的移速/法力获取不给塔。
-T(`极夜：防御塔攻速 +${g.night.bonusAttackSpeedPct}%（满档，不再有法力获取加成）`,
-  Math.abs(towerNight.bonusAttackSpeedPct - g.night.bonusAttackSpeedPct) < 1e-6
-  && Math.abs((towerNight.manaGainPct || 0) - (CONFIG.templates.tower.manaGainPct || 0)) < 1e-6);
+// 追加定稿：夜晚/塔是防守向，法力获取/攻速都不给塔（用户先说给攻速，随后又
+// 拍板"昼夜加成防御塔不再加攻速"，两轮定稿叠加后塔只剩射程+适应之力+双抗三项）。
+T('极夜：防御塔没有法力获取加成、也没有攻速加成',
+  Math.abs((towerNight.manaGainPct || 0) - (CONFIG.templates.tower.manaGainPct || 0)) < 1e-6
+  && Math.abs((towerNight.bonusAttackSpeedPct || 0) - (CONFIG.templates.tower.bonusAttackSpeedPct || 0)) < 1e-6);
 T(`极夜：小兵（白天侧，dayCloseness=0）无加成，移速回到基准`,
   Math.abs(minionNight.moveSpeed - baseMs) < 1e-6);
 T('攻守易位：正午利兵、极夜利塔', minionDay.moveSpeed > minionNight.moveSpeed
