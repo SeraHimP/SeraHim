@@ -1230,9 +1230,9 @@ export const CONFIG = {
     // v51.28：outline 三档全部改 false——用户报了轮廓描边的画面 bug，先禁用，
     // bug 以后再查再修。等 bug 修好，medium/high 想恢复描边只需要把这两个 true 改回来。
     qualityPresets: {
-      low:    { shadow: 'off',    bloom: false, outline: false, ssao: false, resolutionScale: 0.6 },
-      medium: { shadow: 'static', bloom: true,  outline: true,  ssao: false, resolutionScale: 0.85 },
-      high:   { shadow: 'all',    bloom: true,  outline: true,  ssao: true,  resolutionScale: 1.0 },
+      low:    { shadow: 'off',    bloom: false, outline: false, ssao: false, fog: false, resolutionScale: 0.6 },
+      medium: { shadow: 'static', bloom: true,  outline: true,  ssao: false, fog: true,  resolutionScale: 0.85 },
+      high:   { shadow: 'all',    bloom: true,  outline: true,  ssao: true,  fog: true,  resolutionScale: 1.0 },
       // 自动档的帧时判据（毫秒，对应 main.js PERF.render 的 250ms 窗口均值）：
       // 连续 autoDownTicks 次超过 autoDownMs 就降一档；连续 autoUpTicks 次低于
       // autoUpMs 才升一档——升档要求的次数更多，"偶尔快一帧"不该立刻贸然提画质，
@@ -1512,6 +1512,23 @@ export const CONFIG = {
     lineWidth: 1.8,     // 采样偏移的像素倍数，原 1.6
     depthBias: 0.003,   // 深度跳变阈值。调低会在平地上测出深度量化噪声，见 PostFX 头注
     normalBias: 0.35,   // 法线夹角阈值，负责抓内部折角
+  },
+
+  // ==================== 任务 #178：伪体积雾 ====================
+  // "高度雾 + 世界空间噪声 + 深度衰减"，见 PostFX.js 的 createFogPass 头注。
+  // 强度不是这里的固定值——ThreeRenderer 每帧按 window.__weather.getCharge('fog')
+  // 写入 pass.setStrength()（与风吹植被读 windCharge 同一口径："强度取充能不取占比"）；
+  // maxStrength 只是"满充能时这套视觉最多能有多浓"的软上限，不让雾天把画面直接糊死。
+  volumetricFog: {
+    enabled: true,
+    color: '#c9d4de',      // 偏冷灰白，呼应整套已转冷的美术基调（同 outline 的注释）
+    baseHeight: 0,          // 世界 Y，雾"根部"高度——贴合地面
+    heightFalloff: 0.006,   // 越大雾层越薄越贴地
+    density: 0.00028,       // 距离（视空间深度）指数衰减系数
+    noiseScale: 0.004,      // 世界空间噪声频率
+    noiseStrength: 0.5,     // 噪声对浓度的调制幅度，0=纯均匀雾、1=完全由噪声主导
+    noiseSpeed: 4,          // 噪声随真实时间缓慢漂移的速度，让雾"呼吸"，与镜头运动无关
+    maxStrength: 0.8,       // 满充能时的视觉浓度上限
   },
 
   // ==================== 色调映射（tone mapping）====================

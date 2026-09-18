@@ -166,4 +166,59 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
     /gc\.enabled !== false && !ghost/.test(ul));
 }
 
+// ==================== 任务 #178：伪体积雾 ====================
+{
+  const fogSrc = postfx.slice(postfx.indexOf('const FogShader'));
+  T('雾①-PostFX.js 导出 createFogPass', /export function createFogPass/.test(postfx));
+  T('雾②-噪声用重建出的【世界坐标 XZ】采样，不是屏幕 UV（否则雾团会贴着镜头滑）',
+    /worldPos\.xz \* noiseScale/.test(fogSrc) && !/texture2D\(tNoise,\s*vUv/.test(fogSrc));
+  T('雾③-世界坐标由 viewMatrixInverse（camera.matrixWorld）把重建出的视空间坐标转回去',
+    /viewMatrixInverse \* vec4\(viewPos, 1\.0\)/.test(postfx)
+    && /pass\.uniforms\.viewMatrixInverse\.value\.copy\(camera\.matrixWorld\)/.test(postfx));
+  T('雾④-高度雾：随世界 Y 指数衰减；深度衰减：随视空间距离指数吸收（Beer-Lambert）',
+    /exp\(-h \* heightFalloff\)/.test(postfx) && /exp\(-dist \* density\)/.test(postfx));
+  T('雾⑤-复用 NormalDepthPrepass 的深度贴图，没有另开一个预渲染 Pass',
+    /pass\.uniforms\.tDepth\.value = prepass\.renderTarget\.depthTexture/.test(postfx.slice(postfx.indexOf('createFogPass'))));
+  T('雾⑥-fogStrength<=0 时整个 pass 直通原图（关掉/无雾时零视觉影响）',
+    /if \(fogStrength <= 0\.0001\) \{ gl_FragColor = base; return; \}/.test(postfx));
+  T('雾⑦-setStrength(v) 把 0..1 的充能映射到 maxStrength 软上限，不是直接写 1',
+    /pass\.setStrength = \(v\) => \{ pass\.uniforms\.fogStrength\.value = Math\.max\(0, Math\.min\(1, v \|\| 0\)\) \* maxStrength; \}/.test(postfx));
+
+  T('渲⑦-ThreeRenderer 的 fogOn 默认值走 CONFIG.volumetricFog.enabled（不硬编码）',
+    /this\.fogOn = CONFIG\.volumetricFog\?\.enabled !== false/.test(renderer));
+  T('渲⑧-setFog(on) 方法存在且写回 fogPass.enabled', /setFog\(on\)\s*\{[^}]*fogPass[^}]*enabled[^}]*\}/.test(renderer));
+  T('渲⑨-_buildComposer 里雾的 enabled 初值来自 fogOn（不是永远开）',
+    /this\.fogPass\.enabled\s*=\s*this\.fogOn/.test(renderer));
+  T('渲⑩-雾接进了 composer 的 pass 链，且在描边之后、Bloom 之前',
+    (() => {
+      const iOutline = renderer.indexOf('this.composer.addPass(this.outlinePass)');
+      const iFog = renderer.indexOf('this.composer.addPass(this.fogPass)');
+      const iBloom = renderer.indexOf('this.composer.addPass(this.bloomPass)');
+      return iOutline > 0 && iFog > iOutline && iBloom > iFog;
+    })());
+  T('渲⑪-每帧雾强度读 window.__weather.getCharge(\'fog\')（与风吹植被 windCharge 同一口径：强度取充能不取占比）',
+    /window\.__weather\?\.getCharge \? \(window\.__weather\.getCharge\('fog'\) \|\| 0\) : 0/.test(renderer)
+    && /this\.fogPass\.setStrength\(fogCharge\)/.test(renderer));
+  T('渲⑫-画质分档 setQualityPreset 里雾也被一起切换（不是漏掉的新开关）',
+    /this\.setFog\(p\.fog\)/.test(renderer));
+
+  T('置②-CONFIG.volumetricFog 定义了观感参数（颜色/高度衰减/密度/噪声/强度上限）全部软编码',
+    (() => {
+      const c = CONFIG.volumetricFog;
+      return !!c && typeof c.color === 'string' && typeof c.heightFalloff === 'number'
+        && typeof c.density === 'number' && typeof c.noiseScale === 'number'
+        && typeof c.noiseStrength === 'number' && typeof c.maxStrength === 'number'
+        && c.maxStrength > 0 && c.maxStrength <= 1;
+    })());
+  T('置③-画质分档里雾跟描边同一档位分布：低档关、中/高档开',
+    (() => {
+      const q = CONFIG.ui.qualityPresets;
+      return q.low.fog === false && q.medium.fog === true && q.high.fog === true;
+    })());
+
+  T('设⑤-画质面板有体积雾按钮', /id="setFogBtn"/.test(settings));
+  T('设⑥-体积雾按钮接了 bindFx，读写的是 fogOn 和 setFog',
+    /bindFx\('setFogBtn',\s*r => r\.fogOn !== false,\s*\(r, v\) => r\.setFog\(v\)/.test(settings));
+}
+
 done();

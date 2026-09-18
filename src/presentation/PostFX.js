@@ -411,4 +411,142 @@ export function createOutlinePass(prepass, width, height) {
   return pass;
 }
 
+// ==================== Q4 天气重做：伪体积雾 ====================
+// 任务 #178："高度雾 + 世界空间噪声 + 深度衰减"。三个词分别对应下面 shader 里的
+// 三段乘法因子：
+//   heightFactor —— 越贴近地面越浓，随世界坐标 Y 指数衰减（"高度雾"）；
+//   distFactor   —— 看得越深（视空间 -z 越大）雾越厚，经典 Beer-Lambert 指数吸收；
+//   noise        —— 用重建出的【世界坐标 XZ】去采样噪声图，不是屏幕 UV。
+// 最后一点是关键：docs/Q4-WEATHER-REDESIGN.md 明确点过"screen-space 噪声会在镜头
+// 平移/缩放时让雾团贴着屏幕滑，穿帮"——这里的噪声采样坐标是世界坐标，摄像机怎么移、
+// 雾团都焊在世界里不动，只有 noiseOffset（按真实时间缓慢累加）会让雾自己缓慢"呼吸"，
+// 和镜头运动无关。
+//
+// 复用 NormalDepthPrepass 的深度图和 SSAO/描边已有的正交重建公式；不需要法线，
+// 也不需要新开一个预渲染 Pass。世界坐标由 viewMatrixInverse（即 camera.matrixWorld）
+// 把重建出的视空间坐标转回去——正交相机没有透视除法，这一步是纯矩阵乘法。
+function buildFogNoiseTexture(size = 64) {
+  const data = new Float32Array(size * size * 4);
+  for (let i = 0; i < size * size; i++) {
+    const v = Math.random();
+    data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 1;
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.FloatType);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  // 双线性过滤把粗粒度随机网格插值成平滑的团块状噪声（经典"value noise"廉价做法，
+  // 不需要在 GLSL 里另写 Perlin/Simplex 函数）。
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const FogShader = {
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec2 vUv;
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tNoise;
+    uniform mat4 viewMatrixInverse;
+    uniform vec3 fogColor;
+    uniform float fogStrength;     // 0..1，外部按雾天充能每帧写入；<=0 时整个 pass 等于直通
+    uniform float baseHeight;      // 世界 Y，雾"根部"高度
+    uniform float heightFalloff;   // 越大雾层越薄越贴地
+    uniform float density;         // 距离（视空间深度）衰减系数
+    uniform float noiseScale;      // 世界空间噪声频率
+    uniform float noiseStrength;   // 噪声对浓度的调制幅度，0=纯均匀雾
+    uniform vec2 noiseOffset;      // 随真实时间缓慢累加，让雾团"呼吸"（与镜头运动无关）
+    ${ORTHO_RECONSTRUCT_GLSL}
+
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      if (fogStrength <= 0.0001) { gl_FragColor = base; return; }
+
+      float depth = texture2D(tDepth, vUv).x;
+      if (depth >= 1.0) { gl_FragColor = base; return; } // 天空不参与，天空自己的染色走 DayNight
+
+      vec3 viewPos = reconstructViewPos(vUv, depth);
+      vec3 worldPos = (viewMatrixInverse * vec4(viewPos, 1.0)).xyz;
+
+      float h = max(0.0, worldPos.y - baseHeight);
+      float heightFactor = exp(-h * heightFalloff);
+
+      float dist = max(0.0, -viewPos.z);
+      float distFactor = 1.0 - exp(-dist * density);
+
+      vec2 nUv = worldPos.xz * noiseScale + noiseOffset;
+      float n1 = texture2D(tNoise, nUv).r;
+      float n2 = texture2D(tNoise, nUv * 2.13 + vec2(5.2, 1.7)).r;
+      float noise = mix(1.0, n1 * 0.65 + n2 * 0.35 + 0.2, clamp(noiseStrength, 0.0, 1.0));
+
+      float amount = clamp(heightFactor * distFactor * noise * fogStrength, 0.0, 1.0);
+      vec3 col = mix(base.rgb, fogColor, amount);
+      gl_FragColor = vec4(col, base.a);
+    }
+  `,
+};
+
+export function createFogPass(prepass, camera, width, height) {
+  const shader = {
+    uniforms: {
+      tDiffuse: { value: null },
+      tDepth: { value: null },
+      tNoise: { value: null },
+      viewMatrixInverse: { value: new THREE.Matrix4() },
+      fogColor: { value: new THREE.Color(0xc9d4de) },
+      fogStrength: { value: 0 },
+      baseHeight: { value: 0 },
+      heightFalloff: { value: 0.006 },
+      density: { value: 0.00028 },
+      noiseScale: { value: 0.004 },
+      noiseStrength: { value: 0.5 },
+      noiseOffset: { value: new THREE.Vector2(0, 0) },
+      ...cameraUniforms(camera),
+    },
+    vertexShader: FogShader.vertexShader,
+    fragmentShader: FogShader.fragmentShader,
+  };
+  const pass = new ShaderPass(shader);
+  pass.uniforms.tDepth.value = prepass.renderTarget.depthTexture;
+  pass.uniforms.tNoise.value = buildFogNoiseTexture();
+  // 观感参数全部走 CONFIG.volumetricFog（第 2 条铁律，与 CONFIG.outline 同级），
+  // 改配置即可，不用动着色器。
+  const c = CONFIG.volumetricFog || {};
+  if (c.color !== undefined) pass.uniforms.fogColor.value.set(c.color);
+  if (c.baseHeight !== undefined) pass.uniforms.baseHeight.value = c.baseHeight;
+  if (c.heightFalloff !== undefined) pass.uniforms.heightFalloff.value = c.heightFalloff;
+  if (c.density !== undefined) pass.uniforms.density.value = c.density;
+  if (c.noiseScale !== undefined) pass.uniforms.noiseScale.value = c.noiseScale;
+  if (c.noiseStrength !== undefined) pass.uniforms.noiseStrength.value = c.noiseStrength;
+  const maxStrength = c.maxStrength ?? 0.8;
+  const noiseSpeed = c.noiseSpeed ?? 4;
+  const offsetAccum = new THREE.Vector2(0, 0);
+  // 相机是正交、无父节点的独立对象，updateMatrixWorld() 只是一次 4x4 矩阵乘法，
+  // 显式调用一次确保这里读到的是【本帧】的相机变换，不依赖 composer 内部渲染顺序
+  // 恰好已经刷新过它（那份先后关系容易被下一次管线调整悄悄打破）。
+  pass._syncCamera = () => {
+    syncCameraUniforms(pass.uniforms, camera);
+    camera.updateMatrixWorld(true);
+    pass.uniforms.viewMatrixInverse.value.copy(camera.matrixWorld);
+  };
+  pass._advanceNoise = (dt) => {
+    offsetAccum.x += noiseSpeed * dt * 0.00037;
+    offsetAccum.y += noiseSpeed * dt * 0.00021;
+    pass.uniforms.noiseOffset.value.copy(offsetAccum);
+  };
+  // 强度输入是 0..1（天气充能），乘 maxStrength 之后才是着色器实际吃的浓度系数——
+  // 满充能也不该把整个画面糊死，maxStrength 就是这个视觉上限的软编码入口。
+  pass.setStrength = (v) => { pass.uniforms.fogStrength.value = Math.max(0, Math.min(1, v || 0)) * maxStrength; };
+  pass.setSize = () => {}; // 世界空间效果的浓度/频率与像素分辨率无关，占位保持接口一致
+  return pass;
+}
+
 export { NormalDepthPrepass };

@@ -73,7 +73,7 @@ import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
 import { setUnitTint } from './UnitMeshFactory.js';
 // 渲染重构 Week2·Day8-10：轮廓描边 + SSAO，见 PostFX.js 头注。
-import { NormalDepthPrepass, createSSAOPass, createOutlinePass, HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
+import { NormalDepthPrepass, createSSAOPass, createOutlinePass, createFogPass, HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
@@ -145,7 +145,8 @@ export class ThreeRenderer {
     this.gl.toneMappingExposure = CONFIG.toneMapping?.exposure ?? 1.0;
     this.composer = null; this.bloomPass = null; this.fxaaPass = null;
     this.normalDepthPrepass = null; this.ssaoPass = null; this.outlinePass = null;
-    this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA/描边/SSAO 一并失效）
+    this.fogPass = null;     // 任务 #178：伪体积雾
+    this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA/描边/SSAO/雾 一并失效）
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
     this.toneMapOn = true;   // 色调映射（曲线见 CONFIG.toneMapping.mode）
@@ -155,6 +156,8 @@ export class ThreeRenderer {
     // 默认值走 CONFIG.outline.enabled，跟其它观感参数一起软编码。
     this.outlineOn = CONFIG.outline?.enabled !== false;
     this.ssaoOn = true;      // Week2·Day9-10：SSAO，默认开
+    // 任务 #178：伪体积雾，默认值走 CONFIG.volumetricFog.enabled（第 2 条铁律，与 CONFIG.outline 同级）。
+    this.fogOn = CONFIG.volumetricFog?.enabled !== false;
 
     this.scene = new THREE.Scene();
     // 与 2D 画布 CSS 背景 #0a0d12 一致，切换时不闪底色
@@ -513,6 +516,13 @@ export class ThreeRenderer {
     this.outlinePass.enabled = this.outlineOn;
     this.composer.addPass(this.outlinePass);
 
+    // 任务 #178：伪体积雾，接在描边之后——雾是叠在"已经描完边的画面"上的大气层，
+    // 远处物体的轮廓线也该被雾糊淡，这跟真实雾的观感一致；放在 Bloom 之前则让
+    // Bloom 仍能抓到透雾发光的水晶/塔灯（雾后面的光源微微透出来才对）。
+    this.fogPass = createFogPass(this.normalDepthPrepass, this.camera, w, h);
+    this.fogPass.enabled = this.fogOn;
+    this.composer.addPass(this.fogPass);
+
     // 阈值软编码：原来写死 0.82，会把所有偏亮的颜色都糊开（画面偏"脏"）。
     // 提到 1.0 之后只抓【真正过曝】的东西 —— 前提是场景里真的有超过 1.0 的东西，
     // 这正是 towerLight.emissiveNight 要把自发光推到 1.8 的原因。
@@ -708,6 +718,8 @@ export class ThreeRenderer {
   // 换来的多余开销只是一次法线材质的场景渲染，同屏单位规模下可以接受。
   setOutline(on) { this.outlineOn = !!on; if (this.outlinePass) this.outlinePass.enabled = this.outlineOn; return this.outlineOn; }
   setSSAO(on) { this.ssaoOn = !!on; if (this.ssaoPass) this.ssaoPass.enabled = this.ssaoOn; return this.ssaoOn; }
+  // 任务 #178：伪体积雾独立开关，同一批"每项可独立开关"的先例。
+  setFog(on) { this.fogOn = !!on; if (this.fogPass) this.fogPass.enabled = this.fogOn; return this.fogOn; }
 
   /**
    * Week3·Day13-14：渲染分辨率缩放（移动端/低端设备用）。
@@ -745,6 +757,7 @@ export class ThreeRenderer {
     this.setBloom(p.bloom);
     this.setOutline(p.outline);
     this.setSSAO(p.ssao);
+    this.setFog(p.fog);
     this.setResolutionScale(p.resolutionScale);
     return this.qualityPreset;
   }
@@ -1278,6 +1291,14 @@ export class ThreeRenderer {
       // SSAO 的深度/位置重建公式直接用这几个值，缩放过程中不跟着刷新会让 AO
       // 算错半径（zoom 越大，同样的世界半径在算式里应该占的视锥比例越大）。
       this.ssaoPass?._syncCamera?.();
+      // 任务 #178：强度读同一个口径的天气充能（见上方风吹植被 windCharge 的头注：
+      // "强度取充能不取占比"），dt 走墙钟——暂停时雾也该继续缓慢呼吸。
+      if (this.fogPass) {
+        const fogCharge = window.__weather?.getCharge ? (window.__weather.getCharge('fog') || 0) : 0;
+        this.fogPass.setStrength(fogCharge);
+        this.fogPass._advanceNoise?.(this._lightDt || 0.016);
+        this.fogPass._syncCamera?.();
+      }
       this.composer.render();
     } else {
       this.gl.render(this.scene, this.camera);

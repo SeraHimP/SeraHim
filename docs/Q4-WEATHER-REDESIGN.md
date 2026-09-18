@@ -347,7 +347,35 @@ PEAK_DAY=0.25, PEAK_NIGHT=0.75, ...)`）读的是同一个 `phase`，分段映�
 
 ---
 
-**状态**：机制部分——雾/风的结构性机制（射程+索敌收缩、子弹+转身变慢）、晴天
-的"主动关闭"、极端天气自动继承，均**已实现并测试通过**（见提交历史）。
-地面痕迹层（水洼/雪痕，含渲染）、伪体积雾、气象轴、天气对特定技能的定向修正、
-昼夜循环改 15 分钟，这五项**待本节以上方案确认后一次性实现**。
+**状态（已全部完成）**：机制部分——雾/风的结构性机制（射程+索敌收缩、子弹+转身
+变慢）、晴天的"主动关闭"、极端天气自动继承，均**已实现并测试通过**（见提交历史）。
+
+用户"体积雾要做，气象轴先出方案，定向修正建框架，昼夜改15分钟，全部确认完一起
+做"这一轮的五项，也已**全部实现并测试通过**：
+
+- **地面痕迹层**（水洼/雪痕，含渲染）：`GroundTraceSystem.js`（逻辑）+
+  `GroundTraceLayer.js`（渲染，沿用 `RainRippleLayer.js` 的实例池模式，但改成
+  "每帧按当前存在的痕迹重新分配池槽位"而不是维护稳定槽位——水洼/雪痕是长期存在、
+  缓慢变化的东西，不是短命粒子）。`CONFIG.groundTrace` + `CONFIG.ui.groundTraceFx`。
+- **气象轴 v1**（温度轴）：`WeatherSystem.js` 新增一条独立、远慢于天气本身的
+  OU 过程（`AXIS_TARGET_DURATION_MIN/MAX`），偏置各天气的有效 μ
+  （`TEMP_AXIS_COUPLING`，snow/clear 强、rain 弱、fog/wind 不耦合，避免退化成
+  "晴天/下雪开关"）；三层"藏得住但能感知"——天气序列本身、极轻微的环境色调微调
+  （`DayNight.applyWeatherTempTint`）、偶发的非数字文字提示
+  （`WeatherSystem.getTemperatureHint`）。气候模板新增 `muT` 字段绑定长期目标
+  （不只是初始值，否则沙漠气候可能随机抽到偏冷轨迹）。
+- **天气定向技能修正框架**：`src/data/weatherSkillMods.js` 的 `WEATHER_SKILL_MODS`
+  表 + `WeatherSystem.getSkillParamMod(skillId, paramKey)`。按用户要求**只搭框架，
+  表先留空**——具体"某天气对某技能的额外修正"内容未定稿，不属于这一轮范围。
+- **昼夜循环改 15 分钟**（白天 8 / 夜晚 7，非对称）：`DayNight.js` 的
+  `DAY_LEN`/`NIGHT_LEN` + `resolveDayPhase` 按分段线性重算相位；`dayNightAt` 本身
+  未改动（`main.js` 里"phase×period 再传回 dayNightAt"这个已有的往返调用方式，
+  换成非对称模型依然成立，不需要碰那个纯函数）。`CONFIG.world.dayLenSec/nightLenSec`。
+- **伪体积雾**：`PostFX.js` 新增 `createFogPass`，复用 SSAO/描边共用的
+  `NormalDepthPrepass` 深度贴图与正交相机重建 uniform，不需要新的预渲染 Pass。
+  三段乘法因子对应任务描述的三个词——世界 Y 高度指数衰减（高度雾）、视空间深度
+  Beer-Lambert 指数吸收（深度衰减）、按**世界坐标 XZ**（不是屏幕 UV）采样噪声图
+  且随真实时间缓慢漂移（世界空间噪声，镜头怎么移雾团都不会跟着屏幕滑）。强度每帧
+  读 `window.__weather.getCharge('fog')`，与风吹植被的 `windCharge` 同一口径。
+  独立开关 `setFog(on)`，画质分档里低档关、中/高档开（跟描边同档位分布）。
+  `CONFIG.volumetricFog`。

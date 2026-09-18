@@ -207,6 +207,9 @@ export const SettingsDialog = {
           <div class="slider-row"><label title="环境光遮蔽：缝隙/接缝处自动变暗，让模型有实体感">环境光遮蔽 SSAO</label>
             <button id="setSsaoBtn" style="flex:1;">${window.__three?.ssaoOn !== false ? '🌑 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
+          <div class="slider-row"><label title="贴地的大气层，雾天充能越高越浓；高度雾+世界空间噪声，不跟屏幕/镜头走">体积雾</label>
+            <button id="setFogBtn" style="flex:1;">${window.__three?.fogOn !== false ? '🌫️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
         </div>
         <div class="editor-section">
           <h4>🌿 场景元素</h4>
@@ -343,6 +346,8 @@ export const SettingsDialog = {
              '✏️ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       bindFx('setSsaoBtn', r => r.ssaoOn !== false, (r, v) => r.setSSAO(v),
              '🌑 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
+      bindFx('setFogBtn', r => r.fogOn !== false, (r, v) => r.setFog(v),
+             '🌫️ 已开启（点击关闭）', '⭕ 已关闭（点击开启）');
       // HDR：手动切换要同时写 CONFIG.ui.hdr.force，否则下次自动判定会把它覆盖回去。
       document.getElementById('setHdrBtn')?.addEventListener('click', (ev) => {
         const r = window.__three;
