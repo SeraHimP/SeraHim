@@ -540,10 +540,13 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   // 加成可乘）在真实对局里从不成立，连着两轮 --sweep soul 都测出塔那一半没用，
   // 用户直接要求重做。改成直接发 bonusAttackSpeedPct（攻速百分比本身），见
   // sim_v51.mjs 里的新用例。
-  T('龙⑭-风魂给塔的是攻速百分比（v51.7 重做，不再是收益率乘数）',
-    'towerBonusAttackSpeedPct' in CONFIG.dragonSouls.wind
-    && !('towerAttackSpeedRatio' in CONFIG.dragonSouls.wind)
-    && /statKey: 'bonusAttackSpeedPct', flatValue: p\.towerBonusAttackSpeedPct/.test(ds));
+  // Q5：风魂再次全部重做——塔+大型小兵共用同一套"疾风连击"（命中叠
+  // bonusAttackSpeedPct），不再有"塔一半/小兵一半"，towerBonusAttackSpeedPct
+  // 这个字段本身已经删除，见 sim_v51.mjs 里的风⑥~⑩。
+  T('龙⑭-风魂已改成命中叠层的疾风连击（perStackPct/maxStacks/decaySec），塔不再有单独的常驻攻速字段',
+    !('towerBonusAttackSpeedPct' in CONFIG.dragonSouls.wind)
+    && 'perStackPct' in CONFIG.dragonSouls.wind
+    && /onDealtDamage: \(attackerId, targetId, instance, ctx\) => \{[\s\S]{0,400}statKey: 'bonusAttackSpeedPct'/.test(ds));
   T('龙⑮-暗魂改为偷取（削对方多少自己得多少）',
     CONFIG.dragonSouls.dark.steal === true && /dragonsoul_dark_steal/.test(ds));
   T('龙⑯-山魂大削（v43 对照 6/6 全胜、推进度差 +3.65）',

@@ -172,19 +172,24 @@ export const weapons = {
     // 计算公式"——即"（{val}=公式）"这个记号里，左边的 {val} 必须替换成【装备后
     // 算出来的真实数字】，不是字母本身。这里改用 {xx} 占位符（renderSkillDescription
     // 支持 computeCurrent 返回 {key:value} 对象填充任意命名的占位符，不止 {val}
-    // 一个），同一个 {xx} 在模板里出现两次——XX（转化掉的攻击力）与 YY（转化出的
-    // 法术强度）本来就是同一个数（1:1 转化，两边公式都是"攻击力×同一个百分比"），
-    // 没必要开两个 key 存同一份值。
+    // 一个）。
+    // ==================== Q5：转化率与转走量解耦后，XX/YY 不再是同一个数 ====================
+    // lightningApConvertPct 从占位 100% 调到 200%（用户定稿"枢纽塔太弱，攻击力可以
+    // 多倍转化为AP"）之后，"转走多少攻击力"（恒为转化前的全部攻击力，归0）与
+    // "换到多少法强"（= 转走量 × 转化率，可以是转走量的倍数）不再相等，原来共用
+    // 一个 {xx} 会让两处显示同一个数字、其中一处是错的。改成 {xx}（转走的攻击力）
+    // 和 {yy}（换到的法术强度）两个独立占位符，AttributeCalculator 同步暴露
+    // stats._lightningApGained 供这里读取（见其头注）。
     // 另外用户纠正了每跳伤害那句的表述："（72=20%法术强度×充能倍率）"读着别扭，
     // 改成"每次造成（72=20%×法术强度×充能倍率）魔法伤害"，在"20%"和"法术强度"
     // 之间显式补一个"×"。
     // description（无实体上下文时的静态兜底）与 descTemplate 用同一份模板文本——
-    // 跟屠戮的 _text() 是同一个道理：静态展示时 {xx}/{val} 就原样是占位符文本，
-    // 不会被误当成两个真实存在的字母变量。
+    // 跟屠戮的 _text() 是同一个道理：静态展示时 {xx}/{yy}/{val} 就原样是占位符文本，
+    // 不会被误当成三个真实存在的字母变量。
     get descTemplate() {
       const W = CONFIG.tuning?.weapons || {};
       const pct = W.lightningApConvertPct ?? 100;
-      return `唯一被动——闪电杖：将（{xx}=攻击力×${pct}%）攻击力转化为（{xx}=攻击力×${pct}%）法术强度；`
+      return `唯一被动——闪电杖：将（{xx}=攻击力×100%）攻击力转化为（{yy}=攻击力×${pct}%）法术强度；`
         + `每秒固定4次魔法伤害，每次造成（{val}=20%×法术强度×充能倍率）魔法伤害，完全独立于攻速；`
         + `充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、`
         + `无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；`
@@ -201,6 +206,7 @@ export const weapons = {
       const chargeMultiplier = 1 + charge * (P.maxMult - 1);
       return {
         xx: Math.round(s._lightningDrainedAD || 0),
+        yy: Math.round(s._lightningApGained || 0),
         val: Math.round(P.tickPct * (s.abilityPower || 0) * chargeMultiplier),
       };
     },

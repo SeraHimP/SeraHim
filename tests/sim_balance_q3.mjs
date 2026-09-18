@@ -65,8 +65,11 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
   attr.tick();
   const s = attr.calc(tw, fx.getEffects(tw.id));
   T('装备闪电杖：攻击力归零（用户原话"相当于攻击力归0"）', Math.abs(s.attackDamage) < 1e-6);
-  T('装备闪电杖：法术强度 = 原法强 + 全部转化的攻击力（默认1:1，30+200=230）',
-    Math.abs(s.abilityPower - 230) < 1e-6);
+  // Q5：lightningApConvertPct 100→200（用户定稿"枢纽塔太弱，攻击力可以多倍转化为AP"）。
+  // 转走的攻击力恒为全部（200，归0，不受转化率影响），换到的法强 = 200×200% = 400，
+  // 与原有法强相加 = 30+400=430（见 AttributeCalculator 的 drainedAD/apGained 解耦注释）。
+  T('装备闪电杖：法术强度 = 原法强 + 转化率放大后的攻击力（Q5：200%转化率，30+200×2=430）',
+    Math.abs(s.abilityPower - 430) < 1e-6);
 
   // 反证：不装备武器的塔，attackDamage/abilityPower 都不受这条转化影响
   const bare = mkTower(ents, fx, { ad: 200, ap: 30, weapon: null });
@@ -92,11 +95,11 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
   const hp0 = target.currentHP;
   SkillLibrary.weapon_lightning.onFrame(tw.id, 0.26, inst, ctx);
   const tickDmg = hp0 - target.currentHP;
-  // AD=100 全转化为 AP=100（1:1），跳伤害 = 20%×AP(100)×满充倍率1.8 = 36
-  // ——与改动前"20%×AD100×1.8"数值上恰好一致（因为默认转化比例是1:1），
-  // 但现在读的是转化后的法强，不再是原始攻击力（见 AttributeCalculator 的转化注释）。
-  T(`满充单跳伤害基数已切到法术强度（20%×AP100×1.8≈36，实际${tickDmg.toFixed(1)}）`,
-    Math.abs(tickDmg - 36) < 1.5);
+  // Q5：AD=100 全部转走（drainedAD=100），转化率200%换到 AP=200，跳伤害 =
+  // 20%×AP(200)×满充倍率1.8 = 72——读的是转化后的法强，不再是原始攻击力
+  // （见 AttributeCalculator 的 drainedAD/apGained 解耦注释）。
+  T(`满充单跳伤害基数已切到法术强度（20%×AP200×1.8≈72，实际${tickDmg.toFixed(1)}）`,
+    Math.abs(tickDmg - 72) < 1.5);
 }
 
 // ==================== ⑤ 穿透型（返工版）：升温每层的倍率台阶随法术强度变化 ====================

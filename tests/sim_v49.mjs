@@ -258,8 +258,8 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
   const CH = SkillLibrary.atkmode_charge.defaultParams;
   T('补①-攻城车所有状态下都充能（用户改稿），充能自身的倍率回归中性 100',
     CH.onlyVs === 'any' && CH.damagePct === 100);
-  T('补②-攻击力 70 / 对建筑 700%（用户定稿）',
-    CONFIG.templates.ram.attackDamage === 70 && R.siegeDamagePct === 700);
+  T('补②-攻击力 70 / 对建筑 550%（Q5：700→550，用户定稿"攻城车太强了"削弱）',
+    CONFIG.templates.ram.attackDamage === 70 && R.siegeDamagePct === 550);
   T('补③-普通模式 +33% 攻速走 baseAttackSpeed 的百分比，不走 bonusAttackSpeedPct', (() => {
     // 攻城车的攻速收益率是 0.05：正向加成要打 5% 的折，33% 只剩 1.65%，等于没有。
     // baseAttackSpeed 不过收益率 —— 这是选它的全部理由，钉住免得被"顺手改回去"。

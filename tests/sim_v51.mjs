@@ -1106,13 +1106,13 @@ async function world() {
   const { EDITOR_PAGES_SKILLEFFECT } = await import('../src/ui/editor/pagesSkillEffect.js');
   T('统①-编辑器默认被动回填表与 factories.js 真正消费的清单是同一个对象（不再是两份手抄副本）',
     EDITOR_PAGES_SKILLEFFECT._DEFAULT_PASSIVE_MAP === DEFAULT_MINION_PASSIVES);
-  // v51.6：passive_totem_mend（被动"图腾涌泉"）与旧主动 active_totem_shield（庇护波）
-  // 一并删除，合并成新主动技能 active_totem_mend（同名"图腾涌泉"）。
-  T('统②-图腾兵默认清单是重做后的两条被动+主动技能，不是老三件套/旧主动',
-    DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_aura')
+  // Q5：图腾兵收窄成只做"光环治疗"——passive_totem_aura（减伤+护盾光环）整条删除，
+  // active_totem_mend 改回被动 passive_totem_mend（常驻光环持续回复，不再吃法力槽）。
+  T('统②-图腾兵默认清单是收窄后的两条被动（护盾/治疗）+ 屠戮，不再有光环减伤或蓄力主动治疗',
+    !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_aura')
     && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_bulwark')
-    && DEFAULT_MINION_PASSIVES.totem.includes('active_totem_mend')
-    && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_mend')
+    && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_mend')
+    && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_mend')
     && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_shield')
     && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_guardian'));
   T('统③-warlock/siege/corrupt 的默认清单也补上了此前漏掉的主动技能',
@@ -2166,10 +2166,11 @@ async function world() {
 // 用户定稿："攻城车的攻城模式下每次攻击减少的攻速由7%调整为13%。并且恢复速率
 // 降低至原先的75%。" 恢复速率 = recoverLayers/recoverSec，保持 recoverLayers=1
 // 整数层不变，用 recoverSec 承担这个折扣（3÷0.75=4）。
+// Q5：13 → 16（"攻城车太强了"同批削弱，与 siegeDamagePct 700→550 一起）。
 {
   const { CONFIG } = await import('../src/data/Config.js');
   const R = CONFIG.gameRules.ram;
-  T('城⑦-每次攻城攻击的攻速惩罚从 7% 调到 13%', R.fatiguePerAttack === 13 && R.fatigueLayerPct === -1);
+  T('城⑦-每次攻城攻击的攻速惩罚 Q5 从 13% 调到 16%', R.fatiguePerAttack === 16 && R.fatigueLayerPct === -1);
   T('城⑧-恢复速率降到原先的75%（1层/3秒 → 1层/4秒）',
     R.recoverLayers === 1 && R.recoverSec === 4 && Math.abs((1 / 4) / (1 / 3) - 0.75) < 1e-9);
 }
@@ -2802,6 +2803,7 @@ async function world() {
 {
   const tp = srcOf('src/core/skills/towerPassives.js');
   const mp = srcOf('src/core/skills/minionPassives.js');
+  const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
   T('盾⑩-钢铁烈阳护盾（passive_inner_bulwark）自身那份改挂 kind:\'shield\'',
     /name: '钢铁烈阳护盾', icon: '☀️', kind: 'shield', flatValue: selfPlain,/.test(tp));
   // v51.9：用户对 v51.6 那次决定又改了主意——"图腾兵给自己加900护盾的技能，那个
@@ -2814,11 +2816,12 @@ async function world() {
     /defaultParams: \{ selfPlainValue: 50, selfFixedValue: 0, allyPlainValue: 50 \}/.test(tp));
   T('盾⑬b-Q4 修正：自身固定护盾走 kind:\'stat\' statKey:\'shieldFixedMax\'，只有配了 selfFixedValue>0 才挂（不白占状态栏格子）',
     /if \(selfFixed > 0\) \{[\s\S]{0,300}kind: 'stat', statKey: 'shieldFixedMax', flatValue: selfFixed,/.test(tp));
-  // v51.9：图腾守护（passive_totem_aura）友军光环那份护盾用户定稿"应该改成护盾"——
-  // 光环每帧刷新，走固定护盾会变相"不断续满血护盾"，与前面几条踩的是同一个坑。
-  T('盾⑭-图腾守护友军光环护盾改走 kind:\'shield\'（不再是 shieldFixedMax）',
-    /name: '图腾守护', icon: '🟣', kind: 'shield',\s*\n\s*flatValue: sh,/.test(mp)
-    && !/statKey: 'shieldFixedMax',\s*\n\s*flatValue: sh,/.test(mp));
+  // Q5：图腾守护（passive_totem_aura，减伤+护盾光环）整条删除——图腾兵收窄成只做
+  // "光环治疗"，v51.9 这条"友军光环护盾改走 kind:'shield'"的教训已经不适用（那份
+  // 光环本身都不存在了），改成钉"这条技能确实已经不在源码里"，不留一条测已删除代码的死断言。
+  T('盾⑭-图腾守护（减伤+护盾光环）已随 Q5 图腾兵收窄整条删除，不再是默认清单的一部分',
+    !/passive_totem_aura: makeAuraPassive/.test(mp)
+    && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_aura'));
   // v51.9：铁龙之力（dragonPower.steel.shieldFixedMax）用户先说"改为护盾，要不然
   // 太超标了"，之后补充定稿具体分配——"对塔+45固定护盾。对其余单位+45护盾。"
   // 钉的是真实行为而不是正则抠源码：塔拿到的应该是 kind:'stat'/shieldFixedMax
@@ -2998,12 +3001,13 @@ async function world() {
     /return `已过载（最大生命已损失 \$\{Math\.round\(st\.hpLostTotal \|\| 0\)\}）`;/.test(tp));
 }
 
-// ==================== 追加：风魂塔半重做验证（v51.7：攻速收益率→攻速百分比）====================
-// 用户："加移速对塔没啥用，开动脑筋重新做风魂。"根因见 Config.js/dragonSouls.js 里
-// v51.7 那段注释：旧机制放大的是塔身上的 bonusAttackSpeedPct 这个"收益率乘数"，
-// 但塔出厂就没有别的 bonusAttackSpeedPct 来源（模板值是 0），乘数再高乘的还是 0——
-// 这条钉的就是"不做任何人为造条件、直接用真实默认塔"验证攻速确实提高了，堵上被删掉的
-// 旧测试（sim_v45.mjs 原风⑤）手工把 bonusAttackSpeedPct 造到 60 才能测出效果的盲区。
+// ==================== 追加：风魂 v55 全部重做——"疾风连击"（命中叠攻速）====================
+// 用户实测反馈风魂只发给塔+大型小兵，"全体小兵移速"这个描述本身是假的——一整条
+// 兵线里近战/远程原地不动、大型小兵先跑，squad 被拆成两拨反而更弱。定稿改成
+// "羊刀"式：命中叠一层疾风（bonusAttackSpeedPct），最多5层，一段时间不打就清空。
+// 塔和大型小兵共用同一套机制，不再分"塔一半/小兵一半"。这里验证：①装上但没打过
+// 一下，攻速不变（旧的"装备即生效"机制已经删除）；②命中一次后攻速按 perStackPct
+// 提高；③连续命中多次会叠层，封顶 maxStacks；④非塔单位（大型小兵）走同一套。
 {
   const { EventBus } = await import('../src/utils/EventBus.js');
   const { EntityContainer } = await import('../src/core/EntityContainer.js');
@@ -3013,8 +3017,10 @@ async function world() {
   const { DragonSystem } = await import('../src/systems/DragonSystem.js');
   const { CONFIG } = await import('../src/data/Config.js');
 
-  T('风⑥-塔的攻速百分比出厂确实是 0（不是测试特意绕开的特例，是真实默认值——旧盲区的根源）',
-    (CONFIG.templates.tower.bonusAttackSpeedPct || 0) === 0);
+  const p = CONFIG.dragonSouls.wind;
+  T('风⑥-CONFIG.dragonSouls.wind 已经是疾风连击的三个字段（perStackPct/maxStacks/decaySec），不再是移速/常驻攻速那两截',
+    typeof p.perStackPct === 'number' && typeof p.maxStacks === 'number' && typeof p.decaySec === 'number'
+    && p.moveSpeedPct === undefined && p.moveSpeedOutPct === undefined && p.towerBonusAttackSpeedPct === undefined);
 
   const bus = new EventBus();
   const ents = new EntityContainer(bus);
@@ -3022,28 +3028,56 @@ async function world() {
   fx.setStatSource(ents, AttributeCalculator);
   const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
 
-  // 不做任何人为造条件——直接用塔模板的真实出厂值。
   const t = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
     baseStats: { ...CONFIG.templates.tower }, currentHP: CONFIG.templates.tower.maxHP,
     _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
   ents.add(t);
 
+  // 注意：每条魂都有一层独立于"机制"的自动常驻加持（soulStatBlueprints，从
+  // CONFIG.dragonSouls.stat[元素] 读，装备时自动挂，见 dragonSouls.js 尾部的
+  // 包装逻辑）——风魂这层常驻加持是 bonusAttackSpeedPct:10/attackSpeedRatio:0.06/
+  // evasionPct:10（Q5 已经把里面的 moveSpeed:6 一起删掉，理由与机制层同源：
+  // 同样发给塔+大型小兵，同样会拆散squad）。这层与"疾风连击"机制**故意同名**
+  // （'风魂'，见 soulStatBlueprints 的 v47 注释——状态栏要合并成同一个图标），
+  // 所以不能用 getEffectByName 区分，必须按 sourceId 筛（我自己的机制用
+  // sourceId:'dragonsoul_wind'，常驻加持层用 sourceId:'soul_stat_wind'）。
+  const mySourceId = 'dragonsoul_wind';
+  const myWindEff = (entityId) => fx.getEffects(entityId).find(e => e.sourceId === mySourceId);
+
   const before = AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(t, fx.getEffects(t.id)));
   ds._toggleSoul(t, 'dragonsoul_wind');
-  const after = AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(t, fx.getEffects(t.id)));
+  const justEquipped = AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(t, fx.getEffects(t.id)));
+  T('风⑦-刚装上风魂、还没打过一下：不存在"疾风连击"这个机制层的叠层效果（只能靠命中触发，不是装备即生效）',
+    !myWindEff(t.id));
 
-  T('风⑦-真实默认塔（无人为造条件）装上风魂后攻速确实提高了（旧机制这里测出来是 after === before）',
-    after > before);
-  // 期望值要把两处来源都算上：mechanism 那半（towerBonusAttackSpeedPct，本次重做的）
-  // + stat 那半（CONFIG.dragonSouls.stat.wind 的常驻 bonusAttackSpeedPct/attackSpeedRatio，
-  // 塔和大型小兵都会拿到的常驻加持，与本次重做无关但同样叠在塔身上）。
-  const p = CONFIG.dragonSouls.wind;
-  const w = CONFIG.dragonSouls.stat.wind;
-  const bonus = (p.towerBonusAttackSpeedPct ?? 35) + (w.bonusAttackSpeedPct || 0);
-  const ratio = (CONFIG.templates.tower.attackSpeedRatio || 0.667) + (w.attackSpeedRatio || 0);
-  const expected = CONFIG.templates.tower.baseAttackSpeed * (1 + bonus * ratio / 100);
-  T('风⑧-提高的幅度对得上 towerBonusAttackSpeedPct（重做的机制半）+ 常驻加持半 的合计，不是随便一个正数就算过',
-    Math.abs(after - expected) < 0.01);
+  const target = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 0, y: 0 } };
+  ents.add(target);
+  const ctx = { entityContainer: ents, effectRegistry: fx };
+  const windInst = t._skillInstances.find(s => s.skillId === 'dragonsoul_wind');
+  SkillLibrary.dragonsoul_wind.onDealtDamage(t.id, target.id, windInst, ctx);
+  const afterOneHit = AttributeCalculator.calcAttackSpeedOf(AttributeCalculator.calc(t, fx.getEffects(t.id)));
+  const oneStackEff = myWindEff(t.id);
+  T('风⑧-命中一次后获得一层疾风（机制层效果出现，1层），攻速比刚装备时（只有常驻加持）更高',
+    !!oneStackEff && oneStackEff.stacks === 1 && afterOneHit > justEquipped);
+
+  for (let i = 0; i < p.maxStacks + 3; i++) {
+    SkillLibrary.dragonsoul_wind.onDealtDamage(t.id, target.id, windInst, ctx);
+  }
+  const windEff = myWindEff(t.id);
+  T('风⑨-连续命中会叠层，但封顶 maxStacks（不会无限叠）',
+    !!windEff && windEff.stacks === p.maxStacks);
+
+  // 大型小兵（super）走同一套机制，不再是"塔一半/小兵一半"。
+  const s = { id: ++window._uid, type: 'super', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.super }, currentHP: CONFIG.templates.super.maxHP,
+    _skillInstances: [], _mapFaction: 'blue', faction: 'blue' };
+  ents.add(s);
+  ds._toggleSoul(s, 'dragonsoul_wind');
+  const supInst = s._skillInstances.find(x => x.skillId === 'dragonsoul_wind');
+  SkillLibrary.dragonsoul_wind.onDealtDamage(s.id, target.id, supInst, ctx);
+  const supEff = myWindEff(s.id);
+  T('风⑩-大型小兵命中后同样叠疾风层数（塔和大型小兵共用同一套机制）',
+    !!supEff && supEff.stacks === 1);
 }
 
 // ==================== 追加：模板默认护盾（plainShieldFlat）====================

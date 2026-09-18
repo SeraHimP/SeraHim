@@ -154,53 +154,27 @@ export const actives = {
     },
   },
 
-  // ==================== 图腾兵：图腾涌泉（群体治疗，法术强度联动）====================
-  // v51.6 用户定稿："图腾兵原有的被动技能图腾涌泉改成主动技能替换现有的主动技能
-  // （现有的直接删除），效果为：治疗150码范围内友军（XX=70+15%法强）生命值。"
-  // 原来的主动【庇护波】（临时护盾）整个删除；原来的被动【图腾涌泉】（每15秒按
-  // 已损生命百分比回血，见 minionPassives.js 的历史实现）也整个删除，两者合并成
-  // 这一个主动技能——法力攒满就打一次固定量+法强加成的治疗，不再按已损生命算。
-  active_totem_mend: {
-    id: 'active_totem_mend', name: '图腾涌泉', icon: '💧', color: '#bb86fc', category: 'active',
-    applicableTypes: ['totem'],
-    defaultParams: { range: 150, baseHeal: 70, apScale: 0.15 },
-    get description() {
-      const p = this.defaultParams;
-      return `法力攒满后，为半径 ${p.range} 内的全部友军各回复 (${p.baseHeal} + `
-           + `${p.apScale * 100}%×法术强度) 点生命值。`;
-    },
-    effects: [],
-    onCast: (entityId, instance, ctx) => {
-      const self = ctx.entityContainer.get(entityId);
-      if (!self || !self.alive) return false;
-      const p = instance._params || actives.active_totem_mend.defaultParams;
-      const allies = alliesInRadius(ctx, self, p.range ?? 150);
-      if (!allies.length) return false;
-      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
-      const healAmt = (p.baseHeal ?? 70) + (p.apScale ?? 0.15) * (stats.abilityPower || 0);
-      if (!(healAmt > 0)) return false;
-      for (const a of allies) {
-        applyHeal(a, healAmt, healPowerFor(a, ctx), a.baseStats?.maxHP ?? a.currentHP);
-      }
-      return true;
-    },
-  },
+  // active_totem_mend（"图腾涌泉"，法力攒满触发一次性群体治疗）已在 Q5 改成
+  // 常驻光环持续治疗，见 minionPassives.js 的 passive_totem_mend——用户反馈
+  // "图腾兵各种属性堆一块太膨胀了"，收窄图腾兵成只做"光环治疗"这一件事，不再
+  // 占用法力槽，这里删除。
 
   // ==================== 术士兵：蓄能打击（延迟消耗 + 自身叠法术强度）====================
   // 用户："术士兵……主动技能：下次攻击额外造成（XX=10%法术强度）真实伤害且获得5法术
   //        强度（只有攻击了法力值才清零重新计算），被动技能：周围150码友军获得20
-  //        法术强度。" 被动那半句挂在已有的 passive_warlock_aura 上（见 minionPassives.js），
-  //        这里只实现主动的一半。
+  //        法术强度。" 被动那半句原来挂在 passive_warlock_aura 上，Q5 收窄术士兵成
+  //        只做"光环增伤"时，光环法强这一项已随光环双穿一起整条删除（见
+  //        minionPassives.js 的 passive_warlock_aura 头注），这里只实现主动的一半。
   active_warlock_empower: {
     id: 'active_warlock_empower', name: '蓄能打击', icon: '💥', color: '#9b59b6', category: 'active',
     applicableTypes: ['warlock'],
-    defaultParams: { bonusApPct: 10, apGainPerCast: 5 },
+    defaultParams: { bonusApPct: 10, apGainPerCast: 5, apGainMaxStacks: 20 },
     // ManaSystem 认这个标记：法力攒满时只调一次 onCast，之后即使法力仍然满格也不再重复
     // 施放，直到 instance.state._armed 被下面这条效果的消耗方（CombatSystem）清掉。
     deferredConsume: true,
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后蓄势待发并立即获得 ${p.apGainPerCast} 点法术强度（永久叠加）：`
+      return `法力攒满后蓄势待发并立即获得 ${p.apGainPerCast} 点法术强度（永久叠加，最多${p.apGainMaxStacks}层）：`
            + `下一次普通攻击命中额外造成 (${p.bonusApPct}%×法术强度) 的真实伤害，`
            + `命中后法力才清零重新计算。`;
     },
@@ -212,12 +186,18 @@ export const actives = {
       self._empowerNextAttack = { bonusApPct: p.bonusApPct ?? 10, skillInstId: instance.id };
       // 立即获得法术强度（永久叠加，每次施放都加一层）——与"下次攻击触发"是两件事，
       // 这个是施放那一刻就生效的自增益，不需要等攻击命中。
+      // ==================== Q5：自身法强叠层加上限 ====================
+      // 排查"术士兵太强"时发现的结构性问题：这条自增益原来 maxStacks:999，事实上
+      // 不封顶——一个能存活到局面后期的术士兵会无限膨胀法强（连带它自己的输出和
+      // 光环增伤一起滚雪球）。改成有限层数（占位20层=100法强），不是本轮数值削弱
+      // 的主角，是补一个此前没设计到的上限。
       const apGain = p.apGainPerCast ?? 5;
+      const apMaxStacks = p.apGainMaxStacks ?? 20;
       ctx.effectRegistry.apply(entityId, {
         name: '蓄能强化', icon: '✨', kind: 'stat', statKey: 'abilityPower',
         flatValue: apGain, perStackFlat: apGain,
-        duration: Infinity, permanent: true, stackable: true, maxStacks: 999, stackPolicy: 'stack',
-        description: `蓄能强化（{stacks}层，每层+${apGain}法术强度）`,
+        duration: Infinity, permanent: true, stackable: true, maxStacks: apMaxStacks, stackPolicy: 'stack',
+        description: `蓄能强化（{stacks}层，每层+${apGain}法术强度，最多${apMaxStacks}层）`,
       }, 'active_warlock_empower_apgain', { casterId: entityId });
       // 一次性标记："下一次普通攻击会触发"，命中后由 CombatSystem 移除。
       ctx.effectRegistry.apply(entityId, {

@@ -46,27 +46,30 @@ export const CONFIG = {
     // 三个兵种的定位：图腾=续航/减伤、术士=增伤/破防、蚀骨=近战破甲。
     // 全部软编码，源码里不留魔数。
     supportUnits: {
-      // 图腾兵：主动治疗（active_totem_mend，见 actives.js） + 减伤/护盾光环 + 自身高额固定护盾
+      // 图腾兵：持续光环治疗（passive_totem_mend，见 minionPassives.js） + 自身高额固定护盾
+      // ==================== Q5：图腾兵收窄成"只做光环治疗"====================
+      // 用户反馈"术士兵/图腾兵啥的各种属性堆一块太膨胀了"——原来的光环减伤
+      // （auraDamageReduction）与光环护盾（auraShieldFlat）两个字段随
+      // passive_totem_aura 一起整条删除，图腾兵不再提供减伤/护盾光环，只保留
+      // "光环治疗"这一件事。mendRange/mendHealPerSec/mendApScalePct 是新增的持续
+      // 治疗数值：按法力槽节奏（maxMana120/回复2，约60秒一次70+15%AP）折算的
+      // 等效速率约1.17+0.25%AP/秒，这里给得比等效值略保守（"随时都在回"比"攒满
+      // 才有一下"少了博弈空间，故意不给满），避免收窄变成变相加强。
       totem: {
-        // v51.6：周期性被动治疗（healIntervalSec/healMissingPct）已改成主动技能
-        // active_totem_mend，这两个字段随 passive_totem_mend 一起删除——数值现在
-        // 在 actives.js 的 active_totem_mend.defaultParams 里（baseHeal/apScale）。
-        // 与之配套，下面两条光环数值当时是同批**削弱**（用户："图腾兵光环效果太强了，
-        // 削数值"），数值本身不受这次改动影响。
-        auraDamageReduction: 6,  // 光环：伤害减免（%）。v43：10 → 6
-        auraShieldFlat: 15,      // 光环：固定护盾。v43：25 → 15
+        mendRange: 150,          // 持续治疗光环半径
+        mendHealPerSec: 1,       // 持续治疗：每秒固定回复量
+        mendApScalePct: 0.2,     // 持续治疗：每秒×法术强度的百分比（%）
         selfShieldFlat: 900,     // 自身固定护盾（"高额"）。这是图腾兵的存在意义，不动
       },
-      // 术士兵：给友军双穿+增伤光环；自身高额双穿
+      // 术士兵：给友军增伤光环；自身高额双穿
+      // ==================== Q5：术士兵收窄成"只做光环增伤"====================
+      // 用户反馈同上——原来光环同时发双穿（auraPenPct）+ 增伤（auraDamageAmpPct）+
+      // 法强（auraAbilityPower）三个维度，这两个随 passive_warlock_aura 精简一起
+      // 整条删除，只留光环增伤这一件事（自身双穿 selfPenPct 是"自己的"，不算在
+      // 光环收窄范围内，不动）。auraDamageAmpPct 从4%略微补到6%，不是纯削弱，是
+      // "少了两个维度、单一维度稍微顶上一点"。
       warlock: {
-        // v43（用户定稿："术士兵光环效果太强了，削数值"）。
-        // 光环的双穿+增伤是全队乘算，一个术士就让整条兵线的有效输出跳一档，
-        // 而它自己只有 520 血 —— 收益与风险完全不成比例。
-        auraPenPct: 8,         // 光环：护甲穿透% / 魔法穿透%（双穿）。v43：13 → 8
-        auraDamageAmpPct: 4,   // 光环：伤害增幅（%）。v43：7 → 4
-        // v51.1：用户定稿"周围150码友军获得20法术强度"——挂在术士兵已有的
-        // 术法共鸣光环上（半径正好是共用的 AURA_RANGE=150，不用另开一条光环）。
-        auraAbilityPower: 20,
+        auraDamageAmpPct: 6,   // 光环：伤害增幅（%）。Q5：4 → 6（收窄后的补偿）
         selfPenPct: 70,        // 自身双穿（%）。只作用于自己，不动
       },
       // 蚀骨兵：近战，血量高于普通近战，小范围内所有敌人双抗【逐秒递减】。
@@ -85,6 +88,16 @@ export const CONFIG = {
     // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
     // 仍受结构保护约束、且塔的索敌优先级最低（不会为了打塔而无视拆自己的小兵）。
     towerAttacksTower: true,
+    // ==================== Q5：超级兵早弱晚强 ====================
+    // 用户："超级兵弄成前期非常弱……让超级兵的基础数值随时间的流逝变得越来越强"——
+    // 防止水晶陷落触发的超级兵不分游戏时间早晚一律满状态出场。见
+    // minionPassives.js 的 passive_super_timescale。全部占位起始值，下一轮平衡验证。
+    superGrowth: {
+      minMulPct: 40,          // 游戏时间0分钟出生时的全属性倍率（%）
+      fullAtSec: 900,         // 从 minMulPct 线性爬升到 100%（完全体）所需时间，15分钟
+      lateGrowPerMinPct: 1.5, // fullAtSec 之后，每分钟再增长多少百分点
+      lateCapPct: 150,        // 后期增长的封顶倍率（%），防止无限膨胀
+    },
     // 阵营龙魂规则（用户定稿："6 条龙 + ≥4 击杀才成魂、都不到 4 则无魂、之后出远古龙"）
     elementDragonTotal: 6,     // 元素龙总条数，打完即结算龙魂
     dragonSoulThreshold: 4,    // 成魂门槛（阵营击杀数）；双方都达标时按击杀多者，同分则无魂
@@ -178,7 +191,8 @@ export const CONFIG = {
       // v49b 用户改稿："对建筑的伤害改为700%"。
       // 这是攻城车**自己**的性格，不是"充能"这件武器的（充能的 damagePct 是中性 100）——
       // 分开放的理由：换一件别的充能武器时，攻城车的对建筑倍率不该跟着变。
-      siegeDamagePct: 700,
+      // Q5：700 → 550（用户定稿"攻城车太强了，可以砍机制也可以砍数值"，这次砍数值）。
+      siegeDamagePct: 550,
       // v49b："普通模式下获得33%攻速"。
       // ⚠️ 走 **baseAttackSpeed 的百分比**而不是 bonusAttackSpeedPct：
       // 攻城车的攻速收益率是 0.05，正向加成要打 5% 的折（33% 只剩 1.65%），
@@ -186,7 +200,9 @@ export const CONFIG = {
       normalAtkSpeedPct: 33,
       // v51.6 用户定稿："攻城车攻城模式下每次攻击减少的攻速由7%调整为13%。
       // 并且恢复速率降低至原先的75%。"
-      fatiguePerAttack: 13,     // 每次攻城攻击叠几层（13% = 13 层 × 1%）
+      // Q5：13 → 16（同一批"攻城车太强"削弱，让攻城模式下的攻速自我衰减更快，
+      // 与 siegeDamagePct 下调同批处理）。
+      fatiguePerAttack: 16,     // 每次攻城攻击叠几层（16% = 16 层 × 1%）
       fatigueLayerPct: -1,      // 每层攻速 %
       // 恢复速率 = recoverLayers/recoverSec（层/秒）。原 1层/3秒，降到75%即
       // 1层/4秒（recoverLayers 保持整数层，用 recoverSec 承担这个折扣：3÷0.75=4）。
@@ -369,8 +385,13 @@ export const CONFIG = {
       // 改动前的原始量级，把"强度旋钮"从机制转移到常驻加持这一层——以后要继续
       // 调，也优先动这里，不要再碰机制数字。
       thunder: {},   // v51.7 前：{ armorPenPercent: 12, magicPenPercent: 12, critChance: 15, critDamagePct: 25 }
-      // 风=难以捉摸：速度三件套之外加闪避率，呼应"抓不住"这个主题。这条没有超标，不动。
-      wind:    { bonusAttackSpeedPct: 10, moveSpeed: 6, attackSpeedRatio: 0.06, evasionPct: 10 },
+      // 风=难以捉摸：攻速两项+闪避率，呼应"抓不住"这个主题。
+      // Q5：删除 moveSpeed:6——风魂机制那边（dragonsoul_wind 本体）已经全部重做成
+      // "疾风连击"（命中叠攻速），根因是"只发给塔+大型小兵的移速会把一条兵线拆成
+      // 两拨、squad被拆散"；这份常驻加持层（soulStatBlueprints 自动挂的baseline）
+      // 走的是同一个 SOUL_REWARD_OK 领受范围，同样的 moveSpeed 哪怕只有6%量级也是
+      // 同一个问题，必须一起删，不能只改机制那一半、漏了这个自动挂载的常驻层。
+      wind:    { bonusAttackSpeedPct: 10, attackSpeedRatio: 0.06, evasionPct: 10 },
       dark:    {},   // v51.7 前：{ damageAmpPct: 7, lifeStealPct: 4 }
       poison:  {},   // v51.7 前：{ onHitPercentDamage: 0.7, spellVampPct: 4 }
       // 霜=坚冰不动摇：格挡之外加韧性（抗控）。这条测出来偏弱（40%/扣基线+0.19），不动。
@@ -500,12 +521,13 @@ export const CONFIG = {
     //
     // ⚡ 雷魂：连锁真伤。落在参照带内（+0.99，扣基线），不动。
     thunder: { perTargetPct: 15, targets: 6, range: 200, cooldown: 8 },   // v51.11：1→15（恢复 v51.3 原值，见上）
-    // 🌪 风魂：小兵脱战 +移速 / 塔 +攻速。用户实测两轮都反馈塔那一半"跟没拿一样"，
-    // v51.7 把塔那一半从"攻速收益率"改成直接发"攻速百分比"——根因见
-    // src/core/skills/dragonSouls.js 里 dragonsoul_wind.onEquip 的 v51.7 注释：
-    // 收益率是个乘数，塔身上压根没有别的攻速加成可乘，乘数再高乘的还是 0。
-    // 这是机制修复不是数值削弱，不受 v51.11 的"恢复原值"影响，维持原样。
-    wind:    { moveSpeedPct: 0, moveSpeedOutPct: 55, towerBonusAttackSpeedPct: 35 },
+    // 🌪 风魂：v55 全部重做为"疾风连击"（命中叠攻速），删除移速两截和塔的常驻
+    // 攻速——见 src/core/skills/dragonSouls.js 的 dragonsoul_wind 头注：只发给
+    // 塔+大型小兵的"全体移速"会把一条兵线拆成两拨，用户实测确认"没拿反而更强"。
+    // 改成命中触发的 bonusAttackSpeedPct 叠层（自动走 attackSpeedRatio 收益率），
+    // 塔和大型小兵共用同一套，不再区分"塔一半/小兵一半"。三个数都是占位起始值，
+    // 下一轮 --sweep soul 按对照数据再调。
+    wind:    { perStackPct: 8, maxStacks: 5, decaySec: 3 },
     // 🌑 暗魂：命中削双抗，**全队共享层数**（友军攻击也叠）；"偷取"机制自身自带 2 倍
     // 效果（既削对方又补自己）。
     dark:    { flatPerStack: 1, pctPerStack: 0.5, maxFlat: 30, maxPct: 15, duration: 6, steal: true },   // v51.11：pctPerStack 0.08→0.5、maxFlat 10→30、maxPct 2→15（全部恢复到本session改动前的原值）；v51.13 实测落在参照带内（+1.09），不动
@@ -1783,9 +1805,17 @@ export const CONFIG = {
     //     平衡专项再调（用户原话"平衡先不用做"）。这套台阶只影响 preDamageMult（放大
     //     普攻本身），不产生第二笔伤害，也不改动升温本身的叠层/重置节奏。
     // piercingHeatApPct：本轮 Q3 从 20 → 15（用户定稿新公式"每层额外造成
-    // （XX%=20%+15%×法术强度）伤害"）。piercingHeatBasePct/lightningApConvertPct
-    // 未变，仍是上面长注释里记的占位默认值。
-    weapons: { lightningApConvertPct: 100, piercingHeatBasePct: 20, piercingHeatApPct: 15 },
+    // （XX%=20%+15%×法术强度）伤害"）。piercingHeatBasePct 未变，仍是上面长注释里
+    // 记的占位默认值。
+    // lightningApConvertPct：本轮（Q5）100→200（用户定稿"枢纽塔太弱，可以把攻击力
+    // 多倍转化为AP"）。根因诊断：枢纽塔弱不是 apMagicDamagePct 那60%折扣的锅——
+    // 闪电杖是 specialAttack 武器，命中即在 performAttack 里直接 return 跳过普通
+    // 攻击管线（CombatSystem.performAttack 613行），伤害完全来自
+    // weapon_lightning._doTick 自己的公式：20%×AP×充能倍率、每秒固定4跳、和攻速
+    // 脱钩——同样原始数值只有假想同数值物理塔（AD×攻速4.0）两三成的产出量级，
+    // 这才是偏弱的根因。调大转化率让初始AP和AP成长（towerGrowth.apRatioOfAd）
+    // 同步翻倍，直接放大闪电杖的伤害基数。
+    weapons: { lightningApConvertPct: 200, piercingHeatBasePct: 20, piercingHeatApPct: 15 },
 
     // ==================== 本轮：自适应伤害类型判定 + 数值结算规则重做（用户定稿）====================
     // 起因：用户报"上次更改了攻击逻辑，导致目前小兵单位异常强大"——排查发现（见

@@ -1,9 +1,16 @@
 import { makeAuraPassive, AURA_THROTTLE } from './_helpers.js';
 import { CONFIG } from '../../data/Config.js';
-import { healPowerFor } from '../healing.js';
+import { healPowerFor, applyHeal } from '../healing.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵等大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
+
+// 秒数→分钟数文案，去掉整分钟时多余的".0"（同 towerPassives.js 的 _fmtMin，
+// 各自模块内一份小函数，没必要为这一行专门抽公共模块）。
+function _fmtGrowMin(sec) {
+  const m = sec / 60;
+  return Number.isInteger(m) ? String(m) : m.toFixed(1);
+}
 
 /**
  * 屠戮的伤害【基数】。三种口径共用这一个函数 —— 文案（computeCurrent）与结算（onHit）
@@ -124,6 +131,59 @@ export const minionPassives = {
     ],
   }),
 
+  // ==================== Q5：超级兵早弱晚强（出生时按游戏时间快照）====================
+  // 用户："超级兵弄成前期非常弱……防止极端情况下超级兵直接早期终结比赛（但实际上
+  // 不太可能），让超级兵的基础数值随时间的流逝变得越来越强。" 起因：超级兵现在
+  // 数值是常量，不随游戏时间变化，"水晶陷落后立刻满状态出场"是提前终结比赛的漏洞
+  // （laneWaveComposition 里 super 的触发条件是 nexusDown，与游戏时间无关）。
+  // 做法：在超级兵【出生那一刻】按当前 window.gameTime 快照一个 allStatsPct 修正
+  // ——游戏时间越晚出生的超级兵越强，倍率在出生那一刻定死，不随这个单位之后存活
+  // 多久变化（超级兵通常活不长，"随自身存活时间成长"没有意义，用户要的是"整局
+  // 游戏进程"这个尺度）。倍率曲线：0分钟出生=40%基础数值，线性爬升到15分钟=100%
+  // （即完全体），15分钟后继续缓慢增长，每分钟再+1.5%，封顶150%（防止后期无限
+  // 膨胀）。全部软编码进 CONFIG.gameRules.superGrowth，占位起始值，下一轮平衡验证。
+  passive_super_timescale: {
+    id: 'passive_super_timescale', name: '战线洗礼', icon: '⏳', category: 'passive',
+    applicableTypes: ['super'],
+    get description() {
+      const g = CONFIG.gameRules?.superGrowth || {};
+      return `出生时按当前游戏时间快照全属性倍率：0分钟=${g.minMulPct ?? 40}%，`
+        + `${_fmtGrowMin(g.fullAtSec ?? 900)}分钟起达到100%（完全体），之后每分钟再`
+        + `+${g.lateGrowPerMinPct ?? 1.5}%，封顶${g.lateCapPct ?? 150}%（倍率出生时定死，不随自身存活时长变化）。`;
+    },
+    get descTemplate() { return this.description; },
+    computeCurrent: (entity) => (entity?._timescaleMulPct != null ? Math.round(entity._timescaleMulPct) : 100),
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e) return;
+      const g = CONFIG.gameRules?.superGrowth || {};
+      const minMulPct = g.minMulPct ?? 40;
+      const fullAtSec = g.fullAtSec ?? 900;
+      const lateGrowPerMinPct = g.lateGrowPerMinPct ?? 1.5;
+      const lateCapPct = g.lateCapPct ?? 150;
+      const t = Math.max(0, (typeof window !== 'undefined' ? (window.gameTime || 0) : 0));
+      let mulPct;
+      if (t < fullAtSec) mulPct = minMulPct + (100 - minMulPct) * (t / fullAtSec);
+      else mulPct = Math.min(lateCapPct, 100 + ((t - fullAtSec) / 60) * lateGrowPerMinPct);
+      e._timescaleMulPct = mulPct;   // 供 computeCurrent 展示读取，不参与结算
+      const delta = mulPct - 100;    // allStatsPct 是"相对基准的加成量"，基准=0
+      ctx.effectRegistry.apply(entityId, {
+        name: '战线洗礼', icon: '⏳', kind: 'stat', statKey: 'allStatsPct',
+        flatValue: delta, duration: Infinity, permanent: true,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `全属性${delta >= 0 ? '+' : ''}${Math.round(delta)}%（出生时游戏时间定死）`,
+      }, 'passive_super_timescale');
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (e) delete e._timescaleMulPct;
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '战线洗礼') ctx.effectRegistry.remove(eff.id);
+      }
+    },
+  },
+
   passive_siege_shield: {
     id: 'passive_siege_shield',
     applicableTypes: ['siege'],
@@ -222,24 +282,62 @@ export const minionPassives = {
   // 只要站在图腾兵附近就相当于不断续这份"自动回满"，与钢铁烈阳护盾此前踩的是
   // 同一个坑。改成 kind:'shield'（不衰减、不回复），友军离开光环范围过久才会
   // 重新拿到一份满值。
-  passive_totem_aura: makeAuraPassive({
-    id: 'passive_totem_aura', name: '图腾守护', icon: '🟣',
-    casterType: 'totem', targetTypes: null, minionsOnly: true,
-    includeSelf: true,   // 与 v43 后的默认值一致，保留只为显式
-    effectsFn: () => {
+  // ==================== Q5：图腾兵收窄成"只做光环治疗"====================
+  // 用户反馈"术士兵/图腾兵啥的各种属性堆一块太膨胀了"——原来图腾兵同时有
+  // 减伤光环（passive_totem_aura）+ 护盾光环（同一条技能里）+ 主动蓄满一次性
+  // 群体治疗（active_totem_mend），三条不同维度堆在一个兵身上。收窄成只留
+  // "光环治疗"一件事：passive_totem_aura 整条删除（减伤/护盾两个维度都去掉），
+  // active_totem_mend 从"法力攒满才触发一次性大额治疗"改成这条新的
+  // passive_totem_mend——不吃法力槽，常驻对周围友军小额持续回复，"图腾涌泉"
+  // 这个名字（泉水涌动）本来就比"蓄力爆发"更贴"持续"这个语义。数值上：old
+  // 版本按法力槽120/回复2的节奏大约60秒一次70+15%AP，折算成"持续"的等效速率
+  // 约为每秒1.17+0.25%AP，这里给的常驻速率比这个等效值略低（1+0.2%AP/秒），
+  // 因为"随时都在回"比"攒满才有一下"少了博弈空间，故意给得更保守一些，避免
+  // 收窄变成变相加强。自身900固定护盾（passive_totem_bulwark）不受这次收窄影响，
+  // 那是"扛线"这个天然定位，不是光环。
+  passive_totem_mend: {
+    id: 'passive_totem_mend', name: '图腾涌泉', icon: '💧', category: 'passive',
+    applicableTypes: ['totem'], color: '#bb86fc',
+    get description() {
       const c = CONFIG.gameRules.supportUnits?.totem || {};
-      const dr = c.auraDamageReduction ?? 10, sh = c.auraShieldFlat ?? 25;
-      return [
-        { name: '图腾守护', icon: '🟣', kind: 'stat', statKey: 'damageReduction',
-          flatValue: dr, description: `伤害减免+${dr}%` },
-        { name: '图腾守护', icon: '🟣', kind: 'shield',
-          flatValue: sh, description: `护盾+${sh}` },
-      ];
+      const r = c.mendRange ?? 150, hps = c.mendHealPerSec ?? 1, ap = c.mendApScalePct ?? 0.2;
+      return `持续为半径 ${r} 内的全部友军（含自身）各回复（{val}=${hps}+${ap}%×法术强度）点/秒生命值。`;
     },
-  }),
-
-  // passive_totem_mend（"图腾涌泉"，每15秒按已损生命百分比回血）已在 v51.6
-  // 改成主动技能 active_totem_mend（见 actives.js），这里删除。
+    get descTemplate() { return this.description; },
+    computeCurrent: (entity, ctx) => {
+      const c = CONFIG.gameRules.supportUnits?.totem || {};
+      const hps = c.mendHealPerSec ?? 1, apPct = (c.mendApScalePct ?? 0.2) / 100;
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      return Math.round((hps + apPct * (stats.abilityPower || 0)) * 10) / 10;
+    },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return;
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      instance.state.timer += dt;
+      if (instance.state.timer < AURA_THROTTLE) return;
+      const elapsed = instance.state.timer;
+      instance.state.timer = 0;
+      const c = CONFIG.gameRules.supportUnits?.totem || {};
+      const range = c.mendRange ?? 150;
+      const hps = c.mendHealPerSec ?? 1, apPct = (c.mendApScalePct ?? 0.2) / 100;
+      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
+      const healPerSec = hps + apPct * (stats.abilityPower || 0);
+      if (!(healPerSec > 0)) return;
+      const nearby = ctx.entityContainer.findInRadius(self.pos.x, self.pos.y, range, null, true);
+      const allies = nearby.filter(a => {
+        if (a.id === self.id) return false;   // 自己单独 push 一次，避免网格里查到自己重复算
+        const af = a._mapFaction || a.faction, ef = self._mapFaction || self.faction;
+        return af === ef && a.type !== 'tower' && a.type !== 'dragon';
+      });
+      allies.push(self);
+      const amt = healPerSec * elapsed;   // 按实际经过的时间结算，节流不改变总量
+      for (const a of allies) {
+        applyHeal(a, amt, healPowerFor(a, ctx), a.baseStats?.maxHP ?? a.currentHP);
+      }
+    },
+  },
 
   // 自身高额护盾。
   // v51.6 修复：用户"图腾兵的固定护盾也改为护盾"——原来走 onEquip 直接改
@@ -304,21 +402,22 @@ export const minionPassives = {
   // v51.1：补上术士兵的主动技能被动伴侣——用户："被动技能：周围150码友军获得20法术强度。"
   // 这不是一个独立的新光环，是术士兵已有的光环（术法共鸣）多给一项属性——它本来就是
   // "周围友军"的光环，半径也正好是 AURA_RANGE=150，不用另起一条技能重复同一套判定。
+  // ==================== Q5：术士兵收窄成"只做光环增伤"====================
+  // 用户反馈："现在的术士兵/图腾兵啥的各种属性堆一块太膨胀了"——原来这条光环同时
+  // 发双穿+增伤+法强三个维度，跟自身的术法贯通（自己的双穿）、主动技能（自己叠
+  // 法强）加在一起，一个兵身上塞了五条不同的数值线。收窄成只留"光环增伤"一件事，
+  // 光环双穿/光环法强两项整条删除（自身双穿走 passive_warlock_attune，是"自己的"，
+  // 不算在这次收窄范围内）。auraDamageAmpPct 从4%略微补到6%——不是完全不削弱，
+  // 是"少了两个维度、单一维度稍微顶上一点"，避免收窄变成纯削弱。
   passive_warlock_aura: makeAuraPassive({
     id: 'passive_warlock_aura', name: '术法共鸣', icon: '🧙',
     casterType: 'warlock', targetTypes: null, minionsOnly: true,
     effectsFn: () => {
       const c = CONFIG.gameRules.supportUnits?.warlock || {};
-      const pen = c.auraPenPct ?? 13, amp = c.auraDamageAmpPct ?? 7, ap = c.auraAbilityPower ?? 20;
+      const amp = c.auraDamageAmpPct ?? 6;
       return [
-        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'armorPenPercent',
-          flatValue: pen, description: `护甲穿透+${pen}%` },
-        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'magicPenPercent',
-          flatValue: pen, description: `法术穿透+${pen}%` },
         { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'damageAmpPct',
           flatValue: amp, description: `伤害增幅+${amp}%` },
-        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'abilityPower',
-          flatValue: ap, description: `法术强度+${ap}` },
       ];
     },
   }),

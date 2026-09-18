@@ -199,26 +199,34 @@ export const AttributeCalculator = {
     // 塔的默认伤害类型已改自适应（不再固定 magic，见 templates.tower），但闪电杖这件
     // 武器本身的身份必须锁死"打魔法"——不能因为装备之后 AD 还留着一部分而被自适应判定
     // 判成物理。做法：装备闪电杖时，直接在属性计算管线里把塔的攻击力【转走】变成法术
-    // 强度（用户："相当于攻击力归0"），而不是让 resolveAttackType 去猜。转化比例
-    // 软编码在 CONFIG.tuning.weapons.lightningApConvertPct（占位 100%，即 1:1 全转化，
-    // 具体数值本轮不做平衡，见该配置项的注释）。
-    // 放在 adaptiveForce 之后、coreStatsPct/allStatsPct 之前——转化出来的这份法强和
-    // "天生"的法强同等对待，会被两层百分比加成一并放大，转化完不再有特殊身份，
-    // 与 adaptiveForce 的既有处理方式保持一致（见上面那段的同一条理由）。
+    // 强度（用户："相当于攻击力归0"），而不是让 resolveAttackType 去猜。
+    // ==================== Q5：转化率与转走量解耦（用户定稿"枢纽塔太弱，攻击力可以
+    // 多倍转化为AP"）====================
+    // lightningApConvertPct 从占位 100% 调到 200% 后，如果沿用旧写法
+    // `drainedAD = attackDamage * convertPct` 直接从 attackDamage 里扣掉这个数，
+    // 200% 会把 attackDamage 扣成负数（扣两倍于自己的量）——攻击力不该出现负值。
+    // "转走多少攻击力"（永远是全部，即"归0"这句话本身）和"能换到多少法强"（受
+    // convertPct 控制，可以是转走量的多倍）必须拆成两个独立的量：
+    //   drainedAD：从 attackDamage 里扣掉的量，恒等于转化前的全部 attackDamage（归0）
+    //   apGained： 加进 abilityPower 的量，= drainedAD × convertPct（转化率只影响这个）
     if ((entity._skillInstances || []).some(s => s.skillId === 'weapon_lightning' && !s._disabled)) {
       const convertPct = (CONFIG.tuning?.weapons?.lightningApConvertPct ?? 100) / 100;
-      const drainedAD = (stats.attackDamage || 0) * convertPct;
+      const drainedAD = stats.attackDamage || 0;
+      const apGained = drainedAD * convertPct;
       stats.attackDamage = (stats.attackDamage || 0) - drainedAD;
-      stats.abilityPower = (stats.abilityPower || 0) + drainedAD;
+      stats.abilityPower = (stats.abilityPower || 0) + apGained;
       // 本轮：用户报"闪电杖描述里的XX/YY看不懂"——排查发现描述文案里 XX/YY 只是
       // 字面写死的两个字母，从没接到真实计算值上。要在文案里显示"这次转化掉了/
       // 换到了多少"，就得把这个中间结果暴露出去，不能让 weapons.js 的 computeCurrent
       // 自己重新按公式算一遍（那会变成"结算与文案各写一份同一个公式"的老毛病——
       // 这里用的是【转化前】的 attackDamage，computeCurrent 只能拿到 calc() 返回的
-      // 【最终】stats，转化前的值早就没了）。stats._lightningDrainedAD 只是文案用
-      // 的只读旁路数据，不参与后续任何计算（后面的 coreStatsPct/allStatsPct 等只读
-      // attackDamage/abilityPower 两个字段，不会碰这个下划线前缀的旁路字段）。
+      // 【最终】stats，转化前的值早就没了）。stats._lightningDrainedAD/_lightningApGained
+      // 只是文案用的只读旁路数据，不参与后续任何计算（后面的 coreStatsPct/allStatsPct
+      // 等只读 attackDamage/abilityPower 两个字段，不会碰这两个下划线前缀的旁路字段）。
+      // Q5起两者不再相等（convertPct>100%时 apGained > drainedAD），文案必须分开显示，
+      // 不能再共用同一个 {xx} 占位符。
       stats._lightningDrainedAD = drainedAD;
+      stats._lightningApGained = apGained;
     }
 
     // 核心属性加成：只放大这六项，且放在全属性加成之前——如果两者同时存在（理论上

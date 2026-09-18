@@ -193,8 +193,13 @@ const instOf = (e, id) => (e._skillInstances || []).find(s => s.skillId === id);
   const w = CONFIG.dragonSouls.stat.wind;
   const p = CONFIG.dragonPower.wind;
 
-  T('风①-风魂的常驻数值围绕"速度"：移速 + 攻速 + 攻速收益率',
-    w.moveSpeed > 0 && w.bonusAttackSpeedPct > 0 && w.attackSpeedRatio > 0);
+  // Q5：风魂机制全部重做成"疾风连击"（命中叠攻速），根因是"移速只发给塔+大型
+  // 小兵会把一条兵线拆成两拨"——常驻加持层（这里的 CONFIG.dragonSouls.stat.wind）
+  // 走的是同一个领受范围，同样的问题，所以 moveSpeed 也从这层删除了，只留
+  // 攻速两项 + 闪避率（"抓不住"主题不需要移速也能立住）。风之力（dragonPower，
+  // 只发给击杀者单一个体，没有"拆散squad"这个问题）不受影响，风②不动。
+  T('风①-风魂的常驻数值改成围绕"攻速"：攻速 + 攻速收益率（Q5 删除 moveSpeed）',
+    w.moveSpeed === undefined && w.bonusAttackSpeedPct > 0 && w.attackSpeedRatio > 0);
   T('风②-风之力同样是速度三件套（力与魂同一个主题）',
     p.moveSpeed > 0 && p.bonusAttackSpeedPct > 0 && p.attackSpeedRatio > 0);
   T('风③-attackSpeedRatio 是风独占的（别的元素不碰，避免主题重复）',

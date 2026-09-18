@@ -134,7 +134,11 @@ T('超级兵波仍保留近战/远程骨架',
   spawned.filter(t => t === 'melee').length === 3 && spawned.filter(t => t === 'ranged').length === 3);
 
 // ---- Q2/Q1/Q6/Q7/Q10/Q11/Q5 静态与逻辑断言 ----
-T('超级兵指挥官含自身(Q2)', fs.readFileSync(new URL('../src/core/skills/minionPassives.js', import.meta.url),'utf8').includes('includeSelf: true'));
+// Q5：图腾守护（passive_totem_aura）整条删除后，minionPassives.js 里不再有任何
+// 显式写出的 `includeSelf: true`（其它光环被动全部依赖 makeAuraPassive 的默认值），
+// 改成检查 _helpers.js 里那个默认值本身仍是 true（"所有光环类效果也对自己生效"
+// 这条硬规矩落在工厂函数的默认参数上，不需要每条被动各写一遍）。
+T('超级兵指挥官含自身(Q2)', fs.readFileSync(new URL('../src/core/skills/_helpers.js', import.meta.url),'utf8').includes('includeSelf = true'));
 T('闪电充能duration=100(Q1)', fs.readFileSync(new URL('../src/core/skills/weapons.js', import.meta.url),'utf8').includes("kind: 'custom', duration: 100"));
 // v43 P1-4: 4 个实体工厂搬去了 src/core/factories.js。下面这些断言钉的是
 // 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。

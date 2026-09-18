@@ -149,7 +149,9 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   const hp0 = main.currentHP;
   SkillLibrary.weapon_lightning.onFrame(tw.id, 0.26, inst, ctx); // ≥0.25 触发一跳
   const tickDmg = hp0 - main.currentHP;
-  T(`满充单跳≈36（v35方案B：20%×AD100×1.8，实际${tickDmg.toFixed(1)}）`, Math.abs(tickDmg - 36) < 1.5);
+  // Q5：lightningApConvertPct 100→200，AD100 全部转走、换到 AP200，跳伤害 =
+  // 20%×AP200×1.8 = 72（见 AttributeCalculator 的 drainedAD/apGained 解耦注释）。
+  T(`满充单跳≈72（Q5：20%×AP200×1.8，实际${tickDmg.toFixed(1)}）`, Math.abs(tickDmg - 72) < 1.5);
   // v35 方案B：闪电链弹射已删除——满充为纯单体，周围敌人不受伤、无电弧
   T('v35 闪电链已删除（无电弧、周围敌人无伤）', arcs === 0 && others.every(o => o.currentHP === 1e5));
   // 麻痹：照射中常驻（永久显示），停照 0.6s 后脱落

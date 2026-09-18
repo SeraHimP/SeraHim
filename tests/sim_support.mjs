@@ -57,81 +57,76 @@ function world() {
   return { bus, ents, fx, combat, ctx, mk, eq, run, stats };
 }
 
-// ==================== 图腾兵 ====================
-// 规格：施加 10% 伤害减免 / 25 固定护盾的光环，自身拥有高额固定护盾；
-// v51.6：主动技能"图腾涌泉"——法力攒满后为150码内友军各回复(70+15%法强)生命
-//（原来的被动"周期性回已损生命百分比"与旧主动"庇护波"一并删除，见 actives.js）。
+// ==================== 图腾兵（Q5 收窄成只做"光环治疗"）====================
+// 用户反馈"术士兵/图腾兵啥的各种属性堆一块太膨胀了"——原来的光环减伤/光环护盾
+// （passive_totem_aura）整条删除，主动"图腾涌泉"（法力攒满一次性群体治疗）改回
+// 常驻被动 passive_totem_mend（持续小额光环回复，不再吃法力槽）。自身高额固定
+// 护盾（passive_totem_bulwark）不受这次收窄影响。
 {
   const W = world();
   const c = SU().totem;
   const totem = W.mk('totem', 'blue', 0);
-  W.eq(totem, ['passive_totem_aura', 'passive_totem_bulwark']);
+  W.eq(totem, ['passive_totem_bulwark', 'passive_totem_mend']);
   const ally = W.mk('melee', 'blue', 50);
   const foe = W.mk('melee', 'red', 60);
   const allyMax = ally.baseStats.maxHP;
   ally.currentHP = Math.round(allyMax * 0.2);
+  foe.currentHP = Math.round(foe.baseStats.maxHP * 0.2);
 
-  // v51.9：用户对 v51.6 那次决定又改了主意——"图腾兵给自己加900护盾的技能，那个
-  // 应该是固定护盾，你改错成护盾了"。自身这份改回 kind:'stat'+statKey:'shieldFixedMax'
-  // （脱战一段时间后自动回满）；断言相应改回核对 stats.shieldFixedMax。
   const bulwarkEff = W.fx.getEffects(totem.id).find(e => e.blueprint.name === '图腾壁垒');
-  T(`图腾·自身高额护盾改回固定护盾（v51.9 用户重新定稿），走 kind:'stat'/shieldFixedMax（${c.selfShieldFlat}）`,
+  T(`图腾·自身高额护盾走 kind:'stat'/shieldFixedMax（${c.selfShieldFlat}）`,
     !!bulwarkEff && bulwarkEff.blueprint.kind === 'stat' && bulwarkEff.blueprint.statKey === 'shieldFixedMax');
 
   W.run(1, [totem]);      // 光环节流 0.3s，1 秒足够铺开
   const ts = W.stats(totem);
   T(`图腾·固定护盾生效在 shieldFixedMax 上（实测 ${ts.shieldFixedMax}）`,
     ts.shieldFixedMax === CONFIG.templates.totem.shieldFixedMax + c.selfShieldFlat);
-  const as = W.stats(ally);
-  T(`图腾光环·友军伤害减免 +${c.auraDamageReduction}%（实测 ${as.damageReduction}）`,
-    as.damageReduction === c.auraDamageReduction);
-  // v51.9：友军光环护盾改成 kind:'shield'（用户"给周围友军加固定护盾这个应该改成
-  // 护盾"）——不再体现在 stats.shieldFixedMax 上，改核对 EffectRegistry 里那条
-  // shield 效果本身的 shieldRemaining（不衰减、不回复）。
-  const allyShieldEff = W.fx.getEffects(ally.id).find(e => e.blueprint.name === '图腾守护' && e.blueprint.kind === 'shield');
-  T(`图腾光环·友军护盾 +${c.auraShieldFlat}（不会自动回复，实测 ${allyShieldEff?.shieldRemaining}）`,
-    !!allyShieldEff && allyShieldEff.shieldRemaining === c.auraShieldFlat);
-  T('图腾光环·友军 stats.shieldFixedMax 不再被这条光环动过（已经改走 kind:\'shield\'）',
-    as.shieldFixedMax === CONFIG.templates.melee.shieldFixedMax);
-  const fs = W.stats(foe);
-  T('图腾光环·不会加到敌方身上',
-    fs.damageReduction === CONFIG.templates.melee.damageReduction);
 
-  // 图腾涌泉（主动）：法力系统驱动 onCast，这里直接调用同一份实现（与 ManaSystem
-  // 何时触发它是两件事，这里只验证"法力攒满时打这一下"的结算本身对不对）。
-  const mendDef = SkillLibrary.active_totem_mend;
-  T('图腾涌泉·已注册为主动技能', !!mendDef && mendDef.category === 'active');
-  const p = mendDef.defaultParams;
-  const mendInst = { id: ++window._uid, skillId: 'active_totem_mend', state: {} };
-  const hp0 = ally.currentHP;
-  const ok = mendDef.onCast(totem.id, mendInst, W.ctx);
-  const tStats = W.stats(totem);
-  const expect = (p.baseHeal ?? 70) + (p.apScale ?? 0.15) * (tStats.abilityPower || 0);
-  T('图腾涌泉·施放成功（范围内有友军）', ok === true);
-  T(`图腾涌泉·友军回复 (${p.baseHeal}+${p.apScale * 100}%法强)（${hp0} → ${ally.currentHP.toFixed(1)}，期望 ${(hp0 + expect).toFixed(1)}）`,
-    Math.abs(ally.currentHP - (hp0 + expect)) < 0.01);
-  T('图腾涌泉·不治疗敌方', foe.currentHP === foe.baseStats.maxHP);
+  T('图腾光环（passive_totem_aura）已随 Q5 收窄整条删除，不再是默认清单/可装配技能',
+    !SkillLibrary.passive_totem_aura);
 
-  // 自身也要被治疗（"友军"含自己，alliesInRadius 的 findInRadius 默认含查询者本身）
+  // passive_totem_mend：持续光环治疗，1秒足够看出友军/自身血量都涨了、敌方没涨。
+  T(`图腾涌泉·友军血量在持续光环下应该上涨（${Math.round(allyMax * 0.2)} → ${ally.currentHP}）`,
+    ally.currentHP > Math.round(allyMax * 0.2));
+  T('图腾涌泉·不治疗敌方', foe.currentHP === Math.round(foe.baseStats.maxHP * 0.2));
+
+  const mendDef = SkillLibrary.passive_totem_mend;
+  T('图腾涌泉·已改回被动技能（不再吃法力槽）', !!mendDef && mendDef.category === 'passive');
+
+  // 按公式核对治疗量：healPerSec + apScale%×AP，乘以实际经过的时间。
   const W2 = world();
   const t2 = W2.mk('totem', 'blue', 0);
-  t2.currentHP = 10;
-  const tMax = t2.baseStats.maxHP;
-  const mendInst2 = { id: ++window._uid, skillId: 'active_totem_mend', state: {} };
-  SkillLibrary.active_totem_mend.onCast(t2.id, mendInst2, W2.ctx);
-  T(`图腾涌泉·也治疗自己（10 → ${t2.currentHP.toFixed(1)}，高于原血量）`, t2.currentHP > 10);
+  const ally2 = W2.mk('melee', 'blue', 20);
+  ally2.currentHP = 10;
+  W2.eq(t2, ['passive_totem_mend']);
+  W2.run(2, [t2]);
+  const hps = c.mendHealPerSec ?? 1, apPct = (c.mendApScalePct ?? 0.2) / 100;
+  const tStats2 = W2.stats(t2);
+  const expectHealPerSec = hps + apPct * (tStats2.abilityPower || 0);
+  const expected2 = 10 + expectHealPerSec * 2;
+  T(`图腾涌泉·2秒内按 healPerSec+apScale%×AP 的速率回复（10 → ${ally2.currentHP.toFixed(1)}，期望≈${expected2.toFixed(1)}）`,
+    Math.abs(ally2.currentHP - expected2) < 0.5);
 
-  // 满血单位不该浪费一次治疗（不会超出上限）
+  // 自身也要被治疗（同一段光环覆盖施法者本身）。
   const W3 = world();
   const t3 = W3.mk('totem', 'blue', 0);
-  const full = W3.mk('melee', 'blue', 30);
-  const mendInst3 = { id: ++window._uid, skillId: 'active_totem_mend', state: {} };
-  SkillLibrary.active_totem_mend.onCast(t3.id, mendInst3, W3.ctx);
+  t3.currentHP = 10;
+  W3.eq(t3, ['passive_totem_mend']);
+  W3.run(1, [t3]);
+  T(`图腾涌泉·也治疗自己（10 → ${t3.currentHP.toFixed(1)}，高于原血量）`, t3.currentHP > 10);
+
+  // 满血单位不该被治超（applyHeal 内部应该封顶在 maxHP）。
+  const W4 = world();
+  const t4 = W4.mk('totem', 'blue', 0);
+  const full = W4.mk('melee', 'blue', 30);
+  W4.eq(t4, ['passive_totem_mend']);
+  W4.run(1, [t4]);
   T('图腾涌泉·满血单位不会超出上限', full.currentHP === full.baseStats.maxHP);
 }
 
-// ==================== 术士兵 ====================
-// 规格：对附近友军施加 13% 固定双穿和 7% 伤害增幅（光环）；自身拥有 70% 固定双穿（状态）。
+// ==================== 术士兵（Q5 收窄成只做"光环增伤"）====================
+// 用户反馈同上——光环原来同时发双穿+增伤+法强三个维度，收窄成只留增伤这一件事，
+// 光环双穿/光环法强整条删除（自身双穿 selfPenPct 是"自己的"，不算在收窄范围内）。
 {
   const W = world();
   const c = SU().warlock;
@@ -142,12 +137,15 @@ function world() {
   W.run(1, [wl]);
 
   const as = W.stats(ally);
-  T(`术法共鸣·友军双穿 +${c.auraPenPct}%（实测 护甲 ${as.armorPenPercent} / 法术 ${as.magicPenPercent}）`,
-    as.armorPenPercent === c.auraPenPct && as.magicPenPercent === c.auraPenPct);
   T(`术法共鸣·友军伤害增幅 +${c.auraDamageAmpPct}%（实测 ${as.damageAmpPct}）`,
     as.damageAmpPct === c.auraDamageAmpPct);
+  T('术法共鸣·光环双穿已随 Q5 收窄整条删除，不再加到友军身上',
+    as.armorPenPercent === CONFIG.templates.melee.armorPenPercent
+    && as.magicPenPercent === CONFIG.templates.melee.magicPenPercent);
+  T('术法共鸣·光环法强已随 Q5 收窄整条删除，不再加到友军身上',
+    as.abilityPower === CONFIG.templates.melee.abilityPower);
   const fs = W.stats(foe);
-  T('术法共鸣·不会加到敌方身上', fs.armorPenPercent === CONFIG.templates.melee.armorPenPercent);
+  T('术法共鸣·不会加到敌方身上', fs.damageAmpPct === CONFIG.templates.melee.damageAmpPct);
 
   const ws = W.stats(wl);
   T(`术法贯通·自身双穿 ${c.selfPenPct}%（实测 护甲 ${ws.armorPenPercent} / 法术 ${ws.magicPenPercent}）`,

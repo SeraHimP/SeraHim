@@ -22,7 +22,9 @@ export const DEFAULT_MINION_PASSIVES = {
   // 本轮：新增 passive_siege_vs_tower_haste（"炮兵在攻击防御塔时，获得30%攻速"）。
   'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend', 'active_siege_haste', 'passive_siege_vs_tower_haste'],
   // v51.6：超级兵首次拥有主动技能——荆棘装甲（用户定稿具体数值，见 actives.js 头注）。
-  'super': ['passive_super_commander', 'active_thorn_armor'],
+  // Q5：新增 passive_super_timescale（出生时按游戏时间快照全属性倍率，早弱晚强，
+  // 见 minionPassives.js 头注）。
+  'super': ['passive_super_commander', 'active_thorn_armor', 'passive_super_timescale'],
   // v49 攻城车重做：一条被动拆成三条（攻城炮=常驻闸门，另两条是两个模式）。
   // atkmode_charge 是**攻击方式**技能（与塔的武器同一形状），充能的全部参数在它身上。
   'ram': ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
@@ -30,9 +32,12 @@ export const DEFAULT_MINION_PASSIVES = {
   // 已经从 SkillLibrary 里整个删除（不再是"可手动装但不默认装"，是真的不存在了）。
   // v51.6：passive_totem_mend（被动"图腾涌泉"）与原主动"庇护波"（active_totem_shield）
   // 一并删除，合并成新的主动技能 active_totem_mend（同名"图腾涌泉"，改成主动施放）。
+  // Q5：图腾兵收窄成只做"光环治疗"——passive_totem_aura（减伤+护盾光环）整条删除，
+  // active_totem_mend 改回被动 passive_totem_mend（同名"图腾涌泉"，这次是常驻光环
+  // 持续回复，不再吃法力槽），见 minionPassives.js 头注。
   // 本轮：屠戮扩展到除攻城车/超级兵外的全部兵种（用户定稿，见 minionPassives.js
   // 里 passive_totem_rend/passive_warlock_rend/passive_corrupt_rend 旁边的注释）。
-  'totem': ['passive_totem_aura', 'passive_totem_bulwark', 'active_totem_mend', 'passive_totem_rend'],
+  'totem': ['passive_totem_bulwark', 'passive_totem_mend', 'passive_totem_rend'],
   'warlock': ['passive_warlock_aura', 'passive_warlock_attune', 'active_warlock_empower', 'passive_warlock_rend'],
   'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison', 'passive_corrupt_rend'],
 };

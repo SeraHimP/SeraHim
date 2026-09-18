@@ -237,80 +237,66 @@ export const dragonSouls = {
     },
   },
 
-  // ==================== 🌪 风魂：全体移速；塔攻速 ====================
+  // ==================== 🌪 风魂：疾风连击（命中叠攻速，塔与大型小兵统一）====================
+  // v55 全部重做：用户实测反馈两个问题——①塔的攻速部分此前两轮都测出"跟没拿一样"
+  // （v51.7 已经改成直接发攻速百分比修过一次）；②更本质的问题——风魂只发给
+  // 塔+大型小兵（DragonSystem.SOUL_REWARD_OK 排除近战/远程），"全体小兵移速"这个
+  // 描述本身是假的：一整条兵线里只有图腾/术士/炮车这些大型小兵会提速，近战/远程
+  // 原地不动，一队兵被风魂硬生生拆成两拨分批到达，反而比不拿风魂更容易被各个
+  // 击破（用户原话："导致一个完整的兵队伍被拆散，甚至导致没有龙魂的队伍更强一些"）。
+  // 用户定稿重做方向（参考"羊刀"式装备）：不再碰移速，改成命中叠攻速——
+  // 每次命中获得一层疾风，最多5层，一段时间不打就清空。这样只有【正在打架】的单位
+  // 受益，不会有任何单位因为拿了这条魂而跑得比队友快，squad 不会被拆散；塔和大型
+  // 小兵共用同一套机制，不再分"塔一半/小兵一半"。用户确认层数用 bonusAttackSpeedPct
+  // 计（会自动走 attackSpeedRatio 收益率，不需要额外处理）。
   dragonsoul_wind: {
     id: 'dragonsoul_wind', name: '风魂', icon: '🌪', color: '#1abc9c', category: 'dragonsoul',
     applicableTypes: ['tower'],
     get description() {
       const p = P('wind');
-      const mv = p.moveSpeedPct ?? 0;
-      return (mv > 0 ? `小兵移速 +${mv}%，脱战后提升至 +${p.moveSpeedOutPct ?? 25}%` : `小兵脱战后移速 +${p.moveSpeedOutPct ?? 25}%`)
-           + `；防御塔攻速 +${p.towerBonusAttackSpeedPct ?? 35}%。`;
+      return `命中获得一层疾风（攻速+${p.perStackPct ?? 8}%，最多${p.maxStacks ?? 5}层）；`
+        + `${p.decaySec ?? 3}秒内未命中则清空。`;
     },
     get descTemplate() {
       const p = P('wind');
-      return `唯一被动——风魂：小兵移速（{val}%，脱战后升至 +${p.moveSpeedOutPct ?? 25}%）；防御塔攻速 +${p.towerBonusAttackSpeedPct ?? 35}%。`;
+      return `唯一被动——风魂：命中获得一层疾风（当前{val}%攻速，每层+${p.perStackPct ?? 8}%，最多${p.maxStacks ?? 5}层）；`
+        + `${p.decaySec ?? 3}秒内未命中则清空。`;
     },
-    computeCurrent: (entity) => {
+    computeCurrent: (entity, ctx) => {
       const p = P('wind');
-      return entity && entity._inCombat ? (p.moveSpeedPct ?? 0) : (p.moveSpeedOutPct ?? 25);
+      const eff = ctx?.effectRegistry?.getEffectByName?.(entity?.id, '风魂');
+      const stacks = eff ? eff.stacks : 0;
+      return stacks * (p.perStackPct ?? 8);
     },
     effects: [],
-    onEquip: (entityId, instance, ctx) => {
+    // 命中即叠层：走 EffectRegistry 原生的 stackPolicy:'stack'（自动+1层、刷新
+    // duration、封顶 maxStacks），不需要自己额外维护一份计数器——参考 EffectRegistry.js
+    // 177-196行，stackPolicy:'stack' 本来就是为这种"命中触发、层层递增、限时"设计的。
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
       const p = P('wind');
-      const e = ctx.entityContainer.get(entityId);
-      if (!e || e.type !== 'tower') return;
-      // ==================== v44：塔的那一半从攻速改为射程 ====================
-      // 上一版给塔的是攻速。但风魂的主题是"快"，而塔身上"快"的唯一有效形态不是攻速
-      //（那和别的魂重复），是**更早开火** —— 射程 +45 意味着敌方兵线还没进场就先挨一轮，
-      // 而且这份收益是复利的：塔多打一轮 → 兵线更早崩 → 塔挨的伤害更少 → 又多打一轮。
-      // 对照数据里风魂是 -0.54（比不拿还差），移速那一半反而把兵线推得脱离己方塔的保护。
-      // v45：塔那一半改回【速度】主题 —— 攻速收益率。
-      // 它是**乘性**的：本项目的攻速公式是 有效加成 = 正值 × attackSpeedRatio(默认 0.667)，
-      // 抬高收益率等于把这座塔身上所有来源的攻速加成一起放大，
-      // 而且对"不会移动"的单位完全有效（射程那一版方向对，但主题不是速度）。
-      //
-      // ==================== v51.7：v45 的道理没错，但漏看了一个前提 ====================
-      // "抬高收益率能放大所有攻速加成"这句话本身没问题，问题是塔身上**根本没有别的
-      // 攻速加成可放大**——塔模板的 bonusAttackSpeedPct 出厂就是 0，也没有任何其它
-      // 光环/魂/装备会往塔身上叠 bonusAttackSpeedPct。收益率再高，0 × 收益率还是 0。
-      // 这正是这条魂连着两轮 --sweep soul（v51.3 与本轮）都测出"塔那一半形同虚设"的
-      // 根因：sim_v45.mjs 里的旧单测手工把塔的 bonusAttackSpeedPct 造到了 60 去验证
-      // 乘法关系本身写对了没错，但这个前提在真实对局里从不成立——测试证明了公式
-      // 没写错，没证明这条魂真的有用，这两件事此前被当成一回事了。
-      // 用户原话："加移速对塔没啥用，开动脑筋重新做风魂"——于是这次不再去放大一个
-      // 本来就是空的桶，改成直接把攻速百分比本身发给塔，跳过收益率这层间接寻址。
-      // 依然是"速度"主题，只是把间接量换成直接量，这次会真的体现在塔每秒打几下上。
-      ctx.effectRegistry.apply(entityId, {
+      const attacker = ctx.entityContainer.get(attackerId);
+      if (!attacker || !attacker.alive) return;
+      const maxStacks = p.maxStacks ?? 5;
+      const perStack = p.perStackPct ?? 8;
+      ctx.effectRegistry.apply(attackerId, {
         name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
-        statKey: 'bonusAttackSpeedPct', flatValue: p.towerBonusAttackSpeedPct ?? 35,
-        duration: Infinity, permanent: true,
-        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        stackKey: 'dragonsoul_wind_asr',
-        description: `攻速 +${p.towerBonusAttackSpeedPct ?? 35}%`,
+        // flatValue 与 perStackFlat 取同一个值——EffectRegistry 的公式是
+        // totalFlat = flatValue + perStackFlat×(stacks-1)，只写 perStackFlat 的话
+        // 第1层会算出 0（stacks-1=0），命中一次却不涨攻速；两个都写成 perStack
+        // 才能让第1层就立刻生效，参考 active_warlock_empower 的同一个写法。
+        statKey: 'bonusAttackSpeedPct', flatValue: perStack, perStackFlat: perStack,
+        duration: p.decaySec ?? 3, stackable: true, maxStacks, stackPolicy: 'stack',
+        uniquePassive: true,
+        // description 用真实层数×每层百分比现算，不写死——层数变化后状态栏文案跟着变。
+        get description() {
+          return `攻速 +${perStack}%/层`;
+        },
       }, 'dragonsoul_wind');
     },
     onUnequip: (entityId, instance, ctx) => {
       for (const eff of ctx.effectRegistry.getEffects(entityId)) {
         if (eff.blueprint.name === '风魂') ctx.effectRegistry.remove(eff.id);
       }
-    },
-    onFrame: (entityId, dt, instance, ctx) => {
-      const p = P('wind');
-      const e = ctx.entityContainer.get(entityId);
-      if (!e || !e.alive || e.type === 'tower') return;   // 塔移速恒 0，没必要每帧刷
-      // 脱战判定复用引擎已有的 _inCombat / _combatTimer（攻击或受击时置起，4 秒后落下）。
-      // 自己再记一套"上次交战时间"必然与引擎那套漂移 —— 双份状态是本项目的老毛病。
-      const out = !e._inCombat;
-      const pct = out ? (p.moveSpeedOutPct ?? 25) : (p.moveSpeedPct ?? 0);
-      ctx.effectRegistry.apply(entityId, {
-        name: '风魂', icon: '🌪', kind: 'stat', color: '#1abc9c', type: 'buff',
-        aura: true, auraGrace: 1.0,
-        statKey: 'moveSpeed', percentValue: pct,
-        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        stackKey: 'dragonsoul_wind_ms',
-        description: `移速 +${pct}%${out ? '（脱战）' : ''}`,
-      }, 'dragonsoul_wind');
     },
   },
 

@@ -648,18 +648,24 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     S.totem.healIntervalSec === undefined && S.totem.healMissingPct === undefined);
   {
     const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-    const mend = SkillLibrary.active_totem_mend;
-    T('兵①附-图腾涌泉已改为主动技能 active_totem_mend（150码，70+15%法强）',
-      !!mend && mend.category === 'active'
-      && mend.defaultParams.range === 150
-      && mend.defaultParams.baseHeal === 70
-      && mend.defaultParams.apScale === 0.15);
+    // Q5：图腾兵收窄成只做"光环治疗"——active_totem_mend（法力攒满一次性群体
+    // 治疗）改回被动 passive_totem_mend（常驻光环持续回复，不再吃法力槽）。
+    const mend = SkillLibrary.passive_totem_mend;
+    T('兵①附-图腾涌泉已改回被动技能 passive_totem_mend（Q5：常驻光环持续回复，不吃法力槽）',
+      !!mend && mend.category === 'passive' && !SkillLibrary.active_totem_mend);
   }
-  T('兵②-图腾光环削弱：减伤 10→6、固定护盾 25→15',
-    S.totem.auraDamageReduction === 6 && S.totem.auraShieldFlat === 15);
+  // Q5：图腾兵光环收窄成只做"光环治疗"——原来的减伤/护盾光环（passive_totem_aura）
+  // 整条删除，auraDamageReduction/auraShieldFlat 两个字段随之删除，换成新的
+  // mendRange/mendHealPerSec/mendApScalePct（持续治疗数值）。
+  T('兵②-图腾光环收窄：减伤/护盾两个字段已删除，换成持续治疗的三个新字段',
+    S.totem.auraDamageReduction === undefined && S.totem.auraShieldFlat === undefined
+    && typeof S.totem.mendHealPerSec === 'number' && typeof S.totem.mendApScalePct === 'number');
   T('兵③-图腾自身 900 护盾不动（那是它的存在意义）', S.totem.selfShieldFlat === 900);
-  T('兵④-术士光环削弱：双穿 13→8、增伤 7→4',
-    S.warlock.auraPenPct === 8 && S.warlock.auraDamageAmpPct === 4);
+  // Q5：术士兵光环收窄成只做"光环增伤"——光环双穿/光环法强两个字段随之删除，
+  // auraDamageAmpPct 从 4 略微补到 6（收窄后的补偿，不是纯削弱）。
+  T('兵④-术士光环收窄：双穿/法强两个字段已删除，增伤 4→6（收窄后补偿）',
+    S.warlock.auraPenPct === undefined && S.warlock.auraAbilityPower === undefined
+    && S.warlock.auraDamageAmpPct === 6);
   T('兵⑤-术士自身 70% 双穿不动（只作用于自己）', S.warlock.selfPenPct === 70);
 
   // 炮兵：频率 +50%、属性下调、护盾来源收窄
