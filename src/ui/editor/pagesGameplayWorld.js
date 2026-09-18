@@ -478,7 +478,8 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     { key: 'entropyToDayNight', label: '熵 → 昼夜',   hint: '熵越高夜晚越长' },
   ],
   _WORLD_FIELDS: [
-    { path: 'dayPeriodSec', label: '一天时长(秒)', step: 30 },
+    { path: 'dayLenSec', label: '白天时长(秒)', step: 30 },
+    { path: 'nightLenSec', label: '夜晚时长(秒)', step: 30 },
     // 本轮：昼夜加成重做成四档连续曲线（正午/极夜最强，随相位渐变，天气同款
     // 25/50/75/100%档位系数），下面这些是【满档（100%）】的数值，档位系数不在
     // 这里改（复用 Weather.js 的 INTENSITY_TIERS，全局共用一套）。追加定稿：

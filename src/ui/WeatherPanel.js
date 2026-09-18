@@ -554,7 +554,14 @@ export const WeatherPanel = {
           .filter(Boolean);
         const exHtml = exRows.length ? exRows.join('')
           : `<div style="color:var(--text-dim);">（无极端天气）</div>`;
-        live.innerHTML = rows + `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">${exHtml}</div>`;
+        // 气象轴 v1（三层感知的"第三层"，见 docs/Q4-WEATHER-REDESIGN.md §5）：
+        // 偶尔一句文字叙事，不显示任何数值——只有出现明显冷暖趋势或到了寒潮/
+        // 酷热的量级时才有文字，平时不显示（不是每帧都要有话说）。
+        const hint = ws.getTemperatureHint?.();
+        const hintHtml = hint
+          ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);
+              color:var(--text-dim);font-size:11px;">🌡 ${hint}</div>` : '';
+        live.innerHTML = rows + `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);">${exHtml}</div>` + hintHtml;
       }
       requestAnimationFrame(tick);
     };

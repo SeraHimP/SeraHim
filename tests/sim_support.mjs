@@ -338,8 +338,12 @@ function world() {
     resolveDayPhase(0, ctx, false).phase === resolveDayPhase(9999, ctx, false).phase);
   T('__dayPhaseOverride 优先（调试定格）',
     resolveDayPhase(0, { ...ctx, __dayPhaseOverride: 0.75 }, true).phase === 0.75);
+  // v52：__dayPeriodSec 覆写现在是"整体等比缩放"（按住白天:夜晚=8:7 的既有比例，
+  // 见 DayNight.js 的 _dayNightLens 头注），不再是旧模型那种"总秒数的线性分数"。
+  // 覆写成 120 秒时，白天段缩放到 480×(120/900)=64 秒，正午（phase=0.25）在白天
+  // 时长一半处，也就是 t=32，不再是旧模型的 t=30（那是"总周期的1/4"这个假设）。
   T('自定义周期生效（读 __dayPeriodSec 而不是那个 setter 函数）',
-    resolveDayPhase(30, { __dayPeriodSec: 120 }, true).phase === 0.25);
+    Math.abs(resolveDayPhase(32, { __dayPeriodSec: 120 }, true).phase - 0.25) < 1e-9);
 
   // 三处必须读同一个函数 —— 各算一遍时"画面白天、数值夜晚"不会报错，只会让人怀疑眼睛
   const fs2 = (await import('fs')).default;

@@ -42,15 +42,51 @@ const KEYS = [
   { p: 1.00, sun: '#ffc48c', sky: '#e0a888', gnd: '#6a5a48', elev: 16, azim: 105, exp: 0.86, amb: 0.52, bg: '#2e2838' }, // 回到黎明（闭合）
 ];
 
-// 一整天的游戏秒数。**权威值在 CONFIG.world.dayPeriodSec**（用户定稿默认 480 = 8 分钟）；
-// 这里的常量只是模块自己的兜底（Config 缺字段时用），以及给测试当参照。
-// 覆盖优先级：CTX.__dayPeriodSec（运行时调试杠杆） > CONFIG.world.dayPeriodSec > DAY_PERIOD。
-export const DAY_PERIOD = 480;
+// ==================== 昼夜时长：白天/夜晚分开计（用户定稿：15分钟一轮，白天8/夜晚7）====================
+// 权威值在 CONFIG.world.dayLenSec / nightLenSec（默认 480/420）；这里的常量只是
+// 模块自己的兜底（Config 缺字段时用）与测试参照。DAY_PERIOD 保留为两者之和，
+// 供只关心"总周期多长"的旧调用点（phaseLabel 的默认参数等）使用，不拆分调用方。
+//
+// 关键设计：只改"相位走过去要花多久"，不重标 KEYS 那张颜色/曝光/太阳仰角表——
+// 5 个关键帧仍然卡在相位 0/0.25/0.5/0.75/1.0 这五个点（黎明/正午/黄昏/午夜/黎明），
+// dayNightAt() 本身完全不用动；变的只是 resolveDayPhase() 怎么把 gameTime 换算成
+// 相位——gameTime∈[0,dayLen) 线性映到相位∈[0,0.5)（白天），
+// gameTime∈[dayLen,dayLen+nightLen) 线性映到相位∈[0.5,1.0)（夜晚），不对称都体现
+// 在"走相位的速度"上。WorldState 的昼夜加成读的是同一个 resolveDayPhase 相位，
+// 自动继承新比例，不用在那边另外改。
+export const DAY_LEN = 480, NIGHT_LEN = 420;
+export const DAY_PERIOD = DAY_LEN + NIGHT_LEN;
 
-/** 当前生效的一天时长（秒）。所有读周期的地方都必须走这里，不要各自 `|| DAY_PERIOD`。 */
-export function dayPeriodSec(ctx = null) {
+/**
+ * 当前生效的白天/夜晚时长（秒）。CTX.__dayPeriodSec 仍然是运行时调试杠杆，
+ * 但语义变成"整体等比缩放"——按住白天:夜晚的既有比例，把总时长缩放到这个值，
+ * 而不是新开一对调试杠杆分别覆写白天/夜晚。
+ */
+function _dayNightLens(ctx = null) {
   const c = ctx || (typeof window !== 'undefined' ? window.CTX : null) || {};
-  return c.__dayPeriodSec || CONFIG.world?.dayPeriodSec || DAY_PERIOD;
+  const dayLen = CONFIG.world?.dayLenSec ?? DAY_LEN;
+  const nightLen = CONFIG.world?.nightLenSec ?? NIGHT_LEN;
+  const override = c.__dayPeriodSec;
+  if (override) {
+    const baseTotal = dayLen + nightLen;
+    const scale = Math.max(5, override) / Math.max(1, baseTotal);
+    return { dayLen: dayLen * scale, nightLen: nightLen * scale };
+  }
+  return { dayLen, nightLen };
+}
+
+/** 当前生效的一天总时长（秒）＝白天+夜晚。所有只关心"总周期"的地方走这里。 */
+export function dayPeriodSec(ctx = null) {
+  const { dayLen, nightLen } = _dayNightLens(ctx);
+  return dayLen + nightLen;
+}
+
+/** gameTime（秒）→ 相位（0..1），按白天/夜晚各自的时长分段线性映射。 */
+function _gameTimeToPhase(gameTime, dayLen, nightLen) {
+  const period = Math.max(1, dayLen + nightLen);
+  const t = ((gameTime % period) + period) % period;
+  return t < dayLen ? (t / Math.max(1, dayLen)) * 0.5
+                     : 0.5 + ((t - dayLen) / Math.max(1, nightLen)) * 0.5;
 }
 
 const _a = new THREE.Color(), _b = new THREE.Color();
@@ -164,6 +200,33 @@ export function applyWeatherOvercast(params, weatherSystem) {
   };
 }
 
+/**
+ * 气象轴 v1：温度对环境色调的极轻微微调（三层感知里的"第二层"，见
+ * docs/Q4-WEATHER-REDESIGN.md §5）。用户 + GPT 定稿："数值本身绝不显示，但应该
+ * 通过环境表现间接可感知"，且反复强调"变化应该非常微妙，不要做得明显到像滤镜"——
+ * 幅度因此刻意定得比 applyWeatherOvercast（阴天压光）小一个数量级：那个函数的
+ * exposureDrop 默认 0.35（满云量降 35% 曝光），这里满负荷（|T|=1）也只有 ±4%。
+ *
+ * 与 applyWeatherOvercast 同一个理由不改 dayNightAt() 本身、单开函数、
+ * main.js 里串联调用：保持"昼夜"是纯函数，"天气"叠加在它之上。
+ */
+const _tA = new THREE.Color(), _tB = new THREE.Color();
+export function applyWeatherTempTint(params, weatherSystem) {
+  if (!weatherSystem || !weatherSystem.enabled || !weatherSystem.getTemperature) return params;
+  const T = weatherSystem.getTemperature(); // -1冷 ~ +1热
+  if (!T) return params;
+  const W = (CONFIG.ui && CONFIG.ui.weatherLighting) || {};
+  const strength = W.tempTintStrength ?? 0.04; // 满负荷时的曝光/混色幅度上限
+  const warm = W.tempWarmColor ?? '#ffdca0';
+  const cool = W.tempCoolColor ?? '#a8c4e8';
+  const mix = Math.min(1, Math.abs(T)) * strength * 3; // 颜色混合比曝光更敏感一点，肉眼更容易先从色调看出来
+  const target = T > 0 ? warm : cool;
+  const exposure = params.exposure * (1 + T * strength);
+  const sunColor = mix > 0 ? '#' + _tA.set(params.sunColor).lerp(_tB.set(target), mix).getHexString() : params.sunColor;
+  const ambientSky = mix > 0 ? '#' + _tA.set(params.ambientSky).lerp(_tB.set(target), mix * 0.6).getHexString() : params.ambientSky;
+  return { ...params, exposure, sunColor, ambientSky, unitTint: unitTintOf(ambientSky, exposure) };
+}
+
 /** 相位（0..1）对应的一天时刻标签，供 UI/调试显示。 */
 export function phaseLabel(gameTime, period = DAY_PERIOD) {
   const phase = ((gameTime / Math.max(1, period)) % 1 + 1) % 1;
@@ -200,7 +263,8 @@ export function phaseLabelOf(phase) {
  */
 export function resolveDayPhase(gameTime, ctx = null, weatherEnabled = true) {
   const c = ctx || (typeof window !== 'undefined' ? window.CTX : null) || {};
-  const period = dayPeriodSec(c);
+  const { dayLen, nightLen } = _dayNightLens(c);
+  const period = dayLen + nightLen;
   // 手动定格优先（调试用）
   if (c.__dayPhaseOverride != null) {
     return { phase: Math.max(0, Math.min(1, c.__dayPhaseOverride)), period, active: true };
@@ -209,5 +273,5 @@ export function resolveDayPhase(gameTime, ctx = null, weatherEnabled = true) {
   // 关闭昼夜时锁定在 1/3 相位（约下午 2 点）：正午太阳近乎直射几乎无阴影，
   // 14 点约 58° 有像样的斜影 —— 与渲染层原有的取值保持一致。
   if (!active) return { phase: 1 / 3, period, active: false };
-  return { phase: ((gameTime / Math.max(1, period)) % 1 + 1) % 1, period, active: true };
+  return { phase: _gameTimeToPhase(gameTime, dayLen, nightLen), period, active: true };
 }

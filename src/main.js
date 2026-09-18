@@ -20,7 +20,7 @@ import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
 import { FACTIONS, canTarget, towerRuleFor, mapFactionsOf, scorerFactionOf } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
-import { dayNightAt, DAY_PERIOD, resolveDayPhase, applyWeatherOvercast } from './presentation/DayNight.js';
+import { dayNightAt, DAY_PERIOD, resolveDayPhase, applyWeatherOvercast, applyWeatherTempTint } from './presentation/DayNight.js';
 import { EventBus } from './utils/EventBus.js';
 import { equipSkill } from './core/skillParams.js';
 import { createFactories, effectiveMaxHP } from './core/factories.js';
@@ -258,7 +258,7 @@ CTX.__sceneStats = () => renderer3d ? renderer3d.sceneStats() : null;
 // __dayPeriod(秒) 改一天时长；__setDayPhase(0..1) 手动定格相位(null 恢复)。受光材质已接入 → 真实明暗。
 CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=强制锁默认时刻（14 点）
 CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== false); };
-CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || CONFIG.world?.dayPeriodSec || DAY_PERIOD); };
+CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || (CONFIG.world?.dayLenSec ?? 0) + (CONFIG.world?.nightLenSec ?? 0) || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem, weatherSystem);
 const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
@@ -799,7 +799,7 @@ function gameLoop(timestamp) {
     // 三处各算一遍时"画面白天、数值夜晚"这种不一致不会报错，只会让人怀疑眼睛。
     const dp = resolveDayPhase(CTX.gameTime, CTX, weatherSystem.enabled);
     // v51.26：阴天压光——下雨/下雪/起雾时云层遮阳，在昼夜光照之上再叠一层天气影响。
-    renderer3d.setLighting(applyWeatherOvercast(dayNightAt(dp.phase * dp.period, dp.period), weatherSystem));
+    renderer3d.setLighting(applyWeatherTempTint(applyWeatherOvercast(dayNightAt(dp.phase * dp.period, dp.period), weatherSystem), weatherSystem));
   }
   renderer3d?.render(canvasController);
   const t2 = performance.now();

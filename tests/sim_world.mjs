@@ -7,7 +7,7 @@ globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0, CTX: {} };
 const { CONFIG } = await import('../src/data/Config.js');
 const { WorldState } = await import('../src/systems/WorldState.js');
 const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
-const { DAY_PERIOD } = await import('../src/presentation/DayNight.js');
+const { DAY_LEN, NIGHT_LEN } = await import('../src/presentation/DayNight.js');
 let pass = 0, fail = 0; const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 
 const mkUnit = (fac) => ({
@@ -40,8 +40,11 @@ T(`耦合全关时属性零漂移（${drift.length} 项变化）`, drift.length 
 CONFIG.world.couplings.dayNight = _dn0;
 
 // ---- ② 昼夜相位口径：与 DayNight 关键帧一致（0=黎明 .25=正午 .5=黄昏 .75=午夜）----
+// v52：白天/夜晚不对称（用户定稿15分钟：8/7），相位不再是 DAY_PERIOD 的线性分数——
+// 正午在白天时长一半处、黄昏在白天结束处、午夜在夜晚时长一半处（见 DayNight.js
+// 的 _gameTimeToPhase 头注），不能再用 DAY_PERIOD×0.25/0.5/0.75 这种对称假设反推 t。
 const at = (t) => { world.update(0.1, t); return { ...world.daynight }; };
-const noon = at(DAY_PERIOD * 0.25), dusk = at(DAY_PERIOD * 0.5), mid = at(DAY_PERIOD * 0.75);
+const noon = at(DAY_LEN * 0.5), dusk = at(DAY_LEN), mid = at(DAY_LEN + NIGHT_LEN * 0.5);
 T(`正午判为白天（相位 ${noon.phase.toFixed(2)}）`, !noon.isNight);
 T(`午夜判为夜晚（相位 ${mid.phase.toFixed(2)}）`, mid.isNight);
 T('黄昏是昼夜分界（相位 0.5 起为夜）', dusk.isNight);
@@ -65,7 +68,7 @@ const mkTower = (fac) => ({
 const { tierOf } = await import('../src/data/Weather.js');
 const afRatio = 0.6; // adaptiveForce 转攻击力的官方比例（AD 明显高于 AP 时走这条）
 
-world.update(0.1, DAY_PERIOD * 0.25);            // 正午 → dayCloseness=1（严重档，小兵满档）
+world.update(0.1, DAY_LEN * 0.5);            // 正午（白天时长一半处）→ dayCloseness=1（严重档，小兵满档）
 AttributeCalculator.tick();
 const minionDay = AttributeCalculator.calc(mkUnit('blue'), []);
 AttributeCalculator.tick();
@@ -90,7 +93,7 @@ const redMinionDay = AttributeCalculator.calc(mkUnit('red'), []);
 T('正午：蓝红小兵加成完全对称（不再是阵营优势）',
   Math.abs(minionDay.moveSpeed - redMinionDay.moveSpeed) < 1e-9);
 
-world.update(0.1, DAY_PERIOD * 0.75);            // 午夜 → nightCloseness=1（严重档，塔满档）
+world.update(0.1, DAY_LEN + NIGHT_LEN * 0.5);            // 午夜（夜晚时长一半处）→ nightCloseness=1（严重档，塔满档）
 AttributeCalculator.tick();
 const minionNight = AttributeCalculator.calc(mkUnit('blue'), []);
 AttributeCalculator.tick();
@@ -146,7 +149,7 @@ console.log('  黎明·防御塔的修正来源：' + rows.map(r => `${r.source}
 // 不显示进度，有增益才显示进度"；"把'小兵占优（本单位不吃这条）'删掉"。
 // 本轮追加：昼夜行现在带 tier（天气同款四档），且黎明/黄昏两侧可以同时 favored。
 {
-  world.update(0.1, DAY_PERIOD * 0.25); // 挪回正午：night 侧精确为 0，适合验证"完全不吃这条"
+  world.update(0.1, DAY_LEN * 0.5); // 挪回正午：night 侧精确为 0，适合验证"完全不吃这条"
   const towerRow = world.getBreakdown(mkTower('red')).find(r => r.source.startsWith('昼夜'));
   T('⑤b-正午·塔（夜晚侧 nightCloseness=0）：favored=false，mods 为空对象',
     towerRow.favored === false && Object.keys(towerRow.mods).length === 0);
@@ -209,7 +212,7 @@ T('熵接口已就位（value/black/white/red 四个通道）',
 
 // ---- ⑦ 总开关：关掉 WorldState 本身，一切修正消失 ----
 CONFIG.world.couplings.dayNight = true;
-world.update(0.1, DAY_PERIOD * 0.75);
+world.update(0.1, DAY_LEN + NIGHT_LEN * 0.5);
 world.setEnabled(false);
 AttributeCalculator.tick();
 const off = AttributeCalculator.calc(mkTower('red'), []);

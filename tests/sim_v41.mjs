@@ -348,22 +348,33 @@ function unit(ents, o = {}) {
   }
 }
 
-// ==================== 七、昼夜周期：软编码，默认 8 分钟 ====================
+// ==================== 七、昼夜周期：软编码，白天/夜晚分开计时（用户定稿15分钟：8/7）====================
+// v52：原来是单一的 dayPeriodSec=480（对称4/4分钟），本轮改成 dayLenSec=480 /
+// nightLenSec=420（不对称8/7分钟，总计15分钟=900秒）。见 DayNight.js 的
+// _gameTimeToPhase 头注——只改"走相位的速度"，关键帧表本身不动。
 {
-  const { DAY_PERIOD, dayPeriodSec, resolveDayPhase } = await import('../src/presentation/DayNight.js');
-  T('CONFIG 里有可编辑的一天时长', typeof CONFIG.world.dayPeriodSec === 'number');
-  T(`默认 8 分钟（480 秒，原来是写死的 360）`, CONFIG.world.dayPeriodSec === 480);
-  T('模块兜底常量也跟着改成 480（两处不一致会在 Config 缺字段时露馅）', DAY_PERIOD === 480);
-  T('周期解析走唯一入口 dayPeriodSec', typeof dayPeriodSec === 'function' && dayPeriodSec({}) === 480);
-  T('CTX 覆写优先于 CONFIG（调试杠杆仍然好使）', dayPeriodSec({ __dayPeriodSec: 120 }) === 120);
-  T('相位按新周期走：t=240 正好是半天（黄昏）',
-    Math.abs(resolveDayPhase(240, {}, true).phase - 0.5) < 1e-9);
-  T('DayNight.js 里不再有写死的 360',
-    !/DAY_PERIOD = 360/.test(fs.readFileSync('src/presentation/DayNight.js', 'utf8')));
-  // 2026-08 用户定稿："设置窗口只留系统设置"——dayPeriodSec 的入口搬到
-  // "游戏性→熵"页（pagesGameplayWorld.js），设置面板不再管这个。
+  const { DAY_PERIOD, DAY_LEN, NIGHT_LEN, dayPeriodSec, resolveDayPhase } = await import('../src/presentation/DayNight.js');
+  T('CONFIG 里有可编辑的白天/夜晚时长', typeof CONFIG.world.dayLenSec === 'number' && typeof CONFIG.world.nightLenSec === 'number');
+  T('默认白天8分钟(480秒)/夜晚7分钟(420秒)', CONFIG.world.dayLenSec === 480 && CONFIG.world.nightLenSec === 420);
+  T('模块兜底常量也跟着一致（两处不一致会在 Config 缺字段时露馅）',
+    DAY_LEN === 480 && NIGHT_LEN === 420 && DAY_PERIOD === 900);
+  T('周期解析走唯一入口 dayPeriodSec，总时长=白天+夜晚=900', typeof dayPeriodSec === 'function' && dayPeriodSec({}) === 900);
+  T('CTX 覆写优先于 CONFIG（调试杠杆仍然好使，按白天:夜晚比例整体缩放）',
+    dayPeriodSec({ __dayPeriodSec: 90 }) === 90);
+  // 相位按不对称周期走：正午(phase=0.25)在白天时长一半处(t=240)；
+  // 黄昏(phase=0.5)在白天结束处(t=480，不再是旧模型的 t=240)；
+  // 午夜(phase=0.75)在夜晚时长一半处(t=480+210=690)。
+  T('相位①-正午在白天时长一半处(t=240)', Math.abs(resolveDayPhase(240, {}, true).phase - 0.25) < 1e-9);
+  T('相位②-黄昏在白天结束处(t=480，不是旧模型对称时的t=240)',
+    Math.abs(resolveDayPhase(480, {}, true).phase - 0.5) < 1e-9);
+  T('相位③-午夜在夜晚时长一半处(t=690)', Math.abs(resolveDayPhase(690, {}, true).phase - 0.75) < 1e-9);
+  T('相位④-白天段(0~480s)明显比夜晚段(480~900s)长，走一圈仍然闭合回到相位0',
+    Math.abs(resolveDayPhase(900, {}, true).phase - 0) < 1e-9);
+  // 2026-08 用户定稿："设置窗口只留系统设置"——入口在"游戏性→熵"页
+  // （pagesGameplayWorld.js），设置面板不再管这个。
   T('入口搬到"游戏性→熵"（软编码必须可改，不是这条入口本身消失了）',
-    /dayPeriodSec/.test(fs.readFileSync('src/ui/editor/pagesGameplayWorld.js', 'utf8')));
+    /dayLenSec/.test(fs.readFileSync('src/ui/editor/pagesGameplayWorld.js', 'utf8'))
+    && /nightLenSec/.test(fs.readFileSync('src/ui/editor/pagesGameplayWorld.js', 'utf8')));
 }
 
 // ==================== 八、植被：摆在墙顶，不是埋在墙里 ====================

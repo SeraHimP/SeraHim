@@ -246,16 +246,21 @@ CONFIG.world.couplings.entropyToUnits = false;
 CONFIG.world.couplings.entropyToDayNight = true;
 const busB = new EventBus();
 const wB = new WorldState({ bus: busB });
-const { DAY_PERIOD } = await import('../src/presentation/DayNight.js');
+// v52：白天/夜晚不对称（用户定稿15分钟：8/7）——正午在白天时长一半处，不再是
+// DAY_PERIOD 的线性分数，见 DayNight.js 的 _gameTimeToPhase 头注。_stretchNight
+// 本身按 phase（0..1，0.5 仍是昼夜分界）拉伸，不受这次改动影响，不用碰。
+const { DAY_LEN } = await import('../src/presentation/DayNight.js');
 // 中性熵：相位应与未拉伸时一致
-wB.update(0.1, DAY_PERIOD * 0.25);
+wB.update(0.1, DAY_LEN * 0.5);
 T(`中性熵不改变相位（${wB.daynight.phase.toFixed(3)} ≈ 0.25）`, Math.abs(wB.daynight.phase - 0.25) < 1e-6);
-// 高熵：同一时刻应更偏向夜晚
+// 高熵：同一时刻应更偏向夜晚（取白天接近结束、但还没到黄昏的一点，与旧模型
+// "DAY_PERIOD*0.45"同一个意图：临近但还没跨过昼夜分界，才测得出"熵拉长夜晚"
+// 让相位提前跨过 0.5 这条效果）。
 for (let i = 0; i < 300; i++) busB.emit('entity:death', { entity: { type: 'melee', _mapFaction: 'blue' } });
-wB.update(0.1, DAY_PERIOD * 0.45);
+wB.update(0.1, DAY_LEN * 0.9);
 const hiPhase = wB.daynight.phase;
 wB.entropySystem.reset();
-wB.update(0.1, DAY_PERIOD * 0.45);
+wB.update(0.1, DAY_LEN * 0.9);
 T(`高熵时同一时刻相位更晚（${hiPhase.toFixed(3)} > ${wB.daynight.phase.toFixed(3)}）`,
   hiPhase > wB.daynight.phase);
 T('周期总长不变（相位仍在 0..1）', hiPhase >= 0 && hiPhase < 1);

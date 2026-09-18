@@ -699,5 +699,109 @@ import fs from 'fs';
   setExtCharge(ws3, 'haze_surge', 0);
 }
 
+// ==================== 气象轴 v1：温度轴 ====================
+// 用户 + GPT 讨论定稿（docs/Q4-WEATHER-REDESIGN.md §5）：5 种基础天气的 μ 不再是
+// 每局固定随机数，改由一条更慢的隐藏温度轴（-1冷~+1热）实时偏移；气候模板直接
+// 决定温度轴的长期目标值；雪强/晴中/雨弱不对称耦合，雾/风不挂；轴本身永不在
+// UI 显示数值。每条断言钉"行为形状"（方向、量级关系），不钉具体数字——OU 是
+// 随机过程，钉死数字必然偶发抖动失败。
+{
+  const { TEMP_AXIS_COUPLING, CLIMATE_TEMPLATES } = await import('../src/data/Weather.js');
+
+  T('轴①-耦合系数：雪强(负)/晴中(正)/雨弱(正)/雾风不挂，且 |雪耦合| 明显大于其它三项',
+    TEMP_AXIS_COUPLING.snow < 0 && TEMP_AXIS_COUPLING.clear > 0 && TEMP_AXIS_COUPLING.rain > 0
+    && TEMP_AXIS_COUPLING.fog === 0 && TEMP_AXIS_COUPLING.wind === 0
+    && Math.abs(TEMP_AXIS_COUPLING.snow) > Math.abs(TEMP_AXIS_COUPLING.clear)
+    && Math.abs(TEMP_AXIS_COUPLING.clear) > Math.abs(TEMP_AXIS_COUPLING.rain));
+
+  T('轴②-每个气候模板都显式给了 muT（气候模板必须直接决定温度轴目标，不能只给随机倾向）',
+    Object.entries(CLIMATE_TEMPLATES).every(([id, tpl]) => id === 'random' || typeof tpl.muT === 'number'));
+  T('轴③-沙漠 muT 为正（热）、极地 muT 为负（冷），方向符合气候直觉',
+    CLIMATE_TEMPLATES.desert.muT > 0 && CLIMATE_TEMPLATES.polar.muT < 0);
+
+  // ---- 动态行为：沙漠模板长期平均温度应明显高于极地模板（统计断言，给足容差防抖动）----
+  const avgTempOver = (tpl, seed, steps) => {
+    const w = new WeatherSystem(null);
+    w.setEnabled(true);
+    w.setTemplate(tpl);
+    w.reset(seed);
+    let sum = 0;
+    for (let i = 0; i < steps; i++) { w.update(1); sum += w.getTemperature(); }
+    return sum / steps;
+  };
+  const desertAvg = avgTempOver('desert', 101, 1200);
+  const polarAvg = avgTempOver('polar', 102, 1200);
+  const temperateAvg = avgTempOver('temperate', 103, 1200);
+  T('轴④-沙漠模板 20 分钟内的平均温度明显高于极地模板（长期趋向各自的 muT 目标）',
+    desertAvg > polarAvg + 0.5);
+  T('轴⑤-沙漠/极地都明显偏离中性（温带附近），不是"轴形同虚设、大家都在 0 附近打转"',
+    desertAvg > 0.2 && polarAvg < -0.2);
+  T('轴⑥-温带模板的平均温度比沙漠/极地都更接近 0（模板性格有区分度）',
+    Math.abs(temperateAvg) < Math.abs(desertAvg) && Math.abs(temperateAvg) < Math.abs(polarAvg));
+
+  // ---- getTemperature() 读数边界：永远落在 [-1,1]（供环境色调/文字提示消费，不越界）----
+  const wBound = new WeatherSystem(null); wBound.setEnabled(true); wBound.setTemplate('polar'); wBound.reset(9);
+  let outOfBound = false;
+  for (let i = 0; i < 1200; i++) { wBound.update(1); const t = wBound.getTemperature(); if (t < -1 || t > 1) outOfBound = true; }
+  T('轴⑦-getTemperature() 读数任何时刻都落在 [-1,1] 区间内', !outOfBound);
+
+  // ==================== 天气→特定技能定向修正（框架，v1 表为空） ====================
+  {
+    const { WEATHER_SKILL_MODS } = await import('../src/data/weatherSkillMods.js');
+    const wm = new WeatherSystem(null); wm.setEnabled(true);
+    const setWmCharge = (id, v) => { wm._charge[id] = v; wm._invalidateWeatherReadout(); };
+
+    T('框①-出厂表为空（用户确认要不要做具体内容之前不填真实条目）', WEATHER_SKILL_MODS.length === 0);
+    T('框②-表为空时，任何技能/参数组合都读出 null（不是 0，调用方能分清"无规则"和"修正为0"）',
+      wm.getSkillParamMod('some_skill', 'someParam') === null);
+    // 临时塞一条合成条目验证读出机制本身跑得通（不代表真实内容，测完就撤）。
+    WEATHER_SKILL_MODS.push({ weatherId: 'fog', skillId: 'test_skill', paramKey: 'testParam', flat: -50 });
+    setWmCharge('fog', 0.9);
+    const mod = wm.getSkillParamMod('test_skill', 'testParam');
+    T('框③-有条目匹配时读出按当前天气档位系数缩放的 flat 值（雾严重档=100%系数，应为-50）',
+      mod && Math.abs(mod.flat - (-50)) < 1e-9);
+    T('框④-技能id/参数名任一对不上都不命中', wm.getSkillParamMod('test_skill', 'otherParam') === null
+      && wm.getSkillParamMod('other_skill', 'testParam') === null);
+    setWmCharge('fog', 0);
+    T('框⑤-天气完全退散（充能0）后，该条目不再贡献任何强度，读出为 null（与"表里没这条"同一种"无效"表达，不是"修正值恰好是0"）',
+      wm.getSkillParamMod('test_skill', 'testParam') === null);
+    WEATHER_SKILL_MODS.length = 0; // 撤掉测试用的合成条目，不污染后续/其它套件
+  }
+
+  // ---- 关闭态：天气关闭时温度读数恒为 0（不影响任何下游）----
+  // 注意：WeatherSystem 构造函数默认 enabled=true（用户定稿"天气默认开启"），
+  // 这里要显式关掉才是测"关闭"这条路径。
+  const wOff = new WeatherSystem(null); wOff.setTemplate('desert'); wOff.reset(5);
+  wOff.setEnabled(false);
+  T('轴⑧-天气系统关闭时 getTemperature() 恒为 0', wOff.getTemperature() === 0);
+
+  // ---- 三层感知第二层：环境色调微调（DayNight.js）----
+  const { applyWeatherTempTint } = await import('../src/presentation/DayNight.js');
+  const baseParams = { exposure: 1.0, sunColor: '#ffffff', ambientSky: '#8fbce6', ambientGround: '#000', background: '#000' };
+  const wHot = new WeatherSystem(null); wHot.setEnabled(true); wHot.setTemplate('desert'); wHot.reset(11);
+  for (let i = 0; i < 1200; i++) wHot.update(1);
+  const tinted = applyWeatherTempTint(baseParams, wHot);
+  T('轴⑩-环境色调微调：数值本身绝不进这个函数的返回值（只有 exposure/sunColor/ambientSky/unitTint 变化）',
+    !('temperature' in tinted) && !('T' in tinted));
+  T('轴⑪-色调微调幅度很轻微：exposure 相对原值的变化不超过 10%（不能做成明显滤镜）',
+    Math.abs(tinted.exposure - baseParams.exposure) < baseParams.exposure * 0.1);
+  T('轴⑫-天气关闭时环境色调微调是纯直通（不碰 params）',
+    applyWeatherTempTint(baseParams, null) === baseParams);
+
+  // ---- 三层感知第三层：文字叙事提示（永不含数值）----
+  const wHint = new WeatherSystem(null); wHint.setEnabled(true); wHint.setTemplate('polar'); wHint.reset(22);
+  let sawHint = false;
+  for (let i = 0; i < 1800; i++) {
+    wHint.update(1);
+    const h = wHint.getTemperatureHint();
+    if (h) {
+      sawHint = true;
+      T('轴⑬-文字叙事提示不包含任何数字（用户+GPT定稿"数值本身绝不显示"）',
+        !/[0-9]/.test(h));
+    }
+  }
+  T('轴⑭-极地模板跑够久后至少出现过一次文字提示（不是永远沉默的死代码）', sawHint);
+}
+
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail?1:0);

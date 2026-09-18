@@ -1,4 +1,5 @@
-import { BASE_WEATHERS, EXTREME_WEATHERS, TARGET_MATCHERS, CLIMATE_TEMPLATES, tierOf, tierOfExtreme, INTENSITY_TIERS } from '../data/Weather.js';
+import { BASE_WEATHERS, EXTREME_WEATHERS, TARGET_MATCHERS, CLIMATE_TEMPLATES, TEMP_AXIS_COUPLING, tierOf, tierOfExtreme, INTENSITY_TIERS } from '../data/Weather.js';
+import { WEATHER_SKILL_MODS } from '../data/weatherSkillMods.js';
 
 // v35 性能：极端天气条目静态缓存——充能方程每步都要遍历全部极端天气，
 // 前向模拟一次跑 240+ 步，每步 Object.entries 重建数组是纯浪费（15ms → ~4ms）。
@@ -45,6 +46,19 @@ const OSC_SHARPNESS = 4;        // 尖峰陡度：越大，每种天气"当家"�
 const DOMINANCE_HYSTERESIS = 0.06; // 主导天气迟滞：新天气需领先 6 个百分点才算易主（滤抖动，不影响底层权重）
 const FORECAST_HORIZON = 240;   // 预报时长（秒）——滚动条能看到未来 4 分钟
 const TIMELINE_LENGTH = 7200;   // 预生成的时间线长度（秒）＝2小时，远超一局时长
+
+// ==================== 气象轴 v1（用户 + GPT 讨论定稿，见 docs/Q4-WEATHER-REDESIGN.md §5）====================
+// 只做一条轴：温度。比 5 种天气自身的演化慢得多，代表"这局比赛的气候基调"。
+// AXIS_IDS 单独存在（不并入 baseIds）：softmax/权重/极端天气触发等一切现有逻辑
+// 只认 baseIds，温度轴不会被这些循环意外吃进去；同时把它设计成数组（不是单个
+// 字符串常量）是为将来可能追加的第二条轴（湿度等，本轮明确不做）留位置。
+const AXIS_IDS = ['temp'];
+// 目标回归周期 15~30 分钟（平均约 20 分钟）——不是"天气 θ 的固定倍数"，是按
+// 本游戏真实一局时长（balance_matrix 实测均值 35 分钟）反推的：要让温度轴在一局
+// 里能稳定走完约一轮"偏暖→偏冷"或反向的完整弧线，同时明显慢于天气自身 60~600秒
+// 的回归周期，产生"季节感"而不是又一条同频率的天气曲线。
+const AXIS_TARGET_DURATION_MIN = 900, AXIS_TARGET_DURATION_MAX = 1800;
+const AXIS_SIGMA_COEF = 0.5;    // 稳态标准差系数（同 sigma/theta 的换算方式），让 T 大部分时间落在目标附近 ±0.8 左右
 
 export class WeatherSystem {
   constructor(eventBus) {
@@ -119,8 +133,17 @@ export class WeatherSystem {
     // （实测 0.8 时占比长期挤在 20~28% 区间，主导天气频繁易主、极端天气永远触发不了。）
     this.sigma = 0.9 * Math.sqrt(2 * this.theta);
 
+    // 气象轴 v1：温度自己一条独立的 θ/σ，比天气本身慢得多（见 AXIS_TARGET_DURATION_*
+    // 头注），也是每局单独随机一次——同一张图不会每局温度轴节奏都一样。
+    const axisDuration = AXIS_TARGET_DURATION_MIN
+      + this._rng() * (AXIS_TARGET_DURATION_MAX - AXIS_TARGET_DURATION_MIN);
+    this.thetaAxis = 1 / axisDuration;
+    this.sigmaAxis = AXIS_SIGMA_COEF * Math.sqrt(2 * this.thetaAxis);
+
     this._initMu();
+    this._initMuT();
     this._clock = 0;
+    this._tempLagTracker = null; // 气象轴 v1：新局重新开始追踪，不带上一局的滞后值
     this._dominantId = null;
     // Q3 根因修复：整条天气时间线在 reset 时【一次性预生成】。
     //
@@ -179,6 +202,21 @@ export class WeatherSystem {
   }
 
   /**
+   * 气象轴 v1：温度轴的目标值（μ_T）。用户 + GPT 定稿："气候模板必须直接决定温度轴
+   * 的长期目标值，不能只给初始随机倾向"——否则"沙漠"模板完全可能在单局里恰好抽到
+   * 一条偏冷的随机轨迹，"选了沙漠却下雪"。与 _initMu 同一套写法（模板值 ± 扰动，
+   * 无模板/random 时全随机），只是只有一个标量、没有 baseIds 循环。
+   */
+  _initMuT() {
+    const tpl = CLIMATE_TEMPLATES[this._template];
+    if (tpl && tpl.muT != null) {
+      this._muT = _clamp(tpl.muT + (this._rng() - 0.5) * 0.3, -1, 1);
+    } else {
+      this._muT = _clamp((this._rng() - 0.5) * 2, -1, 1); // 全随机：-1~+1 均匀
+    }
+  }
+
+  /**
    * 生成时间线。startFrom 给定时可【只重算未来】——过去的曲线不需要重算，
    * 省一半开销（改 mu 时用得上：4.27ms → 约 2ms）。
    */
@@ -195,6 +233,10 @@ export class WeatherSystem {
       for (const id of this.baseIds) {
         x[id] = this._mu[id] + (this._rng() - 0.5) * 1.5; // 起始分数在均值附近撒开
       }
+      // 气象轴 v1：起点在 μ_T 附近小幅撒开（同一空间：×MU_GAIN，见 _stepOU 头注），
+      // 撒开幅度比天气本身小——轴代表"这局的气候基调"，开局就该比较接近模板目标，
+      // 不需要像单条天气那样大幅度随机起跳。
+      x.temp = this._muT * MU_GAIN + (this._rng() - 0.5) * 0.6;
     }
     const t0 = startFrom > 0 ? Math.floor(startFrom / SAMPLE_INTERVAL) * SAMPLE_INTERVAL : 0;
     for (let t = t0; t <= TIMELINE_LENGTH; t += SAMPLE_INTERVAL) {
@@ -209,6 +251,18 @@ export class WeatherSystem {
     if (!this.enabled) return;
     this._clock += dt;
     this._x = this._sampleTimeline(this._clock);
+    // 气象轴 v1：温度的滞后追踪值，供 getTemperatureHint() 判断"是否正在明显变化"。
+    // 平滑常数取 400 秒——比温度轴自身回归周期（15~30分钟）短、比天气本身
+    // （1~10分钟）长，专门卡在"能看出温度轴走向"这个时间尺度上。
+    {
+      const cur = this.getTemperature();
+      if (this._tempLagTracker == null) this._tempLagTracker = cur;
+      else {
+        const tau = 400;
+        const alpha = 1 - Math.exp(-dt / tau);
+        this._tempLagTracker += (cur - this._tempLagTracker) * alpha;
+      }
+    }
     // v51.26：_x 换了，权重/强度缓存必须失效——放在 _updateCharges 之前，
     // 好让它内部那次 getWeights() 用新 _x 重算并把新值缓存下来；
     // _effStrCache/_extStrCache 这里清空后，一直空到 _updateCharges 改完
@@ -353,6 +407,41 @@ export class WeatherSystem {
     return this._charge[id] ?? this._extremeCharge[id] ?? 0;
   }
 
+  /**
+   * 气象轴 v1：当前温度读数（-1 最冷 ~ +1 最热），钳位后的"物理"数值。
+   * 用户 + GPT 定稿：这个数值本身【永远不在 UI 上显示】，只给环境色调微调/
+   * 天气面板的文字叙事提示（"寒意正在加深"这类）这两处内部消费者使用。
+   */
+  getTemperature() {
+    if (!this.enabled) return 0;
+    const t = this._x.temp;
+    if (t == null) return 0;
+    return Math.max(-1, Math.min(1, t / MU_GAIN));
+  }
+
+  /**
+   * 气象轴 v1："三层感知"的第三层——偶尔一句文字叙事，永不显示数值（用户 + GPT
+   * 定稿，见 docs/Q4-WEATHER-REDESIGN.md §5）。只有出现【明显趋势】或到了寒潮/
+   * 酷热的量级时才返回文字，平时返回 null（不需要"每帧都有话说"）。
+   *
+   * 趋势判据：一条比温度轴本身（15~30分钟回归周期）更短、又比天气本身
+   * （1~10分钟）更长的滞后追踪值（_tempLagTracker，见 update() 里的指数平滑），
+   * 当前读数与它偏离够多就是"正在明显变化"；偏离不大但绝对值已经很极端，就报
+   * "正笼罩/正蒸腾"这类持续态描述。
+   */
+  getTemperatureHint() {
+    if (!this.enabled) return null;
+    const cur = this.getTemperature();
+    const lag = this._tempLagTracker ?? cur;
+    const delta = cur - lag;
+    const TREND = 0.12, EXTREME = 0.55;
+    if (delta <= -TREND) return '寒意正在加深';
+    if (delta >= TREND) return '气温正在回暖';
+    if (cur <= -EXTREME) return '寒潮笼罩战场';
+    if (cur >= EXTREME) return '暑气蒸腾战场';
+    return null;
+  }
+
   /** 某天气的当前档位。极端天气实体可达第 5 档"极端"（≥88% 充能，150%）。 */
   getTier(id) {
     if (EXTREME_WEATHERS[id]) return tierOfExtreme(this._extremeCharge[id] || 0);
@@ -369,11 +458,24 @@ export class WeatherSystem {
     const frac = (t - a.t) / SAMPLE_INTERVAL;
     const out = {};
     for (const id of this.baseIds) out[id] = a.x[id] + (b.x[id] - a.x[id]) * frac;
+    for (const id of AXIS_IDS) out[id] = a.x[id] + (b.x[id] - a.x[id]) * frac;
     return out;
   }
 
   _stepOU(x, dt, rng, t = 0) {
     const sqrtDt = Math.sqrt(dt);
+
+    // ==================== 气象轴 v1：温度（先于 5 种天气步进）====================
+    // 纯 OU，不挂"天气系统过境"振荡——那个振荡代表"某个天气短暂当家"，温度轴要的
+    // 是持续平滑的季节感，不是轮流登场。θ/σ 用独立的 thetaAxis/sigmaAxis（比天气
+    // 本身慢得多，见 reset() 与 AXIS_TARGET_DURATION_* 头注）。
+    const driftT = this.thetaAxis * (this._muT * MU_GAIN - x.temp) * dt;
+    const noiseT = this.sigmaAxis * sqrtDt * _gaussian(rng);
+    x.temp += driftT + noiseT;
+    // 换算成对天气 μ 的偏移时钳在 [-1,1]——轴本身允许尾部偶尔越界（纯 OU 无硬边界），
+    // 但不能让极端尾部把某个天气的 μ 顶到失真（GPT 评审提的点）。
+    const Tc = Math.max(-1, Math.min(1, x.temp / MU_GAIN));
+
     for (const id of this.baseIds) {
       // 可实时调的均值倾向。MU_GAIN 放大 mu 的影响力——
       // mu 的语义范围是 -1~+1（UI 滑条），但 OU 的潜在分数经 softmax 后，
@@ -395,7 +497,12 @@ export class WeatherSystem {
       // 这才是真实大气环流的样子：某个系统控制一段时间，然后让位给下一个。
       const phase = (Math.sin(t * this._oscFreq[id] + this._oscPhase[id]) + 1) / 2; // 0~1
       const spike = Math.pow(phase, OSC_SHARPNESS);   // 大部分时间接近 0，少数时间接近 1
-      const mu = baseMu + this._oscAmp[id] * spike;
+      // 气象轴 v1：温度对该天气 μ 的偏移（雪强/晴中/雨弱，雾风不挂——见 Weather.js
+      // 的 TEMP_AXIS_COUPLING 头注，用户 + GPT 定稿的不对称耦合，避免温度轴退化成
+      // 一个隐藏的"晴/雪二选一开关"）。轴权重全 0 时 axisShift 恒为 0，与本轮改动前
+      // 逐位一致。
+      const axisShift = (TEMP_AXIS_COUPLING[id] || 0) * Tc * MU_GAIN;
+      const mu = baseMu + this._oscAmp[id] * spike + axisShift;
 
       const drift = this.theta * (mu - x[id]) * dt;
       const noise = this.sigma * sqrtDt * _gaussian(rng);
@@ -617,6 +724,38 @@ export class WeatherSystem {
     // 封顶在 1（不会出现"压成负数反而增益"的怪异结果）。
     const suppress = Math.min(1, this.getEffectiveStrengths().clear || 0);
     return othersTotal * (1 - suppress) + clearTotal;
+  }
+
+  // ==================== 天气→特定技能定向修正（框架，v1 表为空） ====================
+  /**
+   * 读出某个天气对某个技能的某个 defaultParams 参数的定向修正（满档值 × 档位系数，
+   * 与 effects/structural 同一套缩放语义）。数据源见 data/weatherSkillMods.js
+   * 头注——那张表目前是空的，这个方法先把"读出机制"落地、跑通。
+   *
+   * 与 getStructuralFactor 不同：极端天气【不】自动从 trigger 继承——skill mod
+   * 条目是任意的、针对具体技能的例外规则，不是"这个天气的通用性格"，没有
+   * "组合天气自动继承基础天气机制"这个语义，条目要对哪个天气生效就显式写哪个
+   * weatherId（可以是基础天气 id，也可以直接写某个极端天气 id）。
+   *
+   * @returns {{flat:number, percent:number}|null} 没有任何条目匹配时返回 null
+   *   （调用方据此判断"这个技能这个参数完全不受天气影响"，不必额外判断 0 与
+   *   "没有规则"的区别）。
+   */
+  getSkillParamMod(skillId, paramKey) {
+    if (!this.enabled) return null;
+    if (!WEATHER_SKILL_MODS.length) return null;
+    const baseStr = this.getEffectiveStrengths();
+    const extStr = this.getExtremeStrengths();
+    let flat = 0, percent = 0, found = false;
+    for (const m of WEATHER_SKILL_MODS) {
+      if (m.skillId !== skillId || m.paramKey !== paramKey) continue;
+      const scale = baseStr[m.weatherId] ?? extStr[m.weatherId];
+      if (!scale) continue;
+      found = true;
+      if (m.flat) flat += m.flat * scale;
+      if (m.percent) percent += m.percent * scale;
+    }
+    return found ? { flat, percent } : null;
   }
 
   // ==================== 属性注入 ====================

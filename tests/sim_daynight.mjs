@@ -24,7 +24,14 @@ const { T, done } = scoreboard('DayNight（太阳方位角 + 天气压光）');
 {
   const src = srcOf('src/main.js');
   T('main.js 导入了 applyWeatherOvercast', /applyWeatherOvercast/.test(src) && /from '\.\/presentation\/DayNight\.js'/.test(src));
-  T('main.js 渲染循环里 setLighting 套了 applyWeatherOvercast', /setLighting\(applyWeatherOvercast\(dayNightAt\(/.test(src));
+  // 气象轴 v1：又在最外层加了一层 applyWeatherTempTint（温度对环境色调的极轻微
+  // 微调，见 DayNight.js 头注），链路变成
+  // setLighting(applyWeatherTempTint(applyWeatherOvercast(dayNightAt(...——
+  // 正则放宽到容忍这层新的外壳，但 applyWeatherOvercast(dayNightAt( 这个骨架
+  // （天气压光必须包住纯昼夜函数）仍然要守住。
+  T('main.js 渲染循环里 setLighting 套了 applyWeatherOvercast', /setLighting\([\w(]*applyWeatherOvercast\(dayNightAt\(/.test(src));
+  T('main.js 渲染循环里还套了气象轴的 applyWeatherTempTint（温度对环境色调的微调）',
+    /applyWeatherTempTint\(applyWeatherOvercast\(dayNightAt\(/.test(src));
 }
 {
   const src = srcOf('src/presentation/ThreeRenderer.js');

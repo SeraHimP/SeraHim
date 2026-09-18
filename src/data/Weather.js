@@ -399,45 +399,70 @@ export const EXTREME_WEATHERS = {
 export const ALL_WEATHERS = { ...BASE_WEATHERS, ...EXTREME_WEATHERS };
 
 // ==================== 气候模板（按真实世界的地貌/气候带） ====================
+// v52（气象轴 v1）：每个模板新增 muT——温度轴的目标值（-1冷~+1热）。
+// 用户 + GPT 定稿："气候模板必须直接决定温度轴的长期目标值，不能只给初始随机
+// 倾向"——不然"沙漠"这个模板完全可能在单局里恰好抽到一条偏冷的随机轨迹，
+// 玩家会觉得"明明选了沙漠怎么下雪了"。muT 数值取自与 GPT 讨论时定的参考表。
 export const CLIMATE_TEMPLATES = {
   random: {
     id: 'random', name: '全随机', icon: '🎲',
     desc: '每局完全随机的天气性格（默认）。',
-    mu: null,
+    mu: null, muT: null,
   },
   temperate: {
     id: 'temperate', name: '温带', icon: '🏞️',
     desc: '四季分明、天气均衡。各类天气都有机会出现。',
     mu: { clear: 0.35, rain: 0.15, fog: 0.0, wind: -0.05, snow: -0.25 },
+    muT: 0,
   },
   desert: {
     id: 'desert', name: '沙漠', icon: '🏜️',
     desc: '撒哈拉。常年烈日当空，几乎不下雨；大风卷起沙暴。',
     mu: { clear: 1.0, rain: -0.9, fog: -0.8, wind: 0.05, snow: -1.0 },
+    muT: 0.75,
   },
   rainforest: {
     id: 'rainforest', name: '热带雨林', icon: '🌴',
     desc: '亚马逊。几乎天天下雨，雷暴频发。',
     mu: { clear: -0.3, rain: 1.0, fog: 0.15, wind: -0.5, snow: -1.0 },
+    muT: 0.45,
   },
   polar: {
     id: 'polar', name: '极地', icon: '🏔️',
     desc: '南极。风雪常态，暴风雪与白茫轮番上阵，战局极度缓慢。',
     mu: { clear: -0.4, rain: -0.8, fog: -0.1, wind: 0.25, snow: 1.0 },
+    muT: -0.75,
   },
   oceanic: {
     id: 'oceanic', name: '海洋性', icon: '🌊',
     desc: '英伦。阴雨连绵、大雾弥漫，暴雨多发。',
     mu: { clear: -0.15, rain: 0.55, fog: 0.7, wind: 0.05, snow: -0.3 },
+    muT: 0.05,
   },
   plateau: {
     id: 'plateau', name: '高原', icon: '⛰️',
     desc: '青藏。烈日与强风并存，偶有风雪。',
     mu: { clear: 0.55, rain: -0.35, fog: -0.5, wind: 0.5, snow: 0.1 },
+    muT: -0.35,
   },
   steppe: {
     id: 'steppe', name: '草原', icon: '🌾',
     desc: '蒙古。大风是常态，干燥少雨，沙暴多发。',
     mu: { clear: 0.25, rain: -0.45, fog: -0.6, wind: 0.8, snow: -0.1 },
+    muT: 0.15,
   },
+};
+
+// ==================== 气象轴 v1：温度对各天气 μ 的偏移系数 ====================
+// 用户 + GPT 定稿：雪强、晴中、雨弱的不对称耦合——温度轴主要负责"冷暖"这一件事，
+// 不能让它退化成一个隐藏的"晴/雪二选一开关"（GPT 原话）。雾/风不挂温度，
+// 不强行给每种天气都找一个因果关系。
+// T 的取值域是 [-1,1]（-1 最冷，+1 最热），axisShift_i = TEMP_AXIS_COUPLING[i] × T，
+// 与 baseMu 同一空间相加（见 WeatherSystem._stepOU）。
+export const TEMP_AXIS_COUPLING = {
+  snow: -0.7,   // 强：越冷雪越容易上
+  clear: 0.3,   // 中：越热越容易晴，但不能强到让"热=晴"变成必然
+  rain: 0.1,    // 弱：暖雨比冷雨略常见，弱关联
+  fog: 0,
+  wind: 0,
 };

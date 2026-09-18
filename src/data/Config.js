@@ -1241,6 +1241,14 @@ export const CONFIG = {
       maxAmbientShare: 0.9,   // 环境光占比的硬上限，留一点方向光不至于完全没有立体感
       desaturate: 0.7,        // 太阳/天空色往阴天灰调混合的最大比例
       overcastColor: '#a4abb6',
+
+      // 气象轴 v1：温度对环境色调的极轻微微调（见 DayNight.js 的
+      // applyWeatherTempTint）。用户 + GPT 定稿"变化应该非常微妙，不要做得明显到
+      // 像滤镜"——tempTintStrength 刻意定得比上面阴天那组小一个数量级
+      // （0.04 vs exposureDrop 的 0.35），满负荷（|温度|=1）也只有 ±4% 曝光变化。
+      tempTintStrength: 0.04,
+      tempWarmColor: '#ffdca0',  // 热：暖黄
+      tempCoolColor: '#a8c4e8',  // 冷：冷蓝
     },
 
     // v51.27："地图是个纸片子"——地形是严格贴合世界边界的一整块平面，边界外直接是
@@ -1278,10 +1286,15 @@ export const CONFIG = {
       entropyToWeather: false,  // 熵 → 天气分布
       entropyToDayNight: false, // 熵 → 昼夜（熵越高夜晚越长）
     },
-    // 一整天（黎明→正午→黄昏→午夜→黎明）的游戏秒数。
-    // 用户定稿：默认 8 分钟（原来是写死在 DayNight.js 里的 360 秒 = 6 分钟）。
-    // CTX.__dayPeriodSec 仍然可以在运行时临时覆写（调试杠杆），优先级高于本值。
-    dayPeriodSec: 480,
+    // 一整天（黎明→正午→黄昏→午夜→黎明）的游戏秒数，白天/夜晚分开计时。
+    // 用户定稿："把昼夜循环改到15分钟（白天8分钟夜晚7分钟）"——原来是单一的
+    // dayPeriodSec=480（对称4分钟/4分钟），本轮拆成两个字段、改成不对称。
+    // 不重标 DayNight.js 的关键帧颜色/曝光/太阳仰角表，只改"走相位的速度"，
+    // 见 DayNight.js 的 _gameTimeToPhase 头注。
+    // CTX.__dayPeriodSec 仍然可以在运行时临时覆写（调试杠杆），语义是"整体等比
+    // 缩放"——按住白天:夜晚=8:7 的比例，把总时长缩放到覆写值，不是分别覆写。
+    dayLenSec: 480,
+    nightLenSec: 420,
     // ==================== 昼夜加成重做（本轮，用户定稿）====================
     // 用户："熵的昼夜加成目前太单调了，重做一下，可以把类型做的丰富一些。可以强度
     // 大一些凸显昼夜变化的手感变化。并且昼夜加成也弄成4档，类似目前的天气，在
