@@ -1425,10 +1425,15 @@ export class UIManager {
    *     护盾吸收已经有自己的构成小节）+ 减免率。
    *   · 护盾构成小节追加"累计已获得护盾"（当前余量之外，历史上一共拿到过多少）。
    */
-  _showHpStatsModal(entity) {
-    if (!entity) return;
-    const old = document.getElementById('hpStatsOverlay');
-    if (old) old.remove();
+  /**
+   * 本轮：点开的生命统计窗口数据要实时更新（用户定稿）——原来只在点开那一刻
+   * 算一次，开着不关的话，血条已经掉了、护盾已经没了，窗口还停在打开那一帧。
+   * 抽出这个纯函数只返回 body 的 HTML（不摸 DOM），_showHpStatsModal 首次打开
+   * 用它建窗口，随后按跟 _updateWorldRow/_showHoverTip 同一套"节流+脏检查"的
+   * 节奏定期重算、只在内容真变了才替换那一小块容器（不是整个 overlay 重建，
+   * 保留窗口的关闭按钮监听/滚动位置不受影响）。
+   */
+  _hpStatsBodyHtml(entity) {
     const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
     const maxHP = stats.maxHP || 1;
     const cur = Math.max(0, entity.currentHP || 0);
@@ -1463,7 +1468,7 @@ export class UIManager {
     // 弹窗高度、必须滚动才能看全；现在把六张卡片放进一个两列网格，同一屏能看完，
     // 靠"宽"而不是"高"装下所有内容。① 删括号 ② 卡片分区 都维持上一版做法不变，
     // 只是这次把排列方式从"一列竖排"改成"两列网格"，弹窗也跟着从窄长改成宽扁。
-    const body = `
+    return `
       <div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
         生命值：<b>${Math.round(cur)}</b> / ${Math.round(maxHP)}
       </div>
@@ -1506,15 +1511,43 @@ export class UIManager {
         `)}
       </div>
     `;
+  }
+
+  _showHpStatsModal(entity) {
+    if (!entity) return;
+    const old = document.getElementById('hpStatsOverlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
     overlay.id = 'hpStatsOverlay';
     overlay.className = 'modal-overlay open';
+    const bodyHtml = this._hpStatsBodyHtml(entity);
     overlay.innerHTML = shellHtml({
-      title: '❤️ 生命统计', body, crumb: '', width: '760px',
+      title: '❤️ 生命统计', body: `<div id="hpStatsBody">${bodyHtml}</div>`, crumb: '', width: '760px',
       footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);
-    overlay.querySelector('.stat-doc-close').addEventListener('click', () => overlay.remove());
+    const bodyEl = overlay.querySelector('#hpStatsBody');
+    if (bodyEl) bodyEl.dataset.key = bodyHtml;
+    // 节流500ms + 脏检查，与 _showHoverTip/_updateWorldRow 同一套节奏——内容没变
+    // 就不碰 DOM，既省事也避免"没必要的替换"造成的视觉跳动。
+    // try/catch 包一层：sim 测试里每个文件都各自造一份极简假 document，
+    // 这个定时器在真实浏览器里会一直活到窗口关闭，但测试进程从不调用 close()，
+    // 500ms 后回调触发时该测试早已跑完、globalThis.document 已经被换成下一个
+    // 测试文件的假实现（形状可能完全不同）——不吞掉这个错误就会整个测试进程崩掉，
+    // 属于"测试环境生命周期短于真实浏览器"这个既有落差，兜底清理定时器即可。
+    const timer = setInterval(() => {
+      try {
+        if (!document?.body?.contains?.(overlay)) { clearInterval(timer); return; }
+        const el = overlay.querySelector('#hpStatsBody');
+        if (!el) return;
+        const next = this._hpStatsBodyHtml(entity);
+        if (next === el.dataset.key) return;
+        el.innerHTML = next;
+        el.dataset.key = next;
+      } catch { clearInterval(timer); }
+    }, 500);
+    const close = () => { clearInterval(timer); overlay.remove(); };
+    overlay.querySelector('.stat-doc-close').addEventListener('click', close);
   }
 
   /**
@@ -1527,8 +1560,38 @@ export class UIManager {
     if (!entity) return;
     const old = document.getElementById('hpStatsOverlay');
     if (old) old.remove();
+    const bodyHtml = this._manaStatsBodyHtml(entity);
+    if (bodyHtml == null) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'hpStatsOverlay';
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = shellHtml({
+      title: '💧 法力统计', body: `<div id="hpStatsBody">${bodyHtml}</div>`, crumb: '', width: '460px',
+      footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
+    });
+    document.body.appendChild(overlay);
+    const bodyEl = overlay.querySelector('#hpStatsBody');
+    if (bodyEl) bodyEl.dataset.key = bodyHtml;
+    // 同 _showHpStatsModal：节流500ms + 脏检查，实时刷新但不会没必要地替换 DOM。
+    const timer = setInterval(() => {
+      try {
+        if (!document?.body?.contains?.(overlay)) { clearInterval(timer); return; }
+        const el = overlay.querySelector('#hpStatsBody');
+        if (!el) return;
+        const next = this._manaStatsBodyHtml(entity);
+        if (next == null || next === el.dataset.key) return;
+        el.innerHTML = next;
+        el.dataset.key = next;
+      } catch { clearInterval(timer); }
+    }, 500);
+    const close = () => { clearInterval(timer); overlay.remove(); };
+    overlay.querySelector('.stat-doc-close').addEventListener('click', close);
+  }
+
+  /** _showManaStatsModal 的纯 body 计算——同 _hpStatsBodyHtml 的理由，供首开+定期刷新共用。 */
+  _manaStatsBodyHtml(entity) {
     const info = resourceInfoOf(entity, { skillLibrary: SkillLibrary, attrCalc: this.attrCalc, effects: this.effects });
-    if (!info) return;
+    if (!info) return null;
     const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
     let body = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
       ${info.kind === 'mana' ? '法力值' : '进度'}：<b>${info.label}</b>
@@ -1545,15 +1608,7 @@ export class UIManager {
         </div>
       `;
     }
-    const overlay = document.createElement('div');
-    overlay.id = 'hpStatsOverlay';
-    overlay.className = 'modal-overlay open';
-    overlay.innerHTML = shellHtml({
-      title: '💧 法力统计', body, crumb: '', width: '460px',
-      footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
-    });
-    document.body.appendChild(overlay);
-    overlay.querySelector('.stat-doc-close').addEventListener('click', () => overlay.remove());
+    return body;
   }
 
   /** 该天气的效果表里是否有条目命中此单位 */
