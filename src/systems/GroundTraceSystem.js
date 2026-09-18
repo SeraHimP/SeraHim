@@ -1,20 +1,27 @@
 import { CONFIG } from '../data/Config.js';
+import { EXTREME_WEATHERS } from '../data/Weather.js';
 
 /**
- * GroundTraceSystem.js —— 地面痕迹层（水洼/雪痕，Q4 天气重做落地）
+ * GroundTraceSystem.js —— 地面痕迹层（水洼/雪盖，Q4 天气重做 + v54 第二轮重做）
  *
- * 雨的水洼、雪的破雪通道，本质是同一类东西：**地面上一小块会随天气强度动态
- * 生成/合并/消退、且对经过单位有持续效果的区域**（见
- * docs/Q4-WEATHER-REDESIGN.md §四）。这里用同一套骨架承载两种痕迹，只是数值
- * 方向相反：水洼是"进去减速"的负面痕迹（区域生成型，随机撒在地面上），雪痕是
- * "沿着走更快"的正面痕迹（路径生成型，跟着移动单位的脚印走）。
+ * 雨的水洼、雪的积雪，本质是同一类东西：**地面上会随天气强度动态变化、且对
+ * 经过单位有持续效果的区域**（见 docs/Q4-WEATHER-REDESIGN.md §九）。但两者的
+ * 实现方式这一轮彻底分开了：
+ *
+ * - **水洼**：区域生成型——不规则的"大片湿润区域"随机（现在是【权重】撒点，
+ *   见 §9.4）撒在地面上，进去减速，可以互相合并。
+ * - **雪盖**（v54 全新设计，取代了旧的"脚印瞬间加速"机制）：**连续网格型**——
+ *   整个地图铺一张低分辨率网格，随雪的强度/时长整体累积"雪深"，站在雪深高的
+ *   地方减速；单位经过会在网格上局部"踩低"雪深留下小径，小径的雪深有个下限
+ *   （不会被踩成 0），离开小径后再缓慢回涨——方向跟旧机制完全相反：不再是
+ *   "加速"，是"踩过的地方减速幅度比周围雪盖小"。
  *
  * ==================== 为什么不走 EffectRegistry 的常规 aura 机制 ====================
  * makeAuraPassive（skills/_helpers.js）是"以施法者为圆心，扫周围友军"的模型，
  * 这里反过来：是**地面固定区域**，单位路过就吃效果，跟哪个技能/哪个施法者无关。
  * 效果本身仍然复用同一套 aura 参数约定（duration 短、stackPolicy:'refresh'、
  * uniquePassive:true）以获得同样"离开自动脱落、不会因重复 apply 而闪烁"的
- * 行为，只是判定"在不在范围内"的逻辑是这个系统自己算的几何查询，不是
+ * 行为，只是判定"在不在范围内"的逻辑是这个系统自己算的几何/网格查询，不是
  * findInRadius 以施法者为心的邻域搜索。
  */
 export class GroundTraceSystem {
@@ -25,7 +32,11 @@ export class GroundTraceSystem {
     this.weather = weatherSystem;
 
     this.puddles = []; // [{id, x, y, r, strength, subOffsets:[{dx,dy,r}]}]
-    this.trails = [];  // [{id, x, y, r, age, lifetime}]
+
+    // 雪盖网格：resolution×resolution 的 Float32Array，每格是 0~1 的局部雪深。
+    this.snowGrid = null;
+    this.snowGridRes = 0;
+    this.snowGlobalTarget = 0; // 雪盖"应该有"的全局目标深度（不考虑局部踩踏）
 
     this._rainSustainT = 0;
     this._puddleRespawnT = 0;
@@ -34,19 +45,21 @@ export class GroundTraceSystem {
 
   update(dt) {
     this._updatePuddles(dt);
-    this._updateTrails(dt);
+    this._updateSnowCover(dt);
     this._applyEffects();
   }
 
-  /** 每次载图重新开局：上一局的水洼/雪痕不该带到新的一局。 */
+  /** 每次载图重新开局：上一局的水洼/雪盖不该带到新的一局。 */
   reset() {
     this.puddles = [];
-    this.trails = [];
     this._rainSustainT = 0;
     this._puddleRespawnT = 0;
+    this.snowGrid = null;
+    this.snowGridRes = 0;
+    this.snowGlobalTarget = 0;
   }
 
-  // ==================== 水洼（雨） ====================
+  // ==================== 水洼（雨，v54 §9.4 重做） ====================
 
   _rainScale() {
     const ws = this.weather;
@@ -60,6 +73,13 @@ export class GroundTraceSystem {
     return ws.getCharge ? ws.getCharge('rain') : 0;
   }
 
+  /** 读任意天气 id（基础或极端）的当前充能，供各条 Signature 用；找不到就是 0。 */
+  _extremeCharge(id) {
+    const ws = this.weather;
+    if (!ws || !ws.enabled || !ws.getCharge) return 0;
+    return ws.getCharge(id) || 0;
+  }
+
   _updatePuddles(dt) {
     const cfg = CONFIG.groundTrace?.puddle || {};
     const scale = this._rainScale();
@@ -71,25 +91,40 @@ export class GroundTraceSystem {
     const active = this._rainSustainT >= (cfg.sustainedSeconds ?? 12)
       || charge >= (cfg.instantChargeThreshold ?? 0.75);
 
+    // 太阳雨 Signature（puddleHighTurnover）：生成更密集、生命周期缩短——
+    // "生得快、干得也快"。洪涝 Signature（floodMerge）：合并距离大幅放宽，
+    // 水洼连成连续积水带（形态质变，不是数量翻倍）。
+    const sunshowerC = this._extremeCharge('sunshower');
+    const floodC = this._extremeCharge('flood');
+    const sunshowerSig = EXTREME_WEATHERS.sunshower.signature || {};
+    const floodSig = EXTREME_WEATHERS.flood.signature || {};
+    const spawnMul = sunshowerC > 0 ? 1 + ((sunshowerSig.spawnMul ?? 1.8) - 1) * sunshowerC : 1;
+    const lifetimeMul = sunshowerC > 0 ? 1 - (1 - (sunshowerSig.lifetimeMul ?? 0.5)) * sunshowerC : 1;
+    const mergeDistMul = floodC > 0 ? 1 + ((floodSig.mergeDistanceMul ?? 3) - 1) * floodC : 1;
+
     if (active) {
       const targetCount = Math.round((cfg.minPatches ?? 8)
         + ((cfg.maxPatches ?? 20) - (cfg.minPatches ?? 8)) * scale);
       this._puddleRespawnT += dt;
-      const interval = cfg.respawnIntervalSec ?? 2.5;
+      const interval = (cfg.respawnIntervalSec ?? 2.5) / spawnMul;
       while (this._puddleRespawnT >= interval && this.puddles.length < targetCount) {
         this._puddleRespawnT -= interval;
-        this._spawnPuddle(cfg);
+        this._spawnPuddle(cfg, mergeDistMul);
       }
       if (this._puddleRespawnT > interval) this._puddleRespawnT = interval; // 不欠账累积
-      for (const p of this.puddles) p.strength = Math.min(1, p.strength + (cfg.growPerSec ?? 0.5) * dt);
+      // 高周转：涨得快，也跌得快——decayPerSec 同时按 lifetimeMul 的倒数放大，
+      // 只在【有充能】时生效，天气一旦真的停了还是走正常的干涸曲线。
+      const growPerSec = (cfg.growPerSec ?? 0.5) / lifetimeMul;
+      for (const p of this.puddles) p.strength = Math.min(1, p.strength + growPerSec * dt);
     } else {
       this._puddleRespawnT = 0;
-      for (const p of this.puddles) p.strength -= (cfg.decayPerSec ?? 0.08) * dt;
+      const decayPerSec = (cfg.decayPerSec ?? 0.08) / lifetimeMul;
+      for (const p of this.puddles) p.strength -= decayPerSec * dt;
       this.puddles = this.puddles.filter(p => p.strength > 0);
     }
   }
 
-  /** 在可行走区域内随机取一点；找不到就放弃（不强行落在墙里/野区外）。 */
+  /** 在可行走区域内全图随机取一点；找不到就放弃（不强行落在墙里/野区外）。 */
   _randomWalkablePoint() {
     const ms = this.mapSystem;
     const world = ms?.currentMap?.world;
@@ -102,11 +137,44 @@ export class GroundTraceSystem {
     return null;
   }
 
-  _spawnPuddle(cfg) {
-    const pos = this._randomWalkablePoint();
+  /**
+   * v54 §9.4：沿兵线附近取一点——先随机选一条兵线，再在随机一段路点之间插值，
+   * 垂直方向加一个 spread 范围内的随机偏移。找不到兵线数据就返回 null，
+   * 调用方会退回全图随机点，不强行依赖地图一定有 lanes。
+   */
+  _randomLaneNearbyPoint(spread) {
+    const ms = this.mapSystem;
+    const lanes = ms?.currentMap?.lanes;
+    if (!ms || !Array.isArray(lanes) || !lanes.length) return null;
+    const lane = lanes[Math.floor(Math.random() * lanes.length)];
+    const wps = lane?.waypoints;
+    if (!wps || wps.length < 2) return null;
+    const i = Math.floor(Math.random() * (wps.length - 1));
+    const a = wps[i], b = wps[i + 1];
+    const t = Math.random();
+    const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
+    // 垂直于路段方向的单位向量，偏移量在 [-spread, spread] 内随机。
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const off = (Math.random() * 2 - 1) * spread;
+    const x = px + nx * off, y = py + ny * off;
+    if (ms.isWalkable && !ms.isWalkable(x, y)) return null;
+    return { x, y };
+  }
+
+  _spawnPuddle(cfg, mergeDistMul = 1) {
+    // v54 §9.4：70~80% 权重沿兵线附近撒点，20~30% 全图自然撒点——不是 100% 沿
+    // 兵线（太游戏化，见设计文档），也不是纯随机（大部分落在玩家看不到的野区）。
+    const laneRatio = cfg.laneWeightRatio ?? 0.75;
+    const spread = cfg.laneSpread ?? 220;
+    let pos = null;
+    if (Math.random() < laneRatio) pos = this._randomLaneNearbyPoint(spread);
+    if (!pos) pos = this._randomWalkablePoint();
     if (!pos) return;
     // 距离够近的已有水洼直接合并进去，而不是各自独立——"水洼可以连接到一块"。
-    const mergeDist = cfg.mergeDistance ?? 90;
+    // 洪涝 Signature 时合并距离被大幅放宽，水洼连成连续积水带。
+    const mergeDist = (cfg.mergeDistance ?? 90) * mergeDistMul;
     const near = this.puddles.find(p => Math.hypot(p.x - pos.x, p.y - pos.y) < mergeDist);
     const subOffsets = this._makeSubOffsets(cfg);
     if (near) {
@@ -124,7 +192,7 @@ export class GroundTraceSystem {
       + Math.floor(Math.random() * ((cfg.subCirclesPerPatchMax ?? 6) - (cfg.subCirclesPerPatchMin ?? 3) + 1));
     const out = [];
     for (let i = 0; i < n; i++) {
-      const rMin = cfg.subRadiusMin ?? 30, rMax = cfg.subRadiusMax ?? 70;
+      const rMin = cfg.subRadiusMin ?? 50, rMax = cfg.subRadiusMax ?? 90;
       const r = rMin + Math.random() * (rMax - rMin);
       // 子圆中心撒在一个比半径稍大的圈内，让整片形状不规则又保持大致连成一片。
       const ang = Math.random() * Math.PI * 2;
@@ -150,7 +218,7 @@ export class GroundTraceSystem {
     return r;
   }
 
-  // ==================== 雪痕（雪） ====================
+  // ==================== 雪盖（雪，v54 全新设计） ====================
 
   _snowScale() {
     const ws = this.weather;
@@ -158,35 +226,92 @@ export class GroundTraceSystem {
     return ws.getEffectiveStrengths?.().snow || 0;
   }
 
-  _updateTrails(dt) {
-    const cfg = CONFIG.groundTrace?.snowTrail || {};
-    for (const t of this.trails) t.age += dt;
-    this.trails = this.trails.filter(t => t.age < t.lifetime);
+  _ensureSnowGrid() {
+    const cfg = CONFIG.groundTrace?.snowCover || {};
+    const res = Math.max(8, cfg.gridResolution ?? 48);
+    if (this.snowGrid && this.snowGridRes === res) return;
+    this.snowGrid = new Float32Array(res * res);
+    this.snowGridRes = res;
+  }
+
+  /**
+   * 雪盖整体的推进：
+   *   全局目标深度 snowGlobalTarget 追着雪的强度走（只有强度过了 minChargeToGrow
+   *   才开始往上涨——"雪下到一定程度后，才缓缓显出积雪"；强度不够时缓慢消退）。
+   *   每一格的局部深度 snowGrid[i] 追着这个全局目标走（regrowPerSec），除非这一帧
+   *   有单位站在这一格——那时局部深度被【踩低】（erodePerSec），但设了下限
+   *   （pathFloor × 全局目标），不会被踩成 0，这就是"小径"。
+   */
+  _updateSnowCover(dt) {
+    const cfg = CONFIG.groundTrace?.snowCover || {};
+    const ms = this.mapSystem;
+    const world = ms?.currentMap?.world;
+    if (!world) return;
+    this._ensureSnowGrid();
 
     const scale = this._snowScale();
-    if (scale < (cfg.minTierScale ?? 0.25)) return;
-    const interval = cfg.sampleIntervalSec ?? 0.4;
-    const minDist = cfg.minMoveDistPx ?? 8;
-    for (const m of this.entities.getAllMinions(true)) {
-      if (!m.alive || !m.pos) continue;
-      m._groundTraceSampleT = (m._groundTraceSampleT || 0) + dt;
-      if (m._groundTraceSampleT < interval) continue;
-      m._groundTraceSampleT = 0;
-      const lx = m._groundTraceLastX, ly = m._groundTraceLastY;
-      if (lx != null && Math.hypot(m.pos.x - lx, m.pos.y - ly) < minDist) continue;
-      m._groundTraceLastX = m.pos.x; m._groundTraceLastY = m.pos.y;
-      this.trails.push({
-        id: this._nextId++, x: m.pos.x, y: m.pos.y,
-        r: cfg.segmentRadius ?? 26, age: 0, lifetime: cfg.lifetimeSec ?? 10,
-      });
+    const minChargeToGrow = cfg.minChargeToGrow ?? 0.25;
+    const growTarget = scale >= minChargeToGrow ? Math.min(1, cfg.maxDepth ?? 1) : 0;
+    // 暴风雪 Signature（snowCoverWindBoost）：雪盖增长速度挂到风强度上，设增长
+    // 响应上限（growthCap）防止风一大瞬间铺满全图。
+    const blizzardC = this._extremeCharge('blizzard');
+    const windCharge = this._extremeCharge('wind');
+    const blizzardSig = EXTREME_WEATHERS.blizzard.signature || {};
+    const windGrowthMul = blizzardC > 0
+      ? Math.min(blizzardSig.growthCap ?? 2.5, 1 + ((blizzardSig.growthMul ?? 1.8) - 1) * windCharge * blizzardC)
+      : 1;
+    const growPerSec = (cfg.growPerSec ?? 0.02) * windGrowthMul;
+    const decayPerSec = cfg.decayPerSec ?? 0.03;
+    const tau = growTarget > this.snowGlobalTarget ? growPerSec : decayPerSec;
+    this.snowGlobalTarget += (growTarget - this.snowGlobalTarget) * Math.min(1, tau * dt * 10);
+
+    const res = this.snowGridRes;
+    const grid = this.snowGrid;
+    const regrowRate = Math.min(1, (cfg.regrowPerSec ?? 0.05) * dt);
+    // 全图格子先统一朝全局目标回涨（踩踏留下的小径也在这一步缓慢恢复）。
+    for (let i = 0; i < grid.length; i++) grid[i] += (this.snowGlobalTarget - grid[i]) * regrowRate;
+
+    // 单位经过时局部踩踏：把周围 erodeRadius 内的格子压低，但设下限（不会踩成 0）。
+    if (this.snowGlobalTarget > 0.001) {
+      const erodeRadius = cfg.erodeRadius ?? 70;
+      const erodeAmt = Math.min(1, (cfg.erodePerSec ?? 1.2) * dt);
+      const pathFloor = cfg.pathFloor ?? 0.3;
+      const cellW = world.w / res, cellH = world.h / res;
+      const rCellsX = Math.max(1, Math.ceil(erodeRadius / cellW));
+      const rCellsY = Math.max(1, Math.ceil(erodeRadius / cellH));
+      for (const m of this.entities.getAllMinions(true)) {
+        if (!m.alive || !m.pos) continue;
+        const cx = Math.floor(m.pos.x / cellW), cy = Math.floor(m.pos.y / cellH);
+        const floor = pathFloor * this.snowGlobalTarget;
+        for (let gy = cy - rCellsY; gy <= cy + rCellsY; gy++) {
+          if (gy < 0 || gy >= res) continue;
+          for (let gx = cx - rCellsX; gx <= cx + rCellsX; gx++) {
+            if (gx < 0 || gx >= res) continue;
+            const wx = (gx + 0.5) * cellW, wy = (gy + 0.5) * cellH;
+            if (Math.hypot(wx - m.pos.x, wy - m.pos.y) > erodeRadius) continue;
+            const idx = gy * res + gx;
+            if (grid[idx] > floor) grid[idx] = Math.max(floor, grid[idx] - erodeAmt);
+          }
+        }
+      }
     }
+  }
+
+  /** 某世界坐标处的当前局部雪深（0~1）；地图未就绪或坐标越界时返回 0。 */
+  _snowDepthAt(x, y) {
+    const world = this.mapSystem?.currentMap?.world;
+    if (!world || !this.snowGrid) return 0;
+    const res = this.snowGridRes;
+    const gx = Math.max(0, Math.min(res - 1, Math.floor(x / world.w * res)));
+    const gy = Math.max(0, Math.min(res - 1, Math.floor(y / world.h * res)));
+    return this.snowGrid[gy * res + gx] || 0;
   }
 
   // ==================== 效果应用 ====================
 
   _applyEffects() {
     const puddleCfg = CONFIG.groundTrace?.puddle || {};
-    const trailCfg = CONFIG.groundTrace?.snowTrail || {};
+    const snowCfg = CONFIG.groundTrace?.snowCover || {};
     for (const m of this.entities.getAllMinions(true)) {
       if (!m.alive || !m.pos) continue;
 
@@ -210,24 +335,27 @@ export class GroundTraceSystem {
         }, 'groundtrace_puddle');
       }
 
-      let onTrail = 0;
-      for (const t of this.trails) {
-        const strength = 1 - t.age / t.lifetime;
-        if (strength <= 0) continue;
-        if (Math.hypot(m.pos.x - t.x, m.pos.y - t.y) <= t.r) { onTrail = Math.max(onTrail, strength); }
-      }
-      if (onTrail > 0) {
+      // v54 全新设计：雪盖站里面减速，局部雪深由网格给出（踩出的小径雪深低，
+      // 减速幅度自然跟着小——不需要另外维护一份"小径"数据结构）。
+      const depth = this._snowDepthAt(m.pos.x, m.pos.y);
+      if (depth > 0.02) {
+        const pct = (snowCfg.slowPct ?? -22) * depth;
         this.effects.apply(m.id, {
-          aura: true, auraGrace: 1.0, name: '雪痕', icon: '❄️', kind: 'stat', statKey: 'moveSpeed',
-          percent: (trailCfg.speedPct ?? 20) * onTrail,
+          aura: true, auraGrace: 1.0, name: '积雪', icon: '❄️', kind: 'stat', statKey: 'moveSpeed',
+          percent: pct,
           stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: `雪痕：移速 +${Math.round((trailCfg.speedPct ?? 20) * onTrail)}%`,
-        }, 'groundtrace_trail');
+          description: `积雪：移速 ${pct >= 0 ? '+' : ''}${Math.round(pct)}%`,
+        }, 'groundtrace_snowcover');
       }
     }
   }
 
   /** 供渲染层读——只读快照。 */
   getPuddles() { return this.puddles; }
-  getTrails() { return this.trails; }
+  /** 供渲染层读——雪盖网格快照，{resolution, data(Float32Array), worldW, worldH}。 */
+  getSnowCover() {
+    const world = this.mapSystem?.currentMap?.world;
+    if (!this.snowGrid || !world) return null;
+    return { resolution: this.snowGridRes, data: this.snowGrid, worldW: world.w, worldH: world.h };
+  }
 }

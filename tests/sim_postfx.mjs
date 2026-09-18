@@ -171,7 +171,11 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
   const fogSrc = postfx.slice(postfx.indexOf('const FogShader'));
   T('雾①-PostFX.js 导出 createFogPass', /export function createFogPass/.test(postfx));
   T('雾②-噪声用重建出的【世界坐标 XZ】采样，不是屏幕 UV（否则雾团会贴着镜头滑）',
-    /worldPos\.xz \* noiseScale/.test(fogSrc) && !/texture2D\(tNoise,\s*vUv/.test(fogSrc));
+    /worldPos\.xz \* noiseScale/.test(fogSrc)
+    // v54：蜃景 Signature 新增了一路用 vUv 采样 tNoise 的屏幕空间"UV 位移"（有意如此，
+    // 做热浪扭曲用，跟雾浓度本身的世界空间噪声是两码事）——钉住"浓度噪声"那一路
+    // 仍然只用 worldPos.xz，不能钉"整个 fogSrc 里完全不出现 vUv 采样 tNoise"。
+    && !/float n1 = texture2D\(tNoise,\s*vUv/.test(fogSrc));
   T('雾③-世界坐标由 viewMatrixInverse（camera.matrixWorld）把重建出的视空间坐标转回去',
     /viewMatrixInverse \* vec4\(viewPos, 1\.0\)/.test(postfx)
     && /pass\.uniforms\.viewMatrixInverse\.value\.copy\(camera\.matrixWorld\)/.test(postfx));
@@ -181,8 +185,8 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
     /pass\.uniforms\.tDepth\.value = prepass\.renderTarget\.depthTexture/.test(postfx.slice(postfx.indexOf('createFogPass'))));
   T('雾⑥-fogStrength<=0 时整个 pass 直通原图（关掉/无雾时零视觉影响）',
     /if \(fogStrength <= 0\.0001\) \{ gl_FragColor = base; return; \}/.test(postfx));
-  T('雾⑦-setStrength(v) 把 0..1 的充能映射到 maxStrength 软上限，不是直接写 1',
-    /pass\.setStrength = \(v\) => \{ pass\.uniforms\.fogStrength\.value = Math\.max\(0, Math\.min\(1, v \|\| 0\)\) \* maxStrength; \}/.test(postfx));
+  T('雾⑦-setStrength(v) 把 0..1 的充能映射到 maxStrength 软上限（可再乘浓雾 Signature 的临时倍数），不是直接写 1',
+    /pass\.setStrength = \(v\) => \{ pass\.uniforms\.fogStrength\.value = Math\.max\(0, Math\.min\(1, v \|\| 0\)\) \* maxStrength \* extraStrengthMul; \}/.test(postfx));
 
   T('渲⑦-ThreeRenderer 的 fogOn 默认值走 CONFIG.volumetricFog.enabled（不硬编码）',
     /this\.fogOn = CONFIG\.volumetricFog\?\.enabled !== false/.test(renderer));
@@ -196,9 +200,9 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
       const iBloom = renderer.indexOf('this.composer.addPass(this.bloomPass)');
       return iOutline > 0 && iFog > iOutline && iBloom > iFog;
     })());
-  T('渲⑪-每帧雾强度读 window.__weather.getCharge(\'fog\')（与风吹植被 windCharge 同一口径：强度取充能不取占比）',
-    /window\.__weather\?\.getCharge \? \(window\.__weather\.getCharge\('fog'\) \|\| 0\) : 0/.test(renderer)
-    && /this\.fogPass\.setStrength\(fogCharge\)/.test(renderer));
+  T('渲⑪-每帧雾强度读 ws.getCharge(\'fog\')（与风吹植被 windCharge 同一口径：强度取充能不取占比；v54 沙暴 Signature 借用同一通道时取两者较大值驱动）',
+    /const fogCharge = ws\?\.getCharge \? \(ws\.getCharge\('fog'\) \|\| 0\) : 0;/.test(renderer)
+    && /this\.fogPass\.setStrength\(Math\.max\(fogCharge, sandstormCharge\)\)/.test(renderer));
   T('渲⑫-画质分档 setQualityPreset 里雾也被一起切换（不是漏掉的新开关）',
     /this\.setFog\(p\.fog\)/.test(renderer));
 
@@ -215,6 +219,28 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
       const q = CONFIG.ui.qualityPresets;
       return q.low.fog === false && q.medium.fog === true && q.high.fog === true;
     })());
+
+  // ==================== v54 第二轮重做 §9.3/§9.8：雾-风联动 + Signature 挂钩 ====================
+  T('雾⑧-噪声流速随风充能提速（_advanceNoise 接收第二个参数 windCharge，windBoostFactor 软编码）',
+    /pass\._advanceNoise = \(dt, windCharge = 0\) => \{/.test(postfx)
+    && /const speed = noiseSpeed \* \(1 \+ Math\.max\(0, Math\.min\(1, windCharge\)\) \* windBoostFactor\)/.test(postfx)
+    && typeof CONFIG.volumetricFog.windBoostFactor === 'number');
+  T('雾⑨-PostFX 暴露蜃景/霾潮/浓雾/沙暴四条 Signature 的专用 setter',
+    /pass\.setUvWobble = /.test(postfx) && /pass\.setNoiseStretch = /.test(postfx)
+    && /pass\.setMaxStrengthMul = /.test(postfx) && /pass\.setColor = /.test(postfx));
+  T('渲⑬-ThreeRenderer 每帧把雾-风联动 + 四条 Signature 的充能接进 fogPass',
+    /this\.fogPass\._advanceNoise\?\.\(this\._lightDt \|\| 0\.016, windCharge\)/.test(renderer)
+    && /this\.fogPass\.setUvWobble\?\.\(exCharge\('mirage'\)/.test(renderer)
+    && /this\.fogPass\.setNoiseStretch\?\.\(1 \+ exCharge\('haze_surge'\)/.test(renderer)
+    && /this\.fogPass\.setMaxStrengthMul\?\.\(1 \+ exCharge\('densefog'\)/.test(renderer));
+  T('渲⑭-雷暴 Signature：_updateLightning 方法存在，充能过低时清空计时器（不是常驻挂着的空闪）',
+    /_updateLightning\(dt\)\s*\{/.test(renderer)
+    && /if \(!cfg \|\| cfg\.enabled === false \|\| thunderCharge <= 0\.05\)/.test(renderer));
+  T('置④-CONFIG.ui.thunderFlash 软编码闪光节奏参数', (() => {
+    const c = CONFIG.ui?.thunderFlash;
+    return !!c && typeof c.minGapSec === 'number' && typeof c.maxGapSec === 'number'
+      && typeof c.peakAlpha === 'number' && typeof c.fadeSec === 'number';
+  })());
 
   T('设⑤-画质面板有体积雾按钮', /id="setFogBtn"/.test(settings));
   T('设⑥-体积雾按钮接了 bindFx，读写的是 fogOn 和 setFog',

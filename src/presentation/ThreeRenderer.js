@@ -193,7 +193,7 @@ export class ThreeRenderer {
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
     this.weatherFx = new WeatherLayer(this.scene); // 天气可视化（雨/雪/雾/风/晴的粒子与薄纱）
     this.rainRipple = new RainRippleLayer(this.scene); // Phase 1：雨滴打在水面上的波纹（独立于水面材质）
-    this.groundTrace = new GroundTraceLayer(this.scene); // Q4 天气重做：水洼/雪痕贴花
+    this.groundTrace = new GroundTraceLayer(this.scene); // Q4 天气重做：水洼贴花+雪盖遮罩
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
     this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
@@ -720,6 +720,42 @@ export class ThreeRenderer {
   setSSAO(on) { this.ssaoOn = !!on; if (this.ssaoPass) this.ssaoPass.enabled = this.ssaoOn; return this.ssaoOn; }
   // 任务 #178：伪体积雾独立开关，同一批"每项可独立开关"的先例。
   setFog(on) { this.fogOn = !!on; if (this.fogPass) this.fogPass.enabled = this.fogOn; return this.fogOn; }
+
+  /**
+   * v54 §9.8：雷暴 Signature——偶发全屏闪光，纯视觉、不带任何机制惩罚。
+   * 用一个覆盖在 canvas 上的 DOM 层做淡入淡出，不进 WebGL 管线（不需要为一个
+   * 稀疏的纯视觉效果新开一条 ShaderPass）。雷暴充能降到接近 0 时清空计时器，
+   * 不会在充能刚好卡在阈值附近时连续触发。
+   */
+  _updateLightning(dt) {
+    const thunderCharge = window.__weather?.getCharge ? (window.__weather.getCharge('thunderstorm') || 0) : 0;
+    const cfg = CONFIG.ui?.thunderFlash;
+    if (!cfg || cfg.enabled === false || thunderCharge <= 0.05) {
+      if (this._lightningEl) this._lightningEl.style.opacity = '0';
+      this._lightningTimer = 0;
+      return;
+    }
+    if (!this._lightningEl) {
+      const el = document.createElement('div');
+      el.style.cssText = 'position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:5;';
+      this.canvas.parentElement.appendChild(el);
+      this._lightningEl = el;
+    }
+    this._lightningTimer = (this._lightningTimer || 0) - dt;
+    if (this._lightningTimer <= 0) {
+      const minGap = cfg.minGapSec ?? 4, maxGap = cfg.maxGapSec ?? 12;
+      this._lightningTimer = minGap + Math.random() * (maxGap - minGap);
+      const peakAlpha = (cfg.peakAlpha ?? 0.55) * thunderCharge;
+      const fadeSec = cfg.fadeSec ?? 0.35;
+      this._lightningEl.style.transition = 'none';
+      this._lightningEl.style.opacity = String(peakAlpha);
+      requestAnimationFrame(() => {
+        if (!this._lightningEl) return;
+        this._lightningEl.style.transition = `opacity ${fadeSec}s ease-out`;
+        this._lightningEl.style.opacity = '0';
+      });
+    }
+  }
 
   /**
    * Week3·Day13-14：渲染分辨率缩放（移动端/低端设备用）。
@@ -1273,7 +1309,7 @@ export class ThreeRenderer {
     if (this.rainRipple) {
       this.rainRipple.update(this.water, this.mapSystem, window.__weather || null, this._lightDt || 0.016);
     }
-    // Q4 天气重做：水洼/雪痕贴花——GroundTraceSystem 自己管生成/合并/消退的节奏
+    // Q4 天气重做：水洼贴花+雪盖遮罩——GroundTraceSystem 自己管生成/合并/消退的节奏
     // （在 main.js 的仿真步进里推进，不是墙钟驱动），这里只负责按它的当前状态画。
     if (this.groundTrace) {
       this.groundTrace.update(window.__groundTrace || null, this.mapSystem);
@@ -1281,8 +1317,12 @@ export class ThreeRenderer {
     // Phase 2：风吹植被——只需要风的 charge，跟天气可视化读同一个量（see WeatherLayer 头注：
     // 强度取充能不取占比），dt 走墙钟，暂停时风也该继续吹。
     if (this.veg && this.vegOn) {
-      const windCharge = window.__weather?.getCharge ? (window.__weather.getCharge('wind') || 0) : 0;
-      this.veg.update(this._lightDt || 0.016, windCharge);
+      const ws0 = window.__weather;
+      const windCharge0 = ws0?.getCharge ? (ws0.getCharge('wind') || 0) : 0;
+      // 飓风 Signature（vegetationMax，v54 §9.8）：不叠加新数值效果，复用现成的
+      // 风吹植被摆动机制拉满——取风充能与飓风充能较大者。
+      const hurricaneCharge = ws0?.getCharge ? (ws0.getCharge('hurricane') || 0) : 0;
+      this.veg.update(this._lightDt || 0.016, Math.max(windCharge0, hurricaneCharge));
     }
     // P1：走后处理管线（Bloom+ACES+FXAA+描边+SSAO）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
@@ -1294,11 +1334,27 @@ export class ThreeRenderer {
       // 任务 #178：强度读同一个口径的天气充能（见上方风吹植被 windCharge 的头注：
       // "强度取充能不取占比"），dt 走墙钟——暂停时雾也该继续缓慢呼吸。
       if (this.fogPass) {
-        const fogCharge = window.__weather?.getCharge ? (window.__weather.getCharge('fog') || 0) : 0;
-        this.fogPass.setStrength(fogCharge);
-        this.fogPass._advanceNoise?.(this._lightDt || 0.016);
+        const ws = window.__weather;
+        const fogCharge = ws?.getCharge ? (ws.getCharge('fog') || 0) : 0;
+        // v54 §9.8：极端天气 Signature——按 id 直接查表，不用扫描全部激活极端天气。
+        const exCharge = (id) => (ws?.getCharge ? (ws.getCharge(id) || 0) : 0);
+        // 飓风 Signature：若同时有雾，流速也跟着拉满（取风充能与飓风充能较大者）。
+        const windCharge = Math.max(ws?.getCharge ? (ws.getCharge('wind') || 0) : 0, exCharge('hurricane'));
+        const sandstormCharge = exCharge('sandstorm');
+        // 沙暴借用雾通道当沙尘层——两个来源取更强的那个驱动浓度，不是相加。
+        this.fogPass.setStrength(Math.max(fogCharge, sandstormCharge));
+        this.fogPass.setColor?.(sandstormCharge > fogCharge
+          ? (CONFIG.volumetricFog?.sandstormColor ?? '#c9a15a')
+          : (CONFIG.volumetricFog?.color ?? '#c9d4de'));
+        // v54 §9.3：雾-风联动——流速随风充能提速（见 PostFX.js._advanceNoise 头注）。
+        this.fogPass._advanceNoise?.(this._lightDt || 0.016, windCharge);
         this.fogPass._syncCamera?.();
+        this.fogPass.setUvWobble?.(exCharge('mirage') * 1.5); // 蜃景：热浪扭曲
+        this.fogPass.setNoiseStretch?.(1 + exCharge('haze_surge') * 2.2); // 霾潮：方向感
+        this.fogPass.setMaxStrengthMul?.(1 + exCharge('densefog') * 0.25); // 浓雾：浓度上限抬高
       }
+      // 雷暴 Signature（lightningFlash）：纯视觉、不带机制惩罚的偶发全屏闪光。
+      this._updateLightning(this._lightDt || 0.016);
       this.composer.render();
     } else {
       this.gl.render(this.scene, this.camera);

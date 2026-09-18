@@ -157,7 +157,10 @@ export class WeatherLayer {
       const v = weather.getCharge ? weather.getCharge(id) : 0;
       return Math.max(0, Math.min(1, v || 0));
     };
-    const rain = ch('rain'), snow = ch('snow'), fog = ch('fog'), wind = ch('wind'), clear = ch('clear');
+    const rain = ch('rain'), snow = ch('snow'), fog = ch('fog'), wind = ch('wind');
+    // 烈日 Signature（dustMax，v54 §9.8）：复用现成的晴天浮尘可视化，不叠加新
+    // 效果——取"晴充能"与"烈日充能"较大者驱动浮尘，烈日触发时浮尘天然拉满。
+    const clear = Math.max(ch('clear'), ch('scorch'));
 
     // ==================== 盒子：跟着镜头走 ====================
     // v43 Q6 修正。用户："天气可视化效果如果我旋转了视角那就会有一部分少了显示不到！"

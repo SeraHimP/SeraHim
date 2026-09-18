@@ -464,10 +464,19 @@ const FogShader = {
     uniform float noiseScale;      // 世界空间噪声频率
     uniform float noiseStrength;   // 噪声对浓度的调制幅度，0=纯均匀雾
     uniform vec2 noiseOffset;      // 随真实时间缓慢累加，让雾团"呼吸"（与镜头运动无关）
+    uniform vec2 noiseStretch;     // 世界空间噪声采样的各向异性拉伸（霾潮 Signature 用，默认(1,1)）
+    uniform float uvWobble;        // >0 时对场景采样做轻微 UV 位移，热浪扭曲感（蜃景 Signature）
     ${ORTHO_RECONSTRUCT_GLSL}
 
     void main() {
-      vec4 base = texture2D(tDiffuse, vUv);
+      // 蜃景 Signature：用噪声纹理再采样一次，对场景采样做极轻微的 UV 位移，
+      // 不是真实物理折射，只是让远景产生微弱波动——uvWobble<=0 时完全等同直采样。
+      vec2 sampleUv = vUv;
+      if (uvWobble > 0.0001) {
+        vec2 wn = texture2D(tNoise, vUv * 6.0 + noiseOffset * 0.5).xy - 0.5;
+        sampleUv += wn * uvWobble * 0.01;
+      }
+      vec4 base = texture2D(tDiffuse, sampleUv);
       if (fogStrength <= 0.0001) { gl_FragColor = base; return; }
 
       float depth = texture2D(tDepth, vUv).x;
@@ -482,7 +491,7 @@ const FogShader = {
       float dist = max(0.0, -viewPos.z);
       float distFactor = 1.0 - exp(-dist * density);
 
-      vec2 nUv = worldPos.xz * noiseScale + noiseOffset;
+      vec2 nUv = worldPos.xz * noiseScale * noiseStretch + noiseOffset;
       float n1 = texture2D(tNoise, nUv).r;
       float n2 = texture2D(tNoise, nUv * 2.13 + vec2(5.2, 1.7)).r;
       float noise = mix(1.0, n1 * 0.65 + n2 * 0.35 + 0.2, clamp(noiseStrength, 0.0, 1.0));
@@ -509,6 +518,8 @@ export function createFogPass(prepass, camera, width, height) {
       noiseScale: { value: 0.004 },
       noiseStrength: { value: 0.5 },
       noiseOffset: { value: new THREE.Vector2(0, 0) },
+      noiseStretch: { value: new THREE.Vector2(1, 1) },
+      uvWobble: { value: 0 },
       ...cameraUniforms(camera),
     },
     vertexShader: FogShader.vertexShader,
@@ -528,7 +539,12 @@ export function createFogPass(prepass, camera, width, height) {
   if (c.noiseStrength !== undefined) pass.uniforms.noiseStrength.value = c.noiseStrength;
   const maxStrength = c.maxStrength ?? 0.8;
   const noiseSpeed = c.noiseSpeed ?? 4;
+  // v54 §9.3：雾-风联动——风越大流速越快。风目前只有强度没有方向，这轮做不了
+  // 真正的定向雾带，只做"整体流速跟风充能走"。windBoostFactor=2 时满风充能约
+  // 3 倍速（1 + 1*2）。
+  const windBoostFactor = c.windBoostFactor ?? 2;
   const offsetAccum = new THREE.Vector2(0, 0);
+  let extraStrengthMul = 1; // 浓雾 Signature：maxStrength 临时抬高的乘数
   // 相机是正交、无父节点的独立对象，updateMatrixWorld() 只是一次 4x4 矩阵乘法，
   // 显式调用一次确保这里读到的是【本帧】的相机变换，不依赖 composer 内部渲染顺序
   // 恰好已经刷新过它（那份先后关系容易被下一次管线调整悄悄打破）。
@@ -537,14 +553,28 @@ export function createFogPass(prepass, camera, width, height) {
     camera.updateMatrixWorld(true);
     pass.uniforms.viewMatrixInverse.value.copy(camera.matrixWorld);
   };
-  pass._advanceNoise = (dt) => {
-    offsetAccum.x += noiseSpeed * dt * 0.00037;
-    offsetAccum.y += noiseSpeed * dt * 0.00021;
+  pass._advanceNoise = (dt, windCharge = 0) => {
+    const speed = noiseSpeed * (1 + Math.max(0, Math.min(1, windCharge)) * windBoostFactor);
+    offsetAccum.x += speed * dt * 0.00037;
+    offsetAccum.y += speed * dt * 0.00021;
     pass.uniforms.noiseOffset.value.copy(offsetAccum);
   };
   // 强度输入是 0..1（天气充能），乘 maxStrength 之后才是着色器实际吃的浓度系数——
   // 满充能也不该把整个画面糊死，maxStrength 就是这个视觉上限的软编码入口。
-  pass.setStrength = (v) => { pass.uniforms.fogStrength.value = Math.max(0, Math.min(1, v || 0)) * maxStrength; };
+  pass.setStrength = (v) => { pass.uniforms.fogStrength.value = Math.max(0, Math.min(1, v || 0)) * maxStrength * extraStrengthMul; };
+  // 浓雾 Signature（maxFogStrength）：临时把浓度上限抬高，超出日常水位。
+  pass.setMaxStrengthMul = (mul) => { extraStrengthMul = mul || 1; };
+  // 蜃景 Signature（fogUvWobble）：0..1，>0 时场景采样做轻微 UV 位移，热浪扭曲感。
+  pass.setUvWobble = (v) => { pass.uniforms.uvWobble.value = Math.max(0, v || 0); };
+  // 霾潮 Signature（directionalFog）：噪声在固定方向被拉伸，折中版"方向感"
+  // （真实风向数据接入前的近似）。stretch<=1 时退回各向同性。
+  pass.setNoiseStretch = (stretch) => {
+    const s = Math.max(1, stretch || 1);
+    pass.uniforms.noiseStretch.value.set(s, 1 / s);
+  };
+  // 沙暴 Signature（sandstormReversal）：雾通道复用成土黄色沙尘层——沙暴没有自己
+  // 独立的体积渲染层，颜色可以随时切回默认雾色。
+  pass.setColor = (hex) => { pass.uniforms.fogColor.value.set(hex); };
   pass.setSize = () => {}; // 世界空间效果的浓度/频率与像素分辨率无关，占位保持接口一致
   return pass;
 }

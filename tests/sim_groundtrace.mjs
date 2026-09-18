@@ -1,11 +1,16 @@
 /**
- * sim_groundtrace.mjs —— 地面痕迹层（水洼/雪痕）验收
+ * sim_groundtrace.mjs —— 地面痕迹层（水洼/雪盖，v54 第二轮重做）验收
  *
  * 用户对雨的水洼提的硬约束（逐条照抄，见 docs/Q4-WEATHER-REDESIGN.md）：
  *   "随机在地面生成小水洼，单位在水洼里会有常驻减速效果，雨下越大水洼越多，
  *   水洼可以连接到一块。但是特别注意！只有雨下了一段时间或者是下的特别大时
  *   才会出现！如果一直保持小雨则不会出现！"
- * 雪的破雪留痕复用同一套骨架，语义相反（进去加速而不是减速）。
+ *
+ * v54：实机验收发现水洼太少太弱（全图随机撒点大多落在看不到的野区、生成节奏
+ * 太慢、单个水洼相对地图尺度太小），这轮改成"70~80%权重沿兵线附近撒点"+
+ * 加大尺寸+提速；雪的机制整个反过来——不再是"脚印瞬间加速"，改成"雪盖网格
+ * 随强度/时长整体积累雪深，站进去减速，单位经过会局部踩低雪深留下小径，
+ * 小径减速幅度比周围雪盖小但不会被踩成 0"。
  *
  * 每条断言钉"行为形状"（触发与否、方向、相对大小关系），不钉具体数字——
  * 生成位置带随机性，钉死坐标必然偶发抖动失败（见 docs/DEVELOPMENT.md §8.2）。
@@ -13,7 +18,7 @@
 import { setupWindow, scoreboard, makeWorld, mkEntity } from './_harness.mjs';
 
 setupWindow({ gameTime: 0, waveNumber: 1 });
-const { T, done } = scoreboard('地面痕迹层（水洼/雪痕）验收');
+const { T, done } = scoreboard('地面痕迹层（水洼/雪盖）验收');
 
 const { WeatherSystem } = await import('../src/systems/WeatherSystem.js');
 const { GroundTraceSystem } = await import('../src/systems/GroundTraceSystem.js');
@@ -128,43 +133,109 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
   T('消③-充分等待后水洼逐渐干涸消失', gts.puddles.length === 0);
 }
 
-// ==================== 五、雪痕：单位移动留痕 + 加速 + 消退 ====================
+// ==================== 五、水洼：沿兵线权重撒点（v54 §9.4） ====================
+{
+  const mkLaneMap = (w = 3000, h = 3000) => ({
+    isWalkable: () => true,
+    currentMap: { world: { w, h }, lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: w, y: h }] }] },
+  });
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkLaneMap(), ws);
+  setCharge(ws, 'rain', 0.99);
+  for (let i = 0; i < 200; i++) gts.update(1);
+  const laneSpread = CONFIG.groundTrace?.puddle?.laneSpread ?? 220;
+  // 对角线 x=y 上任意点到直线的垂距 = |x-y|/√2。
+  const distToLane = (x, y) => Math.abs(x - y) / Math.SQRT2;
+  const near = gts.puddles.filter(p => distToLane(p.x, p.y) <= laneSpread * 1.5).length;
+  T('沿①-有兵线数据时，大部分水洼落在兵线附近（不是纯全图随机撒点）',
+    gts.puddles.length > 0 && near / gts.puddles.length > 0.5);
+}
+{
+  // 没有兵线数据（老地图/测试桩）时优雅退回全图随机撒点，不抛异常、不为空。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(3000, 3000), ws);
+  setCharge(ws, 'rain', 0.99);
+  for (let i = 0; i < 60; i++) gts.update(1);
+  T('沿②-没有 lanes 数据时退回全图随机撒点，仍能正常触发（不因缺字段而崩溃）',
+    gts.puddles.length > 0);
+}
+
+// ==================== 六、雪盖：全新设计（v54，取代旧的"脚印瞬间加速"） ====================
 {
   const { ents, fx } = await makeWorld();
   const ws = mkWeather();
   const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
-  setCharge(ws, 'snow', 0.6);
-  const leader = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 500, y: 500 } }, CONFIG);
-  for (let i = 0; i < 20; i++) { leader.pos.x += 10; gts.update(0.5); }
-  T('雪①-雪天单位移动会留下痕迹点', gts.trails.length > 0);
-
-  const t0 = gts.trails[0];
-  const follower = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: t0.x, y: t0.y } }, CONFIG);
+  setCharge(ws, 'snow', 0.8); // 严重档，远高于 minChargeToGrow
+  for (let i = 0; i < 400; i++) gts.update(1); // 给够时间让全局目标涨起来
+  T('雪①-持续足够强的雪天，雪盖全局目标深度会从 0 涨起来', gts.snowGlobalTarget > 0.05);
+  const cover = gts.getSnowCover();
+  T('雪②-getSnowCover() 返回网格快照，data 里至少有格子深度 >0', cover
+    && Array.from(cover.data).some(v => v > 0.01));
+}
+{
+  // 雪太弱（低于 minChargeToGrow）不积雪——"下到一定程度后才缓缓显出积雪"。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
+  setCharge(ws, 'snow', 0.05); // 远低于 minChargeToGrow
+  for (let i = 0; i < 200; i++) gts.update(1);
+  T('雪③-雪弱到 minChargeToGrow 以下时雪盖不积（不是任何雪天都会有积雪）',
+    gts.snowGlobalTarget < 0.02);
+}
+{
+  // 站在雪盖里减速。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
+  setCharge(ws, 'snow', 0.9);
+  for (let i = 0; i < 400; i++) gts.update(1);
+  const inside = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 1000, y: 1000 } }, CONFIG);
   gts._applyEffects();
-  const followerEff = fx.getEffects(follower.id).find(e => e.blueprint.name === '雪痕');
-  T('雪②-踩在雪痕上的单位获得正向移速修正（加速）', followerEff && followerEff.blueprint.percent > 0);
-
-  for (let i = 0; i < 15; i++) gts.update(1); // 超过 lifetimeSec（默认10s）
-  T('雪③-痕迹点会自然过期消失（不是永久通道）', gts.trails.length === 0);
+  const eff = fx.getEffects(inside.id).find(e => e.blueprint.name === '积雪');
+  T('雪④-站在雪盖里的单位获得负向移速修正（减速，不是旧机制的加速）',
+    eff && eff.blueprint.percent < 0);
 }
 {
-  // 雪太弱（低于 minTierScale）不留痕。
+  // 小径：被踩过的格子局部雪深低于周围未踩过的格子，但不会被踩到 0（pathFloor）。
   const { ents, fx } = await makeWorld();
   const ws = mkWeather();
   const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
-  setCharge(ws, 'snow', 0.05); // 远低于 minTierScale
-  const leader = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 500, y: 500 } }, CONFIG);
-  for (let i = 0; i < 20; i++) { leader.pos.x += 10; gts.update(0.5); }
-  T('雪④-雪弱到轻微档以下时不留痕（不是任何雪天都会有雪痕）', gts.trails.length === 0);
+  setCharge(ws, 'snow', 0.9);
+  for (let i = 0; i < 400; i++) gts.update(1); // 先让雪盖长满，不踩踏
+  const target = gts.snowGlobalTarget;
+  const untouched = gts._snowDepthAt(1900, 1900); // 远离下面要踩的点，代表"周围雪盖"
+  const walker = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 1000, y: 1000 } }, CONFIG);
+  for (let i = 0; i < 60; i++) gts.update(1); // 单位固定站在同一点，持续踩踏
+  const trodden = gts._snowDepthAt(1000, 1000);
+  const pathFloor = CONFIG.groundTrace?.snowCover?.pathFloor ?? 0.3;
+  T('雪⑤-被踩过的格子雪深明显低于未踩过的周围雪盖（踩出了一条小径）', trodden < untouched * 0.9);
+  T('雪⑥-小径不会被踩成完全 0（下限 = pathFloor × 全局目标，仍有一定减速）',
+    trodden >= pathFloor * target * 0.9);
+}
+{
+  // 雪停后全局目标逐渐消退（不是瞬间清空），跟水洼的"消①-③"同一节奏语义。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
+  setCharge(ws, 'snow', 0.9);
+  for (let i = 0; i < 400; i++) gts.update(1);
+  const before = gts.snowGlobalTarget;
+  T('雪⑦-持续降雪后全局目标深度确实涨起来了', before > 0.1);
+  setCharge(ws, 'snow', 0);
+  for (let i = 0; i < 400; i++) gts.update(1);
+  T('雪⑧-雪停后全局目标深度逐渐消退（不是瞬间归零，也不会停在原值不动）',
+    gts.snowGlobalTarget < before * 0.5);
 }
 
-// ==================== 六、天气关闭/无地图系统时安全降级 ====================
+// ==================== 七、天气关闭/无地图系统时安全降级 ====================
 {
   const { ents, fx } = await makeWorld();
   const gts = new GroundTraceSystem(ents, fx, null, null); // 无 mapSystem、无 weatherSystem
   for (let i = 0; i < 50; i++) gts.update(1); // 不应抛异常
   T('降①-mapSystem/weatherSystem 都缺失时不抛异常、不生成任何痕迹',
-    gts.puddles.length === 0 && gts.trails.length === 0);
+    gts.puddles.length === 0 && gts.getSnowCover() === null);
 }
 
 done();

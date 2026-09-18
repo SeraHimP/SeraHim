@@ -1,5 +1,10 @@
 import { BASE_WEATHERS, EXTREME_WEATHERS, TARGET_MATCHERS, CLIMATE_TEMPLATES, TEMP_AXIS_COUPLING, tierOf, tierOfExtreme, INTENSITY_TIERS } from '../data/Weather.js';
 import { WEATHER_SKILL_MODS } from '../data/weatherSkillMods.js';
+// v54 第二轮重做 §9.6：天气×昼夜联动只需要读太阳仰角，DayNight.js 是纯函数
+// （颜色插值用 THREE.Color，但不碰场景/渲染），headless Node 环境下同样可以
+// 安全 import——sim_daynight.mjs 早就这么用了。WeatherSystem 不反向被 DayNight
+// 依赖，不会形成循环 import。
+import { resolveDayPhase } from '../presentation/DayNight.js';
 
 // v35 性能：极端天气条目静态缓存——充能方程每步都要遍历全部极端天气，
 // 前向模拟一次跑 240+ 步，每步 Object.entries 重建数组是纯浪费（15ms → ~4ms）。
@@ -53,11 +58,13 @@ const TIMELINE_LENGTH = 7200;   // 预生成的时间线长度（秒）＝2小�
 // 只认 baseIds，温度轴不会被这些循环意外吃进去；同时把它设计成数组（不是单个
 // 字符串常量）是为将来可能追加的第二条轴（湿度等，本轮明确不做）留位置。
 const AXIS_IDS = ['temp'];
-// 目标回归周期 15~30 分钟（平均约 20 分钟）——不是"天气 θ 的固定倍数"，是按
-// 本游戏真实一局时长（balance_matrix 实测均值 35 分钟）反推的：要让温度轴在一局
-// 里能稳定走完约一轮"偏暖→偏冷"或反向的完整弧线，同时明显慢于天气自身 60~600秒
-// 的回归周期，产生"季节感"而不是又一条同频率的天气曲线。
-const AXIS_TARGET_DURATION_MIN = 900, AXIS_TARGET_DURATION_MAX = 1800;
+// ==================== v54 §9.7：趋势尺度压缩（原 15~30 分钟太慢） ====================
+// 用户实机验收反馈"气象轴看不出效果"——两轮 GPT 复核一致认为根因不是隐藏设计
+// 本身错了，是【趋势尺度太长】：一局约 35 分钟，15~30 分钟的周期只够走半个弧线，
+// 玩家几乎感受不到"正在变热/变冷"这类趋势。压到 10~14 分钟（平均约 12 分钟），
+// 一局能看到至少一次完整的冷暖趋势，同时依然明显慢于天气自身 60~600秒 的回归
+// 周期，保留"季节感而非又一条天气曲线"这条设计初衷。
+const AXIS_TARGET_DURATION_MIN = 600, AXIS_TARGET_DURATION_MAX = 840;
 const AXIS_SIGMA_COEF = 0.5;    // 稳态标准差系数（同 sigma/theta 的换算方式），让 T 大部分时间落在目标附近 ±0.8 左右
 
 export class WeatherSystem {
@@ -399,7 +406,48 @@ export class WeatherSystem {
   _extremeThreshold(id, rawThreshold) {
     const T = CONFIG.tuning || {};
     const scale = T.weatherExtremeThresholdScale ?? 1;
-    return Math.max(0.15, Math.min(0.98, rawThreshold * scale));
+    const base = Math.max(0.15, Math.min(0.98, rawThreshold * scale));
+    const mul = this._dayNightCompatibility(id);
+    // Hard veto：基础充能最高只能到 1.0，给一个远超 1 的哨兵值保证【永远】不满足
+    // `bc < th` 之外的条件——不是"很难触发"，是"这一刻物理上不可能触发"。
+    if (mul === Infinity) return 999;
+    return Math.max(0.15, Math.min(0.98, base * mul));
+  }
+
+  /**
+   * v54 §9.6：天气×昼夜联动（Weather Compatibility）。
+   *
+   * 不给 15 种极端天气逐条写权重表（GPT 复核明确建议过），只用一个通用环境信号
+   * + 每条极端天气可选的 `dayNightRule` 做判定：
+   *   · Hard veto（rule.veto === 'day'）：夜晚时返回 Infinity，_extremeThreshold
+   *     会把它变成一个永远达不到的阈值——物理上不可能触发。
+   *   · Soft penalty（未来可加 rule.nightMul/rule.dayMul 之类的字段）：目前只有
+   *     "烈日"配置了 veto，其余 14 条没有配置 dayNightRule，直接走下面的
+   *     Neutral 分支返回 1（不调整阈值）——避免给每条都发明一份没人验收过的
+   *     权重数字。
+   *   · Neutral：返回 1。
+   *
+   * ==================== 判定信号：相位，不是太阳仰角 ====================
+   * 原计划用 dayNightAt() 的 sunElevation 判断昼夜（GPT 建议的"太阳高度函数"
+   * 比布尔 isDay 更细腻）。实测后发现这个游戏的昼夜光照表是**风格化**的，
+   * 太阳仰角在"午夜"这个关键帧也只是趋于一个较小的正值（14°），从不真正跌到
+   * 地平线以下——直接查 DayNight.js 的 KEYS 表就能看到，不是我猜的。用
+   * `sunElevation<=0` 做夜晚判据在这里永远为 false，veto 形同虚设。
+   * 改用【相位】本身：resolveDayPhase 已经把 gameTime 换算成 phase∈[0,1)，
+   * [0,0.5) 是白天、[0.5,1) 是夜晚（DAY_LEN/NIGHT_LEN 的定义本身就是这么分的），
+   * 这才是这个游戏"昼夜"真正的判据，比另外接一个太阳仰角阈值更直接可靠。
+   */
+  _dayNightCompatibility(id) {
+    const rule = EXTREME_WEATHERS[id]?.dayNightRule;
+    if (!rule) return 1;
+    const gameTime = (typeof window !== 'undefined') ? (window.gameTime || 0) : 0;
+    const ctx = (typeof window !== 'undefined') ? window.CTX : null;
+    const dp = resolveDayPhase(gameTime, ctx, this.enabled);
+    if (!dp.active) return 1; // 昼夜被锁定在固定时刻时不做限制
+    const isNight = dp.phase >= 0.5;
+    if (rule.veto === 'day' && isNight) return Infinity;
+    if (rule.veto === 'night' && !isNight) return Infinity;
+    return 1;
   }
 
   /** 某天气的当前充能值（0~1） */
@@ -718,6 +766,11 @@ export class WeatherSystem {
         const v = BASE_WEATHERS[baseId]?.structural?.[key];
         if (v) othersTotal += v * scale;
       }
+      // v54 §9.8：极端天气【自己】也可以再叠加一份 structural（例如雪盲的额外
+      // 索敌收缩、浓雾比普通雾更狠的收缩、飓风的额外转向惩罚）——这是在上面
+      // "继承自 trigger 里的基础天气"之外的独立加成，不是自动继承的那一份。
+      const own = def.structural?.[key];
+      if (own) othersTotal += own * scale;
     }
     // 晴天的抑制系数：直接复用 getEffectiveStrengths() 里 clear 的档位系数
     // （0~1，禁用晴天时该值为 undefined→0，抑制自动失效，与其它读数口径一致），

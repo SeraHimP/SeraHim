@@ -124,29 +124,35 @@ T('包含全部5种基础天气', Object.keys(w).length===Object.keys(BASE_WEATH
 }
 
 // ==================== Q4：雨天主题重做 + 无用属性清除 ====================
+// v54 第二轮重做：数值加成按"角色化上限"大幅收窄（基础天气 1~2 维度小幅数值，
+// 极端天气最多 1 主轴+1 次轴），见 docs/Q4-WEATHER-REDESIGN.md §九。这里的老
+// 断言钉的是具体旧数值（雨 +4 生命恢复、+33% 治疗护盾强度、雷暴双穿等），
+// 那些条目已经被砍掉——不是回归，是这轮重做本身的目标。改成钉"主题还在、
+// 幅度落在角色化上限区间内"这类行为形状，不再钉已经作废的具体旧数字。
 {
   const {BASE_WEATHERS, EXTREME_WEATHERS}=await import('../src/data/Weather.js');
   const all=[...Object.values(BASE_WEATHERS), ...Object.values(EXTREME_WEATHERS)];
   const keys=new Set(all.flatMap(d=>d.effects.map(e=>e.statKey)));
   T('Q4 已移除小兵生命偷取（小兵用不到）', !keys.has('lifeStealPct'));
-  T('v33 雷暴给塔通用双穿（雷电击穿）',
-    EXTREME_WEATHERS.thunderstorm.effects.some(e=>e.targets==='towers'&&e.statKey==='armorPenPercent'&&e.flat>0)
-    && EXTREME_WEATHERS.thunderstorm.effects.some(e=>e.targets==='towers'&&e.statKey==='magicPenPercent'&&e.flat>0));
+  T('v54 雷暴：不再有穿透类数值 buff（armorPenPercent/magicPenPercent 已砍掉）',
+    !EXTREME_WEATHERS.thunderstorm.effects.some(e=>e.statKey==='armorPenPercent'||e.statKey==='magicPenPercent'));
 
   const rain=BASE_WEATHERS.rain.effects;
-  const has=(t,k)=>rain.some(e=>e.targets===t && e.statKey===k);
-  T('v33 雨天：塔 +4 生命恢复', rain.some(e=>e.targets==='towers'&&e.statKey==='healthRegen'&&e.flat===4));
-  T('Q4 雨天：塔 +33% 治疗护盾强度',
-    rain.some(e=>e.targets==='towers'&&e.statKey==='healShieldPowerPct'&&e.flat===33));
+  T('v54 雨天：塔攻击力主题保留，healthRegen/healShieldPowerPct 已砍掉（不再同时动恢复+治疗强度+攻击力三个维度）',
+    rain.some(e=>e.targets==='towers'&&e.statKey==='attackDamage'&&e.percent>0)
+    && !rain.some(e=>e.statKey==='healthRegen') && !rain.some(e=>e.statKey==='healShieldPowerPct'));
+  T('v54 雨天：塔攻击力幅度落在基础天气角色化上限内（4~8%）',
+    rain.filter(e=>e.targets==='towers'&&e.statKey==='attackDamage').every(e=>e.percent>=4 && e.percent<=8));
   T('v33 雨天：小兵 减移速、减双抗（塔优势）',
     rain.some(e=>e.targets==='minions'&&e.statKey==='moveSpeed'&&e.percent<0)
     && rain.some(e=>e.targets==='minions'&&e.statKey==='armor'&&e.flat<0));
 
   const ts=EXTREME_WEATHERS.thunderstorm.effects;
-  T('Q4 雷暴：塔攻速提升、小兵双抗与攻速下降',
-    ts.some(e=>e.targets==='towers'&&e.statKey==='bonusAttackSpeedPct'&&e.flat>0)
-    && ts.some(e=>e.targets==='minions'&&e.statKey==='armor'&&e.flat<0)
-    && ts.some(e=>e.targets==='minions'&&e.statKey==='bonusAttackSpeedPct'&&e.flat<0));
+  T('v54 雷暴：塔攻击力/攻速主题保留（1主轴+1次轴），不再给小兵减双抗/减攻速',
+    ts.some(e=>e.targets==='towers'&&e.statKey==='attackDamage'&&e.percent>0)
+    && ts.some(e=>e.targets==='towers'&&e.statKey==='bonusAttackSpeedPct'&&e.flat>0)
+    && !ts.some(e=>e.targets==='minions'&&e.statKey==='armor')
+    && !ts.some(e=>e.targets==='minions'&&e.statKey==='bonusAttackSpeedPct'));
   T('Q4 暴雨存在且同款主题', !!EXTREME_WEATHERS.downpour);
 }
 
@@ -206,7 +212,7 @@ T('包含全部5种基础天气', Object.keys(w).length===Object.keys(BASE_WEATH
       baseAttackSpeed:1,attackRange:180,healthRegen:0,shieldFixedMax:0,healShieldPowerPct:0},
     currentHP:4000,_skillInstances:[]};
 
-  // 强制纯雨天并充满能（雨天给塔 +4 生命恢复 / +33% 治疗护盾强度）。
+  // 强制纯雨天并充满能（v54：雨天主题收窄成塔攻击力单一维度，+7%，见 Weather.js）。
   // v33：纯雨独大会连带触发单基础极端【洪涝】（这正是新机制的语义），
   // 此处要隔离验证的是雨天本体的数值管线 → 先禁用洪涝。
   wk.setWeatherDisabled('flood', true);
@@ -214,16 +220,17 @@ T('包含全部5种基础天气', Object.keys(w).length===Object.keys(BASE_WEATH
   for(let t=0;t<300;t++) wk._updateCharges(1);
   AttributeCalculator.tick();
   const rainy=AttributeCalculator.calc(tw,[]);
-  T('雨天满档：塔生命恢复 +4', Math.abs(rainy.healthRegen-4)<0.1);
-  T('雨天满档：塔治疗护盾强度 +33%', Math.abs(rainy.healShieldPowerPct-33)<0.5);
+  T('雨天满档：塔攻击力提升（v54 收窄后的唯一数值主题）', rainy.attackDamage > 200);
+  T('雨天满档：塔攻击力提升幅度落在基础天气角色化上限内（4~8%）',
+    rainy.attackDamage >= 200*1.04 && rainy.attackDamage <= 200*1.08);
 
   // 天气切走并放空 → 属性回落（验证缓存随天气失效）。
-  // v33：切到【风】——晴天新表给全员 +2 恢复，会污染"回落到 0"的判定；风天无恢复词条。
+  // v33：切到【风】——风天不碰塔攻击力，不会污染"回落到基线"的判定。
   wk.getWeights=()=>({clear:0,rain:0,fog:0,wind:1,snow:0});
   for(let t=0;t<400;t++) wk._updateCharges(1);
   AttributeCalculator.tick();
   const dry=AttributeCalculator.calc(tw,[]);
-  T('天气消散后属性回落（缓存随天气正确失效）', dry.healthRegen<0.5);
+  T('天气消散后属性回落（缓存随天气正确失效）', Math.abs(dry.attackDamage-200)<1);
 
   // 禁用某天气 → 其充能与效果归零
   wk.setWeatherDisabled('rain', true);
@@ -231,7 +238,7 @@ T('包含全部5种基础天气', Object.keys(w).length===Object.keys(BASE_WEATH
   for(let t=0;t<300;t++) wk._updateCharges(1);
   T('禁用的天气不充能（效果为零）', wk.getCharge('rain')<0.02);
   AttributeCalculator.tick();
-  T('禁用的天气不产生属性修正', AttributeCalculator.calc(tw,[]).healthRegen<0.5);
+  T('禁用的天气不产生属性修正', Math.abs(AttributeCalculator.calc(tw,[]).attackDamage-200)<1);
   wk.setWeatherDisabled('rain', false);
   AttributeCalculator.setWeatherSystem(ws);
 }
@@ -689,14 +696,27 @@ import fs from 'fs';
     ws3.getStructuralFactor('aggroRangeScalePct') > 0);
   setCharge(ws3, 'clear', 0);
 
-  // ---- 极端天气自动继承：不需要为每条极端天气手写 structural ----
-  T('极①-EXTREME_WEATHERS 里没有任何一条手写了 structural 字段（应由 trigger 自动派生）',
-    Object.values(EXTREME_WEATHERS).every(def => !def.structural));
-  // haze_surge（霾潮）由 fog+wind 触发，理应同时继承两者的 structural。
+  // ---- 极端天气自动继承 + v54 §9.8 允许自己再叠加一份 structural ----
+  // haze_surge（霾潮）由 fog+wind 触发，本身没写 structural，理应【只靠自动继承】
+  // 拿到雾的索敌收缩和风的转身惩罚——用它验证"不手写也能自动派生"这条老invariant
+  // 依然成立；densefog/snowblind/hurricane 这几条是 v54 新增的例外（自己再叠加
+  // 一份，见 §9.8"额外索敌收缩"这类 Signature），不能再断言"没有任何一条手写"。
+  T('极①-霾潮没有手写 structural，靠自动继承（不是每条极端天气都要手写）',
+    !EXTREME_WEATHERS.haze_surge.structural);
   setExtCharge(ws3, 'haze_surge', 0.9);
   T('极②-霾潮（雾+风组合）充满能时，同时继承了雾的索敌收缩和风的转身惩罚',
     ws3.getStructuralFactor('aggroRangeScalePct') < 0 && ws3.getStructuralFactor('turnRateScalePct') < 0);
   setExtCharge(ws3, 'haze_surge', 0);
+
+  // ---- v54 新增：极端天气可以自己再叠加一份 structural（不是只能继承） ----
+  T('极③-浓雾自己手写了一份额外的 structural（雪盲/浓雾/飞风这几条 Signature 需要"比继承更狠"）',
+    !!EXTREME_WEATHERS.densefog.structural && EXTREME_WEATHERS.densefog.structural.aggroRangeScalePct < 0);
+  const fogAloneAggro = (() => { setCharge(ws3, 'fog', 0.9); const v = ws3.getStructuralFactor('aggroRangeScalePct'); setCharge(ws3, 'fog', 0); return v; })();
+  setExtCharge(ws3, 'densefog', 0.9);
+  const densefogAggro = ws3.getStructuralFactor('aggroRangeScalePct');
+  setExtCharge(ws3, 'densefog', 0);
+  T('极④-浓雾激活时的索敌收缩比单纯雾天更狠（自己那份 structural 真的叠加生效了）',
+    densefogAggro < fogAloneAggro);
 }
 
 // ==================== 气象轴 v1：温度轴 ====================
@@ -801,6 +821,54 @@ import fs from 'fs';
     }
   }
   T('轴⑭-极地模板跑够久后至少出现过一次文字提示（不是永远沉默的死代码）', sawHint);
+}
+
+// ==================== v54 §9.6：天气×昼夜联动（Weather Compatibility） ====================
+// 只对"烈日"配了 Hard veto（物理上不可能出现在夜里），其余 14 条极端天气
+// 没有配置 dayNightRule，保持 Neutral——不给每条都发明一份权重表。
+{
+  const { EXTREME_WEATHERS } = await import('../src/data/Weather.js');
+  T('昼①-只有烈日（scorch）配置了 dayNightRule，其余 14 条保持 Neutral（不逐条发明权重）',
+    EXTREME_WEATHERS.scorch.dayNightRule?.veto === 'day'
+    && Object.entries(EXTREME_WEATHERS).filter(([id]) => id !== 'scorch')
+      .every(([, def]) => !def.dayNightRule));
+
+  window.CTX = window.CTX || {};
+  const wDay = new WeatherSystem(null); wDay.setEnabled(true); wDay.reset(501);
+  window.CTX.__dayPhaseOverride = 0.25; // 白天中段，sunElevation > 0
+  window.gameTime = 0;
+  const thDay = wDay._extremeThreshold('scorch', EXTREME_WEATHERS.scorch.trigger.clear);
+  T('昼②-白天时烈日的触发阈值是正常值（不会被 Hard veto 拉高）', thDay < 1);
+
+  window.CTX.__dayPhaseOverride = 0.75; // 夜晚中段，sunElevation ≤ 0
+  const thNight = wDay._extremeThreshold('scorch', EXTREME_WEATHERS.scorch.trigger.clear);
+  T('昼③-夜晚时烈日的触发阈值被 Hard veto 推到不可能达到的量级（充能最高只有1.0）',
+    thNight > 1);
+
+  // 用充能方程实测：即使晴天充能长期拉满，夜里烈日也真的触发不了。
+  const wq = new WeatherSystem(null); wq.setEnabled(true); wq.reset(502);
+  wq.getWeights = () => ({ clear: 1, rain: 0, fog: 0, wind: 0, snow: 0 });
+  for (let t = 0; t < 600; t++) wq._updateCharges(1);
+  T('昼④-夜里晴天充能长期拉满，烈日实测充能仍然是 0（不是"很难触发"，是"触发不了"）',
+    wq.getCharge('scorch') < 0.001);
+
+  window.CTX.__dayPhaseOverride = 0.25; // 切回白天，同样的充能条件下应该能正常触发
+  const wq2 = new WeatherSystem(null); wq2.setEnabled(true); wq2.reset(503);
+  wq2.getWeights = () => ({ clear: 1, rain: 0, fog: 0, wind: 0, snow: 0 });
+  for (let t = 0; t < 600; t++) wq2._updateCharges(1);
+  T('昼⑤-同样条件换到白天，烈日能正常触发（证明 veto 只挡夜晚，不是烈日整体坏掉了）',
+    wq2.getCharge('scorch') > 0.3);
+
+  delete window.CTX.__dayPhaseOverride;
+
+  // 其它极端天气（如雷暴）没有 dayNightRule，白天/夜晚都不受影响（Neutral）。
+  window.CTX.__dayPhaseOverride = 0.75; // 夜晚
+  const wn = new WeatherSystem(null); wn.setEnabled(true); wn.reset(504);
+  const thThunderNight = wn._extremeThreshold('thunderstorm', EXTREME_WEATHERS.thunderstorm.trigger.rain);
+  window.CTX.__dayPhaseOverride = 0.25; // 白天
+  const thThunderDay = wn._extremeThreshold('thunderstorm', EXTREME_WEATHERS.thunderstorm.trigger.rain);
+  T('昼⑥-雷暴（Neutral，没配 dayNightRule）阈值不随昼夜变化', Math.abs(thThunderNight - thThunderDay) < 1e-9);
+  delete window.CTX.__dayPhaseOverride;
 }
 
 console.log(`天气验收: ${pass} 通过 / ${fail} 失败`);
