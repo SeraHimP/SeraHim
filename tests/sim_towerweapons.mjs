@@ -284,7 +284,14 @@ const mapStub = {
   T('召唤①-onFrame 跑几次后凑齐了maxAlive只幻兽', inst.state.petIds.length === (p.maxAlive ?? 2));
   const pet = ctx.entityContainer.get(inst.state.petIds[0]);
   T('召唤②-幻兽是 type:melee（复用现有小兵管线）', pet && pet.type === 'melee');
-  T('召唤③-幻兽出生在塔的位置', pet && pet.pos.x === tower.pos.x);
+  // 用户报的bug"幻兽模型会和塔的模型重叠"：幻兽不该生在塔的坐标点上（塔自身模型
+  // 就占着那块地方），改成生在塔外一圈的待机位——离塔中心的距离＝塔模型半径+间隙。
+  const spawnTowerR = CONFIG.buildingSizes[tower._mapTier] ?? CONFIG.buildingSizes.default;
+  const spawnDist = pet && Math.hypot(pet.pos.x - tower.pos.x, pet.pos.y - tower.pos.y);
+  T('召唤③-幻兽出生在塔外的待机位，不在塔的模型半径以内（不重叠）',
+    pet && spawnDist > spawnTowerR);
+  T('召唤③b-出生点距离精确等于塔模型半径+idleClearance（不是随便定的偏移）',
+    pet && Math.abs(spawnDist - (spawnTowerR + (p.idleClearance ?? 40))) < 1e-6);
   const pct = (p.statPct ?? 80) / 100;
   T('召唤④-幻兽生命值≈塔生命值的statPct%',
     Math.abs(pet.baseStats.maxHP - tower.baseStats.maxHP * pct) < 1e-6);
@@ -430,13 +437,21 @@ const mapStub = {
   T('接敌①-拴绳范围内的敌人会被追击（幻兽移动了）',
     pet.pos.x !== before1.x || pet.pos.y !== before1.y);
 
-  // 拴绳范围外的敌人：不该被追
+  // 拴绳范围外的敌人：不该被追。幻兽先站定在自己算好的待机点上（不是塔的坐标点——
+  // 那正是"重叠"bug修完之后的新语义），这样"没有移动"测的才是"没追那个远处的敌人"，
+  // 不会跟"没到待机点所以本来就要走"这两件事混在一起。
   ents.remove ? ents.remove(nearFoe.id) : (nearFoe.alive = false);
-  pet.pos.x = tower.pos.x; pet.pos.y = tower.pos.y; pet.targetId = null;
+  {
+    const idleTowerR = CONFIG.buildingSizes[tower._mapTier] ?? CONFIG.buildingSizes.default;
+    const idleStandoff = idleTowerR + (pet._petIdleClearance ?? 40);
+    pet.pos.x = tower.pos.x + Math.cos(pet._petIdleAngle || 0) * idleStandoff;
+    pet.pos.y = tower.pos.y + Math.sin(pet._petIdleAngle || 0) * idleStandoff;
+  }
+  pet.targetId = null;
   const farFoe = mk(ents, 'melee', leash * 3, 'red');
   const before2 = { x: pet.pos.x, y: pet.pos.y };
   lms._updatePet(pet, 1.0);
-  T('接敌②-拴绳范围外的敌人不会被追击（幻兽原地不动）',
+  T('接敌②-拴绳范围外的敌人不会被追击（幻兽已在待机点上，不会再移动）',
     pet.pos.x === before2.x && pet.pos.y === before2.y);
 
   // 无目标时离主人太远要往回收
@@ -445,6 +460,25 @@ const mapStub = {
   const before3 = pet.pos.x;
   lms._updatePet(pet, 1.0);
   T('归位①-无目标且离主人较远时会往主人方向收拢', pet.pos.x < before3);
+
+  // ==================== 修复"幻兽模型会和塔的模型重叠"====================
+  // 用户报的bug：幻兽待机归位点原来是直接收到塔的坐标点上（塔自身模型半径就有
+  // 32~44，旧的"离塔中心<40停"完全兜不住），现在待机点应该是塔外一圈、离塔边缘
+  // 有固定间隙的点，不会收缩进塔的模型里。
+  pet.pos.x = tower.pos.x; pet.pos.y = tower.pos.y; pet.targetId = null;
+  for (let i = 0; i < 300; i++) lms._updatePet(pet, 1 / 30);
+  const finalDistFromTower = Math.hypot(pet.pos.x - tower.pos.x, pet.pos.y - tower.pos.y);
+  const towerR = CONFIG.buildingSizes[tower._mapTier] ?? CONFIG.buildingSizes.default;
+  T('重叠修复①-幻兽最终稳定的待机点在塔的模型半径之外（不会陷进塔的几何里）',
+    finalDistFromTower > towerR);
+  T('重叠修复②-待机点距离≈塔半径+idleClearance（精确落在算好的待机点上，不是随便停在某处）',
+    // 容差覆盖 _updatePet 里"离待机点<8就停"的停止阈值，不是断言算法有误差。
+    Math.abs(finalDistFromTower - (towerR + (pet._petIdleClearance ?? 40))) < 8);
+
+  // 两只幻兽的待机点不应该叠在同一个点上（各自的 _petIdleAngle 不同）。
+  const pet2 = ctx.entityContainer.get(inst.state.petIds[1]);
+  T('重叠修复③-两只幻兽的待机角度不同（不会叠在同一个待机点上）',
+    pet._petIdleAngle !== pet2._petIdleAngle);
 }
 
 // ==================== 十七、编辑器/UI枚举接线没有漏掉 shepherd ====================

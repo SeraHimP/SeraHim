@@ -512,14 +512,28 @@ export class LaneMovementSystem {
       return;
     }
 
-    // 没有目标：离主人太远就往回收，贴身待命时原地不动。
-    const ddx = owner.pos.x - minion.pos.x, ddy = owner.pos.y - minion.pos.y;
-    const dOwner = Math.hypot(ddx, ddy);
-    if (dOwner > 40) {
+    // 没有目标：回到"待机位"，不是塔的中心点。
+    // 用户报的bug："之后幻兽的模型会和塔的模型重叠"——旧逻辑是直接往 owner.pos
+    // （塔的坐标本身）收、离塔中心 40 内就不动了，而塔自身的模型半径普遍就有
+    // 32~44，40 这个阈值完全兜不住，幻兽会陷进塔的几何里。待机位改成"塔外一圈
+    // 固定角度+固定间隙的点"（weapon_shepherd 生成幻兽时就定好了 _petIdleAngle/
+    // _petIdleClearance，这里原样复用，不重新算一遍——生成点与归位点必须是同一个
+    // 公式，否则又会出现"生成时不重叠、走丢一次目标再回来又重叠"这种时好时坏的
+    // 二次坑），并且每只幻兽的角度天然不同（分角度是在生成时按第几只幻兽定的），
+    // 顺带修了"两只幻兽的待机点叠在一起"这个新增两只幻兽后才会暴露的问题。
+    const towerR = owner._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[owner._mapTier])
+      || CONFIG.buildingSizes?.default || 32;
+    const standoff = towerR + (minion._petIdleClearance ?? 40);
+    const angle = minion._petIdleAngle || 0;
+    const idleX = owner.pos.x + Math.cos(angle) * standoff;
+    const idleY = owner.pos.y + Math.sin(angle) * standoff;
+    const ddx = idleX - minion.pos.x, ddy = idleY - minion.pos.y;
+    const dIdle = Math.hypot(ddx, ddy);
+    if (dIdle > 8) {
       const speed = stats.moveSpeed || 0;
       if (speed > 0) {
-        minion.pos.x += (ddx / dOwner) * speed * dt;
-        minion.pos.y += (ddy / dOwner) * speed * dt;
+        minion.pos.x += (ddx / dIdle) * speed * dt;
+        minion.pos.y += (ddy / dIdle) * speed * dt;
       }
     }
   }

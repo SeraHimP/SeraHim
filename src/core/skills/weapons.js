@@ -782,6 +782,7 @@ export const weapons = {
       maxAlive: 2,            // 同时最多几只幻兽
       baseRespawnSec: 15,     // 每次复活的基础等待时间
       respawnGrowthPct: 5,    // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
+      idleClearance: 40,      // 待机点与塔边缘之间留的空隙（不含塔本身半径），修"幻兽模型和塔重叠"用
     },
     id: 'weapon_shepherd',
     applicableTypes: ['tower'],
@@ -846,11 +847,25 @@ export const weapons = {
       const need = maxAlive - st.petIds.length;
       if (need > 0 && now >= (st.respawnAt || 0) && typeof ctx.combat?.createMinion === 'function') {
         const faction = tower._mapFaction || tower.faction;
-        const spirit = ctx.combat.createMinion('melee', tower.pos.x, tower.pos.y, faction, 1, 1);
+        // 修复"幻兽模型会和塔的模型重叠"：不再直接生在塔的坐标点上（那正是重叠的
+        // 根因——塔自身有实体几何占着那块地方），改成生在塔外一圈的待机位上。
+        // 每只幻兽按【当前是第几只】分一个固定角度（maxAlive=2 时正好间隔180°），
+        // 不但避开塔本身，两只幻兽之间也不会叠在同一个点上；角度与间隙存在
+        // spirit 身上，LaneMovementSystem._updatePet 的待机分支复用同一份数据，
+        // 保证"生成位置"与"待机归位目标点"是同一个点，不会先重叠一帧再走出去。
+        const angle = (st.petIds.length / maxAlive) * Math.PI * 2;
+        const towerR = tower._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[tower._mapTier])
+          || CONFIG.buildingSizes?.default || 32;
+        const standoff = towerR + (p.idleClearance ?? 40);
+        const spirit = ctx.combat.createMinion('melee',
+          tower.pos.x + Math.cos(angle) * standoff, tower.pos.y + Math.sin(angle) * standoff,
+          faction, 1, 1);
         if (spirit) {
           spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
           spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
           spirit._petLeashRadius = p.leashRadius ?? 260;
+          spirit._petIdleAngle = angle;         // 待机点角度，_updatePet 归位用
+          spirit._petIdleClearance = p.idleClearance ?? 40;   // 待机点距塔边缘的间隙
           // 用户追加定稿："幻兽要有独立技能……不然幻兽太弱了"——攻击带小型减速+
           // 受击概率触发自保护盾，两个都要（见 minionPassives.passive_pet_spirit_guard）。
           equipSkill(spirit, 'passive_pet_spirit_guard', ctx, ctx.combat?.skills);
