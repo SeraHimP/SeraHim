@@ -885,4 +885,111 @@ export const weapons = {
       }
     },
   },
+
+  // ==================== 🌈 光棱塔：同一时刻分裂出多条独立光束 ====================
+  // 用户要求"类似光棱塔"、伤害连锁，但要跟已有的雷魂（dragonsoul_thunder）区分开——
+  // 雷魂是"一条光沿目标依次弹射"（时序上一个接一个、固定真实伤害、总量均摊）；
+  // 这个改成"塔本身同一时刻分裂出多条独立光束"（不是依次弹射，是从塔的位置同时向
+  // 射程内最多 N 个不同目标各打一下），伤害类型走物理/魔法自适应（不是雷魂的固定
+  // 真实伤害），命中目标数越多每条伤害越低（防止跟雷魂一样无限乘算失控）。
+  // "光棱"（棱镜分光）这个名字对应的就是"从源头一次性分裂"，不是"沿途弹射"。
+  //
+  // 实现上照抄 weapon_corrosion 的骨架（specialAttack + skipProjectile + 自己按
+  // 攻速节奏的 onFrame 循环），因为它同样是"无弹道、每次攻击命中多个目标"的形状，
+  // 唯一区别是腐蚀命中【射程内全部】敌人，这里只挑最多 maxBranches 个（否则会退化
+  // 成腐蚀的翻版，失去"多条独立光束"这个卖点）。
+  weapon_prism: {
+    defaultParams: {
+      maxBranches: 4,          // 同时分裂的独立光束数上限
+      basePct: 90,              // 只命中1个目标时，每条分支伤害相对自适应基础伤害的百分比
+      falloffPctPerExtra: 15,   // 命中目标每多1个，所有分支伤害再降的百分点数
+      minBranchPct: 35,         // 分支伤害下限（防止 maxBranches 调大后接近0）
+    },
+    id: 'weapon_prism',
+    applicableTypes: ['tower'],
+    name: '光棱塔',
+    icon: '🌈',
+    color: '#a78bfa',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_prism.defaultParams;
+      return `唯一被动——光棱：无弹道，按自身攻速节奏同时向射程内最多${p.maxBranches ?? 4}个不同`
+        + `目标各射出一条独立光束（{val}=只命中1个目标时的单条伤害），伤害类型随自身自适应判定；`
+        + `命中目标每多1个，每条伤害再降${p.falloffPctPerExtra ?? 15}个百分点（下限${p.minBranchPct ?? 35}%）。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const p = weapons.weapon_prism.defaultParams;
+      const isAdaptive = stats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(stats) || 'physical') : (stats.attackType || 'physical');
+      const base = isAdaptive
+        ? (resolvedType === 'magic' ? (stats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (stats.attackDamage || 0))
+        : (stats.attackDamage || 0);
+      return Math.round(base * ((p.basePct ?? 90) / 100));
+    },
+    specialAttack: true,
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = { timer: 0 };
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true }; // 命中完全由 onFrame 的分支循环自己结算
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (window.__towersAttackOff) return;
+      const st = instance.state || (instance.state = { timer: 0 });
+      const p = instance._params || weapons.weapon_prism.defaultParams;
+
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(stats);   // 与腐蚀同口径：按攻速决定循环间隔
+      st.timer += dt;
+      const interval = 1 / Math.max(0.1, finalAS);
+      if (st.timer < interval) return;
+      st.timer -= interval;
+
+      const range = stats.attackRange || 250;
+      // v49 的教训（见 weapon_corrosion 头注）：必须走 enemyUnitsInRadius，不能直接
+      // findInRadius——那样不认阵营、白名单也会漏兵种。
+      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range);
+      if (enemies.length === 0) return;
+
+      entity._inCombat = true; entity._combatTimer = 4;
+
+      const maxBranches = Math.max(1, p.maxBranches ?? 4);
+      // 最多 maxBranches 个【不同】目标，按距离由近到远挑——不是随机，机械可预期。
+      const targets = enemies
+        .slice()
+        .sort((a, b) => {
+          const da = Math.hypot(a.pos.x - entity.pos.x, a.pos.y - entity.pos.y);
+          const db = Math.hypot(b.pos.x - entity.pos.x, b.pos.y - entity.pos.y);
+          return da - db;
+        })
+        .slice(0, maxBranches);
+
+      const isAdaptive = stats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(stats) || 'physical') : (stats.attackType || 'physical');
+      const base = isAdaptive
+        ? (resolvedType === 'magic' ? (stats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (stats.attackDamage || 0))
+        : (stats.attackDamage || 0);
+      const branchPct = Math.max(p.minBranchPct ?? 35,
+        (p.basePct ?? 90) - (p.falloffPctPerExtra ?? 15) * (targets.length - 1));
+      const dmg = base * (branchPct / 100);
+      if (dmg <= 0) return;
+
+      const groupEff = targets.length > 1; // 多条独立光束同时命中：吸血按群体效率折扣（与连锁/溅射同规格）
+      for (const t of targets) {
+        ctx.combat.performAttackDirect(entity.id, t.id, dmg, resolvedType, { basicAttack: true, vampGroup: groupEff });
+        if (ctx.combat.projectiles && ctx.combat.projectiles.fireBeam) {
+          ctx.combat.projectiles.fireBeam({
+            startX: entity.pos.x, startY: entity.pos.y,
+            endX: t.pos.x, endY: t.pos.y,
+            charge: 1, life: 0.12, color: '#a78bfa',
+          });
+        }
+      }
+    },
+  },
 };

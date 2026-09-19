@@ -1,10 +1,13 @@
 /**
- * sim_towerweapons.mjs —— Q5 新塔武器验收（狂潮塔/连珠炮 weapon_barrage、聚能塔/聚能炮 weapon_nova）
+ * sim_towerweapons.mjs —— Q5 新塔武器验收（狂潮塔 weapon_barrage、聚能塔 weapon_nova、
+ * 牧灵塔 weapon_shepherd、光棱塔 weapon_prism —— 这轮计划的全部4个新塔武器）
  *
  * 用户对狂潮塔的定稿："B，但是每层更少，层数更多。和风魂区别开来"——即每层攻速
  * 加成比风魂小、上限层数比风魂多，且叠层不按时间衰减（风魂是持续时间衰减），
  * 只在脱战/换目标时清零。聚能塔是"低频、单次巨额AOE"，蓄力被打断（掉目标）
- * 立即清零，跟"每次都有延迟"的坠星塔不是一回事。
+ * 立即清零，跟"每次都有延迟"的坠星塔不是一回事。光棱塔要跟雷魂
+ * （dragonsoul_thunder：命中后依次弹射）区分开——"塔本身同一时刻分裂出多条独立
+ * 光束"，不是沿途弹射，见 docs/Q5-BALANCE-UNITS-TOWERS-REDESIGN.md §5.3。
  *
  * 每条断言钉"行为形状/口径"，不钉具体数值（见 docs/DEVELOPMENT.md §8.2）。
  */
@@ -21,7 +24,7 @@ const { CombatSystem } = await import('../src/systems/CombatSystem.js');
 const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
 
-const { T, done } = scoreboard('新塔武器（狂潮塔/聚能塔/牧灵塔）验收');
+const { T, done } = scoreboard('新塔武器（狂潮塔/聚能塔/牧灵塔/光棱塔）验收');
 
 const mk = (ents, t, x, f, hp = 100000) => {
   const e = { id: ++window._uid, type: t, alive: true, pos: { x, y: 0 },
@@ -525,6 +528,59 @@ const mapStub = {
     T('模型②-幻兽造型与普通近战兵不是同一份几何（不会和小兵长一样）',
       petMesh.geo.attributes.position.count !== meleeMesh.geo.attributes.position.count);
   }
+}
+
+// ==================== 二十一、光棱塔（weapon_prism）验收 ====================
+// 用户要求"塔本身同一时刻分裂出多条独立光束"，跟雷魂"依次弹射"明确区分开。
+{
+  const { ents, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.attackRange = 1000;
+  tower.baseStats.attackDamage = 100;
+  const inst = equipSkill(tower, 'weapon_prism', ctx);
+  const p = SkillLibrary.weapon_prism.defaultParams;
+
+  // 6个候选目标，只有最近的 maxBranches 个该挨打。
+  const near = [];
+  for (let i = 0; i < 6; i++) near.push(mk(ents, 'melee', 100 + i * 30, 'red', 1000000));
+
+  for (let i = 0; i < 300; i++) SkillLibrary.weapon_prism.onFrame(tower.id, 1 / 30, inst, ctx);
+
+  const hit = near.filter(e => e.currentHP < 1000000);
+  T('分支①-同一时刻只命中最多maxBranches个不同目标（不是全射程AOE，也不是依次弹射全部6个）',
+    hit.length === (p.maxBranches ?? 4));
+  T('分支②-命中的是最近的那几个（机械按距离挑，不是随机）',
+    near.slice(0, p.maxBranches ?? 4).every(e => e.currentHP < 1000000)
+    && near.slice(p.maxBranches ?? 4).every(e => e.currentHP === 1000000));
+  const dmgs = hit.map(e => 1000000 - e.currentHP);
+  T('分支③-命中的多个目标各自扣血量大致相等（独立光束各打各的，不是均摊）',
+    Math.max(...dmgs) - Math.min(...dmgs) < Math.max(...dmgs) * 0.05);
+
+  // 命中目标越多，单条分支伤害应该越低（"轻微递减"，防止无限乘算失控）。
+  const { ents: ents2, ctx: ctx2 } = W();
+  const tower2 = mk(ents2, 'tower', 0, 'blue');
+  tower2.baseStats.attackRange = 1000;
+  tower2.baseStats.attackDamage = 100;
+  const inst2 = equipSkill(tower2, 'weapon_prism', ctx2);
+  const soloFoe = mk(ents2, 'melee', 100, 'red', 1000000);
+  for (let i = 0; i < 300; i++) SkillLibrary.weapon_prism.onFrame(tower2.id, 1 / 30, inst2, ctx2);
+  const soloDmgPerHit = (1000000 - soloFoe.currentHP);
+  // 只有1个目标时命中次数与4目标场景基本一致（同样的攻速节奏），可以直接比总扣血。
+  T('分支④-只有1个目标时，该目标扣的血比4目标场景里单个目标扣的血更多（递减确实生效）',
+    soloDmgPerHit > (dmgs[0] || 0));
+}
+
+// ==================== 二十二、光棱塔与雷魂的区分（不是同一个东西换皮） ====================
+{
+  const wSrc = srcOf('src/core/skills/weapons.js');
+  T('区分①-光棱塔走performAttackDirect对多个独立目标逐个结算，不调用connectChain（雷魂那种依次弹射）', (() => {
+    const i = wSrc.indexOf('weapon_prism:');
+    const j = wSrc.indexOf('\n  },\n\n', i);
+    const body = wSrc.slice(i, j > i ? j : i + 4000);
+    return !/connectChain/.test(body) && /performAttackDirect/.test(body);
+  })());
+  T('区分②-光棱塔伤害类型走自适应判定（resolveAttackType），不是雷魂的固定真实伤害',
+    /weapon_prism:[\s\S]{0,3000}?resolveAttackType/.test(wSrc));
 }
 
 done();

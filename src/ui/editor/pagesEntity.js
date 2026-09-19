@@ -145,6 +145,7 @@ export const EDITOR_PAGES_ENTITY = {
       weapon_barrage: { label: '连珠炮', icon: '🔥' },
       weapon_nova: { label: '聚能炮', icon: '💫' },
       weapon_shepherd: { label: '牧灵法阵', icon: '🐺' },
+      weapon_prism: { label: '光棱塔', icon: '🌈' },
     };
     const weaponIds = this._SKILLS_BY_TYPE.tower.weapons;
     const weapons = [{ id: 'none', label: '无武器', icon: '🚫' }, ...weaponIds.map(id => ({ id, ...weaponMeta[id] }))];

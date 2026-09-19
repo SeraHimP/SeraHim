@@ -294,3 +294,28 @@ capHP)`，`capHP` 传的就是 `entity._regenCapHP`。工程兵要做的是**调
 名字本身就对应"从源头一次性分裂"而不是"沿途弹射"，命名和机制是一致的。
 
 用户明确表示"剩下的先不加了"——这是这轮塔武器构思的最后一个。
+
+**实现记录（2026-09-19）**：类型名 `weapon_prism`（"光棱塔"）。照抄 `weapon_corrosion`
+的骨架（`specialAttack:true` + `onBeforeAttack` 返回 `skipProjectile:true` + 自己按
+攻速节奏在 `onFrame` 里循环），因为两者形状本来就相似——"无弹道、一次攻击命中多个
+目标"，区别只在腐蚀命中【射程内全部】敌人（持续AOE），这里只挑最多 `maxBranches`
+个（否则会退化成腐蚀的翻版，丢掉"多条独立光束"这个卖点）：每个周期按距离由近到远
+（机械挑选，不随机）取最多 `maxBranches` 个不同目标，各自单独调用
+`performAttackDirect` 结算——不经过 `connectChain`（那是雷魂的依次弹射机制），伤害
+类型用与 nova 同一份自适应判定（`resolveAttackType` + `apMagicDamagePct`）。分支
+伤害 = `basePct - falloffPctPerExtra × (命中数-1)`（下限 `minBranchPct`）：只命中1个
+目标时最高，命中数越多每条越低。索敌用的 `tower.targetId`/`_lockUntil` 锁定前摇
+同样不适用于它（同腐蚀——没有"瞄准单一目标"这回事），`CombatSystem.js` 里那处
+判据也加了 `weapon_prism`。渲染上：`EffectsLayer.js` 的塔攻击红线（只画向
+`t.targetId` 一条）会误导成"只在打这一个"，跳过（同腐蚀/牧灵法阵），命中反馈靠
+`onFrame` 里逐条 `fireBeam` 的瞬时光束（与连锁/雷魂同一套视觉机制）。数值（`maxBranches:4,
+basePct:90, falloffPctPerExtra:15, minBranchPct:35`）是初版占位，跟连珠炮当初的
+处理方式一样——先把机制形状钉对，精确数值留到"平衡所有防御塔武器"那一轮统一算。
+测试：`tests/sim_towerweapons.mjs` 新增"二十一/二十二"两节，断言同时命中数≤
+`maxBranches`、命中的是最近的几个、各分支伤害大致相等（不是像连锁那样均摊）、
+命中数越多单条伤害越低、以及源码层面确认走 `performAttackDirect` 而非
+`connectChain`。
+
+至此这轮计划的4个新塔武器（聚能塔/牧灵塔/狂潮塔/光棱塔）全部实现完毕，用户自己
+定的下一步是"做完所有武器后需要平衡所有的防御塔武器"——这轮平衡还没做，是紧接着
+要做的下一件事，做完后会在本节后面补一段平衡记录。

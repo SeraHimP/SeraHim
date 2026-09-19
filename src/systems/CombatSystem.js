@@ -356,7 +356,9 @@ export class CombatSystem {
         if (tower.targetId !== target.id) {
           const wid = (tower._skillInstances || []).find(s => s.skillId.startsWith('weapon_'))?.skillId;
           // 绝对时间戳（不是倒计时）：谁设置谁比较，仿真只跑部分系统时也正确
-          tower._lockUntil = wid === 'weapon_corrosion' ? 0
+          // 光棱塔同腐蚀型：没有"瞄准单一目标"这回事（每周期独立挑最多N个目标），
+          // tower.targetId 只是索敌循环的副产物，不该被它的切换触发锁定前摇。
+          tower._lockUntil = (wid === 'weapon_corrosion' || wid === 'weapon_prism') ? 0
             : (window.gameTime || 0) + (CONFIG.tuning?.lockOnWindup ?? 0.3);
         }
         tower.targetId = target.id;

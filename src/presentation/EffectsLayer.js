@@ -522,8 +522,11 @@ export class EffectsLayer {
       //      画红线是错的语义。改为从塔脚扩散出去的毒雾波纹，见下面 C3。
       // ---- Q5 牧灵法阵：塔本身没有攻击能力，同理不该画"正在输出"的红线——
       //      改画绿色拴绳线（见下面 C1b），逻辑跟腐蚀型是同一类"这不是普攻"跳过。
+      // ---- 光棱塔：同一时刻打多个不同目标，t.targetId 只是其中一个，画一条红线
+      //      到它会让人误以为只在打这一个——跟腐蚀同理跳过，命中反馈靠 onFrame 里
+      //      逐条 fireBeam 的瞬时光束（与连锁/雷魂同一套机制），不需要常驻红线。
       const wid = this._weaponOf(t);
-      if (wid === 'weapon_corrosion' || wid === 'weapon_shepherd') continue;
+      if (wid === 'weapon_corrosion' || wid === 'weapon_shepherd' || wid === 'weapon_prism') continue;
       if (!t.targetId) continue;
       if ((window.gameTime || 0) < (t._lockUntil || 0)) continue;
       const tgt = entities.get(t.targetId);
