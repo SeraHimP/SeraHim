@@ -851,6 +851,95 @@ const ramPassive = {
       }
     },
   },
+
+  // ==================== Q5：工程兵——修复效果常驻技能栏（纯展示，不重复实现逻辑）====================
+  // 用户反馈："工程兵的修复塔效果要做成技能常驻在工程兵的技能栏里"。
+  // 真正的修复判定/走位/节点封顶突破逻辑仍然全部留在 LaneMovementSystem._updateEngineer
+  // （那段移动+修复是耦合在一起的，工程兵"往哪走"本身就是"该修哪座塔"的直接结果，
+  // 拆成"移动系统管走位、技能系统管治疗量"两份会变成同一份状态两个地方读写，
+  // 是本仓库反复吃过亏的"同一件事实现两遍"）。这里只加一张纯展示用的技能卡——
+  // 没有 onFrame/onEquip，不做任何结算，单纯让工程兵的技能栏里能看到"我在修塔、
+  // 修多快、节点封顶怎么突破"这件事，数值直接读同一份 CONFIG，不会跟真实逻辑读岔。
+  passive_engineer_repair: {
+    id: 'passive_engineer_repair', name: '战地维修', icon: '🔧', category: 'passive',
+    applicableTypes: ['engineer'], color: '#e0a83c',
+    get description() {
+      const c = CONFIG.gameRules.supportUnits?.engineer || {};
+      const rate = c.repairPerSec ?? 20, overflow = c.overflowEfficiencyPct ?? 33;
+      const repairR = c.repairRange ?? 40, searchR = c.searchRange ?? 900;
+      return `不推线：就近修复己方受损防御塔（{val}=每秒修复量），可突破"加固城防"节点`
+        + `封顶（效率降到${overflow}%）；${searchR}范围内找塔，${repairR}范围内视为到位；`
+        + `没有塔需要修时前出驻守本车道当前最前沿的存活塔。`;
+    },
+    get descTemplate() { return this.description; },
+    computeCurrent: (entity, ctx) => {
+      const c = CONFIG.gameRules.supportUnits?.engineer || {};
+      return c.repairPerSec ?? 20;
+    },
+    effects: [],
+  },
+
+  // ==================== Q5：牧灵塔幻兽——独立技能（用户反馈"太弱了"追加）====================
+  // 用户定稿："1+2，要不然幻兽太弱了"——攻击带小型特效（命中减速）+ 受击有概率
+  // 自保（触发护盾）两个方向都要，不是二选一。由 weapon_shepherd 在生成幻兽的
+  // 那一刻用 equipSkill 装上（见 weapons.js），幻兽死亡后随实体一起消失，
+  // 复活出的新幻兽会重新装一份。
+  //
+  // applicableTypes 写 'melee' 而不是专门造一个"pet"类型：幻兽本身就是复用
+  // type:'melee' 管线（见 weapon_shepherd 头注"不新造一个兵种"的取舍），这条技能
+  // 因此在单位编辑器里对普通近战兵也是可选的——如实记录这个小的范围外溢，不是
+  // bug：给普通近战兵手动装上"灵体守护"从机制上没有问题，只是设计意图是幻兽专属，
+  // 没有再加一层"仅限幻兽"的过滤（多一层白名单机制换来的收益，对这条不值当）。
+  passive_pet_spirit_guard: {
+    id: 'passive_pet_spirit_guard', name: '灵体守护', icon: '✨', category: 'passive',
+    applicableTypes: ['melee'], color: '#7fb37f',
+    defaultParams: {
+      onHitSlowPct: -20,       // 命中目标：移速修正（负值=减速）
+      onHitSlowSec: 1.5,       // 减速持续时间
+      shieldChancePct: 25,     // 受到攻击时，触发自保护盾的概率（%）
+      shieldCooldownSec: 6,    // 自保护盾的触发冷却（只在触发时才计时，不是每次挨打都消耗）
+      shieldAmount: 60,        // 护盾量（不衰减不回复，打没了要等下次触发）
+    },
+    get descTemplate() {
+      const p = minionPassives.passive_pet_spirit_guard.defaultParams;
+      return `幻兽专属——灵体守护：攻击命中附带短暂减速（${p.onHitSlowPct}%，`
+        + `持续${p.onHitSlowSec}秒）；受到攻击时有${p.shieldChancePct}%概率触发一层自保护盾`
+        + `（{val}=护盾量，${p.shieldCooldownSec}秒才能再次触发）。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const inst = (entity._skillInstances || []).find(i => i.skillId === 'passive_pet_spirit_guard');
+      const p = (inst && inst._params) || minionPassives.passive_pet_spirit_guard.defaultParams;
+      return p.shieldAmount ?? 60;
+    },
+    effects: [],
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const p = instance._params || minionPassives.passive_pet_spirit_guard.defaultParams;
+      const target = ctx.entityContainer.get(targetId);
+      if (!target || !target.alive) return;
+      ctx.effectRegistry.apply(targetId, {
+        name: '灵体侵蚀', icon: '✨', kind: 'stat', statKey: 'moveSpeed',
+        percentValue: p.onHitSlowPct ?? -20, duration: p.onHitSlowSec ?? 1.5,
+        stackable: false, stackPolicy: 'refresh',
+        description: `移速${p.onHitSlowPct ?? -20}%`,
+      }, 'passive_pet_spirit_guard_slow');
+    },
+    onBeingAttacked: (targetId, attackerId, instance, ctx) => {
+      const p = instance._params || minionPassives.passive_pet_spirit_guard.defaultParams;
+      const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+      instance.state = instance.state || {};
+      if (now < (instance.state.shieldNextAt || 0)) return; // 冷却里，这次挨打不触发
+      if (Math.random() * 100 >= (p.shieldChancePct ?? 25)) return; // 没抽中
+      instance.state.shieldNextAt = now + (p.shieldCooldownSec ?? 6);
+      const self = ctx.entityContainer.get(targetId);
+      if (!self || !self.alive) return;
+      ctx.effectRegistry.apply(targetId, {
+        name: '灵体守护盾', icon: '✨', kind: 'shield', flatValue: p.shieldAmount ?? 60,
+        duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `护盾+${p.shieldAmount ?? 60}`,
+      }, 'passive_pet_spirit_guard_shield');
+    },
+  },
 };
 
 Object.assign(minionPassives, ramPassive);

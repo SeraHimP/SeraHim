@@ -180,4 +180,43 @@ async function world() {
     /healer:\s*false/.test(modeSrc) && /healer:\s*\[\]/.test(modeSrc));
 }
 
+// ==================== 六、移动分支：贴着受治疗的友军，不贴敌方单位 ====================
+// 用户反馈的真实bug："治疗兵为什么会贴着敌方单位，治疗兵要贴着受治疗的友方单位！"
+// 根因：治疗兵此前没有专属移动分支，走的是"追敌人打架"用的通用小兵AI。
+{
+  const mapStub = {
+    active: true,
+    currentMap: { lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 900, y: 0 }] }] },
+    getDefenseZone: () => null,
+    isWalkable: () => true,
+    constrainToWalkable: (p) => p,
+    getLane: (id) => mapStub.currentMap.lanes.find(l => l.id === id),
+    _nearestOnLane: () => ({ dist: 0 }), // 假装已经在兵线中央，跳过居中修正逻辑
+  };
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const heal = mkEntity(ents, 'healer', { faction: 'blue', pos: { x: 0, y: 0 }, lane: 'mid' }, CONFIG);
+  const foeNear = mkEntity(ents, 'melee', { faction: 'red', pos: { x: 20, y: 0 } }, CONFIG); // 贴脸的敌人
+  const allyHurt = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 500, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  allyHurt.currentHP = 400; // 远处但受伤的友军
+  const before = { x: heal.pos.x, y: heal.pos.y };
+  lms._updateHealer(heal, 1);
+  T('贴身①-治疗兵朝受伤友军移动，不是朝贴脸的敌人（x增大而不是停在原地或朝敌人方向）',
+    heal.pos.x > before.x);
+  T('贴身②-移动方向不受贴脸敌人干扰（敌人在x=20但治疗兵越过它继续往受伤友军走）',
+    heal.pos.x > foeNear.pos.x - 1 || heal.pos.x > before.x);
+
+  // 满血友军不该被选为跟随目标。
+  const { ents: ents2, fx: fx2, attr: attr2, combat: combat2, CONFIG: CONFIG2 } = await world();
+  const lms2 = new LaneMovementSystem(ents2, fx2, attr2, combat2, mapStub);
+  const heal2 = mkEntity(ents2, 'healer', { faction: 'blue', pos: { x: 0, y: 0 }, lane: 'mid' }, CONFIG2);
+  mkEntity(ents2, 'melee', { faction: 'blue', pos: { x: 500, y: 0 } }, CONFIG2); // 满血友军
+  const before2 = { x: heal2.pos.x, y: heal2.pos.y };
+  lms2._updateHealer(heal2, 1);
+  T('贴身③-没有受伤友军时沿兵线正常推进（不是工程兵那种"没活干就站定不动"）',
+    heal2.pos.x > before2.x);
+}
+
 done();

@@ -520,7 +520,10 @@ export class EffectsLayer {
     for (const t of entities.getAllTowers(true)) {
       // ---- Q3 腐蚀型：没有"瞄准某个目标"这回事（它对射程内所有敌人持续叠毒），
       //      画红线是错的语义。改为从塔脚扩散出去的毒雾波纹，见下面 C3。
-      if (this._weaponOf(t) === 'weapon_corrosion') continue;
+      // ---- Q5 牧灵法阵：塔本身没有攻击能力，同理不该画"正在输出"的红线——
+      //      改画绿色拴绳线（见下面 C1b），逻辑跟腐蚀型是同一类"这不是普攻"跳过。
+      const wid = this._weaponOf(t);
+      if (wid === 'weapon_corrosion' || wid === 'weapon_shepherd') continue;
       if (!t.targetId) continue;
       if ((window.gameTime || 0) < (t._lockUntil || 0)) continue;
       const tgt = entities.get(t.targetId);
@@ -529,6 +532,26 @@ export class EffectsLayer {
       D.seg3(t.pos.x, MYOF(t.id) ?? 0, t.pos.y,
               tgt.pos.x, (MYOF(tgt.id) ?? 0) * 0.6, tgt.pos.y,
               screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
+    }
+
+    // ---- C1b 牧灵法阵：塔与幻兽之间的绿色拴绳线 ----
+    // 用户原话："塔本身就不要再显示攻击红线了，而是显示绿线和幻兽相连"。
+    // 复用红线同一份 D.seg3 画法+宽度，只换颜色、换两端（塔→每一只活着的幻兽，
+    // 不是塔→索敌目标）。
+    const PL = (CONFIG.ui && CONFIG.ui.petLeashLine) || {};
+    const green = rgbOf(PL.color || '#3ce85c');
+    for (const t of entities.getAllTowers(true)) {
+      if (this._weaponOf(t) !== 'weapon_shepherd') continue;
+      const inst = (t._skillInstances || []).find(i => i.skillId === 'weapon_shepherd');
+      const petIds = inst?.state?.petIds;
+      if (!petIds || !petIds.length) continue;
+      for (const petId of petIds) {
+        const pet = entities.get(petId);
+        if (!pet || !pet.alive || !pet.pos) continue;
+        D.seg3(t.pos.x, MYOF(t.id) ?? 0, t.pos.y,
+                pet.pos.x, (MYOF(pet.id) ?? 0) * 0.6, pet.pos.y,
+                screenW(AL_W), green, AL_A, V.vx, V.vy, V.vz);
+      }
     }
 
     // ---- C3 腐蚀塔的表现已迁出本文件 ----

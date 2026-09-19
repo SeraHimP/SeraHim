@@ -262,8 +262,26 @@ export class GroundTraceSystem {
       : 1;
     const growPerSec = (cfg.growPerSec ?? 0.02) * windGrowthMul;
     const decayPerSec = cfg.decayPerSec ?? 0.03;
-    const tau = growTarget > this.snowGlobalTarget ? growPerSec : decayPerSec;
-    this.snowGlobalTarget += (growTarget - this.snowGlobalTarget) * Math.min(1, tau * dt * 10);
+    // ==================== 2026-09-19 二次修复：指数逼近换成匀速线性推进 ====================
+    // 用户第三次反馈同一个症状："雪依旧直接土地一下子变成白色"——上一轮只是把
+    // 指数逼近的时间常数拉长（0.02/0.03 → 0.003/0.005），但没换掉曲线的**形状**。
+    // 指数逼近 `x += (target-x)*rate` 天生是"越接近起点涨得越快、越接近终点涨得
+    // 越慢"：哪怕总耗时拉到几分钟，头 20 秒（远小于总时长）也已经吃掉了将近一半
+    // 的总变化量（τ=33s 时，20s ≈ 1-e^(-0.6) ≈ 45%）——人眼在这短短 20 秒里看到的
+    // 就是"唰"一下奔到快一半白，跟总时长有没有拉长没关系，因为**变化率本身**
+    // 从开始那一刻就是全程最快的，不是逐渐加速再逐渐放缓。
+    // 换成匀速线性推进：每秒固定涨/退 growPerSec/decayPerSec 这么多（不再乘以
+    // 剩余差值），全程变化率恒定，不存在"前段特别快"这个视觉尖峰。此时
+    // growPerSec/decayPerSec 的含义也跟着变了：不再是指数的时间常数系数，
+    // 而是直接的"每秒增减多少"，1/growPerSec 就是从0到1所需的准确秒数——
+    // 下面把默认值重新标定为"匀速120秒铺满、匀速80秒退净"（CONFIG.js 同步更新）。
+    const growStep = growPerSec * dt;
+    const decayStep = decayPerSec * dt;
+    if (growTarget > this.snowGlobalTarget) {
+      this.snowGlobalTarget = Math.min(growTarget, this.snowGlobalTarget + growStep);
+    } else if (growTarget < this.snowGlobalTarget) {
+      this.snowGlobalTarget = Math.max(growTarget, this.snowGlobalTarget - decayStep);
+    }
 
     const res = this.snowGridRes;
     const grid = this.snowGrid;

@@ -164,7 +164,7 @@ const mapStub = {
   T('特殊②-声明为 specialAttack（跟闪电杖同一类）', SkillLibrary.weapon_nova.specialAttack === true);
 }
 
-// ==================== 七、聚能炮：蓄力——掉目标立即清零 ====================
+// ==================== 七、聚能炮：蓄力——掉目标按秒衰减（不再瞬间清零）====================
 {
   const { ents, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
@@ -174,9 +174,35 @@ const mapStub = {
   SkillLibrary.weapon_nova.onFrame(tower.id, 3.0, inst, ctx);
   T('蓄力①-蓄了一段时间后 charge>0', inst.state.charge > 0);
 
+  const chargeBefore = inst.state.charge;
   tower.targetId = null; // 掉目标
   SkillLibrary.weapon_nova.onFrame(tower.id, 0.1, inst, ctx);
-  T('蓄力②-掉目标后立即清零（"蓄力被打断就得重新蓄"）', inst.state.charge === 0);
+  T('蓄力②-掉目标后不再瞬间清零，只是比之前略低（按秒衰减，不是瞬间归零）',
+    inst.state.charge > 0 && inst.state.charge < chargeBefore);
+}
+
+// ==================== 七b、聚能炮：修复"真实对局里几乎不会开火"这个bug ====================
+// 用户反馈"聚能炮不会攻击"。排查后确认根因：旧实现把"换了目标"当成"蓄力被
+// 打断"、立即清零重蓄——真实混战里目标每隔一两秒就会换一次（小兵死亡/被替换），
+// 蓄力因此永远攒不到18~22秒的满值，实质上等于从不开火。修复后换目标不再清零，
+// 只要【这一刻还有某个可打的目标】就继续累积，跟 atkmode_charge 同一个口径。
+{
+  const { ents, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  const inst = equipSkill(tower, 'weapon_nova', ctx);
+  let foe = mk(ents, 'melee', 50, 'red');
+  tower.targetId = foe.id;
+  SkillLibrary.weapon_nova.onFrame(tower.id, 2.0, inst, ctx);
+  const chargeBeforeSwitch = inst.state.charge;
+  T('换目标①-蓄力确实在涨', chargeBeforeSwitch > 0);
+
+  // 旧目标"死"了，新目标顶上——这是真实对局里最常见的换目标场景。
+  foe.alive = false;
+  foe = mk(ents, 'melee', 55, 'red');
+  tower.targetId = foe.id;
+  SkillLibrary.weapon_nova.onFrame(tower.id, 2.0, inst, ctx);
+  T('换目标②-换了目标之后蓄力继续往上涨，不会被打回0重新开始',
+    inst.state.charge > chargeBeforeSwitch);
 }
 
 // ==================== 八、聚能炮：蓄满后单次巨额AOE命中 ====================
@@ -241,7 +267,7 @@ const mapStub = {
     r.skipProjectile === true);
 }
 
-// ==================== 十一、牧灵法阵：召唤幻兽 + 属性按塔的百分比缩放 ====================
+// ==================== 十一、牧灵法阵：召唤幻兽（现在是两只）+ 属性按塔的百分比缩放 ====================
 {
   const { ents, fx, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
@@ -250,12 +276,13 @@ const mapStub = {
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
   const p = SkillLibrary.weapon_shepherd.defaultParams;
 
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  T('召唤①-onFrame 跑一次后确实生成了幻兽', !!inst.state.petId);
-  const pet = ctx.entityContainer.get(inst.state.petId);
+  // 幻兽是"零冷却排队生成"（respawnAt初始为0），maxAlive只需要跑几帧就能全部凑齐。
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  T('召唤①-onFrame 跑几次后凑齐了maxAlive只幻兽', inst.state.petIds.length === (p.maxAlive ?? 2));
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
   T('召唤②-幻兽是 type:melee（复用现有小兵管线）', pet && pet.type === 'melee');
   T('召唤③-幻兽出生在塔的位置', pet && pet.pos.x === tower.pos.x);
-  const pct = (p.statPct ?? 50) / 100;
+  const pct = (p.statPct ?? 80) / 100;
   T('召唤④-幻兽生命值≈塔生命值的statPct%',
     Math.abs(pet.baseStats.maxHP - tower.baseStats.maxHP * pct) < 1e-6);
   T('召唤⑤-幻兽攻击力≈塔攻击力的statPct%',
@@ -264,74 +291,110 @@ const mapStub = {
   T('召唤⑦-幻兽有拴绳半径', pet && pet._petLeashRadius === (p.leashRadius ?? 260));
   T('召唤⑧-幻兽打了_isSummoned标记（不记熵，同幻灵口径）', pet && pet._isSummoned === true);
 
-  // 已经有活着的幻兽时不会再召唤第二只
-  const before = inst.state.petId;
+  // 已经凑满maxAlive只时不会继续召唤更多。
+  const beforeIds = [...inst.state.petIds];
   SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  T('召唤⑨-幻兽还活着时不会重复召唤', inst.state.petId === before);
+  T('召唤⑨-凑满maxAlive只后不会继续召唤更多', inst.state.petIds.length === beforeIds.length);
+
+  // 幻兽有独立技能（用户追加定稿"1+2，要不然幻兽太弱了"）。
+  T('召唤⑩-幻兽装备了独立技能passive_pet_spirit_guard',
+    pet._skillInstances?.some(s => s.skillId === 'passive_pet_spirit_guard'));
 }
 
-// ==================== 十二、牧灵法阵：持续治疗幻兽 ====================
+// ==================== 十一b、牧灵法阵：塔后续获得的增益会持续按比例转到幻兽身上 ====================
+// 用户追加定稿："塔获得增益会按照一定百分比转换到幻兽上（幻兽是塔的一部分）"——
+// 不是只在召唤那一刻定死属性，塔之后再变强，已经在场的幻兽也要跟着变强。
+{
+  const { ents, fx, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.maxHP = 1000; tower.baseStats.attackDamage = 50;
+  const inst = equipSkill(tower, 'weapon_shepherd', ctx);
+  const p = SkillLibrary.weapon_shepherd.defaultParams;
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
+  const pct = (p.statPct ?? 80) / 100;
+  T('增益前①-幻兽属性一开始按塔当时的属性算', Math.abs(pet.baseStats.attackDamage - 50 * pct) < 1e-6);
+
+  // 塔后来变强了（比如吃到了龙魂/成长）——不用重新装备武器，下一帧幻兽属性就该跟涨。
+  // attrCalc.calc 有帧级缓存（同一帧内同一实体+同样效果集合直接复用），真实主循环
+  // 每帧调用一次 tick() 使其失效（见 main.js），这里手动推进一帧来对齐真实时序，
+  // 否则 baseStats 改了但缓存没失效，测的是缓存问题而不是传导逻辑本身。
+  A.tick();
+  tower.baseStats.attackDamage = 200;
+  tower.baseStats.maxHP = 4000;
+  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  T('增益后①-幻兽攻击力跟着塔的新属性同步涨了', Math.abs(pet.baseStats.attackDamage - 200 * pct) < 1e-6);
+  T('增益后②-幻兽生命上限也跟着涨了', Math.abs(pet.baseStats.maxHP - 4000 * pct) < 1e-6);
+}
+
+// ==================== 十二、牧灵法阵：持续治疗每一只幻兽 ====================
 {
   const { ents, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
   const p = SkillLibrary.weapon_shepherd.defaultParams;
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  const pet = ctx.entityContainer.get(inst.state.petId);
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
+  const pet2 = ctx.entityContainer.get(inst.state.petIds[1]);
   pet.currentHP = pet.baseStats.maxHP * 0.5;
-  const before = pet.currentHP;
+  pet2.currentHP = pet2.baseStats.maxHP * 0.5;
+  const before = pet.currentHP, before2 = pet2.currentHP;
   SkillLibrary.weapon_shepherd.onFrame(tower.id, 1.0, inst, ctx);
   T('治疗①-幻兽掉血后被塔治疗', pet.currentHP > before);
-  T('治疗②-治疗速率≈healPerSec',
-    Math.abs((pet.currentHP - before) - (p.healPerSec ?? 40)) < 1e-6);
+  T('治疗②-治疗速率≈healPerSec', Math.abs((pet.currentHP - before) - (p.healPerSec ?? 40)) < 1e-6);
+  T('治疗③-两只幻兽各自全额治疗，互不分薄',
+    Math.abs((pet2.currentHP - before2) - (p.healPerSec ?? 40)) < 1e-6);
 
   pet.currentHP = pet.baseStats.maxHP;
   const beforeFull = pet.currentHP;
   SkillLibrary.weapon_shepherd.onFrame(tower.id, 1.0, inst, ctx);
-  T('治疗③-满血时不会超出maxHP（治疗管线本身的封顶，不是这里特殊处理）',
+  T('治疗④-满血时不会超出maxHP（治疗管线本身的封顶，不是这里特殊处理）',
     pet.currentHP === beforeFull);
 }
 
-// ==================== 十三、牧灵法阵：死亡后延迟复活，且每死一次冷却更长 ====================
+// ==================== 十三、牧灵法阵：死亡后延迟复活，且每死一次复利多等一点 ====================
 {
   const { ents, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
   const p = SkillLibrary.weapon_shepherd.defaultParams;
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  const pet1 = ctx.entityContainer.get(inst.state.petId);
-  pet1.currentHP = 0; pet1.alive = false; // 幻兽死亡
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  T('前置-先凑满两只', inst.state.petIds.length === (p.maxAlive ?? 2));
+  const pet1 = ctx.entityContainer.get(inst.state.petIds[0]);
+  pet1.currentHP = 0; pet1.alive = false; // 其中一只死亡
 
   SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  T('复活①-幻兽死后没有立即复活', !inst.state.petId);
-  const initial = p.initialRespawnSec ?? 8;
-  T('复活②-第一次死亡的复活等待时间≈initialRespawnSec',
-    Math.abs(inst.state.respawnAt - (window.gameTime || 0) - initial) < 1e-6);
+  T('复活①-幻兽死后没有立即补上（少了一只）', inst.state.petIds.length === (p.maxAlive ?? 2) - 1);
+  const base = p.baseRespawnSec ?? 15;
+  T('复活②-第一次死亡的复活等待时间≈baseRespawnSec',
+    Math.abs(inst.state.respawnAt - (window.gameTime || 0) - base) < 1e-6);
 
-  window.gameTime = (window.gameTime || 0) + initial + 0.1;
+  window.gameTime = (window.gameTime || 0) + base + 0.1;
   SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  T('复活③-等待时间到了之后重新召唤出幻兽', !!inst.state.petId);
+  T('复活③-等待时间到了之后补回满编', inst.state.petIds.length === (p.maxAlive ?? 2));
 
-  const pet2 = ctx.entityContainer.get(inst.state.petId);
-  pet2.currentHP = 0; pet2.alive = false; // 第二次死亡
+  const deadAgainId = inst.state.petIds[0];
+  const petAgain = ctx.entityContainer.get(deadAgainId);
+  petAgain.currentHP = 0; petAgain.alive = false; // 第二次死亡
   const gameTimeAtDeath2 = window.gameTime || 0;
   SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  const step = p.respawnStepSec ?? 4;
-  T('复活④-第二次死亡的复活等待时间比第一次更长（initial + step）',
-    Math.abs(inst.state.respawnAt - gameTimeAtDeath2 - (initial + step)) < 1e-6);
+  const growth = (p.respawnGrowthPct ?? 5) / 100;
+  const expectedWait2 = base * (1 + growth); // 第二次死亡：复利一次
+  T('复活④-第二次死亡的复活等待时间比第一次更长（复利，不是固定加几秒）',
+    Math.abs(inst.state.respawnAt - gameTimeAtDeath2 - expectedWait2) < 1e-6);
   window.gameTime = 0; // 复位，避免影响后面的用例
 }
 
-// ==================== 十四、牧灵法阵：卸下武器时幻兽立即消失（非战斗死亡） ====================
+// ==================== 十四、牧灵法阵：卸下武器时全部幻兽立即消失（非战斗死亡） ====================
 {
   const { ents, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  const pet = ctx.entityContainer.get(inst.state.petId);
-  T('卸下①-装备后确实有一只活着的幻兽', pet && pet.alive);
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pets = inst.state.petIds.map(id => ctx.entityContainer.get(id));
+  T('卸下①-装备后确实有活着的幻兽', pets.length > 0 && pets.every(p => p.alive));
   SkillLibrary.weapon_shepherd.onUnequip(tower.id, inst, ctx);
-  T('卸下②-卸下武器后幻兽立即死亡', !pet.alive);
+  T('卸下②-卸下武器后全部幻兽立即死亡', pets.every(p => !p.alive));
 }
 
 // ==================== 十五、牧灵法阵：塔死亡后幻兽清理（CombatSystem.update） ====================
@@ -339,8 +402,8 @@ const mapStub = {
   const { ents, combat, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  const pet = ctx.entityContainer.get(inst.state.petId);
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
   tower.currentHP = 0; tower.alive = false; // 塔被拆
   combat.update(0.1);
   T('孤儿清理①-主人塔死亡后幻兽在下一次update中也跟着消失', !pet.alive);
@@ -352,8 +415,8 @@ const mapStub = {
   const lms = new LaneMovementSystem(ents, ctx.effectRegistry, ctx.attrCalc, combat, mapStub);
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
-  const pet = ctx.entityContainer.get(inst.state.petId);
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
   pet.pos.x = tower.pos.x; pet.pos.y = tower.pos.y;
   const leash = pet._petLeashRadius;
 
@@ -393,6 +456,53 @@ const mapStub = {
   T('枚举③-weapon_shepherd 的 applicableTypes 包含 tower',
     SkillLibrary.weapon_shepherd.applicableTypes.includes('tower')
     && SkillLibrary.weapon_shepherd.category === 'weapon');
+}
+
+// ==================== 十八、渲染层：牧灵法阵不画红线，改画绿色拴绳线 ====================
+// 用户原话："塔本身就不要再显示攻击红线了，而是显示绿线和幻兽相连"。
+// 渲染层需要 THREE.js/DOM，这里不真的跑渲染，钉源码里的接线（跟 sim_v43.mjs 已有的
+// 红线源码断言同一种手法）。
+{
+  const fxSrc = srcOf('src/presentation/EffectsLayer.js');
+  T('渲染①-塔攻击红线的循环里排除了 weapon_shepherd（不再画"正在输出"的红线）',
+    /wid === 'weapon_corrosion' \|\| wid === 'weapon_shepherd'/.test(fxSrc));
+  T('渲染②-新增了牧灵法阵专属的拴绳线渲染，读的是 state.petIds',
+    /petLeashLine/.test(fxSrc) && /inst\?\.state\?\.petIds/.test(fxSrc));
+
+  const cfgSrc = srcOf('src/data/Config.js');
+  T('渲染③-拴绳线颜色走 CONFIG.ui.petLeashLine（软编码，不是写死的颜色常量）',
+    /petLeashLine:\s*\{/.test(cfgSrc));
+}
+
+// ==================== 十九、幻兽独立技能（passive_pet_spirit_guard）自身机制 ====================
+// 用户追加定稿："1+2，要不然幻兽太弱了"——攻击附带小型减速 + 受击概率触发自保护盾。
+{
+  const { ents, fx, ctx } = W();
+  const pet = mk(ents, 'melee', 0, 'blue');
+  const inst = equipSkill(pet, 'passive_pet_spirit_guard', ctx);
+  const target = mk(ents, 'melee', 50, 'red');
+  const p = SkillLibrary.passive_pet_spirit_guard.defaultParams;
+
+  SkillLibrary.passive_pet_spirit_guard.onDealtDamage(pet.id, target.id, inst, ctx);
+  const slowEff = fx.getEffectByName(target.id, '灵体侵蚀');
+  T('机制①-命中目标后附带减速效果', !!slowEff);
+  T('机制②-减速幅度≈onHitSlowPct', slowEff && Math.abs(slowEff.blueprint.percentValue - (p.onHitSlowPct ?? -20)) < 1e-6);
+
+  const realRandom = Math.random;
+  try {
+    Math.random = () => 0; // 保证抽中
+    SkillLibrary.passive_pet_spirit_guard.onBeingAttacked(pet.id, target.id, inst, ctx);
+    const shieldEff = fx.getEffectByName(pet.id, '灵体守护盾');
+    T('机制③-受击时抽中概率会给自己上一层护盾', !!shieldEff);
+    T('机制④-护盾量≈shieldAmount', shieldEff && Math.abs(shieldEff.blueprint.flatValue - (p.shieldAmount ?? 60)) < 1e-6);
+
+    // 冷却里再次挨打不会重复触发（哪怕又抽中）——effectRegistry 上不会多出第二份实例。
+    SkillLibrary.passive_pet_spirit_guard.onBeingAttacked(pet.id, target.id, inst, ctx);
+    T('机制⑤-冷却期内再次挨打不会重复触发（护盾效果实例没有变成两份/叠加两次）',
+      fx.getEffects(pet.id).filter(e => e.blueprint.name === '灵体守护盾').length === 1);
+  } finally {
+    Math.random = realRandom;
+  }
 }
 
 done();

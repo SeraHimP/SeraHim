@@ -175,22 +175,34 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
     && Array.from(cover.data).some(v => v > 0.01));
 }
 {
-  // 2026-09-19：钉住"渐变而不是突变"——用真实帧长（1/30秒）而不是上面测试用的
-  // dt=1 大步长快进，量真实对局节奏下地面从"看不见"到"接近全白"要多久。
-  // 用户反馈的根因不是代码里有阶跃函数，是渐变的时间常数太短（改前只要 15~20
-  // 秒），玩家在这么短的窗口里分辨不出连续渐变和一次性突变——这条测试直接把
-  // "20秒内不该已经接近全白"和"持续几分钟后确实会接近全白"两头都钉住，防止
-  // 以后有人为了"让雪看起来更快出现"又把参数调回秒级。
+  // 2026-09-19：钉住"渐变而不是突变"——用户带着实机复现连续反馈了三次同一个
+  // 症状，前两轮修复都只是把指数逼近的时间常数拉长，没换掉曲线**形状**：指数
+  // 逼近天生"起步最快、越接近终点越慢"，哪怕总时长拉到几分钟，开局那 20 秒也
+  // 已经吃掉了近一半的总变化量——人眼看到的仍然是"唰"一下奔向快半白。
+  // 真正对症的修法是把推进公式从 `x += (target-x)*rate`（指数）换成
+  // `x += rate*dt`（匀速线性）——这条测试除了钉"20秒内还远没铺满"，更关键的是
+  // 新增"前20秒的涨幅 ≈ 中间任一段20秒的涨幅"这条断言：只有匀速线性推进才会
+  // 让这两段涨幅相等，指数逼近做不到（前段涨幅必然显著大于后段）。这才是防止
+  // 以后有人只知道"调时间常数"又调回同一个坑的关键防线。
   const { ents, fx } = await makeWorld();
   const ws = mkWeather();
   const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
   setCharge(ws, 'snow', 1.0); // 满强度雪天，最不利情况（涨得最快）也不该秒白
   const REAL_DT = 1 / 30;
-  for (let i = 0; i < 30 * 20; i++) gts.update(REAL_DT); // 20 秒
+  const stepSec = (s) => { for (let i = 0; i < Math.round(30 * s); i++) gts.update(REAL_DT); };
+
+  stepSec(20);
   const at20s = gts.snowGlobalTarget;
   T('雪⑨-满强度雪天持续20秒（真实帧长），雪盖远未铺满（不是"到阈值秒白"）',
-    at20s < 0.5);
-  for (let i = 0; i < 30 * 60 * 3; i++) gts.update(REAL_DT); // 再等3分钟
+    at20s < 0.35);
+
+  const before40to60 = gts.snowGlobalTarget;
+  stepSec(20); // 40s → 60s 这一段
+  const gain2 = gts.snowGlobalTarget - before40to60;
+  T('雪⑨b-匀速推进：40~60秒这一段的涨幅和头20秒的涨幅大致相等（不是前快后慢的指数曲线）',
+    Math.abs(gain2 - at20s) < at20s * 0.3);
+
+  stepSec(60 * 3); // 再等3分钟
   T('雪⑩-持续几分钟后雪盖确实积到接近全白（渐变最终有明确终点，不是永远长不满）',
     gts.snowGlobalTarget > 0.9);
 }

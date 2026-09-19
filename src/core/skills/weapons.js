@@ -1,6 +1,7 @@
 import { CONFIG } from '../../data/Config.js';
 import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
 import { applyHeal } from '../healing.js';
+import { equipSkill } from '../skillParams.js';
 
 // ==================== 闪电杖的数值全部搬进 defaultParams（软编码）====================
 // 原来这几个是模块级 const（写死在源码里），编辑器改不了；而 weapon_lightning 的
@@ -547,12 +548,21 @@ export const weapons = {
   //      脱战或换目标才清零（用户原话"和风魂区别开来"：风魂是命中叠层限时衰减的
   //      羊刀节奏，这条改成"咬着同一个目标就不掉层，换目标/脱战立即清零重来"）。
   weapon_barrage: {
+    // 2026-09-19 首次强度调整：用户实机反馈"连珠炮太弱了"。三个机制的【形状】
+    // 是用户已经定过稿的（55%伤害/33%命中效率/攻速不走收益率/每层更少更多层，
+    // 见下方各字段旁的原始设计注释），这次只调数值，不改机制本身：
+    //   preDamageMultPct 55→70、onHitEffPct 33→50、baseAttackSpeedBonusPct 100→150、
+    //   maxStacks 15→20（每层加成 stackPct 保持2%不变——"每层更少、层数更多"这条
+    //   跟风魂区分开的设计前提不能动，只是让层数上限的封顶总量跟着一起往上提）。
+    // 这仍然只是一次单独的强度修正，不是这次要做的"全部塔武器一起平衡"那一轮——
+    // 用户已经说了"做完所有武器后需要平衡所有的防御塔武器"，这里先解决"明显偏弱"
+    // 这个眼下就能看出来的问题，精确数值等全部武器做完一起用平衡工具校准。
     defaultParams: {
-      preDamageMultPct: 55,     // 每次攻击的伤害倍率（%），机制①
-      onHitEffPct: 33,          // 攻击特效效率（%），机制①
-      baseAttackSpeedBonusPct: 100, // 总攻速加成（%，不走收益率），机制②
+      preDamageMultPct: 70,     // 每次攻击的伤害倍率（%），机制①
+      onHitEffPct: 50,          // 攻击特效效率（%），机制①
+      baseAttackSpeedBonusPct: 150, // 总攻速加成（%，不走收益率），机制②
       stackPct: 2,              // 每秒叠层的攻速加成（%/层，走收益率），机制③
-      maxStacks: 15,            // 层数上限
+      maxStacks: 20,            // 层数上限（封顶总量 2%×20=40%）
     },
     id: 'weapon_barrage',
     applicableTypes: ['tower'],
@@ -680,15 +690,24 @@ export const weapons = {
     specialAttack: true,
     effects: [],
     onEquip: (entityId, instance, ctx) => {
-      instance.state = { charge: 0, lastTargetId: null };
+      instance.state = { charge: 0 };
     },
     onBeforeAttack: (attacker, target, instance, ctx) => {
       return { skipProjectile: true }; // 命中完全由 onFrame 的充能循环自己结算
     },
+    // ==================== 修复：真实对局里聚能炮几乎从不开火 ====================
+    // 根因排查（用户反馈"聚能炮不会攻击"）：旧实现把"换了目标"当成"蓄力被打断"，
+    // 一律清零重蓄——这是我自己想当然写的规则，没有对照引擎里已经验证过的
+    // atkmode_charge（攻城车充能同一套）：那边的口径是"只要【这一刻还有某个可打的
+    // 目标】就继续充，没有目标才按秒衰减（不是瞬间清零）"，换目标本身根本不算打断。
+    // 静态对着一个不动的靶子测试时这条差异完全测不出来（目标全程没变过），但真实
+    // 混战里小兵不断死亡/被替换、目标每隔一两秒就会换一次——旧逻辑下蓄力永远蓄不到
+    // 18~22秒的满值，实质上等于"从不开火"。现在改成同一个口径：有目标就充，
+    // 没目标才衰减；开火时打的是【当下】的目标，不需要认得"是不是从头到尾同一个"。
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive) return;
-      if (typeof instance.state?.charge !== 'number') instance.state = { ...(instance.state || {}), charge: 0, lastTargetId: null };
+      if (typeof instance.state?.charge !== 'number') instance.state = { charge: 0 };
       const st = instance.state;
       const p = instance._params || weapons.weapon_nova.defaultParams;
 
@@ -696,10 +715,13 @@ export const weapons = {
       const targetId = entity.targetId;
       const target = targetId ? ctx.entityContainer.get(targetId) : null;
       if (!target || !target.alive) {
-        st.charge = 0; st.lastTargetId = null;
+        // 没有目标：按秒衰减当前充能（与 atkmode_charge 同一口径），不是瞬间清零，
+        // 免得"目标死了、下一个还没锁上"这种一帧空档就把辛苦攒的充能全部作废。
+        const pct = (CONFIG.tuning?.charge?.decayPctPerSec ?? 40) / 100;
+        const next = st.charge * Math.pow(1 - pct, dt);
+        st.charge = next < 1e-4 ? 0 : next;
         return;
       }
-      if (st.lastTargetId !== targetId) { st.charge = 0; st.lastTargetId = targetId; }
       if ((window.gameTime || 0) < (entity._lockUntil || 0)) return;
 
       const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId));
@@ -747,12 +769,19 @@ export const weapons = {
   // 只是站在原地），这里补的 _updatePet 分支就是让幻兽真的能动、能打（见
   // LaneMovementSystem._updatePet 头注，同一个发现顺带写在那边）。
   weapon_shepherd: {
+    // 2026-09-19 首次强度调整：用户实机反馈"目前强度太低了"，给了三条具体方向：
+    //   ①幻兽应该继承塔更多属性（50%→80%）；②召唤两个幻兽而不是一个；
+    //   ③复活节奏从"固定8秒+每次死亡多等固定4秒"改成"每次复活基础15秒，
+    //   每次死亡在这个基础上复利再多等5%"（15s → 15.75s → 16.54s → …）。
+    // state 形状也跟着从单只幻兽（petId）换成一个数组（petIds，最多 maxAlive 只），
+    // 逻辑照抄唤灵兵"_summonedIds 数组+清点存活数"的既有写法，不是重新发明一套。
     defaultParams: {
-      statPct: 50,          // 幻兽获得塔多少百分比的属性（生命/攻击/双抗，法强同理）
-      leashRadius: 260,      // 拴绳半径——幻兽索敌/追击都不会超出这个范围
-      healPerSec: 40,        // 塔给幻兽的治疗速率（幻兽存活且未满血时持续生效）
-      initialRespawnSec: 8,  // 幻兽第一次死亡后，重新召唤前的等待时间
-      respawnStepSec: 4,     // 每死一次，下一次的等待时间再增加这么多秒（不封顶）
+      statPct: 80,           // 幻兽获得塔多少百分比的属性（生命/攻击/双抗，法强同理）
+      leashRadius: 260,       // 拴绳半径——幻兽索敌/追击都不会超出这个范围
+      healPerSec: 40,         // 塔给每只幻兽的治疗速率（幻兽存活且未满血时持续生效，两只互不分薄）
+      maxAlive: 2,            // 同时最多几只幻兽
+      baseRespawnSec: 15,     // 每次复活的基础等待时间
+      respawnGrowthPct: 5,    // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
     },
     id: 'weapon_shepherd',
     applicableTypes: ['tower'],
@@ -762,9 +791,10 @@ export const weapons = {
     category: 'weapon',
     get descTemplate() {
       const p = weapons.weapon_shepherd.defaultParams;
-      return `唯一被动——牧灵法阵：塔本身不攻击，召唤一只幻兽（获得塔${p.statPct}%属性）拴在`
-        + `塔周围${p.leashRadius}范围内代替塔战斗；塔持续为幻兽治疗（{val}=每秒治疗量）；`
-        + `幻兽死亡${p.initialRespawnSec}秒后重新召唤，每死一次下次召唤再多等${p.respawnStepSec}秒。`;
+      return `唯一被动——牧灵法阵：塔本身不攻击，同时召唤最多${p.maxAlive}只幻兽（各获得塔`
+        + `${p.statPct}%属性）拴在塔周围${p.leashRadius}范围内代替塔战斗；塔持续为每只幻兽治疗`
+        + `（{val}=每秒治疗量）；幻兽死亡${p.baseRespawnSec}秒后重新召唤，每死一次下次复活`
+        + `等待时间再复利增加${p.respawnGrowthPct}%。`;
     },
     get description() { return this.descTemplate; },
     computeCurrent: (entity, ctx) => {
@@ -774,16 +804,17 @@ export const weapons = {
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
-      instance.state = { petId: null, respawnAt: 0, deathCount: 0 };
+      instance.state = { petIds: [], respawnAt: 0, deathCount: 0 };
     },
     onUnequip: (entityId, instance, ctx) => {
       // 武器卸下后幻兽失去存在的意义（没人再给它治疗、拴绳也无处可依），
       // 走跟"唤灵消失"同一条非战斗死亡路径（不算击杀、不记熵）。
-      const petId = instance.state?.petId;
-      const pet = petId ? ctx.entityContainer.get(petId) : null;
-      if (pet && pet.alive) {
-        pet.currentHP = 0; pet.alive = false;
-        ctx.eventBus?.emit?.('entity:death', { entityId: pet.id });
+      for (const petId of instance.state?.petIds || []) {
+        const pet = ctx.entityContainer.get(petId);
+        if (pet && pet.alive) {
+          pet.currentHP = 0; pet.alive = false;
+          ctx.eventBus?.emit?.('entity:death', { entityId: pet.id });
+        }
       }
     },
     onBeforeAttack: (attacker, target, instance, ctx) => {
@@ -792,45 +823,65 @@ export const weapons = {
     onFrame: (entityId, dt, instance, ctx) => {
       const tower = ctx.entityContainer.get(entityId);
       if (!tower || !tower.alive) return;
-      if (!instance.state) instance.state = { petId: null, respawnAt: 0, deathCount: 0 };
+      if (!instance.state) instance.state = { petIds: [], respawnAt: 0, deathCount: 0 };
       const st = instance.state;
       const p = instance._params || weapons.weapon_shepherd.defaultParams;
       const now = window.gameTime || 0;
+      const maxAlive = p.maxAlive ?? 2;
+      const base = p.baseRespawnSec ?? 15, growth = (p.respawnGrowthPct ?? 5) / 100;
 
-      let pet = st.petId ? ctx.entityContainer.get(st.petId) : null;
-      if (st.petId && (!pet || !pet.alive)) {
-        // 幻兽这一帧死了（或已被移除）——记一次死亡，下次复活的等待时间按死亡次数递增。
-        st.petId = null; pet = null;
+      // 清点还活着的幻兽；这一轮里"从名单里消失/死掉"的每一只都记一次死亡，
+      // 各自按当时的死亡序数复利算一次应等待的时长，取【最晚】的那个时刻——
+      // 两只前后脚死的话，第二只要在第一只复活排上队之后再往后排，不会同时复活。
+      const alive = [];
+      for (const petId of st.petIds) {
+        const pet = ctx.entityContainer.get(petId);
+        if (pet && pet.alive) { alive.push(petId); continue; }
         st.deathCount = (st.deathCount || 0) + 1;
-        const initial = p.initialRespawnSec ?? 8, step = p.respawnStepSec ?? 4;
-        st.respawnAt = now + initial + step * (st.deathCount - 1);
+        const wait = base * Math.pow(1 + growth, st.deathCount - 1);
+        st.respawnAt = Math.max(st.respawnAt || 0, now) + wait;
       }
+      st.petIds = alive;
 
-      if (!pet) {
-        if (now < (st.respawnAt || 0)) return; // 还在复活冷却里，什么都不做
-        if (typeof ctx.combat?.createMinion !== 'function') return;
+      const need = maxAlive - st.petIds.length;
+      if (need > 0 && now >= (st.respawnAt || 0) && typeof ctx.combat?.createMinion === 'function') {
         const faction = tower._mapFaction || tower.faction;
         const spirit = ctx.combat.createMinion('melee', tower.pos.x, tower.pos.y, faction, 1, 1);
-        if (!spirit) return;
-        const towerStats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(entityId));
-        const pct = (p.statPct ?? 50) / 100;
-        spirit.baseStats.maxHP = Math.max(1, (towerStats.maxHP || 1) * pct);
-        spirit.currentHP = spirit.baseStats.maxHP;
-        spirit.baseStats.attackDamage = (towerStats.attackDamage || 0) * pct;
-        spirit.baseStats.abilityPower = (towerStats.abilityPower || 0) * pct;
-        spirit.baseStats.armor = (towerStats.armor || 0) * pct;
-        spirit.baseStats.magicResist = (towerStats.magicResist || 0) * pct;
-        spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
-        spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
-        spirit._petLeashRadius = p.leashRadius ?? 260;
-        st.petId = spirit.id;
-        return;
+        if (spirit) {
+          spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
+          spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
+          spirit._petLeashRadius = p.leashRadius ?? 260;
+          // 用户追加定稿："幻兽要有独立技能……不然幻兽太弱了"——攻击带小型减速+
+          // 受击概率触发自保护盾，两个都要（见 minionPassives.passive_pet_spirit_guard）。
+          equipSkill(spirit, 'passive_pet_spirit_guard', ctx, ctx.combat?.skills);
+          st.petIds.push(spirit.id);
+        }
       }
 
-      // 幻兽活着：只要没满血就一直治，不分脱战/在战——"塔专职给召唤物回血"。
-      const maxHP = pet.baseStats?.maxHP ?? pet.currentHP;
-      if (pet.currentHP < maxHP) {
-        applyHeal(pet, (p.healPerSec ?? 40) * dt, 1, maxHP, pet._regenCapHP);
+      // 幻兽活着：属性按塔【当下】的实时属性百分比持续同步（不是只在出生那一刻
+      // 快照一次）+ 只要没满血就一直治，不分脱战/在战。
+      // 用户追加定稿："塔获得增益会按照一定百分比转换到幻兽上（幻兽是塔的一部分）"——
+      // 这意味着幻兽出生后塔再叠的buff（龙魂/等级成长/装备等）也要持续跟着涨，
+      // 不能只在召唤瞬间定死。做法：每帧直接用塔的实时 calc() 结果重算幻兽的
+      // baseStats（跟召唤时同一个公式，只是从"仅执行一次"改成"每帧执行"），
+      // currentHP 不强行改动（涨的部分靠下面的持续治疗慢慢补上，跌的部分用
+      // Math.min 卡住，不会出现"当前生命超过新的最大生命"这种显示错误）。
+      if (st.petIds.length) {
+        const towerStats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(entityId));
+        const pct = (p.statPct ?? 80) / 100;
+        for (const petId of st.petIds) {
+          const pet = ctx.entityContainer.get(petId);
+          if (!pet) continue;
+          pet.baseStats.maxHP = Math.max(1, (towerStats.maxHP || 1) * pct);
+          pet.baseStats.attackDamage = (towerStats.attackDamage || 0) * pct;
+          pet.baseStats.abilityPower = (towerStats.abilityPower || 0) * pct;
+          pet.baseStats.armor = (towerStats.armor || 0) * pct;
+          pet.baseStats.magicResist = (towerStats.magicResist || 0) * pct;
+          if (pet.currentHP > pet.baseStats.maxHP) pet.currentHP = pet.baseStats.maxHP;
+
+          const maxHP = pet.baseStats.maxHP;
+          if (pet.currentHP < maxHP) applyHeal(pet, (p.healPerSec ?? 40) * dt, 1, maxHP, pet._regenCapHP);
+        }
       }
     },
   },

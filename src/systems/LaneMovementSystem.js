@@ -32,6 +32,9 @@ import { applyHeal } from '../core/healing.js';
 // 调参归拢：数值住在 CONFIG.tuning（Config.js），这里只取默认兜底——调平衡改配置，不翻系统源码
 const ACQUISITION_RANGE = CONFIG.tuning?.acquisitionRange ?? 200;        // 仇恨获取半径（≈ LoL 800 × 0.24）
 const CHASE_DROP_RANGE = ACQUISITION_RANGE * (CONFIG.tuning?.chaseDropFactor ?? 1.2); // 追击放弃距离
+// Q5：工程兵前出驻守用——塔层级数字越小越靠前（外塔最前，水晶枢纽最后），
+// 没有列在这里的层级（不认识的自定义 tier）一律按 Infinity 处理，不当前沿候选。
+const FRONT_TIER_RANK = { outer: 1, inner: 2, base: 3, hq_tower: 3, nexus_lane: 4, nexus_main: 5 };
 // navgrid 地形（野区可走）后的行军纪律（用户定稿）：小兵【不主动进野区】，被挤进/带偏后也要
 // 尽快回到本路兵线继续向敌方推进。偏离中线超过 LANE_KEEP 起，回归力线性增强到压过前进期望力。
 const LANE_KEEP = 150;      // 容许的离线距离（≈走廊半宽），以内只有原来的温和排队力
@@ -125,6 +128,14 @@ export class LaneMovementSystem {
       // 长链路里插分支——那条链路已经被前面一串"旋转木马/脱锚"之类的坑喂养得
       // 很脆弱，工程兵这种完全不同的行为形状硬塞进去风险远大于收益。
       if (minion.type === 'engineer') { this._updateEngineer(minion, dt); continue; }
+
+      // ==================== Q5：治疗兵——贴着受治疗的友军，独立分支 ====================
+      // 用户反馈的真实bug："治疗兵为什么会贴着敌方单位，治疗兵要贴着受治疗的
+      // 友方单位！"——根因是治疗兵此前没有专属分支，走的是下面给"追敌人打架"
+      // 用的通用AI：它攻击力是0，但索敌/追击/锚定这一整套照样跑，于是它会像
+      // 正常小兵一样站到最近的【敌方】单位旁边，治疗全靠半径内刚好蹭到的友军。
+      // 见 _updateHealer 头注。
+      if (minion.type === 'healer') { this._updateHealer(minion, dt); continue; }
 
       // ==================== Q5：牧灵塔幻兽——拴绳接敌，独立分支 ====================
       // 跟工程兵同一个理由：这是一种跟"追敌人"不同的行为形状（索敌/追击范围以
@@ -307,10 +318,18 @@ export class LaneMovementSystem {
   }
 
   /**
-   * Q5：工程兵——不推线，只在"离自己最近的、血量没满的己方塔"和"原地待命"之间
-   * 二选一。这里刻意不做"往前方找"这类带方向判断的复杂逻辑（用户的设计前提是
-   * "单位不做决策，只机械触发"），机械地选"当前搜索半径内最近的一座"，跟治疗兵
-   * "机械选最近友军"是同一个设计取舍，不是偷懒简化。
+   * Q5：工程兵——有需要修的塔就去修，否则前出到自己这条兵线当前最靠前的存活塔
+   * 旁边驻守待命。选"离自己最近的需要修的塔"、选"自己这条线上最靠前的塔"都
+   * 是机械规则（不做"哪条线更危险"这类跨线路判断），跟治疗兵"机械选最近友军"
+   * 是同一个设计取舍，不是偷懒简化。
+   *
+   * 2026-09-19 修复：用户反馈"工程兵目前只会躺在家里"——旧版没有塔可修时直接
+   * 原地不动，而工程兵出生点在水晶枢纽附近，于是没塔可修的大部分时间里，
+   * 全部工程兵都堆在家门口，前线一旦挨打，它们离得太远根本赶不过去，实际
+   * 效果等于形同虚设。现在没塔可修时改为"前出到本车道最前沿那座存活塔旁边"——
+   * 前沿定义按塔的层级（外→内→基地/大本营→水晶枢纽，见 _FRONT_TIER_RANK），
+   * 层级数字越小越靠前，外塔没了就往内塔靠，内塔也没了就退到基地，这样工程兵
+   * 始终待在离战斗最近、下一次需要它时最快能赶到的位置。
    *
    * 修复超出"加固城防"节点封顶的部分：节点内的量走标准 applyHeal（吃封顶，
    * 与其它治疗来源一致），超出节点的量单独按 overflowEfficiencyPct 效率结算、
@@ -333,7 +352,29 @@ export class LaneMovementSystem {
       if (d <= searchRange * searchRange && d < bestD) { bestD = d; target = t; }
     }
 
-    if (!target) return; // 没有需要修的塔：原地待命，不移动、不修
+    if (!target) {
+      // 没有需要修的塔：前出驻守本车道当前最前沿的存活塔，不再傻站在家里。
+      const stationRange = c.frontlineStationRange ?? repairRange;
+      let front = null, frontRank = Infinity;
+      for (const t of this.entities.getAllTowers(true)) {
+        if (!t.alive || (t._mapFaction || t.faction) !== faction) continue;
+        if (minion._laneId && t._laneId && t._laneId !== minion._laneId) continue;
+        const rank = FRONT_TIER_RANK[t._mapTier] ?? Infinity;
+        if (rank < frontRank) { frontRank = rank; front = t; }
+      }
+      if (!front) return; // 连自己家的塔都没了，没地方可驻守
+      const fdx = front.pos.x - minion.pos.x, fdy = front.pos.y - minion.pos.y;
+      const fdist = Math.hypot(fdx, fdy);
+      if (fdist > stationRange) {
+        const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
+        const speed = stats.moveSpeed || 0;
+        if (speed > 0 && fdist > 0) {
+          minion.pos.x += (fdx / fdist) * speed * dt;
+          minion.pos.y += (fdy / fdist) * speed * dt;
+        }
+      }
+      return;
+    }
 
     const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
     const dist = Math.hypot(dx, dy);
@@ -366,6 +407,55 @@ export class LaneMovementSystem {
     applyHeal(target, normalAmt, 1, maxHP, capHP);
     const leftover = amount - normalAmt;
     if (leftover > 0) applyHeal(target, leftover * overflowEff, 1, maxHP);
+  }
+
+  /**
+   * Q5：治疗兵——贴着"离自己最近的、血量没满的己方友军单位"（不含塔——塔不会
+   * 移动，跟随没有意义；给塔治疗仍然由 passive_healer_mend 按半径独立判定，
+   * 不受这里的移动逻辑约束）。没有需要照顾的友军时照常沿兵线推进，不是"工程兵
+   * 那种蹲家不动"——治疗兵本来就该跟着大部队走，只是走位目标从"最近的敌人"
+   * 换成"最近的伤兵"。
+   *
+   * 用户反馈的真实bug："治疗兵为什么会贴着敌方单位，治疗兵要贴着受治疗的友方
+   * 单位！"——根因是治疗兵此前没有专属分支，走的是给"追敌人打架"用的通用小兵
+   * AI：它攻击力是0，索敌/追击/锚定这一整套照样跑，于是会像正常小兵一样锚定在
+   * 离自己最近的【敌方】单位旁边站桩，一发攻击也打不出去，治疗全靠半径内刚好
+   * 蹭到的友军——现在换成机械选"最近的伤兵"，跟工程兵"机械选最近需要修的塔"
+   * 是同一个设计取舍。
+   */
+  _updateHealer(minion, dt) {
+    const c = CONFIG.gameRules.supportUnits?.healer || {};
+    const searchRange = c.searchRange ?? 700;
+    const followRange = c.followRange ?? 50;
+    const faction = minion._mapFaction || minion.faction;
+
+    let target = null, bestD = Infinity;
+    for (const e of this.entities.findInRadius(minion.pos.x, minion.pos.y, searchRange, null, true)) {
+      if (!e.alive || e.id === minion.id || e.type === 'tower') continue;
+      if ((e._mapFaction || e.faction) !== faction) continue;
+      const maxHP = e.baseStats?.maxHP ?? e.currentHP;
+      if (e.currentHP >= maxHP) continue; // 满血的友军不算候选
+      const d = (e.pos.x - minion.pos.x) ** 2 + (e.pos.y - minion.pos.y) ** 2;
+      if (d < bestD) { bestD = d; target = e; }
+    }
+
+    if (!target) {
+      // 没有需要照顾的伤兵：跟着兵线正常推进（治疗兵本来就该跟大部队走）。
+      const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
+      this._advanceAlongLane(minion, stats, dt);
+      return;
+    }
+
+    const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > followRange) {
+      const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
+      const speed = stats.moveSpeed || 0;
+      if (speed > 0 && dist > 0) {
+        minion.pos.x += (dx / dist) * speed * dt;
+        minion.pos.y += (dy / dist) * speed * dt;
+      }
+    }
   }
 
   /**

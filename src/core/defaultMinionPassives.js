@@ -46,9 +46,12 @@ export const DEFAULT_MINION_PASSIVES = {
   // Q5：治疗兵——唯一被动"生命脉冲"（passive_healer_mend），按攻速节奏治疗
   // 最近的友军。无攻击敌方能力，不装备任何武器/攻击方式技能。
   'healer': ['passive_healer_mend'],
-  // Q5：工程兵——没有技能。它的全部行为（找塔/修塔/原地待命）都在
-  // LaneMovementSystem._updateEngineer 里，不是技能系统驱动的，出厂默认清单留空。
-  'engineer': [],
+  // Q5：工程兵——真正的找塔/修塔/前出驻守逻辑仍然全部在
+  // LaneMovementSystem._updateEngineer 里（不是技能系统驱动的），但用户反馈
+  // "修复塔效果要做成技能常驻在技能栏里"——补一张纯展示用的技能卡
+  // passive_engineer_repair（无 onFrame，不重复结算，见 minionPassives.js 头注），
+  // 让技能栏里至少能看到这件事，数值仍然读同一份 CONFIG.gameRules.supportUnits.engineer。
+  'engineer': ['passive_engineer_repair'],
   // Q5：唤灵兵——唯一主动技能"唤灵"（active_summoner_call），法力攒满召唤幻灵。
   'summoner': ['active_summoner_call'],
 };

@@ -132,8 +132,27 @@ const mapStub = {
   T('接线②-laneWaveComposition 里有 engineer 的出兵规则',
     CONFIG.gameRules.laneWaveComposition.some(r => r.type === 'engineer'));
   const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
-  T('接线③-出厂默认技能清单存在且为空（行为由移动系统驱动，不是技能系统）',
-    Array.isArray(DEFAULT_MINION_PASSIVES.engineer) && DEFAULT_MINION_PASSIVES.engineer.length === 0);
+  // 2026-09-19：用户反馈"修复效果要做成技能常驻在技能栏里"——出厂默认清单从空数组
+  // 改成挂一张纯展示技能卡（passive_engineer_repair）。真正的修复/走位判定逻辑
+  // 仍然只在 LaneMovementSystem._updateEngineer 里，这张卡不重复结算，见该技能
+  // 定义旁的说明。
+  T('接线③-出厂默认技能清单挂了纯展示用的 passive_engineer_repair（行为仍由移动系统驱动）',
+    Array.isArray(DEFAULT_MINION_PASSIVES.engineer)
+    && DEFAULT_MINION_PASSIVES.engineer.includes('passive_engineer_repair'));
+}
+
+// ==================== 八、修复效果的技能卡是纯展示，不会重复结算修复量 ====================
+{
+  const { ents, CONFIG } = await world();
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const def = SkillLibrary.passive_engineer_repair;
+  T('展示①-passive_engineer_repair 存在，applicableTypes 认得 engineer',
+    !!def && def.applicableTypes.includes('engineer'));
+  T('展示②-没有 onFrame（不重复结算，真实修复逻辑只在 LaneMovementSystem._updateEngineer）',
+    typeof def.onFrame !== 'function');
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 } }, CONFIG);
+  T('展示③-computeCurrent 读的是同一份 CONFIG.gameRules.supportUnits.engineer（不会跟真实数值读岔）',
+    def.computeCurrent(eng, {}) === (CONFIG.gameRules.supportUnits.engineer.repairPerSec ?? 20));
 }
 
 // ==================== 八、编辑器/渲染层的类型枚举没有漏掉 engineer ====================
@@ -165,6 +184,44 @@ const mapStub = {
   const modeSrc = srcOf('src/data/maps/modeTransforms.js');
   T('枚举⑦-经典模式排除了 engineer',
     /engineer:\s*false/.test(modeSrc) && /engineer:\s*\[\]/.test(modeSrc));
+}
+
+// ==================== 九、没塔可修时前出驻守本车道最前沿的存活塔 ====================
+// 用户反馈的真实bug："工程兵目前只会躺在家里，应该往前线推进到最前方的塔！"
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 }, lane: 'mid' }, CONFIG);
+  const base = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    tier: 'base', lane: 'mid', stats: { maxHP: 1000 } }, CONFIG);
+  const outer = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 600, y: 0 },
+    tier: 'outer', lane: 'mid', stats: { maxHP: 1000 } }, CONFIG);
+  // 两座塔都满血——没有需要修的塔，但外塔（outer）比基地（base）更靠前。
+  const before = { x: eng.pos.x, y: eng.pos.y };
+  lms._updateEngineer(eng, 1);
+  T('前出①-没塔可修时朝更靠前（外塔）的方向移动，不是继续待在原地',
+    eng.pos.x > before.x);
+
+  // 外塔被拆掉之后，最前沿变成基地——工程兵不该继续往外塔的空位置冲。
+  outer.alive = false;
+  const before2 = { x: eng.pos.x, y: eng.pos.y };
+  lms._updateEngineer(eng, 1);
+  T('前出②-外塔没了之后最前沿退到基地，工程兵已经在基地附近就不再继续往外冲',
+    Math.abs(eng.pos.x - before2.x) < 700); // 宽松上界：不会一路冲向已经死掉的外塔坐标
+}
+
+// ==================== 十、贴脸敌人不影响"没塔可修就前出"这条判断 ====================
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 }, lane: 'mid' }, CONFIG);
+  mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 600, y: 0 }, tier: 'outer', lane: 'mid',
+    stats: { maxHP: 1000 } }, CONFIG);
+  const foe = mkEntity(ents, 'melee', { faction: 'red', pos: { x: 20, y: 0 } }, CONFIG); // 贴脸
+  lms.update(1);
+  T('旁路②-工程兵前出时依旧不会对贴脸敌人获得 targetId（不参与标准索敌）', !eng.targetId);
 }
 
 done();
