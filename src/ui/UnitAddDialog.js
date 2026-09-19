@@ -17,17 +17,18 @@ import { SkillLibrary } from '../core/SkillLibrary.js';
  * 小兵与龙可以反复"加入清单"，最后一次性"批量生成"。
  */
 
-const MINION_TYPES = ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram'];
+const MINION_TYPES = ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy'];
 
 const TYPE_META = {
   melee:   { label: '近战兵', icon: '🗡️', info: '近战攻击，高攻速，低血量' },
   ranged:  { label: '远程兵', icon: '🏹', info: '远程魔法攻击，中等属性' },
   siege:   { label: '炮兵', icon: '💣', info: '远程高伤，受塔伤害-30%，为周围小兵提供+20双抗光环' },
+  heavy:   { label: '重装车', icon: '🐢', info: '纯坦克，塔攻击优先级最高，超高双抗+格挡，对塔有额外伤害' },
   super:   { label: '超级兵', icon: '🦾', info: '高血量高攻击，对塔有额外伤害，提供双抗+攻速光环' },
-  totem:   { label: '图腾兵', icon: '🗿', info: '辅助型，图腾守护（护盾）、图腾光环（全属性）、图腾滋养（治疗强度）' },
-  warlock: { label: '术士兵', icon: '🧙', info: '远程魔法，术法光环给周围普通小兵+攻击力+固定法术穿透' },
+  totem:   { label: '图腾兵', icon: '🗿', info: '辅助型（Q5收窄为只做光环治疗），持续为周围友军回复生命，自身带高额固定护盾' },
+  warlock: { label: '术士兵', icon: '🧙', info: '辅助型（Q5收窄为只做光环增伤），光环给周围友军伤害增幅，自身带高额双穿' },
   corrupt: { label: '蚀骨兵', icon: '🦇', info: '攻击给塔叠加腐蚀（唯一被动，减双抗）' },
-  ram:     { label: '攻城车', icon: '🛠️', info: '专职破塔：锁定建筑后进入攻城模式（攻速-50%/对建筑伤害+270%/每击自损20%最大生命），射程超过防御塔，对小兵-33%，受近战单位伤害+100%' },
+  ram:     { label: '攻城车', icon: '🛠️', info: '专职破塔：锁定建筑后进入攻城模式（对建筑伤害+550%，攻速随攻击自我衰减），射程超过防御塔，对小兵-33%，受近战单位伤害+100%' },
 };
 
 const WEAPONS = {

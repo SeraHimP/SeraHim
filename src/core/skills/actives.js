@@ -309,4 +309,32 @@ export const actives = {
       if (back > 0) ctx.combat?.performAttackDirect?.(entityId, attackerId, back, 'magic', { _noProc: true });
     },
   },
+
+  // ==================== Q5：重装车——铁壁（法力攒满后一段时间伤害减免）====================
+  // 用户给的规格："主动技能是一段时间内获得伤害减免。" 数值占位，量级参考荆棘装甲
+  // 同款"法力攒满触发限时buff"结构，直接复用同一个模式（不新造一套触发方式）。
+  active_heavy_bulwark: {
+    id: 'active_heavy_bulwark', name: '铁壁', icon: '🛡', color: '#7f8c8d', category: 'active',
+    applicableTypes: ['heavy'],
+    defaultParams: { damageReductionPct: 30, durationSec: 4 },
+    get description() {
+      const p = this.defaultParams;
+      return `法力攒满后获得 ${p.damageReductionPct}% 伤害减免，持续 ${p.durationSec} 秒。`;
+    },
+    effects: [],
+    onCast: (entityId, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return false;
+      const p = instance._params || actives.active_heavy_bulwark.defaultParams;
+      const pct = p.damageReductionPct ?? 30;
+      const dur = p.durationSec ?? 4;
+      ctx.effectRegistry.apply(entityId, {
+        name: '铁壁', icon: '🛡', kind: 'stat', statKey: 'damageReduction',
+        flatValue: pct, duration: dur,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `伤害减免 +${pct}%`,
+      }, 'active_heavy_bulwark');
+      return true;
+    },
+  },
 };

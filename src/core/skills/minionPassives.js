@@ -184,6 +184,35 @@ export const minionPassives = {
     },
   },
 
+  // ==================== Q5：重装车——对建筑额外伤害 ====================
+  // 用户给的规格："攻击一般（对塔有额外伤害）。"数值刻意给得比攻城车（对塔+550%）
+  // 温和很多——重装车的存在意义是"坦着挨打、吸引塔火力"，这条只是坦着打的副产物，
+  // 不能抢攻城车"专职破塔"的定位。跟屠戮系被动同一个结算方式（onDealtDamage 里
+  // 用这一下的原始伤害 ctx.totalRaw 算一笔额外伤害，走 performAttackDirect）。
+  passive_heavy_vs_tower: {
+    id: 'passive_heavy_vs_tower', name: '破城锤', icon: '🔨', category: 'passive',
+    applicableTypes: ['heavy'],
+    get defaultParams() {
+      const c = CONFIG.gameRules.supportUnits?.heavy || {};
+      return { bonusVsTowerPct: c.bonusVsTowerPct ?? 60 };
+    },
+    get description() {
+      const p = this.defaultParams;
+      return `对防御塔造成的伤害额外 +${p.bonusVsTowerPct}%。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const target = ctx.entityContainer.get(targetId);
+      if (!target || !target.alive || target.type !== 'tower') return;
+      const p = instance._params || minionPassives.passive_heavy_vs_tower.defaultParams;
+      const bonus = (ctx.totalRaw || 0) * ((p.bonusVsTowerPct ?? 60) / 100);
+      if (bonus <= 0 || !ctx.combat) return;
+      ctx.combat.performAttackDirect(attackerId, targetId, bonus,
+        ctx.attackType || 'physical', { basicAttack: false, _noProc: true });
+    },
+  },
+
   passive_siege_shield: {
     id: 'passive_siege_shield',
     applicableTypes: ['siege'],

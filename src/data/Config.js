@@ -84,6 +84,10 @@ export const CONFIG = {
         stackIntervalSec: 1,     // 每隔多少秒叠一层
         stackDurationSec: 3,     // 单层持续时间（离开范围后逐层过期）
       },
+      // Q5：重装车——纯坦克，对塔额外伤害刻意比攻城车温和很多（那不是它的定位）。
+      heavy: {
+        bonusVsTowerPct: 60,    // 对塔额外伤害（%）
+      },
     },
     // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
     // 仍受结构保护约束、且塔的索敌优先级最低（不会为了打塔而无视拆自己的小兵）。
@@ -2256,6 +2260,31 @@ export const CONFIG = {
       // （攻城 gameRules.ram.siegeSplash / 普通 normalSplash），模板不再自带底数。
       splashRadius: 0,
       ...UNIT_STAT_DEFAULTS,
+    },
+    // ==================== Q5：重装车——纯坦克，敌塔优先攻击目标 ====================
+    // 用户给的规格："塔攻击优先级最高，一般略高血量，超高双抗，自带一些伤害格挡。
+    // 但是攻速极低，攻击一般（对塔有额外伤害）。主动技能是一段时间内获得伤害减免。"
+    // 名字沿用"重装车"（用户在几个候选名里最终选了这个）。
+    // 对塔额外伤害刻意给得比攻城车（550%）温和很多——这只是坦着打的副产物，
+    // 不能抢攻城车"专职破塔"这个定位的戏，见 passive_heavy_vs_tower。
+    heavy: {
+      label: '重装车', type: 'heavy',
+      isLargeMinion: true, isMonster: false,
+      maxHP: 750, healthRegen: 2, baseHealthRegenMod: 1.0,
+      moveSpeed: 78, attackRange: 30,
+      attackDamage: 28, baseAttackSpeed: 0.3, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
+      armor: 65, magicResist: 65,
+      damageReduction: 0, damageBlock: 10,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
+      onHitDamage: 0, onHitPercentDamage: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
+      healShieldPowerPct: 0,
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
+      // 主动技能"铁壁"：法力攒满后获得一段时间的伤害减免，见 actives.js 的
+      // active_heavy_bulwark。数值先给一个合理量级，占位起始值。
+      maxMana: 100, manaRegen: 1.5,
     },
     dragon: {
       label: '巨龙', type: 'dragon',

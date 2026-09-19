@@ -449,6 +449,10 @@ export class CombatSystem {
     if (inRange.length === 0) return null;
 
     const getPriority = (m) => {
+      // Q5：重装车（heavy）"塔攻击优先级最高"（用户定稿）——它是纯坦克，存在
+      // 意义就是吸引塔火力，必须排在所有其它类型之上，包括龙/怪物这些原本的
+      // 最高档，否则"最高优先级"这句话就没有实际意义。
+      if (m.type === 'heavy') return 6;
       if (m.type === 'dragon') return 5;
       if (m.type === 'hero') return 4;
       if (m.type === 'monster') return 3;
