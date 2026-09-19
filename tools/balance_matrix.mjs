@@ -9,19 +9,24 @@
  * 根本不可能收敛。所以熵系统开工前，先把这把尺子造出来。
  *
  * 用法：
- *   node tools/balance_matrix.mjs                       # 默认档位跑一遍
- *   node tools/balance_matrix.mjs --runs 8 --minutes 40 # 每档 8 局、每局上限 40 分钟
+ *   node tools/balance_matrix.mjs                       # 默认档位跑一遍，单局不设时长上限（跑到分出胜负为止）
+ *   node tools/balance_matrix.mjs --runs 8 --minutes 40 # 每档 8 局、每局封顶 40 分钟（快速摸底用，见下方说明）
  *   node tools/balance_matrix.mjs --sweep dayNight      # 扫昼夜阵营加成
  *   node tools/balance_matrix.mjs --sweep entropy       # 扫熵档位（熵实现后可用）
  *   node tools/balance_matrix.mjs --sweep soul --runs 20 # v43：八条龙魂的强度对照
  *                                                       #   基线档差值应≈0；每条魂目标胜率带 60~70%
  *   node tools/balance_matrix.mjs --json out.json       # 结果落盘，便于前后对比
+ *   node tools/balance_matrix.mjs --no-entropy           # 关掉熵三核推进（不影响速度，见下方说明）
  *
  * 说明：
  * - 纯 headless，不需要浏览器；用真实的 MapSystem / LaneWaveSystem / CombatSystem，
  *   不是简化模型 —— 简化模型算出来的平衡没有意义。
  * - 每档用固定种子序列，同一命令重复跑结果一致（可复现）。
- * - 渲染层完全不参与，故一局 40 分钟的模拟只需几秒。
+ * - 渲染层完全不参与，一局模拟通常只需几秒到几十秒，但**默认不设时长上限**——
+ *   实测双方打不动的对局可能需要模拟出几个游戏小时才能分出胜负，真实耗时仍然
+ *   很快（不经过渲染），但如果两边真的谁都打不穿（对称僵局），这一档会一直跑
+ *   下去不退出——那本身就是该被发现和报告的平衡问题，不要通过 --minutes 强行
+ *   封顶来掩盖它；--minutes 仅用于明确知道自己只要一个快速代理信号的场景。
  */
 globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0 };
 
@@ -31,7 +36,20 @@ const arg = (name, def) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : def;
 };
 const RUNS = parseInt(arg('runs', '5'), 10);
-const MAX_MIN = parseFloat(arg('minutes', '45'));
+// ==================== 2026-09-19：默认取消单局时长上限 ====================
+// 用户实测发现：--minutes 40（乃至45）下，绝大多数对局（尤其基线）在时限内根本
+// 分不出胜负（14 档里 13 档是"平 20/20"），意味着"胜率"这条主信号大面积失效，
+// 只能退而求其次看【推进度差】这个代理指标——但那终究是代理，不是真实结果。
+// 用户原话："因为40分钟分不出来胜负，所以取消时间限制，我的电脑跑起来配置高。"
+// 现在默认不设上限：主循环（见下面 maxT 用法）会一直跑到水晶枢纽被摧毁为止，
+// 用真实胜负当主信号。--minutes 仍然保留，传了就按传的值封顶——留给需要快速
+// 摸底、不在乎跑不出真实胜负的场景（比如 --quick 式的冒烟检查）用。
+// 注意：默认无上限意味着"两边打不动、永远分不出胜负"会变成这个进程真的挂住
+// 不退出，而不是像以前那样 40 分钟后体面收场——如果发生这种情况，"这一档
+// 卡住不结束"本身就是一个值得报告的平衡问题（大概率是某种对称僵局），不是
+// 工具的锅，不要为了让工具"看起来能跑完"就悄悄重新加一个隐藏上限糊弄过去。
+const minutesArg = arg('minutes', null);
+const MAX_MIN = minutesArg != null ? parseFloat(minutesArg) : Infinity;
 // --map：在指定地图上跑。默认召唤师峡谷（历史基线都是在它上面测的，不要随便改默认值）。
 // 加这个参数是因为新地图做完必须能【用同一把尺子】量一遍 ——
 // 我自己临时写的简易脚手架量出来"塔零掉血"，连峡谷也是零，说明那种脚手架说明不了任何事。
@@ -44,6 +62,18 @@ const SWEEP = arg('sweep', 'none');
 // ⚠️ 只用于分批跑，**下结论前必须确认基线档也跑过** —— 所有判读都是相对基线的差值，
 // 没有基线的那几档数字单独看没有任何意义。
 const PICK = arg('pick', '');
+// ==================== 2026-09-19：--no-entropy ====================
+// 用户问："这个功能几乎处于永久关闭状态，关闭熵之后跑起来是不是更快一些"——
+// 如实回答写在下面（读代码验证过，不是猜）：熵系统对**耦合到玩法**这一半本来就
+// 默认全关（CONFIG.world.couplings 的 entropyToUnits/entropyToWeather/
+// entropyToDayNight 三个都是 false），熵值从没被喂回过任何一局的战斗结果；
+// **跟踪计算**这一半（EntropySystem.update）本身是 O(1)——只有两次减法和一个
+// 计时器比较，没有任何按帧扫全场实体的查询，开着也几乎不产生可测的耗时。
+// 所以关掉它**不会让批量对局明显跑得更快**——真正的耗时大头是每局本身要模拟
+// 多少游戏内分钟（这次刚好又把这个上限从40分钟去掉了，见上面 MAX_MIN 的改动），
+// 跟熵开不开无关。加这个开关不是为了性能，是为了让"终局熵"这一栏在确认关掉后
+// 干脆显示"关闭"而不是一个从不影响结果、只会让人误以为它在起作用的数字。
+const NO_ENTROPY = args.includes('--no-entropy');
 // v43：--sweep soul 用。非 null 时给**蓝方**的全部领受者（塔 + 大型小兵）装上这条龙魂。
 let FORCE_SOUL = null;
 let FORCE_POWER = null;   // v44：巨龙之力对照档（元素 key），给蓝方叠满层
@@ -457,8 +487,15 @@ if (PICK) {
   cells.length = 0;
   cells.push(...kept);
 }
-console.log(`批量对局模拟：地图 ${MAP_ID}，每档 ${RUNS} 局，单局上限 ${MAX_MIN} 分钟，档位 ${cells.length} 个`);
+const minLabel = Number.isFinite(MAX_MIN) ? `单局上限 ${MAX_MIN} 分钟` : '单局不设时长上限（跑到分出胜负为止）';
+console.log(`批量对局模拟：地图 ${MAP_ID}，每档 ${RUNS} 局，${minLabel}，档位 ${cells.length} 个${NO_ENTROPY ? '，熵已关闭' : ''}`);
 console.log('（纯 headless，使用真实的 MapSystem/LaneWaveSystem/CombatSystem，非简化模型）\n');
+
+// --no-entropy：整批统一关掉三核推进（见上面 NO_ENTROPY 定义处的说明——不是为了
+// 性能，是让"终局熵"这一栏不再打印一个从不影响结果的数字）。跑完还原，避免这个
+// 进程后面还有别的代码路径读到被改过的 CONFIG（虽然当前用法是跑完就退出）。
+const _entropyEnabledBefore = CONFIG.world.entropy.enabled;
+if (NO_ENTROPY) CONFIG.world.entropy.enabled = false;
 
 const t0 = Date.now();
 const results = [];
@@ -470,10 +507,12 @@ for (const [label, apply, restore] of cells) {
     `${label.padEnd(22)} 蓝胜 ${String(r.blue).padStart(2)}/${r.runs}（${String(r.blueRate).padStart(3)}%）` +
     `  红胜 ${String(r.red).padStart(2)}  平 ${String(r.draw).padStart(2)}` +
     `  均时长 ${String(r.avgMin).padStart(5)} 分  推塔 蓝${r.avgTB}/红${r.avgTR}` +
-    `  推进度 蓝${r.pushB}/红${r.pushR}（差 ${sign}${r.pushDiff}）  终局熵 ${r.entropy}`
+    `  推进度 蓝${r.pushB}/红${r.pushR}（差 ${sign}${r.pushDiff}）` +
+    (NO_ENTROPY ? '  终局熵 关闭' : `  终局熵 ${r.entropy}`)
   );
 }
 console.log(`\n耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+CONFIG.world.entropy.enabled = _entropyEnabledBefore;
 
 if (results.length > 1) {
   const rates = results.map(r => r.blueRate);
@@ -484,14 +523,25 @@ if (results.length > 1) {
               `（跨度 ${(Math.max(...diffs) - Math.min(...diffs)).toFixed(2)}）`);
 }
 console.log(
-  '\n判读提示：\n' +
-  '  · 基线对局在 40 分钟内基本打不出胜负，所以【推进度差】才是主信号，胜率是副信号。\n' +
-  '    推进度 = 打掉对方几档塔（外塔1/内塔2/高地塔3/召唤水晶4/枢纽5）+ 当前最前线那座的掉血比例。\n' +
-  '  · 差值 0 = 对称；正 = 蓝方占优。看【趋势】而不是单点，要下结论请用 --runs 20 以上。'
+  Number.isFinite(MAX_MIN)
+    ? ('\n判读提示：\n' +
+      '  · 本次跑的是有时长上限的快速摸底（--minutes 明确传了值），对局可能因为封顶而打平，\n' +
+      '    这种情况下【推进度差】才是主信号，胜率是副信号。\n' +
+      '    推进度 = 打掉对方几档塔（外塔1/内塔2/高地塔3/召唤水晶4/枢纽5）+ 当前最前线那座的掉血比例。\n' +
+      '  · 差值 0 = 对称；正 = 蓝方占优。看【趋势】而不是单点，要下结论请用 --runs 20 以上。')
+    : ('\n判读提示：\n' +
+      '  · 本次单局不设时长上限，"平"意味着真的两边都摧毁不了对方的水晶枢纽（不是被时限打断），\n' +
+      '    这种情况本身就是重要信号——胜率和"平"的占比才是主信号，不再需要靠推进度差代理。\n' +
+      '  · 推进度差依旧一并打出来，仍然有参考价值（谁占优、占优多少）。\n' +
+      '  · 差值 0 = 对称；正 = 蓝方占优。看【趋势】而不是单点，要下结论请用 --runs 20 以上。')
 );
 
 if (JSON_OUT) {
   const fs = await import('fs');
-  fs.writeFileSync(JSON_OUT, JSON.stringify({ runs: RUNS, maxMin: MAX_MIN, sweep: SWEEP, results }, null, 2));
+  // Infinity 不能被 JSON.stringify 原样序列化（会变成 null，读的人看不出"不设上限"和
+  // "读取失败"的区别），显式写成字符串 'unlimited'，跟数字上限区分开。
+  fs.writeFileSync(JSON_OUT, JSON.stringify({
+    runs: RUNS, maxMin: Number.isFinite(MAX_MIN) ? MAX_MIN : 'unlimited', sweep: SWEEP, results,
+  }, null, 2));
   console.log(`结果已写入 ${JSON_OUT}`);
 }

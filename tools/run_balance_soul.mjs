@@ -41,14 +41,25 @@
  * 设计一套"随远古龙击杀数演化"的对照方式再做。
  *
  * ==================== 用法 ====================
- *   node tools/run_balance_soul.mjs                     # 默认龙魂，完整规模：--runs 20 --minutes 40
+ *   node tools/run_balance_soul.mjs                     # 默认龙魂，完整规模：--runs 20，单局不设时长上限
  *   node tools/run_balance_soul.mjs --sweep power        # 巨龙之力，完整规模
- *   node tools/run_balance_soul.mjs --sweep power --quick    # 巨龙之力，快速摸底
- *   node tools/run_balance_soul.mjs --runs 8 --minutes 30
- *   node tools/run_balance_soul.mjs --quick              # 快速摸底：--runs 5 --minutes 25
+ *   node tools/run_balance_soul.mjs --sweep power --quick    # 巨龙之力，快速摸底（有时长上限，见下）
+ *   node tools/run_balance_soul.mjs --runs 8 --minutes 30    # 显式指定上限：只想要个快速代理信号时用
+ *   node tools/run_balance_soul.mjs --quick              # 快速摸底：--runs 5 --minutes 25（有上限，追求快出结果）
  *   node tools/run_balance_soul.mjs --jobs 4             # 手动指定并行进程数（默认按 CPU 核数，封顶档位数）
  *   node tools/run_balance_soul.mjs --pick fire,water,magma   # 只重跑这几档（调完数值针对性验证用，
  *                                                              # "基线"/baseline 也可以写进去）
+ *   node tools/run_balance_soul.mjs --no-entropy         # 透传给子进程关掉熵三核（不是为了性能，
+ *                                                              # 见 balance_matrix.mjs 同名开关的说明）
+ *
+ * ==================== 2026-09-19：默认取消单局时长上限 ====================
+ * 用户拿这份工具的真实扫描结果反馈："因为40分钟分不出来胜负，所以取消时间限制，
+ * 我的电脑跑起来配置高。"（14 档里 13 档在 --minutes 40 下打成"平 20/20"，胜率这条
+ * 主信号大面积失效）。现在不传 --minutes 时不再转发固定的 40/25 给子进程，子进程
+ * （balance_matrix.mjs）收不到这个参数就是"不设上限，跑到分出胜负为止"——跟那边
+ * 是同一次改动，这里只是不再重复维护一份写死的默认分钟数。
+ * 代价：如果两边真的谁都打不穿（对称僵局），某一档会一直跑不完，这个脚本也就
+ * 跟着卡住不退出——这是真实结果，不是这次改动引入的 bug，遇到了直接报告即可。
  *
  * 跑完之后：把控制台打印的表格，或者 .balance/ 目录下最新那份 .log 文件
  * 直接发给 Claude 就行，不需要额外处理。
@@ -83,8 +94,16 @@ const flag = (name, def) => {
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : def;
 };
 const QUICK = argv.includes('--quick');
+const NO_ENTROPY = argv.includes('--no-entropy'); // 透传给子进程，见 balance_matrix.mjs 同名开关的说明
 const RUNS = flag('runs', QUICK ? '5' : '20');
-const MINUTES = flag('minutes', QUICK ? '25' : '40');
+// ==================== 2026-09-19：跟 balance_matrix.mjs 同步取消默认时长上限 ====================
+// 用户实测：--minutes 40 下 14 档里 13 档在时限内分不出胜负，胜率信号大面积失效
+// （见 balance_matrix.mjs 顶部同一次改动的头注，这里只抄结论）。默认不再传固定的
+// --minutes 给子进程——balance_matrix.mjs 收不到这个参数时自己就是"不设上限，跑到
+// 分出胜负为止"，这里保持一致，不重复维护两份"40"。
+// --quick 仍然保留一个封顶（25分钟）：它本来就是"快速摸底、不追求真实胜负"的场景，
+// 跟这次要解决的"全量扫描要看真实结果"不是同一个诉求，不能顺手也去掉。
+const MINUTES = flag('minutes', QUICK ? '25' : null);
 
 // --sweep soul（默认，与之前逐位一致）或 --sweep power。
 const SWEEP = flag('sweep', 'soul');
@@ -140,9 +159,10 @@ const jsonPath = path.join(outDir, `${SWEEP}_sweep_${ts}.json`);
 const logLines = [];
 const log = (s = '') => { console.log(s); logLines.push(s); };
 
+const minLabel = MINUTES != null ? `单局上限 ${MINUTES} 分钟` : '单局不设时长上限（跑到分出胜负为止）';
 log(pickArg
-  ? `${SWEEP_LABEL}平衡扫描（--pick 指定档位）：${TIERS.join('、')}，每档 ${RUNS} 局，单局上限 ${MINUTES} 分钟`
-  : `${SWEEP_LABEL}平衡扫描：${TIERS.length} 档（基线 + ${ELEMENTS.length} 种${SWEEP_LABEL}），每档 ${RUNS} 局，单局上限 ${MINUTES} 分钟`);
+  ? `${SWEEP_LABEL}平衡扫描（--pick 指定档位）：${TIERS.join('、')}，每档 ${RUNS} 局，${minLabel}`
+  : `${SWEEP_LABEL}平衡扫描：${TIERS.length} 档（基线 + ${ELEMENTS.length} 种${SWEEP_LABEL}），每档 ${RUNS} 局，${minLabel}`);
 log(`拆成 ${JOBS} 个并行进程（本机 ${cpuCount} 核）：`);
 buckets.forEach((b, i) => log(`  进程${i + 1}：${b.join('、')}`));
 log('');
@@ -191,7 +211,9 @@ function runJob(idx, pickList) {
   return new Promise((resolve) => {
     const jsonOut = path.join(outDir, `${SWEEP}_sweep_${ts}_job${idx}.json`);
     const args = ['tools/balance_matrix.mjs', '--sweep', SWEEP,
-      '--runs', String(RUNS), '--minutes', String(MINUTES),
+      '--runs', String(RUNS),
+      ...(MINUTES != null ? ['--minutes', String(MINUTES)] : []), // 不传 = 子进程自己按"不设上限"跑
+      ...(NO_ENTROPY ? ['--no-entropy'] : []),
       '--pick', pickList.join(','), '--json', jsonOut];
     const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
@@ -229,7 +251,9 @@ for (const r of jobResults.sort((a, b) => a.idx - b.idx)) {
   }
 }
 
-fs.writeFileSync(jsonPath, JSON.stringify({ runs: Number(RUNS), maxMin: Number(MINUTES), sweep: SWEEP, results: mergedResults }, null, 2));
+fs.writeFileSync(jsonPath, JSON.stringify({
+  runs: Number(RUNS), maxMin: MINUTES != null ? Number(MINUTES) : 'unlimited', sweep: SWEEP, results: mergedResults,
+}, null, 2));
 fs.writeFileSync(logPath, logLines.join('\n') + '\n');
 
 log(`==================== 完成 ====================`);

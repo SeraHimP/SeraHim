@@ -41,6 +41,9 @@ const WEAPONS = {
   lightning: { label: '闪电杖', icon: '⚡' },
   explosive: { label: '爆炸型', icon: '💥' },
   corrosion: { label: '腐蚀型', icon: '🌿' },
+  barrage: { label: '连珠炮', icon: '🔥' },
+  nova: { label: '聚能炮', icon: '💫' },
+  shepherd: { label: '牧灵法阵', icon: '🐺' },
 };
 
 const TOWER_PASSIVES = [

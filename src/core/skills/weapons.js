@@ -1,5 +1,6 @@
 import { CONFIG } from '../../data/Config.js';
 import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
+import { applyHeal } from '../healing.js';
 
 // ==================== 闪电杖的数值全部搬进 defaultParams（软编码）====================
 // 原来这几个是模块级 const（写死在源码里），编辑器改不了；而 weapon_lightning 的
@@ -527,6 +528,309 @@ export const weapons = {
           descTemplate: '唯一被动——腐蚀·衰弱：攻速降低（{val}%=-2.5%×层数），上限-75%。',
           description: '衰弱（{stacks}/30层）',
         }, 'weapon_corrosion_atkslow');
+      }
+    },
+  },
+
+  // ==================== Q5：连珠炮（原临时名"狂潮塔/机枪塔"）====================
+  // 用户定稿的三个机制，全部复用现有既有技术，逐条对应：
+  //   ① 攻击只造成55%伤害，攻击特效按33%效率结算——`onBeforeAttack` 返回
+  //      `preDamageMult`+`attackShare`（后者是这次改动新加的通用能力，见
+  //      CombatSystem.performAttack 头注"Q5：狂潮塔用得到"那一段——普攻路径以前
+  //      恒定 attackShare=1，现在武器能像 performAttackDirect 的调用方一样覆写它）。
+  //   ② 总攻速+100%，不走收益率——`onEquip` 直接给 baseAttackSpeed 乘 2（百分比
+  //      加成），calcAttackSpeedOf 的公式里 baseAttackSpeed 本来就在 attackSpeedRatio
+  //      之外，跟攻城车"普通模式+33%攻速"是同一个技术（那条也是加在 baseAttackSpeed
+  //      上，见 passive_ram_normal）。
+  //   ③ 攻击时每秒叠一层攻速加成，走收益率（bonusAttackSpeedPct），2026-09-19
+  //      跟用户定稿的数值：每层+2%，最多15层（封顶+30%），不按时间衰减——只有
+  //      脱战或换目标才清零（用户原话"和风魂区别开来"：风魂是命中叠层限时衰减的
+  //      羊刀节奏，这条改成"咬着同一个目标就不掉层，换目标/脱战立即清零重来"）。
+  weapon_barrage: {
+    defaultParams: {
+      preDamageMultPct: 55,     // 每次攻击的伤害倍率（%），机制①
+      onHitEffPct: 33,          // 攻击特效效率（%），机制①
+      baseAttackSpeedBonusPct: 100, // 总攻速加成（%，不走收益率），机制②
+      stackPct: 2,              // 每秒叠层的攻速加成（%/层，走收益率），机制③
+      maxStacks: 15,            // 层数上限
+    },
+    id: 'weapon_barrage',
+    applicableTypes: ['tower'],
+    name: '连珠炮',
+    icon: '🔥',
+    color: '#e67e22',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_barrage.defaultParams;
+      return `唯一被动——连珠炮：每次攻击只造成${p.preDamageMultPct}%伤害，攻击特效按${p.onHitEffPct}%效率结算；`
+        + `总攻速+${p.baseAttackSpeedBonusPct}%（不吃攻速收益率）；持续攻击同一目标每秒额外叠一层`
+        + `攻速加成（每层+${p.stackPct}%，走收益率，最多${p.maxStacks}层，封顶+${p.stackPct * p.maxStacks}%），`
+        + `脱战或切换目标立即清空层数（不随时间衰减）。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const eff = ctx?.effectRegistry?.getEffectByName?.(entity?.id, '连珠');
+      return eff ? eff.stacks : 0;
+    },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      const p = instance._params || weapons.weapon_barrage.defaultParams;
+      instance.state = { timer: 0, lastTargetId: null };
+      ctx.effectRegistry.apply(entityId, {
+        name: '连珠炮·超频', icon: '🔥', kind: 'stat', statKey: 'baseAttackSpeed',
+        percentValue: p.baseAttackSpeedBonusPct ?? 100,
+        duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh',
+        uniquePassive: true,
+        description: `总攻速+${p.baseAttackSpeedBonusPct ?? 100}%`,
+      }, 'weapon_barrage_baseas');
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '连珠炮·超频' || eff.blueprint.name === '连珠') ctx.effectRegistry.remove(eff.id);
+      }
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      const p = instance._params || weapons.weapon_barrage.defaultParams;
+      return {
+        preDamageMult: (p.preDamageMultPct ?? 55) / 100,
+        attackShare: (p.onHitEffPct ?? 33) / 100,
+      };
+    },
+    // 机制③：脱战/换目标清零，持续咬着同一目标才按秒叠层——跟"是否正在攻击"绑定，
+    // 不是常驻光环，所以用 onFrame 自己维护，不复用 makeAuraPassive。
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0, lastTargetId: null };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_barrage.defaultParams;
+      const targetId = entity.targetId;
+      const target = targetId ? ctx.entityContainer.get(targetId) : null;
+
+      if (!target || !target.alive || !entity._inCombat) {
+        // 脱战：清空层数
+        if (st.lastTargetId !== null) {
+          const eff = ctx.effectRegistry.getEffectByName(entityId, '连珠');
+          if (eff) ctx.effectRegistry.remove(eff.id);
+        }
+        st.timer = 0; st.lastTargetId = null;
+        return;
+      }
+      if (st.lastTargetId !== targetId) {
+        // 换了目标：清零重新计
+        const eff = ctx.effectRegistry.getEffectByName(entityId, '连珠');
+        if (eff) ctx.effectRegistry.remove(eff.id);
+        st.timer = 0; st.lastTargetId = targetId;
+      }
+      st.timer += dt;
+      if (st.timer < 1) return;
+      st.timer -= 1;
+      const per = p.stackPct ?? 2, max = p.maxStacks ?? 15;
+      ctx.effectRegistry.apply(entityId, {
+        name: '连珠', icon: '🔥', kind: 'stat', statKey: 'bonusAttackSpeedPct',
+        flatValue: per, perStackFlat: per,
+        duration: Infinity, permanent: true, stackable: true, maxStacks: max, stackPolicy: 'stack',
+        uniquePassive: true,
+        get description() { return `攻速 +${per}%/层`; },
+      }, 'weapon_barrage_stack');
+    },
+  },
+
+  // ==================== Q5：聚能塔（临时命名，蓄力单次巨额AOE）====================
+  // 用户定稿方向："充能慢、蓄力后打出超高范围伤害"，跟坠星塔（延迟抛物线弹道，
+  // 每次都有延迟）不是一回事——这个是"低频、单次巨额AOE"，不是"每次都慢一点"。
+  // 实现直接照抄闪电杖已经验证过的骨架（specialAttack + 自己的 onFrame 充能循环+
+  // 独立结算），差异只在充能时间更长、命中方式从"持续小跳"换成"充满打一发+溅射"：
+  //   · 充能：攻速越快充得越快（与闪电杖同一个 chargeTime/finalAS 公式），没有
+  //     有效目标（掉目标/目标死亡）立即清零——"蓄力被打断就得重新蓄"。
+  //   · 命中：伤害走标准的自适应判定（判成物理用攻击力、判成魔法用法术强度×
+  //     全局折扣系数，与 CombatSystem.performAttack 的 baseDamage 公式同源，只是
+  //     这里是 specialAttack 武器自己算，不经过普攻管线），乘满充倍率，再用
+  //     ctx.combat._applyExplosionAt 铺一圈大半径溅射——复用现有溅射公式（中心
+  //     60%、指数衰减），不新造一套AOE结算。
+  weapon_nova: {
+    defaultParams: {
+      chargeTimeAtAS1: 18,   // 攻速1.0时充满需要多少秒——比闪电杖(12s)更慢，符合"低频"
+      maxMultPct: 400,       // 满充能时的伤害倍率（%）
+      radius: 220,           // 命中点的溅射半径（比爆炸型的75大得多，"超高范围"）
+    },
+    id: 'weapon_nova',
+    applicableTypes: ['tower'],
+    name: '聚能炮',
+    icon: '💫',
+    color: '#3498db',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_nova.defaultParams;
+      return `唯一被动——聚能炮：持续蓄力（攻速1.0约${p.chargeTimeAtAS1}秒充满，掉目标立即清零），`
+        + `充满后打出一次范围${p.radius}的超高伤害爆炸（{val}=满充能伤害），伤害类型随自身自适应判定，`
+        + `中心60%、随距离指数衰减。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const p = weapons.weapon_nova.defaultParams;
+      const isAdaptive = stats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(stats) || 'physical') : (stats.attackType || 'physical');
+      const base = isAdaptive
+        ? (resolvedType === 'magic' ? (stats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (stats.attackDamage || 0))
+        : (stats.attackDamage || 0);
+      return Math.round(base * ((p.maxMultPct ?? 400) / 100));
+    },
+    specialAttack: true,
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = { charge: 0, lastTargetId: null };
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true }; // 命中完全由 onFrame 的充能循环自己结算
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (typeof instance.state?.charge !== 'number') instance.state = { ...(instance.state || {}), charge: 0, lastTargetId: null };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_nova.defaultParams;
+
+      if (window.__towersAttackOff) return;
+      const targetId = entity.targetId;
+      const target = targetId ? ctx.entityContainer.get(targetId) : null;
+      if (!target || !target.alive) {
+        st.charge = 0; st.lastTargetId = null;
+        return;
+      }
+      if (st.lastTargetId !== targetId) { st.charge = 0; st.lastTargetId = targetId; }
+      if ((window.gameTime || 0) < (entity._lockUntil || 0)) return;
+
+      const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId));
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(atkStats);
+      const chargeTime = Math.max(0.01, p.chargeTimeAtAS1 ?? 18);
+      st.charge = Math.min(1, (st.charge || 0) + (dt * finalAS) / chargeTime);
+
+      if (st.charge < 1) return;
+      st.charge = 0; // 打出去立即归零，重新蓄力
+
+      entity._inCombat = true; entity._combatTimer = 4;
+      const isAdaptive = atkStats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(atkStats) || 'physical') : (atkStats.attackType || 'physical');
+      const baseDamage = isAdaptive
+        ? (resolvedType === 'magic' ? (atkStats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (atkStats.attackDamage || 0))
+        : (atkStats.attackDamage || 0);
+      const novaDamage = baseDamage * ((p.maxMultPct ?? 400) / 100);
+      if (novaDamage > 0 && ctx.combat) {
+        // 主目标吃满额伤害（不经过距离衰减），周围的再按 _applyExplosionAt 的距离
+        // 衰减公式吃溅射——跟炎魂"中心取目标坐标、排除主目标（主伤害已单独结算）"
+        // 同一个约定（见 CombatSystem._applyExplosionAt 头注），不是我们发明的新规则。
+        ctx.combat.performAttackDirect(entity.id, target.id, novaDamage, resolvedType, { basicAttack: true });
+        if (typeof ctx.combat._applyExplosionAt === 'function') {
+          ctx.combat._applyExplosionAt(entity, target.pos.x, target.pos.y, novaDamage, resolvedType,
+            p.radius ?? 220, target.id, { basicAttack: true });
+        }
+      }
+    },
+  },
+
+  // ==================== Q5：牧灵塔（临时命名，塔本身不攻击，召唤守护幻兽代打）====================
+  // 用户定稿的规则（"已定规则"）：
+  //   · 幻兽拴在塔周围一定范围内（不是沿兵线走位的独立小兵，是塔的随行守卫）
+  //   · 幻兽死亡后隔一段时间重新召唤，且每次重新召唤的冷却时长递增
+  //   · 幻兽获得塔的一部分属性（按百分比）——塔自己变强，幻兽也跟着变强
+  //   · 用户明确留了"待定"：幻兽的具体属性/血量量级、拴绳半径、初始冷却与递增步长，
+  //     写的是"等其它方案定完一起定数值"——现在其它三个塔武器已经落地，这里按同样
+  //     "先给可编辑的默认值、有问题用户随时改"的口径给一版默认值（数值本身不是这条
+  //     铁律要求的"确认后才能写代码"的主观视觉判断，是纯数字，且全部走 defaultParams，
+  //     编辑器/CONFIG.skillOverrides 随时能改，不是钉死的硬编码）。
+  //
+  // 幻兽复用唤灵兵幻灵那条管线（type:'melee' + ctx.combat.createMinion），跟幻灵的
+  // 差异只有两点：①没有存在时长（死了才消失，不是到点消失）；②需要真正的"拴绳接敌"
+  // AI——幻灵那条路径没有 _laneId，本来就不会被 LaneMovementSystem 接管（不追不打，
+  // 只是站在原地），这里补的 _updatePet 分支就是让幻兽真的能动、能打（见
+  // LaneMovementSystem._updatePet 头注，同一个发现顺带写在那边）。
+  weapon_shepherd: {
+    defaultParams: {
+      statPct: 50,          // 幻兽获得塔多少百分比的属性（生命/攻击/双抗，法强同理）
+      leashRadius: 260,      // 拴绳半径——幻兽索敌/追击都不会超出这个范围
+      healPerSec: 40,        // 塔给幻兽的治疗速率（幻兽存活且未满血时持续生效）
+      initialRespawnSec: 8,  // 幻兽第一次死亡后，重新召唤前的等待时间
+      respawnStepSec: 4,     // 每死一次，下一次的等待时间再增加这么多秒（不封顶）
+    },
+    id: 'weapon_shepherd',
+    applicableTypes: ['tower'],
+    name: '牧灵法阵',
+    icon: '🐺',
+    color: '#7fb37f',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_shepherd.defaultParams;
+      return `唯一被动——牧灵法阵：塔本身不攻击，召唤一只幻兽（获得塔${p.statPct}%属性）拴在`
+        + `塔周围${p.leashRadius}范围内代替塔战斗；塔持续为幻兽治疗（{val}=每秒治疗量）；`
+        + `幻兽死亡${p.initialRespawnSec}秒后重新召唤，每死一次下次召唤再多等${p.respawnStepSec}秒。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const inst = (entity._skillInstances || []).find(i => i.skillId === 'weapon_shepherd');
+      const p = (inst && inst._params) || weapons.weapon_shepherd.defaultParams;
+      return p.healPerSec ?? 40;
+    },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = { petId: null, respawnAt: 0, deathCount: 0 };
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      // 武器卸下后幻兽失去存在的意义（没人再给它治疗、拴绳也无处可依），
+      // 走跟"唤灵消失"同一条非战斗死亡路径（不算击杀、不记熵）。
+      const petId = instance.state?.petId;
+      const pet = petId ? ctx.entityContainer.get(petId) : null;
+      if (pet && pet.alive) {
+        pet.currentHP = 0; pet.alive = false;
+        ctx.eventBus?.emit?.('entity:death', { entityId: pet.id });
+      }
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true }; // 塔本身没有攻击能力——用户定稿的第一条规则
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const tower = ctx.entityContainer.get(entityId);
+      if (!tower || !tower.alive) return;
+      if (!instance.state) instance.state = { petId: null, respawnAt: 0, deathCount: 0 };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_shepherd.defaultParams;
+      const now = window.gameTime || 0;
+
+      let pet = st.petId ? ctx.entityContainer.get(st.petId) : null;
+      if (st.petId && (!pet || !pet.alive)) {
+        // 幻兽这一帧死了（或已被移除）——记一次死亡，下次复活的等待时间按死亡次数递增。
+        st.petId = null; pet = null;
+        st.deathCount = (st.deathCount || 0) + 1;
+        const initial = p.initialRespawnSec ?? 8, step = p.respawnStepSec ?? 4;
+        st.respawnAt = now + initial + step * (st.deathCount - 1);
+      }
+
+      if (!pet) {
+        if (now < (st.respawnAt || 0)) return; // 还在复活冷却里，什么都不做
+        if (typeof ctx.combat?.createMinion !== 'function') return;
+        const faction = tower._mapFaction || tower.faction;
+        const spirit = ctx.combat.createMinion('melee', tower.pos.x, tower.pos.y, faction, 1, 1);
+        if (!spirit) return;
+        const towerStats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(entityId));
+        const pct = (p.statPct ?? 50) / 100;
+        spirit.baseStats.maxHP = Math.max(1, (towerStats.maxHP || 1) * pct);
+        spirit.currentHP = spirit.baseStats.maxHP;
+        spirit.baseStats.attackDamage = (towerStats.attackDamage || 0) * pct;
+        spirit.baseStats.abilityPower = (towerStats.abilityPower || 0) * pct;
+        spirit.baseStats.armor = (towerStats.armor || 0) * pct;
+        spirit.baseStats.magicResist = (towerStats.magicResist || 0) * pct;
+        spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
+        spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
+        spirit._petLeashRadius = p.leashRadius ?? 260;
+        st.petId = spirit.id;
+        return;
+      }
+
+      // 幻兽活着：只要没满血就一直治，不分脱战/在战——"塔专职给召唤物回血"。
+      const maxHP = pet.baseStats?.maxHP ?? pet.currentHP;
+      if (pet.currentHP < maxHP) {
+        applyHeal(pet, (p.healPerSec ?? 40) * dt, 1, maxHP, pet._regenCapHP);
       }
     },
   },

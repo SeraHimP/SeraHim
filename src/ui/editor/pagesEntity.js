@@ -142,6 +142,9 @@ export const EDITOR_PAGES_ENTITY = {
       weapon_lightning: { label: '闪电杖', icon: '⚡' },
       weapon_explosive: { label: '爆炸型', icon: '💥' },
       weapon_corrosion: { label: '腐蚀型', icon: '🌿' },
+      weapon_barrage: { label: '连珠炮', icon: '🔥' },
+      weapon_nova: { label: '聚能炮', icon: '💫' },
+      weapon_shepherd: { label: '牧灵法阵', icon: '🐺' },
     };
     const weaponIds = this._SKILLS_BY_TYPE.tower.weapons;
     const weapons = [{ id: 'none', label: '无武器', icon: '🚫' }, ...weaponIds.map(id => ({ id, ...weaponMeta[id] }))];

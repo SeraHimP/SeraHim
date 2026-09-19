@@ -204,6 +204,16 @@ export class CombatSystem {
         this.eventBus?.emit?.('entity:death', { entityId: entity.id });
         continue;
       }
+      // Q5：牧灵塔幻兽——主人（塔）已经不在了（拆塔/换武器都会走到这里），幻兽的
+      // 拴绳和治疗都无处可依，同样按"非战斗消失"处理，不留一个永远站着不动的孤儿单位。
+      if (entity._petOwnerId) {
+        const owner = this.entities.get(entity._petOwnerId);
+        if (!owner || !owner.alive) {
+          entity.currentHP = 0; entity.alive = false;
+          this.eventBus?.emit?.('entity:death', { entityId: entity.id });
+          continue;
+        }
+      }
       // v43 Q7：属性表提到循环顶部——攻速也要从这里取（见 calcAttackSpeedOf 的注释）。
       // attrCalc.calc 每帧带缓存，提前算不增加开销。
       const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
@@ -678,6 +688,10 @@ export class CombatSystem {
     // 用于开火前就要定下的伤害修正（穿透型的升温倍率）、无弹道武器等特殊逻辑。
     //（原来这里举的例子是狙击型按距离调整伤害，那把武器已按用户定稿删除。）
     let preDamageMult = 1;
+    // Q5：狂潮塔用得到——"攻击特效按33%效率结算"需要普攻这条路径也能像
+    // performAttackDirect 一样传一个 attackShare（<1 时被动/on-hit效果按比例打折）。
+    // 普攻默认 1（一次完整攻击），只有武器自己通过 onBeforeAttack 显式覆写才会变。
+    let attackShare = 1;
     let pierceHeat = 0;   // #10：穿透弹升温强度（0..1），仅作渲染提示挂到子弹上，不进伤害
 
     // v36（Q1）：穿透型升温倍率——【开火时刻】按"塔→当前目标"的已积层数结算。
@@ -713,6 +727,7 @@ export class CombatSystem {
       });
       if (r) {
         if (typeof r.preDamageMult === 'number') preDamageMult = r.preDamageMult;
+        if (typeof r.attackShare === 'number') attackShare = Math.max(0, Math.min(1, r.attackShare));
         if (r.skipProjectile) return; // 武器自行处理了伤害（如腐蚀型群体中毒），不走普通命中
       }
     }
@@ -754,6 +769,7 @@ export class CombatSystem {
       onHitPctBase: (atkStats.onHitPercentDamage || 0) / 100,
       dmgAmp: atkStats.damageAmpPct || 0,
       preDamageMult,
+      attackShare,
       // v51：'adaptive' 在开火那一刻就解析成 physical/magic 并快照——与其它攻击方数值
       // 同一个时序（见下面那段关于四项穿透"完全不需要活着的攻击者"的注释）。
       attackType: resolvedAttackType,
@@ -976,10 +992,12 @@ export class CombatSystem {
     // 这是主命中路径，vampEff 恒为 1（100%）——溅射/连锁走各自调用点的 vampGroup 标记。
     applyVamp(this, attacker, damage, attackType, 1);
 
-    // ---- 触发被动（普通攻击恒为一次完整攻击，attackShare=1）----
+    // ---- 触发被动（普通攻击默认一次完整攻击，attackShare=1）----
     // 具体节奏/累加逻辑统一在 _fireOnDealtDamage 里实现，两条伤害路径共用一份代码，
     // 不再各写一份（武器与其余被动过去分两段实现，现在统一走同一个 _skillInstances 循环）。
-    this._fireOnDealtDamage(attacker, target, 1, { totalRaw, finalDamage, attackType });
+    // Q5：狂潮塔的武器通过 onBeforeAttack 把 hitInfo.attackShare 压到 0.33——普攻
+    // 路径第一次有武器能覆写这个值（此前只有 performAttackDirect 的调用方能传）。
+    this._fireOnDealtDamage(attacker, target, hitInfo.attackShare ?? 1, { totalRaw, finalDamage, attackType });
     this._fireOnDamaged(target, attacker, finalDamage);   // 受击方的防御型被动（钢魂反弹等）
 
     // ---- 触发目标的 onBeingAttacked ----

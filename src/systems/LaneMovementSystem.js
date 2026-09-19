@@ -1,4 +1,4 @@
-import { canTarget, isStructureProtected } from './FactionSystem.js';
+import { canTarget, isStructureProtected, enemyUnitsInRadius } from './FactionSystem.js';
 import { AISystem } from './AISystem.js';
 import { hasRamCannon } from './CombatSystem.js';
 import { canFire } from './FacingSystem.js';
@@ -86,7 +86,10 @@ export class LaneMovementSystem {
   }
 
   update(dt) {
-    const minions = this.entities.getAllMinions(true).filter(m => m._mapFaction && m._laneId);
+    // Q5：牧灵塔的幻兽（_petOwnerId）不是兵线出生的兵，没有 _laneId，原过滤条件
+    // 会把它整个漏在这个循环外面——不追、不打、原地站着，跟"召唤一只幻兽出去打"
+    // 这句话直接矛盾。加一条 OR，让它也能进来，走下面自己的独立分支（见 _updatePet）。
+    const minions = this.entities.getAllMinions(true).filter(m => m._mapFaction && (m._laneId || m._petOwnerId));
 
     // Q4 天气重做（雾的结构性机制 B）：索敌半径的全局收缩系数，整帧只算一次
     // （与天气强度一样是"这一帧的全局状态"，不是逐单位的属性，参见
@@ -122,6 +125,12 @@ export class LaneMovementSystem {
       // 长链路里插分支——那条链路已经被前面一串"旋转木马/脱锚"之类的坑喂养得
       // 很脆弱，工程兵这种完全不同的行为形状硬塞进去风险远大于收益。
       if (minion.type === 'engineer') { this._updateEngineer(minion, dt); continue; }
+
+      // ==================== Q5：牧灵塔幻兽——拴绳接敌，独立分支 ====================
+      // 跟工程兵同一个理由：这是一种跟"追敌人"不同的行为形状（索敌/追击范围以
+      // 【主人塔】的位置为圆心，不是以自己为圆心；无目标时要往主人身边收，不能
+      // 走"回归路径"那一套——它根本没有路径），塞进上面那条长链路风险远大于收益。
+      if (minion._petOwnerId) { this._updatePet(minion, dt); continue; }
 
       const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
       const range = stats.attackRange || 20;
@@ -357,6 +366,72 @@ export class LaneMovementSystem {
     applyHeal(target, normalAmt, 1, maxHP, capHP);
     const leftover = amount - normalAmt;
     if (leftover > 0) applyHeal(target, leftover * overflowEff, 1, maxHP);
+  }
+
+  /**
+   * Q5：牧灵塔幻兽——"拴在塔周围一定范围内"的随行守卫，不是沿兵线走位的独立小兵。
+   * 索敌/追击的圆心是【主人塔的位置】（不是幻兽自己），半径是拴绳半径——这样才会
+   * 真的"够不到"太远的敌人，而不是自己站在原地当活靶子（幻兽本来就没有 _laneId，
+   * 不会被上面那条给兵线小兵用的长链路处理，必须自己完整走一遍"索敌→追击→攻击"）。
+   * 主人已死的清理由 CombatSystem.update 负责（见那边 `_petOwnerId` 的头注），
+   * 这里只做"主人这一帧还在但暂时找不到"的安全跳过。
+   */
+  _updatePet(minion, dt) {
+    const owner = minion._petOwnerId ? this.entities.get(minion._petOwnerId) : null;
+    if (!owner || !owner.alive) return;
+    const leash = minion._petLeashRadius || 260;
+    const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
+    const range = stats.attackRange || 20;
+
+    const inLeash = (e) => {
+      const dx = e.pos.x - owner.pos.x, dy = e.pos.y - owner.pos.y;
+      return dx * dx + dy * dy <= leash * leash;
+    };
+
+    let target = minion.targetId ? this.entities.get(minion.targetId) : null;
+    if (target && (!target.alive || !canTarget(minion._mapFaction, target._mapFaction || target.faction) || !inLeash(target))) {
+      target = null;
+    }
+    if (!target) {
+      let bestD = Infinity;
+      for (const e of enemyUnitsInRadius(this.entities, owner, leash, { includeBuildings: true })) {
+        if (isStructureProtected(this.entities, e)) continue;
+        const d = (e.pos.x - minion.pos.x) ** 2 + (e.pos.y - minion.pos.y) ** 2;
+        if (d < bestD) { bestD = d; target = e; }
+      }
+    }
+    minion.targetId = target ? target.id : null;
+
+    if (target) {
+      const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= range * range) {
+        if (minion.attackCooldown <= 0 && canFire(minion, target)) {
+          this.combat.performAttack(minion, target);
+          const finalAS = this.combat.finishAttack(minion, target, this.attrCalc.calcAttackSpeedOf(stats));
+          minion.attackCooldown = this.attrCalc.attackIntervalOf(finalAS);
+        }
+      } else {
+        const dist = Math.sqrt(distSq);
+        const speed = stats.moveSpeed || 0;
+        if (speed > 0 && dist > 0) {
+          minion.pos.x += (dx / dist) * speed * dt;
+          minion.pos.y += (dy / dist) * speed * dt;
+        }
+      }
+      return;
+    }
+
+    // 没有目标：离主人太远就往回收，贴身待命时原地不动。
+    const ddx = owner.pos.x - minion.pos.x, ddy = owner.pos.y - minion.pos.y;
+    const dOwner = Math.hypot(ddx, ddy);
+    if (dOwner > 40) {
+      const speed = stats.moveSpeed || 0;
+      if (speed > 0) {
+        minion.pos.x += (ddx / dOwner) * speed * dt;
+        minion.pos.y += (ddy / dOwner) * speed * dt;
+      }
+    }
   }
 
   /**

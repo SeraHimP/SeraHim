@@ -807,9 +807,12 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /campSpawnPoints\(mapSystem\.currentMap, mapSystem, 'dragon'\)/.test(mainSrc));
 
   // LaneMovementSystem 的接管条件：有阵营 + 有路。中立龙两者都满足。
+  // Q5 之后过滤条件多了 `|| m._petOwnerId`（收下牧灵塔幻兽，见该文件头注）——
+  // 这里只钉"有阵营 + 有路"这半句仍然成立（中立龙满足的仍是这个条件），
+  // 不钉整条表达式的精确文本，免得后续再给这条过滤加别的 OR 分支时又要跟着改。
   const lms = srcOf(('../src/systems/LaneMovementSystem.js'));
   T('龙⑪-兵线系统的过滤条件能收下中立龙',
-    /getAllMinions\(true\)\.filter\(m => m\._mapFaction && m\._laneId\)/.test(lms));
+    /getAllMinions\(true\)\.filter\(m => m\._mapFaction && \(m\._laneId/.test(lms));
 
   // 宿怨被动：对某阵营的减伤/增伤随该阵营击杀数增长
   const cs = srcOf(('../src/systems/CombatSystem.js'));
