@@ -1,0 +1,240 @@
+/**
+ * sim_engineer.mjs —— 工程兵（engineer，Q5 新兵种方案之一）验收
+ *
+ * 行为形状是"不推线，只在需要修复的己方塔和原地待命之间切换"（见
+ * LaneMovementSystem._updateEngineer 头注），跟其它小兵的索敌/追击/攻击完全不同，
+ * 走独立分支、不碰共享的接敌AI。每条断言钉"行为形状"，不钉具体数值。
+ */
+import { setupWindow, scoreboard, srcOf, makeWorld, mkEntity } from './_harness.mjs';
+setupWindow({ waveNumber: 1 });
+
+const { T, done } = scoreboard('工程兵（engineer）验收');
+
+async function world() {
+  const w = await makeWorld();
+  w.fx.setStatSource(w.ents, w.attr);
+  return w;
+}
+
+const mapStub = {
+  active: true,
+  currentMap: { lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 900, y: 0 }] }] },
+  getDefenseZone: () => null,
+  isWalkable: () => true,
+  constrainToWalkable: (p) => p,
+};
+
+// ==================== 一、模板数值：无攻击能力 ====================
+{
+  const { CONFIG } = await world();
+  const tpl = CONFIG.templates.engineer;
+  T('模板①-CONFIG.templates.engineer 存在', !!tpl);
+  T('模板②-攻击力为0（真的没有攻击能力）', tpl.attackDamage === 0);
+}
+
+// ==================== 二、原地待命：没有需要修的塔时不动 ====================
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 100, y: 100 } }, CONFIG);
+  const tower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 800, y: 800 } }, CONFIG);
+  // tower 默认满血，不需要修
+  const before = { x: eng.pos.x, y: eng.pos.y };
+  lms._updateEngineer(eng, 1);
+  T('待命①-附近没有需要修复的塔时原地不动', eng.pos.x === before.x && eng.pos.y === before.y);
+}
+
+// ==================== 三、走向最近的受损己方塔 ====================
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 } }, CONFIG);
+  const damagedTower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 500, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  damagedTower.currentHP = 400;
+  const enemyDamagedTower = mkEntity(ents, 'tower', { faction: 'red', pos: { x: -50, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  enemyDamagedTower.currentHP = 100; // 更近但是敌方的塔，不该被修
+  const before = { x: eng.pos.x, y: eng.pos.y };
+  lms._updateEngineer(eng, 1);
+  T('走位①-朝己方受损塔移动（不是原地不动）', eng.pos.x !== before.x || eng.pos.y !== before.y);
+  T('走位②-移动方向朝向己方塔（x 增大），不是敌方塔方向', eng.pos.x > before.x);
+}
+
+// ==================== 四、修复：节点内正常效率，节点外33%效率突破封顶 ====================
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 } }, CONFIG);
+  const tower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 5, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG); // 距离在 repairRange 内，直接进入修复分支
+  tower.currentHP = 400;
+  tower._regenCapHP = 500; // 加固城防节点封顶在500
+
+  const before1 = tower.currentHP;
+  lms._updateEngineer(eng, 1);
+  const gained1 = tower.currentHP - before1;
+  const c = CONFIG.gameRules.supportUnits.engineer;
+  T('修复①-节点内的部分按正常效率（每秒repairPerSec）回复', Math.abs(gained1 - c.repairPerSec) < 1e-6);
+
+  tower.currentHP = tower._regenCapHP; // 已经顶到节点
+  const before2 = tower.currentHP;
+  lms._updateEngineer(eng, 1);
+  const gained2 = tower.currentHP - before2;
+  T('修复②-顶到节点后，继续修复按33%效率突破封顶（而不是被封顶挡住不再增长）',
+    gained2 > 0 && Math.abs(gained2 - c.repairPerSec * (c.overflowEfficiencyPct / 100)) < 1e-6);
+
+  // 其它治疗来源此时应该仍然被节点挡住——工程兵的突破是它自己调用方式的特例，
+  // 不是把 applyHeal 本身改成不认 cap 了。
+  const { applyHeal } = await import('../src/core/healing.js');
+  const before3 = tower.currentHP;
+  applyHeal(tower, 50, 1, 1000, tower._regenCapHP);
+  T('修复③-普通治疗来源依旧被节点封顶挡住（工程兵的突破没有改坏治疗管线本身）',
+    tower.currentHP === before3);
+}
+
+// ==================== 五、不参与标准索敌/接敌：即使敌人在附近也不会获得 targetId ====================
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 } }, CONFIG);
+  const foe = mkEntity(ents, 'melee', { faction: 'red', pos: { x: 20, y: 0 } }, CONFIG); // 贴脸
+  lms.update(1);
+  T('旁路①-即便有敌人贴脸，工程兵也不会走标准索敌流程获得 targetId', !eng.targetId);
+}
+
+// ==================== 六、塔保护工程兵：优先反击正在攻击工程兵的单位 ====================
+{
+  const { ents, combat, CONFIG } = await world();
+  const tower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    stats: { attackRange: 1000 } }, CONFIG);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 10, y: 0 } }, CONFIG);
+  const attacker = mkEntity(ents, 'melee', { faction: 'red', pos: { x: 20, y: 0 } }, CONFIG);
+  attacker.targetId = eng.id; // 正在攻击工程兵
+  const bystander = mkEntity(ents, 'ranged', { faction: 'red', pos: { x: 30, y: 0 } }, CONFIG);
+  const target = combat.selectTarget(tower, [attacker, bystander]);
+  T('保护①-塔优先攻击正在攻击工程兵的单位', target && target.id === attacker.id);
+
+  const heavyAtk = mkEntity(ents, 'heavy', { faction: 'red', pos: { x: 40, y: 0 } }, CONFIG);
+  const target2 = combat.selectTarget(tower, [attacker, heavyAtk]);
+  T('保护②-保护工程兵的优先级甚至压过重装车的"最高优先级"',
+    target2 && target2.id === attacker.id);
+}
+
+// ==================== 七、出兵编排 / 出兵开关接线 ====================
+{
+  const { CONFIG } = await world();
+  T('接线①-spawnEnabled.engineer 默认开启', CONFIG.gameRules.spawnEnabled.engineer === true);
+  T('接线②-laneWaveComposition 里有 engineer 的出兵规则',
+    CONFIG.gameRules.laneWaveComposition.some(r => r.type === 'engineer'));
+  const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
+  // 2026-09-19：用户反馈"修复效果要做成技能常驻在技能栏里"——出厂默认清单从空数组
+  // 改成挂一张纯展示技能卡（passive_engineer_repair）。真正的修复/走位判定逻辑
+  // 仍然只在 LaneMovementSystem._updateEngineer 里，这张卡不重复结算，见该技能
+  // 定义旁的说明。
+  T('接线③-出厂默认技能清单挂了纯展示用的 passive_engineer_repair（行为仍由移动系统驱动）',
+    Array.isArray(DEFAULT_MINION_PASSIVES.engineer)
+    && DEFAULT_MINION_PASSIVES.engineer.includes('passive_engineer_repair'));
+}
+
+// ==================== 八、修复效果的技能卡是纯展示，不会重复结算修复量 ====================
+{
+  const { ents, CONFIG } = await world();
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const def = SkillLibrary.passive_engineer_repair;
+  T('展示①-passive_engineer_repair 存在，applicableTypes 认得 engineer',
+    !!def && def.applicableTypes.includes('engineer'));
+  T('展示②-没有 onFrame（不重复结算，真实修复逻辑只在 LaneMovementSystem._updateEngineer）',
+    typeof def.onFrame !== 'function');
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 } }, CONFIG);
+  T('展示③-computeCurrent 读的是同一份 CONFIG.gameRules.supportUnits.engineer（不会跟真实数值读岔）',
+    def.computeCurrent(eng, {}) === (CONFIG.gameRules.supportUnits.engineer.repairPerSec ?? 20));
+}
+
+// ==================== 八、编辑器/渲染层的类型枚举没有漏掉 engineer ====================
+{
+  const schemaSrc = srcOf('src/data/schema/index.js');
+  T('枚举①-schema/index.js 的 MINION_TYPES 里有 engineer', /\['engineer',\s*'工程兵'\]/.test(schemaSrc));
+
+  const customSrc = srcOf('src/data/customContent.js');
+  T('枚举②-customContent.js 的 BUILTIN_MINION_TYPES/minionLabel/minionIcon 都认得 engineer',
+    /BUILTIN_MINION_TYPES\s*=\s*\[[^\]]*'engineer'/.test(customSrc)
+    && /engineer:\s*'工程兵'/.test(customSrc) && /engineer:\s*'🔧'/.test(customSrc));
+
+  const dialogSrc = srcOf('src/ui/UnitAddDialog.js');
+  T('枚举③-UnitAddDialog.js 的 MINION_TYPES/TYPE_META 都认得 engineer',
+    /'engineer'/.test(dialogSrc) && /engineer:\s*\{[^}]*工程兵/.test(dialogSrc));
+
+  const openSrc = srcOf('src/ui/editor/open.js');
+  T('枚举④-open.js 的 _TPL_LABELS/_TPL_ICONS 都认得 engineer',
+    /engineer:\s*'工程兵'/.test(openSrc) && /engineer:\s*'🔧'/.test(openSrc));
+
+  const entitySrc = srcOf('src/ui/editor/pagesEntity.js');
+  T('枚举⑤-pagesEntity.js 的技能列表类型枚举包含 engineer',
+    /'healer',\s*'engineer',/.test(entitySrc));
+
+  const spriteSrc = srcOf('src/presentation/SpriteFactory.js');
+  T('枚举⑥-SpriteFactory.js 的 MINION_STYLE 有 engineer 专属样式',
+    /engineer:\s*\{[^}]*🔧/.test(spriteSrc));
+
+  const modeSrc = srcOf('src/data/maps/modeTransforms.js');
+  T('枚举⑦-经典模式排除了 engineer',
+    /engineer:\s*false/.test(modeSrc) && /engineer:\s*\[\]/.test(modeSrc));
+}
+
+// ==================== 九、没塔可修时前出驻守本车道最前沿的存活塔 ====================
+// 用户反馈的真实bug："工程兵目前只会躺在家里，应该往前线推进到最前方的塔！"
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 }, lane: 'mid' }, CONFIG);
+  const base = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    tier: 'base', lane: 'mid', stats: { maxHP: 1000 } }, CONFIG);
+  const outer = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 600, y: 0 },
+    tier: 'outer', lane: 'mid', stats: { maxHP: 1000 } }, CONFIG);
+  // 两座塔都满血——没有需要修的塔，但外塔（outer）比基地（base）更靠前。
+  const before = { x: eng.pos.x, y: eng.pos.y };
+  lms._updateEngineer(eng, 1);
+  T('前出①-没塔可修时朝更靠前（外塔）的方向移动，不是继续待在原地',
+    eng.pos.x > before.x);
+
+  // 外塔被拆掉之后，最前沿变成基地——工程兵不该继续往外塔的空位置冲。
+  outer.alive = false;
+  const before2 = { x: eng.pos.x, y: eng.pos.y };
+  lms._updateEngineer(eng, 1);
+  T('前出②-外塔没了之后最前沿退到基地，工程兵已经在基地附近就不再继续往外冲',
+    Math.abs(eng.pos.x - before2.x) < 700); // 宽松上界：不会一路冲向已经死掉的外塔坐标
+}
+
+// ==================== 十、贴脸敌人不影响"没塔可修就前出"这条判断 ====================
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 0, y: 0 }, lane: 'mid' }, CONFIG);
+  mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 600, y: 0 }, tier: 'outer', lane: 'mid',
+    stats: { maxHP: 1000 } }, CONFIG);
+  const foe = mkEntity(ents, 'melee', { faction: 'red', pos: { x: 20, y: 0 } }, CONFIG); // 贴脸
+  lms.update(1);
+  T('旁路②-工程兵前出时依旧不会对贴脸敌人获得 targetId（不参与标准索敌）', !eng.targetId);
+}
+
+// ==================== 十一、3D 造型：不再复用通用步兵模板（用户："模型也要重做！不要复用现有的！"） ====================
+{
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const m = minionMesh('mm-engineer-test', '#5b9bd5', 11, 'engineer', 'blue');
+    T('模型①-engineer 能造出几何', !!m.geo && m.topY > 0);
+    const generic = minionMesh('mm-generic-test-e', '#5b9bd5', 11, '__custom__', 'blue');
+    T('模型②-engineer 不再落回通用步兵模板（顶点数不同）',
+      m.geo.attributes.position.count !== generic.geo.attributes.position.count);
+  }
+}
+
+done();

@@ -1,0 +1,310 @@
+/**
+ * WorldState.js —— 世界状态聚合层（P3 地基）
+ *
+ * ============ 为什么需要这一层 ============
+ * 天气 / 昼夜 / 熵 / 龙魂 这四个系统此前各自为政：
+ *   · 天气   —— WeatherSystem 直接把修正塞进 AttributeCalculator（唯一真正生效的）
+ *   · 昼夜   —— 只驱动光照，**零数值影响**
+ *   · 熵     —— 只有设计文档，零实现
+ *   · 龙魂   —— 走技能系统，与前三者毫无交集
+ * 于是"白天蓝方有优势、夜晚红方有优势""熵越高极端天气越频繁"这类联动，
+ * 在代码里【没有任何地方可以挂】—— 因为不存在一个"世界现在长什么样"的共同表述。
+ *
+ * 本模块就是那个表述。约定：
+ *   1. **单一出口**：所有世界级修正只从 getModifiers(entity) 出。
+ *      调试时一个断点看得到全部来源，不必在四个系统里翻。
+ *   2. **可解释**：getBreakdown(entity) 返回逐项来源，直接喂给 UI 属性面板。
+ *      "为什么我的攻速变了"必须能当场答出来。
+ *   3. **单向求值**：系统之间【禁止互相 import】。耦合一律在 update() 里
+ *      按 熵→天气→昼夜→阵营 的固定顺序单向计算，杜绝环形依赖与求值顺序玄学。
+ *   4. **每条耦合独立开关**：CONFIG.world.couplings.*，关掉任意一条其余仍自洽。
+ *
+ * 熵尚未实现，但接口在此预留（entropy 恒为中性 0.5，所有读它的地方都已就位）。
+ * 龙魂同理：souls 已接入统计，规则（6 龙 ≥4 成魂）待实现。
+ */
+import { CONFIG } from '../data/Config.js';
+import { DAY_PERIOD, resolveDayPhase } from '../presentation/DayNight.js';
+import { EntropySystem } from './EntropySystem.js';
+import { mapFactionsOf } from './FactionSystem.js';
+import { tierOf } from '../data/Weather.js';
+
+// 昼夜相位与 DayNight.js 的关键帧同口径：0=黎明 0.25=正午 0.5=黄昏 0.75=午夜。
+// 因此 [0, 0.5) 是白天（黎明→正午→黄昏），[0.5, 1) 是夜晚（黄昏→午夜→黎明）。
+// 相位在这里【自己算】而不是从 dayNightAt 取 —— 那个函数只返回光照参数，不含相位。
+const NIGHT_FROM = 0.5;
+const phaseOf = (t, period) => ((t / Math.max(1, period)) % 1 + 1) % 1;
+const PEAK_DAY = 0.25, PEAK_NIGHT = 0.75;   // 正午 / 极夜（午夜）
+
+// 本轮：昼夜加成从"非黑即白"改成"离散四档、随相位连续变化"（用户定稿，见
+// Config.js dayNightBonus 头注）。closenessTo 返回 0..1，1=正处于峰值（正午/极夜），
+// 沿相位轴线性衰减，衰减到 0 的距离由 halfSpan 控制（> 0.25 才能让黎明/黄昏这两个
+// 精确分界点落进"轻微"档而不是骤降到0，形成用户要的"过渡区双方都生效"）。
+// 直接喂给天气系统同款的 tierOf()，量化成 4 档（25/50/75/100%）——不用另开一套档位表。
+function cyclicDist(p, target) {
+  const d = Math.abs(p - target) % 1;
+  return Math.min(d, 1 - d);
+}
+function closenessTo(phase, peak, halfSpan) {
+  return Math.max(0, 1 - cyclicDist(phase, peak) / Math.max(1e-6, halfSpan));
+}
+
+export class WorldState {
+  constructor({ weather = null, dragons = null, entities = null, bus = null } = {}) {
+    this.weather = weather;
+    this.dragons = dragons;
+    this.entities = entities;
+    // P5：熵由 EntropySystem 驱动（事件累积 + 均值回复）。WorldState 是它唯一的持有者 ——
+    // 三核不对外暴露可写引用，其它系统只能通过本层的 getModifiers 间接受影响。
+    this.entropySystem = new EntropySystem(bus, entities);
+    // 兼容既有读法：this.entropy 是一份【只读快照】，每帧 update 时刷新。
+    // （P3 时期这里是个恒定中性的占位对象，读它的地方都已就位，改成快照后无需改调用方。）
+    this.entropy = { value: 0.5, black: 0, white: 0, red: 8, total: 8, volatility: 1,
+                     charge: { black: 0, white: 0 } };
+    // dayTier/nightTier 必须在 update() 第一次跑之前就有安全的零效果默认值——
+    // getModifiers/getBreakdown 可能在 update() 之前就被调用（比如建筑创建时的
+    // effectiveMaxHP 计算），读到 undefined.scale 会直接炸掉整条属性计算管线。
+    const zeroTier = tierOf(0);
+    this.daynight = { phase: 0.5, isNight: false, label: '正午',
+                       dayCloseness: 0, nightCloseness: 0, dayTier: zeroTier, nightTier: zeroTier };
+    this.souls = { blue: [], red: [] };   // 阵营 → 已获得的龙魂 id（DragonSystem.getSouls() 同款预置，见那边头注）
+    this._enabled = true;
+  }
+
+  setEnabled(on) { this._enabled = !!on; return this._enabled; }
+  get enabled() { return this._enabled; }
+
+  /** 把熵钉死在某个值（批量模拟扫档用）。传 null 恢复由三核自然推进。 */
+  forceEntropy(v) { this._forcedEntropy = (v === null || v === undefined) ? null : v; }
+
+  /**
+   * 把"夜"在时间轴上拉长，白天相应压缩，总周期不变。
+   *
+   * 相位 phase 随时间线性推进，isNight 的判据是 phase ≥ 0.5。要让夜更长，
+   * 就得让相位【更早】越过 0.5、并且在 ≥0.5 停留更久。所以分段线性映射是：
+   *   原始 [0, dayCut)  → 映射 [0, 0.5)     ← 白天，占用的真实时间被压短
+   *   原始 [dayCut, 1)  → 映射 [0.5, 1)     ← 夜晚，占用的真实时间被拉长
+   * 其中 dayCut = 0.5/k，k>1 时 dayCut<0.5。
+   *
+   * （写反过一次：把 [0,0.5) 映到 [0,dayCut)，那是把白天的相位【压缩】而不是
+   *   把它占的时间压缩 —— 结果同一时刻的相位反而更早，夜晚变短了。）
+   */
+  _stretchNight(phase, k) {
+    const kk = Math.max(0.1, k || 1);
+    const dayCut = Math.min(0.999, Math.max(0.001, 0.5 / kk));
+    if (phase < dayCut) return (phase / dayCut) * 0.5;
+    return 0.5 + ((phase - dayCut) / (1 - dayCut)) * 0.5;
+  }
+
+  /** 每帧推进。**只在这里做系统间耦合**，且严格单向。 */
+  update(dt, gameTime) {
+    if (!this._enabled) return;
+    const cfg = CONFIG.world || {};
+    const cp = cfg.couplings || {};
+
+    // ---- ① 熵推进（必须排在最前：后面两条耦合都读它，顺序错了会用到上一帧的值）----
+    // 注意 FORCE 通道：批量模拟要把熵钉死在某个档位扫曲线，那时不推进累积。
+    if (this._forcedEntropy === null || this._forcedEntropy === undefined) {
+      this.entropySystem.update(dt);
+      this.entropy.value = this.entropySystem.value;
+    } else {
+      this.entropy.value = this._forcedEntropy;
+    }
+    this.entropy.black = this.entropySystem.black;
+    this.entropy.white = this.entropySystem.white;
+    this.entropy.red = this.entropySystem.red;
+    this.entropy.total = this.entropySystem.cfg.coreTotal;
+    this.entropy.volatility = this.entropySystem.volatility;
+    this.entropy.charge = {
+      black: this.entropySystem.chargeProgress('black'),
+      white: this.entropySystem.chargeProgress('white'),
+    };
+
+    // ---- ② 昼夜相位（渲染层已在用同一个函数，这里只是把它数值化）----
+    // 熵 → 昼夜：熵越高夜越长。做法是拉伸【夜的那一半】而不是改整个周期速度 ——
+    // 改周期速度会让白天也跟着变长，"高熵夜更长"就变成了"高熵一切都更慢"。
+    // 相位走 resolveDayPhase（与光照、HUD 同一口径）。
+    // 这里原先自己写 `window.CTX?.__dayPeriod || DAY_PERIOD` —— 而那个字段是个
+    // **setter 函数**（秒数在 __dayPeriodSec），函数 truthy 导致 period 变成函数、
+    // 相位恒为 NaN、isNight 永远 false，昼夜的数值耦合其实一直没生效过。
+    let phase = resolveDayPhase(gameTime || 0, (typeof window !== 'undefined' ? window.CTX : null),
+                                this.weather ? this.weather.enabled : true).phase;
+    if (cp.entropyToDayNight) phase = this._stretchNight(phase, this.entropySystem.nightStretch);
+    this.daynight.phase = phase;
+    this.daynight.isNight = phase >= NIGHT_FROM;
+    this.daynight.label = this.daynight.isNight ? '夜晚' : '白天';
+    // 本轮：白天/夜晚加成各自的连续强度 + 四档量化（见文件头 closenessTo/tierOf）。
+    // dayTier 只喂给小兵、nightTier 只喂给塔，两条完全独立，黎明/黄昏附近可以同时非零。
+    const halfSpan = (cfg.dayNightBonus || {}).curveHalfSpan ?? 0.32;
+    this.daynight.dayCloseness = closenessTo(phase, PEAK_DAY, halfSpan);
+    this.daynight.nightCloseness = closenessTo(phase, PEAK_NIGHT, halfSpan);
+    this.daynight.dayTier = tierOf(this.daynight.dayCloseness);
+    this.daynight.nightTier = tierOf(this.daynight.nightCloseness);
+
+    // ---- ③ 熵 → 天气（熵越高，极端天气的均值回复目标越高）----
+    if (cp.entropyToWeather && this.weather?.setEntropyBias) {
+      this.weather.setEntropyBias(this.entropy.value);
+    }
+
+    // ---- ③ 龙魂统计（规则待实现，先把数据接上，让 UI 与修正层有东西可读）----
+    // DragonSystem.getSouls() 已经是按阵营动态返回（多阵营地基），这里整份接过来，
+    // 不再只挑 blue/red 两个 key（挑的话第三阵营的魂会被悄悄丢在半路）。
+    if (this.dragons?.getSouls) this.souls = this.dragons.getSouls() || {};
+  }
+
+  /**
+   * 熵-阵营耦合（"混乱侧受益于高熵，秩序侧受益于低熵"）在概念上就是一根
+   * 二元对抗轴——`fac==='red'` 是混乱侧，"其余所有阵营"被当成秩序侧对待。
+   * 三阵营起，"其余所有阵营"不再是一个统一的"秩序侧"，这条耦合没有唯一的
+   * 泛化答案。用户拍板：3+ 阵营地图上直接禁用这条耦合（不是删掉机制，只是
+   * 不在这类地图上生效），两阵营地图行为逐位不变。
+   * 用全局 CTX.__mapSystem 读地图（GameContext.js 的既有同步 key，
+   * WorldState 构造时没有注入 mapSystem 依赖，这是本项目里"跨系统只读一个
+   * 不critical 的量"时的既有惯例，见 dragonPassives.js 同款读法）。
+   */
+  _entropyCouplingApplies() {
+    const map = (typeof window !== 'undefined') ? window.CTX?.__mapSystem?.currentMap : null;
+    return mapFactionsOf(map).length === 2;
+  }
+
+  /**
+   * 世界级属性修正。返回 { statKey: { flat, pct } }，由 AttributeCalculator 合并。
+   * 注意：**天气不在这里**——它已经有自己成熟的通道（getModifiers + 负恢复独立通道），
+   * 强行搬过来只会平添一次回归风险。本层负责的是天气【之外】的三项，
+   * 以及未来把四者统一时的落点。
+   */
+  getModifiers(entity) {
+    const out = {};
+    if (!this._enabled || !entity) return out;
+    const cfg = CONFIG.world || {};
+    const cp = cfg.couplings || {};
+    const add = (key, flat = 0, pct = 0) => {
+      const e = out[key] || (out[key] = { flat: 0, pct: 0 });
+      e.flat += flat; e.pct += pct;
+    };
+
+    // ---- 昼夜 → 兵种/建筑非对称（本轮重做：四档连续强度 + 攻守方向不对称，见
+    // Config.js 头注）----
+    // 用户追加定稿："塔和兵的加成方向要不同！塔在夜晚是防守……兵在白天是进攻……"
+    // 小兵只读 dayTier（离正午越近越强），塔只读 nightTier（离极夜越近越强），
+    // 两条独立，黎明/黄昏附近可以同时非零（各自最低档）。两边的属性清单本身也
+    // 不对称——不是同一份"通用加成包"套两次。巨龙两条都不吃。
+    if (cp.dayNight) {
+      const g = cfg.dayNightBonus || {};
+      const isTower = entity.type === 'tower';
+      const isDragon = entity.type === 'dragon';
+      // 小兵·白天·进攻：移速 + 适应之力 + 法力获取 + 固定穿甲/法穿。
+      const applyDay = (side, scale) => {
+        if (scale <= 0) return;
+        if (side.moveSpeedPct) add('moveSpeed', 0, side.moveSpeedPct * scale);
+        if (side.adaptiveForce) add('adaptiveForce', side.adaptiveForce * scale, 0);
+        if (side.manaGainPct) add('manaGainPct', side.manaGainPct * scale, 0);
+        if (side.armorPenFlat) add('armorPenFlat', side.armorPenFlat * scale, 0);
+        if (side.magicPenFlat) add('magicPenFlat', side.magicPenFlat * scale, 0);
+      };
+      // 防御塔·夜晚·防守：攻击距离 + 适应之力 + 双抗 + 攻速。
+      // 用户追加定稿"昼夜加成防御塔不再加攻速"——原来这里还有一条
+      // bonusAttackSpeedPct，已拿掉，不用别的属性顶替。
+      const applyNight = (side, scale) => {
+        if (scale <= 0) return;
+        if (side.attackRangeFlat) add('attackRange', side.attackRangeFlat * scale, 0);
+        if (side.adaptiveForce) add('adaptiveForce', side.adaptiveForce * scale, 0);
+        if (side.armorFlat) add('armor', side.armorFlat * scale, 0);
+        if (side.magicResistFlat) add('magicResist', side.magicResistFlat * scale, 0);
+      };
+      if (!isTower && !isDragon) applyDay(g.day || {}, this.daynight.dayTier.scale);
+      if (isTower) applyNight(g.night || {}, this.daynight.nightTier.scale);
+    }
+
+    // ---- 熵 → 全局（中性值 0.5 时下面全为 0，等价于未启用）----
+    if (cp.entropyToUnits && this._entropyCouplingApplies()) {
+      const k = (this.entropy.value - 0.5) * 2;      // -1（极秩序） .. +1（极混乱）
+      const g = cfg.entropyBonus || {};
+      const fac = entity._mapFaction || entity.faction;
+      // 混乱侧（红）在高熵时受益，秩序侧（蓝）在低熵时受益 —— 非对称的核心。
+      // 红核（冲突烈度）只放大幅度、不改变方向：打得越凶，这份非对称越明显。
+      const sign = (fac === 'red' ? k : -k) * (this.entropy.volatility || 1);
+      add('attackDamage', 0, sign * (g.attackDamagePct ?? 0));
+      add('armor', sign * (g.armorFlat ?? 0), 0);
+    }
+
+    return out;
+  }
+
+  /**
+   * 逐项来源，供 UI 解释"我这条属性为什么变了"。
+   * 这是本层的硬性要求之一：不可解释的全局修正等于不可调试。
+   */
+  getBreakdown(entity) {
+    const rows = [];
+    if (!this._enabled || !entity) return rows;
+    const cfg = CONFIG.world || {};
+    const cp = cfg.couplings || {};
+    const fac = entity._mapFaction || entity.faction;
+
+    if (cp.dayNight) {
+      const g = cfg.dayNightBonus || {};
+      const isTower = entity.type === 'tower';
+      const isDragon = entity.type === 'dragon';
+      // 本轮重做：小兵只看 dayTier（白天），塔只看 nightTier（夜晚），巨龙两条都不吃。
+      // 档位（tierOf 的返回值，天气同款）：{name, scale, pips}，scale 0~1，pips 0~3。
+      const who = isTower ? '防御塔' : '小兵';
+      const side = isTower ? (g.night || {}) : (g.day || {});
+      const tier = isTower ? this.daynight.nightTier : this.daynight.dayTier;
+      const favored = !isDragon && tier.scale > 0;
+      const mods = {};
+      if (favored) {
+        const s = tier.scale;
+        if (isTower) {
+          if (side.attackRangeFlat) mods.attackRange = { flat: Math.round(side.attackRangeFlat * s * 10) / 10 };
+          if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
+          if (side.armorFlat) mods.armor = { flat: Math.round(side.armorFlat * s * 10) / 10 };
+          if (side.magicResistFlat) mods.magicResist = { flat: Math.round(side.magicResistFlat * s * 10) / 10 };
+        } else {
+          if (side.moveSpeedPct) mods.moveSpeed = { percent: Math.round(side.moveSpeedPct * s * 10) / 10 };
+          if (side.adaptiveForce) mods.adaptiveForce = { flat: Math.round(side.adaptiveForce * s * 10) / 10 };
+          if (side.manaGainPct) mods.manaGainPct = { flat: Math.round(side.manaGainPct * s * 10) / 10 };
+          if (side.armorPenFlat) mods.armorPenFlat = { flat: Math.round(side.armorPenFlat * s * 10) / 10 };
+          if (side.magicPenFlat) mods.magicPenFlat = { flat: Math.round(side.magicPenFlat * s * 10) / 10 };
+        }
+      }
+      rows.push({
+        source: `昼夜 · ${isTower ? '夜晚' : '白天'}`,
+        detail: isDragon ? '无增益（巨龙不吃这条）' : (favored ? `${who}占优（${tier.name}）` : '无增益'),
+        favored, tier, mods,
+      });
+    }
+    if (cp.entropyToUnits && this._entropyCouplingApplies()) {
+      const k = (this.entropy.value - 0.5) * 2;
+      const g = cfg.entropyBonus || {};
+      const sign = (fac === 'red' ? k : -k) * (this.entropy.volatility || 1);
+      const favored = Math.abs(sign) >= 1e-6;
+      rows.push({
+        source: `熵 ${(this.entropy.value * 100).toFixed(0)}%`,
+        detail: favored
+          ? `${this.entropySystem.describe()} → 本方 ${sign > 0 ? '+' : ''}${(sign * (g.attackDamagePct ?? 0)).toFixed(1)}% 攻击力、` +
+            `${sign > 0 ? '+' : ''}${(sign * (g.armorFlat ?? 0)).toFixed(1)} 护甲`
+          : '中性（无修正）',
+        favored,
+        mods: favored ? {
+          attackDamage: { percent: Math.round(sign * (g.attackDamagePct ?? 0) * 10) / 10 },
+          armor: { flat: Math.round(sign * (g.armorFlat ?? 0) * 10) / 10 },
+        } : {},
+      });
+    }
+    if (this.souls[fac]?.length) {
+      rows.push({ source: '龙魂', detail: this.souls[fac].join('、') });
+    }
+    return rows;
+  }
+
+  /** 调试/UI 用的世界快照 */
+  snapshot() {
+    return {
+      enabled: this._enabled,
+      daynight: { ...this.daynight },
+      entropy: { ...this.entropy },
+      souls: Object.fromEntries(Object.entries(this.souls).map(([fac, ids]) => [fac, [...ids]])),
+      weather: this.weather?.getDominant?.()?.label || null,
+    };
+  }
+}
