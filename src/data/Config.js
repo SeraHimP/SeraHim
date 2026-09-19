@@ -2482,6 +2482,9 @@ export const MINION_SIZES = {
   healer: 11,  // Q5：治疗兵——与图腾兵同量级的支援型体型
   engineer: 11, // Q5：工程兵——同上，支援型体型
   summoner: 11, // Q5：唤灵兵——同上，支援型体型（幻灵是缩放后的近战兵，不需要单独尺寸项）
+  // 牧灵法阵幻兽——渲染专用伪类型（entity.type 仍是 melee），比普通近战兵小一圈，
+  // 呼应"幻兽"体型定位，见 SpriteFactory.minionRenderType 头注。
+  shepherd_pet: 9,
 };
 
 /**

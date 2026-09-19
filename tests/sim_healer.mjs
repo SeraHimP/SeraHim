@@ -219,4 +219,17 @@ async function world() {
     heal2.pos.x > before2.x);
 }
 
+// ==================== 七、3D 造型：不再复用通用步兵模板（用户："模型也要重做！不要复用现有的！"） ====================
+{
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const m = minionMesh('mm-healer-test', '#5b9bd5', 11, 'healer', 'blue');
+    T('模型①-healer 能造出几何', !!m.geo && m.topY > 0);
+    const generic = minionMesh('mm-generic-test-h', '#5b9bd5', 11, '__custom__', 'blue');
+    T('模型②-healer 不再落回通用步兵模板（顶点数不同）',
+      m.geo.attributes.position.count !== generic.geo.attributes.position.count);
+  }
+}
+
 done();

@@ -505,4 +505,26 @@ const mapStub = {
   }
 }
 
+// ==================== 二十、幻兽 3D 造型：渲染层单独路由，不长得像小兵 ====================
+// 用户明确要求"幻兽的模型就不要弄成小兵了，新做一个模型"。entity.type 必须留着 'melee'
+// （战斗/属性模板需要，见 weapon_shepherd.onFrame 用 combat.createMinion('melee', ...)），
+// 造型另路由到渲染专用伪类型 'shepherd_pet'，见 SpriteFactory.minionRenderType。
+{
+  const { minionRenderType } = await import('../src/presentation/SpriteFactory.js');
+  T('路由①-普通近战兵（无_petOwnerId）渲染类型仍是melee',
+    minionRenderType({ type: 'melee' }) === 'melee');
+  T('路由②-带_petOwnerId的幻兽渲染类型被路由到shepherd_pet',
+    minionRenderType({ type: 'melee', _petOwnerId: 1 }) === 'shepherd_pet');
+
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const petMesh = minionMesh('mm-pet-test', '#5b9bd5', 9, 'shepherd_pet', 'blue');
+    T('模型①-shepherd_pet 能造出几何', !!petMesh.geo && petMesh.topY > 0);
+    const meleeMesh = minionMesh('mm-melee-test', '#5b9bd5', 9, 'melee', 'blue');
+    T('模型②-幻兽造型与普通近战兵不是同一份几何（不会和小兵长一样）',
+      petMesh.geo.attributes.position.count !== meleeMesh.geo.attributes.position.count);
+  }
+}
+
 done();

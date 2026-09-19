@@ -43,7 +43,22 @@ export const MINION_STYLE = {
   engineer: { color: '#e0a83c', icon: '🔧', size: MINION_SIZES.engineer },
   // Q5：唤灵兵——灵体紫，呼应"幻灵/灵魂"这个语义
   summoner: { color: '#8e7cc3', icon: '👻', size: MINION_SIZES.summoner },
+  // 牧灵法阵幻兽——灵体青，与唤灵兵的灵体紫区分开（两者都是"灵"但来源不同）。
+  // 注意：这是渲染专用的伪类型，entity.type 本身仍是 'melee'，见 minionRenderType()。
+  shepherd_pet: { color: '#6fd6c8', icon: '🔮', size: MINION_SIZES.shepherd_pet },
 };
+
+/**
+ * 渲染层专用：把实体路由到用来选样式/造型的"伪类型"，与 entity.type（战斗/属性模板
+ * 用的真类型）分开。目前唯一的用例是牧灵法阵幻兽——它的 entity.type 必须留着
+ * 'melee'（复用近战兵的属性模板/索敌/移动逻辑），但用户明确要求它不能长得像小兵，
+ * 所以造型另起一份 'shepherd_pet'。UnitLayer._visualOf 与 UnitInfo.minionSize
+ * 必须都走这个函数，不要在两处各自判 `_petOwnerId`——那是同一条规则的两份拷贝，
+ * 迟早会漂移（其中一处忘了同步改）。
+ */
+export function minionRenderType(e) {
+  return e._petOwnerId ? 'shepherd_pet' : e.type;
+}
 
 /**
  * 兵种样式解析：内置查上表，**自制兵种取用户自己填的图标/颜色**。

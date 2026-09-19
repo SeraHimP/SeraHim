@@ -224,4 +224,17 @@ const mapStub = {
   T('旁路②-工程兵前出时依旧不会对贴脸敌人获得 targetId（不参与标准索敌）', !eng.targetId);
 }
 
+// ==================== 十一、3D 造型：不再复用通用步兵模板（用户："模型也要重做！不要复用现有的！"） ====================
+{
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const m = minionMesh('mm-engineer-test', '#5b9bd5', 11, 'engineer', 'blue');
+    T('模型①-engineer 能造出几何', !!m.geo && m.topY > 0);
+    const generic = minionMesh('mm-generic-test-e', '#5b9bd5', 11, '__custom__', 'blue');
+    T('模型②-engineer 不再落回通用步兵模板（顶点数不同）',
+      m.geo.attributes.position.count !== generic.geo.attributes.position.count);
+  }
+}
+
 done();

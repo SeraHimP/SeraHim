@@ -1140,6 +1140,141 @@ const MINION_BUILDERS = {
     }
     return parts;
   },
+
+  // ==================== Q5批次：治疗兵/工程兵/唤灵兵/重装车/牧灵幻兽 ====================
+  // 这五种此前落在通用步兵模板 infantryParts 上（新兵种加进来时只顾了数值/AI，
+  // 造型一直没跟上），用户反馈"新兵种的对应的模型也要重做！不要复用现有的！"。
+  // 风格方向用户定稿"符文图腾化"：延续 totem/warlock 已有的"辅助单位不做人形、
+  // 靠悬浮几何+符文纹样区分"这条美术语言，而不是给这五种也套一个步兵身板。
+
+  // 治疗兵：疗愈图腾——细柱 + 顶端光晕环里嵌一个十字符文 + 环绕的"愈疗光点"。
+  healer(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.6), lite = shade(color, 1.35);
+    const H = S * 1.35;
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.42, S * 0.50, S * 0.20, 10),
+                 matrix: T(0, S * 0.10, 0), color: dark });   // 底座
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.16, S * 0.30, H, 8),
+                 matrix: T(0, S * 0.10 + H / 2, 0), color });
+    const topY = S * 0.10 + H;
+    parts.push({ geo: new THREE.TorusGeometry(S * 0.36, S * 0.045, 6, 16),
+                 matrix: compose(T(0, topY + S * 0.10, 0), R_X(Math.PI / 2)), color: lite });  // 光晕环
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.10, S * 0.42, S * 0.06),
+                 matrix: T(0, topY + S * 0.10, 0), color: '#ffe3ef' });   // 十字符文（竖）
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.42, S * 0.10, S * 0.06),
+                 matrix: T(0, topY + S * 0.10, 0), color: '#ffe3ef' });   // 十字符文（横）
+    parts.push({ geo: new THREE.SphereGeometry(S * 0.10, 8, 6),
+                 matrix: T(0, topY + S * 0.10, 0), color: lite });
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + 0.4;
+      parts.push({ geo: new THREE.SphereGeometry(S * 0.075, 6, 5),
+                   matrix: T(Math.cos(a) * S * 0.5, topY - S * 0.25 + Math.sin(i) * S * 0.1, Math.sin(a) * S * 0.5),
+                   color: lite });   // 环绕的愈疗光点
+    }
+    return parts;
+  },
+
+  // 工程兵：构装图腾——方正堆叠柱身 + 顶端齿轮符文环 + 侧挂扳手，呼应"机械/维修"。
+  engineer(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.55), lite = shade(color, 1.3);
+    const H = S * 1.2;
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.5, S * 0.62, S * 0.28, 8),
+                 matrix: T(0, S * 0.14, 0), color: dark });   // 底座
+    for (let i = 0; i < 2; i++) {
+      const w = S * (0.62 - i * 0.10), h = H / 2;
+      parts.push({ geo: new THREE.BoxGeometry(w, h, w),
+                   matrix: compose(T(0, S * 0.14 + h * (i + 0.5), 0), R_Y(i * 0.78)), color });
+      parts.push({ geo: new THREE.BoxGeometry(w * 1.2, S * 0.07, w * 1.2),
+                   matrix: T(0, S * 0.14 + h * (i + 1), 0), color: dark });
+    }
+    const topY = S * 0.14 + H;
+    parts.push({ geo: new THREE.TorusGeometry(S * 0.32, S * 0.09, 6, 8),
+                 matrix: T(0, topY + S * 0.14, 0), color: lite });   // 齿轮环主体
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      parts.push({ geo: new THREE.BoxGeometry(S * 0.11, S * 0.11, S * 0.11),
+                   matrix: T(Math.cos(a) * S * 0.32, topY + S * 0.14, Math.sin(a) * S * 0.32), color: lite });
+    }   // 齿轮齿
+    parts.push({ geo: new THREE.BoxGeometry(S * 0.09, S * 0.62, S * 0.09),
+                 matrix: compose(T(S * 0.56, topY * 0.55, 0), R_Z(0.30)), color: dark });   // 侧挂扳手
+    for (const sx of [-1, 1]) {
+      parts.push({ geo: new THREE.BoxGeometry(S * 0.08, S * 0.16, S * 0.08),
+                   matrix: compose(T(S * 0.56 + sx * S * 0.10, topY * 0.55 + S * 0.34, 0), R_Z(0.30)), color: dark });
+    }
+    return parts;
+  },
+
+  // 唤灵兵：唤灵图腾——兜帽斗篷（与术士区分：不持法杖，改成套在身上的召唤符文环
+  // + 脚下召唤阵，呼应"召唤"而不是"施法"）。
+  summoner(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.55), lite = shade(color, 1.35);
+    const robeH = S * 1.15;
+    parts.push({ geo: new THREE.CylinderGeometry(S * 0.30, S * 0.66, robeH, 8),
+                 matrix: T(0, robeH / 2, 0), color });
+    parts.push({ geo: new THREE.ConeGeometry(S * 0.38, S * 0.5, 8),
+                 matrix: T(0, robeH + S * 0.20, 0), color: dark });
+    parts.push({ geo: new THREE.SphereGeometry(S * 0.17, 8, 6),
+                 matrix: T(0, robeH + S * 0.06, S * 0.14), color: '#1c1f26' });
+    parts.push({ geo: new THREE.TorusGeometry(S * 0.62, S * 0.05, 6, 16),
+                 matrix: compose(T(0, robeH * 0.55, 0), R_X(Math.PI / 2)), color: lite });   // 环绕符文环
+    parts.push({ geo: new THREE.TorusGeometry(S * 0.78, S * 0.045, 6, 16),
+                 matrix: compose(T(0, S * 0.04, 0), R_X(Math.PI / 2)), color: lite });   // 脚下召唤阵
+    for (let i = 0; i < 2; i++) {
+      const a = (i / 2) * Math.PI * 2 + 0.5;
+      parts.push({ geo: new THREE.OctahedronGeometry(S * 0.16),
+                   matrix: compose(T(Math.cos(a) * S * 0.62, robeH * 0.55, Math.sin(a) * S * 0.62), R_Y(a)),
+                   color: lite });
+    }
+    return parts;
+  },
+
+  // 重装车：龟甲壁垒——低矮宽厚的甲壳 + 四条短粗支柱 + 正面盾纹符文，读作"慢/硬壳/坦克"。
+  // 与其它单位相反：刻意压低整体高度、拉宽底盘，剪影跟又高又细的图腾/术士一眼区分开。
+  heavy(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.55), lite = shade(color, 1.25);
+    const legH = S * 0.34;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      parts.push({ geo: new THREE.CylinderGeometry(S * 0.16, S * 0.20, legH, 8),
+                   matrix: T(sx * S * 0.58, legH / 2, sz * S * 0.78), color: dark });
+    }
+    parts.push({ geo: new THREE.BoxGeometry(S * 1.5, S * 0.5, S * 1.9),
+                 matrix: T(0, legH + S * 0.25, 0), color });
+    parts.push({ geo: new THREE.BoxGeometry(S * 1.24, S * 0.34, S * 1.6),
+                 matrix: T(0, legH + S * 0.5 + S * 0.17, 0), color: shade(color, 1.1) });   // 壳盖
+    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.22),
+                 matrix: compose(T(0, legH + S * 0.42, S * 0.96), R_X(Math.PI / 2)), color: lite });   // 盾纹符文
+    for (let i = 0; i < 3; i++) {
+      parts.push({ geo: new THREE.ConeGeometry(S * 0.12, S * 0.18, 5),
+                   matrix: T(0, legH + S * 0.5 + S * 0.34, -S * 0.7 + i * S * 0.5), color: dark });
+    }
+    return parts;
+  },
+
+  // 牧灵法阵幻兽：灵体碎晶——小巧的悬浮晶簇，刻意不做任何人形/兵种剪影。
+  // 用户明确要求"幻兽的模型就不要弄成小兵了，新做一个模型"——entity.type 本身仍是
+  // 'melee'（战斗/属性模板需要，不能动），渲染层通过 minionRenderType() 单独路由到这里，
+  // 见 SpriteFactory.js 头注与 UnitLayer._visualOf。
+  shepherd_pet(color, S) {
+    const parts = [];
+    const dark = shade(color, 0.6), lite = shade(color, 1.4);
+    const coreY = S * 0.62;
+    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.44, 0),
+                 matrix: compose(T(0, coreY, 0), R_Y(0.4)), color: lite });
+    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.26, 0),
+                 matrix: compose(T(0, coreY, 0), R_Y(0.4 + Math.PI / 4)), color });
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      parts.push({ geo: new THREE.TetrahedronGeometry(S * 0.13),
+                   matrix: compose(T(Math.cos(a) * S * 0.5, coreY + Math.sin(i * 2) * S * 0.14, Math.sin(a) * S * 0.5), R_Y(a)),
+                   color: dark });
+    }
+    parts.push({ geo: new THREE.TorusGeometry(S * 0.34, S * 0.03, 5, 14),
+                 matrix: compose(T(0, S * 0.03, 0), R_X(Math.PI / 2)), color: lite });   // 贴地微光晕
+    return parts;
+  },
 };
 
 // ==================== 谁要转（v45 改为"除塔之外全都转"）====================

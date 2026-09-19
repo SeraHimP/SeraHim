@@ -174,4 +174,20 @@ function fakeCreateMinion(ents, CONFIG) {
     /summoner:\s*false/.test(modeSrc) && /summoner:\s*\[\]/.test(modeSrc));
 }
 
+// ==================== 十一、3D 造型：不再复用通用步兵模板（用户："模型也要重做！不要复用现有的！"） ====================
+{
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const m = minionMesh('mm-summoner-test', '#5b9bd5', 11, 'summoner', 'blue');
+    T('模型①-summoner 能造出几何', !!m.geo && m.topY > 0);
+    const generic = minionMesh('mm-generic-test-s', '#5b9bd5', 11, '__custom__', 'blue');
+    T('模型②-summoner 不再落回通用步兵模板（顶点数不同）',
+      m.geo.attributes.position.count !== generic.geo.attributes.position.count);
+    const warlock = minionMesh('mm-warlock-test-s', '#5b9bd5', 11, 'warlock', 'blue');
+    T('模型③-summoner 与术士（同为兜帽斗篷造型）也是不同几何，不是照抄术士',
+      m.geo.attributes.position.count !== warlock.geo.attributes.position.count);
+  }
+}
+
 done();

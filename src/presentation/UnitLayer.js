@@ -31,7 +31,7 @@
  *   龙魂金环 dragonsoul_ 前缀技能；盾牌 isStructureProtected。幽灵水晶不参与 E 组。
  */
 import * as THREE from '../../vendor/three.module.js';
-import { MINION_STYLE, minionStyle } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
+import { MINION_STYLE, minionStyle, minionRenderType } from './SpriteFactory.js';   // 第 6.3 步：本体改网格后不再需要精灵工厂
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
@@ -235,18 +235,21 @@ export class UnitLayer {
                facing: needsFacing(e.type),
                ringR: size + 5 };
     }
-    const st = minionStyle(e.type);   // 自制兵种取用户填的图标/颜色，见 SpriteFactory.minionStyle
+    // 牧灵法阵幻兽：entity.type 仍是 'melee'（战斗/属性模板需要），造型另路由到
+    // 'shepherd_pet' 这个渲染专用伪类型，见 SpriteFactory.minionRenderType 头注。
+    const rType = minionRenderType(e);
+    const st = minionStyle(rType);   // 自制兵种取用户填的图标/颜色，见 SpriteFactory.minionStyle
     const faction = e._mapFaction || e.faction;
     // v44：GLB 路径删除。原来只有 melee/ranged/super/siege 四种有 GLB，
     // 其余（图腾/术士/蚀骨/攻城车）落到程序化 —— 同一批小兵里两种造型语言，
     // 而且"哪个兵有 GLB"是隐性知识。现在全部走 minionMesh 一条路。
     // 阵营色优先于兵种色：立体化后兵种靠【造型】区分，颜色让位给敌我识别
     const color = faction === 'blue' ? '#5b9bd5' : faction === 'red' ? '#e0473f' : st.color;
-    const key = `m|${e.type}|${faction || 'none'}`;
-    const m = minionMesh(key, color, st.size, e.type, faction);
+    const key = `m|${rType}|${faction || 'none'}`;
+    const m = minionMesh(key, color, st.size, rType, faction);
     return { key, geo: m.geo, mat: m.mat, topY: m.topY, size: st.size,
              barW: 40, barH: 4, barD: 6, alpha: 1, pulse: false,
-             ringR: st.size + 5, facing: needsFacing(e.type) };
+             ringR: st.size + 5, facing: needsFacing(rType) };
   }
 
   // ============ E 组共享资源（几何/材质/盾牌纹理全局复用，暖机后零分配） ============

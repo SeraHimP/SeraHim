@@ -131,4 +131,19 @@ async function world() {
     /heavy:\s*\{[^}]*🐢/.test(spriteSrc));
 }
 
+// ==================== 九、3D 造型：不再复用通用步兵模板（用户："模型也要重做！不要复用现有的！"） ====================
+{
+  const THREE = await import('../vendor/three.module.js').catch(() => null);
+  if (THREE) {
+    const { minionMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const m = minionMesh('mm-heavy-test', '#5b9bd5', 13, 'heavy', 'blue');
+    T('模型①-heavy 能造出几何', !!m.geo && m.topY > 0);
+    const generic = minionMesh('mm-generic-test', '#5b9bd5', 13, '__custom__', 'blue');
+    T('模型②-heavy 不再落回通用步兵模板（顶点数不同）',
+      m.geo.attributes.position.count !== generic.geo.attributes.position.count);
+    // 定位是"低矮宽厚的坦克"，剪影应该明显比通用步兵模板矮（infantryParts 是直立人形）。
+    T('模型③-heavy 造型比通用步兵模板矮（"压低整体高度"的坦克剪影）', m.topY < generic.topY);
+  }
+}
+
 done();
