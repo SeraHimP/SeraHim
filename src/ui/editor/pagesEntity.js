@@ -190,7 +190,7 @@ export const EDITOR_PAGES_ENTITY = {
     }
     // 保证每个已知类型都有一个条目（哪怕暂时没有技能挂在它名下），
     // 避免调用方 `this._SKILLS_BY_TYPE[type].passives` 在新类型上直接报错。
-    for (const t of ['tower','melee','ranged','siege','super','totem','warlock','corrupt','ram','dragon']) {
+    for (const t of ['tower','melee','ranged','siege','super','totem','warlock','corrupt','ram','heavy','healer','engineer','summoner','dragon']) {
       if (!out[t]) out[t] = { weapons: [], passives: [] };
     }
     return out;

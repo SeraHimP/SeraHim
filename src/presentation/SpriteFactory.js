@@ -35,6 +35,14 @@ export const MINION_STYLE = {
   corrupt: { color: '#6b8e23', icon: '🦇', size: MINION_SIZES.corrupt },
   // v40：补上攻城车——此前缺失导致渲染 fallback 到 { icon: '❓' }，画板上显示问号
   ram:     { color: '#7f8c8d', icon: '🛠️', size: MINION_SIZES.ram },
+  // Q5：重装车——铁灰色呼应"重甲/龟壳"定位，与攻城车的深灰区分开（略偏冷蓝调）
+  heavy:   { color: '#5d6d7e', icon: '🐢', size: MINION_SIZES.heavy },
+  // Q5：治疗兵——粉色呼应"治疗"这个语义，与图腾兵的紫色辅助光环区分开
+  healer:  { color: '#e07ab0', icon: '💗', size: MINION_SIZES.healer },
+  // Q5：工程兵——工程黄，与治疗兵/图腾兵等其它支援型颜色区分开
+  engineer: { color: '#e0a83c', icon: '🔧', size: MINION_SIZES.engineer },
+  // Q5：唤灵兵——灵体紫，呼应"幻灵/灵魂"这个语义
+  summoner: { color: '#8e7cc3', icon: '👻', size: MINION_SIZES.summoner },
 };
 
 /**
@@ -126,6 +134,36 @@ export function minionSprite(type, faction, icon, size) {
       case 'totem':   poly(4, -Math.PI / 2, size * 1.15); break;                // 菱形
       case 'warlock': poly(5, -Math.PI / 2, size * 1.1); break;                 // 五边形
       case 'corrupt': poly(3, Math.PI / 2, size * 1.15); break;                 // 倒三角
+      // Q5：重装车——八边形（厚重多角、跟近战兵的圆一眼区分开，呼应"龟甲/装甲"定位）
+      case 'heavy':   poly(8, -Math.PI / 2, size * 1.05); break;
+      // Q5：治疗兵——十字（医疗符号的通用形状，一眼区分于所有攻击型小兵的几何形）
+      case 'healer': {
+        const w = size * 0.4, l = size * 1.1;
+        g.beginPath();
+        g.rect(c - w, c - l, w * 2, l * 2);
+        g.fill(); g.stroke();
+        g.beginPath();
+        g.rect(c - l, c - w, l * 2, w * 2);
+        g.fill(); g.stroke();
+        break;
+      }
+      // Q5：工程兵——五角星（扳手/工具类图标的通用简化形状，跟其它支援兵种的
+      // 十字/菱形/五边形都不一样，一眼可区分）
+      case 'engineer': {
+        const rOuter = size * 1.15, rInner = size * 0.45;
+        g.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const r = i % 2 === 0 ? rOuter : rInner;
+          const a = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+          const x = c + Math.cos(a) * r, y = c + Math.sin(a) * r;
+          i ? g.lineTo(x, y) : g.moveTo(x, y);
+        }
+        g.closePath(); g.fill(); g.stroke();
+        break;
+      }
+      // Q5：唤灵兵——六芒星（两个交叠三角形，呼应"召唤"的神秘学意象，跟工程兵的
+      // 五角星区分开）
+      case 'summoner': poly(3, -Math.PI / 2, size * 1.1); poly(3, Math.PI / 2, size * 1.1); break;
       default:        g.beginPath(); g.arc(c, c, size, 0, 2 * Math.PI); g.fill(); g.stroke();
     }
     if (icon) {

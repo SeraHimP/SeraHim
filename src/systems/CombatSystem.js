@@ -174,10 +174,20 @@ export class CombatSystem {
     this.skills = skillLibrary;
     this.attrCalc = AttributeCalculator;
     this.projectiles = null; // 通过 setProjectileSystem 注入，用于渲染观赏性弹道
+    // Q5：唤灵兵召唤幻灵要用到——同 LaneWaveSystem.setCreateMinion 的注入方式
+    // （createMinion 是 factories.js 的模块级函数，main.js 建完工厂后才存在，
+    // 系统构造时还拿不到，只能后置注入）。放在 combat 上是因为技能的 onCast/
+    // onFrame 回调里唯一稳定能拿到的引擎入口就是 ctx.combat，不想为了这一个
+    // 技能再给 SkillLibrary 的调用签名加一个新字段。
+    this.createMinion = null;
   }
 
   setProjectileSystem(projectileSystem) {
     this.projectiles = projectileSystem;
+  }
+
+  setCreateMinion(fn) {
+    this.createMinion = fn;
   }
 
   update(dt) {
@@ -186,6 +196,14 @@ export class CombatSystem {
 
     // ---- 更新冷却与战斗计时器 ----
     for (const entity of this.entities.getAll(true)) {
+      // Q5：唤灵兵召唤的幻灵到点消失——不是被打死的，不走伤害管线，直接在这里
+      // 判定存在时长到期。放在最前面，免得下面那一串生命恢复/护盾结算还在给一个
+      // 这一帧就该消失的单位加血/回护盾，逻辑顺序上没有意义。
+      if (entity._isSummoned && entity._summonExpireAt != null && now >= entity._summonExpireAt) {
+        entity.currentHP = 0; entity.alive = false;
+        this.eventBus?.emit?.('entity:death', { entityId: entity.id });
+        continue;
+      }
       // v43 Q7：属性表提到循环顶部——攻速也要从这里取（见 calcAttackSpeedOf 的注释）。
       // attrCalc.calc 每帧带缓存，提前算不增加开销。
       const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
@@ -449,6 +467,14 @@ export class CombatSystem {
     if (inRange.length === 0) return null;
 
     const getPriority = (m) => {
+      // Q5：工程兵保护——用户定稿"防御塔会立即切目标优先攻击攻击工程兵的单位"。
+      // 这是纯反应式的保护机制（谁在打工程兵，塔就打谁），比重装车的静态最高
+      // 优先级还要高一级：重装车是"故意吸引火力"，工程兵保护是"救命"，两者
+      // 都要顶格但语义不同，用两个档位分开，不合并成同一档。
+      if (m.targetId) {
+        const mt = this.entities.get(m.targetId);
+        if (mt && mt.type === 'engineer' && (mt._mapFaction || mt.faction) === (tower._mapFaction || tower.faction)) return 7;
+      }
       // Q5：重装车（heavy）"塔攻击优先级最高"（用户定稿）——它是纯坦克，存在
       // 意义就是吸引塔火力，必须排在所有其它类型之上，包括龙/怪物这些原本的
       // 最高档，否则"最高优先级"这句话就没有实际意义。

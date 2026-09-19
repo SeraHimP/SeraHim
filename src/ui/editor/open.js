@@ -202,8 +202,8 @@ export const EDITOR_OPEN = {
     logFn(`✅ 技能全局覆写已更新（写入 ${set} 项，清除 ${cleared} 项）。已在场上的单位下一帧生效`, 'spawn');
   },
 
-  _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', dragon: '巨龙', skill: '技能' },
- _TPL_ICONS: { melee: '🗡️', ranged: '🏹', siege: '💣', super: '🦾', totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️' },
+  _TPL_LABELS: { tower: '防御塔', melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵', super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', heavy: '重装车', healer: '治疗兵', engineer: '工程兵', summoner: '唤灵兵', dragon: '巨龙', skill: '技能' },
+ _TPL_ICONS: { melee: '🗡️', ranged: '🏹', siege: '💣', super: '🦾', totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️', heavy: '🐢', healer: '💗', engineer: '🔧', summoner: '👻' },
   // 兵种列表【不再写死】：自制兵种必须和内置兵种一样出现在页签、出兵编排、
   // 成长表里。写死的话用户做出来的兵在界面上根本看不见 —— 等于没做出来。
   // 名称/图标同理走 customContent 的统一查询，内置的仍从上面两张表取。

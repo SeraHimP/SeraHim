@@ -55,11 +55,13 @@ const CLASSIC_MINION_TEMPLATES = {
 };
 const CLASSIC_SPAWN_ENABLED = {
   melee: true, ranged: true, siege: true, super: true,
-  totem: false, warlock: false, corrupt: false, ram: false,
+  // Q5：新增的 heavy（重装车）/healer（治疗兵）跟 totem/warlock/corrupt/ram 一样，
+  // 经典模式定位是"只保留最早的四种基础兵"，新兵种一律排除在外，不是漏加。
+  totem: false, warlock: false, corrupt: false, ram: false, heavy: false, healer: false, engineer: false, summoner: false,
 };
 const CLASSIC_MINION_PASSIVES = {
   melee: [], ranged: [], siege: [], super: [],
-  totem: [], warlock: [], corrupt: [], ram: [],
+  totem: [], warlock: [], corrupt: [], ram: [], heavy: [], healer: [], engineer: [], summoner: [],
 };
 
 // 单下划线：故意跟旧版 summoners_rift_classic_v1 的形状（<base>_classic_v1）兼容——

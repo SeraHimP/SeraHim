@@ -43,4 +43,12 @@ export const DEFAULT_MINION_PASSIVES = {
   // Q5：重装车——纯坦克，塔攻击优先级最高（见 CombatSystem.selectTarget 的
   // getPriority），对塔额外伤害+主动伤害减免。
   'heavy': ['passive_heavy_vs_tower', 'active_heavy_bulwark'],
+  // Q5：治疗兵——唯一被动"生命脉冲"（passive_healer_mend），按攻速节奏治疗
+  // 最近的友军。无攻击敌方能力，不装备任何武器/攻击方式技能。
+  'healer': ['passive_healer_mend'],
+  // Q5：工程兵——没有技能。它的全部行为（找塔/修塔/原地待命）都在
+  // LaneMovementSystem._updateEngineer 里，不是技能系统驱动的，出厂默认清单留空。
+  'engineer': [],
+  // Q5：唤灵兵——唯一主动技能"唤灵"（active_summoner_call），法力攒满召唤幻灵。
+  'summoner': ['active_summoner_call'],
 };

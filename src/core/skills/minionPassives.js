@@ -1,6 +1,7 @@
 import { makeAuraPassive, AURA_THROTTLE } from './_helpers.js';
 import { CONFIG } from '../../data/Config.js';
 import { healPowerFor, applyHeal } from '../healing.js';
+import { alliesInRadius } from '../../systems/FactionSystem.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵等大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
@@ -210,6 +211,116 @@ export const minionPassives = {
       if (bonus <= 0 || !ctx.combat) return;
       ctx.combat.performAttackDirect(attackerId, targetId, bonus,
         ctx.attackType || 'physical', { basicAttack: false, _noProc: true });
+    },
+  },
+
+  // ==================== Q5：治疗兵——"友方目标"底层架构落地的第一个消费者 ====================
+  // 用户定稿："无对敌方攻击能力，但是每次攻击会对友军造成治疗效果（按攻速节奏、
+  // 类似攻击的固定节奏脉冲，不是主动技能触发），每次治疗损失固定生命值+百分比当前
+  // 生命值；脱战后拥有高额生命值回复。"
+  //
+  // 架构决策（2026-09-19，与用户对齐过）：治疗脉冲走【独立通道】而不是把索敌目标
+  // 换成敌方攻击那套"索敌+追击+锁定+弹道飞行"的完整管线——后者要深改
+  // LaneMovementSystem 的接敌AI 和 CombatSystem.performAttack 的伤害结算分支，
+  // 工作量大、还可能牵连现有近战/远程兵的战斗手感。这里复用 passive_totem_mend
+  // 已经验证过的"按帧节流的周期性效果"范式，只是：
+  //   ① 找目标从 findInRadius 换成新增的 alliesInRadius（FactionSystem.js，
+  //      与 enemyUnitsInRadius 对称，这就是用户要的"目标阵营"通用开关本体，
+  //      以后的奶塔直接复用这一个函数，不是治疗兵的特例代码）；
+  //   ② 节流间隔从固定的 AURA_THROTTLE 改成【按攻速算的攻击间隔】，才是"类似
+  //      攻击的固定节奏"，不是图腾涌泉那种"持续常驻"的光环感；
+  //   ③ 只打附近【最近的一个】友军（不比较血量高低——"单位不做决策，只机械
+  //      触发"是这轮新兵种的共同前提，见 docs/Q5-BALANCE-UNITS-TOWERS-REDESIGN.md
+  //      §三开头），不是智能优先救最缺血的那个；
+  //   ④ 治疗兵自己也扣血（固定+百分比当前生命），且只有【真的回复到了】（目标
+  //      没满血）才扣，不然站在一堆满状态友军旁边会被白白放血，很反直觉。
+  // 弹道视觉：不经过 CombatSystem 的伤害/弹道管线，改走一个独立的 'heal:pulse'
+  // 事件，渲染层订阅这个事件自己生成一条专属治疗弹道特效（GroundTraceLayer/
+  // WeatherLayer 那种"系统算数据、渲染层订阅事件画特效"分层已经是本仓库的既有
+  // 约定，这里照抄，不是新发明一层）。
+  passive_healer_mend: {
+    id: 'passive_healer_mend', name: '生命脉冲', icon: '💗', category: 'passive',
+    applicableTypes: ['healer'], color: '#e07ab0',
+    get description() {
+      const c = CONFIG.gameRules.supportUnits?.healer || {};
+      const r = c.range ?? 180, base = c.healBase ?? 15, ap = c.apScalePct ?? 30;
+      const flat = c.selfCostFlat ?? 4, pct = c.selfCostPctCurrentHP ?? 3;
+      const regen = c.outOfCombatRegenBonus ?? 8;
+      return `按自身攻速节奏，向半径 ${r} 内最近的友军治疗（{val}=${base}+${ap}%×法术强度）点，`
+        + `自身代价为 ${flat}+${pct}%当前生命值；脱战后额外获得 +${regen}/秒 生命回复。`;
+    },
+    get descTemplate() { return this.description; },
+    computeCurrent: (entity, ctx) => {
+      const c = CONFIG.gameRules.supportUnits?.healer || {};
+      const base = c.healBase ?? 15, apPct = (c.apScalePct ?? 30) / 100;
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      return Math.round((base + apPct * (stats.abilityPower || 0)) * 10) / 10;
+    },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive) return;
+      const c = CONFIG.gameRules.supportUnits?.healer || {};
+
+      // 脱战高额回复：与"这一帧是否正在治疗"完全独立判断，每帧都刷新/续期，
+      // 不受下面的攻速节流影响——否则脱战判定会被治疗节奏带偏。
+      if (!self._inCombat) {
+        const bonus = c.outOfCombatRegenBonus ?? 8;
+        if (bonus > 0) {
+          ctx.effectRegistry.apply(entityId, {
+            aura: true, auraGrace: 0.5, name: '静养', icon: '💤', kind: 'stat',
+            statKey: 'healthRegen', flatValue: bonus,
+            stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+            description: `脱战恢复：生命回复 +${bonus}/秒`,
+          }, 'passive_healer_mend_regen');
+        }
+      }
+
+      const stats = ctx.attrCalc.calc(self, ctx.effectRegistry.getEffects(self.id));
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(stats);
+      if (!(finalAS > 0)) return;
+      // ⚠️ 不能写成 `instance.state || (instance.state = { timer: 0 })`——技能实例
+      // 创建时 state 通常已经是一个空对象 `{}`（真值，不会走到 `||` 的右边），
+      // 于是 st.timer 是 undefined，`st.timer += dt` 算出 NaN，`NaN < interval`
+      // 恒为 false，节流形同虚设（每帧都会触发）。必须显式判断 timer 是不是数字
+      // （同 passive_totem_mend 的写法，同一个坑之前已经踩过一次）。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const st = instance.state;
+      st.timer += dt;
+      const interval = 1 / finalAS;
+      if (st.timer < interval) return;
+      st.timer -= interval;
+
+      const range = c.range ?? 180;
+      const allies = alliesInRadius(ctx.entityContainer, self, range);
+      if (!allies.length) return; // 附近没有友军可治，这一脉冲空转，不扣自身血
+
+      // 机械选择"最近"，不比较血量——符合本轮"不做决策"的设计前提。
+      let target = null, bestD = Infinity;
+      for (const a of allies) {
+        const d = (a.pos.x - self.pos.x) ** 2 + (a.pos.y - self.pos.y) ** 2;
+        if (d < bestD) { bestD = d; target = a; }
+      }
+      if (!target) return;
+
+      const base = c.healBase ?? 15, apPct = (c.apScalePct ?? 30) / 100;
+      const amount = base + apPct * (stats.abilityPower || 0);
+      const healed = applyHeal(target, amount, healPowerFor(target, ctx),
+        target.baseStats?.maxHP ?? target.currentHP, target._regenCapHP);
+      if (!(healed > 0)) return; // 目标已满血：这次脉冲没有真的生效，不收自身代价
+
+      const flat = c.selfCostFlat ?? 4, pct = (c.selfCostPctCurrentHP ?? 3) / 100;
+      const cost = flat + pct * self.currentHP;
+      self.currentHP -= cost;
+      if (self.currentHP <= 0) {
+        self.currentHP = 0; self.alive = false;
+        ctx.eventBus?.emit?.('entity:death', { entityId: self.id });
+      }
+
+      self._inCombat = true;
+      self._combatTimer = c.combatWindowSec ?? 4;
+
+      ctx.eventBus?.emit?.('heal:pulse', { sourceId: self.id, targetId: target.id, amount: healed });
     },
   },
 

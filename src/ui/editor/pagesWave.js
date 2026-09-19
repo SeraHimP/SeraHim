@@ -677,6 +677,10 @@ export const EDITOR_PAGES_WAVE = {
   },
 
   // 默认编排（= Config.js 里的出厂值），供「恢复默认」使用
+  // ⚠️ 已知这份表跟 CONFIG.gameRules.laneWaveComposition 的真实出厂值有历史遗留
+  // 的漂移（缺 corrupt/warlock 两条，ram 的 fromWave 也对不上）——不是这次改动
+  // 引入的，本轮只补 heavy 这一条（数值与 Config.js 保持一致），不顺手改其余
+  // 已经漂移的条目，避免在无关任务里动别的行为。
   _DEFAULT_WAVE_COMPOSITION: [
     { type: 'super',  count: 1, when: 'nexusDown' },
     { type: 'melee',  count: 3 },
@@ -684,6 +688,7 @@ export const EDITOR_PAGES_WAVE = {
     { type: 'ranged', count: 3 },
     { type: 'totem',  count: 1, fromWave: 10, everyN: 3 },
     { type: 'ram',    count: 1, fromWave: 5,  everyN: 15 },
+    { type: 'heavy',  count: 1, fromWave: 6,  everyN: 10 },
   ],
 
   // 把面板上所有 .wo-field 的当前值收回 laneWaveComposition。

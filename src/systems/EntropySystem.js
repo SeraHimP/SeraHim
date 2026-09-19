@@ -105,6 +105,10 @@ export class EntropySystem {
     const victimFac = faction || e?._mapFaction || e?.faction;
     const victimType = type || e?.type;
     if (!victimFac) return;
+    // Q5：唤灵兵召唤的幻灵死亡不给对面记熵——用户定稿"幻灵不计入……统计口径"，
+    // 否则会变成"不断召唤送人头给对面刷熵"的免费农场，跟屠戮/出兵编排统计
+    // 排除幻灵是同一条防线，只是这里挡的是熵这个独立系统。
+    if (e?._isSummoned) return;
     const killerFac = victimFac === 'blue' ? 'red' : 'blue';
     const side = killerFac === 'red' ? 'black' : 'white';
 

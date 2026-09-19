@@ -209,8 +209,8 @@ ms.loadMap('summoners_rift_v1', MODES.classic.id);
 {
   const map = ms.currentMap;
   const passives = map.minionDefaultPassives;
-  T('兵①-八个兵种的默认被动全部置空（不只是用得上的四种）',
-    ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram']
+  T('兵①-十一个兵种的默认被动全部置空（不只是用得上的四种）',
+    ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer']
       .every(t => Array.isArray(passives[t]) && passives[t].length === 0));
 
   const mt = map.minionTemplates;
@@ -244,8 +244,8 @@ ms.loadMap('summoners_rift_v1', MODES.classic.id);
     [...seen].every(t => ['melee', 'ranged', 'siege', 'super'].includes(t)));
   T('出②-四种确实都出现过（不是被一起关掉了）',
     ['melee', 'ranged', 'siege', 'super'].every(t => seen.has(t)));
-  T('出③-图腾/术士/蚀骨/攻城车一个都没有',
-    !['totem', 'warlock', 'corrupt', 'ram'].some(t => seen.has(t)));
+  T('出③-图腾/术士/蚀骨/攻城车/重装车/治疗兵/工程兵一个都没有',
+    !['totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer'].some(t => seen.has(t)));
 
   // 不覆写时行为逐位不变 —— 这条守的是"加通道没改别人"
   const seen2 = new Set();

@@ -4,6 +4,7 @@ import { hasRamCannon } from './CombatSystem.js';
 import { canFire } from './FacingSystem.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
 import { lookaheadOnPolyline, projectOntoPolyline } from '../data/mapValidate.js';
+import { applyHeal } from '../core/healing.js';
 
 /**
  * LaneMovementSystem.js
@@ -112,6 +113,15 @@ export class LaneMovementSystem {
     for (const minion of minions) {
       if (!minion.alive || !minion.pos) continue;
       if (this.effects.isStunned(minion.id)) continue;
+
+      // ==================== Q5：工程兵——不走标准的"索敌+推线"逻辑 ====================
+      // 用户定稿："他不会主动推线，在需要修复的塔旁边，如果修复完了并且前方没有
+      // 需要修复的塔，那么工程兵就在原地待命。"这是一种跟"追敌人"完全不同的行为
+      // 形状（追的是【自己这边】需要照顾的目标，不是敌人，不参与仇恨/索敌/追击/
+      // 攻击射程那一整套），走独立分支、独立方法，不往下面这条给敌方战斗单位用的
+      // 长链路里插分支——那条链路已经被前面一串"旋转木马/脱锚"之类的坑喂养得
+      // 很脆弱，工程兵这种完全不同的行为形状硬塞进去风险远大于收益。
+      if (minion.type === 'engineer') { this._updateEngineer(minion, dt); continue; }
 
       const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
       const range = stats.attackRange || 20;
@@ -285,6 +295,68 @@ export class LaneMovementSystem {
       }
       this._advanceAlongLane(minion, stats, dt);
     }
+  }
+
+  /**
+   * Q5：工程兵——不推线，只在"离自己最近的、血量没满的己方塔"和"原地待命"之间
+   * 二选一。这里刻意不做"往前方找"这类带方向判断的复杂逻辑（用户的设计前提是
+   * "单位不做决策，只机械触发"），机械地选"当前搜索半径内最近的一座"，跟治疗兵
+   * "机械选最近友军"是同一个设计取舍，不是偷懒简化。
+   *
+   * 修复超出"加固城防"节点封顶的部分：节点内的量走标准 applyHeal（吃封顶，
+   * 与其它治疗来源一致），超出节点的量单独按 overflowEfficiencyPct 效率结算、
+   * 不传 capHP——这正是用户要的"以33%效率突破节点"，不碰治疗管线本身。
+   */
+  _updateEngineer(minion, dt) {
+    const c = CONFIG.gameRules.supportUnits?.engineer || {};
+    const repairRange = c.repairRange ?? 40;
+    const searchRange = c.searchRange ?? 900;
+    const repairPerSec = c.repairPerSec ?? 20;
+    const overflowEff = (c.overflowEfficiencyPct ?? 33) / 100;
+    const faction = minion._mapFaction || minion.faction;
+
+    let target = null, bestD = Infinity;
+    for (const t of this.entities.getAllTowers(true)) {
+      if (!t.alive || (t._mapFaction || t.faction) !== faction) continue;
+      const maxHP = t.baseStats?.maxHP ?? t.currentHP;
+      if (t.currentHP >= maxHP) continue; // 满血的塔不需要修，不算候选
+      const d = (t.pos.x - minion.pos.x) ** 2 + (t.pos.y - minion.pos.y) ** 2;
+      if (d <= searchRange * searchRange && d < bestD) { bestD = d; target = t; }
+    }
+
+    if (!target) return; // 没有需要修的塔：原地待命，不移动、不修
+
+    const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > repairRange) {
+      const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
+      const speed = stats.moveSpeed || 0;
+      if (speed > 0 && dist > 0) {
+        minion.pos.x += (dx / dist) * speed * dt;
+        minion.pos.y += (dy / dist) * speed * dt;
+      }
+      return;
+    }
+
+    // 到了目标塔身边，开始修。
+    const maxHP = target.baseStats?.maxHP ?? target.currentHP;
+    const capHP = target._regenCapHP;
+    const amount = repairPerSec * dt;
+    if (capHP == null || capHP >= maxHP) {
+      applyHeal(target, amount, 1, maxHP); // 没有节点封顶（或封顶已经等于满血）：全额正常效率
+      return;
+    }
+    if (target.currentHP >= capHP) {
+      applyHeal(target, amount * overflowEff, 1, maxHP); // 已经顶到节点：剩下全按33%效率
+      return;
+    }
+    // 血量在节点以下：先按正常效率补到节点，补满节点后本帧剩余部分接着按33%续上，
+    // 不是"这一帧只能二选一"——否则卡在节点附近时每帧都要多等一帧才能继续。
+    const roomToCap = capHP - target.currentHP;
+    const normalAmt = Math.min(amount, roomToCap);
+    applyHeal(target, normalAmt, 1, maxHP, capHP);
+    const leftover = amount - normalAmt;
+    if (leftover > 0) applyHeal(target, leftover * overflowEff, 1, maxHP);
   }
 
   /**

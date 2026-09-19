@@ -32,7 +32,7 @@ const suites = [
   'sim_multifaction.mjs', 'sim_mapcomposition.mjs', 'sim_imageimport.mjs', 'sim_wavecompmap.mjs',
   'sim_neutralcamp.mjs', 'sim_lanealign.mjs', 'sim_globalaura.mjs', 'sim_frostbridge.mjs', 'sim_navoutline.mjs', 'sim_towerbase.mjs', 'sim_foreststyle.mjs', 'sim_boundarydecor.mjs',
   'sim_qualitybatch.mjs', 'sim_barinc.mjs', 'sim_dmgstats.mjs', 'sim_balance_q3.mjs', 'sim_balance_q4.mjs',
-  'sim_groundtrace.mjs',
+  'sim_groundtrace.mjs', 'sim_heavy.mjs', 'sim_healer.mjs', 'sim_engineer.mjs', 'sim_summoner.mjs',
 ];
 
 const args = process.argv.slice(2);

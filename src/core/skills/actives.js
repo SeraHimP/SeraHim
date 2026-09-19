@@ -337,4 +337,57 @@ export const actives = {
       return true;
     },
   },
+
+  // ==================== Q5：唤灵兵——法力攒满，脚下召唤一只幻灵 ====================
+  // 用户定稿："法力攒满时在自己脚下召唤一只幻灵——一个真正的小型战斗单位（复用
+  // 现有小兵创建管线，不是特效摆设），存在12~15秒后自动消失（或提前被打死）。
+  // 血量/攻击力取偏低量级（近战兵的60~70%），不成长；同时最多存在2只；幻灵不计入
+  // 屠戮/龙魂奖励/出兵编排统计口径。"
+  //
+  // 实现选择：幻灵直接是一个 type:'melee' 实体，只是用 createMinion 的 hpScale/
+  // attrScale 参数缩放成 65%、不传 growthFlat（不成长），额外打三个标记：
+  // _isSummoned（供 EntropySystem 等统计口径排除，见该文件头注）、_summonExpireAt
+  // （到点强制阵亡，见 CombatSystem.update 最前面那段）、_summonVisual（渲染层按
+  // 这个标记做半透明+粒子处理）。不新建一个 'phantom' 兵种类型——那意味着要把
+  // 编辑器/渲染层那一整套枚举清单再抄一遍（heavy/healer/engineer 每加一个都要
+  // 抄七八处），而幻灵的定位就是"一个缩水的近战兵"，复用现有类型完全够用，也更
+  // 贴合用户说的"复用现有小兵创建管线"这句话本身。
+  //
+  // maxAlive 用【施法者自己名下】计数，不是全队共享的池子——每个唤灵兵是独立的
+  // 法力条/独立的召唤额度，符合"这个兵种能凭空多一个打架的身体"这个定位本身。
+  active_summoner_call: {
+    id: 'active_summoner_call', name: '唤灵', icon: '👻', color: '#8e7cc3', category: 'active',
+    applicableTypes: ['summoner'],
+    defaultParams: { hpScalePct: 65, ttlSec: 13.5, maxAlive: 2 },
+    get description() {
+      const p = this.defaultParams;
+      return `法力攒满后在自己脚下召唤一只幻灵（近战兵${p.hpScalePct}%属性，不成长），`
+        + `存在${p.ttlSec}秒后自动消失（或提前被打死）；同时最多存在${p.maxAlive}只。`;
+    },
+    effects: [],
+    onCast: (entityId, instance, ctx) => {
+      const self = ctx.entityContainer.get(entityId);
+      if (!self || !self.alive || typeof ctx.combat?.createMinion !== 'function') return false;
+      const p = instance._params || actives.active_summoner_call.defaultParams;
+      const maxAlive = p.maxAlive ?? 2;
+
+      // 清点自己名下还活着的幻灵，满编就先不放（法力保持满格，下次触发再试——
+      // 等某一只消失腾出名额）。
+      self._summonedIds = (self._summonedIds || []).filter(id => {
+        const e = ctx.entityContainer.get(id);
+        return e && e.alive;
+      });
+      if (self._summonedIds.length >= maxAlive) return false;
+
+      const faction = self._mapFaction || self.faction;
+      const scale = (p.hpScalePct ?? 65) / 100;
+      const spirit = ctx.combat.createMinion('melee', self.pos.x, self.pos.y, faction, scale, scale);
+      if (!spirit) return false;
+      spirit._isSummoned = true;
+      spirit._summonExpireAt = (window.gameTime || 0) + (p.ttlSec ?? 13.5);
+      spirit._summonVisual = true;
+      self._summonedIds.push(spirit.id);
+      return true;
+    },
+  },
 };

@@ -6,8 +6,11 @@ import { CONFIG } from '../../data/Config.js';
  * 路过的、在射程外追击别人的敌人不再计层。
  */
 function _countTowerAttackers(entity, ctx) {
+  // 2026-09-19：这张白名单原来漏了 'ram'（攻城车）——正是最该被联防计层记住的
+  // 那类贴脸打塔单位——补上时一并加上新增的 'heavy'（重装车，塔攻击优先级
+  // 最高，天然是这条被动最该盯防的对象，漏掉它这条被动等于形同虚设）。
   const nearby = ctx.entityContainer.findInRadius(entity.pos.x, entity.pos.y, 260,
-    ['melee', 'ranged', 'siege', 'super', 'totem', 'shield', 'warlock', 'corrupt', 'dragon'], true);
+    ['melee', 'ranged', 'siege', 'super', 'totem', 'shield', 'warlock', 'corrupt', 'ram', 'heavy', 'summoner', 'dragon'], true);
   let n = 0;
   for (const m of nearby) {
     if (m.targetId !== entity.id) continue;

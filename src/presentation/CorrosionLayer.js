@@ -31,8 +31,16 @@
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
 
-/** 可被腐蚀叠层的敌方单位类型，与 weapon_corrosion.onFrame 的过滤表保持一致 */
-const POISONABLE = ['melee', 'ranged', 'siege', 'super', 'totem', 'dragon', 'shield', 'warlock', 'corrupt'];
+/**
+ * 可被腐蚀叠层的敌方单位类型，供雾特效判断"附近有没有中毒目标"用。
+ * ⚠️ 头注原话是"与 weapon_corrosion.onFrame 的过滤表保持一致"，但 v49 之后
+ * 真实机制已经改走 enemyUnitsInRadius（不认白名单，只看"不是建筑"），这份表
+ * 从那次改动起就已经落后了——2026-09-19 排查重装车接线时发现这份表漏了
+ * 'ram'（攻城车），补上时一并补上新增的 'heavy'（重装车）。这类硬编码白名单
+ * 每加一个新兵种就要回来改一次，漏了不会报错，只会表现成"毒素在扣血但雾特效
+ * 没跟着亮"——跟 FactionSystem.js 头注记录的那个坑是同一个形状。
+ */
+const POISONABLE = ['melee', 'ranged', 'siege', 'super', 'totem', 'dragon', 'shield', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer', 'summoner'];
 
 const cfg = () => (CONFIG.ui && CONFIG.ui.corrosionFx) || {};
 

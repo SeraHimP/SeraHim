@@ -88,6 +88,24 @@ export const CONFIG = {
       heavy: {
         bonusVsTowerPct: 60,    // 对塔额外伤害（%）
       },
+      // Q5：治疗兵——按攻速节奏的单体治疗脉冲，见 minionPassives.js 的
+      // passive_healer_mend。数值先给一个合理量级，占位起始值，等平衡扫描再校准。
+      healer: {
+        range: 180,                  // 找友军的半径（与图腾涌泉的150相近，略远一点方便跟着兵线走）
+        healBase: 15,                 // 每次脉冲固定治疗量
+        apScalePct: 30,                // 每次脉冲：法术强度加成（%）
+        selfCostFlat: 4,               // 每次脉冲自损：固定生命值
+        selfCostPctCurrentHP: 3,       // 每次脉冲自损：当前生命值百分比（%）
+        outOfCombatRegenBonus: 8,      // 脱战后额外生命回复（每秒）
+        combatWindowSec: 4,            // 治疗一次后多久算"脱离战斗状态"（与炮兵/其它节奏一致）
+      },
+      // Q5：工程兵——修复己方塔（见 LaneMovementSystem._updateEngineer）。
+      engineer: {
+        repairRange: 40,          // 多近才算"到了塔身边"，可以开始修
+        searchRange: 900,         // 找需要修复的塔的半径
+        repairPerSec: 20,         // 节点内的正常修复速率（每秒生命值）
+        overflowEfficiencyPct: 33, // 突破"加固城防"节点封顶部分的修复效率（%）
+      },
     },
     // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
     // 仍受结构保护约束、且塔的索敌优先级最低（不会为了打塔而无视拆自己的小兵）。
@@ -150,6 +168,20 @@ export const CONFIG = {
       { type: 'warlock', count: 1, fromWave: 3, everyN: 4 },
       { type: 'totem',   count: 1, fromWave: 4, everyN: 4 },
       { type: 'ram',     count: 1, fromWave: 3, everyN: 15 },
+      // Q5：重装车——塔攻击优先级最高的纯坦克，用来"扛住第一轮仇恨"给后面的输出
+      // 兵种争取时间。跟攻城车错开节奏（fromWave/everyN 都不同，不会永远同一波
+      // 一起出现），频率定得比攻城车稍高一点（这兵种本身不构成推塔压力，只是
+      // 拖节奏，出场更频繁不会像攻城车那样破坏平衡）。
+      { type: 'heavy',   count: 1, fromWave: 6, everyN: 10 },
+      // Q5：治疗兵——支援位，节奏与图腾/术士错开（fromWave 5，everyN 4），不跟它们
+      // 挤在同一波，免得某一波支援兵种全堆在一起。
+      { type: 'healer',  count: 1, fromWave: 5, everyN: 4 },
+      // Q5：工程兵——不参与推线/战斗，出场频率给得比其它支援兵种更低（它对局势的
+      // 影响是持续性的"减少塔损耗"，不需要频繁刷新）。
+      { type: 'engineer', count: 1, fromWave: 8, everyN: 8 },
+      // Q5：唤灵兵——用户最喜欢的方案，出场频率给中等（不像工程兵那么稀有，
+      // 但也不像近战/远程那样铺量）。
+      { type: 'summoner', count: 1, fromWave: 4, everyN: 6 },
     ],
     // v43 Q5：**双方共享的按路覆写**（键 = 地图的 lane id，如 'top'/'mid'/'bot'）。
     // 空 = 每一路都跟随上面那份共享基准。阵营专属的按路覆写存在
@@ -170,7 +202,7 @@ export const CONFIG = {
     // ⚠️ 这个键此前在同一个对象字面量里被声明了【两次】（另一处在上方约 30 行处），
     // 后声明的静默覆盖前面的，改前面那份毫无效果 —— 又一个"改了没反应"。
     // 已删除重复声明，这里是唯一一处。
-    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: true, warlock: true, corrupt: true, ram: true },
+    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: true, warlock: true, corrupt: true, ram: true, heavy: true, healer: true, engineer: true, summoner: true },
     // ==================== 巨龙：刷新节奏与强度曲线 ====================
     // 这里原本是七个键（dragonFirstDelay / dragonInterval / dragonHpScale /
     // dragonAttrScale / dragonKillsToUnlock / ancientDragonHpScale /
@@ -760,6 +792,21 @@ export const CONFIG = {
     // 攻城车：生命正常成长，攻击力成长极慢，双抗不成长（影响力随时间自然衰减）。
     // ap 成长清零（原 0.5 删除，攻城车是物理系，见上方头注）。
     ram:    { hp: 10, ad: 0.1,   res: 0 },
+    // Q5：重装车——纯坦克定位，成长也该往"更肉"倾斜而不是"更能打"：生命成长比近战兵
+    // 高一截（12 vs 7），双抗成长延续它"超高双抗"的定位（0.4，仅次于近战兵的0.5），
+    // 攻击力成长压得很低（0.2）——它的价值是扛住仇恨和对塔的额外伤害，不该随时间
+    // 膨胀成一个输出兵种，那样会抢攻城车的戏（方案讨论时用户的原话）。
+    heavy:  { hp: 12, ad: 0.2,   res: 0.4 },
+    // Q5：治疗兵——魔法系辅助，没有攻击力可言（ad 成长清零），生命成长中等
+    // （不该比它治疗的近战兵还脆），法强成长保留（治疗量直接吃法强）。
+    healer: { hp: 9,  ad: 0,     res: 0.15, ap: 0.5 },
+    // Q5：工程兵——纯支援，不打架也不吃打（正常情况下不会站在前线挨揍），
+    // 生命/双抗成长给个保守的量级，不需要法强成长（修塔量不吃AP，见
+    // CONFIG.gameRules.supportUnits.engineer）。
+    engineer: { hp: 7,  ad: 0,    res: 0.1 },
+    // Q5：唤灵兵——自身成长压低（不该随时间变成一个能打的主力，它的价值在幻灵
+    // 身上），双抗给一点保底不至于后期秒死。
+    summoner: { hp: 6,  ad: 0.1,  res: 0.2 },
     // 图腾兵/术士兵/蚀骨兵：魔法系，攻击力成长清零（原 0.375→0），法术强度成长
     // 保留（0.5，与上一轮占位值一致，未重新拍）。
     totem:   { hp: 8, ad: 0, res: 0.1, ap: 0.5 },
@@ -1482,8 +1529,17 @@ export const CONFIG = {
     snowCover: {
       gridResolution: 48,     // 覆盖整张地图的网格边长（格数），渲染时 GPU 双线性插值放大
       minChargeToGrow: 0.25,  // 雪的档位系数低于这个值，雪盖不开始积（"下到一定程度后"）
-      growPerSec: 0.02,       // 全局目标雪深的增长速率系数
-      decayPerSec: 0.03,      // 雪停后全局目标雪深的消退速率系数
+      // 2026-09-19 修复：growPerSec/decayPerSec 原来是 0.02/0.03——数学上确实是连续
+      // 渐变（snowGlobalTarget 每帧按指数逼近目标，不是阶跃），但实际时间常数只有
+      // 5~3.3秒（τ=1/(rate×10)），意味着满强度雪天下**15~20秒内地面就从看不见涨到
+      // 接近全白**，人眼在这么短的窗口里几乎分辨不出"渐变"和"突变"的区别——这正是
+      // 用户反馈"到某个阈值后直接变白，很突兀"的真实成因：不是代码用了阶跃函数，
+      // 是渐变的时间尺度比对局节奏（几十分钟）短了一个数量级，读起来就是"啪"一下。
+      // 改成 0.003/0.005（时间常数拉到 33s/20s，满强度雪天约2~3分钟才铺满全图），
+      // 让积雪读起来像"这一局慢慢下大的"而不是"天气一换地面瞬间刷白"；停雪后的
+      // 消退同理放慢，两者仍保持 decay 略快于 grow 的原有比例关系不变。
+      growPerSec: 0.003,      // 全局目标雪深的增长速率系数
+      decayPerSec: 0.005,     // 雪停后全局目标雪深的消退速率系数
       maxDepth: 1,            // 雪深上限
       regrowPerSec: 0.05,     // 每格局部雪深追向全局目标值的速率（含小径回涨）
       erodeRadius: 70,        // 单位经过时，局部雪深被踩低的影响半径（世界单位）
@@ -2286,6 +2342,68 @@ export const CONFIG = {
       // active_heavy_bulwark。数值先给一个合理量级，占位起始值。
       maxMana: 100, manaRegen: 1.5,
     },
+    // Q5：治疗兵——无对敌方攻击能力（attackDamage/attackRange 都是0，不装备任何
+    // 武器技能），"攻击力"这个词对它没有意义，真正的输出是被动"生命脉冲"
+    // （passive_healer_mend）按攻速节奏对友军治疗。armor/magicResist 给普通支援
+    // 兵的量级（不比图腾兵更肉——它不是拿来扛线的），healthRegen 基线较低，
+    // 脱战后的"高额回复"由被动里的独立 aura 加成给，不写在模板基线里。
+    healer: {
+      label: '治疗兵', type: 'healer',
+      isLargeMinion: true, isMonster: false,
+      maxHP: 190, healthRegen: 1, baseHealthRegenMod: 1.0,
+      moveSpeed: 78, attackRange: 0,
+      attackDamage: 0, baseAttackSpeed: 0.55, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
+      armor: 5, magicResist: 5,
+      damageReduction: 0, damageBlock: 0,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
+      onHitDamage: 0, onHitPercentDamage: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
+      healShieldPowerPct: 0,
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
+    },
+    // Q5：工程兵——无攻击能力（attackDamage/attackRange 都是0），移动方式完全不同
+    // 于其它兵种（见 LaneMovementSystem._updateEngineer：不推线，只在需要修复的己方
+    // 塔和原地待命之间切换），所以这里的 attackRange 不代表任何"够不够远"的判断，
+    // 修复半径单独在 CONFIG.gameRules.supportUnits.engineer.repairRange 里配置。
+    engineer: {
+      label: '工程兵', type: 'engineer',
+      isLargeMinion: true, isMonster: false,
+      maxHP: 150, healthRegen: 1, baseHealthRegenMod: 1.0,
+      moveSpeed: 78, attackRange: 0,
+      attackDamage: 0, baseAttackSpeed: 0, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
+      armor: 5, magicResist: 5,
+      damageReduction: 0, damageBlock: 0,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
+      onHitDamage: 0, onHitPercentDamage: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
+      healShieldPowerPct: 0,
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
+    },
+    // Q5：唤灵兵——用户定稿"自己血/攻偏低，指望幻灵抗线"，所以给的是近战兵一档
+    // 以下的量级；maxMana/manaRegen 沿用图腾兵旧版"60秒一档"的节奏（见下方注释），
+    // 幻灵存活12~15秒、两只上限，正常节奏下不会叠出好几只同时在场。
+    summoner: {
+      label: '唤灵兵', type: 'summoner',
+      isLargeMinion: true, isMonster: false,
+      maxHP: 140, healthRegen: 0, baseHealthRegenMod: 1.0,
+      moveSpeed: 78, attackRange: 120,
+      attackDamage: 3, baseAttackSpeed: 0.6, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
+      armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
+      armor: 5, magicResist: 5,
+      damageReduction: 0, damageBlock: 0,
+      shieldFixedMax: 0, tempShieldDecayPct: 5, plainShieldFlat: 0,
+      onHitDamage: 0, onHitPercentDamage: 0,
+      damageConvertPct: 0, lifeStealPct: 0, damageAmpPct: 0, allStatsPct: 0, coreStatsPct: 0,
+      healShieldPowerPct: 0,
+      attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
+      ...UNIT_STAT_DEFAULTS,
+      // 主动技能"唤灵"：法力攒满后召唤一只幻灵，见 actives.js 的 active_summoner_call。
+      maxMana: 120, manaRegen: 2,
+    },
     dragon: {
       label: '巨龙', type: 'dragon',
       isLargeMinion: true, isMonster: true,
@@ -2338,6 +2456,10 @@ export const MINION_SIZES = {
   warlock: 10,
   corrupt: 10,
   ram: 14,     // v39：攻城车（体型与超级兵相当）
+  heavy: 13,   // Q5：重装车——坦克体型，比普通小兵大一圈，但不抢攻城车/超级兵的视觉体量
+  healer: 11,  // Q5：治疗兵——与图腾兵同量级的支援型体型
+  engineer: 11, // Q5：工程兵——同上，支援型体型
+  summoner: 11, // Q5：唤灵兵——同上，支援型体型（幻灵是缩放后的近战兵，不需要单独尺寸项）
 };
 
 /**

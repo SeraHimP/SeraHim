@@ -161,6 +161,35 @@ export function enemyUnitsInRadius(entities, self, radius, opts = {}) {
 }
 
 /**
+ * ==================== Q5：半径内的**友方单位**（"目标阵营"开关的另一半）====================
+ * 用户明确要求"单位的攻击目标指向友方而不是敌方"必须做成底层架构的通用开关，不是
+ * 治疗兵一个人的特例代码——以后的奶塔要共用同一套东西。这个函数就是那个开关落地的
+ * 地方：跟 enemyUnitsInRadius 完全对称（同一份 findInRadius 查询、同一种"不用白名单
+ * 用类型判断"的写法），唯一区别是阵营判据反过来（同阵营才算，异阵营/中立都排除）。
+ * 两个函数分开维护，不是共用一个 `invert` 参数，因为调用方读起来"找敌人"/"找友军"
+ * 要一眼看清是哪个，不想每次都盯着一个布尔参数猜方向。
+ *
+ * @param entities 实体容器
+ * @param self     施法者（永远排除自己）
+ * @param radius   半径
+ * @param opts.includeBuildings 是否也返回己方建筑（默认 false = 只要单位）
+ */
+export function alliesInRadius(entities, self, radius, opts = {}) {
+  if (!self || !self.pos) return [];
+  const sf = self._mapFaction || self.faction || null;
+  if (!sf) return []; // 中立单位没有"友军"这个概念
+  const out = [];
+  for (const e of entities.findInRadius(self.pos.x, self.pos.y, radius, null, true)) {
+    if (!e || !e.alive || e.id === self.id) continue;
+    if (!opts.includeBuildings && e.type === 'tower') continue;
+    const ef = e._mapFaction || e.faction || null;
+    if (ef !== sf) continue;
+    out.push(e);
+  }
+  return out;
+}
+
+/**
  * 结构保护（"不可选中"，LoL 规则）：
  * - 分路召唤水晶：该路己方水晶塔（高地塔，tier='base'）存活时不可被攻击/索敌。
  * - 水晶枢纽：己方任一枢纽塔（tier='hq_tower'）存活时不可被攻击/索敌（双塔全灭才解除）。

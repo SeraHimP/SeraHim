@@ -17,7 +17,7 @@ import { SkillLibrary } from '../core/SkillLibrary.js';
  * 小兵与龙可以反复"加入清单"，最后一次性"批量生成"。
  */
 
-const MINION_TYPES = ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy'];
+const MINION_TYPES = ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer', 'summoner'];
 
 const TYPE_META = {
   melee:   { label: '近战兵', icon: '🗡️', info: '近战攻击，高攻速，低血量' },
@@ -29,6 +29,9 @@ const TYPE_META = {
   warlock: { label: '术士兵', icon: '🧙', info: '辅助型（Q5收窄为只做光环增伤），光环给周围友军伤害增幅，自身带高额双穿' },
   corrupt: { label: '蚀骨兵', icon: '🦇', info: '攻击给塔叠加腐蚀（唯一被动，减双抗）' },
   ram:     { label: '攻城车', icon: '🛠️', info: '专职破塔：锁定建筑后进入攻城模式（对建筑伤害+550%，攻速随攻击自我衰减），射程超过防御塔，对小兵-33%，受近战单位伤害+100%' },
+  healer:  { label: '治疗兵', icon: '💗', info: '无对敌方攻击能力，按攻速节奏治疗最近的友军，每次治疗自损固定+百分比当前生命值；脱战后额外获得高额生命回复' },
+  engineer: { label: '工程兵', icon: '🔧', info: '无攻击能力，不推线；就近修复己方防御塔，可33%效率突破加固城防的节点封顶；防御塔会优先反击正在攻击工程兵的单位' },
+  summoner: { label: '唤灵兵', icon: '👻', info: '自身血/攻偏低，主动技能（法力攒满触发）在脚下召唤一只幻灵（近战兵65%属性，不成长，存活约13秒，同时最多2只）' },
 };
 
 const WEAPONS = {

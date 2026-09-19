@@ -319,6 +319,12 @@ laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
   // The growth is already applied on top of template values inside createMinion.
   return ent;
 });
+// Q5：唤灵兵召唤幻灵——技能 onCast 里唯一稳定能拿到的引擎入口是 ctx.combat，
+// 所以把 createMinion 也注入到 combatSystem 上（见 CombatSystem.setCreateMinion
+// 的头注）。故意不带波次成长（growthFlat 不传 = 0 成长），也不挂 laneId/direction
+// ——幻灵不推线，不属于任何一条波次编排。
+combatSystem.setCreateMinion((type, x, y, faction, hpScale, attrScale) =>
+  createMinion(type, x, y, hpScale, attrScale, { faction }));
 
 // 龙魂事件日志
 eventBus.on('dragon:killed', (d) => {

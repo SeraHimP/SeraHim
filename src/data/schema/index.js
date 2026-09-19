@@ -163,7 +163,7 @@ const TOWER_TIERS = [
 const MINION_TYPES = [
   ['melee', '近战兵'], ['ranged', '远程兵'], ['siege', '炮兵'], ['super', '超级兵'],
   ['totem', '图腾兵'], ['warlock', '术士兵'], ['corrupt', '蚀骨兵'], ['ram', '攻城车'],
-  ['heavy', '重装车'],
+  ['heavy', '重装车'], ['healer', '治疗兵'], ['engineer', '工程兵'], ['summoner', '唤灵兵'],
 ];
 
 // ==================== 注册表 ====================

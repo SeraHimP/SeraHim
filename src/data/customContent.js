@@ -185,17 +185,19 @@ export function allMinionTypes() {
   return [...BUILTIN_MINION_TYPES, ...Object.keys(CONFIG.customMinions)];
 }
 
-export const BUILTIN_MINION_TYPES = ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy'];
+export const BUILTIN_MINION_TYPES = ['melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer', 'summoner'];
 
 /** 兵种的显示名/图标（内置写死，自制取用户填的）。 */
 export function minionLabel(type) {
   const BUILT = { melee: '近战兵', ranged: '远程兵', siege: '炮兵', totem: '图腾兵',
-                  super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', heavy: '重装车' };
+                  super: '超级兵', warlock: '术士兵', corrupt: '蚀骨兵', ram: '攻城车', heavy: '重装车',
+                  healer: '治疗兵', engineer: '工程兵', summoner: '唤灵兵' };
   return BUILT[type] || CONFIG.customMinions?.[type]?.name || type;
 }
 export function minionIcon(type) {
   const BUILT = { melee: '🗡️', ranged: '🏹', siege: '💣', super: '🦾',
-                  totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️', heavy: '🐢' };
+                  totem: '🗿', warlock: '🧙', corrupt: '🦇', ram: '🛠️', heavy: '🐢',
+                  healer: '💗', engineer: '🔧', summoner: '👻' };
   return BUILT[type] || CONFIG.customMinions?.[type]?.icon || '⚔️';
 }
 
