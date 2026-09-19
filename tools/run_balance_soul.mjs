@@ -4,7 +4,8 @@
  *
  * ==================== 为什么要有这个 ====================
  * balance_matrix.mjs --sweep soul/power 是单进程串行跑一串档位（soul：基线+13种龙魂
- * 共 14 档；power：基线+7种元素之力共 8 档）× --runs 局，在弱一点的机器/共享容器上
+ * 共 14 档；power：基线+13种元素之力共 14 档，见下方 2026-09-19 补齐记录）× --runs 局，
+ * 在弱一点的机器/共享容器上
  * 跑 --runs 20 --minutes 40 可能要好几个小时——这正是这次评估在沙盒容器里被空闲
  * 回收、始终跑不完的根子（不是数值/参数不对，是环境撑不住这么长的连续跑）。
  *
@@ -27,6 +28,17 @@
  * 分支同源的 POWERS 清单（同样有防漂移检查，见 tests/sim_balance_soul_runner.mjs），
  * 转发给子进程的 --sweep 参数也跟着改，其余并行/合并/落盘逻辑一字不动。
  * 默认值仍是 'soul'——不传 --sweep 时行为与之前逐位一致。
+ *
+ * ==================== 2026-09-19：POWERS 清单补齐（7 → 13 元素）====================
+ * 用户发现："为啥才8种巨龙之力，目前系统里有多余10+种。" 排查后确认是真 bug：
+ * balance_matrix.mjs 的 SOULS 清单在 v51.6 已经补上 frost/steel/blood/magma/astral/
+ * rift 六条魂，但同一次改动漏了这份 ELS（power 分支）——13 个元素的 dragonPower
+ * 数值早就都在 CONFIG.dragonPower 里配好了，只是量它们强度的扫描工具从没跑过后
+ * 6 个，沉默漏测了将近一半。现在 POWERS 补齐成与 SOULS 逐项同名的 13 个元素。
+ * 不含 'ancient'（远古之力）：它是每杀一条远古龙永久再叠一层、层数不封顶的机制，
+ * 跟这 13 个"先手集齐 4 条元素龙即封顶"的一次性满层对照不是同一种东西，硬套
+ * 这个工具固定 cap=4 的量法会量出一个不代表真实后期强度的假数字，留到以后专门
+ * 设计一套"随远古龙击杀数演化"的对照方式再做。
  *
  * ==================== 用法 ====================
  *   node tools/run_balance_soul.mjs                     # 默认龙魂，完整规模：--runs 20 --minutes 40
@@ -89,8 +101,9 @@ const SWEEP_LABEL = { soul: '龙魂', power: '巨龙之力' }[SWEEP];
 const SOULS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
   'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
 // 与 balance_matrix.mjs --sweep power 分支里的 ELS 列表保持一致（同样的理由，
-// 不 import 有副作用的模块）。
-const POWERS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+// 不 import 有副作用的模块）。2026-09-19：7 → 13 元素，见上方补齐记录。
+const POWERS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
+  'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
 const ELEMENTS = SWEEP === 'power' ? POWERS : SOULS;
 const ALL_TIERS = ['基线', ...ELEMENTS];   // "基线"能匹配到"基线·双方无魂/无力"（--pick 是子串匹配）
 

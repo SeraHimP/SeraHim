@@ -7,8 +7,13 @@
 // 2026-09-04：这个脚本原来硬编码只认 --sweep soul（14 档：基线 + 13 种龙魂）。
 // 用户想测"巨龙之力"时，我一开始让他直接单进程跑 balance_matrix.mjs——没利用
 // 这个脚本已经写好的并行封装，8 档 × 20 局单进程串行在他 16 核机器上干等了两个
-// 多小时。现在补上 --sweep power（8 档：基线 + 7 种元素之力），下面新增③④两组
-// 断言专门盯这条新路径，①②两组盯的默认 soul 路径逐位不动。
+// 多小时。现在补上 --sweep power（当时是 8 档：基线 + 7 种元素之力），下面新增
+// ③④两组断言专门盯这条新路径，①②两组盯的默认 soul 路径逐位不动。
+//
+// 2026-09-19：power 分支的元素清单当时漏补了 v50 新增的 frost/steel/blood/magma/
+// astral/rift 六个（SOULS 那份在 v51.6 补过，ELS 这份忘了同步），用户发现"系统里
+// 明明有 10+ 种巨龙之力，扫描却只有 8 档"。补齐成 13 种元素之力（14 档），下面
+// ③④两组断言的档数跟着从 8/7 改成 14/13。
 //
 // 四条硬性要求：
 //   ① SOULS 列表不能和 balance_matrix.mjs 里 --sweep soul 分支的清单出现漂移——
@@ -88,7 +93,7 @@ if (runnerPowers && matrixEls) {
     runnerPowers.length === matrixEls.length && runnerPowers.every((k, i) => k === matrixEls[i]));
 }
 
-// ---- ④ --sweep power 真跑一遍：8 档（基线 + 7 种元素之力）一个不漏，--sweep 字段正确 ----
+// ---- ④ --sweep power 真跑一遍：14 档（基线 + 13 种元素之力）一个不漏，--sweep 字段正确 ----
 {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   const rp = spawnSync('node', [runner, '--sweep', 'power', '--runs', '1', '--minutes', '1', '--jobs', '2'],
@@ -103,11 +108,11 @@ if (runnerPowers && matrixEls) {
   if (jsonFileP) {
     const dataP = JSON.parse(fs.readFileSync(path.join(tmpDir, jsonFileP), 'utf8'));
     T('--sweep power：JSON 里的 sweep 字段是 "power"（不是遗留的 "soul"）', dataP.sweep === 'power');
-    T('--sweep power：合并后的 JSON 恰好含 8 档结果（基线 + 7 种元素之力，一个不漏）',
-      dataP.results.length === 8);
+    T('--sweep power：合并后的 JSON 恰好含 14 档结果（基线 + 13 种元素之力，一个不漏）',
+      dataP.results.length === 14);
     const labelsP = new Set(dataP.results.map(r => r.label));
     T('--sweep power：合并结果里包含基线档', [...labelsP].some(l => l.includes('基线')));
-    T('--sweep power：7 种元素之力各自都在（按 POWERS 清单逐个核对）',
+    T('--sweep power：13 种元素之力各自都在（按 POWERS 清单逐个核对）',
       !!runnerPowers && runnerPowers.every(k => [...labelsP].some(l => l.includes(k))));
   }
   fs.rmSync(tmpDir, { recursive: true, force: true });

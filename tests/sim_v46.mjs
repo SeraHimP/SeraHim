@@ -894,7 +894,12 @@ const mkE = (ents, type, x, y, extra = {}) => {
   for (const tpl of Object.values(CONFIG.templates || {})) {
     if (tpl && typeof tpl === 'object') for (const k of Object.keys(tpl)) known.add(k);
   }
-  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+  // 2026-09-19：原来只列了最初的 7 个元素，v50 新增的 frost/steel/blood/magma/
+  // astral/rift 六个一直没被这条 Pct 静默丢弃的检查覆盖到——这正是本轮发现
+  // 平衡扫描工具（tools/balance_matrix.mjs 的 ELS）同样漏了这 6 个之后顺带
+  // 排查出的姊妹漏洞，一并补齐成与 CONFIG.dragonPower 里真实存在的元素一致。
+  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
+    'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
 
   T('Pct①-每个元素的【力】里没有一项 statKey 是不存在的属性', (() => {
     const bad = [];

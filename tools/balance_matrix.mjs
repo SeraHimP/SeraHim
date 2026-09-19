@@ -408,7 +408,20 @@ if (SWEEP === 'dayNight') {
   // v44：**巨龙之力**单独一档（满 4 层，不给魂）。
   // 判读：力是"过程奖励"，强度应当明显低于魂 —— 每档的推进度差落在基线 +0.3~+1.0 之间。
   // 力比魂还强就说明成魂这件事没有意义了。
-  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison'];
+  //
+  // 2026-09-19 修复：这份清单跟 SOULS 一样在 v50 加 frost/steel/blood/magma/astral/
+  // rift 六条魂时该同步却没同步——SOULS 那份在 v51.6 补齐过了，这份 ELS 一直停在
+  // v44 最初的 7 个元素，沉默漏测了 6 档，被用户发现"系统里明明有 10+ 种巨龙之力，
+  // 扫描却只跑了 8 档（基线+7）"。现在补齐成与 CONFIG.dragonPower 里真实存在的
+  // 13 个元素键一致（与 SOULS 逐项同名，一一对应）。
+  // 不含 'ancient'（远古之力）：它和这 13 个元素不是同一种"力"——元素之力是
+  // "先手击杀 4 条元素龙即封顶"的一次性满层对照，远古之力是每杀一条远古龙就
+  // 永久再叠一层、层数上不封顶（见 DragonSystem._applyAncientPower 的 maxStacks:999），
+  // 硬套这份工具"钉死在 cap=4"的量法量出来的数字不代表远古之力真实的后期强度，
+  // 量出来反而会误导人以为它就这么弱。远古之力需要单独设计一套"随远古龙击杀数
+  // 演化"的对照方式，留到下一轮专门做，不在这里囫囵塞一档凑数。
+  const ELS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'poison',
+    'frost', 'steel', 'blood', 'magma', 'astral', 'rift'];
   cells.push(['基线·双方无力', () => { FORCE_POWER = null; }, () => { FORCE_POWER = null; }]);
   for (const k of ELS) {
     cells.push([`蓝方满${k}之力`, () => { FORCE_POWER = k; }, () => { FORCE_POWER = null; }]);
