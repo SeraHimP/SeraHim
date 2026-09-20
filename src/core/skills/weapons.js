@@ -649,15 +649,18 @@ export const weapons = {
   // ==================== Q5：聚能塔（临时命名，蓄力单次巨额AOE）====================
   // 用户定稿方向："充能慢、蓄力后打出超高范围伤害"，跟坠星塔（延迟抛物线弹道，
   // 每次都有延迟）不是一回事——这个是"低频、单次巨额AOE"，不是"每次都慢一点"。
-  // 实现直接照抄闪电杖已经验证过的骨架（specialAttack + 自己的 onFrame 充能循环+
-  // 独立结算），差异只在充能时间更长、命中方式从"持续小跳"换成"充满打一发+溅射"：
-  //   · 充能：攻速越快充得越快（与闪电杖同一个 chargeTime/finalAS 公式），没有
-  //     有效目标（掉目标/目标死亡）立即清零——"蓄力被打断就得重新蓄"。
-  //   · 命中：伤害走标准的自适应判定（判成物理用攻击力、判成魔法用法术强度×
-  //     全局折扣系数，与 CombatSystem.performAttack 的 baseDamage 公式同源，只是
-  //     这里是 specialAttack 武器自己算，不经过普攻管线），乘满充倍率，再用
-  //     ctx.combat._applyExplosionAt 铺一圈大半径溅射——复用现有溅射公式（中心
-  //     60%、指数衰减），不新造一套AOE结算。
+  // ==================== 修复：0充能（用户反馈"这个充能方式和攻城车是一样的，需要修复"）====================
+  // 真根因：nova 原来自己在 onFrame 里另起一套 instance.state.charge 累加/衰减逻辑，
+  // 跟攻城车用的 atkmode_charge（entity._charge，由 CombatSystem._tickCharge 对
+  // 全体实体每帧统一维护、经过长期实战验证）是两套完全独立、互不相干的实现——
+  // "看起来是同一种机制"实际上是两份平行代码，其中 nova 自己那份没有
+  // atkmode_charge 那么多轮打磨过的边界处理，才会在真实对局里出现充能推进不动
+  // （0充能）这种 atkmode_charge 那边早就踩过并修掉的问题。
+  // 现在不再自造轮子：nova 装备时顺带装上 atkmode_charge（复用它的充能累计/衰减，
+  // 装备/卸载联动，见下），onFrame 只负责"读有没有充满、充满了就打一炮+溅射"，
+  // 真正的充能推进完全交给 _tickCharge 那份已经跑通的代码——这也是它现在不需要
+  // 自己处理"没有目标怎么衰减"的原因：_tickCharge 在主循环里对每个实体都会跑，
+  // 跟 nova 自己的 onFrame 是否被调用无关。
   weapon_nova: {
     defaultParams: {
       chargeTimeAtAS1: 18,   // 攻速1.0时充满需要多少秒——比闪电杖(12s)更慢，符合"低频"
@@ -672,7 +675,7 @@ export const weapons = {
     category: 'weapon',
     get descTemplate() {
       const p = weapons.weapon_nova.defaultParams;
-      return `唯一被动——聚能炮：持续蓄力（攻速1.0约${p.chargeTimeAtAS1}秒充满，掉目标立即清零），`
+      return `唯一被动——聚能炮：持续蓄力（攻速1.0约${p.chargeTimeAtAS1}秒充满，掉目标按秒衰减），`
         + `充满后打出一次范围${p.radius}的超高伤害爆炸（{val}=满充能伤害），伤害类型随自身自适应判定，`
         + `中心60%、随距离指数衰减。`;
     },
@@ -689,49 +692,46 @@ export const weapons = {
     },
     specialAttack: true,
     effects: [],
+    // 装备聚能炮 = 同时装上 atkmode_charge（真正的充能状态机住在那颗技能背后的
+    // entity._charge 里），nova 自己只带一份"充满了打一炮"的结算逻辑。
+    // atkmode_charge 是 category:'attackmode'，技能栏/技能选择器都已经把这个
+    // 分类过滤掉了（见 UIManager.js/pagesEntity.js 的既有排除逻辑），不会在界面上
+    // 多出一条看着莫名其妙的"充能攻击"技能。
     onEquip: (entityId, instance, ctx) => {
-      instance.state = { charge: 0 };
+      const entity = ctx.entityContainer.get(entityId);
+      const p = instance._params || weapons.weapon_nova.defaultParams;
+      const chargeInst = entity && equipSkill(entity, 'atkmode_charge', ctx, ctx.combat?.skills);
+      if (chargeInst) {
+        chargeInst._params = {
+          chargeSecAt1AS: p.chargeTimeAtAS1 ?? 18,
+          damagePct: 100,   // nova自己按maxMultPct单独结算伤害，这里给中性值，不重复叠乘
+          decayPctPerSec: null,
+          onlyVs: 'any',
+        };
+      }
+      instance.state = { chargeInstId: chargeInst ? chargeInst.id : null };
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (entity && instance.state?.chargeInstId != null) {
+        entity._skillInstances = (entity._skillInstances || []).filter(i => i.id !== instance.state.chargeInstId);
+      }
     },
     onBeforeAttack: (attacker, target, instance, ctx) => {
-      return { skipProjectile: true }; // 命中完全由 onFrame 的充能循环自己结算
+      return { skipProjectile: true }; // 命中完全由 onFrame 的充能判定自己结算
     },
-    // ==================== 修复：真实对局里聚能炮几乎从不开火 ====================
-    // 根因排查（用户反馈"聚能炮不会攻击"）：旧实现把"换了目标"当成"蓄力被打断"，
-    // 一律清零重蓄——这是我自己想当然写的规则，没有对照引擎里已经验证过的
-    // atkmode_charge（攻城车充能同一套）：那边的口径是"只要【这一刻还有某个可打的
-    // 目标】就继续充，没有目标才按秒衰减（不是瞬间清零）"，换目标本身根本不算打断。
-    // 静态对着一个不动的靶子测试时这条差异完全测不出来（目标全程没变过），但真实
-    // 混战里小兵不断死亡/被替换、目标每隔一两秒就会换一次——旧逻辑下蓄力永远蓄不到
-    // 18~22秒的满值，实质上等于"从不开火"。现在改成同一个口径：有目标就充，
-    // 没目标才衰减；开火时打的是【当下】的目标，不需要认得"是不是从头到尾同一个"。
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive) return;
-      if (typeof instance.state?.charge !== 'number') instance.state = { charge: 0 };
-      const st = instance.state;
-      const p = instance._params || weapons.weapon_nova.defaultParams;
-
       if (window.__towersAttackOff) return;
       const targetId = entity.targetId;
       const target = targetId ? ctx.entityContainer.get(targetId) : null;
-      if (!target || !target.alive) {
-        // 没有目标：按秒衰减当前充能（与 atkmode_charge 同一口径），不是瞬间清零，
-        // 免得"目标死了、下一个还没锁上"这种一帧空档就把辛苦攒的充能全部作废。
-        const pct = (CONFIG.tuning?.charge?.decayPctPerSec ?? 40) / 100;
-        const next = st.charge * Math.pow(1 - pct, dt);
-        st.charge = next < 1e-4 ? 0 : next;
-        return;
-      }
+      if (!target || !target.alive) return;   // 没有目标：atkmode_charge 在主循环里自己按秒衰减，这里不用管
       if ((window.gameTime || 0) < (entity._lockUntil || 0)) return;
+      if (!ctx.combat.chargeReady(entity, target)) return;   // 没充满，不开火
 
+      const p = instance._params || weapons.weapon_nova.defaultParams;
       const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId));
-      const finalAS = ctx.attrCalc.calcAttackSpeedOf(atkStats);
-      const chargeTime = Math.max(0.01, p.chargeTimeAtAS1 ?? 18);
-      st.charge = Math.min(1, (st.charge || 0) + (dt * finalAS) / chargeTime);
-
-      if (st.charge < 1) return;
-      st.charge = 0; // 打出去立即归零，重新蓄力
-
       entity._inCombat = true; entity._combatTimer = 4;
       const isAdaptive = atkStats.attackType === 'adaptive';
       const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(atkStats) || 'physical') : (atkStats.attackType || 'physical');
@@ -739,6 +739,9 @@ export const weapons = {
         ? (resolvedType === 'magic' ? (atkStats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (atkStats.attackDamage || 0))
         : (atkStats.attackDamage || 0);
       const novaDamage = baseDamage * ((p.maxMultPct ?? 400) / 100);
+      // 打出去立即归零重新蓄力——等价于标准流水线里 finishAttack 做的事，这里手动
+      // 做是因为 nova 走 performAttackDirect 而不是 performAttack/finishAttack 那条路。
+      entity._charge = 0;
       if (novaDamage > 0 && ctx.combat) {
         // 主目标吃满额伤害（不经过距离衰减），周围的再按 _applyExplosionAt 的距离
         // 衰减公式吃溅射——跟炎魂"中心取目标坐标、排除主目标（主伤害已单独结算）"

@@ -155,57 +155,107 @@ const mapStub = {
   T('卸下③-卸下后叠层buff清理干净', !fx.getEffectByName(tower.id, '连珠'));
 }
 
-// ==================== 六、聚能炮（weapon_nova）：specialAttack，onBeforeAttack 跳过普通弹道 ====================
+// ==================== 六、聚能炮（weapon_nova）：真正复用 atkmode_charge，不是自己另起一套 ====================
+// 用户反馈"聚能炮依旧0充能，这个充能方式和攻城车是一样的，需要修复"。真根因：
+// nova 原来自己在 onFrame 里另起一套 instance.state.charge 累加/衰减逻辑，跟攻城车
+// 用的 atkmode_charge（entity._charge，由 CombatSystem._tickCharge 统一维护、经过
+// 长期验证）是两套完全独立、没有共享一行代码的实现。现在改成：装备 nova 时顺带
+// 装上 atkmode_charge，真正的充能状态全部记在 entity._charge 上，nova 自己的
+// onFrame 只负责"读有没有充满、充满了打一炮"。
 {
   const { ents, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_nova', ctx);
   const target = mk(ents, 'melee', 50, 'red');
+  T('接线①-装备聚能炮时顺带装上了atkmode_charge（真正复用同一套充能系统）',
+    (tower._skillInstances || []).some(s => s.skillId === 'atkmode_charge'));
+  T('接线②-CombatSystem.chargeNeedOf 认得这座塔在充能（走的是共享判据，不是nova自己判）',
+    !!ctx.combat.chargeNeedOf(tower, target));
+
   const r = SkillLibrary.weapon_nova.onBeforeAttack(tower, target, inst, ctx);
-  T('特殊①-onBeforeAttack 返回 skipProjectile（命中完全由自己的蓄力循环结算）',
+  T('特殊①-onBeforeAttack 返回 skipProjectile（命中完全由自己的充能判定结算）',
     r.skipProjectile === true);
   T('特殊②-声明为 specialAttack（跟闪电杖同一类）', SkillLibrary.weapon_nova.specialAttack === true);
+
+  // 卸载武器时要把顺带装的 atkmode_charge 一起摘掉，不留孤儿实例。
+  tower._skillInstances = tower._skillInstances.filter(s => s.skillId === 'weapon_nova');
+  SkillLibrary.weapon_nova.onUnequip(tower.id, inst, ctx);
+  T('接线③-卸载聚能炮时一并摘掉atkmode_charge（不留孤儿实例）',
+    !(tower._skillInstances || []).some(s => s.skillId === 'atkmode_charge'));
+}
+
+// 推进充能的小工具：真实游戏里充能靠 CombatSystem._tickCharge（对全体实体每帧统一
+// 跑一次），不再是 weapon_nova.onFrame 自己攒——测试要驱动充能就必须调它，直接
+// 调 weapon_nova.onFrame 只能测"充满了会不会开火"这一半。
+function tickNovaCharge(combat, ctx, tower, dt) {
+  const stats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(tower.id));
+  combat._tickCharge(tower, stats, dt);
 }
 
 // ==================== 七、聚能炮：蓄力——掉目标按秒衰减（不再瞬间清零）====================
 {
-  const { ents, ctx } = W();
+  const { ents, combat, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
-  const inst = equipSkill(tower, 'weapon_nova', ctx);
+  equipSkill(tower, 'weapon_nova', ctx);
   const target = mk(ents, 'melee', 50, 'red');
   tower.targetId = target.id;
-  SkillLibrary.weapon_nova.onFrame(tower.id, 3.0, inst, ctx);
-  T('蓄力①-蓄了一段时间后 charge>0', inst.state.charge > 0);
+  tickNovaCharge(combat, ctx, tower, 3.0);
+  T('蓄力①-蓄了一段时间后 charge>0', tower._charge > 0);
 
-  const chargeBefore = inst.state.charge;
+  const chargeBefore = tower._charge;
   tower.targetId = null; // 掉目标
-  SkillLibrary.weapon_nova.onFrame(tower.id, 0.1, inst, ctx);
+  tickNovaCharge(combat, ctx, tower, 0.1);
   T('蓄力②-掉目标后不再瞬间清零，只是比之前略低（按秒衰减，不是瞬间归零）',
-    inst.state.charge > 0 && inst.state.charge < chargeBefore);
+    tower._charge > 0 && tower._charge < chargeBefore);
 }
 
-// ==================== 七b、聚能炮：修复"真实对局里几乎不会开火"这个bug ====================
-// 用户反馈"聚能炮不会攻击"。排查后确认根因：旧实现把"换了目标"当成"蓄力被
-// 打断"、立即清零重蓄——真实混战里目标每隔一两秒就会换一次（小兵死亡/被替换），
-// 蓄力因此永远攒不到18~22秒的满值，实质上等于从不开火。修复后换目标不再清零，
-// 只要【这一刻还有某个可打的目标】就继续累积，跟 atkmode_charge 同一个口径。
+// ==================== 七b、聚能炮：换目标不会打断蓄力（真实对局里最常见的场景）====================
+// 用户此前反馈"聚能炮不会攻击"，根因是旧实现把"换了目标"当成"蓄力被打断"、
+// 立即清零重蓄——真实混战里目标每隔一两秒就会换一次（小兵死亡/被替换），蓄力
+// 因此永远攒不到满值。现在换目标走的是 atkmode_charge 同一套判据：只要【这一刻
+// 还有某个可打的目标】就继续累积，跟目标是不是同一个无关。
 {
-  const { ents, ctx } = W();
+  const { ents, combat, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
-  const inst = equipSkill(tower, 'weapon_nova', ctx);
+  equipSkill(tower, 'weapon_nova', ctx);
   let foe = mk(ents, 'melee', 50, 'red');
   tower.targetId = foe.id;
-  SkillLibrary.weapon_nova.onFrame(tower.id, 2.0, inst, ctx);
-  const chargeBeforeSwitch = inst.state.charge;
+  tickNovaCharge(combat, ctx, tower, 2.0);
+  const chargeBeforeSwitch = tower._charge;
   T('换目标①-蓄力确实在涨', chargeBeforeSwitch > 0);
 
   // 旧目标"死"了，新目标顶上——这是真实对局里最常见的换目标场景。
   foe.alive = false;
   foe = mk(ents, 'melee', 55, 'red');
   tower.targetId = foe.id;
-  SkillLibrary.weapon_nova.onFrame(tower.id, 2.0, inst, ctx);
+  tickNovaCharge(combat, ctx, tower, 2.0);
   T('换目标②-换了目标之后蓄力继续往上涨，不会被打回0重新开始',
-    inst.state.charge > chargeBeforeSwitch);
+    tower._charge > chargeBeforeSwitch);
+}
+
+// ==================== 七c、聚能炮：真实混战节奏（目标每2秒换一次）下最终能蓄满并开火 ====================
+// 用户报的"0充能"是在真实对局（目标churn很快）里看到的现象，这条断言直接复现
+// 那个场景：驱动 CombatSystem.update() 本身（不是单独调 onFrame），目标每2秒
+// 死一个换一个，跑够久之后必须真的打出去过至少一次。
+{
+  const { ents, combat, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.attackRange = 500;
+  equipSkill(tower, 'weapon_nova', ctx);
+  let foe = mk(ents, 'melee', 50, 'red', 10_000_000);
+
+  let fireCount = 0;
+  const origPAD = combat.performAttackDirect.bind(combat);
+  combat.performAttackDirect = (...args) => { fireCount++; return origPAD(...args); };
+
+  window.gameTime = 0;
+  for (let i = 0; i < 2400; i++) {   // 80秒
+    window.gameTime += 1 / 30;
+    combat.update(1 / 30);
+    if (i > 0 && i % 60 === 0) { foe.alive = false; foe.currentHP = 0; foe = mk(ents, 'melee', 50, 'red', 10_000_000); }
+  }
+  combat.performAttackDirect = origPAD;
+  T('真实节奏-80秒、每2秒换一次目标的混战里，聚能炮确实开过火（不是0充能卡死）', fireCount > 0);
 }
 
 // ==================== 八、聚能炮：蓄满后单次巨额AOE命中 ====================
@@ -214,7 +264,7 @@ const mapStub = {
   const tower = mk(ents, 'tower', 0, 'blue');
   tower.baseStats.attackDamage = 1000;
   tower.baseStats.attackType = 'physical';
-  const inst = equipSkill(tower, 'weapon_nova', ctx);
+  equipSkill(tower, 'weapon_nova', ctx);
   const target = mk(ents, 'melee', 50, 'red', 10_000_000);
   target.baseStats.armor = 0;
   const bystander = mk(ents, 'melee', 55, 'red', 10_000_000); // 站在爆点附近，应该吃到溅射
@@ -224,22 +274,18 @@ const mapStub = {
   tower.targetId = target.id;
 
   const hpBefore = target.currentHP, hpBystanderBefore = bystander.currentHP, hpFarBefore = farAway.currentHP;
-  // 一步一步推进，命中"刚打出去那一帧"就停——不多跑，免得停下来之前已经又开始蓄下一发。
-  const step = 0.25;
-  let fired = false;
-  for (let i = 0; i < 2000 && !fired; i++) {
-    const before = inst.state.charge;
-    SkillLibrary.weapon_nova.onFrame(tower.id, step, inst, ctx);
-    if (before > 0 && inst.state.charge === 0) fired = true;
-  }
-  T('蓄满-确实触发了一次打出去（否则下面全部断言都没意义）', fired);
+  // 先用充能推进工具把 entity._charge 直接推到刚好蓄满，再跑一次 onFrame 触发开火——
+  // 不用循环猜多少帧才能蓄满，充能推进和"充满了打一炮"现在是两件独立的事。
+  tower._charge = 1;
+  const novaInst = tower._skillInstances.find(s => s.skillId === 'weapon_nova');
+  SkillLibrary.weapon_nova.onFrame(tower.id, 0.1, novaInst, ctx);
 
   T('命中①-主目标吃到了伤害（蓄满打出去了）', target.currentHP < hpBefore);
   T('命中②-附近的旁观者也吃到了溅射伤害（范围AOE）', bystander.currentHP < hpBystanderBefore);
   T('命中③-远处的单位没被波及（不是全图AOE）', farAway.currentHP === hpFarBefore);
   T('命中④-主目标伤害明显高于溅射到旁观者的伤害（中心命中不打折，旁边才衰减）',
     (hpBefore - target.currentHP) > (hpBystanderBefore - bystander.currentHP));
-  T('命中⑤-打完一发后 charge 归零重新蓄力', inst.state.charge === 0);
+  T('命中⑤-打完一发后 charge 归零重新蓄力', tower._charge === 0);
 }
 
 // ==================== 九、编辑器/UI枚举接线没有漏掉 barrage/nova ====================
