@@ -107,17 +107,40 @@ export const CONFIG = {
         followRange: 50,              // 追上目标后停在这个距离内（"贴着"），比 range(180) 小得多
       },
       // Q5：工程兵——修复己方塔（见 LaneMovementSystem._updateEngineer）。
+      // 2026-09-20 大改：用户报"维修速度太快、多个工程兵叠加维修没有代价、
+      // 修塔应该只能从正面修"，四项一起改：
+      //   ① repairPerSec 20→8：大幅削弱基础维修速率（"大幅削弱"是用户原话）。
+      //   ② repairStackPenaltyPct：同一座塔身边每多一个同阵营工程兵在修，
+      //      每人的修复速率再降这么多个百分点（乘法叠加，见下方 _updateEngineer
+      //      里 stackMult 的算法注释）。
+      //   ③ overflowEfficiencyPct 33→10：突破节点封顶部分的效率同步下调。
+      //   ④ permanentDecayPerRepairPct + permanentDecayFloorPct：新增"伤痕"
+      //      机制——用户原话"每座塔每被维修1%生命值（仅为工程师维修的，不包含
+      //      自己恢复的等），其永久维修效率降低1%"。用一个不清零的累计值
+      //      （entity._engineerRepairAccumPct）记录"这座塔一辈子被工程兵修过
+      //      多少个最大生命值百分点"，每多修 1% 永久扣 1% 效率，扣到地板为止。
+      //      "永久"两个字是重点：这个惩罚不随时间/脱战恢复，也不因为换了
+      //      另一个工程兵来修而重置——它挂在塔身上，不是挂在工程兵身上。
       engineer: {
         repairRange: 40,          // 多近才算"到了塔身边"，可以开始修
         searchRange: 900,         // 找需要修复的塔的半径
-        repairPerSec: 20,         // 节点内的正常修复速率（每秒生命值）
-        overflowEfficiencyPct: 33, // 突破"加固城防"节点封顶部分的修复效率（%）
+        repairPerSec: 8,          // 节点内的正常修复速率（每秒生命值）。原20，大幅削弱
+        overflowEfficiencyPct: 10, // 突破"加固城防"节点封顶部分的修复效率（%）。原33
+        repairStackPenaltyPct: 25, // 同塔每多一个正在修的工程兵，每人再降这么多%效率
+        repairStackFloorPct: 10,   // 叠加惩罚的效率地板（%），防止人多到效率被乘成0
+        permanentDecayPerRepairPct: 1, // 塔每被工程兵修复1%最大生命，永久维修效率再降1%
+        permanentDecayFloorPct: 0,     // 永久效率的地板（%），0=修到麻木、彻底修不动
         // 2026-09-19 修复：用户反馈"工程兵目前只会躺在家里"——没有塔可修时不再
         // 原地不动，改为前出驻守本车道当前最前沿的存活塔（外→内→基地/大本营→
         // 水晶枢纽，哪座还活着就去哪座）。这个距离沿用 repairRange 即可（不用
         // 另起一个值），留成独立字段只是让"驻守"和"修理判定"两件事在数值上
         // 解耦，以后想让驻守站得更远一点不用连修理判定范围一起改。
         frontlineStationRange: 40,
+        // 2026-09-20 新增：工程兵只能从塔的"正面"（朝向±90°的半圆）修复，
+        // 复用 towerFacingRad 的静态朝向数据（presentation/towerFacing.js）——
+        // 拿不到朝向（地图没配、或该塔不在任何路上又没有敌方枢纽参照）时不设限，
+        // 不能因为"算不出朝向"就把工程兵锁死在修不了任何塔的状态。
+        frontArcDeg: 180,
       },
     },
     // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。

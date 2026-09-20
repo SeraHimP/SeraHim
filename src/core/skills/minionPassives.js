@@ -865,16 +865,20 @@ const ramPassive = {
     applicableTypes: ['engineer'], color: '#e0a83c',
     get description() {
       const c = CONFIG.gameRules.supportUnits?.engineer || {};
-      const rate = c.repairPerSec ?? 20, overflow = c.overflowEfficiencyPct ?? 33;
+      const rate = c.repairPerSec ?? 8, overflow = c.overflowEfficiencyPct ?? 10;
       const repairR = c.repairRange ?? 40, searchR = c.searchRange ?? 900;
+      const stackPct = c.repairStackPenaltyPct ?? 25, arcDeg = c.frontArcDeg ?? 180;
+      const decayPct = c.permanentDecayPerRepairPct ?? 1;
       return `不推线：就近修复己方受损防御塔（{val}=每秒修复量），可突破"加固城防"节点`
-        + `封顶（效率降到${overflow}%）；${searchR}范围内找塔，${repairR}范围内视为到位；`
+        + `封顶（效率降到${overflow}%）；${searchR}范围内找塔，${repairR}范围内、且站在塔的正面`
+        + `${arcDeg}°范围内才算到位；多名工程兵同修一座塔时每人效率再降${stackPct}%；`
+        + `塔每被工程兵修复1%最大生命，其维修效率永久再降${decayPct}%；`
         + `没有塔需要修时前出驻守本车道当前最前沿的存活塔。`;
     },
     get descTemplate() { return this.description; },
     computeCurrent: (entity, ctx) => {
       const c = CONFIG.gameRules.supportUnits?.engineer || {};
-      return c.repairPerSec ?? 20;
+      return c.repairPerSec ?? 8;
     },
     effects: [],
   },

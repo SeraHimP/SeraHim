@@ -63,7 +63,7 @@ const mapStub = {
   T('走位②-移动方向朝向己方塔（x 增大），不是敌方塔方向', eng.pos.x > before.x);
 }
 
-// ==================== 四、修复：节点内正常效率，节点外33%效率突破封顶 ====================
+// ==================== 四、修复：节点内正常效率，节点外overflow效率突破封顶 ====================
 {
   const { ents, fx, attr, combat, CONFIG } = await world();
   const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
@@ -79,13 +79,19 @@ const mapStub = {
   const gained1 = tower.currentHP - before1;
   const c = CONFIG.gameRules.supportUnits.engineer;
   T('修复①-节点内的部分按正常效率（每秒repairPerSec）回复', Math.abs(gained1 - c.repairPerSec) < 1e-6);
+  T('修复①b-repairPerSec 相比改造前的 20 已大幅削弱（用户原话"大幅削弱"）', c.repairPerSec < 20);
 
+  // 隔离测量overflow效率：清零上一步顺带累积的"永久效率衰减"，不然会跟十四节
+  // 测的那套机制混在一起，这里只想单独看 overflowEfficiencyPct 这一件事。
+  tower._engineerRepairAccumPct = 0;
   tower.currentHP = tower._regenCapHP; // 已经顶到节点
   const before2 = tower.currentHP;
   lms._updateEngineer(eng, 1);
   const gained2 = tower.currentHP - before2;
-  T('修复②-顶到节点后，继续修复按33%效率突破封顶（而不是被封顶挡住不再增长）',
+  T('修复②-顶到节点后，继续修复按overflowEfficiencyPct效率突破封顶（而不是被封顶挡住不再增长）',
     gained2 > 0 && Math.abs(gained2 - c.repairPerSec * (c.overflowEfficiencyPct / 100)) < 1e-6);
+  T('修复②b-overflowEfficiencyPct 相比改造前的 33 已下调（用户要求"变为10%"）',
+    c.overflowEfficiencyPct === 10);
 
   // 其它治疗来源此时应该仍然被节点挡住——工程兵的突破是它自己调用方式的特例，
   // 不是把 applyHeal 本身改成不认 cap 了。
@@ -235,6 +241,215 @@ const mapStub = {
     T('模型②-engineer 不再落回通用步兵模板（顶点数不同）',
       m.geo.attributes.position.count !== generic.geo.attributes.position.count);
   }
+}
+
+// ==================== 十二、多个工程兵同时维修同一座塔：每人效率再降25%（乘法叠加） ====================
+// 用户原话："多个工程兵同时维修一座塔时维修时每个人降低25%维修速度"。
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const c = CONFIG.gameRules.supportUnits.engineer;
+
+  // 单人基线：只有一个工程兵在修，效率应该是满速。
+  const tower1 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower1.currentHP = 5000;
+  const soloEng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 5, y: 0 } }, CONFIG);
+  const before1 = tower1.currentHP;
+  lms._updateEngineer(soloEng, 1);
+  const soloGain = tower1.currentHP - before1;
+  T('叠加①-单人维修时效率满速（等于repairPerSec）', Math.abs(soloGain - c.repairPerSec) < 1e-6);
+
+  // 双人同修：另一个同阵营工程兵也站在这座塔的repairRange内。
+  const tower2 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 1000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower2.currentHP = 5000;
+  const engA = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 1005, y: 0 } }, CONFIG);
+  const engB = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 995, y: 0 } }, CONFIG);
+  const before2 = tower2.currentHP;
+  lms._updateEngineer(engA, 1);
+  const duoGain = tower2.currentHP - before2;
+  const expectedDuo = c.repairPerSec * (1 - c.repairStackPenaltyPct / 100);
+  T('叠加②-两人同修一座塔时，每人效率按 (1-25%) 衰减', Math.abs(duoGain - expectedDuo) < 1e-6);
+  T('叠加③-两人同修比一个人修更慢（不是巧合数值相等）', duoGain < soloGain);
+
+  // 三人同修：乘法叠加，不是线性叠加（(1-25%)^2，不是 1-2*25%）。
+  const tower3 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 2000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower3.currentHP = 5000;
+  const engC = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 2005, y: 0 } }, CONFIG);
+  mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 1995, y: 0 } }, CONFIG);
+  mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 2010, y: 0 } }, CONFIG);
+  const before3 = tower3.currentHP;
+  lms._updateEngineer(engC, 1);
+  const trioGain = tower3.currentHP - before3;
+  const expectedTrio = c.repairPerSec * Math.pow(1 - c.repairStackPenaltyPct / 100, 2);
+  T('叠加④-三人同修按乘法叠加 (1-25%)^2，不是线性相减',
+    Math.abs(trioGain - expectedTrio) < 1e-6);
+
+  // 范围外/敌方的工程兵不该被计入叠加惩罚。
+  const tower4 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 3000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower4.currentHP = 5000;
+  const engD = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 3005, y: 0 } }, CONFIG);
+  mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 3500, y: 0 } }, CONFIG); // 太远，不算
+  mkEntity(ents, 'engineer', { faction: 'red', pos: { x: 3006, y: 0 } }, CONFIG); // 敌方，不算
+  const before4 = tower4.currentHP;
+  lms._updateEngineer(engD, 1);
+  const gain4 = tower4.currentHP - before4;
+  T('叠加⑤-范围外/敌方阵营的工程兵不计入叠加惩罚', Math.abs(gain4 - c.repairPerSec) < 1e-6);
+}
+
+// ==================== 十三、永久维修效率衰减：塔被工程兵修得越多，效率永久越低 ====================
+// 用户原话："每座塔每被维修1%生命值（仅为工程师维修的，不包含自己恢复的等），
+// 其永久维修效率降低1%"。
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const c = CONFIG.gameRules.supportUnits.engineer;
+
+  // ① 累计值随实际修复量正确增长：修复了 maxHP 的 X%，累计值就该增加 X。
+  const tower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  tower.currentHP = 1;
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 5, y: 0 } }, CONFIG);
+  T('永久①-新塔的累计值初始为0（从未被工程兵修过）', !tower._engineerRepairAccumPct);
+  const beforeHP = tower.currentHP;
+  lms._updateEngineer(eng, 1);
+  const healed = tower.currentHP - beforeHP;
+  T('永久②-修复后累计值按 (实际治疗量/最大生命)×100 增长',
+    Math.abs(tower._engineerRepairAccumPct - (healed / 1000) * 100) < 1e-6);
+
+  // ② 累计值直接决定效率：给定累计值，效率按 1 - accumPct×decayPerRepairPct/100 折算。
+  const tower2 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 1000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower2.currentHP = 5000;
+  tower2._engineerRepairAccumPct = 50; // 已经被修过累计50%最大生命
+  const eng2 = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 1005, y: 0 } }, CONFIG);
+  const before2 = tower2.currentHP;
+  lms._updateEngineer(eng2, 1);
+  const gain2 = tower2.currentHP - before2;
+  const expectedMult = 1 - 50 * c.permanentDecayPerRepairPct / 100;
+  T('永久③-累计50%时效率按公式折算（本例=50%）',
+    Math.abs(gain2 - c.repairPerSec * expectedMult) < 1e-6);
+
+  // ③ 效率地板：累计值远超100%时不会变成负数，卡在 permanentDecayFloorPct。
+  const tower3 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 2000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower3.currentHP = 5000;
+  tower3._engineerRepairAccumPct = 500; // 远超100%
+  const eng3 = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 2005, y: 0 } }, CONFIG);
+  const before3 = tower3.currentHP;
+  lms._updateEngineer(eng3, 1);
+  const gain3 = tower3.currentHP - before3;
+  T('永久④-累计值超过100%时效率地板生效，不会变成负数回血',
+    gain3 >= 0 && gain3 <= c.repairPerSec * ((c.permanentDecayFloorPct ?? 0) / 100 + 1e-9));
+
+  // ④ "永久"：不随时间流逝自动恢复（这一步没有工程兵在场，只是流逝时间）。
+  const tower4 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 3000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower4._engineerRepairAccumPct = 30;
+  const snapshot = tower4._engineerRepairAccumPct;
+  fx.update(10); // 流逝10秒，期间没有任何工程兵修复这座塔
+  T('永久⑤-累计值不会随时间自动衰减/恢复（这是"永久"的字面意思）',
+    tower4._engineerRepairAccumPct === snapshot);
+
+  // ⑤ 换一个新的工程兵来修同一座塔，惩罚照样生效——挂在塔身上，不是挂在工程兵身上。
+  const tower5 = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 4000, y: 0 },
+    stats: { maxHP: 10000 } }, CONFIG);
+  tower5.currentHP = 5000;
+  tower5._engineerRepairAccumPct = 80;
+  const brandNewEng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 4005, y: 0 } }, CONFIG);
+  const before5 = tower5.currentHP;
+  lms._updateEngineer(brandNewEng, 1);
+  const gain5 = tower5.currentHP - before5;
+  const expectedMult5 = Math.max((c.permanentDecayFloorPct ?? 0) / 100, 1 - 80 * c.permanentDecayPerRepairPct / 100);
+  T('永久⑥-换一个全新的工程兵来修，效率依旧按塔身上的累计值折算（不是按工程兵个体清零）',
+    Math.abs(gain5 - c.repairPerSec * expectedMult5) < 1e-6);
+}
+
+// ==================== 十四、只能从塔的正面（半圆）修复 ====================
+// 用户原话："工程兵只能在塔的前方修复（半圆）"。
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  // 这张地图带 buildings，让 towerFacingRad 能真正算出一个朝向（默认的 mapStub
+  // 没有 buildings，facing 恒为 null，测不出正面限制——这里必须换一张。
+  // 塔在原点、没有挂在任何 lane 上，红方水晶枢纽摆在 +x 方向很远处，
+  // 于是 towerFacingRad 走"没有兵线→朝敌方主基地"这条规则，算出朝向=+x（π/2）。
+  const mapStubFacing = {
+    active: true,
+    currentMap: {
+      lanes: [{ id: 'mid', waypoints: [{ x: 0, y: 0 }, { x: 900, y: 0 }] }],
+      buildings: [{ tier: 'nexus_main', faction: 'red', pos: { x: 100000, y: 0 } }],
+    },
+    getDefenseZone: () => null,
+    isWalkable: () => true,
+    constrainToWalkable: (p) => p,
+  };
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStubFacing);
+
+  // 正面（+x一侧）：在 repairRange 内，应该正常修复。
+  const towerFront = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  towerFront.currentHP = 400;
+  const engFront = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 30, y: 0 } }, CONFIG);
+  const beforeFront = towerFront.currentHP;
+  lms._updateEngineer(engFront, 1);
+  T('正面①-站在塔的正面、repairRange内，正常修复', towerFront.currentHP > beforeFront);
+
+  // 背面（-x一侧）：同样在 repairRange 内，但在塔的背面，不该修复，应该改为绕去正面。
+  const towerBack = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 1000, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  towerBack.currentHP = 400;
+  const engBack = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 970, y: 0 } }, CONFIG);
+  const beforeBackPos = { x: engBack.pos.x, y: engBack.pos.y };
+  const beforeBackHP = towerBack.currentHP;
+  lms._updateEngineer(engBack, 1);
+  T('正面②-站在塔的背面时不修复（即使距离在repairRange内）', towerBack.currentHP === beforeBackHP);
+  T('正面③-背面时改为朝正面绕过去，不是原地卡住不动',
+    engBack.pos.x !== beforeBackPos.x || engBack.pos.y !== beforeBackPos.y);
+
+  // 拿不到朝向数据时（地图没有buildings）不设限——沿用最早的 mapStub。
+  const lmsNoFacing = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const towerNoFacing = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 2000, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  towerNoFacing.currentHP = 400;
+  const engBehindNoFacing = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 1970, y: 0 } }, CONFIG);
+  const beforeNoFacing = towerNoFacing.currentHP;
+  lmsNoFacing._updateEngineer(engBehindNoFacing, 1);
+  T('正面④-算不出朝向时不设限，任意方向都能修复', towerNoFacing.currentHP > beforeNoFacing);
+}
+
+// ==================== 十五、"正在维修"状态：塔和工程兵都要挂，停修后自动脱落 ====================
+// 用户原话："维修时塔和工程兵都要新增状态显示正在维修"。
+{
+  const { ents, fx, attr, combat, CONFIG } = await world();
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const lms = new LaneMovementSystem(ents, fx, attr, combat, mapStub);
+  const tower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 },
+    stats: { maxHP: 1000 } }, CONFIG);
+  tower.currentHP = 400;
+  const eng = mkEntity(ents, 'engineer', { faction: 'blue', pos: { x: 5, y: 0 } }, CONFIG);
+
+  lms._updateEngineer(eng, 1);
+  const towerHasStatus = fx.getEffects(tower.id).some(e => e.blueprint.name === '正在维修');
+  const engHasStatus = fx.getEffects(eng.id).some(e => e.blueprint.name === '正在维修');
+  T('状态①-正在修复时塔挂上"正在维修"状态', towerHasStatus);
+  T('状态②-正在修复时工程兵自己也挂上"正在维修"状态', engHasStatus);
+
+  const eff = fx.getEffects(tower.id).find(e => e.blueprint.name === '正在维修');
+  T('状态③-"正在维修"是纯展示效果，不进属性合成管线（kind:display）',
+    !!eff && eff.blueprint.kind === 'display');
+
+  // 停止修复（工程兵离开，不再调用 _updateEngineer 给它续上）后，光环宽限期一过就自动脱落。
+  fx.update(0.6);
+  const towerStillHas = fx.getEffects(tower.id).some(e => e.blueprint.name === '正在维修');
+  const engStillHas = fx.getEffects(eng.id).some(e => e.blueprint.name === '正在维修');
+  T('状态④-停止修复超过宽限期后，塔身上的"正在维修"自动脱落', !towerStillHas);
+  T('状态⑤-停止修复超过宽限期后，工程兵身上的"正在维修"自动脱落', !engStillHas);
 }
 
 done();

@@ -1,10 +1,11 @@
 import { canTarget, isStructureProtected, enemyUnitsInRadius } from './FactionSystem.js';
 import { AISystem } from './AISystem.js';
 import { hasRamCannon } from './CombatSystem.js';
-import { canFire } from './FacingSystem.js';
+import { canFire, wrapPi, angleTo } from './FacingSystem.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
 import { lookaheadOnPolyline, projectOntoPolyline } from '../data/mapValidate.js';
 import { applyHeal } from '../core/healing.js';
+import { towerFacingRad } from '../presentation/towerFacing.js';
 
 /**
  * LaneMovementSystem.js
@@ -333,14 +334,44 @@ export class LaneMovementSystem {
    *
    * 修复超出"加固城防"节点封顶的部分：节点内的量走标准 applyHeal（吃封顶，
    * 与其它治疗来源一致），超出节点的量单独按 overflowEfficiencyPct 效率结算、
-   * 不传 capHP——这正是用户要的"以33%效率突破节点"，不碰治疗管线本身。
+   * 不传 capHP。
+   *
+   * 2026-09-20 四项加强（用户原话："大幅削弱工程兵的维修速度，并且多个工程兵
+   * 同时维修一座塔时维修时每个人降低25%维修速度，超过生命节点的维修速率变为
+   * 10%，维修时塔和工程兵都要新增状态显示正在维修，并且工程兵只能在塔的前方
+   * 修复（半圆）"）：
+   *   ① 基础 repairPerSec 直接在 CONFIG 里砍（20→8），这里照旧读配置。
+   *   ② 叠加惩罚：数同阵营、此刻也真的在有效修复这座塔（同样满足"进
+   *      repairRange + 站在正面"）的其它工程兵数量 coRepairers，效率按
+   *      (1-25%)^coRepairers 乘法衰减——乘法永远落在 (地板, 1] 区间，不会像
+   *      线性减那样人多了直接减成负数，repairStackFloorPct 兜个最终地板。
+   *   ③ overflowEfficiencyPct 同样在 CONFIG 里改（33→10），这里照旧读配置。
+   *   ④ 正面半圆：复用 towerFacingRad（presentation/towerFacing.js）的静态
+   *      朝向。拿不到朝向（地图没配/塔不在任何路上又没有敌方枢纽参照）时
+   *      inFront 恒真——不能因为"算不出朝向"就把工程兵锁死修不了任何塔。
+   *      不在正面时不会硬贴上去修，而是把移动目标从"塔身边"换成"塔正面、
+   *      repairRange 内侧的一点"，工程兵自己绕过去，不用另写寻路。
+   *   ⑤ 永久效率：CONFIG 里 permanentDecayPerRepairPct 的注释有完整说明。
+   *      累计值挂在 target._engineerRepairAccumPct 上（只增不减、只被工程兵
+   *      这条路径写入——塔自身生命回复/其它治疗来源不影响它），每多修
+   *      1%最大生命，往后所有工程兵对这座塔的效率永久再降1%，不随脱战/
+   *      换人恢复。
+   *   ⑥ "正在维修"展示状态：给塔和工程兵各挂一份 kind:'display' 的纯展示
+   *      效果（不进属性合成管线），走 aura 机制——这一帧真的在修就重新
+   *      apply 一次，不满足（跑了/切目标/塔修满了）就不再重新 apply，由
+   *      EffectRegistry 的光环宽限期自动脱落，不需要手动 remove。
    */
   _updateEngineer(minion, dt) {
     const c = CONFIG.gameRules.supportUnits?.engineer || {};
     const repairRange = c.repairRange ?? 40;
     const searchRange = c.searchRange ?? 900;
-    const repairPerSec = c.repairPerSec ?? 20;
-    const overflowEff = (c.overflowEfficiencyPct ?? 33) / 100;
+    const repairPerSec = c.repairPerSec ?? 8;
+    const overflowEff = (c.overflowEfficiencyPct ?? 10) / 100;
+    const stackPenaltyPct = c.repairStackPenaltyPct ?? 25;
+    const stackFloor = (c.repairStackFloorPct ?? 10) / 100;
+    const decayPerRepairPct = c.permanentDecayPerRepairPct ?? 1;
+    const decayFloor = (c.permanentDecayFloorPct ?? 0) / 100;
+    const frontArcRad = ((c.frontArcDeg ?? 180) * Math.PI / 180) / 2;
     const faction = minion._mapFaction || minion.faction;
 
     let target = null, bestD = Infinity;
@@ -378,35 +409,84 @@ export class LaneMovementSystem {
 
     const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > repairRange) {
+
+    // 正面判定：拿不到朝向数据时 facing=null，inFront 恒真、不设限。
+    const facing = towerFacingRad(target, this.mapSystem.currentMap);
+    let inFront = true;
+    if (facing != null && dist > 0) {
+      inFront = Math.abs(wrapPi(angleTo(target.pos, minion.pos) - facing)) <= frontArcRad;
+    }
+
+    if (dist > repairRange || !inFront) {
       const stats = this.attrCalc.calc(minion, this.effects.getEffects(minion.id));
       const speed = stats.moveSpeed || 0;
-      if (speed > 0 && dist > 0) {
-        minion.pos.x += (dx / dist) * speed * dt;
-        minion.pos.y += (dy / dist) * speed * dt;
+      if (speed <= 0) return;
+      let mx = dx, my = dy, mdist = dist;
+      if (!inFront && facing != null) {
+        // 不在正面：改去塔正面、repairRange 内侧的一点，绕过去而不是硬冲塔身。
+        const fx = target.pos.x + Math.sin(facing) * repairRange * 0.7;
+        const fy = target.pos.y + Math.cos(facing) * repairRange * 0.7;
+        mx = fx - minion.pos.x; my = fy - minion.pos.y;
+        mdist = Math.hypot(mx, my);
+      }
+      if (mdist > 0) {
+        minion.pos.x += (mx / mdist) * speed * dt;
+        minion.pos.y += (my / mdist) * speed * dt;
       }
       return;
     }
 
-    // 到了目标塔身边，开始修。
+    // 到了塔的正面身边，开始修。
+    // ---- 叠加惩罚：数同阵营、此刻也在有效修复同一座塔的其它工程兵 ----
+    let coRepairers = 0;
+    for (const other of this.entities.getAllMinions(true)) {
+      if (other === minion || other.type !== 'engineer' || !other.alive) continue;
+      if ((other._mapFaction || other.faction) !== faction) continue;
+      const od = Math.hypot(target.pos.x - other.pos.x, target.pos.y - other.pos.y);
+      if (od > repairRange) continue;
+      if (facing != null && od > 0 && Math.abs(wrapPi(angleTo(target.pos, other.pos) - facing)) > frontArcRad) continue;
+      coRepairers++;
+    }
+    const stackMult = Math.max(stackFloor, Math.pow(1 - stackPenaltyPct / 100, coRepairers));
+
+    // ---- 永久效率：这座塔这辈子被工程兵修过多少%最大生命，就永久扣多少%效率 ----
+    const accumPct = target._engineerRepairAccumPct || 0;
+    const permMult = Math.max(decayFloor, 1 - accumPct * decayPerRepairPct / 100);
+
+    const effMult = stackMult * permMult;
     const maxHP = target.baseStats?.maxHP ?? target.currentHP;
     const capHP = target._regenCapHP;
-    const amount = repairPerSec * dt;
+    const amount = repairPerSec * effMult * dt;
+    let healed = 0;
     if (capHP == null || capHP >= maxHP) {
-      applyHeal(target, amount, 1, maxHP); // 没有节点封顶（或封顶已经等于满血）：全额正常效率
-      return;
+      healed = applyHeal(target, amount, 1, maxHP); // 没有节点封顶（或封顶已经等于满血）：全额正常效率
+    } else if (target.currentHP >= capHP) {
+      healed = applyHeal(target, amount * overflowEff, 1, maxHP); // 已经顶到节点：剩下全按overflow效率
+    } else {
+      // 血量在节点以下：先按正常效率补到节点，补满节点后本帧剩余部分接着按overflow续上，
+      // 不是"这一帧只能二选一"——否则卡在节点附近时每帧都要多等一帧才能继续。
+      const roomToCap = capHP - target.currentHP;
+      const normalAmt = Math.min(amount, roomToCap);
+      healed = applyHeal(target, normalAmt, 1, maxHP, capHP);
+      const leftover = amount - normalAmt;
+      if (leftover > 0) healed += applyHeal(target, leftover * overflowEff, 1, maxHP);
     }
-    if (target.currentHP >= capHP) {
-      applyHeal(target, amount * overflowEff, 1, maxHP); // 已经顶到节点：剩下全按33%效率
-      return;
+
+    if (healed > 0 && maxHP > 0) {
+      target._engineerRepairAccumPct = accumPct + (healed / maxHP) * 100;
     }
-    // 血量在节点以下：先按正常效率补到节点，补满节点后本帧剩余部分接着按33%续上，
-    // 不是"这一帧只能二选一"——否则卡在节点附近时每帧都要多等一帧才能继续。
-    const roomToCap = capHP - target.currentHP;
-    const normalAmt = Math.min(amount, roomToCap);
-    applyHeal(target, normalAmt, 1, maxHP, capHP);
-    const leftover = amount - normalAmt;
-    if (leftover > 0) applyHeal(target, leftover * overflowEff, 1, maxHP);
+
+    // ---- "正在维修"展示状态：塔和工程兵各挂一份，纯展示不进属性合成管线 ----
+    this.effects.apply(target.id, {
+      name: '正在维修', icon: '🔧', kind: 'display',
+      aura: true, auraGrace: 0.5, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+      description: '工程兵正在维修中',
+    }, 'engineer_repairing_target');
+    this.effects.apply(minion.id, {
+      name: '正在维修', icon: '🔧', kind: 'display',
+      aura: true, auraGrace: 0.5, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+      description: '正在维修友方建筑',
+    }, 'engineer_repairing_self');
   }
 
   /**
