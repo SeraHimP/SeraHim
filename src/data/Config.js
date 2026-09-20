@@ -2520,10 +2520,16 @@ export const MINION_SIZES = {
   heavy: 13,   // Q5：重装车——坦克体型，比普通小兵大一圈，但不抢攻城车/超级兵的视觉体量
   healer: 11,  // Q5：治疗兵——与图腾兵同量级的支援型体型
   engineer: 11, // Q5：工程兵——同上，支援型体型
-  summoner: 11, // Q5：唤灵兵——同上，支援型体型（幻灵是缩放后的近战兵，不需要单独尺寸项）
+  summoner: 11, // Q5：唤灵兵——同上，支援型体型
   // 牧灵法阵幻兽——渲染专用伪类型（entity.type 仍是 melee），比普通近战兵小一圈，
   // 呼应"幻兽"体型定位，见 SpriteFactory.minionRenderType 头注。
   shepherd_pet: 9,
+  // 2026-09-20：唤灵兵召唤的幻灵——原来直接落回近战兵通用模板（entity.type
+  // 仍是 melee 但没有专属造型），用户反馈"这个模型改为召唤物的模型，用颜色
+  // 区分"，复用同一份"召唤物"造型（与牧灵法阵幻兽同一个 builder，见
+  // UnitMeshFactory.MINION_BUILDERS.summon_spirit），尺寸也直接跟随
+  // shepherd_pet——用户只要求"用颜色区分"，没要求体型也分开。
+  summon_spirit: 9,
 };
 
 /**

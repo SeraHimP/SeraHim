@@ -1277,6 +1277,12 @@ const MINION_BUILDERS = {
   },
 };
 
+// 2026-09-20：唤灵兵的幻灵——用户定稿"这个模型改为召唤物的模型，用颜色区分"，
+// 直接复用上面牧灵法阵幻兽（shepherd_pet）同一个 builder，不重新画一份几何。
+// 两者靠 SpriteFactory.MINION_STYLE 里不同的 color 区分（青 vs 浅紫），造型本身
+// 就是同一个"悬浮晶簇"。
+MINION_BUILDERS.summon_spirit = MINION_BUILDERS.shepherd_pet;
+
 // ==================== 谁要转（v45 改为"除塔之外全都转"）====================
 // 这里原来是一张白名单（melee/ranged/siege/ram/super/warlock/corrupt），
 // 理由是"图腾这类轴对称造型转了也看不出来"。那个理由在 v45 之前成立，现在不成立了：

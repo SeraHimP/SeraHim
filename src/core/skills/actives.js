@@ -340,14 +340,34 @@ export const actives = {
 
   // ==================== Q5：唤灵兵——法力攒满，脚下召唤一只幻灵 ====================
   // 用户定稿："法力攒满时在自己脚下召唤一只幻灵——一个真正的小型战斗单位（复用
-  // 现有小兵创建管线，不是特效摆设），存在12~15秒后自动消失（或提前被打死）。
-  // 血量/攻击力取偏低量级（近战兵的60~70%），不成长；同时最多存在2只；幻灵不计入
-  // 屠戮/龙魂奖励/出兵编排统计口径。"
+  // 现有小兵创建管线，不是特效摆设）……血量/攻击力取偏低量级（近战兵的60~70%），
+  // 不成长；同时最多存在2只；幻灵不计入屠戮/龙魂奖励/出兵编排统计口径。"
+  //
+  // 2026-09-20 追加两处bug修复（用户原话）：
+  //   ①"召唤出来的唤灵不移动"——根因：LaneMovementSystem 的小兵过滤条件是
+  //     `_laneId || _petOwnerId` 二选一，幻灵两个都没有，直接被整套移动/索敌AI
+  //     排除在外，变成一根杵在原地的木桩。幻灵不是牧灵法阵那种"拴绳宠物"（不该
+  //     走 _updatePet 的跟随/待机逻辑），它是"一个真正的战斗单位"——所以补的是
+  //     `_laneId`（继承施法者自己的），让它并入普通小兵那一整套索敌/追击/推线AI，
+  //     不是新写一套。
+  //   ②"这个唤灵兵的每秒减少生命值，归零后就死了，不再强制设定到多少秒后死"——
+  //     原来的 _summonExpireAt 是"活满 ttlSec 秒无条件强制清零"，用户要求去掉这个
+  //     硬计时器，改成【固有衰减】：每秒扣固定比例的最大生命，血量到 0 才死，
+  //     这样"这一局它扛了多少伤害"会真实影响它能撑多久，而不是不管打没打都是
+  //     同一个数字。用百分比（而不是固定量）扣，是因为幻灵的 maxHP 随波次成长
+  //     （继承近战兵的成长曲线），固定量扣血会导致早期幻灵秒死、后期幻灵基本
+  //     打不干——百分比衰减能让"不挨打能撑多久"这件事在整局里大致恒定。
+  //     drainPctPerSec=7（≈14.3秒衰减完，贴近原来 13.5 秒的量级，只是从"强制
+  //     计时器"换成了"血量说了算"，不是要顺带改变幻灵的大致寿命长短）。
+  //     真正的扣血/死亡判定在 CombatSystem.update 里（与旧的 _summonExpireAt
+  //     判定同一个位置，见那边的头注），这里只在生成时把 drainPctPerSec 打到
+  //     幻灵身上。
   //
   // 实现选择：幻灵直接是一个 type:'melee' 实体，只是用 createMinion 的 hpScale/
-  // attrScale 参数缩放成 65%、不传 growthFlat（不成长），额外打三个标记：
-  // _isSummoned（供 EntropySystem 等统计口径排除，见该文件头注）、_summonExpireAt
-  // （到点强制阵亡，见 CombatSystem.update 最前面那段）、_summonVisual（渲染层按
+  // attrScale 参数缩放成 65%、不传 growthFlat（不成长），额外打几个标记：
+  // _isSummoned（供 EntropySystem 等统计口径排除，见该文件头注；也是渲染层
+  // minionRenderType() 路由到专属"召唤物"造型的判据，见 SpriteFactory.js）、
+  // _summonDrainPctPerSec（上面②描述的衰减速率）、_summonVisual（渲染层按
   // 这个标记做半透明+粒子处理）。不新建一个 'phantom' 兵种类型——那意味着要把
   // 编辑器/渲染层那一整套枚举清单再抄一遍（heavy/healer/engineer 每加一个都要
   // 抄七八处），而幻灵的定位就是"一个缩水的近战兵"，复用现有类型完全够用，也更
@@ -358,11 +378,12 @@ export const actives = {
   active_summoner_call: {
     id: 'active_summoner_call', name: '唤灵', icon: '👻', color: '#8e7cc3', category: 'active',
     applicableTypes: ['summoner'],
-    defaultParams: { hpScalePct: 65, ttlSec: 13.5, maxAlive: 2 },
+    defaultParams: { hpScalePct: 65, drainPctPerSec: 7, maxAlive: 2 },
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后在自己脚下召唤一只幻灵（近战兵${p.hpScalePct}%属性，不成长），`
-        + `存在${p.ttlSec}秒后自动消失（或提前被打死）；同时最多存在${p.maxAlive}只。`;
+      return `法力攒满后在自己脚下召唤一只幻灵（近战兵${p.hpScalePct}%属性，不成长，`
+        + `随施法者一起索敌/推线），每秒衰减${p.drainPctPerSec}%最大生命，`
+        + `衰减或战斗归零后死亡；同时最多存在${p.maxAlive}只。`;
     },
     effects: [],
     onCast: (entityId, instance, ctx) => {
@@ -384,8 +405,9 @@ export const actives = {
       const spirit = ctx.combat.createMinion('melee', self.pos.x, self.pos.y, faction, scale, scale);
       if (!spirit) return false;
       spirit._isSummoned = true;
-      spirit._summonExpireAt = (window.gameTime || 0) + (p.ttlSec ?? 13.5);
+      spirit._summonDrainPctPerSec = p.drainPctPerSec ?? 7;
       spirit._summonVisual = true;
+      spirit._laneId = self._laneId; // 并入施法者自己的兵线AI（索敌/追击/推线），不再是死站桩
       self._summonedIds.push(spirit.id);
       return true;
     },

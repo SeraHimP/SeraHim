@@ -196,13 +196,22 @@ export class CombatSystem {
 
     // ---- 更新冷却与战斗计时器 ----
     for (const entity of this.entities.getAll(true)) {
-      // Q5：唤灵兵召唤的幻灵到点消失——不是被打死的，不走伤害管线，直接在这里
-      // 判定存在时长到期。放在最前面，免得下面那一串生命恢复/护盾结算还在给一个
-      // 这一帧就该消失的单位加血/回护盾，逻辑顺序上没有意义。
-      if (entity._isSummoned && entity._summonExpireAt != null && now >= entity._summonExpireAt) {
-        entity.currentHP = 0; entity.alive = false;
-        this.eventBus?.emit?.('entity:death', { entityId: entity.id });
-        continue;
+      // 2026-09-20：唤灵兵召唤的幻灵不再是"到点强制消失"（原 _summonExpireAt
+      // 计时器），改成【固有衰减】——用户原话："这个唤灵兵的每秒减少生命值，
+      // 归零后就死了，不再强制设定到多少秒后死"。这份扣血不是战斗伤害（没有
+      // 攻击者），故意不走 performAttackDirect/护盾减伤那一整套——否则护盾会把
+      // 衰减吃掉，"衰减"就失去意义了，直接扣 currentHP。归零后的处理与下面
+      // "主人已死的孤儿幻兽"用同一个写法（currentHP=0+alive=false+emit
+      // entity:death），放在最前面，免得下面那一串生命恢复/护盾结算还在给一个
+      // 这一帧就该死亡的单位加血/回护盾，逻辑顺序上没有意义。
+      if (entity._isSummoned && entity._summonDrainPctPerSec > 0 && entity.alive) {
+        const maxHP = entity.baseStats?.maxHP ?? entity.currentHP;
+        entity.currentHP -= maxHP * (entity._summonDrainPctPerSec / 100) * dt;
+        if (entity.currentHP <= 0) {
+          entity.currentHP = 0; entity.alive = false;
+          this.eventBus?.emit?.('entity:death', { entityId: entity.id });
+          continue;
+        }
       }
       // Q5：牧灵塔幻兽——主人（塔）已经不在了（拆塔/换武器都会走到这里），幻兽的
       // 拴绳和治疗都无处可依，同样按"非战斗消失"处理，不留一个永远站着不动的孤儿单位。

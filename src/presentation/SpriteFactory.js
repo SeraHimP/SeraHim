@@ -46,18 +46,27 @@ export const MINION_STYLE = {
   // 牧灵法阵幻兽——灵体青，与唤灵兵的灵体紫区分开（两者都是"灵"但来源不同）。
   // 注意：这是渲染专用的伪类型，entity.type 本身仍是 'melee'，见 minionRenderType()。
   shepherd_pet: { color: '#6fd6c8', icon: '🔮', size: MINION_SIZES.shepherd_pet },
+  // 2026-09-20：唤灵兵的幻灵——用户反馈"这个模型改为召唤物的模型，用颜色区分"，
+  // 复用牧灵法阵幻兽同一份"召唤物"造型（UnitMeshFactory.MINION_BUILDERS.summon_spirit
+  // 直接是 shepherd_pet 的别名，同一个几何体），只用颜色把两者分开：浅紫呼应
+  // 唤灵兵自己的灵体紫（summoner: '#8e7cc3'），但调淡一档，不会跟施法者本人撞色，
+  // 也不会跟牧灵法阵幻兽的青色混淆。
+  summon_spirit: { color: '#c9a6f0', icon: '👻', size: MINION_SIZES.summon_spirit },
 };
 
 /**
  * 渲染层专用：把实体路由到用来选样式/造型的"伪类型"，与 entity.type（战斗/属性模板
- * 用的真类型）分开。目前唯一的用例是牧灵法阵幻兽——它的 entity.type 必须留着
- * 'melee'（复用近战兵的属性模板/索敌/移动逻辑），但用户明确要求它不能长得像小兵，
- * 所以造型另起一份 'shepherd_pet'。UnitLayer._visualOf 与 UnitInfo.minionSize
- * 必须都走这个函数，不要在两处各自判 `_petOwnerId`——那是同一条规则的两份拷贝，
- * 迟早会漂移（其中一处忘了同步改）。
+ * 用的真类型）分开。两个用例都是"entity.type 必须留着 'melee'（复用近战兵的属性
+ * 模板/索敌/移动逻辑），但外观不能长得像小兵"：牧灵法阵幻兽（_petOwnerId）与
+ * 唤灵兵的幻灵（_isSummoned 且没有 _petOwnerId——先判 _petOwnerId 是因为牧灵幻兽
+ * 同时也挂 _isSummoned，顺序反了会被幻灵那条分支先接住）。UnitLayer._visualOf
+ * 与 UnitInfo.minionSize 必须都走这个函数，不要在两处各自判标记字段——那是同一条
+ * 规则的两份拷贝，迟早会漂移（其中一处忘了同步改）。
  */
 export function minionRenderType(e) {
-  return e._petOwnerId ? 'shepherd_pet' : e.type;
+  if (e._petOwnerId) return 'shepherd_pet';
+  if (e._isSummoned) return 'summon_spirit';
+  return e.type;
 }
 
 /**
