@@ -1,6 +1,5 @@
 import { CONFIG } from '../../data/Config.js';
 import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
-import { applyHeal } from '../healing.js';
 import { equipSkill } from '../skillParams.js';
 
 // ==================== 闪电杖的数值全部搬进 defaultParams（软编码）====================
@@ -10,6 +9,25 @@ import { equipSkill } from '../skillParams.js';
 //
 // 充能时间保持 12s 基准不变（用户定稿："充能时间不要改，就用现在的"）：
 // 充能速度本就与攻速挂钩，攻速 4.0 的枢纽塔约 3 秒充满，再缩短基准等于取消充能。
+
+// ==================== 牧灵法阵幻兽：可继承的属性字段清单 ====================
+// 用户定稿"牧灵本身没有任何属性"——幻兽不该有一份独立于塔的作战数值基线，
+// 全部按 statPct 从塔的实时属性（含塔身上任何效果/龙魂加成）继承。覆盖面
+// 有意扩到塔模板里全部"作战相关"字段（不止最初的 HP/AD/AP/双抗5项），塔默认
+// 是0的（穿透/生命偷取/伤害放大等大多数塔默认都是0）幻兽自然也是0，塔如果
+// 吃到龙魂/效果把这些提上去了，幻兽按同一比例分到——不是重新挑一份"看起来
+// 重要"的子集，是"塔有的，幻兽都按比例有"。
+// moveSpeed/attackRange/baseAttackSpeed 等"能不能动/怎么打"的机制性字段不在
+// 这份清单里：塔本身是静止建筑（moveSpeed=0），幻兽如果也继承0就完全动不了，
+// 这些字段沿用 createMinion('melee', ...) 给的近战兵基线，不受这条铁律约束
+// （这条铁律管的是"作战数值强弱"，不是"这个兵种怎么行动"）。
+const PET_INHERITED_STAT_FIELDS = [
+  'maxHP', 'healthRegen', 'attackDamage', 'abilityPower', 'armor', 'magicResist',
+  'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
+  'damageReduction', 'damageBlock', 'onHitDamage', 'onHitPercentDamage',
+  'damageConvertPct', 'lifeStealPct', 'damageAmpPct', 'allStatsPct', 'coreStatsPct',
+  'healShieldPowerPct', 'critChance', 'critDamagePct',
+];
 
 export const weapons = {
   weapon_piercing: {
@@ -778,14 +796,37 @@ export const weapons = {
     //   每次死亡在这个基础上复利再多等5%"（15s → 15.75s → 16.54s → …）。
     // state 形状也跟着从单只幻兽（petId）换成一个数组（petIds，最多 maxAlive 只），
     // 逻辑照抄唤灵兵"_summonedIds 数组+清点存活数"的既有写法，不是重新发明一套。
+    //
+    // 2026-09-20 二次调整（三条bug/机制反馈一起处理）：
+    //   ①幻兽出生只有几百血——排查到根因是"生成时用 melee 模板的小体量 currentHP，
+    //     随后 baseStats.maxHP 才被改成塔的量级，但 currentHP 从没跟着补涨"，出生
+    //     瞬间血条显示的是"几百/几千"这种明显不对称的样子。
+    //   ②回血机制改掉：不再是塔按固定 healPerSec 主动"推"血给幻兽，而是幻兽的
+    //     healthRegen 属性本身就是从塔的 healthRegen 按 statPct 继承来的——跟其它
+    //     属性走同一条路，"共享塔的属性"这句话现在对回血也成立，幻兽自己不再有
+    //     任何独立于塔的回血能力（塔没有回血，幻兽也没有）。healthRegen 的实际
+    //     结算复用 CombatSystem.update 里对**所有实体**都跑的那段通用生命恢复
+    //     tick（读 healPowerOf(stats) 即 healShieldPowerPct），不用再在这里手写
+    //     applyHeal 调用。
+    //   ③幻兽脱离战斗后，单体获得+100%治疗与护盾强度（叠在①继承来的那份之上），
+    //     判据跟"钢铁烈阳护盾"同一套 lastDamageTime+shieldRegenDelay，走光环机制
+    //     （aura:true，停止满足条件后由 EffectRegistry 的光环宽限期自动脱落）。
+    //   ④statPct 80%→60%，且"属性"覆盖面从原来手选的5项（HP/AD/AP/双抗）扩到
+    //     PET_INHERITED_STAT_FIELDS 列出的全部作战相关属性——用户原话"牧灵本身
+    //     没有任何属性"，塔没有的（穿透/生命偷取/伤害放大等大多数塔默认都是0）
+    //     幻兽自然也是0，塔如果吃到龙魂/效果把这些提上去了，幻兽也按比例分到。
+    //   ⑤幻兽不再复用近战兵的默认主动/被动（本能防御等）——createMinion 按
+    //     type:'melee' 自动挂的那两个技能在生成后立刻摘掉，只留幻兽自己的
+    //     passive_pet_spirit_guard（独立主动/被动的重新设计用户明确要自己先想，
+    //     这次先只摘掉不该有的，不新增）。
     defaultParams: {
-      statPct: 80,           // 幻兽获得塔多少百分比的属性（生命/攻击/双抗，法强同理）
+      statPct: 60,            // 幻兽继承塔多少百分比的属性（覆盖面见 PET_INHERITED_STAT_FIELDS）
       leashRadius: 260,       // 拴绳半径——幻兽索敌/追击都不会超出这个范围
-      healPerSec: 40,         // 塔给每只幻兽的治疗速率（幻兽存活且未满血时持续生效，两只互不分薄）
       maxAlive: 2,            // 同时最多几只幻兽
       baseRespawnSec: 15,     // 每次复活的基础等待时间
       respawnGrowthPct: 5,    // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
       idleClearance: 40,      // 待机点与塔边缘之间留的空隙（不含塔本身半径），修"幻兽模型和塔重叠"用
+      outOfCombatHealPowerPct: 100,   // 脱战后额外获得的治疗与护盾强度（叠在继承来的那份之上）
     },
     id: 'weapon_shepherd',
     applicableTypes: ['tower'],
@@ -795,23 +836,26 @@ export const weapons = {
     category: 'weapon',
     get descTemplate() {
       const p = weapons.weapon_shepherd.defaultParams;
-      return `唯一被动——牧灵法阵：塔本身不攻击，同时召唤最多${p.maxAlive}只幻兽（各获得塔`
-        + `${p.statPct}%属性）拴在塔周围${p.leashRadius}范围内代替塔战斗；塔持续为每只幻兽治疗`
-        + `（{val}=每秒治疗量）；幻兽死亡${p.baseRespawnSec}秒后重新召唤，每死一次下次复活`
-        + `等待时间再复利增加${p.respawnGrowthPct}%。`;
+      return `唯一被动——牧灵法阵：塔本身不攻击，同时召唤最多${p.maxAlive}只幻兽（继承塔`
+        + `${p.statPct}%属性，含生命恢复——幻兽自己没有任何独立属性）拴在塔周围${p.leashRadius}`
+        + `范围内代替塔战斗；幻兽脱战后额外获得+${p.outOfCombatHealPowerPct}%治疗与护盾强度`
+        + `（{val}=当前继承到的生命恢复）；幻兽死亡${p.baseRespawnSec}秒后重新召唤，每死一次`
+        + `下次复活等待时间再复利增加${p.respawnGrowthPct}%。`;
     },
     get description() { return this.descTemplate; },
     computeCurrent: (entity, ctx) => {
+      const p = weapons.weapon_shepherd.defaultParams;
       const inst = (entity._skillInstances || []).find(i => i.skillId === 'weapon_shepherd');
-      const p = (inst && inst._params) || weapons.weapon_shepherd.defaultParams;
-      return p.healPerSec ?? 40;
+      const pp = (inst && inst._params) || p;
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      return Math.round((stats.healthRegen || 0) * ((pp.statPct ?? 60) / 100));
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       instance.state = { petIds: [], respawnAt: 0, deathCount: 0 };
     },
     onUnequip: (entityId, instance, ctx) => {
-      // 武器卸下后幻兽失去存在的意义（没人再给它治疗、拴绳也无处可依），
+      // 武器卸下后幻兽失去存在的意义（拴绳无处可依，属性也没有塔可以继承），
       // 走跟"唤灵消失"同一条非战斗死亡路径（不算击杀、不记熵）。
       for (const petId of instance.state?.petIds || []) {
         const pet = ctx.entityContainer.get(petId);
@@ -833,6 +877,7 @@ export const weapons = {
       const now = window.gameTime || 0;
       const maxAlive = p.maxAlive ?? 2;
       const base = p.baseRespawnSec ?? 15, growth = (p.respawnGrowthPct ?? 5) / 100;
+      const pct = (p.statPct ?? 60) / 100;
 
       // 清点还活着的幻兽；这一轮里"从名单里消失/死掉"的每一只都记一次死亡，
       // 各自按当时的死亡序数复利算一次应等待的时长，取【最晚】的那个时刻——
@@ -846,6 +891,8 @@ export const weapons = {
         st.respawnAt = Math.max(st.respawnAt || 0, now) + wait;
       }
       st.petIds = alive;
+
+      const towerStats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(entityId));
 
       const need = maxAlive - st.petIds.length;
       if (need > 0 && now >= (st.respawnAt || 0) && typeof ctx.combat?.createMinion === 'function') {
@@ -864,6 +911,11 @@ export const weapons = {
           tower.pos.x + Math.cos(angle) * standoff, tower.pos.y + Math.sin(angle) * standoff,
           faction, 1, 1);
         if (spirit) {
+          // createMinion 按 type:'melee' 自动挂了近战兵的默认主动/被动（本能防御
+          // 等）——用户定稿"不要复用近战兵的"，生成后立刻摘掉，只留幻兽自己的
+          // passive_pet_spirit_guard（下面单独装）。
+          spirit._skillInstances = (spirit._skillInstances || [])
+            .filter(s => s.skillId !== 'active_melee_block' && s.skillId !== 'passive_melee_rend');
           spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
           spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
           spirit._petLeashRadius = p.leashRadius ?? 260;
@@ -872,33 +924,49 @@ export const weapons = {
           // 用户追加定稿："幻兽要有独立技能……不然幻兽太弱了"——攻击带小型减速+
           // 受击概率触发自保护盾，两个都要（见 minionPassives.passive_pet_spirit_guard）。
           equipSkill(spirit, 'passive_pet_spirit_guard', ctx, ctx.combat?.skills);
+          // 出生就把属性按塔【当下】的实时值算好（不等下面的每帧同步循环），
+          // 并把 currentHP 显式设成满——这是"出生只有几百血"这条bug的真正修复点：
+          // 旧实现出生时 currentHP 还停在 createMinion 给的 melee 模板小体量，
+          // 而 baseStats.maxHP 几乎同一时刻被改成塔的量级，血条显示"几百/几千"
+          // 这种明显不对称的样子。
+          for (const key of PET_INHERITED_STAT_FIELDS) {
+            spirit.baseStats[key] = (towerStats[key] || 0) * pct;
+          }
+          if (spirit.baseStats.maxHP < 1) spirit.baseStats.maxHP = 1;
+          spirit.currentHP = spirit.baseStats.maxHP;
           st.petIds.push(spirit.id);
         }
       }
 
       // 幻兽活着：属性按塔【当下】的实时属性百分比持续同步（不是只在出生那一刻
-      // 快照一次）+ 只要没满血就一直治，不分脱战/在战。
-      // 用户追加定稿："塔获得增益会按照一定百分比转换到幻兽上（幻兽是塔的一部分）"——
-      // 这意味着幻兽出生后塔再叠的buff（龙魂/等级成长/装备等）也要持续跟着涨，
-      // 不能只在召唤瞬间定死。做法：每帧直接用塔的实时 calc() 结果重算幻兽的
-      // baseStats（跟召唤时同一个公式，只是从"仅执行一次"改成"每帧执行"），
-      // currentHP 不强行改动（涨的部分靠下面的持续治疗慢慢补上，跌的部分用
-      // Math.min 卡住，不会出现"当前生命超过新的最大生命"这种显示错误）。
-      if (st.petIds.length) {
-        const towerStats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(entityId));
-        const pct = (p.statPct ?? 80) / 100;
-        for (const petId of st.petIds) {
-          const pet = ctx.entityContainer.get(petId);
-          if (!pet) continue;
-          pet.baseStats.maxHP = Math.max(1, (towerStats.maxHP || 1) * pct);
-          pet.baseStats.attackDamage = (towerStats.attackDamage || 0) * pct;
-          pet.baseStats.abilityPower = (towerStats.abilityPower || 0) * pct;
-          pet.baseStats.armor = (towerStats.armor || 0) * pct;
-          pet.baseStats.magicResist = (towerStats.magicResist || 0) * pct;
-          if (pet.currentHP > pet.baseStats.maxHP) pet.currentHP = pet.baseStats.maxHP;
+      // 快照一次）。用户追加定稿："塔获得增益会按照一定百分比转换到幻兽上（幻兽
+      // 是塔的一部分）"——这意味着幻兽出生后塔再叠的buff（龙魂/等级成长/装备等）
+      // 也要持续跟着涨，不能只在召唤瞬间定死。做法：每帧直接用塔的实时 calc()
+      // 结果重算幻兽的 baseStats（跟召唤时同一个公式，只是从"仅执行一次"改成
+      // "每帧执行"），currentHP 只在超过新上限时按 Math.min 卡住（不强行拉满，
+      // 涨的部分靠继承来的 healthRegen 自然回血补，不再是塔手动推血）。
+      for (const petId of st.petIds) {
+        const pet = ctx.entityContainer.get(petId);
+        if (!pet) continue;
+        for (const key of PET_INHERITED_STAT_FIELDS) {
+          pet.baseStats[key] = (towerStats[key] || 0) * pct;
+        }
+        if (pet.baseStats.maxHP < 1) pet.baseStats.maxHP = 1;
+        if (pet.currentHP > pet.baseStats.maxHP) pet.currentHP = pet.baseStats.maxHP;
 
-          const maxHP = pet.baseStats.maxHP;
-          if (pet.currentHP < maxHP) applyHeal(pet, (p.healPerSec ?? 40) * dt, 1, maxHP, pet._regenCapHP);
+        // 脱战：额外 +outOfCombatHealPowerPct% 治疗与护盾强度，判据跟钢铁烈阳
+        // 护盾同一套（lastDamageTime+shieldRegenDelay）。走光环机制：只在满足
+        // 条件的帧才 apply，停止满足条件后由 EffectRegistry 的光环宽限期自动
+        // 脱落，不用自己写移除逻辑。
+        const regenDelay = CONFIG.gameRules?.shieldRegenDelay ?? 8;
+        const outOfCombat = now - (pet.lastDamageTime ?? -Infinity) >= regenDelay;
+        if (outOfCombat) {
+          ctx.effectRegistry.apply(pet.id, {
+            name: '灵体疗愈', icon: '💗', kind: 'stat', statKey: 'healShieldPowerPct',
+            flatValue: p.outOfCombatHealPowerPct ?? 100, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+            descTemplate: `脱离战斗：治疗与护盾强度+${p.outOfCombatHealPowerPct ?? 100}%。`,
+            description: `治疗与护盾强度+${p.outOfCombatHealPowerPct ?? 100}%`,
+          }, 'weapon_shepherd_outofcombat');
         }
       }
     },

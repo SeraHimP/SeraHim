@@ -338,9 +338,12 @@ function tickNovaCharge(combat, ctx, tower, dt) {
     pet && spawnDist > spawnTowerR);
   T('召唤③b-出生点距离精确等于塔模型半径+idleClearance（不是随便定的偏移）',
     pet && Math.abs(spawnDist - (spawnTowerR + (p.idleClearance ?? 40))) < 1e-6);
-  const pct = (p.statPct ?? 80) / 100;
+  const pct = (p.statPct ?? 60) / 100;
   T('召唤④-幻兽生命值≈塔生命值的statPct%',
     Math.abs(pet.baseStats.maxHP - tower.baseStats.maxHP * pct) < 1e-6);
+  T('召唤④b-幻兽出生时currentHP=满血（用户报的"出生只有几百血"bug——旧实现出生时'
+    + 'currentHP还停在melee模板的小体量，maxHP却已经改成塔的量级）',
+    pet.currentHP === pet.baseStats.maxHP);
   T('召唤⑤-幻兽攻击力≈塔攻击力的statPct%',
     Math.abs(pet.baseStats.attackDamage - tower.baseStats.attackDamage * pct) < 1e-6);
   T('召唤⑥-幻兽记录了主人塔的id（拴绳依据）', pet && pet._petOwnerId === tower.id);
@@ -355,6 +358,12 @@ function tickNovaCharge(combat, ctx, tower, dt) {
   // 幻兽有独立技能（用户追加定稿"1+2，要不然幻兽太弱了"）。
   T('召唤⑩-幻兽装备了独立技能passive_pet_spirit_guard',
     pet._skillInstances?.some(s => s.skillId === 'passive_pet_spirit_guard'));
+  // 用户定稿"不要复用近战兵的"：createMinion 按 type:'melee' 自动挂的默认主动/
+  // 被动（本能防御等）要在生成后立刻摘掉，幻兽的技能栏里不该出现它们。
+  T('召唤⑩b-幻兽没有近战兵的默认主动技能active_melee_block（不复用近战兵的）',
+    !pet._skillInstances?.some(s => s.skillId === 'active_melee_block'));
+  T('召唤⑩c-幻兽没有近战兵的默认被动passive_melee_rend（不复用近战兵的）',
+    !pet._skillInstances?.some(s => s.skillId === 'passive_melee_rend'));
 }
 
 // ==================== 十一b、牧灵法阵：塔后续获得的增益会持续按比例转到幻兽身上 ====================
@@ -368,7 +377,7 @@ function tickNovaCharge(combat, ctx, tower, dt) {
   const p = SkillLibrary.weapon_shepherd.defaultParams;
   for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
   const pet = ctx.entityContainer.get(inst.state.petIds[0]);
-  const pct = (p.statPct ?? 80) / 100;
+  const pct = (p.statPct ?? 60) / 100;
   T('增益前①-幻兽属性一开始按塔当时的属性算', Math.abs(pet.baseStats.attackDamage - 50 * pct) < 1e-6);
 
   // 塔后来变强了（比如吃到了龙魂/成长）——不用重新装备武器，下一帧幻兽属性就该跟涨。
@@ -383,29 +392,72 @@ function tickNovaCharge(combat, ctx, tower, dt) {
   T('增益后②-幻兽生命上限也跟着涨了', Math.abs(pet.baseStats.maxHP - 4000 * pct) < 1e-6);
 }
 
-// ==================== 十二、牧灵法阵：持续治疗每一只幻兽 ====================
+// ==================== 十二、牧灵法阵：幻兽回血机制——共享塔的healthRegen，不再是塔"推"血 ====================
+// 用户定稿："回血机制改为和共享防御塔的属性，本身不具备任何回血能力"——幻兽不再
+// 由塔按固定healPerSec主动"推"治疗，而是幻兽自己的healthRegen属性本身就是从塔的
+// healthRegen按statPct继承来的（走PET_INHERITED_STAT_FIELDS那条通用路径），实际
+// 回血靠CombatSystem.update()对**所有实体**都跑的通用生命恢复tick，跟其它任何
+// 单位同一条路，不是weapon_shepherd自己手写的applyHeal调用。
 {
-  const { ents, ctx } = W();
+  const { ents, combat, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.healthRegen = 20;
+  const inst = equipSkill(tower, 'weapon_shepherd', ctx);
+  const p = SkillLibrary.weapon_shepherd.defaultParams;
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
+  const pct = (p.statPct ?? 60) / 100;
+  T('回血①-幻兽的healthRegen属性是塔healthRegen的statPct%（共享塔的属性）',
+    Math.abs(pet.baseStats.healthRegen - 20 * pct) < 1e-6);
+
+  pet.currentHP = pet.baseStats.maxHP * 0.5;
+  const before = pet.currentHP;
+  combat.update(1.0);
+  T('回血②-幻兽确实按继承来的healthRegen自然回血（不再需要weapon_shepherd自己推血）',
+    pet.currentHP > before);
+}
+
+// ==================== 十二b、牧灵法阵：塔本身没有回血能力时幻兽也没有 ====================
+// "本身不具备任何回血能力"：塔的healthRegen是0（默认防御塔就是0），幻兽继承到的
+// 也是0——回血能力完全靠共享，不是幻兽自己另外还揣着一份。
+{
+  const { ents, combat, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.healthRegen = 0;
+  const inst = equipSkill(tower, 'weapon_shepherd', ctx);
+  for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const pet = ctx.entityContainer.get(inst.state.petIds[0]);
+  pet.currentHP = pet.baseStats.maxHP * 0.5;
+  const before = pet.currentHP;
+  combat.update(1.0);
+  T('回血③-塔没有healthRegen时幻兽也没有回血', pet.currentHP === before);
+}
+
+// ==================== 十二c、牧灵法阵：幻兽脱战后额外获得+100%治疗与护盾强度 ====================
+{
+  const { ents, fx, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
   const inst = equipSkill(tower, 'weapon_shepherd', ctx);
   const p = SkillLibrary.weapon_shepherd.defaultParams;
   for (let i = 0; i < 5; i++) SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
   const pet = ctx.entityContainer.get(inst.state.petIds[0]);
-  const pet2 = ctx.entityContainer.get(inst.state.petIds[1]);
-  pet.currentHP = pet.baseStats.maxHP * 0.5;
-  pet2.currentHP = pet2.baseStats.maxHP * 0.5;
-  const before = pet.currentHP, before2 = pet2.currentHP;
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 1.0, inst, ctx);
-  T('治疗①-幻兽掉血后被塔治疗', pet.currentHP > before);
-  T('治疗②-治疗速率≈healPerSec', Math.abs((pet.currentHP - before) - (p.healPerSec ?? 40)) < 1e-6);
-  T('治疗③-两只幻兽各自全额治疗，互不分薄',
-    Math.abs((pet2.currentHP - before2) - (p.healPerSec ?? 40)) < 1e-6);
 
-  pet.currentHP = pet.baseStats.maxHP;
-  const beforeFull = pet.currentHP;
-  SkillLibrary.weapon_shepherd.onFrame(tower.id, 1.0, inst, ctx);
-  T('治疗④-满血时不会超出maxHP（治疗管线本身的封顶，不是这里特殊处理）',
-    pet.currentHP === beforeFull);
+  // 幻兽出生时 lastDamageTime 是 -Infinity（"从没挨过打"，机械上等同"已脱战"），
+  // 前面5次spawn循环的onFrame已经把脱战aura打上了——先手动摘掉，才能干净地测
+  // "刚挨打①"这条（不然测的是"aura还没到宽限期"，不是"在战斗中不会重新施加"）。
+  const preExisting = fx.getEffectByName(pet.id, '灵体疗愈');
+  if (preExisting) fx.remove(preExisting.id);
+  window.gameTime = 100;
+  pet.lastDamageTime = window.gameTime; // 刚挨打，还在战斗中
+  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  T('脱战①-刚挨打时（还在战斗中）不会获得脱战治疗强度加成',
+    !fx.getEffectByName(pet.id, '灵体疗愈'));
+
+  window.gameTime = 200; // 早就没挨打了（超过shieldRegenDelay）
+  SkillLibrary.weapon_shepherd.onFrame(tower.id, 0.1, inst, ctx);
+  const eff = fx.getEffectByName(pet.id, '灵体疗愈');
+  T('脱战②-脱离战斗一段时间后幻兽获得+outOfCombatHealPowerPct%治疗与护盾强度',
+    !!eff && Math.abs(eff.blueprint.flatValue - (p.outOfCombatHealPowerPct ?? 100)) < 1e-6);
 }
 
 // ==================== 十三、牧灵法阵：死亡后延迟复活，且每死一次复利多等一点 ====================
