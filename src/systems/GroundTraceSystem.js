@@ -226,19 +226,50 @@ export class GroundTraceSystem {
     return ws.getEffectiveStrengths?.().snow || 0;
   }
 
-  _ensureSnowGrid() {
+  // 每格速率倍率用的空间噪声——两个不同频率、不同轴向的正弦波叠加，跟
+  // mapValidate.js 的 laneWidthNoise 同一手法（那边注释："哈希是给散点装饰用的
+  // ——每个点互不相关；这里要的是连续、平滑的起伏，用哈希会变成锯齿状抖动"）。
+  // 频率常数跟 laneWidthNoise 刻意错开，避免雪的斑驳纹理跟着道路的宽窄起伏走
+  // （两者语义无关，撞了频率会看起来像"雪跟着路的形状铺"）。
+  _snowCellNoise(x, y) {
+    return Math.sin(x * 0.0057 + y * 0.0031) * 0.5 + Math.sin(x * 0.0019 - y * 0.0083) * 0.5;
+  }
+
+  _ensureSnowGrid(world) {
     const cfg = CONFIG.groundTrace?.snowCover || {};
     const res = Math.max(8, cfg.gridResolution ?? 48);
     if (this.snowGrid && this.snowGridRes === res) return;
     this.snowGrid = new Float32Array(res * res);
     this.snowGridRes = res;
+    // 每格一份固定不变的速率倍率（只在网格新建时算一次）：有的格子天生涨得快、
+    // 有的天生涨得慢，全部收敛到同一个 snowGlobalTarget，但"谁先谁后"从空间上
+    // 错开，看起来是自然蔓延，不是全图同步的一次性刷白（真根因见下面 _updateSnowCover
+    // 头注 2026-09-20 记录）。没有 world 尺寸时退化成全 1（不变），下一帧
+    // _updateSnowCover 拿到 world 后会重新走一次这个函数把倍率补上。
+    const amp = cfg.cellRateNoiseAmp ?? 0.65;
+    const floor = cfg.cellRateNoiseFloor ?? 0.25;
+    this.snowCellRateMul = new Float32Array(res * res).fill(1);
+    if (world) {
+      const cellW = world.w / res, cellH = world.h / res;
+      for (let gy = 0; gy < res; gy++) {
+        for (let gx = 0; gx < res; gx++) {
+          const wx = (gx + 0.5) * cellW, wy = (gy + 0.5) * cellH;
+          const mul = Math.max(floor, 1 + this._snowCellNoise(wx, wy) * amp);
+          this.snowCellRateMul[gy * res + gx] = mul;
+        }
+      }
+    }
   }
 
   /**
    * 雪盖整体的推进：
    *   全局目标深度 snowGlobalTarget 追着雪的强度走（只有强度过了 minChargeToGrow
    *   才开始往上涨——"雪下到一定程度后，才缓缓显出积雪"；强度不够时缓慢消退）。
-   *   每一格的局部深度 snowGrid[i] 追着这个全局目标走（regrowPerSec），除非这一帧
+   *   每一格的局部深度 snowGrid[i] 追着这个全局目标走（regrowPerSec × 每格自己的
+   *   速率倍率 snowCellRateMul，见 _ensureSnowGrid 头注——2026-09-20 第三次修复
+   *   记录：前两次分别改了"时间常数"和"曲线形状"，症状依旧是"整块地面同一时刻
+   *   刷白"，根因是全图每一格用的是【同一条速率】，天生就会同步——不是曲线的问题，
+   *   是"没有空间差异"的问题，现在每格速率各自固定错开，蔓延感靠这个），除非这一帧
    *   有单位站在这一格——那时局部深度被【踩低】（erodePerSec），但设了下限
    *   （pathFloor × 全局目标），不会被踩成 0，这就是"小径"。
    */
@@ -247,7 +278,7 @@ export class GroundTraceSystem {
     const ms = this.mapSystem;
     const world = ms?.currentMap?.world;
     if (!world) return;
-    this._ensureSnowGrid();
+    this._ensureSnowGrid(world);
 
     const scale = this._snowScale();
     const minChargeToGrow = cfg.minChargeToGrow ?? 0.25;
@@ -285,9 +316,14 @@ export class GroundTraceSystem {
 
     const res = this.snowGridRes;
     const grid = this.snowGrid;
+    const rateMul = this.snowCellRateMul;
     const regrowRate = Math.min(1, (cfg.regrowPerSec ?? 0.05) * dt);
-    // 全图格子先统一朝全局目标回涨（踩踏留下的小径也在这一步缓慢恢复）。
-    for (let i = 0; i < grid.length; i++) grid[i] += (this.snowGlobalTarget - grid[i]) * regrowRate;
+    // 全图格子朝全局目标回涨（踩踏留下的小径也在这一步缓慢恢复），但不是同一个
+    // 速率——每格乘自己固定的空间噪声倍率，有的格子先到、有的格子晚到，蔓延感
+    // 靠这个（见本函数头注 2026-09-20 记录的真根因）。
+    for (let i = 0; i < grid.length; i++) {
+      grid[i] += (this.snowGlobalTarget - grid[i]) * regrowRate * (rateMul ? rateMul[i] : 1);
+    }
 
     // 单位经过时局部踩踏：把周围 erodeRadius 内的格子压低，但设下限（不会踩成 0）。
     if (this.snowGlobalTarget > 0.001) {

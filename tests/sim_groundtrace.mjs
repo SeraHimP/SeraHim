@@ -207,6 +207,33 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
     gts.snowGlobalTarget > 0.9);
 }
 {
+  // ==================== 2026-09-20 第三次修复：真根因是"全图同步"，不是曲线 ====================
+  // 用户第四次反馈同一个症状（前两次分别修了时间常数、曲线形状，症状依旧）。
+  // 排查后发现：哪怕 snowGlobalTarget 已经是匀速线性推进，全图每一格追它用的
+  // 是【同一条速率】——于是全图所有格子永远同步同速，人眼看到的是"整块地面
+  // 同一时刻一起变白"，这才是"突变感"真正的根子，跟曲线形状/时间常数无关。
+  // 修法：给每格叠一个固定不变的空间噪声速率倍率，有的格子先到、有的晚到。
+  // 这条测试直接断言"蔓延感"这个行为本身——积雪过程中，网格里同时存在明显
+  // 深浅不同的格子（不是全图数值几乎相等的同步推进）。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
+  setCharge(ws, 'snow', 1.0);
+  const REAL_DT = 1 / 30;
+  for (let i = 0; i < 30 * 40; i++) gts.update(REAL_DT); // 40秒，铺满中途
+
+  const grid = gts.snowGrid;
+  let min = 1, max = 0;
+  for (let i = 0; i < grid.length; i++) { min = Math.min(min, grid[i]); max = Math.max(max, grid[i]); }
+  T('雪⑨c-积雪过程中网格里同时存在深浅明显不同的格子（不是全图同步刷白）',
+    (max - min) > gts.snowGlobalTarget * 0.3);
+
+  const rateSnapshot = Array.from(gts.snowCellRateMul);
+  for (let i = 0; i < 30 * 5; i++) gts.update(REAL_DT); // 再跑5秒
+  T('雪⑨c-b-每格的速率倍率是固定值，不会逐帧变化（同一格前后两次读到同一个倍率）',
+    rateSnapshot.every((v, i) => v === gts.snowCellRateMul[i]));
+}
+{
   // 雪太弱（低于 minChargeToGrow）不积雪——"下到一定程度后才缓缓显出积雪"。
   const { ents, fx } = await makeWorld();
   const ws = mkWeather();
