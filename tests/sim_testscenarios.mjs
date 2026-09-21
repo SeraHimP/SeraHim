@@ -25,21 +25,23 @@ const { T, done } = scoreboard('平衡测试专用技能（testScenarios）验�
   T('注④-小兵技能覆盖内置小兵类型（不含tower）', minion.applicableTypes.includes('melee') && !minion.applicableTypes.includes('tower'));
 }
 
-// ==================== 二、装到塔上：伤害减免/增幅生效 + 武器换成闪电杖 ====================
+// ==================== 二、装到塔上：伤害减免/增幅生效，武器不受影响 ====================
+// 2026-09-21：用户要求"测试技能中删除强制替换闪电杖"——这条技能装上之后
+// 塔原有的武器必须原样保留，不再被换成闪电杖。
 {
   const { ents, fx, attr, combat, CONFIG } = await world();
   const { equipSkill } = await import('../src/core/skillParams.js');
   const tower = mkEntity(ents, 'tower', { faction: 'blue', pos: { x: 0, y: 0 } }, CONFIG);
-  // 先给它装一把原有武器，验证"先卸旧的再装新的"这一步真的发生了。
+  // 先给它装一把原有武器，验证这条技能不会动它。
   const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
   const ctx0 = { entityContainer: ents, effectRegistry: fx, eventBus: null, attrCalc: attr, combat, waveNumber: 0 };
   equipSkill(tower, 'weapon_piercing', ctx0, SkillLibrary);
   T('装配①-装备前带着穿透型武器', tower._skillInstances.some(s => s.skillId === 'weapon_piercing'));
 
   equipSkill(tower, 'passive_test_tower_attacker', ctx0, SkillLibrary);
-  T('装配②-穿透型武器被摘掉（换武器是"先卸后装"，不是叠加）',
-    !tower._skillInstances.some(s => s.skillId === 'weapon_piercing'));
-  T('装配③-换成了闪电杖', tower._skillInstances.some(s => s.skillId === 'weapon_lightning'));
+  T('装配②-穿透型武器原样保留（不再强制换成闪电杖）',
+    tower._skillInstances.some(s => s.skillId === 'weapon_piercing'));
+  T('装配③-没有被凭空装上闪电杖', !tower._skillInstances.some(s => s.skillId === 'weapon_lightning'));
 
   const stats = attr.calc(tower, fx.getEffects(tower.id));
   T('装配④-伤害减免生效（默认90%）', stats.damageReduction === 90);

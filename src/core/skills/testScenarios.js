@@ -1,5 +1,3 @@
-import { equipSkill } from '../skillParams.js';
-
 /**
  * testScenarios.js —— 平衡测试专用技能（不是给正常出兵/建塔流程用的玩法内容）
  *
@@ -24,44 +22,33 @@ import { equipSkill } from '../skillParams.js';
  * 本身不需要、也不应该带任何这套逻辑；这两条技能是唯一需要新增的东西。
  *
  * ==================== 数值设计 ====================
- * defaultParams 三项对应用户原话的三个数字，全部走标准的"技能参数三层覆写"
- * 通道（skillParams.js），符合"一切数值都必须软编码"——要调这套测试增益，
- * 改这里的 defaultParams 或走 CONFIG.skillOverrides，不用碰脚本代码。
+ * defaultParams 对应用户原话的数字，全部走标准的"技能参数三层覆写"通道
+ * （skillParams.js），符合"一切数值都必须软编码"——要调这套测试增益，改这里
+ * 的 defaultParams 或走 CONFIG.skillOverrides，不用碰脚本代码。
+ *
+ * 2026-09-21：删除"强制替换闪电杖"（用户原话"测试技能中删除强制替换闪电杖"）。
+ * passive_test_tower_attacker 原来 onEquip 里还会顺手把进攻方的塔武器换成闪电杖，
+ * 现在只保留伤害减免/伤害增幅两条属性效果，进攻方武器不再被这条技能动过。
  */
 export const testScenarios = {
-  // 塔：伤害减免 + 伤害增幅 + 强制闪电杖。
+  // 塔：伤害减免 + 伤害增幅。
+  // 2026-09-21：删除"强制替换闪电杖"这一步（用户原话"测试技能中删除强制替换
+  // 闪电杖"）——进攻方的武器不再被这条技能改动，防守方那边武器覆写（决定
+  // 测哪种塔武器的那个维度）本来就跟这条技能无关，不受影响。
   passive_test_tower_attacker: {
     id: 'passive_test_tower_attacker', name: '【测试】进攻方强化', icon: '⚡',
     color: '#f1c40f', category: 'passive', applicableTypes: ['tower'],
-    defaultParams: { damageReductionPct: 90, damageAmpPct: 1000, weapon: 'lightning' },
+    defaultParams: { damageReductionPct: 90, damageAmpPct: 1000 },
     get description() {
       const p = this.defaultParams;
-      return `【塔平衡横向测试专用】伤害减免+${p.damageReductionPct}%、伤害增幅+${p.damageAmpPct}%，`
-        + `武器强制替换为闪电杖。仅用于对照测试（真实存在的技能，可在编辑器手动装配/`
-        + `观察），不会出现在正常出兵/建塔/地图默认配置里。`;
+      return `【塔平衡横向测试专用】伤害减免+${p.damageReductionPct}%、伤害增幅+${p.damageAmpPct}%。`
+        + `仅用于对照测试（真实存在的技能，可在编辑器手动装配/观察），不会出现在`
+        + `正常出兵/建塔/地图默认配置里。`;
     },
     get descTemplate() { return this.description; },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
-      const self = ctx.entityContainer?.get(entityId);
-      if (!self) return;
       const p = instance._params || testScenarios.passive_test_tower_attacker.defaultParams;
-      const lib = ctx.combat?.skills;
-      // 强制换武器：先卸旧的（跑 onUnequip 还原任何"装备时改了固定值、卸下要复原"
-      // 的武器机制），再装闪电杖——跟编辑器手动换武器（events.js._applyWeaponChanges）
-      // 同一套两步流程，不是另起一套。跳过水晶枢纽/召唤水晶（nexus_lane/nexus_main）：
-      // 这两档在所有地图上一律 weapon:null（不攻击），"进攻方强化"不应该凭空给它们
-      // 造一把它们本来就没有、也不该有的武器。
-      const noWeaponTier = self._mapTier === 'nexus_lane' || self._mapTier === 'nexus_main';
-      if (p.weapon && lib && !noWeaponTier) {
-        const oldInst = (self._skillInstances || []).find(s => s.skillId.startsWith('weapon_'));
-        if (oldInst) {
-          const oldDef = lib[oldInst.skillId];
-          if (oldDef?.onUnequip) oldDef.onUnequip(entityId, oldInst, ctx);
-          self._skillInstances = self._skillInstances.filter(s => s !== oldInst);
-        }
-        equipSkill(self, 'weapon_' + p.weapon, ctx, lib);
-      }
       ctx.effectRegistry?.apply(entityId, {
         name: '进攻方强化', icon: '⚡', kind: 'stat', statKey: 'damageReduction',
         flatValue: p.damageReductionPct, duration: 0, permanent: true,
@@ -75,9 +62,6 @@ export const testScenarios = {
         description: `伤害增幅 +${p.damageAmpPct}%（塔平衡测试）`,
       }, 'passive_test_tower_attacker_amp');
     },
-    // 只摘自己挂的两条属性效果——武器是这条技能装备时触发的**一次性副作用**，
-    // 不是它持续拥有的东西，卸下这条技能不负责把武器换回去（跟 passive_outer_fortify
-    // 只摘自己名下效果、不管其它副作用是同一个取舍）。
     onUnequip: (entityId, instance, ctx) => {
       for (const eff of ctx.effectRegistry?.getEffects(entityId) || []) {
         if (eff.blueprint.name === '进攻方强化') ctx.effectRegistry.remove(eff.id);
