@@ -57,11 +57,19 @@
  * 用户反馈"跑塔平衡时cpu占用很低"——原因是每一局（runOne）都是重 CPU 计算，
  * 但改动前是【单进程单核】一局接一局串行跑，其余核心全程闲置。现在把
  * "全部武器 × 全部局数"拆成一份扁平工作项列表（每项就是一局：{武器,种子}），
- * 按本机核数拆到多个子进程（重新 spawn 自己，带 --worker-items/--worker-out
- * 两个内部专用参数），并行跑完再合并——不是按"武器"分（8种武器可能远小于
+ * 按本机核数拆到多个子进程并行跑完再合并——不是按"武器"分（8种武器可能远小于
  * 核数，会晾着大半CPU不用），是按"局"分，核数不管多高都能喂满。
- * 跟 tools/run_balance_soul.mjs 拆分档位到多进程是同一个思路，只是这里拆到
- * 局这一级，颗粒度更细。
+ * 并行调度这部分逻辑本身已抽到 tools/lib/parallelRunner.mjs（见其头注，含一次
+ * "fork炸弹"真实bug的教训）——用户："以后测试跑的脚本可能很多，脚本也要有
+ * 一个统一的架构，方便后期写不同其他测试脚本。"这个工具是那套共享架构的
+ * 第一个落地案例。
+ *
+ * ==================== 2026-09-21：当前局实时数据 + 手动跳过 ====================
+ * 起因：用户反馈单局跑很久时进度条会长时间不动，"也没有一个跳过这局或者是
+ * 查看当前运行的情况啥的"。现在每个并行子进程会把"当前在跑哪一局、模拟到
+ * 第几分钟了"实时上报给主进程（跑批过程中总进度行会显示），终端是 TTY 时
+ * 还能按 s+回车跳过跑得最久的那一局（跳过的局不计入均值统计，单独报告
+ * 跳过了几局）。
  *
  * 用法：
  *   node tools/balance_tower.mjs                          # 8种塔武器全测，每档20局，单局上限120分钟
@@ -83,15 +91,12 @@ const MAX_MIN = minutesArg != null ? parseFloat(minutesArg) : Infinity;
 const MAP_ID = 'summoners_rift_v1';
 const PICK = arg('pick', '');
 const JSON_OUT = arg('json', '');
-// --worker-items/--worker-out：内部专用，orchestrator 拿自己 spawn 自己时才会传，
-// 手动跑这个脚本不需要碰它们（见文件头注"并行榨干多核"）。
-const WORKER_ITEMS = arg('worker-items', null);
-const WORKER_OUT = arg('worker-out', null);
 
 const fs = await import('fs');
 const path = await import('path');
 const { fileURLToPath } = await import('url');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { isWorkerProcess, runWorker, runOrchestrator, ensureBalanceDir } = await import('./lib/parallelRunner.mjs');
 
 const { EntityContainer } = await import('../src/core/EntityContainer.js');
 const { EventBus } = await import('../src/utils/EventBus.js');
@@ -181,8 +186,16 @@ function applyAttackerMinionBuff(entity, ctx) {
 
 let CURRENT_ATTACKER = null; // 本局随机指派，runOne 开头设置
 
-/** 跑一局，返回 { attackerWon, defenderWon, draw, minutes, defenderTowersLost, attackerTowersLost } */
-function runOne(seed, defenderWeapon) {
+/**
+ * 跑一局，返回 { attackerWon, defenderWon, draw, minutes, defenderTowersLost, attackerTowersLost }
+ * （手动跳过时额外带 skipped:true，minutes/丢塔档位仍是跳过那一刻的快照，仅供参考，
+ * 不计入汇总均值——见 orchestrator 侧的过滤逻辑）。
+ *
+ * @param {{onProgress?:(info:string)=>void, shouldSkip?:()=>boolean}} [ctx] 见
+ *   tools/lib/parallelRunner.mjs 头注——worker 模式下由它注入，直接跑
+ *   `node tools/balance_tower.mjs`（不经过并行库）时不传，两种路径行为一致。
+ */
+async function runOne(seed, defenderWeapon, ctx = {}) {
   _seedRandom(seed + 1);
   window.gameTime = 0; window.waveNumber = 0; window._uid = 0;
   window.__towerRules = {
@@ -267,6 +280,7 @@ function runOne(seed, defenderWeapon) {
 
   const maxT = MAX_MIN * 60;
   let winnerFaction = null;
+  let skipped = false;
   let frame = 0;
   for (let t = 0; t < maxT; t += SIM_DT) {
     frame++;
@@ -291,6 +305,17 @@ function runOne(seed, defenderWeapon) {
         if (nexus && !nexus.alive) { winnerFaction = fac === 'blue' ? 'red' : 'blue'; break; }
       }
       if (winnerFaction) { window.gameTime = t; break; }
+      // 手动跳过：Node 是单线程事件循环，IPC 发来的跳过消息要等当前这段同步
+      // 代码把控制权还给事件循环才会真正触发（见 tools/lib/parallelRunner.mjs
+      // 头注"第二个真实坑"——冒烟测试实测过，不让出控制权的话 shouldSkip()
+      // 永远读到旧值，跳过功能形同虚设）。每模拟1分钟真的 await 一次
+      // setImmediate 让出控制权，频率低到可以忽略性能影响，但足够让"按了s"
+      // 这件事在几秒内被感知到。
+      if (ctx.onProgress && frame % 1800 === 0) {
+        await new Promise((r) => setImmediate(r));
+        ctx.onProgress(`${(t / 60).toFixed(0)}/${Number.isFinite(MAX_MIN) ? MAX_MIN : '∞'}分钟`);
+      }
+      if (ctx.shouldSkip && ctx.shouldSkip()) { skipped = true; window.gameTime = t; break; }
     }
   }
 
@@ -314,30 +339,23 @@ function runOne(seed, defenderWeapon) {
     defenderTowersLost: towersLostBy(defenderFaction),
     attackerTowersLost: towersLostBy(CURRENT_ATTACKER),
     attackerFaction: CURRENT_ATTACKER,
+    skipped,
   };
   AttributeCalculator.setWorldState(null);
   Math.random = _realRandom;
   return out;
 }
 
-// ==================== worker 模式：只跑分给自己的那一批局，不打印任何汇总 ====================
-// orchestrator（下面的默认流程）拿这份文件自己 spawn 自己，带上这两个参数就会
-// 走这条分支：读工作项列表（每项 {weaponKey, seed}），逐个跑 runOne，整批结果
-// 写成一个 JSON 数组到 --worker-out，然后直接退出——聚合/打印/落盘都是
-// orchestrator 进程的事，worker 只管算。
-if (WORKER_ITEMS && WORKER_OUT) {
-  const items = JSON.parse(fs.readFileSync(WORKER_ITEMS, 'utf8'));
-  const out = [];
-  for (let i = 0; i < items.length; i++) {
-    const { weaponKey, seed } = items[i];
-    out.push({ weaponKey, seed, ...runOne(seed, weaponKey) });
-    process.stderr.write(`\r${i + 1}/${items.length}`);
-  }
-  fs.writeFileSync(WORKER_OUT, JSON.stringify(out));
-  process.exit(0);
-}
+// ==================== worker 模式 / orchestrator 模式：结构上互斥 ====================
+// ⚠️ 见 tools/lib/parallelRunner.mjs 头注"调用约定"那一段：这里必须是
+// if/else 互斥，不能写成"worker 分支跑完往下顺序执行 orchestrator 代码"，
+// 那样会在 worker 进程里递归 fork 出更多 worker（第一版栽过这个真实 bug，
+// 冒烟测试复现为"15秒零输出后超时杀掉"）。
+if (isWorkerProcess()) {
+  runWorker(async (item, ctx) => ({ weaponKey: item.weaponKey, seed: item.seed, ...await runOne(item.seed, item.weaponKey, ctx) }));
+  // runWorker 内部会跑到 process.exit()，这个 if 分支到此为止，不会再执行别的代码。
+} else {
 
-// ==================== 跑（orchestrator，默认走这条）====================
 let weaponsToRun = WEAPONS;
 if (PICK) {
   const keys = PICK.split(',').map(k => k.trim()).filter(Boolean);
@@ -353,113 +371,62 @@ if (PICK) {
 // 这个工具也该有同样的体验，不用每次都记得手打 --json）。--json 仍然保留，
 // 传了就【额外】再写一份到指定路径，两边不冲突。
 const ts = new Date().toISOString().replace(/[:.]/g, '-');
-const outDir = path.join(ROOT, '.balance');
-fs.mkdirSync(outDir, { recursive: true });
+const outDir = ensureBalanceDir(import.meta.url);
 const logPath = path.join(outDir, `tower_sweep_${ts}.log`);
 const jsonPath = path.join(outDir, `tower_sweep_${ts}.json`);
 
 const logLines = [];
 const log = (s = '') => { console.log(s); logLines.push(s); };
 
-// ---- 拆分工作项：每个 {武器, 种子} 就是一局，拆到 min(核数, 总局数) 个子进程 ----
-// 见文件头注"并行榨干多核"——按"局"拆而不是按"武器"拆，核数再多也能喂满。
-const os = await import('os');
-const { spawn } = await import('child_process');
-const cpuCount = os.cpus().length || 4;
-
 const workItems = [];
 for (const w of weaponsToRun) for (let seed = 0; seed < RUNS; seed++) workItems.push({ weaponKey: w, seed });
-const JOBS = Math.max(1, Math.min(cpuCount, workItems.length));
-const buckets = Array.from({ length: JOBS }, () => []);
-workItems.forEach((item, i) => buckets[i % JOBS].push(item));
 
 const minLabel = Number.isFinite(MAX_MIN) ? `单局上限 ${MAX_MIN} 分钟` : '单局不设时长上限';
 log(`防御塔强度横向对照：地图 ${MAP_ID}，每档 ${RUNS} 局，${minLabel}，${weaponsToRun.length} 种塔武器`);
-log(`拆成 ${JOBS} 个并行进程（本机 ${cpuCount} 核，共 ${workItems.length} 局待跑）`);
 log('（进攻方每局随机指派蓝/红，固定90%减伤+1000%增伤+小兵33%减伤，武器不改动；防守方按档位换武器，其余一切正常）\n');
 
-// ---- 汇总进度：子进程把"这一批跑到第几局了"写去 stderr，父进程累加成总进度 ----
-// 进度条走 stderr（不是 stdout）：sim_towerbalance.mjs 的可复现性测试会逐字比对
-// 整段 stdout，进度条自带耗时/百分比这类每次跑都不同的内容，混进 stdout 会把
-// "同参数复现"误判成"不一致"——跟 balance_matrix.mjs 原来那条 `\r i/RUNS`
-// 进度走 stderr 是同一个理由，不是这次心血来潮。
-const jobDone = new Array(JOBS).fill(0);
-const totalItems = workItems.length;
-function totalDone() { return jobDone.reduce((a, b) => a + b, 0); }
-function onProgressChunk(idx, chunk) {
-  const seg = chunk.split('\r').filter(Boolean).pop();
-  if (!seg) return;
-  const m = seg.match(/(\d+)\/(\d+)/);
-  if (m) jobDone[idx] = parseInt(m[1], 10);
-}
-const tickerStarted = Date.now();
-const ticker = setInterval(() => {
-  const done = totalDone();
-  const elapsed = (Date.now() - tickerStarted) / 1000;
-  const rate = done > 0 ? elapsed / done : 0;
-  const remain = done > 0 ? Math.max(0, (totalItems - done) * rate) : NaN;
-  const etaStr = Number.isFinite(remain)
-    ? (remain > 90 ? `约 ${(remain / 60).toFixed(1)} 分钟` : `约 ${Math.round(remain)} 秒`)
-    : '估算中…';
-  process.stderr.write(`\r总进度：${done}/${totalItems} 局，已耗时 ${(elapsed / 60).toFixed(1)} 分钟，预计剩余 ${etaStr}   `);
-}, 3000);
-
-function runWorker(idx, items) {
-  return new Promise((resolve) => {
-    const itemsFile = path.join(outDir, `.tower_items_${ts}_${idx}.json`);
-    const outFile = path.join(outDir, `.tower_out_${ts}_${idx}.json`);
-    fs.writeFileSync(itemsFile, JSON.stringify(items));
-    const scriptPath = fileURLToPath(import.meta.url);
-    const cliArgs = [scriptPath, '--worker-items', itemsFile, '--worker-out', outFile,
-      ...(Number.isFinite(MAX_MIN) ? ['--minutes', String(MAX_MIN)] : [])];
-    const child = spawn(process.execPath, cliArgs, { cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'] });
-    child.stderr.on('data', (d) => onProgressChunk(idx, d.toString()));
-    child.on('close', (code) => resolve({ idx, code, itemsFile, outFile }));
-  });
-}
-
 const t0 = Date.now();
-const jobResults = await Promise.all(buckets.map((b, i) => runWorker(i, b)));
-clearInterval(ticker);
-process.stderr.write(`\r总进度：${totalItems}/${totalItems} 局，全部完成` + ' '.repeat(30) + '\n');
+const flatResults = await runOrchestrator({
+  items: workItems,
+  scriptUrl: import.meta.url,
+  taskLabel: '防御塔强度横向对照',
+  labelOf: (it) => `${WEAPON_LABEL[it.weaponKey] || it.weaponKey}#${it.seed}`,
+  sortKey: (it) => it.seed, // 同一武器内按种子排序（见下方按武器分组时的说明）
+  extraArgs: Number.isFinite(MAX_MIN) ? ['--minutes', String(MAX_MIN)] : [],
+});
 
-// ---- 合并：按武器分组，每组按种子排序 ----
-// 排序是可复现性的关键：并行完成的先后顺序本身不确定（哪个子进程先跑完取决于
-// 机器当下的调度，不是种子决定的），如果直接按"谁先回来"的顺序拼 rows，同一组
-// 参数两次运行会拼出不同顺序的 rows 数组，序列化成 JSON/汇总统计虽然平均值一样
-// 但明细顺序不同——sim_towerbalance.mjs 的可复现性测试比对的是完整 stdout
-// 文本，顺序一变就判不一致了。按 seed 排序把它拉回跟旧的串行版本逐位一致的序。
+// ---- 合并：按武器分组 ----
+// runOrchestrator 已经按 sortKey（种子）把结果排过序，这里只需要按武器归堆——
+// 归堆本身不破坏组内的种子序，多个武器的种子区间不重叠，稳定排序足够。
 const rowsByWeapon = new Map();
-for (const jr of jobResults) {
-  if (jr.code !== 0) {
-    log(`⚠️ 子进程${jr.idx + 1}异常退出（退出码${jr.code}），它负责的那批局可能缺失。`);
-  }
-  let items = [];
-  try {
-    items = JSON.parse(fs.readFileSync(jr.outFile, 'utf8'));
-  } catch (e) {
-    log(`⚠️ 读取子进程${jr.idx + 1}的结果失败：${e.message}`);
-  }
-  try { fs.unlinkSync(jr.itemsFile); } catch { /* 临时文件，读不到也无所谓 */ }
-  try { fs.unlinkSync(jr.outFile); } catch { /* 同上 */ }
-  for (const it of items) {
-    if (!rowsByWeapon.has(it.weaponKey)) rowsByWeapon.set(it.weaponKey, []);
-    rowsByWeapon.get(it.weaponKey).push(it);
-  }
+for (const r of flatResults) {
+  const it = r.item;
+  if (r.error) { log(`⚠️ ${WEAPON_LABEL[it.weaponKey] || it.weaponKey}#${it.seed} 运行出错：${r.error}`); continue; }
+  if (!rowsByWeapon.has(it.weaponKey)) rowsByWeapon.set(it.weaponKey, []);
+  rowsByWeapon.get(it.weaponKey).push(r.result);
 }
 
 const results = [];
+let totalSkipped = 0;
 for (const w of weaponsToRun) {
-  const rows = (rowsByWeapon.get(w) || [])
-    .sort((a, b) => a.seed - b.seed)
-    .map(({ weaponKey, seed, ...rest }) => rest); // 剥掉合并用的辅助字段，形状跟旧版 runOne() 输出逐位一致
+  const allRows = rowsByWeapon.get(w) || [];
+  const skippedRows = allRows.filter(r => r.skipped);
+  totalSkipped += skippedRows.length;
+  // 手动跳过的局是半途而废的快照，不是真实结果——均值统计必须把它们摘出去，
+  // 不然会把"跳过时恰好打到哪"这种噪音悄悄掺进"防守方到底扛不扛揍"的结论里。
+  const rows = allRows.filter(r => !r.skipped);
   const label = `防守方=${WEAPON_LABEL[w] || w}`;
+  if (!rows.length) {
+    log(`${label.padEnd(16)} 全部 ${allRows.length} 局都被跳过，没有可用数据`);
+    results.push({ weaponKey: w, label, runs: 0, skipped: skippedRows.length, rows: [] });
+    continue;
+  }
   const avg = (f) => +(rows.reduce((s, r) => s + f(r), 0) / rows.length).toFixed(2);
   const attackerWins = rows.filter(r => r.winner === 'attacker').length;
   const defenderWins = rows.filter(r => r.winner === 'defender').length;
   const draws = rows.filter(r => r.winner === 'draw').length;
   const r = {
-    weaponKey: w, label, runs: rows.length,
+    weaponKey: w, label, runs: rows.length, skipped: skippedRows.length,
     attackerWins, defenderWins, draws,
     defenderWinRate: +(defenderWins / rows.length * 100).toFixed(1),
     avgSurviveMin: avg(r2 => r2.minutes),
@@ -471,19 +438,24 @@ for (const w of weaponsToRun) {
   log(
     `${r.label.padEnd(16)} 防守方存活均时长 ${String(r.avgSurviveMin).padStart(6)} 分` +
     `  防守方平均丢塔档位 ${String(r.avgDefenderTowersLost).padStart(5)}` +
-    `  防守方胜 ${r.defenderWins}/${r.runs}（${r.defenderWinRate}%）  平 ${r.draws}`
+    `  防守方胜 ${r.defenderWins}/${r.runs}（${r.defenderWinRate}%）  平 ${r.draws}` +
+    (skippedRows.length ? `  （另有 ${skippedRows.length} 局被手动跳过，不计入以上统计）` : '')
   );
 }
 log(`\n耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s（并行墙钟时间，不是累加）`);
+if (totalSkipped) log(`本次共手动跳过 ${totalSkipped} 局。`);
 
 if (results.length > 1) {
-  const mins = results.map(r => r.avgSurviveMin);
-  const lost = results.map(r => r.avgDefenderTowersLost);
-  const best = results.reduce((a, b) => (b.avgSurviveMin > a.avgSurviveMin ? b : a));
-  const worst = results.reduce((a, b) => (b.avgSurviveMin < a.avgSurviveMin ? b : a));
-  log(`存活均时长区间 ${Math.min(...mins)} ~ ${Math.max(...mins)} 分`);
-  log(`丢塔档位区间 ${Math.min(...lost)} ~ ${Math.max(...lost)}`);
-  log(`最扛揍：${best.label}（${best.avgSurviveMin}分）　最不扛揍：${worst.label}（${worst.avgSurviveMin}分）`);
+  const mins = results.filter(r => r.runs).map(r => r.avgSurviveMin);
+  const lost = results.filter(r => r.runs).map(r => r.avgDefenderTowersLost);
+  const scored = results.filter(r => r.runs);
+  if (scored.length) {
+    const best = scored.reduce((a, b) => (b.avgSurviveMin > a.avgSurviveMin ? b : a));
+    const worst = scored.reduce((a, b) => (b.avgSurviveMin < a.avgSurviveMin ? b : a));
+    log(`存活均时长区间 ${Math.min(...mins)} ~ ${Math.max(...mins)} 分`);
+    log(`丢塔档位区间 ${Math.min(...lost)} ~ ${Math.max(...lost)}`);
+    log(`最扛揍：${best.label}（${best.avgSurviveMin}分）　最不扛揍：${worst.label}（${worst.avgSurviveMin}分）`);
+  }
 }
 log(
   '\n判读提示：\n' +
@@ -506,3 +478,5 @@ if (JSON_OUT) {
   fs.writeFileSync(JSON_OUT, JSON.stringify(payload, null, 2));
   console.log(`  另存：${JSON_OUT}`);
 }
+
+} // else（orchestrator）结束
