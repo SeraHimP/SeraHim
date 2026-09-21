@@ -146,6 +146,18 @@ export const CONFIG = {
     // 塔是否可以互相攻击（用户："塔之前也可以相互攻击（我方塔打敌方塔）"）。
     // 仍受结构保护约束、且塔的索敌优先级最低（不会为了打塔而无视拆自己的小兵）。
     towerAttacksTower: true,
+    // 2026-09-21：单局模拟的最长时长（分钟）——用户原话"设定每局游戏最长跑120
+    // 分钟（代码实现，默认还是无上限）"。只给 tools/balance_matrix.mjs 等模拟
+    // 工具读（见该文件里 MAX_MIN 的解析：CLI --minutes > 这里 > 无上限），不影响
+    // 实机对局本身——MapSystem.js 里"水晶枢纽摧毁后要不要做终局判定"这件事之前
+    // 已经确认暂不做，这条不是要动那个决定。
+    // 默认值故意留 null（=Infinity）：2026-09-19 已经踩过一次坑——默认封顶
+    // （当时是40分钟）会让大部分对局在分出真实胜负前被强行掐断，胜率这条主信号
+    // 大面积失效（14档里13档打成平局），是用户明确要求撤掉的，这里不能重新
+    // 悄悄把默认值改回"有上限"。真正要用120分钟封顶的场景（比如塔平衡对照——
+    // 进攻方被人为拉到极端强度，防守方选的武器再硬也可能被磨到天荒地老）
+    // 由调用方显式传 --minutes 120，不依赖这个默认值。
+    maxSimMinutes: null,
     // ==================== Q5：超级兵早弱晚强 ====================
     // 用户："超级兵弄成前期非常弱……让超级兵的基础数值随时间的流逝变得越来越强"——
     // 防止水晶陷落触发的超级兵不分游戏时间早晚一律满状态出场。见
@@ -238,7 +250,10 @@ export const CONFIG = {
     // ⚠️ 这个键此前在同一个对象字面量里被声明了【两次】（另一处在上方约 30 行处），
     // 后声明的静默覆盖前面的，改前面那份毫无效果 —— 又一个"改了没反应"。
     // 已删除重复声明，这里是唯一一处。
-    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: true, warlock: true, corrupt: true, ram: true, heavy: true, healer: true, engineer: true, summoner: true },
+    // 2026-09-21：engineer 暂时关闭出兵——用户原话"把工程兵暂时禁用，他完全影响了
+    // 游戏的平衡"。只关出兵开关，不删代码/不删测试——"暂时"两个字是重点，这是一个
+    // 可以随时翻回 true 的软开关，不是下线这个兵种。
+    spawnEnabled: { melee: true, ranged: true, siege: true, super: true, totem: true, warlock: true, corrupt: true, ram: true, heavy: true, healer: true, engineer: false, summoner: true },
     // ==================== 巨龙：刷新节奏与强度曲线 ====================
     // 这里原本是七个键（dragonFirstDelay / dragonInterval / dragonHpScale /
     // dragonAttrScale / dragonKillsToUnlock / ancientDragonHpScale /

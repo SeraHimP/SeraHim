@@ -49,7 +49,6 @@ const RUNS = parseInt(arg('runs', '5'), 10);
 // 卡住不结束"本身就是一个值得报告的平衡问题（大概率是某种对称僵局），不是
 // 工具的锅，不要为了让工具"看起来能跑完"就悄悄重新加一个隐藏上限糊弄过去。
 const minutesArg = arg('minutes', null);
-const MAX_MIN = minutesArg != null ? parseFloat(minutesArg) : Infinity;
 // --map：在指定地图上跑。默认召唤师峡谷（历史基线都是在它上面测的，不要随便改默认值）。
 // 加这个参数是因为新地图做完必须能【用同一把尺子】量一遍 ——
 // 我自己临时写的简易脚手架量出来"塔零掉血"，连峡谷也是零，说明那种脚手架说明不了任何事。
@@ -99,6 +98,16 @@ const { BuffSystem } = await import('../src/systems/BuffSystem.js');
 const { WorldState } = await import('../src/systems/WorldState.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { FACTIONS } = await import('../src/systems/FactionSystem.js');
+
+// 2026-09-21：--minutes 优先级链 CLI > CONFIG.gameRules.maxSimMinutes > 无上限。
+// 用户原话"设定每局游戏最长跑120分钟（代码实现，默认还是无上限）"——上面那段
+// 2026-09-19 的教训（默认封顶会把胜率这条主信号打没）依然成立，不能碰
+// CONFIG.gameRules.maxSimMinutes 的默认值，所以它留 null（=Infinity）；
+// "代码实现"要的是有一个统一读取点，而不是每次都要记得手打 --minutes，
+// 以后哪个批次要用固定上限（比如塔平衡对照——见 balance_tower.mjs），
+// CLI 传参就行，不影响这里的默认行为。
+const MAX_MIN = minutesArg != null ? parseFloat(minutesArg)
+  : (Number.isFinite(CONFIG.gameRules?.maxSimMinutes) ? CONFIG.gameRules.maxSimMinutes : Infinity);
 
 const SIM_DT = 1 / 30;
 let FORCE_ENTROPY = null;   // 熵扫档时由 runCell 的 apply 钩子钉住

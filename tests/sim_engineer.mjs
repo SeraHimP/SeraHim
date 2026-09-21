@@ -134,7 +134,11 @@ const mapStub = {
 // ==================== 七、出兵编排 / 出兵开关接线 ====================
 {
   const { CONFIG } = await world();
-  T('接线①-spawnEnabled.engineer 默认开启', CONFIG.gameRules.spawnEnabled.engineer === true);
+  // 2026-09-21：用户"把工程兵暂时禁用，他完全影响了游戏的平衡"——只关出兵开关，
+  // 兵种本身（模板/技能/移动逻辑）原样保留，这条断言跟着改成钉"暂时关闭"这个
+  // 状态本身，而不是继续断言"默认开启"（那样这条测试会在正确的改动下失败）。
+  T('接线①-spawnEnabled.engineer 暂时关闭（用户反馈影响平衡，兵种代码本身仍保留）',
+    CONFIG.gameRules.spawnEnabled.engineer === false);
   T('接线②-laneWaveComposition 里有 engineer 的出兵规则',
     CONFIG.gameRules.laneWaveComposition.some(r => r.type === 'engineer'));
   const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
