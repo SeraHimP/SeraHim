@@ -234,8 +234,17 @@ export function alliesInRadius(entities, self, radius, opts = {}) {
  */
 const LANE_CHAIN = ['outer', 'inner', 'base', 'nexus_lane'];
 
+const PROTECTABLE_TIERS = new Set(['inner', 'base', 'nexus_lane', 'hq_tower', 'nexus_main']);
+
 export function isStructureProtected(entityContainer, target) {
   if (!target || !target._mapFaction) return false;
+  // 性能：下面能返回 true 的 target._mapTier 只有这五档（outer 在 LANE_CHAIN 里
+  // idx===0，落到 idx>0 分支之外，switch 也没它的 case，本来就总是 false）。
+  // 这里先按 tier 短路，跳过 getAllTowers() 这次全量扫描——这个函数被
+  // scanEnemies 对索敌半径内【每一个候选目标】调用（绝大多数是小兵，不是塔），
+  // 原来对着注定返回 false 的小兵也白扫一遍全部塔，profiling 实测是热路径
+  // 前几名之一。返回值逐位不变，纯短路。
+  if (!PROTECTABLE_TIERS.has(target._mapTier)) return false;
   const towers = entityContainer.getAllTowers(true);
   const aliveTier = (tier, laneId) => towers.some(t =>
     t.alive && t._mapFaction === target._mapFaction && t._mapTier === tier &&
