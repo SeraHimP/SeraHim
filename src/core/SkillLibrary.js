@@ -21,6 +21,8 @@ import { dragonPassives } from './skills/dragonPassives.js';
 // v51：主动技能自成一类（category:'active'）——见 actives.js 头注，与"被动"的
 // 区别只在触发者是 ManaSystem 还是引擎的战斗时序。
 import { actives } from './skills/actives.js';
+// 平衡测试专用技能（不是正常玩法内容）——见 testScenarios.js 头注。
+import { testScenarios } from './skills/testScenarios.js';
 
 export const SkillLibrary = {
   _registry: new Map(),
@@ -43,7 +45,7 @@ export const SkillLibrary = {
 
 // Register all built-in skills
 const allSkills = { ...core, ...weapons, ...attackModes, ...towerPassives, ...TowerGrowthSkills,
-  ...HomeAuraSkill, ...minionPassives, ...dragonSouls, ...dragonPassives, ...actives };
+  ...HomeAuraSkill, ...minionPassives, ...dragonSouls, ...dragonPassives, ...actives, ...testScenarios };
 for (const [id, def] of Object.entries(allSkills)) {
   SkillLibrary.register(id, def);
 }

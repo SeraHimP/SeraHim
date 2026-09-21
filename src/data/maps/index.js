@@ -3,7 +3,6 @@ import { howling_abyss } from './howling_abyss.js';
 import { twisted_treeline } from './twisted_treeline.js';
 import { demo_stylized } from './demo_stylized.js';
 import { howling_abyss_frost } from './howling_abyss_frost.js';
-import { tower_balance_test } from './tower_balance_test.js';
 
 /**
  * maps/index.js
@@ -29,11 +28,6 @@ export const MAPS = {
   // 2026-09-04：嚎哭深渊·冰封风格重做（见 howling_abyss_frost.js 头注 + 设计文档
   // docs/MAP-DESIGN-howling-abyss-frost.md），原图 howling_abyss.js 不受影响。
   [howling_abyss_frost.id]: howling_abyss_frost,
-  // 2026-09-21：防御塔强度横向测试场（见 tower_balance_test.js 头注 + 配套的
-  // tools/balance_tower.mjs）——工具/测试用途，不是给玩家正常对局用的图，
-  // 但沿用 demo_stylized 的既有先例（同样是探路/工具用途的图，也是直接注册
-  // 在这张表里，不单独搞一份"隐藏地图"清单）。
-  [tower_balance_test.id]: tower_balance_test,
 };
 
 export const DEFAULT_MAP_ID = summoners_rift.id;

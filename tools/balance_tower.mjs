@@ -1,12 +1,25 @@
 #!/usr/bin/env node
 /**
- * balance_tower.mjs —— 防御塔武器强度横向对照（在 tower_balance_test_v1 上跑）
+ * balance_tower.mjs —— 防御塔武器强度横向对照（在真实召唤师峡谷上跑）
  *
  * ==================== 这把尺子量的是什么 ====================
  * 用户原话："在这个测试中，红蓝方中随机某一方为进攻方，进攻方的所有防御塔获得
  * 90%伤害减免并且获得1000%伤害增幅（进攻方所有防御塔武器设置为闪电杖），
  * 进攻方所有小兵额外获得33%伤害减免。防守方一切正常。这个地图是用来测试防御塔
  * 强度的，就是通过设置防守方所有防御塔的武器类型来横向判断防御塔的武器强度。"
+ *
+ * ==================== 第一版返工记录（如实记录）====================
+ * 第一版做错了两件事，用户原话："这个防御塔测试场就是复用召唤师峡谷的地图，
+ * 并且我看也没有进攻方和防守方的属性加成啊！进攻方获得的属性加成通过永久状态
+ * 实现！"：
+ *   ① 自己另造了一张最小地图（tower_balance_test_v1），而不是像其它平衡工具
+ *      （龙魂/巨龙之力）一样在真实地图上量——已删除那张图，改用 summoners_rift_v1。
+ *   ② 把进攻方增益直接内联写在这个脚本里（一串 fx.apply），只存在于脚本自己
+ *      的一次性内存模拟里，游戏/编辑器里正常打开地图什么都看不到。现在改成
+ *      equipSkill 装一条真实存在于 SkillLibrary 里的技能
+ *      （passive_test_tower_attacker / passive_test_minion_attacker，见
+ *      src/core/skills/testScenarios.js），跟 balance_matrix.mjs 给蓝方装龙魂
+ *      同一条路径——脚本不再发明任何新机制，只是"批量装配+批量跑+统计"。
  *
  * 进攻方被人为拉到近乎打不死、且输出被放大到 11 倍（1+1000%）的极端强度，
  * 用统一同一把"锤子"（闪电杖）敲，这样【谁是进攻方的武器强度】这个变量被
@@ -49,7 +62,8 @@ const arg = (name, def) => {
 const RUNS = parseInt(arg('runs', '20'), 10);
 const minutesArg = arg('minutes', '120'); // 见上方头注：这个工具专属默认120，不动全局默认
 const MAX_MIN = minutesArg != null ? parseFloat(minutesArg) : Infinity;
-const MAP_ID = 'tower_balance_test_v1';
+// 用户明确要求复用真实的召唤师峡谷，不要另造一张地图——见文件头注那次返工的说明。
+const MAP_ID = 'summoners_rift_v1';
 const PICK = arg('pick', '');
 const JSON_OUT = arg('json', '');
 
@@ -75,15 +89,17 @@ const { CONFIG } = await import('../src/data/Config.js');
 const SIM_DT = 1 / 30;
 
 // 8 种塔武器（见 src/core/skills/weapons.js 的 weapon_* 定义）——这是本工具
-// 唯一要横向对照的维度。地图里塔默认是 'piercing' 占位值，这里全部覆写。
+// 唯一要横向对照的维度。召唤师峡谷地图本身给不同档位塔配了不同默认武器
+// （outer/inner=piercing、base/hq_tower=lightning），防守方这里全部覆写成
+// 当前档位要测的那一种，不受地图默认值影响。
 const WEAPONS = ['piercing', 'lightning', 'explosive', 'corrosion', 'barrage', 'nova', 'shepherd', 'prism'];
 const WEAPON_LABEL = {
   piercing: '穿透型', lightning: '闪电杖', explosive: '爆破型', corrosion: '腐蚀型',
   barrage: '弹幕型', nova: '聚能炮', shepherd: '牧灵法阵', prism: '光棱',
 };
-// 只有这几档塔层级真正持有武器（nexus_lane/nexus_main 在这张图里 weapon:null，
-// 不参与武器覆写——跟地图文件本身的声明一致，见 tower_balance_test.js）。
-const WEAPON_TOWER_TIERS = new Set(['outer', 'base', 'hq_tower']);
+// 只有这几档塔层级真正持有武器（nexus_lane/nexus_main 在召唤师峡谷上一律
+// weapon:null，不攻击——跟地图文件本身的声明一致，不覆写这两档）。
+const WEAPON_TOWER_TIERS = new Set(['outer', 'inner', 'base', 'hq_tower']);
 
 const _realRandom = Math.random;
 function _seedRandom(seed) {
@@ -115,37 +131,26 @@ function swapTowerWeapon(entity, weaponKey, ctx) {
 }
 
 /**
- * 进攻方增益：90%伤害减免 + 1000%伤害增幅（塔），闪电杖（塔，非水晶枢纽档），
- * 33%伤害减免（小兵）。走 kind:'stat' + duration:Infinity + permanent:true，
- * 跟 balance_matrix.mjs 里龙之力对照档同一个"整局常驻"写法。
+ * 进攻方增益：装 passive_test_tower_attacker / passive_test_minion_attacker——
+ * 这是 SkillLibrary 里真实存在的技能（见 src/core/skills/testScenarios.js
+ * 头注：第一版把这套增益内联写在脚本里，只在这个脚本自己的内存模拟里存在，
+ * 编辑器/游戏里看不到，是错的；跟龙魂的装法完全一致，equipSkill 装的是一条
+ * "已经存在于游戏里"的技能，脚本自己不发明任何新机制）。塔武器换成闪电杖
+ * 由这条技能自己的 onEquip 处理（同时会跳过 nexus_lane/nexus_main）。
+ * 防守方：只换武器（这一档要测的那种），不装任何增益技能——"防守方一切正常"。
  */
-function applyAttackerTowerBuffs(entity, fx, ctx, defenderWeapon) {
+function applyRoleBuffs(entity, ctx, defenderWeapon) {
   const isAttacker = (entity._mapFaction || entity.faction) === CURRENT_ATTACKER;
   if (isAttacker) {
-    if (WEAPON_TOWER_TIERS.has(entity._mapTier)) swapTowerWeapon(entity, 'lightning', ctx);
-    fx.apply(entity.id, {
-      name: '进攻方增益', icon: '⚡', kind: 'stat', statKey: 'damageReduction',
-      flatValue: 90, duration: Infinity, permanent: true, stackable: false, uniquePassive: true,
-      description: '伤害减免 +90%（塔平衡测试：进攻方）',
-    }, 'tower_balance_atk_dr');
-    fx.apply(entity.id, {
-      name: '进攻方增益', icon: '⚡', kind: 'stat', statKey: 'damageAmpPct',
-      flatValue: 1000, duration: Infinity, permanent: true, stackable: false, uniquePassive: true,
-      description: '伤害增幅 +1000%（塔平衡测试：进攻方）',
-    }, 'tower_balance_atk_amp');
-  } else {
-    if (WEAPON_TOWER_TIERS.has(entity._mapTier)) swapTowerWeapon(entity, defenderWeapon, ctx);
-    // 防守方一切正常——不额外挂任何效果。
+    equipSkill(entity, 'passive_test_tower_attacker', ctx, SkillLibrary);
+  } else if (WEAPON_TOWER_TIERS.has(entity._mapTier)) {
+    swapTowerWeapon(entity, defenderWeapon, ctx);
   }
 }
 
-function applyAttackerMinionBuff(entity, fx) {
+function applyAttackerMinionBuff(entity, ctx) {
   if ((entity._mapFaction || entity.faction) !== CURRENT_ATTACKER) return;
-  fx.apply(entity.id, {
-    name: '进攻方增益', icon: '⚡', kind: 'stat', statKey: 'damageReduction',
-    flatValue: 33, duration: Infinity, permanent: true, stackable: false, uniquePassive: true,
-    description: '伤害减免 +33%（塔平衡测试：进攻方小兵）',
-  }, 'tower_balance_atk_minion_dr');
+  equipSkill(entity, 'passive_test_minion_attacker', ctx, SkillLibrary);
 }
 
 let CURRENT_ATTACKER = null; // 本局随机指派，runOne 开头设置
@@ -195,11 +200,14 @@ function runOne(seed, defenderWeapon) {
   });
   dragons.setCreateEntity(F.createDragon);
 
-  const skillCtx = { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, waveNumber: 0 };
+  // combat 字段是必须的：passive_test_tower_attacker 的 onEquip 靠 ctx.combat?.skills
+  // 拿到 SkillLibrary 去查旧武器的 onUnequip（与 weapons.js 里 atkmode_charge/
+  // passive_pet_spirit_guard 的装配同一个既有取法，不是这里新发明的）。
+  const skillCtx = { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: AttributeCalculator, combat, waveNumber: 0 };
 
   mapSys.setCreateBuildingFn((opt) => {
     const e = F.createBuilding(opt);
-    if (e) applyAttackerTowerBuffs(e, fx, skillCtx, defenderWeapon);
+    if (e) applyRoleBuffs(e, skillCtx, defenderWeapon);
     return e;
   });
 
@@ -216,7 +224,7 @@ function runOne(seed, defenderWeapon) {
       growthFlat: growth(type),
       templateOverride: mapSys.currentMap?.minionTemplates?.[type],
     });
-    if (e) applyAttackerMinionBuff(e, fx);
+    if (e) applyAttackerMinionBuff(e, skillCtx);
     return e;
   });
 

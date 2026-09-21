@@ -54,10 +54,11 @@ const { T, done } = scoreboard('经典模式验收（模式×地图）');
   // 是探路用的第四张真实地图，只加不改，与经典模式变换无关。
   // 2026-09-04（第二次）：再新增 howling_abyss_frost_v1（嚎哭深渊·冰封版，见
   // docs/MAP-DESIGN-howling-abyss-frost.md），常量从 4 改成 5，同样只加不改。
-  // 2026-09-21（第三次）：再新增 tower_balance_test_v1（防御塔强度测试场，见
-  // tower_balance_test.js 头注），常量从 5 改成 6，同样只加不改。
+  // 2026-09-21：曾短暂新增过 tower_balance_test_v1（防御塔强度测试场），常量
+  // 一度改成 6；用户反馈那张图不该另造，塔平衡测试应该直接复用召唤师峡谷，
+  // 已删除那张图，常量改回 5——不是这次改动引起的回退，是纠正上一版的错误。
   T('注①-summoners_rift_classic 不再单独注册（经典模式不是第四张地图）',
-    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 6);
+    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 5);
   T('注②-MapSystem 认得 __/_classic 后缀，能反查回经典模式版本',
     !!(new MapSystem(new EntityContainer(new EventBus()), new EventBus())
       .getMapById('summoners_rift_v1_classic')));
