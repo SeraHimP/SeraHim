@@ -329,33 +329,50 @@ if (PICK) {
   }
 }
 
+// 2026-09-21：自动落盘到 .balance/（跟 tools/run_balance_soul.mjs 同一个约定——
+// 用户跑完龙魂/巨龙之力扫描后一直是直接把 .balance/ 下最新的 .log/.json 发过来，
+// 这个工具也该有同样的体验，不用每次都记得手打 --json）。--json 仍然保留，
+// 传了就【额外】再写一份到指定路径，两边不冲突。
+const fs = await import('fs');
+const path = await import('path');
+const { fileURLToPath } = await import('url');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ts = new Date().toISOString().replace(/[:.]/g, '-');
+const outDir = path.join(ROOT, '.balance');
+fs.mkdirSync(outDir, { recursive: true });
+const logPath = path.join(outDir, `tower_sweep_${ts}.log`);
+const jsonPath = path.join(outDir, `tower_sweep_${ts}.json`);
+
+const logLines = [];
+const log = (s = '') => { console.log(s); logLines.push(s); };
+
 const minLabel = Number.isFinite(MAX_MIN) ? `单局上限 ${MAX_MIN} 分钟` : '单局不设时长上限';
-console.log(`防御塔强度横向对照：地图 ${MAP_ID}，每档 ${RUNS} 局，${minLabel}，${weaponsToRun.length} 种塔武器`);
-console.log('（进攻方每局随机指派蓝/红，固定90%减伤+1000%增伤+闪电杖+小兵33%减伤；防守方按档位换武器，其余一切正常）\n');
+log(`防御塔强度横向对照：地图 ${MAP_ID}，每档 ${RUNS} 局，${minLabel}，${weaponsToRun.length} 种塔武器`);
+log('（进攻方每局随机指派蓝/红，固定90%减伤+1000%增伤+闪电杖+小兵33%减伤；防守方按档位换武器，其余一切正常）\n');
 
 const t0 = Date.now();
 const results = [];
 for (const w of weaponsToRun) {
   const r = runCell(w);
   results.push(r);
-  console.log(
+  log(
     `${r.label.padEnd(16)} 防守方存活均时长 ${String(r.avgSurviveMin).padStart(6)} 分` +
     `  防守方平均丢塔档位 ${String(r.avgDefenderTowersLost).padStart(5)}` +
     `  防守方胜 ${r.defenderWins}/${r.runs}（${r.defenderWinRate}%）  平 ${r.draws}`
   );
 }
-console.log(`\n耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+log(`\n耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
 if (results.length > 1) {
   const mins = results.map(r => r.avgSurviveMin);
   const lost = results.map(r => r.avgDefenderTowersLost);
   const best = results.reduce((a, b) => (b.avgSurviveMin > a.avgSurviveMin ? b : a));
   const worst = results.reduce((a, b) => (b.avgSurviveMin < a.avgSurviveMin ? b : a));
-  console.log(`存活均时长区间 ${Math.min(...mins)} ~ ${Math.max(...mins)} 分`);
-  console.log(`丢塔档位区间 ${Math.min(...lost)} ~ ${Math.max(...lost)}`);
-  console.log(`最扛揍：${best.label}（${best.avgSurviveMin}分）　最不扛揍：${worst.label}（${worst.avgSurviveMin}分）`);
+  log(`存活均时长区间 ${Math.min(...mins)} ~ ${Math.max(...mins)} 分`);
+  log(`丢塔档位区间 ${Math.min(...lost)} ~ ${Math.max(...lost)}`);
+  log(`最扛揍：${best.label}（${best.avgSurviveMin}分）　最不扛揍：${worst.label}（${worst.avgSurviveMin}分）`);
 }
-console.log(
+log(
   '\n判读提示：\n' +
   '  · 进攻方被人为拉到近乎打不死，"胜负"在这里几乎必然一边倒，不是有效信号——\n' +
   '    真正要看的是【存活均时长】【平均丢塔档位】：数值越大越扛揍，武器强度按这个排序。\n' +
@@ -365,10 +382,14 @@ console.log(
   '    比单看"赢/输"更能看出"差多少"。'
 );
 
+const payload = { runs: RUNS, maxMin: Number.isFinite(MAX_MIN) ? MAX_MIN : 'unlimited', map: MAP_ID, results };
+fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2));
+fs.writeFileSync(logPath, logLines.join('\n') + '\n');
+console.log(`\n📄 结果已落盘：`);
+console.log(`  日志：${logPath}`);
+console.log(`  数据：${jsonPath}`);
+
 if (JSON_OUT) {
-  const fs = await import('fs');
-  fs.writeFileSync(JSON_OUT, JSON.stringify({
-    runs: RUNS, maxMin: Number.isFinite(MAX_MIN) ? MAX_MIN : 'unlimited', map: MAP_ID, results,
-  }, null, 2));
-  console.log(`\n📄 已写入 ${JSON_OUT}`);
+  fs.writeFileSync(JSON_OUT, JSON.stringify(payload, null, 2));
+  console.log(`  另存：${JSON_OUT}`);
 }

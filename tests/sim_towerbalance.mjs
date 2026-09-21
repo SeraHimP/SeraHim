@@ -14,6 +14,7 @@
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tool = path.join(root, 'tools', 'balance_tower.mjs');
@@ -22,12 +23,23 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 
 const run = (args) => spawnSync('node', [tool, ...args], { encoding: 'utf8' });
 
+// 每次跑都会自动落盘到 .balance/（见下面⑧），这份测试全程会触发好几次真实的
+// 子进程调用——先记一份"跑之前 .balance/ 里有什么"，最后统一把这次测试自己
+// 造出来的 tower_sweep_* 文件清掉，不在仓库工作目录里留垃圾（虽然已经
+// gitignore，但保持这个目录干净，不给下次手动跑的人添乱）。
+const balanceDir = path.join(root, '.balance');
+const balanceBefore = new Set(await fs.promises.readdir(balanceDir).catch(() => []));
+
 // ---- ① 可复现：同参数两次运行输出完全一致 ----
 const A = run(['--runs', '2', '--minutes', '3', '--pick', 'piercing']);
 const B = run(['--runs', '2', '--minutes', '3', '--pick', 'piercing']);
 T('工具正常退出', A.status === 0 && B.status === 0);
 if (A.status !== 0) console.log(A.stderr.slice(0, 800));
-const strip = (s) => s.split('\n').filter(l => !l.startsWith('耗时')).join('\n');
+// 落盘路径带时间戳（tower_sweep_<ISO时间>.log/.json），跟"耗时"一样每次跑都
+// 不一样，可复现性比对时一并剔除，不然会被这两行的时间戳字符串误判成"不一致"。
+const strip = (s) => s.split('\n')
+  .filter(l => !l.startsWith('耗时') && !/结果已落盘|^\s*日志：|^\s*数据：|^\s*另存：/.test(l))
+  .join('\n');
 T('同参数两次运行结果逐字一致（可复现）', strip(A.stdout) === strip(B.stdout));
 
 // ---- ② --pick 过滤：只测请求的武器，不多不少 ----
@@ -44,7 +56,6 @@ T('--pick 匹配不到任何武器时非0退出并给出可用列表', P0.status
 const J = path.join(root, 'tests', '.towerbalance_tmp.json');
 const C = run(['--runs', '4', '--minutes', '3', '--pick', 'piercing', '--json', J]);
 T('--json 落盘可用', C.status === 0);
-const fs = await import('fs');
 const data = JSON.parse(fs.readFileSync(J, 'utf8'));
 fs.unlinkSync(J);
 const rows = data.results[0].rows;
@@ -77,6 +88,27 @@ T(`丢塔档位在合理量级内（最大 ${Math.max(...lost)}，3 分钟不可
 T('输出含存活均时长（主信号，不能被删）', /存活均时长/.test(A.stdout));
 T('输出含丢塔档位（主信号，不能被删）', /丢塔档位/.test(A.stdout));
 T('输出含防守方胜率（旁证信号）', /防守方胜/.test(A.stdout));
+
+// ---- ⑧ 自动落盘到 .balance/：不用记 --json 也能拿到结果 ----
+// 用户"代码给我"要在自己机器上跑——跟 run_balance_soul.mjs 一样，跑完直接把
+// .balance/ 下最新那份 .log/.json 发过来就行，不该逼着每次都手打 --json。
+const D = run(['--runs', '1', '--minutes', '2', '--pick', 'piercing']);
+T('不传 --json 也能正常退出', D.status === 0);
+const balanceAfter = await fs.promises.readdir(balanceDir).catch(() => []);
+const createdByD = balanceAfter.filter(f => !balanceBefore.has(f) && f.startsWith('tower_sweep_'));
+T(`自动落盘了一份 .log 和一份 .json（实际新增：${createdByD.join(', ') || '无'}）`,
+  createdByD.some(f => f.endsWith('.log')) && createdByD.some(f => f.endsWith('.json')));
+T('输出提示了落盘路径', /结果已落盘/.test(D.stdout) && /\.balance[\\/]tower_sweep_/.test(D.stdout));
+
+// 清掉这份测试全程（①~⑧，A/B/P2/P0/C/J2那次run/D）自动落盘出来的全部
+// tower_sweep_* 文件——A/B/P2/P0/J2那次run 都没传 --json，同样会各自触发一次
+// 自动落盘，不止 D 这一次。
+const balanceFinal = await fs.promises.readdir(balanceDir).catch(() => []);
+for (const f of balanceFinal) {
+  if (!balanceBefore.has(f) && f.startsWith('tower_sweep_')) {
+    await fs.promises.unlink(path.join(balanceDir, f)).catch(() => {});
+  }
+}
 
 console.log(`防御塔强度对照工具（balance_tower.mjs）验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
