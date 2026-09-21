@@ -11,6 +11,12 @@
  * MapSystem._applyGlobalAura 原有的"看字段推断模式"风格，不加显式 mode 字段）：
  *   ① 固定值：只有 `flat`/`percent`（改动前就有的行为，原样保留）。
  *   ② 渐进到目标值：有 `perMinute`（+ 可选 `max` 封顶）（改动前就有，原样保留）。
+ *      2026-09-21 补：新增姊妹字段 `percentPerMinute`（+ 可选 `max` 封顶，省略=无上限）——
+ *      `perMinute` 只会把爬升的量写进 `flat`，这对"基础值恒为0的纯加成属性"
+ *      （如 bonusAttackSpeedPct）是对的，但对"有真实基础值的属性"（如 moveSpeed）
+ *      用 flat 是错的：往 moveSpeed 上加个位数的 flat 数值几乎等于没加。
+ *      召唤师峡谷"每分钟+0.5%移速、无上限"这条要的是【百分比】随分钟数线性爬升，
+ *      必须走 percent 通道，所以单独加一条爬升 percent 而不是 flat 的姊妹字段。
  *   ③ 分阶段（新增）：有 `stages` 数组，每项 `{ when, whenArg, flat, percent }`——
  *      按数组顺序把 `whenPasses(stage, ctx)` 挨个判一遍，**最后一个满足条件的
  *      阶段生效**（不是第一个）。这样阶段按"越靠后越进阶"的顺序排列时，
@@ -60,6 +66,13 @@ export function resolveAuraEffectValue(effect, ctx = {}) {
     let flat = Math.min(effect.max ?? Infinity, effect.perMinute * minutes);
     flat = Math.round(flat * 100) / 100;   // 面板上别出现 7.333333%
     return { flat, percent: effect.percent };
+  }
+
+  if (typeof effect.percentPerMinute === 'number') {
+    const minutes = (ctx.gameTime || 0) / 60;
+    let percent = Math.min(effect.max ?? Infinity, effect.percentPerMinute * minutes);
+    percent = Math.round(percent * 100) / 100;
+    return { flat: effect.flat ?? 0, percent };
   }
 
   return { flat: effect.flat ?? 0, percent: effect.percent };

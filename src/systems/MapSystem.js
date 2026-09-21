@@ -591,6 +591,18 @@ export class MapSystem {
    * （事件触发换挡，复用出兵编排的 WAVE_CONDITIONS），逻辑挪到独立纯函数里
    * 才能脱离完整 MapSystem 单独测试。固定值/渐进到目标值两种改动前就有的
    * 模式解析结果逐位不变。
+   *
+   * 2026-09-21（热寂终局）：单条效果新增两个可选字段，两者都是"不写就是改动前
+   * 行为"的纯新增，不影响既有地图（扭曲丛林/嚎哭深渊）：
+   *   `appliesTo` / `excludesTypes`：按 entity.type 过滤只对部分单位生效
+   *     （热寂要"塔掉血、非塔单位变强"两条完全不同的效果，globalAura 原来是
+   *     "同一条效果套给场上所有单位"，没有按类型分支的能力，这里补上）。
+   *   `scaleByOwnMaxHP`：这条效果的 flat 不是直接拿去用的数值，而是"目标自身
+   *     当前最大生命值的百分比/秒"——用于"每秒损失1%最大生命值"这类跟目标
+   *     自身体量挂钩、而不是全场统一一个数的效果。仍然落在 statKey:'healthRegen'
+   *     上，复用 v39/v36 就有的"负生命恢复=字面扣血，不吃恢复加成，结构保护/
+   *     无敌照常免疫"这条既有通道（CombatSystem.js 的那两段），不需要新的
+   *     伤害类型或新的结算路径。
    */
   _applyGlobalAura(dt) {
     const aura = this.currentMap && this.currentMap.globalAura;
@@ -607,13 +619,22 @@ export class MapSystem {
     for (const e of this.entities.getAll(true)) {
       if (!e || !e.alive) continue;
       for (const it of aura.effects) {
+        if (it.appliesTo && !it.appliesTo.includes(e.type)) continue;
+        if (it.excludesTypes && it.excludesTypes.includes(e.type)) continue;
         const { flat, percent } = resolveAuraEffectValue(it, ctx);
+        const flatValue = it.scaleByOwnMaxHP ? (flat / 100) * (e.baseStats.maxHP || 0) : flat;
+        if (!flatValue && !percent) continue; // 热寂触发前 flat=0：不用白挂一条零效果
+        // it.name 覆写：EffectRegistry 的去重键是 `${name}::${statKey}`（见其
+        // apply() 头注），同一张地图光环里如果有两条效果撞了同一个 statKey
+        // （本轮：热寂的+100%移速 与 常驻的每分钟+X%移速 都是 statKey:'moveSpeed'），
+        // 沿用同一个 aura.name 会让两条效果互相顶替、只剩后应用的那条生效——
+        // 给需要区分的那条效果单独起名，去重键自然分开，两条各自独立叠加。
         this._fx.apply(e.id, {
-          name: aura.name, icon: aura.icon || '🌐', kind: 'stat', statKey: it.statKey,
-          flatValue: flat, percentValue: percent,
+          name: it.name || aura.name, icon: it.icon || aura.icon || '🌐', kind: 'stat', statKey: it.statKey,
+          flatValue, percentValue: percent,
           duration: 0, permanent: true, stackable: false, stackPolicy: 'refresh',
           uniquePassive: true,
-          description: `${it.label || it.statKey}${flat >= 0 ? '+' : ''}${flat}`,
+          description: `${it.label || it.statKey}${flatValue >= 0 ? '+' : ''}${flatValue}`,
         }, 'map_global_aura');
       }
     }

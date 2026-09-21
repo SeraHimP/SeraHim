@@ -1,6 +1,7 @@
 import { FACTIONS } from '../../systems/FactionSystem.js';
 import { SR_PITS } from './sr_navgrid.js';
 import { composeMap } from '../mapComposition.js';
+import { CONFIG } from '../Config.js';
 
 /**
  * summoners_rift.js
@@ -140,6 +141,69 @@ const SR_CONFIG = {
   skillOverrides: {
     'tower:inner': { passive_inner_bulwark: { selfPlainValue: 800, selfFixedValue: 50 } },
     'tower:outer': { passive_outer_fortify: { earlyDefenseBonus: 25, earlyDefenseDuration: 600 } },
+  },
+
+  // ==================== 2026-09-21：热寂终局 + 常驻加速（目前仅本图）====================
+  // 起因：用户跑龙魂平衡（run_balance_soul.mjs 默认不设时长上限）挂了超过24小时
+  // 依旧卡住——两边打成真正对称僵局时，主循环没有任何退出条件，真的会无限跑下去。
+  // 用户定稿的解法不是给跑批脚本打补丁，是在游戏本身加一条终局机制：拖得够久，
+  // 地图自己把自己终结掉。数值全部来自 CONFIG.tuning.heatDeath（见其头注，含
+  // 完整设计背景）——这里只是把它们接到 globalAura 的"分阶段"通道上。
+  //   · 塔/水晶枢纽/召唤水晶：触发后每秒损失自身当前最大生命值的 1%，结构保护/
+  //     无敌照常免疫（用户确认："被保护的后排塔不会立刻掉血"——前置层级得先被
+  //     熔穿曝光，是有意的，不是漏做）。
+  //   · 非塔单位（含中立单位）：攻速/伤害增幅/移速各 +100%（用户："所有单位"）。
+  //   · 独立于热寂、从第0分钟就生效的常驻光环：全体每分钟 +0.5% 移速，无上限
+  //     （用户定稿"无上限"——不设 max，与扭曲丛林攻速光环那条 15% 封顶的先例
+  //     刻意不同）。
+  // 目前只有这张图声明了这条光环（用户："目前仅召唤师峡谷，后续再加其他地图"）——
+  // 嚎哭深渊/扭曲丛林等地图的对局理论上仍可能真死锁，还没有这条终局保底。
+  globalAura: {
+    name: '召唤师峡谷光环', icon: '⏱️',
+    effects: [
+      {
+        name: '召唤师峡谷·加速', icon: '⏱️', statKey: 'moveSpeed', excludesTypes: ['tower'],
+        percentPerMinute: CONFIG.tuning.summonersRiftMoveSpeedPctPerMin,
+        label: '移速',
+      },
+      {
+        name: '热寂', icon: '🔥', statKey: 'healthRegen', appliesTo: ['tower'],
+        scaleByOwnMaxHP: true,
+        stages: [
+          { when: '' },
+          { when: 'time.after', whenArg: CONFIG.tuning.heatDeath.triggerAtMin * 60,
+            flat: -CONFIG.tuning.heatDeath.towerDrainPctPerSec },
+        ],
+        label: '热寂衰减',
+      },
+      {
+        name: '热寂', icon: '🔥', statKey: 'bonusAttackSpeedPct', excludesTypes: ['tower'],
+        stages: [
+          { when: '' },
+          { when: 'time.after', whenArg: CONFIG.tuning.heatDeath.triggerAtMin * 60,
+            flat: CONFIG.tuning.heatDeath.unitAtkSpeedBonusPct },
+        ],
+        label: '攻速',
+      },
+      {
+        name: '热寂', icon: '🔥', statKey: 'damageAmpPct', excludesTypes: ['tower'],
+        stages: [
+          { when: '' },
+          { when: 'time.after', whenArg: CONFIG.tuning.heatDeath.triggerAtMin * 60,
+            flat: CONFIG.tuning.heatDeath.unitDmgAmpBonusPct },
+        ],
+        label: '伤害增幅',
+      },
+      {
+        name: '热寂', icon: '🔥', statKey: 'moveSpeed', excludesTypes: ['tower'],
+        stages: [
+          { when: '' },
+          { when: 'time.after', whenArg: CONFIG.tuning.heatDeath.triggerAtMin * 60,
+            percent: CONFIG.tuning.heatDeath.unitMoveSpeedBonusPct },
+        ],
+        label: '移速',
+      },
+    ],
   },
 
   // === Wave timing (classic defaults) ===
