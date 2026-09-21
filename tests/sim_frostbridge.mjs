@@ -58,7 +58,10 @@ const halfWidth = (bits, d, sign) => {
 // ==================== 二、新地图正确注册，声明字段齐全 ====================
 {
   T('注①-howling_abyss_frost_v1 已注册进 MAPS', MAPS['howling_abyss_frost_v1'] === howling_abyss_frost);
-  T('注②-Object.keys(MAPS).length === 5（原4 张 + 这次新增1 张）', Object.keys(MAPS).length === 5);
+  // 2026-09-21：之后又新增了 tower_balance_test_v1（防御塔强度测试场），常量
+  // 从 5 改成 6——不是这次冰封版改动引起的，只是这条断言恰好也钉了总数，
+  // 跟着地图表一起涨，如实同步。
+  T('注②-Object.keys(MAPS).length === 6（原4 张 + 冰封版 + 塔平衡测试场）', Object.keys(MAPS).length === 6);
   T('注③-visualStyle/paletteId 正确声明', howling_abyss_frost.visualStyle === 'stylized' && howling_abyss_frost.paletteId === 'frost');
   // ==================== v0.6/v0.7：navgrid 从"逐位复用原图"变成这张图自己的一份 ====================
   // v0.6 用户拍板：新描一份更宽的（HA_NAVGRID_FROST_WIDE），原图完全不动。
