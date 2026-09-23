@@ -126,4 +126,50 @@ const { T, done } = scoreboard('森林风格（forest palette）验收');
     })());
 }
 
+// ==================== 七：v51.18 魔幻森林（扭曲丛林专用）====================
+// 用户先文字方案对齐（第四条铁律），确认方向"紫雾+扭曲发光树木"后才写代码
+// （见 Config.stylizedPalettes.magicForest 头注里记的确认原话）。这里钉住：
+//   ① 调色板数据本身（配色、vegetationMode、treeShape 新字段）；
+//   ② 扭曲丛林地图确实声明了 visualStyle/paletteId；
+//   ③ stylizedTreeGeo 按 treeShape:'twisted' 真的产出了不同的几何（不是空转），
+//      且没声明这个字段的 forest 调色板逐位不受影响（回归安全网）。
+//      stylizedTreeGeo 只构建 BufferGeometry 数据，不需要真实 WebGL 上下文，
+//      可以直接 import 真实跑，不是源码正则。
+{
+  const { CONFIG: CONFIG2, stylizedPaletteOf: paletteOf2 } = await import('../src/data/Config.js');
+  const { twisted_treeline } = await import('../src/data/maps/twisted_treeline.js');
+  const { stylizedTreeGeo } = await import('../src/presentation/VegetationLayer.js');
+
+  const MF = CONFIG2.stylizedPalettes.magicForest;
+  T('魔①-magicForest 调色板存在，且不与其它调色板共用引用',
+    !!MF && MF !== CONFIG2.stylizedPalettes.forest && MF !== CONFIG2.stylizedPalettes.default
+    && MF !== CONFIG2.stylizedPalettes.frost);
+  T('魔②-magicForest 声明 vegetationMode:"jungle"（复用森林三级梯度框架，用户原话"地形结构复用召唤师峡谷那套框架"）',
+    MF.vegetationMode === 'jungle');
+  T('魔③-magicForest 声明 treeShape:"twisted"（扭曲树干开关）', MF.treeShape === 'twisted');
+  T('魔④-magicForest 的地面/雾效配色确实偏紫（groundColor/corridorColor 的 R 通道与 B 通道都不为0，读出紫调而非纯绿/纯蓝）',
+    (() => {
+      const rgb = (hex) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+      const [r, , b] = rgb(MF.groundColor);
+      return r > 10 && b > 10 && b >= r; // 紫/品红：红蓝都有值且蓝不弱于红
+    })());
+  T('魔⑤-stylizedPaletteOf 认得 paletteId:"magicForest"（不会被兜底成 default）',
+    paletteOf2({ paletteId: 'magicForest' }).treeShape === 'twisted');
+
+  T('图⑤-扭曲丛林声明了 visualStyle:"stylized"（接入风格化渲染分支）',
+    twisted_treeline.visualStyle === 'stylized');
+  T('图⑥-扭曲丛林声明了 paletteId:"magicForest"', twisted_treeline.paletteId === 'magicForest');
+
+  const twistedGeo = stylizedTreeGeo({ paletteId: 'magicForest' }, false);
+  const twistedGeoDeep = stylizedTreeGeo({ paletteId: 'magicForest' }, true);
+  const forestGeo = stylizedTreeGeo({ paletteId: 'forest' }, false);
+  T('几③-treeShape:"twisted" 时 stylizedTreeGeo 产出了有效几何（没有因为矩阵合并失败返回 null）',
+    !!twistedGeo && twistedGeo.getAttribute('position').count > 0);
+  T('几④-深林档（deep=true）同样能正常产出几何', !!twistedGeoDeep && twistedGeoDeep.getAttribute('position').count > 0);
+  T('几⑤-扭曲树干（3段 6边圆柱不带index）比老直筒树干（1段 6边圆柱不带index）顶点数更多——真的换了形状，不是加了字段没接上',
+    twistedGeo.getAttribute('position').count > forestGeo.getAttribute('position').count);
+  T('几⑥-没声明 treeShape 的 forest 调色板逐位不变（回归安全网：新分支不影响老地图）',
+    forestGeo.getAttribute('position').count === 432);
+}
+
 done();

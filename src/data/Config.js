@@ -404,6 +404,24 @@ export const CONFIG = {
   // v51.4 起用户放宽了要求："龙魂的平衡不需要做的太严格，只要不是差的太远就行。
   // 因为有强有弱。"—— 不再死守 60~70% 这个窄带，只要别出现 poison 那种"均局20分钟、
   // 对面被打到推进度 <1"级别的离谱结果就行。
+  //
+  // ==================== v51.18：用户重新定稿明确胜率目标——75% ====================
+  // 用户原话："拥有龙魂的队伍强一些是正常的。拥有龙魂的队伍胜率要保证75%！"——
+  // 收回 v51.4 那次放宽，改回一个具体数字：目标胜率 75%（不是区间，是这一个点，
+  // 允许小样本（20局/档）噪声导致的 ±1~2 局摆动）。本轮用这份最新对照数据
+  // （2026-09-22，用户本机16核实测，20局/档，单局不设时长上限）按"扣基线后的
+  // 推进度差，缩放到能让胜率落到75%附近"重新估了一遍全部13条魂，只动每条魂
+  // 已经验证过的"真正吃重"那个/那几个杠杆（沿用v51.8/v51.13/v51.15~17一路排查
+  // 出来的结论，不重新瞎猜）：
+  //   基线45%（不是魂，红方天生略占优，历史遗留问题，Task#74已排查过，
+  //           这次不再动）
+  //   fire 70%/+0.93、water 60%/+0.39、earth 65%/+0.33、thunder 60%/+0.58、
+  //   dark 60%/+0.15、steel 60%/+0.27、blood 65%/+0.61、magma 60%/+0.25、
+  //   astral 60%/+0.18、rift 55%/+0.02 —— 全部低于75%目标，按各自杠杆同比例加强。
+  //   poison 40%/-0.54、frost 45%/-0.16 —— 差距最大的两条，加强幅度也最大。
+  //   wind 90%/+1.3 —— 唯一超标的一条，同一根杠杆往下砍。
+  // 这依然是粗估（单点数据倒推的比例），不是最终数值——下一轮 --sweep soul 还要
+  // 再验一遍，尤其是 poison/frost/wind 这三条改动幅度最大的。
   dragonSouls: {
     // ==================== v51.6：龙魂给的吸血类加成对塔削弱到 33% ====================
     // 用户定稿："所有龙魂作用增加的吸血（物理/魔法/全能）对防御塔这种单位的数值
@@ -478,7 +496,10 @@ export const CONFIG = {
       // 两拨、squad被拆散"；这份常驻加持层（soulStatBlueprints 自动挂的baseline）
       // 走的是同一个 SOUL_REWARD_OK 领受范围，同样的 moveSpeed 哪怕只有6%量级也是
       // 同一个问题，必须一起删，不能只改机制那一半、漏了这个自动挂载的常驻层。
-      wind:    { bonusAttackSpeedPct: 10, attackSpeedRatio: 0.06, evasionPct: 10 },
+      // v51.18：90%/+1.3，14档里唯一超过75%目标的一条，常驻加持三项一起同比例砍
+      // （×0.63，跟下面机制层 wind.perStackPct 8→5 同一个缩放倍率，两层一起动才
+      // 不会砍了一层另一层还是超标——参照 v51.8 "只砍一项等于没砍"的教训）。
+      wind:    { bonusAttackSpeedPct: 6, attackSpeedRatio: 0.04, evasionPct: 6 },
       dark:    {},   // v51.7 前：{ damageAmpPct: 7, lifeStealPct: 4 }
       poison:  {},   // v51.7 前：{ onHitPercentDamage: 0.7, spellVampPct: 4 }
       // 霜=坚冰不动摇：格挡之外加韧性（抗控）。这条测出来偏弱（40%/扣基线+0.19），不动。
@@ -559,15 +580,15 @@ export const CONFIG = {
     // 已经和"没拿这条魂"差不多了，插值回调到 -2。
     //
     // 🔥 炎魂：攻击附带溅射。
-    fire:    { pct: 18, radius: 75, cooldown: 0 },   // v51.3：30 → 18（×0.59，主伤害杠杆）；测出来落在目标带内，不动，作锚点
+    fire:    { pct: 22, radius: 75, cooldown: 0 },   // v51.3：30 → 18（×0.59，主伤害杠杆）；v51.18：70%/+0.93，低于75%目标，18→22（×1.22）
     // 🌊 潮魂：攻击后回复已损生命 + 治疗强度。回血**不无视**加固城防的节点封顶
-    water:   { healMissingPct: 2, powerPct: 25, buffSec: 5, cooldown: 8 },   // v51.3：70% 压线，不动；v51.7：healMissingPct 5→2（×0.42——20局0胜，胜率数字骗人，实际偏强）；测出来落进目标区间，这次不动
+    water:   { healMissingPct: 3.5, powerPct: 25, buffSec: 5, cooldown: 8 },   // v51.3：70% 压线，不动；v51.7：healMissingPct 5→2（×0.42——20局0胜，胜率数字骗人，实际偏强）；v51.18：60%/+0.39，低于75%目标，2→3.5（×1.75）
     // 🗿 山魂：减伤 + 格挡。
     // ⚠️ damageBlock 是【每次命中扣固定值】，对小 AD 单位近乎免疫，这个数不要再往上调
     //（v44 定稿的老结论仍然成立，这次没碰它）。
     // v51.11：damageReduction 恢复到 v51.3 的 6（见下面大段说明——机制杠杆一律
     // 恢复原值，靠常驻加持调强弱）。earth 本身没被用户点名超标，维持 v51.3 水平。
-    earth:   { damageReduction: 6, damageBlock: 1 },
+    earth:   { damageReduction: 9, damageBlock: 1 },   // v51.18：65%/+0.33，低于75%目标，damageReduction 6→9（×1.5，damageBlock 那条 v44 定稿"不要再往上调"不动）
     // ==================== v51.11：平衡方向反过来——机制杠杆恢复原值，靠常驻加持调强弱 ====================
     // 用户："雷魂的连锁伤害变成1%了？？这跟没有也没啥区别啊。龙魂削弱的方向是
     // 削弱常驻加持甚至不要这个也行。但能不能给特殊的机制砍废啊！！！重申一遍，
@@ -607,17 +628,17 @@ export const CONFIG = {
     // 尤其是 magma/poison/steel/astral 这四条，砍完之后可能又矫枉过正变成太弱。
     //
     // ⚡ 雷魂：连锁真伤。落在参照带内（+0.99，扣基线），不动。
-    thunder: { perTargetPct: 15, targets: 6, range: 200, cooldown: 8 },   // v51.11：1→15（恢复 v51.3 原值，见上）
+    thunder: { perTargetPct: 22, targets: 6, range: 200, cooldown: 8 },   // v51.11：1→15（恢复 v51.3 原值，见上）；v51.18：60%/+0.58，低于75%目标，15→22（×1.47）
     // 🌪 风魂：v55 全部重做为"疾风连击"（命中叠攻速），删除移速两截和塔的常驻
     // 攻速——见 src/core/skills/dragonSouls.js 的 dragonsoul_wind 头注：只发给
     // 塔+大型小兵的"全体移速"会把一条兵线拆成两拨，用户实测确认"没拿反而更强"。
     // 改成命中触发的 bonusAttackSpeedPct 叠层（自动走 attackSpeedRatio 收益率），
     // 塔和大型小兵共用同一套，不再区分"塔一半/小兵一半"。三个数都是占位起始值，
     // 下一轮 --sweep soul 按对照数据再调。
-    wind:    { perStackPct: 8, maxStacks: 5, decaySec: 3 },
+    wind:    { perStackPct: 5, maxStacks: 5, decaySec: 3 },   // v51.18：90%/+1.3，唯一超过75%目标的一条（14档里最强），perStackPct 8→5（×0.63）；常驻加持层（下面 stat.wind）一起同比例砍，见那边注释
     // 🌑 暗魂：命中削双抗，**全队共享层数**（友军攻击也叠）；"偷取"机制自身自带 2 倍
     // 效果（既削对方又补自己）。
-    dark:    { flatPerStack: 1, pctPerStack: 0.5, maxFlat: 30, maxPct: 15, duration: 6, steal: true },   // v51.11：pctPerStack 0.08→0.5、maxFlat 10→30、maxPct 2→15（全部恢复到本session改动前的原值）；v51.13 实测落在参照带内（+1.09），不动
+    dark:    { flatPerStack: 1.5, pctPerStack: 0.5, maxFlat: 40, maxPct: 15, duration: 6, steal: true },   // v51.11：pctPerStack 0.08→0.5、maxFlat 10→30、maxPct 2→15（全部恢复到本session改动前的原值）；v51.13 实测落在参照带内（+1.09），不动；v51.18：新目标75%下实测60%/+0.15，偏弱，真正吃重的杠杆是flatPerStack/maxFlat（v51.8已验证），flatPerStack 1→1.5、maxFlat 30→40
     // ☠️ 毒魂：命中叠中毒，无限叠加。v51.13：本轮 --sweep soul 20 局全胜/推进度差
     // +3.94（扣基线），离谱超标——主伤害杠杆 pctPerStack 砍到约 0.27 倍，粗估数值，
     // 下一轮验证。
@@ -640,7 +661,7 @@ export const CONFIG = {
     // 效果共用的基础设施，牵连面太大，这次不改。先用 maxStacks 兜个安全上限（软
     // 编码，可调）：999→30，贴着设计注释原本假设的"~27层稳态"给一点余量，
     // 让"无限叠加"在实际战斗时长内不再是名义上无限、实际上一路涨到爆表。
-    poison:  { pctPerStack: 0.03, duration: 4, vsBuildingPct: 25, maxStacks: 30 },   // v51.11：0.02→0.3（恢复到 v51.3 改动前的原值）；v51.13：0.3→0.08（本轮实测离谱超标，×0.27）；v51.16：0.08→0.03（再次实测仍偏强+2.23，×0.36）；v51.17：maxStacks 999→30（真正的病灶：命中会刷新共用计时器导致层数无限走高，不是 pctPerStack 数值问题，见上方说明）
+    poison:  { pctPerStack: 0.06, duration: 4, vsBuildingPct: 25, maxStacks: 30 },   // v51.11：0.02→0.3（恢复到 v51.3 改动前的原值）；v51.13：0.3→0.08（本轮实测离谱超标，×0.27）；v51.16：0.08→0.03（再次实测仍偏强+2.23，×0.36）；v51.17：maxStacks 999→30（真正的病灶：命中会刷新共用计时器导致层数无限走高，不是 pctPerStack 数值问题，见上方说明）；v51.18：maxStacks 病灶修好之后本轮实测反而是14档里最弱的一条（40%/-0.54，扣基线后是负数），说明v51.17那次在病灶修好后没跟着把pctPerStack往回调，矫枉过正，0.03→0.06（×2）
     // ==================== v50：六条新魂的机制参数 ====================
     // 🧊 霜魂：命中叠【霜冻】，满层冻结；**对建筑改为减攻速**（用户定稿："塔做减攻速的"）。
     //    冻结后目标获得 immuneSec 秒的冻结免疫（用户定稿），状态栏显示剩余时间。
@@ -649,7 +670,7 @@ export const CONFIG = {
     // 慷慨了？给少一点。"）。frost 这条测出来偏弱（40%/扣基线仅+0.19），不属于
     // v51.11"机制被砍废"的名单，维持 v51.8 的 -2（不随这轮恢复原值）。
     frost:   { stacksToFreeze: 5, freezeSec: 1.2, immuneSec: 15, stackDuration: 4,
-               towerAtkSpeedPct: -2, towerDebuffSec: 4, towerMaxStacks: 8 },
+               towerAtkSpeedPct: -4, towerDebuffSec: 4, towerMaxStacks: 8 },   // v51.18：新目标75%下实测45%/-0.16（扣基线后是负数），14档里第二弱，towerAtkSpeedPct -2→-4（×2，跟v51.6"给少一点"那次同一根杠杆，这次是反方向调）
     // 🛡 铁魂：周期性给自己套护盾；护盾在场时反弹近战伤害（真伤，绕过对方防御）。
     //    四档护盾来源都预留（用户定稿："预留固定值 + 最大生命% + 已损生命% + 当前生命%"）。
     // v51.13：本轮 --sweep soul 20 局全胜/推进度差 +3.06——v51.8 已经验证过真正的
@@ -658,13 +679,13 @@ export const CONFIG = {
     // v51.16：steel 的护盾结算是纯 onFrame 周期发放，onDamaged 反弹那条命中已经
     // 传了 _noProc（见下面 onDamaged 实现），没有 magma 那类结构性 bug——本轮实测
     // 80%胜/推进度差+1.87（扣基线）仍偏强，继续按同一套比例砍护盾三项。
-    steel:   { everySec: 8, flat: 15, maxHPPct: 0.4, missingHPPct: 0.9, currentHPPct: 0,
-               reflectPct: 30 },   // v51.11：flat 20→120、maxHPPct 0.5→3、missingHPPct 1→6、reflectPct 5→30（全部恢复原值）；v51.13：flat 120→35、maxHPPct 3→1、missingHPPct 6→2（本轮实测离谱超标，三项一起×0.3，reflectPct不动）；v51.16：35→15、1→0.4、2→0.9（再次实测仍偏强+1.87，三项一起×0.44）
+    steel:   { everySec: 8, flat: 22, maxHPPct: 0.6, missingHPPct: 1.3, currentHPPct: 0,
+               reflectPct: 30 },   // v51.11：flat 20→120、maxHPPct 0.5→3、missingHPPct 1→6、reflectPct 5→30（全部恢复原值）；v51.13：flat 120→35、maxHPPct 3→1、missingHPPct 6→2（本轮实测离谱超标，三项一起×0.3，reflectPct不动）；v51.16：35→15、1→0.4、2→0.9（再次实测仍偏强+1.87，三项一起×0.44）；v51.18：新目标75%下实测60%/+0.27，偏弱，护盾三项一起×1.5（15→22、0.4→0.6、0.9→1.3）
     // 🩸 血魂：越残血越强，**33% 生命时增益最大**（用户定稿），低于 33% 维持峰值不再回落
     //    —— 越接近死亡收益反而下降会很怪。加的是攻击力/攻速/全能吸血三项。
     // v51.13：本轮实测推进度差 +1.96（扣基线），中等超标——延续 v51.8 的教训，三项
     // 一起砍（只砍其中一项等于只削一半输出），粗估约 ×0.44。
-    blood:   { peakAtHPPct: 33, attackDamagePct: 13, bonusAttackSpeedPct: 11, lifeStealPct: 5 },   // v51.11：attackDamagePct 9→30、bonusAttackSpeedPct 8→25（恢复原值）；v51.13：30→13、25→11、10→5（本轮实测中等超标，三项一起×0.44）
+    blood:   { peakAtHPPct: 33, attackDamagePct: 17, bonusAttackSpeedPct: 14, lifeStealPct: 7 },   // v51.11：attackDamagePct 9→30、bonusAttackSpeedPct 8→25（恢复原值）；v51.13：30→13、25→11、10→5（本轮实测中等超标，三项一起×0.44）；v51.18：新目标75%下实测65%/+0.61，偏弱，三项一起×1.3（13→17、11→14、5→7）
     // 🌋 熔魂：命中施加【灼烧】，灼烧**有半径且跟着目标走**（用户定稿），
     //    每秒对半径内的敌人造成真伤。等于一个会走的伤害圈，对密集兵线最强。
     // v51.13：本轮 --sweep soul 20 局全胜/推进度差 +5.00（满分）、均局仅 19.6 分钟，
@@ -689,16 +710,16 @@ export const CONFIG = {
     // 伤害/减速——tickDamagePct/slowPct 从 v51.11 恢复原值后就再没动过，这次改这
     // 两项。（这条魂已经连续两轮验证"调错杠杆胜负不变"，这次要是还不动，说明还有
     // 没找到的第三处，下一轮得回去看减速/命中判定那块，而不是继续在这三个数字里猜。）
-    magma:   { duration: 4, radius: 70, tickDamagePct: 0.2, slowPct: 6, splashPct: 12 },   // v51.13：0.6→0.3、20→6（砍错了杠杆，本轮验证纹丝不动）；v51.15：tickDamagePct/slowPct 都恢复回 v51.11 原值，新增 splashPct=35（真正的杠杆，修好滚雪球 bug 之后半径内其他敌人只吃35%伤害）；v51.16：35→12（再次实测仍偏强+2.63，×0.34）；v51.17：tickDamagePct 0.6→0.2、slowPct 20→6（splashPct 再砍纹丝不动，改砍主目标自己这两项，×0.3）
+    magma:   { duration: 4, radius: 70, tickDamagePct: 0.28, slowPct: 8, splashPct: 16 },   // v51.13：0.6→0.3、20→6（砍错了杠杆，本轮验证纹丝不动）；v51.15：tickDamagePct/slowPct 都恢复回 v51.11 原值，新增 splashPct=35（真正的杠杆，修好滚雪球 bug 之后半径内其他敌人只吃35%伤害）；v51.16：35→12（再次实测仍偏强+2.63，×0.34）；v51.17：tickDamagePct 0.6→0.2、slowPct 20→6（splashPct 再砍纹丝不动，改砍主目标自己这两项，×0.3）；v51.18：新目标75%下实测60%/+0.25，偏弱，三项一起×1.4（0.2→0.28、6→8、12→16）
     // 🌌 星魂：命中后分裂两枚小弹打向最近的敌人。
     //    分裂弹**不触发任何技能/被动**，但攻击特效（固定/%当前生命）按 onHitEffPct 效率工作
     //    （用户定稿：55%）。不这么限的话毒魂/暗魂/蚀魂的叠层速度会直接翻三倍。
     // v51.13：本轮 20 局全胜/推进度差 +3.51——主伤害杠杆 damagePct 砍到约 0.25 倍。
-    astral:  { splits: 2, damagePct: 10, radius: 260, onHitEffPct: 55 },   // v51.11：damagePct 2→40（恢复原值）；v51.13：40→10（本轮实测离谱超标，×0.25）
+    astral:  { splits: 2, damagePct: 18, radius: 260, onHitEffPct: 55 },   // v51.11：damagePct 2→40（恢复原值）；v51.13：40→10（本轮实测离谱超标，×0.25）；v51.18：新目标75%下实测60%/+0.18，偏弱，10→18（×1.8）
     // ☄️ 蚀魂：命中削目标的【伤害减免】，**可以削成负数** —— 负减伤 = 受到的伤害被放大。
     //    这条与 v50 的真伤规则是配套的：真伤跳过一切防御手段，所以**真伤不吃这个放大**。
     // v51.13：本轮实测推进度差 +1.59（扣基线），中等超标——主伤害杠杆 perStack 砍到约 0.5 倍。
-    rift:    { perStack: 2, maxStacks: 5, duration: 6 },   // v51.11：perStack 1→4（恢复原值）；v51.13：4→2（本轮实测中等超标，×0.5）
+    rift:    { perStack: 4, maxStacks: 5, duration: 6 },   // v51.11：perStack 1→4（恢复原值）；v51.13：4→2（本轮实测中等超标，×0.5）；v51.18：新目标75%下实测55%/+0.02（扣基线后基本为0，14档里离目标最远的之一），2→4（×2，恢复回v51.11原值）
     // 🐲 远古龙魂：唯一**限时**的一条（其余七条全部永久）。durationSec 240→300
     // （用户定稿"远古龙魂还是限时的，时长改为300s"）。
     // v51.9：用户实测"4巨龙之力+雷魂的蓝方打不过0巨龙之力+远古龙魂的红方"，连带
@@ -738,7 +759,10 @@ export const CONFIG = {
     // 穿透的收益 = min(穿透值, 目标抗性)，而兵线上绝大多数目标是小兵（护甲个位数），
     // 固定穿 10 点里有八九点是浪费的；真正有护甲的是塔（40~70），可那是**百分比**才吃得到的。
     // 换成百分比穿透 —— 仍然只属于雷（独占性不破），但收益终于落在有抗性的目标上。
-    thunder: { armorPenPercent: 5, magicPenPercent: 5 },
+    // v51.18：2026-09-22 --sweep power 实测 55%/-0.09（扣基线后基本为0，等于白拿），
+    // 目标带是"推进度差落在基线+0.3~+1.0"（力是过程奖励，弱于魂），这条完全没到
+    // 下限，armorPenPercent/magicPenPercent 一起×2。
+    thunder: { armorPenPercent: 10, magicPenPercent: 10 },
     // v45 风改回【速度】主题（用户定稿："改为 +移速 +攻速 +攻击速度收益率等等"）。
     // 三项都归风独占：attackRange 让出去（原来在风这里），attackSpeedRatio 这一项
     // 全场只有风用 —— 而且它对**塔**有效（塔不动，移速对塔是废的，这正是上一版
@@ -758,8 +782,19 @@ export const CONFIG = {
     steel:   { shieldFixedMax: 45 },
     blood:   { damageConvertPct: 2 },
     magma:   { armorPenFlat: 3, magicPenFlat: 3 },
-    astral:  { attackRange: 8, bulletSpeed: 20 },
-    rift:    { damageReduction: 1.5 },
+    // v51.18：2026-09-22 --sweep power 实测 100%胜率/+2.79（扣基线），14档里唯一
+    // 20局全胜的一档，目标带上限只有+1.0——是全部13条巨龙之力里唯一"力比魂还强"
+    // 的一条（对照同一批数据里 astral 魂只有60%/+0.18，力反而比魂猛得多，完全
+    // 违反"力是过程奖励，弱于魂"这条设计前提）。射程/弹速这类"命中判定"型属性
+    // 对塔（钉死不动、永远索敌命中）的收益本来就比对会走位的单位更稳定，攻击
+    // 频率没变的情况下射程每涨一截都是净赚的输出窗口，这次两项一起大砍
+    // （attackRange 8→2、bulletSpeed 20→6，都是原来的约1/3.3~1/4），砍完之后
+    // 如果还是偏强，下一步要怀疑是否有结构性问题（类似之前 magma 溅射滚雪球
+    // 那种），不能一直在这两个数字里反复砍。
+    astral:  { attackRange: 2, bulletSpeed: 6 },
+    // v51.18：2026-09-22 --sweep power 实测 45%/-0.06（扣基线后基本为0，等于白拿，
+    // 13条力里最弱的两条之一），damageReduction 1.5→3（×2）。
+    rift:    { damageReduction: 3 },
     // 🐲 远古之力（v51.6 新增）：用户"远古巨龙目前只有龙魂，没有远古之力，远古之力
     // （作用在某阵营所有单位）的效果每层：+5%全属性加成（永久生效）。远古之力肯定要
     // 比其他的强一些，但也不能太强。"——与其余元素之力同一套机制（永久、逐层叠加、
@@ -1843,6 +1878,36 @@ export const CONFIG = {
       // 塔原本用的是 FACTION_STYLE 里与本图无关的暖中性灰——那才是"塔像贴纸"的根因。
       outlineOnByDefault: false,
       vegetationMode: 'none',
+    },
+    // ==================== v51.18：魔幻森林（扭曲丛林专用）====================
+    // 用户与我先对齐过一版文字方案再动手（第四条铁律要求）："紫雾+扭曲发光树木
+    // （推荐）：地面/雾效偏紫（紫罗兰~品红渐变），树木造型扭曲缠绕（不是SR那种
+    // 规整松树），树冠/藤蔓带低强度自发光（紫/青），地表点缀发光孢子或菌类，
+    // 整体阴森奇幻感。然后参考LOL中扭曲丛林的设计感"——用户确认这份方向。
+    // 复用 forest palette 同一套地形结构（三级森林梯度 forestZoneAt + navgrid + 野区
+    // 装饰层），这里只换主题元素：配色整体偏紫/品红，树用新增的 treeShape:'twisted'
+    // 扭曲树干（见 VegetationLayer.stylizedTreeGeo），树冠色刻意选高饱和高明度的
+    // 紫/青——VegetationLayer 目前用 MeshLambertMaterial（不支持真正的 emissive
+    // 材质，改这个要动全部风格化地图共用的材质管线，风险面太大，这次先不碰），
+    // 用"亮到发光"的颜色在暗紫背景上读出自发光的错觉，是个成立的取巧办法，
+    // 不是敷衍。地表发光孢子/菌类这条本轮先不做——那是全新的散布装饰类型，
+    // 不是改个颜色能完成的，留到下一轮跟这套配色一起实机看了再定形状/密度。
+    magicForest: {
+      groundColor: '#160c22',
+      corridorColor: '#4a2f52',
+      jungleColor: '#3d1f4a',
+      forestEdgeColor: '#5c3568',
+      forestDeepColor: '#241030',
+      treeTrunkColor: '#2a1830',
+      treeCrownColorA: '#a855c9',
+      treeCrownColorB: '#5ec9d6',
+      treeCrownDeepA: '#7a3a94',
+      treeCrownDeepB: '#3d9aa8',
+      rockColor: '#4a3552',
+      wallCapColor: '#c85ee0',
+      outlineOnByDefault: false,
+      vegetationMode: 'jungle',
+      treeShape: 'twisted',
     },
   },
 

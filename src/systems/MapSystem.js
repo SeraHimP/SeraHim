@@ -603,6 +603,24 @@ export class MapSystem {
    *     上，复用 v39/v36 就有的"负生命恢复=字面扣血，不吃恢复加成，结构保护/
    *     无敌照常免疫"这条既有通道（CombatSystem.js 的那两段），不需要新的
    *     伤害类型或新的结算路径。
+   *
+   * 2026-09-23（v51.18）：热寂塔掉血机制从"负生命恢复扣当前血"改成"缩最大生命值
+   * （类似过载）"——用户原话"有原先的生命恢复-40改为减少最大生命值（类似过载）"。
+   * 参照的正是本仓库已有的 passive_overload（towerPassives.js）那套"缩最大生命，
+   * 当前血超过新上限就跟着削，削到0算阵亡"的做法，不是另起一套：
+   *   `drainMaxHPPctPerSec`：走这条新分支（与 statKey/scaleByOwnMaxHP 那条老通路
+   *     互斥，effects 数组里同一条要么走老的 stat 效果、要么走这条），数值语义
+   *     不变，仍是"目标自身原始最大生命值的百分比/秒"。
+   *   `drainAfterSec`：触发时间点（绝对 gameTime，秒）——直接比较 gameTime，
+   *     不复用 stages/resolveAuraEffectValue，因为这条分支是直接改
+   *     baseStats.maxHP 的永久性结构突变，不是可回退的 stat 修正，套"分阶段数值"
+   *     那套语义反而绕。
+   * 关键教训（passive_overload 代码里已经踩过、这里原样抄过来）：算每次要削多少
+   * 必须用**触发那一刻**的原始最大生命值（缓存在 e._heatDeathMaxHP0），不能用
+   * "当前正在缩水的 maxHP"——否则损失量跟着 maxHP 一起指数衰减，永远削不到 0，
+   * 塔会卡在 maxHP=1 附近不死，热寂"保证游戏必然终局"这条设计初衷就落空了。
+   * 结构保护/全局无敌沿用同一套判据（isStructureProtected + window.__towerRuleFor
+   * 'invincible'），跟老的 healthRegen 通道那两行检查逐位相同，只是搬到了这里。
    */
   _applyGlobalAura(dt) {
     const aura = this.currentMap && this.currentMap.globalAura;
@@ -610,6 +628,11 @@ export class MapSystem {
     this._auraT = (this._auraT || 0) + dt;
     const every = aura?.refreshSec ?? 0.5;
     if (this._auraT < every) return;
+    // drainMaxHPPctPerSec 分支要按【真实】过去了多久来算损失量，不能假设正好是
+    // every——调用方每帧传进来的 dt 可能远大于 every（比如测试脚本一次性传
+    // dt=1），只用 every 当分母会系统性地算少。用重置前的累加值（本来就是
+    // "距上次真正跑这段逻辑过了多久"）更准确。
+    const elapsedSinceLastFire = this._auraT;
     this._auraT = 0;
     if (!aura || !aura.effects || !aura.effects.length) return;
     // 分阶段模式用得到的 ctx——地图光环对全部阵营生效，没有"我方/敌方"视角，
@@ -621,6 +644,10 @@ export class MapSystem {
       for (const it of aura.effects) {
         if (it.appliesTo && !it.appliesTo.includes(e.type)) continue;
         if (it.excludesTypes && it.excludesTypes.includes(e.type)) continue;
+        if (it.drainMaxHPPctPerSec) {
+          this._applyMaxHPDrainTick(e, it, ctx.gameTime, elapsedSinceLastFire);
+          continue;
+        }
         const { flat, percent } = resolveAuraEffectValue(it, ctx);
         const flatValue = it.scaleByOwnMaxHP ? (flat / 100) * (e.baseStats.maxHP || 0) : flat;
         if (!flatValue && !percent) continue; // 热寂触发前 flat=0：不用白挂一条零效果
@@ -637,6 +664,36 @@ export class MapSystem {
           description: `${it.label || it.statKey}${flatValue >= 0 ? '+' : ''}${flatValue}`,
         }, 'map_global_aura');
       }
+    }
+  }
+
+  /**
+   * 热寂（v51.18改版）"过载"式塔掉血：直接缩 baseStats.maxHP，当前血超过新上限
+   * 就跟着削，削到0判定阵亡——做法照抄 towerPassives.js 的 passive_overload
+   * （同一个"削肉可致死"套路，那边是给单个塔的被动技能，这里是地图全局光环，
+   * 场景不同但机制要保持一致，不是重新发明一套）。
+   * @param {*} e 目标实体（appliesTo:['tower'] 已经在调用处过滤过，这里不用再判type）
+   * @param {*} it globalAura.effects 里那一条声明（drainMaxHPPctPerSec/drainAfterSec）
+   * @param {number} gameTime 当前绝对游戏时间（秒）
+   * @param {number} elapsedSec 距上次真正跑这段逻辑过了多久（调用方按重置前的
+   *   _auraT 累加值传入，是真实值不是 refreshSec 的近似——见调用处注释）
+   */
+  _applyMaxHPDrainTick(e, it, gameTime, elapsedSec) {
+    if (gameTime < (it.drainAfterSec ?? Infinity)) return;
+    const inv = e.type === 'tower' && !!window.__towerRuleFor?.('invincible', e._mapFaction);
+    if (inv || isStructureProtected(this.entities, e)) return;
+    // 必须用【触发那一刻】的原始最大生命值算损失量，不能用"当前正在缩水的
+    // maxHP"——否则损失量跟着 maxHP 一起指数衰减，永远削不到 0（passive_overload
+    // 那边已经踩过、写在它自己的注释里的坑，这里原样避开）。
+    if (e._heatDeathMaxHP0 == null) e._heatDeathMaxHP0 = e.baseStats.maxHP || 0;
+    if (e._heatDeathMaxHP0 <= 0) return;
+    const loss = e._heatDeathMaxHP0 * (it.drainMaxHPPctPerSec / 100) * elapsedSec;
+    if (loss <= 0) return;
+    e.baseStats.maxHP = Math.max(0, (e.baseStats.maxHP ?? e._heatDeathMaxHP0) - loss);
+    if (e.currentHP > e.baseStats.maxHP) e.currentHP = e.baseStats.maxHP;
+    if ((e.baseStats.maxHP <= 0 || e.currentHP <= 0) && e.alive) {
+      e.alive = false; e.currentHP = 0;
+      this.eventBus?.emit?.('entity:death', { entityId: e.id });
     }
   }
 

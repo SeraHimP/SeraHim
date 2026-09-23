@@ -827,19 +827,27 @@ export const weapons = {
     //     type:'melee' 自动挂的那两个技能在生成后立刻摘掉，只留幻兽自己的
     //     passive_pet_spirit_guard（独立主动/被动的重新设计用户明确要自己先想，
     //     这次先只摘掉不该有的，不新增）。
-    // 2026-09-22 三次调整：balance_tower.mjs 塔强度横向对照实测牧灵法阵防守方
-    // 均存活10.82分，8种塔武器里垫底（腐蚀型69.45分的1/6.4）。前两次调整
-    // （09-19给幻兽属性/数量、09-20修出生血量+回血继承+砍统计口径）都是修
-    // 机制正确性，没有专门针对"两只幻兽死绝之间那段真空期=塔完全零输出"这个
-    // 结构性弱点动过手——respawnGrowthPct复利叠加下，死得越多下一次空窗期
-    // 涨得越快，越打越弱。这次两个杠杆一起收：①statPct 60→75（提高幻兽在世
-    // 时的输出）；②baseRespawnSec 15→10（缩短复活空窗期，两只同时死绝的概率
-    // 和持续时长都降低）。改完用 node tools/balance_tower.mjs --pick shepherd --runs 40 复核。
+    // 2026-09-22 三次调整（已撤销，见09-23）：balance_tower.mjs 塔强度横向对照实测
+    // 牧灵法阵防守方均存活10.82分，8种塔武器里垫底，当时判断是幻兽输出/续航不够，
+    // 把 statPct 60→75、baseRespawnSec 15→10。
+    //
+    // 2026-09-23 撤销并查明真根因：这轮数值调整是在假数据上做的——排查发现
+    // tools/balance_tower.mjs 从来没有调用 combat.setCreateMinion(...)（只接了
+    // waves.setCreateMinion，给兵线小兵用），而 weapon_shepherd.onFrame 召唤幻兽
+    // 走的是 ctx.combat.createMinion（跟唤灵兵幻灵同一条路径，见 src/main.js 里
+    // combatSystem.setCreateMinion 的头注）。这个函数指针在旧版横向对照工具里
+    // 全程是 null，`typeof ctx.combat?.createMinion === 'function'` 卡住直接跳过
+    // 召唤——牧灵法阵那 20 局全是"塔独自站着挨打，一只幻兽都没有"，10.82分测的
+    // 是"裸塔"而不是"牧灵法阵"。补上这行 wiring 后单独跑诊断脚本：两只幻兽正常
+    // 生成、正常接战、正常死亡复活，塔本体前 470 秒实测 0 掉血（幻兽把仇恨扛住了）。
+    // 09-22 那版调参因此是在无效样本上做的判断，予以撤销，数值改回09-20定的
+    // statPct:60/baseRespawnSec:15——牧灵法阵是否还需要调参，等 balance_tower.mjs
+    // 修复后重新跑一次真实横向对照再看。
     defaultParams: {
-      statPct: 75,             // 幻兽继承塔多少百分比的属性（覆盖面见 PET_INHERITED_STAT_FIELDS）——原60，实测过弱
+      statPct: 60,              // 幻兽继承塔多少百分比的属性（覆盖面见 PET_INHERITED_STAT_FIELDS）
       leashRadius: 260,        // 拴绳半径——幻兽索敌/追击都不会超出这个范围
       maxAlive: 2,             // 同时最多几只幻兽
-      baseRespawnSec: 10,      // 每次复活的基础等待时间——原15，缩短双亡空窗期
+      baseRespawnSec: 15,      // 每次复活的基础等待时间
       respawnGrowthPct: 5,     // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
       idleClearance: 40,       // 待机点与塔边缘之间留的空隙（不含塔本身半径），修"幻兽模型和塔重叠"用
       outOfCombatHealPowerPct: 100,   // 脱战后额外获得的治疗与护盾强度（叠在继承来的那份之上）

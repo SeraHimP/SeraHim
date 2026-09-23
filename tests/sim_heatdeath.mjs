@@ -18,8 +18,10 @@
  *   ③ 召唤师峡谷真实地图声明：触发前后的数值确实来自 CONFIG.tuning.heatDeath，
  *      不是测试自己算出来的另一套数字。
  *   ④ 端到端：结构保护应免疫热寂衰减（用户定稿"被保护的后排塔不会立刻掉血"）——
- *      未受保护的塔在触发后真的会掉血，受保护的塔不会，靠真实 CombatSystem.update()
- *      跑出来验证，不只是看 stats 快照。
+ *      未受保护的塔在触发后最大生命真的会缩水（v51.18 起改成"类似过载"的缩
+ *      最大生命机制，不再是负生命恢复扣当前血，见 MapSystem._applyGlobalAura
+ *      头注），受保护的塔不会，靠真实 MapSystem.update() 跑出来验证，不只是看
+ *      stats 快照。
  */
 import { setupWindow, scoreboard, makeWorld, mkEntity } from './_harness.mjs';
 setupWindow({ waveNumber: 1 });
@@ -27,8 +29,6 @@ setupWindow({ waveNumber: 1 });
 const { resolveAuraEffectValue } = await import('../src/systems/AuraValueResolver.js');
 const { MapSystem } = await import('../src/systems/MapSystem.js');
 const { EventBus } = await import('../src/utils/EventBus.js');
-const { CombatSystem } = await import('../src/systems/CombatSystem.js');
-const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { MAPS } = await import('../src/data/maps/index.js');
 
@@ -93,12 +93,12 @@ const { T, done } = scoreboard('热寂终局机制验收');
 {
   const aura = MAPS.summoners_rift_v1.globalAura;
   T('③-召唤师峡谷已声明 globalAura', !!aura && Array.isArray(aura.effects) && aura.effects.length === 5);
-  const drainEff = aura.effects.find(e => e.statKey === 'healthRegen');
+  const drainEff = aura.effects.find(e => e.drainMaxHPPctPerSec != null);
   T('③b-塔掉血效果只对塔生效', JSON.stringify(drainEff.appliesTo) === JSON.stringify(['tower']));
   T('③c-塔掉血数值来自 CONFIG.tuning.heatDeath.towerDrainPctPerSec，不是硬编码的另一份',
-    drainEff.stages[1].flat === -CONFIG.tuning.heatDeath.towerDrainPctPerSec);
+    drainEff.drainMaxHPPctPerSec === CONFIG.tuning.heatDeath.towerDrainPctPerSec);
   T('③d-触发阈值来自 CONFIG.tuning.heatDeath.triggerAtMin（70分钟）',
-    drainEff.stages[1].whenArg === CONFIG.tuning.heatDeath.triggerAtMin * 60);
+    drainEff.drainAfterSec === CONFIG.tuning.heatDeath.triggerAtMin * 60);
   const asEff = aura.effects.find(e => e.statKey === 'bonusAttackSpeedPct');
   const dmgEff = aura.effects.find(e => e.statKey === 'damageAmpPct');
   const msEffs = aura.effects.filter(e => e.statKey === 'moveSpeed');
@@ -113,14 +113,13 @@ const { T, done } = scoreboard('热寂终局机制验收');
   T('③j-热寂移速加成数值来自 CONFIG', heatMsEff.stages[1].percent === CONFIG.tuning.heatDeath.unitMoveSpeedBonusPct);
 }
 
-// ==================== ④ 端到端：结构保护免疫热寂衰减 ====================
+// ==================== ④ 端到端：结构保护免疫热寂"过载"式掉最大生命 ====================
 {
   const { ents, fx, attr } = await makeWorld();
   fx.setStatSource(ents, attr);
   const bus = new EventBus();
   const ms = new MapSystem(ents, bus);
   ms.setEffectRegistry(fx);
-  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
 
   ms.loadMap('summoners_rift_v1');
 
@@ -130,27 +129,30 @@ const { T, done } = scoreboard('热寂终局机制验收');
 
   const triggerSec = CONFIG.tuning.heatDeath.triggerAtMin * 60;
 
-  // 触发前：跑几帧，血量不该有任何变化。
+  // 触发前：跑一次 update（dt=1 > refreshSec=0.5，足以让 _applyGlobalAura 真正跑一轮），
+  // 最大生命不该有任何变化——drainAfterSec 门槛没到，_applyMaxHPDrainTick 直接早退。
   window.gameTime = triggerSec - 10;
   attr.tick(); ms.update(1);
-  for (let i = 0; i < 5; i++) combat.update(1);
-  T('④-触发前：未受保护的外塔血量不变', outer.currentHP === outer.baseStats.maxHP);
-  T('④b-触发前：受保护的水晶塔血量不变', base.currentHP === base.baseStats.maxHP);
+  T('④-触发前：未受保护的外塔最大生命不变', outer.baseStats.maxHP === 3000);
+  T('④b-触发前：受保护的水晶塔最大生命不变', base.baseStats.maxHP === 3000);
 
-  // 触发后：外塔（未受保护）应该真的开始掉血；水晶塔（外塔仍存活、受保护）应该血量不变。
+  // 触发后：外塔（未受保护）应该真的开始缩最大生命（"过载"式，见 MapSystem 头注）；
+  // 水晶塔（外塔仍存活、受保护）应该最大生命不变。
   window.gameTime = triggerSec + 1;
   attr.tick(); ms.update(1);
-  for (let i = 0; i < 5; i++) combat.update(1);
-  T('④c-触发后：未受保护的外塔血量下降了', outer.currentHP < outer.baseStats.maxHP);
-  T('④d-触发后：外塔仍存活时，受保护的水晶塔血量【不变】（用户定稿：被保护的后排塔不会立刻掉血）',
-    base.currentHP === base.baseStats.maxHP);
+  T('④c-触发后：未受保护的外塔最大生命下降了', outer.baseStats.maxHP < 3000);
+  T('④c2-当前血量跟着新上限走（起始满血，maxHP降了currentHP也该跟着降到同一个数）',
+    outer.currentHP === outer.baseStats.maxHP);
+  T('④d-触发后：外塔仍存活时，受保护的水晶塔最大生命【不变】（用户定稿：被保护的后排塔不会立刻掉血）',
+    base.baseStats.maxHP === 3000);
 
-  // 外塔倒了之后，水晶塔曝光，也应该开始掉血（前置层级熔穿曝光后链式生效）。
+  // 外塔倒了之后，水晶塔曝光，也应该开始缩最大生命（前置层级熔穿曝光后链式生效）。
   outer.alive = false;
   ents.markDirty();
-  for (let i = 0; i < 5; i++) combat.update(1);
-  T('④e-外塔倒了、水晶塔曝光后：也开始掉血了（链式曝光，不是永久免疫）',
-    base.currentHP < base.baseStats.maxHP);
+  window.gameTime = triggerSec + 2;
+  attr.tick(); ms.update(1);
+  T('④e-外塔倒了、水晶塔曝光后：也开始缩最大生命了（链式曝光，不是永久免疫）',
+    base.baseStats.maxHP < 3000);
 }
 
 done();

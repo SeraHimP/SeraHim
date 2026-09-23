@@ -37,21 +37,63 @@ function treeGeo() {
 // 的树冠色（treeCrownDeepA/B），跟"普通森林"拉开一档，颜色随深度加深才读得出
 // "越往里走越密越暗"的层次，不是所有树都长一个样。没声明这两个字段的调色板
 // 退回普通树冠色，逐位不变。
+//
+// v51.18：新增 treeShape:'twisted' 分支（扭曲丛林·魔幻森林专用，见
+// Config.stylizedPalettes.magicForest 头注）——用户要求"树木造型扭曲缠绕（不是
+// SR那种规整松树）"，直筒树干换成 3 段依次偏转的树干（每段在上一段顶端的位置和
+// 朝向上再叠一次旋转，累积出一条弯折的 S 形剪影），树冠团簇也跟着挪到实际弯折后
+// 的树梢位置、并加大左右不对称的偏移量，读起来像缠绕生长而不是笔直的一根杆子。
+// 没声明这个字段的调色板（forest/default）走原来的直筒树干，逐位不变。
 export function stylizedTreeGeo(map, deep = false) {
   const SV = stylizedPaletteOf(map);
+  const trunkColor = SV.treeTrunkColor || '#6b5230';
+  const A = deep ? (SV.treeCrownDeepA || SV.treeCrownColorA || '#4f9a52') : (SV.treeCrownColorA || '#4f9a52');
+  const B = deep ? (SV.treeCrownDeepB || SV.treeCrownColorB || '#6cbb5e') : (SV.treeCrownColorB || '#6cbb5e');
   // ⚠️ mergeGeometries 要求参与合并的几何"要么全带 index，要么全不带"（否则直接
   // 失败返回 null，下游 place() 拿到 null 几何再崩一次）。CylinderGeometry 默认带
   // index，IcosahedronGeometry（PolyhedronGeometry 系）默认不带——两者混着合并
   // 踩了这一条，这里统一 .toNonIndexed() 到"都不带"那一档。
-  const trunk = withColor(new THREE.CylinderGeometry(3, 4, 13, 6).translate(0, 6.5, 0).toNonIndexed(), SV.treeTrunkColor || '#6b5230');
-  const A = deep ? (SV.treeCrownDeepA || SV.treeCrownColorA || '#4f9a52') : (SV.treeCrownColorA || '#4f9a52');
-  const B = deep ? (SV.treeCrownDeepB || SV.treeCrownColorB || '#6cbb5e') : (SV.treeCrownColorB || '#6cbb5e');
+  if (SV.treeShape === 'twisted') {
+    const { trunkParts, tipPos } = twistedTrunkParts(trunkColor);
+    const blobs = [
+      [tipPos.x, tipPos.y + 7, tipPos.z, 15, A], [tipPos.x - 12, tipPos.y - 1, tipPos.z + 8, 11, B],
+      [tipPos.x + 13, tipPos.y, tipPos.z - 7, 11, A], [tipPos.x - 3, tipPos.y - 6, tipPos.z + 11, 9, B],
+      [tipPos.x - 9, tipPos.y + 9, tipPos.z - 8, 10, A], [tipPos.x + 8, tipPos.y + 10, tipPos.z + 6, 9, B],
+    ];
+    const crown = blobs.map(([x, y, z, r, hex]) => withColor(new THREE.IcosahedronGeometry(r, 0).translate(x, y, z), hex));
+    return mergeGeometries([...trunkParts, ...crown]);
+  }
+  const trunk = withColor(new THREE.CylinderGeometry(3, 4, 13, 6).translate(0, 6.5, 0).toNonIndexed(), trunkColor);
   const blobs = [
     [0, 32, 0, 16, A], [-10, 24, 6, 12, B], [10, 25, -5, 12, A],
     [0, 19, 10, 10, B], [-7, 40, -7, 11, A], [6, 41, 6, 10, B],
   ];
   const parts = [trunk, ...blobs.map(([x, y, z, r, hex]) => withColor(new THREE.IcosahedronGeometry(r, 0).translate(x, y, z), hex))];
   return mergeGeometries(parts);
+}
+
+// v51.18：扭曲树干——3 段圆柱依次绕 X/Z 轴偏转再首尾相接（每段的变换 = 上一段
+// 变换叠加自己这一节的旋转，不是各自独立摆一个角度），累积出一条弯折的 S 形剪影。
+// 返回 { trunkParts: 已变换好的几何数组, tipPos: 最后一段顶端的世界坐标（给树冠挂载点用）}。
+function twistedTrunkParts(hex) {
+  const SEGMENTS = [
+    { h: 6, rBottom: 3.6, rTop: 3.0, rotX: 0.05, rotZ: 0.16 },
+    { h: 5, rBottom: 3.0, rTop: 2.2, rotX: 0.10, rotZ: -0.30 },
+    { h: 4.5, rBottom: 2.2, rTop: 1.3, rotX: -0.14, rotZ: 0.34 },
+  ];
+  const trunkParts = [];
+  let basePos = new THREE.Vector3(0, 0, 0);
+  let baseQuat = new THREE.Quaternion();
+  for (const seg of SEGMENTS) {
+    const segQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(seg.rotX, 0, seg.rotZ));
+    const combinedQuat = baseQuat.clone().multiply(segQuat);
+    const geo = new THREE.CylinderGeometry(seg.rTop, seg.rBottom, seg.h, 6).translate(0, seg.h / 2, 0).toNonIndexed();
+    geo.applyMatrix4(new THREE.Matrix4().compose(basePos, combinedQuat, new THREE.Vector3(1, 1, 1)));
+    trunkParts.push(withColor(geo, hex));
+    basePos = new THREE.Vector3(0, seg.h, 0).applyQuaternion(combinedQuat).add(basePos);
+    baseQuat = combinedQuat;
+  }
+  return { trunkParts, tipPos: basePos };
 }
 // 坐标哈希 → [0,1)，确定性伪随机
 export function hash(x, y) {

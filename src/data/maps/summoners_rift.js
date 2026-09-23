@@ -162,19 +162,27 @@ const SR_CONFIG = {
     name: '召唤师峡谷光环', icon: '⏱️',
     effects: [
       {
-        name: '召唤师峡谷·加速', icon: '⏱️', statKey: 'moveSpeed', excludesTypes: ['tower'],
+        // v51.18：用户要求把这条效果名从"召唤师峡谷·加速"改成"召唤师峡谷光环"
+        // （跟上面 globalAura.name 保持一致的措辞）。名字必须保留显式 name 字段
+        // （不能删掉直接吃 aura.name 兜底）——它跟下面"热寂"那条 moveSpeed 效果
+        // 撞了同一个 statKey，这条 name 覆写正是当初为了避开 EffectRegistry 按
+        // name+statKey 去重导致互相顶替那个 bug 才加的（见 MapSystem.js 头注）。
+        name: '召唤师峡谷光环', icon: '⏱️', statKey: 'moveSpeed', excludesTypes: ['tower'],
         percentPerMinute: CONFIG.tuning.summonersRiftMoveSpeedPctPerMin,
         label: '移速',
       },
+      // v51.18：塔掉血机制从"负生命恢复扣当前血"改成"缩最大生命值（类似过载）"
+      // ——用户原话"有原先的生命恢复-40改为减少最大生命值（类似过载）"，参照的是
+      // 本仓库已有的 passive_overload（towerPassives.js）那套"缩最大生命+当前血
+      // 超上限跟着削+削到0阵亡"做法。数值语义不变（仍是自身原始最大生命值的
+      // 1%/秒），走的是 MapSystem._applyGlobalAura 里新增的 drainMaxHPPctPerSec
+      // 专用分支（直接改 baseStats.maxHP，不是常规的 stat 效果修正，见那边头注），
+      // 不再用 statKey/scaleByOwnMaxHP/stages 这一套。
       {
-        name: '热寂', icon: '🔥', statKey: 'healthRegen', appliesTo: ['tower'],
-        scaleByOwnMaxHP: true,
-        stages: [
-          { when: '' },
-          { when: 'time.after', whenArg: CONFIG.tuning.heatDeath.triggerAtMin * 60,
-            flat: -CONFIG.tuning.heatDeath.towerDrainPctPerSec },
-        ],
-        label: '热寂衰减',
+        name: '热寂', icon: '🔥', appliesTo: ['tower'],
+        drainMaxHPPctPerSec: CONFIG.tuning.heatDeath.towerDrainPctPerSec,
+        drainAfterSec: CONFIG.tuning.heatDeath.triggerAtMin * 60,
+        label: '过载',
       },
       {
         name: '热寂', icon: '🔥', statKey: 'bonusAttackSpeedPct', excludesTypes: ['tower'],

@@ -266,6 +266,17 @@ async function runOne(seed, defenderWeapon, ctx = {}) {
     if (e) applyAttackerMinionBuff(e, skillCtx);
     return e;
   });
+  // 2026-09-23：真实bug，不是数值问题——牧灵法阵（weapon_shepherd）召唤幻兽走的是
+  // ctx.combat.createMinion（见 src/main.js 里 combatSystem.setCreateMinion 的头注：
+  // "唯一稳定能拿到的引擎入口是 ctx.combat"，唤灵兵幻灵也走这条路），这里只接了
+  // waves.setCreateMinion（兵线小兵用），没接 combat.setCreateMinion——诊断脚本单独
+  // 起了一局只测牧灵法阵，跑了15分钟真实小兵战斗，全程 pets=0，塔独自扛到死。
+  // 之前"牧灵法阵防守方均存活10.82分，8种塔武器里垫底"这个横向对照结果因此是
+  // 假的：不是塔武器弱，是这个工具从来没让它的幻兽实际生成过，塔全程等于裸站。
+  // 照抄 main.js 同一处的接法补上，不带 growth（幻兽不参与兵线成长曲线，跟唤灵兵
+  // 幻灵同一个口径）。
+  combat.setCreateMinion((type, x, y, faction, hpScale, attrScale) =>
+    F.createMinion(type, x, y, hpScale, attrScale, { faction }));
 
   bus.on('entity:death', ({ entityId }) => {
     const e = ents.get(entityId);

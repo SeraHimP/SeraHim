@@ -331,10 +331,19 @@ for (const map of Object.values(MAPS)) {
 
 // ==================== 高地（heightAt）：形状必须是用户定的那个 ====================
 // 这两条都是踩出来的，钉住免得又被改回去：
-//   · 扭曲丛林原来用"过水晶塔的一条竖线"半平面，位置对不上用户画的圆 → 改成圆。
+//   · 扭曲丛林原来用"过水晶塔的一条竖线"半平面，位置对不上用户画的圆 → 改成圆
+//     （这份【声明】至今仍在 —— TT_TERRAIN.highground 没删，下面①仍然守着它）。
 //   · 嚎哭深渊**没有高低差**（平桥）。但它为了光环圈保留了 baseCircleRadius，
 //     一旦不声明 highground，heightAt 就会退回"按基地圈抬圆台"的老分支，
 //     在桥两端凭空鼓起两个包。所以它必须显式声明 `highground: {}`。
+//
+// v51.18：扭曲丛林接入"魔幻森林"风格化调色板后，也变成了 visualStyle:'stylized'
+// 地图——跟召唤师峡谷同一条规则："把风格化地图中所有的高低差全部删除"
+// （MapSystem.heightAt 里 `if (m.visualStyle !== 'stylized')` 那段门禁，见
+// tests/sim_boundarydecor.mjs 的"高①/高③"）。圆形高地这份【声明】还留着
+// （① 仍然守它没被误删），但【生效的高度】现在跟召唤师峡谷一样是 0，旧的
+// "满高高地/连续斜坡"断言（②③）已经不成立，删掉——不是这轮改坏的，是
+// visualStyle 门禁按设计生效了，这里只是让测试跟上新现实。
 {
   const { EntityContainer: _E2 } = await import('../src/core/EntityContainer.js');
   const { EventBus: _B2 } = await import('../src/utils/EventBus.js');
@@ -343,31 +352,18 @@ for (const map of Object.values(MAPS)) {
     const bus = new _B2(), ents = new _E2(bus), ms = new _M2(ents, bus);
     ms.setCreateBuildingFn(() => null); window.gameTime = 0; ms.loadMap(id); return ms;
   };
-  // ---- 扭曲丛林：圆形高地 ----
+  // ---- 扭曲丛林：高地【声明】仍是圆，但风格化后【实际高度】清零（跟召唤师峡谷一致） ----
   {
     const ms = mk('twisted_treeline_v1'), tt = MAPS['twisted_treeline_v1'];
     const H = (p) => ms.heightAt(p.x, p.y);
     const g = (t, l) => tt.buildings.find(b => b.faction === 'blue' && b.tier === t && (l ? b.laneId === l : true));
-    const platH = tt.heightZones?.plateauHeight ?? 20;
+    T('[扭曲丛林] ①高地声明仍是【圆】（圆心在水晶枢纽上，没被这轮改动误删）',
+      !!tt.highground?.blue?.center && len(tt.highground.blue.center, g('nexus_main').pos) < 1);
     for (const [n, t, l] of [['水晶枢纽', 'nexus_main'], ['枢纽塔', 'hq_tower'],
                              ['上路召唤水晶', 'nexus_lane', 'top'], ['上路水晶塔', 'base', 'top'],
-                             ['下路水晶塔', 'base', 'bot']]) {
-      T(`[扭曲丛林] ${n}处是满高高地（${H(g(t, l).pos).toFixed(1)} = ${platH}）`, Math.abs(H(g(t, l).pos) - platH) < 0.01);
+                             ['下路水晶塔', 'base', 'bot'], ['外塔', 'outer', 'top']]) {
+      T(`[扭曲丛林] ②${n}处高度=0（风格化后高地台阶已清零，与召唤师峡谷一致）`, H(g(t, l).pos) === 0);
     }
-    T(`[扭曲丛林] 外塔处不是高地（${H(g('outer', 'top').pos).toFixed(1)} = 0）`, H(g('outer', 'top').pos) === 0);
-    // 用户："从水晶塔前面就是斜坡" —— 必须是一段【连续的坡】，不是陡坎。
-    // 沿"枢纽 → 兵线出口方向"的射线按距离采样：高度应随距离单调不增，且中间有过渡值。
-    // （不要拿兵线路点当采样序列 —— 路点离枢纽的距离并不单调，会误判成"不单调"。）
-    const c0 = tt.highground.blue.center;
-    const dir = { x: (556 - c0.x), y: (320 - c0.y) };
-    const dl = Math.hypot(dir.x, dir.y); dir.x /= dl; dir.y /= dl;
-    const hs = [];
-    for (let d = 300; d <= 620; d += 40) hs.push(H({ x: c0.x + dir.x * d, y: c0.y + dir.y * d }));
-    T(`[扭曲丛林] 高地边缘是连续斜坡不是陡坎（离枢纽 300→620：${hs.map(h => h.toFixed(1)).join(' ')}）`,
-      hs.every((h, i) => i === 0 || h <= hs[i - 1]) && Math.abs(hs[0] - platH) < 0.01
-      && hs.at(-1) === 0 && hs.filter((h) => h > 0 && h < platH).length >= 2);
-    T('[扭曲丛林] 高地声明成【圆】（圆心在水晶枢纽上）',
-      !!tt.highground?.blue?.center && len(tt.highground.blue.center, g('nexus_main').pos) < 1);
   }
   // ---- 嚎哭深渊：平桥，全图零高差 ----
   {

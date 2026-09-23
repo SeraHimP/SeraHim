@@ -57,7 +57,7 @@ const mk = (id) => {
   }
 }
 
-// ==================== 二、heightAt：风格化地图（召唤师峡谷）高地/龙坑清零，非风格化地图不变 ====================
+// ==================== 二、heightAt：风格化地图（召唤师峡谷/扭曲丛林）高地/龙坑清零 ====================
 {
   const srMs = mk('summoners_rift_v1');
   const nexus = summoners_rift.buildings.find(b => b.tier === 'nexus_main' && b.faction === 'blue');
@@ -78,11 +78,15 @@ const mk = (id) => {
   T('高②-召唤师峡谷（风格化）龙坑坑心处不再有老的坑深度下沉（新的森林梯度轻微正高度是另一回事）',
     !dragonPit || pitHeightNoRiver > -5);
 
+  // v51.18：扭曲丛林接入"魔幻森林"风格化调色板（见 twisted_treeline.js 头注），
+  // 从"未声明 visualStyle:stylized 的老地图"变成了跟召唤师峡谷同一类——原来这里
+  // 钉的是"非风格化地图不受影响"，现在扭曲丛林也风格化了，高地台阶同样按
+  // visualStyle 清零，断言改成跟召唤师峡谷同一套（高①）。
   const ttMs = mk('twisted_treeline_v1');
   const tt = MAPS['twisted_treeline_v1'];
   const ttNexus = tt.buildings.find(b => b.tier === 'nexus_main' && b.faction === 'blue');
-  T('高③-扭曲丛林（非风格化）基地核心处高度仍 > 0（v58 改动不影响未声明 visualStyle:stylized 的老地图）',
-    ttMs.heightAt(ttNexus.pos.x, ttNexus.pos.y) > 0);
+  T('高③-扭曲丛林（风格化后）基地核心处高度=0（高地台阶已按 visualStyle 清零，与召唤师峡谷一致）',
+    ttMs.heightAt(ttNexus.pos.x, ttNexus.pos.y) === 0);
 }
 
 // ==================== 三、BoundaryDecorLayer：源码正则（渲染层胶水代码）====================

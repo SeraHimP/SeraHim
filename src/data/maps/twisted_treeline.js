@@ -122,6 +122,14 @@ const TT_CONFIG = {
   label: '扭曲丛林',
   factions: [FACTIONS.BLUE, FACTIONS.RED],   // 见 summoners_rift.js 同字段头注
 
+  // ==================== v51.18：风格化——魔幻森林（紫雾+扭曲发光树木）====================
+  // 用户先文字方案对齐（第四条铁律要求，见 CONFIG.stylizedPalettes.magicForest 头注
+  // 里记的确认原话），再动手接入渲染分支。做法跟召唤师峡谷接"森林"调色板同一套：
+  // visualStyle:'stylized' 打开 TerrainLayer/VegetationLayer 的风格化分支，
+  // paletteId 指到新增的 magicForest 调色板（配色+扭曲树干形状都在那份调色板里）。
+  visualStyle: 'stylized',
+  paletteId: 'magicForest',
+
   // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管，
   // MapSystem.isWalkable 走 navgrid 分支时根本不看这两个字段）。
   // 不声明的话 getBaseCircleRadius 会退回"按世界角点反推"，画出一个跟基地毫不相干的
