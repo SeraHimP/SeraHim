@@ -483,7 +483,14 @@ export const weapons = {
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive) return;
-      const st = instance.state || (instance.state = { timer: 0 });
+      // v51.20：`instance.state || (instance.state = { timer: 0 })` 是危险写法——
+      // state 若已经是真值空对象 `{}`（equipSkill 建实例时的初始值），`||` 不会走到
+      // 右边，st.timer 是 undefined，`st.timer += dt` 会算出 NaN，节流形同虚设
+      // （同 minionPassives.js passive_totem_mend 头注踩过的坑）。这里虽然有自己的
+      // onEquip 兜底真的初始化过 timer，不会实际触发，但换成与本仓库既有正确写法
+      // 一致的判据，防的是"以后有人绕开 equipSkill 建实例"这种以后才会踩的坑。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const st = instance.state;
 
       const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       // 叠层速度基于攻速：每秒叠 (攻速) 层
@@ -1050,7 +1057,9 @@ export const weapons = {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive) return;
       if (window.__towersAttackOff) return;
-      const st = instance.state || (instance.state = { timer: 0 });
+      // v51.20：同上方 weapon_corrosion 那处的坑，换成本仓库既有的正确判据。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const st = instance.state;
       const p = instance._params || weapons.weapon_prism.defaultParams;
 
       const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));

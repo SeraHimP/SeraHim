@@ -533,6 +533,32 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   window.CTX.__app = prevApp;
 }
 
+// ==================== 十点六、v51.20：清理"危险 timer 初始化"模式（任务#190）====================
+// 已知问题记录（2026-09-19）："towerPassives.js 365/434行、weapons.js 466行都用了
+// `instance.state || (instance.state = { timer: 0 })` 这个错误模式——当state已经是
+// {}（真值）时timer会是undefined，累加变成NaN，节流形同虚设。"
+//
+// 实际排查结论（本轮验证，不是直接改）：equipSkill()（skillParams.js，"装备一个技能
+// 的**唯一**入口"）总是【先建 `{state:{}}`，再同步调 onEquip】，而这 4 个 onFrame
+// 站点（另外还多了一处 weapon_prism，诊断记录写的时候它可能还不存在/行号对不上，
+// 一并处理）**各自的 onEquip 都已经真的把 timer 初始化成数字**——真实游戏内 100%
+// 走 factories.js 的 equipSkill，从未绕过 onEquip，所以诊断里担心的 NaN 目前【没有】
+// 实际复现。但这个写法仍是地雷：谁以后要是加一条不经过 equipSkill 的建实例路径，
+// 就会静默踩上。换成本文件已有的正确判据（minionPassives.js passive_totem_mend / 本
+// towerPassives.js passive_heavy_defense 的 onEquip 早就是这么写的），零行为改动、
+// 纯粹排雷，所以不需要另跑 balance 验证。
+{
+  const wpSrc = srcOf('src/core/skills/weapons.js');
+  const tpSrc = srcOf('src/core/skills/towerPassives.js');
+  T('timer①-weapons.js 不再有危险的 `instance.state || (instance.state = { timer: 0 })` 写法',
+    !/instance\.state \|\| \(instance\.state = \{ timer/.test(wpSrc));
+  T('timer②-towerPassives.js 同上', !/instance\.state \|\| \(instance\.state = \{ timer/.test(tpSrc));
+  T('timer③-weapon_corrosion/weapon_prism 的 onFrame 改用正确判据（typeof …timer !== \'number\'）',
+    (wpSrc.match(/typeof instance\.state\?\.timer !== 'number'/g) || []).length >= 2);
+  T('timer④-passive_hq_bulwark/passive_heavy_defense 的 onFrame 也改用同一判据',
+    (tpSrc.match(/typeof instance\.state\?\.timer !== 'number'/g) || []).length >= 3);
+}
+
 // ==================== 十一、Q8(下) 腐蚀型改成 3D 雾 ====================
 {
   const cl = srcOf(('../src/presentation/CorrosionLayer.js'));

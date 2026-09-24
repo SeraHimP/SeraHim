@@ -362,7 +362,11 @@ export const towerPassives = {
       const cap = typeof p.cap === 'number' ? p.cap : 350;
       const interval = typeof p.tickInterval === 'number' ? p.tickInterval : 15;
       const maxStacks = Math.max(1, Math.floor(cap / perTick));
-      const state = instance.state || (instance.state = { timer: 0 });
+      // v51.20：`instance.state || (instance.state = {...})` 是危险写法，见
+      // weapons.js weapon_corrosion 头注同一条说明；换成本文件 passive_heavy_defense
+      // 已经在用的正确判据，onEquip 已经真初始化过 timer，这里不会实际触发。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const state = instance.state;
       // 脱战判据跟固定护盾回满共用同一套（lastDamageTime + shieldRegenDelay），
       // 见上方大段注释——挨打就清零重算，不管这座塔自己有没有在还手。
       const now = window.gameTime || 0;
@@ -431,7 +435,10 @@ export const towerPassives = {
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive) return;
-      const state = instance.state || (instance.state = { timer: 0 });
+      // v51.20：与上方 onEquip 用同一条正确判据（原来这里另写了一份危险的
+      // `instance.state || (instance.state = {...})`，见 weapon_corrosion 头注）。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const state = instance.state;
       state.timer = (state.timer || 0) + dt;
       if (state.timer < 0.2) return; // 轻量节流：每0.2秒检查一次即可，视觉上无感知差异
       state.timer = 0;
