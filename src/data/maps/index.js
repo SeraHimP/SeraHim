@@ -3,6 +3,7 @@ import { howling_abyss } from './howling_abyss.js';
 import { twisted_treeline } from './twisted_treeline.js';
 import { demo_stylized } from './demo_stylized.js';
 import { howling_abyss_frost } from './howling_abyss_frost.js';
+import { summoners_rift_organic } from './summoners_rift_organic.js';
 
 /**
  * maps/index.js
@@ -28,6 +29,9 @@ export const MAPS = {
   // 2026-09-04：嚎哭深渊·冰封风格重做（见 howling_abyss_frost.js 头注 + 设计文档
   // docs/MAP-DESIGN-howling-abyss-frost.md），原图 howling_abyss.js 不受影响。
   [howling_abyss_frost.id]: howling_abyss_frost,
+  // v51.22：召唤师峡谷·蜿蜒版（见 summoners_rift_organic.js 头注）——用户要求保留
+  // 的"做错了但完成度很高"的有机弯曲兵线设计，登记为独立姊妹图，不影响原图。
+  [summoners_rift_organic.id]: summoners_rift_organic,
 };
 
 export const DEFAULT_MAP_ID = summoners_rift.id;

@@ -56,7 +56,11 @@ export const WORLD_SIZE = 3552;
 // JSON 序列化结果，只多了下面新增的 neutralCamps 字段，其余一个值都没变）。
 // 这样编辑器的"配置模式"就能直接读/改老图的 config 部分，不用再靠
 // extractConfigFromMap() 现场从整体对象里抠。
-const SR_TERRAIN = {
+// v51.22：导出这两份（原来只是模块内部的中间量），给 summoners_rift_organic.js
+// 复用——那张图除了 navgrid/lanes 之外，塔位/数值/光环/出兵节奏等一切玩法内容
+// 跟这张图逐位相同，导入+局部覆写，不再抄一份出来自己维护（抄一份的话，以后
+// 改这张图的数值，另一张图不会跟着变，两张图的数据迟早对不上）。
+export const SR_TERRAIN = {
   world: { w: WORLD_SIZE, h: WORLD_SIZE },
   // v34/v35（Q4）：地图墙壁（走廊模型，参照 LoL 小地图）。
   // 可行走区域 = 三路走廊（兵线折线 ± corridorHalfWidth）∪ 双方基地高地区（基地圈）。
@@ -81,7 +85,7 @@ const SR_TERRAIN = {
   useNavgrid: true,
 };
 
-const SR_CONFIG = {
+export const SR_CONFIG = {
   id: 'summoners_rift_v1',
   label: '召唤师峡谷',
   // 多阵营地基（docs/REPORT-2026-09-03-multifaction.md §3）：地图声明支持哪些阵营，

@@ -34,6 +34,7 @@ const suites = [
   'sim_qualitybatch.mjs', 'sim_barinc.mjs', 'sim_dmgstats.mjs', 'sim_balance_q3.mjs', 'sim_balance_q4.mjs',
   'sim_groundtrace.mjs', 'sim_heavy.mjs', 'sim_healer.mjs', 'sim_engineer.mjs', 'sim_summoner.mjs',
   'sim_towerweapons.mjs', 'sim_towerbalance.mjs', 'sim_testscenarios.mjs', 'sim_heatdeath.mjs',
+  'sim_srorganic.mjs',
 ];
 
 const args = process.argv.slice(2);
