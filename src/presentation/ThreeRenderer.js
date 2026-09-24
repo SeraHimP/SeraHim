@@ -888,14 +888,24 @@ export class ThreeRenderer {
   // 的地形笔刷改完 navgrid 之后刷新画面。
   // 必须把 _terrainMapId 置空——否则 _rebuildTerrain 开头的"同一张图就跳过"守卫会挡回（陷阱#6）。
   //
-  // v51.32：光置空 _terrainMapId 只解决渲染器自己这层守卫，还有三处各自独立的
+  // v51.32：光置空 _terrainMapId 只解决渲染器自己这层守卫，还有多处各自独立的
   // "同图跳过"守卫必须一起清，否则重建了个寂寞（渲染器以为在重建，实际每处内部
   // 都直接返回了旧结果）：
   //   ① TerrainLayer.js 的 _terrainCache（模块级 Map，按 map.id 缓存烘焙好的离屏
   //      画布，之前从未被清过，见 invalidateTerrainCache 的头注）；
-  //   ② VegetationLayer/WaterLayer/MapSkirtLayer 各自的 `this._mapId === map.id`
-  //      守卫——三者的 build() 都是"同图直接 return"，不会因为地形变了就自动重算。
-  // 四处一起清，改地形才能保证画面立刻反映新数据，不用切一次图才刷新。
+  //   ② VegetationLayer/WaterLayer/MapSkirtLayer/TerrainEdgeLayer/HowlingAbyssDecor/
+  //      BoundaryDecorLayer 各自的 `this._mapId === map.id` 守卫——六者的 build() 都是
+  //      "同图直接 return"，不会因为地形变了就自动重算。
+  // 全部一起清，改地形才能保证画面立刻反映新数据，不用切一次图才刷新。
+  //
+  // v51.33：排查"地图编辑器笔刷画的新墙只留地面深色印记、没有真实石头/树模型"——
+  // 根因不是缺功能，BoundaryDecorLayer 早就在画真实的石柱/金顶围墙和野区树石丛
+  // （v58/v59 就做了），只是当年这里漏加了它和 terrainEdge/frostDecor 这三个
+  // `_mapId` 守卫。地图编辑器整段会话里 currentMap.id 是固定的
+  // LIVE_EDIT_SESSION_MAP_ID（见 mapEditorSession.js），不会因为画了一笔就变，
+  // 于是这三层第一次建完之后就再也不会重算——不管后面在画布上加了多少堵墙，
+  // 它们全部卡在"同图已建，跳过"，只有 TerrainLayer 的地面色块和 VegetationLayer
+  // 的植被会正常刷新，看起来就像"墙体可视化被删掉了，只剩地面印记"。
   invalidateTerrain() {
     this._terrainMapId = null;
     this._terrainDirty = true;
@@ -903,6 +913,9 @@ export class ThreeRenderer {
     if (this.veg) this.veg._mapId = null;
     if (this.water) this.water._mapId = null;
     if (this.skirt) this.skirt._mapId = null;
+    if (this.terrainEdge) this.terrainEdge._mapId = null;
+    if (this.frostDecor) this.frostDecor._mapId = null;
+    if (this.boundaryDecor) this.boundaryDecor._mapId = null;
   }
 
   /**

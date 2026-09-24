@@ -3493,13 +3493,24 @@ async function world() {
     && /map: this\._shieldTexture\(\),[\s\S]{0,160}?fog: false/.test(ulSrc));
 
   const trSrc = srcOf('src/presentation/ThreeRenderer.js');
-  const invalidateBlock = trSrc.match(/invalidateTerrain\(\) \{[\s\S]{0,400}?\n  \}/)?.[0] || '';
+  // v51.33 起函数体里加了一段解释"为什么六处守卫要一起清"的头注，字符数早就超过
+  // 原来 {0,400} 的窗口——那是按"捕获到函数体"设的宽松上限，不是要钉注释长度，
+  // 窗口不够宽只会让这条测试自己失效，钉不住行为，所以放宽而不是删掉这条断言。
+  const invalidateBlock = trSrc.match(/invalidateTerrain\(\) \{[\s\S]{0,1400}?\n  \}/)?.[0] || '';
   T('渲①-invalidateTerrain() 会清 TerrainLayer 的离屏画布缓存（之前从未被清过的那处）',
     /invalidateTerrainCache\(this\.mapSystem\?\.currentMap\?\.id\)/.test(invalidateBlock));
   T('渲②-同时清掉植被/水面/裙边各自的 "同图跳过" 守卫（_mapId）',
     /this\.veg\._mapId = null/.test(invalidateBlock)
     && /this\.water\._mapId = null/.test(invalidateBlock)
     && /this\.skirt\._mapId = null/.test(invalidateBlock));
+  // v51.33：排查"地图编辑器地形笔刷画的新墙只有地面深色印记、没有真实石头/树
+  // 模型"——根因是这里漏清了 terrainEdge/frostDecor/boundaryDecor 三层各自的
+  // `_mapId` 守卫，导致地图编辑器整段会话里（currentMap.id 固定不变）这三层
+  // 建一次之后就再也不会跟着笔刷重新采样，纵使 navgrid 数据已经更新。
+  T('渲②b-同时清掉 terrainEdge/frostDecor/boundaryDecor 各自的 "同图跳过" 守卫（v51.33 修复：墙体笔刷编辑不出真实模型）',
+    /this\.terrainEdge\._mapId = null/.test(invalidateBlock)
+    && /this\.frostDecor\._mapId = null/.test(invalidateBlock)
+    && /this\.boundaryDecor\._mapId = null/.test(invalidateBlock));
 
   const tlSrc = srcOf('src/presentation/TerrainLayer.js');
   T('渲③-TerrainLayer 导出了 invalidateTerrainCache，且真的对 _terrainCache 调用了 delete',
