@@ -1190,6 +1190,13 @@ export const weapons = {
             startX: entity.pos.x, startY: entity.pos.y,
             endX: t.pos.x, endY: t.pos.y,
             charge: 1, life: 0.12, color: '#a78bfa',
+            attackerId: entity.id, targetId: t.id,
+            // v51.31：ProjectileSystem.fireBeam 原来按 attackerId 当 Map key（一个
+            // 攻击者一条常驻光束），光棱塔同一时刻却要开最多4条——不给独立 key 的话
+            // 同一帧内后一条会直接覆盖前一条，Map 里永远只留得住最后一条，等于4条
+            // 光束打出去、画面上顶多闪一下，这正是"光棱塔看起来不攻击"的真根因
+            // （伤害结算 performAttackDirect 其实一直是对的）。见 fireBeam 头注。
+            beamKey: `${entity.id}_${t.id}`,
           });
         }
       }

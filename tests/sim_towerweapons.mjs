@@ -702,6 +702,31 @@ function tickNovaCharge(combat, ctx, tower, dt) {
     soloDmgPerHit > (dmgs[0] || 0));
 }
 
+// ==================== 二十一b：光棱塔"不攻击"bug（v51.31）====================
+// 真根因：ProjectileSystem.fireBeam 原来按 attackerId（塔没传就退化成坐标）当
+// Map key，一个攻击者只留一条常驻光束；光棱塔同一时刻要开最多4条，不给各自独立
+// 的 key 就会在同一帧内互相覆盖，Map 里最后只剩1条——伤害其实一直是对的（上面
+// 二十一已经验过），玩家看到的只是画面上顶多闪一下，误以为"没在攻击"。
+{
+  const { ents, ctx } = W();
+  const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
+  ctx.combat.projectiles = new ProjectileSystem(ents, ctx.eventBus, ctx.combat);
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.attackRange = 1000;
+  tower.baseStats.attackDamage = 100;
+  const inst = equipSkill(tower, 'weapon_prism', ctx);
+  const p = SkillLibrary.weapon_prism.defaultParams;
+  for (let i = 0; i < 4; i++) mk(ents, 'melee', 100 + i * 30, 'red', 1000000);
+
+  for (let i = 0; i < 300; i++) SkillLibrary.weapon_prism.onFrame(tower.id, 1 / 30, inst, ctx);
+
+  const beams = ctx.combat.projectiles.getBeams();
+  T(`光束①-同一时刻命中的每条分支都留下一条独立可见的光束（应有${p.maxBranches ?? 4}条，不是被互相覆盖只剩1条）`,
+    beams.length === (p.maxBranches ?? 4));
+  T('光束②-各条光束的终点各不相同（真的是4条打4个不同目标，不是同一条反复刷新）',
+    new Set(beams.map(b => `${b.endX},${b.endY}`)).size === beams.length);
+}
+
 // ==================== 二十二、光棱塔与雷魂的区分（不是同一个东西换皮） ====================
 {
   const wSrc = srcOf('src/core/skills/weapons.js');

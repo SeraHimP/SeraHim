@@ -34,8 +34,21 @@ export class ProjectileSystem {
 
   // 闪电杖持久光束：按攻击者维护一条常驻光束，每次攻击刷新端点/充能/存活计时，
   // 而非每次新建短命光束——这样视觉上是一条连续不闪的光束（参考源实现）。
+  //
+  // v51.31：光棱塔bug排查发现——这个 Map 一直是按【单个攻击者一条光束】设计的
+  // （key = attackerId），闪电杖/聚能炮确实一个塔同一时刻只有一条光束，天生适配。
+  // 但光棱塔"同一时刻从一座塔分裂出最多4条独立光束打4个不同目标"是"一个攻击者、
+  // 多条光束"，原调用点（weapon_prism.onFrame）又没传 attackerId，退化成按塔坐标
+  // 算 key——于是同一帧内 for 循环连续 fireBeam() 4次，前3次全部被第4次用同一个
+  // key 覆盖掉，Map 里最终只留得住最后一条，等于4条光束打出去、画面上最多只闪一下
+  // （甚至因为 life 只有0.12s，下一帧可能已经淡出），看起来就像"没在攻击"——这才是
+  // 用户报的"光棱塔不攻击"的真根因，不是伤害结算没生效（伤害其实一直是对的）。
+  // 加一个可选的 beamKey：调用方明确知道自己会为同一个攻击者同时开多条光束时
+  // 传它（每条给不同的 key，互不覆盖）；不传就还是退回 attackerId/坐标兜底，
+  // 闪电杖/聚能炮这类"一个攻击者一条光束"的调用点不用改。
   fireBeam(beam) {
-    const key = beam.attackerId != null ? beam.attackerId : `_${beam.startX}_${beam.startY}`;
+    const key = beam.beamKey != null ? beam.beamKey
+      : (beam.attackerId != null ? beam.attackerId : `_${beam.startX}_${beam.startY}`);
     const existing = this.beams.get(key);
     if (existing) {
       existing.startX = beam.startX; existing.startY = beam.startY;
