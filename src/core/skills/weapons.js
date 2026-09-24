@@ -835,6 +835,30 @@ export const weapons = {
       const target = targetId ? ctx.entityContainer.get(targetId) : null;
       if (!target || !target.alive) return;   // 没有目标：atkmode_charge 在主循环里自己按秒衰减，这里不用管
       if ((window.gameTime || 0) < (entity._lockUntil || 0)) return;
+
+      // 用户报告"聚能炮子弹不显示"——修复：聚能炮此前完全没有任何画面反馈
+      // （无子弹、也没接 ProjectileSystem.fireBeam），充能到开火全程玩家看不到
+      // 任何东西。它跟闪电杖同样走 atkmode_charge 充能状态机（entity._charge），
+      // ProjectileSystem.fireBeam 头注早把"闪电杖/聚能炮"列为同类调用点，但落地
+      // 时这段调用漏加了。补上后画面上是一条随 entity._charge（0~1）推进逐渐
+      // 变亮的光束，充满那一刻打出去——跟闪电杖的充能光束完全同一套视觉语言，
+      // 不是新发明的呈现方式。命中判定与爆炸伤害结算不受这段影响，仍在下面
+      // chargeReady 之后原样结算。
+      if (ctx.combat && ctx.combat.projectiles && entity.pos && target.pos) {
+        if (instance.state && instance.state._beamTargetId !== target.id) {
+          ctx.combat.projectiles.clearBeam?.(entity.id);
+          instance.state._beamTargetId = target.id;
+        }
+        const fac = entity._mapFaction;
+        const beamColor = fac === 'blue' ? '#5b9bd5' : fac === 'red' ? '#e0473f' : '#f1c40f';
+        ctx.combat.projectiles.fireBeam({
+          attackerId: entity.id,
+          startX: entity.pos.x, startY: entity.pos.y,
+          endX: target.pos.x, endY: target.pos.y,
+          charge: entity._charge || 0, life: 0.4, color: beamColor, targetId: target.id,
+        });
+      }
+
       if (!ctx.combat.chargeReady(entity, target)) return;   // 没充满，不开火
 
       const p = instance._params || weapons.weapon_nova.defaultParams;

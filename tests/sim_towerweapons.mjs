@@ -288,6 +288,50 @@ function tickNovaCharge(combat, ctx, tower, dt) {
   T('命中⑤-打完一发后 charge 归零重新蓄力', tower._charge === 0);
 }
 
+// ==================== 八b、聚能炮：修复"子弹不显示"——没接 ProjectileSystem.fireBeam ====================
+// 用户报告："聚能炮子弹不显示。"根因：聚能炮走 atkmode_charge 充能状态机，跟闪电杖
+// 同一类（ProjectileSystem.fireBeam 头注早把"闪电杖/聚能炮"列为同类调用点），但
+// nova 落地时从没调用过 fireBeam——充能到开火全程没有任何画面反馈。修复：onFrame
+// 每帧都调 ctx.combat.projectiles.fireBeam，charge 传 entity._charge（0~1），换目标
+// 时先 clearBeam 清掉旧光束（与闪电杖的既有处理一致）。
+{
+  const { ents, fx, combat, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  equipSkill(tower, 'weapon_nova', ctx);
+  const target = mk(ents, 'melee', 50, 'red');
+  tower.targetId = target.id;
+  const novaInst = tower._skillInstances.find(s => s.skillId === 'weapon_nova');
+
+  const fireBeamCalls = [];
+  const clearBeamCalls = [];
+  combat.projectiles = {
+    fireBeam: (beam) => fireBeamCalls.push(beam),
+    clearBeam: (attackerId) => clearBeamCalls.push(attackerId),
+  };
+
+  // 充能中途（没打满）：应该也画一条光束，charge 反映当前充能比例，不是只有命中那一帧才画。
+  tower._charge = 0.4;
+  SkillLibrary.weapon_nova.onFrame(tower.id, 0.1, novaInst, ctx);
+  T('视觉①-充能中途也调用了 fireBeam（不是只有开火那一帧才有画面）', fireBeamCalls.length === 1);
+  T('视觉②-光束端点是塔到目标的连线', fireBeamCalls[0].startX === tower.pos.x && fireBeamCalls[0].endX === target.pos.x);
+  T('视觉③-charge 字段如实反映 entity._charge（充能进度=画面亮度/粗细的依据）', fireBeamCalls[0].charge === 0.4);
+  T('视觉④-attackerId 传了塔自己的 id（fireBeam 靠它当 Map key，同一座塔只留一条光束）',
+    fireBeamCalls[0].attackerId === tower.id);
+
+  // 蓄满打出去那一帧同样要画（不能因为命中判定提前 return 而漏掉这次的光束刷新）。
+  tower._charge = 1;
+  SkillLibrary.weapon_nova.onFrame(tower.id, 0.1, novaInst, ctx);
+  T('视觉⑤-蓄满命中的那一帧同样调用了 fireBeam', fireBeamCalls.length === 2);
+
+  // 换目标：应该先清掉旧光束，不留"指向空气的残影"（与闪电杖同一处理）。
+  const target2 = mk(ents, 'melee', 90, 'red');
+  tower.targetId = target2.id;
+  tower._charge = 0.1;
+  SkillLibrary.weapon_nova.onFrame(tower.id, 0.1, novaInst, ctx);
+  T('视觉⑥-换目标时调用了 clearBeam 清掉旧光束', clearBeamCalls.includes(tower.id));
+  T('视觉⑦-换目标后新一帧的光束端点指向新目标', fireBeamCalls[2].endX === target2.pos.x);
+}
+
 // ==================== 九、编辑器/UI枚举接线没有漏掉 barrage/nova ====================
 {
   const dialogSrc = srcOf('src/ui/UnitAddDialog.js');
