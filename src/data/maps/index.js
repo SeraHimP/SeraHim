@@ -4,6 +4,7 @@ import { twisted_treeline } from './twisted_treeline.js';
 import { demo_stylized } from './demo_stylized.js';
 import { howling_abyss_frost } from './howling_abyss_frost.js';
 import { summoners_rift_organic } from './summoners_rift_organic.js';
+import { confluence } from './confluence.js';
 
 /**
  * maps/index.js
@@ -32,6 +33,9 @@ export const MAPS = {
   // v51.22：召唤师峡谷·蜿蜒版（见 summoners_rift_organic.js 头注）——用户要求保留
   // 的"做错了但完成度很高"的有机弯曲兵线设计，登记为独立姊妹图，不影响原图。
   [summoners_rift_organic.id]: summoners_rift_organic,
+  // v55.3：汇流战场——超大型5路扇形汇流地图（见 confluence.js 头注：用户深夜要求
+  // "特别大、多个内塔、多战线可重叠、180分钟量级"，明确授权2阵营降级方案）。
+  [confluence.id]: confluence,
 };
 
 export const DEFAULT_MAP_ID = summoners_rift.id;
