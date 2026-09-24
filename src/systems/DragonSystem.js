@@ -274,11 +274,17 @@ export class DragonSystem {
    * 用户重新规定过一次："除了近战兵和远程兵都是。"
    * 刻意**不读 isLargeMinion**：那个标记还被渲染体积等处用着，
    * 把"体型"和"够不够格拿龙魂"绑死在一个字段上，改一个必然误伤另一个。
+   *
+   * 本轮追加（软编码化）：用户"巨龙龙魂页面新增巨龙之力/龙魂的生效单位选择……
+   * 改为按照不同兵种/不同塔来筛选"——上面这条规则改由 CONFIG.dragonRewardTargets.soul
+   * 这张表决定，可在编辑器"巨龙与龙魂"页勾选。表里没列出的类型（未来新增的自制
+   * 兵种）按旧硬编码规则兜底：塔/非近战远程默认算数，龙不算。
    */
   static SOUL_REWARD_OK(e) {
     if (!e) return false;
-    if (e.type === 'tower') return true;
     if (e.type === 'dragon') return false;
+    const targets = CONFIG.dragonRewardTargets && CONFIG.dragonRewardTargets.soul;
+    if (targets && Object.prototype.hasOwnProperty.call(targets, e.type)) return !!targets[e.type];
     return e.type !== 'melee' && e.type !== 'ranged';
   }
 
@@ -291,10 +297,17 @@ export class DragonSystem {
    * 设计规则（"力"给谁、"魂"给谁），共用一个带开关的函数迟早变成一堆嵌套 if，
    * 而且调用点看不出自己问的到底是哪一条。
    * 龙自己不在领受范围内 —— 它自带的那份走 applyDragonSelfBuffs，是另一回事。
+   *
+   * 本轮追加（软编码化）：与 SOUL_REWARD_OK 同一批改动，改由
+   * CONFIG.dragonRewardTargets.power 这张表决定，表里没列出的类型默认算数
+   * （沿用"全部单位"的旧规则）。
    */
   static POWER_REWARD_OK(e) {
     if (!e) return false;
-    return e.type !== 'dragon';
+    if (e.type === 'dragon') return false;
+    const targets = CONFIG.dragonRewardTargets && CONFIG.dragonRewardTargets.power;
+    if (targets && Object.prototype.hasOwnProperty.call(targets, e.type)) return !!targets[e.type];
+    return true;
   }
 
   spawnDragon() {

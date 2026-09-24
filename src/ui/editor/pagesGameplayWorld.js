@@ -17,6 +17,7 @@ import { CONFIG } from '../../data/Config.js';
 import { WeatherPanel } from '../WeatherPanel.js';
 import { DRAGON_ELEMENTS, DragonSystem } from '../../systems/DragonSystem.js';
 import { SkillLibrary, renderSkillDescription } from '../../core/SkillLibrary.js';
+import { allMinionTypes, minionLabel, minionIcon } from '../../data/customContent.js';
 
 export const EDITOR_PAGES_GAMEPLAY_WORLD = {
   // ==================== 巨龙与龙魂 ====================
@@ -230,11 +231,44 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     return `
       ${factionRows}
       ${scopeRow}
+      ${this._dgTargetFilterHtml()}
       <div class="panel-sec">巨龙之力池（点击 +1 层）</div>
       <div class="pick-grid">${powerPoolHtml}</div>
       <div class="panel-sec">龙魂池（点击切换）</div>
       <div class="pick-grid">${soulPoolHtml}</div>
       <div class="pick-desc-box" id="dgSoulDescBox">点击巨龙之力/龙魂池，对勾选的阵营广播；点击上方"当前生效"里的条目可以移除。</div>`;
+  },
+
+  /**
+   * ==================== 生效单位筛选（龙魂/巨龙之力各一份，塔整体算一类）====================
+   * 用户："巨龙龙魂页面新增巨龙之力/龙魂的生效单位选择。就是目前龙魂只对大型小兵/
+   * 塔生效，改为按照不同兵种/不同塔来筛选。"——数值住在 CONFIG.dragonRewardTargets
+   * （见 Config.js 头注），DragonSystem.SOUL_REWARD_OK/POWER_REWARD_OK 读这张表。
+   * 这里只是给它一个可勾选的入口，勾选即写回 CONFIG，不需要额外的"应用"按钮。
+   *
+   * 只影响**以后的新增授予**——真实击杀奖励、编辑器手动广播、equipExistingSoul
+   * 给新出生单位补发，都会读到新值；但已经挂在场上单位身上的层数不会被这个
+   * 开关追溯清空（这与本项目里其它数值配置的语义一致：改配置不回头改存量）。
+   */
+  _dgTargetFilterHtml() {
+    const targets = CONFIG.dragonRewardTargets || (CONFIG.dragonRewardTargets = { soul: {}, power: {} });
+    const soulT = targets.soul || (targets.soul = {});
+    const powerT = targets.power || (targets.power = {});
+    const types = [['tower', '🏰', '防御塔'], ...allMinionTypes().map(t => [t, minionIcon(t), minionLabel(t)])];
+    const row = (kind, tbl) => types.map(([t, icon, label]) => {
+      // 表里没声明的类型（比如刚添加还没存过盘的自制兵种）按旧硬编码规则的语义
+      // 兜底显示：龙魂默认排除近战/远程，其余（含力）默认全部打勾。
+      const fallback = kind === 'soul' ? (t !== 'melee' && t !== 'ranged') : true;
+      const on = Object.prototype.hasOwnProperty.call(tbl, t) ? tbl[t] : fallback;
+      return `<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;">
+        <input type="checkbox" class="dg-target" data-dg-target-kind="${kind}" data-dg-target-type="${t}" data-dg-target-label="${label}" ${on ? 'checked' : ''}>${icon}${label}</label>`;
+    }).join('');
+    return `
+      <div class="panel-sec" title="控制龙魂/巨龙之力具体对哪些单位类型生效。只影响以后新增的授予（真实击杀奖励、编辑器手动广播、新出生单位补发都读这张表），已经拿到的层数不会被追溯清空。">生效单位</div>
+      <div style="font-size:11px;color:var(--text-mute);padding:0 2px 4px;">龙魂</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;padding:0 2px 8px;">${row('soul', soulT)}</div>
+      <div style="font-size:11px;color:var(--text-mute);padding:0 2px 4px;">巨龙之力</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;padding:0 2px 10px;">${row('power', powerT)}</div>`;
   },
 
   /** 读取"广播目标"复选框当前勾选的阵营集合。 */
@@ -305,6 +339,20 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
           if (allBox) allBox.checked = false;
         }
         this._dgSyncScopeState(overlay);
+      });
+    });
+
+    // ==================== 生效单位筛选：勾选即写回 CONFIG.dragonRewardTargets ====================
+    // 不需要额外的"应用"按钮——DragonSystem.SOUL_REWARD_OK/POWER_REWARD_OK 每次
+    // 判定都实时读这张表，下一次新增授予（真实击杀/手动广播/新单位补发）立即生效。
+    overlay.querySelectorAll('.dg-target').forEach(box => {
+      box.addEventListener('change', () => {
+        const kind = box.dataset.dgTargetKind;
+        const type = box.dataset.dgTargetType;
+        const targets = CONFIG.dragonRewardTargets || (CONFIG.dragonRewardTargets = { soul: {}, power: {} });
+        const tbl = targets[kind] || (targets[kind] = {});
+        tbl[type] = box.checked;
+        logFn(`🎯 ${kind === 'soul' ? '龙魂' : '巨龙之力'}生效单位·${box.dataset.dgTargetLabel || type}：${box.checked ? '✅ 生效' : '⭕ 不生效'}`, 'spawn');
       });
     });
 

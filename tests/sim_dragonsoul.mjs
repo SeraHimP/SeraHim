@@ -576,4 +576,76 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   T('⑲-力的 +1 层/-1 层都调用了 ds._recordFactionPowerLayer（缺一处就是回到这次修的 bug）', n === 2);
 }
 
+// ==================== ⑳：生效单位筛选——软编码化，默认值与旧硬编码规则逐位一致 ====================
+// 用户："巨龙龙魂页面新增巨龙之力/龙魂的生效单位选择。就是目前龙魂只对大型小兵/塔
+// 生效，改为按照不同兵种/不同塔来筛选。"——SOUL_REWARD_OK/POWER_REWARD_OK 原来是写死
+// 的判定函数，现在改读 CONFIG.dragonRewardTargets.soul/power 这两张表。参数化时默认值
+// 必须与参数化前逐位一致（CLAUDE.md 铁律②），这里把旧规则覆盖到的全部已知类型都过一遍。
+{
+  const KNOWN = ['tower', 'melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer', 'summoner'];
+  const soulOldRule = (t) => t === 'tower' ? true : (t !== 'melee' && t !== 'ranged');
+  const powerOldRule = () => true;
+  for (const t of KNOWN) {
+    T(`⑳-龙魂默认值对「${t}」与旧硬编码规则一致`,
+      DragonSystem.SOUL_REWARD_OK({ type: t }) === soulOldRule(t));
+    T(`⑳-巨龙之力默认值对「${t}」与旧硬编码规则一致`,
+      DragonSystem.POWER_REWARD_OK({ type: t }) === powerOldRule(t));
+  }
+  T('⑳-两者对龙自己都不算（沿用旧规则）',
+    DragonSystem.SOUL_REWARD_OK({ type: 'dragon' }) === false && DragonSystem.POWER_REWARD_OK({ type: 'dragon' }) === false);
+  // 未来新增的自制兵种：表里没有这个 key，按旧规则语义兜底（不因为筛选表没提前
+  // 列出新类型就意外拿不到奖励）。
+  T('⑳-未声明的自制兵种类型仍按旧规则兜底（龙魂：非近战远程即算）',
+    DragonSystem.SOUL_REWARD_OK({ type: 'my_custom_minion' }) === true);
+  T('⑳-未声明的自制兵种类型仍按旧规则兜底（力：全部算）',
+    DragonSystem.POWER_REWARD_OK({ type: 'my_custom_minion' }) === true);
+}
+
+// ==================== ㉑：编辑器勾选筛选后，真实生效范围确实收窄/放宽 ====================
+{
+  const before = JSON.parse(JSON.stringify(CONFIG.dragonRewardTargets));
+  try {
+    // 把龙魂的"炮兵（siege）"关掉，巨龙之力的"近战（melee）"打开（本来就是true，改关掉再开回来验证双向）。
+    CONFIG.dragonRewardTargets.soul.siege = false;
+    T('㉑-关掉龙魂对炮兵的生效后，SOUL_REWARD_OK 对炮兵返回 false',
+      DragonSystem.SOUL_REWARD_OK({ type: 'siege' }) === false);
+    CONFIG.dragonRewardTargets.soul.melee = true;
+    T('㉑-把龙魂对近战的生效打开后，SOUL_REWARD_OK 对近战返回 true（原来是硬编码排除的）',
+      DragonSystem.SOUL_REWARD_OK({ type: 'melee' }) === true);
+    CONFIG.dragonRewardTargets.power.ranged = false;
+    T('㉑-关掉巨龙之力对远程的生效后，POWER_REWARD_OK 对远程返回 false',
+      DragonSystem.POWER_REWARD_OK({ type: 'ranged' }) === false);
+
+    // 端到端：equipExistingSoul 给新出生单位补发时也要尊重这份筛选（不是只有
+    // SOUL_REWARD_OK/POWER_REWARD_OK 两个静态方法看得到，实际补发路径也要收窄）。
+    const { ds, ents, fx } = mk();
+    const mkFresh = (type, fac) => {
+      const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+        baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+        _skillInstances: [], _mapFaction: fac, faction: fac };
+      ents.add(e); return e;
+    };
+    const el = 'fire';
+    ds._grantAll('blue', (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+    ds._recordFactionPowerLayer('blue', el, 1);
+    const rangedUnit = mkFresh('ranged', 'blue');
+    const hasPower = (e) => fx.getEffects(e.id).some(x => x.blueprint?.stackKey?.startsWith(`dragon_${el}_`));
+    T('㉑-被筛选排除的远程兵，equipExistingSoul 补发时确实拿不到（真实补发路径同样尊重筛选）',
+      ds.equipExistingSoul(rangedUnit) === false && !hasPower(rangedUnit));
+  } finally {
+    // 还原，避免污染同文件里排在后面的测试或以后新增的用例。
+    CONFIG.dragonRewardTargets = before;
+  }
+}
+
+// ==================== ㉒：编辑器"巨龙与龙魂"页确实提供了生效单位的勾选入口 ====================
+{
+  const src = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  T('㉒-渲染函数里生成了 .dg-target 复选框', /class="dg-target"/.test(src));
+  T('㉒-复选框携带 kind（soul/power）与 type 两个 data 属性，供事件处理器区分', /data-dg-target-kind="\$\{kind\}"/.test(src) && /data-dg-target-type="\$\{t\}"/.test(src));
+  T('㉒-事件处理器写回 CONFIG.dragonRewardTargets（勾选即生效，不需要额外的应用按钮）', /targets\[kind\] \|\| \(targets\[kind\] = \{\}\)/.test(src));
+  T('㉒-勾选覆盖了"塔"这一类（用户定稿：塔整体算一类，不按外/内/基地塔细分）', /\[\s*\['tower'/.test(src));
+  T('㉒-兵种列表来自 allMinionTypes()（含自制兵种，不是写死的内置列表）', /allMinionTypes\(\)\.map/.test(src));
+}
+
 board.done();

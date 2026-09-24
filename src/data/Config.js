@@ -395,6 +395,31 @@ export const CONFIG = {
   // 生成建筑时按 地图 tierStats → towerTierOverrides → factionOverrides['tower_'+tier] 依次覆盖。
   // 不改就是空对象 → 完全沿用地图数值，行为不变。
   towerTierOverrides: { outer: {}, inner: {}, base: {}, hq_tower: {}, nexus_lane: {}, nexus_main: {} },
+  // ==================== 龙魂/巨龙之力的生效单位筛选 ====================
+  // 用户："巨龙龙魂页面新增巨龙之力/龙魂的生效单位选择。就是目前龙魂只对大型
+  // 小兵/塔生效，改为按照不同兵种/不同塔来筛选。"——把 DragonSystem 里原来写死
+  // 的 SOUL_REWARD_OK（塔+大型小兵，排除近战/远程）/POWER_REWARD_OK（全部单位）
+  // 两条硬编码规则，改成可在编辑器"巨龙与龙魂"页勾选的软编码筛选表。
+  //
+  // 结构：塔整体算一类（不按外/内/基地塔细分——用户定稿"够用即可，不需要更细"），
+  // 龙魂/巨龙之力各一份全局共享筛选（不按元素/每条魂各自独立——同一批用户定稿，
+  // 理由是这本来就是"这一类单位算不算数"的规则，不是某条魂的专属数值）。
+  // 默认值与参数化前的硬编码规则**逐位一致**：龙魂沿用"塔+大型小兵，排除近战/
+  // 远程"，巨龙之力沿用"全部单位"。DragonSystem.SOUL_REWARD_OK/POWER_REWARD_OK
+  // 读不到某个类型（比如未来新增的自制兵种）时，也按这两条旧规则的语义兜底，
+  // 不会因为筛选表没提前列出新类型就意外拿不到奖励。
+  dragonRewardTargets: {
+    soul: {
+      tower: true, melee: false, ranged: false, siege: true, super: true,
+      totem: true, warlock: true, corrupt: true, ram: true, heavy: true,
+      healer: true, engineer: true, summoner: true,
+    },
+    power: {
+      tower: true, melee: true, ranged: true, siege: true, super: true,
+      totem: true, warlock: true, corrupt: true, ram: true, heavy: true,
+      healer: true, engineer: true, summoner: true,
+    },
+  },
   // ==================== v43：八条龙魂 + 远古之力的全部数值 ====================
   // 领受者是**塔与大型小兵**，没有玩家 —— 所以每条的触发条件都不需要判断
   //（命中就触发 / 受击就触发 / 每隔 N 秒就触发），机械单位也能吃满。
