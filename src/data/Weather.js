@@ -562,3 +562,130 @@ export const TEMP_AXIS_COUPLING = {
   fog: 0,
   wind: 0,
 };
+
+// ==================== v55.2：天气系统重构——"系统驱动"核心机制 ====================
+// 用户实机反馈两个问题："效果看不出来"（5 条基础天气强制权重恒和为1，谁都冲不高，
+// 永远是稀释过的混合汁）和"物理别扭"（雨/雪是两条独立游走的轴，只靠弱耦合系数
+// 偏一下彼此的目标值，能同时冲到"盛夏暴雪"这种说不通的组合）。跟用户+GPT反复
+// 讨论后定的新模型：不再是"5个各自摇骰子的独立变量"，改成"有没有一个天气系统
+// 正在经过"——系统有生命周期（起→峰→落），风/降水强度/温度骤变全部是"这个系统
+// 现在走到哪一步了"的同一份读数派生出来的，不是各自独立摇骰子。
+//
+// ==================== 与旧模型的兼容策略（不是推倒重来）====================
+// 没有改变 WeatherSystem 对外的公开契约——getCharge('rain')/getCharge('snow')/
+// getEffectiveStrengths()/getModifiers()/getStructuralFactor()/getSkillParamMod()
+// 全部照旧返回同样形状的数据，EXTREME_WEATHERS 的 trigger 表（认 rain/snow/fog/
+// wind/clear 这五个 id）、WEATHER_SKILL_MODS、GroundTraceSystem._rainScale()/
+// _snowScale()、PostFX/ThreeRenderer 的天气可视化——一个字都不用改。变的只是
+// WeatherSystem 内部【怎么算出这五个 id 各自现在多强】：旧的是 5 条独立 OU +
+// softmax，新的是"天气系统事件"驱动，降水强度和风强度由系统的包络曲线给出，
+// rain/snow 这两个 id 现在是【同一份降水强度】按【当前温度】拆出来的两半
+// （temperature 决定"这团正在下落的水汽是雨还是雪"），不再是两条各自独立的轴——
+// "盛夏暴雪"这种物理不成立的组合，现在结构上就不可能出现了。
+// clear 这个 id 也从"第5个要抢预算的选手"变成派生量（= 1 − 降水 − 雾 的近似），
+// fog 只在"没有系统在场"的空当里由气候基线生成。
+//
+// ==================== 原型（archetype）====================
+// 首批 5 种，覆盖度足够（GPT 复核建议的起始规模）。每个原型的"形状"（包络曲线）
+// 都是 riseFrac + peakFrac + fallFrac = 1（起势占比例+驻峰占比例+回落占比例，
+// 三段吃满整个生命周期，不留"已经归零但还占着位置"的死尾巴）——见
+// WeatherSystem._archetypeEnvelope 的纯函数实现。durationSec 是这局35分钟游戏
+// 时长里的【游戏设计参数】，不是真实气象系统的实际持续时间（GPT 原话）。
+// precipPeak/windPeak：满强度（strength=1）时驻峰阶段能冲到的降水/风强度上限
+// （0~1）。deltaT：满强度时驻峰阶段把温度往哪个方向推多少（气候基线单位，
+// 与 TEMP_AXIS_COUPLING 同一空间）。affinity(mu, muT)：这个原型在当前气候
+// 倾向下被抽中的相对权重，复用现有的 CLIMATE_TEMPLATES.mu/muT（不新增气候
+// 字段，气候模板与编辑器面板的 mu 滑条因此不用改一行代码就能继续控场——见
+// WeatherSystem._pickArchetype 头注）。
+//
+// ⚠️ 数值是这次重构给出的第一版合理值（时长范围/强度峰值/ΔT幅度/亲和度公式），
+// 不是用 balance_matrix 复核过的精确数字——跟这个项目其它"先给可编辑默认值、
+// 有问题随时调"的口径一致，后续要用 node tools/balance_matrix.mjs 实机验证手感。
+export const WEATHER_ARCHETYPES = {
+  // 冷锋：快、猛、转冷，风先来，降水集中在前沿——"天气突然变了"的那种系统。
+  coldFront: {
+    id: 'coldFront', name: '冷锋', icon: '🌬️', color: '#6f9bc7',
+    durationSec: [300, 480],   // 5~8 分钟
+    // v55.2 实测调整：驻峰占比 0.15 时，即便冷锋是当前气候被抽中最多的原型，
+    // 整条事件时间线里它"真正猛"的时间也太短——大部分时间都在缓慢起势/消散，
+    // 长期统计下来"晴"（谁的缓坡时段都会往这边记）反而比"风"更常见，草原模板测出
+    // 来主导天气是晴不是风。把驻峰段拉长到 0.40（起势/回落相应缩短），冷锋经过时
+    // "真的在刮大风"这件事占的时间比例更高，草原这类偏爱冷锋的气候，风才能立起来。
+    envelope: { riseFrac: 0.15, peakFrac: 0.40, fallFrac: 0.45 },
+    precipPeak: 0.95,
+    windPeak: 1.0,             // 风在冷锋自己的前沿最强，这是它的招牌特征
+    deltaT: [-0.55, -0.25],    // 转冷
+    // v55.2 实测调整：草原模板（mu.wind 很高、mu.rain/snow 都是负的）原本测出"晴"
+    // 反而比"风"更常见——因为原来的亲和度公式完全没提 mu.wind，"风"只是别的降水
+    // 系统的副产品，草原的高 mu.wind 无处生根。冷锋本身就是"风在前沿最强"的原型
+    // （见 windPeak），加一条 mu.wind 项，让"喜欢刮风"的气候真的更容易抽到它。
+    affinity: (mu, muT) => 0.4 + Math.max(0, mu.rain) * 0.22 + Math.max(0, mu.snow) * 0.1 + Math.max(0, mu.wind) * 0.6 + Math.max(0, -muT) * 0.2,
+  },
+  // 暖锋：缓慢转暖，降水绵长，起落都比冷锋温和——"连绵阴雨"的那种系统。
+  warmFront: {
+    id: 'warmFront', name: '暖锋', icon: '🌦️', color: '#7fae8f',
+    durationSec: [420, 660],   // 7~11 分钟
+    envelope: { riseFrac: 0.35, peakFrac: 0.30, fallFrac: 0.35 },
+    precipPeak: 0.9,
+    windPeak: 0.4,
+    deltaT: [0.2, 0.45],       // 转暖
+    affinity: (mu, muT) => 0.4 + Math.max(0, mu.rain) * 0.5 + Math.max(0, muT) * 0.2,
+  },
+  // 对流雷暴：短、猛、脉冲式——起势快、驻峰短、回落也快，整个系统本身持续时间就短。
+  thunderstorm: {
+    id: 'thunderstorm', name: '对流雷暴', icon: '⛈️', color: '#7c5cff',
+    durationSec: [120, 240],   // 2~4 分钟
+    envelope: { riseFrac: 0.20, peakFrac: 0.30, fallFrac: 0.50 },
+    precipPeak: 1.0,           // 单位时间内最猛的降水
+    windPeak: 0.85,
+    deltaT: [-0.1, 0.1],       // 温度冲击不大，主戏是降水+风
+    affinity: (mu, muT) => 0.25 + Math.max(0, mu.rain) * 0.3 + Math.max(0, muT) * 0.25, // 暖湿地区更容易对流
+  },
+  // 稳定高压：平静期/晴朗期，长时间维持、起落都很平缓——"什么都没发生"的那种系统，
+  // 天气叙事里"事件之间的空当"本身就是它，不是没有天气，是天气正好是"晴"。
+  highPressure: {
+    id: 'highPressure', name: '稳定高压', icon: '☀️', color: '#f6c94a',
+    durationSec: [420, 720],   // 7~12 分钟
+    envelope: { riseFrac: 0.15, peakFrac: 0.70, fallFrac: 0.15 },
+    precipPeak: 0,             // 不带降水
+    windPeak: 0.1,
+    deltaT: [0, 0],            // 不主动推温度——平静期温度自己缓慢漂回气候基调
+    // v55.2 实测调整：海洋性模板（mu.fog 很高）原本测出"风"比"雾"更常见——雾只在
+    // "没有系统压阵"的平静期由气候基线生成（见 WeatherSystem._ratiosFromSample），
+    // 而稳定高压是唯一制造这种平静期的原型，它原来只认 mu.clear，海洋性那种
+    // "常年阴湿多雾但没什么大太阳"的气候完全没有多余的平静期可用。稳定高压不是
+    // "只代表晴"，是"没有强系统经过"这件事本身，加一条 mu.fog 项后，喜欢起雾的
+    // 气候也会更频繁地进入这种平静期，雾才有地方长出来。
+    affinity: (mu, muT) => 0.4 + Math.max(0, mu.clear) * 0.6 + Math.max(0, mu.fog) * 0.5,
+  },
+  // 寒潮：快速降温、长时间维持低温——核心是温度骤降本身，降水是中等量的伴生物
+  // （温度会被推得很低，同一份降水强度经温度拆分后几乎全部落成雪）。
+  coldWave: {
+    id: 'coldWave', name: '寒潮', icon: '🥶', color: '#a8c8e8',
+    durationSec: [480, 840],   // 8~14 分钟
+    // v55.2 实测调整：驻峰段拉到 0.65（起势相应缩短）——寒潮的性格就是"来了就赖着不走"，
+    // 比冷锋更需要长时间维持满强度，不然极地模板测出来"晴"比"雪"更常见（漂移到
+    // "晴"的缓坡时段被记太多）。
+    envelope: { riseFrac: 0.12, peakFrac: 0.65, fallFrac: 0.23 },
+    precipPeak: 1.0,           // 满强度时驻峰阶段几乎全是降水——寒潮期间不该还有大片"晴"
+    windPeak: 0.3,
+    deltaT: [-0.9, -0.6],      // 大幅转冷，这是寒潮的核心
+    affinity: (mu, muT) => 0.3 + Math.max(0, mu.snow) * 0.6 + Math.max(0, -muT) * 0.3,
+  },
+};
+
+// ==================== 降水形态：纯粹是"当前温度"的函数 ====================
+// 系统只决定"有没有抬升、抬升多猛"（precip 强度），温度决定"抬升出来的水汽变成
+// 什么"——这样同一个系统经过的过程中会自然出现"雨→雨夹雪→雪"这种形态演变，
+// 不是硬阈值瞬间变脸。返回 0~1：0=全是雨，1=全是雪；连续插值，中间是雨夹雪。
+// 阈值参考真实体感：temp<-0.15（气候基调偏冷）时开始明显偏雪，temp<-0.5 时几乎全雪；
+// temp 的取值域是 [-1,1]，与 WeatherSystem.getTemperature() 同一空间。
+export function snowFractionAt(temp) {
+  const t = Math.max(-1, Math.min(1, temp));
+  // 用一段线性斜坡把 [-0.55, 0.15] 映射到 [1, 0]（越界钳位），中心落在"体感转折点"
+  // 略偏冷侧——真实世界里 0°C 左右才开始有雨夹雪，不是温度轴的正中点。
+  const hi = -0.55, lo = 0.15;
+  if (t <= hi) return 1;
+  if (t >= lo) return 0;
+  return (lo - t) / (lo - hi);
+}

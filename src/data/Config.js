@@ -2216,6 +2216,15 @@ export const CONFIG = {
     // 极端天气触发门槛的整体缩放（>1 更难进）。用户："可以适当增加进如极端天气的门槛"。
     // 1.25 = 各极端天气的原始阈值统一抬高 25%，相对难易不变。
     weatherExtremeThresholdScale: 1.25,
+    // ==================== v55.2：天气系统重构——"系统驱动"机制的调度旋钮 ====================
+    // 跟上面几条 weatherCharge*/weatherOffAt 同一批"软编码但暂未接编辑器入口"的
+    // 天气机制常量放在一起——这批常量是既有代码里的既定先例（这些年一直只软编码到
+    // 这里、没接编辑器 UI），这次新增的天气系统调度参数延续同一惯例，没有新起一套
+    // 规矩。首版合理值，不是 balance_matrix 复核过的精确数字。
+    weatherSystemOverlapMaxFrac: 0.15, // 相邻两个系统事件最多重叠多少（占前一个事件自身时长的比例）——制造"新系统已经起势、旧系统还没完全消散"的过渡，同时保证曲线处处连续。事件之间不再有独立的强制平静间隔，"平静"完全交给 highPressure 原型自己的出现概率/时长表达（见 WeatherSystem._generateSystemEvents 头注）
+    weatherWindMuGain: 0.6,           // 风的出现倾向滑条（mu.wind）对系统自带风强度的缩放力度
+    weatherFogBaselineMax: 0.85,      // 雾的出现倾向滑条（mu.fog）拉满时，平静期雾潜力的上限（实测：0.55 时海洋性模板的雾长期占比抢不过风/雨，调高到 0.85——calmness 因子本身已经会把它往下拉，不会变成"平静期恒定起雾"）
+    weatherSystemTempPushGain: 1,     // 天气系统事件对温度的即时推力力度（见 WeatherSystem._generateTimeline 头注：气候基线偏冷时，靠这份直接叠加让暖锋经过时真能把降水形态推成雨）
     // Q2：召唤水晶重生前多少秒停止生成超级兵（水晶快复活了 → 超级兵红利提前结束）
     // （v33：30 → 45，用户定稿）
     superMinionCutoffBeforeRespawn: 45,

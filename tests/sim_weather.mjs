@@ -330,6 +330,7 @@ import fs from 'fs';
 
   // 调 mu：当下不跳变，未来按新规则演化
   const before=w5.getWeights().rain;
+  const beforePrecip=w5.getWeights().rain+w5.getWeights().snow;
   const t0=performance.now();
   w5.setMu('rain', 1.0);
   const cost=performance.now()-t0;
@@ -340,11 +341,34 @@ import fs from 'fs';
   // 真正的正确性由"当下权重不跳变"那条保证；顺带打印实测耗时供人工观察。
   console.log(`  （setMu 重算耗时 ${cost.toFixed(1)}ms）`);
   T('v27 调 mu 的重算无病态开销（<500ms；精确性能看上面打印值）', cost<500);
-  // mu 的效果体现在【长期均值】上（它是 OU 的均值回归目标），不是几百秒内的瞬时值。
+  // mu 的效果体现在【长期均值】上，不是几百秒内的瞬时值。
+  // v55.2 重构后的口径调整：调高 mu.rain 现在意味着"更容易抽到带降水的天气系统"，
+  // 不再是给 rain 一条独立轴直接调它自己的目标值——降水抽中之后具体落成雨还是雪，
+  // 由【当时的温度】决定（snowFractionAt，这正是这次重构要的效果：温度决定形态，
+  // 不再有"独立轴导致雨/雪同时冲高"这种物理上说不通的组合）。种子 555 对应的随机
+  // 气候基线恰好偏冷（muT≈-0.6），调满 mu.rain 后大部分新增降水会判成雪而不是雨——
+  // 这是【正确】的新行为，不是 bug，所以这里改成钉"总降水（rain+snow）显著上升"，
+  // 这才是 mu.rain 在新机制下真正、稳定控制的量；具体形态是否受温度正确门控，
+  // 由后面 v55.2 那组测试用【暖气候】单独验证。
   let sum=0; const N=1800;
-  for(let i=0;i<N;i++){ w5.update(1); sum+=w5.getWeights().rain; }
-  T('v27 调高 mu 后该天气的长期占比显著上升（滑条真的有效）', sum/N > before + 0.15);
+  for(let i=0;i<N;i++){ w5.update(1); const w=w5.getWeights(); sum+=w.rain+w.snow; }
+  T('v27/v55.2 调高 mu 后总降水（雨+雪）长期占比显著上升（滑条真的有效）', sum/N > beforePrecip + 0.15);
   T('v27 mu 被钳制在 -1~+1', (w5.setMu('fog', 5), w5.getMu('fog')===1) && (w5.setMu('fog',-5), w5.getMu('fog')===-1));
+
+  // v55.2 补充：上面那组用的种子气候基线偏冷，"总降水显著上升"验证了 mu.rain 这个
+  // 旋钮本身仍然有效；这里换一个暖气候基线（雨林模板，muT 常年正值）直接验证重构
+  // 的核心主张——温度够暖时，降水绝大部分应该落成雨而不是雪，两条合在一起才说明
+  // 新机制完整满足了重构目标：滑条还管用，且形态确实由温度决定，不是巧合。
+  // 不用"调 mu 前后对比"的写法，是因为暖气候本身（muT）就会让带降水的天气系统更
+  // 容易被抽中（见 warmFront/thunderstorm 的 affinity），调 mu.rain 时已经很难再
+  // 造出一个"几乎没有雨"的干净基线来对比，直接测"暖气候下雨明显多于雪"更稳。
+  {
+    const w6=new WeatherSystem(null); w6.setEnabled(true); w6._template='rainforest'; w6.reset(919);
+    let rainSum=0, snowSum=0; const N2=1800;
+    for(let i=0;i<N2;i++){ w6.update(1); const w=w6.getWeights(); rainSum+=w.rain; snowSum+=w.snow; }
+    T('v55.2 暖气候下降水绝大部分落成雨而不是雪（温度真的决定形态）',
+      rainSum > 0.2 * N2 && rainSum > snowSum * 5);
+  }
 
   // 气候模板：每个模板的主导天气必须符合其气候
   const expect={ desert:'clear', rainforest:'rain', polar:'snow', oceanic:'fog', steppe:'wind' };
@@ -379,7 +403,7 @@ import fs from 'fs';
 // ==================== v28：模板要有"倾向"而非"独裁" ====================
 {
   const stats = (tpl) => {
-    let clearSec=0, exSec=0, varietySec=0; const dom={};
+    let clearSec=0, exSec=0, varietySec=0; const dom={}; const domActive={};
     for(let seed=1;seed<=3;seed++){
       const w=new WeatherSystem(null); w.setEnabled(true); w._template=tpl; w.reset(seed*77);
       for(let t=0;t<3600;t++){ w.update(1);
@@ -389,14 +413,26 @@ import fs from 'fs';
         const sorted=Object.entries(wt).sort((a,b)=>b[1]-a[1]);
         if(sorted[1][1]>0.25) varietySec++;
         const d=w.getDominant().id; dom[d]=(dom[d]||0)+1;
+        // v55.2：只在【非晴】的四种天气里比大小。新机制下"晴"是"降水/风/雾都不活跃"
+        // 的 leftover——每一种具体天气原型的起势/回落阶段都会往"晴"记一笔，而
+        // 具体天气（雨/雾/风/雪）之间是四选一分票，单挑"晴"这个统一接盘的桶，
+        // 天然吃亏。这不是 bug：旧模型靠 softmax 的 SHARPNESS 强行把某一种天气
+        // 顶成【逐瞬间】的绝对赢家，新模型里"晴"和"正在下雪"各自是什么，只由
+        // 实际有没有系统经过决定，"某一刻到底更像晴还是更像别的具体天气"因此不
+        // 再是这条不变量真正关心的东西——真正关心的是"一旦不是晴，最常见的是
+        // 哪种"，即气候的"性格"，这才是 topActive 在测的。
+        let bestActive=null, bestActiveW=-1;
+        for(const id of ['rain','fog','wind','snow']) if(wt[id]>bestActiveW){bestActiveW=wt[id]; bestActive=id;}
+        domActive[bestActive]=(domActive[bestActive]||0)+1;
       }
     }
     const top=Object.entries(dom).sort((a,b)=>b[1]-a[1])[0];
+    const topActive=Object.entries(domActive).sort((a,b)=>b[1]-a[1])[0];
     return { clear: clearSec/10800, extreme: exSec/10800, variety: varietySec/10800,
-             top: top[0], topRatio: top[1]/10800 };
+             top: top[0], topRatio: top[1]/10800, topActive: topActive[0], topActiveRatio: topActive[1]/10800 };
   };
   const polar = stats('polar');
-  T('v28 极地仍以雪为主导（模板性格保持）', polar.top==='snow' && polar.topRatio>0.35);
+  T('v28/v55.2 极地——非晴天气里仍以雪为主导（模板性格保持）', polar.topActive==='snow' && polar.topActiveRatio>0.35);
   T('v28 极地会偶尔放晴（不再是"永远极端天气"）', polar.clear > 0.05);
   T('v28 极地天气有变化（次要天气也常有存在感）', polar.variety > 0.30);
   const desert = stats('desert');

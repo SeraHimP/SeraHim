@@ -1,4 +1,4 @@
-import { BASE_WEATHERS, EXTREME_WEATHERS, TARGET_MATCHERS, CLIMATE_TEMPLATES, TEMP_AXIS_COUPLING, tierOf, tierOfExtreme, INTENSITY_TIERS } from '../data/Weather.js';
+import { BASE_WEATHERS, EXTREME_WEATHERS, TARGET_MATCHERS, CLIMATE_TEMPLATES, WEATHER_ARCHETYPES, snowFractionAt, tierOf, tierOfExtreme, INTENSITY_TIERS } from '../data/Weather.js';
 import { WEATHER_SKILL_MODS } from '../data/weatherSkillMods.js';
 // v54 第二轮重做 §9.6：天气×昼夜联动只需要读太阳仰角，DayNight.js 是纯函数
 // （颜色插值用 THREE.Color，但不碰场景/渲染），headless Node 环境下同样可以
@@ -14,50 +14,58 @@ import { CONFIG } from '../data/Config.js';
 /**
  * WeatherSystem.js —— 全局天气系统
  *
- * ==================== 核心模型 ====================
- * 天气不是离散状态机，而是一组【连续演化的权重】。任意时刻天气都是
- * "晴 62% / 雨 25% / 雾 8% / 风 4% / 雪 1%" 这样的分布，没有开关式切换。
- * 所谓"当前天气"只是权重最大的那个——是权重表的【读出结果】，不是被设定的状态。
+ * ==================== v55.2：核心模型换血——"系统驱动" ====================
+ * 用户实机反馈两个问题：① "效果看不出来"——5 条基础天气的占比强制走 softmax、
+ * 恒和为 1，谁都冲不高，永远是稀释过的混合汁；② "物理别扭"——雨/雪原来是两条
+ * 各自独立游走的轴，只靠一个弱耦合系数互相偏一下目标值，能同时冲到"盛夏暴雪"
+ * 这种说不通的组合。跟用户 + GPT 反复讨论后定的新模型：天气不再是"5 个各自
+ * 摇骰子的独立变量"，而是"有没有一个天气系统正在经过"——像真实气象一样，
+ * 降水强度、风强度、温度骤变，全部是"这个系统现在走到生命周期哪一步了"这
+ * 同一份读数派生出来的，不是各自独立摇骰子。
  *
- * 演化算法：Ornstein-Uhlenbeck 过程 + Softmax
- *   每种基础天气有一个"潜在分数" x_i，做带均值回归的随机游走：
- *       dx_i = θ·(μ_i − x_i)·dt + σ·√dt·N(0,1)
- *   · θ（回归力）：把分数拉回均值的强度 → 决定天气变化的【快慢】
- *   · σ（波动率）：随机扰动的强度 → 决定天气变化的【剧烈程度】
- *   · μ_i（倾向）：该天气的长期均值 → 决定它有多【常见】
- *   占比 = softmax(x)，天然归一化到 1、平滑连续、无跳变。
+ * 新机制（见 data/Weather.js 的 WEATHER_ARCHETYPES 头注）：开局一次性预生成
+ * 整条【天气系统事件时间线】——冷锋/暖锋/对流雷暴/稳定高压/寒潮，每个事件
+ * 有起止时刻、强度、一条"起势→驻峰→回落"的包络曲线。任意时刻的降水强度/
+ * 风强度 = 当前活跃事件（最多同时 2 个，小幅重叠）按各自包络值加总。
+ * 降水的【形态】（雨还是雪）不再是独立天气，而是降水强度按【当前温度】
+ * 连续拆分出来的两半（snowFractionAt()）——同一份水汽，温度决定它是雨是雪，
+ * "盛夏暴雪"这种组合现在结构上就不可能出现。雾只在"没有系统经过"的平静期由
+ * 气候基线生成（系统经过时自然压制雾）。clear（晴）不是被抢预算的第 6 个选手，
+ * 是"降水+风+雾都不活跃"时的leftover——calm 本身就该显示成"晴"。
  *
- *   为什么是 OU 而不是纯随机游走：纯游走会让某个天气无限漂移不回头。
- *   OU 的均值回归让极端占比【难以长期维持】——偶尔会有一场持续很久的大雨，
- *   但概率随时长指数衰减。这正是真实天气的统计特性，也是为什么
- *   不需要硬性的占比上限（用户明确要求不加上限）。
+ * ==================== 与旧模型的兼容策略（不是推倒重来） ====================
+ * WeatherSystem 对外的公开契约【一字未改】——getCharge/getEffectiveStrengths/
+ * getModifiers/getStructuralFactor/getSkillParamMod/getForecast/getDominant/
+ * getMu/setMu/setTemplate/isWeatherDisabled/setWeatherDisabled/averageDuration
+ * 全部保留同样的签名和返回形状；EXTREME_WEATHERS 的 trigger 表、
+ * WEATHER_SKILL_MODS、GroundTraceSystem、PostFX/ThreeRenderer、WeatherPanel.js
+ * ——这些下游消费者一个字都不用改。变的只是内部【怎么算出 rain/snow/fog/
+ * wind/clear 这五个 id 各自现在多强】。`_mu[id]`（UI 滑条的"出现倾向"）仍然
+ * 是每个 id 独立的旋钮：mu.rain/mu.snow 偏置哪些天气系统更容易被抽中
+ * （见 WEATHER_ARCHETYPES[*].affinity），mu.fog/mu.wind 直接缩放各自的
+ * 派生强度，mu.clear 偏置"稳定高压"（calm）被抽中的概率——滑条的用户体感
+ * （"往右拖，这种天气明显变多"）没有变，只是内部路由换了机制。
  *
  * ==================== 极端天气 ====================
- * 不参与游走，而是基础权重跨过阈值时【自动涌现】：
- *       强度 = min over 条件 of (占比 − 阈值) / (1 − 阈值)
- * 刚过阈值时极弱，占比越高越猛——连续，无突兀跳变。
+ * 不参与调度，而是基础充能跨过阈值时【自动涌现】，这部分完全没动
+ * （见下方 _stepCharges/_extremeThreshold，机制与之前逐字一致）。
  *
  * ==================== 预报 ====================
- * OU 是马尔可夫过程，可以从当前状态往前推演。系统用一个【独立的推演副本】
- * 提前算出未来 FORECAST_HORIZON 秒的权重曲线，滚动条据此渲染。
- * 预报是"真的"——未来确实会那样走（除非玩家中途改了参数）。
+ * 事件时间线开局即【预生成完毕】，未来不是"猜"出来的，是已经写好但还没走到——
+ * 预报只是读时间线的未来段，100% 准确、永不刷新，这条设计不变。
  */
 
 const SAMPLE_INTERVAL = 2;      // 预报采样间隔（秒）
-const SHARPNESS = 1.2;          // softmax 尖锐度：>1 放大占比差距，让主导天气鲜明、极端天气可达
-const MU_GAIN = 1.2;            // mu(-1~+1) → OU 潜在分数的放大系数，让模板性格鲜明
-const OSC_AMPLITUDE = 1.2;      // 天气系统过境：给演化加一点周期性节奏（辅助角色）
-const OSC_SHARPNESS = 4;        // 尖峰陡度：越大，每种天气"当家"的窗口越短越集中
+const MU_GAIN = 1.2;            // muT(-1~+1) → 温度轴内部数值空间的放大系数，让气候模板性格鲜明（v55.2：现在只用于温度轴，5 种基础天气不再走这条缩放）
 const DOMINANCE_HYSTERESIS = 0.06; // 主导天气迟滞：新天气需领先 6 个百分点才算易主（滤抖动，不影响底层权重）
 const FORECAST_HORIZON = 240;   // 预报时长（秒）——滚动条能看到未来 4 分钟
 const TIMELINE_LENGTH = 7200;   // 预生成的时间线长度（秒）＝2小时，远超一局时长
 
 // ==================== 气象轴 v1（用户 + GPT 讨论定稿，见 docs/Q4-WEATHER-REDESIGN.md §5）====================
-// 只做一条轴：温度。比 5 种天气自身的演化慢得多，代表"这局比赛的气候基调"。
-// AXIS_IDS 单独存在（不并入 baseIds）：softmax/权重/极端天气触发等一切现有逻辑
-// 只认 baseIds，温度轴不会被这些循环意外吃进去；同时把它设计成数组（不是单个
-// 字符串常量）是为将来可能追加的第二条轴（湿度等，本轮明确不做）留位置。
-const AXIS_IDS = ['temp'];
+// 只做一条轴：温度。比天气系统事件本身的演化慢得多，代表"这局比赛的气候基调"。
+// v55.2：温度轴的 OU 步进机制完全没动（见下方 _generateTimeline），只是把原来
+// 静态的回归目标 muT，换成了"气候基线 + 当前系统事件的 ΔT 贡献"这个随时间变化
+// 的目标——一场冷锋经过时温度轴会真的被推低，不再是温度轴和天气系统各算各的。
 // ==================== v54 §9.7：趋势尺度压缩（原 15~30 分钟太慢） ====================
 // 用户实机验收反馈"气象轴看不出效果"——两轮 GPT 复核一致认为根因不是隐藏设计
 // 本身错了，是【趋势尺度太长】：一局约 35 分钟，15~30 分钟的周期只够走半个弧线，
@@ -130,17 +138,7 @@ export class WeatherSystem {
     this._invalidateWeatherReadout(); // v51.26：重开一局，天气从零算起，缓存不能带着上一局的值
     this._rng = _makeRng(seed ?? (Math.random() * 1e9) | 0);
 
-    // θ 决定主导天气的平均持续时长。经验关系：持续时长 ≈ 1/θ 量级。
-    // 取值范围让持续时长落在 60s ~ 600s（10分钟）之间（用户指定）。
-    const tMin = 60, tMax = 600;
-    const targetDuration = tMin + this._rng() * (tMax - tMin);
-    this.theta = 1 / targetDuration;
-    // σ 与 θ 配比决定波动幅度：σ/√(2θ) 是 OU 的稳态标准差。
-    // 取 1.6：稳态标准差越大，各天气的潜在分数拉得越开，softmax 后占比对比度越高。
-    // （实测 0.8 时占比长期挤在 20~28% 区间，主导天气频繁易主、极端天气永远触发不了。）
-    this.sigma = 0.9 * Math.sqrt(2 * this.theta);
-
-    // 气象轴 v1：温度自己一条独立的 θ/σ，比天气本身慢得多（见 AXIS_TARGET_DURATION_*
+    // 气象轴 v1：温度自己一条独立的 θ/σ，比天气系统事件慢得多（见 AXIS_TARGET_DURATION_*
     // 头注），也是每局单独随机一次——同一张图不会每局温度轴节奏都一样。
     const axisDuration = AXIS_TARGET_DURATION_MIN
       + this._rng() * (AXIS_TARGET_DURATION_MAX - AXIS_TARGET_DURATION_MIN);
@@ -152,51 +150,29 @@ export class WeatherSystem {
     this._clock = 0;
     this._tempLagTracker = null; // 气象轴 v1：新局重新开始追踪，不带上一局的滞后值
     this._dominantId = null;
-    // Q3 根因修复：整条天气时间线在 reset 时【一次性预生成】。
+    // Q3 根因修复（沿用至今）：整条天气时间线在 reset 时【一次性预生成】。
     //
-    // 原实现的错误：把"OU 是马尔可夫过程、可以从当前状态往前推"当成了"可以预报未来"，
-    // 但【未来的随机数还没生成】——推演时我另开了一条随机序列去猜，猜的当然不准
-    // （实测：t=0 预报 t=60 的雨是 40.9%，实际走到 t=60 是 14.3%），
-    // 而且每 8 秒重推一次、每次种子不同 → 同一未来时刻的预报值来回变
-    //   → 这就是用户看到的"天气突然刷新、不连续"。
+    // 原实现（OU 随机游走）的错误：把"马尔可夫过程可以从当前状态往前推"当成了
+    // "可以预报未来"，但【未来的随机数还没生成】——推演时另开一条随机序列去猜，
+    // 猜的当然不准，而且每次重推种子都不同 → 同一未来时刻的预报值来回变，
+    // 这就是当年用户看到的"天气突然刷新、不连续"。
     //
     // 正确做法：天气的整条时间线开局即确定（用固定种子一次性生成），
-    // 未来不是"猜"出来的，而是"已经写好但还没走到"。于是：
-    //   · 预报 100% 准确（它读的就是真实的未来）
-    //   · 永不刷新（时间线不再重算）
-    //   · 演化仍然随机（种子随机 + 每局 θ 随机）
-    // 这也符合"天气预报"的物理直觉：预报之所以能报，正因大气演化是确定性的。
-    this._initOscillation();
+    // 未来不是"猜"出来的，而是"已经写好但还没走到"——这条设计原则在 v55.2
+    // 换成"系统事件调度"之后依然成立：事件列表本身就是开局一次性生成的，
+    // 预报读的是同一份事件表，不是另开一次模拟。
     for (const id of this.baseIds) this._charge[id] = 0;
     for (const id of Object.keys(EXTREME_WEATHERS)) this._extremeCharge[id] = 0;
     this._timeline = this._generateTimeline();
-    this._x = { ...this._timeline[0].x };
+    this._x = { precip: this._timeline[0].precip, windSys: this._timeline[0].windSys, temp: this._timeline[0].temp, tempBase: this._timeline[0].tempBase };
   }
 
-  /**
-   * 一次性生成整条天气时间线。
-   * 采样点间隔 SAMPLE_INTERVAL 秒，覆盖 TIMELINE_LENGTH 秒（远超一局时长）。
-   * 任意时刻的权重 = 在相邻两个采样点之间线性插值 → 连续、无跳变。
-   */
   /**
    * 初始化各天气的 mu（均值倾向 = 出现概率旋钮）。
    *   · 模板 = random → 每种天气的 mu 在 [-0.5, +0.8] 随机抽（每局天气性格不同）
    *   · 选了气候模板 → 用模板值，并做 ±0.15 的随机扰动
    *     （所以同一个"沙漠"每局也不完全一样）
    */
-  /** 天气系统过境的振荡参数（每种天气一条慢周期，相位不同 → 轮流当家） */
-  _initOscillation() {
-    this._oscAmp = {}; this._oscFreq = {}; this._oscPhase = {};
-    for (const id of this.baseIds) {
-      // 振幅：与 MU_GAIN 同量级，才能把低 mu 的天气短暂顶上来
-      this._oscAmp[id] = OSC_AMPLITUDE * (0.7 + this._rng() * 0.6);
-      // 周期 180~480 秒（3~8 分钟）
-      const period = 180 + this._rng() * 300;
-      this._oscFreq[id] = (2 * Math.PI) / period;
-      this._oscPhase[id] = this._rng() * Math.PI * 2;
-    }
-  }
-
   _initMu() {
     const tpl = CLIMATE_TEMPLATES[this._template];
     for (const id of this.baseIds) {
@@ -224,33 +200,142 @@ export class WeatherSystem {
   }
 
   /**
-   * 生成时间线。startFrom 给定时可【只重算未来】——过去的曲线不需要重算，
-   * 省一半开销（改 mu 时用得上：4.27ms → 约 2ms）。
+   * v55.2：生成整条时间线——【天气系统事件表】+【温度轨迹】两部分。
+   * startFrom 给定时可【只重算未来】：已经开始的事件保留（"当下权重不变"），
+   * 只重新调度 startFrom 之后的新事件；温度轨迹同理，从当前实际值接续。
    */
   _generateTimeline(startFrom = 0) {
+    if (startFrom > 0 && this._events) {
+      // 保留已经在进行中的事件（哪怕它会跨过 startFrom 继续到未来）——
+      // 它是在旧 mu 下已经"确定发生"的，改 mu 不能让它凭空消失或掐头。
+      const past = this._events.filter(ev => ev.start < startFrom);
+      this._events = past.concat(this._generateSystemEvents(startFrom));
+    } else {
+      this._events = this._generateSystemEvents(0);
+    }
+
     const line = [];
-    let x;
+    let tempBase;
     if (startFrom > 0 && this._timeline) {
-      // 从当前时刻的实际权重接续 → 当下的天气不会跳变，只是往后的走向变了
-      x = { ...this._sampleTimeline(startFrom) };
+      tempBase = this._sampleTimeline(startFrom).tempBase;
       const keep = this._timeline.filter(p => p.t < startFrom);
       line.push(...keep);
     } else {
-      x = {};
-      for (const id of this.baseIds) {
-        x[id] = this._mu[id] + (this._rng() - 0.5) * 1.5; // 起始分数在均值附近撒开
-      }
-      // 气象轴 v1：起点在 μ_T 附近小幅撒开（同一空间：×MU_GAIN，见 _stepOU 头注），
-      // 撒开幅度比天气本身小——轴代表"这局的气候基调"，开局就该比较接近模板目标，
-      // 不需要像单条天气那样大幅度随机起跳。
-      x.temp = this._muT * MU_GAIN + (this._rng() - 0.5) * 0.6;
+      // 起点在 μ_T 附近小幅撒开（同一空间：×MU_GAIN）——轴代表"这局的气候基调"，
+      // 开局就该比较接近模板目标，不需要像具体天气事件那样大幅度随机起跳。
+      tempBase = this._muT * MU_GAIN + (this._rng() - 0.5) * 0.6;
     }
+    // ==================== 温度 = 慢速气候基线 + 天气系统的即时推力 ====================
+    // 实现时发现：如果把系统的 ΔT 只当成"慢速轴回归目标的一个分量"（第一版做法），
+    // 慢轴的回归周期长达 10~14 分钟，一场 2~14 分钟的天气系统还没把基线拉动多少就
+    // 已经过境了——实测：mu.rain 拉满后，一场暖锋经过时"温度"几乎纹丝不动，降水
+    // 该拆成雨的时候仍然全部落成雪（因为气候基线本身偏冷）。这在物理上也不对：
+    // 真实的冷锋/暖锋恰恰以【过境时段温度骤变】著称，不该被"气候基调"完全压住。
+    // 改法：气候基线（tempBase）仍然按原有的慢速 OU 机制独立演化（只回归气候模板
+    // 的静态 muT，不再被系统事件牵着走）；系统当下的 ΔT 贡献【直接叠加】在基线上，
+    // 跟随包络曲线实时起落，不经过慢轴的惯性——"这场暴风雪正在让这里更冷"这件事
+    // 应该立刻体现，而不是要等基线慢慢挪过去。weatherSystemTempPushGain 是这份
+    // 直接叠加的整体力度旋钮（软编码，默认 1，降水形态是否够敏感由此微调）。
+    const pushGain = (CONFIG.tuning || {}).weatherSystemTempPushGain ?? 1;
     const t0 = startFrom > 0 ? Math.floor(startFrom / SAMPLE_INTERVAL) * SAMPLE_INTERVAL : 0;
     for (let t = t0; t <= TIMELINE_LENGTH; t += SAMPLE_INTERVAL) {
-      line.push({ t, x: { ...x } });
-      this._stepOU(x, SAMPLE_INTERVAL, this._rng, t);
+      const sys = this._deriveSystemsAt(this._events, t);
+      const temp = tempBase + sys.deltaT * MU_GAIN * pushGain;
+      line.push({ t, precip: sys.precip, windSys: sys.windSys, temp, tempBase });
+      const drift = this.thetaAxis * (this._muT * MU_GAIN - tempBase) * SAMPLE_INTERVAL;
+      const noise = this.sigmaAxis * Math.sqrt(SAMPLE_INTERVAL) * _gaussian(this._rng);
+      // v55.2 新增的钳位：旧模型里 x.temp 允许纯 OU 无硬边界地偶尔越界，因为它只通过
+      // 【钳位后】的 Tc 去做很弱的 mu 偏移（见旧版 TEMP_AXIS_COUPLING 头注），越界多少
+      // 不影响下游。现在温度直接决定降水形态（snowFractionAt），不钳位的话，一次
+      // 正常的 OU 长期游走就可能把基线甩到 −1.8 这种物理上没有意义的读数，
+      // 天气系统自身的 ΔT 推力（至多 ±1 量级）再怎么推也拉不回来——实测过：
+      // mu.rain 拉满后暖锋经过时基线恰好甩到深冷尾部，降水依然 100% 判成雪。
+      // 把基线本身钳在物理范围内（±MU_GAIN，对应 getTemperature() 的 ±1），
+      // 天气系统的 ΔT 推力才能真的够到"让这一刻的降水改判"这件事。
+      tempBase = Math.max(-MU_GAIN, Math.min(MU_GAIN, tempBase + drift + noise));
     }
     return line;
+  }
+
+  /**
+   * 调度一串【天气系统事件】，覆盖 [fromT, TIMELINE_LENGTH]。
+   * 每个事件：{start, dur, archetypeId, strength, direction}。
+   * fromT=0（全新开局）时额外往负方向撒一点起点，避免每局开局前几秒
+   * 都必然"什么都没有"；fromT>0（mu 改变后只重算未来）时从 fromT 正常起排。
+   */
+  _generateSystemEvents(fromT = 0) {
+    const T = CONFIG.tuning || {};
+    // v55.2 排查记录：第一版在事件之间插了 60~420s 的"平静间隔"（外加强度越高间隔
+    // 越长），想法是"刚经历一场大的，缓一缓"。实测下来这是个重复设计——高压
+    // （highPressure）本身就是一个时长 7~12 分钟、driving as "calm/clear" 的天气
+    // 系统原型，专门用来表示平静期；再叠加一段"事件之间强制留白"，等于把"平静"
+    // 算了两遍：极地模板测出来 clear 反而是全局占比最高的那个（1960 处断言里 7 处
+    // 因此失败），因为不管抽中哪个原型，大段留白时间总归全部记成 clear。
+    // 改法：事件【首尾相接调度】，"平静"完全交给 highPressure 自己的出现概率和
+    // 时长去表达——某个气候容易平静，是因为 affinity() 让 highPressure 更容易被
+    // 抽中/占的时长更长，不是靠一段游离在事件表之外的强制空白。只留一点点随机的
+    // 首尾重叠/错位（overlapMaxFrac）用于让过渡不生硬，不是常态化的大段留白。
+    const overlapMaxFrac = T.weatherSystemOverlapMaxFrac ?? 0.15;
+    const ids = Object.keys(WEATHER_ARCHETYPES);
+    const events = [];
+    let t = fromT;
+    if (fromT <= 0) t -= this._rng() * 300; // 只有全新开局需要这个"已经进行到一半"的错位，避免每局开局都从同一个相位起算
+    while (t < TIMELINE_LENGTH) {
+      const archId = this._pickArchetype(ids);
+      const arch = WEATHER_ARCHETYPES[archId];
+      const dur = arch.durationSec[0] + this._rng() * (arch.durationSec[1] - arch.durationSec[0]);
+      const strength = 0.55 + this._rng() * 0.45; // 每次系统经过的强度不同：0.55~1.0
+      const direction = this._rng() * Math.PI * 2;
+      const start = t;
+      events.push({ start, dur, archetypeId: archId, strength, direction });
+      // 首尾衔接，只留一点小幅重叠（"新系统已经起势、旧系统还没完全消散"的过渡感），
+      // 不再有独立于任何原型之外的大段强制留白。
+      const overlap = dur * overlapMaxFrac * this._rng();
+      t = start + dur - overlap;
+    }
+    return events;
+  }
+
+  /** 按 affinity(mu, muT) 做加权随机抽取一个天气系统原型 id。 */
+  _pickArchetype(ids) {
+    const weights = ids.map(id => Math.max(0.001, WEATHER_ARCHETYPES[id].affinity(this._mu, this._muT)));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    let r = this._rng() * sum;
+    for (let i = 0; i < ids.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return ids[i];
+    }
+    return ids[ids.length - 1];
+  }
+
+  /**
+   * 给定时刻 t，把所有【当前活跃】的天气系统事件按包络曲线加总，得到这一刻的
+   * 降水强度/风强度/温度推力。
+   *
+   * 不区分"主系统/副系统"、不做强度封顶——设计讨论稿里 GPT 建议的"副系统强度
+   * 硬封顶在 0.35~0.45"在实现时发现会引入真实的不连续：两个事件重叠时哪个算
+   * "副系统"是由起始时间早晚决定的，主系统结束的那一瞬间，原来的副系统会突然
+   * "转正"、封顶跟着消失——如果它当时的包络值已经超过封顶，这一帧就会跳变。
+   * 直接把活跃事件（结构上最多同时 2 个，重叠幅度被 overlapMaxFrac 卡得很小）的
+   * 贡献加总、交给 _ratiosFromSample 里"总量超过 1 就按比例收窄"那一步去处理，
+   * 效果上仍然是"新来的系统不会让总强度爆表"，但整条曲线处处连续——见
+   * _archEnvelope 的头注：包络在事件首尾两端本来就是 0，天然衔接。
+   */
+  _deriveSystemsAt(events, t) {
+    let precip = 0, wind = 0, deltaT = 0;
+    for (const ev of events) {
+      if (t < ev.start) break; // events 按 start 严格递增排列，后面不会再有更早的了
+      if (t >= ev.start + ev.dur) continue;
+      const arch = WEATHER_ARCHETYPES[ev.archetypeId];
+      const phase = Math.max(0, Math.min(1, (t - ev.start) / ev.dur));
+      const env = _archEnvelope(arch.envelope, phase);
+      const str = ev.strength * env;
+      precip += (arch.precipPeak || 0) * str;
+      wind += (arch.windPeak || 0) * str;
+      const dtRange = arch.deltaT || [0, 0];
+      deltaT += ((dtRange[0] + dtRange[1]) / 2) * str;
+    }
+    return { precip: Math.min(1, precip), windSys: Math.min(1, wind), deltaT };
   }
 
   // ==================== 演化：沿已确定的时间线推进 ====================
@@ -381,7 +466,7 @@ export class WeatherSystem {
     const STEP = 1;
     const horizon = 240 + 4; // FORECAST_HORIZON + 余量
     for (let t = this._clock; t <= this._clock + horizon; t += STEP) {
-      this._stepCharges(base, extreme, this._softmax(this._sampleTimeline(t + STEP)), STEP);
+      this._stepCharges(base, extreme, this._softmax(this._ratiosFromSample(this._sampleTimeline(t + STEP))), STEP);
       const g = Math.floor((t + STEP) / 2) * 2;
       if (!map.has(g)) map.set(g, { ...extreme });
     }
@@ -501,68 +586,62 @@ export class WeatherSystem {
     const line = this._timeline;
     if (!line || !line.length) return this._x;
     const idx = Math.floor(t / SAMPLE_INTERVAL);
-    if (idx >= line.length - 1) return { ...line[line.length - 1].x }; // 超出时间线：停在末态
+    if (idx >= line.length - 1) { const last = line[line.length - 1]; return { precip: last.precip, windSys: last.windSys, temp: last.temp, tempBase: last.tempBase }; } // 超出时间线：停在末态
     const a = line[idx], b = line[idx + 1];
     const frac = (t - a.t) / SAMPLE_INTERVAL;
-    const out = {};
-    for (const id of this.baseIds) out[id] = a.x[id] + (b.x[id] - a.x[id]) * frac;
-    for (const id of AXIS_IDS) out[id] = a.x[id] + (b.x[id] - a.x[id]) * frac;
-    return out;
+    return {
+      precip: a.precip + (b.precip - a.precip) * frac,
+      windSys: a.windSys + (b.windSys - a.windSys) * frac,
+      temp: a.temp + (b.temp - a.temp) * frac,
+      tempBase: a.tempBase + (b.tempBase - a.tempBase) * frac,
+    };
   }
 
-  _stepOU(x, dt, rng, t = 0) {
-    const sqrtDt = Math.sqrt(dt);
+  /**
+   * v55.2：把"这一刻的系统读数"（降水强度/系统自带风强度/温度）换算成
+   * 五种基础天气各自的【原始占比】（未做禁用过滤、未必严格和为 1——那一步交给
+   * _softmax）。这是新旧模型之间真正的翻译层。
+   *
+   * · 降水按 snowFractionAt(温度) 连续拆成 rain/snow 两半——同一份水汽，
+   *   温度决定它是雨是雪，这是这次重构要解决的核心问题（不再是两条独立轴）。
+   * · 风 = 系统自带的风强度，被 mu.wind 现场缩放（正值放大、负值收窄）——
+   *   保留旧滑条"这个天气出现得更多/更少"的直觉，但不再是另开一条独立游走轴。
+   * · 雾只在"没有系统压阵"的平静空当里由气候基线（mu.fog）生成——系统经过时
+   *   降水/风越活跃，雾的空间被自然压缩，不需要额外互斥判定。
+   * · 降水+风+雾的原始强度之和一旦超过 1，按比例收窄——physically "不可能同时
+   *   把所有天气现象都堆到满格"，clear 因此永远是非负的 leftover。
+   */
+  _ratiosFromSample(sample) {
+    const T = CONFIG.tuning || {};
+    const fogMu = this._mu.fog ?? BASE_WEATHERS.fog?.mu ?? 0;
+    const windMu = this._mu.wind ?? BASE_WEATHERS.wind?.mu ?? 0;
+    const precip = Math.max(0, Math.min(1, sample.precip || 0));
+    const sysWind = Math.max(0, Math.min(1, sample.windSys || 0));
 
-    // ==================== 气象轴 v1：温度（先于 5 种天气步进）====================
-    // 纯 OU，不挂"天气系统过境"振荡——那个振荡代表"某个天气短暂当家"，温度轴要的
-    // 是持续平滑的季节感，不是轮流登场。θ/σ 用独立的 thetaAxis/sigmaAxis（比天气
-    // 本身慢得多，见 reset() 与 AXIS_TARGET_DURATION_* 头注）。
-    const driftT = this.thetaAxis * (this._muT * MU_GAIN - x.temp) * dt;
-    const noiseT = this.sigmaAxis * sqrtDt * _gaussian(rng);
-    x.temp += driftT + noiseT;
-    // 换算成对天气 μ 的偏移时钳在 [-1,1]——轴本身允许尾部偶尔越界（纯 OU 无硬边界），
-    // 但不能让极端尾部把某个天气的 μ 顶到失真（GPT 评审提的点）。
-    const Tc = Math.max(-1, Math.min(1, x.temp / MU_GAIN));
+    const windGain = T.weatherWindMuGain ?? 0.6;
+    let wind = sysWind * Math.max(0, 1 + windMu * windGain);
 
-    for (const id of this.baseIds) {
-      // 可实时调的均值倾向。MU_GAIN 放大 mu 的影响力——
-      // mu 的语义范围是 -1~+1（UI 滑条），但 OU 的潜在分数经 softmax 后，
-      // ±1 的差距只能造成很小的占比差异。乘以 MU_GAIN 拉到 softmax 敏感的区间。
-      const baseMu = (this._mu[id] ?? BASE_WEATHERS[id].mu) * MU_GAIN;
+    const fogMax = T.weatherFogBaselineMax ?? 0.55;
+    const fogPotential = Math.max(0, Math.min(1, 0.5 + fogMu * 0.5)) * fogMax;
+    const calmness = Math.max(0, 1 - precip * 1.6 - wind * 1.2); // 降水/风越猛，平静度越低，雾潜力被自然压制
+    let fog = fogPotential * calmness;
 
-      // 【天气系统过境】：给 mu 叠加一个慢周期的尖峰振荡（周期 3~8 分钟、相位错开），
-      // 让天气演化有"某个系统控制一段时间、然后让位"的节奏感。
-      //
-      // 注意：解决"极地永远不放晴"的【不是】这个振荡，而是 MU_GAIN 的取值。
-      // 排查过程：mu 差距（极地雪 +1.0 vs 晴 -0.4）经 MU_GAIN 放大后进 softmax，
-      // 差距是碾压性的——任何叠加项都撼不动。实测 MU_GAIN=2.2 时极地"晴>25%"的
-      // 时长只有 4%，加振荡也没用。把 MU_GAIN 降到 1.2 后：极地雪仍主导 60%（还是极地），
-      // 但放晴时长升到 13%、极端天气从 55% 降到 22%（不再是常态）。
-      // 教训：模板应该给出"倾向"，而不是"独裁"。
-      // 振荡用【尖峰函数】而非正弦：正弦让所有天气同时都在"中位"，高 mu 的永远压着低 mu 的。
-      // 尖峰函数（(1+sin)/2 的高次幂）让每种天气【大部分时间处于低位、少数时间冲上高位】——
-      // 相位错开后，就形成"轮流当家"：即使极地的晴天 mu 很低，轮到它的窗口时也能顶上来。
-      // 这才是真实大气环流的样子：某个系统控制一段时间，然后让位给下一个。
-      const phase = (Math.sin(t * this._oscFreq[id] + this._oscPhase[id]) + 1) / 2; // 0~1
-      const spike = Math.pow(phase, OSC_SHARPNESS);   // 大部分时间接近 0，少数时间接近 1
-      // 气象轴 v1：温度对该天气 μ 的偏移（雪强/晴中/雨弱，雾风不挂——见 Weather.js
-      // 的 TEMP_AXIS_COUPLING 头注，用户 + GPT 定稿的不对称耦合，避免温度轴退化成
-      // 一个隐藏的"晴/雪二选一开关"）。轴权重全 0 时 axisShift 恒为 0，与本轮改动前
-      // 逐位一致。
-      const axisShift = (TEMP_AXIS_COUPLING[id] || 0) * Tc * MU_GAIN;
-      const mu = baseMu + this._oscAmp[id] * spike + axisShift;
+    let precipR = precip;
+    const sum = precipR + wind + fog;
+    if (sum > 1) { const k = 1 / sum; precipR *= k; wind *= k; fog *= k; }
+    const clear = Math.max(0, 1 - precipR - wind - fog);
 
-      const drift = this.theta * (mu - x[id]) * dt;
-      const noise = this.sigma * sqrtDt * _gaussian(rng);
-      x[id] += drift + noise;
-    }
+    const snowFrac = snowFractionAt(sample.temp != null ? sample.temp / MU_GAIN : 0);
+    const rain = precipR * (1 - snowFrac);
+    const snow = precipR * snowFrac;
+    return { clear, rain, fog, wind, snow };
   }
 
   // ==================== 权重读出 ====================
-  /** 当前基础天气占比（softmax，和为 1）。被禁用的天气占比恒为 0。 */
+  /** 当前基础天气占比（和为 1）。被禁用的天气占比恒为 0。 */
   getWeights() {
     if (this._weightsCache) return this._weightsCache;
-    return (this._weightsCache = this._softmax(this._x));
+    return (this._weightsCache = this._softmax(this._ratiosFromSample(this._x)));
   }
 
   /**
@@ -587,7 +666,13 @@ export class WeatherSystem {
     return (this._mu[id] ?? BASE_WEATHERS[id]?.mu ?? 0) <= off;
   }
 
-  _softmax(x) {
+  /**
+   * v55.2：不再是字面意义的 softmax——输入已经是 _ratiosFromSample 算好、
+   * 大致和为 1 的原始占比，这里只做【禁用过滤 + 重新归一化】。方法名保留
+   * "_softmax"没有改（对外全是私有方法，调用方只是同一个仓库里的测试桩，
+   * 见 tests/sim_v34.mjs 对 ws._softmax 的 monkey-patch），避免无谓的改名扩散。
+   */
+  _softmax(raw) {
     let active = this.baseIds.filter(id => !this._isOff(id));
     // 兜底：全都被拉到底时保留 mu 最高的那一个。天气占比之和必须是 1，
     // 全空会让"当前天气"变成 null，界面与效果链路都没有定义这种状态。
@@ -597,22 +682,23 @@ export class WeatherSystem {
     if (!active.length) {
       let best = this.baseIds[0];
       for (const id of this.baseIds) if ((this._mu[id] ?? 0) > (this._mu[best] ?? 0)) best = id;
-      active = [best];
+      const out = {};
+      for (const id of this.baseIds) out[id] = id === best ? 1 : 0;
       this._fallbackId = best;
+      return out;
     }
-    // 温度 T<1 让分布更"尖锐"：占比差距被放大，主导天气更鲜明、极端天气有机会触发。
-    // T=1（标准 softmax）时五种天气的占比长期挤在 20~28%，谁都不占优——那不叫天气，
-    // 叫五种天气的平均值。SHARPNESS 就是这个"尖锐度"旋钮。
-    const T = 1 / SHARPNESS;
-    const max = Math.max(...active.map(id => x[id]));
-    const exps = {};
     let sum = 0;
-    for (const id of active) {
-      exps[id] = Math.exp((x[id] - max) / T); // 减最大值防溢出
-      sum += exps[id];
-    }
+    for (const id of active) sum += Math.max(0, raw[id] || 0);
     const out = {};
-    for (const id of this.baseIds) out[id] = exps[id] === undefined ? 0 : exps[id] / sum;
+    if (sum <= 1e-9) {
+      // 激活集合都恰好是 0（比如降水/风/雾都没有，clear 又被禁用）——按 mu 兜底
+      // 分配，避免除 0，同时保持"总有一个在当家"的既有语义。
+      let best = active[0];
+      for (const id of active) if ((this._mu[id] ?? 0) > (this._mu[best] ?? 0)) best = id;
+      for (const id of this.baseIds) out[id] = id === best ? 1 : 0;
+      return out;
+    }
+    for (const id of this.baseIds) out[id] = active.includes(id) ? Math.max(0, raw[id] || 0) / sum : 0;
     return out;
   }
 
@@ -919,7 +1005,7 @@ export class WeatherSystem {
     };
     for (let t = gridStart; t <= end; t += SAMPLE_INTERVAL) {
       if (t < 0) continue;
-      const weights = this._softmax(this._sampleTimeline(t));
+      const weights = this._softmax(this._ratiosFromSample(this._sampleTimeline(t)));
       const ex = t <= gridNow ? histAt(t) : (fc.get(t) || null);
       const extremes = [];
       if (ex) {
@@ -985,11 +1071,34 @@ export class WeatherSystem {
 
   isWeatherDisabled(id) { return this.disabledWeathers.has(id); }
 
-  /** 主导天气的平均持续时长（秒）——面板展示用，让玩家知道这局天气多变还是沉闷 */
-  get averageDuration() { return Math.round(1 / this.theta); }
+  /**
+   * 主导天气的平均持续时长（秒）——面板展示用，让玩家知道这局天气多变还是沉闷。
+   * v55.2：不再有全局 theta 这个概念，改成本局实际调度出来的天气系统事件
+   * 的平均时长——比原来"1/theta 的理论估计"更直接：这就是本局事件表的真实统计量。
+   */
+  get averageDuration() {
+    if (!this._events || !this._events.length) return 0;
+    let sum = 0;
+    for (const ev of this._events) sum += ev.dur;
+    return Math.round(sum / this._events.length);
+  }
 }
 
 // ==================== 工具 ====================
+/**
+ * v55.2：天气系统事件的包络曲线——起势→驻峰→回落三段吃满整个 [0,1] 相位区间
+ * （riseFrac+peakFrac+fallFrac=1，不留"已经归零但还占着位置"的死尾巴），
+ * 纯函数、只依赖相位，方便预报路径和真实演化共用同一份计算（同 _stepCharges
+ * 的"纯函数抽出来，两处不会漂移"思路）。
+ */
+function _archEnvelope(env, phase) {
+  const riseFrac = env.riseFrac || 0;
+  const peakEnd = riseFrac + (env.peakFrac || 0);
+  if (riseFrac > 0 && phase < riseFrac) return phase / riseFrac;
+  if (phase < peakEnd) return 1;
+  const fallFrac = Math.max(1e-6, 1 - peakEnd);
+  return Math.max(0, 1 - (phase - peakEnd) / fallFrac);
+}
 // 可复现的伪随机（mulberry32）——预报推演需要确定性
 function _makeRng(seed) {
   let a = seed >>> 0;
