@@ -321,7 +321,13 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
           // 力发给全部单位（POWER_REWARD_OK），不是只给塔+大型小兵那条 SOUL_REWARD_OK——
           // 与 _grantSlayer 里真实击杀走的广播范围（DragonSystem.js:330）保持一致。
           let total = 0;
-          for (const fac of facs) total += ds._grantAll(fac, (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+          for (const fac of facs) {
+            total += ds._grantAll(fac, (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+            // 修复：批量授予只加到当场单位身上，没写进 factionKills[fac][el]，后续新
+            // 生成的小兵（死亡重生频繁，塔几乎不会）永远补不到——见 DragonSystem.js
+            // _recordFactionPowerLayer 头注与 equipExistingSoul 的详细说明。
+            ds._recordFactionPowerLayer(fac, el, 1);
+          }
           logFn(`🔥 ${def.label}之力 +1 层：已广播给 ${facs.map(f => f === 'blue' ? '蓝方' : '红方').join('/')}（共 ${total} 个单位）`, 'spawn');
         } else if (kind === 'soul') {
           const soulId = card.dataset.dgpSoulid;
@@ -390,6 +396,9 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
             }
             n++;
           }, DragonSystem.POWER_REWARD_OK);
+          // 与上面 +1 层对称：针对性 -1 层也要同步扣 factionKills[fac][el]，
+          // 否则扣完之后新生成的小兵还会被 equipExistingSoul 按旧层数补回来。
+          ds._recordFactionPowerLayer(fac, el, -1);
           logFn(`🔻 ${fac === 'blue' ? '蓝方' : '红方'} ${def.label}之力 -1 层（${n} 个单位）`, 'spawn');
         } else if (kind === 'soul') {
           let n = 0;

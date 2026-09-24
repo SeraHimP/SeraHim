@@ -513,4 +513,67 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   T('⑰-批量授予与针对性移除都调用了 ds._recordFactionSoul（缺一处就是回到本轮修的那个 bug）', n === 2);
 }
 
+// ==================== ⑱：编辑器批量授予巨龙之力，小兵拿不到（真 bug，本轮追加）====================
+// 用户报告："我在模板编辑器中手动设置多层巨龙之力，但是并未正确生效，只有塔生效
+// 而小兵未生效。"——与⑯的龙魂 bug 同一类根因，但这次是巨龙之力那条一直没补上：
+// 编辑器"巨龙之力池"点击只是 _grantAll 直接把 buff 加到**当时在场**的实体上，
+// 从没写过 factionKills[fac][el]——而 equipExistingSoul() 给新出生单位补发巨龙之
+// 力，读的正是这张表（真实击杀 _onDragonKilled 会写它，编辑器手动授予从来没写
+// 过）。塔静态永久存在，广播那一刻装上就留着，掩盖了这个洞；小兵不断死亡重生，
+// 每一批新兵在 equipExistingSoul 里都读到空表，永远是裸的。
+// 修复：新增 _recordFactionPowerLayer(fac, el, delta) 同步写 factionKills[fac][el]
+// （与 _recordFactionSoul 同构），编辑器 +1 层/-1 层都调用它。
+{
+  const { ds, ents, fx } = mk();
+  const mkFresh = (type, fac) => {
+    const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+      _skillInstances: [], _mapFaction: fac, faction: fac };
+    ents.add(e); return e;
+  };
+  const tower = mkFresh('tower', 'blue');
+  const melee1 = mkFresh('melee', 'blue');   // 力对**全部单位**生效，含近战/远程——用近战验证范围最宽
+  const el = 'fire';
+  const hasPower = (e) => fx.getEffects(e.id).some(x => x.blueprint?.stackKey?.startsWith(`dragon_${el}_`));
+
+  // 模拟编辑器"巨龙之力池"点击（对齐 pagesGameplayWorld.js 里 kind==='power' 的真实调用顺序）。
+  ds._grantAll('blue', (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+  ds._recordFactionPowerLayer('blue', el, 1);
+  T('⑱-批量授予立即对当场的塔与近战小兵都生效（力的范围本来就该覆盖全部单位）',
+    hasPower(tower) && hasPower(melee1));
+
+  // 小兵死亡重生：新的近战兵要靠 equipExistingSoul 补发。
+  melee1.alive = false;
+  const melee2 = mkFresh('melee', 'blue');
+  T('⑱-新出生的小兵修复前拿不到（对照：此刻尚未补发）', !hasPower(melee2));
+  const got = ds.equipExistingSoul(melee2);
+  T('⑱-equipExistingSoul 补发成功，新小兵拿到手动授予的巨龙之力（真正的 bug 修复点）',
+    got === true && hasPower(melee2));
+
+  // 新塔同理也该补到。
+  const tower2 = mkFresh('tower', 'blue');
+  T('⑱-新建的塔同样补到手动授予的力', ds.equipExistingSoul(tower2) === true && hasPower(tower2));
+
+  // 针对性 -1 层：factionKills 计数同步回退，新出生的单位不应该再补到这一层。
+  ds._grantAll('blue', (e) => {
+    const effs = fx.getEffects(e.id).filter(x => x.sourceId && x.sourceId.startsWith(`dragon_buff_${el}_`));
+    for (const eff of effs) { if (eff.stacks > 1) { eff.stacks -= 1; fx._recalcEffectValues(eff); } else fx.remove(eff.id); }
+  }, DragonSystem.POWER_REWARD_OK);
+  ds._recordFactionPowerLayer('blue', el, -1);
+  const melee3 = mkFresh('melee', 'blue');
+  T('⑱--1 层后 factionKills 归零，新出生的单位不再补到这层力',
+    ds.equipExistingSoul(melee3) === false && !hasPower(melee3));
+
+  // 敌方不受影响（_grantAll 已经按阵营过滤，_recordFactionPowerLayer 也是按 fac 分开存）。
+  const redMelee = mkFresh('melee', 'red');
+  T('⑱-敌方阵营完全不受影响', !hasPower(redMelee) && ds.equipExistingSoul(redMelee) === false);
+}
+
+// ==================== ⑲：编辑器"巨龙与龙魂"页两处力调用点确实同步了 _recordFactionPowerLayer ====================
+{
+  const src = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  const n = (src.match(/ds\._recordFactionPowerLayer\(/g) || []).length;
+  T('⑲-力的 +1 层/-1 层都调用了 ds._recordFactionPowerLayer（缺一处就是回到这次修的 bug）', n === 2);
+}
+
 board.done();

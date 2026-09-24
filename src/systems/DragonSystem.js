@@ -903,6 +903,24 @@ export class DragonSystem {
     else if (!on && idx !== -1) arr.splice(idx, 1);
   }
 
+  /**
+   * 用户报告：模板编辑器手动设置多层巨龙之力，只有塔正确生效，小兵未生效。
+   * 根因与 _recordFactionSoul 那次（Q17）是同一类问题，但这次是巨龙之力
+   * 那条一直没补上：编辑器"巨龙之力池"点击只是 _grantAll 直接把 buff
+   * 加到**当时在场**的实体上，从没写过 factionKills[fac][el]——而
+   * equipExistingSoul() 给新出生单位补发巨龙之力，读的正是这张表
+   * （真实击杀 _onDragonKilled 会写它，编辑器手动授予从来没写过）。
+   * 塔是静态的，广播那一刻装上就永远留着，掩盖了这个洞；小兵不断死亡
+   * 重生，每一批新兵在 equipExistingSoul 里都读到空表，永远是裸的。
+   * 现在编辑器的 +1 层/-1 层都要同步写这张表，新出生的小兵才补得到。
+   */
+  _recordFactionPowerLayer(fac, el, delta) {
+    if (!fac || !el || !delta) return;
+    const tbl = this.factionKills[fac] || (this.factionKills[fac] = {});
+    const next = (tbl[el] || 0) + delta;
+    tbl[el] = Math.max(0, next);
+  }
+
   _ctx() {
     return {
       entityContainer: this.entities,
