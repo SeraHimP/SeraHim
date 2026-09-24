@@ -60,8 +60,10 @@ const { T, done } = scoreboard('经典模式验收（模式×地图）');
   // v51.22：新增 summoners_rift_organic_v1（召唤师峡谷·蜿蜒版，见
   // summoners_rift_organic.js 头注——用户要求保留的一版有机弯曲兵线设计，
   // 登记为独立姊妹图），常量从 5 改成 6，同样只加不改。
+  // v55.3：新增 confluence_v1（汇流战场，见 confluence.js 头注——用户深夜要求的
+  // 超大型5路扇形汇流地图），常量从 6 改成 7，同样只加不改。
   T('注①-summoners_rift_classic 不再单独注册（经典模式不是第四张地图）',
-    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 6);
+    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 7);
   T('注②-MapSystem 认得 __/_classic 后缀，能反查回经典模式版本',
     !!(new MapSystem(new EntityContainer(new EventBus()), new EventBus())
       .getMapById('summoners_rift_v1_classic')));

@@ -113,6 +113,22 @@ function alongFirstSeg(lane, s) {
 
 const HQ_OFFSET = 200;                       // 枢纽双塔离水晶枢纽（=BA/RA）的垂直半间距
 const PERP = { x: -F.y, y: F.x };
+const hqBlueA = add(BA, scale(PERP, HQ_OFFSET));
+const hqBlueB = add(BA, scale(PERP, -HQ_OFFSET));
+
+// 火炬点：作者摆点，不用程序化撒点算法（torchPlacement.js 头注"地图自己声明的优先"）。
+// 这张图是窄走廊模型（不是 navgrid 的大片野区），可行走区域整体沿蓝红对角线呈狭长带状，
+// 天然不会铺满全图四个象限——程序化撒点的"必须撒到右下半区"这条通用假设（见
+// tests/sim_v46.mjs"炬⑧"，防的是撒点算法坐标系搞错缩在一角的真bug）对这种窄带状地图
+// 不成立，跟嚎哭深渊冰封版的桥（同样的反对角线窄带）是同一件事，那张图也是手动声明
+// torches 绕开的。挑的点是双方水晶枢纽/两座枢纽塔/每路外塔（战场地标，不是全走廊铺满）。
+const TORCH_POINTS = [
+  BA, Rr(BA), hqBlueA, Rr(hqBlueA), hqBlueB, Rr(hqBlueB),
+  ...LANES.flatMap((lane) => {
+    const pOuter = alongFirstSeg(lane, TIER_ARC.outer);
+    return [pOuter, Rr(pOuter)];
+  }),
+];
 
 const CONFLUENCE_TERRAIN = {
   world: { w: WORLD, h: WORLD },
@@ -132,6 +148,8 @@ const CONFLUENCE_CONFIG = {
   // 第四条铁律要求视觉决策先对齐，直接复用已获认可的现成资产就是最安全的路）。
   visualStyle: 'stylized',
   paletteId: 'default',
+
+  torches: TORCH_POINTS,
 
   baseCenters: { blue: BA, red: RA },
   baseCircleRadius: 900,
@@ -215,8 +233,6 @@ const CONFLUENCE_CONFIG = {
         out.push({ faction: FACTIONS.RED, tier, laneId: lane.id, pos: Rr(pBlue), weapon });
       }
     }
-    const hqBlueA = add(BA, scale(PERP, HQ_OFFSET));
-    const hqBlueB = add(BA, scale(PERP, -HQ_OFFSET));
     out.push({ faction: FACTIONS.BLUE, tier: 'hq_tower', laneId: null, pos: hqBlueA, weapon: 'piercing' });
     out.push({ faction: FACTIONS.BLUE, tier: 'hq_tower', laneId: null, pos: hqBlueB, weapon: 'piercing' });
     out.push({ faction: FACTIONS.BLUE, tier: 'nexus_main', laneId: null, pos: BA, weapon: null });

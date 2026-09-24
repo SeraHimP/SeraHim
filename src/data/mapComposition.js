@@ -73,6 +73,11 @@ export const CONFIG_FIELDS = [
   'visualStyle', 'paletteId',
   // v51.22：BoundaryDecorLayer 城墙/围墙柱子装饰的开关，同样是纯画面字段。
   'boundaryPillars',
+  // v55.3：作者手动声明的火炬点（torchPlacement.js 头注"地图自己声明的优先于
+  // 程序化撒点"）——同样是纯画面字段。汇流战场（confluence.js）第一个通过
+  // composeMap() 声明这个字段；之前唯一用到它的 howling_abyss_frost.js 是手写
+  // 整个地图对象、不走 composeMap，所以这个字段以前从没被这份白名单漏过。
+  'torches',
 ];
 
 /**
