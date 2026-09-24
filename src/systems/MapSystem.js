@@ -33,7 +33,10 @@ import { clearDamageMarks } from '../core/reviveState.js';
 // 建筑显示半径由 CONFIG.buildingSizes 按 tier 提供（模板编辑器可调），不在此处。
 // Q2 塔数值重排（LoL 对齐）：攻击力为【起步值】，成长由 passive_growth_* 技能按时间线性推进；
 // 双抗为固定值（内塔 16:00 起的 +1/分钟 由成长技能负责）。生命/护盾：外4000+0/内3500+50/水晶3300+800/枢纽4750+0。
-const TIER_STATS = {
+// v51.32：导出给地图编辑器用——"单塔数值覆写"表单要显示"不填=继承这个默认值"
+// 的占位提示，得读到同一张表，不能自己抄一份（抄一份的话这张表以后改了，
+// 编辑器的占位提示不会跟着变，两边迟早对不上）。
+export const TIER_STATS = {
   // v35（Q5）：所有建筑默认 固定护盾/生命恢复 = 0——这两项全部改由默认装备的
   // 可卸被动提供（水晶再生/加固城防/钢铁烈阳护盾），数值可见可拆。
   outer:      { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 40, magicResist: 40, attackDamage: 152, baseAttackSpeed: 0.833 },
@@ -68,17 +71,34 @@ export class MapSystem {
   setCreateBuildingFn(fn) { this.createBuildingFn = fn; }
 
   /**
+   * 查一座建筑该用哪份数值——地图级 tierStats 覆写（同档位所有塔共用）之上，
+   * 再叠一层【单塔实例】覆写 b.statOverride（地图编辑器"模板自定义"功能用，
+   * 只想让某一座塔跟同档位其它塔不一样时用它，不影响同档位的其它塔）。
+   * 三处建塔路径（loadMap 批量建塔、addBuildingLive 现场加一座、水晶重生）
+   * 都要走同一份查表逻辑，不能各查各的——见 addBuildingLive 头注那条教训。
+   * @param {?object} tierStatsOverride 地图声明的 tierStats（可能为空）
+   * @param {string} tier
+   * @param {?object} statOverride 单塔覆写（building.statOverride，可能为空/只填部分字段）
+   * @returns {object} 合并后的数值表（tierStats 那层原对象不会被改动，这里返回的是新对象）
+   */
+  _resolveBuildingStats(tierStatsOverride, tier, statOverride) {
+    const base = (tierStatsOverride && tierStatsOverride[tier]) || TIER_STATS[tier] || TIER_STATS.outer;
+    if (!statOverride || typeof statOverride !== 'object') return base;
+    return { ...base, ...statOverride };
+  }
+
+  /**
    * 在【当前已加载的地图】上现场再造一座建筑，不重新走 loadMap()（那会清空全场、
    * 归零对局时钟、重置召唤水晶重生队列——对"只是想再加一座塔"这个操作来说代价太大）。
    * 地图编辑器主画面工具条的"➕ 添加塔"工具用它：数值/技能查表逻辑与 loadMap()
    * 建塔那段、以及水晶重生那条建塔路径（本文件下方 _respawnNexus 附近）完全一致——
    * 三处都在造同一种东西，数值来源必须是同一张 TIER_STATS/tierStats 表，不能各查各的。
-   * @param {{faction:string, tier:string, laneId:?string, pos:{x:number,y:number}, weapon?:string, skills?:string[]}} b
+   * @param {{faction:string, tier:string, laneId:?string, pos:{x:number,y:number}, weapon?:string, skills?:string[], statOverride?:object}} b
    * @returns {object|null} 新建的实体（createBuildingFn 未注入或造塔失败时为 null）
    */
   addBuildingLive(b) {
     if (!this.createBuildingFn || !this.currentMap) return null;
-    const stats = (this.currentMap.tierStats && this.currentMap.tierStats[b.tier]) || TIER_STATS[b.tier] || TIER_STATS.outer;
+    const stats = this._resolveBuildingStats(this.currentMap.tierStats, b.tier, b.statOverride);
     const isNexus = b.tier === 'nexus_lane' || b.tier === 'nexus_main';
     const entity = this.createBuildingFn({
       faction: b.faction, tier: b.tier, laneId: b.laneId ?? null, isNexus,
@@ -86,6 +106,21 @@ export class MapSystem {
     });
     if (entity) this._buildingIds.push(entity.id);
     return entity;
+  }
+
+  /**
+   * addBuildingLive 的镜像——地图编辑器主画面工具条的"🗑️ 删除塔"工具用它。
+   * 直接从实体容器摘除（entities.remove），不是"杀死"（不走 entity:death 事件、
+   * 不算击杀、不触发复仇/超级兵等任何战斗后果）——这是编辑动作，不是游戏事件。
+   * 同步把 id 从 _buildingIds 摘掉，否则清图时会去查一个已经不存在的实体
+   * （虽然 `if (e)` 守卫本来就会跳过，但留着一个指向空气的 id 没有意义）。
+   * @param {number} entityId
+   * @returns {boolean} 是否真的删掉了（entityId 不存在时为 false）
+   */
+  removeBuildingLive(entityId) {
+    const removed = this.entities.remove(entityId);
+    if (removed) this._buildingIds = this._buildingIds.filter(id => id !== entityId);
+    return removed;
   }
 
   /**
@@ -182,8 +217,9 @@ export class MapSystem {
 
     if (this.createBuildingFn) {
       for (const b of map.buildings) {
-        // Q9：地图可自带 tierStats 覆写（嚎哭深渊建筑数值与峡谷不同）
-        const stats = (map.tierStats && map.tierStats[b.tier]) || TIER_STATS[b.tier] || TIER_STATS.outer;
+        // Q9：地图可自带 tierStats 覆写（嚎哭深渊建筑数值与峡谷不同）；
+        // v51.32：再叠一层单塔覆写 b.statOverride（地图编辑器"模板自定义"用）。
+        const stats = this._resolveBuildingStats(map.tierStats, b.tier, b.statOverride);
         const isNexus = b.tier === 'nexus_lane' || b.tier === 'nexus_main';
         const entity = this.createBuildingFn({
           faction: b.faction,
@@ -706,7 +742,7 @@ export class MapSystem {
       if (!this.currentMap) continue;
       // 光魂的队列项没有蓝图（一定是原地复活尸体），tier 从尸体本身取。
       const tier = b ? b.tier : (this.entities.get(corpseId)?._mapTier);
-      const stats = (this.currentMap.tierStats && this.currentMap.tierStats[tier]) || TIER_STATS[tier] || TIER_STATS.outer;
+      const stats = this._resolveBuildingStats(this.currentMap.tierStats, tier, b?.statOverride);
       // Q5：优先原地复活尸体（技能/塔身在原实体上都还在，满血满盾归位即可）；
       // 尸体意外不在（旧存档等）才回退到重建路径。
       const corpse = corpseId ? this.entities.get(corpseId) : null;

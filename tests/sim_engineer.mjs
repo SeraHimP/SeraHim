@@ -183,9 +183,11 @@ const mapStub = {
   T('枚举④-open.js 的 _TPL_LABELS/_TPL_ICONS 都认得 engineer',
     /engineer:\s*'工程兵'/.test(openSrc) && /engineer:\s*'🔧'/.test(openSrc));
 
-  const entitySrc = srcOf('src/ui/editor/pagesEntity.js');
-  T('枚举⑤-pagesEntity.js 的技能列表类型枚举包含 engineer',
-    /'healer',\s*'engineer',/.test(entitySrc));
+  // v51.32：这份类型枚举从 pagesEntity.js 搬到了 SkillLibrary.js 的 skillsByType()
+  // （地图编辑器"塔模板自定义"要用同一份数据，不再各写一份，见该函数头注）。
+  const skillLibSrc = srcOf('src/core/SkillLibrary.js');
+  T('枚举⑤-SkillLibrary.js 的 skillsByType 类型枚举包含 engineer',
+    /'healer',\s*'engineer',/.test(skillLibSrc));
 
   const spriteSrc = srcOf('src/presentation/SpriteFactory.js');
   T('枚举⑥-SpriteFactory.js 的 MINION_STYLE 有 engineer 专属样式',

@@ -44,7 +44,7 @@
 import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import { paintCircle } from '../data/navgrid.js';
-import { snapBuildingPos, freeBuildingPos, autoDetectTiers } from '../data/mapEditorCore.js';
+import { snapBuildingPos, freeBuildingPos, autoDetectTiers, withBuildingRemoved } from '../data/mapEditorCore.js';
 import {
   ensureSession, getSession, syncLiveMap, commitTerrainLive,
 } from './mapEditorSession.js';
@@ -53,7 +53,7 @@ const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的
 
 export const MapEditorBoardTool = {
   _active: false,
-  _tool: 'brush',        // 'brush' | 'move' | 'add'
+  _tool: 'brush',        // 'brush' | 'move' | 'add' | 'delete'
   _brushMode: 'draw',     // 'draw' | 'erase'（同弹窗）
   _brushRadius: null,     // 现算，见 enable()（软编码默认值）
   _faction: 'blue',       // 'add' 工具用：新塔归哪一方
@@ -153,6 +153,7 @@ export const MapEditorBoardTool = {
       if (this._tool === 'brush') { this._painting = true; this._strokePoints = []; this._sampleStroke(e); }
       else if (this._tool === 'move') { this._startDrag(e); }
       else if (this._tool === 'add') { this._addTowerAt(e); }
+      else if (this._tool === 'delete') { this._deleteTowerAt(e); }
     });
     ov.addEventListener('pointermove', (e) => {
       if (this._tool === 'brush' && this._painting) this._sampleStroke(e);
@@ -265,6 +266,36 @@ export const MapEditorBoardTool = {
     this._updateStatus();
   },
 
+  // ==================== 删除已有塔 ====================
+  /** 与 _startDrag 同一套"离点击点最近的塔"命中判定，命中后直接删除
+   * （不是拖动）。用户原话"地图编辑器里目前并没有新增塔/删除的按钮"——
+   * 这个工具是那句话里"删除"的落地。 */
+  _deleteTowerAt(e) {
+    const session = getSession();
+    const { mapSystem, canvasController, entityContainer } = this._deps;
+    const world = canvasController.screenToWorld(e.clientX, e.clientY);
+    const slack = Math.max(8, 40 / (canvasController.zoom || 1));
+    let best = null, bestD = Infinity;
+    for (const t of entityContainer.getAllTowers(true)) {
+      const d = Math.hypot(t.pos.x - world.x, t.pos.y - world.y);
+      if (d <= slack && d < bestD) { bestD = d; best = t; }
+    }
+    if (!best) return;
+    const idx = this._entityToIndex?.get(best.id);
+    if (idx == null) return;   // 找不到对应草稿下标就不删——不确定是不是这次会话建的塔，宁可不动
+    mapSystem.removeBuildingLive(best.id);
+    session.draftBuildings = withBuildingRemoved(session.draftBuildings, idx);
+    // 删掉下标 idx 之后，草稿数组里排在它后面的全部整体前移一位——
+    // _entityToIndex 里记录的下标也要跟着往前挪，否则后续的"移动/删除"会用
+    // 旧下标操作错了目标（这正是数组删除后维护平行索引结构的经典坑）。
+    this._entityToIndex.delete(best.id);
+    for (const [entId, entIdx] of this._entityToIndex) {
+      if (entIdx > idx) this._entityToIndex.set(entId, entIdx - 1);
+    }
+    this._deps.logFn?.(`🗑️ 已删除一座塔`, 'spawn');
+    this._updateStatus();
+  },
+
   // ==================== 工具条 UI ====================
   _render() {
     let panel = document.getElementById('mapEditorBoardToolbar');
@@ -280,6 +311,7 @@ export const MapEditorBoardTool = {
         <button class="icon-btn ${this._tool === 'brush' ? 'primary' : ''}" id="mbtToolBrush" title="地形笔刷">🖌️</button>
         <button class="icon-btn ${this._tool === 'move' ? 'primary' : ''}" id="mbtToolMove" title="移动建筑">✥</button>
         <button class="icon-btn ${this._tool === 'add' ? 'primary' : ''}" id="mbtToolAdd" title="添加塔">➕</button>
+        <button class="icon-btn ${this._tool === 'delete' ? 'primary' : ''}" id="mbtToolDelete" title="删除塔">🗑️</button>
         <button class="icon-btn" id="mbtClose" title="关闭">✖</button>
       </div>
       ${this._tool === 'brush' ? `
@@ -298,6 +330,7 @@ export const MapEditorBoardTool = {
     document.getElementById('mbtToolBrush').addEventListener('click', () => { this._tool = 'brush'; this._render(); });
     document.getElementById('mbtToolMove').addEventListener('click', () => { this._tool = 'move'; this._render(); });
     document.getElementById('mbtToolAdd').addEventListener('click', () => { this._tool = 'add'; this._render(); });
+    document.getElementById('mbtToolDelete').addEventListener('click', () => { this._tool = 'delete'; this._render(); });
     document.getElementById('mbtClose').addEventListener('click', () => this.disable());
     document.getElementById('mbtBrushDraw')?.addEventListener('click', () => { this._brushMode = 'draw'; this._render(); });
     document.getElementById('mbtBrushErase')?.addEventListener('click', () => { this._brushMode = 'erase'; this._render(); });
@@ -312,7 +345,7 @@ export const MapEditorBoardTool = {
   _updateStatus() {
     const el = document.getElementById('mbtStatus');
     if (!el) return;
-    const hint = { brush: '按住拖动画地形，松手生效', move: '拖动一座塔即可移动', add: '点一下就近落在最近的路上' };
+    const hint = { brush: '按住拖动画地形，松手生效', move: '拖动一座塔即可移动', add: '点一下就近落在最近的路上', delete: '点一座塔即可删除（不可撤销）' };
     el.textContent = hint[this._tool] || '';
   },
 };

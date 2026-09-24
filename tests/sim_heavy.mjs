@@ -122,9 +122,11 @@ async function world() {
   T('枚举④-open.js 的 _TPL_LABELS/_TPL_ICONS 都认得 heavy',
     /heavy:\s*'重装车'/.test(openSrc) && /heavy:\s*'🐢'/.test(openSrc));
 
-  const entitySrc = srcOf('src/ui/editor/pagesEntity.js');
-  T('枚举⑤-pagesEntity.js 的技能列表类型枚举包含 heavy（否则该类型技能面板会报错）',
-    /'ram',\s*'heavy',/.test(entitySrc));
+  // v51.32：这份类型枚举从 pagesEntity.js 搬到了 SkillLibrary.js 的 skillsByType()
+  // （地图编辑器"塔模板自定义"要用同一份数据，不再各写一份，见该函数头注）。
+  const skillLibSrc = srcOf('src/core/SkillLibrary.js');
+  T('枚举⑤-SkillLibrary.js 的 skillsByType 类型枚举包含 heavy（否则该类型技能面板会报错）',
+    /'ram',\s*'heavy',/.test(skillLibSrc));
 
   const spriteSrc = srcOf('src/presentation/SpriteFactory.js');
   T('枚举⑥-SpriteFactory.js 的 MINION_STYLE 有 heavy 专属样式（不会 fallback 成问号/近战兵默认色）',

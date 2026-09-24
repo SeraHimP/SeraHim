@@ -136,6 +136,25 @@ function mkMapSystem() {
   T('④-没有已加载地图时安全返回 null（不抛错）', !threw && result === null);
 }
 
+// ==================== ④b MapSystem.removeBuildingLive：addBuildingLive 的镜像，删除塔 ====================
+{
+  const { ms, ents } = mkMapSystem();
+  ms.loadMap('summoners_rift_v1');
+  const before = ents.getAll(true).filter(e => e.type === 'tower').length;
+  const entity = ms.addBuildingLive({ faction: 'blue', tier: 'inner', laneId: 'top', pos: { x: 500, y: 600 } });
+
+  T('①-removeBuildingLive 删除刚加的那座塔，返回 true', ms.removeBuildingLive(entity.id) === true);
+  T('②-场上塔数回到删除前（不是软删除，是真的从容器摘除）',
+    ents.getAll(true).filter(e => e.type === 'tower').length === before);
+  T('③-实体容器里再也查不到这个 id', ents.get(entity.id) == null);
+  T('④-删一个不存在的 id 安全返回 false（不抛错）', ms.removeBuildingLive(999999) === false);
+
+  // _buildingIds 同步摘除——不留一个指向空气的 id
+  const other = ms.addBuildingLive({ faction: 'red', tier: 'inner', laneId: 'top', pos: { x: 700, y: 800 } });
+  ms.removeBuildingLive(other.id);
+  T('⑤-_buildingIds 里不再含已删除的 id', !ms._buildingIds.includes(other.id));
+}
+
 // ==================== ⑤ MapEditorBoardTool.js：源码层面的接线检查（DOM/3D 交互测不到，但能测"接对了没接错"） ====================
 {
   const src = srcOf('../src/ui/MapEditorBoardTool.js');
@@ -163,6 +182,17 @@ function mkMapSystem() {
   T('⑨-只在【从关到开】那一刻记一次"进来之前是不是已经暂停着"（用 !this._active 判断，避免 enable() 重复调用时把原始状态覆盖掉）',
     /if\s*\(\s*!this\._active\s*\)\s*this\._pausedBefore\s*=\s*CTX\.gamePaused/.test(src));
   T('⑩-disable() 里把 CTX.gamePaused 恢复成 _pausedBefore', /CTX\.gamePaused\s*=\s*this\._pausedBefore/.test(src));
+
+  // v51.32：删除塔工具——用户原话"地图编辑器里目前并没有新增塔/删除的按钮"，
+  // 这几条钉住"删除"这半句确实落地了（不只是加了个按钮，真的接到了
+  // removeBuildingLive + 草稿数组同步）。
+  T('⑪-工具条多了一个 delete 工具（_tool 的合法值扩到 add|delete）', /'brush' \| 'move' \| 'add' \| 'delete'/.test(src));
+  T('⑫-删除塔调用了 MapSystem 的 removeBuildingLive（与 addBuildingLive 对称的真删除，不是标记隐藏）',
+    /removeBuildingLive/.test(src));
+  T('⑬-删除后用 mapEditorCore.js 的 withBuildingRemoved 同步草稿（不是直接 splice 手写一遍）',
+    /withBuildingRemoved/.test(src));
+  T('⑭-删除后维护 _entityToIndex 的下标平移（数组删中间一项，后面的下标要跟着减1，否则后续操作会错位）',
+    /entIdx > idx/.test(src) && /entIdx - 1/.test(src));
 }
 
 board.done();

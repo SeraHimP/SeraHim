@@ -287,6 +287,101 @@ export function withBuildingMoved(buildings, index, pos) {
 }
 
 /**
+ * 新增一座建筑，返回一份新数组（不改原数组，与 withBuildingMoved 同一套约定）。
+ * @param {object[]} buildings @param {object} building 完整的建筑描述（faction/tier/laneId/pos/weapon…）
+ * @returns {object[]}
+ */
+export function withBuildingAdded(buildings, building) {
+  return [...buildings, building];
+}
+
+/**
+ * 删除下标为 index 的建筑，返回一份新数组。
+ * @param {object[]} buildings @param {number} index
+ * @returns {object[]}
+ */
+export function withBuildingRemoved(buildings, index) {
+  return buildings.filter((_, i) => i !== index);
+}
+
+/**
+ * 改 buildings[index] 的某个顶层字段（tier/weapon 等标量字段），返回一份新数组。
+ * @param {object[]} buildings @param {number} index @param {string} field @param {*} value
+ * @returns {object[]}
+ */
+export function withBuildingFieldSet(buildings, index, field, value) {
+  return buildings.map((b, i) => (i === index ? { ...b, [field]: value } : b));
+}
+
+/**
+ * 单塔实例模板自定义——用户原话"新增的塔的模板也可以自定义"，范围定在武器/技能/
+ * 数值覆写三项（2026-09-24 AskUserQuestion 定稿），返回一份新数组。
+ *
+ * 数值覆写字段与 MapSystem.js 的 TIER_STATS 表同一张字段清单（maxHP/shieldFixedMax/
+ * healthRegen/armor/magicResist/attackDamage/baseAttackSpeed）——单塔覆写是在【地图级
+ * tierStats 覆写】之上再叠一层（见 MapSystem._resolveBuildingStats 头注），只想改这
+ * 一座塔时用它，不影响同档位的其它塔。
+ */
+export const STAT_OVERRIDE_FIELDS = [
+  'maxHP', 'shieldFixedMax', 'healthRegen', 'armor', 'magicResist', 'attackDamage', 'baseAttackSpeed',
+];
+
+/**
+ * 把 buildings[index].statOverride[statKey] 设成 value；value 为 null/undefined
+ * 时表示"改回继承默认值"——直接从 statOverride 里删掉这个 key（而不是存一个
+ * null，避免 {...base, ...statOverride} 合并时把 base 的值顶成 null）。
+ * statOverride 对象整个变空时顺手删掉这个字段（不留一个空对象在建筑数据里）。
+ * @param {object[]} buildings @param {number} index @param {string} statKey @param {?number} value
+ * @returns {object[]}
+ */
+export function withBuildingStatOverrideSet(buildings, index, statKey, value) {
+  return buildings.map((b, i) => {
+    if (i !== index) return b;
+    const next = { ...(b.statOverride || {}) };
+    if (value == null || Number.isNaN(value)) delete next[statKey];
+    else next[statKey] = value;
+    const out = { ...b };
+    if (Object.keys(next).length > 0) out.statOverride = next;
+    else delete out.statOverride;
+    return out;
+  });
+}
+
+/**
+ * 切换 buildings[index].skills 里某个技能 id 的挂载状态（有就摘掉，没有就装上），
+ * 返回一份新数组。skills 数组整个变空时顺手删掉这个字段（同 statOverride 的处理）。
+ * @param {object[]} buildings @param {number} index @param {string} skillId
+ * @returns {object[]}
+ */
+export function withBuildingSkillToggled(buildings, index, skillId) {
+  return buildings.map((b, i) => {
+    if (i !== index) return b;
+    const cur = b.skills || [];
+    const next = cur.includes(skillId) ? cur.filter(s => s !== skillId) : [...cur, skillId];
+    const out = { ...b };
+    if (next.length > 0) out.skills = next;
+    else delete out.skills;
+    return out;
+  });
+}
+
+/**
+ * 这座塔是否偏离了它所在档位的出厂默认——武器不是该图默认武器组成里的那种、
+ * 或者手动装了技能、或者有数值覆写，三者任一为真就算"已自定义"。地图编辑器
+ * "已自定义塔"侧边栏列表用它筛哪些塔要出现在列表里（用户 AskUserQuestion 定稿：
+ * 侧边栏列表形式，不在塔本体上加视觉标记）。
+ * @param {object} b 建筑描述
+ * @param {?string} defaultWeapon 该图这个档位默认应该是什么武器（不传则不比较武器）
+ * @returns {boolean}
+ */
+export function isBuildingCustomized(b, defaultWeapon) {
+  if (defaultWeapon != null && b.weapon && b.weapon !== defaultWeapon) return true;
+  if (b.skills && b.skills.length > 0) return true;
+  if (b.statOverride && Object.keys(b.statOverride).length > 0) return true;
+  return false;
+}
+
+/**
  * 对草稿建筑跑一遍 mapValidate.js 那套结构性校验，整理成编辑器能直接渲染
  * 红线/状态文字的形状。attackRange/attackTiers 不传时退回 CONFIG 里的软编码默认值
  * （调用方传自定义值是为了单测覆盖，不是产品需要另配一套数字）。

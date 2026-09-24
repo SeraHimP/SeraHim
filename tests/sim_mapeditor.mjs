@@ -16,6 +16,8 @@ const {
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
   cloneFactionsForEdit, withFactionAdded, withFactionRemoved, pruneMapDataForRemovedFaction,
+  withBuildingAdded, withBuildingRemoved, withBuildingFieldSet,
+  withBuildingStatOverrideSet, withBuildingSkillToggled, isBuildingCustomized, STAT_OVERRIDE_FIELDS,
 } = await import('../src/data/mapEditorCore.js');
 const { unpackBits, packBits } = await import('../src/data/navgrid.js');
 const { SR_NAVGRID } = await import('../src/data/maps/sr_navgrid.js');
@@ -273,6 +275,100 @@ const T = board.T;
   const asymDraft = draft2.filter(b => !(b.tier === 'outer' && b.laneId === 'top' && b.faction === 'red'));
   const asymResult = validateDraftMap({ ...sr, buildings: asymDraft });
   T('⑪-少一座红方塔 → 报出不对称', asymResult.ok === false && asymResult.symmetric === false);
+}
+
+// ==================== ⑤d 地图编辑器加/删塔 + 模板自定义（v51.32）====================
+{
+  const sr = MAPS.summoners_rift_v1;
+  const draft = cloneBuildingsForEdit(sr);
+  const n0 = draft.length;
+
+  // withBuildingAdded：追加一座，不改原数组
+  const newB = { faction: 'blue', tier: 'inner', laneId: 'top', pos: { x: 1, y: 2 }, weapon: 'piercing' };
+  const added = withBuildingAdded(draft, newB);
+  T('①-withBuildingAdded 不改原数组', draft.length === n0);
+  T('②-withBuildingAdded 返回的新数组多了一座、就是刚加的那座',
+    added.length === n0 + 1 && added[added.length - 1] === newB);
+
+  // withBuildingRemoved：删掉下标0，不改原数组
+  const removed = withBuildingRemoved(added, 0);
+  T('③-withBuildingRemoved 不改原数组', added.length === n0 + 1);
+  T('④-withBuildingRemoved 返回的新数组少了一座，且不是被删的那座',
+    removed.length === n0 && !removed.includes(added[0]));
+  T('⑤-withBuildingRemoved 能删掉最后一个（刚加的那座）',
+    withBuildingRemoved(added, added.length - 1).length === n0
+    && !withBuildingRemoved(added, added.length - 1).includes(newB));
+
+  // withBuildingFieldSet：改武器，不改原数组，只动目标下标
+  const rearmed = withBuildingFieldSet(draft, 2, 'weapon', 'corrosion');
+  T('⑥-withBuildingFieldSet 不改原数组', draft[2].weapon !== 'corrosion');
+  T('⑦-withBuildingFieldSet 目标下标的字段已更新', rearmed[2].weapon === 'corrosion');
+  T('⑧-withBuildingFieldSet 只改目标下标', JSON.stringify(rearmed[0]) === JSON.stringify(draft[0]));
+
+  // withBuildingStatOverrideSet：设置/清除单塔数值覆写
+  const withHP = withBuildingStatOverrideSet(draft, 2, 'maxHP', 9999);
+  T('⑨-withBuildingStatOverrideSet 设置后 statOverride 里有这个字段', withHP[2].statOverride?.maxHP === 9999);
+  T('⑩-withBuildingStatOverrideSet 不影响原数组', draft[2].statOverride === undefined);
+  const withTwo = withBuildingStatOverrideSet(withHP, 2, 'armor', 50);
+  T('⑪-withBuildingStatOverrideSet 连续设置两个字段都在', withTwo[2].statOverride.maxHP === 9999 && withTwo[2].statOverride.armor === 50);
+  const cleared = withBuildingStatOverrideSet(withTwo, 2, 'maxHP', null);
+  T('⑫-withBuildingStatOverrideSet 传 null 清掉这一项（改回继承默认）', !('maxHP' in cleared[2].statOverride));
+  T('⑬-清完剩下的字段还在', cleared[2].statOverride.armor === 50);
+  const clearedAll = withBuildingStatOverrideSet(withHP, 2, 'maxHP', null);
+  T('⑭-statOverride 清空后整个字段被删掉（不留空对象）', !('statOverride' in clearedAll[2]));
+  T('⑮-STAT_OVERRIDE_FIELDS 与 MapSystem 的 TIER_STATS 字段清单一致（7项）',
+    STAT_OVERRIDE_FIELDS.length === 7 && STAT_OVERRIDE_FIELDS.includes('maxHP') && STAT_OVERRIDE_FIELDS.includes('baseAttackSpeed'));
+
+  // withBuildingSkillToggled：装上/摘掉
+  const withSkill = withBuildingSkillToggled(draft, 2, 'passive_test_x');
+  T('⑯-withBuildingSkillToggled 没有就装上', withSkill[2].skills?.includes('passive_test_x'));
+  T('⑰-withBuildingSkillToggled 不影响原数组', draft[2].skills === undefined || !draft[2].skills.includes('passive_test_x'));
+  const withoutSkill = withBuildingSkillToggled(withSkill, 2, 'passive_test_x');
+  T('⑱-withBuildingSkillToggled 再点一次摘掉，数组整个字段被删掉', !('skills' in withoutSkill[2]));
+
+  // isBuildingCustomized：武器不同/有技能/有数值覆写 任一为真
+  T('⑲-isBuildingCustomized：武器与默认相同、无技能无覆写 → false',
+    isBuildingCustomized({ weapon: 'piercing' }, 'piercing') === false);
+  T('⑳-isBuildingCustomized：武器与默认不同 → true',
+    isBuildingCustomized({ weapon: 'corrosion' }, 'piercing') === true);
+  T('㉑-isBuildingCustomized：武器相同但装了技能 → true',
+    isBuildingCustomized({ weapon: 'piercing', skills: ['x'] }, 'piercing') === true);
+  T('㉒-isBuildingCustomized：武器相同但有数值覆写 → true',
+    isBuildingCustomized({ weapon: 'piercing', statOverride: { maxHP: 1 } }, 'piercing') === true);
+  T('㉓-isBuildingCustomized：不传 defaultWeapon 时不比较武器', isBuildingCustomized({ weapon: 'anything' }) === false);
+}
+
+// ==================== ⑤e MapSystem._resolveBuildingStats：单塔数值覆写真的生效 ====================
+{
+  const { EntityContainer } = await import('../src/core/EntityContainer.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { MapSystem } = await import('../src/systems/MapSystem.js');
+  const bus = new EventBus(), ents = new EntityContainer(bus);
+  const ms = new MapSystem(ents, bus);
+
+  // 不传 statOverride：跟没这层一样，原样返回地图/全局 tierStats
+  const base = ms._resolveBuildingStats(null, 'outer', null);
+  T('①-不传 statOverride 时返回原始 tierStats（outer 的 maxHP=4000）', base.maxHP === 4000);
+
+  // 传了 statOverride：只覆盖传的那几项，其它字段保留 tierStats 原值
+  const withOverride = ms._resolveBuildingStats(null, 'outer', { maxHP: 12345 });
+  T('②-statOverride 覆盖了 maxHP', withOverride.maxHP === 12345);
+  T('③-statOverride 没提到的字段（armor）仍是 outer 的原值', withOverride.armor === base.armor);
+
+  // 地图级 tierStats 覆写之上再叠单塔覆写，两层都要生效
+  const mapTierStats = { outer: { ...base, maxHP: 5000, armor: 99 } };
+  const layered = ms._resolveBuildingStats(mapTierStats, 'outer', { maxHP: 7777 });
+  T('④-地图级覆写先生效（armor=99，单塔覆写没提到这项）', layered.armor === 99);
+  T('⑤-单塔覆写在地图级覆写之上再生效、最终以单塔覆写为准（maxHP=7777，不是地图级的5000）',
+    layered.maxHP === 7777);
+
+  // 造一座真实建筑走 addBuildingLive，确认 entity.baseStats 真的拿到了覆写值
+  ms.currentMap = { id: 'x', tierStats: null };
+  let created = null;
+  ms.setCreateBuildingFn((args) => { created = args; return { id: 1, baseStats: { ...args.stats } }; });
+  const entity = ms.addBuildingLive({ faction: 'blue', tier: 'outer', laneId: 'top', pos: { x: 0, y: 0 }, weapon: 'piercing', statOverride: { maxHP: 8888 } });
+  T('⑥-addBuildingLive 把 statOverride 传进了 createBuildingFn 给的 stats 里', created.stats.maxHP === 8888);
+  T('⑦-entity 最终拿到的 baseStats.maxHP 是覆写后的值', entity.baseStats.maxHP === 8888);
 }
 
 // ==================== ⑤c 档位自动识别 autoDetectTiers ====================
@@ -686,6 +782,42 @@ const T = board.T;
   const openSrc = srcOf('../src/ui/editor/open.js');
   T('⑥-open.js 模板编辑器的 _TPL_TOWER_TIERS 与身份技能同名',
     openSrc.includes(`label: '${CANON.base}'`) && openSrc.includes(`label: '${CANON.hq_tower}'`));
+}
+
+// ==================== v51.32：地图编辑器加/删塔 + 模板自定义（源码层面接线检查）====================
+// 用户原话"地图编辑器里目前并没有新增塔/删除的按钮，并且新增的塔的模板也可以
+// 自定义，并且显示已经自定义的塔的模板"——AskUserQuestion 定稿三项范围：
+// ①两个编辑器都补删除 ②自定义到武器+技能+数值覆写 ③自定义指示器用侧边栏列表。
+// MapEditorBoardTool.js 的对应源码检查见 sim_mapeditorlive.mjs，这里只钉
+// MapEditorDialog.js（2D 弹窗）这半边。
+{
+  const src = srcOf('../src/ui/MapEditorDialog.js');
+  T('①-导入了 mapEditorCore.js 的加/删/改字段函数（不是弹窗里重新写一遍数组操作）',
+    /withBuildingAdded/.test(src) && /withBuildingRemoved/.test(src) && /withBuildingFieldSet/.test(src));
+  T('②-导入了单塔模板自定义的三个函数（数值覆写/技能切换/自定义判据）',
+    /withBuildingStatOverrideSet/.test(src) && /withBuildingSkillToggled/.test(src) && /isBuildingCustomized/.test(src));
+  T('③-导入了 SkillLibrary.js 的 skillsByType（武器/技能下拉的数据源与单位编辑器同一份，不另起清单）',
+    /skillsByType/.test(src) && /from ['"]\.\.\/core\/SkillLibrary\.js['"]/.test(src));
+  T('④-有新增塔的开关按钮 mapEditorBuildingAddModeBtn', /mapEditorBuildingAddModeBtn/.test(src));
+  T('⑤-新增塔调用了 snapBuildingPos 就近吸附到最近的路（与 MapEditorBoardTool.js 的 _addTowerAt 同一套逻辑，不是另起一份不一致的实现）',
+    /addBuildingAt[\s\S]{0,600}snapBuildingPos/.test(src));
+  T('⑥-新增塔调用了 autoDetectTiers 自动识别档位（不需要用户手选）',
+    /addBuildingAt[\s\S]{0,900}autoDetectTiers/.test(src));
+  T('⑦-有删除选中建筑的按钮 mapEditorDeleteBuildingBtn，点击调用了 withBuildingRemoved',
+    /mapEditorDeleteBuildingBtn['"]\)[\s\S]{0,200}withBuildingRemoved/.test(src));
+  T('⑧-有武器下拉框 mapEditorBuildingWeaponSelect，change 时调用了 withBuildingFieldSet 改 weapon 字段',
+    /mapEditorBuildingWeaponSelect['"]\)[\s\S]{0,200}withBuildingFieldSet\([^)]*'weapon'/.test(src));
+  T('⑨-技能多选用 data-building-skill 标记复选框，change 时调用了 withBuildingSkillToggled',
+    /data-building-skill[\s\S]{0,600}withBuildingSkillToggled/.test(src));
+  T('⑩-数值覆写表单用 data-building-stat 标记输入框，change 时调用了 withBuildingStatOverrideSet',
+    /data-building-stat[\s\S]{0,600}withBuildingStatOverrideSet/.test(src));
+  T('⑪-数值覆写表单用 STAT_OVERRIDE_FIELDS 生成（与 MapSystem.TIER_STATS 同一张字段表，不另起一份）',
+    /STAT_OVERRIDE_FIELDS\.map/.test(src));
+  T('⑫-有"已自定义模板的塔"侧边栏列表容器 mapEditorCustomizedList', /mapEditorCustomizedList/.test(src));
+  T('⑬-updateCustomizedList 调用了 isBuildingCustomized 判定哪些塔进列表',
+    /updateCustomizedList[\s\S]{0,1500}isBuildingCustomized/.test(src));
+  T('⑭-列表条目点击后会跳选中对应建筑（data-customized-idx → selectedBuildingIndex）',
+    /data-customized-idx[\s\S]{0,300}selectedBuildingIndex\s*=\s*Number\(card\.dataset\.customizedIdx\)/.test(src));
 }
 
 board.done();

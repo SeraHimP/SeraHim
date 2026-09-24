@@ -9,7 +9,7 @@
  * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
  */
 import { CONFIG } from '../../data/Config.js';
-import { SkillLibrary, renderSkillDescription } from '../../core/SkillLibrary.js';
+import { SkillLibrary, renderSkillDescription, skillsByType } from '../../core/SkillLibrary.js';
 import { towerTierSource } from '../../data/schema/index.js';
 import { FIELD_META, fieldLabel } from './fields.js';
 import { clearDamageMarks } from '../../core/reviveState.js';
@@ -167,37 +167,13 @@ export const EDITOR_PAGES_ENTITY = {
   // 用户定稿（"游戏性·批量加技能"落地时提出）：这份清单不再手工维护，改成从
   // 每个技能自己声明的 applicableTypes 现算——之前是两份手工清单（这里 + 后来给
   // 批量赋予页新增的 applicableTypes）并存，迟早会出现"新增/改一个技能，
-  // 只改了一边"的漂移（Q3 那次的教训就是两份手工清单对不上）。现在
-  // applicableTypes 是唯一数据源，这里只是按 type 分组、按 category==='weapon'
-  // 拆成 weapons/passives 两桶，纯读取、不再手写。
+  // 只改了一边"的漂移（Q3 那次的教训就是两份手工清单对不上）。
+  // v51.32：算法本体搬到 SkillLibrary.js 的 skillsByType()——地图编辑器"塔模板
+  // 自定义"（武器下拉+技能多选）也要同一份数据，不再各写一份（同样的教训，
+  // 第二次不能再犯）。这里只剩下调用，排除 core/dragonsoul/attackmode 三类的
+  // 理由原样保留在 skillsByType() 那边的注释里。
   get _SKILLS_BY_TYPE() {
-    const out = {};
-    for (const [id, def] of Object.entries(SkillLibrary)) {
-      if (!def || typeof def !== 'object' || !Array.isArray(def.applicableTypes)) continue;
-      // core（身份技能，按塔层自动分配，不是"手动装备"的东西）和 dragonsoul（龙魂，
-      // 走击杀奖励/游戏性批量赋予两条独立机制装备）不进这个"常规技能选择器"的池子——
-      // 否则单位编辑器的"技能"tab 里会突然多出"外侧防御塔""炎魂"这种不该被手动
-      // 随便勾选的条目。这两类的装备入口分别是：core 由 createBuilding 按层自动挂，
-      // dragonsoul 由 DragonSystem._equipSoul/_grantAncient 或"游戏性·批量加技能"页装。
-      // v51.6 修复：attackmode（充能攻击等）也要排除——同一条口径已经在"游戏性·批量
-      // 加技能"页应用过（pagesGameplaySkillState.js，用户原话："这个里面不要显示充能
-      // 攻击，这个应该是和塔武器/小兵类型相绑定的"），但当时只改了那一个批量页，单位
-      // 编辑器自己的「技能」tab 漏了同一处——于是"充能攻击"作为一条可勾选的被动技能
-      // 残留在这里（atkmode_charge 的 applicableTypes 几乎覆盖所有类型，所以哪个单位
-      // 类型打开这个 tab 都能看到它）。充能攻击跟着兵种默认配置走
-      // （defaultMinionPassives.js），不该在任何"通用技能勾选列表"里出现。
-      if (def.category === 'core' || def.category === 'dragonsoul' || def.category === 'attackmode') continue;
-      for (const t of def.applicableTypes) {
-        if (!out[t]) out[t] = { weapons: [], passives: [] };
-        (def.category === 'weapon' ? out[t].weapons : out[t].passives).push(id);
-      }
-    }
-    // 保证每个已知类型都有一个条目（哪怕暂时没有技能挂在它名下），
-    // 避免调用方 `this._SKILLS_BY_TYPE[type].passives` 在新类型上直接报错。
-    for (const t of ['tower','melee','ranged','siege','super','totem','warlock','corrupt','ram','heavy','healer','engineer','summoner','dragon']) {
-      if (!out[t]) out[t] = { weapons: [], passives: [] };
-    }
-    return out;
+    return skillsByType(SkillLibrary);
   },
 
   // 分层塔的技能清单：★ = main.js 里该层级的【默认装配】，其余为该层级可选。

@@ -60,7 +60,9 @@ import { baseCircleCenter } from '../data/baseCircle.js';
 import { nearestLaneId } from '../data/mapValidate.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
-  freeBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
+  freeBuildingPos, snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
+  withBuildingAdded, withBuildingRemoved, withBuildingFieldSet,
+  withBuildingStatOverrideSet, withBuildingSkillToggled, isBuildingCustomized, STAT_OVERRIDE_FIELDS,
   cloneRegionsForEdit, defaultPitFor,
   cloneLanesForEdit, withWaypointMoved, withWaypointInserted, withWaypointRemoved,
   withLaneAdded, withLaneRemoved, laneBuildingCount, nearestSegmentIndex,
@@ -75,6 +77,24 @@ import { allMinionTypes, minionLabel, minionIcon } from '../data/customContent.j
 import { NEUTRAL_UNIT_TYPES } from '../systems/NeutralCampSystem.js';
 import { EDITOR_PAGES_SKILLEFFECT } from './editor/pagesSkillEffect.js';
 import { fieldLabel } from './editor/fields.js';
+import { SkillLibrary, skillsByType } from '../core/SkillLibrary.js';
+import { TIER_STATS } from '../systems/MapSystem.js';
+
+// 塔的武器下拉——与单位编辑器"武器"tab（pagesEntity.js._renderWeaponContent）
+// 用的是同一套图标/文案，这里复刻一份短表：那边是给【场上活着的实体】现场换武器
+// 用的富交互（pick-grid 卡片+描述框），这里只是编辑器草稿建筑的一个 <select>，
+// 形状不同没法直接复用同一段渲染代码，但内容（id→图标/中文名）必须对得上，
+// 不能各写一份不同步的清单——见 SkillLibrary.js skillsByType() 头注同一条教训。
+const WEAPON_META = {
+  weapon_piercing: { label: '穿透型', icon: '🔷' },
+  weapon_lightning: { label: '闪电杖', icon: '⚡' },
+  weapon_explosive: { label: '爆炸型', icon: '💥' },
+  weapon_corrosion: { label: '腐蚀型', icon: '🌿' },
+  weapon_barrage: { label: '连珠炮', icon: '🔥' },
+  weapon_nova: { label: '聚能炮', icon: '💫' },
+  weapon_shepherd: { label: '牧灵法阵', icon: '🐺' },
+  weapon_prism: { label: '光棱塔', icon: '🌈' },
+};
 
 const FAC_COLOR = { blue: '#4a9eff', red: '#ff5a5a' };   // 与 UIManager.js 的 FAC_DOT 同一套配色
 
@@ -117,6 +137,8 @@ export const MapEditorDialog = {
     let draftBuildings = cloneBuildingsForEdit(baseMap);
     let draggingBuildingIndex = -1;
     let selectedBuildingIndex = -1;     // 点选一座建筑后可在下方手动改档位（覆盖自动识别）
+    let buildingAddMode = false;        // 开着时点画布任意位置=就近吸附新增一座塔
+    let buildingAddFaction = 'blue';    // 新增塔属于哪一方
     let draftRegions = cloneRegionsForEdit(baseMap);   // 区域参数草稿：{baseCircleRadius, pits:{baron?,dragon?}}
     let draftLanes = cloneLanesForEdit(baseMap);        // 路径编辑（阶段六）草稿：[{id, waypoints:[{x,y}...]}]
     let selectedLaneId = draftLanes[0]?.id ?? null;     // 当前正在编辑哪条路
@@ -745,6 +767,33 @@ export const MapEditorDialog = {
       updateValidationStatus();
     };
 
+    /** 新增塔：点画布任意位置，就近吸附到离点击点最近的那条路（跨全部 lane 找最近
+     * 投影点），先给占位档位'inner'插入草稿后立刻按位置自动识别——与
+     * MapEditorBoardTool.js._addTowerAt 同一套逻辑（两个入口共享同一份草稿，
+     * 行为不该有分歧），只是这里走的是 clientToWorld 而不是 canvasController。 */
+    const addBuildingAt = (clientX, clientY) => {
+      const canvas = document.getElementById('mapEditorCanvas');
+      const world = clientToWorld(canvas, clientX, clientY);
+      if (!world) return;
+      const map = draftMapForValidate();
+      const lanes = map.lanes || [];
+      let bestLane = null, bestD = Infinity, bestPos = world;
+      for (const lane of lanes) {
+        const near = snapBuildingPos(map, { laneId: lane.id }, world.x, world.y);
+        const d = Math.hypot(near.x - world.x, near.y - world.y);
+        if (d < bestD) { bestD = d; bestLane = lane.id; bestPos = near; }
+      }
+      if (!bestLane) return;
+      const draft = { faction: buildingAddFaction, tier: 'inner', laneId: bestLane, pos: bestPos, weapon: 'piercing' };
+      draftBuildings = autoDetectTiers(map, withBuildingAdded(draftBuildings, draft));
+      selectedBuildingIndex = draftBuildings.length - 1;
+      redrawCanvas();
+      updateValidationStatus();
+      updateSelectionPanel();
+      updateCustomizedList();
+      logFn(`➕ 已在${buildingAddFaction === 'blue' ? '蓝方' : '红方'}${bestLane}路添加一座塔`, 'spawn');
+    };
+
     /** 找离 (clientX,clientY) 最近的、当前可见（过滤器允许）的中立营地出生点。
      *  命中半径与建筑复用同一个 buildingHitRadiusPx——同一种"点选精度"心智模型。 */
     const findCampPointNear = (canvas, clientX, clientY) => {
@@ -868,26 +917,136 @@ export const MapEditorDialog = {
       el.style.color = '#ff8080';
     };
 
-    // 点选一座建筑后，在画布下方展示它的档位并允许手动改（覆盖自动识别的结果）。
-    // 用户定稿："档位自动识别为主，允许手动覆盖"——这里就是那个"手动覆盖"入口，
+    // 点选一座建筑后，在画布下方展示它的档位并允许手动改（覆盖自动识别的结果），
+    // 以及删除这座塔、模板自定义（武器/技能/数值覆写）——用户原话"地图编辑器里
+    // 目前并没有新增塔/删除的按钮，并且新增的塔的模板也可以自定义，并且显示已经
+    // 自定义的塔的模板"（2026-09-24，AskUserQuestion 定稿三项范围：两个编辑器都
+    // 补删除；自定义到武器+技能+数值覆写；自定义指示器用侧边栏列表——见下方
+    // updateCustomizedList()）。
     // 独立于画布重绘（每次拖拽/选中都只替换这一小块 DOM，不走整弹窗 render()）。
     const updateSelectionPanel = () => {
       const el = document.getElementById('mapEditorSelectionPanel');
       if (!el) return;
       const b = selectedBuildingIndex >= 0 ? draftBuildings[selectedBuildingIndex] : null;
       if (!b) {
-        el.innerHTML = `<div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>`;
+        el.innerHTML = `<div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位，或用上方"➕ 新增塔"点画布新增一座。</div>`;
         return;
       }
       const facLabel = b.faction === 'blue' ? '蓝方' : (b.faction === 'red' ? '红方' : b.faction);
-      el.innerHTML = `<div class="slider-row"><label style="width:auto;">${facLabel}${b.laneId ? '/' + b.laneId : ''}：</label>
-        <select id="mapEditorTierSelect" style="flex:1;">
-          ${STRUCT_TIERS.map(t => `<option value="${t.key}" ${t.key === b.tier ? 'selected' : ''}>${t.label}</option>`).join('')}
-        </select></div>`;
+      const weaponIds = (skillsByType(SkillLibrary).tower || { weapons: [] }).weapons;
+      const skillIds = (skillsByType(SkillLibrary).tower || { passives: [] }).passives;
+      const curWeapon = b.weapon || 'none';
+      const tierDefault = TIER_STATS[b.tier] || TIER_STATS.outer;
+      el.innerHTML = `
+        <div class="slider-row"><label style="width:auto;">${facLabel}${b.laneId ? '/' + b.laneId : ''}：</label>
+          <select id="mapEditorTierSelect" style="flex:1;">
+            ${STRUCT_TIERS.map(t => `<option value="${t.key}" ${t.key === b.tier ? 'selected' : ''}>${t.label}</option>`).join('')}
+          </select>
+          <button id="mapEditorDeleteBuildingBtn" title="删除这座塔">🗑️</button>
+        </div>
+        <div class="slider-row"><label style="width:auto;">武器：</label>
+          <select id="mapEditorBuildingWeaponSelect" style="flex:1;">
+            <option value="none" ${curWeapon === 'none' ? 'selected' : ''}>🚫 无武器</option>
+            ${weaponIds.map(id => `<option value="${id}" ${id === curWeapon ? 'selected' : ''}>${WEAPON_META[id]?.icon || ''} ${WEAPON_META[id]?.label || id}</option>`).join('')}
+          </select>
+        </div>
+        <details style="margin-top:4px;">
+          <summary style="font-size:11px;cursor:pointer;color:var(--text-mute);">技能（${(b.skills || []).length} 个已装）</summary>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;max-height:120px;overflow:auto;">
+            ${skillIds.map(id => `<label style="font-size:10px;display:flex;align-items:center;gap:2px;">
+              <input type="checkbox" data-building-skill="${id}" ${(b.skills || []).includes(id) ? 'checked' : ''}>
+              ${SkillLibrary[id]?.name || id}</label>`).join('')}
+          </div>
+        </details>
+        <details style="margin-top:4px;">
+          <summary style="font-size:11px;cursor:pointer;color:var(--text-mute);">数值覆写（${Object.keys(b.statOverride || {}).length} 项已改，留空=继承档位默认值）</summary>
+          <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px;">
+            ${STAT_OVERRIDE_FIELDS.map(f => `<div class="slider-row"><label style="width:110px;font-size:10px;">${fieldLabel(f) || f}</label>
+              <input type="number" data-building-stat="${f}" placeholder="${tierDefault[f]}"
+                value="${b.statOverride && f in b.statOverride ? b.statOverride[f] : ''}" style="flex:1;">
+            </div>`).join('')}
+          </div>
+        </details>
+      `;
       document.getElementById('mapEditorTierSelect').addEventListener('change', (e) => {
         draftBuildings = draftBuildings.map((x, i) => (i === selectedBuildingIndex ? { ...x, tier: e.target.value } : x));
         redrawCanvas();
         updateValidationStatus();
+        updateCustomizedList();
+      });
+      document.getElementById('mapEditorDeleteBuildingBtn').addEventListener('click', () => {
+        draftBuildings = withBuildingRemoved(draftBuildings, selectedBuildingIndex);
+        selectedBuildingIndex = -1;
+        redrawCanvas();
+        updateValidationStatus();
+        updateSelectionPanel();
+        updateCustomizedList();
+      });
+      document.getElementById('mapEditorBuildingWeaponSelect').addEventListener('change', (e) => {
+        const v = e.target.value === 'none' ? null : e.target.value;
+        draftBuildings = withBuildingFieldSet(draftBuildings, selectedBuildingIndex, 'weapon', v);
+        updateCustomizedList();
+      });
+      el.querySelectorAll('[data-building-skill]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          draftBuildings = withBuildingSkillToggled(draftBuildings, selectedBuildingIndex, cb.dataset.buildingSkill);
+          updateCustomizedList();
+        });
+      });
+      el.querySelectorAll('[data-building-stat]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          const raw = inp.value.trim();
+          const val = raw === '' ? null : Number(raw);
+          draftBuildings = withBuildingStatOverrideSet(draftBuildings, selectedBuildingIndex, inp.dataset.buildingStat, val);
+          updateCustomizedList();
+        });
+      });
+    };
+
+    // "已自定义塔"侧边栏列表——武器/技能/数值覆写任一偏离档位默认值的塔都会出现在
+    // 这里（isBuildingCustomized 的判据），点条目可以直接跳选中那座塔。武器"默认值"
+    // 按同一张地图上同档位塔里出现次数最多的那个算（多数票）——这张地图的塔本来就
+    // 没有一张写死的"官方默认武器表"，只能拿"这张图这个档位大多数塔用的武器"当参照，
+    // 少数几座手动换过的自然会被列出来。
+    const updateCustomizedList = () => {
+      const el = document.getElementById('mapEditorCustomizedList');
+      if (!el) return;
+      const byTier = new Map();
+      for (const b of draftBuildings) {
+        if (!byTier.has(b.tier)) byTier.set(b.tier, new Map());
+        const counts = byTier.get(b.tier);
+        counts.set(b.weapon || 'none', (counts.get(b.weapon || 'none') || 0) + 1);
+      }
+      const defaultWeaponOf = (tier) => {
+        const counts = byTier.get(tier);
+        if (!counts) return null;
+        let best = null, bestN = -1;
+        for (const [w, n] of counts) if (n > bestN) { best = w; bestN = n; }
+        return best;
+      };
+      const entries = [];
+      draftBuildings.forEach((b, i) => {
+        if (isBuildingCustomized(b, defaultWeaponOf(b.tier))) entries.push({ b, i });
+      });
+      if (entries.length === 0) {
+        el.innerHTML = `<div style="font-size:10px;color:var(--text-mute);">暂无已自定义模板的塔。</div>`;
+        return;
+      }
+      const facLabel = (f) => f === 'blue' ? '蓝' : (f === 'red' ? '红' : f);
+      const tierLabel = (t) => STRUCT_TIERS.find(x => x.key === t)?.label || t;
+      el.innerHTML = entries.map(({ b, i }) => `
+        <div class="pick-card" data-customized-idx="${i}" style="cursor:pointer;font-size:10px;padding:3px 6px;">
+          ${facLabel(b.faction)}/${b.laneId || '—'}/${tierLabel(b.tier)}
+          ${WEAPON_META[b.weapon]?.icon || (b.weapon ? '' : '🚫')}
+          ${(b.skills?.length ? `🎯×${b.skills.length}` : '')}
+          ${(b.statOverride && Object.keys(b.statOverride).length ? `📊×${Object.keys(b.statOverride).length}` : '')}
+        </div>`).join('');
+      el.querySelectorAll('[data-customized-idx]').forEach(card => {
+        card.addEventListener('click', () => {
+          selectedBuildingIndex = Number(card.dataset.customizedIdx);
+          redrawCanvas();
+          updateSelectionPanel();
+        });
       });
     };
 
@@ -915,7 +1074,9 @@ export const MapEditorDialog = {
       canvas.addEventListener('pointerdown', (e) => {
         canvas.setPointerCapture(e.pointerId);
         if (editMode === 'buildings') {
-          if (campAddMode) {
+          if (buildingAddMode) {
+            addBuildingAt(e.clientX, e.clientY);
+          } else if (campAddMode) {
             addCampPointAt(e.clientX, e.clientY);
           } else {
             // 营地出生点优先判定：数量少（通常1~2个/营地），建筑动辄二三十座，
@@ -1126,15 +1287,25 @@ export const MapEditorDialog = {
             </div>
           </div>` : ''}` : editMode === 'buildings' ? `
           <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
-            拖动一座建筑可以随意摆放。红圈标出违反结构规则的建筑。
+            默认点选/拖动一座建筑可以随意摆放。红圈标出违反结构规则的建筑。
           </div>
           <div id="mapEditorValidationStatus" style="font-size:12px;margin-bottom:4px;"></div>
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+            <button id="mapEditorBuildingAddModeBtn" class="${buildingAddMode ? 'primary' : ''}" title="开着时点画布任意位置=就近吸附新增一座塔；关着时（默认）点已有的塔=选中/拖动移动">➕ 新增塔</button>
+            ${buildingAddMode ? `
+            <button class="icon-btn ${buildingAddFaction === 'blue' ? 'primary' : ''}" id="mapEditorBuildingAddFacBlue" title="蓝方">🔵</button>
+            <button class="icon-btn ${buildingAddFaction === 'red' ? 'primary' : ''}" id="mapEditorBuildingAddFacRed" title="红方">🔴</button>` : ''}
+          </div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <button id="mapEditorAutoDetectBtn">🔍 自动识别档位</button>
             <span style="font-size:10px;color:var(--text-mute);">离召唤水晶最近=水晶防御塔，最远=外塔，没有路的塔=枢纽防御塔</span>
           </div>
           <div id="mapEditorSelectionPanel" style="margin-bottom:6px;">
-            <div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位。</div>
+            <div style="font-size:11px;color:var(--text-mute);">点选画布上的一座建筑可查看/手动改它的档位，或用上方"➕ 新增塔"点画布新增一座。</div>
+          </div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
+            <div style="font-size:12px;font-weight:600;margin-bottom:4px;">已自定义模板的塔</div>
+            <div id="mapEditorCustomizedList" style="display:flex;flex-direction:column;gap:2px;max-height:100px;overflow:auto;margin-bottom:2px;"></div>
           </div>
           <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
             <div style="font-size:12px;font-weight:600;margin-bottom:4px;">中立营地出生点（画布上的金色菱形）</div>
@@ -1256,7 +1427,7 @@ export const MapEditorDialog = {
       bindEvents();
       bindCanvasEvents();
       redrawCanvas();
-      if (editMode === 'buildings') { updateValidationStatus(); updateSelectionPanel(); }
+      if (editMode === 'buildings') { updateValidationStatus(); updateSelectionPanel(); updateCustomizedList(); }
       if (editMode === 'terrain' && brushShape === 'polyline') updatePolylineStatus();
       if (editMode === 'paths') updatePathStatus();
       if (imgImportOpen && imgImportImageData) redrawImgImportPreview();
@@ -1683,7 +1854,20 @@ export const MapEditorDialog = {
         redrawCanvas();
         updateValidationStatus();
         updateSelectionPanel();
+        updateCustomizedList();
         logFn('🔍 已按位置自动识别全部建筑档位（手动改过的也会被重算，如需保留请改完再点这个）', 'spawn');
+      });
+
+      // 新增塔：开关+归属阵营，点画布落点在 bindCanvasEvents() 里（同 campAddMode 的既定分工）。
+      document.getElementById('mapEditorBuildingAddModeBtn')?.addEventListener('click', () => {
+        buildingAddMode = !buildingAddMode;
+        render();
+      });
+      document.getElementById('mapEditorBuildingAddFacBlue')?.addEventListener('click', () => {
+        buildingAddFaction = 'blue'; render();
+      });
+      document.getElementById('mapEditorBuildingAddFacRed')?.addEventListener('click', () => {
+        buildingAddFaction = 'red'; render();
       });
 
       // 画/擦切换、笔刷半径滑杆只在地形模式下渲染，建筑模式下这几个元素不存在

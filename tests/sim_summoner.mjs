@@ -194,9 +194,11 @@ function fakeCreateMinion(ents, CONFIG) {
   T('枚举④-open.js 的 _TPL_LABELS/_TPL_ICONS 都认得 summoner',
     /summoner:\s*'唤灵兵'/.test(openSrc) && /summoner:\s*'👻'/.test(openSrc));
 
-  const entitySrc = srcOf('src/ui/editor/pagesEntity.js');
-  T('枚举⑤-pagesEntity.js 的技能列表类型枚举包含 summoner',
-    /'engineer',\s*'summoner',\s*'dragon'/.test(entitySrc));
+  // v51.32：这份类型枚举从 pagesEntity.js 搬到了 SkillLibrary.js 的 skillsByType()
+  // （地图编辑器"塔模板自定义"要用同一份数据，不再各写一份，见该函数头注）。
+  const skillLibSrc = srcOf('src/core/SkillLibrary.js');
+  T('枚举⑤-SkillLibrary.js 的 skillsByType 类型枚举包含 summoner',
+    /'engineer',\s*'summoner',\s*'dragon'/.test(skillLibSrc));
 
   const spriteSrc = srcOf('src/presentation/SpriteFactory.js');
   T('枚举⑥-SpriteFactory.js 的 MINION_STYLE 有 summoner 专属样式',

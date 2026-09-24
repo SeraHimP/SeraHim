@@ -94,4 +94,30 @@ for (const id of SkillLibrary.ids()) {
   }
 }
 
+/**
+ * v51.32：按单位类型分组、按 category==='weapon' 拆成 weapons/passives 两桶——
+ * 原来只有 pagesEntity.js（单位编辑器"武器/技能"tab）自己算这份表，地图编辑器
+ * 新增的"塔模板自定义"（武器下拉+技能多选）需要同一份数据，抽到这里给两处共用，
+ * 不重新手写一份清单——本文件自己的注释早就写清楚过"两份手工清单迟早会漂移"
+ * 这条教训（core/dragonsoul/attackmode 三类排除在外的理由见 pagesEntity.js
+ * 原实现里的详细说明，逻辑原样照搬，没有改判据）。
+ * @param {object} lib 通常就是 SkillLibrary 本身
+ * @returns {Record<string,{weapons:string[], passives:string[]}>}
+ */
+export function skillsByType(lib) {
+  const out = {};
+  for (const [id, def] of Object.entries(lib)) {
+    if (!def || typeof def !== 'object' || !Array.isArray(def.applicableTypes)) continue;
+    if (def.category === 'core' || def.category === 'dragonsoul' || def.category === 'attackmode') continue;
+    for (const t of def.applicableTypes) {
+      if (!out[t]) out[t] = { weapons: [], passives: [] };
+      (def.category === 'weapon' ? out[t].weapons : out[t].passives).push(id);
+    }
+  }
+  for (const t of ['tower', 'melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer', 'summoner', 'dragon']) {
+    if (!out[t]) out[t] = { weapons: [], passives: [] };
+  }
+  return out;
+}
+
 export { renderSkillDescription };
