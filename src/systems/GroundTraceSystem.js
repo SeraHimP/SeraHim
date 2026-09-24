@@ -1,5 +1,21 @@
 import { CONFIG } from '../data/Config.js';
 import { EXTREME_WEATHERS } from '../data/Weather.js';
+import { forestZoneAt } from '../data/mapValidate.js';
+
+/**
+ * 供渲染层（VegetationLayer/BoundaryDecorLayer）按世界坐标点采样雪深——与
+ * GroundTraceLayer.update 里逐格铺贴纹理时用的下标公式完全同一套（行优先，
+ * floor(坐标/世界尺寸*分辨率)），抽成纯函数供"点采样"场景复用，不在每个
+ * 调用点各写一份容易跑偏的下标算法。
+ * @param {{resolution:number, data:Float32Array, worldW:number, worldH:number}|null} snow getSnowCover() 的快照
+ */
+export function sampleSnowGrid(snow, x, y) {
+  if (!snow || !snow.data || !snow.worldW || !snow.worldH) return 0;
+  const res = snow.resolution;
+  const gx = Math.max(0, Math.min(res - 1, Math.floor(x / snow.worldW * res)));
+  const gy = Math.max(0, Math.min(res - 1, Math.floor(y / snow.worldH * res)));
+  return snow.data[gy * res + gx] || 0;
+}
 
 /**
  * GroundTraceSystem.js —— 地面痕迹层（水洼/雪盖，Q4 天气重做 + v54 第二轮重做）
@@ -249,13 +265,24 @@ export class GroundTraceSystem {
     const amp = cfg.cellRateNoiseAmp ?? 0.65;
     const floor = cfg.cellRateNoiseFloor ?? 0.25;
     this.snowCellRateMul = new Float32Array(res * res).fill(1);
+    // 积雪材质差异化（v55.1）：每格一份 0~1 的"野区程度"（forestZoneAt!==0 的
+    // 森林分级），只在网格新建时算一次——跟 snowCellRateMul 同一节奏，同样是
+    // 只依赖地形本身、不随天气变化的静态量。路面(0)恒为0，森林分级 1/2/3
+    // 一律记 1（先只做"路 vs 野区"二分，不细分三档，见 Config.js
+    // groundTrace.snowCover.jungleMaxDepthMul 头注）。没有 lanes（森林分区判据
+    // 的前提，比如没有森林概念的老地图）时整张恒为 0，效果与改动前逐位一致。
+    this.snowCellZoneMix = new Float32Array(res * res); // 全 0 = 默认（无差异化）
+    const map = this.mapSystem?.currentMap;
+    const hasForest = Array.isArray(map?.lanes) && map.lanes.length > 0;
     if (world) {
       const cellW = world.w / res, cellH = world.h / res;
       for (let gy = 0; gy < res; gy++) {
         for (let gx = 0; gx < res; gx++) {
           const wx = (gx + 0.5) * cellW, wy = (gy + 0.5) * cellH;
           const mul = Math.max(floor, 1 + this._snowCellNoise(wx, wy) * amp);
-          this.snowCellRateMul[gy * res + gx] = mul;
+          const idx = gy * res + gx;
+          this.snowCellRateMul[idx] = mul;
+          if (hasForest) this.snowCellZoneMix[idx] = forestZoneAt(map, wx, wy) === 0 ? 0 : 1;
         }
       }
     }
@@ -317,12 +344,20 @@ export class GroundTraceSystem {
     const res = this.snowGridRes;
     const grid = this.snowGrid;
     const rateMul = this.snowCellRateMul;
+    const zoneMix = this.snowCellZoneMix;
+    const jungleMaxMul = cfg.jungleMaxDepthMul ?? 1;
     const regrowRate = Math.min(1, (cfg.regrowPerSec ?? 0.05) * dt);
     // 全图格子朝全局目标回涨（踩踏留下的小径也在这一步缓慢恢复），但不是同一个
     // 速率——每格乘自己固定的空间噪声倍率，有的格子先到、有的格子晚到，蔓延感
     // 靠这个（见本函数头注 2026-09-20 记录的真根因）。
+    // 积雪材质差异化（v55.1）：每格的"追赶目标"不再统一是 snowGlobalTarget，
+    // 野区（zoneMix===1）按 jungleMaxDepthMul 再往上提一档（"上限更高"），路面
+    // （zoneMix===0，或没有森林分区数据的地图整张恒为0）目标不变，逐位一致。
     for (let i = 0; i < grid.length; i++) {
-      grid[i] += (this.snowGlobalTarget - grid[i]) * regrowRate * (rateMul ? rateMul[i] : 1);
+      const localTarget = zoneMix && zoneMix[i]
+        ? Math.min(1, this.snowGlobalTarget * jungleMaxMul)
+        : this.snowGlobalTarget;
+      grid[i] += (localTarget - grid[i]) * regrowRate * (rateMul ? rateMul[i] : 1);
     }
 
     // 单位经过时局部踩踏：把周围 erodeRadius 内的格子压低，但设下限（不会踩成 0）。
@@ -406,10 +441,20 @@ export class GroundTraceSystem {
 
   /** 供渲染层读——只读快照。 */
   getPuddles() { return this.puddles; }
-  /** 供渲染层读——雪盖网格快照，{resolution, data(Float32Array), worldW, worldH}。 */
+  /**
+   * 供渲染层读——雪盖网格快照，{resolution, data(Float32Array), worldW, worldH,
+   * zoneMix(Float32Array|null)}。zoneMix 是积雪材质差异化（v55.1）新增的"野区
+   * 程度"（0=路面/无森林分区数据，1=野区），与 data 同长度、同下标公式，供
+   * GroundTraceLayer 铺贴雪盖纹理颜色、VegetationLayer/BoundaryDecorLayer
+   * 需要时判断这一点在不在野区。地图没有森林分区数据时恒为 null，渲染层据此
+   * 退回原来的单一颜色，画面不变。
+   */
   getSnowCover() {
     const world = this.mapSystem?.currentMap?.world;
     if (!this.snowGrid || !world) return null;
-    return { resolution: this.snowGridRes, data: this.snowGrid, worldW: world.w, worldH: world.h };
+    return {
+      resolution: this.snowGridRes, data: this.snowGrid, worldW: world.w, worldH: world.h,
+      zoneMix: this.snowCellZoneMix || null,
+    };
   }
 }

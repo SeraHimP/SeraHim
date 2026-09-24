@@ -1337,6 +1337,10 @@ export class ThreeRenderer {
       const hurricaneCharge = ws0?.getCharge ? (ws0.getCharge('hurricane') || 0) : 0;
       this.veg.update(this._lightDt || 0.016, Math.max(windCharge0, hurricaneCharge));
     }
+    // 积雪野区可见性修复（v55.1）：树/岩落雪节流刷新，dt 走墙钟（跟风摆动同口径，
+    // 暂停时雪该继续"落"）。两层各自内部节流，这里每帧都调没关系。
+    if (this.veg && this.vegOn) this.veg.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
+    if (this.boundaryDecor) this.boundaryDecor.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
     // P1：走后处理管线（Bloom+ACES+FXAA+描边+SSAO）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
       if (!this.composer) this._buildComposer();

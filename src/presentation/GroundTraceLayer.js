@@ -99,14 +99,25 @@ export class GroundTraceLayer {
     tex.minFilter = THREE.LinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.generateMipmaps = false;
+    // 积雪材质差异化（v55.1）：这张纹理现在也当 map（颜色）用，不再只是 alphaMap——
+    // 同文件里 makeDiscTexture 那张贴图同样是"程序生成 Canvas 当 map 用"，一样
+    // 标了 SRGBColorSpace，这里跟它对齐，颜色管线口径统一。
+    tex.colorSpace = THREE.SRGBColorSpace;
     this._snowTex = tex;
 
     const geo = new THREE.PlaneGeometry(WW, WH, 1, 1);
     geo.rotateX(-Math.PI / 2);
     const C = cfg();
+    // 积雪材质差异化（v55.1）：material.color 改成中性白——真正的颜色现在按格
+    // 写进纹理的 RGB 通道（路面/野区各自的颜色，见 update() 里的写入逻辑），
+    // 不再是整块平面统一吃一个 tint。地图没有森林分区数据时纹理 RGB 处处等于
+    // 旧的 snowCoverColor，等价于"白色材质 × 旧颜色纹理" = 旧颜色，画面不变。
+    // map 和 alphaMap 都指向同一张纹理——alphaMap 只读它的 alpha 通道（雪深），
+    // map 读它的 RGB 通道（颜色）；两者本来就是同一份 ImageData 的不同通道，
+    // 没必要建两张纹理各读各的。
     const mat = new THREE.MeshBasicMaterial({
-      color: C.snowCoverColor ?? 0xf4f8fc, transparent: true,
-      alphaMap: tex, depthWrite: false,
+      color: 0xffffff, transparent: true,
+      map: tex, alphaMap: tex, depthWrite: false,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(WW / 2, C.snowCoverLift ?? 0.4, WH / 2);
@@ -170,15 +181,25 @@ export class GroundTraceLayer {
     if (!this._snowMesh) return;
     const snowAlphaMax = C.snowCoverAlpha ?? 0.6;
     this._snowMesh.material.opacity = snowAlphaMax;
-    // 网格值（0~1 局部雪深）写进 ImageData 的 alpha 通道——alphaMap 只读 alpha，
-    // RGB 随便填白色即可（材质颜色由 color 属性统一控制）。
+    // 网格值（0~1 局部雪深）写进 ImageData 的 alpha 通道；RGB 通道现在也不再是
+    // 写死的白——积雪材质差异化（v55.1）：按 zoneMix（0=路面，1=野区）在
+    // pathColor/jungleColor 之间线性插值。zoneMix 为 null（地图没有森林分区
+    // 数据）时退回纯 pathColor，逐位等于改动前"整块统一 snowCoverColor"的画面。
     const img = this._snowImgData;
     const data = img.data;
     const grid = snow.data;
+    const zoneMix = snow.zoneMix;
+    const pathHex = C.snowCoverColor ?? 0xf4f8fc;
+    const jungleHex = C.snowCoverJungleColor ?? 0xffffff;
+    const pr = (pathHex >> 16) & 255, pg = (pathHex >> 8) & 255, pb = pathHex & 255;
+    const jr = (jungleHex >> 16) & 255, jg = (jungleHex >> 8) & 255, jb = jungleHex & 255;
     for (let i = 0; i < grid.length; i++) {
       const v = Math.round(Math.max(0, Math.min(1, grid[i])) * 255);
+      const t = zoneMix ? zoneMix[i] : 0;
       const o = i * 4;
-      data[o] = data[o + 1] = data[o + 2] = 255;
+      data[o] = pr + (jr - pr) * t;
+      data[o + 1] = pg + (jg - pg) * t;
+      data[o + 2] = pb + (jb - pb) * t;
       data[o + 3] = v;
     }
     this._snowCanvas.getContext('2d').putImageData(img, 0, 0);

@@ -31,6 +31,9 @@ import { stylizedPaletteOf } from '../data/Config.js';
 import { isLaneCell } from '../data/mapValidate.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { withColor, stylizedTreeGeo, hash } from './VegetationLayer.js';
+import { applySnowTint, updateSnowInstances } from './VegetationShaderPatch.js';
+import { sampleSnowGrid } from '../systems/GroundTraceSystem.js';
+import { CONFIG } from '../data/Config.js';
 
 // ==================== 城墙（柱子）====================
 // 用户标注的"粉色"是墙，但不做真的墙体嵌板（做嵌板需要算切线方向摆正朝向，
@@ -153,18 +156,29 @@ export class BoundaryDecorLayer {
 
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(),
           S = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
-    const place = (geo, mat, arr, scaleBase, scaleVary) => {
+    // 积雪野区可见性修复（v55.1）：只给 natTrees/natRocks（野区自然边缘的树/岩，
+    // 真正会挡住雪盖平面的那两类）接落雪效果——石柱/城墙是人工建筑，snow=false
+    // 时跳过，不接 instanceSnow/applySnowTint，逐位不变（见 VegetationLayer.js
+    // 同一处改动的头注）。
+    const place = (geo, mat, arr, scaleBase, scaleVary, snow) => {
       if (!arr.length) return;
       const inst = new THREE.InstancedMesh(geo, mat, arr.length);
       inst.castShadow = true; inst.receiveShadow = true;
+      const snowPositions = snow ? new Array(arr.length) : null;
       arr.forEach(([x, y], i) => {
         const gh = heightAt(x, y);
         const s = scaleBase + hash(x + 3, y) * scaleVary;
         const rot = hash(x + 5, y + 5) * 6.2832;
         Q.setFromAxisAngle(UP, rot); M.compose(P.set(x, gh, y), Q, S.set(s, s, s)); inst.setMatrixAt(i, M);
+        if (snowPositions) snowPositions[i] = { x, z: y };
       });
       inst.instanceMatrix.needsUpdate = true;
       inst.frustumCulled = false;   // 实例包围盒默认在原点，整片会被误剔除（见 VegetationLayer 同一注释）
+      if (snowPositions) {
+        inst.geometry.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(arr.length), 1));
+        inst.userData.snowPositions = snowPositions;
+        applySnowTint(inst.geometry, mat);
+      }
       this.scene.add(inst); this.meshes.push(inst);
     };
     if (showPillars) {
@@ -173,11 +187,27 @@ export class BoundaryDecorLayer {
       // 比兵线/野区边界那圈装饰性城墙更重一些。
       place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), wallRingPosts, 1.3, 0.1);
     }
-    place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35);
-    place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4);
+    place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35, true);
+    place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4, true);
     // 高地石墙笔刷（素材库）：笔刷显式画的石墙，不受 showPillars 这个地图级默认
     // 开关约束——召唤师峡谷把默认城墙柱子关掉是"这张图整体不要柱子"这条全局
     // 偏好，但作者在野区某一段显式选了"石墙"风格是更具体的信号，应该覆盖它。
     place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), styledPosts, 1.0, 0.15);
+  }
+
+  /** 积雪野区可见性修复（v55.1）：节流刷新 natTrees/natRocks 的落雪程度，与
+   * VegetationLayer.updateSnow 同一套节流/采样逻辑，见该方法的头注。 */
+  updateSnow(dt, groundTraceSystem) {
+    const cfg = (CONFIG.ui && CONFIG.ui.vegetationSnowFx) || {};
+    const interval = cfg.updateIntervalSec ?? 0.75;
+    this._snowT = (this._snowT || 0) + dt;
+    if (this._snowT < interval) return;
+    this._snowT = 0;
+    if (!groundTraceSystem || !groundTraceSystem.getSnowCover) return;
+    const snow = groundTraceSystem.getSnowCover();
+    if (!snow) return;
+    const maxBlend = cfg.maxBlend ?? 0.65;
+    const sampleFn = (x, z) => sampleSnowGrid(snow, x, z);
+    for (const m of this.meshes) updateSnowInstances(m, sampleFn, maxBlend);
   }
 }

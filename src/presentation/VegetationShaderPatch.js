@@ -107,3 +107,86 @@ export function updateWindSway(dt, strength) {
 export function clearWindSwayRegistry() {
   _registry.clear();
 }
+
+/**
+ * ==================== 积雪野区可见性修复：树/岩"落雪"（v55.1）====================
+ * 用户报告野区看不到雪，根因是密密麻麻的树/岩 InstancedMesh 从俯视角度把贴地
+ * 的雪盖平面挡住了（见 GroundTraceSystem.js/VegetationLayer.js 头注）。修法：
+ * 让树冠/岩石按所在位置的局部雪深"落雪"——颜色朝白混一部分，不是刷成全白。
+ *
+ * 为什么不用 InstancedMesh 自带的 instanceColor：three.js 的内置 shader 对
+ * instanceColor 的处理是【乘法】（`vColor.xyz *= instanceColor.xyz`，见
+ * three.module.js 的 color_fragment chunk），乘法只能把颜色调暗，乘以白色
+ * (1,1,1) 是恒等变换、乘以任何 <1 的值只会更暗——没有办法用它把一个深绿色
+ * 树冠"混"向白色。往白混必须是【线性插值】（mix(color, white, t)），这不是
+ * three.js 内置材质支持的组合方式，所以走跟风摆动同一条路：onBeforeCompile
+ * 注入一个新的 per-instance 属性 + 一段插值。
+ *
+ * 与 applyWindSway 分开两个函数（不合并成一个"植被特效"大开关）：这是两条
+ * 会各自演化的效果（风摆动 = 顶点位移，落雪 = 颜色混合），合并后调用点会
+ * 传一堆参数去区分"这次要不要摆动/要不要落雪"，不如两个独立、按需调用的
+ * 函数清楚——跟 DragonSystem.SOUL_REWARD_OK/POWER_REWARD_OK 分成两个方法而不是
+ * 加布尔参数是同一个理由。
+ *
+ * 不用模块级注册表（跟 applyWindSway 的 _registry 不一样）：VegetationLayer 和
+ * BoundaryDecorLayer 都会调这套函数，但两者各自独立 build/clear（比如设置面板
+ * 单独开关"野区植被"只会调 VegetationLayer.clear()，不会碰 BoundaryDecorLayer
+ * 已经建好的那批网格）——共用一个全局注册表的话，一层 clear() 会把另一层还在
+ * 用的网格也从表里摘掉，之后再也不刷新，雪深就停在摘除那一刻的值，不报错但
+ * 悄悄过期。改成调用方（各层的 place()）自己把 {positions} 记在
+ * mesh.userData.snowPositions 上，updateSnowInstances 只对调用方明确传入的
+ * 那份 mesh 列表生效，两层各管各的，互不影响。
+ */
+export function applySnowTint(geometry, material) {
+  const prevOnBeforeCompile = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    if (prevOnBeforeCompile) prevOnBeforeCompile(shader, renderer);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', [
+        '#include <common>',
+        'attribute float instanceSnow;',
+        'varying float vSnowAmt;',
+      ].join('\n'))
+      .replace('#include <begin_vertex>', [
+        '#include <begin_vertex>',
+        'vSnowAmt = instanceSnow;',
+      ].join('\n'));
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', [
+        '#include <common>',
+        'varying float vSnowAmt;',
+      ].join('\n'))
+      // 放在 <color_fragment> 之后：先让内置的 vColor（顶点色/instanceColor 乘法）
+      // 按原样跑完，落雪效果在它算出的最终 diffuseColor 基础上再往白混一层，
+      // 两件事互不冲突、顺序也不影响结果（乘法与插值可以任意先后）。
+      .replace('#include <color_fragment>', [
+        '#include <color_fragment>',
+        'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), vSnowAmt);',
+      ].join('\n'));
+  };
+  material.needsUpdate = true;
+}
+
+/**
+ * 按节流间隔调用（不是每帧）：给一个已经 applySnowTint 过、且
+ * mesh.userData.snowPositions 已经记好世界坐标的 InstancedMesh，把每个实例
+ * 按它的坐标查一次局部雪深，写进 instanceSnow 属性（乘封顶混合比例
+ * maxBlend——封顶本身发生在这里而不是 shader 里，数值软编码要能在一个地方
+ * 改，不要 shader 和 JS 各存一份）。mesh 没有 snowPositions/instanceSnow 时
+ * 直接跳过（不是所有网格都开了落雪效果，比如城墙石柱）。
+ * @param {THREE.InstancedMesh} mesh
+ * @param {(x:number, z:number) => number} sampleFn 传入世界坐标返回 0~1 局部雪深的函数
+ * @param {number} maxBlend 封顶混合比例（雪深=1时的最终混合量）
+ */
+export function updateSnowInstances(mesh, sampleFn, maxBlend) {
+  const positions = mesh?.userData?.snowPositions;
+  const attr = mesh?.geometry?.getAttribute('instanceSnow');
+  if (!positions || !attr) return;
+  const arr = attr.array;
+  for (let i = 0; i < positions.length; i++) {
+    const p = positions[i];
+    const depth = Math.max(0, Math.min(1, sampleFn(p.x, p.z)));
+    arr[i] = depth * maxBlend;
+  }
+  attr.needsUpdate = true;
+}

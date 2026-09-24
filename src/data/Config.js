@@ -1177,6 +1177,16 @@ export const CONFIG = {
       maxBendFactor: 6,   // 风充能=1时的最大侧向位移（世界单位，越高的顶点越接近这个值）
       freq: 1.6,          // 摆动角频率（弧度/秒）
     },
+    // ==================== 积雪野区可见性修复：树/岩"落雪"（v55.1）====================
+    // 用户报告野区看不到雪；实测确认根因是野区密密麻麻的树/岩 InstancedMesh
+    // 从俯视角度把贴地的雪盖平面完全挡住了（数据层本来就是整张图统一算的，
+    // 问题只在渲染层）。修法：让树冠/岩石本身按所在位置的局部雪深"落雪"——
+    // 顶点色朝白混一部分（不是刷成全白），见 VegetationShaderPatch.applySnowTint。
+    // 见 GroundTraceSystem.js/VegetationLayer.js/BoundaryDecorLayer.js 头注。
+    vegetationSnowFx: {
+      maxBlend: 0.65,        // 封顶混合比例：雪深=1时，颜色朝白混合的最大比例（不是全白）
+      updateIntervalSec: 0.75, // 节流刷新间隔——雪深本身涨落要几十秒到两分钟，没必要每帧全量刷新上千个实例
+    },
     crystal: {
       spin: 0.6,           // 水晶本体（保持原值，改动前就是这个数）
       particleSpin: -0.42, // 粒子。反向 + 约 0.7 倍速 —— 反向比"同向但快一点"容易看出来得多
@@ -1192,7 +1202,11 @@ export const CONFIG = {
       puddleColor: 0x5b8fb0, // 水色，偏冷偏灰（不是鲜艳的蓝，贴在地面上不能太跳）
       // v54：雪盖改成整地图 alpha 遮罩（见 GroundTraceLayer.js 头注），不再是
       // 实例池贴花，trailColor/maxTrailPoints 已废弃删除。
-      snowCoverColor: 0xf4f8fc, // 雪盖色，浅冷白
+      snowCoverColor: 0xf4f8fc, // 雪盖色，浅冷白——路面/无森林分区数据的地图仍是这个颜色，逐位不变
+      // 积雪材质差异化（v55.1）：野区（forestZoneAt 非 0 的格子）用更蓬松的纯白，
+      // 跟路面的浅灰白拉开一档——不新造调色板，只是同一份"往白混"的颜色再往上提一点。
+      // 只在地图声明了森林分区（有 lanes）时生效，其余地图这个字段不起作用，画面不变。
+      snowCoverJungleColor: 0xffffff,
       snowCoverAlpha: 0.6,      // 雪盖满深时的不透明度上限
       snowCoverLift: 0.4,       // 雪盖平面离地高度（世界单位），避免与地面 z-fighting
     },
@@ -1682,6 +1696,15 @@ export const CONFIG = {
       erodePerSec: 1.2,       // 单位站在格子里时，局部雪深被踩低的速率（远快于回涨，走一下就踩开）
       pathFloor: 0.3,         // 踩踏能把局部雪深压到的下限 = 这个比例 × 全局目标（不会踩成 0）
       slowPct: -22,           // 雪深=1（满）时的移速百分比修正（乘以该格局部雪深）
+      // ==================== 积雪材质差异化（v55.1）====================
+      // 用户："材质差异化：现在雪层完全无视底下是什么材质……方案是让
+      // GroundTraceSystem 在算每格积雪目标值/速率时，读一下 TerrainMaterial.js
+      // 已经算好的分区结果，给不同分区不同的最大积雪深度上限。"——路面（森林
+      // 分级 forestZoneAt===0）沿用现在的上限（乘数 1，逐位不变）；野区（非 0，
+      // 含林缘/普通森林/深林三档一视同仁，先不细分三档）上限更高，"更蓬松"。
+      // 只在地图声明了 lanes（森林分区判据的前提）时生效，其余地图恒为 1，
+      // 画面不变。见 GroundTraceSystem._ensureSnowGrid 的 snowCellZoneMix。
+      jungleMaxDepthMul: 1.3,
     },
   },
 

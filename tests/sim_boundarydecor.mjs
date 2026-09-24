@@ -196,4 +196,47 @@ const mk = (id) => {
     !('boundaryPillars' in MAPS['howling_abyss_frost_v1']));
 }
 
+// ==================== 六、积雪野区可见性修复（v55.1）：树/岩落雪接线 ====================
+// 用户报告野区看不到雪，根因是野区密密麻麻的树/岩 InstancedMesh 挡住了贴地的
+// 雪盖平面。渲染层没有 DOM/WebGL 没法在 Node 里实际跑，这里走本文件既定的
+// "源码正则钉胶水代码"规矩，钉住：natTrees/natRocks 接了落雪效果、wall 柱子
+// 没接（人工建筑不需要）、VegetationLayer 四类植被全接了、ThreeRenderer 每帧
+// 调用了两层的 updateSnow。浏览器实测见任务提交记录里的截图对比。
+{
+  const bd4 = srcOf('src/presentation/BoundaryDecorLayer.js');
+  T('雪接①-BoundaryDecorLayer 导入了 applySnowTint/updateSnowInstances/sampleSnowGrid',
+    /import \{ applySnowTint, updateSnowInstances \} from '\.\/VegetationShaderPatch\.js';/.test(bd4)
+    && /import \{ sampleSnowGrid \} from '\.\.\/systems\/GroundTraceSystem\.js';/.test(bd4));
+  T('雪接②-natTrees/natRocks 两处 place 调用都传了 snow=true（最后一个参数）',
+    /place\(stylizedTreeGeo\(map\)[\s\S]{0,160}natTrees, 0\.85, 0\.35, true\)/.test(bd4)
+    && /place\([\s\S]{0,160}natRocks, 0\.8, 0\.4, true\)/.test(bd4));
+  T('雪接③-城墙/围墙柱子（posts/wallRingPosts/styledPosts）三处调用都没传 snow（人工建筑不落雪）',
+    /place\(wallPostGeo\(SV\)[\s\S]{0,80}posts, 1\.0, 0\.15\);/.test(bd4)
+    && /place\(wallPostGeo\(SV\)[\s\S]{0,80}wallRingPosts, 1\.3, 0\.1\);/.test(bd4)
+    && /place\(wallPostGeo\(SV\)[\s\S]{0,80}styledPosts, 1\.0, 0\.15\);/.test(bd4));
+  T('雪接④-新增 updateSnow(dt, groundTraceSystem) 方法', /updateSnow\(dt, groundTraceSystem\) \{/.test(bd4));
+
+  const veg2 = srcOf('src/presentation/VegetationLayer.js');
+  T('雪接⑤-VegetationLayer 的 place() 内部统一给每个实例建了 instanceSnow 属性并调用 applySnowTint',
+    /setAttribute\('instanceSnow', new THREE\.InstancedBufferAttribute/.test(veg2) && /applySnowTint\(inst\.geometry, mat\)/.test(veg2));
+  T('雪接⑥-VegetationLayer 新增 updateSnow(dt, groundTraceSystem) 方法', /updateSnow\(dt, groundTraceSystem\) \{/.test(veg2));
+
+  const patch = srcOf('src/presentation/VegetationShaderPatch.js');
+  T('雪接⑦-VegetationShaderPatch 用 mix() 往白插值（不是乘法/instanceColor那套，理由见头注）',
+    /diffuseColor\.rgb = mix\(diffuseColor\.rgb, vec3\(1\.0\), vSnowAmt\);/.test(patch));
+  T('雪接⑧-updateSnowInstances 封顶乘 maxBlend（不是把雪深原样写进去，读 Config 的 maxBlend）',
+    /arr\[i\] = depth \* maxBlend;/.test(patch));
+
+  const tr2 = srcOf('src/presentation/ThreeRenderer.js');
+  T('雪接⑨-ThreeRenderer 每帧调用了 veg.updateSnow 与 boundaryDecor.updateSnow',
+    /this\.veg\.updateSnow\(this\._lightDt \|\| 0\.016, window\.__groundTrace \|\| null\)/.test(tr2)
+    && /this\.boundaryDecor\.updateSnow\(this\._lightDt \|\| 0\.016, window\.__groundTrace \|\| null\)/.test(tr2));
+
+  const gtl = srcOf('src/presentation/GroundTraceLayer.js');
+  T('雪接⑩-GroundTraceLayer 雪盖材质改用中性白 + map/alphaMap 同源纹理（颜色现在来自纹理RGB，不是材质tint）',
+    /color: 0xffffff, transparent: true,\s*\n\s*map: tex, alphaMap: tex/.test(gtl));
+  T('雪接⑪-GroundTraceLayer 按 zoneMix 在 pathColor/jungleColor 之间插值写 RGB 通道',
+    /const t = zoneMix \? zoneMix\[i\] : 0;/.test(gtl));
+}
+
 done();

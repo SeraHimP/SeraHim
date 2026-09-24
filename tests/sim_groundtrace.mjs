@@ -288,6 +288,77 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
     gts.snowGlobalTarget < before * 0.5);
 }
 
+// ==================== 六b、积雪材质差异化（v55.1）：野区上限更高，路面不变 ====================
+// 用户报告野区看不到雪，根因确认是密密麻麻的树/岩把贴地的雪盖平面挡住了（渲染层
+// 问题，见 VegetationLayer.js/BoundaryDecorLayer.js 头注）；顺带做的材质差异化——
+// 路面沿用现有上限（不变），野区（forestZoneAt!==0）上限按 jungleMaxDepthMul
+// 再往上提一档。这里只测数据层（GroundTraceSystem 的 snowCellZoneMix/上限计算），
+// 渲染层（树/岩落雪、雪盖纹理按分区染色）没有 DOM/WebGL 没法在 Node 里跑，走
+// sim_boundarydecor.mjs 那套源码级断言钉接线，这里只钉真正的数值行为。
+{
+  const { sampleSnowGrid } = await import('../src/systems/GroundTraceSystem.js');
+  // sampleSnowGrid 纯函数：下标公式要跟 GroundTraceLayer 铺贴纹理时用的那套一致。
+  const snap = { resolution: 4, worldW: 400, worldH: 400, data: new Float32Array([0, 0.25, 0.5, 0.75, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]) };
+  T('材质①-sampleSnowGrid 越界坐标夹到边界，不崩溃', sampleSnowGrid(snap, -50, -50) === 0);
+  T('材质②-sampleSnowGrid 命中右下角格子（下标15）读到该格的值', sampleSnowGrid(snap, 399, 399) === 1);
+  T('材质③-sampleSnowGrid 对 null 快照安全返回 0', sampleSnowGrid(null, 10, 10) === 0);
+}
+{
+  // 没有 lanes（森林分区判据的前提）的地图：zoneMix 恒为 0，野区上限跟路面
+  //完全一样——逐位不变，不能因为这次改动让没有森林概念的老地图画面变化。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws); // mkMapSystem() 不带 lanes
+  setCharge(ws, 'snow', 1.0);
+  for (let i = 0; i < 400; i++) gts.update(1);
+  const cover = gts.getSnowCover();
+  T('材质④-没有森林分区数据的地图，zoneMix 整张恒为 0（不影响老地图画面）',
+    cover.zoneMix && Array.from(cover.zoneMix).every(v => v === 0));
+}
+{
+  // 有 lanes 的地图：野区格子（离兵线远）应该比路面格子（贴着兵线）更快涨到
+  // 更高的雪深上限——用 jungleMaxDepthMul>1 的既有默认值验证这个相对关系，
+  // 不钉具体数字（生成位置/噪声带随机性，见文件头注）。
+  const mkForestMapSystem = (w = 4000, h = 4000) => ({
+    isWalkable: () => true,
+    currentMap: { world: { w, h }, lanes: [{ waypoints: [{ x: 0, y: h / 2 }, { x: w, y: h / 2 }] }] },
+  });
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkForestMapSystem(), ws);
+  setCharge(ws, 'snow', 1.0);
+  // 先让全局目标涨到 1（满），这样路面/野区的上限差异才会被"卡住"而不是两边
+  // 都还没追上各自目标、暂时看不出差别。
+  for (let i = 0; i < 30 * 200; i++) gts.update(1 / 30);
+  T('材质⑤-全局目标已经涨满（后面比较上限差异的前提）', gts.snowGlobalTarget > 0.95);
+
+  const laneDepth = gts._snowDepthAt(2000, 2000);           // 就在兵线正中间——路面
+  const jungleDepth = gts._snowDepthAt(2000, 2000 - 1500);  // 离兵线很远——深野区
+  const jungleMul = CONFIG.groundTrace?.snowCover?.jungleMaxDepthMul ?? 1;
+  T('材质⑥-路面雪深封顶在全局目标附近（不超过1，且没有被野区那档乘数拉高）',
+    laneDepth <= 1.001 && laneDepth <= gts.snowGlobalTarget * 1.05);
+  if (jungleMul > 1) {
+    T('材质⑦-野区雪深明显高于路面（jungleMaxDepthMul>1 时野区上限更高，"上限更高"这条要求成立）',
+      jungleDepth > laneDepth * 1.05 || jungleDepth >= 0.999);
+  }
+}
+{
+  // getSnowCover() 暴露 zoneMix 供渲染层用，格式与 data 同长度。
+  const mkForestMapSystem = (w = 2000, h = 2000) => ({
+    isWalkable: () => true,
+    currentMap: { world: { w, h }, lanes: [{ waypoints: [{ x: 0, y: h / 2 }, { x: w, y: h / 2 }] }] },
+  });
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkForestMapSystem(), ws);
+  setCharge(ws, 'snow', 0.9);
+  for (let i = 0; i < 10; i++) gts.update(1); // 只需要触发一次 _ensureSnowGrid
+  const cover = gts.getSnowCover();
+  T('材质⑧-getSnowCover() 暴露 zoneMix，长度与 data 一致', cover.zoneMix && cover.zoneMix.length === cover.data.length);
+  T('材质⑨-有森林分区的地图，zoneMix 里既有0（路面）也有1（野区），不是全一个值',
+    cover.zoneMix.includes(0) && cover.zoneMix.includes(1));
+}
+
 // ==================== 七、天气关闭/无地图系统时安全降级 ====================
 {
   const { ents, fx } = await makeWorld();

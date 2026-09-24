@@ -11,7 +11,10 @@ import { WALL_H } from './WallLayer.js';
 import { stylizedPaletteOf } from '../data/Config.js';
 import { forestZoneAt } from '../data/mapValidate.js';
 import { isInBaseWallRing } from '../data/baseCircle.js';
-import { applyWindSway, updateWindSway, clearWindSwayRegistry } from './VegetationShaderPatch.js';
+import { applyWindSway, updateWindSway, clearWindSwayRegistry,
+         applySnowTint, updateSnowInstances } from './VegetationShaderPatch.js';
+import { sampleSnowGrid } from '../systems/GroundTraceSystem.js';
+import { CONFIG } from '../data/Config.js';
 
 // v58：导出给 BoundaryDecorLayer 复用——野区内部（不可走的迷宫墙块）边界的
 // "自然感"装饰要用同一套树/坐标哈希，不重新写一份几何生成逻辑。
@@ -111,6 +114,9 @@ export class VegetationLayer {
     // 换图/重建时把风摆动注册表也清空——VegetationShaderPatch 的登记表是模块级
     // 全局的（只有这个文件在用它），不清的话旧地图那批已经 dispose 掉的材质会
     // 一直留在里面被 updateWindSway() 白白遍历，是个真实的内存/CPU 泄漏。
+    // 落雪效果不用清——那份状态（snowPositions/instanceSnow）挂在各自的
+    // InstancedMesh.userData/geometry 上，随 mesh 一起 dispose，不是模块级
+    // 全局登记表，没有类似的泄漏风险。
     clearWindSwayRegistry();
   }
 
@@ -211,15 +217,22 @@ export class VegetationLayer {
     // （按树的世界坐标哈希，不是数组下标——见 VegetationShaderPatch.js 头注为什么
     // 不能用下标），装成 InstancedBufferAttribute 喂给 applyWindSway。只对树/
     // 深林树传 true——灌木/岩石这一轮先不摆，等树的效果验证过手感自然再考虑扩展。
+    //
+    // 积雪野区可见性修复（v55.1）：全部四类（树/深林树/岩石/灌木）都会挡住贴地
+    // 的雪盖平面，所以全部接 applySnowTint——建一份 instanceSnow 属性（初始全0，
+    // 无雪时逐位不变）+ 把每个实例的世界坐标记进 userData.snowPositions，供
+    // updateSnow() 节流刷新时按坐标查雪深。
     const place = (geo, mat, arr, vary, sway) => {
       if (!arr.length) return;
       const inst = new THREE.InstancedMesh(geo, mat, arr.length);
       inst.castShadow = true; inst.receiveShadow = true;
       const phase = sway ? new Float32Array(arr.length) : null;
+      const snowPositions = new Array(arr.length);
       arr.forEach(([x, y, z, s, rot], i) => {
         Q.setFromAxisAngle(UP, rot); M.compose(P.set(x, y, z), Q, S.set(s, s, s)); inst.setMatrixAt(i, M);
         if (vary) { C.setHSL(vary.h + (hash(x + 1, z) - 0.5) * vary.dh, vary.s, vary.l + (hash(z + 1, x) - 0.5) * vary.dl); inst.setColorAt(i, C); }
         if (phase) phase[i] = hash(x * 7 + 3, z * 7 + 3) * Math.PI * 2;
+        snowPositions[i] = { x, z };
       });
       inst.instanceMatrix.needsUpdate = true;
       if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
@@ -229,6 +242,9 @@ export class VegetationLayer {
         inst.geometry.setAttribute('instancePhase', new THREE.InstancedBufferAttribute(phase, 1));
         applyWindSway(inst.geometry, mat);
       }
+      inst.geometry.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(arr.length), 1));
+      inst.userData.snowPositions = snowPositions;
+      applySnowTint(inst.geometry, mat);
       this.scene.add(inst); this.meshes.push(inst);
     };
     if (stylized) {
@@ -278,6 +294,27 @@ export class VegetationLayer {
    */
   update(dt, windStrength) {
     updateWindSway(dt, Math.max(0, Math.min(1, windStrength || 0)));
+  }
+
+  /**
+   * 积雪野区可见性修复（v55.1）：节流刷新每棵树/岩的"落雪"程度。不是每帧调用——
+   * 雪深本身涨落要几十秒到两分钟，节流间隔（默认0.75s）远小于这个时间尺度，
+   * 肉眼看不出延迟，但能省掉每帧刷新上千个实例的开销（用户点头认可的取舍，
+   * 见 Config.js vegetationSnowFx 头注）。groundTraceSystem 为空（还没进对局/
+   * 天气系统未接线）时直接跳过，不报错。
+   */
+  updateSnow(dt, groundTraceSystem) {
+    const cfg = (CONFIG.ui && CONFIG.ui.vegetationSnowFx) || {};
+    const interval = cfg.updateIntervalSec ?? 0.75;
+    this._snowT = (this._snowT || 0) + dt;
+    if (this._snowT < interval) return;
+    this._snowT = 0;
+    if (!groundTraceSystem || !groundTraceSystem.getSnowCover) return;
+    const snow = groundTraceSystem.getSnowCover();
+    if (!snow) return;
+    const maxBlend = cfg.maxBlend ?? 0.65;
+    const sampleFn = (x, z) => sampleSnowGrid(snow, x, z);
+    for (const m of this.meshes) updateSnowInstances(m, sampleFn, maxBlend);
   }
 
   setTint(hex) {
