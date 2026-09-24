@@ -96,6 +96,10 @@ const SR_CONFIG = {
   // 以后任何"森林风格"地图都能直接声明同一个 paletteId 复用）。
   visualStyle: 'stylized',
   paletteId: 'forest',
+  // v51.22：用户反馈要去掉地图上的石柱+金顶城墙/围墙装饰（BoundaryDecorLayer，
+  // task #149 加的那批）——嚎哭深渊冰封版那套是完全独立的 frostBridge 火把柱，
+  // 不受这个开关影响，两者不是一回事。只关柱子，野区树/岩的自然边缘装饰不受影响。
+  boundaryPillars: false,
 
   // === Building tier stats (classic defaults, self-contained) ===
   // v51.6：用户定稿属性修正——"外塔HP5000，双抗40。内塔HP4000，双抗70。水晶塔HP3500，

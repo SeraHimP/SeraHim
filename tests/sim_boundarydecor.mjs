@@ -181,4 +181,19 @@ const mk = (id) => {
     sawJungleAtOldWidth);
 }
 
+// ==================== 五、v51.22：召唤师峡谷去掉柱子装饰 ====================
+// 用户反馈把地图上（召唤师峡谷）的石柱+金顶装饰去掉——嚎哭深渊冰封版自己有一套
+// 独立的 frostBridge 火把柱，两者不是一回事，不受这个开关影响。走本文件既定的
+// "渲染层用源码正则钉胶水代码"规矩，同时用真实地图数据核实开关字段确实声明了。
+{
+  const bd3 = srcOf('src/presentation/BoundaryDecorLayer.js');
+  T('柱①-新增 showPillars 开关（默认开，map.boundaryPillars===false 才关）',
+    /const showPillars = map\.boundaryPillars !== false;/.test(bd3));
+  T('柱②-两处城墙/围墙柱子的 place 调用都在 showPillars 判断内（只关柱子，不影响下面的树/岩装饰）',
+    /if \(showPillars\) \{[\s\S]{0,400}place\(wallPostGeo\(SV\)[\s\S]{0,150}posts[\s\S]{0,400}place\(wallPostGeo\(SV\)[\s\S]{0,150}wallRingPosts[\s\S]{0,20}\}/.test(bd3));
+  T('柱③-召唤师峡谷声明了 boundaryPillars:false', summoners_rift.boundaryPillars === false);
+  T('柱④-嚎哭深渊冰封版没有声明这个字段（默认开，不受影响，它有自己独立的火把柱）',
+    !('boundaryPillars' in MAPS['howling_abyss_frost_v1']));
+}
+
 done();

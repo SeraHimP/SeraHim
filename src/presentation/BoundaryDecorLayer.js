@@ -83,6 +83,11 @@ export class BoundaryDecorLayer {
     if (!active) { this.clear(); this._mapId = null; return; }
     if (this._mapId === map.id && this.meshes.length) return;   // 同图已建，跳过
     this.clear(); this._mapId = map.id;
+    // v51.22：石柱+金顶的城墙/围墙装饰默认开——地图可以显式声明 boundaryPillars:false
+    // 关掉（用户反馈召唤师峡谷上这批柱子要去掉，嚎哭深渊冰封版自己另有一套
+    // frostBridge 火把柱，两者不是一回事，不受这个开关影响，默认值不动）。
+    // 只关柱子这一类装饰，下面野区树/岩的自然边缘装饰不受影响。
+    const showPillars = map.boundaryPillars !== false;
 
     const { w: WW, h: WH } = map.world;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
@@ -151,10 +156,12 @@ export class BoundaryDecorLayer {
       inst.frustumCulled = false;   // 实例包围盒默认在原点，整片会被误剔除（见 VegetationLayer 同一注释）
       this.scene.add(inst); this.meshes.push(inst);
     };
-    place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), posts, 1.0, 0.15);
-    // 围墙用同一套柱子几何，尺寸略大一档——高地围墙是防御工事，视觉分量应该
-    // 比兵线/野区边界那圈装饰性城墙更重一些。
-    place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), wallRingPosts, 1.3, 0.1);
+    if (showPillars) {
+      place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), posts, 1.0, 0.15);
+      // 围墙用同一套柱子几何，尺寸略大一档——高地围墙是防御工事，视觉分量应该
+      // 比兵线/野区边界那圈装饰性城墙更重一些。
+      place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), wallRingPosts, 1.3, 0.1);
+    }
     place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35);
     place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4);
   }

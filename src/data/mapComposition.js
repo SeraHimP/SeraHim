@@ -71,6 +71,8 @@ export const CONFIG_FIELDS = [
   // "除物理几何外的一切顶层字段"的桶里。之前只有 howling_abyss_frost.js 这种
   // 不走 composeMap 的手写地图用过，第一次有 TERRAIN/CONFIG 拆分的老地图要用。
   'visualStyle', 'paletteId',
+  // v51.22：BoundaryDecorLayer 城墙/围墙柱子装饰的开关，同样是纯画面字段。
+  'boundaryPillars',
 ];
 
 /**
