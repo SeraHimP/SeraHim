@@ -45,14 +45,16 @@ import { CONFIG } from '../Config.js';
  *
  * ==================== 规模与180分钟目标 ====================
  * 世界 7500×7500（召唤师峡谷 3552 的约2.1倍边长，约4.5倍面积）；每路的塔位
- * 血量/双抗普遍比召唤师峡谷同档高出 60%~70%（见 tierStats），单纯"塔更肉、
- * 路更多、要走的路更长"三者叠加，推进节奏天然比三路小图慢得多。终局保险丝是
+ * 血量/双抗（见 tierStats）经过一轮 balance_matrix 实测校准，比召唤师峡谷
+ * 同档高出约 2.7~3.8 倍（首版只上浮60%~70%，实测均时长仅60.83分钟，离目标
+ * 差近3倍，详见 tierStats 上方的"实测校准"注）。单纯"塔更肉、路更多、要走
+ * 的路更长"三者叠加，推进节奏天然比三路小图慢得多。终局保险丝是
  * CONFIG.tuning.heatDeath 那套热寂机制的这张图专属触发时间
- * （confluenceHeatDeathTriggerAtMin=165，见 Config.js 头注），触发后跟召唤师
+ * （confluenceHeatDeathTriggerAtMin=220，见 Config.js 头注），触发后跟召唤师
  * 峡谷一样每秒衰减塔的当前最大生命，把整场对局的时长上限兜住，不会真的失控
- * 打到天荒地老。180分钟是设计目标，不是已经跑批验证过的精确解——
- * 用 `node tools/balance_matrix.mjs --map confluence_v1 --runs 20 --minutes 200`
- * 才能拿到实机数据，交付时间受限没能跑完整轮次，这里如实说明。
+ * 打到天荒地老。180分钟仍然是设计目标，不是已经用完整批次（--runs 20）验证
+ * 过的精确解——只做过一版60.83分钟的实测+一次方向性调整，第二版调整后还没有
+ * 再跑批次验证，交付时间受限没能跑完整轮次，这里如实说明（跟进见任务#208）。
  */
 
 const WORLD = 7500;
@@ -160,18 +162,29 @@ const CONFLUENCE_CONFIG = {
   spawnGap: 0.55,
   nexusRespawnTime: 300,
 
-  // 建筑数值：相对召唤师峡谷同档普遍上浮 60%~70%——5条战线+更大的地图尺度，
-  // 塔更肉才能配合"180分钟量级"的目标（见文件头注）。healthRegen 沿用本项目
-  // 的既定规矩，全部归0，恢复统一走塔默认装配的技能（加固城防/水晶再生，
-  // 见 factories.js 的 growthByTier/fortifyByTier——本图建筑没有显式声明
-  // skills 字段，会自动拿到与召唤师峡谷同一套默认被动，不需要另起一份覆写）。
+  // 建筑数值（v2，见下方"balance_matrix 实测校准"注）：相对召唤师峡谷同档
+  // 上浮约 2.7~3.8 倍——5条战线+更大的地图尺度，塔更肉才能配合"180分钟量级"
+  // 的目标（见文件头注）。healthRegen 沿用本项目的既定规矩，全部归0，恢复
+  // 统一走塔默认装配的技能（加固城防/水晶再生，见 factories.js 的
+  // growthByTier/fortifyByTier——本图建筑没有显式声明 skills 字段，会自动
+  // 拿到与召唤师峡谷同一套默认被动，不需要另起一份覆写）。
+  //
+  // ==================== balance_matrix 实测校准（v1→v2）====================
+  // 首版数值（上浮60%~70%）交付后跑了一批小样本实测
+  // （node tools/balance_matrix.mjs --map confluence_v1 --runs 3 --minutes 90，
+  // 3局全部在90分钟封顶前分出胜负，均时长仅 60.83 分钟——离180分钟目标差了
+  // 近3倍，不是"差不多，微调"的量级。样本量小（n=3），不是精确结论，但60分钟
+  // vs 180分钟这个差距大到不可能只是抽样噪声。据此把 HP 整体再上浮约2.3倍
+  // （即相对召唤师峡谷同档从60%~70%涨到约2.7~3.8倍），如实记录：这一版
+  // 同样没有再跑一轮完整批次验证，只是基于第一版实测数据做的方向性修正，
+  // 精确校准仍然是任务#208的后续工作。
   tierStats: {
-    outer:      { maxHP: 6000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 20,  attackDamage: 160, baseAttackSpeed: 0.833 },
-    inner:      { maxHP: 6600, shieldFixedMax: 0, healthRegen: 0, armor: 90, magicResist: 90,  attackDamage: 175, baseAttackSpeed: 0.833 },
-    base:       { maxHP: 7500, shieldFixedMax: 0, healthRegen: 0, armor: 75, magicResist: 75,  attackDamage: 175, baseAttackSpeed: 4.00 },
-    nexus_lane: { maxHP: 4500, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
-    hq_tower:   { maxHP: 8500, shieldFixedMax: 0, healthRegen: 0, armor: 90, magicResist: 130, attackDamage: 155, baseAttackSpeed: 4.00 },
-    nexus_main: { maxHP: 9000, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
+    outer:      { maxHP: 14000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 20,  attackDamage: 160, baseAttackSpeed: 0.833 },
+    inner:      { maxHP: 15000, shieldFixedMax: 0, healthRegen: 0, armor: 90, magicResist: 90,  attackDamage: 175, baseAttackSpeed: 0.833 },
+    base:       { maxHP: 17000, shieldFixedMax: 0, healthRegen: 0, armor: 75, magicResist: 75,  attackDamage: 175, baseAttackSpeed: 4.00 },
+    nexus_lane: { maxHP: 10000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
+    hq_tower:   { maxHP: 19500, shieldFixedMax: 0, healthRegen: 0, armor: 90, magicResist: 130, attackDamage: 155, baseAttackSpeed: 4.00 },
+    nexus_main: { maxHP: 20500, shieldFixedMax: 0, healthRegen: 0, armor: 0,  magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
   },
 
   // 终局保险丝（热寂）+ 常驻移速光环——机制跟召唤师峡谷完全一致，只是触发时间/
