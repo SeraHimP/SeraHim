@@ -92,6 +92,11 @@ export class BoundaryDecorLayer {
     const { w: WW, h: WH } = map.world;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
     const heightAt = mapSystem.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
+    // 高地石墙笔刷（素材库，v51.33）：笔刷在某格不可走区域显式画了"石墙"风格时
+    // （wallStyleAt 返回 2），这格附近该摆石柱而不是自然树石丛——见下方自然边缘
+    // 候选那段的用法。没有覆写网格/不是 navgrid 地图时恒返回 0（自动），行为
+    // 逐位不变，不影响任何已有地图。
+    const wallStyleAt = mapSystem.wallStyleAt ? (x, y) => mapSystem.wallStyleAt(x, y) : () => 0;
     const edge = 90;   // 与 VegetationLayer 同一个"离图边留白"
 
     // ---- 城墙候选：路/野区分类在探测半径内发生翻转的网格点 ----
@@ -110,15 +115,21 @@ export class BoundaryDecorLayer {
     }
 
     // ---- 自然边缘候选：野区里"可走但贴着不可走障碍物"的网格点 ----
-    const natTrees = [], natRocks = [];
+    const natTrees = [], natRocks = [], styledPosts = [];
     for (let gx = edge; gx < WW - edge; gx += NAT_SPACING) {
       for (let gy = edge; gy < WH - edge; gy += NAT_SPACING) {
         const x = gx + (hash(gx + 31, gy) - 0.5) * NAT_SPACING * NAT_JITTER;
         const y = gy + (hash(gx, gy + 31) - 0.5) * NAT_SPACING * NAT_JITTER;
         if (!walk(x, y)) continue;
         if (isLaneCell(map, x, y)) continue;   // 只加密野区一侧，路面不摆
-        const surrounded = walk(x + NAT_PROBE, y) && walk(x - NAT_PROBE, y) && walk(x, y + NAT_PROBE) && walk(x, y - NAT_PROBE);
+        const probes = [[x + NAT_PROBE, y], [x - NAT_PROBE, y], [x, y + NAT_PROBE], [x, y - NAT_PROBE]];
+        const surrounded = probes.every(([px, py]) => walk(px, py));
         if (surrounded) continue;              // 四周都可走，说明没贴着障碍物，跳过
+        // 高地石墙笔刷：贴着的不可走格子里，只要有一个被笔刷显式画成"石墙"风格
+        // （wallStyleAt===2），这个候选点就改摆石柱围墙，不摆自然树石——这是
+        // 素材库笔刷唯一要改的行为，其余（没画过/画的是"自然"风格）逐位不变。
+        const stoneNearby = probes.some(([px, py]) => !walk(px, py) && wallStyleAt(px, py) === 2);
+        if (stoneNearby) { styledPosts.push([x, y]); continue; }
         (hash(gx + 3, gy) < 0.6 ? natTrees : natRocks).push([x, y]);
       }
     }
@@ -164,5 +175,9 @@ export class BoundaryDecorLayer {
     }
     place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35);
     place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4);
+    // 高地石墙笔刷（素材库）：笔刷显式画的石墙，不受 showPillars 这个地图级默认
+    // 开关约束——召唤师峡谷把默认城墙柱子关掉是"这张图整体不要柱子"这条全局
+    // 偏好，但作者在野区某一段显式选了"石墙"风格是更具体的信号，应该覆盖它。
+    place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), styledPosts, 1.0, 0.15);
   }
 }

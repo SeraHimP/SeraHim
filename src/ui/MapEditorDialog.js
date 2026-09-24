@@ -50,7 +50,7 @@ import { paneHtml } from './dialogShell.js';
 import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
 import {
-  paintCircle, paintPolyline, despeckle,
+  paintCircle, paintByteCircle, paintPolyline, despeckle,
   worldToGrid as worldToGridPure, clientToGrid as clientToGridPure, canvasDisplaySize,
 } from '../data/navgrid.js';
 import { LANE_COLOR } from './laneLabels.js';
@@ -59,7 +59,8 @@ import { STRUCT_TIERS, RULE_FIELDS, compositionFor, whenOptionGroups, WAVE_CONDI
 import { baseCircleCenter } from '../data/baseCircle.js';
 import { nearestLaneId } from '../data/mapValidate.js';
 import {
-  decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
+  decodeBaseBits, decodeWallStyleGrid, WALL_STYLE_AUTO, WALL_STYLE_NATURAL, WALL_STYLE_STONE,
+  buildCustomMapPayload, cloneBuildingsForEdit,
   freeBuildingPos, snapBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
   withBuildingAdded, withBuildingRemoved, withBuildingFieldSet,
   withBuildingStatOverrideSet, withBuildingSkillToggled, isBuildingCustomized, STAT_OVERRIDE_FIELDS,
@@ -121,6 +122,9 @@ export const MapEditorDialog = {
     let baseId = mapSystem.currentBaseMapId || mapSystem.getAvailableMaps()[0]?.id;
     let baseMap = mapSystem.getMapById(baseId);
     let { n, bits } = decodeBaseBits(baseMap);
+    // 高地石墙笔刷（素材库）：同 bits 一样，n 变了要跟着重新解码，见 switchBase()。
+    let wallStyle = decodeWallStyleGrid(baseMap, n);
+    let brushWallStyle = WALL_STYLE_AUTO;   // 只在 brushMode==='erase' 时有意义
     // 画布 CSS 显示尺寸按当前 baseMap.world 的长宽比自适应（见 navgrid.js
     // canvasDisplaySize() 头注——用户反馈"扭曲丛林地图都变形了"）。读实时的
     // baseMap（切图后会重新赋值），不缓存成固定值，否则切图后尺寸对不上新地图。
@@ -738,7 +742,11 @@ export const MapEditorDialog = {
       if (rect.width <= 0 || rect.height <= 0) return;
       const gx = (clientX - rect.left) / rect.width * n;
       const gy = (clientY - rect.top) / rect.height * n;
-      paintCircle(bits, n, gx, gy, brushRadius, brushMode === 'draw');
+      const drawing = brushMode === 'draw';
+      paintCircle(bits, n, gx, gy, brushRadius, drawing);
+      // 高地石墙笔刷：画可走时这格不该带风格标签（墙没了，风格无意义），清回 AUTO；
+      // 擦除（画墙）时按当前选中的风格写入。
+      paintByteCircle(wallStyle, n, gx, gy, brushRadius, drawing ? WALL_STYLE_AUTO : brushWallStyle);
       redrawCanvas();
     };
 
@@ -1222,6 +1230,18 @@ export const MapEditorDialog = {
               <button id="mapEditorModeErase" class="${brushMode === 'erase' ? 'primary' : ''}">⬛ 擦（不可走）</button>
             </div>
           </div>
+          ${brushMode === 'erase' ? `
+          <div class="slider-row"><label>墙体风格</label>
+            <div style="display:flex;gap:6px;">
+              <button id="mapEditorWallAuto" class="${brushWallStyle === WALL_STYLE_AUTO ? 'primary' : ''}">❔ 自动</button>
+              <button id="mapEditorWallNatural" class="${brushWallStyle === WALL_STYLE_NATURAL ? 'primary' : ''}">🌲 自然树石</button>
+              <button id="mapEditorWallStone" class="${brushWallStyle === WALL_STYLE_STONE ? 'primary' : ''}">🧱 石柱围墙</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px;">
+            "自动"沿用现有的按位置判定（基地高地围墙一圈自动是石柱、野区其它地方自动是
+            树石）；这里选了具体风格，画出来的不可走区域会强制用这种风格，不再看位置。
+          </div>` : ''}
           <div class="slider-row"><label>笔刷形状</label>
             <div style="display:flex;gap:6px;">
               <button id="mapEditorShapeCircle" class="${brushShape === 'circle' ? 'primary' : ''}">⚪ 圆形（拖动画）</button>
@@ -1444,6 +1464,7 @@ export const MapEditorDialog = {
       baseId = id;
       baseMap = mapSystem.getMapById(baseId);
       ({ n, bits } = decodeBaseBits(baseMap));
+      wallStyle = decodeWallStyleGrid(baseMap, n);
       draftBuildings = cloneBuildingsForEdit(baseMap);
       selectedBuildingIndex = -1;   // 建筑数组重建了，旧下标不再指向同一座塔
       draftRegions = cloneRegionsForEdit(baseMap);   // 换了起点地图，区域参数草稿也要跟着重来
@@ -1873,6 +1894,9 @@ export const MapEditorDialog = {
       // 画/擦切换、笔刷半径滑杆只在地形模式下渲染，建筑模式下这几个元素不存在
       document.getElementById('mapEditorModeDraw')?.addEventListener('click', () => { brushMode = 'draw'; render(); });
       document.getElementById('mapEditorModeErase')?.addEventListener('click', () => { brushMode = 'erase'; render(); });
+      document.getElementById('mapEditorWallAuto')?.addEventListener('click', () => { brushWallStyle = WALL_STYLE_AUTO; render(); });
+      document.getElementById('mapEditorWallNatural')?.addEventListener('click', () => { brushWallStyle = WALL_STYLE_NATURAL; render(); });
+      document.getElementById('mapEditorWallStone')?.addEventListener('click', () => { brushWallStyle = WALL_STYLE_STONE; render(); });
 
       const slider = document.getElementById('mapEditorBrushSlider');
       slider?.addEventListener('input', () => {
@@ -1894,8 +1918,22 @@ export const MapEditorDialog = {
       });
       document.getElementById('mapEditorPolylineCommit')?.addEventListener('click', () => {
         if (polylinePoints.length >= 2) {
-          paintPolyline(bits, n, polylinePoints, brushRadius, brushMode === 'draw');
-          logFn(`📐 已把 ${polylinePoints.length} 个顶点连成的墙体${brushMode === 'draw' ? '画成可走' : '擦成不可走'}`, 'spawn');
+          const drawing = brushMode === 'draw';
+          paintPolyline(bits, n, polylinePoints, brushRadius, drawing);
+          // 高地石墙笔刷：折线笔刷没有专门的字节版几何（paintPolyline 只有 0/1
+          // 版本），这层只是装饰风格覆写、不需要跟 navgrid 本身一样精确到胶囊体
+          // 边界，沿折线每段采样一串圆笔刷近似即可。
+          const styleValue = drawing ? WALL_STYLE_AUTO : brushWallStyle;
+          for (let i = 0; i < polylinePoints.length - 1; i++) {
+            const a = polylinePoints[i], b = polylinePoints[i + 1];
+            const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+            const steps = Math.max(1, Math.ceil(segLen / Math.max(1, brushRadius)));
+            for (let s = 0; s <= steps; s++) {
+              const t = s / steps;
+              paintByteCircle(wallStyle, n, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, brushRadius, styleValue);
+            }
+          }
+          logFn(`📐 已把 ${polylinePoints.length} 个顶点连成的墙体${drawing ? '画成可走' : '擦成不可走'}`, 'spawn');
         }
         polylinePoints = [];
         updatePolylineStatus();
@@ -1967,6 +2005,9 @@ export const MapEditorDialog = {
         // 识别结果本来就是按当前地形分辨率（n）算出来的（见 recomputeImgImportPreview），
         // 直接整份换掉 bits 就行，不用像切换起点地图那样重建整个草稿状态。
         bits = imgImportResult.bits;
+        // 整份地形被图片识别结果换掉了，旧的风格覆写贴在新地形上没有意义（画的
+        // 是上一版地形的边缘），清成全自动，作者可以在新地形上重新画。
+        wallStyle = new Uint8Array(n * n);
         imgImportOpen = false; imgImportImageData = null; imgImportSampleColor = null; imgImportResult = null;
         logFn('🖼️ 已把图片识别结果应用为当前地形（可以接着用笔刷/去毛刺微调）', 'spawn');
         render();
@@ -2008,7 +2049,7 @@ export const MapEditorDialog = {
               [...draftLaneComposition[laneId], ...(draftLaneBroadcast[laneId] || [])];
           }
           const payload = buildCustomMapPayload(baseMap, {
-            id, label, n, bits, buildings: draftBuildings,
+            id, label, n, bits, wallStyle, buildings: draftBuildings,
             baseCircleRadius: draftRegions.baseCircleRadius, pits: draftRegions.pits,
             lanes: draftLanes, factions: draftFactions, spawnEnabled: draftSpawnEnabled,
             laneWaveCompositionByLane, neutralCamps: draftNeutralCamps, globalAura: draftGlobalAura,

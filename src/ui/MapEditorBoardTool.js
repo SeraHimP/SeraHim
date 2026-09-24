@@ -43,8 +43,11 @@
  */
 import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
-import { paintCircle } from '../data/navgrid.js';
-import { snapBuildingPos, freeBuildingPos, autoDetectTiers, withBuildingRemoved } from '../data/mapEditorCore.js';
+import { paintCircle, paintByteCircle } from '../data/navgrid.js';
+import {
+  snapBuildingPos, freeBuildingPos, autoDetectTiers, withBuildingRemoved,
+  WALL_STYLE_AUTO, WALL_STYLE_NATURAL, WALL_STYLE_STONE,
+} from '../data/mapEditorCore.js';
 import {
   ensureSession, getSession, syncLiveMap, commitTerrainLive,
 } from './mapEditorSession.js';
@@ -56,6 +59,10 @@ export const MapEditorBoardTool = {
   _tool: 'brush',        // 'brush' | 'move' | 'add' | 'delete'
   _brushMode: 'draw',     // 'draw' | 'erase'（同弹窗）
   _brushRadius: null,     // 现算，见 enable()（软编码默认值）
+  // 高地石墙笔刷（素材库）：只在"擦除"（画墙）模式下有意义——画可走时不存在
+  // "这格该长成什么风格"这个问题。AUTO=沿用 BoundaryDecorLayer 现在按位置的
+  // 自动判定，NATURAL/STONE 是显式覆写。
+  _wallStyle: WALL_STYLE_AUTO,
   _faction: 'blue',       // 'add' 工具用：新塔归哪一方
   _deps: null,            // { mapSystem, renderer3d, canvasController, entityContainer, logFn }
   _painting: false,
@@ -201,11 +208,17 @@ export const MapEditorBoardTool = {
   _commitStroke() {
     const session = getSession();
     const { mapSystem, canvasController, renderer3d } = this._deps;
+    const drawing = this._brushMode === 'draw';
+    // 高地石墙笔刷：画可走时这格不该再带风格标签（墙都没了，风格无意义），
+    // 统一清回 AUTO；擦除（画墙）时按当前选中的风格写入——AUTO 等于"不画风格"，
+    // 不单独判空跳过也没关系，写 0 和不写效果一样。
+    const styleValue = drawing ? WALL_STYLE_AUTO : this._wallStyle;
     for (const p of this._strokePoints) {
       const world = canvasController.screenToWorld(p.x, p.y);
       const gx = world.x / (session.baseMap.world?.w || 1) * session.n;
       const gy = world.y / (session.baseMap.world?.h || 1) * session.n;
-      paintCircle(session.bits, session.n, gx, gy, this._brushRadius, this._brushMode === 'draw');
+      paintCircle(session.bits, session.n, gx, gy, this._brushRadius, drawing);
+      paintByteCircle(session.wallStyle, session.n, gx, gy, this._brushRadius, styleValue);
     }
     this._strokePoints = [];
     this._clearStrokeVisual();
@@ -320,6 +333,12 @@ export const MapEditorBoardTool = {
         <button class="icon-btn ${this._brushMode === 'erase' ? 'primary' : ''}" id="mbtBrushErase" title="擦不可走">⬛</button>
         <input id="mbtBrushRadius" type="range" min="${CONFIG.mapEditor.brushRadiusGridMin}" max="${CONFIG.mapEditor.brushRadiusGridMax}" value="${this._brushRadius}" style="flex:1;">
       </div>` : ''}
+      ${this._tool === 'brush' && this._brushMode === 'erase' ? `
+      <div style="display:flex;gap:4px;">
+        <button class="icon-btn ${this._wallStyle === WALL_STYLE_AUTO ? 'primary' : ''}" id="mbtWallAuto" title="自动（按位置判定）">❔</button>
+        <button class="icon-btn ${this._wallStyle === WALL_STYLE_NATURAL ? 'primary' : ''}" id="mbtWallNatural" title="自然树石">🌲</button>
+        <button class="icon-btn ${this._wallStyle === WALL_STYLE_STONE ? 'primary' : ''}" id="mbtWallStone" title="石柱围墙">🧱</button>
+      </div>` : ''}
       ${this._tool === 'add' ? `
       <div style="display:flex;gap:4px;">
         <button class="icon-btn ${this._faction === 'blue' ? 'primary' : ''}" id="mbtFacBlue" title="蓝方">🔵</button>
@@ -337,6 +356,9 @@ export const MapEditorBoardTool = {
     document.getElementById('mbtBrushRadius')?.addEventListener('input', (e) => {
       this._brushRadius = Number(e.target.value) || CONFIG.mapEditor.brushRadiusGridDefault;
     });
+    document.getElementById('mbtWallAuto')?.addEventListener('click', () => { this._wallStyle = WALL_STYLE_AUTO; this._render(); });
+    document.getElementById('mbtWallNatural')?.addEventListener('click', () => { this._wallStyle = WALL_STYLE_NATURAL; this._render(); });
+    document.getElementById('mbtWallStone')?.addEventListener('click', () => { this._wallStyle = WALL_STYLE_STONE; this._render(); });
     document.getElementById('mbtFacBlue')?.addEventListener('click', () => { this._faction = 'blue'; this._render(); });
     document.getElementById('mbtFacRed')?.addEventListener('click', () => { this._faction = 'red'; this._render(); });
     this._updateStatus();

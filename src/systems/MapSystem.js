@@ -6,7 +6,7 @@ import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected, mapFactionsOf } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
-import { unpackBits } from '../data/navgrid.js';
+import { unpackBits, unpackByteGrid } from '../data/navgrid.js';
 import { LIVE_EDIT_SESSION_MAP_ID } from '../data/mapEditorCore.js';
 import { resolveAuraEffectValue } from './AuraValueResolver.js';
 // 重生血量与出生血量必须用同一个"最大生命"口径，见 factories.js spawnAtFullHP 头注。
@@ -940,23 +940,59 @@ export class MapSystem {
   }
 
   /**
+   * 高地石墙笔刷（素材库）：解码 wallStyleGrid（逐格风格 id，0=自动/1=自然树石/
+   * 2=石柱围墙），按需解码一次并缓存——与 _navgrid() 同一套缓存/失效节奏
+   * （invalidateNav() 一起清）。未声明这张覆写网格、或分辨率跟 navgrid 的 n
+   * 对不上时返回 null，调用方（BoundaryDecorLayer）据此退回现在的"按位置自动
+   * 判定"，逐位不变——与 mapEditorCore.js 的 decodeWallStyleGrid 是同一条
+   * "没声明/尺寸不匹配就退回默认公式"规则，只是这里是运行时读，那边是编辑器写。
+   */
+  _wallStyleGrid() {
+    if (this._wallStyle !== undefined) return this._wallStyle;
+    this._wallStyle = null;
+    const wsg = this.currentMap?.wallStyleGrid;
+    const nav = this._navgrid();
+    if (wsg && nav && wsg.n === nav.n) {
+      const styles = unpackByteGrid(wsg.styles, wsg.n);
+      if (styles) this._wallStyle = { n: wsg.n, styles };
+    }
+    return this._wallStyle;
+  }
+
+  /**
+   * 某世界坐标处笔刷显式指定的墙体风格 id（0=自动/1=自然树石/2=石柱围墙）；
+   * 没有覆写网格、或该地图不是 navgrid 地图时恒返回 0（自动）。
+   */
+  wallStyleAt(x, y) {
+    const ws = this._wallStyleGrid();
+    if (!ws) return 0;
+    const W = this.currentMap.world;
+    const i = Math.floor(x / W.w * ws.n), j = Math.floor(y / W.h * ws.n);
+    if (i < 0 || j < 0 || i >= ws.n || j >= ws.n) return 0;
+    return ws.styles[j * ws.n + i] || 0;
+  }
+
+  /**
    * v51.32：地图编辑器前置重构（阶段二，见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md
-   * §2 原则 6）——navgrid 相关缓存的失效入口：解码后的可行走位图（`_nav`）与
-   * 各路回流场（`_fields`，见 `_laneField`）。
+   * §2 原则 6）——navgrid 相关缓存的失效入口：解码后的可行走位图（`_nav`）、逐格
+   * 墙体风格（`_wallStyle`，v51.33 高地石墙笔刷新增）与各路回流场
+   * （`_fields`，见 `_laneField`）。
    *
-   * 正常切图不需要调用这个方法：两处缓存各自靠 `this._nav !== undefined` /
-   * `this._fieldsMapId !== map.id` 在切图时自然重算。这个方法是给"同一张图、
-   * navgrid 数据在运行时被改了"这一种场景用的——目前唯一会发生这种事的是地图编辑器
-   * 的地形笔刷：画一笔就要让"能不能走"和"沿哪条路脱困"两份缓存立刻失效，
-   * 否则画完地形，寻路读到的还是画之前的旧位图。
+   * 正常切图不需要调用这个方法：三处缓存各自靠 `this._nav !== undefined` /
+   * `this._wallStyle !== undefined` / `this._fieldsMapId !== map.id` 在切图时
+   * 自然重算。这个方法是给"同一张图、navgrid 数据在运行时被改了"这一种场景用的
+   * ——目前唯一会发生这种事的是地图编辑器的地形笔刷：画一笔就要让"能不能走"、
+   * "画的什么风格"和"沿哪条路脱困"三份缓存立刻失效，否则画完地形，寻路/装饰层
+   * 读到的还是画之前的旧数据。
    *
-   * 只清 MapSystem 自己这两处逻辑层缓存；渲染层（离屏地形画布、植被/水面/裙边网格）
-   * 的缓存走 `ThreeRenderer.invalidateTerrain()`，两处调用点分开是因为
+   * 只清 MapSystem 自己这三处逻辑层缓存；渲染层（离屏地形画布、植被/水面/裙边网格、
+   * 城墙树石装饰）的缓存走 `ThreeRenderer.invalidateTerrain()`，两处调用点分开是因为
    * MapSystem（系统层）不允许 import 渲染层模块（CLAUDE.md 的系统间禁止互相 import）——
    * 调用方（未来的地图编辑器）需要在改完 navgrid 后把两个方法都调一遍。
    */
   invalidateNav() {
     this._nav = undefined;
+    this._wallStyle = undefined;
     this._fields = {};
   }
 

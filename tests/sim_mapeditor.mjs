@@ -820,4 +820,108 @@ const T = board.T;
     /data-customized-idx[\s\S]{0,300}selectedBuildingIndex\s*=\s*Number\(card\.dataset\.customizedIdx\)/.test(src));
 }
 
+// ==================== v51.33：高地石墙笔刷（素材库）====================
+// 用户原话"高地石墙笔刷这个功能设计一下。就是弄成可以选择素材库里的素材然后画"
+// ——定稿范围先只覆盖两种已建好模型的风格（自然树石/石柱围墙），复用 v51.32
+// 材质笔刷(zoneCellGrid)同一套"没声明就退回默认公式、尺寸不匹配就安全兜底"模式。
+{
+  const { decodeWallStyleGrid, WALL_STYLE_AUTO, WALL_STYLE_NATURAL, WALL_STYLE_STONE }
+    = await import('../src/data/mapEditorCore.js');
+  const { paintByteCircle, packByteGrid } = await import('../src/data/navgrid.js');
+
+  T('①-风格常量三值：AUTO=0/NATURAL=1/STONE=2（编码约定，改了要连带改渲染层判定）',
+    WALL_STYLE_AUTO === 0 && WALL_STYLE_NATURAL === 1 && WALL_STYLE_STONE === 2);
+
+  T('②-decodeWallStyleGrid：没声明 wallStyleGrid 时退回全 0（=全部自动）',
+    Array.from(decodeWallStyleGrid({}, 8)).every(v => v === 0) && decodeWallStyleGrid({}, 8).length === 64);
+
+  {
+    const n = 8;
+    const styles = new Uint8Array(n * n);
+    styles[10] = WALL_STYLE_STONE;
+    const mapObj = { wallStyleGrid: { n, styles: packByteGrid(styles) } };
+    const decoded = decodeWallStyleGrid(mapObj, n);
+    T('③-decodeWallStyleGrid：声明且分辨率匹配时正确解码（往返一致）',
+      decoded[10] === WALL_STYLE_STONE && decoded[0] === WALL_STYLE_AUTO);
+  }
+
+  {
+    const n = 8;
+    const styles = new Uint8Array(n * n).fill(WALL_STYLE_NATURAL);
+    const mapObj = { wallStyleGrid: { n: 16, styles: packByteGrid(styles) } };   // 分辨率对不上
+    const decoded = decodeWallStyleGrid(mapObj, n);
+    T('④-decodeWallStyleGrid：分辨率不匹配时安全退回全 0，不强行拉伸凑数据',
+      decoded.length === n * n && Array.from(decoded).every(v => v === 0));
+  }
+
+  T('⑤-paintByteCircle：写入的是原始字节值，不像 paintCircle 那样把 value 压成 0/1',
+    (() => {
+      const n = 8;
+      const bits = new Uint8Array(n * n);
+      paintByteCircle(bits, n, 4, 4, 2, WALL_STYLE_STONE);
+      return bits[4 * n + 4] === WALL_STYLE_STONE;
+    })());
+
+  T('⑥-paintByteCircle：越界的圆自动裁掉，不越界写',
+    (() => {
+      const n = 4;
+      const bits = new Uint8Array(n * n);
+      paintByteCircle(bits, n, 0, 0, 10, WALL_STYLE_NATURAL);   // 半径远超地图，应该被裁到画布内
+      return bits.length === n * n;   // 没有抛异常/越界写，数组长度不变即视为通过
+    })());
+
+  const { buildCustomMapPayload, decodeBaseBits } = await import('../src/data/mapEditorCore.js');
+  {
+    const base = MAPS.summoners_rift_v1 || Object.values(MAPS)[0];
+    const baseMap = base || { id: 'x', label: 'x', world: { w: 100, h: 100 }, lanes: [] };
+    const { n, bits } = decodeBaseBits(baseMap);
+    const wallStyle = new Uint8Array(n * n);
+    wallStyle[0] = WALL_STYLE_STONE;
+    const payload = buildCustomMapPayload(baseMap, { id: 'test_wallstyle', label: 'x', n, bits, wallStyle });
+    T('⑦-buildCustomMapPayload：传了 wallStyle 时落盘 wallStyleGrid 字段',
+      !!payload.wallStyleGrid && payload.wallStyleGrid.n === n);
+    const payloadNoStyle = buildCustomMapPayload(baseMap, { id: 'test_wallstyle2', label: 'x', n, bits });
+    T('⑧-buildCustomMapPayload：不传 wallStyle 时不落盘该字段（不传就不动，同 buildings/pits 等既有字段的规则）',
+      !('wallStyleGrid' in payloadNoStyle) || payloadNoStyle.wallStyleGrid === baseMap.wallStyleGrid);
+  }
+}
+
+// ==================== v51.33：高地石墙笔刷——两个编辑器 UI 接线（源码正则） ====================
+{
+  const dialogSrc = srcOf('../src/ui/MapEditorDialog.js');
+  T('⑨-2D弹窗：导入了 decodeWallStyleGrid + 三个风格常量',
+    /decodeWallStyleGrid/.test(dialogSrc) && /WALL_STYLE_AUTO/.test(dialogSrc)
+    && /WALL_STYLE_NATURAL/.test(dialogSrc) && /WALL_STYLE_STONE/.test(dialogSrc));
+  T('⑩-2D弹窗：有三个风格按钮（自动/自然/石墙），且只在擦除模式下渲染',
+    /mapEditorWallAuto/.test(dialogSrc) && /mapEditorWallNatural/.test(dialogSrc) && /mapEditorWallStone/.test(dialogSrc)
+    && /brushMode === 'erase' \? `/.test(dialogSrc));
+  T('⑪-2D弹窗：圆形笔刷落笔时调用了 paintByteCircle 写风格网格',
+    /paintAt[\s\S]{0,500}paintByteCircle\(wallStyle/.test(dialogSrc));
+  T('⑫-2D弹窗：保存时把 wallStyle 传给 buildCustomMapPayload',
+    /buildCustomMapPayload\(baseMap,\s*\{[\s\S]{0,100}wallStyle/.test(dialogSrc));
+
+  const boardSrc = srcOf('../src/ui/MapEditorBoardTool.js');
+  T('⑬-3D工具条：导入了三个风格常量 + paintByteCircle',
+    /paintByteCircle/.test(boardSrc) && /WALL_STYLE_AUTO/.test(boardSrc)
+    && /WALL_STYLE_NATURAL/.test(boardSrc) && /WALL_STYLE_STONE/.test(boardSrc));
+  T('⑭-3D工具条：有三个风格按钮，且只在"擦除"笔刷模式下渲染',
+    /mbtWallAuto/.test(boardSrc) && /mbtWallNatural/.test(boardSrc) && /mbtWallStone/.test(boardSrc)
+    && /_brushMode === 'erase' \? `/.test(boardSrc));
+  T('⑮-3D工具条：松手提交时调用了 paintByteCircle 写风格网格',
+    /_commitStroke[\s\S]{0,800}paintByteCircle\(session\.wallStyle/.test(boardSrc));
+
+  const bdSrc = srcOf('../src/presentation/BoundaryDecorLayer.js');
+  T('⑯-BoundaryDecorLayer：读了 mapSystem.wallStyleAt，笔刷画的石墙风格能覆盖自动判定',
+    /wallStyleAt/.test(bdSrc) && /styledPosts/.test(bdSrc));
+  {
+    const showPillarsBlock = bdSrc.match(/if \(showPillars\) \{[\s\S]*?\n {4}\}/)?.[0] || '';
+    T('⑰-BoundaryDecorLayer：styledPosts 不受 showPillars 开关约束（笔刷显式选择优先于地图级默认，不在 if(showPillars){...} 这个块里）',
+      /place\(wallPostGeo\(SV\)[\s\S]{0,150}styledPosts,/.test(bdSrc) && !showPillarsBlock.includes('styledPosts'));
+  }
+
+  const msSrc = srcOf('../src/systems/MapSystem.js');
+  T('⑱-MapSystem：wallStyleAt 方法存在，invalidateNav 一并清 _wallStyle 缓存',
+    /wallStyleAt\(x, y\)/.test(msSrc) && /invalidateNav\(\)\s*\{[\s\S]{0,150}_wallStyle = undefined/.test(msSrc));
+}
+
 board.done();

@@ -31,9 +31,10 @@
  * `MapEditorBoardTool.js` 对"结构性变化才重新同步"的注释。
  */
 import {
-  decodeBaseBits, cloneBuildingsForEdit, cloneMapForEdit, buildCustomMapPayload, LIVE_EDIT_SESSION_MAP_ID,
+  decodeBaseBits, decodeWallStyleGrid, cloneBuildingsForEdit, cloneMapForEdit,
+  buildCustomMapPayload, LIVE_EDIT_SESSION_MAP_ID,
 } from '../data/mapEditorCore.js';
-import { packBits } from '../data/navgrid.js';
+import { packBits, packByteGrid } from '../data/navgrid.js';
 import { CONFIG } from '../data/Config.js';
 
 let _session = null;
@@ -55,7 +56,10 @@ export function startSession(mapSystem, baseId) {
   if (!original) throw new Error('mapEditorSession.startSession: 地图不存在 ' + baseId);
   const clone = cloneMapForEdit(original);
   const { n, bits } = decodeBaseBits(clone);
-  _session = { baseId, baseMap: clone, n, bits, draftBuildings: cloneBuildingsForEdit(clone) };
+  // 高地石墙笔刷（素材库）：草稿同时带一份逐格风格覆写，跟 bits 用同一个 n，
+  // 与 bits 同生命周期（切图/开新会话时一起重新解码）。
+  const wallStyle = decodeWallStyleGrid(clone, n);
+  _session = { baseId, baseMap: clone, n, bits, wallStyle, draftBuildings: cloneBuildingsForEdit(clone) };
   return _session;
 }
 
@@ -87,7 +91,7 @@ export function syncLiveMap(mapSystem, renderer3d) {
   const session = ensureSession(mapSystem);
   const payload = buildCustomMapPayload(session.baseMap, {
     id: LIVE_EDIT_SESSION_MAP_ID, label: session.baseMap.label,
-    n: session.n, bits: session.bits, buildings: session.draftBuildings,
+    n: session.n, bits: session.bits, wallStyle: session.wallStyle, buildings: session.draftBuildings,
   });
   if (!CONFIG.customMaps || typeof CONFIG.customMaps !== 'object') CONFIG.customMaps = {};
   CONFIG.customMaps[LIVE_EDIT_SESSION_MAP_ID] = payload;
@@ -107,6 +111,12 @@ export function commitTerrainLive(mapSystem, renderer3d) {
   const session = getSession();
   if (!session || mapSystem.currentMap?.id !== LIVE_EDIT_SESSION_MAP_ID) return;
   mapSystem.currentMap.navgrid = { n: session.n, bits: packBits(session.bits) };
+  // 高地石墙笔刷（素材库）：跟 navgrid 同一次提交一起写，两者本来就是同一批笔刷
+  // 操作画出来的（地形笔刷改可走性，风格笔刷改风格标签），分开提交只会制造
+  // "画完地形风格却没跟着更新"这种时序坑。
+  if (session.wallStyle) {
+    mapSystem.currentMap.wallStyleGrid = { n: session.n, styles: packByteGrid(session.wallStyle) };
+  }
   mapSystem.invalidateNav?.();
   renderer3d?.invalidateTerrain?.();
 }

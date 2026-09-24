@@ -142,6 +142,27 @@ export function paintCircle(bits, n, cx, cy, r, value) {
 }
 
 /**
+ * 笔刷：同 paintCircle 的几何（圆心/半径同一套格子坐标），但写入的是任意字节值
+ * （0~255），不像 paintCircle 那样把 value 强制压成 0/1——素材库笔刷（wallStyleGrid，
+ * 见 mapEditorCore.js）要画的是"哪种风格"这个多值状态，不是可走/不可走这个二值
+ * 状态，不能借用 paintCircle（会把风格 id 2 压成 1）。与 unpackByteGrid/
+ * packByteGrid 是同一套"每格一个小整数"编码家族。
+ */
+export function paintByteCircle(bits, n, cx, cy, r, value) {
+  const v = value & 0xff;
+  const r2 = r * r;
+  const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(n - 1, Math.ceil(cx + r));
+  const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(n - 1, Math.ceil(cy + r));
+  for (let gy = y0; gy <= y1; gy++) {
+    for (let gx = x0; gx <= x1; gx++) {
+      const dx = gx + 0.5 - cx, dy = gy + 0.5 - cy;
+      if (dx * dx + dy * dy <= r2) bits[gy * n + gx] = v;
+    }
+  }
+  return bits;
+}
+
+/**
  * 通用逐格字节数据的编解码——每格 1 字节（0~255），不做位打包，直接
  * Uint8Array → base64。与 unpackBits/packBits（每格 1 bit）是两套独立编码，
  * 不要为了"格式统一"硬凑成同一种打包方式（见设计报告 §3.2 高度笔刷那段的

@@ -13,7 +13,7 @@
  * 是设计报告阶段六（兵路径自定义）要做的事，不在这一批范围内。
  */
 import { SR_NAVGRID } from './maps/sr_navgrid.js';
-import { unpackBits, packBits } from './navgrid.js';
+import { unpackBits, packBits, unpackByteGrid, packByteGrid } from './navgrid.js';
 import { CONFIG } from './Config.js';
 import {
   nearestPointOnPolyline, buildingCountsSymmetric, buildingOnLaneOrInBase,
@@ -50,6 +50,30 @@ export function decodeBaseBits(baseMap) {
   return { n: ng.n, bits };
 }
 
+// ==================== 高地石墙笔刷：素材库（wallStyleGrid） ====================
+// 用户定稿的范围："弄成可以选择素材库里的素材然后画"，先只覆盖已经建好模型的
+// 两种风格——不新增美术。0=自动（沿用 BoundaryDecorLayer 现在按位置的自动判定，
+// 未声明这张覆写网格时逐位不变）、1=自然树石丛、2=石柱围墙。
+export const WALL_STYLE_AUTO = 0;
+export const WALL_STYLE_NATURAL = 1;
+export const WALL_STYLE_STONE = 2;
+
+/**
+ * 把一张地图的 wallStyleGrid 解码成笔刷能直接改的 Uint8Array（长度 n×n，逐格
+ * 风格 id）。未声明、或声明了但分辨率跟当前 navgrid 的 n 对不上（笔刷分辨率与
+ * 本次渲染批次不是同一批）时，安全退回全 0（=全部自动判定），不强行拉伸凑数据
+ * ——与 TerrainMaterial.js 的 zoneCellGrid 覆写走的是同一条"没声明/尺寸不匹配就
+ * 退回默认公式"规则。
+ */
+export function decodeWallStyleGrid(baseMap, n) {
+  const wsg = baseMap?.wallStyleGrid;
+  if (wsg && wsg.n === n) {
+    const decoded = unpackByteGrid(wsg.styles, n);
+    if (decoded) return decoded;
+  }
+  return new Uint8Array(n * n);
+}
+
 /**
  * 深克隆一张地图数据（供编辑器改动而不污染原对象——尤其是内置地图，那是模块级
  * 常量，被 MAPS 表和当前正在跑的对局同时引用，编辑器决不能就地改它）。
@@ -67,7 +91,7 @@ export function cloneMapForEdit(baseMap) {
  * @param {object} o        { id, label, n, bits }—— bits 是笔刷改完的 Uint8Array
  */
 export function buildCustomMapPayload(baseMap, {
-  id, label, n, bits, buildings, baseCircleRadius, pits, lanes, factions, spawnEnabled,
+  id, label, n, bits, wallStyle, buildings, baseCircleRadius, pits, lanes, factions, spawnEnabled,
   laneWaveCompositionByLane, neutralCamps, globalAura,
 }) {
   if (!id) throw new Error('buildCustomMapPayload: id 不能为空');
@@ -75,6 +99,13 @@ export function buildCustomMapPayload(baseMap, {
   clone.id = id;
   clone.label = label || id;
   clone.navgrid = { n, bits: packBits(bits) };
+  // 高地石墙笔刷（素材库）：只有真的画过风格覆写时才落盘这个字段，不传就保持
+  // baseMap 原值（cloneMapForEdit 的整体 JSON 克隆已经带过来了）——同 buildings/
+  // pits 这批字段一样的"不传就不动"规则。全 0（没有任何格子被显式指定风格）也要
+  // 落盘：区分"这张图从没用过素材库笔刷"（不传，沿用 baseMap 原值/不存在）与
+  // "用过笔刷但目前所有格子都是自动"（传全0数组）没有实际意义上的必要，索性
+  // 只要调用方传了 wallStyle 就落盘，逻辑更简单，也不会产生歧义。
+  if (wallStyle instanceof Uint8Array) clone.wallStyleGrid = { n, styles: packByteGrid(wallStyle) };
   // 建筑摆放（阶段三剩余）：不传 buildings 时保持"整体克隆 baseMap 的建筑"这条
   // 参数化前的默认行为完全不变（见 docs/DEVELOPMENT.md §8.3），只有真的拖动过
   // 建筑、调用方显式传了草稿数组时才覆盖。
