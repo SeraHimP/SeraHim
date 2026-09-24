@@ -1210,13 +1210,18 @@ export const weapons = {
       if (dmg <= 0) return;
 
       const groupEff = targets.length > 1; // 多条独立光束同时命中：吸血按群体效率折扣（与连锁/溅射同规格）
+      // v55.3 修复：光束颜色原来写死 '#a78bfa'（图标紫），不认施法塔的阵营——用户报
+      // "光棱塔的子弹轨迹未跟随阵营颜色"。改成跟 weapon_lightning（本文件上面那处
+      // 闪电杖光束）同一套阵营判色，不是新发明一套规则。
+      const fac = entity._mapFaction;
+      const beamColor = fac === 'blue' ? '#5b9bd5' : fac === 'red' ? '#e0473f' : '#f1c40f';
       for (const t of targets) {
         ctx.combat.performAttackDirect(entity.id, t.id, dmg, resolvedType, { basicAttack: true, vampGroup: groupEff });
         if (ctx.combat.projectiles && ctx.combat.projectiles.fireBeam) {
           ctx.combat.projectiles.fireBeam({
             startX: entity.pos.x, startY: entity.pos.y,
             endX: t.pos.x, endY: t.pos.y,
-            charge: 1, life: 0.12, color: '#a78bfa',
+            charge: 1, life: 0.12, color: beamColor,
             attackerId: entity.id, targetId: t.id,
             // v51.31：ProjectileSystem.fireBeam 原来按 attackerId 当 Map key（一个
             // 攻击者一条常驻光束），光棱塔同一时刻却要开最多4条——不给独立 key 的话

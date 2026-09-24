@@ -1341,6 +1341,8 @@ export class ThreeRenderer {
     // 暂停时雪该继续"落"）。两层各自内部节流，这里每帧都调没关系。
     if (this.veg && this.vegOn) this.veg.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
     if (this.boundaryDecor) this.boundaryDecor.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
+    // v55.3：塔也要有被雪覆盖的效果，同一节流口径，见 InstancedBodyLayer.BodyInstancer.updateSnow。
+    if (this.units?.bodyInst) this.units.bodyInst.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
     // P1：走后处理管线（Bloom+ACES+FXAA+描边+SSAO）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
       if (!this.composer) this._buildComposer();

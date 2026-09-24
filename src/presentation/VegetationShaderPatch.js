@@ -41,6 +41,27 @@ const _cfg = () => (CONFIG.ui && CONFIG.ui.vegetationWindFx) || {};
 // 供 setWindStrength() 每帧统一回写，不用在每个调用点各自记住哪些材质被 patch 过。
 const _registry = new Set();
 
+// ==================== v55.3 修复：program 缓存串号导致落雪效果在树上不生效 ====================
+// 用户报"野区依旧没有雪覆盖"——排查发现石头确实变白了，树却纹丝不动，而两者
+// 用的是同一套 applySnowTint。根因是 three.js 的 Material.customProgramCacheKey()
+// 默认实现是 `this.onBeforeCompile.toString()`——只看函数【源码文本】，不看闭包里
+// 实际捕获的变量。applyWindSway/applySnowTint 里的 onBeforeCompile 函数体对每个
+// 材质都是逐字相同的一段代码（只是闭包变量不同——不同的 uniforms/prevOnBeforeCompile
+// 引用），`.toString()` 拿到的文本因此对所有"经过同一个 patch 函数"的材质都一样，
+// three.js 于是认为它们"可以共用同一个编译好的 GPU program"，直接复用了先编译出来
+// 的那份、忽略了这个材质自己实际要注入的 shader 内容——树（先过 applyWindSway
+// 再过 applySnowTint，两层 onBeforeCompile 叠加）和只过一层 applySnowTint 的材质
+// 凑巧签名一样时，谁先编译谁的版本就被别的材质错误地复用了。
+// 官方文档原话就是这个坑："If … onBeforeCompile … a unique customProgramCacheKey
+// must be set too, otherwise the renderer might reuse a shader program from a
+// different material." 这里给每个真正 patch 过的材质发一个全局自增的唯一签名，
+// 保证 three.js 永远不会把它跟别的材质错认成同一份 program。
+let _nextCacheKeyId = 1;
+function _forceUniqueProgramCacheKey(material) {
+  const id = _nextCacheKeyId++;
+  material.customProgramCacheKey = () => `vegShaderPatch_${id}`;
+}
+
 /**
  * 给一个 InstancedMesh 的几何+材质注入风摆动。调用方需要先给 geometry 装好
  * 名为 instancePhase 的 InstancedBufferAttribute（一实例一个相位值，弧度）。
@@ -87,6 +108,7 @@ export function applyWindSway(geometry, material) {
   // 角频率不写死在 GLSL 字面量里——uWindTime 由 updateWindSway() 按 dt×freq 累加，
   // shader 侧永远只是 sin(uWindTime + instancePhase)，频率完全交给 JS 侧的累加
   // 节奏决定，CONFIG 改 freq 立刻生效，不用重新编译 shader。
+  _forceUniqueProgramCacheKey(material); // 见文件头 v55.3 修复记录
   material.needsUpdate = true;
   _registry.add({ material, uniforms });
 }
@@ -151,19 +173,35 @@ export function applySnowTint(geometry, material) {
         '#include <begin_vertex>',
         'vSnowAmt = instanceSnow;',
       ].join('\n'));
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', [
-        '#include <common>',
-        'varying float vSnowAmt;',
-      ].join('\n'))
-      // 放在 <color_fragment> 之后：先让内置的 vColor（顶点色/instanceColor 乘法）
-      // 按原样跑完，落雪效果在它算出的最终 diffuseColor 基础上再往白混一层，
-      // 两件事互不冲突、顺序也不影响结果（乘法与插值可以任意先后）。
-      .replace('#include <color_fragment>', [
-        '#include <color_fragment>',
-        'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), vSnowAmt);',
-      ].join('\n'));
+    // ==================== v55.3 排查记录：注入点从 <color_fragment> 挪到了 gl_FragColor ====================
+    // 第一版混在 <color_fragment> 之后改 diffuseColor.rgb——石头（纯色材质）上确实
+    // 变白了，树（vertexColors+flatShading，且先经过 applyWindSway 叠一层
+    // onBeforeCompile）上却纹丝不动。逐步排查：① 直接整段覆盖 diffuseColor.rgb（不
+    // 读它原来的值）——树也会变色，证明注入点本身、instanceSnow→vSnowAmt 这条链路
+    // 都是通的；② 只要表达式【读】diffuseColor.rgb 当前值（不管是 mix 还是
+    // += 之类的自引用运算）——树上一律没有任何可见变化，石头上仍然正常。这说明
+    // 树用的这条 Lambert 管线里，diffuseColor.rgb 在 <color_fragment> 这一步之后、
+    // 最终像素输出之前，会被后面的光照/色调映射链路重新算过、覆盖掉这里改的值
+    // （MeshLambertMaterial 的漫反射是按顶点算光照、fragment 端还会过 tonemapping/
+    // colorspace 这些阶段），而石头那条更简单的材质配置没有触发这个覆盖——没有
+    // 深究具体是哪一道工序覆盖的，因为挪到 gl_FragColor 这个更靠谱的通用锚点后
+    // 两种材质配置都验证过了。改成直接在 main() 函数体的最后一条语句之前（此时
+    // gl_FragColor 已经是最终要写进帧缓冲的值，之后不会再被任何标准 chunk 改动）
+    // 补一行 mix，两种材质配置都用同一份逻辑，不用再纠结某个具体 material
+    // 类型的光照管线内部细节，往后 InstancedMesh 用别的材质类型也一样适用。
+    const withVarying = shader.fragmentShader.replace('#include <common>', [
+      '#include <common>',
+      'varying float vSnowAmt;',
+    ].join('\n'));
+    // main() 函数体最后一条语句之前插入——此时 gl_FragColor 已经是这个材质模板
+    // 本来就要写进帧缓冲的最终值，插在这里不用管具体是哪种材质模板、光照管线
+    // 内部把 diffuseColor 传递到最终输出之间还有几道工序。
+    const insertAt = withVarying.lastIndexOf('}');
+    shader.fragmentShader = withVarying.slice(0, insertAt)
+      + '  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), vSnowAmt);\n'
+      + withVarying.slice(insertAt);
   };
+  _forceUniqueProgramCacheKey(material); // 见文件头 v55.3 修复记录
   material.needsUpdate = true;
 }
 

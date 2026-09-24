@@ -222,8 +222,12 @@ const mk = (id) => {
   T('雪接⑥-VegetationLayer 新增 updateSnow(dt, groundTraceSystem) 方法', /updateSnow\(dt, groundTraceSystem\) \{/.test(veg2));
 
   const patch = srcOf('src/presentation/VegetationShaderPatch.js');
+  // v55.3 修复：注入点从 <color_fragment> 后的 diffuseColor.rgb 挪到了 main() 末尾的
+  // gl_FragColor.rgb——树（MeshLambertMaterial + vertexColors + flatShading + 链式
+  // onBeforeCompile）在 diffuseColor.rgb 上做混合会被后续管线静默吃掉，gl_FragColor
+  // 是确定不会再被覆写的最终像素值，两种材质配置都验证过有效（见该文件头注排查记录）。
   T('雪接⑦-VegetationShaderPatch 用 mix() 往白插值（不是乘法/instanceColor那套，理由见头注）',
-    /diffuseColor\.rgb = mix\(diffuseColor\.rgb, vec3\(1\.0\), vSnowAmt\);/.test(patch));
+    /gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, vec3\(1\.0\), vSnowAmt\);/.test(patch));
   T('雪接⑧-updateSnowInstances 封顶乘 maxBlend（不是把雪深原样写进去，读 Config 的 maxBlend）',
     /arr\[i\] = depth \* maxBlend;/.test(patch));
 

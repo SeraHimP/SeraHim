@@ -43,6 +43,9 @@
  *     UnitMeshFactory.unitMaterial() 共享材质本来就是这个模型，InstancedMesh 不改变它。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { applySnowTint } from './VegetationShaderPatch.js';
+import { CONFIG } from '../data/Config.js';
+import { sampleSnowGrid } from '../systems/GroundTraceSystem.js';
 
 const INITIAL_CAPACITY = 24;
 
@@ -61,10 +64,26 @@ function shadowFor(level, isTower) {
 class BodyBucket {
   constructor(scene, geo, mat, isTower, level) {
     this.scene = scene;
-    this.geo = geo; this.mat = mat;
     this.isTower = isTower;
     this.capacity = INITIAL_CAPACITY;
-    this.mesh = new THREE.InstancedMesh(geo, mat, this.capacity);
+    // ==================== v55.3：塔"被雪覆盖"效果 ====================
+    // 用户要求"塔也有被雪覆盖的效果"，跟野区植被同一套 applySnowTint/
+    // updateSnowInstances（VegetationShaderPatch.js，本来就是通用工具，不是
+    // 植被专属）。但这里的 geo/mat 是 UnitMeshFactory 按 key 全局共享的缓存
+    // （见文件头注），直接在共享对象上加 instanceSnow 属性/onBeforeCompile 会
+        // 波及同一份缓存的其它消费者（比如编辑器里的幽灵预览塔可能复用同一把
+    // 几何/材质，但没有走 InstancedMesh、没有这个属性，会导致 shader 编译要求
+    // 的 attribute 缺失）。只对塔桶克隆一份专属 geo/mat 再挂雪效——塔数量少
+    // （≤44，且文件头注已经说"塔的几何 key 本来就很碎，大部分互不共享"），
+    // 克隆的额外开销可以忽略；小兵桶继续用共享对象，不受影响，逐位不变。
+    this.geo = isTower ? geo.clone() : geo;
+    this.mat = isTower ? mat.clone() : mat;
+    if (isTower) {
+      this.geo.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(this.capacity), 1));
+      applySnowTint(this.geo, this.mat);
+      this._snowPosArr = new Float32Array(this.capacity * 3); // 每槽位缓存一份世界坐标，updateSnow 时不用每次都解矩阵算三角函数
+    }
+    this.mesh = new THREE.InstancedMesh(this.geo, this.mat, this.capacity);
     this.mesh.frustumCulled = false;
     const { cast, recv } = shadowFor(level, isTower);
     this.mesh.castShadow = cast; this.mesh.receiveShadow = recv;
@@ -79,6 +98,15 @@ class BodyBucket {
     while (cap < minCap) cap *= 2;
     if (cap === this.capacity) return;
     const old = this.mesh;
+    if (this.isTower) {
+      const newSnowAttr = new Float32Array(cap);
+      const oldSnowAttr = this.geo.getAttribute('instanceSnow')?.array;
+      if (oldSnowAttr) newSnowAttr.set(oldSnowAttr);
+      this.geo.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(newSnowAttr, 1));
+      const newPos = new Float32Array(cap * 3);
+      newPos.set(this._snowPosArr);
+      this._snowPosArr = newPos;
+    }
     const mesh = new THREE.InstancedMesh(this.geo, this.mat, cap);
     mesh.frustumCulled = false;
     mesh.castShadow = old.castShadow; mesh.receiveShadow = old.receiveShadow;
@@ -89,6 +117,32 @@ class BodyBucket {
     this.scene.add(mesh);
     this.mesh = mesh;
     this.capacity = cap;
+  }
+
+  /**
+   * 每帧调用（isTower 桶才有意义，setMatrix 里顺带记一份世界坐标，供节流刷新雪深时
+   * 直接查表，不用每次都从矩阵里解出平移分量）。
+   */
+  _recordSnowPos(idx, x, y, z) {
+    if (!this._snowPosArr) return;
+    this._snowPosArr[idx * 3] = x;
+    this._snowPosArr[idx * 3 + 1] = y;
+    this._snowPosArr[idx * 3 + 2] = z;
+  }
+
+  /** 节流刷新这一桶里所有塔实例的落雪程度（塔不动，坐标从 _snowPosArr 直接查表）。 */
+  updateSnow(sampleFn, maxBlend) {
+    if (!this.isTower) return;
+    const attr = this.geo.getAttribute('instanceSnow');
+    if (!attr) return;
+    const arr = attr.array;
+    for (let i = 0; i < this.mesh.count; i++) {
+      if (this.free.includes(i)) continue; // 已释放的空槽位不用算，反正缩放为0不可见
+      const x = this._snowPosArr[i * 3], z = this._snowPosArr[i * 3 + 2];
+      const depth = Math.max(0, Math.min(1, sampleFn(x, z)));
+      arr[i] = depth * maxBlend;
+    }
+    attr.needsUpdate = true;
   }
 
   alloc() {
@@ -113,6 +167,7 @@ class BodyBucket {
     _m4.compose(_pos, _quat, _scl);
     this.mesh.setMatrixAt(idx, _m4);
     this.mesh.instanceMatrix.needsUpdate = true;
+    this._recordSnowPos(idx, x, y, z);
   }
 
   setLevel(level) {
@@ -126,6 +181,9 @@ class BodyBucket {
     this.mesh.dispose();
     // geometry/material 是 UnitMeshFactory 按 key 全局共享的缓存，这里不释放——
     // 与 UnitLayer.remove() 头注"共享资源随 disposeMeshCache 统一释放"同一个约定。
+    // 塔桶例外：this.geo/this.mat 在构造时已经各自 clone 过一份专属的（见构造函数
+    // 的 v55.3 注释），不是共享缓存，这里必须自己释放，否则每次重建地图都会泄漏。
+    if (this.isTower) { this.geo.dispose(); this.mat.dispose(); }
   }
 }
 
@@ -155,6 +213,27 @@ export class BodyInstancer {
   setShadowLevel(level) {
     this._level = level;
     for (const b of this.buckets.values()) b.setLevel(level);
+  }
+
+  /**
+   * 塔的积雪效果，节流刷新，口径与 VegetationLayer.updateSnow 完全一致（见
+   * Config.js ui.towerSnowFx 头注：塔数量少不是不节流的理由，两处保持同一套习惯）。
+   * groundTraceSystem 为空（还没进对局/天气系统未接线）时直接跳过，不报错。
+   */
+  updateSnow(dt, groundTraceSystem) {
+    const cfg = (CONFIG.ui && CONFIG.ui.towerSnowFx) || {};
+    const interval = cfg.updateIntervalSec ?? 0.75;
+    this._snowT = (this._snowT || 0) + dt;
+    if (this._snowT < interval) return;
+    this._snowT = 0;
+    if (!groundTraceSystem || !groundTraceSystem.getSnowCover) return;
+    const snow = groundTraceSystem.getSnowCover();
+    if (!snow) return;
+    const maxBlend = cfg.maxBlend ?? 0.55;
+    const sampleFn = (x, z) => sampleSnowGrid(snow, x, z);
+    for (const b of this.buckets.values()) {
+      if (b.isTower) b.updateSnow(sampleFn, maxBlend);
+    }
   }
 
   dispose() {

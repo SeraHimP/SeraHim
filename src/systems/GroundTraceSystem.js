@@ -1,4 +1,4 @@
-import { CONFIG } from '../data/Config.js';
+import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { EXTREME_WEATHERS } from '../data/Weather.js';
 import { forestZoneAt } from '../data/mapValidate.js';
 
@@ -274,6 +274,19 @@ export class GroundTraceSystem {
     this.snowCellZoneMix = new Float32Array(res * res); // 全 0 = 默认（无差异化）
     const map = this.mapSystem?.currentMap;
     const hasForest = Array.isArray(map?.lanes) && map.lanes.length > 0;
+    // ==================== v55.3 修复：雪盖不该铺到水面上 ====================
+    // 用户报"嚎哭深渊·冰封"这张图的水域也盖了一层雪——根因是雪盖网格原来
+    // 不区分地形类型，整张地图矩形范围内的格子统统朝 snowGlobalTarget 涨，
+    // 对召唤师峡谷这类"不可走=野区"的图碰巧没问题（野区也是陆地，落雪合理），
+    // 但对嚎哭深渊冰封版这类"不可走=水面"的图，水面也被刷了一层雪，违反常识。
+    // "可走 vs 不可走"本身不能当判据（两张图对不可走区域的含义完全相反），
+    // 复用 VegetationLayer.build() 已经在用的同一个信号——调色板声明
+    // vegetationMode:'none' 就是"这张图的非路面区域不是森林，是别的东西（水/
+    // 浮冰），不该按野区规则铺装饰"，雪盖沿用同一条判据：这种图里"不可走"的
+    // 格子标记为不积雪（noGrow=1），路面格子照常积雪；其余图（'jungle'/默认
+    // 未声明）不受影响，不可走区域仍然是野区，继续正常积雪，逐位不变。
+    this.snowCellNoGrow = new Float32Array(res * res); // 1 = 这一格永远不积雪（水面）
+    const isWaterOffPathMap = map?.visualStyle === 'stylized' && stylizedPaletteOf(map).vegetationMode === 'none';
     if (world) {
       const cellW = world.w / res, cellH = world.h / res;
       for (let gy = 0; gy < res; gy++) {
@@ -283,6 +296,9 @@ export class GroundTraceSystem {
           const idx = gy * res + gx;
           this.snowCellRateMul[idx] = mul;
           if (hasForest) this.snowCellZoneMix[idx] = forestZoneAt(map, wx, wy) === 0 ? 0 : 1;
+          if (isWaterOffPathMap && this.mapSystem?.isWalkable && !this.mapSystem.isWalkable(wx, wy)) {
+            this.snowCellNoGrow[idx] = 1;
+          }
         }
       }
     }
@@ -353,7 +369,9 @@ export class GroundTraceSystem {
     // 积雪材质差异化（v55.1）：每格的"追赶目标"不再统一是 snowGlobalTarget，
     // 野区（zoneMix===1）按 jungleMaxDepthMul 再往上提一档（"上限更高"），路面
     // （zoneMix===0，或没有森林分区数据的地图整张恒为0）目标不变，逐位一致。
+    const noGrow = this.snowCellNoGrow;
     for (let i = 0; i < grid.length; i++) {
+      if (noGrow && noGrow[i]) { grid[i] = 0; continue; } // 水面：永远不积雪，直接钳零
       const localTarget = zoneMix && zoneMix[i]
         ? Math.min(1, this.snowGlobalTarget * jungleMaxMul)
         : this.snowGlobalTarget;
@@ -418,7 +436,12 @@ export class GroundTraceSystem {
           // （auraGrace）自动到期——不用也不该在这里再传 duration，见
           // EffectRegistry.apply 的"光环机制"头注。
           aura: true, auraGrace: 1.0, name: '水洼', icon: '💧', kind: 'stat', statKey: 'moveSpeed',
-          percent: (puddleCfg.slowPct ?? -25) * inPuddle,
+          // v55.3 修复：这里原来传的字段名是 percent，EffectRegistry._recalcEffectValues
+          // 只认 percentValue（见其头注 + flatValue/percentValue 的字段约定）——字段名对
+          // 不上，totalPercent 永远按 bp.percentValue（undefined）算成 0，玩法上这个
+          // debuff 只有描述文字、从来没有真的生效过。用户报"水洼/积雪只有视觉没有数值"，
+          // 根因就是这个拼写不一致的字段名，两处（这里 + 下面积雪）一起改。
+          percentValue: (puddleCfg.slowPct ?? -25) * inPuddle,
           stackable: false, stackPolicy: 'refresh', uniquePassive: true,
           description: `水洼：移速 ${(puddleCfg.slowPct ?? -25) * inPuddle >= 0 ? '+' : ''}${Math.round((puddleCfg.slowPct ?? -25) * inPuddle)}%`,
         }, 'groundtrace_puddle');
@@ -431,7 +454,7 @@ export class GroundTraceSystem {
         const pct = (snowCfg.slowPct ?? -22) * depth;
         this.effects.apply(m.id, {
           aura: true, auraGrace: 1.0, name: '积雪', icon: '❄️', kind: 'stat', statKey: 'moveSpeed',
-          percent: pct,
+          percentValue: pct, // 见上面水洼那条的 v55.3 修复记录，同一个字段名bug
           stackable: false, stackPolicy: 'refresh', uniquePassive: true,
           description: `积雪：移速 ${pct >= 0 ? '+' : ''}${Math.round(pct)}%`,
         }, 'groundtrace_snowcover');

@@ -103,7 +103,7 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
 
 // ==================== 三、水洼：进去减速，效果随强度打折 ====================
 {
-  const { ents, fx } = await makeWorld();
+  const { ents, fx, attr } = await makeWorld();
   const ws = mkWeather();
   const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
   setCharge(ws, 'rain', 0.95);
@@ -114,8 +114,18 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
   gts._applyEffects();
   const insideEff = fx.getEffects(inside.id).find(e => e.blueprint.name === '水洼');
   const outsideEff = fx.getEffects(outside.id).find(e => e.blueprint.name === '水洼');
-  T('水⑧-站在水洼里的单位获得负向移速修正（减速）', insideEff && insideEff.blueprint.percent < 0);
+  // v55.3 修复：blueprint 字段名从 percent 改成 EffectRegistry 真正读取的 percentValue
+  // （见 GroundTraceSystem._applyEffects 头注——原字段名是个静默失效的bug，减速从未生效过）。
+  T('水⑧-站在水洼里的单位获得负向移速修正（减速）', insideEff && insideEff.blueprint.percentValue < 0);
   T('水⑨-远离水洼的单位不受影响', !outsideEff);
+  // v55.3 补：只钉 blueprint 字段名字面值钉不住"字段名对不对"这件事本身——原来的
+  // bug 恰恰是 blueprint.percent 本身赋值正确，只是 EffectRegistry 不认这个字段名，
+  // 静默算成0。这里额外过一遍 AttributeCalculator，钉住**最终 moveSpeed 真的降了**，
+  // 不然同一类"改错字段名"的回归还是会被这条测试放过。
+  const baseMoveSpeed = attr.calc(inside, []).moveSpeed;
+  const effMoveSpeed = attr.calc(inside, fx.getEffects(inside.id)).moveSpeed;
+  T('水⑩-水洼减速端到端生效：站在水洼里的实际 moveSpeed 低于无效果基准值',
+    effMoveSpeed < baseMoveSpeed);
 }
 
 // ==================== 四、水洼：雨停后逐渐消退，不是瞬间消失 ====================
@@ -245,7 +255,7 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
 }
 {
   // 站在雪盖里减速。
-  const { ents, fx } = await makeWorld();
+  const { ents, fx, attr } = await makeWorld();
   const ws = mkWeather();
   const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
   setCharge(ws, 'snow', 0.9);
@@ -254,7 +264,11 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
   gts._applyEffects();
   const eff = fx.getEffects(inside.id).find(e => e.blueprint.name === '积雪');
   T('雪④-站在雪盖里的单位获得负向移速修正（减速，不是旧机制的加速）',
-    eff && eff.blueprint.percent < 0);
+    eff && eff.blueprint.percentValue < 0);
+  // 雪④-b：同水洼那条一样，端到端过一遍 AttributeCalculator，钉住 moveSpeed 真的降了。
+  const baseMoveSpeed = attr.calc(inside, []).moveSpeed;
+  const effMoveSpeed = attr.calc(inside, fx.getEffects(inside.id)).moveSpeed;
+  T('雪④-b-积雪减速端到端生效：实际 moveSpeed 低于无效果基准值', effMoveSpeed < baseMoveSpeed);
 }
 {
   // 小径：被踩过的格子局部雪深低于周围未踩过的格子，但不会被踩到 0（pathFloor）。

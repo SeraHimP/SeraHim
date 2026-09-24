@@ -775,6 +775,34 @@ function tickNovaCharge(combat, ctx, tower, dt) {
     new Set(beams.map(b => `${b.endX},${b.endY}`)).size === beams.length);
 }
 
+// ==================== 二十一c：光棱塔光束颜色跟随阵营（v55.3 修复）====================
+// 用户报"光棱塔的子弹轨迹未跟随阵营颜色"——原实现 fireBeam 的 color 写死图标紫
+// '#a78bfa'，不认塔自己的阵营。改成跟 weapon_lightning 同一套阵营判色规则。
+{
+  const { ents, ctx } = W();
+  const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
+  ctx.combat.projectiles = new ProjectileSystem(ents, ctx.eventBus, ctx.combat);
+  const towerBlue = mk(ents, 'tower', 0, 'blue');
+  towerBlue.baseStats.attackRange = 1000; towerBlue.baseStats.attackDamage = 100;
+  const instBlue = equipSkill(towerBlue, 'weapon_prism', ctx);
+  mk(ents, 'melee', 100, 'red', 1000000);
+  for (let i = 0; i < 300; i++) SkillLibrary.weapon_prism.onFrame(towerBlue.id, 1 / 30, instBlue, ctx);
+  const beamsBlue = ctx.combat.projectiles.getBeams();
+  T('阵营色①-蓝方光棱塔光束颜色不是写死的图标紫',
+    beamsBlue.length > 0 && beamsBlue.every(b => b.color !== '#a78bfa'));
+
+  const { ents: ents2, ctx: ctx2 } = W();
+  ctx2.combat.projectiles = new ProjectileSystem(ents2, ctx2.eventBus, ctx2.combat);
+  const towerRed = mk(ents2, 'tower', 0, 'red');
+  towerRed.baseStats.attackRange = 1000; towerRed.baseStats.attackDamage = 100;
+  const instRed = equipSkill(towerRed, 'weapon_prism', ctx2);
+  mk(ents2, 'melee', 100, 'blue', 1000000);
+  for (let i = 0; i < 300; i++) SkillLibrary.weapon_prism.onFrame(towerRed.id, 1 / 30, instRed, ctx2);
+  const beamsRed = ctx2.combat.projectiles.getBeams();
+  T('阵营色②-红方塔与蓝方塔光束颜色不同（真的按阵营区分，不是两边都套同一个常量）',
+    beamsRed.length > 0 && beamsRed[0].color !== beamsBlue[0].color);
+}
+
 // ==================== 二十二、光棱塔与雷魂的区分（不是同一个东西换皮） ====================
 {
   const wSrc = srcOf('src/core/skills/weapons.js');
