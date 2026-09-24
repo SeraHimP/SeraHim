@@ -68,9 +68,9 @@ const mapStub = {
   const target = mk(ents, 'melee', 50, 'red');
   const r = SkillLibrary.weapon_barrage.onBeforeAttack(tower, target, inst, ctx);
   const p = SkillLibrary.weapon_barrage.defaultParams;
-  T('命中①-onBeforeAttack 返回 preDamageMult=55%（出厂值）',
+  T(`命中①-onBeforeAttack 返回 preDamageMult=${p.preDamageMultPct}%（出厂值，钉住行为形状不钉数字）`,
     Math.abs(r.preDamageMult - (p.preDamageMultPct / 100)) < 1e-9);
-  T('命中②-onBeforeAttack 返回 attackShare=33%（"33%命中效率"）',
+  T(`命中②-onBeforeAttack 返回 attackShare=${p.onHitEffPct}%（"命中效率"）`,
     Math.abs(r.attackShare - (p.onHitEffPct / 100)) < 1e-9);
   T('命中③-没有 skipProjectile（连珠炮走正常开火，不是自带结算的特殊攻击）',
     !r.skipProjectile);

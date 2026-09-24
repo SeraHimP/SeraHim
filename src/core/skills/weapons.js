@@ -433,19 +433,43 @@ export const weapons = {
   },
 
   weapon_explosive: {
-    defaultParams: { splashDmg: 80, radius: 50 },
+    // v51.30：平衡横向对照实测（tower_sweep_2026-09-24）——以穿透型（54.97分）为
+    // 基准，爆炸型均存活40.55分，偏低约26%，需要加强。
+    //
+    // 加强之前先修一个既有的软编码债：defaultParams 原来写的
+    // { splashDmg: 80, radius: 50 } 从来没被下面的 onEquip/onUnequip 读取过——
+    // 攻击力惩罚是写死的 `* 0.8`，溅射半径则完全由 CombatSystem._applyExplosionAt
+    // 的共享兜底值（`radiusOverride || 75`）决定，跟这份 defaultParams 里的两个数字
+    // 毫无关系，改它们什么都不会发生。这违反了 CLAUDE.md 铁律2——现在把攻击力
+    // 惩罚改名 attackDamagePct 并真正接进 onEquip/onUnequip；半径改叫
+    // radius，通过 CombatSystem 在命中时查这把武器实例的 _params.radius 显式传给
+    // _applyExplosion（不再依赖共享兜底值——那个 75 仍然是攻城车/巨龙等其它溅射
+    // 来源的默认值，不受这次改动影响，见 CombatSystem.js 对应改动处的注释）。
+    //
+    // 加强本身：attackDamagePct 80→90（攻击力惩罚从-20%收窄到-10%）；
+    // radius 从共享默认的75→90（给爆炸型自己更大的溅射范围，命中密集来袭的
+    // 小兵群时能多炸中几个，这是它跟单体武器拉开差距的核心机制，之前一直卡在
+    // 别的武器共用的默认值上，没有真正体现"爆炸型该比别人炸得更广"这条设计意图）。
+    defaultParams: {
+      attackDamagePct: 90,   // 装备后攻击力变为模板值的这个百分比（原写死80）
+      radius: 90,            // 命中点的溅射半径（原来跟其它溅射来源共享75的兜底值）
+    },
     id: 'weapon_explosive',
     applicableTypes: ['tower'],
     name: '爆炸型子弹',
     icon: '💥',
     category: 'weapon',
-    description: '攻击力-20%，溅射半径75，伤害随距离指数衰减（中心60%，边缘约5%）。',
-    descTemplate: '唯一被动——爆炸：攻击力-20%，命中造成半径75的溅射伤害（中心60%，边缘5%指数衰减）。',
+    get description() { return weapons.weapon_explosive.descTemplate; },
+    get descTemplate() {
+      const p = weapons.weapon_explosive.defaultParams;
+      return `唯一被动——爆炸：攻击力${p.attackDamagePct - 100}%，命中造成半径${p.radius}的溅射伤害（中心60%，边缘5%指数衰减）。`;
+    },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
+      const p = instance._params || weapons.weapon_explosive.defaultParams;
       if (entity) {
-        entity.baseStats.attackDamage = CONFIG.templates.tower.attackDamage * 0.8;
+        entity.baseStats.attackDamage = CONFIG.templates.tower.attackDamage * ((p.attackDamagePct ?? 90) / 100);
       }
     },
     onUnequip: (entityId, instance, ctx) => {
@@ -461,7 +485,32 @@ export const weapons = {
   //   选了之后所有关于它的平衡结论都得重新算一遍。）
 
   weapon_corrosion: {
-    defaultParams: { tickDamage: 5, tickInterval: 1, maxStacks: 5 },
+    // v51.30：平衡横向对照实测（tower_sweep_2026-09-24）——以穿透型（54.97分）为
+    // 基准，腐蚀型均存活69.37分，全场最扛揍，偏高约26%，需要削弱。
+    //
+    // 削弱之前先修一个既有的软编码债：defaultParams 原来写的
+    // { tickDamage: 5, tickInterval: 1, maxStacks: 5 } 从来没有被 onFrame 读取过——
+    // 实际的每层伤害（攻击力1%/秒）、叠层间隔（1/攻速）、三档上限（中毒50/减速5/
+    // 减攻速30）全部是写死在 onFrame 里的字面量，跟 defaultParams 完全是两套数字、
+    // 改 defaultParams 什么都不会发生。这违反了 CLAUDE.md 铁律2"所有数值都必须
+    // 软编码"——现在把 onFrame 里的字面量换成读 instance._params（缺省回落到
+    // defaultParams），三处（伤害结算/文案展示）同源，跟这个文件里其它武器的既有
+    // 写法（barrage/nova/shepherd 那套 `const p = instance._params || xxx.defaultParams`）
+    // 保持一致，编辑器/CONFIG.skillOverrides 才能真正改动它。
+    //
+    // 削弱本身：perStackAdPct 1.0%→0.85%（两条中毒都读这个值，等于给腐蚀的持续
+    // 伤害整体打了个八五折）；atkSpeedDownMaxStacks 30→24（减攻速上限 75%→60%，
+    // 这条本身是"瘫痪敌方输出"的防御乘数，此前的75%上限过于夸张）。减速上限
+    // （35%/5层）与叠层节奏（随攻速）未动——这两项不是数据里体现出的主要优势
+    // 来源，机制形状不改，只调削弱要用的两个杠杆。
+    defaultParams: {
+      perStackAdPct: 0.85,        // 每层每秒 = 攻击力 × 这个百分比（两种中毒共用）
+      poisonMaxStacks: 50,        // 中毒最多层数
+      slowPctPerStack: 7,         // 减速每层百分比
+      slowMaxStacks: 5,           // 减速最多层数（上限 = 每层% × 本值 = 35%）
+      atkSpeedDownPctPerStack: 2.5, // 减攻速每层百分比
+      atkSpeedDownMaxStacks: 24,  // 减攻速最多层数（上限 = 每层% × 本值 = 60%）
+    },
     id: 'weapon_corrosion',
     applicableTypes: ['tower'],
     name: '腐蚀型',
@@ -469,8 +518,12 @@ export const weapons = {
     color: '#7bc96f',
     category: 'weapon',
     attackType: 'magic', // 可选伤害类型（默认魔法），另50%固定为真实
-    description: '无弹道。持续对射程内所有敌人叠加中毒、减速与减攻速。',
-    descTemplate: '唯一被动——腐蚀：持续对射程内所有敌人叠加两种中毒（可选类型50%+真实50%，各每层攻击力1%/秒，最多50层）；叠层速度随攻速；额外施加减速（每层7%，上限35%）与减攻速（每层2.5%，上限75%）。',
+    get description() { return weapons.weapon_corrosion.descTemplate; },
+    get descTemplate() {
+      const p = weapons.weapon_corrosion.defaultParams;
+      return `唯一被动——腐蚀：持续对射程内所有敌人叠加两种中毒（可选类型50%+真实50%，各每层攻击力${p.perStackAdPct}%/秒，最多${p.poisonMaxStacks}层）；`
+        + `叠层速度随攻速；额外施加减速（每层${p.slowPctPerStack}%，上限${p.slowPctPerStack * p.slowMaxStacks}%）与减攻速（每层${p.atkSpeedDownPctPerStack}%，上限${p.atkSpeedDownPctPerStack * p.atkSpeedDownMaxStacks}%）。`;
+    },
     specialAttack: true,
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -491,6 +544,7 @@ export const weapons = {
       // 一致的判据，防的是"以后有人绕开 equipSkill 建实例"这种以后才会踩的坑。
       if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
       const st = instance.state;
+      const p = instance._params || weapons.weapon_corrosion.defaultParams;
 
       const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
       // 叠层速度基于攻速：每秒叠 (攻速) 层
@@ -507,13 +561,17 @@ export const weapons = {
       const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range);
       if (enemies.length > 0) { entity._inCombat = true; entity._combatTimer = 4; }
 
-      const perStackDmg = Math.max(0.5, (stats.attackDamage || 0) * 0.01); // 每层每秒 = 攻击力1%
+      const perStackAdPct = p.perStackAdPct ?? 1;
+      const perStackDmg = Math.max(0.5, (stats.attackDamage || 0) * (perStackAdPct / 100)); // 每层每秒 = 攻击力 × perStackAdPct%
       const chosenType = stats.attackType || 'magic'; // 可选的那 50% 伤害类型
+      const poisonMaxStacks = p.poisonMaxStacks ?? 50;
+      const slowPctPerStack = p.slowPctPerStack ?? 7, slowMaxStacks = p.slowMaxStacks ?? 5;
+      const asDownPctPerStack = p.atkSpeedDownPctPerStack ?? 2.5, asDownMaxStacks = p.atkSpeedDownMaxStacks ?? 30;
 
       for (const enemy of enemies) {
         if (!enemy.alive) continue;
 
-        // 中毒A：可选伤害类型（默认魔法），最多50层
+        // 中毒A：可选伤害类型（默认魔法），最多 poisonMaxStacks 层
         // v51：basicAttack:true——腐蚀是【武器】，这是普攻的一部分（只是拆成了 DOT 结算），
         // 不该吃技能增幅/技能暴击。见 BuffSystem 里对这个字段的转发。
         ctx.effectRegistry.apply(enemy.id, {
@@ -521,38 +579,38 @@ export const weapons = {
           damageType: chosenType, basicAttack: true,
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
-          stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: `唯一被动——腐蚀·毒素：每秒（{val}=攻击力1%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多50层。`,
-          description: '毒素（{stacks}/50层）',
+          stackable: true, maxStacks: poisonMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·毒素：每秒（{val}=攻击力${perStackAdPct}%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多${poisonMaxStacks}层。`,
+          description: `毒素（{stacks}/${poisonMaxStacks}层）`,
         }, 'weapon_corrosion_poisonA', { casterId: entityId });
 
-        // 中毒B：固定真实伤害，最多50层
+        // 中毒B：固定真实伤害，最多 poisonMaxStacks 层
         ctx.effectRegistry.apply(enemy.id, {
           name: '腐蚀·剧毒', icon: '☠️', kind: 'dot', color: '#8e6b2a', type: 'debuff',
           damageType: 'true', basicAttack: true,
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
-          stackable: true, maxStacks: 50, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: '唯一被动——腐蚀·剧毒：每秒（{val}=攻击力1%×层数）真实伤害，最多50层。',
-          description: '剧毒（{stacks}/50层）',
+          stackable: true, maxStacks: poisonMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·剧毒：每秒（{val}=攻击力${perStackAdPct}%×层数）真实伤害，最多${poisonMaxStacks}层。`,
+          description: `剧毒（{stacks}/${poisonMaxStacks}层）`,
         }, 'weapon_corrosion_poisonB', { casterId: entityId });
 
-        // 减速（每层7%，上限35% = 5层）—— 独立效果
+        // 减速（每层 slowPctPerStack%，上限 slowPctPerStack×slowMaxStacks%）—— 独立效果
         ctx.effectRegistry.apply(enemy.id, {
           name: '腐蚀·迟缓', icon: '🐌', kind: 'stat', color: '#7bc96f', type: 'debuff',
-          statKey: 'moveSpeed', percentValue: -7, perStackPercent: -7,
-          duration: 5, stackable: true, maxStacks: 5, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: '唯一被动——腐蚀·迟缓：移速降低（{val}%=-7%×层数），上限-35%。',
-          description: '减速（{stacks}/5层）',
+          statKey: 'moveSpeed', percentValue: -slowPctPerStack, perStackPercent: -slowPctPerStack,
+          duration: 5, stackable: true, maxStacks: slowMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·迟缓：移速降低（{val}%=-${slowPctPerStack}%×层数），上限-${slowPctPerStack * slowMaxStacks}%。`,
+          description: `减速（{stacks}/${slowMaxStacks}层）`,
         }, 'weapon_corrosion_slow');
 
-        // 减攻速（每层2.5%，上限75% = 30层）—— 独立效果，负值不受收益率影响
+        // 减攻速（每层 atkSpeedDownPctPerStack%，上限对应值）—— 独立效果，负值不受收益率影响
         ctx.effectRegistry.apply(enemy.id, {
           name: '腐蚀·衰弱', icon: '🌿', kind: 'stat', color: '#7bc96f', type: 'debuff',
-          statKey: 'bonusAttackSpeedPct', flatValue: -2.5, perStackFlat: -2.5,
-          duration: 5, stackable: true, maxStacks: 30, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: '唯一被动——腐蚀·衰弱：攻速降低（{val}%=-2.5%×层数），上限-75%。',
-          description: '衰弱（{stacks}/30层）',
+          statKey: 'bonusAttackSpeedPct', flatValue: -asDownPctPerStack, perStackFlat: -asDownPctPerStack,
+          duration: 5, stackable: true, maxStacks: asDownMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·衰弱：攻速降低（{val}%=-${asDownPctPerStack}%×层数），上限-${asDownPctPerStack * asDownMaxStacks}%。`,
+          description: `衰弱（{stacks}/${asDownMaxStacks}层）`,
         }, 'weapon_corrosion_atkslow');
       }
     },
@@ -582,10 +640,18 @@ export const weapons = {
     // 这仍然只是一次单独的强度修正，不是这次要做的"全部塔武器一起平衡"那一轮——
     // 用户已经说了"做完所有武器后需要平衡所有的防御塔武器"，这里先解决"明显偏弱"
     // 这个眼下就能看出来的问题，精确数值等全部武器做完一起用平衡工具校准。
+    //
+    // v51.30：那一轮到了——平衡横向对照实测（tower_sweep_2026-09-24），以穿透型
+    // （54.97分）为基准，连珠炮均存活35.33分，第一轮调整后仍偏低约36%，需要
+    // 第二轮加强。preDamageMultPct 70→90、onHitEffPct 50→65、
+    // baseAttackSpeedBonusPct 150→180——这三项都是【无条件生效】的加成，装上就有；
+    // 机制③（每秒叠层，封顶+40%）这次没动，因为它需要"咬住同一目标至少几秒"才能
+    // 叠满，在小兵一波接一波、目标频繁切换的真实防守场景里未必能吃到满层，这次
+    // 优先加强不依赖"咬住同一目标"这个前提的三项，更能直接转化成场均存活时长。
     defaultParams: {
-      preDamageMultPct: 70,     // 每次攻击的伤害倍率（%），机制①
-      onHitEffPct: 50,          // 攻击特效效率（%），机制①
-      baseAttackSpeedBonusPct: 150, // 总攻速加成（%，不走收益率），机制②
+      preDamageMultPct: 90,     // 每次攻击的伤害倍率（%），机制①
+      onHitEffPct: 65,          // 攻击特效效率（%），机制①
+      baseAttackSpeedBonusPct: 180, // 总攻速加成（%，不走收益率），机制②
       stackPct: 2,              // 每秒叠层的攻速加成（%/层，走收益率），机制③
       maxStacks: 20,            // 层数上限（封顶总量 2%×20=40%）
     },
@@ -695,10 +761,18 @@ export const weapons = {
     // 收到跟闪电杖一样的12s——保留"低频高爆发"的身份（跟持续开火的塔比仍然
     // 是脉冲式输出），只是不再比同类脉冲武器慢50%。改完用
     // node tools/balance_tower.mjs --pick nova --runs 40 复核。
+    //
+    // v51.30：复核结果（tower_sweep_2026-09-24）——均存活从17.81分只升到20.66分，
+    // 涨幅远小于充能提速33%这个杠杆本身的量级，说明"充能多快打一炮"不是主要
+    // 瓶颈（atkmode_charge 只在完全没有目标时才衰减，真实对局里塔几乎总有目标，
+    // 充能大部分时间在稳步推进，缩短充满时间的边际收益有限）。这轮换一个杠杆：
+    // 直接加大【打中一炮能造成多少伤害】——maxMultPct 400→650，radius 220→250，
+    // 这两个是打中之后直接决定效果的量，不依赖"多久打一次"这个已经收效有限的
+    // 前提。以穿透型（54.97分）为基准，聚能炮偏低约62%，这轮调整量级也相应更大。
     defaultParams: {
       chargeTimeAtAS1: 12,   // 攻速1.0时充满需要多少秒——原18，实测过弱，收到与闪电杖同频
-      maxMultPct: 400,       // 满充能时的伤害倍率（%）
-      radius: 220,           // 命中点的溅射半径（比爆炸型的75大得多，"超高范围"）
+      maxMultPct: 650,       // 满充能时的伤害倍率（%）
+      radius: 250,           // 命中点的溅射半径（比爆炸型大得多，"超高范围"）
     },
     id: 'weapon_nova',
     applicableTypes: ['tower'],
@@ -850,12 +924,22 @@ export const weapons = {
     // 09-22 那版调参因此是在无效样本上做的判断，予以撤销，数值改回09-20定的
     // statPct:60/baseRespawnSec:15——牧灵法阵是否还需要调参，等 balance_tower.mjs
     // 修复后重新跑一次真实横向对照再看。
+    //
+    // v51.30：修复后的真实横向对照到了（tower_sweep_2026-09-24）——均存活19.88分，
+    // 8种武器里垫底，以穿透型（54.97分）为基准偏低约64%。诊断脚本（09-23那条）
+    // 显示前470秒（~7.8分钟）塔本体0掉血，幻兽正常扛住了仇恨，说明幻兽死亡后
+    // 的复活等待时间随死亡次数复利增长（respawnGrowthPct）在长时间被拉满强度的
+    // 攻击下会滚雪球——幻兽越打越频繁死亡，每次复活等待又比上一次更久，塔逐渐
+    // 变成"经常没有幻兽护着"的裸奔状态。这轮同时压两个杠杆：respawnGrowthPct
+    // 5%→3%（放缓复利增长速度，缓解滚雪球）；statPct 60%→75%（幻兽本身更硬，
+    // 从根上降低死亡频率，两个杠杆互相加强而不是各管一段）。maxAlive/baseRespawnSec
+    // 暂不动——同时改三个量没法从下一轮复核里干净地分辨到底哪个杠杆起了作用。
     defaultParams: {
-      statPct: 60,              // 幻兽继承塔多少百分比的属性（覆盖面见 PET_INHERITED_STAT_FIELDS）
+      statPct: 75,              // 幻兽继承塔多少百分比的属性（覆盖面见 PET_INHERITED_STAT_FIELDS）
       leashRadius: 260,        // 拴绳半径——幻兽索敌/追击都不会超出这个范围
       maxAlive: 2,             // 同时最多几只幻兽
       baseRespawnSec: 15,      // 每次复活的基础等待时间
-      respawnGrowthPct: 5,     // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
+      respawnGrowthPct: 3,     // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
       idleClearance: 40,       // 待机点与塔边缘之间留的空隙（不含塔本身半径），修"幻兽模型和塔重叠"用
       outOfCombatHealPowerPct: 100,   // 脱战后额外获得的治疗与护盾强度（叠在继承来的那份之上）
     },

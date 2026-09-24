@@ -1049,8 +1049,14 @@ export class CombatSystem {
     });
 
     // ---- 爆炸溅射 ----
+    // v51.30：半径不再依赖 _applyExplosionAt 的共享兜底值（那是给攻城车/巨龙等
+    // 其它溅射来源用的），改成显式查这把爆炸型武器实例自己的 _params.radius
+    // （地图/编辑器覆写优先，缺省回落到 weapon_explosive.defaultParams），
+    // 平衡改动才能真正生效——见 weapons.js 里 weapon_explosive 头注。
     if (weaponDef && weaponDef.id === 'weapon_explosive') {
-      this._applyExplosion(attacker, target, totalRaw, attackType, undefined, { attackerCategory: hitInfo.attackerCategory });
+      const expInst = attacker?._skillInstances?.find(i => i.skillId === 'weapon_explosive');
+      const expP = expInst?._params || weaponDef.defaultParams || {};
+      this._applyExplosion(attacker, target, totalRaw, attackType, expP.radius, { attackerCategory: hitInfo.attackerCategory });
     }
     // 普攻自带溅射。闸门是"模板里写了 splashRadius 就溅射"（v43 放宽的）——
     // 原来它与攻城武器被动绑死，于是**巨龙的溅射从来没生效过**：
@@ -1099,7 +1105,11 @@ export class CombatSystem {
     if (!(totalRaw > 0)) return;
     const type = hitInfo.attackType;
     if (weaponDef && weaponDef.id === 'weapon_explosive') {
-      this._applyExplosionAt(attacker, x, y, totalRaw, type, undefined, null);
+      // v51.30：同 _resolveHit 的爆炸溅射——半径查这把武器实例自己的 _params.radius，
+      // 不再依赖共享兜底值，见那边的注释。
+      const expInst = attacker._skillInstances?.find(i => i.skillId === 'weapon_explosive');
+      const expP = expInst?._params || weaponDef.defaultParams || {};
+      this._applyExplosionAt(attacker, x, y, totalRaw, type, expP.radius, null);
     }
     const splashR = attacker.baseStats?.splashRadius || 0;
     if (splashR > 0) this._applyExplosionAt(attacker, x, y, totalRaw, type, splashR, null);
