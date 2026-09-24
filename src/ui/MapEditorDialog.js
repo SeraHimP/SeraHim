@@ -49,10 +49,15 @@
 import { paneHtml } from './dialogShell.js';
 import { CTX } from '../core/GameContext.js';
 import { CONFIG } from '../data/Config.js';
-import { paintCircle, paintPolyline, despeckle, canvasDisplaySize } from '../data/navgrid.js';
+import {
+  paintCircle, paintPolyline, despeckle,
+  worldToGrid as worldToGridPure, clientToGrid as clientToGridPure, canvasDisplaySize,
+} from '../data/navgrid.js';
+import { LANE_COLOR } from './laneLabels.js';
 import { imageToNavgrid } from '../data/imageImport.js';
 import { STRUCT_TIERS, RULE_FIELDS, compositionFor, whenOptionGroups, WAVE_CONDITIONS, conditionItemsOf } from '../data/waveComposition.js';
 import { baseCircleCenter } from '../data/baseCircle.js';
+import { nearestLaneId } from '../data/mapValidate.js';
 import {
   decodeBaseBits, buildCustomMapPayload, cloneBuildingsForEdit,
   freeBuildingPos, withBuildingMoved, validateDraftMap, autoDetectTiers,
@@ -245,7 +250,6 @@ export const MapEditorDialog = {
 
     // 路径编辑（阶段六）：画全部路（未选中的路淡色，方便看出彼此的相对位置），
     // 选中的路加粗高亮，路点画成小圆点，被选中/正在拖动的路点额外描白边。
-    const LANE_COLOR = ['#ffd166', '#06d6a0', '#ef476f', '#118ab2', '#8338ec'];
     const drawLanePaths = (ctx) => {
       draftLanes.forEach((lane, li) => {
         const isSel = lane.id === selectedLaneId;
@@ -305,27 +309,16 @@ export const MapEditorDialog = {
       ctx.globalAlpha = 1;
     };
 
-    /** 点到线段的最短距离（缩略图点选最近的路用）——纯几何，跟哪条路无关。 */
-    const pointToSegmentDist = (px, py, ax, ay, bx, by) => {
-      const dx = bx - ax, dy = by - ay;
-      const len2 = dx * dx + dy * dy;
-      const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
-      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-    };
-
-    /** 缩略图上离 (gx,gy) 最近的那条路的 id——点选用。 */
-    const nearestLaneAtGridPoint = (gx, gy) => {
-      let best = null, bestDist = Infinity;
-      for (const lane of draftLanes) {
-        for (let i = 0; i < lane.waypoints.length - 1; i++) {
-          const a = worldToGrid(lane.waypoints[i].x, lane.waypoints[i].y);
-          const b = worldToGrid(lane.waypoints[i + 1].x, lane.waypoints[i + 1].y);
-          const d = pointToSegmentDist(gx, gy, a.gx, a.gy, b.gx, b.gy);
-          if (d < bestDist) { bestDist = d; best = lane.id; }
-        }
-      }
-      return best;
-    };
+    /**
+     * 缩略图上离 (gx,gy) 最近的那条路的 id——点选用。
+     * v51.19：点到线段的最近距离算法已收进 mapValidate.js 的 distToPolyline
+     * （nearestLaneId 的 transform 参数把 waypoint 先投到当前格子坐标系再比距离），
+     * 这里不再自己维护一份 pointToSegmentDist——模板编辑器要搬同一套交互，
+     * 两处用同一颗"最近路"实现，不会出现"编辑器点得到 A 路、模板编辑器点得到
+     * 相邻的 B 路"这种因两份几何实现悄悄漂移导致的不一致。
+     */
+    const nearestLaneAtGridPoint = (gx, gy) =>
+      nearestLaneId({ lanes: draftLanes }, gx, gy, (wp) => worldToGrid(wp.x, wp.y));
 
     /**
      * 第一次真正编辑某条路的出兵队列时，把它从"继承共享基准"挪成"这条路自己的
@@ -635,10 +628,10 @@ export const MapEditorDialog = {
     // 建筑标记画在 navgrid 的 n×n 像素坐标系里（与 redrawCanvas 的 putImageData 同一
     // 坐标系），世界坐标按 world.w/world.h 分别换算——与 MapSystem.isWalkable 的
     // "i=x/W.w*n, j=y/W.h*n"用的是同一条换算规则，非正方形世界（如扭曲丛林）也不会错位。
-    const worldToGrid = (wx, wy) => ({
-      gx: wx / (baseMap.world?.w || 1) * n,
-      gy: wy / (baseMap.world?.h || 1) * n,
-    });
+    // v51.19：算法本体已抽到 navgrid.js（worldToGrid/clientToGrid），这里的闭包只是
+    // 把当前 baseMap/n 绑进去——12 处调用点的签名不变，零回归风险；模板编辑器
+    // （pagesWave.js）要搬同一套"点图选路"交互，两处不再各写一份、迟早漂移。
+    const worldToGrid = (wx, wy) => worldToGridPure(baseMap.world, n, wx, wy);
 
     const drawBuildingMarkers = (ctx) => {
       // n 随 switchBase() 换起点地图而变（不同地图 navgrid 分辨率不同），标记半径
@@ -914,11 +907,7 @@ export const MapEditorDialog = {
 
     // 折线模式下把 client 坐标换算成格子坐标——与 paintAt 内联的那行算法一致，
     // 单独抽出来是因为点选顶点、画橡皮筋预览两处都要用，不想抄两遍。
-    const clientToGrid = (canvas, clientX, clientY) => {
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return null;
-      return { x: (clientX - rect.left) / rect.width * n, y: (clientY - rect.top) / rect.height * n };
-    };
+    const clientToGrid = (canvas, clientX, clientY) => clientToGridPure(canvas, n, clientX, clientY);
 
     const bindCanvasEvents = () => {
       const canvas = document.getElementById('mapEditorCanvas');

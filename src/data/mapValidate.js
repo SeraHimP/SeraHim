@@ -76,6 +76,28 @@ export function nearestLaneDist(map, x, y) {
 }
 
 /**
+ * v51.19：nearestLaneDist 的姊妹函数——只要距离时用上面那个，要知道"离哪条兵线
+ * 最近"时用这个。distToPolyline 本身坐标系无关（只认传进去的数字），所以这里
+ * 接一个可选的 transform：调用方点选发生在哪个坐标系（世界坐标 / navgrid 格子
+ * 坐标），就把 waypoint 先投到那个坐标系再比距离——地图编辑器的缩略图点选和
+ * 模板编辑器（pagesWave.js）要搬的同一套交互都建在 navgrid 的 n×n 格子空间里
+ * （非正方形世界下格子空间的"最近"和世界空间的"最近"不是同一个答案，
+ * 见 navgrid.js canvasDisplaySize() 头注），不加这层间接就得各写一份找最近路的循环。
+ * 没有声明 lanes 的地图返回 null。
+ * @param {object} map @param {number} x @param {number} y
+ * @param {(wp:{x:number,y:number})=>{x:number,y:number}} [transform] 默认原样透传（世界坐标）
+ * @returns {string|null}
+ */
+export function nearestLaneId(map, x, y, transform = (p) => p) {
+  let d = Infinity, id = null;
+  for (const lane of map.lanes || []) {
+    const dd = distToPolyline(lane.waypoints.map(transform), x, y);
+    if (dd < d) { d = dd; id = lane.id; }
+  }
+  return id;
+}
+
+/**
  * v58：单点判定"路"还是"野区"——离最近兵线够近，或者落在己方基地开放圈内，
  * 两条判据取或。是 classifyLaneCells（批量/网格版）与 BoundaryDecorLayer
  * （连续坐标逐点采样版）共用的**唯一**判据实现，不在两处各写一份。

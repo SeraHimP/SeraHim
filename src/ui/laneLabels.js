@@ -47,3 +47,11 @@ export function clampLaneId(id) {
   const ids = mapLaneIds();
   return ids.includes(id) ? id : ids[0];
 }
+
+/**
+ * v51.19：按"第几条路"分配的描边色，缩略图/连线图之类要给每条路一个稳定颜色时用。
+ * 原是 MapEditorDialog.js 出兵编排缩略图的局部常量，模板编辑器（pagesWave.js）
+ * 要搬同一套"点图选路"交互，颜色语义也要一致（同一条路在两个编辑器里应该是同一个
+ * 颜色，不然用户会以为选中的不是同一条路），所以抽到这里两边共用，不各定义一份。
+ */
+export const LANE_COLOR = ['#ffd166', '#06d6a0', '#ef476f', '#118ab2', '#8338ec'];

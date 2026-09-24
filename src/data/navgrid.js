@@ -94,6 +94,34 @@ export function canvasDisplaySize(worldW, worldH, maxPx) {
 }
 
 /**
+ * 世界坐标 → navgrid 的 n×n 格子坐标。与 MapSystem.isWalkable 用的
+ * "i=x/W.w*n, j=y/W.h*n" 是同一条换算规则，非正方形世界（如扭曲丛林）也不会错位——
+ * 原是 MapEditorDialog.js 里的局部闭包，v51.19 抽到这里：模板编辑器（pagesWave.js）
+ * 要搬地图编辑器"点缩略图选兵线"那套交互，两处用同一份换算，不能各写一份迟早漂移。
+ * @param {{w?:number,h?:number}} world @param {number} n @param {number} wx @param {number} wy
+ * @returns {{gx:number,gy:number}}
+ */
+export function worldToGrid(world, n, wx, wy) {
+  return {
+    gx: wx / (world?.w || 1) * n,
+    gy: wy / (world?.h || 1) * n,
+  };
+}
+
+/**
+ * 鼠标/触摸的 client 坐标 → navgrid 格子坐标（读 canvas 当前实际显示尺寸反推，
+ * 天然适配 canvasDisplaySize() 算出的非正方形显示框，不需要跟着它同步改）。
+ * v51.19：随 worldToGrid 一起抽出来给 pagesWave.js 复用。
+ * @param {HTMLCanvasElement} canvas @param {number} n @param {number} clientX @param {number} clientY
+ * @returns {{x:number,y:number}|null} 画布尺寸未就绪（如刚创建还没 layout）时返回 null
+ */
+export function clientToGrid(canvas, n, clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return { x: (clientX - rect.left) / rect.width * n, y: (clientY - rect.top) / rect.height * n };
+}
+
+/**
  * 笔刷：把 (cx, cy) 为圆心、半径 r（都是【格子】单位，不是世界单位——调用方按
  * cellSize 换算）的圆形区域整体设成 value（1=可走/0=不可走）。原地修改 bits，
  * 同时把它返回，方便链式调用。

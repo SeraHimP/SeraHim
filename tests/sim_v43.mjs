@@ -446,6 +446,93 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   AttributeEditor._factionScope = 'shared'; AttributeEditor._waveLaneScope = 'all';
 }
 
+// ==================== 十点五、v51.19：出兵编排"点图选路"搬到模板编辑器 ====================
+// 用户："地图编辑器里面强大的出兵编排在模板编辑器中应该也能用……把地图编辑器那套
+// '选中兵线就能看到/改地图上实际出兵规则'的交互方式搬到模板编辑器。"
+// 底层数据（waveComposition.js）两个编辑器早就共用一份（Q5b 那一整段测的就是这个），
+// 这次搬的是**交互**：地图编辑器出兵编排面板的缩略图点选路 → 模板编辑器同一块面板
+// 也加一块。算法本体（worldToGrid/clientToGrid/"点到哪条路最近"）抽成共用函数，
+// 两处点同一个位置必须选中同一条路，不能因为各写一份实现而悄悄漂移。
+{
+  const { worldToGrid, clientToGrid } = await import('../src/data/navgrid.js');
+  T('图选路①-worldToGrid 按 world.w/world.h 各自独立换算到 n×n 格子',
+    (() => { const g = worldToGrid({ w: 200, h: 100 }, 20, 100, 50); return g.gx === 10 && g.gy === 10; })());
+  T('图选路②-非正方形世界（如扭曲丛林）两条轴缩放系数天生不同，换算后仍居中',
+    (() => { const g = worldToGrid({ w: 3008, h: 1388 }, 100, 1504, 694);
+      return Math.abs(g.gx - 50) < 1e-9 && Math.abs(g.gy - 50) < 1e-9; })());
+  T('图选路③-clientToGrid 按 canvas 实际显示尺寸（可能非正方形）反推格子坐标',
+    (() => { const c = clientToGrid({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 200, height: 100 }) }, 20, 100, 50);
+      return c.x === 10 && c.y === 10; })());
+  T('图选路④-clientToGrid 对尺寸未就绪（刚创建还没 layout）的画布返回 null',
+    clientToGrid({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }) }, 20, 5, 5) === null);
+
+  const { nearestLaneId } = await import('../src/data/mapValidate.js');
+  const map2 = { lanes: [
+    { id: 'A', waypoints: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
+    { id: 'B', waypoints: [{ x: 0, y: 20 }, { x: 100, y: 20 }] },
+  ] };
+  T('图选路⑤-不传 transform 时按世界坐标原样就近（dist A=8 < dist B=12）', nearestLaneId(map2, 50, 8) === 'A');
+  T('图选路⑥-transform 改变了比距离用的坐标系，结果确实会反转（不是摆设参数）',
+    nearestLaneId(map2, 50, 8, (wp) => ({ x: wp.x, y: 30 - wp.y })) === 'B');
+  T('图选路⑦-没有声明 lanes 的地图返回 null，不炸', nearestLaneId({}, 0, 0) === null);
+
+  // 地图编辑器（MapEditorDialog.js）的点选也要改走同一个 nearestLaneId，
+  // 不能自己另维护一份"点到线段最短距离"——这正是本仓库反复强调的"同一件事
+  // 两份实现迟早漂移"。用源码断言钉住：私有的 pointToSegmentDist 已经删掉，
+  // nearestLaneAtGridPoint 改成调共用函数。
+  const med = srcOf('src/ui/MapEditorDialog.js');
+  T('图选路⑧-MapEditorDialog.js 不再自己维护 pointToSegmentDist（改调共用的 nearestLaneId）',
+    !/pointToSegmentDist/.test(med) && /nearestLaneAtGridPoint[\s\S]{0,120}nearestLaneId\(/.test(med));
+  T('图选路⑨-worldToGrid/clientToGrid 的算法本体已收进 navgrid.js（不再是本地闭包里的算法）',
+    /worldToGridPure[\s\S]{0,150}from ['"]\.\.\/data\/navgrid\.js['"]/.test(med)
+    && /clientToGridPure[\s\S]{0,150}from ['"]\.\.\/data\/navgrid\.js['"]/.test(med));
+
+  // 模板编辑器（pagesWave.js）新加的缩略图：先按渲染出的 HTML 字符串钉行为形状
+  // （沿用本文件已有的 _renderWaveOrderContent() 纯字符串模板测法，见 sim_v51.mjs
+  // "编①"那一段同款套路），源码断言钉"确实调了共用函数、不是抄了一份"。
+  const { AttributeEditor } = await import('../src/ui/AttributeEditor.js');
+  const prevApp = window.CTX?.__app;
+  window.CTX = window.CTX || {};
+  const fakeMap = {
+    label: '测试图',
+    world: { w: 200, h: 100 },
+    lanes: [
+      { id: 'top', waypoints: [{ x: 0, y: 0 }, { x: 200, y: 0 }] },
+      { id: 'bot', waypoints: [{ x: 0, y: 100 }, { x: 200, y: 100 }] },
+    ],
+  };
+  window.CTX.__app = { mapSystem: { currentMap: fakeMap } };
+  AttributeEditor._factionScope = 'shared'; AttributeEditor._waveLaneScope = 'all';
+
+  const htmlWithMap = AttributeEditor._renderWaveOrderContent();
+  T('图选路⑩-能拿到当前地图时，出兵编排页渲染出缩略图画布',
+    /id="waveTemplateLaneThumb"/.test(htmlWithMap));
+  T('图选路⑪-画布 width/height 属性是正整数（来自 decodeBaseBits 的 navgrid 分辨率）',
+    /waveTemplateLaneThumb" width="\d+" height="\d+"/.test(htmlWithMap));
+
+  window.CTX.__app.mapSystem.currentMap = { ...fakeMap, lanes: [] };
+  const htmlNoLane = AttributeEditor._renderWaveOrderContent();
+  T('图选路⑫-地图没有 lanes 时不渲染画布，退回纯按钮页签（不是画一张空白图）',
+    !/id="waveTemplateLaneThumb"/.test(htmlNoLane) && /data-wo-lane="all"/.test(htmlNoLane));
+
+  window.CTX.__app.mapSystem.currentMap = null;
+  const htmlNoMap = AttributeEditor._renderWaveOrderContent();
+  T('图选路⑬-拿不到地图时不渲染画布，页签仍按 _mapLaneIds() 的兜底显示三路',
+    !/id="waveTemplateLaneThumb"/.test(htmlNoMap) && /data-wo-lane="all"/.test(htmlNoMap));
+
+  window.CTX.__app.mapSystem.currentMap = fakeMap;
+  const ae2 = editorSrc();
+  T('图选路⑭-_drawWaveLaneThumb 复用共用的 worldToGrid/decodeBaseBits/LANE_COLOR，不是重新发明一份',
+    /_drawWaveLaneThumb\(overlay\)\s*\{[\s\S]{0,1000}decodeBaseBits\(map\)[\s\S]{0,1000}worldToGrid\(map\.world/.test(ae2)
+    && /_drawWaveLaneThumb\(overlay\)\s*\{[\s\S]{0,1100}LANE_COLOR\[/.test(ae2));
+  T('图选路⑮-画布画完就绑点击，点击换算 & 选路都调共用的 clientToGrid/nearestLaneId（不是自己另写一份点选逻辑）',
+    /waveTemplateLaneThumb['"]\)\?\.addEventListener\('click'[\s\S]{0,300}clientToGrid\(canvas, n,[\s\S]{0,300}nearestLaneId\(map, g\.x, g\.y,/.test(ae2));
+  T('图选路⑯-点击后把选中的路写回 _waveLaneScope（与按钮页签是同一份状态，不是另起一套）',
+    /nearestLaneId\(map, g\.x, g\.y,[\s\S]{0,200}this\._waveLaneScope = laneId/.test(ae2));
+
+  window.CTX.__app = prevApp;
+}
+
 // ==================== 十一、Q8(下) 腐蚀型改成 3D 雾 ====================
 {
   const cl = srcOf(('../src/presentation/CorrosionLayer.js'));

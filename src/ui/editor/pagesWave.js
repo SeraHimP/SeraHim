@@ -9,11 +9,14 @@
  * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
  */
 import { CONFIG } from '../../data/Config.js';
-import { mapLaneIds, laneLabel } from '../laneLabels.js';
+import { mapLaneIds, laneLabel, LANE_COLOR } from '../laneLabels.js';
 import { buildWaveOrder, buildBroadcastOrder, WAVE_CONDITIONS, whenOptionGroups, hasFactionComposition, hasLaneComposition } from '../../data/waveComposition.js';
 import { mapFactionsOf } from '../../systems/FactionSystem.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, rangeMid } from '../../data/dragonCurve.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
+import { decodeBaseBits } from '../../data/mapEditorCore.js';
+import { canvasDisplaySize, worldToGrid, clientToGrid } from '../../data/navgrid.js';
+import { nearestLaneId } from '../../data/mapValidate.js';
 
 export const EDITOR_PAGES_WAVE = {
   // ==================== 巨龙：刷新节奏与强度曲线 ====================
@@ -405,11 +408,31 @@ export const EDITOR_PAGES_WAVE = {
       </span>
       ${_own ? `<button id="woClearFaction" style="margin-left:auto;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除本格编排</button>` : ''}
       </h4>`;
-    html += `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:6px;">
+    // v51.19：用户"地图编辑器里面强大的出兵编排在模板编辑器中应该也能用"——具体是指
+    // 地图编辑器"选中兵线就能看到/改地图上实际出兵规则"那套点缩略图选路的交互，
+    // 不是底层数据（两边本来就共用 waveComposition.js，见该文件头注）。这里加一块
+    // 与 MapEditorDialog.js 出兵编排面板同构的缩略图：navgrid 背景 + 按 LANE_COLOR
+    // 着色的兵线折线，点画布直接选路，和下面按钮页签是同一个 _waveLaneScope、
+    // 点哪个都一样，只是多一种"看着地图选"的路径。
+    const laneTabsHtml = `<div class="editor-tabs" style="flex-wrap:wrap;margin-bottom:6px;">
       <span style="font-size:10px;color:var(--text-mute);align-self:center;margin-right:6px;">路（${_mapLabel}，${_laneIds.length} 条）：</span>
       <button class="editor-tab ${_lane === 'all' ? 'active' : ''}" data-wo-lane="all" style="font-size:11px;">🌐 全部路</button>
       ${_laneIds.map(id => `<button class="editor-tab ${_lane === id ? 'active' : ''}" data-wo-lane="${id}" style="font-size:11px;">${this._laneLabel(id)}${hasLaneComposition(_f, id) ? ' ●' : ''}</button>`).join('')}
     </div>`;
+    const _hasThumb = !!(_currentMap && _currentMap.lanes?.length);
+    if (_hasThumb) {
+      const { n: _thumbN } = decodeBaseBits(_currentMap);
+      const _thumbSize = canvasDisplaySize(_currentMap.world?.w, _currentMap.world?.h, 170);
+      html += `<div style="display:flex;gap:10px;align-items:flex-start;">
+        <canvas id="waveTemplateLaneThumb" width="${_thumbN}" height="${_thumbN}"
+          style="width:${_thumbSize.w}px;height:${_thumbSize.h}px;image-rendering:pixelated;cursor:pointer;flex-shrink:0;
+                 border:1px solid var(--border-color,#444);border-radius:4px;"
+          title="点画布上的一条路，等价于点右边的路页签"></canvas>
+        <div style="flex:1;min-width:0;">${laneTabsHtml}</div>
+      </div>`;
+    } else {
+      html += laneTabsHtml;
+    }
     html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
       解析顺序（先命中先用）：<b>本阵营·本路</b> → <b>本阵营·全部路</b> → <b>共享·本路</b> → <b>共享·基准</b>。
       页签上的 ● 表示那一格有自己的编排。</div>`;
@@ -582,6 +605,42 @@ export const EDITOR_PAGES_WAVE = {
     });
   },
 
+  /**
+   * 画出兵编排缩略图（v51.19）：navgrid 背景 + 按 LANE_COLOR 着色的兵线折线，
+   * 当前选中的路加粗高亮——与 MapEditorDialog.js drawWaveLaneThumbnail 同一套画法
+   * （颜色/坐标换算都已抽到共用模块，见该函数与本文件头部的 import），这里不再
+   * 重新发明一遍，只是换了个挂载的 canvas id。选中"🌐 全部路"时不特别高亮
+   * 某一条——那种作用域下改动本来就对全部路生效，没有"哪条路更相关"这回事。
+   */
+  _drawWaveLaneThumb(overlay) {
+    const canvas = overlay.querySelector('#waveTemplateLaneThumb');
+    const map = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
+    if (!canvas || !map) return;
+    const { n, bits } = decodeBaseBits(map);
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(n, n);
+    for (let i = 0; i < n * n; i++) {
+      const o = i * 4;
+      if (bits[i]) { img.data[o] = 206; img.data[o + 1] = 224; img.data[o + 2] = 188; img.data[o + 3] = 255; }
+      else { img.data[o] = 46; img.data[o + 1] = 48; img.data[o + 2] = 56; img.data[o + 3] = 255; }
+    }
+    ctx.putImageData(img, 0, 0);
+    const scope = this._waveLaneScope;
+    (map.lanes || []).forEach((lane, li) => {
+      const isSel = scope === 'all' || lane.id === scope;
+      ctx.strokeStyle = LANE_COLOR[li % LANE_COLOR.length];
+      ctx.globalAlpha = isSel ? 1 : 0.4;
+      ctx.lineWidth = isSel ? (scope === 'all' ? 2 : 3) : 1.5;
+      ctx.beginPath();
+      lane.waypoints.forEach((wp, i) => {
+        const { gx, gy } = worldToGrid(map.world, n, wp.x, wp.y);
+        if (i === 0) ctx.moveTo(gx, gy); else ctx.lineTo(gx, gy);
+      });
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  },
+
   _bindWaveOrderEvents(overlay, logFn) {
     const gr = CONFIG.gameRules;
     // 只重绘内容区，不整屏重绘 —— 整屏重绘会重建左树并让滚动位置跳回顶部，
@@ -591,6 +650,25 @@ export const EDITOR_PAGES_WAVE = {
       this._bindWaveOrderEvents(overlay, logFn);
     };
     this._bindSpawnToggles(overlay, logFn, rerender);
+    // 出兵编排缩略图（v51.19，搬自 MapEditorDialog.js 出兵编排面板同一套交互）：
+    // 画完就绑点击，点哪都触发跟 [data-wo-lane] 按钮一样的选路逻辑。
+    this._drawWaveLaneThumb(overlay);
+    overlay.querySelector('#waveTemplateLaneThumb')?.addEventListener('click', (e) => {
+      const map = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
+      if (!map) return;
+      const canvas = e.target;
+      const n = canvas.width;
+      const g = clientToGrid(canvas, n, e.clientX, e.clientY);
+      if (!g) return;
+      const laneId = nearestLaneId(map, g.x, g.y, (wp) => {
+        const gp = worldToGrid(map.world, n, wp.x, wp.y);
+        return { x: gp.gx, y: gp.gy };
+      });
+      if (!laneId) return;
+      this._waveLaneScope = laneId;
+      this._waveOrderPreviewLane = laneId;
+      rerender();
+    });
     // 运行时控制（暂停/立即下一波/间隔）：从设置面板搬过来，行为逐位不变。
     const app = window.CTX?.__app || window.__app;
     const laneWaveSystem = app?.laneWaveSystem;
