@@ -648,12 +648,21 @@ export const weapons = {
     // 机制③（每秒叠层，封顶+40%）这次没动，因为它需要"咬住同一目标至少几秒"才能
     // 叠满，在小兵一波接一波、目标频繁切换的真实防守场景里未必能吃到满层，这次
     // 优先加强不依赖"咬住同一目标"这个前提的三项，更能直接转化成场均存活时长。
+    //
+    // v51.33：用户定稿改机制——"脱战或切换目标立即清空层数"改成"只有脱离战斗后
+    // 层数才消失"（换目标不再清零，只要塔还在打就一直咬着叠）。这条本来是靠
+    // "咬住同一目标至少几秒"才叠得满的前提被直接拿掉了：小兵一波接一波、塔频繁
+    // 换目标的真实防守场景里，以前叠不满的层数现在轻松叠满。用户随之要求"相应
+    // 每层叠加的数值要少一些"——stackPct 2→1.5（封顶总量跟着从40%降到30%，
+    // maxStacks 这个"层数上限"用户没提，机制形状不动，不跟着一起改）。这是按
+    // "更容易吃满、单层价值对应下调"的方向给的第一版合理值，不是平衡工具复核过
+    // 的精确数字，后续要用 balance_tower.mjs --pick barrage 再核一遍。
     defaultParams: {
       preDamageMultPct: 90,     // 每次攻击的伤害倍率（%），机制①
       onHitEffPct: 65,          // 攻击特效效率（%），机制①
       baseAttackSpeedBonusPct: 180, // 总攻速加成（%，不走收益率），机制②
-      stackPct: 2,              // 每秒叠层的攻速加成（%/层，走收益率），机制③
-      maxStacks: 20,            // 层数上限（封顶总量 2%×20=40%）
+      stackPct: 1.5,             // 每秒叠层的攻速加成（%/层，走收益率），机制③
+      maxStacks: 20,            // 层数上限（封顶总量 1.5%×20=30%）
     },
     id: 'weapon_barrage',
     applicableTypes: ['tower'],
@@ -664,9 +673,9 @@ export const weapons = {
     get descTemplate() {
       const p = weapons.weapon_barrage.defaultParams;
       return `唯一被动——连珠炮：每次攻击只造成${p.preDamageMultPct}%伤害，攻击特效按${p.onHitEffPct}%效率结算；`
-        + `总攻速+${p.baseAttackSpeedBonusPct}%（不吃攻速收益率）；持续攻击同一目标每秒额外叠一层`
+        + `总攻速+${p.baseAttackSpeedBonusPct}%（不吃攻速收益率）；持续攻击（可切换目标）每秒额外叠一层`
         + `攻速加成（每层+${p.stackPct}%，走收益率，最多${p.maxStacks}层，封顶+${p.stackPct * p.maxStacks}%），`
-        + `脱战或切换目标立即清空层数（不随时间衰减）。`;
+        + `脱离战斗后层数才清空（不随时间衰减，切换目标不影响层数）。`;
     },
     get description() { return this.descTemplate; },
     computeCurrent: (entity, ctx) => {
@@ -676,7 +685,7 @@ export const weapons = {
     effects: [],
     onEquip: (entityId, instance, ctx) => {
       const p = instance._params || weapons.weapon_barrage.defaultParams;
-      instance.state = { timer: 0, lastTargetId: null };
+      instance.state = { timer: 0 };
       ctx.effectRegistry.apply(entityId, {
         name: '连珠炮·超频', icon: '🔥', kind: 'stat', statKey: 'baseAttackSpeed',
         percentValue: p.baseAttackSpeedBonusPct ?? 100,
@@ -697,31 +706,25 @@ export const weapons = {
         attackShare: (p.onHitEffPct ?? 33) / 100,
       };
     },
-    // 机制③：脱战/换目标清零，持续咬着同一目标才按秒叠层——跟"是否正在攻击"绑定，
-    // 不是常驻光环，所以用 onFrame 自己维护，不复用 makeAuraPassive。
+    // 机制③（v51.33 改）：用户定稿"脱战或切换目标立即清空层数"改成"只有脱离
+    // 战斗后层数才消失"——不再跟着 entity.targetId 是否变化清零，只看
+    // entity._inCombat / 目标是否存活。换目标不再打断叠层是本轮唯一的机制变化，
+    // 不再需要记 lastTargetId，onFrame 直接按"在不在战斗"这一件事判定。
     onFrame: (entityId, dt, instance, ctx) => {
       const entity = ctx.entityContainer.get(entityId);
       if (!entity || !entity.alive) return;
-      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0, lastTargetId: null };
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
       const st = instance.state;
       const p = instance._params || weapons.weapon_barrage.defaultParams;
       const targetId = entity.targetId;
       const target = targetId ? ctx.entityContainer.get(targetId) : null;
 
       if (!target || !target.alive || !entity._inCombat) {
-        // 脱战：清空层数
-        if (st.lastTargetId !== null) {
-          const eff = ctx.effectRegistry.getEffectByName(entityId, '连珠');
-          if (eff) ctx.effectRegistry.remove(eff.id);
-        }
-        st.timer = 0; st.lastTargetId = null;
-        return;
-      }
-      if (st.lastTargetId !== targetId) {
-        // 换了目标：清零重新计
+        // 脱离战斗：清空层数（唯一的清空条件）
         const eff = ctx.effectRegistry.getEffectByName(entityId, '连珠');
         if (eff) ctx.effectRegistry.remove(eff.id);
-        st.timer = 0; st.lastTargetId = targetId;
+        st.timer = 0;
+        return;
       }
       st.timer += dt;
       if (st.timer < 1) return;

@@ -90,7 +90,10 @@ const mapStub = {
     Math.abs(asAfter / asBefore - expectMult) < 1e-6);
 }
 
-// ==================== 三、连珠炮：按秒叠层，不按时间衰减，命中同一目标才涨层 ====================
+// ==================== 三、连珠炮：按秒叠层，不按时间衰减，只有脱战才清零 ====================
+// v51.33 机制改动：用户定稿"脱战或切换目标立即清空层数"改成"只有脱离战斗后
+// 层数才消失"——换目标不再打断叠层，只要塔一直在战斗状态就持续涨，直到真的
+// 脱离战斗（没有存活目标/entity._inCombat 变 false）才清零。
 {
   const { ents, fx, ctx } = W();
   const tower = mk(ents, 'tower', 0, 'blue');
@@ -103,26 +106,27 @@ const mapStub = {
   let eff = fx.getEffectByName(tower.id, '连珠');
   T('叠层①-命中同一目标 3 秒后叠了 3 层', eff && eff.stacks === 3);
 
-  // 长时间不动（模拟"不按时间衰减"）：多跑几秒不清零，只要还在同一目标身上就继续涨
-  for (let i = 0; i < 50; i++) SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
-  eff = fx.getEffectByName(tower.id, '连珠');
-  T(`叠层②-层数封顶在 maxStacks=${p.maxStacks}，不会无限涨`, eff && eff.stacks === p.maxStacks);
-  T('叠层③-封顶后层数不随时间自然衰减（effect 是 permanent，不吃 remainingTime 递减）',
-    eff && eff.blueprint.permanent === true);
-
-  // 换目标：应该清零重新开始
+  // 换目标：本轮改动后不应该再清零——层数继续在新目标身上累加。
   const target2 = mk(ents, 'melee', 60, 'red');
   tower.targetId = target2.id;
-  SkillLibrary.weapon_barrage.onFrame(tower.id, 0.5, inst, ctx); // 还没到1秒，观察是否先清零重计时
+  SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
   eff = fx.getEffectByName(tower.id, '连珠');
-  T('叠层④-换目标后层数清零重新开始（不是继续累加在新目标身上）',
-    !eff || eff.stacks < p.maxStacks);
+  T('叠层②-换目标后层数不清零，继续在新目标身上累加（本轮机制改动的核心）',
+    eff && eff.stacks === 4);
 
-  // 脱离战斗：应该清零
+  // 长时间不动（模拟"不按时间衰减"）：多跑几秒不清零，中途再换一次目标也一样继续涨，
+  // 只要一直在战斗状态就冲到封顶。
+  for (let i = 0; i < 50; i++) SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
+  eff = fx.getEffectByName(tower.id, '连珠');
+  T(`叠层③-层数封顶在 maxStacks=${p.maxStacks}，不会无限涨`, eff && eff.stacks === p.maxStacks);
+  T('叠层④-封顶后层数不随时间自然衰减（effect 是 permanent，不吃 remainingTime 递减）',
+    eff && eff.blueprint.permanent === true);
+
+  // 脱离战斗：唯一的清零条件。
   tower._inCombat = false;
   SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
   eff = fx.getEffectByName(tower.id, '连珠');
-  T('叠层⑤-脱战后层数清零', !eff);
+  T('叠层⑤-脱战后层数清零（脱战是现在唯一会清空层数的条件）', !eff);
 }
 
 // ==================== 四、连珠炮：与风魂区别开——每层更少、层数更多 ====================
