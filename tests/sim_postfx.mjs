@@ -247,4 +247,28 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
     /bindFx\('setFogBtn',\s*r => r\.fogOn !== false,\s*\(r, v\) => r\.setFog\(v\)/.test(settings));
 }
 
+// ==================== 2026-09-25：水晶白名单——描边黑线穿模修复 ====================
+// 用户报"黑色描边线穿过了水晶材质"：水晶材质 transparent:true（早于本轮就存在，
+// 为水晶质感需要），按 2026-09-05 那条"transparent 一律不进预渲染"的通用规则会被
+// 整体隐藏，于是水晶这块屏幕区域在深度/法线图里读到的是**水晶背后**的塔身结构，
+// 描边把那部分结构的边缘画成黑线，合成时叠在水晶前面——表现为"背后描边穿模"。
+// 水晶是实心凸多面体（不是该被跳过的粒子/弹道薄片），修法是给它开一个显式白名单：
+// userData.prepassSolid，NormalDepthPrepass 遇到这个标记时跳过"transparent 就隐藏"
+// 这条规则，让它像不透明物体一样正常参与深度/法线预渲染。
+{
+  const prepassBlock2 = postfx.match(/render\(renderer[\s\S]{0,1800}?\n  \}/)?.[0] || '';
+  T('晶①-NormalDepthPrepass 的 traverse 里对 userData.prepassSolid 开了白名单，不进"transparent 就隐藏"分支',
+    /if \(o\.userData && o\.userData\.prepassSolid\) return;/.test(prepassBlock2));
+  T('晶②-白名单判断在"是否隐藏"之前生效（顺序对：先放行，再判断 transparent）',
+    (() => {
+      const iWhitelist = prepassBlock2.indexOf('o.userData.prepassSolid');
+      const iHide = prepassBlock2.indexOf('o.visible = false; hidden.push(o);');
+      return iWhitelist > 0 && iHide > 0 && iWhitelist < iHide;
+    })());
+
+  const ulSrc2 = srcOf('src/presentation/UnitLayer.js');
+  T('晶③-水晶 Mesh 创建时挂上了 prepassSolid 白名单标记（不是光改 PostFX 没接线）',
+    /const cm = new THREE\.Mesh\(vis\.crystal\.geo, crystalMaterial\(vis\.crystalColor\)\);[\s\S]{0,300}?cm\.userData\.prepassSolid = true;/.test(ulSrc2));
+}
+
 done();

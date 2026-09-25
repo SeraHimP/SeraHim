@@ -9,6 +9,9 @@
  * 故水面宽度永远和真实河床一致。仅渲染，仿真不读。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { CONFIG } from '../data/Config.js';
+
+const _wA = new THREE.Color(), _wB = new THREE.Color();
 
 // 程序化涟漪法线贴图：两组不同频率/朝向的正弦叠加 → 交错波纹，平铺无缝（用整数周期）。
 function rippleNormalTexture(size = 256) {
@@ -65,7 +68,10 @@ function riverMaskTexture(WW, WH, riverAt, size = 512) {
 }
 
 export class WaterLayer {
-  constructor(scene) { this.scene = scene; this.mesh = null; this.tex = null; this.mask = null; this._mapId = null; this.enabled = true; }
+  constructor(scene) {
+    this.scene = scene; this.mesh = null; this.tex = null; this.mask = null; this._mapId = null; this.enabled = true;
+    this._coldness = 0; // 见 setColdness 头注，换图重建材质时要把这个状态带过去，不能一重建就跳回常温色
+  }
 
   clear() {
     if (this.mesh) {
@@ -98,8 +104,9 @@ export class WaterLayer {
     // 材质用 Lambert（【无镜面反射】）而不是 Standard：低粗糙度+金属度会在太阳方向打出一大片高光，
     // 再被 Bloom 放大成刺眼白斑（用户反馈"晃瞎"）。水面不是核心玩法，只需要"看得出是水"：
     // 靠法线扰动做出细微涟漪的明暗起伏即可，不要任何高光。
+    const wcfg = (CONFIG.ui && CONFIG.ui.water) || {};
     const mat = new THREE.MeshLambertMaterial({
-      color: 0x35707c, transparent: true, opacity: 0.55,
+      color: wcfg.color ?? '#35707c', transparent: true, opacity: wcfg.opacity ?? 0.55,
       normalMap: this.tex, normalScale: new THREE.Vector2(0.35, 0.35),
       alphaMap: this.mask,        // 只有河带处不透明
       depthWrite: false,          // 半透明水面不写深度，避免挡住河床里的单位/贴花
@@ -110,12 +117,27 @@ export class WaterLayer {
     mesh.renderOrder = 1;
     this.scene.add(mesh);
     this.mesh = mesh;
+    this.setColdness(this._coldness); // 换图重建材质后，把当前气温对应的颜色立刻补上，不用等下一次 setLighting
   }
 
   /** 每帧滚动 UV → 水在流。tNow = 游戏时间（秒）。 */
   update(tNow) {
     if (!this.tex) return;
     this.tex.offset.set((tNow * 0.035) % 1, (tNow * 0.012) % 1);
+  }
+
+  /**
+   * v55.9：随气温在 color/coldColor 之间线性混色——ThreeRenderer.setLighting 跟
+   * setTint（植被/裙边昼夜染色）走同一条路，这里是"水面的气温染色"版本。
+   * @param t 0~1，0=常温色，1=coldColor（严寒）。存一份到 this._coldness，
+   *   换图重建材质（build()）时不会丢——否则每次切图水面都会先跳回常温色一帧。
+   */
+  setColdness(t) {
+    this._coldness = Math.max(0, Math.min(1, t || 0));
+    if (!this.mesh) return;
+    const wcfg = (CONFIG.ui && CONFIG.ui.water) || {};
+    const base = wcfg.color ?? '#35707c', cold = wcfg.coldColor ?? '#8199a3';
+    this.mesh.material.color.copy(_wA.set(base)).lerp(_wB.set(cold), this._coldness);
   }
 
   setEnabled(on) {

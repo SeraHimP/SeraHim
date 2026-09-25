@@ -130,8 +130,7 @@ export const EDITOR_OPEN = {
     const ovr = CONFIG.skillOverrides || {};
     let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
       ✨ 技能参数的叠加顺序：<b>技能出厂值 → 这里的全局覆写 → 地图级覆写</b>（后者压前者）。<br>
-      改这里等于改"所有地图上的基准值"。<br>
-      留空 = 不覆写，用出厂值。改完点【应用】。
+      改这里等于改"所有地图上的基准值"。
     </div>`;
 
     if (!list.length) {

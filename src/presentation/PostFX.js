@@ -111,10 +111,24 @@ class NormalDepthPrepass extends Pass {
     // 改成一条通用规则——**材质 transparent 的就不进预渲染**。这条规则本身也是对的：
     // 半透明物体既不该产生轮廓、也不该在 SSAO 里遮蔽别人（两者读的是同一张预渲染图）。
     // 好处是以后新加的特效自动就对，不需要记得挂 layer。
+    //
+    // ==================== 2026-09-25：水晶（实心半透明凸多面体）需要白名单例外 ====================
+    // 用户报"黑色描边线穿过了水晶材质"：塔水晶（UnitLayer.js 的 crystalMaterial，
+    // transparent:true opacity:0.88，为水晶质感所需，早于本轮修复就存在）按上面的
+    // 通用规则被整体从预渲染里隐藏——于是水晶这块屏幕区域在深度/法线图里"空"了，
+    // 描边读到的是水晶**背后**塔身结构的深度，把那部分结构的边缘画成黑线，合成时
+    // 叠在水晶前面，看起来就是"背后描边线穿模显示在水晶上"。
+    // 这和弹道/粒子的情况不是一回事：那些是应该被跳过的薄片状特效（本来就不该
+    // 产生轮廓、也不该遮挡别人）；水晶是一整块实心凸多面体，半透明只是材质效果，
+    // 它在空间上确实挡住了背后的东西，该像不透明物体一样参与深度/遮蔽判定。
+    // 用 userData 开一个显式白名单标记（而不是反过来给粒子挂标记）：只有明确
+    // "我是实心几何、该正常参与预渲染"的物体才需要例外，默认规则不变，
+    // 不会引入新的满屏黑麻点风险。
     const hidden = [];
     this.scene.traverse((o) => {
       if (!o.visible) return;
       if (!o.isMesh && !o.isPoints && !o.isLine && !o.isSprite) return;
+      if (o.userData && o.userData.prepassSolid) return; // 白名单：实心半透明几何，正常参与预渲染
       const m = o.material;
       const tr = Array.isArray(m) ? m.some((x) => x && x.transparent) : !!(m && m.transparent);
       if (tr) { o.visible = false; hidden.push(o); }

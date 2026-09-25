@@ -220,7 +220,7 @@ export const EDITOR_PAGES_ENTITY = {
       </div>`;
     }
     html += `</div>`;
-    html += `<div class="pick-desc-box" id="skillDescBox">点击某个被动查看说明；再次点击可切换装备/卸载。</div>`;
+    html += `<div class="pick-desc-box" id="skillDescBox"></div>`;
     return html;
   },
 
@@ -467,7 +467,7 @@ export const EDITOR_PAGES_ENTITY = {
           <div class="transfer-pool-title">🐉 龙魂池（唯一开关，可同时装备多个不同龙魂）</div>
           <div class="pick-grid">${soulPoolHtml}</div>
         </div>
-        <div class="pick-desc-box" id="soulDescBox">点击某项查看说明。</div>
+        <div class="pick-desc-box" id="soulDescBox"></div>
       </div>
     `;
   },

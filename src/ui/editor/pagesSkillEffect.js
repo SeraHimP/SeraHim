@@ -76,7 +76,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       </div>`;
     }
     html += `</div>`;
-    html += `<div class="pick-desc-box" id="tplSkillDescBox">点击某个被动查看说明；再次点击可切换是否默认装备。</div>`;
+    html += `<div class="pick-desc-box" id="tplSkillDescBox"></div>`;
     return html;
   },
 

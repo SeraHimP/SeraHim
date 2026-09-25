@@ -221,6 +221,10 @@ export class BodyInstancer {
    * groundTraceSystem 为空（还没进对局/天气系统未接线）时直接跳过，不报错。
    */
   updateSnow(dt, groundTraceSystem) {
+    // v55.9 修复："塔更换损毁模型时会先变成原模型闪一下才变雪模型"的根因——
+    // 这里缓存一份最新引用，供 seedTowerSnow() 在损毁档切换（bindSlot 换新
+    // 槽位）的那一瞬间立即取用，不用等下面这个节流周期真正跑到。
+    this._groundTraceSystem = groundTraceSystem;
     const cfg = (CONFIG.ui && CONFIG.ui.towerSnowFx) || {};
     const interval = cfg.updateIntervalSec ?? 0.75;
     this._snowT = (this._snowT || 0) + dt;
@@ -238,6 +242,33 @@ export class BodyInstancer {
     for (const b of this.buckets.values()) {
       if (b.isTower) b.updateSnow(sampleFn, maxBlend);
     }
+  }
+
+  /**
+   * v55.9 修复：塔损毁档位切换（vis.key 变化）会经 InstancedUnitProxy.bindSlot
+   * 分配一个全新槽位——新槽位的 instanceSnow 是 Float32Array 默认值 0（见
+   * BodyBucket 构造函数/_grow），要等下一次上面 updateSnow() 的节流周期
+   * （默认0.75秒）才会被刷新成正确值。这段时间里塔先以"完全无雪"的样子画
+   * 出来，再在节流周期到时"啪"地一下跳变成有雪——用户报"先变成原模型后闪
+   * 一下才变为雪的模型"，正是这个空档期。
+   * 修法：在 bindSlot 换槽的那一刻立即用【当前】groundTraceSystem 算一次
+   * 这一个槽位该有的雪量并写入，不等节流周期——只在换槽这个低频事件发生时
+   * 多做一次单点采样，成本可以忽略，跟节流刷新（照顾"雪随时间累积/消退"
+   * 这个持续过程）不冲突，两者管的是不同的时机。
+   */
+  seedTowerSnow(slot, x, z) {
+    if (!slot || !slot.bucket.isTower) return;
+    const gts = this._groundTraceSystem;
+    if (!gts || !gts.getSnowTarget) return;
+    const snow = gts.getSnowTarget();
+    if (!snow) return;
+    const attr = slot.bucket.geo.getAttribute('instanceSnow');
+    if (!attr) return;
+    const cfg = (CONFIG.ui && CONFIG.ui.towerSnowFx) || {};
+    const maxBlend = cfg.maxBlend ?? 0.55;
+    const depth = Math.max(0, Math.min(1, sampleSnowTarget(snow, x, z)));
+    attr.array[slot.index] = depth * maxBlend;
+    attr.needsUpdate = true;
   }
 
   dispose() {
@@ -276,6 +307,11 @@ export class InstancedUnitProxy {
     this._slot = this._instancer.alloc(key, geo, mat, isTower);
     if (old) this._instancer.release(old);
     this._flush();
+    // v55.9 修复：塔损毁档切换换槽的瞬间立即补一次雪深采样，不等节流周期，
+    // 见 BodyInstancer.seedTowerSnow 头注（"先变原模型再闪一下变雪模型"的根因）。
+    // 用换槽前就已知道的位置（_x/_z 在损毁档切换时基本不变，_flush 会随即
+    // 再同步一次），不需要等外部再传一次坐标进来。
+    if (isTower) this._instancer.seedTowerSnow(this._slot, this._x, this._z);
   }
 
   releaseSlot() {

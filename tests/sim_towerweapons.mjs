@@ -641,6 +641,29 @@ function tickNovaCharge(combat, ctx, tower, dt) {
     && SkillLibrary.weapon_shepherd.category === 'weapon');
 }
 
+// ==================== 十七b：编辑器/UI枚举接线没有漏掉 prism（v55.9 修复） ====================
+// 用户报"建塔界面不显示光棱塔"——排查发现 UnitAddDialog.js 的 WEAPONS 表当初加
+// 四个新塔武器时漏掉了光棱塔一个（其它三个都有，pagesEntity.js/MapEditorDialog.js
+// 也都齐了，只有这一处漏），而上面十七这组"没漏掉 shepherd"的测试恰好没有对
+// prism 做同样的检查——这正是"有断言守着 shepherd，没人管 prism"的活教材，
+// 这里补上同一套检查，防止同类遗漏以后在这份清单上重演。
+{
+  const dialogSrc = srcOf('src/ui/UnitAddDialog.js');
+  T('枚举④-UnitAddDialog.js 的 WEAPONS 认得光棱塔', /prism:\s*\{[^}]*光棱塔/.test(dialogSrc));
+
+  const entitySrc = srcOf('src/ui/editor/pagesEntity.js');
+  T('枚举⑤-pagesEntity.js 的 weaponMeta 认得 weapon_prism',
+    /weapon_prism:\s*\{[^}]*光棱塔/.test(entitySrc));
+
+  const mapEditorSrc = srcOf('src/ui/MapEditorDialog.js');
+  T('枚举⑥-MapEditorDialog.js 的 WEAPON_META 认得 weapon_prism',
+    /weapon_prism:\s*\{[^}]*光棱塔/.test(mapEditorSrc));
+
+  T('枚举⑦-weapon_prism 的 applicableTypes 包含 tower',
+    SkillLibrary.weapon_prism.applicableTypes.includes('tower')
+    && SkillLibrary.weapon_prism.category === 'weapon');
+}
+
 // ==================== 十八、渲染层：牧灵法阵不画红线，改画绿色拴绳线 ====================
 // 用户原话："塔本身就不要再显示攻击红线了，而是显示绿线和幻兽相连"。
 // 渲染层需要 THREE.js/DOM，这里不真的跑渲染，钉源码里的接线（跟 sim_v43.mjs 已有的
@@ -801,6 +824,35 @@ function tickNovaCharge(combat, ctx, tower, dt) {
   const beamsRed = ctx2.combat.projectiles.getBeams();
   T('阵营色②-红方塔与蓝方塔光束颜色不同（真的按阵营区分，不是两边都套同一个常量）',
     beamsRed.length > 0 && beamsRed[0].color !== beamsBlue[0].color);
+}
+
+// ==================== 二十一d：光棱塔/腐蚀武器都能打敌方防御塔（v59修复） ====================
+// 用户："光棱塔不攻击敌对防御塔，需要修复。所有不同类型的武器对敌对单位都是可以
+// 攻击的"——真根因是 enemyUnitsInRadius 默认不返回敌方建筑，两处调用（光棱塔自己
+// 抄的腐蚀塔的骨架）都漏了 includeBuildings:true。
+{
+  const { ents, ctx } = W();
+  const tower = mk(ents, 'tower', 0, 'blue');
+  tower.baseStats.attackRange = 1000;
+  tower.baseStats.attackDamage = 100;
+  const inst = equipSkill(tower, 'weapon_prism', ctx);
+  const foeTower = mk(ents, 'tower', 100, 'red', 1000000);
+  for (let i = 0; i < 300; i++) SkillLibrary.weapon_prism.onFrame(tower.id, 1 / 30, inst, ctx);
+  T('塔①-光棱塔能命中敌方防御塔（不再被 enemyUnitsInRadius 默认过滤掉）',
+    foeTower.currentHP < 1000000);
+
+  const { ents: ents2, ctx: ctx2, fx: fx2 } = (() => {
+    const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+    const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+    combat.createMinion = fakeCreateMinion(ents);
+    return { ents, fx, ctx: { entityContainer: ents, effectRegistry: fx, eventBus: bus, attrCalc: A, combat, waveNumber: 0 } };
+  })();
+  const corrTower = mk(ents2, 'tower', 0, 'blue');
+  corrTower._skillInstances.push({ id: ++window._uid, skillId: 'weapon_corrosion', state: { timer: 999 } });
+  const corrFoeTower = mk(ents2, 'tower', 80, 'red', 1000000);
+  SkillLibrary.weapon_corrosion.onFrame(corrTower.id, 1.0, corrTower._skillInstances[0], ctx2);
+  T('塔②-腐蚀塔的毒素也能上敌方防御塔身',
+    fx2.getEffects(corrFoeTower.id).some(x => x.blueprint.name === '腐蚀·毒素'));
 }
 
 // ==================== 二十二、光棱塔与雷魂的区分（不是同一个东西换皮） ====================

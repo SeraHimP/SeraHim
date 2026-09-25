@@ -407,6 +407,15 @@ eventBus.on('map:loading', () => {
   CTX.gameTime = 0;
   CTX.waveNumber = 0;
   CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
+  // v59 自查修复：飞行中的子弹/光束原来只在【重置本局】按钮（__resetRun）里手动清过，
+  // 走"选地图"菜单/地图编辑器切图这条最常见的路径（直接调 mapSystem.loadMap()，
+  // 不经过 __resetRun）完全没人清——上一张图残留的子弹会带着已经不存在的
+  // targetId 飞到新地图上（entities.get 找不到目标时会冻结在最后已知落点继续飞，
+  // 见 ProjectileSystem.update 的 B2 逻辑），表现为"新地图刚加载就有几发凭空出现
+  // 的幽灵子弹"。跟龙魂那条一样是"切图该完全初始化却漏了一处"，这里补上，
+  // __resetRun 里原来那两行显式清空就可以删掉了（loadMap 会自动带出这一步）。
+  projectileSystem.projectiles.length = 0;
+  projectileSystem.beams.clear();
 });
 eventBus.on('map:loaded', (d) => {
   CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
@@ -453,13 +462,13 @@ CTX.__resetRun = () => {
     for (const eff of effectRegistry.getEffects(e.id)) effectRegistry.remove(eff.id);
   }
   entityContainer.purgeDead();
-  // ② 飞行物：不清的话上一局的子弹会带着 pendingHit 落到新一局的实体 id 上
-  projectileSystem.projectiles.length = 0;
-  projectileSystem.beams.clear();
-  // ③ 龙系统的整局进度（含龙魂归属）
+  // ② 龙系统的整局进度（含龙魂归属）
   dragonSystem.resetRun();
-  // ④ 地图：重载当前图。loadMap 触发的 map:loading/map:loaded 会把时钟/波次/比分/
-  //    天气一并重置，见下面那两个事件处理器 —— 这里不用重复做一遍。
+  // ③ 地图：重载当前图。loadMap 触发的 map:loading/map:loaded 会把时钟/波次/比分/
+  //    天气/飞行物一并重置，见下面那几个事件处理器 —— 这里不用重复做一遍
+  //   （飞行物清空 v59 起已经挪到 map:loading 监听器里，见那边注释：原来只有这里
+  //    手动清过，走"选地图"菜单直接调 loadMap 那条路完全没清，是同一类"切图该
+  //    完全初始化却漏了一处"的问题，不是本函数专属的）。
   mapSystem.loadMap(mapSystem.currentMap.id);
   uiManager.log('🔄 本局已重置（地图与所有属性设置保持不变）', 'spawn');
   return true;

@@ -296,7 +296,10 @@ export class ThreeRenderer {
    * fog 传数值即启用线性雾（世界单位），传 null 关闭。
    */
   setLighting(opt = {}) {
-    const { sunColor, ambientSky, ambientGround, sunElevation, sunAzimuth, ambientShare, exposure, fog, background, unitTint, normalize = true } = opt;
+    const { sunColor, ambientSky, ambientGround, sunElevation, sunAzimuth, ambientShare, exposure, fog, background, unitTint, waterColdness, normalize = true } = opt;
+    // v55.9：河道水面的降温变色，跟 unitTint/skirt.setTint 走同一条"setLighting 是
+    // 光照唯一入口"的规矩——见 DayNight.applyWeatherTempTint 头注。
+    if (waterColdness !== undefined && this.water?.setColdness) this.water.setColdness(waterColdness);
     // v47：单位（塔/兵/龙）跟着环境一起变色，否则夜里满地图发白的小人（见 DayNight.unitTintOf）。
     // 走 setLighting 是因为**这里已经是光照的唯一入口** —— 再开一条并行的通道，
     // 就会出现"改了灯没改单位"的半截状态。

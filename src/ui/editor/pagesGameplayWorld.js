@@ -236,7 +236,7 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
       <div class="pick-grid">${powerPoolHtml}</div>
       <div class="panel-sec">龙魂池（点击切换）</div>
       <div class="pick-grid">${soulPoolHtml}</div>
-      <div class="pick-desc-box" id="dgSoulDescBox">点击巨龙之力/龙魂池，对勾选的阵营广播；点击上方"当前生效"里的条目可以移除。</div>`;
+      <div class="pick-desc-box" id="dgSoulDescBox"></div>`;
   },
 
   /**

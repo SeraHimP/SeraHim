@@ -224,7 +224,14 @@ export function applyWeatherTempTint(params, weatherSystem) {
   const exposure = params.exposure * (1 + T * strength);
   const sunColor = mix > 0 ? '#' + _tA.set(params.sunColor).lerp(_tB.set(target), mix).getHexString() : params.sunColor;
   const ambientSky = mix > 0 ? '#' + _tA.set(params.ambientSky).lerp(_tB.set(target), mix * 0.6).getHexString() : params.ambientSky;
-  return { ...params, exposure, sunColor, ambientSky, unitTint: unitTintOf(ambientSky, exposure) };
+  // v55.9：河道水面单独一根"降温变色"杠杆，只吃 T 的冷侧（T<0），跟上面这组
+  // 环境光的"暖/冷都要动"不是一回事——水没有"变热"的说法，只在天冷时往冷灰蓝
+  // 混，见 Config.js ui.water 头注。这里刻意不套 tempTintStrength 那个"故意调
+  // 得很轻微"的系数：那个系数是给全屏光照滤镜感定的上限，水面是一小块局部
+  // 物体，需要更明显的变化幅度才盖得住用户反馈的"和环境割裂"，两者不该共用
+  // 同一个强度上限。
+  const waterColdness = Math.max(0, -T);
+  return { ...params, exposure, sunColor, ambientSky, unitTint: unitTintOf(ambientSky, exposure), waterColdness };
 }
 
 /** 相位（0..1）对应的一天时刻标签，供 UI/调试显示。 */

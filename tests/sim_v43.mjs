@@ -849,6 +849,18 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('重③-清掉飞行物（否则上一局的子弹会落到新一局的实体 id 上）',
     /projectileSystem\.projectiles\.length = 0;/.test(mainSrc)
     && /projectileSystem\.beams\.clear\(\);/.test(mainSrc));
+  // v59 自查修复：飞行物清空原来只写在 __resetRun 里，走"选地图"菜单/地图编辑器
+  // 切图那条最常见的路径（直接调 mapSystem.loadMap()，不经过 __resetRun）完全没清，
+  // 上一张图残留的子弹会带着已经不存在的 targetId 飞到新地图上。改挂到
+  // eventBus.on('map:loading', ...) 里，这样不管走哪条路调 loadMap 都会清。
+  T('重③b-飞行物清空挂在 map:loading 监听器里（不只是 __resetRun 专属，选地图/编辑器切图也要清）',
+    (() => {
+      const i = mainSrc.indexOf("eventBus.on('map:loading'");
+      const j = mainSrc.indexOf('\n});', i);
+      const block = mainSrc.slice(i, j > i ? j : i + 800);
+      return /projectileSystem\.projectiles\.length = 0;/.test(block)
+        && /projectileSystem\.beams\.clear\(\);/.test(block);
+    })());
   T('重④-龙系统整局进度归零', /dragonSystem\.resetRun\(\);/.test(mainSrc));
   T('重⑤-对战模式复用 loadMap(当前图) 做完整清场，不另写一套',
     /mapSystem\.loadMap\(mapSystem\.currentMap\.id\);/.test(mainSrc));

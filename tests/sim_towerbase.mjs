@@ -16,7 +16,7 @@
  */
 import { CONFIG, stylizedPaletteOf, adaptiveTowerColors } from '../src/data/Config.js';
 import { howling_abyss_frost } from '../src/data/maps/howling_abyss_frost.js';
-import { towerMesh } from '../src/presentation/UnitMeshFactory.js';
+import { towerMesh, crystalMaterial } from '../src/presentation/UnitMeshFactory.js';
 import { srcOf, scoreboard } from './_harness.mjs';
 
 const { T, done } = scoreboard('塔基 + 塔色自适应地面');
@@ -245,6 +245,46 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   const b = build('outer', 'blue', 0, 'x2');
   T('外⑥-outer 造型是确定性的（同样入参、不同 key 两次生成，顶点数/topY 完全一致）',
     a.geo.attributes.position.count === b.geo.attributes.position.count && a.topY === b.topY);
+}
+
+// ==================== 八、水晶边缘发光描边（Fresnel rim，v55.9） ====================
+// 用户反馈"水晶材质像塑料片"，选定方向"边缘发光描边"。crystalMaterial 本身没有
+// document/WebGL 依赖，可以直接 new 一份出来检查；onBeforeCompile 是纯 JS 函数，
+// 用一个符合三处注入点（<common>/<normal_fragment_maps>）的最小 fragmentShader
+// 桩子直接调用它，不需要真的编译 GPU 程序就能钉住"注入了什么"。
+{
+  const mat = crystalMaterial(0x4a9eff);
+  T('晶①-crystalMaterial 保留原有基础属性（颜色/自发光/切面/半透明不变）',
+    mat.color.getHex() === 0x4a9eff && mat.emissive.getHex() === 0x4a9eff
+    && mat.flatShading === true && mat.transparent === true
+    && Math.abs(mat.opacity - 0.88) < 1e-6 && Math.abs(mat.roughness - 0.18) < 1e-6);
+  T('晶②-customProgramCacheKey 对所有水晶材质返回同一个常量字符串（结构相同，可以安全共享编译好的 program）',
+    typeof mat.customProgramCacheKey === 'function'
+    && mat.customProgramCacheKey() === crystalMaterial(0xff5a5a).customProgramCacheKey());
+
+  const fakeShader = {
+    uniforms: {},
+    fragmentShader: [
+      'uniform vec3 emissive;',
+      '#include <common>',
+      'void main() {',
+      '  vec3 totalEmissiveRadiance = emissive;',
+      '  #include <normal_fragment_maps>',
+      '  gl_FragColor = vec4(totalEmissiveRadiance, 1.0);',
+      '}',
+    ].join('\n'),
+  };
+  mat.onBeforeCompile(fakeShader);
+  T('晶③-onBeforeCompile 往 shader.uniforms 里注入了 uRimPower/uRimStrength，初值取自 CONFIG.ui.crystalRim',
+    fakeShader.uniforms.uRimPower?.value === (CONFIG.ui.crystalRim?.power ?? 2.5)
+    && fakeShader.uniforms.uRimStrength?.value === (CONFIG.ui.crystalRim?.strength ?? 1.4));
+  T('晶④-片元着色器里声明了这两个 uniform（在 <common> 之后，供后面的计算引用）',
+    /uniform float uRimPower;/.test(fakeShader.fragmentShader)
+    && /uniform float uRimStrength;/.test(fakeShader.fragmentShader));
+  T('晶⑤-在 <normal_fragment_maps> 之后按 Fresnel 公式把边缘光叠加进 totalEmissiveRadiance（乘 emissive，随攻击蓄能同步变亮）',
+    /totalEmissiveRadiance \+= emissive \* crystalRim \* uRimStrength;/.test(fakeShader.fragmentShader));
+  T('晶⑥-Fresnel 项用的是 1-dot(视线,法线) 的幂次（边缘越接近垂直视线越亮，不是随手写的别的公式）',
+    /pow\(1\.0 - max\(dot\(normalize\(vViewPosition\), normal\), 0\.0\), uRimPower\)/.test(fakeShader.fragmentShader));
 }
 
 done();

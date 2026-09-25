@@ -379,7 +379,7 @@ export const EDITOR_PAGES_CONFIG = {
           <div class="transfer-pool-title">🐉 龙魂池（点击设为默认装备，可多选）</div>
           <div class="pick-grid">${poolHtml}</div>
         </div>
-        <div class="pick-desc-box" id="tplSoulDescBox">点击某项查看说明。</div>
+        <div class="pick-desc-box" id="tplSoulDescBox"></div>
       </div>
     `;
   },

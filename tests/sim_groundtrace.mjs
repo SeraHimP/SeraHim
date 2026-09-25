@@ -315,6 +315,34 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
     trodden >= pathFloor * target * 0.9);
 }
 {
+  // ==================== v55.9 修复验收：正常行走单次经过不该被自己的脚步瞬间踩到地板值 ====================
+  // 用户实测反馈："积雪的移速降低就是-6.6恒定的，即使小兵走的是前面小兵踩过的
+  // 地方还是小兵新走的地方"——排查（用真实移速78、erodeRadius=70 模拟移动中的
+  // 小兵）确认：旧的 erodePerSec=1.2 换算下来，满雪深到 pathFloor 只需要约0.58秒，
+  // 比小兵走完 erodeRadius 覆盖范围所需时间（约1.8秒）还短——小兵还没走出自己
+  // 脚下这圈影响半径，那圈地就已经被自己踩到下限，"雪越厚移速降得越多"这个效果
+  // 实际只存在于用户根本来不及感知的瞬间。这里钉住新值 0.1 下，一次正常速度的
+  // 单趟经过（几秒钟），全新雪地上采样到的深度基本维持在高位，不会自己踩到地板。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(4000, 4000), ws);
+  setCharge(ws, 'snow', 1.0);
+  for (let i = 0; i < 30 * 400; i++) gts.update(1 / 30); // 先在远处让雪盖长满，不踩踏这条测线
+  const target = gts.snowGlobalTarget;
+  const pathFloor = CONFIG.groundTrace?.snowCover?.pathFloor ?? 0.3;
+  const mover = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 0, y: 2000 } }, CONFIG);
+  const moveSpeed = CONFIG.templates?.melee?.moveSpeed ?? 78;
+  const dt = 1 / 30;
+  let minDepthWhileMoving = Infinity;
+  for (let steps = 0; steps < 90; steps++) { // 模拟 3 秒的正常行走
+    mover.pos.x += moveSpeed * dt;
+    gts.update(dt);
+    minDepthWhileMoving = Math.min(minDepthWhileMoving, gts._snowDepthAt(mover.pos.x, mover.pos.y));
+  }
+  T('雪⑤b-单次正常速度经过全新雪地，途中采样到的最低深度不会被自己的脚步踩到 pathFloor 那么低',
+    minDepthWhileMoving > pathFloor * target * 1.3);
+}
+{
   // ==================== v55.8 修复验收：塔的落雪不该被旁边小兵的踩踏侵蚀影响 ====================
   // 用户报"下雪天塔的颜色会跟随旁边的小兵走过后出现变化，太诡异了"——排查确认
   // 塔（InstancedBodyLayer）原来跟地面/植被一样查 sampleSnowGrid（会被侵蚀的实际
@@ -428,6 +456,38 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
   T('材质⑧-getSnowCover() 暴露 zoneMix，长度与 data 一致', cover.zoneMix && cover.zoneMix.length === cover.data.length);
   T('材质⑨-有森林分区的地图，zoneMix 里既有0（路面）也有1（野区），不是全一个值',
     cover.zoneMix.includes(0) && cover.zoneMix.includes(1));
+}
+
+// ==================== 六c、河道不积雪（v55.9） ====================
+// 用户："河面上应该不会有雪！水的上面没有雪！"——v55.3 那次"水面不积雪"的修复
+// 判据只覆盖了 isWaterOffPathMap（老式"不可走=水面"的图，如嚎哭深渊冰封版），
+// 森林风格地图（召唤师峡谷/扭曲丛林）的河道是独立的一套连续判据
+// （MapSystem.riverFactor），不属于这个分支，之前完全没被 noGrow 覆盖到。
+{
+  const mkRiverMapSystem = (w = 4000, h = 4000) => ({
+    isWalkable: () => true,
+    currentMap: { world: { w, h } },
+    riverFactor: (x, y) => (Math.abs(x - y) < 200 ? 1 : 0), // 模拟一条沿 x=y 对角线的河
+  });
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkRiverMapSystem(), ws);
+  setCharge(ws, 'snow', 1.0);
+  for (let i = 0; i < 30 * 200; i++) gts.update(1 / 30); // 充分积雪
+  T('河①-全局雪深确实涨起来了（后面判断河道为0不是因为雪根本没下）', gts.snowGlobalTarget > 0.9);
+  const onRiver = gts._snowDepthAt(2000, 2000);       // x=y，河心
+  const offRiver = gts._snowDepthAt(500, 3500);       // 远离河道
+  T('河②-河心位置的局部雪深恒为0（河面不积雪）', onRiver === 0);
+  T('河③-远离河道的位置正常积雪（不是整张图都被误判成水面）', offRiver > 0.5);
+}
+{
+  // 没有 riverFactor 方法的老式测试桩：这条判据直接跳过，不抛异常，逐位不变。
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws); // mkMapSystem() 没有 riverFactor
+  setCharge(ws, 'snow', 1.0);
+  for (let i = 0; i < 30; i++) gts.update(1 / 30);
+  T('河④-mapSystem 没有 riverFactor 方法时不抛异常，照常积雪', gts.snowGlobalTarget >= 0);
 }
 
 // ==================== 七、天气关闭/无地图系统时安全降级 ====================

@@ -144,7 +144,6 @@ export const EDITOR_PAGES_WAVE = {
   _renderGrowthContent(type) {
     let html = `<div style="padding:4px 0;">`;
     html += `<div class="pick-desc-box" style="margin-bottom:10px;">
-      📈 这里只管【单位有多强】，不管【什么时候出多少】—— 后者在「出兵编排」tab。<br>
       成长按<b>波次</b>线性累加，单位出生时结算一次并写死；已经在场上的兵不会追溯。
     </div>`;
     const G = CONFIG.battleGrowth?.[type];
@@ -366,7 +365,6 @@ export const EDITOR_PAGES_WAVE = {
     // 是一整面墙。这里改成与上面"运行时控制"（runtime 变量）同一套 .editor-section
     // + <h4> 卡片，读起来是几张边界清楚的卡片，不是一整页平铺的控件。
     let html = runtime + `<div class="pick-desc-box" style="margin-bottom:10px;">
-      🧬 出什么兵、按什么顺序出，全在这一页。分两段：<br>
       　<b>① 兵种总开关</b>　关掉的兵种下面怎么排都不会出。<br>
       　<b>② 出兵编排</b>　数组顺序 = 出兵先后。
     </div>`;

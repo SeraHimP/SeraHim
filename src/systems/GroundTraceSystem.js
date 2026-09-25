@@ -316,6 +316,19 @@ export class GroundTraceSystem {
     // 未声明）不受影响，不可走区域仍然是野区，继续正常积雪，逐位不变。
     this.snowCellNoGrow = new Float32Array(res * res); // 1 = 这一格永远不积雪（水面）
     const isWaterOffPathMap = map?.visualStyle === 'stylized' && stylizedPaletteOf(map).vegetationMode === 'none';
+    // ==================== v55.9 修复：森林风格地图的河道也不该积雪 ====================
+    // 用户报"河面上应该不会有雪！"——上面 v55.3 那次修复只覆盖了"不可走=水面"这类图
+    // （嚎哭深渊冰封版），森林风格地图（召唤师峡谷/扭曲丛林）的河道跟野区一样是
+    // "可走"或至少不是靠 isWalkable 判定水面的，走的是完全独立的一套连续河道
+    // 判据——MapSystem.riverFactor(x,y) 本来就是 WaterLayer/TerrainLayer 画河用的
+        // 那份 0~1 权重（河心=1，往岸边羽化到0），这里直接复用同一份判据，不用另起一套。
+    // 阈值不用 >0（严格任何河道痕迹都不积雪）——riverFactor 在岸边羽化得很宽，
+    // 卡在>0会让河岸很大一圈过渡带也强制不积雪，看着像河比实际宽一圈；用一个
+    // 软编码阈值（riverNoGrowThreshold）只掐掉视觉上"确实是水"的核心区域，
+    // 岸边淡出段仍按正常规则积雪，自然过渡。没有 riverFactor 方法（老式非
+    // MapSystem 的测试桩）时这一条直接跳过，逐位不变。
+    const riverThreshold = cfg.riverNoGrowThreshold ?? 0.15;
+    const hasRiver = typeof this.mapSystem?.riverFactor === 'function';
     if (world) {
       const cellW = world.w / res, cellH = world.h / res;
       for (let gy = 0; gy < res; gy++) {
@@ -326,6 +339,9 @@ export class GroundTraceSystem {
           this.snowCellRateMul[idx] = mul;
           if (hasForest) this.snowCellZoneMix[idx] = forestZoneAt(map, wx, wy) === 0 ? 0 : 1;
           if (isWaterOffPathMap && this.mapSystem?.isWalkable && !this.mapSystem.isWalkable(wx, wy)) {
+            this.snowCellNoGrow[idx] = 1;
+          }
+          if (hasRiver && this.mapSystem.riverFactor(wx, wy) > riverThreshold) {
             this.snowCellNoGrow[idx] = 1;
           }
         }

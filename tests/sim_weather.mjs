@@ -844,6 +844,20 @@ import fs from 'fs';
   T('轴⑫-天气关闭时环境色调微调是纯直通（不碰 params）',
     applyWeatherTempTint(baseParams, null) === baseParams);
 
+  // ==================== v55.9：河道水面降温变色（waterColdness） ====================
+  // 用户看实机截图反馈"这个水和环境是割裂的"——寒潮下全图变白/冷色调，水面却还是
+  // 固定的常温饱和色。修法是给 WaterLayer 加一根随气温变化的降温变色，这里钉住
+  // applyWeatherTempTint 输出的 waterColdness：热天=0（水没有"变热"的说法，只吃
+  // 冷侧），冷天>0 且随温度轴变化，不跟 exposure 共用那个"故意调得很轻微"的强度
+  // 上限（见 DayNight.js 头注，水是局部物体需要更明显的变化才盖得住割裂感）。
+  T('轴⑬-热天（温度轴正值）waterColdness 应为 0（水没有变热这回事）',
+    tinted.waterColdness === 0);
+  const wCold = new WeatherSystem(null); wCold.setEnabled(true); wCold.setTemplate('polar'); wCold.reset(33);
+  for (let i = 0; i < 1200; i++) wCold.update(1);
+  const tintedCold = applyWeatherTempTint(baseParams, wCold);
+  T('轴⑭-冷天（温度轴负值）waterColdness 大于 0', tintedCold.waterColdness > 0);
+  T('轴⑮-waterColdness 钳在 0~1 之间', tintedCold.waterColdness >= 0 && tintedCold.waterColdness <= 1);
+
   // ---- 三层感知第三层：文字叙事提示（永不含数值）----
   const wHint = new WeatherSystem(null); wHint.setEnabled(true); wHint.setTemplate('polar'); wHint.reset(22);
   let sawHint = false;

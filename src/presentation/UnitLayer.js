@@ -1076,6 +1076,11 @@ export class UnitLayer {
         //（局部偏移量 crystalLocalY 记在 entry 上，同一个道理见那段的头注）。
         this._disposeCrystal(en);
         const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
+        // 水晶材质 transparent:true，但它是实心凸多面体，不是该被跳过预渲染的粒子/
+        // 弹道薄片——挂这个白名单标记让 PostFX.js 的 NormalDepthPrepass 正常把它当
+        // 不透明物体处理，否则描边会读到水晶背后的结构深度，画出"黑线穿模"的效果
+        // （见 PostFX.js 里这个标记的头注，2026-09-25）。
+        cm.userData.prepassSolid = true;
         cm.renderOrder = ORDER_UNIT;
         this.scene.add(cm); this.infoObjs++;
         const pts = crystalParticles(vis.crystalColor, vis.crystal.r || 8);  // Q6：绕水晶公转的发光粒子（随水晶慢转）

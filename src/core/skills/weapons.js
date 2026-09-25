@@ -558,7 +558,10 @@ export const weapons = {
       // v49：改走 enemyUnitsInRadius —— 原来这行直接用 findInRadius 的结果，
       // 既不认阵营（自己人也中毒）、白名单里又漏了 'ram'（攻城车对腐蚀免疫）。
       // 用户同时报了这两个症状，它们是同一行代码造成的。详见该函数的头注。
-      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range);
+      // v59：漏了 includeBuildings——enemyUnitsInRadius 默认不返回敌方塔，导致腐蚀
+      // 武器打不到敌方防御塔。用户原话："所有不同类型的武器对敌对单位都是可以
+      // 攻击的"，塔也是敌对单位，理应可选中。
+      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range, { includeBuildings: true });
       if (enemies.length > 0) { entity._inCombat = true; entity._combatTimer = 4; }
 
       const perStackAdPct = p.perStackAdPct ?? 1;
@@ -1183,7 +1186,9 @@ export const weapons = {
       const range = stats.attackRange || 250;
       // v49 的教训（见 weapon_corrosion 头注）：必须走 enemyUnitsInRadius，不能直接
       // findInRadius——那样不认阵营、白名单也会漏兵种。
-      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range);
+      // v59：实现上照抄 weapon_corrosion 的骨架时把同一个漏洞也抄了过来——漏了
+      // includeBuildings，光棱塔因此打不到敌方防御塔。修法同 weapon_corrosion。
+      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range, { includeBuildings: true });
       if (enemies.length === 0) return;
 
       entity._inCombat = true; entity._combatTimer = 4;

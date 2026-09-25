@@ -1515,13 +1515,56 @@ export function setUnitTint(hex) {
 
 // Q6：水晶材质——玻璃/切面质感 + 自发光（队伍色）。每座塔【独立一份】（攻击辉光要逐塔调
 // emissiveIntensity），故不缓存、每次 new；调用方负责在替换/移除时 dispose。
+//
+// ==================== v55.9：边缘发光描边（Fresnel rim）====================
+// 用户反馈"目前的水晶材质像塑料片"——排查：flatShading 只给了硬切面，没有任何
+// 折射/反射，MeshStandardMaterial 在没有环境贴图时反射项基本是黑的，于是整个
+// 水晶只剩"一块固定色 + 均匀自发光"，跟真水晶该有的"边缘通透发亮、正面看进去
+// 比较暗"的观感正好相反。用户选定方向"边缘发光描边"（性价比高，不用开
+// transmission）：在片元着色器里按视角与法线的夹角算一个 Fresnel 项，越靠近
+// 轮廓边缘（视线与法线接近垂直）就越亮，叠加到自发光上，正面看进去保留原来
+// 较暗的切面质感——这正是宝石/玻璃"边缘亮、中心暗"的标志性观感。
+// 用户额外强调："水晶在正常状态下是有自发光的，在攻击时发光更加强烈"——这条
+// rim 效果不能破坏这个既有机制。做法是让 rim 直接乘 three.js 内置的 emissive
+// uniform（该 uniform 在 JS 侧已经是 material.emissive×emissiveIntensity 的结果，
+// 见 WebGLProgram 里的 emissive.value.copy(...).multiplyScalar(emissiveIntensity)），
+// 不额外引入一份颜色/强度状态——UnitLayer.js 每帧照常调
+// en.crystal.material.emissiveIntensity 驱动攻击蓄能变亮，rim 亮度跟着同步放大，
+// 两套效果永远同步，不会出现"核心亮了但边缘没跟上"的割裂。
+// flatShading 下没有 vNormal varying（法线在片元里现算），因此注入点选在
+// <normal_fragment_maps> 之后——那时候 `normal` 已经是这一片的最终法线，
+// 不用关心 flat/smooth 走的是哪条计算路径。customProgramCacheKey 固定成同一个
+// 字符串（不是每次 new 都不同）：所有水晶材质的 onBeforeCompile 逻辑和这段注入
+// 完全一样，唯一的差异（color/emissive）是运行时 uniform 值，不影响编译出的
+// shader 结构，可以放心让它们共享同一份编译好的 program（同 VegetationShaderPatch.js
+// 头注记录的"identical onBeforeCompile 文本导致错误共享 program"是反过来的坑——
+// 那边是"文本相同但语义不同不该共享"，这里是"文本相同且语义也相同，该共享"）。
+const CRYSTAL_RIM_CACHE_KEY = 'crystalRimMaterial_v1';
 export function crystalMaterial(color) {
-  return new THREE.MeshStandardMaterial({
+  const mat = new THREE.MeshStandardMaterial({
     color, emissive: color, emissiveIntensity: 0.7,
     roughness: 0.18, metalness: 0.0,
     flatShading: true,                 // 切面高光 → 水晶感
     transparent: true, opacity: 0.88,
   });
+  const rimCfg = (CONFIG.ui && CONFIG.ui.crystalRim) || {};
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRimPower = { value: rimCfg.power ?? 2.5 };
+    shader.uniforms.uRimStrength = { value: rimCfg.strength ?? 1.4 };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', [
+        '#include <common>',
+        'uniform float uRimPower;',
+        'uniform float uRimStrength;',
+      ].join('\n'))
+      .replace('#include <normal_fragment_maps>', [
+        '#include <normal_fragment_maps>',
+        'float crystalRim = pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), uRimPower);',
+        'totalEmissiveRadiance += emissive * crystalRim * uRimStrength;',
+      ].join('\n'));
+  };
+  mat.customProgramCacheKey = () => CRYSTAL_RIM_CACHE_KEY;
+  return mat;
 }
 
 // Q6：水晶粒子——绕水晶悬浮的一圈发光尘埃（加法混合，类 LoL）。作为水晶 Mesh 的子物体挂上，

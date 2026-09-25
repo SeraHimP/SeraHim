@@ -318,15 +318,18 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
   const foe = mk(ents, 'melee', 50, 'red');
   const mate = mk(ents, 'melee', 60, 'blue');
   const foeRam = mk(ents, 'ram', 70, 'red');
+  const foeTower = mk(ents, 'tower', 80, 'red');
   const inst = tower._skillInstances[0];
   SkillLibrary.weapon_corrosion.onFrame(tower.id, 1.0, inst, ctx);
   const poisoned = (e) => fx.getEffects(e.id).some(x => x.blueprint.name === '腐蚀·毒素');
   T('腐①-敌方单位中毒', poisoned(foe));
   T('腐②-**友军不中毒**（用户报的第一个症状）', !poisoned(mate));
   T('腐③-攻城车也会中毒（用户报的第二个症状：白名单里漏了 ram）', poisoned(foeRam));
+  T('腐③b-敌方防御塔也会中毒（v59修复：漏了includeBuildings，"所有武器对敌对单位都能攻击"，塔也是敌对单位）',
+    poisoned(foeTower));
   T('腐④-判据不再是写死的兵种白名单（以后加兵种不用回来补）', (() => {
     const w = srcOf('src/core/skills/weapons.js');
-    return /enemyUnitsInRadius\(ctx\.entityContainer, entity, range\)/.test(w)
+    return /enemyUnitsInRadius\(ctx\.entityContainer, entity, range, \{ includeBuildings: true \}\)/.test(w)
       && !/'melee', 'ranged', 'siege', 'super', 'totem', 'dragon', 'shield', 'warlock', 'corrupt'/.test(w);
   })());
   T('腐⑤-连锁伤害走同一份实现（同一个坑的另一半）', (() => {

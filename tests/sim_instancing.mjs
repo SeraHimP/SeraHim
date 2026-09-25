@@ -173,6 +173,45 @@ const { T, done } = scoreboard('单位本体合批（InstancedMesh，小兵+塔�
   inst.dispose();
 }
 
+// ==================== 一c、塔损毁档切换换槽时立即补雪，不等节流周期（v55.9 修复） ====================
+// 用户报"塔更换损毁模型的时候，如果被雪覆盖了这时候会先变成原模型后闪一下才变为
+// 雪的模型"——根因：损毁档切换会让 vis.key 变化，InstancedUnitProxy.bindSlot 因此
+// 分配一个全新槽位，新槽位的 instanceSnow 初始是 Float32Array 默认值 0（见
+// BodyBucket 构造函数），要等下一次 updateSnow() 节流周期（默认0.75秒）才会被
+// 刷新成正确值——这段空档期塔先以"无雪"外观画出来，之后再跳变成有雪。
+// 修法：bindSlot 换槽的那一刻立即调用 seedTowerSnow 补一次单点采样。这里验证：
+// 一次完整的节流刷新之后（塔已经有正确的雪量），紧接着换到一个全新的损毁档
+// key（模拟tier切换），换槽瞬间不应该读到0——不用等下一次 updateSnow 节流周期。
+{
+  const scene = new THREE.Scene();
+  const inst = new BodyInstancer(scene);
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshBasicMaterial();
+  const towerProxy = new InstancedUnitProxy(inst);
+  towerProxy.bindSlot('t|blue|outer|tier0', geo, mat, true);
+  towerProxy.position.set(200, 0, 200);
+
+  const fakeGroundTraceSystem = {
+    getSnowTarget: () => ({
+      resolution: 4, worldW: 400, worldH: 400,
+      globalTarget: 0.9, zoneMix: null, jungleMaxMul: 1,
+    }),
+  };
+  inst.updateSnow(10, fakeGroundTraceSystem); // 先跑一次完整节流周期，塔已经有正确雪量
+
+  // 模拟损毁档切换：换到一个全新几何/材质 key（新槽位，新桶）。
+  const damagedGeo = new THREE.BoxGeometry(1, 1, 1);
+  const damagedMat = new THREE.MeshBasicMaterial();
+  towerProxy.bindSlot('t|blue|outer|tier1_damaged', damagedGeo, damagedMat, true);
+
+  const newBucket = inst.buckets.get('t|blue|outer|tier1_damaged');
+  const newAttr = newBucket.geo.getAttribute('instanceSnow');
+  const maxBlend = CONFIG.ui?.towerSnowFx?.maxBlend ?? 0.55;
+  T('塔落雪③-损毁档切换到新槽位的瞬间，instanceSnow 已经被立即补上正确值（不是刚分配时的默认0）',
+    Math.abs(newAttr.array[0] - 0.9 * maxBlend) < 0.02);
+  inst.dispose();
+}
+
 // ==================== 二、UnitLayer.js 接线：源码形态 + 可安全借用的纯函数 ====================
 {
   const src = srcOf('src/presentation/UnitLayer.js');

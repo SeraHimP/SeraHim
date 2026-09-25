@@ -1204,10 +1204,6 @@ export const MapEditorDialog = {
       const body = `
         <div class="editor-section">
           <h4>起点地图</h4>
-          <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
-            笔刷改的是地形（navgrid），路径/建筑/技能覆写等其它结构原样克隆自起点地图——
-            从零徒手画一张全新地图（路径/出兵点）是后续阶段的事，这一批只做地形。
-          </div>
           <select id="mapEditorBaseSelect" style="width:100%;padding:6px;">
             ${maps.map(m => `<option value="${m.id}" ${m.id === baseId ? 'selected' : ''}>${m.label}${isCustomMap(m.id) ? '（自制）' : ''}</option>`).join('')}
           </select>

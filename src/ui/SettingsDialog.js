@@ -231,7 +231,6 @@ export const SettingsDialog = {
         </div>
         <div class="editor-section">
           <h4>🧭 小兵寻路</h4>
-          <p style="color:#8b949e;font-size:11px;margin:4px 0 8px;">两项都是地形卡死的解药，独立开关；关掉可对照观察。</p>
           <div class="slider-row"><label>预判式地形避障</label>
             <button id="setTerrAvoidBtn" style="flex:1;">${window.__terrainAvoid !== false ? '👀 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>

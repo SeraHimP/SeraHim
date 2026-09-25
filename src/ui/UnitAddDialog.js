@@ -44,6 +44,7 @@ const WEAPONS = {
   barrage: { label: '连珠炮', icon: '🔥' },
   nova: { label: '聚能炮', icon: '💫' },
   shepherd: { label: '牧灵法阵', icon: '🐺' },
+  prism: { label: '光棱塔', icon: '🌈' },
 };
 
 const TOWER_PASSIVES = [
@@ -351,9 +352,6 @@ export const UnitAddDialog = {
     const keys = Object.keys(els);
     return `
       <div class="option-group">
-        <div class="pick-desc-box">手动生成一条巨龙用于测试。可指定元素，或留空随机。</div>
-      </div>
-      <div class="option-group" style="margin-top:10px;">
         <label class="uad-section-label">元素（可选）</label>
         <select id="uadDragonElement" class="editor-select">
           <option value="">随机</option>

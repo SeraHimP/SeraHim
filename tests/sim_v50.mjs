@@ -419,7 +419,10 @@ const mk = (ents, t, x, f, hp = 100000) => {
   T('腐①-敌方中毒、友军不中毒', poisoned(foe) && !poisoned(mate));
   T('腐②-攻城车也会中毒（旧白名单里漏了 ram）', poisoned(foeRam));
   T('腐③-两处都走同一份 enemyUnitsInRadius（腐蚀 + 连锁）',
-    /enemyUnitsInRadius\(ctx\.entityContainer, entity, range\)/.test(srcOf('src/core/skills/weapons.js'))
+    // v59：腐蚀这处补了 includeBuildings:true（漏了敌方防御塔，见 sim_v49.mjs 腐④/
+    // sim_towerweapons.mjs 塔②）——连锁（弹射到附近敌人，不是塔的主动选敌）刻意
+    // 不跟着改，两者不再是完全同一行文本，但仍是同一个函数、同一套阵营判据。
+    /enemyUnitsInRadius\(ctx\.entityContainer, entity, range, \{ includeBuildings: true \}\)/.test(srcOf('src/core/skills/weapons.js'))
     && /enemyUnitsInRadius\(this\.entities, probe, radius\)/.test(srcOf('src/systems/CombatSystem.js')));
 }
 
