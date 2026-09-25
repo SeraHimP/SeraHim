@@ -27,6 +27,7 @@ globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0, CTX: {} };
 
 const { BodyInstancer, InstancedUnitProxy } = await import('../src/presentation/InstancedBodyLayer.js');
 const { UnitLayer } = await import('../src/presentation/UnitLayer.js');
+const { CONFIG } = await import('../src/data/Config.js');
 
 const { T, done } = scoreboard('单位本体合批（InstancedMesh，小兵+塔）');
 
@@ -137,6 +138,39 @@ const { T, done } = scoreboard('单位本体合批（InstancedMesh，小兵+塔�
 
   inst.dispose();
   T('dispose 后所有桶的 Mesh 都从 scene 里摘除', scene.children.length === 0);
+}
+
+// ==================== 一b、塔的落雪：改用 getSnowTarget（v55.8 修复） ====================
+// 用户报"下雪天塔的颜色会跟随旁边小兵走过后出现变化"——排查确认塔原来跟地面/植被
+// 一样查会被踩踏侵蚀的实际雪深（sampleSnowGrid/getSnowCover），小兵一走近塔就把
+// 塔坐标点的雪深带低了。修法是塔改查 sampleSnowTarget/getSnowTarget（不含侵蚀的
+// 目标雪深，见 GroundTraceSystem.js 头注）。这里只提供 getSnowTarget，故意不提供
+// getSnowCover——如果以后有人不小心把塔的调用改回旧接口，这条测试会直接抛异常
+// 或读到 undefined 而失败，而不是安静地退回错误行为。
+{
+  const scene = new THREE.Scene();
+  const inst = new BodyInstancer(scene);
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshBasicMaterial();
+  const towerProxy = new InstancedUnitProxy(inst);
+  towerProxy.bindSlot('t|blue|outer', geo, mat, true);
+  towerProxy.position.set(100, 0, 100);
+
+  const fakeGroundTraceSystem = {
+    getSnowTarget: () => ({
+      resolution: 4, worldW: 400, worldH: 400,
+      globalTarget: 0.8, zoneMix: null, jungleMaxMul: 1,
+    }),
+  };
+  inst.updateSnow(10, fakeGroundTraceSystem); // dt 远超节流间隔，保证这一帧真的刷新
+  const bucket = inst.buckets.get('t|blue|outer');
+  const attr = bucket.geo.getAttribute('instanceSnow');
+  const maxBlend = CONFIG.ui?.towerSnowFx?.maxBlend ?? 0.55;
+  T('塔落雪①-塔的 instanceSnow 按 getSnowTarget 的全局目标值刷新（约等于 globalTarget×maxBlend）',
+    Math.abs(attr.array[0] - 0.8 * maxBlend) < 0.02);
+  T('塔落雪②-只提供 getSnowTarget、不提供 getSnowCover 也能正常工作（没有偷偷调用旧接口）',
+    attr.array[0] > 0);
+  inst.dispose();
 }
 
 // ==================== 二、UnitLayer.js 接线：源码形态 + 可安全借用的纯函数 ====================

@@ -128,6 +128,33 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
     effMoveSpeed < baseMoveSpeed);
 }
 
+// ==================== 三b、水洼：减速幅度按"水洼有多大"再打一层折扣（v55.7） ====================
+// 用户原话："水洼越大移速降得也多"——改之前减速只乘 strength（成型进度0~1），跟
+// 水洼实际大小（合并了多少子圆）没关系，见 GroundTraceSystem.js Config.js
+// sizeSlowRefRadius 头注。这里直接构造两个 strength 相同、外接半径 r 不同的
+// 合成水洼，钉住"水洼越大，减速幅度越大"这个相对关系，不钉具体数字。
+{
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
+  const refR = CONFIG.groundTrace?.puddle?.sizeSlowRefRadius ?? 260;
+  const mkPuddle = (id, x, r) => ({
+    id, x, y: 1000, strength: 1, r, subOffsets: [{ dx: 0, dy: 0, r: refR * 2 }], // subOffsets.r 只管命中判定范围，够大保证站进去
+  });
+  gts.puddles = [mkPuddle(1, 0, refR * 0.1), mkPuddle(2, 5000, refR * 1.5)];
+  const small = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 0, y: 1000 } }, CONFIG);
+  const big = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 5000, y: 1000 } }, CONFIG);
+  gts._applyEffects();
+  const smallEff = fx.getEffects(small.id).find(e => e.blueprint.name === '水洼');
+  const bigEff = fx.getEffects(big.id).find(e => e.blueprint.name === '水洼');
+  T('水⑪-strength 相同时，站在大水洼（r 远超参照半径）里的减速幅度明显大于小水洼（r 远小于参照半径）',
+    smallEff && bigEff && Math.abs(bigEff.blueprint.percentValue) > Math.abs(smallEff.blueprint.percentValue) * 1.5);
+  const minFactor = CONFIG.groundTrace?.puddle?.minSizeSlowFactor ?? 0.5;
+  const baseSlow = CONFIG.groundTrace?.puddle?.slowPct ?? -25;
+  T('水⑫-刚生成的小水洼减速幅度不会低于下限系数（minSizeSlowFactor），不会几乎没有减速',
+    Math.abs(smallEff.blueprint.percentValue) >= Math.abs(baseSlow) * minFactor - 0.01);
+}
+
 // ==================== 四、水洼：雨停后逐渐消退，不是瞬间消失 ====================
 {
   const { ents, fx } = await makeWorld();
@@ -286,6 +313,36 @@ const mkWeather = () => { const ws = new WeatherSystem(null); ws.setEnabled(true
   T('雪⑤-被踩过的格子雪深明显低于未踩过的周围雪盖（踩出了一条小径）', trodden < untouched * 0.9);
   T('雪⑥-小径不会被踩成完全 0（下限 = pathFloor × 全局目标，仍有一定减速）',
     trodden >= pathFloor * target * 0.9);
+}
+{
+  // ==================== v55.8 修复验收：塔的落雪不该被旁边小兵的踩踏侵蚀影响 ====================
+  // 用户报"下雪天塔的颜色会跟随旁边的小兵走过后出现变化，太诡异了"——排查确认
+  // 塔（InstancedBodyLayer）原来跟地面/植被一样查 sampleSnowGrid（会被侵蚀的实际
+  // 地面雪深），小兵一走近塔（在 erodeRadius 内），塔坐标点的雪深就被一起压低。
+  // 这里复刻当时的复现步骤（假小兵站在同一个坐标点旁边持续踩踏），钉住：
+  // ①（现有机制不变）地面雪深确实被侵蚀变低——这是 GroundTraceLayer/植被要用的；
+  // ②（今天新增）sampleSnowTarget 给塔用的"目标"雪深不受这次侵蚀影响。
+  const { sampleSnowTarget } = await import('../src/systems/GroundTraceSystem.js');
+  const { ents, fx } = await makeWorld();
+  const ws = mkWeather();
+  const gts = new GroundTraceSystem(ents, fx, mkMapSystem(), ws);
+  setCharge(ws, 'snow', 1.0);
+  for (let i = 0; i < 400; i++) gts.update(1); // 先让雪盖长满
+  const targetBefore = gts.snowGlobalTarget;
+  const groundBefore = gts._snowDepthAt(1000, 1000);
+  const towerBefore = sampleSnowTarget(gts.getSnowTarget(), 1000, 1000);
+
+  const passerby = mkEntity(ents, 'melee', { faction: 'blue', pos: { x: 1020, y: 1010 } }, CONFIG); // 30单位内，erodeRadius=70覆盖
+  for (let i = 0; i < 60; i++) gts.update(1); // 小兵在塔旁边持续踩踏
+
+  const groundAfter = gts._snowDepthAt(1000, 1000);
+  const towerAfter = sampleSnowTarget(gts.getSnowTarget(), 1000, 1000);
+  T('塔①-（对照组）地面在这个坐标点的实际雪深确实被旁边小兵的踩踏侵蚀压低了',
+    groundAfter < groundBefore * 0.9);
+  T('塔②-塔用的 sampleSnowTarget 在同一坐标点不受旁边小兵踩踏影响（前后基本不变）',
+    Math.abs(towerAfter - towerBefore) < 0.02);
+  T('塔③-sampleSnowTarget 仍然如实反映全局雪深目标（不是恒为0之类的空实现）',
+    towerAfter > targetBefore * 0.9);
 }
 {
   // 雪停后全局目标逐渐消退（不是瞬间清空），跟水洼的"消①-③"同一节奏语义。

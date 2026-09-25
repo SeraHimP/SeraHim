@@ -105,9 +105,32 @@ export class GroundTraceLayer {
     tex.colorSpace = THREE.SRGBColorSpace;
     this._snowTex = tex;
 
-    const geo = new THREE.PlaneGeometry(WW, WH, 1, 1);
-    geo.rotateX(-Math.PI / 2);
     const C = cfg();
+    // v55.5 修复："野区雪盖看着还是绿的"真根因——不是颜色/透明度算错，是【几何
+    // 高度错了】。这块雪盖原来是整块【单一 Y 值的平面】（1×1 分段，Y 固定
+    // =snowCoverLift≈0.4），头注里"地形高度差本来就很小……暂时接受这个简化"这个
+    // 前提在森林风格地图上并不成立——实测野区台阶地形 heightAt 能到 6~10 世界
+    // 单位（v58 森林三级梯度），而雪盖平面固定卡在 0.4，比野区地面矮了一大截。
+    // 结果是野区地面几何体本身就比雪盖高，深度测试里雪盖被野区地形整个挡在下面
+    // ——根本没画出来，跟贴图里雪深/颜色/alpha 写没写对毫无关系（之前排查只查了
+    // Canvas 纹理数据本身，没有连着实际渲染出的画面一起核对，才把"贴图对了"
+    // 误判成"整条链路都对了"）。路面 heightAt=0，跟雪盖原来的 0.4 差得不多，
+    // 所以路面从来没暴露过这个问题。
+    // 修法：雪盖平面改成跟 ThreeRenderer._rebuildTerrain 同一套做法——按同样密度
+    // 细分网格，逐顶点用 heightAt 抬到地形实际高度，再统一加 snowCoverLift 的
+    // 小幅离地量避免 z-fighting。地图没有 heightAt（老式非台阶地图）时全部
+    // 顶点仍是 Y=snowCoverLift，等价于修复前的整块平面，画面不变。
+    const segX = Math.max(1, Math.round(WW / 24)), segZ = Math.max(1, Math.round(WH / 24));
+    const geo = new THREE.PlaneGeometry(WW, WH, segX, segZ);
+    geo.rotateX(-Math.PI / 2);
+    const lift = C.snowCoverLift ?? 0.4;
+    if (mapSystem?.heightAt) {
+      const pos = geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        pos.setY(i, mapSystem.heightAt(WW / 2 + pos.getX(i), WH / 2 + pos.getZ(i)) + lift);
+      }
+      pos.needsUpdate = true;
+    }
     // 积雪材质差异化（v55.1）：material.color 改成中性白——真正的颜色现在按格
     // 写进纹理的 RGB 通道（路面/野区各自的颜色，见 update() 里的写入逻辑），
     // 不再是整块平面统一吃一个 tint。地图没有森林分区数据时纹理 RGB 处处等于
@@ -120,7 +143,7 @@ export class GroundTraceLayer {
       map: tex, alphaMap: tex, depthWrite: false,
     });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(WW / 2, C.snowCoverLift ?? 0.4, WH / 2);
+    mesh.position.set(WW / 2, mapSystem?.heightAt ? 0 : lift, WH / 2);
     mesh.renderOrder = 23; // 压在水洼贴花（24）之下——雪盖是更底层的地表状态
     this.scene.add(mesh);
     this._snowMesh = mesh;
@@ -179,8 +202,17 @@ export class GroundTraceLayer {
     if (!snow) { if (this._snowMesh) this._snowMesh.material.opacity = 0; return; }
     this._ensureSnowMesh(mapSystem, snow.resolution);
     if (!this._snowMesh) return;
+    // v55.4 修复：material.opacity 是整块平面共用的一个标量，纹理 alpha 通道只能在
+    // 【它以内】按局部雪深往下调，调不出它的上限——之前野区局部雪深拉满时纹理
+    // alpha 也顶到 255，等效不透明度正好卡在 snowCoverAlpha（0.6）这个天花板，
+    // 跟路面雪深拉满时的效果完全一样，这正是"野区雪盖看着还是绿的"的根源。
+    // 改法：material.opacity 固定为 1（不再是可变天花板），把 snowCoverAlpha
+    // 本身也一起编码进纹理 alpha 通道——路面用原始 snowCoverAlpha 当上限，野区用
+    // snowCoverAlpha × snowCoverJungleAlphaBoost 当上限（按 zoneMix 线性插值），
+    // 这样野区雪深拉满时才能真正冲到 0.9 那种更白的不透明度，路面上限不变，
+    // 数学上跟改动前逐位一致（0.6×1=0.6，material.opacity=1 抵消了原来的 0.6）。
     const snowAlphaMax = C.snowCoverAlpha ?? 0.6;
-    this._snowMesh.material.opacity = snowAlphaMax;
+    this._snowMesh.material.opacity = 1;
     // 网格值（0~1 局部雪深）写进 ImageData 的 alpha 通道；RGB 通道现在也不再是
     // 写死的白——积雪材质差异化（v55.1）：按 zoneMix（0=路面，1=野区）在
     // pathColor/jungleColor 之间线性插值。zoneMix 为 null（地图没有森林分区
@@ -193,9 +225,19 @@ export class GroundTraceLayer {
     const jungleHex = C.snowCoverJungleColor ?? 0xffffff;
     const pr = (pathHex >> 16) & 255, pg = (pathHex >> 8) & 255, pb = pathHex & 255;
     const jr = (jungleHex >> 16) & 255, jg = (jungleHex >> 8) & 255, jb = jungleHex & 255;
+    // 同一档 snowCoverAlpha 在路面（浅色）和野区（饱和绿/紫）上观感天差地别——哪怕
+    // 野区局部雪深已经拉满，60%不透明度混出来的颜色在饱和度高的野区底色上仍然
+    // "看得出底色"，被用户报成"野区依旧没有雪覆盖"（详见 Config.js
+    // groundTraceFx.snowCoverJungleAlphaBoost 头注，那边有具体的 RGB 混合计算）。
+    // 野区（zoneMix=1）的不透明度上限按 jungleAlphaBoost 放大，路面（zoneMix=0）
+    // 上限沿用原始 snowCoverAlpha，逐位不变。
+    const jungleAlphaBoost = C.snowCoverJungleAlphaBoost ?? 1;
+    const jungleAlphaMax = Math.min(1, snowAlphaMax * jungleAlphaBoost);
     for (let i = 0; i < grid.length; i++) {
-      const v = Math.round(Math.max(0, Math.min(1, grid[i])) * 255);
+      const depth = Math.max(0, Math.min(1, grid[i]));
       const t = zoneMix ? zoneMix[i] : 0;
+      const alphaCap = snowAlphaMax + (jungleAlphaMax - snowAlphaMax) * t;
+      const v = Math.round(depth * alphaCap * 255);
       const o = i * 4;
       data[o] = pr + (jr - pr) * t;
       data[o + 1] = pg + (jg - pg) * t;

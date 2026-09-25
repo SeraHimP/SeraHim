@@ -18,6 +18,35 @@ export function sampleSnowGrid(snow, x, y) {
 }
 
 /**
+ * ==================== v55.8 修复："下雪天塔的颜色会跟随小兵走过而变化" ====================
+ * 用户报：塔本来落了雪，旁边小兵一走过，塔的颜色就跟着变——很诡异。排查实测：
+ * 塔的落雪效果（InstancedBodyLayer.updateSnow）跟野区植被用的是同一份 sampleSnowGrid
+ * + 同一份 snowGrid，而 snowGrid 正是"单位经过时局部踩踏"（_updateSnowCover 里的
+ * 侵蚀循环）会去压低的那份数据——侵蚀设计的本意是"小兵踩出的路径雪浅"，是给【地面】
+ * 用的视觉反馈，但塔的落雪效果查的是塔自己所在坐标点的 snowGrid 值：小兵只要在
+ * erodeRadius（默认70世界单位）内经过，塔那个坐标点的雪深就会被一起压低，塔的
+ * "白了多少"因此跟着小兵的走位实时抖动——塔是石头/金属结构，不是会被踩的地面，
+ * 被路过的小兵改变落雪程度没有任何物理意义，纯粹是"两者共用同一份数据"的副作用。
+ * 实测验证：让一个假小兵站在塔旁 30 世界单位处，塔坐标点的 sampleSnowGrid 从 1.0
+ * 被侵蚀到 0.29（见调试脚本），复现了用户描述的现象。
+ * 修法：塔改用这个新的 sampleSnowTarget/getSnowTarget——只读"这一格该积多少雪"的
+ * 目标值（全局目标 × 野区加成），不经过侵蚀步骤，塔的雪量只跟天气本身的强度/时长
+ * 走，不再受旁边有没有小兵经过影响。地面（GroundTraceLayer）、植被（VegetationLayer/
+ * BoundaryDecorLayer）不受影响，仍然读原来那份会被侵蚀的 snowGrid——它们本来就是
+ * "地面"，侵蚀的踩踏小径视觉在那里是有意义的，不属于今天要改的范围。
+ */
+export function sampleSnowTarget(snap, x, y) {
+  if (!snap || !snap.worldW || !snap.worldH) return 0;
+  const { globalTarget, zoneMix, jungleMaxMul, resolution } = snap;
+  if (!zoneMix) return globalTarget;
+  const res = resolution;
+  const gx = Math.max(0, Math.min(res - 1, Math.floor(x / snap.worldW * res)));
+  const gy = Math.max(0, Math.min(res - 1, Math.floor(y / snap.worldH * res)));
+  const idx = gy * res + gx;
+  return zoneMix[idx] ? Math.min(1, globalTarget * jungleMaxMul) : globalTarget;
+}
+
+/**
  * GroundTraceSystem.js —— 地面痕迹层（水洼/雪盖，Q4 天气重做 + v54 第二轮重做）
  *
  * 雨的水洼、雪的积雪，本质是同一类东西：**地面上会随天气强度动态变化、且对
@@ -362,7 +391,6 @@ export class GroundTraceSystem {
     const rateMul = this.snowCellRateMul;
     const zoneMix = this.snowCellZoneMix;
     const jungleMaxMul = cfg.jungleMaxDepthMul ?? 1;
-    const regrowRate = Math.min(1, (cfg.regrowPerSec ?? 0.05) * dt);
     // 全图格子朝全局目标回涨（踩踏留下的小径也在这一步缓慢恢复），但不是同一个
     // 速率——每格乘自己固定的空间噪声倍率，有的格子先到、有的格子晚到，蔓延感
     // 靠这个（见本函数头注 2026-09-20 记录的真根因）。
@@ -370,6 +398,21 @@ export class GroundTraceSystem {
     // 野区（zoneMix===1）按 jungleMaxDepthMul 再往上提一档（"上限更高"），路面
     // （zoneMix===0，或没有森林分区数据的地图整张恒为0）目标不变，逐位一致。
     const noGrow = this.snowCellNoGrow;
+    // ==================== v55.6 尝试修复又撤销：这里的指数逼近是故意的 ====================
+    // 一度怀疑这里跟 snowGlobalTarget 一样漏改成线性、是个遗留 bug，改成了线性步进
+    // （`grid[i] += step` 而不是 `+=(target-grid[i])*rate`）。跑 tests/sim_groundtrace.mjs
+    // 才发现判断错了：改成线性后"雪⑨c-积雪过程中网格里同时存在深浅明显不同的格子"
+    // 直接测试失败——推导一下发现，线性限幅（rate-limited slew）追一个匀速上升的
+        // target，只要单格速率 > target 上升速率（这里恒成立：最慢的格子 regrowPerSec×
+    // rateMul下限 0.05×0.25=0.0125/s，仍快于 target 的 growPerSec=1/120≈0.0083/s），
+    // 会【零误差】锁定在 target 上，所有格子几乎同时到达、没有先后之分——这正好
+    // 抹掉了 2026-09-20 那次修复特意做出来的"有的格子先到、有的格子晚到"的蔓延感
+    // （那次修复的机制原理就是【指数逼近对不同 rateMul 会产生持续的追踪滞后】，
+    // 滞后量正比于 target 爬升速率/自身速率——这是蔓延感的来源，不是缺陷）。
+    // snowGlobalTarget 那次修复要解决的是"总量曲线形状"（改一次全局变量），跟这里
+    // "同一时刻各格子该不该长得不一样多"是两个不同的设计目标，不能用同一个药方。
+    // 结论：这里维持指数逼近，不是遗留 bug，撤销这次改动。
+    const regrowRate = Math.min(1, (cfg.regrowPerSec ?? 0.05) * dt);
     for (let i = 0; i < grid.length; i++) {
       if (noGrow && noGrow[i]) { grid[i] = 0; continue; } // 水面：永远不积雪，直接钳零
       const localTarget = zoneMix && zoneMix[i]
@@ -422,15 +465,24 @@ export class GroundTraceSystem {
     for (const m of this.entities.getAllMinions(true)) {
       if (!m.alive || !m.pos) continue;
 
-      let inPuddle = 0;
+      let inPuddle = 0, inPuddleR = 0;
       for (const p of this.puddles) {
         if (p.strength <= 0) continue;
         for (const so of p.subOffsets) {
           const cx = p.x + so.dx, cy = p.y + so.dy;
-          if (Math.hypot(m.pos.x - cx, m.pos.y - cy) <= so.r) { inPuddle = Math.max(inPuddle, p.strength); break; }
+          if (Math.hypot(m.pos.x - cx, m.pos.y - cy) <= so.r) {
+            if (p.strength > inPuddle) { inPuddle = p.strength; inPuddleR = p.r; }
+            break;
+          }
         }
       }
       if (inPuddle > 0) {
+        // v55.7：减速幅度不再只看 strength（成型进度），再叠一层"水洼有多大"
+        // 的尺寸系数——见 Config.js groundTrace.puddle.sizeSlowRefRadius 头注。
+        const refR = puddleCfg.sizeSlowRefRadius ?? 260;
+        const minSizeFactor = puddleCfg.minSizeSlowFactor ?? 0.5;
+        const sizeFactor = Math.max(minSizeFactor, Math.min(1, inPuddleR / refR));
+        const pct = (puddleCfg.slowPct ?? -25) * inPuddle * sizeFactor;
         this.effects.apply(m.id, {
           // aura:true 时 EffectRegistry 会把 duration 强制设成 Infinity，改用宽限期
           // （auraGrace）自动到期——不用也不该在这里再传 duration，见
@@ -441,9 +493,9 @@ export class GroundTraceSystem {
           // 不上，totalPercent 永远按 bp.percentValue（undefined）算成 0，玩法上这个
           // debuff 只有描述文字、从来没有真的生效过。用户报"水洼/积雪只有视觉没有数值"，
           // 根因就是这个拼写不一致的字段名，两处（这里 + 下面积雪）一起改。
-          percentValue: (puddleCfg.slowPct ?? -25) * inPuddle,
+          percentValue: pct,
           stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: `水洼：移速 ${(puddleCfg.slowPct ?? -25) * inPuddle >= 0 ? '+' : ''}${Math.round((puddleCfg.slowPct ?? -25) * inPuddle)}%`,
+          description: `水洼：移速 ${pct >= 0 ? '+' : ''}${Math.round(pct)}%`,
         }, 'groundtrace_puddle');
       }
 
@@ -478,6 +530,22 @@ export class GroundTraceSystem {
     return {
       resolution: this.snowGridRes, data: this.snowGrid, worldW: world.w, worldH: world.h,
       zoneMix: this.snowCellZoneMix || null,
+    };
+  }
+
+  /**
+   * 供【结构类】消费者（目前只有塔）读——不含侵蚀的"目标"雪深快照，见本文件
+   * sampleSnowTarget 头注（v55.8 修复）。跟 getSnowCover 分开两个方法而不是加参数：
+   * 两者语义不同（一个是实际地面雪深，一个是不受踩踏影响的目标雪深），混在一个
+   * 方法里靠参数区分容易被调用方传错。
+   */
+  getSnowTarget() {
+    const world = this.mapSystem?.currentMap?.world;
+    if (!this.snowGrid || !world) return null;
+    const jungleMaxMul = (CONFIG.groundTrace?.snowCover || {}).jungleMaxDepthMul ?? 1;
+    return {
+      resolution: this.snowGridRes, worldW: world.w, worldH: world.h,
+      globalTarget: this.snowGlobalTarget, zoneMix: this.snowCellZoneMix || null, jungleMaxMul,
     };
   }
 }

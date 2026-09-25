@@ -45,7 +45,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { applySnowTint } from './VegetationShaderPatch.js';
 import { CONFIG } from '../data/Config.js';
-import { sampleSnowGrid } from '../systems/GroundTraceSystem.js';
+import { sampleSnowTarget } from '../systems/GroundTraceSystem.js';
 
 const INITIAL_CAPACITY = 24;
 
@@ -226,11 +226,15 @@ export class BodyInstancer {
     this._snowT = (this._snowT || 0) + dt;
     if (this._snowT < interval) return;
     this._snowT = 0;
-    if (!groundTraceSystem || !groundTraceSystem.getSnowCover) return;
-    const snow = groundTraceSystem.getSnowCover();
+    // v55.8 修复：塔改读 getSnowTarget()（不含侵蚀的目标雪深），不再用
+    // getSnowCover() 那份会被小兵踩踏侵蚀的实际地面雪深——否则小兵一从塔附近
+    // 走过，塔坐标点的雪深就被一起压低，塔的落雪程度跟着诡异地闪烁（见
+    // GroundTraceSystem.js sampleSnowTarget 头注的完整根因记录）。
+    if (!groundTraceSystem || !groundTraceSystem.getSnowTarget) return;
+    const snow = groundTraceSystem.getSnowTarget();
     if (!snow) return;
     const maxBlend = cfg.maxBlend ?? 0.55;
-    const sampleFn = (x, z) => sampleSnowGrid(snow, x, z);
+    const sampleFn = (x, z) => sampleSnowTarget(snow, x, z);
     for (const b of this.buckets.values()) {
       if (b.isTower) b.updateSnow(sampleFn, maxBlend);
     }
