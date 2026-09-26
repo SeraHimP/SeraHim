@@ -132,14 +132,28 @@ export class MapSkirtLayer {
     const geo = new THREE.PlaneGeometry(SW, SH, segX, segZ);
     geo.rotateX(-Math.PI / 2);
 
+    // ==================== 环形/挖空地图的洞口修正 ====================
+    // 上面这条淡出公式的前提是"地形包围盒内部＝一定被地形盖住，裙边画实心也看不见"，
+    // 对三张老地图（可走区域是一整块贴合边界的陆地）成立。水晶之痕这类环形图会在
+    // 包围盒**内部**（外环中心）挖一个真正不可走的洞，交给 TerrainEdgeLayer 在更低处
+    // 铺深渊面——那个洞离地形边界很远，上面的公式仍判它是"内部"，强制 fade=1，
+    // 于是裙边的实色（此刻被昼夜染色成接近夜空的深蓝）整块盖在深渊面前面，画面上
+    // 洞里和地图外的虚空长一模一样，深渊/大型岩柱全部看不见。
+    // 只在 t<=0（原本恒为 1）的点上补判：声明了 terrainEdge 且该点落在不可走区，
+    // 就把裙边淡出成 0，让位给深渊面；t>0 的径向淡出段不受影响。
+    const cutout = !!map.terrainEdge;
+    const walkFn = cutout && typeof mapSystem.isWalkable === 'function' ? mapSystem.isWalkable.bind(mapSystem) : null;
     const pos = geo.attributes.position;
     const fade = new Float32Array(pos.count);
     for (let i = 0; i < pos.count; i++) {
-      const lx = pos.getX(i) / WW, lz = pos.getZ(i) / WH; // "以地形边长为单位"的局部坐标，地形边界在 ±0.5
+      const px = pos.getX(i), pz = pos.getZ(i);
+      const lx = px / WW, lz = pz / WH; // "以地形边长为单位"的局部坐标，地形边界在 ±0.5
       const distX = Math.max(0, Math.abs(lx) - 0.5) / halfExtra;
       const distZ = Math.max(0, Math.abs(lz) - 0.5) / halfExtra;
       const t = Math.max(0, Math.min(1, Math.max(distX, distZ))); // 0=贴着地形边界，1=裙边最外圈
-      fade[i] = t <= 0 ? 1 : Math.max(0, 1 - t / fadeFrac);
+      let a = t <= 0 ? 1 : Math.max(0, 1 - t / fadeFrac);
+      if (a > 0 && walkFn && !walkFn(px + WW / 2, pz + WH / 2)) a = 0;
+      fade[i] = a;
     }
     geo.setAttribute('fadeAlpha', new THREE.BufferAttribute(fade, 1));
     geo.computeVertexNormals();
