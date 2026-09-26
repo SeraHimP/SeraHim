@@ -250,11 +250,17 @@ const DOMINION_CONFIG = {
   // "正常一座塔"的基准，不是特别削弱/强化）。
   tierStats: {
     nexus_main: { maxHP: 500, shieldFixedMax: 0, healthRegen: 0, armor: 0, magicResist: 0, attackDamage: 0, baseAttackSpeed: 0 },
-    // 2026-09-26：attackDamage 152 → 450（用户定稿"召唤水晶的攻击力大幅提升"，
-    // 起草值待 balance_matrix 校准）——原来的 152 只是"照抄一座普通外塔的强度
-    // 基准"，不是刻意削弱，这次直接给到接近 3 倍，让它真的是一道难啃的防线，
-    // 不只是摆设。攻速/护甲这些没提到的数值不动。
-    nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0, attackDamage: 450, attackRange: 180, baseAttackSpeed: 0.833 },
+    // 2026-09-26 第一轮：attackDamage 152 → 450（用户定稿"召唤水晶的攻击力大幅
+    // 提升"）——原来的 152 只是"照抄一座普通外塔的强度基准"，这次直接给到
+    // 接近 3 倍，让它真的是一道难啃的防线，不只是摆设。
+    // 2026-09-26 第四轮：用户反馈"滚雪球更严重了"，追加定稿"召唤水晶的全部
+    // 属性大幅度提升"——不再只动攻击力，这次连 HP/护甲/魔抗/射程/攻速一起
+    // 拉高一档：maxHP 4000→9000（~2.25×）、armor 20→60（3×）、magicResist
+    // 0→50（新增抗性，之前完全没有魔抗）、attackDamage 450→700（在第一轮
+    // 基础上再提）、attackRange 180→260（+44%）、baseAttackSpeed 0.833→1.4
+    // (+68%)。都是起草值（用户只定了"大幅度提升"这个方向，没给具体数字），
+    // 待 balance_matrix/实机校准。
+    nexus_lane: { maxHP: 9000, shieldFixedMax: 0, healthRegen: 0, armor: 60, magicResist: 50, attackDamage: 700, attackRange: 260, baseAttackSpeed: 1.4 },
   },
 
   // 本图的占领/出兵/水晶掉血节点表——DominionSystem.initMap() 读这个字段激活整套

@@ -2836,9 +2836,10 @@ export const CONFIG = {
       super: 3.3,
       default: 1.5,
     },
-    // 已被完全占领的据点会主动开火（"帮拥有者守点"，不是"自己包圆"）——
-    // 相对普通塔（CONFIG.templates.tower）的攻击力/射程打折。中立据点
-    // attackDamage 恒为 0，天然不会开火，不需要额外的"中立不攻击"判断。
+    // 据点会主动开火——相对普通塔（CONFIG.templates.tower）的攻击力/射程打折。
+    // 2026-09-26 第四轮：用户定稿"中立据点会正常攻击"，这三个百分比字段现在
+    // 不分中立/被占领，一律套用（见 DominionSystem.initMap() 里据点实体的
+    // baseStats）——归属只决定它认哪一方为敌，不再决定"打不打"。
     // 2026-09-26 第一轮：用户反馈"据点的攻击力大幅度减弱，攻速略微提升"——
     // 35% → 12%，新增 pointAttackSpeedPct=110%（+10%，"略微"）。
     // 2026-09-26 第二轮：用户实机测过之后改口"据点的攻击力太低了，需要加强，
@@ -2852,6 +2853,9 @@ export const CONFIG = {
     pointAttackSpeedPct: 150,  // 普通塔基础攻速的 150%（用户定稿"攻速改为1.5"）
     // ---- 动态归属出兵 ----
     waveInterval: 20,     // 每个"完全占领"的据点，每隔这么多秒出一波兵
+    // 2026-09-26 第四轮：用户定稿"基地每波出兵，据点改为每2波出兵"——据点出兵
+    // 节奏单独拉慢一档，跟基地（bonusWaveEvery，见下面）解耦成两条独立的节奏。
+    pointWaveEvery: 2,
     // 2026-09-26 返工：据点的出兵编制（"2近战2远程+隔波炮兵"）改走标准出兵
     // 编排系统（compositionFor/buildWaveOrder，见 CONFIG.gameRules.
     // laneWaveCompositionByLane 的 ring_fwd/ring_rev 两个伪路）——原来这里的
@@ -2867,20 +2871,19 @@ export const CONFIG = {
     // 据点出兵与召唤水晶出兵是两个独立的兵种来源，模板编辑器里也分两处编辑，
     // 不共用同一份(阵营×路)编排（避免"改据点的兵，水晶跟着变"这种意外耦合）。
     bonusWaveEvery: 1,
-    // 2026-09-26 第二轮：用户定稿"修改每波从双方召唤水晶的兵，每波新增1超级
-    // 兵"——不是"敌方水晶被摧毁才有"那份 crystalSuperBonus（那份留着，两者
-    // 会叠加：平时每波基础带 1 超级兵，敌方水晶被拆掉之后额外再加 1，变 2）。
-    bonusWaveComposition: { melee: 3, ranged: 3, siege: 1, super: 1 },
+    // 2026-09-26 第四轮：用户反馈"滚雪球更严重了"，追加定稿"取消常驻超级兵的
+    // 生成"——第二轮加的那个"平时每波基础带 1 超级兵"整个撤销，退回只有
+    // "敌方水晶被拆才出超级兵"这一条路径（crystalSuperBonus，下面）。
+    bonusWaveComposition: { melee: 3, ranged: 3, siege: 1 },
     // 2026-09-26 新增（用户定稿）："只有在某一方打掉了另一方的召唤水晶后，在自家
     // 的召唤水晶出超级兵"——DominionSystem._tickWaves 出召唤水晶的额外波时，
     // 若敌方召唤水晶此刻处于摧毁/重生倒计时状态，就把这份加进 bonusWaveComposition，
     // 敌方水晶一旦重生（nexusRespawnTime）立刻停止，与 LoL"拆水晶出超级兵"同一节奏。
-    // 见上面 bonusWaveComposition 头注：这份要在"每波基础 1 超级兵"之上再加 1，
-    // 变成 2——但 _spawnBudget 的合并是 `{...bonusWaveComposition, ...crystalSuperBonus}`
-    // 这种【覆盖式】合并（同名字段谁在后面谁生效，不是相加），所以这里直接填【合并后
-    // 的目标值 2】，不是"要多加的量 1"——写成 1 的话会被"覆盖成同一个 1"，实际
-    // 从没叠加成功过（第二轮改动时验收测试抓到过这个坑）。
-    crystalSuperBonus: { super: 2 },
+    // 第四轮：上面 bonusWaveComposition 不再带 super 字段，_spawnBudget 的合并
+    // `{...bonusWaveComposition, ...crystalSuperBonus}` 又是纯覆盖式（没有基线
+    // 值可覆盖），这里的 1 就是最终生效的数量，回到最初"敌方水晶被拆，每波
+    // 额外 1 超级兵"的字面含义，不用再考虑跟基线叠加的问题。
+    crystalSuperBonus: { super: 1 },
     // ---- 水晶掉血：己方占据点数 > 对方时，对方水晶每秒掉这么多血 ----
     // 2026-09-26：8 → 1（用户定稿具体数值："敌方每比我方多占领一个据点，我方的
     // 水晶枢纽生命值减去多出来的数量×1"），配合水晶枢纽 HP 从原型草案的量级

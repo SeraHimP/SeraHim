@@ -116,6 +116,14 @@ export class DominionSystem {
       _lastHit: { [FACTIONS.BLUE]: -Infinity, [FACTIONS.RED]: -Infinity },
     }));
     const tpl = CONFIG.templates.tower;
+    const cfg = CONFIG.dominion || {};
+    // 2026-09-26 用户定稿"中立据点会正常攻击"——据点不管有没有被占领都用同一套
+    // pointDamagePct/pointRangePct/pointAttackSpeedPct 主动开火，不再是"中立=
+    // 完全被动的空目标"。canTarget(NEUTRAL, BLUE/RED) 天然允许中立据点攻击
+    // 任意一方（跟中立野怪同一条判据），于是中立据点会对最先靠近的任何一方
+    // 开火——据点从"谁先摸到就是谁的"变成"要打一架才能拿下"，归属翻转只改变
+    // 它认哪一方为敌（_setOwner 只改 _mapFaction/faction），不再需要跟着重新
+    // 装卸武器/改攻击数值，见 _setOwner() 头注。
     for (const node of this.nodes) {
       if (node.kind !== 'point') continue;
       const entity = {
@@ -126,7 +134,13 @@ export class DominionSystem {
         pos: { x: node.pos.x, y: node.pos.y },
         // 没有 HP 概念：maxHP/currentHP 给一个恒定占位值，CombatSystem 的伤害
         // 结算被 isCapturePoint 分支整个绕开，这两个字段永远不会被改动。
-        baseStats: { ...tpl, attackDamage: 0, attackRange: 0, maxHP: 1, healthRegen: 0, shieldFixedMax: 0 },
+        baseStats: {
+          ...tpl,
+          attackDamage: (tpl.attackDamage || 0) * ((cfg.pointDamagePct ?? 12) / 100),
+          attackRange: (tpl.attackRange || 0) * ((cfg.pointRangePct ?? 82) / 100),
+          baseAttackSpeed: (tpl.baseAttackSpeed || 0) * ((cfg.pointAttackSpeedPct ?? 100) / 100),
+          maxHP: 1, healthRegen: 0, shieldFixedMax: 0,
+        },
         currentHP: 1,
         shieldFixedCurrent: 0,
         tempShield: 0,
@@ -156,14 +170,13 @@ export class DominionSystem {
     // 召唤水晶（nexus_lane）自带穿透型子弹+物理攻击（用户定稿），但全局
     // CONFIG.towerTierWeapon.nexus_lane 固定是 'none'（所有地图的召唤水晶默认
     // 不开火），常规的"地图 buildings[].weapon"装配路径会被这条全局配置直接
-    // 顶掉——跟据点占领后开火踩的是同一个坑（见 _setOwner 头注），这里同样
-    // 只能绕开正常武器装配、直接调用 equipSkill。攻击力/射程/攻速走地图自己
-    // 的 tierStats.nexus_lane 覆写（见 dominion_crystal_scar.js），不需要在
-    // 这里再改数值，只补上"装武器"这一步。
+    // 顶掉，据点同样是手搭的裸实体（不走 createBuilding）——两者都只能绕开
+    // 正常武器装配、直接调用 equipSkill 补上"装武器"这一步，数值都已经在各自
+    // 的创建处（这里的 baseStats / dominion_crystal_scar.js 的 tierStats）给好了。
     if (this.effectRegistry) {
       const ctx = { entityContainer: this.entities, effectRegistry: this.effectRegistry, eventBus: this.eventBus, waveNumber: (typeof window !== 'undefined' && window.CTX?.waveNumber) || 0 };
       for (const e of this.entities.getAllTowers(false)) {
-        if (e._mapTier !== 'nexus_lane') continue;
+        if (e._mapTier !== 'nexus_lane' && !e.isCapturePoint) continue;
         if ((e._skillInstances || []).some((s) => s.skillId === 'weapon_piercing')) continue;
         equipSkill(e, 'weapon_piercing', ctx, SkillLibrary);
       }
@@ -178,13 +191,6 @@ export class DominionSystem {
   }
 
   /** 蓝红两方是不是都在 contestWindowSec 秒内"在场"过这个据点——"双方同时在场"的判据。 */
-  _isContested(node, now) {
-    const win = CONFIG.dominion?.contestWindowSec ?? 2;
-    return (now - node._lastHit[FACTIONS.BLUE] <= win)
-        && (now - node._lastHit[FACTIONS.RED] <= win);
-  }
-
-  /** 蓝红两方是不是都在 contestWindowSec 秒内打过这个据点——"双方同时在场"的判据。 */
   _isContested(node, now) {
     const win = CONFIG.dominion?.contestWindowSec ?? 2;
     return (now - node._lastHit[FACTIONS.BLUE] <= win)
@@ -211,52 +217,21 @@ export class DominionSystem {
   }
 
   /**
-   * 归属翻转时同步：数值（attackDamage/attackRange）+ 武器技能实例。
-   *
-   * ⚠️ 光有正的 attackDamage 不够——CombatSystem.update 的塔攻击循环有一道
-   * 前置闸门："无武器：不攻击（`tower._skillInstances.some(s => category==='weapon')`
-   * 为假就直接 `tower.targetId=null; continue`）"，跟 attackDamage 数值本身无关。
-   * 据点是手搭的裸实体（不走 createBuilding），天生没有这个技能实例，所以
-   * "已占领的据点主动开火"必须在这里显式装/卸一把武器，不能只改数值——
-   * 这是本系统实现过程中一处真实踩过的坑：数值改对了但仍然不开火。
-   * 武器复用 'weapon_piercing'——本仓库所有攻击塔（outer/base/hq_tower）默认
-   * 都用它，据点没有理由另起一种，见 howling_abyss.js 等地图 `weapon:'piercing'`。
+   * 归属翻转时同步：只改 _mapFaction/faction（决定 canTarget 判它是敌是友），
+   * 不再需要在这里重算攻击力/攻速/装卸武器——2026-09-26 用户定稿"中立据点会
+   * 正常攻击"之后，据点从 initMap() 创建那一刻起就已经按同一套
+   * pointDamagePct/pointRangePct/pointAttackSpeedPct 定死了攻击强度并装好了
+   * weapon_piercing，不管中立还是被占领都是同一份数值/同一把武器，翻转归属
+   * 只是换了"认哪一方为敌"，不需要跟着重新装卸/改数值。
    */
   _setOwner(node, owner, value) {
-    const prevOwner = node.captureOwner;
     node.captureOwner = owner;
     node.capturePct = value;
     const e = node.entity;
     if (!e) return;
     e._mapFaction = owner;
     e.faction = owner;
-    const tpl = CONFIG.templates.tower;
-    const cfg = CONFIG.dominion || {};
-    const ctx = { entityContainer: this.entities, effectRegistry: this.effectRegistry, eventBus: this.eventBus, waveNumber: (typeof window !== 'undefined' && window.CTX?.waveNumber) || 0 };
-    if (owner === FACTIONS.NEUTRAL) {
-      // 中立不攻击任何单位（用户明确定稿）。
-      e.baseStats.attackDamage = 0;
-      e.baseStats.attackRange = 0;
-      if (prevOwner !== FACTIONS.NEUTRAL && this.effectRegistry) {
-        const wInst = (e._skillInstances || []).find((s) => s.skillId === 'weapon_piercing');
-        if (wInst) {
-          SkillLibrary.weapon_piercing?.onUnequip?.(e.id, wInst, ctx);
-          e._skillInstances = e._skillInstances.filter((s) => s !== wInst);
-        }
-      }
-    } else {
-      // 已被完全占领的据点"帮拥有者守点"，火力打折到普通塔的一小截（设计文档 5.2 节）。
-      // 2026-09-26 用户定稿"据点的攻击力大幅度减弱，攻速略微提升"：攻击力百分比
-      // 从 35 砍到 12（pointDamagePct 的默认值同步改了，这里的 ?? 兜底也要跟着改，
-      // 否则地图/存档里没写这个字段时会悄悄退回旧的 35%）；新增 pointAttackSpeedPct
-      // 表达攻速提升——攻速这个维度以前 _setOwner 从没碰过（一直是 tpl 原始值）。
-      e.baseStats.attackDamage = (tpl.attackDamage || 0) * ((cfg.pointDamagePct ?? 12) / 100);
-      e.baseStats.attackRange = (tpl.attackRange || 0) * ((cfg.pointRangePct ?? 82) / 100);
-      e.baseStats.baseAttackSpeed = (tpl.baseAttackSpeed || 0) * ((cfg.pointAttackSpeedPct ?? 100) / 100);
-      if (prevOwner === FACTIONS.NEUTRAL && this.effectRegistry) {
-        equipSkill(e, 'weapon_piercing', ctx, SkillLibrary);
-      }
-    }
+    this._syncCaptureDisplay(node);
   }
 
   update(dt) {
@@ -397,14 +372,27 @@ export class DominionSystem {
     this._waveCount++;
     const toggleStart = this._waveCount % 2 === 0;
     const bonusEvery = Math.max(1, cfg.bonusWaveEvery ?? 1);
+    // 2026-09-26 第四轮：用户定稿"基地每波出兵，据点改为每2波出兵"——据点出兵
+    // 节奏单独拉慢，跟基地（bonusWaveEvery）解耦成两个独立的节奏。
+    const pointEvery = Math.max(1, cfg.pointWaveEvery ?? 2);
+    // 追赶炮兵（用户定稿"当某方占领的据点数量低于另一方时，基地出兵每波额外出
+    // 1×据点占领差值的炮兵"）：算一次双方当前占了几个据点，下面 base 分支里
+    // 落后的那一方按差值往自己的编制里加炮兵。
+    const points = this.nodes.filter((n) => n.kind === 'point');
+    const blueCount = points.filter((n) => n.captureOwner === FACTIONS.BLUE).length;
+    const redCount = points.filter((n) => n.captureOwner === FACTIONS.RED).length;
     for (const node of this.nodes) {
       if (node.kind === 'point') {
         if (node.captureOwner === FACTIONS.NEUTRAL) continue;
+        if (this._waveCount % pointEvery !== 0) continue;
         this._spawnPointWave(node, node.captureOwner);
       } else if (node.kind === 'base' && this._waveCount % bonusEvery === 0) {
-        const budget = this._enemyCrystalDown(node.faction)
-          ? { ...cfg.bonusWaveComposition, ...cfg.crystalSuperBonus }
-          : cfg.bonusWaveComposition;
+        const budget = { ...cfg.bonusWaveComposition };
+        if (this._enemyCrystalDown(node.faction)) Object.assign(budget, cfg.crystalSuperBonus);
+        const myCount = node.faction === FACTIONS.BLUE ? blueCount : redCount;
+        const oppCount = node.faction === FACTIONS.BLUE ? redCount : blueCount;
+        const deficit = Math.max(0, oppCount - myCount);
+        if (deficit > 0) budget.siege = (budget.siege || 0) + deficit;
         this._spawnBudget(node, node.faction, budget, toggleStart);
       }
     }

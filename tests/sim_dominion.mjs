@@ -169,11 +169,15 @@ const FULL = DCFG.captureFull;
 
   while (node.captureOwner === FACTIONS.BLUE) tick();
   T('⑨-推到 0 之后变回中立（不是直接被红方占领）', node.captureOwner === FACTIONS.NEUTRAL && node.capturePct === 0);
-  T('⑩-变回中立后攻击力/射程清零（中立不攻击任何单位）',
-    node.entity.baseStats.attackDamage === 0 && node.entity.baseStats.attackRange === 0);
+  // 2026-09-26 第四轮：用户定稿"中立据点会正常攻击"——变回中立后攻击力/射程
+  // 不再清零，跟被占领时是同一份数值（归属只改变它认哪一方为敌）。
+  T('⑩-变回中立后攻击力/射程仍然是正的（中立据点会正常攻击，不再是完全被动的空目标）',
+    node.entity.baseStats.attackDamage > 0 && node.entity.baseStats.attackRange > 0);
 }
 
-// ==================== 三、被占领的据点真的会开火（不是只有数值变了）====================
+// ==================== 三、据点真的会开火（不是只有数值变了）====================
+// 2026-09-26 第四轮：用户定稿"中立据点会正常攻击"——据点从 initMap() 创建
+// 那一刻起就已经带着武器/攻击数值，不需要先被占领才会开火。
 {
   const { ents, fx, combat, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
@@ -185,15 +189,27 @@ const FULL = DCFG.captureFull;
   const tickSec = DCFG.captureTickSec ?? 1;
   const tick = (dt = tickSec) => { window.gameTime = (window.gameTime || 0) + dt; ds.update(dt); };
 
-  T('①-占领前（中立）没有武器技能实例，塔攻击循环会直接跳过它',
-    !(node.entity._skillInstances || []).some(s => s.skillId === 'weapon_piercing'));
+  T('①-中立据点从创建时起就已经装好了武器技能实例（不再是无武器空实例）',
+    node.entity._skillInstances.some(s => s.skillId === 'weapon_piercing'));
+
+  const neutralEnemy = mkEntity(ents, 'ranged', {
+    faction: FACTIONS.RED,
+    pos: { x: node.entity.pos.x + 10, y: node.entity.pos.y },
+    stats: { maxHP: 100000, armor: 0, magicResist: 0 },
+  }, C);
+  const neutralHpBefore = neutralEnemy.currentHP;
+  window.gameTime = 0;
+  for (let i = 0; i < 200; i++) { window.gameTime += 0.1; combat.update(0.1); }
+  T('②-中立态的据点确实会主动攻击靠近它的任意一方单位（不需要先被占领）',
+    neutralEnemy.currentHP < neutralHpBefore);
+  // 索敌锁定：目标存活且在射程内就不会重新索敌（见 CombatSystem.update() 的
+  // "索敌锁定"注释）——不清掉这个目标，下面 ③ 新建的 enemy 永远抢不到点的
+  // targetId，测的其实还是这具旧尸体，跟"占领后还会不会打"这件事没关系。
+  neutralEnemy.alive = false;
 
   const attacker = mkEntity(ents, 'melee', { faction: FACTIONS.BLUE }, C);
   attacker.targetId = node.entity.id;
-  window.gameTime = 0;
   while (node.captureOwner === FACTIONS.NEUTRAL) tick();
-  T('②-占领后自动装备了武器技能（不再是无武器空实例）',
-    node.entity._skillInstances.some(s => s.skillId === 'weapon_piercing'));
 
   const enemy = mkEntity(ents, 'ranged', {
     faction: FACTIONS.RED,
@@ -202,7 +218,7 @@ const FULL = DCFG.captureFull;
   }, C);
   const hpBefore = enemy.currentHP;
   for (let i = 0; i < 200; i++) { window.gameTime += 0.1; combat.update(0.1); }
-  T('③-被占领的据点确实对射程内的敌方单位造成了伤害（不是只有一份摆设数值）',
+  T('③-被占领之后据点依然对射程内的敌方单位造成伤害（同一份武器/数值，没有跟着掉线）',
     enemy.currentHP < hpBefore);
 
   // 蓝方撤出，避开"双方同时在场=争夺中"（见第十一节），过了 contestWindowSec
@@ -212,7 +228,8 @@ const FULL = DCFG.captureFull;
   const redAttacker = mkEntity(ents, 'melee', { faction: FACTIONS.RED }, C);
   redAttacker.targetId = node.entity.id;
   while (node.captureOwner !== FACTIONS.NEUTRAL) tick();
-  T('④-退回中立后武器技能被卸下', !node.entity._skillInstances.some(s => s.skillId === 'weapon_piercing'));
+  T('④-退回中立后武器技能仍然装着（中立据点也会正常攻击，不用跟着卸掉）',
+    node.entity._skillInstances.some(s => s.skillId === 'weapon_piercing'));
 }
 
 // ==================== 四、CombatSystem：命中据点是纯粹的空操作 ====================
@@ -282,48 +299,55 @@ const FULL = DCFG.captureFull;
   ds._waveTimer = 0;
   ds._waveCount = 0;
 
+  const pointEvery = DCFG.pointWaveEvery ?? 2;
+
+  // 2026-09-26 第四轮：用户定稿"基地每波出兵，据点改为每2波出兵"——奇数波
+  // （_waveCount % 2 !== 0）据点应该完全不出兵，只有偶数波才出。
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // 第 1 波
+  ds.update(DCFG.waveInterval + 0.01); // _waveCount=1（奇数）
+  T('①-第 1 波（奇数）据点不出兵，用户定稿"据点改为每2波出兵"', spawned.length === 0);
+
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01); // _waveCount=2（偶数，第一次真正出兵）
   const fwd1 = spawned.filter(s => s.direction === node.segForward.direction);
   const rev1 = spawned.filter(s => s.direction === node.segReverse.direction);
-  T('①-第 1 波：顺时针方向出了 2 近战 + 1 远程（第 1 波不是隔波，不含炮兵）',
+  T('②-第 2 波（偶数）顺时针方向出了 2 近战 + 1 远程，不含任何炮兵（据点已经不再生成炮兵）',
     fwd1.filter(s => s.type === 'melee').length === 2 && fwd1.filter(s => s.type === 'ranged').length === 1
     && fwd1.filter(s => s.type === 'siege').length === 0);
-  T('②-逆时针方向也出了完全一样的一整套（不是把预算拆开轮流分给两边）',
+  T('③-逆时针方向也出了完全一样的一整套（不是把预算拆开轮流分给两边）',
     rev1.filter(s => s.type === 'melee').length === 2 && rev1.filter(s => s.type === 'ranged').length === 1);
-  T('③-所有出的兵都是占领方的阵营', spawned.every(s => s.faction === FACTIONS.BLUE));
-  T('③b-所有出的兵都走它自己声明的方向对应的 laneId（真实的 ring，不是伪路 id）',
+  T('④-所有出的兵都是占领方的阵营', spawned.every(s => s.faction === FACTIONS.BLUE));
+  T('④b-所有出的兵都走它自己声明的方向对应的 laneId（真实的 ring，不是伪路 id）',
     spawned.every(s => s.laneId === node.segForward.laneId));
-  T('③c-据点默认不出超级兵', !spawned.some(s => s.type === 'super'));
-
-  // 2026-09-26 第三轮：用户追加定稿"据点处不再生成炮兵"——原来的"每两波+1
-  // 炮兵"整条规则删除，第 2 波也应该跟第 1 波一样，只有 2 近战 1 远程。
-  spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // 第 2 波：不再有隔波炮兵这回事
-  T('④-据点不再生成炮兵，第 2 波依然是 2 近战 1 远程，没有任何炮兵',
-    spawned.filter(s => s.type === 'siege').length === 0
-    && spawned.filter(s => s.type === 'melee').length === 4 && spawned.filter(s => s.type === 'ranged').length === 2);
+  T('④c-据点默认不出超级兵', !spawned.some(s => s.type === 'super'));
 
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // 第 3 波：跟第 1 波一样不含炮兵
-  T('⑤-中立据点不出兵（本波仅这一个已占领据点的编排量：2+1 两个方向共6个单位，没有其它据点掺进来）',
-    spawned.length === 6);
+  ds.update(DCFG.waveInterval + 0.01); // _waveCount=3（奇数，又不出兵）
+  T('⑤-第 3 波（奇数）又轮空不出兵，确认不是只有第 1 波特殊', spawned.length === 0);
+
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01); // _waveCount=4（偶数，第二次出兵）
+  T('⑥-第 4 波（偶数）跟第 2 波完全一样的编排（据点出兵没有隔波+1这种概念了，是"每2波一次"的节奏本身，本波仅这一个已占领据点：2+1 两个方向共6个单位）',
+    spawned.length === 6
+    && spawned.filter(s => s.type === 'melee').length === 4 && spawned.filter(s => s.type === 'ranged').length === 2
+    && spawned.filter(s => s.type === 'siege').length === 0);
 
   // 验证真实出兵读的就是 compositionFor()/编辑器同一份数据——直接改
-  // CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd 之后，下一波马上跟着变，
-  // 不需要重启/重新 initMap（这正是"跟模板编辑器同一份数据"这句话的可验证含义）。
+  // CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd 之后，下一次据点出兵
+  // 马上跟着变，不需要重启/重新 initMap（这正是"跟模板编辑器同一份数据"这句话
+  // 的可验证含义）。据点现在每 pointEvery 波才出一次，得多推进几波才能等到。
   const bak = CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd;
   CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd = [{ type: 'siege', count: 5 }];
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01);
+  for (let i = 0; i < pointEvery; i++) ds.update(DCFG.waveInterval + 0.01);
   const fwd4 = spawned.filter(s => s.direction === node.segForward.direction);
-  T('⑥-改 CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd 立刻影响真实出兵（编辑器改了不再没用）',
+  T('⑦-改 CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd 立刻影响真实出兵（编辑器改了不再没用）',
     fwd4.length === 5 && fwd4.every(s => s.type === 'siege'));
   CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd = bak;
 
   // pseudoLaneId 的编码规则（<laneId>_fwd/_rev）跟 CONFIG.gameRules 里登记的
   // 键名一致，用真实 buildWaveOrder 调用交叉验证一遍。
-  T('⑦-伪路 id 命名跟 CONFIG.gameRules.laneWaveCompositionByLane 的键一致',
+  T('⑧-伪路 id 命名跟 CONFIG.gameRules.laneWaveCompositionByLane 的键一致',
     buildWaveOrder(1, false, CONFIG.gameRules, FACTIONS.BLUE, { laneId: 'ring_fwd' }).length === 3
     && buildWaveOrder(1, false, CONFIG.gameRules, FACTIONS.BLUE, { laneId: 'ring_rev' }).length === 3);
 }
@@ -351,13 +375,14 @@ const FULL = DCFG.captureFull;
 
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
-  // 2026-09-26 第二轮：用户定稿"修改每波从双方召唤水晶的兵，每波新增1超级兵"——
-  // 基线编制里已经带了 1 个超级兵，不再是"平时不出、敌方水晶被拆才出"。
-  T('②-双方召唤水晶都活着时，每波出 3 近战 + 3 远程 + 1 炮兵 + 1 超级兵（基线自带，不是敌方水晶被拆才有）',
+  // 2026-09-26 第四轮：用户反馈"滚雪球更严重了"，追加定稿"取消常驻超级兵的
+  // 生成"——第二轮加的"基线每波自带 1 超级兵"整个撤销，退回只有"敌方水晶被
+  // 拆才出超级兵"这一条路径（下面 ③④⑤）。双方水晶都活着时不应该有任何超级兵。
+  T('②-双方召唤水晶都活着时，每波出 3 近战 + 3 远程 + 1 炮兵，不含超级兵（已取消常驻超级兵）',
     spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'melee').length === 3
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'ranged').length === 3
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1
-    && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super').length === 1);
+    && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super').length === 0);
 
   // 红方召唤水晶被摧毁（alive=false，跟 MapSystem._onEntityDeath 的处理逐位一致）
   redCrystal.alive = false;
@@ -365,10 +390,10 @@ const FULL = DCFG.captureFull;
   ds.update(DCFG.waveInterval + 0.01);
   const blueSupers = spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super');
   const redSupers = spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'super');
-  T('③-红方召唤水晶被摧毁后，蓝方（打掉它的一方）额外再加 1 超级兵——基线 1 + 加成 1 = 2',
-    blueSupers.length === 2);
-  T('④-红方自己（水晶被摧毁的一方）不会因此额外获得超级兵，仍是基线的 1 个',
-    redSupers.length === 1);
+  T('③-红方召唤水晶被摧毁后，蓝方（打掉它的一方）出 1 个超级兵（没有基线可加，crystalSuperBonus 直接就是最终值）',
+    blueSupers.length === 1);
+  T('④-红方自己（水晶被摧毁的一方）不会因此获得超级兵，仍是 0 个',
+    redSupers.length === 0);
   T('④b-超级兵加成是额外加的，常规编制(3+3+1)依然照出不误',
     spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'melee').length === 3
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'ranged').length === 3
@@ -378,8 +403,8 @@ const FULL = DCFG.captureFull;
   redCrystal.alive = true;
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
-  T('⑤-红方召唤水晶重生后，蓝方的超级兵额外加成立刻停止（不需要额外监听重生事件），退回基线的 1 个',
-    spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super').length === 1);
+  T('⑤-红方召唤水晶重生后，蓝方的超级兵加成立刻停止（不需要额外监听重生事件），退回 0 个（不是"退回基线1个"，因为已经没有基线了）',
+    spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super').length === 0);
 }
 
 // ==================== 七、水晶掉血：己方占点数 > 对方时，对方水晶按据点数差持续掉血 ====================
@@ -784,6 +809,53 @@ const FULL = DCFG.captureFull;
     maxStall < 10);
   T(`③-${runSeconds}s 里确实绕完了不止一整圈（wraps=${wraps} ≥ 2，不是卡在半路一直没到终点）`,
     wraps >= 2);
+}
+
+// ==================== 十七、追赶机制：落后一方基地出兵额外带炮兵 ====================
+// 2026-09-26 第四轮：用户定稿"当某方占领的据点数量低于另一方时，基地出兵
+// 每波额外出1×据点占领差值的炮兵"——纯粹的据点数量差值，跟谁在打谁、水晶
+// 死没死都无关，只看 _tickWaves() 每次结算时双方各占了几个据点。
+{
+  const { ents, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
+  mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
+
+  const points = ds.nodes.filter(n => n.kind === 'point');
+  const spawned = [];
+  ds.setCreateMinion((type, x, y, faction) => spawned.push({ type, faction }));
+
+  // 双方占点数相等（0=0）：谁都不该有追赶炮兵，仍是基线的 1 炮兵。
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01);
+  T('①-双方占点数相等（都是 0）时没有追赶加成，双方都只有基线的 1 个炮兵',
+    spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1
+    && spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'siege').length === 1);
+
+  // 蓝方占 2 个据点，红方占 0 个：红方落后 2，应该额外多出 2 个炮兵（基线1+追赶2=3）；
+  // 蓝方领先，不受影响，仍是基线的 1 个。
+  points[0].captureOwner = FACTIONS.BLUE; points[0].capturePct = FULL;
+  points[1].captureOwner = FACTIONS.BLUE; points[1].capturePct = FULL;
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01);
+  T('②-占点落后 2 个的红方，基地这一波炮兵数=基线1+差值2=3',
+    spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'siege').length === 3);
+  T('③-占点领先的蓝方不受影响，仍是基线的 1 个炮兵（不是双方都加）',
+    spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1);
+  T('④-追赶只加炮兵这一项，常规的近战/远程编制不受影响（3+3，不是被炮兵顶掉）',
+    spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'melee').length === 3
+    && spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'ranged').length === 3);
+
+  // 红方追上（也占 2 个），差值归零：额外炮兵立刻消失，不需要额外的"追平"事件。
+  points[2].captureOwner = FACTIONS.RED; points[2].capturePct = -FULL;
+  points[3].captureOwner = FACTIONS.RED; points[3].capturePct = -FULL;
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01);
+  T('⑤-双方占点数追平（2=2）后，追赶炮兵立刻消失，红方退回基线的 1 个',
+    spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'siege').length === 1);
 }
 
 done();
