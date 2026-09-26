@@ -18,6 +18,7 @@ import { FacingSystem, setWeatherSystem as setFacingWeatherSystem } from './syst
 import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
 import { CollisionSystem } from './systems/CollisionSystem.js';
 import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
+import { DominionSystem } from './systems/DominionSystem.js';
 import { FACTIONS, canTarget, towerRuleFor, mapFactionsOf, scorerFactionOf } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
@@ -273,9 +274,14 @@ const collisionSystem = new CollisionSystem(entityContainer, mapSystem);
 // 见 FacingSystem 头注的「时序」一节。
 const facingSystem = new FacingSystem(entityContainer);
 const laneAvengerSystem = new LaneAvengerSystem(entityContainer, effectRegistry, eventBus, mapSystem); // v33 Q20：哀兵
+// 统治战场·水晶之痕：据点占领/动态归属出兵/水晶掉血，见 DominionSystem.js 头注。
+// 普通地图（无 map.dominionNodes）下 active=false，update() 直接早退，零影响。
+const dominionSystem = new DominionSystem(entityContainer, eventBus);
+combatSystem.setDominionSystem(dominionSystem);
+dominionSystem.setEffectRegistry(effectRegistry); // 据点占领翻转时装/卸武器技能要用它
 
 
-CTX.__app = { entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
+CTX.__app = { entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, dominionSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
 
 // ---------- 创建单位 ----------
 // v43 P1-④：塔 / 对战建筑 / 小兵 / 巨龙 四个工厂已搬到 src/core/factories.js。
@@ -325,6 +331,10 @@ laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
 // ——幻灵不推线，不属于任何一条波次编排。
 combatSystem.setCreateMinion((type, x, y, faction, hpScale, attrScale) =>
   createMinion(type, x, y, hpScale, attrScale, { faction }));
+// 水晶之痕出兵：走据点自己的独立波次计数，不挂 laneWaveSystem 的成长曲线
+// （据点出兵节奏由 CONFIG.dominion.waveInterval 单独控制，见 DominionSystem._tickWaves）。
+dominionSystem.setCreateMinion((type, x, y, faction, laneId, direction) =>
+  createMinion(type, x, y, 1, 1, { faction, laneId, direction }));
 
 // 龙魂事件日志
 eventBus.on('dragon:killed', (d) => {
@@ -416,9 +426,11 @@ eventBus.on('map:loading', () => {
   // __resetRun 里原来那两行显式清空就可以删掉了（loadMap 会自动带出这一步）。
   projectileSystem.projectiles.length = 0;
   projectileSystem.beams.clear();
+  dominionSystem.reset(); // 上一局的据点占领状态不带到新的一局
 });
 eventBus.on('map:loaded', (d) => {
   CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
+  dominionSystem.initMap(mapSystem.currentMap); // 无 dominionNodes 的地图上这里是空操作
   weatherSystem.reset(); // 每次载图重新随机：起始权重、变化快慢（θ）全部重抽
   groundTraceSystem.reset(); // 上一局的水洼/雪盖不带到新的一局
   // v42: full state reset on map switch
@@ -746,6 +758,7 @@ function stepSimulation(dt) {
   worldState.update(dt, CTX.gameTime);   // P3：昼夜相位 / 熵 / 龙魂统计（耦合默认全关）
   mapSystem.update(dt);       // 召唤水晶重生计时（仅对战模式内部生效）
   laneWaveSystem.update(dt);
+  dominionSystem.update(dt); // 水晶之痕：据点出兵节奏 + 水晶掉血（普通地图 active=false 直接早退）
       laneMovementSystem.update(dt);
       collisionSystem.update(dt);
   facingSystem.update(dt);      // v45：朝向必须在移动/碰撞之后，才用得上这一帧的位置

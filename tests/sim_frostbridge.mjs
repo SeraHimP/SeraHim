@@ -61,7 +61,8 @@ const halfWidth = (bits, d, sign) => {
   // v51.22：新增 summoners_rift_organic_v1（召唤师峡谷·蜿蜒版），常量从 5 改成
   // 6，同样只加不改——见 summoners_rift_organic.js 头注/sim_classic.mjs 注①同款说明。
   // v55.3：新增 confluence_v1（汇流战场），常量从 6 改成 7，同样只加不改。
-  T('注②-Object.keys(MAPS).length === 7（原6 张 + 这次新增1 张）', Object.keys(MAPS).length === 7);
+  // 统治战场·水晶之痕：新增 dominion_crystal_scar_v1，常量从 7 改成 8，同样只加不改。
+  T('注②-Object.keys(MAPS).length === 8（原7 张 + 这次新增1 张）', Object.keys(MAPS).length === 8);
   T('注③-visualStyle/paletteId 正确声明', howling_abyss_frost.visualStyle === 'stylized' && howling_abyss_frost.paletteId === 'frost');
   // ==================== v0.6/v0.7：navgrid 从"逐位复用原图"变成这张图自己的一份 ====================
   // v0.6 用户拍板：新描一份更宽的（HA_NAVGRID_FROST_WIDE），原图完全不动。

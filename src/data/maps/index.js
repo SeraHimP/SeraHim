@@ -5,6 +5,7 @@ import { demo_stylized } from './demo_stylized.js';
 import { howling_abyss_frost } from './howling_abyss_frost.js';
 import { summoners_rift_organic } from './summoners_rift_organic.js';
 import { confluence } from './confluence.js';
+import { dominion_crystal_scar } from './dominion_crystal_scar.js';
 
 /**
  * maps/index.js
@@ -36,6 +37,9 @@ export const MAPS = {
   // v55.3：汇流战场——超大型5路扇形汇流地图（见 confluence.js 头注：用户深夜要求
   // "特别大、多个内塔、多战线可重叠、180分钟量级"，明确授权2阵营降级方案）。
   [confluence.id]: confluence,
+  // 统治战场·水晶之痕（Dominion 复刻，见 dominion_crystal_scar.js 头注）——
+  // 占领/出兵/水晶掉血机制在 DominionSystem.js，本表只登记地形+建筑数据。
+  [dominion_crystal_scar.id]: dominion_crystal_scar,
 };
 
 export const DEFAULT_MAP_ID = summoners_rift.id;

@@ -78,6 +78,10 @@ export const CONFIG_FIELDS = [
   // composeMap() 声明这个字段；之前唯一用到它的 howling_abyss_frost.js 是手写
   // 整个地图对象、不走 composeMap，所以这个字段以前从没被这份白名单漏过。
   'torches',
+  // 统治战场·水晶之痕新增：据点/基地节点表（占领/出兵节奏用，见 DominionSystem.js）。
+  // 属于"这张地形上打什么仗"的玩法内容，不是物理几何——没有这个字段的地图
+  // DominionSystem.initMap() 直接判定 active=false，逐位不受影响。
+  'dominionNodes',
 ];
 
 /**
