@@ -277,7 +277,6 @@ const laneAvengerSystem = new LaneAvengerSystem(entityContainer, effectRegistry,
 // 统治战场·水晶之痕：据点占领/动态归属出兵/水晶掉血，见 DominionSystem.js 头注。
 // 普通地图（无 map.dominionNodes）下 active=false，update() 直接早退，零影响。
 const dominionSystem = new DominionSystem(entityContainer, eventBus);
-combatSystem.setDominionSystem(dominionSystem);
 dominionSystem.setEffectRegistry(effectRegistry); // 据点占领翻转时装/卸武器技能要用它
 
 

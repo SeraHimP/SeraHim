@@ -36,9 +36,18 @@
  *   - 已被占领的据点要"主动开火"（设计文档 5.2）：只要给它一个正的 attackDamage，
  *     现成的塔攻击循环就会自动生效，不需要另外写一套"据点开火"逻辑。
  * 唯一需要特殊处理的地方是【伤害结算】：据点没有 HP，CombatSystem 命中据点时
- * 必须整个绕开正常的护甲/护盾/伤害转化那一整套，改成调用这里的
- * applyCapturePressure()——两者是完全解耦的两套数值（设计文档 5.1 节的核心结论），
- * 混在一起算就会出现"以后调兵种伤害，据点争夺节奏也跟着变"这种不该有的耦合。
+ * 必须整个绕开正常的护甲/护盾/伤害转化那一整套，直接跳过（不做任何事）——
+ * 两者是完全解耦的两套数值（设计文档 5.1 节的核心结论），混在一起算就会出现
+ * "以后调兵种伤害，据点争夺节奏也跟着变"这种不该有的耦合。
+ *
+ * ==================== 2026-09-26 第三轮：占领不再挂在攻击事件上 ====================
+ * 早期版本占领压力是 CombatSystem 命中据点那一刻【顺带】触发的（调
+ * DominionSystem.applyCapturePressure()），本质是"攻击的副作用"，于是占领
+ * 推进速度被绑上了攻击者自己的攻速——用户反馈"小兵占领和攻击的实现是完全
+ * 不同的，目前我看做的占领实际上就是攻击"。现在两者彻底解耦：CombatSystem
+ * 命中据点时什么都不做（见上一段），占领改由 DominionSystem._tickCapture()
+ * 自己按固定节奏（跟攻速无关）扫描"谁把这个据点设为目标"来推进，见该方法
+ * 的头注。
  */
 import { CONFIG } from '../data/Config.js';
 import { FACTIONS } from './FactionSystem.js';
@@ -99,8 +108,9 @@ export class DominionSystem {
     const nodes = map?.dominionNodes;
     if (!Array.isArray(nodes) || nodes.length === 0) return;
     this.active = true;
-    // _lastHit：蓝/红两方【最近一次】对这个据点造成占领压力的游戏时刻，供
-    // _tickContest() 判定"双方是否同时在场"与"是否已经脱战"——见那个方法的头注。
+    // _lastHit：蓝/红两方【最近一次】在场（有小兵把这个据点设为目标）的游戏
+    // 时刻，供 _tickCapture()/_tickRegen() 判定"双方是否同时在场"与"是否已经
+    // 脱战"——见那两个方法的头注。
     this.nodes = nodes.map((n) => ({
       ...n, capturePct: 0, captureOwner: FACTIONS.NEUTRAL, entity: null,
       _lastHit: { [FACTIONS.BLUE]: -Infinity, [FACTIONS.RED]: -Infinity },
@@ -137,7 +147,7 @@ export class DominionSystem {
         _captureOwner: FACTIONS.NEUTRAL,
         // 用户定稿："两方不能同时占领据点……据点进入不可被占领状态（不可被
         // 双方选中）"——FactionSystem.isStructureProtected() 读这个字段，
-        // 见 _tickContest() 的维护逻辑。
+        // 见 _tickCapture() 的维护逻辑。
         _contested: false,
       };
       this.entities.add(entity);
@@ -167,44 +177,11 @@ export class DominionSystem {
     node.entity._captureOwner = node.captureOwner;
   }
 
-  /**
-   * CombatSystem 的 _resolveHit / performAttackDirect 命中据点时调用，取代
-   * 正常的 currentHP -= 伤害结算——见文件头注"为什么不用正常伤害结算"。
-   *
-   * 用户定稿："两方不能同时占领据点，如果出现了，据点进入不可被占领状态
-   * （不可被双方选中，迫使两方开始交战），直至只剩一方占领该据点。"
-   * 落地方式：先无条件记一笔"这一方刚刚打过这个据点"（_lastHit，供
-   * _tickContest() 判定"双方是否都在场"），再检查【记完之后】是不是已经
-   * 进入争夺状态——是的话这次命中不产生任何占领压力，并且把攻击者的
-   * targetId 清掉，逼它下一轮重新索敌；索敌（AISystem.scanEnemies 等）
-   * 会经过 isStructureProtected()，那里已经加了 target._contested 的判断，
-   * 自然会跳过这个据点，转而盯上旁边的敌方单位——这就是"迫使两方开始交战"
-   * 在代码里的样子：不需要另外写一套"强制攻击最近敌人"的逻辑，只是让现成的
-   * 索敌逻辑看不到这个目标了。
-   */
-  applyCapturePressure(attacker, targetEntity) {
-    if (!attacker) return;
-    const node = this.nodes.find((n) => n.entity && n.entity.id === targetEntity.id);
-    if (!node) return;
-    const faction = attacker._mapFaction || attacker.faction;
-    if (faction !== FACTIONS.BLUE && faction !== FACTIONS.RED) return;
-    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
-    node._lastHit[faction] = now;
-    // ⚠️ 必须【无条件】同步，不能只在"判定为争夺中"这一支里赋 true——那样争夺
-    // 状态只有 _tickContest()（挂在 update() 里）跑到才会被翻回 false，如果调用方
-    // 没有稳定的每帧 update() 节奏（单测直接调这个函数，或者双方脱离后很久才有
-    // 下一次命中），_contested 会卡在 true 出不来。这里每次命中都用当下最新的
-    // 判定结果覆盖一遍，跟 _tickContest() 的逻辑保持同一个真源。
-    const contested = this._isContested(node, now);
-    node.entity._contested = contested;
-    if (contested) {
-      attacker.targetId = null;
-      return;
-    }
-    const sign = faction === FACTIONS.BLUE ? 1 : -1;
-    const cfg = CONFIG.dominion || {};
-    const power = (cfg.capturePower && (cfg.capturePower[attacker.type] ?? cfg.capturePower.default)) ?? 1;
-    this._advance(node, sign * power);
+  /** 蓝红两方是不是都在 contestWindowSec 秒内"在场"过这个据点——"双方同时在场"的判据。 */
+  _isContested(node, now) {
+    const win = CONFIG.dominion?.contestWindowSec ?? 2;
+    return (now - node._lastHit[FACTIONS.BLUE] <= win)
+        && (now - node._lastHit[FACTIONS.RED] <= win);
   }
 
   /** 蓝红两方是不是都在 contestWindowSec 秒内打过这个据点——"双方同时在场"的判据。 */
@@ -284,28 +261,96 @@ export class DominionSystem {
 
   update(dt) {
     if (!this.active) return;
-    this._tickContest(dt);
+    this._tickCapture(dt);
+    this._tickRegen(dt);
     this._tickWaves(dt);
     this._tickNexusDrain(dt);
   }
 
   /**
-   * 每帧刷新每个据点的"争夺中"状态 + 脱战后的静息值回归。
+   * ==================== 2026-09-26 第三轮：占领与攻击彻底解耦 ====================
+   * 用户反馈"中立据点会进行攻击单位"，追问之下定的根因是"小兵占领和攻击的
+   * 实现是完全不同的，目前我看做的占领实际上就是攻击。小兵占领据点时应该是
+   * 固定每秒一次"——原来的占领压力是从 CombatSystem._resolveHit/
+   * performAttackDirect 命中据点时【顺带】触发的（见旧版 applyCapturePressure
+   * 头注），本质上是"攻击事件的副作用"：占领的推进节奏因此被绑在攻击者自己的
+   * 攻速上——近战/远程/炮兵攻速不同，同样的 capturePower 换算出来的实际占领
+   * 速度（每秒推进的百分点）就会不一样，这正是用户说的"占领实际上就是攻击"。
    *
-   * 争夺状态不能只在 applyCapturePressure() 里"开"不"关"——一旦双方都停手
-   * （比如其中一方的兵全被打死了），_lastHit 会自然老化出 contestWindowSec
-   * 这个窗口，这里每帧重新判一次，让它能够【自动解除】，不需要额外的
-   * "谁死了"事件监听。
+   * 现在改成据点自己按固定节奏（captureTickSec，默认 1 秒）扫一遍"当前谁把
+   * 我设为攻击目标"（只读 targetId，不读攻速/冷却），按扫到的小兵各自的
+   * capturePower 汇总一次净压力，跟攻击者的攻速/攻击冷却彻底没有关系——
+   * 哪怕是炮兵那种攻速很慢的兵种，只要站在据点边上把它设为目标，同样按
+   * 这固定的每秒一次推进，不会因为攻速快就推得更猛。
    *
-   * 脱战回归：用户定稿"若据点脱离战斗状态，此时会慢慢恢复该状态下的值"——
-   * "该状态下的值"= 静息值：中立=0，已被某方占领=±captureFull。脱战判据
-   * 是【两方都】超过 combatTimeoutSec 秒没再对这个据点造成过占领压力
-   * （比"争夺中"那个窗口更宽松，争夺解除不代表已经没人管这个点了——可能
-   * 只是暂时没打，紧接着还会回来打）。回归只会把 capturePct 拉向静息值，
-   * 不会翻过界（Math.min/max 卡在静息值），也不会触发 _setOwner——已经在
-   * 静息值上或正在往那儿靠近，从不需要转移归属。
+   * 用户追加定稿："据点是有占领速度上限的，每秒最多10%最大占领速度"——不管
+   * 同时有多少个小兵在占（人越多本来净压力会越大），最终这一次 tick 的净变化
+   * 量被夹在 ±(captureFull × maxCaptureRatePctPerSec / 100) 之内，见下面
+   * capPerTick 的计算。
+   *
+   * "谁在占领"的判据用现成的 minion.targetId===点的实体id（LaneMovementSystem
+   * 的索敌/锚定逻辑已经在维护这个字段，且已经过 isStructureProtected 的争夺
+   * 判定——争夺中的据点不会被设成任何人的目标，见 AISystem.scanEnemies）——
+   * 只读它的【值】（谁盯着我），不牵扯攻击方那一套攻速/冷却计时，这就是
+   * "占领和攻击完全独立两套实现"在这里的落地方式：复用位置/索敌信息，
+   * 不复用节奏信息。
+   *
+   * _lastHit 的更新也从"每次攻击命中"改成"这一帧扫到时有没有人在场"——
+   * 语义不变（供 _isContested/_tickRegen 判定"双方是否同时在场"/"是否已经
+   * 脱战"），只是触发源从攻击事件变成了每帧的在场扫描。
    */
-  _tickContest(dt) {
+  _tickCapture(dt) {
+    const cfg = CONFIG.dominion || {};
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    const full = cfg.captureFull ?? 100;
+    const tickSec = cfg.captureTickSec ?? 1;
+    const capPerTick = full * ((cfg.maxCaptureRatePctPerSec ?? 10) / 100) * tickSec;
+    const minions = this.entities.getAllMinions ? this.entities.getAllMinions(true) : [];
+    for (const node of this.nodes) {
+      if (node.kind !== 'point' || !node.entity) continue;
+      let bluePower = 0, redPower = 0, blueHere = false, redHere = false;
+      for (const m of minions) {
+        if (!m.alive || m.targetId !== node.entity.id) continue;
+        const faction = m._mapFaction || m.faction;
+        const power = (cfg.capturePower && (cfg.capturePower[m.type] ?? cfg.capturePower.default)) ?? 1;
+        if (faction === FACTIONS.BLUE) { bluePower += power; blueHere = true; }
+        else if (faction === FACTIONS.RED) { redPower += power; redHere = true; }
+      }
+      if (blueHere) node._lastHit[FACTIONS.BLUE] = now;
+      if (redHere) node._lastHit[FACTIONS.RED] = now;
+
+      const contested = this._isContested(node, now);
+      node.entity._contested = contested;
+      if (contested) {
+        // 迫使两方开始交战：把当前盯着这个据点的攻击者目标清空，逼它们下一轮
+        // 重新索敌——索敌会经过 isStructureProtected()（已认得 _contested），
+        // 自然跳过这个据点，转而盯上旁边的敌方单位。
+        for (const m of minions) {
+          if (m.alive && m.targetId === node.entity.id) m.targetId = null;
+        }
+        continue;
+      }
+
+      node._captureTimer = (node._captureTimer || 0) + dt;
+      if (node._captureTimer < tickSec - 1e-9) continue;
+      node._captureTimer -= tickSec;
+      const rawDelta = bluePower - redPower;
+      if (rawDelta === 0) continue;
+      const delta = Math.max(-capPerTick, Math.min(capPerTick, rawDelta));
+      this._advance(node, delta);
+    }
+  }
+
+  /**
+   * 脱战后向"静息值"（中立=0，已占领=±captureFull）缓慢恢复——用户定稿
+   * "若据点脱离战斗状态，此时会慢慢恢复该状态下的值"。脱战判据是【两方都】
+   * 超过 combatTimeoutSec 秒没有任何小兵把这个据点设为目标（_lastHit 由
+   * _tickCapture() 每帧维护），比"争夺中"那个窗口更宽松——争夺解除不代表
+   * 已经没人管这个点了，可能只是暂时没人在占，紧接着还会回来。回归只会把
+   * capturePct 拉向静息值，不会翻过界，也不会触发 _setOwner——已经在静息值
+   * 上或正在往那儿靠近，从不需要转移归属。
+   */
+  _tickRegen(dt) {
     const cfg = CONFIG.dominion || {};
     const now = (typeof window !== 'undefined' && window.gameTime) || 0;
     const full = cfg.captureFull ?? 100;
@@ -313,9 +358,8 @@ export class DominionSystem {
     const regenPerSec = cfg.captureRegenPerSec ?? 8;
     for (const node of this.nodes) {
       if (node.kind !== 'point' || !node.entity) continue;
-      node.entity._contested = this._isContested(node, now);
       const idleFor = Math.min(now - node._lastHit[FACTIONS.BLUE], now - node._lastHit[FACTIONS.RED]);
-      if (idleFor < combatTimeout) continue; // 至少还有一方最近打过，不脱战
+      if (idleFor < combatTimeout) continue; // 至少还有一方最近在场，不脱战
       const resting = node.captureOwner === FACTIONS.BLUE ? full
                     : node.captureOwner === FACTIONS.RED ? -full : 0;
       if (node.capturePct === resting) continue;
@@ -432,7 +476,10 @@ export class DominionSystem {
     const diff = blueCount - redCount;
     if (diff === 0) return;
     const cfg = CONFIG.dominion || {};
-    const amount = (cfg.nexusDrainPerPointPerSec ?? 8) * Math.abs(diff) * dt;
+    // 2026-09-26：用户反馈"某一方滚雪球太严重了"，改成按 sqrt(据点数差) 走而不是
+    // 线性——领先越大惩罚越重的方向不变，但增速变缓（边际递减），见 Config.js
+    // 里 nexusDrainPerPointPerSec 旁边的头注，那里有完整的问题分析和公式对比。
+    const amount = (cfg.nexusDrainPerPointPerSec ?? 8) * Math.sqrt(Math.abs(diff)) * dt;
     const loserFaction = diff > 0 ? FACTIONS.RED : FACTIONS.BLUE;
     const nexus = this.entities.getAllTowers(true)
       .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === loserFaction);

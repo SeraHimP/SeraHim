@@ -1298,6 +1298,12 @@ export class UnitLayer {
     let showBar;
     if (ruin) {
       showBar = false;
+    } else if (e.isCapturePoint) {
+      // 2026-09-26 修复：用户报"塔进入不可选中状态后，充能条就不可见了"——据点
+      // 争夺中会被 isStructureProtected 判定为"结构保护"，而这条 tower 分支的规则
+      // 本来是给"建筑满血+受保护就不用露血条"设计的（无敌塔满血没什么好看的），
+      // 据点的条根本不是血条，是占领进度，永远都该显示，不受这条规则约束。
+      showBar = true;
     } else if (e.type === 'tower' && !ghost) {
       const mHP = attrCalc.calc(e, effects.getEffects(e.id)).maxHP || 1;
       const full = e.currentHP >= mHP - 1e-6;

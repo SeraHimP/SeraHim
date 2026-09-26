@@ -245,9 +245,9 @@ export function isStructureProtected(entityContainer, target) {
   // 不同的游戏理由，但对调用方（AISystem.scanEnemies / LaneMovementSystem 的
   // 目标校验 / CombatSystem 的塔攻击循环）来说都是"跳过这个目标"，复用这一个
   // 函数就能让全部现成的判断点（本仓库里有 10+ 处）一起生效，不需要在每处
-  // 都加一条新判断——见 DominionSystem._tickContest() 对 target._contested
-  // 的维护，以及 applyCapturePressure() 在争夺中直接清掉攻击者的 targetId
-  // （逼它下一轮重新索敌，索敌时就会经过这里被过滤掉）。
+  // 都加一条新判断——见 DominionSystem._tickCapture() 对 target._contested
+  // 的维护，争夺中会直接清掉当前盯着这个据点的攻击者的 targetId（逼它下
+  // 一轮重新索敌，索敌时就会经过这里被过滤掉）。
   if (target.isCapturePoint && target._contested) return true;
   if (!target._mapFaction) return false;
   // 性能：下面能返回 true 的 target._mapTier 只有这五档（outer 在 LANE_CHAIN 里

@@ -180,18 +180,10 @@ export class CombatSystem {
     // onFrame 回调里唯一稳定能拿到的引擎入口就是 ctx.combat，不想为了这一个
     // 技能再给 SkillLibrary 的调用签名加一个新字段。
     this.createMinion = null;
-    // 统治战场·水晶之痕：据点没有 HP，命中据点时转发到这里而不是走正常伤害
-    // 结算——见 DominionSystem.js 头注"为什么不用正常伤害结算"。普通地图
-    // 不受影响（this.dominionSystem 为 null 时下面两处早退分支永远不触发）。
-    this.dominionSystem = null;
   }
 
   setProjectileSystem(projectileSystem) {
     this.projectiles = projectileSystem;
-  }
-
-  setDominionSystem(dominionSystem) {
-    this.dominionSystem = dominionSystem;
   }
 
   setCreateMinion(fn) {
@@ -874,9 +866,11 @@ export class CombatSystem {
     // attacker.xxx 的地方全部改成 attacker?.xxx（找不到就按"没有攻击者"处理，
     // 和 performAttackDirect 对无来源伤害的既有处理方式一致）。
     if (!target || !target.alive) return;
-    // 统治战场·水晶之痕：据点没有 HP，"命中"改记占领压力，完全绕开下面这一整套
-    // 护甲/护盾/伤害转化结算——两者是刻意解耦的两套数值，见 DominionSystem.js 头注。
-    if (target.isCapturePoint) { this.dominionSystem?.applyCapturePressure(attacker, target); return; }
+    // 统治战场·水晶之痕：据点没有 HP，"命中"什么都不做，完全绕开下面这一整套
+    // 护甲/护盾/伤害转化结算——占领压力不再挂在攻击事件上（用户定稿"占领和
+    // 攻击是完全不同的实现"），改由 DominionSystem._tickCapture() 按固定节奏
+    // 自己扫描谁在场，见 DominionSystem.js 头注。
+    if (target.isCapturePoint) return;
     // Q7：全塔无敌开关（设置窗口）——建筑不再受到任何伤害
     if (target.type === 'tower' && window.__towerRuleFor?.('invincible', target._mapFaction)) return; // Q5：按阵营无敌
 
@@ -1499,9 +1493,9 @@ export class CombatSystem {
     const target = this.entities.get(targetId);
     // 允许无攻击者的纯伤害来源（DOT、环境、龙魂等以字符串/0 为 source 的情况）
     if (!target || !target.alive) return 0;
-    // 统治战场·水晶之痕：据点没有 HP，真伤/DOT 等间接伤害路径同样要转发到占领压力，
-    // 而不是走下面的护甲/护盾结算——理由同 _resolveHit 里的同名分支。
-    if (target.isCapturePoint) { this.dominionSystem?.applyCapturePressure(attacker, target); return 0; }
+    // 统治战场·水晶之痕：据点没有 HP，真伤/DOT 等间接伤害路径同样什么都不做，
+    // 不走下面的护甲/护盾结算——理由同 _resolveHit 里的同名分支。
+    if (target.isCapturePoint) return 0;
     if (isStructureProtected(this.entities, target)) return 0; // 结构保护：真实伤害也无效
 
     if (attacker) {
