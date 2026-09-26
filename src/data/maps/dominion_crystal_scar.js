@@ -59,10 +59,13 @@ import { composeMap } from '../mapComposition.js';
  * 口径完全一致，只是现在它自己也能反过来主动咬人。
  *
  * 用户追加定稿"确保正常情况下水晶枢纽干扰不到正常推线的小兵"——NEXUS_INSET
- * 从 380 加大到 420（水晶枢纽往环心方向多缩进 40），攻击距离按新的
- * NEXUS_INSET 原样设成"从环到水晶枢纽的距离"（见下面 NEXUS_ATTACK_RANGE），
- * 这个圆只够勉强碰到环上贴着走廊口的一小段弧，绝大部分环上路段完全够不着，
- * 不会对整条环的正常推线造成干扰。
+ * 从 380 加大到 420（水晶枢纽往环心方向多缩进 40）。攻击距离最初直接照抄
+ * NEXUS_INSET（本意是"射程刚好够到环边"），但用户实机测试后反馈这个值
+ * 打得太远，把 NEXUS_ATTACK_RANGE 从等于 NEXUS_INSET 改成独立的固定值 220
+ * ——射程和缩进距离本来就是两件事（前者是"打多远"，后者是"摆多偏"），只是
+ * 定稿时偷懒让它们相等，这次拆开成两个独立常量，互不影响。220 比 420 小
+ * 了近一半，只够碰到环上贴着走廊口最近的一小段弧，比原来更不容易干扰到
+ * 正常推线的小兵。
  *
  * ==================== 出兵为什么不给 lane 挂 spawns ====================
  * 唯一这一条环形兵线把 `spawns` 显式声明成空数组。原因：FactionSystem.
@@ -173,11 +176,11 @@ function insetNexusPos(nodeId) {
 }
 const blueNexusMainPos = insetNexusPos('blue_base');
 const redNexusMainPos = insetNexusPos('red_base');
-// 用户定稿"水晶枢纽变得可以攻击（攻击范围是从环到水晶枢纽的距离）"——水晶枢纽
-// 到环上最近点的直线距离，几何上正好等于 NEXUS_INSET（同角度、半径差），
-// 不用另外算。这个圆只够碰到环上贴着走廊口的一小段弧，不会打到正常巡线中的
-// 大部分小兵（同一次定稿要求的安全边界）。
-const NEXUS_ATTACK_RANGE = NEXUS_INSET;
+// 用户定稿"水晶枢纽变得可以攻击"，射程最初直接等于 NEXUS_INSET（水晶枢纽到
+// 环上最近点的直线距离，同角度、半径差，几何上正好相等，图省事就设成一样）。
+// 2026-09-26：用户实机测试后反馈这个射程太远，改成独立的固定值 220——
+// 跟 NEXUS_INSET 不再是同一个数字，改缩进距离不会再连带改到射程，反之亦然。
+const NEXUS_ATTACK_RANGE = 220;
 
 // dominionNodes 分两类：
 //   kind:'point' —— 环上 7 个据点，占领/争夺/出兵编排全部对等，见文件头注。
@@ -245,6 +248,20 @@ const DOMINION_CONFIG = {
   visualStyle: 'stylized',
   paletteId: 'desert',
 
+  // ==================== 本图全局光环（用户定稿）====================
+  // "新增地图级光环，水晶之痕光环——所有单位伤害增幅+33%"——跟扭曲丛林/
+  // 嚎哭深渊冰封版同一套机制（MapSystem._applyGlobalAura），"所有单位"同样
+  // 含防御塔与水晶（跟那两张图的既有口径一致，不用另开分支）。damageAmpPct
+  // 是 CombatSystem 里现成的"攻击方全伤害增幅"字段（见 performAttackDirect
+  // 的 dmgAmp 取值），不是新造的属性——用户没有指定这是不是随时间增长的，
+  // 直接给固定值 33，不套 twisted_treeline 那种 perMinute 累进写法。
+  globalAura: {
+    name: '水晶之痕光环', icon: '💎',
+    effects: [
+      { statKey: 'damageAmpPct', flat: 33, label: '伤害增幅' },
+    ],
+  },
+
   // ==================== 第三轮：让"不可走区域"变成真峡谷，不是一块纯色背景 ====================
   // 用户转述的 GPT 评估："它把'不可行走区域'做成了一个巨大的黑洞……而不是
   // '这里是一片不可通行的巨大峡谷/岩丘/荒漠地貌'"——复用 TerrainEdgeLayer.js
@@ -295,25 +312,28 @@ const DOMINION_CONFIG = {
   ],
 
   // ==================== 本图专属建筑数值 ====================
-  // 水晶枢纽：HP 固定 500（用户早前定稿"生命值设置为500，并且默认不含任何
-  // 技能和状态"），双抗/固定护盾/生命恢复都清零——这些防御数值现在更加无关
-  // 紧要，因为第五轮定稿"水晶枢纽无法被场上的小兵所攻击"（DominionSystem.
-  // initMap() 给它标 `_untargetable`，isStructureProtected 无条件放行），
-  // 它的血量只由据点数差驱动的持续掉血决定，从不吃直接命中，双抗数值不管
-  // 填多少都不会有任何效果，留 0 只是不给"看起来有意义"的数字添误导。
+  // 水晶枢纽：HP 早前定稿"设置为500，并且默认不含任何技能和状态"，
+  // 2026-09-26 用户追加定稿"为了增加对局时长，将双方的水晶枢纽的最大生命值
+  // 由500增加到750"——用户给了具体数字，不是起草值。双抗/固定护盾/生命恢复
+  // 都清零——这些防御数值现在更加无关紧要，因为第五轮定稿"水晶枢纽无法被
+  // 场上的小兵所攻击"（DominionSystem.initMap() 给它标 `_untargetable`，
+  // isStructureProtected 无条件放行），它的血量只由据点数差驱动的持续掉血
+  // （+30分钟后新增的热寂平推，见 CONFIG.dominion.nexusHeatDeathDrainPerSec）
+  // 决定，从不吃直接命中，双抗数值不管填多少都不会有任何效果，留 0 只是
+  // 不给"看起来有意义"的数字添误导。
   //
   // 攻击力/攻速/射程：用户定稿"水晶枢纽继承召唤水晶的攻击"——直接搬第四轮
   // 调出来的召唤水晶(nexus_lane)攻击力 700、攻速 1.4（原样照抄，不是重新
-  // 起草）；射程改用 NEXUS_ATTACK_RANGE（"从环到水晶枢纽的距离"，见上面
-  // 定义处），不沿用召唤水晶原来的 260——那是配合"就在环上"这个位置调的，
-  // 水晶枢纽现在挪进了环内侧，用同一个数字没有意义。
+  // 起草）；射程用独立常量 NEXUS_ATTACK_RANGE（定义处见上面，用户实机测试
+  // 后定稿为固定值 220），不沿用召唤水晶原来的 260——那是配合"就在环上"这个
+  // 位置调的，水晶枢纽现在挪进了环内侧，用同一个数字没有意义。
   // 全局 CONFIG.towerTierWeapon.nexus_main 固定是 'none'（所有地图的水晶
   // 枢纽默认无武器，不该为了这一张图去改），所以这里的 weapon:null 只是
   // 常规装配路径的占位——真正给它装 weapon_piercing 由 DominionSystem.
   // initMap() 手动调 equipSkill() 完成，跟原来给召唤水晶装的是同一份代码。
   tierStats: {
     nexus_main: {
-      maxHP: 500, shieldFixedMax: 0, healthRegen: 0, armor: 0, magicResist: 0,
+      maxHP: 750, shieldFixedMax: 0, healthRegen: 0, armor: 0, magicResist: 0,
       attackDamage: 700, attackRange: NEXUS_ATTACK_RANGE, baseAttackSpeed: 1.4,
     },
   },

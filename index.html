@@ -172,6 +172,16 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
   0% { box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 10px 3px rgba(255,80,80,0.9); }
   100% { box-shadow: none; }
 }
+/* 掉血减少特效（用户定稿）："每减少1进度，就从当前进度的位置往后划一个圆点到
+   进度为0的地方，代表进度减少，减少得快就加快滑动速度"——见 UIManager.js
+   updNexusBar 里 spawnDrainDot() 的头注，那边有完整的实现取舍说明。这里只是
+   点本身的外观：小圆点，白色发光，不吃鼠标事件（不能挡住血条本身的点击/悬浮）。
+   left 用行内百分比定位，translate(-50%,-50%) 让点的中心对齐那个百分比坐标。 */
+.dnb-dot {
+  position: absolute; top: 50%; left: 0; width: 5px; height: 5px;
+  border-radius: 50%; background: #fff; box-shadow: 0 0 4px 1px rgba(255,255,255,0.85);
+  pointer-events: none; transform: translate(-50%, -50%);
+}
 
 #main { display: flex; flex: 1; min-height: 0; }
 

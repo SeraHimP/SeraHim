@@ -89,8 +89,8 @@ const FULL = DCFG.captureFull;
     !map.buildings.some(b => b.tier === 'nexus_lane') && !map.tierStats.nexus_lane);
   T('⑥c-水晶枢纽显式声明 skills:[]（用户定稿"默认不含任何技能和状态"）',
     map.buildings.filter(b => b.tier === 'nexus_main').every(b => Array.isArray(b.skills) && b.skills.length === 0));
-  T('⑥d-水晶枢纽 HP 定稿为 500（用户定稿具体数值，撤编召唤水晶之后这个数字未变）',
-    map.tierStats.nexus_main.maxHP === 500);
+  T('⑥d-水晶枢纽 HP 定稿为 750（用户追加定稿"为了增加对局时长，由500增加到750"）',
+    map.tierStats.nexus_main.maxHP === 750);
   T('⑥e-水晶枢纽继承了原召唤水晶的攻击力/攻速（用户定稿"水晶枢纽继承召唤水晶的攻击"，数值原样照抄第四轮定的 700/1.4）',
     map.tierStats.nexus_main.attackDamage === 700 && map.tierStats.nexus_main.baseAttackSpeed === 1.4);
   T('⑥f-水晶枢纽射程是正数且明显小于世界尺寸（用户定稿"攻击范围是从环到水晶枢纽的距离"，不是沿用召唤水晶原来的射程）',
@@ -134,9 +134,10 @@ const FULL = DCFG.captureFull;
 // 推进 ds.update(dt)"来模拟"站在据点旁边占领"，DominionSystem._tickCapture()
 // 自己按 captureTickSec 的固定节奏扫描谁在场、推进占领压力，见该方法头注。
 {
-  const { ents, CONFIG: C } = await makeWorld();
+  const { ents, fx, attr, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
   const ds = new DominionSystem(ents, bus);
+  ds.setEffectRegistry(fx);
   const map = MAPS['dominion_crystal_scar_v1'];
   ds.initMap(map);
   T('①-声明了 dominionNodes 的地图会激活系统', ds.active === true);
@@ -149,7 +150,11 @@ const FULL = DCFG.captureFull;
   const redAttacker = mkEntity(ents, 'melee', { faction: FACTIONS.RED }, C);
   const power = DCFG.capturePower.melee;
   const tick = (dt = tickSec) => { window.gameTime = (window.gameTime || 0) + dt; ds.update(dt); };
-  const neutralDamage = node.entity.baseStats.attackDamage;
+  // 2026-09-26 用户追加返工："攻占后据点属性提升……都要在状态栏显示"——占领
+  // 后的攻击力增量不再直接写进 baseStats.attackDamage（那样状态栏看不出来），
+  // 改走 EffectRegistry 的一条可见效果，真实生效的总值要用 attr.calc 现算，
+  // 不能只读 baseStats（baseStats 现在永远停在中立基线上，见 _setOwner 头注）。
+  const neutralDamage = attr.calc(node.entity, fx.getEffects(node.entity.id)).attackDamage;
 
   window.gameTime = 0;
   blueAttacker.targetId = node.entity.id;
@@ -163,13 +168,16 @@ const FULL = DCFG.captureFull;
   while (node.captureOwner === FACTIONS.NEUTRAL) tick();
   T('⑤-推满之后归属翻转为蓝方且进度钉在 captureFull', node.captureOwner === FACTIONS.BLUE && node.capturePct === FULL);
   T('⑤b-镜像的 _captureOwner 也翻转为蓝方', node.entity._captureOwner === FACTIONS.BLUE);
+  const capturedDamage = attr.calc(node.entity, fx.getEffects(node.entity.id)).attackDamage;
   T('⑥-被占领后据点获得正的攻击力/射程（tpl 的一部分，不再是 0）',
-    node.entity.baseStats.attackDamage > 0 && node.entity.baseStats.attackRange > 0);
+    capturedDamage > 0 && node.entity.baseStats.attackRange > 0);
   // 2026-09-26 第四轮·补充：用户追加定稿"据点在中立状态下攻击力低，在某方
   // 占领之后攻击力提高"——占领后的攻击力应该明显比中立时高（pointDamagePct
   // 30% > pointNeutralDamagePct 15%），不再是中立/占领共用同一份数值。
   T('⑥b-占领后攻击力比中立时更高（用户定稿"中立低、占领后提高"）',
-    node.entity.baseStats.attackDamage > neutralDamage);
+    capturedDamage > neutralDamage);
+  T('⑥c-占领后据点身上真的有一条可见的"据点占领增益"效果（用户追加返工："都要在状态栏显示"）',
+    fx.getEffects(node.entity.id).some((e) => e.blueprint.name === '据点占领增益'));
 
   const before = node.capturePct;
   tick();
@@ -668,8 +676,12 @@ const FULL = DCFG.captureFull;
   // 2026-09-26 第二轮：用户实机测过之后改口"太低了，需要加强"——不再钉死
   // "必须 <=20" 这个第一轮的具体门限，改钉行为形状本身：比第一轮砍过头的
   // 12% 强，但仍然比原型草案原始的 35% 弱（用户没说要强化到超过原始基准）。
-  T('①-据点攻击力比上一轮砍过头的 12% 强化了，但仍比原型草案原始的 35% 弱',
-    (DCFG.pointDamagePct ?? 35) > 12 && (DCFG.pointDamagePct ?? 35) < 35);
+  // 2026-09-26 第三轮：用户实机测过第二轮的 30% 之后仍反馈"还是太低了"——
+  // 说明"不超过原始35%基准"这条第二轮自己加的隐性上限本身就是错的，这次
+  // 改钉"比第二轮的 30% 继续强化"，不再假设存在任何固定上限。
+  T('①-据点攻击力（占领后）比第二轮的 30% 继续强化', (DCFG.pointDamagePct ?? 30) > 30);
+  T('①b-中立时的攻击力也同步提高（用户定稿"中立状态和占领状态的攻击都提高"），且仍然低于占领后（维持"中立弱、占领强"的层级关系不能被"都提高"这条要求打破）',
+    (DCFG.pointNeutralDamagePct ?? 15) > 15 && DCFG.pointNeutralDamagePct < DCFG.pointDamagePct);
   T('②-新增据点攻速系数，且是提升方向（"略微提升"≈>100%）',
     (DCFG.pointAttackSpeedPct ?? 100) > 100);
   T('③-小兵占领速度整体提高（capturePower 各项都比原型草案的基准更高）',
@@ -677,9 +689,10 @@ const FULL = DCFG.captureFull;
     && DCFG.capturePower.siege > 0.75 && DCFG.capturePower.super > 2.2);
 
   // 数值真的接线到 _setOwner，不是只停在 Config.js 里没人读
-  const { ents, CONFIG: C } = await makeWorld();
+  const { ents, fx, attr, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
   const ds = new DominionSystem(ents, bus);
+  ds.setEffectRegistry(fx);
   ds.initMap(MAPS['dominion_crystal_scar_v1']);
   const node = ds.nodes.find(n => n.kind === 'point');
   const tpl = CONFIG.templates.tower;
@@ -688,8 +701,9 @@ const FULL = DCFG.captureFull;
   attacker.targetId = node.entity.id;
   window.gameTime = 0;
   while (node.captureOwner === FACTIONS.NEUTRAL) { window.gameTime += tickSec; ds.update(tickSec); }
-  T('④-占领后据点的攻击力确实是 tpl 的 pointDamagePct%（不是某个写死的数）',
-    Math.abs(node.entity.baseStats.attackDamage - tpl.attackDamage * (DCFG.pointDamagePct / 100)) < 1e-6);
+  const finalDamage = attr.calc(node.entity, fx.getEffects(node.entity.id)).attackDamage;
+  T('④-占领后据点的攻击力确实是 tpl 的 pointDamagePct%（不是某个写死的数；现在是 baseStats 中立基线 + 一条可见效果的加成合计）',
+    Math.abs(finalDamage - tpl.attackDamage * (DCFG.pointDamagePct / 100)) < 1e-6);
   T('⑤-占领后据点的攻速确实是 tpl 的 pointAttackSpeedPct%（新增的这个维度真的生效了）',
     Math.abs(node.entity.baseStats.baseAttackSpeed - tpl.baseAttackSpeed * (DCFG.pointAttackSpeedPct / 100)) < 1e-6);
 }
@@ -719,6 +733,13 @@ const FULL = DCFG.captureFull;
     /if \(e\.isCapturePoint\) \{/.test(layerSrc));
   T('⑨-isCapturePoint 分支恒定显示（不受"结构保护+满血则隐藏"那条规则约束——占领条不是血条，见 bug 修复的 showBar=true）',
     /e\.isCapturePoint[\s\S]{0,400}showBar\s*=\s*true/.test(layerSrc));
+  // 2026-09-26 用户补充定稿："目前据点在画板上的进度条并无拖尾特效，需要和其他
+  // 进度条统一增加拖尾/增加特效"——_redrawBar 的 isCapturePoint 分支原来直接
+  // return，调用方已经用 stepTrail 算好的 resTrailFrac 传进来却从没读过。
+  T('⑫-画板据点条现在真的用了 resTrailFrac（不再是早期版本直接 return、完全无视调用方算好的拖尾数据）',
+    /if \(e\.isCapturePoint\) \{[\s\S]{0,900}resTrailFrac > capFrac/.test(layerSrc));
+  T('⑬-据点的拖尾残段跟 HP/资源条用同一个 TRAIL_COLOR 常量（真正的"统一"，不是另起一套颜色）',
+    /if \(e\.isCapturePoint\) \{[\s\S]{0,1000}TRAIL_COLOR/.test(layerSrc));
 
   const facSrc = srcOf('src/systems/FactionSystem.js');
   T('⑩-isStructureProtected 里接了 _contested 判断（争夺中的据点在所有既有索敌/攻击判据点上都生效）',
@@ -991,6 +1012,68 @@ const FULL = DCFG.captureFull;
   T('④-defenderSlowPct 定稿为 50（用户给的具体数字，不是起草值）', DCFG.defenderSlowPct === 50);
 }
 
+// ==================== 十九b、驻守减速必须在状态栏可见（用户追加返工）====================
+// 用户："这个经过实测并没做出来，需要修复。还有攻占后据点属性提升，攻占速度
+// 减少等都要在状态栏显示！"——排查后确认十九节测的折算逻辑本身没问题，真正
+// 缺的是"玩家看不看得见"：原来只改了两个局部变量 bluePower/redPower，据点
+// 自己的效果列表里什么都没有。这里改走 EffectRegistry.apply，跟其它任何
+// buff/debuff 一样能被 effects.getEffects() 读到。
+{
+  const { ents, fx, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  ds.setEffectRegistry(fx);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const node = ds.nodes.find(n => n.kind === 'point');
+  const tickSec = DCFG.captureTickSec ?? 1;
+
+  node.captureOwner = FACTIONS.BLUE; node.capturePct = FULL;
+  ds._syncCaptureDisplay(node);
+  const redAttacker = mkEntity(ents, 'melee', { faction: FACTIONS.RED }, C);
+  redAttacker.targetId = node.entity.id;
+  const blueDefender = mkEntity(ents, 'melee', {
+    faction: FACTIONS.BLUE, pos: { x: node.entity.pos.x + 5, y: node.entity.pos.y },
+  }, C);
+  window.gameTime = 0;
+  window.gameTime += tickSec; ds.update(tickSec);
+  const hasSlowEffect = fx.getEffects(node.entity.id).some((e) => e.blueprint.name === '驻守减速');
+  T('①-驻守小兵在场时，据点自己身上真的挂了一条可见的"驻守减速"效果（不再是完全无感的暗改）',
+    hasSlowEffect);
+
+  blueDefender.pos.x = node.entity.pos.x + 99999;
+  window.gameTime += 2; fx.update(2); ds.update(0.001);
+  const stillHasSlowEffect = fx.getEffects(node.entity.id).some((e) => e.blueprint.name === '驻守减速');
+  T('②-驻守小兵离开之后，这条效果会自然消失（aura 的宽限期到期，不是永久挂着骗玩家）',
+    !stillHasSlowEffect);
+}
+
+// ==================== 十九c、占领后的攻击力提升必须在状态栏可见（用户追加返工）====================
+{
+  const { ents, fx, attr, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  ds.setEffectRegistry(fx);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const node = ds.nodes.find(n => n.kind === 'point');
+
+  ds._setOwner(node, FACTIONS.BLUE, FULL);
+  const buffEffect = fx.getEffects(node.entity.id).find((e) => e.blueprint.name === '据点占领增益');
+  T('①-占领之后据点身上挂了一条可见的"据点占领增益"效果（不再是静默改 baseStats）',
+    !!buffEffect && buffEffect.blueprint.statKey === 'attackDamage');
+
+  const tpl = C.templates.tower;
+  const expectedTotal = tpl.attackDamage * (DCFG.pointDamagePct / 100);
+  const stats = attr.calc(node.entity, fx.getEffects(node.entity.id));
+  T('②-基线(中立值)+这条效果的加成 = 跟改动前完全一样的占领后总攻击力（数值不变，只是拆开了）',
+    Math.abs(stats.attackDamage - expectedTotal) < 1e-6);
+
+  ds._setOwner(node, FACTIONS.NEUTRAL, 0);
+  const buffAfterNeutral = fx.getEffects(node.entity.id).find((e) => e.blueprint.name === '据点占领增益');
+  T('③-翻转回中立之后，这条效果被显式移除（不是永久挂着）', !buffAfterNeutral);
+}
+
 // ==================== 二十、中立据点优先攻击正在占领它的单位 ====================
 // 用户定稿："中立据点会优先攻击正在占领该据点的阵营的单位"。
 {
@@ -1045,7 +1128,108 @@ const FULL = DCFG.captureFull;
   T('⑥-读的是水晶枢纽(nexus_main)的血量，不是别的塔层级',
     /nexus_main[\s\S]{0,200}_mapFaction === 'blue'/.test(uiSrc));
   T('⑦-掉血时会给对应轨道节点补一个 class（用户定稿的"显示特效"落地成这一步）',
-    /hp < prevHp[\s\S]{0,300}classList\.add\('dnb-flash'\)/.test(uiSrc));
+    /hp < prevHp[\s\S]{0,400}classList\.add\('dnb-flash'\)/.test(uiSrc));
+
+  // 2026-09-26 追加两条用户返工：
+  //   Q5-文字格式："文字不要为XXX/YYY，仅保留XXX（当前血量）"；
+  //   Q6-减少特效："每减少1进度，就从当前进度的位置往后划一个圆点到进度为0的
+  //      地方，代表进度减少，减少得快就加快小点的滑动速度"。
+  T('⑧-血量文字只显示当前值，不再拼 "当前/上限"（不能匹配旧的 hp/max 写法）',
+    /_setText\(hpId, `\$\{hp\}`\)/.test(uiSrc) && !/_setText\(hpId, `\$\{hp\}\/\$\{max\}`\)/.test(uiSrc));
+  T('⑨-掉血时会生成一个"减少点"（.dnb-dot），不是只有轨道闪烁',
+    /spawnDrainDot/.test(uiSrc) && /dnb-dot/.test(uiSrc));
+  T('⑩-减少点的滑动时长跟掉血量挂钩（掉得越多滑得越快），不是写死一个固定时长',
+    /DOT_BASE_MS\s*\/\s*Math\.sqrt\(delta\)/.test(uiSrc));
+  T('⑪-CSS 里真的定义了 .dnb-dot 这个点的样式（不是只在 JS 里造了个没有外观的节点）',
+    /\.dnb-dot\s*\{/.test(htmlSrc));
+}
+
+// ==================== 二十二：水晶之痕光环——所有单位伤害增幅+33% ====================
+// 用户定稿："新增地图级光环，水晶之痕光环——所有单位伤害增幅+33%"。跟扭曲丛林/
+// 嚎哭深渊冰封版同一套 MapSystem._applyGlobalAura 机制（那套通用机制本身已经
+// 在 sim_globalaura.mjs 和 sim_v51.mjs 里覆盖过），这里只验证【这张图】的
+// 声明值真的接上了，做法照抄 sim_v51.mjs 里"光①~光④"那组断言的模式。
+{
+  const { ents, fx, attr, CONFIG: C } = await makeWorld();
+  const { MapSystem } = await import('../src/systems/MapSystem.js');
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const ms = new MapSystem(ents, new EventBus());
+  ms.setEffectRegistry(fx);
+  ms.loadMap('dominion_crystal_scar_v1');
+  const unit = mkEntity(ents, 'melee', {}, C);
+  ms.update(1);
+  const stats = attr.calc(unit, fx.getEffects(unit.id));
+  T('①-水晶之痕光环：所有单位伤害增幅+33%（真接上了 damageAmpPct，不是只停在地图数据里没人读）',
+    Math.abs(stats.damageAmpPct - 33) < 1e-6);
+
+  const tower = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE }, C);
+  ms.update(1);
+  const towerStats = attr.calc(tower, fx.getEffects(tower.id));
+  T('②-光环真的对塔也生效（用户口径"所有单位"含防御塔，跟其它两张图的既有先例一致）',
+    Math.abs(towerStats.damageAmpPct - 33) < 1e-6);
+}
+
+// ==================== 二十三、水晶枢纽低血量额外超级兵 ====================
+// 用户定稿："若某阵营水晶枢纽生命值低于75，则该阵营每2次出兵额外生成一个超级兵"。
+{
+  const { ents, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  ds.createMinion = () => {};
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  // DominionSystem 自己只建 kind:'point' 那些据点实体（initMap 头注写得很明白：
+  // "kind:'base' 的两个节点复用地图 buildings 数组里已经建好的 nexus_main 水晶
+  // 实体"）——水晶枢纽的建造是 MapSystem 走 map.buildings 那条常规建塔路径，
+  // 这份轻量测试脚手架没有跑那条路径，得跟第九节一样自己手搭一个。
+  const blueNexus = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_main', stats: { maxHP: 750 } }, C);
+
+  let superCount = 0;
+  ds.createMinion = (type) => { if (type === 'super') superCount++; };
+  window.gameTime = 0;
+  const interval = DCFG.waveInterval ?? 20;
+  const bonusEvery = Math.max(1, DCFG.bonusWaveEvery ?? 1);
+  const wavesNeeded = 8 * bonusEvery; // 跑够多波，覆盖至少 8 次这个水晶枢纽自己的出兵
+  for (let i = 0; i < wavesNeeded; i++) { window.gameTime += interval; ds.update(interval); }
+  T('①-血量充足时，正常出兵不会带超级兵（先测出基准，确认下面的差异不是巧合）',
+    superCount === 0);
+
+  blueNexus.currentHP = (DCFG.lowHpNexusThreshold ?? 75) - 1; // 打到阈值以下
+  superCount = 0;
+  for (let i = 0; i < wavesNeeded; i++) { window.gameTime += interval; ds.update(interval); }
+  T('②-血量低于阈值后，蓝方每 lowHpNexusBonusEvery 次出兵确实多出一个超级兵',
+    superCount === Math.floor(8 / (DCFG.lowHpNexusBonusEvery ?? 2)));
+
+  T('③-lowHpNexusThreshold/lowHpNexusBonusEvery 定稿为 75/2（用户给的具体数字，不是起草值）',
+    DCFG.lowHpNexusThreshold === 75 && DCFG.lowHpNexusBonusEvery === 2);
+}
+
+// ==================== 二十四、水晶枢纽热寂：30分钟后每秒固定掉0.5血，防止僵局 ====================
+// 用户定稿："为了防止僵局，在30分钟后所有阵营的水晶枢纽每秒减少0.5生命值
+// （状态——热寂）"——固定量，不随据点数差变化，双方无条件各扣一份。
+{
+  const { ents, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const blueNexus = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_main', stats: { maxHP: 750 } }, C);
+  const redNexus = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_main', stats: { maxHP: 750 } }, C);
+  const hpBefore = blueNexus.currentHP;
+
+  window.gameTime = 60 * (DCFG.nexusHeatDeathTriggerAtMin ?? 30) - 5; // 触发前 5 秒
+  ds.update(1);
+  T('①-触发时间点之前，双方水晶枢纽不受这条掉血影响（据点数量相同，双方也没有据点差掉血）',
+    blueNexus.currentHP === hpBefore && redNexus.currentHP === hpBefore);
+
+  window.gameTime += 10; // 跨过触发点
+  ds.update(1);
+  const expected = hpBefore - (DCFG.nexusHeatDeathDrainPerSec ?? 0.5) * 1;
+  T('②-触发时间点之后，双方（据点数量仍然相同）都按固定速率掉血（不是只掉落后方那一份）',
+    Math.abs(blueNexus.currentHP - expected) < 1e-6 && Math.abs(redNexus.currentHP - expected) < 1e-6);
+
+  T('③-触发时间点/掉血速率定稿为 30分钟 / 0.5每秒（用户给的具体数字，不是起草值）',
+    DCFG.nexusHeatDeathTriggerAtMin === 30 && DCFG.nexusHeatDeathDrainPerSec === 0.5);
 }
 
 done();

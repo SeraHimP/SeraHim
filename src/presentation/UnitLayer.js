@@ -903,9 +903,29 @@ export class UnitLayer {
     // maxHP 只是占位值，画出来的血条没有意义）。
     if (e.isCapturePoint) {
       if (resInfo) {
+        const capFrac = Math.max(0, Math.min(1, resInfo.frac));
+        const capColor = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.capture_neutral;
         g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, BAR_H);
-        g.fillStyle = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.capture_neutral;
-        g.fillRect(0, 0, BAR_W * Math.max(0, Math.min(1, resInfo.frac)), BAR_H);
+        g.fillStyle = capColor;
+        g.fillRect(0, 0, BAR_W * capFrac, BAR_H);
+        // 2026-09-26 用户补充定稿："目前据点在画板上的进度条并无拖尾特效，需要和
+        // 其他进度条统一增加拖尾/增加特效"——这条早期实现直接 return，把调用方
+        // 已经用 stepTrail 算好的 resTrailFrac 传进来却从没用过，跟其它血条/资源条
+        // 用的是同一套动画数据、画法却是两回事。这里补上跟资源条（974~996 行）
+        // 完全一样的拖尾画法：resTrailFrac 是"被反超/被打退"之前的显示值，
+        // 真实值追不上它时补一段淡红残段，代表"刚刚失去的这部分占领进度"——
+        // 不管是被对面攻击打退，还是己方从领先翻成落后，读法都一样。
+        // ⚠️ 没有对称照抄"增加特效"（hpIncFrac/resIncFrac）：那条特效的触发条件
+        // 是 bigRegenPreviewFrac() 读 healthRegen/manaRegen 限时效果，据点的占领
+        // 进度既不是 HP 也不是法力，没有对应的"限时大量回复"效果会命中它，
+        // resIncFrac 对据点恒为 0（调用方 1359 行只在 kind==='mana' 时才算它）——
+        // 生搬硬套一段永远不会触发的分支不是"统一"，是画一段死代码。
+        let capTrailEnd = capFrac;
+        if (resTrailFrac > capFrac) {
+          capTrailEnd = Math.min(1, resTrailFrac);
+          g.fillStyle = TRAIL_COLOR;
+          g.fillRect(BAR_W * capFrac, 0, BAR_W * (capTrailEnd - capFrac), BAR_H);
+        }
         g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
         g.strokeRect(0.5, 0.5, BAR_W - 1, BAR_H - 1);
       }

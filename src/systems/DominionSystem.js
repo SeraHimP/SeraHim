@@ -244,10 +244,32 @@ export class DominionSystem {
     e.faction = owner;
     const cfg = CONFIG.dominion || {};
     const tpl = CONFIG.templates.tower;
-    const pct = owner === FACTIONS.NEUTRAL
-      ? (cfg.pointNeutralDamagePct ?? cfg.pointDamagePct ?? 12)
-      : (cfg.pointDamagePct ?? 12);
-    e.baseStats.attackDamage = (tpl.attackDamage || 0) * (pct / 100);
+    // 2026-09-26 用户追加定稿"攻占后据点属性提升……都要在状态栏显示"——原来
+    // 这里直接改写 e.baseStats.attackDamage 是一次静默的数值替换，玩家在
+    // 属性面板/状态栏上看不出任何"因为占领而变强"的迹象，只会看到一个孤立
+    // 的攻击力数字，跟其它任何 buff/debuff 都不一样（本仓库其它所有加成都
+    // 走 EffectRegistry，唯独这里是个例外）。改法：e.baseStats.attackDamage
+    // 永远保持在 initMap() 时设的中立基线不再改动，占领后多出来的那部分
+    // 差值改成一条真正的 EffectRegistry 效果——跟护盾/龙魂/光环走同一套
+    // 展示机制，"状态栏"自然就有了，不需要另外写 UI 代码。
+    // node._captureBuffEffectId 记住这条效果的 id，翻转回中立时显式移除
+    // （不能靠"不再调用 apply 自然过期"——这条不是 aura:true，permanent 效果
+    // 没有宽限期这回事，不显式 remove 就会永久挂着）。
+    if (this.effectRegistry) {
+      if (node._captureBuffEffectId != null) {
+        this.effectRegistry.remove(node._captureBuffEffectId);
+        node._captureBuffEffectId = null;
+      }
+      if (owner !== FACTIONS.NEUTRAL) {
+        const neutralPct = cfg.pointNeutralDamagePct ?? cfg.pointDamagePct ?? 12;
+        const capturedPct = cfg.pointDamagePct ?? 12;
+        const delta = (tpl.attackDamage || 0) * (capturedPct - neutralPct) / 100;
+        node._captureBuffEffectId = this.effectRegistry.apply(e.id, {
+          name: '据点占领增益', icon: '⚔️', kind: 'stat', statKey: 'attackDamage',
+          flatValue: delta, permanent: true,
+        }, 'dominion_point_capture');
+      }
+    }
     this._syncCaptureDisplay(node);
   }
 
@@ -341,6 +363,22 @@ export class DominionSystem {
           const slowMul = 1 - (cfg.defenderSlowPct ?? 50) / 100;
           if (node.captureOwner === FACTIONS.BLUE) redPower *= slowMul;
           else bluePower *= slowMul;
+          // 2026-09-26 用户反馈"这个经过实测并没做出来，需要修复"——排查后确认
+          // 上面这套折算逻辑本身是对的（sim_dominion.mjs 十九节的隔离测试完整
+          // 覆盖了这个场景，一直是绿的），真正的问题是**这条效果全程不可见**：
+          // 只改了 bluePower/redPower 这两个局部变量，据点自己的属性面板上
+          // 什么迹象都没有——玩家没有任何办法确认它到底有没有在生效，"测试"
+          // 出来的只能是"看不出来"，跟"没做"在体验上没有区别。这里补一个
+          // 可见的状态效果，跟用户追加要求的"攻占速度减少……都要在状态栏
+          // 显示"是同一件事：挂在据点自己身上，aura:true 让它只在 defenderPresent
+          // 为真的这几帧持续刷新，不再满足条件后靠 EffectRegistry 的宽限期
+          // （约0.6秒）自然消失，不需要额外维护一个"何时移除"的状态机。
+          if (this.effectRegistry) {
+            this.effectRegistry.apply(node.entity.id, {
+              name: '驻守减速', icon: '🛡️', kind: 'stat', statKey: 'pointCaptureSlowPct',
+              percentValue: -(cfg.defenderSlowPct ?? 50), label: '占领速度', aura: true,
+            }, 'dominion_defender_slow');
+          }
         }
       }
 
@@ -439,6 +477,17 @@ export class DominionSystem {
         const oppCount = node.faction === FACTIONS.BLUE ? redCount : blueCount;
         const deficit = Math.max(0, oppCount - myCount);
         if (deficit > 0) budget.siege = (budget.siege || 0) + deficit;
+        // 2026-09-26 用户追加定稿："若某阵营水晶枢纽生命值低于75，则该阵营每2次
+        // 出兵额外生成一个超级兵"——按这个水晶枢纽节点自己出过几次兵计数
+        // （node._nexusSpawnCount，不是共用的 _waveCount，两个水晶枢纽的节奏
+        // 本来就不必同步），低于阈值时每 lowHpNexusBonusEvery 次追加一个超级兵。
+        node._nexusSpawnCount = (node._nexusSpawnCount || 0) + 1;
+        const myNexus = this.entities.getAllTowers(false)
+          .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === node.faction);
+        const lowHp = myNexus && myNexus.alive && myNexus.currentHP < (cfg.lowHpNexusThreshold ?? 75);
+        if (lowHp && node._nexusSpawnCount % Math.max(1, cfg.lowHpNexusBonusEvery ?? 2) === 0) {
+          budget.super = (budget.super || 0) + 1;
+        }
         this._spawnBudget(node, node.faction, budget, toggleStart);
       }
     }
@@ -515,27 +564,49 @@ export class DominionSystem {
    * 新增代码，写这段注释只是把"不会加血"这个不变量明确钉下来，防止以后
    * 哪次改动不小心给它接上了某个通用的回血/护盾机制。
    */
-  _tickNexusDrain(dt) {
-    const points = this.nodes.filter((n) => n.kind === 'point');
-    if (points.length === 0) return;
-    const blueCount = points.filter((n) => n.captureOwner === FACTIONS.BLUE).length;
-    const redCount = points.filter((n) => n.captureOwner === FACTIONS.RED).length;
-    const diff = blueCount - redCount;
-    if (diff === 0) return;
-    const cfg = CONFIG.dominion || {};
-    // 2026-09-26：用户反馈"某一方滚雪球太严重了"，改成按 sqrt(据点数差) 走而不是
-    // 线性——领先越大惩罚越重的方向不变，但增速变缓（边际递减），见 Config.js
-    // 里 nexusDrainPerPointPerSec 旁边的头注，那里有完整的问题分析和公式对比。
-    const amount = (cfg.nexusDrainPerPointPerSec ?? 8) * Math.sqrt(Math.abs(diff)) * dt;
-    const loserFaction = diff > 0 ? FACTIONS.RED : FACTIONS.BLUE;
-    const nexus = this.entities.getAllTowers(true)
-      .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === loserFaction);
-    if (!nexus || !nexus.alive) return;
+  /** 扣血 + 复刻 CombatSystem._resolveHit 那份死亡检查（见本方法头注）。共用给据点数差掉血和热寂两条独立掉血源。 */
+  _drainNexus(nexus, amount) {
+    if (!nexus || !nexus.alive || amount <= 0) return;
     nexus.currentHP = Math.max(0, nexus.currentHP - amount);
     if (nexus.currentHP <= 0 && nexus.alive) {
       nexus.currentHP = 0;
       nexus.alive = false;
       this.eventBus.emit('entity:death', { entityId: nexus.id });
+    }
+  }
+
+  _tickNexusDrain(dt) {
+    const cfg = CONFIG.dominion || {};
+    const points = this.nodes.filter((n) => n.kind === 'point');
+    if (points.length > 0) {
+      const blueCount = points.filter((n) => n.captureOwner === FACTIONS.BLUE).length;
+      const redCount = points.filter((n) => n.captureOwner === FACTIONS.RED).length;
+      const diff = blueCount - redCount;
+      if (diff !== 0) {
+        // 2026-09-26：用户反馈"某一方滚雪球太严重了"，改成按 sqrt(据点数差) 走而不是
+        // 线性——领先越大惩罚越重的方向不变，但增速变缓（边际递减），见 Config.js
+        // 里 nexusDrainPerPointPerSec 旁边的头注，那里有完整的问题分析和公式对比。
+        const amount = (cfg.nexusDrainPerPointPerSec ?? 8) * Math.sqrt(Math.abs(diff)) * dt;
+        const loserFaction = diff > 0 ? FACTIONS.RED : FACTIONS.BLUE;
+        const nexus = this.entities.getAllTowers(true)
+          .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === loserFaction);
+        this._drainNexus(nexus, amount);
+      }
+    }
+    // 2026-09-26 用户追加定稿："为了防止僵局，在30分钟后所有阵营的水晶枢纽每秒
+    // 减少0.5生命值（状态——热寂）"——固定量、双方无条件各扣一份，跟上面据点数差
+    // 驱动的那份掉血完全独立、互不影响，也不受 diff===0/无据点这些早退条件约束
+    // （僵局本来就是"双方势均力敌"，如果这条也被 diff===0 挡住，就永远等不到它
+    // 生效的那天，跟"防止僵局"这条设计初衷矛盾）。
+    const triggerSec = (cfg.nexusHeatDeathTriggerAtMin ?? 30) * 60;
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    if (now >= triggerSec) {
+      const heatAmount = (cfg.nexusHeatDeathDrainPerSec ?? 0.5) * dt;
+      for (const faction of [FACTIONS.BLUE, FACTIONS.RED]) {
+        const nexus = this.entities.getAllTowers(true)
+          .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === faction);
+        this._drainNexus(nexus, heatAmount);
+      }
     }
   }
 

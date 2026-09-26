@@ -1809,7 +1809,9 @@ export class UIManager {
     // 阵营改用颜色而不是文字——颜色本来就是这个游戏里识别敌我的方式，写成文字反而占地方。
     // ⚠️ 阵营是三值的（blue/red/neutral），任何按它分叉的地方都必须有三个分支：
     // v43 修过一次「没有第三档的三元」，中立塔被显示成红方塔。
-    const FAC_DOT = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#4caf50' };
+    // 2026-09-26：用户反馈中立单位（如水晶之痕的中立据点）圆点应该显示白色，
+    // 不该用绿色——绿色在这个游戏里没有承载"中立"的语义，用户直接点名要白色。
+    const FAC_DOT = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#ffffff' };
     const dot = FAC_DOT[e._mapFaction] || '#8a93a3';
     const typeName = e.type === 'tower'
       ? (tierLabels[e._mapTier] || '防御塔')
@@ -2209,15 +2211,45 @@ export class UIManager {
         const towers = this.entities.getAllTowers(false);
         const blueNexus = towers.find(t => t._mapTier === 'nexus_main' && t._mapFaction === 'blue');
         const redNexus = towers.find(t => t._mapTier === 'nexus_main' && t._mapFaction === 'red');
-        const updNexusBar = (nexus, hpId, fillId, trackId, prevKey) => {
+        // 减少特效常量：纯 UI 动画时长，不影响任何仿真结果，按 HowlingAbyssDecor.js
+        // 头注确立的先例（纯装饰性常量可以就地命名，不必进 CONFIG）留在这里。
+        // DOT_MIN_MS：滑动最快也不能快于这个下限，否则单帧内就滑完等于没有动画；
+        // DOT_BASE_MS：单次掉 1 点血时的时长（几乎不会触发，仅做上限参考）。
+        const DOT_MIN_MS = 150, DOT_BASE_MS = 700;
+        // 掉血"减少特效"：用户定稿"每减少1进度，就从当前进度的位置往后划一个
+        // 圆点到进度为0的地方，代表进度减少，减少得快就加快小点的滑动速度"。
+        // ⚠️ 没有照字面意思按"每 1 点血 1 个点"实现——这条水晶枢纽满血 500，
+        // 一次团灭刷新就要生成 500 个 DOM 节点，纯粹是性能灾难，肉眼也分不清
+        // 500 个点和 1 个点滑得一样快有什么区别。改成每次检测到掉血只生成
+        // 【一个】点，用这一次掉血量本身当"减少得快不快"的信号——掉得越多
+        // （burst 伤害/连续被打），滑动时长越短、看起来滑得越快；掉得越少
+        // （持续小额跳变），时长越接近上限，动作偏慢。这样"点代表一次减少、
+        // 减少快慢决定滑动快慢"这条用户要的行为形状完整保留，只是不逐点铺满。
+        const spawnDrainDot = (track, side, fromPct, durMs) => {
+          const dot = document.createElement('span');
+          dot.className = 'dnb-dot';
+          // 见 index.html .dnb-fill-blue 的 margin-left:auto 注释：蓝方血条右对齐，
+          // "0 进度"落在轨道右边（100%）；红方左对齐，"0 进度"落在轨道左边（0%）。
+          const fromLeft = side === 'blue' ? (100 - fromPct) : fromPct;
+          const toLeft = side === 'blue' ? 100 : 0;
+          dot.style.left = `${fromLeft}%`;
+          track.appendChild(dot);
+          void dot.offsetWidth; // 强制 reflow：创建时就把终点写进去，transition 不会触发。
+          dot.style.transition = `left ${durMs}ms linear`;
+          dot.style.left = `${toLeft}%`;
+          setTimeout(() => dot.remove(), durMs + 50);
+        };
+        const updNexusBar = (nexus, hpId, fillId, trackId, prevKey, side) => {
           if (!nexus) return;
           const hp = Math.max(0, Math.round(nexus.currentHP));
           const max = Math.max(1, Math.round(nexus.baseStats?.maxHP || 500));
-          this._setText(hpId, `${hp}/${max}`);
+          // 用户定稿"文字不要为XXX/YYY，仅保留XXX（当前血量）"。
+          this._setText(hpId, `${hp}`);
           const fill = document.getElementById(fillId);
           if (fill) fill.style.width = `${Math.max(0, Math.min(100, hp / max * 100))}%`;
-          // 掉血特效：这一帧的血量比上一次记录的更低，就在血条轨道上补播一次闪烁。
-          // remove→强制 reflow→add 是让"连续两次都在掉血"时动画能重新播放一遍
+          // 掉血特效：这一帧的血量比上一次记录的更低，就在血条轨道上补播一次闪烁，
+          // 并生成一个"减少点"往 0 的方向滑走。
+          // remove→强制 reflow→add 是让"连续两次都在掉血"时闪烁动画能重新播放一遍
           // （只 add 一次的话，第二次掉血时 class 已经在身上，animation 不会重触发）。
           const prevHp = this._txtCache[prevKey];
           if (prevHp != null && hp < prevHp) {
@@ -2226,12 +2258,15 @@ export class UIManager {
               track.classList.remove('dnb-flash');
               void track.offsetWidth;
               track.classList.add('dnb-flash');
+              const delta = prevHp - hp;
+              const dur = Math.max(DOT_MIN_MS, DOT_BASE_MS / Math.sqrt(delta));
+              spawnDrainDot(track, side, prevHp / max * 100, dur);
             }
           }
           this._txtCache[prevKey] = hp;
         };
-        updNexusBar(blueNexus, 'dnbHpBlue', 'dnbFillBlue', 'dnbTrackBlue', '_dnbPrevBlue');
-        updNexusBar(redNexus, 'dnbHpRed', 'dnbFillRed', 'dnbTrackRed', '_dnbPrevRed');
+        updNexusBar(blueNexus, 'dnbHpBlue', 'dnbFillBlue', 'dnbTrackBlue', '_dnbPrevBlue', 'blue');
+        updNexusBar(redNexus, 'dnbHpRed', 'dnbFillRed', 'dnbTrackRed', '_dnbPrevRed', 'red');
       }
     }
 
