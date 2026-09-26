@@ -2192,6 +2192,49 @@ export class UIManager {
         this._setText('dragonPowerRed', sideText('red'));
       }
     }
+    // ==================== 统治战场：居中顶部水晶枢纽血量条 ====================
+    // 用户定稿"在主窗口上方新增居中小条，上面显示红蓝方水晶枢纽的血量（加进度条，
+    // 并且某方水晶枢纽扣血时在进度条上显示特效让我知道某一方在扣血）"——只在
+    // 统治战场地图上显示，跟上面"推塔数/巨龙信息"互斥显隐同一种做法
+    // （按 dominionSystem.active 切 display，不是每帧都无条件改 DOM）。
+    {
+      const bar = document.getElementById('dominionNexusBar');
+      const dom = app?.dominionSystem;
+      const active = !!(dom && dom.active);
+      if (bar && this._txtCache._dominionBarMode !== active) {
+        this._txtCache._dominionBarMode = active;
+        bar.style.display = active ? '' : 'none';
+      }
+      if (active) {
+        const towers = this.entities.getAllTowers(false);
+        const blueNexus = towers.find(t => t._mapTier === 'nexus_main' && t._mapFaction === 'blue');
+        const redNexus = towers.find(t => t._mapTier === 'nexus_main' && t._mapFaction === 'red');
+        const updNexusBar = (nexus, hpId, fillId, trackId, prevKey) => {
+          if (!nexus) return;
+          const hp = Math.max(0, Math.round(nexus.currentHP));
+          const max = Math.max(1, Math.round(nexus.baseStats?.maxHP || 500));
+          this._setText(hpId, `${hp}/${max}`);
+          const fill = document.getElementById(fillId);
+          if (fill) fill.style.width = `${Math.max(0, Math.min(100, hp / max * 100))}%`;
+          // 掉血特效：这一帧的血量比上一次记录的更低，就在血条轨道上补播一次闪烁。
+          // remove→强制 reflow→add 是让"连续两次都在掉血"时动画能重新播放一遍
+          // （只 add 一次的话，第二次掉血时 class 已经在身上，animation 不会重触发）。
+          const prevHp = this._txtCache[prevKey];
+          if (prevHp != null && hp < prevHp) {
+            const track = document.getElementById(trackId);
+            if (track) {
+              track.classList.remove('dnb-flash');
+              void track.offsetWidth;
+              track.classList.add('dnb-flash');
+            }
+          }
+          this._txtCache[prevKey] = hp;
+        };
+        updNexusBar(blueNexus, 'dnbHpBlue', 'dnbFillBlue', 'dnbTrackBlue', '_dnbPrevBlue');
+        updNexusBar(redNexus, 'dnbHpRed', 'dnbFillRed', 'dnbTrackRed', '_dnbPrevRed');
+      }
+    }
+
     // Q4：巨龙横幅隐藏（巨龙系统默认暂停、待大改，横幅先不显示；恢复时删掉这个 return 即可）
     { const b = document.getElementById('dragonBanner'); if (b) b.classList.remove('show'); }
     if (true) return;

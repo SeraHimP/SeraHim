@@ -159,8 +159,9 @@ function runOne(seed) {
 
     if (frame % 30 === 0) {
       const st = dominion.getStatus();
+      const majority = Math.floor(st.total / 2) + 1; // 第五轮：据点总数从 5 变成 7，"多数"跟着算，不再硬编码 3
       if (firstCaptureAt == null && (st.blue > 0 || st.red > 0)) firstCaptureAt = t;
-      if (firstMajorityAt == null && (st.blue >= 3 || st.red >= 3)) firstMajorityAt = t;
+      if (firstMajorityAt == null && (st.blue >= majority || st.red >= majority)) firstMajorityAt = t;
       if (firstDrainStartAt == null && st.blue !== st.red) firstDrainStartAt = t;
       if (frame % 300 === 0) { // 每 10s 采样一次轨迹
         const blueNexus = ents.getAllTowers(false).find(e => e._mapTier === 'nexus_main' && e._mapFaction === 'blue');
@@ -225,7 +226,7 @@ console.log(`结果：蓝胜 ${blue}/${RUNS}（${(blue / RUNS * 100).toFixed(0)}
 console.log(`均时长 ${avg(r => r.minutes)} 分钟（min ${Math.min(...rows.map(r => r.minutes))} / max ${Math.max(...rows.map(r => r.minutes))}）`);
 console.log(`首次出现据点归属 平均 ${withCapture.length ? avg.call(null, r => r.firstCaptureAt) : 'N/A'}s`
   + `（${withCapture.length}/${RUNS} 局观测到）`);
-console.log(`首次出现某方多数占领(≥3/5) 平均 ${withMajority.length ? +(withMajority.reduce((s, r) => s + r.firstMajorityAt, 0) / withMajority.length).toFixed(0) : 'N/A'}s`
+console.log(`首次出现某方多数占领(≥半数+1) 平均 ${withMajority.length ? +(withMajority.reduce((s, r) => s + r.firstMajorityAt, 0) / withMajority.length).toFixed(0) : 'N/A'}s`
   + `（${withMajority.length}/${RUNS} 局观测到）`);
 console.log(`首次出现水晶枢纽掉血(据点数差≠0) 平均 ${withDrain.length ? +(withDrain.reduce((s, r) => s + r.firstDrainStartAt, 0) / withDrain.length).toFixed(0) : 'N/A'}s`
   + `（${withDrain.length}/${RUNS} 局观测到）`);

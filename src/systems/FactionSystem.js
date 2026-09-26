@@ -249,6 +249,11 @@ export function isStructureProtected(entityContainer, target) {
   // 的维护，争夺中会直接清掉当前盯着这个据点的攻击者的 targetId（逼它下
   // 一轮重新索敌，索敌时就会经过这里被过滤掉）。
   if (target.isCapturePoint && target._contested) return true;
+  // 统治战场·水晶之痕 第五轮：用户定稿"水晶枢纽无法被场上的小兵所攻击"——
+  // 硬性规则，不指望"小兵天生走不到水晶枢纽跟前"这个自然结果当唯一防线。
+  // `_untargetable` 是个通用逃生舱：DominionSystem.initMap() 给这张图的
+  // nexus_main 打上这个标记，其它地图的塔/水晶从不带这个字段，不受影响。
+  if (target._untargetable) return true;
   if (!target._mapFaction) return false;
   // 性能：下面能返回 true 的 target._mapTier 只有这五档（outer 在 LANE_CHAIN 里
   // idx===0，落到 idx>0 分支之外，switch 也没它的 case，本来就总是 false）。

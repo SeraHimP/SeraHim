@@ -170,16 +170,23 @@ export class DominionSystem {
       this.entities.add(entity);
       node.entity = entity;
     }
-    // 召唤水晶（nexus_lane）自带穿透型子弹+物理攻击（用户定稿），但全局
-    // CONFIG.towerTierWeapon.nexus_lane 固定是 'none'（所有地图的召唤水晶默认
-    // 不开火），常规的"地图 buildings[].weapon"装配路径会被这条全局配置直接
-    // 顶掉，据点同样是手搭的裸实体（不走 createBuilding）——两者都只能绕开
-    // 正常武器装配、直接调用 equipSkill 补上"装武器"这一步，数值都已经在各自
-    // 的创建处（这里的 baseStats / dominion_crystal_scar.js 的 tierStats）给好了。
+    // 水晶枢纽（nexus_main）自带穿透型子弹+物理攻击——2026-09-26 第五轮定稿
+    // "水晶枢纽继承召唤水晶的攻击"，撤编召唤水晶(nexus_lane)之后这份"自带
+    // 武器"的待遇转到水晶枢纽身上。全局 CONFIG.towerTierWeapon.nexus_main
+    // 固定是 'none'（所有地图的水晶枢纽默认不开火），常规的"地图
+    // buildings[].weapon"装配路径会被这条全局配置直接顶掉，据点同样是手搭
+    // 的裸实体（不走 createBuilding）——两者都只能绕开正常武器装配、直接调用
+    // equipSkill 补上"装武器"这一步，数值都已经在各自的创建处（这里的
+    // baseStats / dominion_crystal_scar.js 的 tierStats）给好了。
+    // 水晶枢纽还额外标一个 `_untargetable`——用户定稿"水晶枢纽无法被场上的
+    // 小兵所攻击"，isStructureProtected() 认这个字段，无条件让任何索敌判定
+    // 跳过它（不管小兵事实上走不走得到它跟前，都硬性挡掉，不指望"小兵天生
+    // 走不到"这个自然结果当唯一防线）。
     if (this.effectRegistry) {
       const ctx = { entityContainer: this.entities, effectRegistry: this.effectRegistry, eventBus: this.eventBus, waveNumber: (typeof window !== 'undefined' && window.CTX?.waveNumber) || 0 };
       for (const e of this.entities.getAllTowers(false)) {
-        if (e._mapTier !== 'nexus_lane' && !e.isCapturePoint) continue;
+        if (e._mapTier === 'nexus_main') e._untargetable = true;
+        if (e._mapTier !== 'nexus_main' && !e.isCapturePoint) continue;
         if ((e._skillInstances || []).some((s) => s.skillId === 'weapon_piercing')) continue;
         equipSkill(e, 'weapon_piercing', ctx, SkillLibrary);
       }
@@ -316,6 +323,27 @@ export class DominionSystem {
         continue;
       }
 
+      // 2026-09-26 第五轮：用户定稿"若我方据点的攻击范围内还存在我方小兵，则
+      // 敌方的占领速度降低50%"——上面 bluePower/redPower 那段扫描只认得
+      // "targetId 指向这个据点的人"，天生只会扫到【攻击者】：己方小兵不可能
+      // 把 targetId 设成自己的据点（canTarget 禁止同阵营互相攻击，"己方打不动
+      // 自己的点"），所以驻守在已占领据点旁边的己方小兵一直没有任何办法体现
+      // 在这套占领计算里——这里单独按"阵营 + 据点自己的攻击范围内"（不看
+      // targetId）扫一遍"是否有己方小兵在场"，检测到就把对方这一 tick 的净
+      // 压力打五折。只对【已被占领】的据点生效（中立据点没有"己方"概念）。
+      if (node.captureOwner !== FACTIONS.NEUTRAL) {
+        const range = node.entity.baseStats.attackRange || 0;
+        const nearby = this.entities.findInRadius
+          ? this.entities.findInRadius(node.entity.pos.x, node.entity.pos.y, range, null, true) : [];
+        const defenderPresent = nearby.some((m) =>
+          m.alive && m.type !== 'tower' && (m._mapFaction || m.faction) === node.captureOwner);
+        if (defenderPresent) {
+          const slowMul = 1 - (cfg.defenderSlowPct ?? 50) / 100;
+          if (node.captureOwner === FACTIONS.BLUE) redPower *= slowMul;
+          else bluePower *= slowMul;
+        }
+      }
+
       node._captureTimer = (node._captureTimer || 0) + dt;
       if (node._captureTimer < tickSec - 1e-9) continue;
       node._captureTimer -= tickSec;
@@ -361,17 +389,25 @@ export class DominionSystem {
    * "每个据点改为每个方向生成2近战2远程（共4近战4远程），每两两波每个方向
    * 额外生成1炮兵（共2炮兵）"——不再是"预算在两个方向分摊"那种旧算法，
    * 见 _spawnPointWave() 头注）。
-   * 双方召唤水晶每隔 bonusWaveEvery 波额外出一次固定编制的兵，与据点占领
+   * 双方水晶枢纽每隔 bonusWaveEvery 波额外出一次固定编制的兵，与据点占领
    * 状态无关（防止一方据点优势滚雪球到底，设计文档 5.3 节）——这一部分保留
    * 原来的独立预算+两方向轮流分摊算法（_spawnBudget），用户拍板"据点和
-   * 召唤水晶两份编排分开"，不共用 _spawnPointWave 那一套。
+   * 水晶枢纽两份编排分开"，不共用 _spawnPointWave 那一套。
+   *
+   * 2026-09-26 第五轮：撤编了召唤水晶(nexus_lane)，"基地每波出兵"这条改成
+   * 从水晶枢纽（kind:'nexus'，原来是 kind:'base'）出兵——用户定稿"出兵在
+   * 水晶枢纽处出兵"。出兵位置(node.pos)因此从"商栈/望塔的环上位置"变成
+   * "水晶枢纽自己的位置"，小兵怎么从这个不在环上的位置走出来汇入环形兵线，
+   * 见 dominion_crystal_scar.js 文件头注"打通水晶枢纽与环的通道"。
    *
    * 用户定稿："只有在某一方打掉了另一方的召唤水晶后，在自家的召唤水晶出
-   * 超级兵"——召唤水晶（kind:'base'）出兵时额外检查敌方召唤水晶【此刻】
-   * 是不是处于摧毁/重生倒计时状态，是就把 crystalSuperBonus 并进这一波编制——
-   * 敌方水晶一旦重生（nexusRespawnTime 到点，MapSystem 原地复活尸体）这里
-   * 立刻就读不到"敌方水晶已摧毁"了，自然停止，不需要额外监听重生事件、
-   * 也不需要自己维护一份"是否已解锁"的开关状态。
+   * 超级兵"——出兵时额外检查敌方水晶枢纽【此刻】是不是处于摧毁状态，是就把
+   * crystalSuperBonus 并进这一波编制。撤编召唤水晶之后，"敌方水晶被摧毁"
+   * 现在检查的是敌方水晶枢纽（_enemyCrystalDown 已同步改成查 nexus_main）——
+   * 但水晶枢纽被摧毁本身就是本局游戏结束的判定点（见 _tickNexusDrain 头注），
+   * 不会像原来的召唤水晶那样"摧毁后过一段时间原地复活、继续打"，所以这个
+   * 分支在实际对局里几乎不会被命中（水晶枢纽死的那一刻游戏已经结束）——
+   * 保留这个分支只是不额外删掉一条现成机制，不是特意留了什么伏笔。
    */
   _tickWaves(dt) {
     const cfg = CONFIG.dominion || {};
@@ -396,7 +432,7 @@ export class DominionSystem {
         if (node.captureOwner === FACTIONS.NEUTRAL) continue;
         if (this._waveCount % pointEvery !== 0) continue;
         this._spawnPointWave(node, node.captureOwner);
-      } else if (node.kind === 'base' && this._waveCount % bonusEvery === 0) {
+      } else if (node.kind === 'nexus' && this._waveCount % bonusEvery === 0) {
         const budget = { ...cfg.bonusWaveComposition };
         if (this._enemyCrystalDown(node.faction)) Object.assign(budget, cfg.crystalSuperBonus);
         const myCount = node.faction === FACTIONS.BLUE ? blueCount : redCount;
@@ -426,18 +462,23 @@ export class DominionSystem {
     }
   }
 
-  /** faction 的敌方召唤水晶此刻是不是已经被摧毁（还没重生）——决定这一波要不要带超级兵。 */
+  /**
+   * faction 的敌方水晶枢纽此刻是不是已经被摧毁——决定这一波要不要带超级兵。
+   * 2026-09-26 第五轮：撤编召唤水晶(nexus_lane)之后改查水晶枢纽(nexus_main)——
+   * 但水晶枢纽被摧毁=游戏结束（不会像原来的召唤水晶那样摧毁后过一段时间
+   * 原地复活），这条分支实际几乎不会被命中，见 _tickWaves() 头注。
+   */
   _enemyCrystalDown(faction) {
     const enemy = faction === FACTIONS.BLUE ? FACTIONS.RED : faction === FACTIONS.RED ? FACTIONS.BLUE : null;
     if (!enemy) return false;
     const crystal = this.entities.getAllTowers(false)
-      .find((t) => t._mapTier === 'nexus_lane' && t._mapFaction === enemy);
+      .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === enemy);
     return !!crystal && !crystal.alive;
   }
 
   /**
    * 把 budgetCfg（{melee:1,ranged:1,super:1} 这种）拆成单位序列，轮流分给两个
-   * 方向——只有召唤水晶（kind:'base'）还在用这个算法，据点已经改走
+   * 方向——只有水晶枢纽（kind:'nexus'）还在用这个算法，据点已经改走
    * _spawnPointWave() 那套标准编排系统（见上面两个方法的头注）。
    */
   _spawnBudget(node, faction, budgetCfg, toggleStart) {
@@ -465,6 +506,14 @@ export class DominionSystem {
    * 各自复刻一份，不是本系统独创的写法），复用同一个 entity:death 事件后，
    * MapSystem 现成的 nexus_main 死亡处理（转损毁幽灵 + 发 map:mainNexusDestroyed）
    * 不需要认得"这次死亡是不是由据点数差造成的"，天然一起生效。
+   *
+   * 2026-09-26 第五轮：用户定稿"水晶枢纽的血量不能通过任何形式恢复（除了
+   * 手动设置属性之外）"——这条本来就只有减法（下面只有 `Math.max(0,
+   * currentHP - amount)`，没有任何加回去的分支），水晶枢纽的 tierStats 也没
+   * 声明 healthRegen（Config.js 里固定 0），场上也没有任何治疗兵/技能会把
+   * `_untargetable` 的水晶枢纽当治疗目标——现状已经满足这条要求，这里不用
+   * 新增代码，写这段注释只是把"不会加血"这个不变量明确钉下来，防止以后
+   * 哪次改动不小心给它接上了某个通用的回血/护盾机制。
    */
   _tickNexusDrain(dt) {
     const points = this.nodes.filter((n) => n.kind === 'point');

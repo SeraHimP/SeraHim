@@ -140,6 +140,39 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 @keyframes dragonPulse { 0%,100% { opacity: 0.85; } 50% { opacity: 1; } }
 #dragonBanner .db-timer { color: var(--text); font-variant-numeric: tabular-nums; }
 
+/* ==================== 统治战场：居中顶部水晶枢纽血量条 ====================
+   用户定稿"在主窗口上方新增居中小条，上面显示红蓝方水晶枢纽的血量（加进度条，
+   并且某方水晶枢纽扣血时在进度条上显示特效）"，选的是"仿经典对局顶部条"这个
+   方案：居中横条，蓝方数字+进度条在左、红方在右，中间留一个分隔图标，掉血的
+   那一侧短暂闪一下再恢复。只在统治战场地图上显示（UIManager.updateTopBar()
+   按 dominionSystem.active 切换 display，跟巨龙提示条同一种做法）。 */
+#dominionNexusBar {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 20; gap: 8px;
+}
+#dominionNexusBar .dnb-label {
+  font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--text-dim);
+}
+#dominionNexusBar .dnb-hp {
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap;
+}
+#dominionNexusBar .dnb-vs { font-size: 12px; color: var(--text-dim); opacity: 0.7; }
+.dnb-track {
+  width: 110px; height: 7px; border-radius: 4px; overflow: hidden;
+  background: rgba(255,255,255,0.08); flex: none; position: relative;
+}
+.dnb-fill { display: block; height: 100%; transition: width 0.25s ease; }
+.dnb-fill-blue { background: linear-gradient(90deg, #3f7fc9, #6fb3ff); margin-left: auto; }
+.dnb-fill-red { background: linear-gradient(90deg, #ff7a70, #c9403f); }
+/* 掉血特效：那一侧的血条短暂亮一下再恢复——用户原话"显示特效让我知道某一方在扣血"。
+   套在 .dnb-track 上而不是 .dnb-fill 上，这样闪的是整段轨道（含已经空出来的部分），
+   看起来更像"这里刚发生了一次伤害"，不是单纯的血条本身变色。 */
+.dnb-track.dnb-flash { animation: dnbFlash 0.5s ease-out; }
+@keyframes dnbFlash {
+  0% { box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 10px 3px rgba(255,80,80,0.9); }
+  100% { box-shadow: none; }
+}
+
 #main { display: flex; flex: 1; min-height: 0; }
 
 /* ==================== 侧栏 ==================== */
@@ -1040,6 +1073,17 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 <div id="dragonBanner">
   <span id="dragonBannerText">🐉 巨龙即将降临</span>
   <span class="db-timer" id="dragonBannerTimer"></span>
+</div>
+
+<!-- 统治战场·水晶之痕：居中顶部水晶枢纽血量条（只在这张地图上显示，见 UIManager.updateTopBar()）。 -->
+<div id="dominionNexusBar" class="hud-panel" style="display:none;">
+  <span class="dnb-label">🔵 水晶枢纽</span>
+  <span class="dnb-hp" id="dnbHpBlue">500/500</span>
+  <span class="dnb-track" id="dnbTrackBlue"><span class="dnb-fill dnb-fill-blue" id="dnbFillBlue"></span></span>
+  <span class="dnb-vs">⚔</span>
+  <span class="dnb-track" id="dnbTrackRed"><span class="dnb-fill dnb-fill-red" id="dnbFillRed"></span></span>
+  <span class="dnb-hp" id="dnbHpRed">500/500</span>
+  <span class="dnb-label">水晶枢纽 🔴</span>
 </div>
 
 <div id="main">

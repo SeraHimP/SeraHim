@@ -11,30 +11,58 @@ import { composeMap } from '../mapComposition.js';
  * 只是纯地形 + 建筑数据，不包含任何行为逻辑（跟 howling_abyss.js 等老地图的
  * 分工一致：地图文件只回答"这张图长什么样"）。
  *
- * ==================== 拓扑：7 节点环形（5 据点 + 2 基地）====================
+ * ==================== 拓扑：7 节点环形（7 个都是可占领据点）====================
  * 原版是一张圆形地图，5 个据点沿圆周分布：风车(Windmill)在正上方、离两个基地
  * 都最远；精炼厂(Refinery)/采石场(Quarry) 对称分列风车两侧；兽骨场(Boneyard)/
- * 钻机(Drill) 紧邻两个基地。这里把两个基地也当成环上的节点，7 个节点等角度
+ * 钻机(Drill) 紧邻两个基地。这里把两个基地节点也当成环上的节点，7 个节点等角度
  * （360°/7 ≈ 51.43°）分布在同一个圆上。
  *
  * 环上顺序（按角度递增，风车=0°为环的"正上方"）：
- *   兽骨场(-154.3°) → 蓝方基地(-102.9°) → 精炼厂(-51.4°) → 风车(0°)
- *   → 采石场(+51.4°) → 红方基地(+102.9°) → 钻机(+154.3°) → (绕回兽骨场)
+ *   兽骨场(-154.3°) → 商栈(-102.9°) → 精炼厂(-51.4°) → 风车(0°)
+ *   → 采石场(+51.4°) → 望塔(+102.9°) → 钻机(+154.3°) → (绕回兽骨场)
  *
- * ==================== 2026-09-26 返工：整环一条闭合兵线，不是 7 段各自独立 ====================
- * 用户看了第一版截图后否掉了"7 条独立短边、出兵只走一跳就停"的设计："整个兵线
- * 应该是环形游走的（逆时针或顺时针），而不是在某处停下……应该是个完整的圆。"
+ * ==================== 2026-09-26 第五轮：召唤水晶撤编，改成 7 个据点全部可占领 ====================
+ * 用户定稿"这个地图没有召唤水晶，把原有的召唤水晶改为普通的据点。然后打通
+ * 水晶枢纽和环的通道，出兵在水晶枢纽处出兵，水晶枢纽无法被小兵攻击，水晶
+ * 枢纽继承召唤水晶的攻击"——原来"商栈"/"望塔"这两个节点是 kind:'base'
+ * （固定归属、不可争夺，专门用来放召唤水晶 nexus_lane），现在它们撤掉召唤
+ * 水晶、改成跟另外 5 个一样的 kind:'point'（中立起手，可被任意一方占领/
+ * 争夺）——地图上再也没有"谁的地盘天生就是谁的"这种节点了，7 个据点完全对等。
  *
- * 现在把 7 段边按环上顺序首尾相接、去掉重复的共享端点，拼成【一条闭合的环形
- * 兵线】（首尾都在兽骨场，形成一个真正的圆）。据点/基地出兵时只需要在这一条
- * 共享兵线上声明"顺时针"或"逆时针"，不用再各自记一条邻边 id——
- * LaneMovementSystem 的 pure-pursuit 推进（projectOntoPolyline + 前瞻）本来就是
- * "先把当前位置投影到折线最近点，再沿声明方向走"，不关心小兵是不是从折线的
- * 端点出发，所以小兵在环上任意一个节点位置汇入这条共享兵线、一路走到折线
- * 首尾相接处（约等于绕完整个环）完全不需要改动那套系统——这也是选"首尾相接
- * 成一个圈"而不是"7 段各自独立"的原因：一条足够长的折线本身就能让"走完自己
- * 出发点之外的几乎一整圈"这件事自然发生，不需要真正的"折线成环、走到头绕回
- * 开头"这种额外支持。
+ * 水晶枢纽（nexus_main）原来的"挪到环内侧、完全不在任何路径上"设计作废——
+ * 见下面"打通水晶枢纽与环的通道"一节。出兵位置也从"商栈/望塔的环上位置"
+ * 改成"水晶枢纽自己的位置"（DOMINION_NODES 新增 kind:'nexus' 这两个节点，
+ * DominionSystem._tickWaves 认这个 kind 当出兵源）。
+ *
+ * ==================== 打通水晶枢纽与环的通道 ====================
+ * 水晶枢纽沿原来"商栈/望塔"那个角度、径向缩进 NEXUS_INSET 的位置不变，但
+ * 现在额外画一条从这个位置直插环上（同角度）的直线走廊（跟环本身的走廊
+ * 同宽），把水晶枢纽正式接入 navgrid 的可行走连通图——这不是画面装饰，是
+ * 出兵机制真正需要的：出兵改成"在水晶枢纽处出兵"之后，小兵的出生点位就在
+ * 环外面，LaneMovementSystem 用"投影到最近折线点 + 沿切线前瞻"驱动巡线，
+ * 出生点离折线远到超过 LANE_KEEP(150px) 时会切换成 MapSystem.laneFlowDir()
+ * 的"回流场下山"逻辑（BFS 距离场，沿 navgrid 能走的格子找回兵线的最短路），
+ * 这套逻辑本来就是给"小兵意外被挤出兵线"设计的通用寻路兜底，水晶枢纽只要
+ * 落在跟环连通的可走区域内，小兵就会自己顺着这条新走廊走出来汇入环形兵线，
+ * 不需要另外发明"两条兵线在某点交接"这种新概念——如果这条走廊没打通（不
+ * 连通），回流场会判定"不可达"（laneFlowDir 返回 null），小兵会卡在水晶
+ * 枢纽附近走不出来，所以这条走廊是功能性必需品，不是可选的视觉修饰。
+ *
+ * 水晶枢纽变得可以主动攻击（继承原召唤水晶 nexus_lane 的攻击力/攻速，射程
+ * 按"从环到水晶枢纽的距离"设定），但因为它天生不在小兵会主动巡逻/索敌的
+ * 路径终点上（小兵的巡线目标永远是环本身，不会主动折返进这条走廊），加上
+ * DominionSystem.initMap() 显式给它标了 `_untargetable`（isStructureProtected
+ * 认这个标记，无条件让任何索敌判定跳过它——用户定稿"水晶枢纽无法被场上的
+ * 小兵所攻击"，做成硬性规则而不是指望"小兵天生走不到"这个自然结果），场上
+ * 的小兵完全打不到它——它的血量只由 DominionSystem._tickNexusDrain()（据点
+ * 数差驱动的持续掉血）决定，跟直接的近战/远程命中无关，跟改动前的胜负判定
+ * 口径完全一致，只是现在它自己也能反过来主动咬人。
+ *
+ * 用户追加定稿"确保正常情况下水晶枢纽干扰不到正常推线的小兵"——NEXUS_INSET
+ * 从 380 加大到 420（水晶枢纽往环心方向多缩进 40），攻击距离按新的
+ * NEXUS_INSET 原样设成"从环到水晶枢纽的距离"（见下面 NEXUS_ATTACK_RANGE），
+ * 这个圆只够勉强碰到环上贴着走廊口的一小段弧，绝大部分环上路段完全够不着，
+ * 不会对整条环的正常推线造成干扰。
  *
  * ==================== 出兵为什么不给 lane 挂 spawns ====================
  * 唯一这一条环形兵线把 `spawns` 显式声明成空数组。原因：FactionSystem.
@@ -48,8 +76,8 @@ import { composeMap } from '../mapComposition.js';
  * 跟嚎哭深渊/召唤师峡谷冰封版一样用 navgrid（逐格可走位图），但那两张图是
  * 从小地图美术图逐像素描出来的，这张图没有美术图可描——直接用 paintPolyline
  * 沿环形兵线的路点画一条固定半宽的环形走廊，再在每个节点上叠一个更大的圆形
- * 空地（据点/基地周围留出建筑摆放和战斗空间，跟 howling_abyss.js 桥两端变宽
- * 的处理思路一致）。
+ * 空地（据点周围留出建筑摆放和战斗空间，跟 howling_abyss.js 桥两端变宽
+ * 的处理思路一致），水晶枢纽和它到环的连接走廊同一套画法再叠一遍。
  *
  * ==================== 画面：黄沙风格 ====================
  * 用户定稿"为黄沙风格得地图"——新增 CONFIG.stylizedPalettes.desert（见
@@ -74,14 +102,23 @@ const STEP = 360 / N;          // ≈51.428571°
 const START = -3 * STEP;       // 兽骨场角度，7 个节点角度从这里每步 +STEP
 
 // 环上顺序（下标 i 对应角度 START + i*STEP）
+// "blue_base"/"red_base" 这两个 id 是历史遗留（第四轮之前它们是 kind:'base'
+// 的固定归属节点），第五轮撤编召唤水晶之后它们已经是跟其余 5 个完全对等的
+// kind:'point'——继续用这两个 id 只是为了不用连带改 insetNexusPos() 等一批
+// 内部查找逐个改名，不影响任何对外行为（node.id 从不显示给玩家，显示的是
+// 下面 NODE_META 里的 name）。
 const RING_ORDER = ['boneyard', 'blue_base', 'refinery', 'windmill', 'quarry', 'red_base', 'drill'];
 const NODE_META = {
   boneyard: { name: '兽骨场', kind: 'point' },
-  blue_base: { name: '蓝方基地', kind: 'base', faction: FACTIONS.BLUE },
+  // 2026-09-26 第五轮：占位名，用户没有指定具体叫什么——原来的"蓝方基地"/
+  // "红方基地"名字暗示"天生归属蓝/红"，现在这两个节点中立起手、可被任意
+  // 一方占领，继续叫"XX基地"会误导玩家以为它自带归属，改成跟其余 5 个一样
+  // 中性的地名。如果想要别的名字，这两个字符串随时可以改，不影响任何逻辑。
+  blue_base: { name: '商栈', kind: 'point' },
   refinery: { name: '精炼厂', kind: 'point' },
   windmill: { name: '风车', kind: 'point' },
   quarry: { name: '采石场', kind: 'point' },
-  red_base: { name: '红方基地', kind: 'base', faction: FACTIONS.RED },
+  red_base: { name: '望塔', kind: 'point' },
   drill: { name: '钻机', kind: 'point' },
 };
 
@@ -126,22 +163,42 @@ for (let i = 0; i < N; i++) {
 // 环形兵线），其它地图的 lane 没有这个字段，行为不受任何影响。
 const RING_LANE = { id: RING_LANE_ID, waypoints: RING_WAYPOINTS, spawns: [], loop: true };
 
-// dominionNodes：每个节点在同一条环形兵线上标两个出兵方向——forward（顺时针）
-// 与 reverse（逆时针），出兵时朝这两个方向各出一批，小兵各自沿环走到几乎绕
-// 完一整圈为止（而不是走一跳就停），见文件头注"整环一条闭合兵线"。
-const DOMINION_NODES = NODES.map((n) => ({
+// ==================== 水晶枢纽位置 + 与环的连接走廊 ====================
+// 2026-09-26 第五轮：380 → 420（用户定稿"可以适当把水晶枢纽往里面挪一挪……
+// 确保正常情况下水晶枢纽干扰不到正常推线的小兵"）——挪得更深一点，留更多缓冲。
+const NEXUS_INSET = 420; // 水晶枢纽相对环上同角度位置【向环心方向】缩进的半径（世界单位）
+function insetNexusPos(nodeId) {
+  const n = NODES.find((x) => x.id === nodeId);
+  return polar(n.angle, RING_R - NEXUS_INSET);
+}
+const blueNexusMainPos = insetNexusPos('blue_base');
+const redNexusMainPos = insetNexusPos('red_base');
+// 用户定稿"水晶枢纽变得可以攻击（攻击范围是从环到水晶枢纽的距离）"——水晶枢纽
+// 到环上最近点的直线距离，几何上正好等于 NEXUS_INSET（同角度、半径差），
+// 不用另外算。这个圆只够碰到环上贴着走廊口的一小段弧，不会打到正常巡线中的
+// 大部分小兵（同一次定稿要求的安全边界）。
+const NEXUS_ATTACK_RANGE = NEXUS_INSET;
+
+// dominionNodes 分两类：
+//   kind:'point' —— 环上 7 个据点，占领/争夺/出兵编排全部对等，见文件头注。
+//   kind:'nexus' —— 水晶枢纽出兵锚点（第五轮新增，替代原来的 kind:'base'），
+//     只用来给 DominionSystem._tickWaves 提供"这一波兵从哪个位置、往哪两个
+//     方向出"，不参与占领/争夺（不会出现在 blueCount/redCount 的统计里）。
+const DOMINION_POINT_NODES = NODES.map((n) => ({
   id: n.id,
   name: n.name,
   kind: n.kind,
-  // 2026-09-26 修复：之前这里没有把 NODE_META 里的 faction 字段带过来——
-  // kind:'base' 节点因此拿到 undefined 的 faction，DominionSystem._spawnBudget
-  // 的 `if (!this.createMinion || !faction) return;` 直接早退，表现为"双方
-  // 召唤水晶每 3 波该出的兵完全不出"（用户报"目前初始根本默认不会出兵"）。
-  faction: n.faction,
   pos: n.pos,
   segForward: { laneId: RING_LANE_ID, direction: 'forward' },
   segReverse: { laneId: RING_LANE_ID, direction: 'reverse' },
 }));
+const DOMINION_NEXUS_NODES = [
+  { id: 'blue_nexus', name: '蓝方水晶枢纽', kind: 'nexus', faction: FACTIONS.BLUE, pos: blueNexusMainPos,
+    segForward: { laneId: RING_LANE_ID, direction: 'forward' }, segReverse: { laneId: RING_LANE_ID, direction: 'reverse' } },
+  { id: 'red_nexus', name: '红方水晶枢纽', kind: 'nexus', faction: FACTIONS.RED, pos: redNexusMainPos,
+    segForward: { laneId: RING_LANE_ID, direction: 'forward' }, segReverse: { laneId: RING_LANE_ID, direction: 'reverse' } },
+];
+const DOMINION_NODES = [...DOMINION_POINT_NODES, ...DOMINION_NEXUS_NODES];
 
 /** 世界坐标 → navgrid 格子坐标，与 MapSystem.isWalkable 同一换算（世界是正方形，两轴系数相同）。 */
 function toGrid(p) { return { x: p.x / WORLD.w * NAV_N, y: p.y / WORLD.h * NAV_N }; }
@@ -152,6 +209,17 @@ function buildNavgrid() {
   paintPolyline(bits, NAV_N, RING_WAYPOINTS.map(toGrid), hwGrid, 1);
   const bulgeGrid = NODE_BULGE / WORLD.w * NAV_N;
   for (const n of NODES) { const g = toGrid(n.pos); paintCircle(bits, NAV_N, g.x, g.y, bulgeGrid, 1); }
+  // 水晶枢纽本身的空地 + 打通到环的直线走廊（见文件头注"打通水晶枢纽与环的
+  // 通道"）——走廊是一段直线（同角度、从环上位置到水晶枢纽位置），跟环本身
+  // 走廊同宽，画法一致（paintPolyline 的两点折线）。
+  for (const nexusPos of [blueNexusMainPos, redNexusMainPos]) {
+    const g = toGrid(nexusPos);
+    paintCircle(bits, NAV_N, g.x, g.y, bulgeGrid, 1);
+  }
+  const blueRingMouth = NODES.find((n) => n.id === 'blue_base').pos;
+  const redRingMouth = NODES.find((n) => n.id === 'red_base').pos;
+  paintPolyline(bits, NAV_N, [toGrid(blueRingMouth), toGrid(blueNexusMainPos)], hwGrid, 1);
+  paintPolyline(bits, NAV_N, [toGrid(redRingMouth), toGrid(redNexusMainPos)], hwGrid, 1);
   return { n: NAV_N, bits: packBits(bits) };
 }
 
@@ -166,22 +234,8 @@ const DOMINION_TERRAIN = {
   walls: { river: false },
 };
 
-const blueBaseNode = DOMINION_NODES.find((n) => n.id === 'blue_base');
-const redBaseNode = DOMINION_NODES.find((n) => n.id === 'red_base');
-
-// ==================== 用户定稿：水晶枢纽不在路径上 ====================
-// "水晶枢纽应该不在路径上，把目前水晶枢纽那个位置改为召唤水晶"——基地节点
-// 原来的落点（环上、走廊内）现在放【召唤水晶】（nexus_lane），水晶枢纽
-// （nexus_main）挪到环内侧的空地里（沿基地节点同一角度、半径缩小到走廊内圈
-// 以内，稳稳落在环中央那片完全没有 navgrid 走廊覆盖的空地上，不在任何小兵
-// 能走到的路径上）。
-const NEXUS_INSET = 380; // 水晶枢纽相对基地节点【向环心方向】缩进的半径（世界单位）
-function insetNexusPos(nodeId) {
-  const n = NODES.find((x) => x.id === nodeId);
-  return polar(n.angle, RING_R - NEXUS_INSET);
-}
-const blueNexusMainPos = insetNexusPos('blue_base');
-const redNexusMainPos = insetNexusPos('red_base');
+const blueBaseNode = NODES.find((n) => n.id === 'blue_base');
+const redBaseNode = NODES.find((n) => n.id === 'red_base');
 
 const DOMINION_CONFIG = {
   id: 'dominion_crystal_scar_v1',
@@ -209,58 +263,36 @@ const DOMINION_CONFIG = {
   // 没声明时才退回 map.lanes（其它地图都是这种情况，不受影响）。
   waveEditorLaneIds: ['ring_fwd', 'ring_rev'],
 
-  // 2026-09-26：召唤水晶重生时间从通用默认的 300s 改成 120s（用户定稿
-  // "召唤水晶2分钟后重生"）——这是既有的 MapSystem.NEXUS_RESPAWN_TIME
-  // 通用机制（HA/SR/TT 各自也用这个字段覆写），不是新写的重生逻辑。
-  nexusRespawnTime: 120,
-
-  // 每方两座"水晶类"建筑：召唤水晶(nexus_lane) 落在基地节点原来的路径位置上
-  // （小兵仍然从这里出发/沿环占领，自带穿透型子弹+物理攻击，见下面 tierStats），
-  // 水晶枢纽(nexus_main) 挪到环内侧空地、不在任何路径上（见上面"用户定稿：
-  // 水晶枢纽不在路径上"），HP 固定 500、不带默认技能/被动（skills:[]，见
-  // tierStats 同一处注释）。
-  // 召唤水晶必须挂 laneId——MapSystem.beginNexusRespawn() 的重生入队判定
-  // `if (!laneId) return false` 直接依赖它，没有 laneId 的召唤水晶被摧毁后
-  // 永远不会重生（这条踩过一次：最初为了让 buildingCountsSymmetric 的
-  // "按 tier+laneId 分组"通用校验通过，两个基地节点相邻的环边命名各不相同，
-  // 干脆没给召唤水晶挂 laneId——但改成整环一条共享兵线之后，双方召唤水晶
-  // 现在可以共用同一个 laneId='ring'，两个问题一起解决：对称性检查看到的是
-  // 同一个 key，重生判定也拿到了非空 laneId）。
+  // 每方一座水晶枢纽（nexus_main）建筑，落在环内侧空地、有一条走廊接入环
+  // （见文件头注）。第五轮撤编了召唤水晶（nexus_lane）——不再单独建它，
+  // 水晶枢纽自己继承了原来召唤水晶的攻击数值（见下面 tierStats）。
   buildings: [
-    { faction: FACTIONS.BLUE, tier: 'nexus_lane', laneId: RING_LANE_ID, pos: blueBaseNode.pos, weapon: null },
     { faction: FACTIONS.BLUE, tier: 'nexus_main', pos: blueNexusMainPos, weapon: null, skills: [] },
-    { faction: FACTIONS.RED, tier: 'nexus_lane', laneId: RING_LANE_ID, pos: redBaseNode.pos, weapon: null },
     { faction: FACTIONS.RED, tier: 'nexus_main', pos: redNexusMainPos, weapon: null, skills: [] },
   ],
 
   // ==================== 本图专属建筑数值 ====================
-  // 水晶枢纽：用户定稿"生命值设置为500，并且默认不含任何技能和状态"——HP 砍到
-  // 500（远低于通用默认的 5500），双抗/固定护盾/生命恢复都清零（不给"技能带来
-  // 的状态"留口子，加固城防/水晶再生这类被动本来就只在 buildings 数组不显式
-  // 传 skills 时才会自动装配，这里已经显式传了 skills:[] 挡掉了，这里的 0 只是
-  // 避免"万一以后又给它接了被动"时还留着一份看似有意义的双抗数值）。
+  // 水晶枢纽：HP 固定 500（用户早前定稿"生命值设置为500，并且默认不含任何
+  // 技能和状态"），双抗/固定护盾/生命恢复都清零——这些防御数值现在更加无关
+  // 紧要，因为第五轮定稿"水晶枢纽无法被场上的小兵所攻击"（DominionSystem.
+  // initMap() 给它标 `_untargetable`，isStructureProtected 无条件放行），
+  // 它的血量只由据点数差驱动的持续掉血决定，从不吃直接命中，双抗数值不管
+  // 填多少都不会有任何效果，留 0 只是不给"看起来有意义"的数字添误导。
   //
-  // 召唤水晶：用户定稿"召唤水晶自带穿透型子弹和物理攻击"——但 CONFIG.
-  // towerTierWeapon.nexus_lane 全局固定为 'none'（所有地图的召唤水晶默认无
-  // 武器，这是全局配置，不该为了这一张图去改，会连带 SR/HA/TT 的召唤水晶一起
-  // 变得能开火），所以这里不能靠 buildings[].weapon 走常规装配路径——
-  // DominionSystem.initMap() 里对这两座召唤水晶单独调 equipSkill(...,
-  // 'weapon_piercing', ...) 绕开那道全局闸门，这里的 tierStats 只负责给它
-  // 攻击力/射程/攻速这几个数值（照抄 TIER_STATS.outer 的攻击强度，作为
-  // "正常一座塔"的基准，不是特别削弱/强化）。
+  // 攻击力/攻速/射程：用户定稿"水晶枢纽继承召唤水晶的攻击"——直接搬第四轮
+  // 调出来的召唤水晶(nexus_lane)攻击力 700、攻速 1.4（原样照抄，不是重新
+  // 起草）；射程改用 NEXUS_ATTACK_RANGE（"从环到水晶枢纽的距离"，见上面
+  // 定义处），不沿用召唤水晶原来的 260——那是配合"就在环上"这个位置调的，
+  // 水晶枢纽现在挪进了环内侧，用同一个数字没有意义。
+  // 全局 CONFIG.towerTierWeapon.nexus_main 固定是 'none'（所有地图的水晶
+  // 枢纽默认无武器，不该为了这一张图去改），所以这里的 weapon:null 只是
+  // 常规装配路径的占位——真正给它装 weapon_piercing 由 DominionSystem.
+  // initMap() 手动调 equipSkill() 完成，跟原来给召唤水晶装的是同一份代码。
   tierStats: {
-    nexus_main: { maxHP: 500, shieldFixedMax: 0, healthRegen: 0, armor: 0, magicResist: 0, attackDamage: 0, baseAttackSpeed: 0 },
-    // 2026-09-26 第一轮：attackDamage 152 → 450（用户定稿"召唤水晶的攻击力大幅
-    // 提升"）——原来的 152 只是"照抄一座普通外塔的强度基准"，这次直接给到
-    // 接近 3 倍，让它真的是一道难啃的防线，不只是摆设。
-    // 2026-09-26 第四轮：用户反馈"滚雪球更严重了"，追加定稿"召唤水晶的全部
-    // 属性大幅度提升"——不再只动攻击力，这次连 HP/护甲/魔抗/射程/攻速一起
-    // 拉高一档：maxHP 4000→9000（~2.25×）、armor 20→60（3×）、magicResist
-    // 0→50（新增抗性，之前完全没有魔抗）、attackDamage 450→700（在第一轮
-    // 基础上再提）、attackRange 180→260（+44%）、baseAttackSpeed 0.833→1.4
-    // (+68%)。都是起草值（用户只定了"大幅度提升"这个方向，没给具体数字），
-    // 待 balance_matrix/实机校准。
-    nexus_lane: { maxHP: 9000, shieldFixedMax: 0, healthRegen: 0, armor: 60, magicResist: 50, attackDamage: 700, attackRange: 260, baseAttackSpeed: 1.4 },
+    nexus_main: {
+      maxHP: 500, shieldFixedMax: 0, healthRegen: 0, armor: 0, magicResist: 0,
+      attackDamage: 700, attackRange: NEXUS_ATTACK_RANGE, baseAttackSpeed: 1.4,
+    },
   },
 
   // 本图的占领/出兵/水晶掉血节点表——DominionSystem.initMap() 读这个字段激活整套

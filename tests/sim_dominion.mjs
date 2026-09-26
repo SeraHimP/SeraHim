@@ -23,7 +23,7 @@
  * balance_matrix 校准的起草值，见 Config.js 头注）——除非断言本身就是在验证
  * "某个具体数字确实被用户定稿改成了这个值"（比如 nexusDrainPerPointPerSec）。
  */
-import { setupWindow, scoreboard, makeWorld, mkEntity, srcOf } from './_harness.mjs';
+import { setupWindow, scoreboard, makeWorld, mkEntity, srcOf, srcRaw } from './_harness.mjs';
 
 setupWindow({ waveNumber: 1 });
 
@@ -41,12 +41,21 @@ const DCFG = CONFIG.dominion;
 const FULL = DCFG.captureFull;
 
 // ==================== 一、地图数据形状 ====================
+// 2026-09-26 第五轮：用户定稿"这个地图没有召唤水晶，把原有的召唤水晶改为
+// 普通的据点。然后打通水晶枢纽和环的通道……水晶枢纽继承召唤水晶的攻击"——
+// 原来的 2 个 kind:'base' 节点（固定归属、专门放召唤水晶）撤编，改成跟其余
+// 5 个一样的 kind:'point'（7 个据点全部可占领）；水晶枢纽(nexus_main)不再
+// "完全不在任何路径上"，而是通过新走廊接入 navgrid，自己也带上了原来召唤
+// 水晶(nexus_lane)的攻击数值；出兵锚点从"基地节点"变成 dominionNodes 里新增
+// 的 kind:'nexus' 节点（挂在水晶枢纽自己的位置上）。
 {
   const map = MAPS['dominion_crystal_scar_v1'];
   T('①-地图确实注册进了 MAPS', !!map);
-  T('②-7 个节点：5 据点 + 2 基地', map.dominionNodes.length === 7
-    && map.dominionNodes.filter(n => n.kind === 'point').length === 5
-    && map.dominionNodes.filter(n => n.kind === 'base').length === 2);
+  T('②-9 个节点：7 据点（全部可占领，没有固定归属的"基地"了）+ 2 水晶枢纽出兵锚点',
+    map.dominionNodes.length === 9
+    && map.dominionNodes.filter(n => n.kind === 'point').length === 7
+    && map.dominionNodes.filter(n => n.kind === 'nexus').length === 2
+    && map.dominionNodes.filter(n => n.kind === 'base').length === 0);
 
   T('③-只有一条闭合的环形兵线（不是 7 段各自独立的短边）', map.lanes.length === 1);
   const ring = map.lanes[0];
@@ -60,33 +69,32 @@ const FULL = DCFG.captureFull;
 
   T('④-唯一这条环形兵线显式声明空出兵流（不借道 laneWaveSystem 的默认兜底）',
     Array.isArray(ring.spawns) && ring.spawns.length === 0);
-  T('⑤-每个节点的 segForward/segReverse 都指向同一条共享兵线，只是方向相反',
+  T('⑤-每个据点/水晶枢纽锚点的 segForward/segReverse 都指向同一条共享兵线，只是方向相反',
     map.dominionNodes.every(n => n.segForward.laneId === ring.id && n.segReverse.laneId === ring.id
       && n.segForward.direction !== n.segReverse.direction));
 
-  T('⑤b-两个基地节点都带着正确的 faction 字段（回归：曾经这里丢过这个字段）',
-    map.dominionNodes.find(n => n.id === 'blue_base').faction === FACTIONS.BLUE
-    && map.dominionNodes.find(n => n.id === 'red_base').faction === FACTIONS.RED);
+  T('⑤b-两个水晶枢纽出兵锚点都带着正确的 faction 字段',
+    map.dominionNodes.find(n => n.id === 'blue_nexus').faction === FACTIONS.BLUE
+    && map.dominionNodes.find(n => n.id === 'red_nexus').faction === FACTIONS.RED);
+  T('⑤c-据点节点(kind:point)不带 faction 字段（不再有"天生归属谁"这种概念，归属完全由占领决定）',
+    map.dominionNodes.filter(n => n.kind === 'point').every(n => n.faction === undefined));
 
-  T('⑥-召唤水晶(nexus_lane)在基地节点的路径位置上，水晶枢纽(nexus_main)不在（用户定稿"水晶枢纽不在路径上"）',
+  T('⑥-水晶枢纽(nexus_main)不落在据点上（挪进环内侧），但确实存在两座（蓝/红各一）',
     ['blue', 'red'].every(f => {
-      const lane = map.buildings.find(b => b.tier === 'nexus_lane' && b.faction === f);
       const main = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
-      const node = map.dominionNodes.find(n => n.kind === 'base' && n.pos.x === lane.pos.x && n.pos.y === lane.pos.y);
-      const mainOnPath = map.dominionNodes.some(n => n.pos.x === main.pos.x && n.pos.y === main.pos.y);
-      return !!node && !mainOnPath;
+      const onPoint = map.dominionNodes.some(n => n.kind === 'point' && n.pos.x === main.pos.x && n.pos.y === main.pos.y);
+      return !!main && !onPoint;
     }));
-  T('⑥b-召唤水晶挂了 laneId（MapSystem.beginNexusRespawn 的重生入队要求非空 laneId，否则摧毁后永远不重生）',
-    map.buildings.filter(b => b.tier === 'nexus_lane').every(b => b.laneId === ring.id));
+  T('⑥b-地图上再也没有召唤水晶(nexus_lane)这个层级了（buildings 里没有，tierStats 里也没有）',
+    !map.buildings.some(b => b.tier === 'nexus_lane') && !map.tierStats.nexus_lane);
   T('⑥c-水晶枢纽显式声明 skills:[]（用户定稿"默认不含任何技能和状态"）',
     map.buildings.filter(b => b.tier === 'nexus_main').every(b => Array.isArray(b.skills) && b.skills.length === 0));
-  T('⑥d-水晶枢纽 HP 定稿为 500（用户定稿具体数值）', map.tierStats.nexus_main.maxHP === 500);
-  T('⑥e-召唤水晶自带正的攻击力/射程（用户定稿"自带穿透型子弹和物理攻击"，数值走 tierStats）',
-    map.tierStats.nexus_lane.attackDamage > 0 && map.tierStats.nexus_lane.attackRange > 0);
-  T('⑥f-召唤水晶 2 分钟重生（用户定稿具体数值，走既有的 MapSystem.nexusRespawnTime 通用字段）',
-    map.nexusRespawnTime === 120);
-  T('⑥g-召唤水晶攻击力大幅提升（用户返工定稿，从原型草案的 152 大幅上调）',
-    map.tierStats.nexus_lane.attackDamage >= 300);
+  T('⑥d-水晶枢纽 HP 定稿为 500（用户定稿具体数值，撤编召唤水晶之后这个数字未变）',
+    map.tierStats.nexus_main.maxHP === 500);
+  T('⑥e-水晶枢纽继承了原召唤水晶的攻击力/攻速（用户定稿"水晶枢纽继承召唤水晶的攻击"，数值原样照抄第四轮定的 700/1.4）',
+    map.tierStats.nexus_main.attackDamage === 700 && map.tierStats.nexus_main.baseAttackSpeed === 1.4);
+  T('⑥f-水晶枢纽射程是正数且明显小于世界尺寸（用户定稿"攻击范围是从环到水晶枢纽的距离"，不是沿用召唤水晶原来的射程）',
+    map.tierStats.nexus_main.attackRange > 0 && map.tierStats.nexus_main.attackRange < 500);
 
   T('⑦-画面走黄沙风格（visualStyle:stylized + paletteId:desert）',
     map.visualStyle === 'stylized' && map.paletteId === 'desert');
@@ -99,20 +107,23 @@ const FULL = DCFG.captureFull;
     const i = Math.floor(x / map.world.w * map.navgrid.n), j = Math.floor(y / map.world.h * map.navgrid.n);
     return !!bits[j * map.navgrid.n + i];
   };
-  T('⑨-水晶枢纽真的落在 navgrid 不可走的格子里（不是只挪了坐标数字）',
+  T('⑨-水晶枢纽自己那块空地现在是可走的（第五轮打通之前这里是故意留白的不可走格，现在反过来必须可走，否则小兵永远走不出来）',
     ['blue', 'red'].every(f => {
       const main = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
-      return !isWalk(main.pos.x, main.pos.y);
+      return isWalk(main.pos.x, main.pos.y);
     }));
-  T('⑩-召唤水晶仍然落在可走的路径格子里', ['blue', 'red'].every(f => {
-    const lane = map.buildings.find(b => b.tier === 'nexus_lane' && b.faction === f);
-    return isWalk(lane.pos.x, lane.pos.y);
-  }));
+  T('⑨b-水晶枢纽到环上同角度那个位置之间的走廊也是可走的（真的打通了整条连接路，不是两端各自留了一块空地、中间没接上）',
+    ['blue', 'red'].every(f => {
+      const main = map.buildings.find(b => b.tier === 'nexus_main' && b.faction === f);
+      const mouth = map.dominionNodes.find(n => n.id === (f + '_base')).pos;
+      const midX = (main.pos.x + mouth.x) / 2, midY = (main.pos.y + mouth.y) / 2;
+      return isWalk(midX, midY);
+    }));
 
   // 2026-09-26：Q3 返工——据点出兵改走标准出兵编排系统，这张图物理上只有一条
   // 兵线（ring），装不下"顺/逆时针各自编排"两份数据，靠这个字段给编辑器一个
   // 额外的"按几路分"提示（见 laneLabels.js mapLaneIds() 的头注）。
-  T('⑪-地图声明了 waveEditorLaneIds:[ring_fwd,ring_rev]（用户定稿"分为4条线路：红蓝方×顺逆时针"）',
+  T('⑩-地图声明了 waveEditorLaneIds:[ring_fwd,ring_rev]（用户定稿"分为4条线路：红蓝方×顺逆时针"）',
     JSON.stringify(map.waveEditorLaneIds) === JSON.stringify(['ring_fwd', 'ring_rev']));
 }
 
@@ -285,11 +296,12 @@ const FULL = DCFG.captureFull;
   const ds = new DominionSystem(ents, bus);
   const map = MAPS['dominion_crystal_scar_v1'];
   ds.initMap(map);
-  // 隔离测试：召唤水晶（kind:'base'）也走同一条共享环形兵线（同样的 laneId/
-  // direction 字符串），且 bonusWaveEvery 现在是 1——每一波都会跟着一起出兵，
-  // 混进这里要单独盯的"某一个据点自己出的这一份编排"里。这两个节点本身的出兵
-  // 行为由第六节单独覆盖，这里只掐掉它们对 spawned 数组的干扰，不改产品逻辑。
-  ds.nodes = ds.nodes.filter(n => n.kind !== 'base');
+  // 隔离测试：水晶枢纽出兵锚点（kind:'nexus'）也走同一条共享环形兵线（同样的
+  // laneId/direction 字符串），且 bonusWaveEvery 现在是 1——每一波都会跟着一起
+  // 出兵，混进这里要单独盯的"某一个据点自己出的这一份编排"里。这两个节点
+  // 本身的出兵行为由第六节单独覆盖，这里只掐掉它们对 spawned 数组的干扰，
+  // 不改产品逻辑。
+  ds.nodes = ds.nodes.filter(n => n.kind !== 'nexus');
 
   const spawned = [];
   ds.setCreateMinion((type, x, y, faction, laneId, direction) => spawned.push({ type, faction, laneId, direction }));
@@ -361,11 +373,14 @@ const FULL = DCFG.captureFull;
     && buildWaveOrder(1, false, CONFIG.gameRules, FACTIONS.BLUE, { laneId: 'ring_rev' }).length === 3);
 }
 
-// ==================== 六、召唤水晶出兵：每波固定编制，与据点占领无关 ====================
+// ==================== 六、水晶枢纽出兵：每波固定编制，与据点占领无关 ====================
 // 用户定稿："召唤水晶处每波生成3远程3近战1炮兵"——bonusWaveEvery 从 3 改成 1
 // （字面意思上的"每波"），composition 从 1+1 改成 3+3+1。这份编排跟据点的
 // 出兵编排系统（第五节）是两个独立的兵种来源，用户拍板过"两份分开"，不共用
 // _spawnPointWave 那一套 compositionFor，所以还是走原来的 _spawnBudget 算法。
+// 2026-09-26 第五轮：撤编召唤水晶(nexus_lane)之后，这份出兵待遇（以及
+// "敌方水晶被摧毁才出超级兵"的判据）转到水晶枢纽(nexus_main)身上——
+// _enemyCrystalDown() 现在查 nexus_main.alive，不再查 nexus_lane。
 {
   const { ents, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
@@ -373,8 +388,8 @@ const FULL = DCFG.captureFull;
   const map = MAPS['dominion_crystal_scar_v1'];
   ds.initMap(map);
 
-  const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
-  const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
+  const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_main', stats: { maxHP: 500 } }, C);
+  const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_main', stats: { maxHP: 500 } }, C);
 
   const spawned = [];
   ds.setCreateMinion((type, x, y, faction) => spawned.push({ type, faction }));
@@ -387,19 +402,19 @@ const FULL = DCFG.captureFull;
   // 2026-09-26 第四轮：用户反馈"滚雪球更严重了"，追加定稿"取消常驻超级兵的
   // 生成"——第二轮加的"基线每波自带 1 超级兵"整个撤销，退回只有"敌方水晶被
   // 拆才出超级兵"这一条路径（下面 ③④⑤）。双方水晶都活着时不应该有任何超级兵。
-  T('②-双方召唤水晶都活着时，每波出 3 近战 + 3 远程 + 1 炮兵，不含超级兵（已取消常驻超级兵）',
+  T('②-双方水晶枢纽都活着时，每波出 3 近战 + 3 远程 + 1 炮兵，不含超级兵（已取消常驻超级兵）',
     spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'melee').length === 3
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'ranged').length === 3
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super').length === 0);
 
-  // 红方召唤水晶被摧毁（alive=false，跟 MapSystem._onEntityDeath 的处理逐位一致）
+  // 红方水晶枢纽被摧毁（alive=false，跟 MapSystem._onEntityDeath 的处理逐位一致）
   redCrystal.alive = false;
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
   const blueSupers = spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super');
   const redSupers = spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'super');
-  T('③-红方召唤水晶被摧毁后，蓝方（打掉它的一方）出 1 个超级兵（没有基线可加，crystalSuperBonus 直接就是最终值）',
+  T('③-红方水晶枢纽被摧毁后，蓝方（打掉它的一方）出 1 个超级兵（没有基线可加，crystalSuperBonus 直接就是最终值）',
     blueSupers.length === 1);
   T('④-红方自己（水晶被摧毁的一方）不会因此获得超级兵，仍是 0 个',
     redSupers.length === 0);
@@ -408,11 +423,13 @@ const FULL = DCFG.captureFull;
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'ranged').length === 3
     && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1);
 
-  // 红方召唤水晶重生（原地复活，跟 MapSystem 的"原地复活尸体"逐位一致）
+  // 红方水晶枢纽"复活"（现实中水晶枢纽被摧毁=游戏结束，不会真的复活——这里
+  // 单纯是测试手段，验证_enemyCrystalDown()读的是【当前】alive状态，不是
+  // 曾经死过一次就锁死的旗标）。
   redCrystal.alive = true;
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
-  T('⑤-红方召唤水晶重生后，蓝方的超级兵加成立刻停止（不需要额外监听重生事件），退回 0 个（不是"退回基线1个"，因为已经没有基线了）',
+  T('⑤-红方水晶枢纽 alive 回真后，蓝方的超级兵加成立刻停止，退回 0 个（不是"退回基线1个"，因为已经没有基线了）',
     spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super').length === 0);
 }
 
@@ -474,21 +491,28 @@ const FULL = DCFG.captureFull;
   T('③-普通地图不激活这套机制（active 仍为 false）', ds.active === false);
 }
 
-// ==================== 九、召唤水晶自带武器（不需要占领触发，initMap 时就有）====================
+// ==================== 九、水晶枢纽自带武器 + 无法被小兵攻击（initMap 时就定好） ====================
+// 2026-09-26 第五轮：撤编召唤水晶(nexus_lane)之后，"自带穿透型子弹+物理攻击"
+// 这份待遇转到水晶枢纽(nexus_main)身上；同一轮追加定稿"水晶枢纽无法被场上
+// 的小兵所攻击"——initMap() 顺手给它标 `_untargetable`。
 {
   const { ents, fx, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
-  const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000, attackDamage: 450, attackRange: 180 } }, C);
-  const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000, attackDamage: 450, attackRange: 180 } }, C);
+  const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_main', stats: { maxHP: 500, attackDamage: 700, attackRange: 420 } }, C);
+  const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_main', stats: { maxHP: 500, attackDamage: 700, attackRange: 420 } }, C);
 
   const ds = new DominionSystem(ents, bus);
   ds.setEffectRegistry(fx);
   ds.initMap(MAPS['dominion_crystal_scar_v1']);
 
-  T('①-蓝方召唤水晶 initMap 时就自动装备了穿透型武器（不需要先打一场仗）',
+  T('①-蓝方水晶枢纽 initMap 时就自动装备了穿透型武器（不需要先打一场仗）',
     blueCrystal._skillInstances.some(s => s.skillId === 'weapon_piercing'));
-  T('②-红方召唤水晶同样装备（两座都要，不是只装了一座）',
+  T('②-红方水晶枢纽同样装备（两座都要，不是只装了一座）',
     redCrystal._skillInstances.some(s => s.skillId === 'weapon_piercing'));
+  T('②b-两座水晶枢纽都标了 _untargetable（用户定稿"水晶枢纽无法被场上的小兵所攻击"）',
+    blueCrystal._untargetable === true && redCrystal._untargetable === true);
+  T('②c-isStructureProtected 认得这个标记，无条件放行（跳过任何索敌判定）',
+    isStructureProtected(ents, blueCrystal) === true);
 
   ds.initMap(MAPS['dominion_crystal_scar_v1']);
   T('③-重复 initMap 不会重复装备（幂等）',
@@ -834,8 +858,8 @@ const FULL = DCFG.captureFull;
   const ds = new DominionSystem(ents, bus);
   const map = MAPS['dominion_crystal_scar_v1'];
   ds.initMap(map);
-  mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
-  mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
+  mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_main', stats: { maxHP: 500 } }, C);
+  mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_main', stats: { maxHP: 500 } }, C);
 
   const points = ds.nodes.filter(n => n.kind === 'point');
   const spawned = [];
@@ -913,6 +937,115 @@ const FULL = DCFG.captureFull;
   for (let i = 0; i < 50; i++) { window.gameTime += 0.1; combat.update(0.1); }
   T('④-修复之后：翻转后据点不会继续咬着这个已经变成友军的旧目标打到死（bug修复前会一直打到它死）',
     node.entity.targetId !== blueUnit.id && blueUnit.currentHP === hpAfterFlip);
+}
+
+// ==================== 十九、驻守小兵：己方据点攻击范围内有己方小兵时，敌方占领速度打五折 ====================
+// 用户定稿："若我方据点的攻击范围内还存在我方小兵，则敌方的占领速度降低50%"。
+// 根因见 DominionSystem._tickCapture() 里新增的驻守检测那段注释：己方小兵
+// 不可能把 targetId 设成自己的据点（canTarget 挡着同阵营互相攻击），所以
+// 驻守小兵一直没办法体现在"谁在占领"的那份扫描里，这里单独按"阵营 + 据点
+// 自己的攻击范围"检测驻守，跟"谁在占领"用的是两套完全不同的判据。
+{
+  const { ents, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const node = ds.nodes.find(n => n.kind === 'point');
+  const tickSec = DCFG.captureTickSec ?? 1;
+
+  node.captureOwner = FACTIONS.BLUE; node.capturePct = FULL;
+  ds._syncCaptureDisplay(node);
+  const redAttacker = mkEntity(ents, 'melee', { faction: FACTIONS.RED }, C);
+  redAttacker.targetId = node.entity.id;
+  window.gameTime = 0;
+  window.gameTime += tickSec; ds.update(tickSec);
+  const dropNoDefender = FULL - node.capturePct;
+  T('①-没有驻守小兵时，红方确实能正常推进（前提：先测出正常掉的量，不是巧合为 0）',
+    dropNoDefender > 0);
+
+  // 复原到满值，这次在据点攻击范围内放一个蓝方驻守小兵（离据点很近，但不会
+  // 把 targetId 设成据点自己——那是 canTarget 不允许的）。
+  node.captureOwner = FACTIONS.BLUE; node.capturePct = FULL;
+  ds._syncCaptureDisplay(node);
+  redAttacker.targetId = node.entity.id;
+  const blueDefender = mkEntity(ents, 'melee', {
+    faction: FACTIONS.BLUE,
+    pos: { x: node.entity.pos.x + 5, y: node.entity.pos.y },
+  }, C);
+  window.gameTime += tickSec; ds.update(tickSec);
+  const dropWithDefender = FULL - node.capturePct;
+  T('②-驻守小兵在场时，敌方这一 tick 的净占领压力正好打五折（用户给的具体数字：50%）',
+    Math.abs(dropWithDefender - dropNoDefender * 0.5) < 1e-6);
+
+  // 驻守小兵走出据点攻击范围之后，敌方占领速度应该恢复正常——不是"来过就永久打折"。
+  node.captureOwner = FACTIONS.BLUE; node.capturePct = FULL;
+  ds._syncCaptureDisplay(node);
+  redAttacker.targetId = node.entity.id;
+  blueDefender.pos.x = node.entity.pos.x + 99999;
+  window.gameTime += tickSec; ds.update(tickSec);
+  const dropAfterLeaving = FULL - node.capturePct;
+  T('③-驻守小兵离开攻击范围之后，敌方占领速度恢复正常（不再打折）',
+    Math.abs(dropAfterLeaving - dropNoDefender) < 1e-6);
+
+  T('④-defenderSlowPct 定稿为 50（用户给的具体数字，不是起草值）', DCFG.defenderSlowPct === 50);
+}
+
+// ==================== 二十、中立据点优先攻击正在占领它的单位 ====================
+// 用户定稿："中立据点会优先攻击正在占领该据点的阵营的单位"。
+{
+  const { ents, fx, combat, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  ds.setEffectRegistry(fx);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const node = ds.nodes.find(n => n.kind === 'point');
+
+  // 旁观者：离据点更近，但没有在占领它（targetId 没有指向这个据点）——
+  // 纯按距离排的话应该是它赢，用它来反证"确实是优先级规则在起作用，不是
+  // 巧合按距离也选中了同一个"。
+  const bystander = mkEntity(ents, 'melee', {
+    faction: FACTIONS.RED,
+    pos: { x: node.entity.pos.x + 5, y: node.entity.pos.y },
+    stats: { maxHP: 100000 },
+  }, C);
+  // 占领者：离据点更远，但正在占领它（targetId 指向据点）。
+  const capturer = mkEntity(ents, 'melee', {
+    faction: FACTIONS.RED,
+    pos: { x: node.entity.pos.x + 50, y: node.entity.pos.y },
+    stats: { maxHP: 100000 },
+  }, C);
+  capturer.targetId = node.entity.id;
+
+  window.gameTime = 0;
+  combat.update(0.1);
+  T('①-中立据点优先锁定正在占领它的单位，不是纯按距离选中更近的旁观者',
+    node.entity.targetId === capturer.id);
+}
+
+// ==================== 二十一、居中顶部水晶枢纽血量条：源码接线核对 ====================
+// 用户定稿"在主窗口上方新增居中小条，上面显示红蓝方水晶枢纽的血量（加进度条，
+// 并且某方水晶枢纽扣血时在进度条上显示特效）"——纯 DOM/渲染层的行为，这套
+// 测试脚手架没有真实 DOM，钉不住"画面上到底显示成什么样"，能钉住的是"该接的
+// 线都接了"：HTML 里有这些元素、UIManager 按 dominionSystem.active 切显隐、
+// 读的是 nexus_main 的 currentHP/maxHP、掉血时真的会给轨道补一个 class。
+{
+  const htmlSrc = srcRaw('index.html');
+  T('①-HTML 里有这条居中血量条本身，默认是隐藏的（只在统治战场地图上才显示）',
+    /id="dominionNexusBar"[\s\S]{0,60}style="display:none;"/.test(htmlSrc));
+  T('②-蓝/红两侧的血量文字节点都在', /id="dnbHpBlue"/.test(htmlSrc) && /id="dnbHpRed"/.test(htmlSrc));
+  T('③-蓝/红两侧的进度条填充节点都在', /id="dnbFillBlue"/.test(htmlSrc) && /id="dnbFillRed"/.test(htmlSrc));
+  T('④-掉血特效挂在轨道节点上（.dnb-flash 的 keyframes 确实存在）',
+    /id="dnbTrackBlue"/.test(htmlSrc) && /id="dnbTrackRed"/.test(htmlSrc) && /@keyframes dnbFlash/.test(htmlSrc));
+
+  const uiSrc = srcOf('src/ui/UIManager.js');
+  T('⑤-UIManager 按 dominionSystem.active 切换这条血量条的显隐（不是无条件常显）',
+    /dominionNexusBar[\s\S]{0,400}dom\.active/.test(uiSrc));
+  T('⑥-读的是水晶枢纽(nexus_main)的血量，不是别的塔层级',
+    /nexus_main[\s\S]{0,200}_mapFaction === 'blue'/.test(uiSrc));
+  T('⑦-掉血时会给对应轨道节点补一个 class（用户定稿的"显示特效"落地成这一步）',
+    /hp < prevHp[\s\S]{0,300}classList\.add\('dnb-flash'\)/.test(uiSrc));
 }
 
 done();
