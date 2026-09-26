@@ -191,6 +191,9 @@ export class ThreeRenderer {
     this.terrainEdge = new TerrainEdgeLayer(this.scene);   // v55：陆地厚度（崖壁 + 下沉深渊面），通用件
     if (this.mapSystem?.isWalkable) {
       this.frostDecor.setWalkableFn((x, y) => this.mapSystem.isWalkable(x, y));
+      // 统治战场·据点环境装饰第二轮新增的地形装饰（岩石/枯木/骨渣）同样要
+      // 避开小兵能走的地方，见 DominionPropsLayer.js 的 buildTerrainAccents 头注。
+      this.dominionProps.setWalkableFn((x, y) => this.mapSystem.isWalkable(x, y));
     }
     this.skirt = new MapSkirtLayer(this.scene);   // v51.27：地图外围裙边（软化"纸片子"硬边）
     this.skirtOn = true;
@@ -1284,6 +1287,8 @@ export class ThreeRenderer {
       // 水晶粒子按它把世界尺寸换算成 gl_PointSize（像素），否则缩放时粒子尺寸恒定、糊成一团。
       this.units.pxPerUnit = (controller ? (controller.zoom || 1) : 1) * this.gl.getPixelRatio();
       this.units.update(this.deps, rel, window.gameTime || 0);
+      // 统治战场·据点归属旗：只改材质颜色，不重建几何，见 DominionPropsLayer.update 头注。
+      this.dominionProps.update(this.deps);
       // 第3.5步：弹道/指示线/静态参照。lodDots 与 2D 的档2 同阈值（rel < 1.02）
       // 摄像机不偏航、只有仰角，故视线与上方向是常量，每帧算一次传给特效层。
       // 视线用于把光束/红线做成朝向摄像机的带子；上方向用于把子弹做成面向摄像机的片。
