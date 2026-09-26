@@ -88,6 +88,13 @@ export const CONFIG_FIELDS = [
   // 编辑器读到的永远是 undefined，退回默认的 map.lanes（这张图只有 1 条真实
   // 兵线），"4条线路"就摆不出来。跟 dominionNodes 同一个坑、同一个原因。
   'waveEditorLaneIds',
+  // 2026-09-26 第三轮新增：TerrainEdgeLayer.js 的声明（陆地厚度：下沉深渊面 +
+  // 沿边界崖壁）。跟 visualStyle/paletteId/boundaryPillars/torches 同一类——
+  // 纯画面字段，不影响 navgrid/物理判定，之前只有不走 composeMap 的手写地图
+  // （howling_abyss_frost.js）用过，dominion_crystal_scar.js 是第一张走
+  // composeMap() 又要用这个字段的图，同一个坑、同一个原因：不写进白名单会被
+  // composeMap() 静默丢弃，画面上什么也不会发生，且没有任何报错提示。
+  'terrainEdge',
 ];
 
 /**

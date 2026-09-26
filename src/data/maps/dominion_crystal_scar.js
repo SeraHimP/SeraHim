@@ -245,6 +245,29 @@ const DOMINION_CONFIG = {
   visualStyle: 'stylized',
   paletteId: 'desert',
 
+  // ==================== 第三轮：让"不可走区域"变成真峡谷，不是一块纯色背景 ====================
+  // 用户转述的 GPT 评估："它把'不可行走区域'做成了一个巨大的黑洞……而不是
+  // '这里是一片不可通行的巨大峡谷/岩丘/荒漠地貌'"——复用 TerrainEdgeLayer.js
+  // 这个通用件（howling_abyss_frost.js 已经在用同一套机制，设计文档写明
+  // "这一层是通用件，不是冰封图专用"）：不可走区域会被挖空，另在更低的
+  // waterY 铺一张深渊面，沿可走边界画一圈外倾斜坡——陆地因此第一次有了真实
+  // 的高度落差，而不是跟不可走区域完全同一个平面。
+  // 颜色全部从 CONFIG.stylizedPalettes.desert 的 corridorColor/groundColor
+  // 用同一套"同色系压暗"规则派生（跟 DominionPropsLayer.js 的
+  // deriveDesertRamp() 是同一个来源、同一条规则，不是另起一套配色）：
+  //   slopeColor = corridorColor(#c9915a) × 0.75 → #976d44（岸坡：地面色的
+  //     背光面，TerrainEdgeLayer 的既有约定"必须取地面色压暗一档，不能取
+  //     石色"）；
+  //   abyssColor = groundColor(#3a2410) × 0.55 → #201409（深渊面：整张图
+  //     最暗的一档，比原来纯色背景的 groundColor 本身更暗，读出"往下凹"）。
+  // 其余参数（落差/外扩/抖动/分段）沿用 TerrainEdgeLayer 的默认值——那套
+  // 默认值本来就是给"通用地图边界"调的，没有这张图专属到需要另调的理由。
+  terrainEdge: {
+    waterY: -22,
+    slopeColor: '#976d44',
+    abyssColor: '#201409',
+  },
+
   baseCenters: { blue: blueBaseNode.pos, red: redBaseNode.pos },
   baseCircleRadius: NODE_BULGE,
 

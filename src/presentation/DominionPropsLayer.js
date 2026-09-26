@@ -33,6 +33,34 @@
  * 颜色/密度这类纯装饰性数值继续按 HowlingAbyssDecor.js 已有先例留作模块内
  * 命名常量，不算 CLAUDE.md 第二条铁律要盯的"玩法数值硬编码"。
  *
+ * ==================== 第三轮：用户转述 GPT 的评估——"撒石头填空白不是设计地形" ====================
+ * 用户原话："这版最大的问题不是'做得不好看'，而是根本没理解你要解决的视觉
+ * 问题……它把'不可行走区域'做成了一个巨大的黑洞……完全没利用'沙漠峡谷'这个
+ * 主题……没有视觉层级"。这轮不再是"加更多同类型的小道具"，是三处结构性补课：
+ *   ①**"黑洞"变真峡谷**：地图文件新增 `terrainEdge` 声明（复用
+ *     `TerrainEdgeLayer.js`——设计文档写明"这一层是通用件，不是冰封图专用"，
+ *     `howling_abyss_frost.js` 已经在用同一套机制）。不可走区域从"一块纯色
+ *     背景"变成"下沉的深渊面 + 沿边界的斜坡崖壁"，陆地因此第一次有了真实的
+ *     高度落差，不再是一整块平面——这条最便宜也最关键，零新渲染代码，只是
+ *     给地图数据补一个已有机制的声明。
+ *   ②**大尺度地貌，不是撒石头**：新增 `buildCanyonMonoliths`——中央峡谷/
+ *     外圈放几座真正大的岩体（比原来的碎石簇高一个数量级，40~90 高），沉到
+ *     `terrainEdge.waterY` 那个深度，读成"峡谷里立着的巨岩"而不是"平地上的
+ *     鹅卵石"。原来那批小岩石簇/骨渣/枯木降级成这些巨岩周围的"碎屑"（第三层
+ *     细节），不再独立铺满整张图当主角。
+ *   ③**沿途色阶**：新增 `buildSandTexture`——沿整条环形走廊（不只是据点周围）
+ *     撒浅色沙丘高光块+深色风蚀阴影块，两者都是同一个暖沙色系里的明暗变体
+ *     （不引入新色相），让路面本身有肉眼可辨的明暗层次，而不是一整圈同一个
+ *     纯色。
+ *   ④**每个据点一块专属地面色**：新增 `buildNodeGroundPatch`——5 个主题据点
+ *     各自的功能区底下垫一块跟主题呼应的地面色块（采石场偏灰岩、兽骨场偏
+ *     骨白、精炼厂/钻机偏油渍暗褐、风车维持亮沙色），据点之间因此不再是
+ *     "同一片地上摆了不同道具"，而是"几片视觉上能分辨的场地"。
+ * 用到的六档颜色全部从现有调色板的 corridorColor/groundColor/rockColor 用
+ * multiplyScalar/lerp 派生（同一色相家族深浅分层），不是新起一套配色——
+ * 这是用户转述 GPT 方案里明确要求的做法（"不要增加彩虹颜色……同一个沙漠色系
+ * 里建立5~7个明度/饱和度层级"），派生规则见下面 `deriveDesertRamp()`。
+ *
  * ==================== 通用件，不是这一张图专属 ====================
  * 只要地图声明了 `dominionNodes`，这一层就会给每个 kind:'point' 节点摆一套
  * 跟节点 id 对应的主题道具+归属旗、给每个 kind:'nexus' 节点摆旗杆装饰、给
@@ -83,6 +111,33 @@ const BONE_COLOR = '#e8ddc0';       // 骸骨（兽骨场）
 const WOOD_COLOR = '#6b4a30';       // 风车木结构/旗杆
 
 function mat(color) { return new THREE.MeshLambertMaterial({ color, flatShading: true }); }
+
+/**
+ * 从调色板的 corridorColor/groundColor/rockColor 派生一套同色相家族的深浅
+ * 阶梯——第三轮用户转述的 GPT 方案原话"不要增加彩虹颜色……同一个沙漠色系
+ * 里建立5~7个明度/饱和度层级"。全部用 THREE.Color 的 lerp/multiplyScalar
+ * （HSL 明度方向的简化实现，足够低模风格用），不手写第二套色值表。
+ * @returns {{lightSand:number, windShadow:number, deepRock:number, abyss:number, slope:number}}
+ *   （返回十六进制整数，THREE.Color/材质直接吃）
+ */
+function deriveDesertRamp(SV) {
+  const corridor = new THREE.Color(SV.corridorColor || '#c9915a');
+  const ground = new THREE.Color(SV.groundColor || '#3a2410');
+  const rock = new THREE.Color(SV.rockColor || '#9c5a42');
+  return {
+    // 浅沙丘高光：主沙色往白里拉一点。
+    lightSand: corridor.clone().lerp(new THREE.Color('#ffffff'), 0.22).getHex(),
+    // 风蚀阴影：主沙色压暗，还在"路"这个明度量级里，不是深阴影。
+    windShadow: corridor.clone().multiplyScalar(0.82).getHex(),
+    // 深褐岩壁：岩石色再压暗，给大岩体用，比据点道具的 rockColor 更暗一档。
+    deepRock: rock.clone().multiplyScalar(0.68).getHex(),
+    // 峡谷阴影（深渊面/大岩体阴面）：环外虚空色再压暗，整张图最暗的一档。
+    abyss: ground.clone().multiplyScalar(0.56).getHex(),
+    // 崖壁斜坡：TerrainEdgeLayer 的既有约定"必须取地面色压暗一档，不能取石色"
+    // （见该文件 DEF.slopeColor 头注），这里用同一条规则从 corridorColor 派生。
+    slope: corridor.clone().multiplyScalar(0.75).getHex(),
+  };
+}
 
 // ==================== ① 风车（windmill）====================
 // 石基木塔 + 顶部十字静态旋翼（用户确认不做旋转动画，成本更低且没有先例）+
@@ -422,12 +477,126 @@ function buildNexusFlank(group, pos, colorHex) {
   }
 }
 
-// ==================== 地形装饰：不可走区域撒岩石/枯木/骨渣 ====================
+// ==================== 沿途色阶：整条环形走廊撒浅色沙丘高光/深色风蚀阴影 ====================
+// 第三轮新增——用户转述的 GPT 方案"路面本身要有明暗层次，不是一整圈同一个
+// 纯色"。只在【可走】区域撒（这是路面本身的色阶，不是不可走区域的地形装饰，
+// 跟下面 buildTerrainAccents 的判据刚好相反），扁平低矮的团块状网格贴着地面，
+// 不影响小兵通行（没有碰撞体，只是渲染）。两种色块都从 deriveDesertRamp()
+// 派生，跟主沙色同一色相家族，只是明暗不同。
+const SAND_TEXTURE_STEP = 95;
+const SAND_TEXTURE_CHANCE = 0.3;
+function buildSandTexture(group, map, SV, isWalkable, ramp) {
+  if (!isWalkable) return;
+  const lightMat = mat(ramp.lightSand);
+  const shadowMat = mat(ramp.windShadow);
+  const blobGeo = new THREE.IcosahedronGeometry(1, 1);
+  const { w: WW, h: WH } = map.world;
+
+  for (let gx = 0; gx < WW; gx += SAND_TEXTURE_STEP) {
+    for (let gy = 0; gy < WH; gy += SAND_TEXTURE_STEP) {
+      const x = gx + (hash(gx + 11, gy) - 0.5) * SAND_TEXTURE_STEP * 0.7;
+      const y = gy + (hash(gx, gy + 11) - 0.5) * SAND_TEXTURE_STEP * 0.7;
+      if (!isWalkable(x, y)) continue;                 // 只画在路面上
+      if (hash(gx + 13, gy + 13) > SAND_TEXTURE_CHANCE) continue;
+      const light = hash(x + 6, y + 6) < 0.5;
+      const r = 22 + hash(x, y) * 26;
+      const blob = new THREE.Mesh(blobGeo, light ? lightMat : shadowMat);
+      // 极低矮的扁团块，贴着地面——是"色块"不是"土堆"，高度只用来避免 z-fight。
+      blob.position.copy(toScene(x, y, 0.4));
+      const ex = 0.7 + hash(x + 3, y) * 0.7, ez = 0.7 + hash(x, y + 3) * 0.7;
+      blob.scale.set(r * ex, 1.6, r * ez);
+      blob.rotation.y = hash(x + 5, y + 5) * 6.2832;
+      group.add(blob);
+    }
+  }
+}
+
+// ==================== 每个据点一块专属地面色 ====================
+// 第三轮新增——用户转述的 GPT 方案"五个据点应该有五种视觉语言"。给已登记
+// 主题的据点在功能区脚下垫一块跟主题呼应的扁平色块（比如采石场偏灰岩），
+// 半径覆盖节点本身 + RADIAL_OFFSET 那圈功能区，让"这一片是同一个场地"读
+// 得出来，不是"同一片沙地上摆了不同道具"。颜色同样只在暖色系内部变化
+// （灰岩/骨白都是把主沙色的饱和度往下调，不是换色相），跟 deriveDesertRamp()
+// 的"同色系分层"原则一致。
+const NODE_GROUND_TINTS = {
+  quarry: (SV) => new THREE.Color(SV.rockColor || '#9c5a42').lerp(new THREE.Color('#8a8478'), 0.5).getHex(),
+  boneyard: (SV) => new THREE.Color(BONE_COLOR).lerp(new THREE.Color(SV.corridorColor || '#c9915a'), 0.35).getHex(),
+  refinery: (SV) => new THREE.Color(SV.corridorColor || '#c9915a').multiplyScalar(0.6).getHex(),
+  drill: (SV) => new THREE.Color(SV.corridorColor || '#c9915a').multiplyScalar(0.58).getHex(),
+  windmill: (SV) => new THREE.Color(SV.corridorColor || '#c9915a').lerp(new THREE.Color('#ffffff'), 0.12).getHex(),
+};
+function buildNodeGroundPatch(group, node, pos, SV) {
+  const tintFn = NODE_GROUND_TINTS[node.id];
+  if (!tintFn) return;
+  const patchMat = mat(tintFn(SV));
+  const midX = (node.pos.x + pos.x) / 2, midY = (node.pos.y + pos.y) / 2;
+  const r = RADIAL_OFFSET * 0.95;
+  const patch = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.05, 1.2, 20), patchMat);
+  patch.position.copy(toScene(midX, midY, 0.15));
+  group.add(patch);
+}
+
+// ==================== 中央峡谷/外圈的大岩体 ====================
+// 第三轮新增——用户转述的 GPT 方案"小石头只能是第三层细节，不能承担大尺度
+// 构图"。这批岩体比 buildTerrainAccents 里的碎石簇高一个数量级（40~90），
+// 沉到 `map.terrainEdge.waterY` 那个深度（跟 HowlingAbyssDecor.js 的水域
+// 装饰同一条规则："陆地有厚度之后，水域装饰要整体沉到深渊面那一层"），读成
+// "峡谷里立着的巨岩"而不是"平地上的鹅卵石"。位置沿几个固定角度扇区取
+// isWalkable 为假的点，数量克制（不到 10 座），量少但个头大，撑住构图。
+const MONOLITH_ANGLES = [30, 95, 160, 210, 275, 330];   // 度，围绕地图中心分布
+function buildCanyonMonoliths(group, map, SV, isWalkable, nodePositions, ramp) {
+  if (!isWalkable) return;
+  const rockMat = mat(ramp.deepRock);
+  const rockLightMat = mat(new THREE.Color(ramp.deepRock).lerp(new THREE.Color('#ffffff'), 0.18).getHex());
+  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+  const cx = map.world.w / 2, cy = map.world.h / 2;
+  const maxR = Math.max(map.world.w, map.world.h) * 0.42;
+  const EXCLUDE_R = 250;
+  const nearAnyNode = (x, y) => nodePositions.some((p) => Math.hypot(x - p.x, y - p.y) < EXCLUDE_R);
+
+  for (const angleDeg of MONOLITH_ANGLES) {
+    const a = (angleDeg * Math.PI) / 180;
+    // 沿这个方向从内向外找一个真正不可走、且不挨着任何据点功能区的点。
+    let placed = false;
+    for (let r = 120; r <= maxR && !placed; r += 40) {
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      if (isWalkable(x, y) || nearAnyNode(x, y)) continue;
+      const h = 40 + hash(x, y) * 50;
+      const baseR = 22 + hash(x + 1, y + 1) * 20;
+      const monolith = new THREE.Mesh(rockGeo, hash(x + 2, y + 2) < 0.6 ? rockMat : rockLightMat);
+      monolith.position.copy(toScene(x, y, h * 0.42));
+      monolith.scale.set(baseR, h, baseR * (0.75 + hash(x, y) * 0.4));
+      monolith.rotation.y = hash(x + 3, y + 3) * 6.2832;
+      group.add(monolith);
+      // 岩体底部的碎屑：3~4 块小石头，读成"从大岩体上崩落的碎渣"而不是
+      // 独立的装饰——呼应"小石头只能当第三层细节"这条要求。
+      const debrisN = 3 + Math.floor(hash(x + 4, y + 4) * 2);
+      for (let i = 0; i < debrisN; i++) {
+        const da = hash(x + i * 9, y - i * 5) * Math.PI * 2;
+        const dd = baseR * (1.1 + hash(x - i, y + i) * 0.6);
+        const dx = x + Math.cos(da) * dd, dy = y + Math.sin(da) * dd;
+        if (isWalkable(dx, dy)) continue;
+        const s = 5 + hash(dx, dy) * 6;
+        const debris = new THREE.Mesh(rockGeo, rockMat);
+        debris.position.copy(toScene(dx, dy, s * 0.4));
+        debris.scale.set(s, s * 0.7, s);
+        debris.rotation.y = hash(dx + 2, dy + 2) * 6.2832;
+        group.add(debris);
+      }
+      placed = true;
+    }
+  }
+}
+
+// ==================== 地形装饰：不可走区域撒岩石/枯木/骨渣（第三层细节）====================
 // 只看 isWalkable，绝不会撒在小兵能走的地方（跟 HowlingAbyssDecor.js 的浮冰/
 // 瓦砾摆放同一条底线）。同时要避开每个节点周围的主题道具区（NODE_BULGE 范围
 // 内已经有专门设计的功能区，这里再撒东西会互相打架），用 minDist 排除。
+// 第三轮：密度调低（0.46→0.3）——这批小碎石现在是巨岩（buildCanyonMonoliths）
+// 和地面色阶之外的补充细节，不再是撑起整张图空间感的主角，用户转述的 GPT
+// 方案原话"小石头只能作为第三层细节，不能承担大尺度构图职责"。
 const TERRAIN_ACCENT_STEP = 130;   // 扫描格距——比据点间距小得多，保证中央颈部/外圈都能覆盖到
-const TERRAIN_ACCENT_CHANCE = 0.46;
+const TERRAIN_ACCENT_CHANCE = 0.3;
 function buildTerrainAccents(group, map, SV, isWalkable, nodePositions) {
   if (!isWalkable) return;
   const rockMat = mat(SV.rockColor || '#9c5a42');
@@ -542,6 +711,20 @@ export class DominionPropsLayer {
     const nexuses = nodes.filter((n) => n.kind === 'nexus');
     const allPositions = nodes.map((n) => ({ x: n.pos.x, y: n.pos.y }));
 
+    const ramp = deriveDesertRamp(SV);
+
+    // 第三轮：沿途色阶要垫在所有据点道具/旗帜**之下**，所以先画（画的顺序
+    // 就是 THREE.Group 的 z 序无所谓——都是不透明平面几何——但先建更符合
+    // "先有地面色阶，再往上面摆东西"的阅读顺序，也方便以后要挖洞规避时改）。
+    // 单独起一个具名子分组（不是散落进顶层 group）——sim_dominionprops.mjs
+    // 靠这个名字精确数"沿途色阶到底铺了多少"，不会跟同一张图里其它内容混在
+    // 一起数（两套系统一个只认可走、一个只认不可走，笼统数顶层 children 在
+    // "整张图全可走"这种极端场景下会失真，见该测试文件⑮⑯两条断言的头注）。
+    const sandGroup = new THREE.Group();
+    sandGroup.name = 'sandTexture';
+    group.add(sandGroup);
+    buildSandTexture(sandGroup, map, SV, this._isWalkable, ramp);
+
     for (const node of points) {
       const { dirX, dirY } = dirOf(node);
       // ① 主题功能区（仅登记过的 id 有）。
@@ -551,6 +734,8 @@ export class DominionPropsLayer {
           y: node.pos.y + dirY * RADIAL_OFFSET,
           dirX, dirY,
         };
+        // 第三轮：专属地面色垫在主题道具下面，让"据点+功能区"读成同一片场地。
+        buildNodeGroundPatch(group, node, pos, SV);
         BUILDERS[node.id](group, pos, SV);
       }
       // ② 归属旗：所有据点通用，不管有没有登记主题（据点占位名"商栈"/"望塔"
@@ -567,7 +752,20 @@ export class DominionPropsLayer {
       buildNexusFlank(group, { x: node.pos.x, y: node.pos.y, dirX, dirY }, colorHex);
     }
 
-    buildTerrainAccents(group, map, SV, this._isWalkable, allPositions);
+    // ==================== 第三轮：不可走区域的装饰整体沉到深渊面那一层 ====================
+    // 跟 HowlingAbyssDecor.js 的水域装饰同一条规则头注："陆地有厚度之后，
+    // 水域装饰要整体沉到深渊面那一层"——地图一旦声明了 `terrainEdge`，
+    // 不可走区域就不再是跟陆地同高的一块平面，而是下沉的深渊面
+    // （TerrainEdgeLayer.js 的 waterY）。这里的巨岩/碎石/枯木/骨渣全部长在
+    // 不可走区域里，因此也要整体沉下去，否则会悬浮在半空。没声明 terrainEdge
+    // 的地图（比如还没接入这套机制的旧版本）用 0 兜底，行为不变。
+    const voidGroup = new THREE.Group();
+    voidGroup.name = 'voidAccents';
+    voidGroup.position.y = map.terrainEdge?.waterY ?? 0;
+    group.add(voidGroup);
+    buildCanyonMonoliths(voidGroup, map, SV, this._isWalkable, allPositions, ramp);
+    buildTerrainAccents(voidGroup, map, SV, this._isWalkable, allPositions);
+
     this.setShadowLevel(this.shadowLevel);
   }
 

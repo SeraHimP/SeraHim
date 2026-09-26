@@ -140,8 +140,14 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
 // ==================== 四、老地图不受影响 ====================
 {
   const { MAPS } = await import('../src/data/maps/index.js');
-  const others = Object.values(MAPS).filter(m => m.id !== 'howling_abyss_frost_v1');
-  T(`老①-其余 ${others.length} 张地图都没有声明 terrainEdge（画面逐位不变）`,
+  // 2026-09-26 第三轮：dominion_crystal_scar_v1 也声明了 terrainEdge（用户转述的
+  // GPT 评估要求"不可行走区域要有真实高度落差"，复用这个通用件——见
+  // DominionPropsLayer.js 头注"第三轮"一节）。这条断言原意是"没主动接入这套
+  // 机制的老地图不受影响"，不是"永远只有一张图能用它"，随着接入范围扩大同步
+  // 更新排除名单，不是放宽断言。
+  const withTerrainEdge = ['howling_abyss_frost_v1', 'dominion_crystal_scar_v1'];
+  const others = Object.values(MAPS).filter(m => !withTerrainEdge.includes(m.id));
+  T(`老①-除 terrainEdge 已知使用方外，其余 ${others.length} 张地图都没有声明它（画面逐位不变）`,
     others.every(m => !m.terrainEdge));
 }
 
