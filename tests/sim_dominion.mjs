@@ -138,6 +138,7 @@ const FULL = DCFG.captureFull;
   const redAttacker = mkEntity(ents, 'melee', { faction: FACTIONS.RED }, C);
   const power = DCFG.capturePower.melee;
   const tick = (dt = tickSec) => { window.gameTime = (window.gameTime || 0) + dt; ds.update(dt); };
+  const neutralDamage = node.entity.baseStats.attackDamage;
 
   window.gameTime = 0;
   blueAttacker.targetId = node.entity.id;
@@ -153,6 +154,11 @@ const FULL = DCFG.captureFull;
   T('⑤b-镜像的 _captureOwner 也翻转为蓝方', node.entity._captureOwner === FACTIONS.BLUE);
   T('⑥-被占领后据点获得正的攻击力/射程（tpl 的一部分，不再是 0）',
     node.entity.baseStats.attackDamage > 0 && node.entity.baseStats.attackRange > 0);
+  // 2026-09-26 第四轮·补充：用户追加定稿"据点在中立状态下攻击力低，在某方
+  // 占领之后攻击力提高"——占领后的攻击力应该明显比中立时高（pointDamagePct
+  // 30% > pointNeutralDamagePct 15%），不再是中立/占领共用同一份数值。
+  T('⑥b-占领后攻击力比中立时更高（用户定稿"中立低、占领后提高"）',
+    node.entity.baseStats.attackDamage > neutralDamage);
 
   const before = node.capturePct;
   tick();
@@ -170,9 +176,12 @@ const FULL = DCFG.captureFull;
   while (node.captureOwner === FACTIONS.BLUE) tick();
   T('⑨-推到 0 之后变回中立（不是直接被红方占领）', node.captureOwner === FACTIONS.NEUTRAL && node.capturePct === 0);
   // 2026-09-26 第四轮：用户定稿"中立据点会正常攻击"——变回中立后攻击力/射程
-  // 不再清零，跟被占领时是同一份数值（归属只改变它认哪一方为敌）。
-  T('⑩-变回中立后攻击力/射程仍然是正的（中立据点会正常攻击，不再是完全被动的空目标）',
-    node.entity.baseStats.attackDamage > 0 && node.entity.baseStats.attackRange > 0);
+  // 不再清零（中立据点会正常攻击，不再是完全被动的空目标）。
+  T('⑩-变回中立后攻击力/射程仍然是正的', node.entity.baseStats.attackDamage > 0 && node.entity.baseStats.attackRange > 0);
+  // 2026-09-26 第四轮·补充：变回中立后攻击力要跟着降回中立档（不是停留在
+  // 占领时的更高档），也不是直接清零——"低"不等于"没有"。
+  T('⑩b-变回中立后攻击力退回中立档（比刚才占领时低，但仍是正数，逐位等于最初的中立值）',
+    Math.abs(node.entity.baseStats.attackDamage - neutralDamage) < 1e-9);
 }
 
 // ==================== 三、据点真的会开火（不是只有数值变了）====================
@@ -860,6 +869,50 @@ const FULL = DCFG.captureFull;
   ds.update(DCFG.waveInterval + 0.01);
   T('⑤-双方占点数追平（2=2）后，追赶炮兵立刻消失，红方退回基线的 1 个',
     spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'siege').length === 1);
+}
+
+// ==================== 十八、bug修复：占领翻转后不会继续咬着已锁定的旧目标打到死 ====================
+// 用户报"在某方夺取某个据点后，该防御塔依然会攻击正在锁定的目标直至死亡"。
+// 根因：中立据点索敌不分敌我（canTarget(NEUTRAL,*) 恒真），如果它锁定的目标
+// 恰好跟"刚占领它的那一方"同阵营，占领瞬间目标就从敌人变成了友军——但
+// CombatSystem.update() 里"索敌锁定"那段校验原来只查 alive/射程，从来没有
+// 在【已经锁定】的情况下复查过阵营，于是翻转之后这座塔还在照着旧目标打，
+// 直到它死或走出射程才停。修复见 CombatSystem.js 里新增的 canTarget 复查。
+{
+  const { ents, fx, combat, CONFIG: C } = await makeWorld();
+  const bus = { emit() {}, on() {} };
+  const ds = new DominionSystem(ents, bus);
+  ds.setEffectRegistry(fx);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const node = ds.nodes.find(n => n.kind === 'point');
+  const tickSec = DCFG.captureTickSec ?? 1;
+
+  // 蓝方单位既是"正在占领这个据点的人"（targetId 指向据点），也恰好站在
+  // 射程内——中立据点索敌不分敌我，会同时把它当成攻击目标锁定住。
+  const blueUnit = mkEntity(ents, 'melee', {
+    faction: FACTIONS.BLUE,
+    pos: { x: node.entity.pos.x + 10, y: node.entity.pos.y },
+    stats: { maxHP: 100000, armor: 0, magicResist: 0 },
+  }, C);
+  blueUnit.targetId = node.entity.id;
+
+  window.gameTime = 0;
+  for (let i = 0; i < 5; i++) { window.gameTime += 0.1; combat.update(0.1); }
+  T('①-中立据点确实锁定住了这个恰好也在占领它的蓝方单位（前置条件：翻转前先锁定）',
+    node.entity.targetId === blueUnit.id);
+  const hpBeforeFlip = blueUnit.currentHP;
+  T('②-锁定之后蓝方单位确实在掉血（不是锁定了却没打）', hpBeforeFlip < 100000);
+
+  // 推进占领直到翻转成蓝方——翻转瞬间据点的 _mapFaction 从中立变成蓝方，
+  // 之前锁定的蓝方单位从"敌人"变成了"友军"。
+  while (node.captureOwner === FACTIONS.NEUTRAL) { window.gameTime += tickSec; ds.update(tickSec); }
+  T('③-翻转后据点的阵营确实已经变成蓝方', node.entity._mapFaction === FACTIONS.BLUE);
+
+  const hpAfterFlip = blueUnit.currentHP;
+  for (let i = 0; i < 50; i++) { window.gameTime += 0.1; combat.update(0.1); }
+  T('④-修复之后：翻转后据点不会继续咬着这个已经变成友军的旧目标打到死（bug修复前会一直打到它死）',
+    node.entity.targetId !== blueUnit.id && blueUnit.currentHP === hpAfterFlip);
 }
 
 done();

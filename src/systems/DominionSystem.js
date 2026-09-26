@@ -117,13 +117,16 @@ export class DominionSystem {
     }));
     const tpl = CONFIG.templates.tower;
     const cfg = CONFIG.dominion || {};
-    // 2026-09-26 用户定稿"中立据点会正常攻击"——据点不管有没有被占领都用同一套
-    // pointDamagePct/pointRangePct/pointAttackSpeedPct 主动开火，不再是"中立=
-    // 完全被动的空目标"。canTarget(NEUTRAL, BLUE/RED) 天然允许中立据点攻击
-    // 任意一方（跟中立野怪同一条判据），于是中立据点会对最先靠近的任何一方
-    // 开火——据点从"谁先摸到就是谁的"变成"要打一架才能拿下"，归属翻转只改变
-    // 它认哪一方为敌（_setOwner 只改 _mapFaction/faction），不再需要跟着重新
-    // 装卸武器/改攻击数值，见 _setOwner() 头注。
+    // 2026-09-26 用户定稿"中立据点会正常攻击"——据点不管有没有被占领都会主动
+    // 开火，不再是"中立=完全被动的空目标"。canTarget(NEUTRAL, BLUE/RED) 天然
+    // 允许中立据点攻击任意一方（跟中立野怪同一条判据），于是中立据点会对
+    // 最先靠近的任何一方开火——据点从"谁先摸到就是谁的"变成"要打一架才能
+    // 拿下"。射程/攻速这两项不分中立/占领，一律套用 pointRangePct/
+    // pointAttackSpeedPct，归属翻转不需要跟着重新装卸武器，见 _setOwner() 头注。
+    // 2026-09-26 第四轮·补充：用户追加定稿"据点在中立状态下攻击力低，在某方
+    // 占领之后攻击力提高"——攻击力单独拆出来，不再跟射程/攻速一样"一律套用"：
+    // 中立时用 pointNeutralDamagePct（更低），占领后用 pointDamagePct（更高），
+    // _setOwner() 里归属翻转时会重算这一项（也只有这一项）。
     for (const node of this.nodes) {
       if (node.kind !== 'point') continue;
       const entity = {
@@ -136,7 +139,7 @@ export class DominionSystem {
         // 结算被 isCapturePoint 分支整个绕开，这两个字段永远不会被改动。
         baseStats: {
           ...tpl,
-          attackDamage: (tpl.attackDamage || 0) * ((cfg.pointDamagePct ?? 12) / 100),
+          attackDamage: (tpl.attackDamage || 0) * ((cfg.pointNeutralDamagePct ?? cfg.pointDamagePct ?? 12) / 100),
           attackRange: (tpl.attackRange || 0) * ((cfg.pointRangePct ?? 82) / 100),
           baseAttackSpeed: (tpl.baseAttackSpeed || 0) * ((cfg.pointAttackSpeedPct ?? 100) / 100),
           maxHP: 1, healthRegen: 0, shieldFixedMax: 0,
@@ -217,12 +220,13 @@ export class DominionSystem {
   }
 
   /**
-   * 归属翻转时同步：只改 _mapFaction/faction（决定 canTarget 判它是敌是友），
-   * 不再需要在这里重算攻击力/攻速/装卸武器——2026-09-26 用户定稿"中立据点会
-   * 正常攻击"之后，据点从 initMap() 创建那一刻起就已经按同一套
-   * pointDamagePct/pointRangePct/pointAttackSpeedPct 定死了攻击强度并装好了
-   * weapon_piercing，不管中立还是被占领都是同一份数值/同一把武器，翻转归属
-   * 只是换了"认哪一方为敌"，不需要跟着重新装卸/改数值。
+   * 归属翻转时同步：改 _mapFaction/faction（决定 canTarget 判它是敌是友），
+   * 不需要跟着重新装卸武器——2026-09-26 用户定稿"中立据点会正常攻击"之后，
+   * 据点从 initMap() 创建那一刻起就已经装好了 weapon_piercing，不管中立还是
+   * 被占领都是同一把武器，不需要跟着重新装卸。
+   * 2026-09-26 第四轮·补充：用户追加定稿"据点在中立状态下攻击力低，在某方
+   * 占领之后攻击力提高"——攻击力（只有这一项，射程/攻速仍然不分中立/占领）
+   * 需要跟着归属重算：中立用 pointNeutralDamagePct，占领后用 pointDamagePct。
    */
   _setOwner(node, owner, value) {
     node.captureOwner = owner;
@@ -231,6 +235,12 @@ export class DominionSystem {
     if (!e) return;
     e._mapFaction = owner;
     e.faction = owner;
+    const cfg = CONFIG.dominion || {};
+    const tpl = CONFIG.templates.tower;
+    const pct = owner === FACTIONS.NEUTRAL
+      ? (cfg.pointNeutralDamagePct ?? cfg.pointDamagePct ?? 12)
+      : (cfg.pointDamagePct ?? 12);
+    e.baseStats.attackDamage = (tpl.attackDamage || 0) * (pct / 100);
     this._syncCaptureDisplay(node);
   }
 

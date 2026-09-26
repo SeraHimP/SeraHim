@@ -353,6 +353,14 @@ export class CombatSystem {
       // 索敌锁定：当前目标存活且仍在射程内则不重新索敌，否则重新索敌
       let target = tower.targetId ? this.entities.get(tower.targetId) : null;
       if (target && (!target.alive || target.type === 'tower')) target = null;
+      // bug修复：据点被占领会翻转 tower._mapFaction（DominionSystem._setOwner），
+      // 但这里锁定校验原来只查 alive/射程，不查阵营——中立据点索敌不分敌我，
+      // 一旦锁定的目标恰好跟"刚占领它的那一方"同阵营，占领瞬间它就从敌人变
+      // 成了友军，锁定校验却认不出来，导致占领后这座塔还在照着旧目标打，
+      // 直到它死或走出射程才停（用户报的"夺取据点后仍攻击原目标直至死亡"）。
+      // dragon 例外：巨龙没有阵营敌我，跟 selectTarget() 里同一条判据一致。
+      if (target && target.type !== 'dragon'
+          && !canTarget(tower._mapFaction, target._mapFaction || target.faction || null)) target = null;
       if (target) {
         const dx0 = target.pos.x - tower.pos.x, dy0 = target.pos.y - tower.pos.y;
         if (dx0 * dx0 + dy0 * dy0 > range * range) target = null; // 脱离范围重新索敌
