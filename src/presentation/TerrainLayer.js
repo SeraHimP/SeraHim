@@ -1,0 +1,355 @@
+/**
+ * TerrainLayer.js —— 地形层（墙壁）离屏烘焙
+ *
+ * 从 CanvasRenderer._terrainLayer 原样抽出（2.5D 迁移第 2 步）。
+ * 抽离目的：Three 渲染器要把同一张离屏画布做成 CanvasTexture 贴地面，
+ * 不能为此依赖 CanvasRenderer 实例。
+ *
+ * 【纪律】本次抽离是【纯搬运】：绘制逻辑、常量、缓存命中路径一律未改，
+ *   不许在这里顺手做任何"优化"。CanvasRenderer._terrainLayer 现在只是转调。
+ * 唯一的差别：缓存从"每个渲染器实例一份"变成模块级共享一份
+ *   （全程只有一个 CanvasRenderer 实例，行为等价；两个渲染器共用还省一份内存）。
+ *
+ * ==================== v33（Q8）：地形层（墙壁）预渲染 ====================
+ * 每张地图只烘焙一次（半分辨率离屏画布，绘制时放大）——运行时零开销。
+ * 视觉编码：深色丛林 = 墙（不可行走），亮色走廊 = 兵线路面，斜向河道为装饰，
+ * 走廊外沿一圈"墙缘"高光，读起来就是 LoL 小地图的结构。
+ */
+import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
+import { baseCircleCenter, isInBaseWallRing } from '../data/baseCircle.js';
+import { unpackBits } from '../data/navgrid.js';
+import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
+import { forestZoneCells } from '../data/mapValidate.js';
+
+const _terrainCache = new Map();
+
+/**
+ * v51.32：地图编辑器前置重构（阶段二，见 docs/MAPEDITOR-PATH-DEPLOYMENT-DESIGN.md
+ * §2 原则 6）——清掉某张地图缓存的离屏地形画布。
+ *
+ * 在此之前 `_terrainCache` 是【全程只增不减】的：ThreeRenderer.invalidateTerrain()
+ * 只置空 `_terrainMapId` 让渲染器那一层的"同图跳过"守卫失效，但 buildTerrainLayer()
+ * 自己这份缓存的 key（map.id 不变）从没变过，于是"渲染器以为在重建"实际拿到的还是
+ * 上一次烘焙的旧画布——这条路径目前唯一的调用者（河道可行走开关）之所以没暴露这个
+ * 坑，是因为那个开关只影响寻路/isWalkable，不影响 buildTerrainLayer 读的 grid.walk
+ * 视觉表现在那条路径上恰好没有变化。地图编辑器的地形笔刷会真的改 navgrid 的可走位，
+ * 每一笔都要求这份缓存跟着作废，否则画完地形游戏里看到的还是旧的。
+ *
+ * 两个 key（有无 '#nav' 后缀）一起删，不假设调用方知道当前地图是不是 navgrid 模式。
+ */
+export function invalidateTerrainCache(mapId) {
+  if (!mapId) return;
+  _terrainCache.delete(mapId);
+  _terrainCache.delete(mapId + '#nav');
+  // v55.1：挖空型地图的 key 带 '#cut'，原来漏删了；轮廓缓存同源，一起丢。
+  _terrainCache.delete(mapId + '#cut');
+  _terrainCache.delete(mapId + '#nav#cut');
+  invalidateMapOutline(mapId);
+}
+
+/**
+ * @param map        地图定义
+ * @param grid       WallLayer 的可走网格 { walk, nx, ny }（navgrid 地图才有意义）
+ * @param mapSystem  用于取河道强度场（riverFactor）；缺省则不画河
+ */
+/**
+ * 可选的"只用来画地面形状"的位图（`map.visualNavgrid`）→ 与 grid 同分辨率的 0/1 表。
+ *
+ * 为什么需要它：嚎哭深渊·冰封版把可走区域收到了石墙那条线上（"墙即碰撞边界"），
+ * 但用户要的画面是**墙站在桥面上**，墙外侧还留着一圈看得见、走不上去的桥沿
+ * （见 howling_abyss_frost.js 头注④）。地面底图本来逐格照抄可走网格，收边之后
+ * 桥面跟着一起缩了，墙看上去依旧贴在桥的最外沿——正是用户反馈"墙贴着桥的边缘
+ * 不好看"没被解决的原因。于是把"画多大"和"能走多远"拆成两份数据：地图声明
+ * `visualNavgrid` 就按它画地面，可走判定仍然只认 `map.navgrid`。
+ *
+ * 没有声明这个字段的地图（除冰封版外的所有图）返回 null，走原来的分支，逐位不变。
+ */
+function visualWalkOf(map, grid) {
+  const vg = map.visualNavgrid;
+  if (!vg || !vg.bits || !vg.n || !grid) return null;
+  const bits = unpackBits(vg.bits, vg.n);
+  if (!bits) return null;
+  const { nx, ny } = grid;
+  const { w: WW, h: WH } = map.world;
+  const out = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const gx = Math.floor((i + 0.5) / nx * vg.n), gy = Math.floor((j + 0.5) / ny * vg.n);
+      const inside = gx >= 0 && gy >= 0 && gx < vg.n && gy < vg.n;
+      out[j * nx + i] = (inside && bits[gy * vg.n + gx]) ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+export function buildTerrainLayer(map, grid = null, mapSystem = null) {
+  // Q4：navgrid 地图的底图改由【真实可走网格】生成，与走廊模型产出的底图不是一回事，
+  // 故缓存键要带上模式，切换时不会拿到上一版。
+  const navMode = !!(map.useNavgrid && grid && grid.walk);
+  const key = map.id + (navMode ? '#nav' : '') + (map.terrainEdge ? '#cut' : '');
+  let c = _terrainCache.get(key);
+  if (c) return c;
+  const { w: WW, h: WH } = map.world;
+  const S = 0.5; // 半分辨率烘焙（3552² 全尺寸约 50MB，砍到 1/4）
+  c = document.createElement('canvas');
+  c.width = Math.ceil(WW * S); c.height = Math.ceil(WH * S);
+  const g = c.getContext('2d');
+  g.scale(S, S);
+  const hw = map.walls?.corridorHalfWidth ?? 95;
+
+  // 2026-09-04：风格化地图（见 Config.stylizedPalettes 头注）——地面/走廊直接用
+  // 声明的纯色，不叠"稀疏亮斑"这层噪声纹理（实拍截图核对过：Thronefall 的地面
+  // 就是一片饱和纯色，没有可见的铺贴纹理）。只影响声明了 visualStyle:'stylized'
+  // 的地图，三张老地图这里的颜色/纹理逐位不变。
+  const stylized = map.visualStyle === 'stylized';
+  const SV = stylizedPaletteOf(map);
+
+  // 丛林底（= 墙）
+  g.fillStyle = stylized ? (SV.groundColor || '#151c26') : '#151c26';
+  g.fillRect(0, 0, WW, WH);
+  if (!stylized) {
+    // 丛林纹理：稀疏亮斑（廉价的"树丛"感）
+    g.fillStyle = 'rgba(74,110,87,0.10)';
+    let seed = 12345;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * WW, y = rnd() * WH, r = 14 + rnd() * 30;
+      g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill();
+    }
+  }
+
+  // 河道（装饰）：v34 起地图可声明 walls.river:false 关闭（嚎哭深渊是冰桥，没有河道）。
+  // Q5：不再画"整条对角线"，改为逐格采样 MapSystem.riverFactor —— 与水面/河床同一个场，
+  // 于是路面处自动没有河色（用户定稿：只有被三路切出来的那两段是河）。
+  const drawRiver = (riverAt) => {
+    if (map.walls?.river === false || !riverAt) return;
+    const STEP = 16;                                  // 世界单位；底图是半分辨率，16 已足够细
+    for (let y = 0; y < WH; y += STEP) {
+      for (let x = 0; x < WW; x += STEP) {
+        const a = riverAt(x + STEP / 2, y + STEP / 2);
+        if (a <= 0.01) continue;
+        g.fillStyle = `rgba(60,120,150,${(0.35 * a).toFixed(3)})`;
+        g.fillRect(x, y, STEP, STEP);
+      }
+    }
+  };
+  const riverAt = mapSystem ? ((x, y) => mapSystem.riverFactor(x, y)) : null;
+
+  // ============ Q4：navgrid 地图 —— 底图直接由真实可走网格生成 ============
+  // 此前底图是"沿兵线折线描三层粗线"画出来的走廊模型；而地形的真实形状早已换成 navgrid。
+  // 两者不重合，最外那层比走廊宽 14px 的亮边（'#43536a'）就在真实路面上留下一圈
+  // 【与地形无关的亮线】——正是用户圈出来的"原先的道路边缘标识线"。
+  // 现在底图与 navgrid 逐格一致，那圈亮线从源头消失，也不需要再叠加任何描边。
+  if (navMode) {
+    const { walk, nx, ny } = grid;
+    const cell = document.createElement('canvas');
+    cell.width = nx; cell.height = ny;
+    const cg = cell.getContext('2d');
+    const im = cg.createImageData(nx, ny);
+    // 2026-09-04：navMode 原来完全没读 stylized/调色板（现有缺口，见
+    // docs/MAP-DESIGN-howling-abyss-frost.md 第 4.3 节）——写死的 #2b3647/#151c26
+    // 走廊模型和 navgrid 地图共用同一对颜色，非风格化地图逐位不变；风格化地图
+    // 改用调色板的 corridorColor（可走）/groundColor（不可走），不再是这两个死值。
+    const hex2rgb = (h, fallback) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(h || '');
+      const v = m ? m[1] : fallback;
+      return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
+    };
+    const [corR, corG, corB] = stylized ? hex2rgb(SV.corridorColor, 'c9a06b') : [0x2b, 0x36, 0x47];
+    const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
+    // 画地面用的形状可以与"能不能走"分开（见 visualWalkOf 头注）；没声明就还是照抄可走网格。
+    const paint = visualWalkOf(map, grid) || walk;
+
+    // ==================== v58：走廊 / 野区二分（森林风格地图新增）====================
+    // 用户："召唤师峡谷是森林风格。"——LoL 原图里可走区域并不是一片同色：兵线走廊是
+    // 夯实的泥土路，走廊两侧的野区虽然也能走，但视觉上是草地。之前 navMode 这条分支
+    // 从 HA-frost 继承来的假设是"可走=路，不可走=景"，套到召唤师峡谷这种"野区本身
+    // 也能走"的地图上就会整张图变成同一个颜色，读不出"路"。
+    // 只有调色板声明了 jungleColor 才走这条分支（目前只有 forest palette），其余
+    // 风格化地图（含 HA-frost 的 frost 调色板）逐位不变——用 corridorColor 兜底，
+    // 与"没有 jungleColor"时完全一样。
+    // 判据：可走格离最近兵线折线的距离 ≤ 走廊半宽 → 路（corridorColor），否则 → 野区
+    // （jungleColor）。半宽复用 map.walls.corridorHalfWidth——navgrid 地图虽然不再用
+    // 它判定"能不能走"（那已经交给位图了），但它仍然准确描述"这条路视觉上有多宽"，
+    // 没必要再单独声明一个数字。
+    // v59：路/野区二分升级成森林深度四档（道路/林缘/普通森林/深林）——用户反馈
+    // "没有峡谷的空间结构，只有峡谷的颜色"：纯色块二分读不出层次，颜色要跟着
+    // 离兵线的距离逐档变化，才谈得上"越往深处越密越暗"。四档颜色都在 forest
+    // 调色板里声明（jungleColor=普通森林，新增 forestEdgeColor=林缘、
+    // forestDeepColor=深林），没声明 jungleColor 的老地图（HA-frost/demo）
+    // 逐位不变——仍然只有 corridorColor 一种可走色。
+    const [jngR, jngG, jngB] = stylized && SV.jungleColor ? hex2rgb(SV.jungleColor, '4c9a5b') : [corR, corG, corB];
+    const [edgR, edgG, edgB] = stylized && SV.forestEdgeColor ? hex2rgb(SV.forestEdgeColor, '6bab63') : [jngR, jngG, jngB];
+    const [dpR, dpG, dpB] = stylized && SV.forestDeepColor ? hex2rgb(SV.forestDeepColor, '2f6b3d') : [jngR, jngG, jngB];
+    const jungleActive = stylized && !!SV.jungleColor && Array.isArray(map.lanes) && map.lanes.length > 0;
+    // v59：分级算法（森林深度 0~3，见 forestZoneAt 头注）抽成了共享函数
+    // forestZoneCells（mapValidate.js）——BoundaryDecorLayer 的边界围墙、
+    // VegetationLayer 的植被密度/类型都要用同一份分级结果，不能这里算一套、
+    // 那边再算一套（否则地面颜色说深林、植被却按普通森林的密度长）。
+    const zoneAt = jungleActive ? forestZoneCells(map, paint, nx, ny) : null;
+    // v55：声明了 terrainEdge 的地图，**不可走格直接挖空**（alpha=0），
+    // 由 TerrainEdgeLayer 在更低的高度另铺一张深渊面 —— 陆地才读得出"有厚度"。
+    // 见 docs/MAP-DESIGN-howling-abyss-frost.md §8.2.3 的路线 B。
+    // ⚠️ 必须做成按地图声明开启，否则三张老地图会一起变透明。
+    // ⚠️ 材质那边要配 alphaTest（discard）而不是混合：discard 的深度写入是正确的，
+    //    SSAO / 描边的法线深度预渲染不会被半透明搞乱，也没有渲染排序问题。
+    const cutout = !!map.terrainEdge;
+    // 阵营底色：基地圈的蓝/红是敌我识别信息（材质合成里靠 CHROMA_KEEP 单独保留），
+    // 但只染色不改亮度 —— 用叠加半透明色而不是实心填充，免得又造出一圈新的亮度边界。
+    const tintBases = () => {
+      const tintBase = (cx, cy, r, color) => {
+        const gr2 = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+        gr2.addColorStop(0, color); gr2.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr2;
+        g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill();
+      };
+      // 阵营底色的圆心跟着基地圈走（原来写死在两个角上，扭曲丛林的基地不在角上）。
+      // 305/326 是相对角点的内缩偏移，改成沿"角点→基地圈心"同向内缩同样的量。
+      const bcB = baseCircleCenter(map, 'blue'), bcR = baseCircleCenter(map, 'red');
+      tintBase(bcB.x + 305, bcB.y - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
+      tintBase(bcR.x - 326, bcR.y + 305, WW * 0.30, 'rgba(224,71,63,0.20)');
+    };
+
+    // ============ v55.1：挖空型地图 —— 地面按**平滑轮廓**填，不再逐格填色 ============
+    // 用户反馈两条：「你新做的那个条在图上乱飘」「大陆的锯齿感太重」。实测下来是同一个
+    // 根因：同一条"陆地边界"在工程里存了三份，各自的量化粒度还不一样——
+    //   · 能不能走：navgrid 256 格 = 9.08 世界单位/格；
+    //   · 地面底图：下面那段逐格填色用的是 WallLayer 的 CELL=8 网格，从 256 格最近邻
+    //     重采样。9.08 与 8 频率不同，两次量化打出**拍频**，所以锯齿不只是台阶，
+    //     还带一层摩尔纹；
+    //   · 崖壁：navOutline 追边 → DP → Chaikin 的平滑折线。
+    // 平滑折线与 8 单位台阶最大偏离 23 世界单位，而崖壁块厚度只有 16 —— 沿轮廓密采样
+    // 2620 点，29.6% 落在被挖空的地方，也就是崖壁脚下根本没有地面 = "乱飘"。
+    //
+    // 修法不是调参数，是**取消另外两份**：地面直接填 mapOutline 那条折线，崖壁读同一条。
+    // 两者从此共用同一组顶点，物理上不可能再错开；矢量填充的边缘精度 ≈ 1 个底图像素
+    // ≈ 2 世界单位，锯齿一并消失。
+    // ⚠️ 只对声明了 terrainEdge 的地图走这条分支，三张老地图仍走下面的逐格路径，逐位不变。
+    const loops = cutout ? mapOutline(map) : null;
+    if (loops && loops.length) {
+      const tracePath = () => {
+        g.beginPath();
+        for (const lp of loops) {
+          const pts = lp.pts;
+          g.moveTo(pts[0][0], pts[0][1]);
+          for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+          g.closePath();
+        }
+      };
+      // 陆地以外一律 alpha=0：上面那层铺满画布的 groundColor 底要先清掉，
+      // 挖空区交给 TerrainEdgeLayer 在更低处铺的深渊面。
+      // even-odd 填充：外环与洞的绕向相反，用它就不必分辨哪条环是洞。
+      g.clearRect(0, 0, WW, WH);
+      g.fillStyle = stylized ? (SV.corridorColor || '#c9a06b') : '#2b3647';
+      tracePath();
+      g.fill('evenodd');
+      // 河道与阵营底色裁到陆地内。挖空区的残留 alpha 虽然低于 alphaTest 会被 discard，
+      // 但不要指望阈值兜底——直接裁干净，换个 alphaTest 值也不会翻车。
+      g.save();
+      tracePath();
+      g.clip('evenodd');
+      drawRiver(riverAt);
+      tintBases();
+      g.restore();
+      _terrainCache.set(key, c);
+      return c;
+    }
+
+    // v59.1：基地高地围墙那一圈的不可走格子——用户看截图指出："地面留下的深绿色
+    // 丑的要死的块……我粉色画圈的地方应该是高地的围墙（石墙）"。这圈格子原来
+    // 跟野区内部迷宫障碍物一样一律画成 gndColor（图外底色），BoundaryDecorLayer
+    // 摆的石柱只是稀疏的点缀，柱间空隙还是会露出这块底色——单独给这一圈不可走
+    // 格子换成石头色（跟围墙柱同一个 SV.rockColor），读成连续的石墙地基，
+    // 不是裸露的虚空。只在森林风格+有兵线的地图上判定，与其它 v59 特性同一个开关。
+    const [wallR, wallG, wallB] = stylized && SV.rockColor ? hex2rgb(SV.rockColor, '8f8879') : [gndR, gndG, gndB];
+    const cellW2 = WW / nx, cellH2 = WH / ny;
+    for (let k = 0; k < nx * ny; k++) {
+      const on = paint[k];
+      // v59：0=道路 1=林缘 2=普通森林 3=深林；未开森林分级时 zoneAt 为 null，
+      // 全部按老逻辑当"路"（zone 0），三张老地图与 demo_stylized_v1 逐位不变。
+      const zone = zoneAt ? zoneAt[k] : 0;
+      let r, gg, b;
+      if (zone === 1) { r = edgR; gg = edgG; b = edgB; }
+      else if (zone === 2) { r = jngR; gg = jngG; b = jngB; }
+      else if (zone === 3) { r = dpR; gg = dpG; b = dpB; }
+      else { r = corR; gg = corG; b = corB; }
+      let gr = gndR, gg2 = gndG, gb2 = gndB;
+      if (!on && jungleActive) {
+        const gx = k % nx, gy = (k / nx) | 0;
+        const wx = (gx + 0.5) * cellW2, wy = (gy + 0.5) * cellH2;
+        if (isInBaseWallRing(map, wx, wy)) { gr = wallR; gg2 = wallG; gb2 = wallB; }
+      }
+      im.data[k * 4]     = on ? r : gr;
+      im.data[k * 4 + 1] = on ? gg : gg2;
+      im.data[k * 4 + 2] = on ? b : gb2;
+      im.data[k * 4 + 3] = (cutout && !on) ? 0 : 255;
+    }
+    cg.putImageData(im, 0, 0);
+    g.imageSmoothingEnabled = false;                  // 最近邻：格边界与 navgrid 严格对齐
+    g.drawImage(cell, 0, 0, WW, WH);
+    g.imageSmoothingEnabled = true;
+    drawRiver(riverAt);
+    tintBases();
+    _terrainCache.set(key, c);
+    return c;
+  }
+
+  drawRiver(riverAt);
+
+  const strokeLanes = (width, color) => {
+    g.strokeStyle = color;
+    g.lineWidth = width;
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    for (const lane of map.lanes) {
+      g.beginPath();
+      lane.waypoints.forEach((wp, i) => i ? g.lineTo(wp.x, wp.y) : g.moveTo(wp.x, wp.y));
+      g.stroke();
+    }
+  };
+  const fillBase = (cx, cy, r, color) => {
+    g.fillStyle = color;
+    g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill();
+  };
+  // 基地区半径：与 MapSystem.getBaseCircleRadius 同一算法（此处离线重算，避免依赖注入时序）
+  const HIGHGROUND = new Set(['nexus_main', 'hq_tower', 'nexus_lane', 'base']);
+  const bSizes = CONFIG.buildingSizes || {};
+  const baseRFor = (faction, cx, cy) => {
+    if (map.baseCircleRadius) return map.baseCircleRadius; // v34 Q1：声明值优先（与 MapSystem 同口径）
+    let far = 0;
+    for (const b of map.buildings || []) {
+      if (b.faction !== faction || !HIGHGROUND.has(b.tier)) continue;
+      far = Math.max(far, Math.hypot(b.pos.x - cx, b.pos.y - cy) + (bSizes[b.tier] || bSizes.default || 28));
+    }
+    return far || WW * 0.37;
+  };
+  // v36（Q6）：开放内圈（baseOpenRadius）——圆内到这个半径才整片开放着色；
+  // 未声明时退回旧地图行为（= baseCircleRadius，即无收束段，整圆开放）。
+  const openRFor = (r) => map.baseOpenRadius || r;
+  const cB = baseCircleCenter(map, 'blue'), cR = baseCircleCenter(map, 'red');
+  const rBlue = baseRFor('blue', cB.x, cB.y), rRed = baseRFor('red', cR.x, cR.y);
+  const oBlue = openRFor(rBlue), oRed = openRFor(rRed);
+
+  // 墙缘（比走廊宽一圈的亮边）→ 走廊路面。基地区同理两层。
+  // 开放区改用 oBlue/oRed（收束段内圈）而不是 rBlue/rRed（外层完整基地圈半径）——
+  // 收束段（oBlue~rBlue 之间）不再被开放色覆盖，corridor 墙壁在那一圈保持可见，
+  // 高地塔（落在收束段内）的射程圈因此会真实穿过两侧墙壁。
+  if (stylized) {
+    // 风格化 demo：单色走廊 + 干净边界，不叠边缘高光/中心细线（那两层是"贴图感"，
+    // 参照截图里道路就是一条颜色差一档的干净色带）。
+    const roadColor = SV.corridorColor || '#c9a06b';
+    strokeLanes(hw * 2, roadColor);
+    fillBase(cB.x, cB.y, oBlue, roadColor); fillBase(cR.x, cR.y, oRed, roadColor);
+  } else {
+    strokeLanes(hw * 2 + 14, '#43536a');
+    fillBase(cB.x, cB.y, oBlue + 7, '#43536a'); fillBase(cR.x, cR.y, oRed + 7, '#43536a');
+    strokeLanes(hw * 2, '#2b3647');
+    fillBase(cB.x, cB.y, oBlue, '#2b3647'); fillBase(cR.x, cR.y, oRed, '#2b3647');
+    // 走廊中心细线（路感）
+    strokeLanes(3, 'rgba(246,201,74,0.10)');
+  }
+
+  // v36（Q6）：高地门槛线已删除（用户反馈突兀且蓝红不对称）。
+
+  _terrainCache.set(key, c);
+  return c;
+}

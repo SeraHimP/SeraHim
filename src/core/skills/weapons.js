@@ -1,0 +1,1242 @@
+import { CONFIG } from '../../data/Config.js';
+import { enemyUnitsInRadius } from '../../systems/FactionSystem.js';
+import { equipSkill } from '../skillParams.js';
+
+// ==================== 闪电杖的数值全部搬进 defaultParams（软编码）====================
+// 原来这几个是模块级 const（写死在源码里），编辑器改不了；而 weapon_lightning 的
+// defaultParams 里躺着 { damage, bounces, interval } 三个**根本没人读**的键 ——
+// 面板上摆着三个改了没反应的滑块。现在两边合一：面板列什么，代码就读什么。
+//
+// 充能时间保持 12s 基准不变（用户定稿："充能时间不要改，就用现在的"）：
+// 充能速度本就与攻速挂钩，攻速 4.0 的枢纽塔约 3 秒充满，再缩短基准等于取消充能。
+
+// ==================== 牧灵法阵幻兽：可继承的属性字段清单 ====================
+// 用户定稿"牧灵本身没有任何属性"——幻兽不该有一份独立于塔的作战数值基线，
+// 全部按 statPct 从塔的实时属性（含塔身上任何效果/龙魂加成）继承。覆盖面
+// 有意扩到塔模板里全部"作战相关"字段（不止最初的 HP/AD/AP/双抗5项），塔默认
+// 是0的（穿透/生命偷取/伤害放大等大多数塔默认都是0）幻兽自然也是0，塔如果
+// 吃到龙魂/效果把这些提上去了，幻兽按同一比例分到——不是重新挑一份"看起来
+// 重要"的子集，是"塔有的，幻兽都按比例有"。
+// moveSpeed/attackRange/baseAttackSpeed 等"能不能动/怎么打"的机制性字段不在
+// 这份清单里：塔本身是静止建筑（moveSpeed=0），幻兽如果也继承0就完全动不了，
+// 这些字段沿用 createMinion('melee', ...) 给的近战兵基线，不受这条铁律约束
+// （这条铁律管的是"作战数值强弱"，不是"这个兵种怎么行动"）。
+const PET_INHERITED_STAT_FIELDS = [
+  'maxHP', 'healthRegen', 'attackDamage', 'abilityPower', 'armor', 'magicResist',
+  'armorPenFlat', 'armorPenPercent', 'magicPenFlat', 'magicPenPercent',
+  'damageReduction', 'damageBlock', 'onHitDamage', 'onHitPercentDamage',
+  'damageConvertPct', 'lifeStealPct', 'damageAmpPct', 'allStatsPct', 'coreStatsPct',
+  'healShieldPowerPct', 'critChance', 'critDamagePct',
+];
+
+export const weapons = {
+  weapon_piercing: {
+    id: 'weapon_piercing',
+    applicableTypes: ['tower'],
+    name: '穿透型子弹',
+    icon: '🔷',
+    category: 'weapon',
+    // v36 重做（用户 Q1）：升温不再叠塔的"伤害增幅"（那会污染塔对所有目标的输出，
+    // 且有数值 bug）。改为【塔→特定目标】的独立伤害倍率：连续命中同一目标，
+    //   第1下 100%（原始）、第2下 130%、第3下 160%…每层 +30%，最多累进到某上限。
+    // 切换目标（含目标死亡）从头计。倍率在【开火时刻】结算进 hitInfo.preDamageMult，
+    // 命中时乘入——不进塔的属性系统。状态栏只显示"升温 N 层"（纯计数，无属性）。
+    //   穿透：30% 护甲穿透 + 30% 法术穿透（永久状态）；命中削目标 3 双抗最多 -12（原有）。
+    // v51.6 修复：这两条描述用户报了两个问题——① 两条"唯一被动"手写在同一行、
+    // 用"；"分隔，展示的地方（DetailModal 的 <pre>、悬浮预览）都是 pre-wrap，
+    // 换成真正的 '\n' 才会各占一行，和 core_tier_* 那批走 mergedDescription 的
+    // 换行方式统一。② 原文写"固定30%双穿"——"固定"和"30%"两个修饰语自相矛盾
+    // （armorPenPercent/magicPenPercent 本来就是百分比穿透，不是固定值穿透），
+    // "双穿"又是简写；onEquip 里实际挂的是 armorPenPercent+30 与 magicPenPercent+30
+    // 两条独立效果（见下方 onEquip），文案直接照实际效果分开写成两个百分比。
+    //
+    // ==================== Q3（本轮）：升温每层的倍率随法术强度变化 ====================
+    // 用户第一版原话"每层额外造成（20%+X%×法术强度）伤害"，我第一次理解成"额外开一笔
+    // 独立加成伤害"，被用户否掉并纠正："我说的是法术强度影响每层增伤的数值，按照我的来"
+    // ——法术强度影响的是【每层这个倍率台阶本身有多高】，不是另开一笔伤害：台阶 =
+    // (piercingHeatBasePct + piercingHeatApPct%×法术强度)%，替换掉原来写死的 30%，
+    // preDamageMult 机制本身不变，没有新增第二笔伤害（具体计算见 _perStackFraction）。
+    //
+    // 本轮返工：用户否掉了上面的口语化文案改写——"别耍小聪明，我说咋写就是咋写"，
+    // 改回用户原话的公式化表述："穿透型是每层额外造成（YY%=ZZ%+X%×法术强度）伤害
+    // （最多T层）"。这套记号里 YY 是【左边的动态结果】、右边是计算公式——YY 必须
+    // 替换成装备后算出来的真实百分比数字，不能在界面上打印字面的"YY"两个字符
+    // （用户后续报的"看不懂XX/YY是什么意思"就是这个问题，闪电杖那条同样踩过，
+    // 一并改正）。descTemplate 原本就在用 {val} 填 YY（唯一没改对的是 description
+    // 那份静态兜底还写着字面"YY%"），这里让 description 直接复用 descTemplate 的
+    // 文本，两处不再各写一份、也不会再有"一处改对一处忘了改"。
+    // Q3（本轮）：apCoefPct 20% → 15%（用户定稿新公式"20%+15%×法术强度"）。
+    get descTemplate() {
+      const W = CONFIG.tuning?.weapons || {};
+      const basePct = W.piercingHeatBasePct ?? 20;
+      const apCoefPct = W.piercingHeatApPct ?? 15;
+      const maxStacks = weapons.weapon_piercing.HEAT_MAX_STACKS ?? 4;
+      return `唯一被动——升温：连续攻击同一目标，每层额外造成（{val}%=${basePct}%+${apCoefPct}%×法术强度）伤害（最多${maxStacks}层），切换目标或目标死亡重置。\n唯一被动——穿透：+30%护甲穿透，+30%法术穿透。`;
+    },
+    get description() { return this.descTemplate; },
+    // 每层的倍率台阶（小数，0.30 = 30%）：基础值 + AP系数% × 法术强度，两个都是软编码，
+    // CombatSystem 的开火结算、这里的文案展示（computeCurrent/onDealtDamage 的升温效果）
+    // 三处共用同一个函数，不许各写一份——这正是屠戮那次"文案与结算必须同源"的教训。
+    _perStackFraction(atkStats) {
+      const W = CONFIG.tuning?.weapons || {};
+      const basePct = W.piercingHeatBasePct ?? 20;
+      const apCoefPct = W.piercingHeatApPct ?? 15;
+      return (basePct + (apCoefPct / 100) * (atkStats?.abilityPower || 0)) / 100;
+    },
+    // computeCurrent 现在填的是 descTemplate 里的 {val}=YY（每层这一台阶本身的百分比，
+    // 例：法强50时 = 20+20%×50 = 30），不再是"当前层数下的总倍率"——那个总倍率已经
+    // 不是这版文案要表达的东西了，没有别处依赖旧的返回值（仓库内搜过，只有这份
+    // descTemplate 用到它）。
+    computeCurrent: (entity, ctx) => {
+      const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const per = weapons.weapon_piercing._perStackFraction(atkStats);
+      return Math.round(per * 100);
+    },
+    HEAT_MAX_STACKS: 4,          // 最多 4 层，与旧上限一致
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = instance.state || {};
+      instance.state.heatTarget = null;   // 当前升温针对的目标 id
+      instance.state.heatStacks = 0;      // 已累积层数（第 N 下命中后 = N-1，因为第1下是原始）
+      for (const [key, label] of [['armorPenPercent', '护甲穿透'], ['magicPenPercent', '法术穿透']]) {
+        ctx.effectRegistry.apply(entityId, {
+          name: '穿透', icon: '🔷', kind: 'stat', statKey: key, flatValue: 30,
+          duration: Infinity, permanent: true,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `${label}+30%`,
+        }, 'weapon_piercing_' + entityId);
+      }
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      // 卸下武器：移除穿透与升温状态（v43 起不再有破甲 debuff）
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '穿透' || eff.blueprint.name === '升温') ctx.effectRegistry.remove(eff.id);
+      }
+    },
+    // procMode：'perAttack'——升温本该按"完整一次攻击"叠层，不该按分数攻击的
+    // 每一小份都叠。穿透型自己没有特殊攻击节奏（attackShare 恒为1），这里声明
+    // 只是为了语义正确、以防以后有人给它接上特殊攻击方式。
+    procMode: 'perAttack',
+    onDealtDamage: (attackerId, targetId, instance, ctx) => {
+      const target = ctx.entityContainer.get(targetId);
+      if (!target || !target.alive) return;
+
+      // ---- 升温（命中后叠层，供【下一次】对同一目标的攻击提升伤害） ----
+      // 注意：本次命中用的倍率已在 performAttack 开火时刻算好（读的是命中前的层数）；
+      // 这里在命中后 +1 层，作用于下一次。切换目标由 performAttack 侧重置（见 CombatSystem）。
+      instance.state = instance.state || { heatTarget: null, heatStacks: 0 };
+      const maxS = weapons.weapon_piercing.HEAT_MAX_STACKS;
+      if (instance.state.heatTarget === targetId) {
+        instance.state.heatStacks = Math.min(maxS, (instance.state.heatStacks || 0) + 1);
+      } else {
+        instance.state.heatTarget = targetId;
+        instance.state.heatStacks = 1; // 第一次命中该目标后 → 下一下是第2下
+      }
+      // 展示效果：纯计数，不含任何属性（statKey 用一个不存在于 stats 的 key，绝不影响数值）
+      const st = instance.state.heatStacks;
+      // Q3（本轮，返工版）：每层的倍率台阶现在随法术强度变化（见上方 _perStackFraction
+      // 的头注——用户纠正"法术强度影响每层增伤的数值"），展示文案跟着用同一个函数算，
+      // 不能再写死 30。
+      const attacker = ctx.entityContainer.get(attackerId);
+      const atkStats = attacker ? ctx.attrCalc.calc(attacker, ctx.effectRegistry.getEffects(attackerId)) : {};
+      const nextMultPct = Math.round((1 + st * weapons.weapon_piercing._perStackFraction(atkStats)) * 100);
+      // 展示效果：纯计数。用 alwaysShowStacks + initialStacks 让状态栏直接显示层数徽标，
+      // kind:'display' + 无 statKey → 绝不进属性合成管线（不影响任何数值）。
+      ctx.effectRegistry.apply(attackerId, {
+        name: '升温', icon: '🔥', kind: 'display',
+        duration: 6, stackable: true, maxStacks: maxS, stackPolicy: 'refresh',
+        alwaysShowStacks: true, uniquePassive: true,
+        descTemplate: `唯一被动——升温：对当前目标下次伤害倍率 ${nextMultPct}%（升温 ${st} 层）。`,
+        description: `升温 ${st} 层 → 下次 ${nextMultPct}% 伤害`,
+      }, 'weapon_piercing_heat', { initialStacks: st });
+
+      // ---- v43 Q10：破甲已删除 ----
+      // 用户："穿透型太强了……直接改为固定+30%双穿和原来的升温。剩下的都不要了。"
+      // 这里原本还会给目标叠一层"破甲"：命中削 3 点双抗、最多 4 层（-12/-12），持续 4 秒。
+      // 它与固定 30% 双穿是**乘上加**的关系（先按百分比削、再减固定值），
+      // 对低抗性的小兵等于把有效抗性直接打穿到 0 —— 这是穿透型过强的主要来源之一。
+      // 现在整条移除：穿透型 = 30% 双穿（永久） + 升温（连续命中同目标的伤害倍率），仅此两项。
+    },
+  },
+
+  weapon_lightning: {
+    // 单位统一用"百分数写百分数、秒写秒"，面板上直接可读。
+    defaultParams: {
+      chargeTimeAtAS1: 12,    // 攻速 1.0 时充满需要几秒（实际 = 本值 / 最终攻速）
+      tickPct: 20,            // 每跳伤害 = 攻击力 × 本值%
+      tickPerSec: 4,          // 每秒跳几次（独立于攻速）
+      // 攻击特效的每跳修正系数（现在叫 attackShare——见 CombatSystem._fireOnDealtDamage
+      // 的说明：这个值同时决定"这一下算几分之几次标准攻击"）。
+      // 留空(null)时自动取 1/tickPerSec；显式填一个数可以让攻击特效相对普通攻击
+      // 更强/更弱（软编码，编辑器里可改）。
+      attackShare: null,
+      maxMult: 180,           // 满充能伤害倍率（%）
+      // v43 Q10：90 → 67（用户定稿："闪电杖改为满充能无视67%防御，剩下不改"）。
+      // 与穿透型的削弱同批，避免穿透被砍之后闪电杖独大。
+      maxPenPct: 67,          // 满充能无视防御（%）——只无视【保护性】防御，见 CombatSystem
+      bonusVsShieldPct: 7,    // 目标持盾时的额外伤害（%）
+      slowPct: 15,            // 麻痹：移速 −%
+      ampDownPct: 15,         // 麻痹：伤害增幅 −%
+      asDownPct: 20,          // 麻痹：攻速 −%
+      grievousPct: 40,        // 重伤：满充能时减少目标治疗与护盾强度 −%
+    },
+    id: 'weapon_lightning',
+    applicableTypes: ['tower'],
+    name: '闪电杖 (魔法)',
+    icon: '⚡',
+    category: 'weapon',
+    // 本轮返工：用户报"你在游戏里用XX/YY代替是什么意思，我根本看不懂"——排查发现
+    // 上一版虽然写对了公式结构，但 descTemplate 里的 "XX"/"YY" 是字面写死的两个
+    // 字母，从没接到 computeCurrent 上，玩家在游戏里看到的就是原原本本的"XX"两个
+    // 字符，当然看不懂。用户原话讲清楚了这套记号的含义："左面是动态结果，右面是
+    // 计算公式"——即"（{val}=公式）"这个记号里，左边的 {val} 必须替换成【装备后
+    // 算出来的真实数字】，不是字母本身。这里改用 {xx} 占位符（renderSkillDescription
+    // 支持 computeCurrent 返回 {key:value} 对象填充任意命名的占位符，不止 {val}
+    // 一个）。
+    // ==================== Q5：转化率与转走量解耦后，XX/YY 不再是同一个数 ====================
+    // lightningApConvertPct 从占位 100% 调到 200%（用户定稿"枢纽塔太弱，攻击力可以
+    // 多倍转化为AP"）之后，"转走多少攻击力"（恒为转化前的全部攻击力，归0）与
+    // "换到多少法强"（= 转走量 × 转化率，可以是转走量的倍数）不再相等，原来共用
+    // 一个 {xx} 会让两处显示同一个数字、其中一处是错的。改成 {xx}（转走的攻击力）
+    // 和 {yy}（换到的法术强度）两个独立占位符，AttributeCalculator 同步暴露
+    // stats._lightningApGained 供这里读取（见其头注）。
+    // 另外用户纠正了每跳伤害那句的表述："（72=20%法术强度×充能倍率）"读着别扭，
+    // 改成"每次造成（72=20%×法术强度×充能倍率）魔法伤害"，在"20%"和"法术强度"
+    // 之间显式补一个"×"。
+    // description（无实体上下文时的静态兜底）与 descTemplate 用同一份模板文本——
+    // 跟屠戮的 _text() 是同一个道理：静态展示时 {xx}/{yy}/{val} 就原样是占位符文本，
+    // 不会被误当成三个真实存在的字母变量。
+    get descTemplate() {
+      const W = CONFIG.tuning?.weapons || {};
+      const pct = W.lightningApConvertPct ?? 100;
+      return `唯一被动——闪电杖：将（{xx}=攻击力×100%）攻击力转化为（{yy}=攻击力×${pct}%）法术强度；`
+        + `每秒固定4次魔法伤害，每次造成（{val}=20%×法术强度×充能倍率）魔法伤害，完全独立于攻速；`
+        + `充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、`
+        + `无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；`
+        + `被动对当前目标-15%移速/-15%伤害增幅/-20%攻速（唯一被动）；目标有护盾额外+7%伤害。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const s = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const inst = (entity._skillInstances || []).find(i => i.skillId === 'weapon_lightning');
+      const P = weapons.weapon_lightning._p(inst);
+      const charge = inst?.state?.charge || 0;
+      // 与 _doTick 结算用的是同一个 chargeMultiplier 公式——文案与结算必须同源，
+      // 不能各写一份，否则以后改了充能曲线只会有一边跟着变（本仓库栽过这个坑）。
+      const chargeMultiplier = 1 + charge * (P.maxMult - 1);
+      return {
+        xx: Math.round(s._lightningDrainedAD || 0),
+        yy: Math.round(s._lightningApGained || 0),
+        val: Math.round(P.tickPct * (s.abilityPower || 0) * chargeMultiplier),
+      };
+    },
+    specialAttack: true,
+    effects: [],
+    // 参数取值：实例覆写（全局/地图级）→ 出厂值。所有数值都从这里过一遍，
+    // 源码里不再出现第二份字面量。
+    _p(instance) {
+      const d = weapons.weapon_lightning.defaultParams;
+      const o = (instance && instance._params) || {};
+      const g = (k) => (typeof o[k] === 'number' ? o[k] : d[k]);
+      return {
+        chargeTime: Math.max(0.01, g('chargeTimeAtAS1')),
+        tickPct: g('tickPct') / 100,
+        tickInterval: 1 / Math.max(0.01, g('tickPerSec')),
+        maxMult: g('maxMult') / 100,
+        maxPen: g('maxPenPct') / 100,
+        bonusVsShieldPct: g('bonusVsShieldPct'),
+        slowPct: g('slowPct'), ampDownPct: g('ampDownPct'), asDownPct: g('asDownPct'),
+        grievousPct: g('grievousPct'),
+      };
+    },
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = instance.state || {};
+      instance.state.charge = 0;
+      instance.state.tickTimer = 0;
+      instance.state.lastTargetId = null;
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (typeof instance.state?.charge !== 'number') instance.state = { ...(instance.state || {}), charge: 0, tickTimer: 0, lastTargetId: null };
+
+      const targetId = entity.targetId;
+      const target = targetId ? ctx.entityContainer.get(targetId) : null;
+
+      // Q7：全塔停火——闪电杖伤害独立于普攻循环，需单独设门（充能保留，仅停止输出）
+      if (window.__towersAttackOff) return;
+      if (!target || !target.alive) {
+        // 无有效目标：充能归零，计时器清空，充能状态即刻脱落
+        instance.state.charge = 0;
+        instance.state.tickTimer = 0;
+        instance.state.lastTargetId = null;
+        const chEff = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === '闪电充能');
+        if (chEff) chEff.remainingTime = 0.01;
+        return;
+      }
+
+      // 切换目标：充能归零重新开始
+      if (instance.state.lastTargetId !== targetId) {
+        instance.state.charge = 0;
+        instance.state.lastTargetId = targetId;
+      }
+
+      // v33（Q14）：锁定前摇——CombatSystem 给塔设置的 _lockUntil 之前既不充能也不放电
+      //（普攻武器在 performAttack 处被同一时间戳拦截；闪电杖伤害独立于普攻循环，须单独设门）
+      if ((window.gameTime || 0) < (entity._lockUntil || 0)) return;
+
+      const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId));
+
+      // 充能速度：攻速越快充能越快。基准：攻速 1.0 → 12s 充满（用户定稿：满充时间维持 12s 保平衡，
+      // 高攻速塔自然快——枢纽塔攻速 4.0 时约 3s 充满）。
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(atkStats);   // v43 Q7：走属性表，不读原始模板值
+      // Q1 BUG 修复：原式 asRatio = finalAS / baseAS 把【模板攻速约掉了】——
+      // 分子分母同时随模板攻速变化，比值恒为 1。实测：塔攻速 0.833 与 4.0 的满充时间
+      // 一模一样（都是 10.9s），"攻速影响充能"完全没生效。
+      // 正确：充能速率正比于【最终攻速的绝对值】，以攻速 1.0 为基准。
+      //   满充时间 = CHARGE_TIME_AT_AS1 / finalAS
+      //   → 攻速 1.0：12s；攻速 2.0：6s；攻速 4.0：3s。攻速加成同样直接生效。
+      const P = weapons.weapon_lightning._p(instance);
+      instance.state.charge = Math.min(1, (instance.state.charge || 0) + (dt * finalAS) / P.chargeTime);
+
+      // EQ4：充能以【状态】形式展示——挂一个"闪电充能"效果，用效果栏自带的倒计时环当进度条
+      // （环的已消耗比例 = 充能比例），描述实时显示百分比；掉目标后停止刷新即自动脱落。
+      instance.state._fxTimer = (instance.state._fxTimer || 0) + dt;
+      if (instance.state._fxTimer >= 0.1) {
+        instance.state._fxTimer = 0;
+        const ch = instance.state.charge;
+        // Q1 修复：进度环跳动 = 效果系统每帧递减 remainingTime 与我们 0.1s 一次的回写打架。
+        // duration 从 1 放大到 100：两次回写之间的自然递减只占环的 0.1%，肉眼不可见；
+        // 回写仍是权威值（环 = 充能比例），根治跳动。
+        ctx.effectRegistry.apply(entityId, {
+          name: '闪电充能', icon: '⚡', kind: 'custom', duration: 100,
+          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          customData: { charge: ch },
+          description: `充能 ${(ch * 100).toFixed(0)}%`,
+        }, 'lightning_charge_' + entityId);
+        const chEff = ctx.effectRegistry.getEffects(entityId).find(x => x.blueprint.name === '闪电充能');
+        if (chEff) {
+          chEff.remainingTime = Math.max((1 - ch) * 100, 0.5); // 环的已消耗部分 = 充能比例
+          chEff.blueprint.description = `充能 ${(ch * 100).toFixed(0)}%（满充能：${P.maxMult.toFixed(1)}倍伤害、${(P.maxPen * 100) | 0}%无视防御、施加${P.grievousPct}%重伤）`;
+        }
+      }
+
+      // 固定 4 次/秒 tick（伤害结算），完全独立于攻速
+      instance.state.tickTimer = (instance.state.tickTimer || 0) + dt;
+      const tickInterval = P.tickInterval;
+      let safety = 0;
+      while (instance.state.tickTimer >= tickInterval && safety < 8) {
+        instance.state.tickTimer -= tickInterval;
+        safety++;
+        weapons.weapon_lightning._doTick(entity, target, instance, ctx);
+      }
+
+      // 每帧刷新光束端点（平滑跟随移动的塔/目标，不受 0.25s tick 间隔影响）
+      // v36（Q2）：光束颜色 = 塔阵营色；目标死亡时不再刷新 → 由 ProjectileSystem
+      // 的 ttl 让最后一段轨迹残留淡出（fadeOut 标记触发淡出渲染）。
+      if (ctx.combat && ctx.combat.projectiles && entity.pos && target.pos) {
+        // v39（Q8）：切换目标时立刻清掉旧光束——否则旧那条会留在原地走完 0.35s 淡出，
+        // 视觉上是"指着空气的残影"。目标【死亡】时不走这里（无新目标），残留淡出保留。
+        if (instance.state.beamTargetId !== target.id) {
+          ctx.combat.projectiles.clearBeam?.(entity.id);
+          instance.state.beamTargetId = target.id;
+        }
+        const fac = entity._mapFaction;
+        const beamColor = fac === 'blue' ? '#5b9bd5' : fac === 'red' ? '#e0473f' : '#f1c40f';
+        ctx.combat.projectiles.fireBeam({
+          attackerId: entity.id,
+          startX: entity.pos.x, startY: entity.pos.y,
+          endX: target.pos.x, endY: target.pos.y,
+          charge: instance.state.charge || 0, life: 0.4, color: beamColor, targetId: target.id,
+        });
+      }
+    },
+    // 独立的伤害结算逻辑，不经过普通攻击（performAttack）
+    _doTick(entity, target, instance, ctx) {
+      if (!entity.alive || !target.alive) return;
+      entity._inCombat = true;
+      entity._combatTimer = 4;
+
+      const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const charge = instance.state.charge || 0;
+      const P = weapons.weapon_lightning._p(instance);
+      // 每跳 tickPct × 充能倍率（1.0 ~ maxMult）
+      const chargeMultiplier = 1 + charge * (P.maxMult - 1);
+      // Q3（本轮）：基数从 attackDamage 改成 abilityPower——闪电杖装备后攻击力已经
+      // 被 AttributeCalculator 转化成法术强度（"相当于攻击力归0"，见那边的注释），
+      // 这里跟着换成读转化后的法强，跳数/充能节奏（tickPerSec、chargeTimeAtAS1 等）
+      // 一律不改，用户原话"攻击方式不要改"。
+      const tickDamage = P.tickPct * (atkStats.abilityPower || 0) * chargeMultiplier;
+
+      if (ctx.combat && typeof ctx.combat.performAttackDirect === 'function') {
+        // 无视防御随充能【连续】增长至 maxPen（v43 定稿 67%，原 90%）；伤害类型固定魔法。
+        // ⚠️ "无视防御"只无视【保护性】的那部分：目标双抗/减伤/格挡若是负值，
+        // 那是给攻击方的增伤，不能被一起抹掉 —— 这条在 CombatSystem 里实现，
+        // 见 performAttackDirect 里 `keepAmp` 那段（用户指出的坑）。
+        // v45：攻击特效按"每跳 × attackShare"修正（用户定稿）。
+        // 默认 0.25 = 1 / tickPerSec：4 跳合起来正好等于一个 1.0 攻速单位打一下。
+        // 写成 `1 / tickPerSec` 而不是写死 0.25 —— 以后谁调了跳数，修正系数自动跟上；
+        // 写死的话改跳数就会**静默**把攻击特效放大或缩小，而且没人会想到来改这里。
+        // applyOnHitBonus:true —— 闪电杖是目前唯一需要"攻击特效数值部分按份额并入"
+        // 的调用方（溅射/DOT/龙魂等都不该带，见 CombatSystem.performAttackDirect
+        // 里 applyOnHitBonus 那段说明）。attackShare 同时决定被动判定的节奏，
+        // 两件事分开在 CombatSystem 里处理，这里只管传值，不用关心内部怎么拆。
+        ctx.combat.performAttackDirect(entity.id, target.id, tickDamage, 'magic', {
+          ignoreDefenseRatio: charge * P.maxPen,
+          bonusVsShieldPct: P.bonusVsShieldPct,
+          attackShare: P.attackShare ?? (1 / Math.max(1, P.tickPerSec || 4)),
+          applyOnHitBonus: true,
+          // v51：闪电杖是【武器】——这是普攻，只是拆成了每秒 4 跳，不该吃技能增幅/技能暴击。
+          basicAttack: true,
+          // bug 修复：闪电杖打人/挨打不涨法力——这里补上 grantsMana（见
+          // CombatSystem.performAttackDirect 里那段说明，为什么不能直接用 basicAttack）。
+          grantsMana: true,
+        });
+        // （v35：满充闪电链弹射已按方案B删除——纯单体，无 AOE）
+      }
+
+      // ==================== 重伤（满充能才施加）====================
+      // 用户定稿："改为满充无视90%防御并且对攻击目标施加40%重伤
+      //（状态：减少目标40%治疗与护盾强度）" + "把重伤改成满充能后才会施加"。
+      // 走光环机制（aura:true）与麻痹同规格：照射期间常驻、停照 0.6s 自动脱落，
+      // 于是"切目标 → 充能归零 → 重伤自然掉"不需要额外的清理代码。
+      // 治疗与护盾强度是【被治疗方】的属性（见 core/healing.js 头注），所以减它
+      // 能压住这个目标身上【所有】来源的回血与护盾，包括别人给他的。
+      if (charge >= 1 && P.grievousPct > 0) {
+        ctx.effectRegistry.apply(target.id, {
+          name: '重伤', icon: '💔', kind: 'stat', statKey: 'healShieldPowerPct',
+          flatValue: -P.grievousPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+          descTemplate: `唯一被动——重伤：治疗与护盾强度-${P.grievousPct}%。`,
+          description: `治疗与护盾强度-${P.grievousPct}%`,
+        }, 'weapon_lightning_grievous');
+      }
+
+      // 被动：减速 / 减伤害增幅 / 减攻速——唯一被动，多个闪电杖塔打同一目标只生效一份。
+      // v33（Q12）：走【光环机制】（aura:true）——照射期间常驻显示（无倒计时环反复重置的闪烁），
+      // 停止照射后由 EffectRegistry 的光环宽限期（0.6s）自动脱落。
+      ctx.effectRegistry.apply(target.id, {
+        name: '闪电麻痹', icon: '⚡', kind: 'stat', statKey: 'moveSpeed',
+        flatValue: -P.slowPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+        descTemplate: `唯一被动——闪电麻痹：移速-${P.slowPct}%。`, description: `移速-${P.slowPct}%`,
+      }, 'weapon_lightning_slow');
+      ctx.effectRegistry.apply(target.id, {
+        name: '闪电麻痹', icon: '⚡', kind: 'stat', statKey: 'damageAmpPct',
+        flatValue: -P.ampDownPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+        descTemplate: `唯一被动——闪电麻痹：伤害增幅-${P.ampDownPct}%。`, description: `伤害增幅-${P.ampDownPct}%`,
+      }, 'weapon_lightning_amp');
+      ctx.effectRegistry.apply(target.id, {
+        name: '闪电麻痹', icon: '⚡', kind: 'stat', statKey: 'bonusAttackSpeedPct',
+        flatValue: -P.asDownPct, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+        descTemplate: `唯一被动——闪电麻痹：攻速-${P.asDownPct}%。`, description: `攻速-${P.asDownPct}%`,
+      }, 'weapon_lightning_as');
+    },
+  },
+
+  weapon_explosive: {
+    // v51.30：平衡横向对照实测（tower_sweep_2026-09-24）——以穿透型（54.97分）为
+    // 基准，爆炸型均存活40.55分，偏低约26%，需要加强。
+    //
+    // 加强之前先修一个既有的软编码债：defaultParams 原来写的
+    // { splashDmg: 80, radius: 50 } 从来没被下面的 onEquip/onUnequip 读取过——
+    // 攻击力惩罚是写死的 `* 0.8`，溅射半径则完全由 CombatSystem._applyExplosionAt
+    // 的共享兜底值（`radiusOverride || 75`）决定，跟这份 defaultParams 里的两个数字
+    // 毫无关系，改它们什么都不会发生。这违反了 CLAUDE.md 铁律2——现在把攻击力
+    // 惩罚改名 attackDamagePct 并真正接进 onEquip/onUnequip；半径改叫
+    // radius，通过 CombatSystem 在命中时查这把武器实例的 _params.radius 显式传给
+    // _applyExplosion（不再依赖共享兜底值——那个 75 仍然是攻城车/巨龙等其它溅射
+    // 来源的默认值，不受这次改动影响，见 CombatSystem.js 对应改动处的注释）。
+    //
+    // 加强本身：attackDamagePct 80→90（攻击力惩罚从-20%收窄到-10%）；
+    // radius 从共享默认的75→90（给爆炸型自己更大的溅射范围，命中密集来袭的
+    // 小兵群时能多炸中几个，这是它跟单体武器拉开差距的核心机制，之前一直卡在
+    // 别的武器共用的默认值上，没有真正体现"爆炸型该比别人炸得更广"这条设计意图）。
+    defaultParams: {
+      attackDamagePct: 90,   // 装备后攻击力变为模板值的这个百分比（原写死80）
+      radius: 90,            // 命中点的溅射半径（原来跟其它溅射来源共享75的兜底值）
+    },
+    id: 'weapon_explosive',
+    applicableTypes: ['tower'],
+    name: '爆炸型子弹',
+    icon: '💥',
+    category: 'weapon',
+    get description() { return weapons.weapon_explosive.descTemplate; },
+    get descTemplate() {
+      const p = weapons.weapon_explosive.defaultParams;
+      return `唯一被动——爆炸：攻击力${p.attackDamagePct - 100}%，命中造成半径${p.radius}的溅射伤害（中心60%，边缘5%指数衰减）。`;
+    },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      const p = instance._params || weapons.weapon_explosive.defaultParams;
+      if (entity) {
+        entity.baseStats.attackDamage = CONFIG.templates.tower.attackDamage * ((p.attackDamagePct ?? 90) / 100);
+      }
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (entity) {
+        entity.baseStats.attackDamage = CONFIG.templates.tower.attackDamage;
+      }
+    },
+  },
+
+  // （原 weapon_sniper「狙击型」已按用户定稿删除：攻速-33%、伤害随距离 ×0.6~×1.6、
+  //   命中 0.5s 眩晕。整块删掉而不是留着置灰 —— 留着编辑器里就会有人选，
+  //   选了之后所有关于它的平衡结论都得重新算一遍。）
+
+  weapon_corrosion: {
+    // v51.30：平衡横向对照实测（tower_sweep_2026-09-24）——以穿透型（54.97分）为
+    // 基准，腐蚀型均存活69.37分，全场最扛揍，偏高约26%，需要削弱。
+    //
+    // 削弱之前先修一个既有的软编码债：defaultParams 原来写的
+    // { tickDamage: 5, tickInterval: 1, maxStacks: 5 } 从来没有被 onFrame 读取过——
+    // 实际的每层伤害（攻击力1%/秒）、叠层间隔（1/攻速）、三档上限（中毒50/减速5/
+    // 减攻速30）全部是写死在 onFrame 里的字面量，跟 defaultParams 完全是两套数字、
+    // 改 defaultParams 什么都不会发生。这违反了 CLAUDE.md 铁律2"所有数值都必须
+    // 软编码"——现在把 onFrame 里的字面量换成读 instance._params（缺省回落到
+    // defaultParams），三处（伤害结算/文案展示）同源，跟这个文件里其它武器的既有
+    // 写法（barrage/nova/shepherd 那套 `const p = instance._params || xxx.defaultParams`）
+    // 保持一致，编辑器/CONFIG.skillOverrides 才能真正改动它。
+    //
+    // 削弱本身：perStackAdPct 1.0%→0.85%（两条中毒都读这个值，等于给腐蚀的持续
+    // 伤害整体打了个八五折）；atkSpeedDownMaxStacks 30→24（减攻速上限 75%→60%，
+    // 这条本身是"瘫痪敌方输出"的防御乘数，此前的75%上限过于夸张）。减速上限
+    // （35%/5层）与叠层节奏（随攻速）未动——这两项不是数据里体现出的主要优势
+    // 来源，机制形状不改，只调削弱要用的两个杠杆。
+    defaultParams: {
+      perStackAdPct: 0.85,        // 每层每秒 = 攻击力 × 这个百分比（两种中毒共用）
+      poisonMaxStacks: 50,        // 中毒最多层数
+      slowPctPerStack: 7,         // 减速每层百分比
+      slowMaxStacks: 5,           // 减速最多层数（上限 = 每层% × 本值 = 35%）
+      atkSpeedDownPctPerStack: 2.5, // 减攻速每层百分比
+      atkSpeedDownMaxStacks: 24,  // 减攻速最多层数（上限 = 每层% × 本值 = 60%）
+    },
+    id: 'weapon_corrosion',
+    applicableTypes: ['tower'],
+    name: '腐蚀型',
+    icon: '🌿',
+    color: '#7bc96f',
+    category: 'weapon',
+    attackType: 'magic', // 可选伤害类型（默认魔法），另50%固定为真实
+    get description() { return weapons.weapon_corrosion.descTemplate; },
+    get descTemplate() {
+      const p = weapons.weapon_corrosion.defaultParams;
+      return `唯一被动——腐蚀：持续对射程内所有敌人叠加两种中毒（可选类型50%+真实50%，各每层攻击力${p.perStackAdPct}%/秒，最多${p.poisonMaxStacks}层）；`
+        + `叠层速度随攻速；额外施加减速（每层${p.slowPctPerStack}%，上限${p.slowPctPerStack * p.slowMaxStacks}%）与减攻速（每层${p.atkSpeedDownPctPerStack}%，上限${p.atkSpeedDownPctPerStack * p.atkSpeedDownMaxStacks}%）。`;
+    },
+    specialAttack: true,
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = instance.state || {};
+      instance.state.timer = 0;
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true };
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      // v51.20：`instance.state || (instance.state = { timer: 0 })` 是危险写法——
+      // state 若已经是真值空对象 `{}`（equipSkill 建实例时的初始值），`||` 不会走到
+      // 右边，st.timer 是 undefined，`st.timer += dt` 会算出 NaN，节流形同虚设
+      // （同 minionPassives.js passive_totem_mend 头注踩过的坑）。这里虽然有自己的
+      // onEquip 兜底真的初始化过 timer，不会实际触发，但换成与本仓库既有正确写法
+      // 一致的判据，防的是"以后有人绕开 equipSkill 建实例"这种以后才会踩的坑。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_corrosion.defaultParams;
+
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      // 叠层速度基于攻速：每秒叠 (攻速) 层
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(stats);   // v43 Q7：走属性表，不读原始模板值
+      st.timer += dt;
+      const interval = 1 / Math.max(0.1, finalAS); // 按攻速决定叠层间隔
+      if (st.timer < interval) return;
+      st.timer -= interval;
+
+      const range = stats.attackRange || 250;
+      // v49：改走 enemyUnitsInRadius —— 原来这行直接用 findInRadius 的结果，
+      // 既不认阵营（自己人也中毒）、白名单里又漏了 'ram'（攻城车对腐蚀免疫）。
+      // 用户同时报了这两个症状，它们是同一行代码造成的。详见该函数的头注。
+      // v59：漏了 includeBuildings——enemyUnitsInRadius 默认不返回敌方塔，导致腐蚀
+      // 武器打不到敌方防御塔。用户原话："所有不同类型的武器对敌对单位都是可以
+      // 攻击的"，塔也是敌对单位，理应可选中。
+      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range, { includeBuildings: true });
+      if (enemies.length > 0) { entity._inCombat = true; entity._combatTimer = 4; }
+
+      const perStackAdPct = p.perStackAdPct ?? 1;
+      const perStackDmg = Math.max(0.5, (stats.attackDamage || 0) * (perStackAdPct / 100)); // 每层每秒 = 攻击力 × perStackAdPct%
+      const chosenType = stats.attackType || 'magic'; // 可选的那 50% 伤害类型
+      const poisonMaxStacks = p.poisonMaxStacks ?? 50;
+      const slowPctPerStack = p.slowPctPerStack ?? 7, slowMaxStacks = p.slowMaxStacks ?? 5;
+      const asDownPctPerStack = p.atkSpeedDownPctPerStack ?? 2.5, asDownMaxStacks = p.atkSpeedDownMaxStacks ?? 30;
+
+      for (const enemy of enemies) {
+        if (!enemy.alive) continue;
+
+        // 中毒A：可选伤害类型（默认魔法），最多 poisonMaxStacks 层
+        // v51：basicAttack:true——腐蚀是【武器】，这是普攻的一部分（只是拆成了 DOT 结算），
+        // 不该吃技能增幅/技能暴击。见 BuffSystem 里对这个字段的转发。
+        ctx.effectRegistry.apply(enemy.id, {
+          name: '腐蚀·毒素', icon: '🧪', kind: 'dot', color: '#7bc96f', type: 'debuff',
+          damageType: chosenType, basicAttack: true,
+          flatValue: perStackDmg, perStackFlat: perStackDmg,
+          tickInterval: 1, duration: 5,
+          stackable: true, maxStacks: poisonMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·毒素：每秒（{val}=攻击力${perStackAdPct}%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多${poisonMaxStacks}层。`,
+          description: `毒素（{stacks}/${poisonMaxStacks}层）`,
+        }, 'weapon_corrosion_poisonA', { casterId: entityId });
+
+        // 中毒B：固定真实伤害，最多 poisonMaxStacks 层
+        ctx.effectRegistry.apply(enemy.id, {
+          name: '腐蚀·剧毒', icon: '☠️', kind: 'dot', color: '#8e6b2a', type: 'debuff',
+          damageType: 'true', basicAttack: true,
+          flatValue: perStackDmg, perStackFlat: perStackDmg,
+          tickInterval: 1, duration: 5,
+          stackable: true, maxStacks: poisonMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·剧毒：每秒（{val}=攻击力${perStackAdPct}%×层数）真实伤害，最多${poisonMaxStacks}层。`,
+          description: `剧毒（{stacks}/${poisonMaxStacks}层）`,
+        }, 'weapon_corrosion_poisonB', { casterId: entityId });
+
+        // 减速（每层 slowPctPerStack%，上限 slowPctPerStack×slowMaxStacks%）—— 独立效果
+        ctx.effectRegistry.apply(enemy.id, {
+          name: '腐蚀·迟缓', icon: '🐌', kind: 'stat', color: '#7bc96f', type: 'debuff',
+          statKey: 'moveSpeed', percentValue: -slowPctPerStack, perStackPercent: -slowPctPerStack,
+          duration: 5, stackable: true, maxStacks: slowMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·迟缓：移速降低（{val}%=-${slowPctPerStack}%×层数），上限-${slowPctPerStack * slowMaxStacks}%。`,
+          description: `减速（{stacks}/${slowMaxStacks}层）`,
+        }, 'weapon_corrosion_slow');
+
+        // 减攻速（每层 atkSpeedDownPctPerStack%，上限对应值）—— 独立效果，负值不受收益率影响
+        ctx.effectRegistry.apply(enemy.id, {
+          name: '腐蚀·衰弱', icon: '🌿', kind: 'stat', color: '#7bc96f', type: 'debuff',
+          statKey: 'bonusAttackSpeedPct', flatValue: -asDownPctPerStack, perStackFlat: -asDownPctPerStack,
+          duration: 5, stackable: true, maxStacks: asDownMaxStacks, stackPolicy: 'stack', uniquePassive: true,
+          descTemplate: `唯一被动——腐蚀·衰弱：攻速降低（{val}%=-${asDownPctPerStack}%×层数），上限-${asDownPctPerStack * asDownMaxStacks}%。`,
+          description: `衰弱（{stacks}/${asDownMaxStacks}层）`,
+        }, 'weapon_corrosion_atkslow');
+      }
+    },
+  },
+
+  // ==================== Q5：连珠炮（原临时名"狂潮塔/机枪塔"）====================
+  // 用户定稿的三个机制，全部复用现有既有技术，逐条对应：
+  //   ① 攻击只造成55%伤害，攻击特效按33%效率结算——`onBeforeAttack` 返回
+  //      `preDamageMult`+`attackShare`（后者是这次改动新加的通用能力，见
+  //      CombatSystem.performAttack 头注"Q5：狂潮塔用得到"那一段——普攻路径以前
+  //      恒定 attackShare=1，现在武器能像 performAttackDirect 的调用方一样覆写它）。
+  //   ② 总攻速+100%，不走收益率——`onEquip` 直接给 baseAttackSpeed 乘 2（百分比
+  //      加成），calcAttackSpeedOf 的公式里 baseAttackSpeed 本来就在 attackSpeedRatio
+  //      之外，跟攻城车"普通模式+33%攻速"是同一个技术（那条也是加在 baseAttackSpeed
+  //      上，见 passive_ram_normal）。
+  //   ③ 攻击时每秒叠一层攻速加成，走收益率（bonusAttackSpeedPct），2026-09-19
+  //      跟用户定稿的数值：每层+2%，最多15层（封顶+30%），不按时间衰减——只有
+  //      脱战或换目标才清零（用户原话"和风魂区别开来"：风魂是命中叠层限时衰减的
+  //      羊刀节奏，这条改成"咬着同一个目标就不掉层，换目标/脱战立即清零重来"）。
+  weapon_barrage: {
+    // 2026-09-19 首次强度调整：用户实机反馈"连珠炮太弱了"。三个机制的【形状】
+    // 是用户已经定过稿的（55%伤害/33%命中效率/攻速不走收益率/每层更少更多层，
+    // 见下方各字段旁的原始设计注释），这次只调数值，不改机制本身：
+    //   preDamageMultPct 55→70、onHitEffPct 33→50、baseAttackSpeedBonusPct 100→150、
+    //   maxStacks 15→20（每层加成 stackPct 保持2%不变——"每层更少、层数更多"这条
+    //   跟风魂区分开的设计前提不能动，只是让层数上限的封顶总量跟着一起往上提）。
+    // 这仍然只是一次单独的强度修正，不是这次要做的"全部塔武器一起平衡"那一轮——
+    // 用户已经说了"做完所有武器后需要平衡所有的防御塔武器"，这里先解决"明显偏弱"
+    // 这个眼下就能看出来的问题，精确数值等全部武器做完一起用平衡工具校准。
+    //
+    // v51.30：那一轮到了——平衡横向对照实测（tower_sweep_2026-09-24），以穿透型
+    // （54.97分）为基准，连珠炮均存活35.33分，第一轮调整后仍偏低约36%，需要
+    // 第二轮加强。preDamageMultPct 70→90、onHitEffPct 50→65、
+    // baseAttackSpeedBonusPct 150→180——这三项都是【无条件生效】的加成，装上就有；
+    // 机制③（每秒叠层，封顶+40%）这次没动，因为它需要"咬住同一目标至少几秒"才能
+    // 叠满，在小兵一波接一波、目标频繁切换的真实防守场景里未必能吃到满层，这次
+    // 优先加强不依赖"咬住同一目标"这个前提的三项，更能直接转化成场均存活时长。
+    //
+    // v51.33：用户定稿改机制——"脱战或切换目标立即清空层数"改成"只有脱离战斗后
+    // 层数才消失"（换目标不再清零，只要塔还在打就一直咬着叠）。这条本来是靠
+    // "咬住同一目标至少几秒"才叠得满的前提被直接拿掉了：小兵一波接一波、塔频繁
+    // 换目标的真实防守场景里，以前叠不满的层数现在轻松叠满。用户随之要求"相应
+    // 每层叠加的数值要少一些"——stackPct 2→1.5（封顶总量跟着从40%降到30%，
+    // maxStacks 这个"层数上限"用户没提，机制形状不动，不跟着一起改）。这是按
+    // "更容易吃满、单层价值对应下调"的方向给的第一版合理值，不是平衡工具复核过
+    // 的精确数字，后续要用 balance_tower.mjs --pick barrage 再核一遍。
+    defaultParams: {
+      preDamageMultPct: 90,     // 每次攻击的伤害倍率（%），机制①
+      onHitEffPct: 65,          // 攻击特效效率（%），机制①
+      baseAttackSpeedBonusPct: 180, // 总攻速加成（%，不走收益率），机制②
+      stackPct: 1.5,             // 每秒叠层的攻速加成（%/层，走收益率），机制③
+      maxStacks: 20,            // 层数上限（封顶总量 1.5%×20=30%）
+    },
+    id: 'weapon_barrage',
+    applicableTypes: ['tower'],
+    name: '连珠炮',
+    icon: '🔥',
+    color: '#e67e22',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_barrage.defaultParams;
+      return `唯一被动——连珠炮：每次攻击只造成${p.preDamageMultPct}%伤害，攻击特效按${p.onHitEffPct}%效率结算；`
+        + `总攻速+${p.baseAttackSpeedBonusPct}%（不吃攻速收益率）；持续攻击（可切换目标）每秒额外叠一层`
+        + `攻速加成（每层+${p.stackPct}%，走收益率，最多${p.maxStacks}层，封顶+${p.stackPct * p.maxStacks}%），`
+        + `脱离战斗后层数才清空（不随时间衰减，切换目标不影响层数）。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const eff = ctx?.effectRegistry?.getEffectByName?.(entity?.id, '连珠');
+      return eff ? eff.stacks : 0;
+    },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      const p = instance._params || weapons.weapon_barrage.defaultParams;
+      instance.state = { timer: 0 };
+      ctx.effectRegistry.apply(entityId, {
+        name: '连珠炮·超频', icon: '🔥', kind: 'stat', statKey: 'baseAttackSpeed',
+        percentValue: p.baseAttackSpeedBonusPct ?? 100,
+        duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh',
+        uniquePassive: true,
+        description: `总攻速+${p.baseAttackSpeedBonusPct ?? 100}%`,
+      }, 'weapon_barrage_baseas');
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      for (const eff of ctx.effectRegistry.getEffects(entityId)) {
+        if (eff.blueprint.name === '连珠炮·超频' || eff.blueprint.name === '连珠') ctx.effectRegistry.remove(eff.id);
+      }
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      const p = instance._params || weapons.weapon_barrage.defaultParams;
+      return {
+        preDamageMult: (p.preDamageMultPct ?? 55) / 100,
+        attackShare: (p.onHitEffPct ?? 33) / 100,
+      };
+    },
+    // 机制③（v51.33 改）：用户定稿"脱战或切换目标立即清空层数"改成"只有脱离
+    // 战斗后层数才消失"——不再跟着 entity.targetId 是否变化清零，只看
+    // entity._inCombat / 目标是否存活。换目标不再打断叠层是本轮唯一的机制变化，
+    // 不再需要记 lastTargetId，onFrame 直接按"在不在战斗"这一件事判定。
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_barrage.defaultParams;
+      const targetId = entity.targetId;
+      const target = targetId ? ctx.entityContainer.get(targetId) : null;
+
+      if (!target || !target.alive || !entity._inCombat) {
+        // 脱离战斗：清空层数（唯一的清空条件）
+        const eff = ctx.effectRegistry.getEffectByName(entityId, '连珠');
+        if (eff) ctx.effectRegistry.remove(eff.id);
+        st.timer = 0;
+        return;
+      }
+      st.timer += dt;
+      if (st.timer < 1) return;
+      st.timer -= 1;
+      const per = p.stackPct ?? 2, max = p.maxStacks ?? 15;
+      ctx.effectRegistry.apply(entityId, {
+        name: '连珠', icon: '🔥', kind: 'stat', statKey: 'bonusAttackSpeedPct',
+        flatValue: per, perStackFlat: per,
+        duration: Infinity, permanent: true, stackable: true, maxStacks: max, stackPolicy: 'stack',
+        uniquePassive: true,
+        get description() { return `攻速 +${per}%/层`; },
+      }, 'weapon_barrage_stack');
+    },
+  },
+
+  // ==================== Q5：聚能塔（临时命名，蓄力单次巨额AOE）====================
+  // 用户定稿方向："充能慢、蓄力后打出超高范围伤害"，跟坠星塔（延迟抛物线弹道，
+  // 每次都有延迟）不是一回事——这个是"低频、单次巨额AOE"，不是"每次都慢一点"。
+  // ==================== 修复：0充能（用户反馈"这个充能方式和攻城车是一样的，需要修复"）====================
+  // 真根因：nova 原来自己在 onFrame 里另起一套 instance.state.charge 累加/衰减逻辑，
+  // 跟攻城车用的 atkmode_charge（entity._charge，由 CombatSystem._tickCharge 对
+  // 全体实体每帧统一维护、经过长期实战验证）是两套完全独立、互不相干的实现——
+  // "看起来是同一种机制"实际上是两份平行代码，其中 nova 自己那份没有
+  // atkmode_charge 那么多轮打磨过的边界处理，才会在真实对局里出现充能推进不动
+  // （0充能）这种 atkmode_charge 那边早就踩过并修掉的问题。
+  // 现在不再自造轮子：nova 装备时顺带装上 atkmode_charge（复用它的充能累计/衰减，
+  // 装备/卸载联动，见下），onFrame 只负责"读有没有充满、充满了就打一炮+溅射"，
+  // 真正的充能推进完全交给 _tickCharge 那份已经跑通的代码——这也是它现在不需要
+  // 自己处理"没有目标怎么衰减"的原因：_tickCharge 在主循环里对每个实体都会跑，
+  // 跟 nova 自己的 onFrame 是否被调用无关。
+  weapon_nova: {
+    // 2026-09-22：balance_tower.mjs 塔强度横向对照（防守方全部换成8种塔武器，
+    // 进攻方拉满对照组）实测：聚能炮防守方均存活17.81分，全场倒数第二，只有
+    // 最扛揍的腐蚀型（69.45分）的1/4——之前"比闪电杖(12s)更慢，符合低频"这句
+    // 话本身没错，但18s对12s在单体持续输出上拉开的差距，没有被"更大溅射半径"
+    // 补回来（这个测试场景基本是单体攻防，溅射价值体现不出来）。把充能时间
+    // 收到跟闪电杖一样的12s——保留"低频高爆发"的身份（跟持续开火的塔比仍然
+    // 是脉冲式输出），只是不再比同类脉冲武器慢50%。改完用
+    // node tools/balance_tower.mjs --pick nova --runs 40 复核。
+    //
+    // v51.30：复核结果（tower_sweep_2026-09-24）——均存活从17.81分只升到20.66分，
+    // 涨幅远小于充能提速33%这个杠杆本身的量级，说明"充能多快打一炮"不是主要
+    // 瓶颈（atkmode_charge 只在完全没有目标时才衰减，真实对局里塔几乎总有目标，
+    // 充能大部分时间在稳步推进，缩短充满时间的边际收益有限）。这轮换一个杠杆：
+    // 直接加大【打中一炮能造成多少伤害】——maxMultPct 400→650，radius 220→250，
+    // 这两个是打中之后直接决定效果的量，不依赖"多久打一次"这个已经收效有限的
+    // 前提。以穿透型（54.97分）为基准，聚能炮偏低约62%，这轮调整量级也相应更大。
+    defaultParams: {
+      chargeTimeAtAS1: 12,   // 攻速1.0时充满需要多少秒——原18，实测过弱，收到与闪电杖同频
+      maxMultPct: 650,       // 满充能时的伤害倍率（%）
+      radius: 250,           // 命中点的溅射半径（比爆炸型大得多，"超高范围"）
+    },
+    id: 'weapon_nova',
+    applicableTypes: ['tower'],
+    name: '聚能炮',
+    icon: '💫',
+    color: '#3498db',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_nova.defaultParams;
+      return `唯一被动——聚能炮：持续蓄力（攻速1.0约${p.chargeTimeAtAS1}秒充满，掉目标按秒衰减），`
+        + `充满后打出一次范围${p.radius}的超高伤害爆炸（{val}=满充能伤害），伤害类型随自身自适应判定，`
+        + `中心60%、随距离指数衰减。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const p = weapons.weapon_nova.defaultParams;
+      const isAdaptive = stats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(stats) || 'physical') : (stats.attackType || 'physical');
+      const base = isAdaptive
+        ? (resolvedType === 'magic' ? (stats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (stats.attackDamage || 0))
+        : (stats.attackDamage || 0);
+      return Math.round(base * ((p.maxMultPct ?? 400) / 100));
+    },
+    specialAttack: true,
+    effects: [],
+    // 装备聚能炮 = 同时装上 atkmode_charge（真正的充能状态机住在那颗技能背后的
+    // entity._charge 里），nova 自己只带一份"充满了打一炮"的结算逻辑。
+    // atkmode_charge 是 category:'attackmode'，技能栏/技能选择器都已经把这个
+    // 分类过滤掉了（见 UIManager.js/pagesEntity.js 的既有排除逻辑），不会在界面上
+    // 多出一条看着莫名其妙的"充能攻击"技能。
+    onEquip: (entityId, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      const p = instance._params || weapons.weapon_nova.defaultParams;
+      const chargeInst = entity && equipSkill(entity, 'atkmode_charge', ctx, ctx.combat?.skills);
+      if (chargeInst) {
+        chargeInst._params = {
+          chargeSecAt1AS: p.chargeTimeAtAS1 ?? 18,
+          damagePct: 100,   // nova自己按maxMultPct单独结算伤害，这里给中性值，不重复叠乘
+          decayPctPerSec: null,
+          onlyVs: 'any',
+        };
+      }
+      instance.state = { chargeInstId: chargeInst ? chargeInst.id : null };
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (entity && instance.state?.chargeInstId != null) {
+        entity._skillInstances = (entity._skillInstances || []).filter(i => i.id !== instance.state.chargeInstId);
+      }
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true }; // 命中完全由 onFrame 的充能判定自己结算
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (window.__towersAttackOff) return;
+      const targetId = entity.targetId;
+      const target = targetId ? ctx.entityContainer.get(targetId) : null;
+      if (!target || !target.alive) return;   // 没有目标：atkmode_charge 在主循环里自己按秒衰减，这里不用管
+      if ((window.gameTime || 0) < (entity._lockUntil || 0)) return;
+
+      // 用户报告"聚能炮子弹不显示"——修复：聚能炮此前完全没有任何画面反馈
+      // （无子弹、也没接 ProjectileSystem.fireBeam），充能到开火全程玩家看不到
+      // 任何东西。它跟闪电杖同样走 atkmode_charge 充能状态机（entity._charge），
+      // ProjectileSystem.fireBeam 头注早把"闪电杖/聚能炮"列为同类调用点，但落地
+      // 时这段调用漏加了。补上后画面上是一条随 entity._charge（0~1）推进逐渐
+      // 变亮的光束，充满那一刻打出去——跟闪电杖的充能光束完全同一套视觉语言，
+      // 不是新发明的呈现方式。命中判定与爆炸伤害结算不受这段影响，仍在下面
+      // chargeReady 之后原样结算。
+      if (ctx.combat && ctx.combat.projectiles && entity.pos && target.pos) {
+        if (instance.state && instance.state._beamTargetId !== target.id) {
+          ctx.combat.projectiles.clearBeam?.(entity.id);
+          instance.state._beamTargetId = target.id;
+        }
+        const fac = entity._mapFaction;
+        const beamColor = fac === 'blue' ? '#5b9bd5' : fac === 'red' ? '#e0473f' : '#f1c40f';
+        ctx.combat.projectiles.fireBeam({
+          attackerId: entity.id,
+          startX: entity.pos.x, startY: entity.pos.y,
+          endX: target.pos.x, endY: target.pos.y,
+          charge: entity._charge || 0, life: 0.4, color: beamColor, targetId: target.id,
+        });
+      }
+
+      if (!ctx.combat.chargeReady(entity, target)) return;   // 没充满，不开火
+
+      const p = instance._params || weapons.weapon_nova.defaultParams;
+      const atkStats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entityId));
+      entity._inCombat = true; entity._combatTimer = 4;
+      const isAdaptive = atkStats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(atkStats) || 'physical') : (atkStats.attackType || 'physical');
+      const baseDamage = isAdaptive
+        ? (resolvedType === 'magic' ? (atkStats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (atkStats.attackDamage || 0))
+        : (atkStats.attackDamage || 0);
+      const novaDamage = baseDamage * ((p.maxMultPct ?? 400) / 100);
+      // 打出去立即归零重新蓄力——等价于标准流水线里 finishAttack 做的事，这里手动
+      // 做是因为 nova 走 performAttackDirect 而不是 performAttack/finishAttack 那条路。
+      entity._charge = 0;
+      if (novaDamage > 0 && ctx.combat) {
+        // 主目标吃满额伤害（不经过距离衰减），周围的再按 _applyExplosionAt 的距离
+        // 衰减公式吃溅射——跟炎魂"中心取目标坐标、排除主目标（主伤害已单独结算）"
+        // 同一个约定（见 CombatSystem._applyExplosionAt 头注），不是我们发明的新规则。
+        ctx.combat.performAttackDirect(entity.id, target.id, novaDamage, resolvedType, { basicAttack: true });
+        if (typeof ctx.combat._applyExplosionAt === 'function') {
+          ctx.combat._applyExplosionAt(entity, target.pos.x, target.pos.y, novaDamage, resolvedType,
+            p.radius ?? 220, target.id, { basicAttack: true });
+        }
+      }
+    },
+  },
+
+  // ==================== Q5：牧灵塔（临时命名，塔本身不攻击，召唤守护幻兽代打）====================
+  // 用户定稿的规则（"已定规则"）：
+  //   · 幻兽拴在塔周围一定范围内（不是沿兵线走位的独立小兵，是塔的随行守卫）
+  //   · 幻兽死亡后隔一段时间重新召唤，且每次重新召唤的冷却时长递增
+  //   · 幻兽获得塔的一部分属性（按百分比）——塔自己变强，幻兽也跟着变强
+  //   · 用户明确留了"待定"：幻兽的具体属性/血量量级、拴绳半径、初始冷却与递增步长，
+  //     写的是"等其它方案定完一起定数值"——现在其它三个塔武器已经落地，这里按同样
+  //     "先给可编辑的默认值、有问题用户随时改"的口径给一版默认值（数值本身不是这条
+  //     铁律要求的"确认后才能写代码"的主观视觉判断，是纯数字，且全部走 defaultParams，
+  //     编辑器/CONFIG.skillOverrides 随时能改，不是钉死的硬编码）。
+  //
+  // 幻兽复用唤灵兵幻灵那条管线（type:'melee' + ctx.combat.createMinion），跟幻灵的
+  // 差异只有两点：①没有存在时长（死了才消失，不是到点消失）；②需要真正的"拴绳接敌"
+  // AI——幻灵那条路径没有 _laneId，本来就不会被 LaneMovementSystem 接管（不追不打，
+  // 只是站在原地），这里补的 _updatePet 分支就是让幻兽真的能动、能打（见
+  // LaneMovementSystem._updatePet 头注，同一个发现顺带写在那边）。
+  weapon_shepherd: {
+    // 2026-09-19 首次强度调整：用户实机反馈"目前强度太低了"，给了三条具体方向：
+    //   ①幻兽应该继承塔更多属性（50%→80%）；②召唤两个幻兽而不是一个；
+    //   ③复活节奏从"固定8秒+每次死亡多等固定4秒"改成"每次复活基础15秒，
+    //   每次死亡在这个基础上复利再多等5%"（15s → 15.75s → 16.54s → …）。
+    // state 形状也跟着从单只幻兽（petId）换成一个数组（petIds，最多 maxAlive 只），
+    // 逻辑照抄唤灵兵"_summonedIds 数组+清点存活数"的既有写法，不是重新发明一套。
+    //
+    // 2026-09-20 二次调整（三条bug/机制反馈一起处理）：
+    //   ①幻兽出生只有几百血——排查到根因是"生成时用 melee 模板的小体量 currentHP，
+    //     随后 baseStats.maxHP 才被改成塔的量级，但 currentHP 从没跟着补涨"，出生
+    //     瞬间血条显示的是"几百/几千"这种明显不对称的样子。
+    //   ②回血机制改掉：不再是塔按固定 healPerSec 主动"推"血给幻兽，而是幻兽的
+    //     healthRegen 属性本身就是从塔的 healthRegen 按 statPct 继承来的——跟其它
+    //     属性走同一条路，"共享塔的属性"这句话现在对回血也成立，幻兽自己不再有
+    //     任何独立于塔的回血能力（塔没有回血，幻兽也没有）。healthRegen 的实际
+    //     结算复用 CombatSystem.update 里对**所有实体**都跑的那段通用生命恢复
+    //     tick（读 healPowerOf(stats) 即 healShieldPowerPct），不用再在这里手写
+    //     applyHeal 调用。
+    //   ③幻兽脱离战斗后，单体获得+100%治疗与护盾强度（叠在①继承来的那份之上），
+    //     判据跟"钢铁烈阳护盾"同一套 lastDamageTime+shieldRegenDelay，走光环机制
+    //     （aura:true，停止满足条件后由 EffectRegistry 的光环宽限期自动脱落）。
+    //   ④statPct 80%→60%，且"属性"覆盖面从原来手选的5项（HP/AD/AP/双抗）扩到
+    //     PET_INHERITED_STAT_FIELDS 列出的全部作战相关属性——用户原话"牧灵本身
+    //     没有任何属性"，塔没有的（穿透/生命偷取/伤害放大等大多数塔默认都是0）
+    //     幻兽自然也是0，塔如果吃到龙魂/效果把这些提上去了，幻兽也按比例分到。
+    //   ⑤幻兽不再复用近战兵的默认主动/被动（本能防御等）——createMinion 按
+    //     type:'melee' 自动挂的那两个技能在生成后立刻摘掉，只留幻兽自己的
+    //     passive_pet_spirit_guard（独立主动/被动的重新设计用户明确要自己先想，
+    //     这次先只摘掉不该有的，不新增）。
+    // 2026-09-22 三次调整（已撤销，见09-23）：balance_tower.mjs 塔强度横向对照实测
+    // 牧灵法阵防守方均存活10.82分，8种塔武器里垫底，当时判断是幻兽输出/续航不够，
+    // 把 statPct 60→75、baseRespawnSec 15→10。
+    //
+    // 2026-09-23 撤销并查明真根因：这轮数值调整是在假数据上做的——排查发现
+    // tools/balance_tower.mjs 从来没有调用 combat.setCreateMinion(...)（只接了
+    // waves.setCreateMinion，给兵线小兵用），而 weapon_shepherd.onFrame 召唤幻兽
+    // 走的是 ctx.combat.createMinion（跟唤灵兵幻灵同一条路径，见 src/main.js 里
+    // combatSystem.setCreateMinion 的头注）。这个函数指针在旧版横向对照工具里
+    // 全程是 null，`typeof ctx.combat?.createMinion === 'function'` 卡住直接跳过
+    // 召唤——牧灵法阵那 20 局全是"塔独自站着挨打，一只幻兽都没有"，10.82分测的
+    // 是"裸塔"而不是"牧灵法阵"。补上这行 wiring 后单独跑诊断脚本：两只幻兽正常
+    // 生成、正常接战、正常死亡复活，塔本体前 470 秒实测 0 掉血（幻兽把仇恨扛住了）。
+    // 09-22 那版调参因此是在无效样本上做的判断，予以撤销，数值改回09-20定的
+    // statPct:60/baseRespawnSec:15——牧灵法阵是否还需要调参，等 balance_tower.mjs
+    // 修复后重新跑一次真实横向对照再看。
+    //
+    // v51.30：修复后的真实横向对照到了（tower_sweep_2026-09-24）——均存活19.88分，
+    // 8种武器里垫底，以穿透型（54.97分）为基准偏低约64%。诊断脚本（09-23那条）
+    // 显示前470秒（~7.8分钟）塔本体0掉血，幻兽正常扛住了仇恨，说明幻兽死亡后
+    // 的复活等待时间随死亡次数复利增长（respawnGrowthPct）在长时间被拉满强度的
+    // 攻击下会滚雪球——幻兽越打越频繁死亡，每次复活等待又比上一次更久，塔逐渐
+    // 变成"经常没有幻兽护着"的裸奔状态。这轮同时压两个杠杆：respawnGrowthPct
+    // 5%→3%（放缓复利增长速度，缓解滚雪球）；statPct 60%→75%（幻兽本身更硬，
+    // 从根上降低死亡频率，两个杠杆互相加强而不是各管一段）。maxAlive/baseRespawnSec
+    // 暂不动——同时改三个量没法从下一轮复核里干净地分辨到底哪个杠杆起了作用。
+    defaultParams: {
+      statPct: 75,              // 幻兽继承塔多少百分比的属性（覆盖面见 PET_INHERITED_STAT_FIELDS）
+      leashRadius: 260,        // 拴绳半径——幻兽索敌/追击都不会超出这个范围
+      maxAlive: 2,             // 同时最多几只幻兽
+      baseRespawnSec: 15,      // 每次复活的基础等待时间
+      respawnGrowthPct: 3,     // 每死一次，下一次等待时间在【基础值】上复利再多这么多百分比
+      idleClearance: 40,       // 待机点与塔边缘之间留的空隙（不含塔本身半径），修"幻兽模型和塔重叠"用
+      outOfCombatHealPowerPct: 100,   // 脱战后额外获得的治疗与护盾强度（叠在继承来的那份之上）
+    },
+    id: 'weapon_shepherd',
+    applicableTypes: ['tower'],
+    name: '牧灵法阵',
+    icon: '🐺',
+    color: '#7fb37f',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_shepherd.defaultParams;
+      return `唯一被动——牧灵法阵：塔本身不攻击，同时召唤最多${p.maxAlive}只幻兽（继承塔`
+        + `${p.statPct}%属性，含生命恢复——幻兽自己没有任何独立属性）拴在塔周围${p.leashRadius}`
+        + `范围内代替塔战斗；幻兽脱战后额外获得+${p.outOfCombatHealPowerPct}%治疗与护盾强度`
+        + `（{val}=当前继承到的生命恢复）；幻兽死亡${p.baseRespawnSec}秒后重新召唤，每死一次`
+        + `下次复活等待时间再复利增加${p.respawnGrowthPct}%。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const p = weapons.weapon_shepherd.defaultParams;
+      const inst = (entity._skillInstances || []).find(i => i.skillId === 'weapon_shepherd');
+      const pp = (inst && inst._params) || p;
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      return Math.round((stats.healthRegen || 0) * ((pp.statPct ?? 60) / 100));
+    },
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = { petIds: [], respawnAt: 0, deathCount: 0 };
+    },
+    onUnequip: (entityId, instance, ctx) => {
+      // 武器卸下后幻兽失去存在的意义（拴绳无处可依，属性也没有塔可以继承），
+      // 走跟"唤灵消失"同一条非战斗死亡路径（不算击杀、不记熵）。
+      for (const petId of instance.state?.petIds || []) {
+        const pet = ctx.entityContainer.get(petId);
+        if (pet && pet.alive) {
+          pet.currentHP = 0; pet.alive = false;
+          ctx.eventBus?.emit?.('entity:death', { entityId: pet.id });
+        }
+      }
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true }; // 塔本身没有攻击能力——用户定稿的第一条规则
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const tower = ctx.entityContainer.get(entityId);
+      if (!tower || !tower.alive) return;
+      if (!instance.state) instance.state = { petIds: [], respawnAt: 0, deathCount: 0 };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_shepherd.defaultParams;
+      const now = window.gameTime || 0;
+      const maxAlive = p.maxAlive ?? 2;
+      const base = p.baseRespawnSec ?? 15, growth = (p.respawnGrowthPct ?? 5) / 100;
+      const pct = (p.statPct ?? 60) / 100;
+
+      // 清点还活着的幻兽；这一轮里"从名单里消失/死掉"的每一只都记一次死亡，
+      // 各自按当时的死亡序数复利算一次应等待的时长，取【最晚】的那个时刻——
+      // 两只前后脚死的话，第二只要在第一只复活排上队之后再往后排，不会同时复活。
+      const alive = [];
+      for (const petId of st.petIds) {
+        const pet = ctx.entityContainer.get(petId);
+        if (pet && pet.alive) { alive.push(petId); continue; }
+        st.deathCount = (st.deathCount || 0) + 1;
+        const wait = base * Math.pow(1 + growth, st.deathCount - 1);
+        st.respawnAt = Math.max(st.respawnAt || 0, now) + wait;
+      }
+      st.petIds = alive;
+
+      const towerStats = ctx.attrCalc.calc(tower, ctx.effectRegistry.getEffects(entityId));
+
+      const need = maxAlive - st.petIds.length;
+      if (need > 0 && now >= (st.respawnAt || 0) && typeof ctx.combat?.createMinion === 'function') {
+        const faction = tower._mapFaction || tower.faction;
+        // 修复"幻兽模型会和塔的模型重叠"：不再直接生在塔的坐标点上（那正是重叠的
+        // 根因——塔自身有实体几何占着那块地方），改成生在塔外一圈的待机位上。
+        // 每只幻兽按【当前是第几只】分一个固定角度（maxAlive=2 时正好间隔180°），
+        // 不但避开塔本身，两只幻兽之间也不会叠在同一个点上；角度与间隙存在
+        // spirit 身上，LaneMovementSystem._updatePet 的待机分支复用同一份数据，
+        // 保证"生成位置"与"待机归位目标点"是同一个点，不会先重叠一帧再走出去。
+        const angle = (st.petIds.length / maxAlive) * Math.PI * 2;
+        const towerR = tower._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[tower._mapTier])
+          || CONFIG.buildingSizes?.default || 32;
+        const standoff = towerR + (p.idleClearance ?? 40);
+        const spirit = ctx.combat.createMinion('melee',
+          tower.pos.x + Math.cos(angle) * standoff, tower.pos.y + Math.sin(angle) * standoff,
+          faction, 1, 1);
+        if (spirit) {
+          // createMinion 按 type:'melee' 自动挂了近战兵的默认主动/被动（本能防御
+          // 等）——用户定稿"不要复用近战兵的"，生成后立刻摘掉，只留幻兽自己的
+          // passive_pet_spirit_guard（下面单独装）。
+          spirit._skillInstances = (spirit._skillInstances || [])
+            .filter(s => s.skillId !== 'active_melee_block' && s.skillId !== 'passive_melee_rend');
+          spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
+          spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
+          spirit._petLeashRadius = p.leashRadius ?? 260;
+          spirit._petIdleAngle = angle;         // 待机点角度，_updatePet 归位用
+          spirit._petIdleClearance = p.idleClearance ?? 40;   // 待机点距塔边缘的间隙
+          // 用户追加定稿："幻兽要有独立技能……不然幻兽太弱了"——攻击带小型减速+
+          // 受击概率触发自保护盾，两个都要（见 minionPassives.passive_pet_spirit_guard）。
+          equipSkill(spirit, 'passive_pet_spirit_guard', ctx, ctx.combat?.skills);
+          // 出生就把属性按塔【当下】的实时值算好（不等下面的每帧同步循环），
+          // 并把 currentHP 显式设成满——这是"出生只有几百血"这条bug的真正修复点：
+          // 旧实现出生时 currentHP 还停在 createMinion 给的 melee 模板小体量，
+          // 而 baseStats.maxHP 几乎同一时刻被改成塔的量级，血条显示"几百/几千"
+          // 这种明显不对称的样子。
+          for (const key of PET_INHERITED_STAT_FIELDS) {
+            spirit.baseStats[key] = (towerStats[key] || 0) * pct;
+          }
+          if (spirit.baseStats.maxHP < 1) spirit.baseStats.maxHP = 1;
+          spirit.currentHP = spirit.baseStats.maxHP;
+          st.petIds.push(spirit.id);
+        }
+      }
+
+      // 幻兽活着：属性按塔【当下】的实时属性百分比持续同步（不是只在出生那一刻
+      // 快照一次）。用户追加定稿："塔获得增益会按照一定百分比转换到幻兽上（幻兽
+      // 是塔的一部分）"——这意味着幻兽出生后塔再叠的buff（龙魂/等级成长/装备等）
+      // 也要持续跟着涨，不能只在召唤瞬间定死。做法：每帧直接用塔的实时 calc()
+      // 结果重算幻兽的 baseStats（跟召唤时同一个公式，只是从"仅执行一次"改成
+      // "每帧执行"），currentHP 只在超过新上限时按 Math.min 卡住（不强行拉满，
+      // 涨的部分靠继承来的 healthRegen 自然回血补，不再是塔手动推血）。
+      for (const petId of st.petIds) {
+        const pet = ctx.entityContainer.get(petId);
+        if (!pet) continue;
+        for (const key of PET_INHERITED_STAT_FIELDS) {
+          pet.baseStats[key] = (towerStats[key] || 0) * pct;
+        }
+        if (pet.baseStats.maxHP < 1) pet.baseStats.maxHP = 1;
+        if (pet.currentHP > pet.baseStats.maxHP) pet.currentHP = pet.baseStats.maxHP;
+
+        // 脱战：额外 +outOfCombatHealPowerPct% 治疗与护盾强度，判据跟钢铁烈阳
+        // 护盾同一套（lastDamageTime+shieldRegenDelay）。走光环机制：只在满足
+        // 条件的帧才 apply，停止满足条件后由 EffectRegistry 的光环宽限期自动
+        // 脱落，不用自己写移除逻辑。
+        const regenDelay = CONFIG.gameRules?.shieldRegenDelay ?? 8;
+        const outOfCombat = now - (pet.lastDamageTime ?? -Infinity) >= regenDelay;
+        if (outOfCombat) {
+          ctx.effectRegistry.apply(pet.id, {
+            name: '灵体疗愈', icon: '💗', kind: 'stat', statKey: 'healShieldPowerPct',
+            flatValue: p.outOfCombatHealPowerPct ?? 100, aura: true, stackPolicy: 'refresh', uniquePassive: true,
+            descTemplate: `脱离战斗：治疗与护盾强度+${p.outOfCombatHealPowerPct ?? 100}%。`,
+            description: `治疗与护盾强度+${p.outOfCombatHealPowerPct ?? 100}%`,
+          }, 'weapon_shepherd_outofcombat');
+        }
+      }
+    },
+  },
+
+  // ==================== 🌈 光棱塔：同一时刻分裂出多条独立光束 ====================
+  // 用户要求"类似光棱塔"、伤害连锁，但要跟已有的雷魂（dragonsoul_thunder）区分开——
+  // 雷魂是"一条光沿目标依次弹射"（时序上一个接一个、固定真实伤害、总量均摊）；
+  // 这个改成"塔本身同一时刻分裂出多条独立光束"（不是依次弹射，是从塔的位置同时向
+  // 射程内最多 N 个不同目标各打一下），伤害类型走物理/魔法自适应（不是雷魂的固定
+  // 真实伤害），命中目标数越多每条伤害越低（防止跟雷魂一样无限乘算失控）。
+  // "光棱"（棱镜分光）这个名字对应的就是"从源头一次性分裂"，不是"沿途弹射"。
+  //
+  // 实现上照抄 weapon_corrosion 的骨架（specialAttack + skipProjectile + 自己按
+  // 攻速节奏的 onFrame 循环），因为它同样是"无弹道、每次攻击命中多个目标"的形状，
+  // 唯一区别是腐蚀命中【射程内全部】敌人，这里只挑最多 maxBranches 个（否则会退化
+  // 成腐蚀的翻版，失去"多条独立光束"这个卖点）。
+  weapon_prism: {
+    defaultParams: {
+      maxBranches: 4,          // 同时分裂的独立光束数上限
+      basePct: 90,              // 只命中1个目标时，每条分支伤害相对自适应基础伤害的百分比
+      falloffPctPerExtra: 15,   // 命中目标每多1个，所有分支伤害再降的百分点数
+      minBranchPct: 35,         // 分支伤害下限（防止 maxBranches 调大后接近0）
+    },
+    id: 'weapon_prism',
+    applicableTypes: ['tower'],
+    name: '光棱塔',
+    icon: '🌈',
+    color: '#a78bfa',
+    category: 'weapon',
+    get descTemplate() {
+      const p = weapons.weapon_prism.defaultParams;
+      return `唯一被动——光棱：无弹道，按自身攻速节奏同时向射程内最多${p.maxBranches ?? 4}个不同`
+        + `目标各射出一条独立光束（{val}=只命中1个目标时的单条伤害），伤害类型随自身自适应判定；`
+        + `命中目标每多1个，每条伤害再降${p.falloffPctPerExtra ?? 15}个百分点（下限${p.minBranchPct ?? 35}%）。`;
+    },
+    get description() { return this.descTemplate; },
+    computeCurrent: (entity, ctx) => {
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const p = weapons.weapon_prism.defaultParams;
+      const isAdaptive = stats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(stats) || 'physical') : (stats.attackType || 'physical');
+      const base = isAdaptive
+        ? (resolvedType === 'magic' ? (stats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (stats.attackDamage || 0))
+        : (stats.attackDamage || 0);
+      return Math.round(base * ((p.basePct ?? 90) / 100));
+    },
+    specialAttack: true,
+    effects: [],
+    onEquip: (entityId, instance, ctx) => {
+      instance.state = { timer: 0 };
+    },
+    onBeforeAttack: (attacker, target, instance, ctx) => {
+      return { skipProjectile: true }; // 命中完全由 onFrame 的分支循环自己结算
+    },
+    onFrame: (entityId, dt, instance, ctx) => {
+      const entity = ctx.entityContainer.get(entityId);
+      if (!entity || !entity.alive) return;
+      if (window.__towersAttackOff) return;
+      // v51.20：同上方 weapon_corrosion 那处的坑，换成本仓库既有的正确判据。
+      if (typeof instance.state?.timer !== 'number') instance.state = { ...(instance.state || {}), timer: 0 };
+      const st = instance.state;
+      const p = instance._params || weapons.weapon_prism.defaultParams;
+
+      const stats = ctx.attrCalc.calc(entity, ctx.effectRegistry.getEffects(entity.id));
+      const finalAS = ctx.attrCalc.calcAttackSpeedOf(stats);   // 与腐蚀同口径：按攻速决定循环间隔
+      st.timer += dt;
+      const interval = 1 / Math.max(0.1, finalAS);
+      if (st.timer < interval) return;
+      st.timer -= interval;
+
+      const range = stats.attackRange || 250;
+      // v49 的教训（见 weapon_corrosion 头注）：必须走 enemyUnitsInRadius，不能直接
+      // findInRadius——那样不认阵营、白名单也会漏兵种。
+      // v59：实现上照抄 weapon_corrosion 的骨架时把同一个漏洞也抄了过来——漏了
+      // includeBuildings，光棱塔因此打不到敌方防御塔。修法同 weapon_corrosion。
+      const enemies = enemyUnitsInRadius(ctx.entityContainer, entity, range, { includeBuildings: true });
+      if (enemies.length === 0) return;
+
+      entity._inCombat = true; entity._combatTimer = 4;
+
+      const maxBranches = Math.max(1, p.maxBranches ?? 4);
+      // 最多 maxBranches 个【不同】目标，按距离由近到远挑——不是随机，机械可预期。
+      const targets = enemies
+        .slice()
+        .sort((a, b) => {
+          const da = Math.hypot(a.pos.x - entity.pos.x, a.pos.y - entity.pos.y);
+          const db = Math.hypot(b.pos.x - entity.pos.x, b.pos.y - entity.pos.y);
+          return da - db;
+        })
+        .slice(0, maxBranches);
+
+      const isAdaptive = stats.attackType === 'adaptive';
+      const resolvedType = isAdaptive ? (ctx.attrCalc.resolveAttackType(stats) || 'physical') : (stats.attackType || 'physical');
+      const base = isAdaptive
+        ? (resolvedType === 'magic' ? (stats.abilityPower || 0) * ((CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100) : (stats.attackDamage || 0))
+        : (stats.attackDamage || 0);
+      const branchPct = Math.max(p.minBranchPct ?? 35,
+        (p.basePct ?? 90) - (p.falloffPctPerExtra ?? 15) * (targets.length - 1));
+      const dmg = base * (branchPct / 100);
+      if (dmg <= 0) return;
+
+      const groupEff = targets.length > 1; // 多条独立光束同时命中：吸血按群体效率折扣（与连锁/溅射同规格）
+      // v55.3 修复：光束颜色原来写死 '#a78bfa'（图标紫），不认施法塔的阵营——用户报
+      // "光棱塔的子弹轨迹未跟随阵营颜色"。改成跟 weapon_lightning（本文件上面那处
+      // 闪电杖光束）同一套阵营判色，不是新发明一套规则。
+      const fac = entity._mapFaction;
+      const beamColor = fac === 'blue' ? '#5b9bd5' : fac === 'red' ? '#e0473f' : '#f1c40f';
+      for (const t of targets) {
+        ctx.combat.performAttackDirect(entity.id, t.id, dmg, resolvedType, { basicAttack: true, vampGroup: groupEff });
+        if (ctx.combat.projectiles && ctx.combat.projectiles.fireBeam) {
+          ctx.combat.projectiles.fireBeam({
+            startX: entity.pos.x, startY: entity.pos.y,
+            endX: t.pos.x, endY: t.pos.y,
+            charge: 1, life: 0.12, color: beamColor,
+            attackerId: entity.id, targetId: t.id,
+            // v51.31：ProjectileSystem.fireBeam 原来按 attackerId 当 Map key（一个
+            // 攻击者一条常驻光束），光棱塔同一时刻却要开最多4条——不给独立 key 的话
+            // 同一帧内后一条会直接覆盖前一条，Map 里永远只留得住最后一条，等于4条
+            // 光束打出去、画面上顶多闪一下，这正是"光棱塔看起来不攻击"的真根因
+            // （伤害结算 performAttackDirect 其实一直是对的）。见 fireBeam 头注。
+            beamKey: `${entity.id}_${t.id}`,
+          });
+        }
+      }
+    },
+  },
+};

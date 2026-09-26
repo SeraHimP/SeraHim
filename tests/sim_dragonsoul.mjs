@@ -1,0 +1,651 @@
+// 阵营龙魂规则验收（v43 全部重写）
+//
+// ==================== 规则改了什么 ====================
+// 旧规则："6 条元素龙全部刷完再一次性结算，谁的击杀数 ≥4 谁成魂、都不到则无魂"。
+// 新规则（用户定稿）："某阵营拿满 4 条**直接**获得龙魂，然后不再生成元素龙而是一直生成远古龙。"
+//
+// 三处关键差别，本套逐条钉住：
+//   ① 归属：从"参与塔投票"改成 **最后一击**（_lastHitFaction）。
+//      投票制下一条龙被双方轮流打时谁塔多谁拿 —— 抢龙这件事就没有博弈了。
+//   ② 奖励对象：从"参与的那几座塔"扩到 **该阵营全体塔 + 全体大型小兵**
+//      （= 除近战/远程外的所有兵种），且**新生成的单位要补发**。
+//      不补的话奖励只对当时在场的生效，后面每一波新兵都是裸的。
+//   ③ 时机：拿满门槛立即成魂，不再等 6 条刷完。紧迫感完全不同 ——
+//      旧规则下前 5 条龙谁拿都无所谓，反正最后一起算。
+//
+// 于是"3:3 平局无魂"这个旧结局**不再存在**：先到 4 的一方当场拿走。
+import { setupWindow, scoreboard, srcOf } from './_harness.mjs';
+setupWindow({ waveNumber: 1 });
+const { CONFIG } = await import('../src/data/Config.js');
+const { DragonSystem, DRAGON_ELEMENTS } = await import('../src/systems/DragonSystem.js');
+const { EntityContainer } = await import('../src/core/EntityContainer.js');
+const { EventBus } = await import('../src/utils/EventBus.js');
+const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+const board = scoreboard('阵营龙魂规则验收');
+const T = board.T;
+
+/** 造一个世界：双方各 2 塔 + 各 1 个炮车（大型小兵）+ 各 1 个近战（不该拿奖励）。 */
+function mk() {
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  const units = { blue: [], red: [] };
+  const mkUnit = (type, fac, tier) => {
+    const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: fac === 'blue' ? 0 : 500 },
+      baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+      _skillInstances: [], _mapFaction: fac, faction: fac };
+    if (tier) e._mapTier = tier;
+    ents.add(e); units[fac].push(e); return e;
+  };
+  for (const fac of ['blue', 'red']) {
+    mkUnit('tower', fac, 'outer'); mkUnit('tower', fac, 'base');
+    mkUnit('siege', fac); mkUnit('melee', fac);
+  }
+  const pick = (fac, type) => units[fac].filter(u => u.type === type);
+
+  /** 用某阵营的**最后一击**杀掉一条龙。 */
+  const killBy = (fac, element, ancient = false) => {
+    if (!ancient) ds.elementDragonSpawned++;
+    const d = { id: ++window._uid, type: 'dragon', alive: false, pos: { x: 250, y: 250 },
+      baseStats: { ...CONFIG.templates.dragon }, currentHP: 0,
+      _element: element, _isAncient: ancient, _skillInstances: [],
+      _lastHitBy: pick(fac, 'tower')[0].id, _lastHitFaction: fac };
+    ents.add(d);
+    bus.emit('entity:death', { entityId: d.id });
+  };
+  return { bus, ents, fx, ds, units, pick, killBy };
+}
+
+const hasSoul = (e, id) => e._skillInstances.some(s => s.skillId === id);
+const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragonsoul_'));
+
+// ==================== ① 领受范围：塔 + 大型小兵，不含近战/远程 ====================
+{
+  const ok = DragonSystem.SOUL_REWARD_OK;
+  T('①-塔算领受者', ok({ type: 'tower' }) === true);
+  T('①-大型小兵都算（炮车/超级兵/图腾/术士/蚀骨/攻城车）',
+    ['siege', 'super', 'totem', 'warlock', 'corrupt', 'ram'].every(t => ok({ type: t }) === true));
+  T('①-近战/远程不算', ok({ type: 'melee' }) === false && ok({ type: 'ranged' }) === false);
+  T('①-龙自己不算', ok({ type: 'dragon' }) === false);
+  // 判定刻意不读 isLargeMinion —— 那个标记还被渲染体积等处用着。
+  // srcOf **默认剥注释**（含块注释）：SOUL_REWARD_OK 的 JSDoc 里就写着
+  // "刻意不读 isLargeMinion"，不剥的话这条断言会匹配到自己的解释文字。
+  const src = srcOf('src/systems/DragonSystem.js');
+  T('①-判定不依赖 isLargeMinion（两件事不绑死在一个字段上）',
+    !/isLargeMinion/.test(src));
+}
+
+// ==================== ② 归属按最后一击；奖励发给全阵营 ====================
+{
+  const { ds, units, pick, killBy } = mk();
+  killBy('blue', 'fire');
+  T('②-最后一击方记到击杀数', ds.factionTotals.blue === 1 && ds.factionTotals.red === 0);
+  const buffed = (e) => Object.values(e.__fx || {}).length >= 0;   // 占位，真正的断言在下面
+  void buffed;
+  // 巨龙之力发给该阵营的全部塔 + 大型小兵
+  const { fx } = mk();   // 另起一个干净世界做效果检查
+  const w = mk();
+  w.killBy('blue', 'fire');
+  const hasPower = (e) => w.fx.getEffects(e.id).some(x => x.blueprint?.stackKey?.startsWith('dragon_fire'));
+  T('②-该阵营全部塔拿到巨龙之力', w.pick('blue', 'tower').every(hasPower));
+  T('②-该阵营大型小兵也拿到', w.pick('blue', 'siege').every(hasPower));
+  // v45：用户改了规则 ——「巨龙之力现在作用于所有单位（包含普通小兵），
+  // 只有龙魂作用于大型小兵+塔」。所以这一条从"近战兵不拿"翻成"近战兵也拿"。
+  // 这是**规则改了**，不是断言写错了；魂的那条范围断言（③）原样保留。
+  T('②-近战兵现在也拿力（v45：力的范围放宽到所有单位）',
+    w.pick('blue', 'melee').every(hasPower));
+  T('②-力的层数不因兵种打折（近战与大型兵同层）', (() => {
+    const st = (e) => (w.fx.getEffects(e.id).find(x => x.blueprint?.stackKey?.startsWith('dragon_fire')) || {}).stacks;
+    return st(w.pick('blue', 'melee')[0]) === st(w.pick('blue', 'siege')[0]);
+  })());
+  T('②-敌方一点都没有', [...w.units.red].every(e => !hasPower(e)));
+  void fx; void units; void pick;
+}
+
+// ==================== ③ 拿满 4 条【立即】成魂，之后只刷远古龙 ====================
+{
+  const { ds, units, killBy } = mk();
+  const seen = [];
+  ds.eventBus.on('dragon:soulResolved', (d) => seen.push(d));
+  for (let i = 0; i < 3; i++) killBy('blue', 'fire');
+  T('③-3 条时尚未成魂', ds.soulResolved === false && ds.soulOwner === null);
+  killBy('blue', 'fire');                      // 第 4 条
+  T('③-第 4 条【当场】成魂（不再等 6 条刷完）', ds.soulResolved === true && ds.soulOwner === 'blue');
+  T('③-魂的元素 = 该阵营击杀最多的那种（炎龙）',
+    ds.getSouls().blue[0] === DRAGON_ELEMENTS.fire.soul);
+  T('③-另一方无魂', ds.getSouls().red.length === 0);
+  T('③-成魂阵营的塔与大型小兵都装上了魂',
+    units.blue.filter(u => DragonSystem.SOUL_REWARD_OK(u))
+      .every(u => hasSoul(u, DRAGON_ELEMENTS.fire.soul)));
+  T('③-近战兵没装魂', units.blue.filter(u => u.type === 'melee').every(u => !anySoul(u)));
+  T('③-敌方没有任何单位装魂', units.red.every(u => !anySoul(u)));
+  T('③-结算事件发一次且带阵营与比分',
+    seen.length === 1 && seen[0].owner === 'blue' && seen[0].factionTotals.blue === 4);
+  T('③-成魂后进入远古龙阶段', ds.soulUnlocked === true && ds.ancientSpawned === 0);
+}
+
+// ==================== ④ 抢龙：最后一击换人，奖励就换人 ====================
+{
+  const { ds, killBy } = mk();
+  for (let i = 0; i < 3; i++) killBy('blue', 'fire');
+  killBy('red', 'water');    // 红方抢到第 4 条 —— 蓝方 3、红方 1，都没到门槛
+  T('④-抢到的那条算红方', ds.factionTotals.blue === 3 && ds.factionTotals.red === 1);
+  T('④-谁都没到 4 → 仍未成魂', ds.soulResolved === false);
+  killBy('blue', 'fire');    // 蓝方补到 4
+  T('④-蓝方补满 4 条后成魂', ds.soulOwner === 'blue');
+}
+
+// ==================== ⑤ 新生成的单位要补发（否则奖励几十秒后自动失效）====================
+{
+  const { ds, ents, fx, killBy } = mk();
+  for (let i = 0; i < 4; i++) killBy('blue', 'fire');
+  const mkFresh = (type, fac) => {
+    const e = { id: ++window._uid, type, alive: true, pos: { x: 99, y: 0 },
+      baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+      _skillInstances: [], _mapFaction: fac, faction: fac, _mapTier: type === 'tower' ? 'outer' : undefined };
+    ents.add(e); return e;
+  };
+  const freshTower = mkFresh('tower', 'blue');
+  T('⑤-新建单位默认什么都没有', !anySoul(freshTower));
+  T('⑤-补发成功（龙魂）', ds.equipExistingSoul(freshTower) === true
+    && hasSoul(freshTower, DRAGON_ELEMENTS.fire.soul));
+  T('⑤-巨龙之力也按已击杀条数补齐（4 条炎龙 → 4 层）',
+    fx.getEffects(freshTower.id).some(x => x.blueprint?.stackKey?.startsWith('dragon_fire') && x.stacks === 4));
+
+  const freshSiege = mkFresh('siege', 'blue');
+  T('⑤-新出的大型小兵同样补发', ds.equipExistingSoul(freshSiege) === true && anySoul(freshSiege));
+  const freshMelee = mkFresh('melee', 'blue');
+  // v45：近战兵现在要补【力】、但仍然不给【魂】。
+  // 补发这条尤其不能漏：击杀时的 _grantAll 已经放宽到所有单位，补发这边如果还卡着
+  // 老范围，就会变成"开局在场的近战兵有力、后面出的没有" —— 两处范围不一致
+  // 比两处都窄难查得多（本仓库刚在龙的两条出生路径上栽过同一形状）。
+  T('⑤-新出的近战兵要补【力】', ds.equipExistingSoul(freshMelee) === true
+    && fx.getEffects(freshMelee.id).some(x => x.blueprint?.stackKey?.startsWith('dragon_fire')));
+  T('⑤-但近战兵仍然拿不到【魂】', !anySoul(freshMelee));
+  const freshRed = mkFresh('tower', 'red');
+  T('⑤-敌方新塔不补发', ds.equipExistingSoul(freshRed) === false && !anySoul(freshRed));
+
+  ds.equipExistingSoul(freshTower); ds.equipExistingSoul(freshTower);
+  T('⑤-重复补发幂等（不会叠出多个魂）',
+    freshTower._skillInstances.filter(s => s.skillId.startsWith('dragonsoul_')).length === 1);
+}
+
+// ==================== ⑥ 远古龙魂（远古处决）：限时 300s 的处决，双方都能抢 ====================
+// v51.6：展示名从"远古之力"改成"远古处决"——那个名字现在专指新增的永久全属性
+// 加成（见下面新增的"远古之力（力）"那一节），不再和限时的处决效果撞名。
+{
+  const { ds, fx, units, killBy } = mk();
+  for (let i = 0; i < 4; i++) killBy('blue', 'fire');   // 蓝方成魂
+  window.gameTime = 100;
+  killBy('red', null, true);                            // 红方拿下一条远古龙
+  const redOk = units.red.filter(u => DragonSystem.SOUL_REWARD_OK(u));
+  T('⑥-远古龙魂发给最后一击方的全体领受者',
+    redOk.every(u => hasSoul(u, 'dragonsoul_ancient')));
+  T('⑥-未成魂的一方照样能拿远古（这是落后方的翻盘工具）', ds.soulOwner === 'blue');
+  T('⑥-状态栏可见、限时（不是永久）',
+    fx.getEffects(redOk[0].id).some(x => x.blueprint.name === '远古处决'
+      && x.remainingTime > 0 && x.remainingTime !== Infinity));
+  const dur = CONFIG.dragonSouls.ancient.durationSec;
+  T('⑥-限时 180 秒（八条龙魂里唯一限时的一条；v51.6 从 240 改稿为 300，v51.9 用户实测超标改为 180）', dur === 180);
+  // 到点回收
+  window.gameTime = 100 + dur + 1;
+  ds.update(0.1);
+  T('⑥-到期后技能实例被摘掉', redOk.every(u => !hasSoul(u, 'dragonsoul_ancient')));
+  T('⑥-龙魂本体不受影响（永久）',
+    units.blue.filter(u => DragonSystem.SOUL_REWARD_OK(u)).every(u => anySoul(u)));
+  window.gameTime = 0;
+}
+
+// ==================== ⑥b 远古之力（新增，v51.6；v51.9 改用核心属性加成）：永久核心属性加成，覆盖全部单位 ====================
+// 用户："远古巨龙目前只有龙魂，没有远古之力，远古之力（作用在某阵营所有单位）的效果
+//        每层：+5%全属性加成（永久生效）。"——与限时的"远古处决"（上面⑥那节）是两件
+//        独立的事：一个永久叠层覆盖全部单位（含近战/远程），一个限时只给塔+大型小兵。
+// v51.9：用户实测发现太超标，改用核心属性加成（更窄的六项属性），5%→2.5%。
+{
+  const { ds, fx, units, killBy } = mk();
+  const findPower = (e) => fx.getEffects(e.id).find(x => x.sourceId === 'dragon_ancient_power_0');
+
+  killBy('red', null, true); // 第一条远古龙
+  const meleeRed = units.red.find(u => u.type === 'melee');
+  const towerRed = units.red.find(u => u.type === 'tower');
+  T('⑥b-近战兵也拿到远古之力（POWER_REWARD_OK 范围，不是龙魂那条窄范围）',
+    !!findPower(meleeRed) && findPower(meleeRed).stacks === 1);
+  // v51.9：用户实测"4力+雷魂的蓝方打不过0力+远古龙魂的红方"，把全属性加成砍成
+  // 核心属性加成、5%→2.5%（见 Config.js dragonPower.ancient 的头注）。
+  T('⑥b-塔同样拿到，且每层 +2.5%核心属性（与 CONFIG.dragonPower.ancient.coreStatsPct 一致）',
+    findPower(towerRed).blueprint.flatValue === CONFIG.dragonPower.ancient.coreStatsPct
+    && CONFIG.dragonPower.ancient.coreStatsPct === 2.5
+    && findPower(towerRed).blueprint.statKey === 'coreStatsPct');
+  T('⑥b-是永久效果，不受"远古处决"限时窗口影响',
+    findPower(towerRed).blueprint.duration === Infinity && findPower(towerRed).blueprint.permanent === true);
+
+  killBy('red', null, true); // 第二条远古龙，同一阵营再下一条
+  T('⑥b-再杀一条远古龙，层数叠加到2层（不是刷新成1层）', findPower(towerRed).stacks === 2);
+
+  // 窗口期内新出生的单位（含近战/远程）也要补到当前层数——与元素之力的 factionKills
+  // 补发同一个道理，否则"旧的一批死绝、新出生的一批没有"。
+  const newMelee = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 0, y: 500 },
+    baseStats: { ...CONFIG.templates.melee }, currentHP: 500, _skillInstances: [],
+    _mapFaction: 'red', faction: 'red' };
+  ds.entities.add(newMelee);
+  ds.equipExistingSoul(newMelee);
+  T('⑥b-新出生的近战兵补到2层（不是只对开局在场的单位生效）',
+    !!findPower(newMelee) && findPower(newMelee).stacks === 2);
+
+  T('⑥b-未拿到远古龙的一方没有这个效果', !findPower(units.blue.find(u => u.type === 'tower')));
+}
+
+// ==================== ⑦ 两个独立开关 ====================
+{
+  const bak = { ...CONFIG.dragonToggles };
+  CONFIG.dragonToggles.spawn = false;
+  {
+    const { ds } = mk();
+    ds.paused = false;
+    const before = ds.elementDragonSpawned;
+    for (let i = 0; i < 100; i++) ds.update(10);
+    T('⑦-spawn 关掉后一条龙都不刷', ds.elementDragonSpawned === before);
+  }
+  CONFIG.dragonToggles.spawn = true;
+  CONFIG.dragonToggles.effect = false;
+  {
+    const { ds, units, killBy } = mk();
+    for (let i = 0; i < 4; i++) killBy('blue', 'fire');
+    T('⑦-effect 关掉后照常结算归属（用于做"有龙但没魂"的平衡基线）',
+      ds.soulOwner === 'blue' && ds.factionTotals.blue === 4);
+    T('⑦-但不发放任何增益', units.blue.every(u => !anySoul(u)));
+  }
+  Object.assign(CONFIG.dragonToggles, bak);
+}
+
+// ==================== ⑧ 龙坑交替 ====================
+// v51.9 修复：用户报"蓝方一直在输，从未赢过"排查出的一条——首条龙坑此前硬编码
+// 从 'top' 出（top 坑推的正是【蓝方】基地），等于每一局红方都天然先手抢到"第一条
+// 龙威胁蓝方"这个地理优势，蓝方永远没有。改成每局随机决定首条坑位，组内仍然
+// 严格交替（公平性只挪到"哪边先手"上随机，不影响"轮流"这条规则本身）。
+{
+  const { ds } = mk();
+  const sides = [];
+  ds.setCreateEntity((type, o) => { sides.push(o.pitSide); return null; });
+  ds.paused = false;
+  for (let i = 0; i < 4; i++) ds.spawnDragon();
+  T(`⑧-上/下龙坑严格交替（实际 ${sides.join('/')}）`,
+    sides.join('/') === 'top/bot/top/bot' || sides.join('/') === 'bot/top/bot/top');
+  T('⑧-首条坑位是合法值（不再固定是 top——固定就是本条要修的不对称本身）',
+    sides[0] === 'top' || sides[0] === 'bot');
+}
+
+// ==================== ⑨ 重置本局把整局进度清干净 ====================
+{
+  const { ds, killBy } = mk();
+  for (let i = 0; i < 4; i++) killBy('blue', 'fire');
+  ds.resetRun();
+  T('⑨-resetRun 清掉成魂状态与击杀数',
+    ds.soulOwner === null && ds.soulResolved === false && ds.soulUnlocked === false
+    && ds.factionTotals.blue === 0 && ds.getSouls().blue.length === 0);
+  // v51.9：首条坑位改成每局随机（见上面⑧那条），resetRun 也要重新掷一次骰子，
+  // 不能停在上一局用剩的值——这里只能钉"复位后仍是合法坑位"，具体是哪一边不该
+  // 是固定值（固定就是回归到本条要修的不对称）。
+  T('⑨-龙坑交替也复位（重开一局仍是合法坑位，不会残留成 undefined 之类的坏状态）',
+    ds._nextPitSide === 'top' || ds._nextPitSide === 'bot');
+}
+
+// ==================== ⑩ getSouls / getState 仍然可用（WorldState 与 UI 读它们）====================
+{
+  const { ds, killBy } = mk();
+  T('⑩-getSouls() 存在且返回双阵营结构', typeof ds.getSouls === 'function'
+    && Array.isArray(ds.getSouls().blue) && Array.isArray(ds.getSouls().red));
+  for (let i = 0; i < 2; i++) killBy('blue', 'fire');
+  const st = ds.getState();
+  T('⑩-getState 含阵营比分与规则参数',
+    st.factionTotals.blue === 2 && st.soulThreshold === 4
+    && st.soulResolved === false && st.soulOwner === null && !!st.souls);
+}
+
+// ==================== ⑪ 没有最后一击归属方（环境击杀）不结算，也不该崩 ====================
+{
+  const bus = new EventBus();
+  const ents = new EntityContainer(bus);
+  const fx = new EffectRegistry(bus);
+  const ds = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
+  const t = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.tower }, currentHP: 1000,
+    _skillInstances: [], _mapTier: 'outer' };   // 无 _mapFaction
+  ents.add(t);
+  for (let i = 0; i < 7; i++) {
+    ds.elementDragonSpawned++;
+    const d = { id: ++window._uid, type: 'dragon', alive: false, pos: { x: 1, y: 1 },
+      baseStats: {}, currentHP: 0, _element: 'fire', _skillInstances: [] };  // 无 _lastHitFaction
+    ents.add(d);
+    bus.emit('entity:death', { entityId: d.id });
+  }
+  T('⑪-无归属击杀不计数', ds.factionTotals.blue === 0 && ds.factionTotals.red === 0);
+  T('⑪-无归属击杀不成魂', ds.soulOwner === null && ds.soulResolved === false);
+  T('⑪-没有最后一击方时不发放任何增益（宁可少发也不能误发给敌方）',
+    !fx.getEffects(t.id).some(e => e.blueprint?.stackKey?.startsWith('dragon_fire')));
+}
+
+// ==================== ⑫ 旧的按塔解锁旁路仍然不存在 ====================
+{
+  const { ds } = mk();
+  T('⑫-_unlockSoulForTower 已删除（语义与阵营规则相反）', ds._unlockSoulForTower === undefined);
+  T('⑫-_applyElementBuffToTower 已改名（奖励不再限于塔）',
+    ds._applyElementBuffToTower === undefined && typeof ds._applyElementBuff === 'function');
+}
+
+// ==================== ⑬ v51.23：换图不再把上一局的龙魂/巨龙之力带进新一局 ====================
+// 用户报告："切换地图时上局残留的龙魂会应用到新的一盘中，导致我每次想要真正的从零
+// 开始需要刷新网页。" 根因：MapSystem.loadMap() 的真实顺序是 clearCurrentMap()（清旧塔）
+// → 发 map:loading → **逐个建新塔（这一步会调 equipExistingSoul，把"本阵营已有的
+// 龙之奖励"补给新塔）** → 发 map:loaded。resetRun() 原来挂在 map:loaded 上，等它清空
+// 时新塔已经在建塔那一步把上一局的旧数据当成"已有奖励"吃进去了——这里直接复现
+// 这个时序，不只是调一下 resetRun() 就完事。
+{
+  const { bus, ds, fx, killBy } = mk();
+
+  // ① 模拟"上一局"：蓝方杀了 2 条山龙，全场领受者应该带着 2 层山龙之力
+  for (let i = 0; i < 2; i++) killBy('blue', 'earth');
+  T('⑬-上一局：蓝方确实拿到了2层山龙击杀记录（先确认残留数据是真的存在）',
+    ds.factionKills.blue.earth === 2);
+
+  // ② 模拟"切换地图"：真实 MapSystem.loadMap() 的顺序是先发 map:loading（这里挂的
+  // resetRun 应该在这一刻清空一切），再才逐个建新塔——用紧跟着手动调
+  // equipExistingSoul 模拟"新塔刚被建出来"这一步。
+  bus.emit('map:loading', { mapId: 'howling_abyss_v1' });
+  const newTower = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
+    baseStats: { ...CONFIG.templates.tower }, currentHP: 9000,
+    _skillInstances: [], _mapFaction: 'blue', faction: 'blue', _mapTier: 'outer' };
+  const gotAny = ds.equipExistingSoul(newTower);
+  T('⑬-新地图的新塔建出来时，resetRun 已经先清空了——equipExistingSoul 无事可做',
+    gotAny === false && fx.getEffects(newTower.id).length === 0);
+  T('⑬-DragonSystem 的击杀/奖励簿记确实清零了，不是巧合没触发',
+    Object.keys(ds.factionKills.blue).length === 0 && ds.factionTotals.blue === 0);
+
+  // ③ 新地图里蓝方杀的第一条山龙，新塔身上应该是干干净净的1层，不是"3层"
+  //（2层残留 + 1层新的）。newTower 是手搭的、不在 mk() 的 ents 容器里，
+  // 直接调内部记账+应用两步，与 killBy 内部真正做的事等价（killBy 本身也是靠
+  // entity:death 事件间接触发同一段逻辑，这里跳过事件只是省得再搭一个 ents.add）。
+  ds.killCounts.earth = (ds.killCounts.earth || 0) + 1;
+  ds.totalKills++;
+  ds.factionKills.blue.earth = (ds.factionKills.blue.earth || 0) + 1;
+  ds.factionTotals.blue++;
+  ds._applyElementBuff(newTower, 'earth');
+  const earthEff = fx.getEffects(newTower.id).find(e => e.blueprint.stackKey?.startsWith('dragon_earth_'));
+  T('⑬-新地图第一次杀山龙，新塔身上的山龙之力正好是1层（不是带着上一局残留的3层）',
+    !!earthEff && earthEff.stacks === 1);
+}
+
+// ==================== ⑭ v51.32：召唤水晶复活不该把全阵营的巨龙之力重新叠一遍 ====================
+// 用户报告（v51.23 那次"排查结论：不是独立引擎bug，是Q1下游症状"判断错了，这次是真的）：
+// "击杀巨龙获得的巨龙之力，层数还是有问题，每新杀一条巨龙都会使原来有的其他巨龙之力的
+// 层数+1……应该相互独立的！"
+//
+// 真根因：main.js 原来订阅 map:nexusRespawned，一路召唤水晶复活时就对【该阵营全部
+// 现存的塔】重新调用一遍 equipExistingSoul——理由写的是"重建路径是全新实体，不补就把
+// 魂丢了"，这个前提是错的：MapSystem.update() 里召唤水晶优先走【原地复活尸体】
+//（同一个 entity id，效果系统里的巨龙之力从未被摘掉，见 _onEntityDeath 只打 _ruin
+// 标记、从不清效果），根本不需要重发；唯一会造出全新实体的"尸体不在"兜底路径，
+// createBuildingFn 内部的 createBuilding() 早就调用过一次 equipExistingSoul 了。
+// 于是那个处理器唯一的效果就是：每次召唤水晶复活，把已经正确持有各自层数的旧塔，
+// 按 factionKills 记的每个元素击杀数再重新叠一轮——四条元素一起涨，看起来就像
+// "巨龙之力之间互相污染"。已在 main.js 里删掉这个处理器（见删除处留的详细注释）。
+//
+// 这里从两个角度钉住：① 源码层面确认那个处理器真的不在了，不会有人以后原样加回来；
+// ② 行为层面直接示范"对已有层数的实体重复调用 equipExistingSoul 会发生什么"——
+// 用来说明为什么"广播补发"绝不能作用于旧实体，只能用于真正的新实体（那两条真实路径
+// 各自已经正确处理，不需要再有第三条路径去"兜底"）。
+{
+  // srcOf 剥掉注释——上面那段解释性注释里出现的 nexusRespawned/equipExistingSoul
+  // 字样不会污染这条断言，真正要钉住的是【代码】里不再有这个监听器。
+  const src = srcOf('src/main.js');
+  T('⑭-main.js 不再监听 map:nexusRespawned 广播补发巨龙之力（真根因已删除）',
+    !/nexusRespawned/.test(src));
+
+  const { ds, fx, killBy } = mk();
+  killBy('blue', 'fire'); killBy('blue', 'fire');   // 2层炎之力
+  killBy('blue', 'water');                          // 1层潮之力
+  const tower = ds.entities?.getAllTowers ? ds.entities.getAllTowers(true).find(e => (e._mapFaction || e.faction) === 'blue') : null;
+  const stackOf = (el) => {
+    const eff = fx.getEffects(tower.id).find(e => e.blueprint?.stackKey?.startsWith(`dragon_${el}_`));
+    return eff ? eff.stacks : 0;
+  };
+  T('⑭-正常击杀链路下层数本来就是独立的（炎2/潮1，互不干扰）——对照组',
+    stackOf('fire') === 2 && stackOf('water') === 1);
+
+  // 手动示范"广播补发"式的错误调用（main.js 已删掉的那种），确认它确实会让全部
+  // 元素一起叠加——这正是被删掉的处理器过去在做的事，也是用户看到的现象。
+  for (const t of ds.entities.getAllTowers(true)) {
+    if ((t._mapFaction || t.faction) === 'blue') ds.equipExistingSoul(t);
+  }
+  T('⑭-对已有层数的旧塔广播 equipExistingSoul 会让全部元素一起多叠一轮（复现被删掉的bug机制）',
+    stackOf('fire') === 4 && stackOf('water') === 2);
+}
+
+// ==================== ⑮：手动建塔（"添加单位"）漏发龙魂/巨龙之力（真 bug）====================
+// 用户反馈"核查Bug，某阵营获得龙魂后，龙魂不再塔上生效"。排查发现：createBuilding()
+// （地图上的塔）和 createMinion()（含手动加的大型小兵）早就调用了
+// dragonSystem.equipExistingSoul(entity) 补发（factories.js:379/500），唯独
+// "添加单位"手动建塔这条路径（main.js 里 armPlaceMode 的回调，走 createTower()）
+// 漏了这一句——createTower() 本身不知道塔要归哪个阵营（faction 是回调外部传的），
+// 所以 equipExistingSoul 只能由调用方在设置完 tower._mapFaction 之后自己补。
+// 于是同一批"添加单位"操作里，手动加的大型小兵能补到龙魂/巨龙之力，手动建的塔却拿不到，
+// 跟用户描述的现象完全对得上。
+// srcOf 剥掉注释，钉的是**代码顺序**：先赋值 _mapFaction，再调 equipExistingSoul
+// （equipExistingSoul 读 entity._mapFaction || entity.faction，赋值前调用等于传一个
+// 还没归属阵营的塔进去，直接被 fac === NEUTRAL 的判断挡掉，什么都补不到）。
+{
+  const src = srcOf('src/main.js');
+  const idxFaction = src.indexOf('tower._mapFaction = faction;');
+  const idxEquip = src.indexOf('dragonSystem.equipExistingSoul(tower);');
+  T('⑮-main.js 手动建塔路径调用了 dragonSystem.equipExistingSoul(tower)（此前完全没调）',
+    idxEquip >= 0);
+  T('⑮-equipExistingSoul(tower) 在 tower._mapFaction 赋值之后调用（顺序反了会读到未归属的塔）',
+    idxFaction >= 0 && idxEquip > idxFaction);
+}
+
+// ==================== ⑯：编辑器批量授予龙魂，大型小兵拿不到（真 bug，本轮追加）====================
+// 用户报告："模板编辑器-巨龙与龙魂批量设置某阵营获得龙魂，目前只有塔正常获得，
+// 大型小兵并未正常获得龙魂！！！"——根因：塔静态永久存在，编辑器广播那一刻装上
+// 就一直留着；大型小兵不断死亡重生，新出生的替补全靠 equipExistingSoul 补发，
+// 而它原来只在 this.soulOwner === fac（只有**自动成魂**才会写）时才补龙魂——编辑器
+// 手动授予走 _toggleSoul，从不碰 soulOwner，于是这个补发分支对手动授予的魂永远
+// 不生效。修复：新增 _recordFactionSoul(fac, soulId, on) 把"该阵营现在应该有哪些
+// 魂"单独记进 this.souls[fac]（自动成魂与编辑器手动授予都写它，互不冲突），
+// equipExistingSoul 补发时只认这张表，不再依赖 soulOwner。
+{
+  const { ds, ents, fx } = mk();
+  const mkFresh = (type, fac) => {
+    const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+      _skillInstances: [], _mapFaction: fac, faction: fac };
+    ents.add(e); return e;
+  };
+  const tower = mkFresh('tower', 'blue');
+  const totem1 = mkFresh('totem', 'blue');
+  const soulId = 'dragonsoul_fire';
+
+  // 模拟编辑器"批量授予"点击：直接对当场单位 _toggleSoul，再调 _recordFactionSoul
+  // （对齐 pagesGameplayWorld.js 里巨龙之力池/龙魂池点击处理器的真实调用顺序）。
+  ds._grantAll('blue', (e) => {
+    const has = (e._skillInstances || []).some(i => i.skillId === soulId);
+    if (!has) ds._toggleSoul(e, soulId);
+  });
+  ds._recordFactionSoul('blue', soulId, true);
+  T('⑯-批量授予立即对当场的塔与大型小兵都生效',
+    hasSoul(tower, soulId) && hasSoul(totem1, soulId));
+  T('⑯-soulOwner 不受手动授予影响（出兵条件不能被污染成"已真实成魂"）',
+    ds.soulOwner === null);
+
+  // 大型小兵死亡重生：新totem要靠 equipExistingSoul 补发。
+  totem1.alive = false;
+  const totem2 = mkFresh('totem', 'blue');
+  T('⑯-新出生的大型小兵修复前拿不到（对照：此刻尚未补发）', !hasSoul(totem2, soulId));
+  const got = ds.equipExistingSoul(totem2);
+  T('⑯-equipExistingSoul 补发成功，新大型小兵拿到手动授予的魂（真正的 bug 修复点）',
+    got === true && hasSoul(totem2, soulId));
+
+  // 新塔同理也该补到（塔本来就不会死，这里额外验证"新建的塔"这条边界路径）。
+  const tower2 = mkFresh('tower', 'blue');
+  T('⑯-新建的塔同样补到手动授予的魂', ds.equipExistingSoul(tower2) === true && hasSoul(tower2, soulId));
+
+  // 针对性移除：chip 上点 ✕ 之后，新出生的单位不应该再补到。
+  ds._grantAll('blue', (e) => {
+    if ((e._skillInstances || []).some(i => i.skillId === soulId)) ds._toggleSoul(e, soulId);
+  });
+  ds._recordFactionSoul('blue', soulId, false);
+  const totem3 = mkFresh('totem', 'blue');
+  T('⑯-针对性移除后，新出生的单位不再补发这条魂', ds.equipExistingSoul(totem3) === false && !hasSoul(totem3, soulId));
+
+  // 敌方不受影响（_grantAll 已经按阵营过滤，_recordFactionSoul 也是按 fac 分开存）。
+  const redTotem = mkFresh('totem', 'red');
+  T('⑯-敌方阵营完全不受影响', !hasSoul(redTotem, soulId) && ds.equipExistingSoul(redTotem) === false);
+}
+
+// ==================== ⑰：编辑器"巨龙与龙魂"页两处调用点确实同步了 _recordFactionSoul ====================
+// 读源码钉住调用点存在，防止以后有人改批量授予/移除时漏掉这一步同步（本仓库已经
+// 因为同类"两处该一致的地方只改了一处"栽过好几次，见 minionPassives.js 的 rend 那段注释）。
+{
+  const src = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  const n = (src.match(/ds\._recordFactionSoul\(/g) || []).length;
+  T('⑰-批量授予与针对性移除都调用了 ds._recordFactionSoul（缺一处就是回到本轮修的那个 bug）', n === 2);
+}
+
+// ==================== ⑱：编辑器批量授予巨龙之力，小兵拿不到（真 bug，本轮追加）====================
+// 用户报告："我在模板编辑器中手动设置多层巨龙之力，但是并未正确生效，只有塔生效
+// 而小兵未生效。"——与⑯的龙魂 bug 同一类根因，但这次是巨龙之力那条一直没补上：
+// 编辑器"巨龙之力池"点击只是 _grantAll 直接把 buff 加到**当时在场**的实体上，
+// 从没写过 factionKills[fac][el]——而 equipExistingSoul() 给新出生单位补发巨龙之
+// 力，读的正是这张表（真实击杀 _onDragonKilled 会写它，编辑器手动授予从来没写
+// 过）。塔静态永久存在，广播那一刻装上就留着，掩盖了这个洞；小兵不断死亡重生，
+// 每一批新兵在 equipExistingSoul 里都读到空表，永远是裸的。
+// 修复：新增 _recordFactionPowerLayer(fac, el, delta) 同步写 factionKills[fac][el]
+// （与 _recordFactionSoul 同构），编辑器 +1 层/-1 层都调用它。
+{
+  const { ds, ents, fx } = mk();
+  const mkFresh = (type, fac) => {
+    const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+      baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+      _skillInstances: [], _mapFaction: fac, faction: fac };
+    ents.add(e); return e;
+  };
+  const tower = mkFresh('tower', 'blue');
+  const melee1 = mkFresh('melee', 'blue');   // 力对**全部单位**生效，含近战/远程——用近战验证范围最宽
+  const el = 'fire';
+  const hasPower = (e) => fx.getEffects(e.id).some(x => x.blueprint?.stackKey?.startsWith(`dragon_${el}_`));
+
+  // 模拟编辑器"巨龙之力池"点击（对齐 pagesGameplayWorld.js 里 kind==='power' 的真实调用顺序）。
+  ds._grantAll('blue', (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+  ds._recordFactionPowerLayer('blue', el, 1);
+  T('⑱-批量授予立即对当场的塔与近战小兵都生效（力的范围本来就该覆盖全部单位）',
+    hasPower(tower) && hasPower(melee1));
+
+  // 小兵死亡重生：新的近战兵要靠 equipExistingSoul 补发。
+  melee1.alive = false;
+  const melee2 = mkFresh('melee', 'blue');
+  T('⑱-新出生的小兵修复前拿不到（对照：此刻尚未补发）', !hasPower(melee2));
+  const got = ds.equipExistingSoul(melee2);
+  T('⑱-equipExistingSoul 补发成功，新小兵拿到手动授予的巨龙之力（真正的 bug 修复点）',
+    got === true && hasPower(melee2));
+
+  // 新塔同理也该补到。
+  const tower2 = mkFresh('tower', 'blue');
+  T('⑱-新建的塔同样补到手动授予的力', ds.equipExistingSoul(tower2) === true && hasPower(tower2));
+
+  // 针对性 -1 层：factionKills 计数同步回退，新出生的单位不应该再补到这一层。
+  ds._grantAll('blue', (e) => {
+    const effs = fx.getEffects(e.id).filter(x => x.sourceId && x.sourceId.startsWith(`dragon_buff_${el}_`));
+    for (const eff of effs) { if (eff.stacks > 1) { eff.stacks -= 1; fx._recalcEffectValues(eff); } else fx.remove(eff.id); }
+  }, DragonSystem.POWER_REWARD_OK);
+  ds._recordFactionPowerLayer('blue', el, -1);
+  const melee3 = mkFresh('melee', 'blue');
+  T('⑱--1 层后 factionKills 归零，新出生的单位不再补到这层力',
+    ds.equipExistingSoul(melee3) === false && !hasPower(melee3));
+
+  // 敌方不受影响（_grantAll 已经按阵营过滤，_recordFactionPowerLayer 也是按 fac 分开存）。
+  const redMelee = mkFresh('melee', 'red');
+  T('⑱-敌方阵营完全不受影响', !hasPower(redMelee) && ds.equipExistingSoul(redMelee) === false);
+}
+
+// ==================== ⑲：编辑器"巨龙与龙魂"页两处力调用点确实同步了 _recordFactionPowerLayer ====================
+{
+  const src = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  const n = (src.match(/ds\._recordFactionPowerLayer\(/g) || []).length;
+  T('⑲-力的 +1 层/-1 层都调用了 ds._recordFactionPowerLayer（缺一处就是回到这次修的 bug）', n === 2);
+}
+
+// ==================== ⑳：生效单位筛选——软编码化，默认值与旧硬编码规则逐位一致 ====================
+// 用户："巨龙龙魂页面新增巨龙之力/龙魂的生效单位选择。就是目前龙魂只对大型小兵/塔
+// 生效，改为按照不同兵种/不同塔来筛选。"——SOUL_REWARD_OK/POWER_REWARD_OK 原来是写死
+// 的判定函数，现在改读 CONFIG.dragonRewardTargets.soul/power 这两张表。参数化时默认值
+// 必须与参数化前逐位一致（CLAUDE.md 铁律②），这里把旧规则覆盖到的全部已知类型都过一遍。
+{
+  const KNOWN = ['tower', 'melee', 'ranged', 'siege', 'super', 'totem', 'warlock', 'corrupt', 'ram', 'heavy', 'healer', 'engineer', 'summoner'];
+  const soulOldRule = (t) => t === 'tower' ? true : (t !== 'melee' && t !== 'ranged');
+  const powerOldRule = () => true;
+  for (const t of KNOWN) {
+    T(`⑳-龙魂默认值对「${t}」与旧硬编码规则一致`,
+      DragonSystem.SOUL_REWARD_OK({ type: t }) === soulOldRule(t));
+    T(`⑳-巨龙之力默认值对「${t}」与旧硬编码规则一致`,
+      DragonSystem.POWER_REWARD_OK({ type: t }) === powerOldRule(t));
+  }
+  T('⑳-两者对龙自己都不算（沿用旧规则）',
+    DragonSystem.SOUL_REWARD_OK({ type: 'dragon' }) === false && DragonSystem.POWER_REWARD_OK({ type: 'dragon' }) === false);
+  // 未来新增的自制兵种：表里没有这个 key，按旧规则语义兜底（不因为筛选表没提前
+  // 列出新类型就意外拿不到奖励）。
+  T('⑳-未声明的自制兵种类型仍按旧规则兜底（龙魂：非近战远程即算）',
+    DragonSystem.SOUL_REWARD_OK({ type: 'my_custom_minion' }) === true);
+  T('⑳-未声明的自制兵种类型仍按旧规则兜底（力：全部算）',
+    DragonSystem.POWER_REWARD_OK({ type: 'my_custom_minion' }) === true);
+}
+
+// ==================== ㉑：编辑器勾选筛选后，真实生效范围确实收窄/放宽 ====================
+{
+  const before = JSON.parse(JSON.stringify(CONFIG.dragonRewardTargets));
+  try {
+    // 把龙魂的"炮兵（siege）"关掉，巨龙之力的"近战（melee）"打开（本来就是true，改关掉再开回来验证双向）。
+    CONFIG.dragonRewardTargets.soul.siege = false;
+    T('㉑-关掉龙魂对炮兵的生效后，SOUL_REWARD_OK 对炮兵返回 false',
+      DragonSystem.SOUL_REWARD_OK({ type: 'siege' }) === false);
+    CONFIG.dragonRewardTargets.soul.melee = true;
+    T('㉑-把龙魂对近战的生效打开后，SOUL_REWARD_OK 对近战返回 true（原来是硬编码排除的）',
+      DragonSystem.SOUL_REWARD_OK({ type: 'melee' }) === true);
+    CONFIG.dragonRewardTargets.power.ranged = false;
+    T('㉑-关掉巨龙之力对远程的生效后，POWER_REWARD_OK 对远程返回 false',
+      DragonSystem.POWER_REWARD_OK({ type: 'ranged' }) === false);
+
+    // 端到端：equipExistingSoul 给新出生单位补发时也要尊重这份筛选（不是只有
+    // SOUL_REWARD_OK/POWER_REWARD_OK 两个静态方法看得到，实际补发路径也要收窄）。
+    const { ds, ents, fx } = mk();
+    const mkFresh = (type, fac) => {
+      const e = { id: ++window._uid, type, alive: true, pos: { x: 0, y: 0 },
+        baseStats: { ...(CONFIG.templates[type] || CONFIG.templates.tower) }, currentHP: 1000,
+        _skillInstances: [], _mapFaction: fac, faction: fac };
+      ents.add(e); return e;
+    };
+    const el = 'fire';
+    ds._grantAll('blue', (e) => ds._applyElementBuff(e, el), DragonSystem.POWER_REWARD_OK);
+    ds._recordFactionPowerLayer('blue', el, 1);
+    const rangedUnit = mkFresh('ranged', 'blue');
+    const hasPower = (e) => fx.getEffects(e.id).some(x => x.blueprint?.stackKey?.startsWith(`dragon_${el}_`));
+    T('㉑-被筛选排除的远程兵，equipExistingSoul 补发时确实拿不到（真实补发路径同样尊重筛选）',
+      ds.equipExistingSoul(rangedUnit) === false && !hasPower(rangedUnit));
+  } finally {
+    // 还原，避免污染同文件里排在后面的测试或以后新增的用例。
+    CONFIG.dragonRewardTargets = before;
+  }
+}
+
+// ==================== ㉒：编辑器"巨龙与龙魂"页确实提供了生效单位的勾选入口 ====================
+{
+  const src = srcOf('src/ui/editor/pagesGameplayWorld.js');
+  T('㉒-渲染函数里生成了 .dg-target 复选框', /class="dg-target"/.test(src));
+  T('㉒-复选框携带 kind（soul/power）与 type 两个 data 属性，供事件处理器区分', /data-dg-target-kind="\$\{kind\}"/.test(src) && /data-dg-target-type="\$\{t\}"/.test(src));
+  T('㉒-事件处理器写回 CONFIG.dragonRewardTargets（勾选即生效，不需要额外的应用按钮）', /targets\[kind\] \|\| \(targets\[kind\] = \{\}\)/.test(src));
+  T('㉒-勾选覆盖了"塔"这一类（用户定稿：塔整体算一类，不按外/内/基地塔细分）', /\[\s*\['tower'/.test(src));
+  T('㉒-兵种列表来自 allMinionTypes()（含自制兵种，不是写死的内置列表）', /allMinionTypes\(\)\.map/.test(src));
+}
+
+board.done();
