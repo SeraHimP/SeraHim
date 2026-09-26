@@ -108,10 +108,38 @@ export class DominionSystem {
         _mapFaction: FACTIONS.NEUTRAL,
         faction: FACTIONS.NEUTRAL,
         _mapTier: 'capture_point',
+        // 用户定稿："中立据点不显示血条，画板上显示占领进度（用不同颜色区分），
+        // 属性面板用法力条显示"——这两份镜像字段是 resourceBar.js/UnitLayer.js
+        // 读占领进度的唯一来源（那两处不认识 DominionSystem，只读实体本身的字段），
+        // 见 _advance/_setOwner 里的 _syncCaptureDisplay()。
+        _capturePct: 0,
+        _captureOwner: FACTIONS.NEUTRAL,
       };
       this.entities.add(entity);
       node.entity = entity;
     }
+    // 召唤水晶（nexus_lane）自带穿透型子弹+物理攻击（用户定稿），但全局
+    // CONFIG.towerTierWeapon.nexus_lane 固定是 'none'（所有地图的召唤水晶默认
+    // 不开火），常规的"地图 buildings[].weapon"装配路径会被这条全局配置直接
+    // 顶掉——跟据点占领后开火踩的是同一个坑（见 _setOwner 头注），这里同样
+    // 只能绕开正常武器装配、直接调用 equipSkill。攻击力/射程/攻速走地图自己
+    // 的 tierStats.nexus_lane 覆写（见 dominion_crystal_scar.js），不需要在
+    // 这里再改数值，只补上"装武器"这一步。
+    if (this.effectRegistry) {
+      const ctx = { entityContainer: this.entities, effectRegistry: this.effectRegistry, eventBus: this.eventBus, waveNumber: (typeof window !== 'undefined' && window.CTX?.waveNumber) || 0 };
+      for (const e of this.entities.getAllTowers(false)) {
+        if (e._mapTier !== 'nexus_lane') continue;
+        if ((e._skillInstances || []).some((s) => s.skillId === 'weapon_piercing')) continue;
+        equipSkill(e, 'weapon_piercing', ctx, SkillLibrary);
+      }
+    }
+  }
+
+  /** 镜像占领状态到实体上，供 resourceBar.js（面板法力条）/UnitLayer.js（画板血条）读取。 */
+  _syncCaptureDisplay(node) {
+    if (!node.entity) return;
+    node.entity._capturePct = node.capturePct;
+    node.entity._captureOwner = node.captureOwner;
   }
 
   /**
@@ -146,6 +174,7 @@ export class DominionSystem {
       if (node.capturePct >= full) this._setOwner(node, FACTIONS.BLUE, full);
       else if (node.capturePct <= -full) this._setOwner(node, FACTIONS.RED, -full);
     }
+    this._syncCaptureDisplay(node);
   }
 
   /**
@@ -201,8 +230,16 @@ export class DominionSystem {
   /**
    * 出兵：据点被完全占领后，从这里开始按固定预算出兵，朝相邻两个方向分摊
    * （不是各出一整套，见设计文档第 6 节"出兵预算"——避免 5 点全占时爆量）。
-   * 双方水晶基地每隔 bonusWaveEvery 波额外出一次固定编制的兵，与据点占领
+   * 双方召唤水晶每隔 bonusWaveEvery 波额外出一次固定编制的兵，与据点占领
    * 状态无关（防止一方据点优势滚雪球到底，设计文档 5.3 节）。
+   *
+   * 用户定稿："所有据点默认不出超级兵，只有在某一方打掉了另一方的召唤水晶后，
+   * 在自家的召唤水晶出超级兵"——据点（kind:'point'）的编制（cfg.waveBudget）
+   * 本身就不含 super（见 Config.js）；召唤水晶（kind:'base'）出兵时额外检查
+   * 敌方召唤水晶【此刻】是不是处于摧毁/重生倒计时状态，是就把 crystalSuperBonus
+   * 并进这一波编制——敌方水晶一旦重生（nexusRespawnTime 到点，MapSystem 原地
+   * 复活尸体）这里立刻就读不到"敌方水晶已摧毁"了，自然停止，不需要额外监听
+   * 重生事件、也不需要自己维护一份"是否已解锁"的开关状态。
    */
   _tickWaves(dt) {
     const cfg = CONFIG.dominion || {};
@@ -218,9 +255,21 @@ export class DominionSystem {
         if (node.captureOwner === FACTIONS.NEUTRAL) continue;
         this._spawnBudget(node, node.captureOwner, cfg.waveBudget, toggleStart);
       } else if (node.kind === 'base' && this._waveCount % bonusEvery === 0) {
-        this._spawnBudget(node, node.faction, cfg.bonusWaveComposition, toggleStart);
+        const budget = this._enemyCrystalDown(node.faction)
+          ? { ...cfg.bonusWaveComposition, ...cfg.crystalSuperBonus }
+          : cfg.bonusWaveComposition;
+        this._spawnBudget(node, node.faction, budget, toggleStart);
       }
     }
+  }
+
+  /** faction 的敌方召唤水晶此刻是不是已经被摧毁（还没重生）——决定这一波要不要带超级兵。 */
+  _enemyCrystalDown(faction) {
+    const enemy = faction === FACTIONS.BLUE ? FACTIONS.RED : faction === FACTIONS.RED ? FACTIONS.BLUE : null;
+    if (!enemy) return false;
+    const crystal = this.entities.getAllTowers(false)
+      .find((t) => t._mapTier === 'nexus_lane' && t._mapFaction === enemy);
+    return !!crystal && !crystal.alive;
   }
 
   /** 把 budgetCfg（{melee:1,ranged:1,super:1} 这种）拆成单位序列，轮流分给两个方向。 */

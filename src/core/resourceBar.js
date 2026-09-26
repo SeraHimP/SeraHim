@@ -52,6 +52,13 @@ export const RESOURCE_COLORS = {
   heat: NON_MANA_COLOR,       // 穿透型升温
   lightning: NON_MANA_COLOR,  // 闪电杖充能
   charge: NON_MANA_COLOR,     // 通用充能型攻击方式（攻城车等）
+  // 统治战场·水晶之痕：据点占领进度（用户定稿"属性面板用法力条显示"）——按
+  // 当前归属方分三种颜色，跟 FACTION_HP_COLORS 用同一套蓝/红，中立用比中立
+  // 血条绿更暗一档的灰绿（用户原话是"用不同颜色的血条区分"，不是三态都用
+  // 同一色，见 UnitLayer.js `_redrawBar` 的画板血条同款配色）。
+  capture_blue: '#4a9eff',
+  capture_red: '#ff5a5a',
+  capture_neutral: '#5c6b63',
 };
 
 /**
@@ -79,6 +86,16 @@ export const FACTION_HP_COLORS = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#4
  */
 export function resourceInfoOf(entity, ctx) {
   if (!entity) return null;
+  // 统治战场·水晶之痕：据点没有 HP（见 DominionSystem.js），用户定稿"中立据点
+  // 不显示血条……属性面板用法力条显示"——占领进度 capturePct∈[-100,100] 映射
+  // 到 0~1（-100=完全红方、0=中立、+100=完全蓝方），颜色按当前领先方走，
+  // 在 hasActive 等常规资源判定之前提前返回，据点没有技能/法力这些概念。
+  if (entity.isCapturePoint) {
+    const pct = entity._capturePct ?? 0;
+    const kind = pct > 0 ? 'capture_blue' : pct < 0 ? 'capture_red' : 'capture_neutral';
+    const leadLabel = pct > 0 ? '蓝方' : pct < 0 ? '红方' : '中立';
+    return { frac: (pct + 100) / 200, kind, label: `${leadLabel} ${Math.round(Math.abs(pct))}%` };
+  }
   const { skillLibrary, attrCalc, effects } = ctx;
   const insts = entity._skillInstances || [];
   const hasActive = insts.some(i => !i._disabled && skillLibrary[i.skillId]?.category === 'active');

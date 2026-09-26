@@ -20,19 +20,18 @@ export const ModeDialog = {
     overlay.classList.add('open');
     document.getElementById('modalTitle').textContent = '🗺️ 游戏模式 / 地图';
 
+    // v2026-09-26：统治战场并入"选择模式"（用户定稿"这个模式下目前只有这一个
+    // 地图"）——是这条轴上第三个互斥选项，不是"选择地图"网格里的一张图。
+    // 选中它时"选择地图"整块直接不渲染（没有可选的地图，留着一个空/禁用的
+    // 网格没有意义）；MODE_ICONS 补一个专属图标，避免继续用 classic/normal
+    // 的兜底逻辑（`m.id==='classic'?...:...`）硬凑第三种。
+    const MODE_ICONS = { classic: '📜', dominion: '💠', normal: '⚔️' };
     // 只有两组选卡，不摆侧边栏——跟原来一样，一个只有一两项的导航是纯装饰。
     const render = () => {
       const modes = mapSystem.getAvailableModes();
       const maps = mapSystem.getAvailableMaps();
-      const body = `
-        <div class="editor-section">
-          <h4>选择模式</h4>
-          <div class="pick-grid">
-            ${modes.map(m => `<div class="pick-card ${mapSystem.currentMode === m.id ? 'selected' : ''}" data-mode-id="${m.id}">
-              <div class="pick-icon">${m.id === 'classic' ? '📜' : '⚔️'}</div><div class="pick-label">${m.label}</div>
-            </div>`).join('')}
-          </div>
-        </div>
+      const isDominion = mapSystem.currentMode === 'dominion';
+      const mapSection = isDominion ? '' : `
         <div class="editor-section">
           <h4>选择地图</h4>
           <div class="pick-grid">
@@ -42,6 +41,16 @@ export const ModeDialog = {
           </div>
           <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">选择模式或地图都会立刻重新加载对战（清空当前场上单位）。</div>
         </div>`;
+      const body = `
+        <div class="editor-section">
+          <h4>选择模式</h4>
+          <div class="pick-grid">
+            ${modes.map(m => `<div class="pick-card ${mapSystem.currentMode === m.id ? 'selected' : ''}" data-mode-id="${m.id}">
+              <div class="pick-icon">${MODE_ICONS[m.id] || '⚔️'}</div><div class="pick-label">${m.label}</div>
+            </div>`).join('')}
+          </div>
+        </div>
+        ${mapSection}`;
       document.getElementById('modalBody').innerHTML = paneHtml({ groups: [], body });
       bindEvents();
     };
@@ -51,7 +60,14 @@ export const ModeDialog = {
         card.addEventListener('click', () => {
           const modeId = card.dataset.modeId;
           if (modeId === mapSystem.currentMode) return;
-          mapSystem.loadMap(mapSystem.currentBaseMapId, modeId);
+          // 从统治战场切回普通/经典时，currentBaseMapId 还留着它专属的那张环形
+          // 地图——那张图已经从"选择地图"网格里摘掉了，继续拿它当 baseId 会显得
+          // "怎么点了普通模式画面却没变"，这里显式传 undefined 落回 loadMap 的
+          // 默认地图（DEFAULT_MAP_ID）。反过来切进统治战场则不用管传了什么
+          // baseId——loadMap() 见到 mode==='dominion' 会自己强制换图。
+          const wasDominion = mapSystem.currentMode === 'dominion';
+          const baseMapId = (wasDominion && modeId !== 'dominion') ? undefined : mapSystem.currentBaseMapId;
+          mapSystem.loadMap(baseMapId, modeId);
           logFn(`🗺️ 已切换模式：${card.querySelector('.pick-label').textContent}`, 'spawn');
           render();
           deps.onMapChanged?.();

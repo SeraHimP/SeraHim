@@ -1,5 +1,5 @@
 import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
-import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode } from '../data/maps/modeTransforms.js';
+import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode, DOMINION_MODE_MAP_ID } from '../data/maps/modeTransforms.js';
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { forestZoneAt } from '../data/mapValidate.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
@@ -142,8 +142,14 @@ export class MapSystem {
     // 地图编辑器主画面工具条借这个 id 落一份临时草稿（见 mapEditorCore.js 头注的
     // LIVE_EDIT_SESSION_MAP_ID 说明），不是用户存过的真地图，选图列表里不该出现它。
     // getMapById()/loadMap() 不受影响——它们要能正常找到并加载这个 id。
+    //
+    // 统治战场专属地图也从"选择地图"网格里摘掉——用户定稿"统治战场的模式应该
+    // 做到上面的tab里，这个模式下目前只有这一个地图"：它不是"普通/经典"这条轴
+    // 上的一张地图（拓扑/规则整个不同），改成从"选择模式"里选 dominion 时
+    // 由 loadMap() 直接换到这张图（见那边头注），普通/经典模式的地图网格
+    // 不应该再出现它。getMapById()/loadMap() 仍然认得这个 id，不受影响。
     return Object.values(this._mapRegistry())
-      .filter(m => m.id !== LIVE_EDIT_SESSION_MAP_ID)
+      .filter(m => m.id !== LIVE_EDIT_SESSION_MAP_ID && m.id !== DOMINION_MODE_MAP_ID)
       .map(m => ({ id: m.id, label: m.label }));
   }
 
@@ -188,6 +194,11 @@ export class MapSystem {
       if (effectiveMode === undefined) effectiveMode = MODES.classic.id;
     }
     if (effectiveMode === undefined) effectiveMode = MODES.normal.id;
+    // 统治战场"这个模式下目前只有这一个地图"（用户定稿）——不管调用方传的
+    // mapId 是什么（通常是切模式那一刻界面上还留着的上一张普通地图），选中
+    // 这个 mode 一律换成它专属的那张环形地图，不需要地图选择器另外提供入口
+    // （getAvailableMaps() 也已经把它从"选择地图"网格里摘掉，见那边头注）。
+    if (effectiveMode === MODES.dominion.id) baseId = DOMINION_MODE_MAP_ID;
 
     const base = this._mapRegistry()[baseId];
     if (!base) { console.warn('地图不存在:', mapId); return; }

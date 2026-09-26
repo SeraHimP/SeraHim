@@ -2812,13 +2812,24 @@ export const CONFIG = {
     waveInterval: 20,     // 每个"完全占领"的据点，每隔这么多秒出一波兵
     // 每据点每波的出兵预算——两个相邻方向平分（不是每个方向各出一整套），
     // 见设计文档第 6 节"出兵预算"：避免 5 点全占时爆量成十几条出兵流。
-    waveBudget: { melee: 1, ranged: 1, super: 1 },
-    // ---- 双方水晶每隔 N 波额外出一波固定编制的兵（防止一边倒） ----
+    // 2026-09-26 用户定稿："所有据点默认不出超级兵"——超级兵改为专属召唤水晶的
+    // 战果奖励（见 crystalSuperBonus），据点自己的编制里去掉 super 这一项。
+    waveBudget: { melee: 1, ranged: 1 },
+    // ---- 双方召唤水晶每隔 N 波额外出一波固定编制的兵（防止一边倒） ----
     bonusWaveEvery: 3,
-    bonusWaveComposition: { melee: 1, ranged: 1, super: 1 },
+    bonusWaveComposition: { melee: 1, ranged: 1 },
+    // 2026-09-26 新增（用户定稿）："只有在某一方打掉了另一方的召唤水晶后，在自家
+    // 的召唤水晶出超级兵"——DominionSystem._tickWaves 出召唤水晶的额外波时，
+    // 若敌方召唤水晶此刻处于摧毁/重生倒计时状态，就把这份加进 bonusWaveComposition，
+    // 敌方水晶一旦重生（nexusRespawnTime）立刻停止，与 LoL"拆水晶出超级兵"同一节奏。
+    crystalSuperBonus: { super: 1 },
     // ---- 水晶掉血：己方占据点数 > 对方时，对方水晶每秒掉这么多血 ----
     // 乘以双方据点数量差——差距越大掉血越快，同数量时（含都是 0）不掉血。
-    nexusDrainPerPointPerSec: 8,
+    // 2026-09-26：8 → 1（用户定稿具体数值："敌方每比我方多占领一个据点，我方的
+    // 水晶枢纽生命值减去多出来的数量×1"），配合水晶枢纽 HP 从原型草案的量级
+    // 改为固定 500（见 dominion_crystal_scar.js 的 tierStats.nexus_main），
+    // 1/秒的速率下最大 5 点据点差也要 100 秒才耗光，节奏比原来 8 这个起草值缓和。
+    nexusDrainPerPointPerSec: 1,
   },
 };
 

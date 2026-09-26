@@ -673,6 +673,18 @@ export class LaneMovementSystem {
 
     const forward = minion._laneDirection !== 'reverse';
     const wps = lane.waypoints;
+    // 环形兵线（lane.loop:true，目前只有统治战场·水晶之痕的 'ring' 用到）：
+    // 首尾路点坐标相同（首尾相接闭合成圆），走到最后一个索引不该"卡死在终点"，
+    // 而是绕回索引 0 继续走下一圈——见下面 wrap() 的两处用法。
+    // 回归背景：闭合折线原样复用"到达终点就停"的旧逻辑时，索引卡在末尾后，
+    // pure-pursuit 的全局最近点投影（projectOntoPolyline/lookaheadOnPolyline，
+    // 不认识、也不受这里的 idx 钳制）发现当前位置正好和索引 0 处于同一坐标，
+    // 于是继续把小兵往"折线前段"拽——索引卡着不动、位置却被越拽越远，
+    // 实测 150 秒后偏出终点 1550px（sim_pathcorner.mjs①⑤ 抓到的这个回归）。
+    // 让索引本身也跟着绕圈，两边就不再互相矛盾。
+    const N = wps.length;
+    const loop = !!lane.loop;
+    const wrap = (i) => (loop ? ((i % N) + N) % N : Math.max(0, Math.min(N - 1, i)));
     let idx = minion._laneWaypointIndex;
     if (idx === undefined) {
       // 首次初始化：按"最近线段投影"确定行进段，而不是盲取端点索引——
@@ -689,7 +701,7 @@ export class LaneMovementSystem {
       }
       idx = forward ? bestSeg + 1 : bestSeg;
     }
-    idx = Math.max(0, Math.min(wps.length - 1, idx));
+    idx = wrap(idx);
 
     // 路点跳跃：追击可能把小兵带到了当前路点前方——若已比"当前路点"更接近
     // "下一个路点"，直接推进索引，避免往回走。最多连跳数个（限制防死循环）。
@@ -703,17 +715,18 @@ export class LaneMovementSystem {
     // 于是绕着转角那个点无限打转（实测：路程 11738px、净位移 465px、150 秒不推进一格）。
     // 所以补一条与转角无关的判据：**沿来向越过该路点所在的平面**就算到达。
     const passedWaypoint = (i) => {
-      const prevIdx = forward ? i - 1 : i + 1;
-      if (prevIdx < 0 || prevIdx >= wps.length) return false;
-      const w = wps[i], pv = wps[prevIdx];
+      const prevIdxRaw = forward ? i - 1 : i + 1;
+      if (!loop && (prevIdxRaw < 0 || prevIdxRaw >= wps.length)) return false;
+      const w = wps[i], pv = wps[wrap(prevIdxRaw)];
       const ax = w.x - pv.x, ay = w.y - pv.y;          // 来向（上一段的方向）
       const L = Math.hypot(ax, ay) || 1;
       // 越过 = 位置相对该路点在来向上的投影为正
       return ((minion.pos.x - w.x) * ax + (minion.pos.y - w.y) * ay) / L > 0;
     };
     for (let hop = 0; hop < 4; hop++) {
-      const nextIdx = forward ? idx + 1 : idx - 1;
-      if (nextIdx < 0 || nextIdx >= wps.length) break;
+      const nextIdxRaw = forward ? idx + 1 : idx - 1;
+      if (!loop && (nextIdxRaw < 0 || nextIdxRaw >= wps.length)) break;
+      const nextIdx = wrap(nextIdxRaw);
       const cur = wps[idx], nxt = wps[nextIdx];
       const dCur = (cur.x - minion.pos.x) ** 2 + (cur.y - minion.pos.y) ** 2;
       const dNxt = (nxt.x - minion.pos.x) ** 2 + (nxt.y - minion.pos.y) ** 2;
@@ -742,7 +755,7 @@ export class LaneMovementSystem {
 
     if (distSq < 16) {
       idx = forward ? idx + 1 : idx - 1;
-      minion._laneWaypointIndex = Math.max(0, Math.min(wps.length - 1, idx));
+      minion._laneWaypointIndex = wrap(idx);
       return;
     }
     // pure-pursuit：期望前进方向不再直奔 target 的精确坐标，而是沿折线前瞻

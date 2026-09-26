@@ -895,6 +895,22 @@ export class UnitLayer {
       g.fillStyle = '#9aa3ae'; g.fillRect(0, 0, BAR_W * prog, BAR_H);
       return;
     }
+    // 统治战场·水晶之痕：据点没有 HP（DominionSystem.js），用户定稿"中立据点不
+    // 显示血条……在画板上显示占领进度（用不同颜色的血条区分）"——占领进度已经
+    // 由调用方通过 resourceInfoOf(e,...) 算成 resInfo（capture_blue/red/neutral
+    // 三种 kind，frac 是 -100..100 映射到 0..1 的占领刻度，见 resourceBar.js 头注），
+    // 这里直接把它当【主条】画，完全跳过下面 HP/护盾那一整套（据点的 currentHP/
+    // maxHP 只是占位值，画出来的血条没有意义）。
+    if (e.isCapturePoint) {
+      if (resInfo) {
+        g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, BAR_H);
+        g.fillStyle = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.capture_neutral;
+        g.fillRect(0, 0, BAR_W * Math.max(0, Math.min(1, resInfo.frac)), BAR_H);
+        g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
+        g.strokeRect(0.5, 0.5, BAR_W - 1, BAR_H - 1);
+      }
+      return;
+    }
     if (maxHP <= 0) return;
     // 资源条占底部 2px，HP 条让出这 2px——BAR_H 只有 8px，硬加一整条会让贴图翻倍、
     // 世界尺寸也要跟着改（vis.barH 是按 BAR_W/BAR_H 比例算的），blast radius 太大；

@@ -69,9 +69,19 @@ const CLASSIC_MINION_PASSIVES = {
 // 用这个后缀套上去能直接复用同一套材质映射（经典模式视觉上还是那张图，不用新增主题）。
 export const CLASSIC_ID_SUFFIX = '_classic';
 
+// 2026-09-26 用户定稿："统治战场的模式应该做到上面的tab里"（选择模式那一栏，
+// 跟普通/经典模式并列），"这个模式下目前只有这一个地图"——跟普通/经典不同，
+// 统治战场不是"套在任意一张已有地图上的数值变换"（applyClassicMode 那种），
+// 它是**专属一张地图**（dominion_crystal_scar_v1，7 节点环形拓扑，跟 SR/HA/TT
+// 的传统兵线走廊完全是两回事），所以这里只登记这个 id 本身，不写变换函数——
+// MapSystem.loadMap() 见到这个 mode 会直接强制换成那张专属地图，
+// getAvailableMaps() 也会把那张图从"选择地图"网格里摘掉（见那两处头注）。
+export const DOMINION_MODE_MAP_ID = 'dominion_crystal_scar_v1';
+
 export const MODES = {
-  normal:  { id: 'normal',  label: '普通模式' },
-  classic: { id: 'classic', label: '经典模式' },
+  normal:   { id: 'normal',   label: '普通模式' },
+  classic:  { id: 'classic',  label: '经典模式' },
+  dominion: { id: 'dominion', label: '统治战场' },
 };
 
 /** 拿一张"普通模式"的 base map，产出它的经典模式版本。 */

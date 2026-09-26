@@ -192,6 +192,52 @@ async function battle(arriveR, seconds) {
   delete MAPS[map.id];
 }
 
+// ==================== ④b lane.loop：闭合环形兵线走到"终点"要绕回索引 0，不能卡死 ====================
+// 2026-09-26 用户返工统治战场·水晶之痕："整个兵线应该是环形游走的……应该是个完整的圆"——
+// 把 7 段独立短边改成一条首尾相接的闭合折线后，实测暴露了一个新坑：折线走到最后一个
+// 索引（数值上跟第一个路点重合）时，旧逻辑把它当成普通终点"到了就停"，但 pure-pursuit
+// 的全局最近点投影（projectOntoPolyline/lookaheadOnPolyline）不认识这个"停"，仍然按
+// 当前坐标就近投影、继续往前拽——索引卡死不动、位置却被越拽越远（sim_dominion.mjs 的
+// 环形地图实测：150 秒后偏出"终点"1550px）。这里用一条最小的正方形闭合折线单独钉
+// wrap() 这一段逻辑本身，不依赖任何具体地图的几何形状。
+{
+  const map = {
+    id: '__loop_square', label: '__loop_square', world: { w: 2000, h: 2000 },
+    walls: { corridorHalfWidth: 150, river: false },
+    baseCenters: { blue: { x: 500, y: 500 }, red: { x: 1500, y: 500 } },
+    baseCircleRadius: 200, baseOpenRadius: 200,
+    lanes: [{
+      id: 'loop',
+      // 正方形闭合折线：500,500 → 1500,500 → 1500,1500 → 500,1500 → 500,500（首尾同点）
+      waypoints: [{ x: 500, y: 500 }, { x: 1500, y: 500 }, { x: 1500, y: 1500 }, { x: 500, y: 1500 }, { x: 500, y: 500 }],
+      loop: true,
+    }],
+    buildings: [],
+  };
+  const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  const ms = new MapSystem(ents, bus); ms.setCreateBuildingFn(() => null);
+  MAPS[map.id] = map; window.gameTime = 0; ms.loadMap(map.id);
+  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, ms);
+  const tpl = CONFIG.templates.melee;
+  const m = { id: ++window._uid, type: 'melee', alive: true, pos: { x: 500, y: 500 },
+    baseStats: { ...tpl }, currentHP: tpl.maxHP, shieldFixedCurrent: 0, tempShield: 0,
+    lastDamageTime: -Infinity, attackCooldown: 0, targetId: null, _skillInstances: [],
+    _mapFaction: 'blue', faction: 'blue', _laneId: 'loop', _laneDirection: 'forward' };
+  ents.add(m);
+  const perimeter = 4000; // 正方形周长
+  const secs = (perimeter / (tpl.moveSpeed || 100)) * 3.2; // 留够绕 3 圈以上的时间
+  let wraps = 0, lastIdx = m._laneWaypointIndex, minIdxSeenAfterWrap = 99;
+  for (let i = 0; i < secs / DT; i++) {
+    window.gameTime = i * DT; move.update(DT);
+    if (lastIdx === 4 && m._laneWaypointIndex !== 4) { wraps++; minIdxSeenAfterWrap = m._laneWaypointIndex; }
+    lastIdx = m._laneWaypointIndex;
+  }
+  T(`[环形折线] 索引真的绕回了 0（不是卡在末尾索引 4 不动），至少绕了 2 圈（实际 ${wraps} 圈）`, wraps >= 2);
+  T(`[环形折线] 绕回后落在索引 0（wrap() 取模，不是继续往负数/超界跑），观察到 ${minIdxSeenAfterWrap}`, minIdxSeenAfterWrap === 0);
+  delete MAPS[map.id];
+}
+
 // ==================== ⑤ 真实地图：每条兵线都要走得通 ====================
 // 合成图能过不代表真图能过（走廊宽度、基地圈、路点密度都不同）。
 for (const map of Object.values(MAPS)) {
@@ -213,13 +259,23 @@ for (const map of Object.values(MAPS)) {
     const total = wp.reduce((s, p, i) => i ? s + Math.hypot(p.x - wp[i - 1].x, p.y - wp[i - 1].y) : 0, 0);
     // 给足时间：全长 / 速度 × 2.5 的余量（绕行、走廊约束都会拖慢）
     const secs = (total / (tpl.moveSpeed || 100)) * 2.5;
+    let wrapCount = 0, lastIdx = m._laneWaypointIndex;
     for (let i = 0; i < secs / DT; i++) {
       window.gameTime = i * DT; move.update(DT);
       m.pos.x += rnd() * 3; m.pos.y += rnd() * 3;   // 持续推挤
+      // 环形兵线（lane.loop:true，目前只有统治战场·水晶之痕的 'ring'）没有真正的
+      // "终点"——小兵会不停绕圈（这正是这条兵线要的行为，见 dominion_crystal_scar.js
+      // 头注），下面数"索引从末尾绕回 0 的次数"来判定"走得通"，而不是判定"离终点够近"。
+      if (lane.loop && lastIdx > wp.length - 3 && m._laneWaypointIndex < 3) wrapCount++;
+      lastIdx = m._laneWaypointIndex;
     }
-    const end = wp[wp.length - 1];
-    const left = Math.hypot(m.pos.x - end.x, m.pos.y - end.y);
-    T(`[${map.label}/${lane.id}] 被推挤下仍能走完全程（离终点 ${left.toFixed(0)} < 250，全长 ${total.toFixed(0)}）`, left < 250);
+    if (lane.loop) {
+      T(`[${map.label}/${lane.id}] 环形兵线被推挤下仍能持续绕圈（绕了 ${wrapCount} 圈，全长 ${total.toFixed(0)}）`, wrapCount >= 2);
+    } else {
+      const end = wp[wp.length - 1];
+      const left = Math.hypot(m.pos.x - end.x, m.pos.y - end.y);
+      T(`[${map.label}/${lane.id}] 被推挤下仍能走完全程（离终点 ${left.toFixed(0)} < 250，全长 ${total.toFixed(0)}）`, left < 250);
+    }
   }
 }
 
