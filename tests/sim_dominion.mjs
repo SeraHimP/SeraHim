@@ -436,8 +436,12 @@ const FULL = DCFG.captureFull;
   // 据点数差从 1 变到 2 时，掉血速率应该是 √2 倍，不再是 2 倍。
   T('③-据点数差从 1 变到 2，掉血速率变成 √2 倍（sqrt 曲线，不再是线性的 2 倍）',
     Math.abs(dropAt2 - Math.SQRT2 * dropAt1) < 1e-6);
-  T('③b-掉血速率系数定稿为 1（用户定稿"敌方每多占一个据点，我方水晶枢纽生命值减去多出来的数量×1"）',
-    DCFG.nexusDrainPerPointPerSec === 1);
+  // 2026-09-26 第四轮：1 → 0.8——balance_dominion.mjs 实测发现真正的滚雪球根因
+  // 是水晶枢纽没有回血、落后期间欠的血债追不回来（不是这个系数本身），用户
+  // 定稿"根因暂不修，先只调这个系数，水晶枢纽满血还是500"，0.8 是待
+  // balance_matrix 校准的起草值，不是像 1 那样的用户逐字定稿数字。
+  T('③b-掉血速率系数当前是 0.8（水晶枢纽没有回血这条根因暂缓，先用这个系数买一点缓冲，起草值待校准）',
+    DCFG.nexusDrainPerPointPerSec === 0.8);
 
   let deathEvent = null;
   bus.emit = (evt, payload) => { if (evt === 'entity:death') deathEvent = payload; };
