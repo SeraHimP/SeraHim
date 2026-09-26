@@ -399,11 +399,26 @@ export const EDITOR_PAGES_WAVE = {
     const _laneIds = this._mapLaneIds();
     const _currentMap = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap || null;
     const _mapLabel = _currentMap?.label || '当前地图';
-    html += `<div class="editor-section"><h4 style="display:flex;align-items:center;gap:8px;">
+    // 用户补充报的 bug："出兵编排里，我删除了某一方的所有兵种，但是还是会出兵"——
+    // 根因是 compositionFor()（真实出兵/预览面板共用的唯一实现）当时仍把"空数组"
+    // 当"没配、回退共享基准"，跟这里 _woList() 早前已经改过的判据不一致（见
+    // waveComposition.js 2026-09-26 的修复注释）。数据层修完之后，用户接着要求
+    // 补一个"该方是否出兵"的显式入口，而不是只能靠"手动删光每一条规则"这种
+    // 容易被当成"没删干净"的隐晦操作。这个开关就是 list.length===0 状态的一个
+    // 直观读写口——checked=会出兵（当前作用域至少有一条规则或继承到非空的编排），
+    // 取消勾选=一键清空本格所有规则（等价于手动删完每一条，结果与那条路完全一样，
+    // 不是另一套独立机制）；重新勾选补回一条默认近战规则（与"+ 添加一条刷兵规则"
+    // 按钮给的初始值一致），不去猜"用户到底想恢复成什么"。
+    const _noSpawn = list.length === 0;
+    html += `<div class="editor-section"><h4 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span>② 出兵编排（数组顺序 = 出兵先后）</span>
       <span style="font-size:10px;font-weight:400;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
         作用域：${_who} × ${_laneTxt}${_own ? '（本格已有独立编排）' : '（当前显示继承来的那份，一改就会复制成本格专属）'}
       </span>
+      <button id="woNoSpawnToggle" class="editor-tab ${_noSpawn ? '' : 'active'}" style="font-size:11px;"
+        title="关闭 = 这个作用域（${_who} × ${_laneTxt}）完全不出兵，一键清空所有规则">
+        ${_noSpawn ? '⛔ 本作用域不出兵' : '✅ 本作用域会出兵'}
+      </button>
       ${_own ? `<button id="woClearFaction" style="margin-left:auto;font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;">🧹 清除本格编排</button>` : ''}
       </h4>`;
     // v51.19：用户"地图编辑器里面强大的出兵编排在模板编辑器中应该也能用"——具体是指
@@ -722,6 +737,24 @@ export const EDITOR_PAGES_WAVE = {
       if (this._waveLaneScope !== 'all') this._waveOrderPreviewLane = this._waveLaneScope;
       rerender();
     }));
+    // "该作用域是否出兵"开关：不出兵 = 一键清空这一格的所有规则（跟手动删完
+    // 每一条是同一件事，走同一个 _woList(true)，不是另起一套判定）；
+    // 重新打开则补回一条默认近战规则，与"+ 添加一条刷兵规则"给的初始值一致。
+    overlay.querySelector('#woNoSpawnToggle')?.addEventListener('click', () => {
+      flush();
+      const arr = this._woList(true);
+      const f = this._factionScope, lane = this._waveLaneScope || 'all';
+      const who = f === 'blue' ? '蓝方' : f === 'red' ? '红方' : '共享';
+      const where = lane === 'all' ? '全部路' : this._laneLabel(lane);
+      if (arr.length > 0) {
+        arr.length = 0;
+        logFn(`⛔ 【${who} × ${where}】已设为不出兵（清空了这一格的所有规则）`, 'spawn');
+      } else {
+        arr.push({ type: 'melee', count: 1 });
+        logFn(`✅ 【${who} × ${where}】恢复出兵（补回一条默认近战规则）`, 'spawn');
+      }
+      rerender();
+    });
     overlay.querySelector('#woClearFaction')?.addEventListener('click', () => {
       const f = this._factionScope, lane = this._waveLaneScope || 'all';
       this._woClearCell();

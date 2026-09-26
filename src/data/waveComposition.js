@@ -267,22 +267,39 @@ export function compositionFor(faction, rules = CONFIG.gameRules, laneId = null)
   // 本来就是"先分阵营再分对象"），所以"我给红方单独排过兵"应当压过"我给上路排过兵"。
   // 顺序写死在这一个函数里，出兵、编辑器预览、批量模拟共用它。
   const fo = faction ? CONFIG.factionOverrides?.[faction] : null;
-  const pick = (a) => (Array.isArray(a) && a.length) ? a : null;
-  return pick(laneId && fo?.laneWaveCompositionByLane?.[laneId])
-      || pick(fo?.laneWaveComposition)
-      || pick(laneId && rules.laneWaveCompositionByLane?.[laneId])
+  // 2026-09-26 修复：这里原来用 `Array.isArray(a) && a.length` 判"这一格有没有
+  // 自己的编排"——用户把某一方的编排逐条删空后，这里看到的是一个真实存在、
+  // 但长度为 0 的数组，`a.length` 为假就判它"不算有"，于是照样落到共享基准/继承
+  // 那一份，表现为"删光了所有兵种，但真实对局还是会出兵"。
+  // src/ui/editor/pagesWave.js 的 `_woList()` 早前已经改过这个判据（那次的注释
+  // 原话："空数组本身就是一个合法的、用户主动选择的'这一格不出兵'状态，与
+  // '从没编辑过、该看继承值'是两件事"）——但那次只改了编辑器自己读取表格用的
+  // `_woList`，没有改这个函数。`buildWaveOrder`/`buildBroadcastOrder`（真实出兵
+  // 与编辑器"出兵预览"面板都调它们）走的是这里，不是 `_woList`，所以编辑器的
+  // 规则列表能正确显示"编排为空"，预览面板和真实对局却仍然按老逻辑回退——
+  // 两处判据不一致，是本系列 bug 里"改了一半"的典型情形。现在两边统一成同一个
+  // "只认数组存不存在，不看长度"的判据。
+  const owned = (a) => Array.isArray(a) ? a : null;
+  return owned(laneId && fo?.laneWaveCompositionByLane?.[laneId])
+      || owned(fo?.laneWaveComposition)
+      || owned(laneId && rules.laneWaveCompositionByLane?.[laneId])
       || rules.laneWaveComposition || [];
 }
 
-/** 该阵营是否有独立编排（编辑器用来显示角标/启用"清除覆写"）。 */
+/**
+ * 该阵营是否有独立编排（编辑器用来显示角标/启用"清除覆写"）。
+ * 2026-09-26：判据从"数组非空"改成"数组存在"——跟 compositionFor() 同一次修复、
+ * 同一个理由：显式设成空数组是用户主动选的"这一格不出兵"，也该算"有独立编排"，
+ * 不然那一格既不显示 ● 角标，也没有"清除本格"按钮，删完之后就没有回退的入口。
+ */
 export function hasFactionComposition(faction) {
   const ov = CONFIG.factionOverrides?.[faction]?.laneWaveComposition;
-  return Array.isArray(ov) && ov.length > 0;
+  return Array.isArray(ov);
 }
 
 /**
  * (阵营, 路) 这一格是否有自己的编排。faction 传 null/'shared' 表示共享那一行。
- * 编辑器用它给格子打角标、决定"清除本格"按钮是否可用。
+ * 编辑器用它给格子打角标、决定"清除本格"按钮是否可用。同上，只认存不存在。
  */
 export function hasLaneComposition(faction, laneId) {
   if (!laneId) return false;
@@ -290,7 +307,7 @@ export function hasLaneComposition(faction, laneId) {
     ? CONFIG.factionOverrides?.[faction]?.laneWaveCompositionByLane
     : CONFIG.gameRules?.laneWaveCompositionByLane;
   const ov = box?.[laneId];
-  return Array.isArray(ov) && ov.length > 0;
+  return Array.isArray(ov);
 }
 
 /**

@@ -50,11 +50,19 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   T('兵种总开关对阵营编排同样生效', buildWaveOrder(1, false, gr, 'red').length === 0);
   gr.spawnEnabled.ranged = true;
 
-  // 空数组视为"没配"，回退共享 —— 否则用户把编排删空会得到"这一方完全不出兵"，
-  // 而那几乎肯定是误操作而不是本意
+  // 2026-09-26 反转：这条断言原来钉的是"空数组视为'没配'，回退共享"，
+  // 理由是"删空几乎肯定是误操作"——但用户后来在模板编辑器里明确要求反过来
+  // （pagesWave.js `_woList()` 那次的原话："出兵排版……要是把所有兵删除之后就
+  // 突然恢复默认值了，要求也可以没有（相当于不出兵）"）。`_woList()` 当时已经
+  // 改了判据，但 compositionFor()（真实出兵与预览面板真正调用的那一个）没有跟着
+  // 改，于是编辑器表格显示"编排为空"、真实对局却仍按旧逻辑回退——这正是用户这次
+  // 报的 bug："我删除了某一方的所有兵种，但是还是会出兵"。现在两处判据统一，
+  // 这条断言必须跟着反转，否则它会继续把"回退共享"这个已经被否掉的行为钉为正确。
   CONFIG.factionOverrides.red.laneWaveComposition = [];
-  T('空的阵营编排回退共享基准（删空≈没配，不是"这方不出兵"）',
-    buildWaveOrder(1, false, gr, 'red').join() === 'melee,melee,melee');
+  T('空的阵营编排就是"这方不出兵"（不回退共享，用户定稿删空=不出兵）',
+    buildWaveOrder(1, false, gr, 'red').length === 0);
+  T('hasFactionComposition 认得"显式设成空数组"也算有独立编排（否则删完没有 ● 角标/清除按钮）',
+    hasFactionComposition('red') === true);
 
   // 出兵系统真的按阵营取
   const src = fs.readFileSync('src/systems/LaneWaveSystem.js', 'utf8');

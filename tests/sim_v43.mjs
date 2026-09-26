@@ -442,6 +442,37 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
     /data-wo-lane=/.test(ae) && /_mapLaneIds\(\)/.test(ae)
     && /m\?\.lanes \|\| \[\]/.test(srcOf('src/ui/laneLabels.js')));
 
+  // ==================== 2026-09-26 补充：删光某方所有兵种，真实对局仍会出兵 ====================
+  // 用户报的 bug 原话："出兵编排里，我删除了某一方的所有兵种，但是还是会出兵。"
+  // 根因：_woList()（编辑器读写表格用）早前已经把判据从"数组非空"改成"数组存在"
+  // （这里 Q5b⑨-⑫ 测的就是那次修复），但 compositionFor()——真正驱动出兵、以及
+  // 编辑器"出兵预览"面板调用的那个唯一实现——当时没有跟着改，仍然用
+  // `Array.isArray(a) && a.length` 判"这一格有没有自己的编排"，空数组被判定
+  // 成"没配"，落到共享基准继续出兵。结果编辑器的规则列表正确显示"编排为空"，
+  // 但预览面板和真实对局都仍然按继承的编排出兵——这正是用户报的现象。
+  AttributeEditor._factionScope = 'red'; AttributeEditor._waveLaneScope = 'top';
+  const redTopArr = AttributeEditor._woList(true);
+  redTopArr.length = 0; // 等价于用户在界面上把这一格的规则逐条删空
+  T('Q5b⑮ 删光某方（某作用域）所有规则后，compositionFor 返回空数组，不回退共享/继承',
+    compositionFor('red', gr, 'top').length === 0);
+  T('Q5b⑯ buildWaveOrder 跟着返回 0 个单位（真实出兵/预览面板走的是它）',
+    buildWaveOrder(1, false, gr, 'red', { laneId: 'top' }).length === 0);
+  T('Q5b⑰ hasLaneComposition 认得"显式设成空数组"也算本格拥有独立编排',
+    hasLaneComposition('red', 'top') === true);
+  T('Q5b⑱ 同阵营其它路不受影响（bot 仍是它自己的编排）',
+    compositionFor('red', gr, 'bot')[0].count === 7);
+
+  // 补的 UI 入口："该作用域是否出兵"开关——不出兵=一键清空本格规则（走的还是
+  // 上面同一个 _woList(true)，不是另一套独立机制），重新打开补回一条默认近战规则。
+  const woNoSpawnArr = AttributeEditor._woList(true);
+  T('Q5b⑲ 开关"关闭"状态下 _woList 长度为 0（按钮 label 依据的就是这个）', woNoSpawnArr.length === 0);
+  woNoSpawnArr.push({ type: 'melee', count: 1 });
+  T('Q5b⑳ 重新打开后补回一条默认近战规则，真实出兵立刻恢复',
+    buildWaveOrder(1, false, gr, 'red', { laneId: 'top' }).join() === 'melee');
+  T('Q5b㉑ 面板确实接了这个开关（按钮 + 清空/补默认规则的处理逻辑都在源码里）',
+    /woNoSpawnToggle/.test(ae) && /arr\.length = 0/.test(ae)
+    && /arr\.push\(\{ type: 'melee', count: 1 \}\)/.test(ae));
+
   gr.laneWaveCompositionByLane = bakLane; CONFIG.factionOverrides = bakFO;
   AttributeEditor._factionScope = 'shared'; AttributeEditor._waveLaneScope = 'all';
 }
