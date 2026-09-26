@@ -264,10 +264,23 @@ export class MapSystem {
    * 存的是【路点陷进建筑圆里多深】= 建筑半径 − 圆心距，不含小兵半径：
    * 小兵半径按类型不同，留到运行时再加（见 LaneMovementSystem 的到达半径）。
    * 每次 loadMap 重算，所以塔位改了不会用到旧值。
+   *
+   * 2026-09-26 补：水晶之痕的据点（kind:'point'）就是这同一个坑的第三个受害者——
+   * 用户报"会出现小兵在塔下呆着不动"。据点实体不进 `map.buildings`（那是给
+   * MapSystem 常规建塔管线用的，据点走 DominionSystem 自己的 `dominionNodes`，
+   * 见那份数据的头注），而据点 pos 恰好就落在环形兵线的路点坐标上（每个节点
+   * 既是出兵点也是路点）——这条循环之前只认 `map.buildings`，据点的避障半径
+   * （CONFIG.buildingSizes 没有 'capture_point' 这个 tier，退回 default=32 ×
+   * towerVizScale.default=1.25 ≈ 40px）完全没被记进 `_wpBlock`，到达半径只有
+   * 24px，40 > 24——小兵永远够不着那个路点，卡在据点周围推来推去，看起来就是
+   * "站着不动"。跟 SR/TT 那次一样，只是这次的"建筑"换了个不走 buildings 数组
+   * 的实现方式，补一条单独遍历 dominionNodes 的据点即可，其它地图没有这个
+   * 字段，循环体直接是空数组，不受影响。
    */
   _computeWaypointBlock(map) {
     const sizes = CONFIG.buildingSizes || {};
     const vz = CONFIG.towerVizScale || {};
+    const capturePoints = (map.dominionNodes || []).filter((n) => n.kind === 'point');
     for (const lane of (map.lanes || [])) {
       const out = new Array(lane.waypoints.length).fill(-Infinity);
       for (let i = 0; i < lane.waypoints.length; i++) {
@@ -275,6 +288,10 @@ export class MapSystem {
         for (const b of (map.buildings || [])) {
           const r = (sizes[b.tier] || sizes.default || 28) * (vz[b.tier] ?? vz.default ?? 1);
           out[i] = Math.max(out[i], r - Math.hypot(b.pos.x - w.x, b.pos.y - w.y));
+        }
+        for (const n of capturePoints) {
+          const r = (sizes.capture_point || sizes.default || 28) * (vz.capture_point ?? vz.default ?? 1);
+          out[i] = Math.max(out[i], r - Math.hypot(n.pos.x - w.x, n.pos.y - w.y));
         }
       }
       lane._wpBlock = out;

@@ -43,6 +43,8 @@
  *     这个分支被漏掉，仍是 XX%（用户这轮指出"原有的XX%也改为XX/100"）。
  */
 
+import { CONFIG } from '../data/Config.js';
+
 /** 非法力类资源（升温/闪电充能/通用充能）统一用这一种石板灰，比 v51.2 的浅灰更深、更压得住白字投影。 */
 const NON_MANA_COLOR = '#6b7280';
 
@@ -87,14 +89,23 @@ export const FACTION_HP_COLORS = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#4
 export function resourceInfoOf(entity, ctx) {
   if (!entity) return null;
   // 统治战场·水晶之痕：据点没有 HP（见 DominionSystem.js），用户定稿"中立据点
-  // 不显示血条……属性面板用法力条显示"——占领进度 capturePct∈[-100,100] 映射
-  // 到 0~1（-100=完全红方、0=中立、+100=完全蓝方），颜色按当前领先方走，
-  // 在 hasActive 等常规资源判定之前提前返回，据点没有技能/法力这些概念。
+  // 不显示血条……属性面板用法力条显示"——占领进度 capturePct∈[-100,100] 只取
+  // 【当前领先方】的进度，映射到 0~1（无符号：中立=空、越接近完全占领越满），
+  // 颜色按领先方走。在 hasActive 等常规资源判定之前提前返回，据点没有技能/
+  // 法力这些概念。
+  //
+  // 2026-09-26 返工：原来用 (pct+100)/200 把有符号值映射成"以 50% 为中点"的
+  // 双向量表——用户反馈"应该是显示某一方占领进度从0到100"：中立、谁都没打过
+  // 的据点应该是一条空条，不是一条一上来就半满的灰条（半满读起来像"已经有
+  // 进度了"，而不是"还没人动过"）。改成取幅值 abs(pct)，中立时 frac=0（空条），
+  // 完全占领时 frac=1（满条），跟血条的"越打越少/越攒越满"是同一种直觉。
   if (entity.isCapturePoint) {
     const pct = entity._capturePct ?? 0;
+    const full = CONFIG.dominion?.captureFull ?? 100;
     const kind = pct > 0 ? 'capture_blue' : pct < 0 ? 'capture_red' : 'capture_neutral';
     const leadLabel = pct > 0 ? '蓝方' : pct < 0 ? '红方' : '中立';
-    return { frac: (pct + 100) / 200, kind, label: `${leadLabel} ${Math.round(Math.abs(pct))}%` };
+    const mag = Math.round(Math.abs(pct));
+    return { frac: full > 0 ? Math.abs(pct) / full : 0, kind, label: `${leadLabel} ${mag}%` };
   }
   const { skillLibrary, attrCalc, effects } = ctx;
   const insts = entity._skillInstances || [];

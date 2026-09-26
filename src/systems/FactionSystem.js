@@ -237,7 +237,19 @@ const LANE_CHAIN = ['outer', 'inner', 'base', 'nexus_lane'];
 const PROTECTABLE_TIERS = new Set(['inner', 'base', 'nexus_lane', 'hq_tower', 'nexus_main']);
 
 export function isStructureProtected(entityContainer, target) {
-  if (!target || !target._mapFaction) return false;
+  if (!target) return false;
+  // 统治战场·水晶之痕：用户定稿"两方不能同时占领据点，如果出现了，据点进入
+  // 不可被占领状态（不可被双方选中，迫使两方开始交战），直至只剩一方占领该
+  // 据点"——这里的"不可被选中"跟这个函数已有的语义（"这个具体目标此刻不能
+  // 被任何人当攻击目标"）是同一件事，虽然"争夺中"跟"受己方结构保护"是两种
+  // 不同的游戏理由，但对调用方（AISystem.scanEnemies / LaneMovementSystem 的
+  // 目标校验 / CombatSystem 的塔攻击循环）来说都是"跳过这个目标"，复用这一个
+  // 函数就能让全部现成的判断点（本仓库里有 10+ 处）一起生效，不需要在每处
+  // 都加一条新判断——见 DominionSystem._tickContest() 对 target._contested
+  // 的维护，以及 applyCapturePressure() 在争夺中直接清掉攻击者的 targetId
+  // （逼它下一轮重新索敌，索敌时就会经过这里被过滤掉）。
+  if (target.isCapturePoint && target._contested) return true;
+  if (!target._mapFaction) return false;
   // 性能：下面能返回 true 的 target._mapTier 只有这五档（outer 在 LANE_CHAIN 里
   // idx===0，落到 idx>0 分支之外，switch 也没它的 case，本来就总是 false）。
   // 这里先按 tier 短路，跳过 getAllTowers() 这次全量扫描——这个函数被

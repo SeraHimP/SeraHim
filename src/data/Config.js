@@ -236,8 +236,34 @@ export const CONFIG = {
     // CONFIG.factionOverrides[阵营].laneWaveCompositionByLane 里。
     // 四层的解析顺序写在 data/waveComposition.js 的 compositionFor 里（唯一实现）。
     // ⚠️ 路的集合是**每张地图各不相同**的（峡谷 3 路 / 扭曲丛林 2 路 / 嚎哭深渊 1 路），
-    // 所以这里不预置任何键——编辑器按当前地图的 lanes 现生成页签。
-    laneWaveCompositionByLane: {},
+    // 所以这里原则上不预置任何键——编辑器按当前地图的 lanes 现生成页签。
+    //
+    // 例外：ring_fwd / ring_rev 是统治战场·水晶之痕专属的两个"伪路 id"（顺时针/
+    // 逆时针，见 dominion_crystal_scar.js 的 waveEditorLaneIds + DominionSystem.js
+    // 的 _spawnPointWave）。2026-09-26 用户报"水晶之痕地图中的实际出兵编排和
+    // 模板编辑器中的对应不上"——根因是 DominionSystem 原来自己维护一份独立的
+    // CONFIG.dominion.waveBudget，完全绕开这套(阵营×路)出兵编排系统，编辑器
+    // 改了这里没有任何效果、真实出兵也不会显示在编辑器的预览里。现在据点出兵
+    // 改走 buildWaveOrder/compositionFor（跟所有其它地图同一套唯一实现），
+    // 用户定稿"分为4条线路：红蓝方×顺逆时针"——两个方向共用同一条物理兵线
+    // （环形兵线只有一条 laneId='ring'），所以借用 compositionFor 现成的
+    // "阵营×laneId"二维解析，给方向也发一个（伪）laneId，四格正好对应四条线路。
+    // 这里两个方向给同一份默认编排（用户没有要求两个方向出不同的兵）。
+    // 召唤水晶的出兵**不**在这套系统里——见 CONFIG.dominion.bonusWaveComposition
+    // 头注，那是两个独立的兵种来源，用户拍板过"两份分开"，不共用一份编排。
+    laneWaveCompositionByLane: {
+      ring_fwd: [
+        { type: 'melee',  count: 2 },
+        { type: 'ranged', count: 2 },
+        // 用户定稿："每两两波每个方向额外生成1炮兵（共2炮兵）"——每 2 波追加一次。
+        { type: 'siege',  count: 1, everyN: 2 },
+      ],
+      ring_rev: [
+        { type: 'melee',  count: 2 },
+        { type: 'ranged', count: 2 },
+        { type: 'siege',  count: 1, everyN: 2 },
+      ],
+    },
     // ⚠️ 死配置（保留仅为兼容旧存档，全仓库无人读取，tests/sim_tplio.mjs 有断言守着）：
     // 对战出兵全部由上面的 laneWaveComposition 驱动，图腾兵的节奏由其中那条规则的
     // fromWave/everyN 决定。已从模板编辑器面板移除，请勿再新增读取点。
@@ -2796,28 +2822,45 @@ export const CONFIG = {
     // 攻击方阵营决定，蓝方为正、红方为负，中立/未知阵营不贡献）。
     // 刻意与伤害数字完全解耦（设计文档 5.1 节的核心结论）：以后调 AD/暴击/
     // 护甲这些战斗数值，占领节奏不会跟着漂移。
+    // 2026-09-26：用户反馈"小兵占领速度提高"——整体上调约 50%（起草值，
+    // 具体倍率待 balance_matrix 校准；只改了大小，没改各兵种之间的相对比例，
+    // 超级兵仍然是占领效率最高的兵种，这条关系用户没有要求变）。
     capturePower: {
-      melee: 1.0,
-      ranged: 0.75,
-      siege: 0.75,
-      super: 2.2,
-      default: 1.0,
+      melee: 1.5,
+      ranged: 1.1,
+      siege: 1.1,
+      super: 3.3,
+      default: 1.5,
     },
     // 已被完全占领的据点会主动开火（"帮拥有者守点"，不是"自己包圆"）——
     // 相对普通塔（CONFIG.templates.tower）的攻击力/射程打折。中立据点
     // attackDamage 恒为 0，天然不会开火，不需要额外的"中立不攻击"判断。
-    pointDamagePct: 35,   // 普通塔攻击力的 35%（设计文档给的 30%~40% 区间取中）
-    pointRangePct: 82,    // 普通塔射程的 82%（30%~40% 对应区间 75%~90% 取中）
+    // 2026-09-26：用户反馈"据点的攻击力大幅度减弱，攻速略微提升"——
+    // 35% → 12%（起草值，大幅砍到设计文档原区间 30%~40% 的三分之一左右），
+    // 射程不动（用户没提射程）。新增 pointAttackSpeedPct 表达"攻速略微提升"：
+    // 原来据点的攻速就是普通塔的基础攻速（_setOwner 从没碰过 baseAttackSpeed），
+    // 这里给一个 110%（+10%，"略微"）。
+    pointDamagePct: 12,        // 普通塔攻击力的 12%
+    pointRangePct: 82,         // 普通塔射程的 82%（未改动）
+    pointAttackSpeedPct: 110,  // 普通塔基础攻速的 110%（"攻速略微提升"）
     // ---- 动态归属出兵 ----
     waveInterval: 20,     // 每个"完全占领"的据点，每隔这么多秒出一波兵
-    // 每据点每波的出兵预算——两个相邻方向平分（不是每个方向各出一整套），
-    // 见设计文档第 6 节"出兵预算"：避免 5 点全占时爆量成十几条出兵流。
-    // 2026-09-26 用户定稿："所有据点默认不出超级兵"——超级兵改为专属召唤水晶的
-    // 战果奖励（见 crystalSuperBonus），据点自己的编制里去掉 super 这一项。
-    waveBudget: { melee: 1, ranged: 1 },
+    // 2026-09-26 返工：据点的出兵编制（"2近战2远程+隔波炮兵"）改走标准出兵
+    // 编排系统（compositionFor/buildWaveOrder，见 CONFIG.gameRules.
+    // laneWaveCompositionByLane 的 ring_fwd/ring_rev 两个伪路）——原来这里的
+    // waveBudget 字段已删除。根因见那两个字段旁边的头注："水晶之痕地图中的
+    // 实际出兵编排和模板编辑器中的对应不上"，就是因为 DominionSystem 曾经
+    // 只认这个字段、编辑器完全够不着它。
+    //
     // ---- 双方召唤水晶每隔 N 波额外出一波固定编制的兵（防止一边倒） ----
-    bonusWaveEvery: 3,
-    bonusWaveComposition: { melee: 1, ranged: 1 },
+    // 2026-09-26 用户定稿："召唤水晶处每波生成3远程3近战1炮兵"——从"每隔3波
+    // 出一次1+1"改成"每波都出3+3+1"，bonusWaveEvery 相应从 3 改成 1（跟点位的
+    // waveInterval 走同一条波次时钟，"每波"字面意思就是每次这个时钟走一格）。
+    // 这份编制**不**并入上面的 compositionFor 体系——用户拍板"两份分开"：
+    // 据点出兵与召唤水晶出兵是两个独立的兵种来源，模板编辑器里也分两处编辑，
+    // 不共用同一份(阵营×路)编排（避免"改据点的兵，水晶跟着变"这种意外耦合）。
+    bonusWaveEvery: 1,
+    bonusWaveComposition: { melee: 3, ranged: 3, siege: 1 },
     // 2026-09-26 新增（用户定稿）："只有在某一方打掉了另一方的召唤水晶后，在自家
     // 的召唤水晶出超级兵"——DominionSystem._tickWaves 出召唤水晶的额外波时，
     // 若敌方召唤水晶此刻处于摧毁/重生倒计时状态，就把这份加进 bonusWaveComposition，
@@ -2830,6 +2873,27 @@ export const CONFIG = {
     // 改为固定 500（见 dominion_crystal_scar.js 的 tierStats.nexus_main），
     // 1/秒的速率下最大 5 点据点差也要 100 秒才耗光，节奏比原来 8 这个起草值缓和。
     nexusDrainPerPointPerSec: 1,
+    // ==================== 2026-09-26 新增：据点争夺 + 脱战恢复 ====================
+    // 用户定稿："两方不能同时占领据点，如果出现了，据点进入不可被占领状态
+    // （不可被双方选中，迫使两方开始交战），直至只剩一方占领该据点。"
+    // 判定：分别记录蓝/红两方【最近一次】对这个据点造成占领压力的时刻，
+    // 两个时刻都落在 contestWindowSec 秒以内 → 判定为"双方都在场，正在争夺"，
+    // 见 DominionSystem._tickContest()。窗口不能太短（几乎每一下攻击都会
+    // 触发一次"刚刚又不在争夺了"的抖动）也不能太长（明明打完了、赢的一方
+    // 却半天抢不回点），2 秒落在"一轮攻击节奏"的量级上。
+    contestWindowSec: 2,
+    // 用户定稿："若据点脱离战斗状态，此时会慢慢恢复该状态下的值。"
+    // "脱离战斗状态" = 两方都超过这么多秒没再对这个据点造成过占领压力
+    // （不只是不再互相矛盾——完全没人打了）。跟本仓库其它地方"脱战"判定
+    // 用的固定 4 秒（见 CombatSystem.js 的 `_combatTimer`）取同一个量级，
+    // 不是巧合另起一个数字。
+    combatTimeoutSec: 4,
+    // 脱战后 capturePct 每秒向"静息值"（中立=0，已占领=±captureFull）恢复
+    // 这么多个百分点——用户给的两个例子（中立态被推到某个百分比后慢慢消退到
+    // 0；已占领的据点被打到 40% 后慢慢恢复到 100）都只说"慢慢"，没给具体
+    // 速率，这里起草一个能在十几秒内看出明显变化、但不会快到"一场小规模试探
+    // 攻击完全白打"的速率，跟 nexusDrainPerPointPerSec 一样待 balance_matrix 校准。
+    captureRegenPerSec: 8,
   },
 };
 

@@ -82,6 +82,12 @@ export const CONFIG_FIELDS = [
   // 属于"这张地形上打什么仗"的玩法内容，不是物理几何——没有这个字段的地图
   // DominionSystem.initMap() 直接判定 active=false，逐位不受影响。
   'dominionNodes',
+  // 2026-09-26 新增：模板编辑器"出兵编排"页按几路生成页签用的路 id 覆写
+  // （见 laneLabels.js mapLaneIds() 头注）。第一次写这张图时漏加进这份白名单，
+  // composeMap() 按白名单丢弃未登记字段，导致地图对象里根本没有这个字段——
+  // 编辑器读到的永远是 undefined，退回默认的 map.lanes（这张图只有 1 条真实
+  // 兵线），"4条线路"就摆不出来。跟 dominionNodes 同一个坑、同一个原因。
+  'waveEditorLaneIds',
 ];
 
 /**

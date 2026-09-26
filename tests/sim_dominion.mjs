@@ -1,23 +1,27 @@
 /**
  * sim_dominion.mjs —— 统治战场·水晶之痕（Dominion 复刻）验收
  *
- * 覆盖：DominionSystem 自己的占领/出兵/掉血逻辑，CombatSystem 对据点的伤害
- * 转发（isCapturePoint 分支），新地图 dominion_crystal_scar_v1 的数据形状
- * （通用几何校验已经在 sim_maps.mjs 的全地图循环里跑过，这里只钉"整环一条
- * 闭合兵线/出兵流为空/水晶枢纽不在路径上"这类本图专属的东西），据点/召唤
- * 水晶的占领进度展示（resourceBar.js 的法力条复用），以及统治战场并入
- * "选择模式"tab 这条 UI 接线。
+ * 覆盖：DominionSystem 自己的占领/争夺/脱战恢复/出兵/掉血逻辑，CombatSystem
+ * 对据点的伤害转发（isCapturePoint 分支），新地图 dominion_crystal_scar_v1
+ * 的数据形状，据点/召唤水晶的占领进度展示（resourceBar.js 的法力条复用），
+ * 以及统治战场并入"选择模式"tab 这条 UI 接线。
  *
- * 用户看了第一版截图后返工的三条硬性纠正（均已落地为下面的断言）：
- *   ① 兵线必须是整环闭合游走，不是 7 段各走一跳就停；
- *   ② 双方召唤水晶每 3 波该出的兵完全没出（真实 bug：DOMINION_NODES 没把
- *      NODE_META 的 faction 字段带过来，_spawnBudget 因为 faction 为空早退）；
- *   ③ 超级兵改为"打掉敌方召唤水晶后，己方召唤水晶才出超级兵"，据点自己
- *      默认不出超级兵。
+ * 2026-09-26 第二轮返工（用户实机截图后报的 4 条问题）：
+ *   Q1-占领条：无符号 0~100（不再是"以50%为中点"的双向量表）；
+ *   Q1-争夺机制：双方同时在场则据点不可被选中，逼迫交战；脱战后向"静息值"
+ *      （中立=0，已占领=±100）缓慢恢复；
+ *   Q1-出兵编排：据点每方向 2 近战 2 远程、每两波每方向 +1 炮兵；召唤水晶每波
+ *      3 远程 3 近战 1 炮兵，敌方水晶被摧毁则每波额外 1 超级兵；
+ *   Q2-数值：据点攻击力大幅减弱/攻速略微提升/占领速度提高，召唤水晶攻击力
+ *      大幅提升；
+ *   Q3-出兵编排统一：据点出兵改走标准 compositionFor（跟模板编辑器同一份数据，
+ *      不再是编辑器改了没用的独立配置）；
+ *   Q4-模式弹窗：统治战场下"选择地图"块显示这张图的真名（水晶之痕），不是
+ *      彻底隐藏。
  *
- * 每条断言钉行为形状（signed capturePct 的粘性翻转、出兵方向、掉血速率与
- * 据点数差的关系），不钉 CONFIG.dominion 里的具体数字（那些是待
- * balance_matrix 校准的起草值，见 Config.js 头注）。
+ * 每条断言钉行为形状，不钉 CONFIG.dominion 里的具体数字（那些是待
+ * balance_matrix 校准的起草值，见 Config.js 头注）——除非断言本身就是在验证
+ * "某个具体数字确实被用户定稿改成了这个值"（比如 nexusDrainPerPointPerSec）。
  */
 import { setupWindow, scoreboard, makeWorld, mkEntity, srcOf } from './_harness.mjs';
 
@@ -30,6 +34,8 @@ const { FACTIONS } = await import('../src/systems/FactionSystem.js');
 const { DominionSystem } = await import('../src/systems/DominionSystem.js');
 const { MAPS } = await import('../src/data/maps/index.js');
 const { resourceInfoOf, RESOURCE_COLORS } = await import('../src/core/resourceBar.js');
+const { isStructureProtected } = await import('../src/systems/FactionSystem.js');
+const { buildWaveOrder } = await import('../src/data/waveComposition.js');
 
 const DCFG = CONFIG.dominion;
 const FULL = DCFG.captureFull;
@@ -42,9 +48,6 @@ const FULL = DCFG.captureFull;
     && map.dominionNodes.filter(n => n.kind === 'point').length === 5
     && map.dominionNodes.filter(n => n.kind === 'base').length === 2);
 
-  // 用户返工①："整个兵线应该是环形游走的（逆时针或顺时针），而不是在某处停下……
-  // 应该是个完整的圆"——第一版的"7 条独立短边"已经废弃，改成一条首尾相接的
-  // 闭合环形兵线。
   T('③-只有一条闭合的环形兵线（不是 7 段各自独立的短边）', map.lanes.length === 1);
   const ring = map.lanes[0];
   T('③b-环形兵线路点足够多、真的绕了一整圈（弧线采样，不是 7 个点的折线）',
@@ -52,10 +55,6 @@ const FULL = DCFG.captureFull;
   const first = ring.waypoints[0], last = ring.waypoints[ring.waypoints.length - 1];
   T('③c-首尾相接，闭合成一个完整的圆（最后一个路点等于第一个）',
     Math.abs(first.x - last.x) < 1 && Math.abs(first.y - last.y) < 1);
-  // 首尾坐标相同不代表小兵真的会绕圈——LaneMovementSystem 得知道"走到最后一个
-  // 索引该绕回 0，不是原地卡死"，这条开关就是 loop:true（回归见 sim_pathcorner.mjs
-  // ④b：没有它的话，索引卡在末尾但 pure-pursuit 仍按坐标就近投影继续往前拽，
-  // 位置被越拽越远，150 秒后偏出"终点"1550px）。
   T('③d-环形兵线声明了 loop:true（否则首尾坐标重合只是摆设，走不出真正的绕圈）',
     ring.loop === true);
 
@@ -65,10 +64,6 @@ const FULL = DCFG.captureFull;
     map.dominionNodes.every(n => n.segForward.laneId === ring.id && n.segReverse.laneId === ring.id
       && n.segForward.direction !== n.segReverse.direction));
 
-  // 用户返工②的真实 bug 回归测试：DOMINION_NODES 曾经没有把 NODE_META 的
-  // faction 字段带过来，kind:'base' 节点的 faction 是 undefined，
-  // DominionSystem._spawnBudget 的 `if (!faction) return` 直接早退，
-  // 表现为"双方召唤水晶每 3 波该出的兵完全不出"。
   T('⑤b-两个基地节点都带着正确的 faction 字段（回归：曾经这里丢过这个字段）',
     map.dominionNodes.find(n => n.id === 'blue_base').faction === FACTIONS.BLUE
     && map.dominionNodes.find(n => n.id === 'red_base').faction === FACTIONS.RED);
@@ -90,14 +85,14 @@ const FULL = DCFG.captureFull;
     map.tierStats.nexus_lane.attackDamage > 0 && map.tierStats.nexus_lane.attackRange > 0);
   T('⑥f-召唤水晶 2 分钟重生（用户定稿具体数值，走既有的 MapSystem.nexusRespawnTime 通用字段）',
     map.nexusRespawnTime === 120);
+  T('⑥g-召唤水晶攻击力大幅提升（用户返工定稿，从原型草案的 152 大幅上调）',
+    map.tierStats.nexus_lane.attackDamage >= 300);
 
   T('⑦-画面走黄沙风格（visualStyle:stylized + paletteId:desert）',
     map.visualStyle === 'stylized' && map.paletteId === 'desert');
   T('⑧-CONFIG.stylizedPalettes.desert 确实存在且不长树（沙漠据点）',
     !!CONFIG.stylizedPalettes.desert && CONFIG.stylizedPalettes.desert.vegetationMode === 'none');
 
-  // ⑨：不只是"不在节点坐标上"，真的落在 navgrid 不可走的格子里——
-  // 这才是"不在路径上"字面意义上的验证（跟 MapSystem.isWalkable 同一套换算）。
   const { unpackBits } = await import('../src/data/navgrid.js');
   const bits = unpackBits(map.navgrid.bits, map.navgrid.n);
   const isWalk = (x, y) => {
@@ -113,6 +108,12 @@ const FULL = DCFG.captureFull;
     const lane = map.buildings.find(b => b.tier === 'nexus_lane' && b.faction === f);
     return isWalk(lane.pos.x, lane.pos.y);
   }));
+
+  // 2026-09-26：Q3 返工——据点出兵改走标准出兵编排系统，这张图物理上只有一条
+  // 兵线（ring），装不下"顺/逆时针各自编排"两份数据，靠这个字段给编辑器一个
+  // 额外的"按几路分"提示（见 laneLabels.js mapLaneIds() 的头注）。
+  T('⑪-地图声明了 waveEditorLaneIds:[ring_fwd,ring_rev]（用户定稿"分为4条线路：红蓝方×顺逆时针"）',
+    JSON.stringify(map.waveEditorLaneIds) === JSON.stringify(['ring_fwd', 'ring_rev']));
 }
 
 // ==================== 二、占领机制：有符号进度 + 粘性翻转 + 镜像展示字段 ====================
@@ -131,12 +132,14 @@ const FULL = DCFG.captureFull;
   const redAttacker = { type: 'melee', _mapFaction: FACTIONS.RED };
   const power = DCFG.capturePower.melee;
 
+  window.gameTime = 0;
   ds.applyCapturePressure(blueAttacker, node.entity);
   T('④-蓝方打一下，进度按 capturePower.melee 往蓝方（正）方向推', Math.abs(node.capturePct - power) < 1e-9);
   T('④b-镜像字段 _capturePct 跟着同步（resourceBar.js/UnitLayer.js 只读实体本身的字段）',
     Math.abs(node.entity._capturePct - node.capturePct) < 1e-9);
 
-  // 推到完全占领：直接调用足够多次
+  // 推到完全占领：直接调用足够多次（同一方持续攻击，不涉及争夺判定——
+  // 争夺判定专门测试见下面第九节，这里只测原有的推进/粘性行为）。
   while (node.captureOwner === FACTIONS.NEUTRAL) ds.applyCapturePressure(blueAttacker, node.entity);
   T('⑤-推满之后归属翻转为蓝方且进度钉在 captureFull', node.captureOwner === FACTIONS.BLUE && node.capturePct === FULL);
   T('⑤b-镜像的 _captureOwner 也翻转为蓝方', node.entity._captureOwner === FACTIONS.BLUE);
@@ -147,6 +150,11 @@ const FULL = DCFG.captureFull;
   ds.applyCapturePressure(blueAttacker, node.entity);
   T('⑦-己方（蓝）打不动自己已占领的点（canTarget 已经会挡，这里是兜底）', node.capturePct === before);
 
+  // ⚠️ 红方开始进攻前，把游戏时间往后拨过 contestWindowSec——否则蓝方刚才那几十次
+  // 攻击留下的 _lastHit[blue] 会跟红方这一下"撞在同一个窗口里"，被误判成"双方
+  // 同时在场"（争夺状态会拦掉这次命中）。真实对局里蓝方推满之后不会有人一直
+  // 无意义戳自己的点，这个间隔只是单测在modeling"过了一阵子蓝方才有人来打"。
+  window.gameTime += (DCFG.contestWindowSec ?? 2) + 1;
   // 敌方（红）持续推：进度应该单调下降，但在推到 0 之前归属全程仍是蓝方（粘性）
   ds.applyCapturePressure(redAttacker, node.entity);
   T('⑧-敌方攻击开始把进度往回推，但推到 0 之前归属仍然粘着蓝方',
@@ -159,12 +167,6 @@ const FULL = DCFG.captureFull;
 }
 
 // ==================== 三、被占领的据点真的会开火（不是只有数值变了）====================
-// CombatSystem.update 的塔攻击循环有一道跟 attackDamage 数值完全无关的前置闸门：
-// "无武器：不攻击"（`_skillInstances` 里没有 category:'weapon' 的实例就直接
-// targetId=null、continue）。据点是手搭的裸实体，天生没有这个实例——这是实现
-// 过程中踩过的一个真坑（数值改对了、据点却仍然打不出去），这里补一套端到端验证：
-// 真的接上 AISystem+CombatSystem 的完整攻击循环，看被占领的点是否真的对靠近的
-// 敌方单位造成伤害，而不是只断言 baseStats 数值本身。
 {
   const { ents, fx, combat, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
@@ -183,21 +185,18 @@ const FULL = DCFG.captureFull;
   T('②-占领后自动装备了武器技能（不再是无武器空实例）',
     node.entity._skillInstances.some(s => s.skillId === 'weapon_piercing'));
 
-  // 站一个敌方（红）单位到射程内，跑几秒真实的战斗循环，看它是否真的掉血
   const enemy = mkEntity(ents, 'ranged', {
     faction: FACTIONS.RED,
     pos: { x: node.entity.pos.x + 10, y: node.entity.pos.y },
     stats: { maxHP: 100000, armor: 0, magicResist: 0 },
   }, C);
   const hpBefore = enemy.currentHP;
-  // 锁定前摇（CONFIG.tuning.lockOnWindup，默认0.3s）按 window.gameTime 的绝对时间戳判定，
-  // 不推进它的话前摇窗口永远"还没过"——真实主循环里 CTX.gameTime 每帧自然前进，
-  // 这里手动模拟同一件事，不能只调 combat.update(dt) 而漏了这一步。
-  for (let i = 0; i < 200; i++) { window.gameTime += 0.1; combat.update(0.1); } // 20 秒足够打出至少一次攻击
+  // 这 20 秒真实战斗模拟顺带让 window.gameTime 远远超过 contestWindowSec，
+  // 之后红方开始进攻据点不会被误判成"跟蓝方之前那波攻击撞在同一个窗口"。
+  for (let i = 0; i < 200; i++) { window.gameTime += 0.1; combat.update(0.1); }
   T('③-被占领的据点确实对射程内的敌方单位造成了伤害（不是只有一份摆设数值）',
     enemy.currentHP < hpBefore);
 
-  // 退回中立后应该重新失去武器（不会打不掉的哑炮永久留在身上）
   const redAttacker = { type: 'melee', _mapFaction: FACTIONS.RED };
   while (node.captureOwner !== FACTIONS.NEUTRAL) ds.applyCapturePressure(redAttacker, node.entity);
   T('④-退回中立后武器技能被卸下', !node.entity._skillInstances.some(s => s.skillId === 'weapon_piercing'));
@@ -220,7 +219,6 @@ const FULL = DCFG.captureFull;
   T('①-命中据点不扣 HP（据点没有 HP 概念）', node.entity.currentHP === hpBefore);
   T('②-命中据点确实推动了占领进度（转发到了 DominionSystem）', node.capturePct > pctBefore);
 
-  // _resolveHit 路径（间接伤害如溅射/DOT 落地时走的那条）同样要转发，不走真伤/护盾结算
   const pctBefore2 = node.capturePct;
   combat._resolveHit({
     attackerId: atk.id, targetId: node.entity.id,
@@ -233,66 +231,82 @@ const FULL = DCFG.captureFull;
   T('④-两条路径都没有让据点掉血', node.entity.currentHP === hpBefore);
 }
 
-// ==================== 五、动态出兵：整环两个方向都出，据点默认不出超级兵 ====================
+// ==================== 五、据点出兵：改走标准出兵编排系统，两个方向各出一整套 ====================
+// 2026-09-26 返工：原来据点出兵是 DominionSystem 自己维护的 CONFIG.dominion.
+// waveBudget，编辑器改了没用（用户报"实际出兵编排和模板编辑器中的对应不上"）。
+// 现在据点出兵直接调 buildWaveOrder/compositionFor，跟模板编辑器"出兵编排"页
+// 读写的是同一份数据——默认编排在 CONFIG.gameRules.laneWaveCompositionByLane
+// 的 ring_fwd/ring_rev。用户定稿："每个据点改为每个方向生成2近战2远程（共4
+// 近战4远程），每两两波每个方向额外生成1炮兵（共2炮兵）。"
 {
   const bus = { emit() {}, on() {} };
   const ents = { add() {}, getAllTowers: () => [] };
   const ds = new DominionSystem(ents, bus);
   const map = MAPS['dominion_crystal_scar_v1'];
   ds.initMap(map);
+  // 隔离测试：召唤水晶（kind:'base'）也走同一条共享环形兵线（同样的 laneId/
+  // direction 字符串），且 bonusWaveEvery 现在是 1——每一波都会跟着一起出兵，
+  // 混进这里要单独盯的"某一个据点自己出的这一份编排"里。这两个节点本身的出兵
+  // 行为由第六节单独覆盖，这里只掐掉它们对 spawned 数组的干扰，不改产品逻辑。
+  ds.nodes = ds.nodes.filter(n => n.kind !== 'base');
 
   const spawned = [];
   ds.setCreateMinion((type, x, y, faction, laneId, direction) => spawned.push({ type, faction, laneId, direction }));
 
   const node = ds.nodes.find(n => n.kind === 'point');
   const attacker = { type: 'melee', _mapFaction: FACTIONS.BLUE };
+  window.gameTime = 0;
   while (node.captureOwner === FACTIONS.NEUTRAL) ds.applyCapturePressure(attacker, node.entity);
 
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01);
-  const fromThisNode = spawned.filter(s => s.laneId === node.segForward.laneId);
-  T('①-占领后按 waveInterval 节奏出兵', fromThisNode.length > 0);
-  T('②-出的兵都是占领方的阵营', fromThisNode.every(s => s.faction === FACTIONS.BLUE));
-  const dirsUsed = new Set(fromThisNode.map(s => s.direction));
-  T('③-朝共享环形兵线的两个方向都出（顺时针+逆时针，不是只出一个方向）',
-    dirsUsed.has(node.segForward.direction) && dirsUsed.has(node.segReverse.direction));
-  // 用户返工③："所有据点默认不出超级兵"——CONFIG.dominion.waveBudget 本身
-  // 就不该含 super，这里从真实出兵结果反过来验证。
-  T('③b-据点默认不出超级兵（用户返工定稿）', !fromThisNode.some(s => s.type === 'super'));
+  ds.update(DCFG.waveInterval + 0.01); // 第 1 波
+  const fwd1 = spawned.filter(s => s.direction === node.segForward.direction);
+  const rev1 = spawned.filter(s => s.direction === node.segReverse.direction);
+  T('①-第 1 波：顺时针方向出了 2 近战 + 2 远程（第 1 波不是隔波，不含炮兵）',
+    fwd1.filter(s => s.type === 'melee').length === 2 && fwd1.filter(s => s.type === 'ranged').length === 2
+    && fwd1.filter(s => s.type === 'siege').length === 0);
+  T('②-逆时针方向也出了完全一样的一整套（不是把预算拆开轮流分给两边）',
+    rev1.filter(s => s.type === 'melee').length === 2 && rev1.filter(s => s.type === 'ranged').length === 2);
+  T('③-所有出的兵都是占领方的阵营', spawned.every(s => s.faction === FACTIONS.BLUE));
+  T('③b-所有出的兵都走它自己声明的方向对应的 laneId（真实的 ring，不是伪路 id）',
+    spawned.every(s => s.laneId === node.segForward.laneId));
+  T('③c-据点默认不出超级兵', !spawned.some(s => s.type === 'super'));
 
-  // 中立据点不出兵
-  const neutralNode = ds.nodes.find(n => n.kind === 'point' && n.captureOwner === FACTIONS.NEUTRAL);
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01); // 第 2 波：隔波炮兵生效
+  T('④-第 2 波每个方向额外出 1 炮兵（共 2）', spawned.filter(s => s.type === 'siege').length === 2);
+  T('④b-炮兵之外，2 近战 2 远程仍然照常出（隔波是叠加，不是替换）',
+    spawned.filter(s => s.type === 'melee').length === 4 && spawned.filter(s => s.type === 'ranged').length === 4);
+
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01); // 第 3 波：跟第 1 波一样不含炮兵
+  T('⑤-中立据点不出兵（本波仅这一个已占领据点的编排量：2+2 两个方向共8个单位，没有其它据点掺进来）',
+    spawned.length === 8);
+
+  // 验证真实出兵读的就是 compositionFor()/编辑器同一份数据——直接改
+  // CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd 之后，下一波马上跟着变，
+  // 不需要重启/重新 initMap（这正是"跟模板编辑器同一份数据"这句话的可验证含义）。
+  const bak = CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd;
+  CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd = [{ type: 'siege', count: 5 }];
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
-  const fromNeutral = spawned.filter(s => s.laneId === neutralNode.segForward.laneId
-    && (s.pos ? true : true)); // 占位：环形兵线所有出兵 laneId 相同，靠下面按类型/faction 交叉验证即可
-  // 环形兵线所有据点共享同一个 laneId，不能再用 laneId 区分"是不是这个据点出的兵"——
-  // 改成直接断言"本轮 update 里，中立据点那一份出兵预算完全没有被触发"，用总出兵数
-  // 对比"已占领据点数量"来验证（这一版地图里只有 node 是蓝方，其余 4 个据点仍中立，
-  // 所以这一帧的据点出兵应该只来自 node 一份预算）。
-  const pointBudgetSize = Object.values(DCFG.waveBudget).reduce((a, b) => a + b, 0);
-  const fromPoints = spawned.filter(s => s.faction && !DCFG.crystalSuperBonus[s.type]); // 粗筛：非基地专属类型
-  T('④-中立据点不出兵（这一帧的据点出兵总数只等于唯一已占领据点的预算量）',
-    spawned.filter(s => s.faction === FACTIONS.BLUE).length === pointBudgetSize
-    || spawned.filter(s => s.faction === FACTIONS.BLUE).length === 0); // 未到 waveInterval 时为 0，均视为通过
+  const fwd4 = spawned.filter(s => s.direction === node.segForward.direction);
+  T('⑥-改 CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd 立刻影响真实出兵（编辑器改了不再没用）',
+    fwd4.length === 5 && fwd4.every(s => s.type === 'siege'));
+  CONFIG.gameRules.laneWaveCompositionByLane.ring_fwd = bak;
 
-  // 基地/召唤水晶额外波：每 bonusWaveEvery 波出一次，与占领状态无关。
-  // 前面①-④已经调用过两次 ds.update()，_waveCount 已经不是 0——不能再假设
-  // "接下来再跑 bonusEvery-1 次就到第 bonusEvery 波"，要按当前 _waveCount
-  // 算到下一个 bonusEvery 的整数倍还差几波。
-  const bonusEvery = Math.max(1, DCFG.bonusWaveEvery);
-  const stepsToNextBonus = (bonusEvery - (ds._waveCount % bonusEvery)) % bonusEvery || bonusEvery;
-  for (let i = 0; i < stepsToNextBonus - 1; i++) ds.update(DCFG.waveInterval + 0.01);
-  spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // 这一波是下一个 bonusEvery 的整数倍
-  const baseNodeIds = ds.nodes.filter(n => n.kind === 'base').map(n => n.id);
-  T('⑤-第 bonusWaveEvery 波，双方召唤水晶各出一次额外兵（回归：曾经因为 faction 字段丢失完全不出）',
-    baseNodeIds.every(id => spawned.some(s => s.faction === ds.nodes.find(n => n.id === id).faction)));
-  T('⑤b-召唤水晶这一波默认也不含超级兵（敌方召唤水晶还活着，没解锁）',
-    !spawned.some(s => s.type === 'super'));
+  // pseudoLaneId 的编码规则（<laneId>_fwd/_rev）跟 CONFIG.gameRules 里登记的
+  // 键名一致，用真实 buildWaveOrder 调用交叉验证一遍。
+  T('⑦-伪路 id 命名跟 CONFIG.gameRules.laneWaveCompositionByLane 的键一致',
+    buildWaveOrder(1, false, CONFIG.gameRules, FACTIONS.BLUE, { laneId: 'ring_fwd' }).length === 4
+    && buildWaveOrder(1, false, CONFIG.gameRules, FACTIONS.BLUE, { laneId: 'ring_rev' }).length === 4);
 }
 
-// ==================== 六、超级兵解锁：打掉敌方召唤水晶后，己方召唤水晶才出超级兵 ====================
+// ==================== 六、召唤水晶出兵：每波固定编制，与据点占领无关 ====================
+// 用户定稿："召唤水晶处每波生成3远程3近战1炮兵"——bonusWaveEvery 从 3 改成 1
+// （字面意思上的"每波"），composition 从 1+1 改成 3+3+1。这份编排跟据点的
+// 出兵编排系统（第五节）是两个独立的兵种来源，用户拍板过"两份分开"，不共用
+// _spawnPointWave 那一套 compositionFor，所以还是走原来的 _spawnBudget 算法。
 {
   const { ents, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
@@ -300,37 +314,42 @@ const FULL = DCFG.captureFull;
   const map = MAPS['dominion_crystal_scar_v1'];
   ds.initMap(map);
 
-  // 手搭两座召唤水晶实体（真实游戏里这两座在 DominionSystem.initMap() 之前就已经由
-  // MapSystem/factories 建好，见 main.js 的 map:loading→建塔→map:loaded 时序）。
   const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
   const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000 } }, C);
 
   const spawned = [];
   ds.setCreateMinion((type, x, y, faction) => spawned.push({ type, faction }));
 
-  const bonusEvery = Math.max(1, DCFG.bonusWaveEvery);
-  for (let i = 0; i < bonusEvery - 1; i++) ds.update(DCFG.waveInterval + 0.01);
+  T('①-bonusWaveEvery 定稿为 1（用户定稿"每波"字面意思，不再是每隔3波）',
+    (DCFG.bonusWaveEvery ?? 1) === 1);
+
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
-  T('①-双方召唤水晶都活着时，额外波不含超级兵', !spawned.some(s => s.type === 'super'));
+  T('②-双方召唤水晶都活着时，每波出 3 近战 + 3 远程 + 1 炮兵、不含超级兵',
+    spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'melee').length === 3
+    && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'ranged').length === 3
+    && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1
+    && !spawned.some(s => s.type === 'super'));
 
   // 红方召唤水晶被摧毁（alive=false，跟 MapSystem._onEntityDeath 的处理逐位一致）
   redCrystal.alive = false;
-  for (let i = 0; i < bonusEvery - 1; i++) ds.update(DCFG.waveInterval + 0.01);
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
   const blueSupers = spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'super');
   const redSupers = spawned.filter(s => s.faction === FACTIONS.RED && s.type === 'super');
-  T('②-红方召唤水晶被摧毁后，蓝方（打掉它的一方）召唤水晶开始出超级兵',
+  T('③-红方召唤水晶被摧毁后，蓝方（打掉它的一方）召唤水晶开始出超级兵',
     blueSupers.length > 0);
-  T('③-红方自己（水晶被摧毁的一方）不会因此获得超级兵', redSupers.length === 0);
+  T('④-红方自己（水晶被摧毁的一方）不会因此获得超级兵', redSupers.length === 0);
+  T('④b-超级兵是额外加的，常规编制(3+3+1)依然照出不误',
+    spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'melee').length === 3
+    && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'ranged').length === 3
+    && spawned.filter(s => s.faction === FACTIONS.BLUE && s.type === 'siege').length === 1);
 
   // 红方召唤水晶重生（原地复活，跟 MapSystem 的"原地复活尸体"逐位一致）
   redCrystal.alive = true;
-  for (let i = 0; i < bonusEvery - 1; i++) ds.update(DCFG.waveInterval + 0.01);
   spawned.length = 0;
   ds.update(DCFG.waveInterval + 0.01);
-  T('④-红方召唤水晶重生后，蓝方立刻停止出超级兵（不需要额外监听重生事件）',
+  T('⑤-红方召唤水晶重生后，蓝方立刻停止出超级兵（不需要额外监听重生事件）',
     !spawned.some(s => s.faction === FACTIONS.BLUE && s.type === 'super'));
 }
 
@@ -345,7 +364,6 @@ const FULL = DCFG.captureFull;
   const blueNexus = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_main', stats: { maxHP: 100000 } }, C);
   const redNexus = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_main', stats: { maxHP: 100000 } }, C);
 
-  // 手动把 1 个据点判给蓝方、0 个给红方（不经过 applyCapturePressure，直接摆状态测掉血逻辑）
   const points = ds.nodes.filter(n => n.kind === 'point');
   points[0].captureOwner = FACTIONS.BLUE; points[0].capturePct = FULL;
 
@@ -354,7 +372,6 @@ const FULL = DCFG.captureFull;
   T('①-占点数落后的一方（红）水晶掉血', redNexus.currentHP < redHpBefore);
   T('②-占点数领先的一方（蓝）水晶不掉血', blueNexus.currentHP === blueHpBefore);
 
-  // 掉血量应该正比于据点数差（1 个 vs 2 个，掉血速率翻倍）
   const dropAt1 = redHpBefore - redNexus.currentHP;
   points[1].captureOwner = FACTIONS.BLUE; points[1].capturePct = FULL;
   const redHpBefore2 = redNexus.currentHP;
@@ -364,12 +381,10 @@ const FULL = DCFG.captureFull;
   T('③b-掉血速率系数定稿为 1（用户定稿"敌方每多占一个据点，我方水晶枢纽生命值减去多出来的数量×1"）',
     DCFG.nexusDrainPerPointPerSec === 1);
 
-  // 掉到 0 应该正确触发死亡 + entity:death（死亡检查是 DominionSystem 自己复刻的一份，
-  // 见 _tickNexusDrain 头注——这里验证它确实发了事件，不是只改了字段）
   let deathEvent = null;
   bus.emit = (evt, payload) => { if (evt === 'entity:death') deathEvent = payload; };
   redNexus.currentHP = 0.001;
-  ds.update(1000); // 足够大的 dt，一次性打到 0 以下
+  ds.update(1000);
   T('④-水晶被掉血打到 0 后 alive=false（与 CombatSystem 的死亡判据逐位一致）', redNexus.alive === false && redNexus.currentHP === 0);
   T('⑤-正确发出 entity:death 事件（下游 MapSystem 的水晶损毁处理靠它触发）',
     deathEvent && deathEvent.entityId === redNexus.id);
@@ -384,7 +399,6 @@ const FULL = DCFG.captureFull;
   T('①-激活后 nodes 非空', ds.nodes.length > 0);
   ds.reset();
   T('②-reset 之后 active=false 且 nodes 清空', ds.active === false && ds.nodes.length === 0);
-  // 普通地图（无 dominionNodes）不应该激活
   ds.initMap(MAPS['summoners_rift_v1']);
   T('③-普通地图不激活这套机制（active 仍为 false）', ds.active === false);
 }
@@ -393,11 +407,8 @@ const FULL = DCFG.captureFull;
 {
   const { ents, fx, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
-  // 手搭两座召唤水晶——真实时序里 MapSystem 已经在 DominionSystem.initMap() 之前
-  // 把它们建进了容器（main.js 的 map:loading→建塔→map:loaded），initMap() 只需要
-  // 从容器里【找到】它们并补上武器，不负责创建。
-  const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000, attackDamage: 152, attackRange: 180 } }, C);
-  const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000, attackDamage: 152, attackRange: 180 } }, C);
+  const blueCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE, tier: 'nexus_lane', stats: { maxHP: 4000, attackDamage: 450, attackRange: 180 } }, C);
+  const redCrystal = mkEntity(ents, 'tower', { faction: FACTIONS.RED, tier: 'nexus_lane', stats: { maxHP: 4000, attackDamage: 450, attackRange: 180 } }, C);
 
   const ds = new DominionSystem(ents, bus);
   ds.setEffectRegistry(fx);
@@ -408,45 +419,165 @@ const FULL = DCFG.captureFull;
   T('②-红方召唤水晶同样装备（两座都要，不是只装了一座）',
     redCrystal._skillInstances.some(s => s.skillId === 'weapon_piercing'));
 
-  // 重复调用 initMap 不应该给同一座水晶叠两份武器实例
   ds.initMap(MAPS['dominion_crystal_scar_v1']);
   T('③-重复 initMap 不会重复装备（幂等）',
     blueCrystal._skillInstances.filter(s => s.skillId === 'weapon_piercing').length === 1);
 }
 
 // ==================== 十、据点/召唤水晶的占领进度展示（resourceBar.js 复用法力条）====================
-// 用户定稿："中立据点不显示血条……在画板上显示占领进度（用不同颜色的血条区分），
-// 在属性面板上用法力条显示"——resourceInfoOf() 是面板与画面血条共用的唯一实现
-// （见 resourceBar.js 头注），isCapturePoint 分支提前返回，两处自动一起生效。
+// 用户返工："应该是显示某一方占领进度从0到100，用颜色区分"——无符号 0~1，
+// 中立=空条，颜色按当前领先方走（不用等完全占领才变色）。
 {
   const neutralPt = { isCapturePoint: true, _capturePct: 0, _captureOwner: FACTIONS.NEUTRAL };
   const bluePt = { isCapturePoint: true, _capturePct: 100, _captureOwner: FACTIONS.BLUE };
   const redPt = { isCapturePoint: true, _capturePct: -40, _captureOwner: FACTIONS.NEUTRAL };
-  const ctx = {}; // 据点分支提前返回，不会碰 skillLibrary/attrCalc/effects，传空对象即可
+  const ctx = {};
 
   const infoNeutral = resourceInfoOf(neutralPt, ctx);
-  T('①-中立据点：frac 落在正中间（0.5），kind 是中立色，不是法力/升温这些常规资源',
-    Math.abs(infoNeutral.frac - 0.5) < 1e-9 && infoNeutral.kind === 'capture_neutral');
+  T('①-中立据点：frac 是 0（空条，不是半满），kind 是中立色，不是法力/升温这些常规资源',
+    infoNeutral.frac === 0 && infoNeutral.kind === 'capture_neutral');
 
   const infoBlue = resourceInfoOf(bluePt, ctx);
   T('②-完全被蓝方占领：frac 拉满（1），kind 是蓝方色', infoBlue.frac === 1 && infoBlue.kind === 'capture_blue');
 
   const infoRed = resourceInfoOf(redPt, ctx);
-  T('③-红方领先 40%（中立据点，还没完全占领）：frac=0.3，kind 已经跟着当前领先方是红色（不用等完全占领才变色）',
-    Math.abs(infoRed.frac - 0.3) < 1e-9 && infoRed.kind === 'capture_red');
+  T('③-红方领先 40%（中立据点，还没完全占领）：frac=0.4（幅值本身，不再叠加中点偏移），kind 已经跟着当前领先方是红色',
+    Math.abs(infoRed.frac - 0.4) < 1e-9 && infoRed.kind === 'capture_red');
 
   T('④-label 里带上了具体百分比数字，不是只有颜色/进度条', /\d+%/.test(infoBlue.label) && /\d+%/.test(infoRed.label));
   T('⑤-RESOURCE_COLORS 里确实定义了三种据点专属颜色（面板/画板血条共用同一份颜色表）',
     !!RESOURCE_COLORS.capture_blue && !!RESOURCE_COLORS.capture_red && !!RESOURCE_COLORS.capture_neutral);
 
-  // 普通单位不受影响：没有 isCapturePoint 字段的实体应该继续走原来那一套判定
   const normalTower = { _skillInstances: [] };
   const infoNormal = resourceInfoOf(normalTower, { skillLibrary: {}, attrCalc: { calc: () => ({}) }, effects: { getEffectByName: () => null } });
   T('⑥-普通单位不受影响（没有 isCapturePoint 字段时走原来的法力/充能判定，退化空法力条）',
     infoNormal.kind === 'mana' && infoNormal.label === '0/0');
 }
 
-// ==================== 十一、main.js / CombatSystem.js / UnitLayer.js 源码接线核对 ====================
+// ==================== 十一、据点争夺：双方同时在场则不可选中，逼迫交战 ====================
+// 用户定稿："两方不能同时占领据点，如果出现了，据点进入不可被占领状态
+// （不可被双方选中，迫使两方开始交战），直至只剩一方占领该据点。"
+{
+  const bus = { emit() {}, on() {} };
+  const ents = { add() {}, getAllTowers: () => [] };
+  const ds = new DominionSystem(ents, bus);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const node = ds.nodes.find(n => n.kind === 'point');
+  const win = DCFG.contestWindowSec ?? 2;
+
+  const blueAttacker = { type: 'melee', _mapFaction: FACTIONS.BLUE, targetId: node.entity.id };
+  const redAttacker = { type: 'melee', _mapFaction: FACTIONS.RED, targetId: node.entity.id };
+
+  window.gameTime = 500;
+  ds.applyCapturePressure(blueAttacker, node.entity);
+  T('①-只有蓝方在场时不算争夺（还没被双方同时打过）', node.entity._contested === false);
+
+  const pctBeforeContest = node.capturePct;
+  window.gameTime = 500.5; // 0.5 秒后红方也来了，落在 contestWindowSec 之内
+  ds.applyCapturePressure(redAttacker, node.entity);
+  T('②-双方短时间内都打过之后，据点进入争夺状态', node.entity._contested === true);
+  T('③-争夺中这一下命中不产生任何占领压力（既不加也不减）', node.capturePct === pctBeforeContest);
+  T('④-争夺中攻击者的 targetId 被清空（逼它下一轮重新索敌，索敌会经 isStructureProtected 跳过这个据点）',
+    redAttacker.targetId === null);
+  T('⑤-isStructureProtected 认得争夺中的据点，拒绝把它当合法目标', isStructureProtected(ents, node.entity) === true);
+
+  blueAttacker.targetId = node.entity.id;
+  window.gameTime = 500.6;
+  ds.applyCapturePressure(blueAttacker, node.entity);
+  T('⑥-争夺中双方都打不动这个点（不是只挡了一方）',
+    node.capturePct === pctBeforeContest && blueAttacker.targetId === null);
+
+  // 红方消失、蓝方孤身留下：过了 contestWindowSec 之后蓝方再打一下就恢复正常
+  window.gameTime = 500.6 + win + 1;
+  blueAttacker.targetId = node.entity.id;
+  ds.applyCapturePressure(blueAttacker, node.entity);
+  T('⑦-红方长时间没再出现、窗口过期后争夺自动解除（不需要额外事件通知）', node.entity._contested === false);
+  T('⑧-解除后蓝方的攻击重新产生占领压力', node.capturePct > pctBeforeContest);
+  T('⑨-isStructureProtected 也跟着认为它重新可以被选中了', isStructureProtected(ents, node.entity) === false);
+}
+
+// ==================== 十二、脱战恢复：静息值回归 ====================
+// 用户定稿："若据点脱离战斗状态，此时会慢慢恢复该状态下的值。比如此时为中立
+// 据点（红方并未完全占领），脱战后红方占领进度会慢慢消退直至0。如果该据点
+// 已经被红方占领了，但是由于蓝方进攻占领进度目前为40%，那么脱战后占领进度
+// 会慢慢恢复为100。"
+{
+  const bus = { emit() {}, on() {} };
+  const ents = { add() {}, getAllTowers: () => [] };
+  const ds = new DominionSystem(ents, bus);
+  const map = MAPS['dominion_crystal_scar_v1'];
+  ds.initMap(map);
+  const points = ds.nodes.filter(n => n.kind === 'point');
+
+  // 场景①：中立据点，红方领先但还没占满——脱战后应该慢慢消退回 0。
+  // 这两个点从没被 applyCapturePressure 碰过（_lastHit 全是 -Infinity），
+  // 对 _tickContest() 来说天然就是"早就脱战了"，不需要额外拨时间模拟脱战。
+  const p1 = points[0];
+  p1.captureOwner = FACTIONS.NEUTRAL;
+  p1.capturePct = -30;
+  ds._syncCaptureDisplay(p1);
+  ds.update(0.5); // 小步长，看它是不是"慢慢"移动而不是一步到位
+  T('①-中立据点脱战后向 0 回归（不是原地不动，也不是一步走到底）',
+    p1.capturePct > -30 && p1.capturePct < 0);
+  for (let i = 0; i < 500 && p1.capturePct !== 0; i++) ds.update(1);
+  T('②-脱战恢复最终精确停在 0，归属仍是中立（回归不会因为浮点步长扣过头）',
+    p1.capturePct === 0 && p1.captureOwner === FACTIONS.NEUTRAL);
+
+  // 场景②：已被红方占领，蓝方进攻打到 40%（对红方而言 capturePct=-40）——
+  // 脱战后应该慢慢恢复回 -100（红方自己的满值，不是 0）。
+  const p2 = points[1];
+  p2.captureOwner = FACTIONS.RED;
+  p2.capturePct = -40;
+  ds._syncCaptureDisplay(p2);
+  ds.update(0.5);
+  T('③-已占领的据点脱战后向自己的满值回归（红方满值是 -100，不是 0）',
+    p2.capturePct < -40 && p2.capturePct > -100);
+  for (let i = 0; i < 500 && p2.capturePct !== -100; i++) ds.update(1);
+  T('④-脱战恢复最终精确停在满值 -100，归属仍然是红方（回归不触发 _setOwner 的多余副作用）',
+    p2.capturePct === -100 && p2.captureOwner === FACTIONS.RED);
+
+  // 场景③：正在被攻击（最近有命中）的据点不该被脱战恢复悄悄拉走——
+  // "脱战"要求两方都超过 combatTimeoutSec 秒没打过，而不是"当下没在争夺"就够了。
+  const p3 = points[2];
+  p3.captureOwner = FACTIONS.NEUTRAL;
+  p3.capturePct = -30;
+  ds._syncCaptureDisplay(p3);
+  const attacker = { type: 'melee', _mapFaction: FACTIONS.RED };
+  window.gameTime = (window.gameTime || 0) + 1;
+  ds.applyCapturePressure(attacker, p3.entity); // 红方刚打过一下，还在战斗中
+  const pctAfterHit = p3.capturePct;
+  ds.update(0.5); // 只过了半秒，远没到 combatTimeoutSec（默认 4 秒）
+  T('⑤-最近还在被攻击的据点不会被脱战恢复悄悄拉走', p3.capturePct === pctAfterHit);
+}
+
+// ==================== 十三、据点/召唤水晶数值调整（用户返工定稿）====================
+{
+  T('①-据点攻击力大幅减弱（pointDamagePct 从原型草案的 35 大幅下调）',
+    (DCFG.pointDamagePct ?? 35) <= 20);
+  T('②-新增据点攻速系数，且是提升方向（"略微提升"≈>100%）',
+    (DCFG.pointAttackSpeedPct ?? 100) > 100);
+  T('③-小兵占领速度整体提高（capturePower 各项都比原型草案的基准更高）',
+    DCFG.capturePower.melee > 1.0 && DCFG.capturePower.ranged > 0.75
+    && DCFG.capturePower.siege > 0.75 && DCFG.capturePower.super > 2.2);
+
+  // 数值真的接线到 _setOwner，不是只停在 Config.js 里没人读
+  const bus = { emit() {}, on() {} };
+  const ents = { add() {}, getAllTowers: () => [] };
+  const ds = new DominionSystem(ents, bus);
+  ds.initMap(MAPS['dominion_crystal_scar_v1']);
+  const node = ds.nodes.find(n => n.kind === 'point');
+  const tpl = CONFIG.templates.tower;
+  const attacker = { type: 'melee', _mapFaction: FACTIONS.BLUE };
+  window.gameTime = 0;
+  while (node.captureOwner === FACTIONS.NEUTRAL) ds.applyCapturePressure(attacker, node.entity);
+  T('④-占领后据点的攻击力确实是 tpl 的 pointDamagePct%（不是某个写死的数）',
+    Math.abs(node.entity.baseStats.attackDamage - tpl.attackDamage * (DCFG.pointDamagePct / 100)) < 1e-6);
+  T('⑤-占领后据点的攻速确实是 tpl 的 pointAttackSpeedPct%（新增的这个维度真的生效了）',
+    Math.abs(node.entity.baseStats.baseAttackSpeed - tpl.baseAttackSpeed * (DCFG.pointAttackSpeedPct / 100)) < 1e-6);
+}
+
+// ==================== 十四、main.js / CombatSystem.js / UnitLayer.js / FactionSystem.js 源码接线核对 ====================
 {
   const combatSrc = srcOf('src/systems/CombatSystem.js');
   T('①-CombatSystem 有 setDominionSystem 注入口', /setDominionSystem\(dominionSystem\)/.test(combatSrc));
@@ -463,11 +594,13 @@ const FULL = DCFG.captureFull;
   const layerSrc = srcOf('src/presentation/UnitLayer.js');
   T('⑦-UnitLayer 的画板血条对 isCapturePoint 有专门分支（不是画一条没意义的满血条）',
     /if \(e\.isCapturePoint\) \{/.test(layerSrc));
+
+  const facSrc = srcOf('src/systems/FactionSystem.js');
+  T('⑧-isStructureProtected 里接了 _contested 判断（争夺中的据点在所有既有索敌/攻击判据点上都生效）',
+    /isCapturePoint && target\._contested/.test(facSrc));
 }
 
-// ==================== 十二、统治战场并入"选择模式"tab ====================
-// 用户定稿："统治战场的模式应该做到上面的tab里，这个模式下目前只有这一个地图"——
-// 跟普通/经典不同，统治战场专属一张地图，不是"选择地图"网格里的一张图。
+// ==================== 十五、统治战场并入"选择模式"tab ====================
 {
   const { MODES, DOMINION_MODE_MAP_ID } = await import('../src/data/maps/modeTransforms.js');
   T('①-MODES 里新增了 dominion 这个模式', MODES.dominion?.id === 'dominion');
@@ -482,8 +615,6 @@ const FULL = DCFG.captureFull;
   T('③-"选择地图"网格里不再出现这张专属地图（只能从"选择模式"进，不在两处都能选到）',
     !available.some(m => m.id === DOMINION_MODE_MAP_ID));
 
-  // 从任意一张普通地图切进统治战场模式：不管传的 mapId 是什么，loadMap 都应该
-  // 强制换成这张专属地图（用户原话"这个模式下目前只有这一个地图"）。
   ms.loadMap('summoners_rift_v1', 'dominion');
   T('④-选中统治战场模式后，不管原来选的是哪张图，都会强制换成这张专属地图',
     ms.currentMap.id === DOMINION_MODE_MAP_ID && ms.currentMode === 'dominion');
@@ -491,8 +622,101 @@ const FULL = DCFG.captureFull;
   const dialogSrc = srcOf('src/ui/ModeDialog.js');
   T('⑤-ModeDialog.js 给 dominion 配了专属图标，不是沿用 normal/classic 的兜底',
     /MODE_ICONS\s*=\s*\{[^}]*dominion/.test(dialogSrc));
-  T('⑥-选中统治战场时不再渲染"选择地图"那一块（目前只有一张图，没有可选的）',
-    /isDominion/.test(dialogSrc));
+  T('⑥-选中统治战场时"选择地图"块改成渲染当前这张图（水晶之痕），不是彻底隐藏',
+    /isDominion[\s\S]{0,400}mapSystem\.currentMap/.test(dialogSrc)
+    && !/isDominion \? '' :/.test(dialogSrc));
+
+  const laneSrc = srcOf('src/ui/laneLabels.js');
+  T('⑦-mapLaneIds() 优先读 map.waveEditorLaneIds（Q3 返工：编辑器"路"数跟物理兵线数解耦）',
+    /waveEditorLaneIds/.test(laneSrc));
+  T('⑧-laneLabel/laneShort 给顺/逆时针配了人话标签，不是直接显示 ring_fwd/ring_rev 这种内部 id',
+    /ring_fwd:\s*'[^']*顺时针/.test(laneSrc) && /ring_rev:\s*'[^']*逆时针/.test(laneSrc));
+}
+
+// ==================== 十六、真实移动回归：小兵不会卡在据点/塔下不动 ====================
+// 用户实机报"会出现小兵在塔下呆着不动，不知道什么意思"。根因见
+// MapSystem._computeWaypointBlock 头注新补的一段：5 个据点不进 map.buildings
+// （据点走 DominionSystem 自己的 dominionNodes，不走常规建塔管线），而据点
+// pos 恰好就是环形兵线上的一个路点——这个函数之前只认 map.buildings，据点的
+// 避障半径（CONFIG.buildingSizes 没有 'capture_point' 这个 tier，退回
+// default=32 × towerVizScale.default=1.25 = 40px）完全没被计入 _wpBlock，
+// 到达半径只有 24px，40 > 24，小兵永远够不着那个精确路点坐标，被碰撞推着
+// 原地顶牛——跟 sim_pathcorner.mjs⑦ 那次"塔压在路点上"是同一个坑，这次换了
+// 一种不走 buildings 数组的建筑实现方式而已。
+//
+// 用真实 LaneMovementSystem 让一个兵从兽骨场出发，沿顺时针方向跑足够绕完
+// 一整圈的时长，钉住"路点索引不会在任何一个据点/基地处停住不再推进"——
+// 不钉具体像素/秒数（那些是起草值），钉的是"卡死"这个行为形状本身。
+// 隔离交战这个变量：真实地图上环绕整圈会先撞上敌方召唤水晶，minion 停下来
+// 打架是【正确】行为，不是这次要钉的 bug——所以这里不建召唤水晶实体（不进
+// ents，没有可选中的目标），据点也在 DominionSystem.initMap() 建好之后
+// 改成跟小兵同阵营（canTarget 同阵营必为 false，不会被当成敌人打），只留下
+// 它们的【物理避障体积】——这样才能干净地单独测"路径推进会不会被卡死"，
+// 不跟"正在交战所以站定"这个完全正常的分支混在一起。
+{
+  const { ents, CONFIG: C } = await makeWorld();
+  const { EventBus } = await import('../src/utils/EventBus.js');
+  const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { CombatSystem } = await import('../src/systems/CombatSystem.js');
+  const { MapSystem } = await import('../src/systems/MapSystem.js');
+  const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
+  const bus = new EventBus();
+  const fx = new EffectRegistry(bus);
+  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
+  const ms = new MapSystem(ents, bus);
+  ms.setCreateBuildingFn(({ pos }) => ({ pos })); // 不进 ents：没有召唤水晶可打
+  window.gameTime = 0;
+  ms.loadMap('dominion_crystal_scar_v1');
+  const map = MAPS['dominion_crystal_scar_v1'];
+  const lane = ms.getLane('ring');
+
+  T('①-据点自己的避障半径确实被计入 _wpBlock（不再是 -Infinity，之前压根不知道据点存在）',
+    map.dominionNodes.filter(n => n.kind === 'point')
+      .every(n => {
+        const idx = lane.waypoints.findIndex(w => Math.hypot(w.x - n.pos.x, w.y - n.pos.y) < 1);
+        return idx >= 0 && lane._wpBlock[idx] > 0;
+      }));
+
+  const ds = new DominionSystem(ents, bus);
+  ds.initMap(map);
+  for (const node of ds.nodes) {
+    if (!node.entity) continue;
+    node.entity._mapFaction = FACTIONS.BLUE; // 测试专用：跟小兵同阵营，不互相交火
+    node.entity.faction = FACTIONS.BLUE;
+  }
+
+  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, ms);
+  const boneyard = map.dominionNodes.find(n => n.id === 'boneyard');
+  const m = {
+    id: ++window._uid, type: 'melee', alive: true, pos: { x: boneyard.pos.x, y: boneyard.pos.y },
+    baseStats: { ...C.templates.melee }, currentHP: C.templates.melee.maxHP,
+    shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity, attackCooldown: 0,
+    targetId: null, _skillInstances: [], _mapFaction: FACTIONS.BLUE, faction: FACTIONS.BLUE,
+    _laneId: 'ring', _laneDirection: 'forward',
+  };
+  ents.add(m);
+
+  const DT = 1 / 30;
+  const runSeconds = 220; // 足够绕完好几整圈（实测约 73s/圈），给足冗余
+  let maxStall = 0, lastIdx = m._laneWaypointIndex, stallStart = 0, wraps = 0;
+  for (let i = 0; i < runSeconds / DT; i++) {
+    window.gameTime = i * DT;
+    move.update(DT);
+    if (m._laneWaypointIndex !== lastIdx) {
+      maxStall = Math.max(maxStall, window.gameTime - stallStart);
+      // 索引从接近末尾突然跳回接近开头 → 绕完了一圈（loop:true 的 wrap()）。
+      if (lastIdx > m._laneWaypointIndex && lastIdx - m._laneWaypointIndex > 5) wraps++;
+      lastIdx = m._laneWaypointIndex;
+      stallStart = window.gameTime;
+    }
+  }
+  maxStall = Math.max(maxStall, window.gameTime - stallStart);
+  T(`②-绕圈期间路点索引最长停滞 ${maxStall.toFixed(1)}s，没有在任何一个据点处卡死不再推进（< 10s）`,
+    maxStall < 10);
+  T(`③-${runSeconds}s 里确实绕完了不止一整圈（wraps=${wraps} ≥ 2，不是卡在半路一直没到终点）`,
+    wraps >= 2);
 }
 
 done();

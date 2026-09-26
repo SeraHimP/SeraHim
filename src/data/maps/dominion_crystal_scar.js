@@ -196,6 +196,19 @@ const DOMINION_CONFIG = {
 
   lanes: [RING_LANE],
 
+  // 2026-09-26 新增：模板编辑器"出兵编排"页按 map.lanes 生成路页签
+  // （laneLabels.js 的 mapLaneIds()），这张图物理上只有一条环形兵线
+  // （lanes.length===1，id='ring'），页签因此只会显示一格——但用户定稿
+  // "分为4条线路：红蓝方×顺逆时针"，要求能分别编辑"顺时针"和"逆时针"两个
+  // 方向各自的出兵编制。两个方向共用同一条物理兵线，没有第二条真实 lane 可用，
+  // 于是给两个方向各发一个不对应任何真实 LaneMovementSystem 兵线的"伪路 id"
+  // （ring_fwd/ring_rev），只用于出兵编排的 (阵营×路) 二维网格定位——
+  // DominionSystem._spawnPointWave() 按小兵的实际方向把这两个伪 id 之一
+  // 传给 compositionFor()，跟 CONFIG.gameRules.laneWaveCompositionByLane 的
+  // 默认编排（见该文件头注）是同一套键。mapLaneIds() 优先读这个字段，
+  // 没声明时才退回 map.lanes（其它地图都是这种情况，不受影响）。
+  waveEditorLaneIds: ['ring_fwd', 'ring_rev'],
+
   // 2026-09-26：召唤水晶重生时间从通用默认的 300s 改成 120s（用户定稿
   // "召唤水晶2分钟后重生"）——这是既有的 MapSystem.NEXUS_RESPAWN_TIME
   // 通用机制（HA/SR/TT 各自也用这个字段覆写），不是新写的重生逻辑。
@@ -237,7 +250,11 @@ const DOMINION_CONFIG = {
   // "正常一座塔"的基准，不是特别削弱/强化）。
   tierStats: {
     nexus_main: { maxHP: 500, shieldFixedMax: 0, healthRegen: 0, armor: 0, magicResist: 0, attackDamage: 0, baseAttackSpeed: 0 },
-    nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0, attackDamage: 152, attackRange: 180, baseAttackSpeed: 0.833 },
+    // 2026-09-26：attackDamage 152 → 450（用户定稿"召唤水晶的攻击力大幅提升"，
+    // 起草值待 balance_matrix 校准）——原来的 152 只是"照抄一座普通外塔的强度
+    // 基准"，不是刻意削弱，这次直接给到接近 3 倍，让它真的是一道难啃的防线，
+    // 不只是摆设。攻速/护甲这些没提到的数值不动。
+    nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20, magicResist: 0, attackDamage: 450, attackRange: 180, baseAttackSpeed: 0.833 },
   },
 
   // 本图的占领/出兵/水晶掉血节点表——DominionSystem.initMap() 读这个字段激活整套

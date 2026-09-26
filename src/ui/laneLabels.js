@@ -18,21 +18,32 @@
  * 抄过去的话，下次再加一个用到分路的界面，就是第三份。
  */
 
-/** 当前地图的路 id 列表。取不到地图（尚未载入）时退回三路，与改动前的默认一致。 */
+/**
+ * 当前地图的路 id 列表。取不到地图（尚未载入）时退回三路，与改动前的默认一致。
+ *
+ * 2026-09-26：优先读 map.waveEditorLaneIds——统治战场·水晶之痕只有一条物理
+ * 兵线（环形，一个 laneId），但出兵编排要按"顺时针/逆时针"两个方向分别编辑
+ * （用户定稿"分为4条线路：红蓝方×顺逆时针"），物理路数（1）和编排要分的格数
+ * （2）对不上，所以让地图自己声明一份"出兵编排要按几路分"的列表，跟"这张图
+ * 视觉/寻路上到底有几条真实兵线"（map.lanes）解耦。没声明这个字段的地图
+ * （SR/HA/TT/汇流战场等）行为完全不变，照旧读 map.lanes。
+ */
 export function mapLaneIds() {
   const m = (window.CTX?.__app || window.__app)?.mapSystem?.currentMap;
-  const ids = (m?.lanes || []).map(l => l.id).filter(Boolean);
+  const ids = m?.waveEditorLaneIds
+    ? m.waveEditorLaneIds.filter(Boolean)
+    : (m?.lanes || []).map(l => l.id).filter(Boolean);
   return ids.length ? ids : ['top', 'mid', 'bot'];
 }
 
 /** 带图标的长标签（页签用）。地图自定义的路 id 没有登记时原样显示 id。 */
 export function laneLabel(id) {
-  return ({ top: '⬆️ 上路', mid: '➡️ 中路', bot: '⬇️ 下路' })[id] || id;
+  return ({ top: '⬆️ 上路', mid: '➡️ 中路', bot: '⬇️ 下路', ring_fwd: '↻ 顺时针', ring_rev: '↺ 逆时针' })[id] || id;
 }
 
 /** 不带图标的短标签（"🔵→中路" 这种一行摘要用）。 */
 export function laneShort(id) {
-  return ({ top: '上路', mid: '中路', bot: '下路' })[id] || id;
+  return ({ top: '上路', mid: '中路', bot: '下路', ring_fwd: '顺时针', ring_rev: '逆时针' })[id] || id;
 }
 
 /**

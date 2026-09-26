@@ -22,16 +22,30 @@ export const ModeDialog = {
 
     // v2026-09-26：统治战场并入"选择模式"（用户定稿"这个模式下目前只有这一个
     // 地图"）——是这条轴上第三个互斥选项，不是"选择地图"网格里的一张图。
-    // 选中它时"选择地图"整块直接不渲染（没有可选的地图，留着一个空/禁用的
-    // 网格没有意义）；MODE_ICONS 补一个专属图标，避免继续用 classic/normal
-    // 的兜底逻辑（`m.id==='classic'?...:...`）硬凑第三种。
+    // MODE_ICONS 补一个专属图标，避免继续用 classic/normal 的兜底逻辑
+    // （`m.id==='classic'?...:...`）硬凑第三种。
     const MODE_ICONS = { classic: '📜', dominion: '💠', normal: '⚔️' };
     // 只有两组选卡，不摆侧边栏——跟原来一样，一个只有一两项的导航是纯装饰。
+    //
+    // 2026-09-26 修复：用户报"地图选择中只显示统治战场，这个地图叫做水晶之痕
+    // 应该显示在二级tab里"——排查结论：上面"选择模式"那一栏只放得下【模式名】
+    // （统治战场），而这张环形地图的真名【水晶之痕】只写在 map.label 里，
+    // 之前选中统治战场后"选择地图"整块被直接隐藏（`isDominion ? '' : ...`），
+    // 导致切进这个模式后，界面上任何地方都找不到"水晶之痕"这四个字——
+    // 用户在统治战场模式下点开这个窗口，完全看不出当前到底玩的是哪张图。
+    // 改成：统治战场下"选择地图"依然渲染，只是网格里唯一的一张卡片就是
+    // mapSystem.currentMap（这个模式下永远是这张图，loadMap() 已经保证了这一点，
+    // 见 MapSystem.js 的强制换图分支），点它是个无操作（本来就选中的那张图）。
     const render = () => {
       const modes = mapSystem.getAvailableModes();
-      const maps = mapSystem.getAvailableMaps();
       const isDominion = mapSystem.currentMode === 'dominion';
-      const mapSection = isDominion ? '' : `
+      const maps = isDominion
+        ? (mapSystem.currentMap ? [{ id: mapSystem.currentMap.id, label: mapSystem.currentMap.label }] : [])
+        : mapSystem.getAvailableMaps();
+      const mapSectionHint = isDominion
+        ? '统治战场目前只有这一张地图。'
+        : '选择模式或地图都会立刻重新加载对战（清空当前场上单位）。';
+      const mapSection = `
         <div class="editor-section">
           <h4>选择地图</h4>
           <div class="pick-grid">
@@ -39,7 +53,7 @@ export const ModeDialog = {
               <div class="pick-icon">🗺️</div><div class="pick-label">${m.label}</div>
             </div>`).join('')}
           </div>
-          <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">选择模式或地图都会立刻重新加载对战（清空当前场上单位）。</div>
+          <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">${mapSectionHint}</div>
         </div>`;
       const body = `
         <div class="editor-section">
