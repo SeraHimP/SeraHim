@@ -20,7 +20,7 @@
 // DOM 环境（这个仓库目前没有先例这么测 canvas 纹理层，其它同类文件都是走"源码
 // 形态断言"绕开，但那种测法测不出这次的真根因——纯正则测不出"平面到底有没有
 // 抬到地形高度"，这里改用真实构建 geometry + 查顶点数据）。
-import { scoreboard } from './_harness.mjs';
+import { scoreboard, srcOf } from './_harness.mjs';
 import * as THREE from '../vendor/three.module.js';
 
 globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0, CTX: {} };
@@ -111,6 +111,57 @@ const { T, done } = scoreboard('GroundTraceLayer（雪盖渲染层）v55.4/v55.5
     Math.abs(jungleAlpha / 255 - Math.min(1, snowCoverAlpha * boost)) < 0.02);
   T('野区④-material.opacity 固定为1（真正的上限已经编码进纹理 alpha 通道本身）',
     layer._snowMesh.material.opacity === 1);
+}
+
+// ==================== 四、2026-09-26 修复：夜里雪盖/水洼跟着昼夜变暗 ====================
+// 用户报"雪覆盖的时候，夜晚已经看不出来是夜晚了，依旧亮堂堂的"——根因是水洼/雪盖
+// 用 MeshBasicMaterial，不吃场景光照，昼夜系统压暗光源对它们没用。修法是跟
+// MapSkirtLayer/VegetationLayer 同一套：昼夜系统算出的 tint 颜色乘进 material.color。
+{
+  const scene = new THREE.Scene();
+  const layer = new GroundTraceLayer(scene);
+  const mapSystem = { currentMap: { id: 'tint_map', world: { w: 16, h: 16 } } };
+  const resolution = 2;
+  const groundTraceSystem = {
+    getPuddles: () => [{ x: 8, y: 8, strength: 1, r: 4, subOffsets: [{ dx: 0, dy: 0, r: 4 }] }],
+    getSnowCover: () => ({ resolution, data: new Float32Array(resolution * resolution).fill(1), worldW: 16, worldH: 16, zoneMix: null }),
+  };
+  layer.update(groundTraceSystem, mapSystem); // 先建出雪盖 mesh + 至少一个可见水洼槽位
+
+  T('夜①-GroundTraceLayer 导出了 setTint 方法（跟 VegetationLayer/MapSkirtLayer 同一套接口）',
+    typeof layer.setTint === 'function');
+
+  // THREE.Color 的颜色管理会把 hex 当 sRGB 转成线性值再存——0x808080 存出来是
+  // ≈0.2159，不是天真按 8 位比例算出来的 0.5（这是 three.js 本身的颜色管线，
+  // 不是这里的换算逻辑）。拿真实的 THREE.Color 转换结果当期望值，不要在测试里
+  // 重新发明一套换算公式。
+  const expected = new THREE.Color(0x808080).r;
+  layer.setTint(0x808080); // 半灰：夜晚场景常见的暗淡 tint
+  const snowColor = layer._snowMesh.material.color;
+  T('夜②-setTint 后雪盖材质颜色被压暗（不再是满值白色 1,1,1）',
+    snowColor.r < 0.99 && snowColor.g < 0.99 && snowColor.b < 0.99);
+  T('夜③-雪盖颜色约等于白色×tint',
+    Math.abs(snowColor.r - expected) < 0.01 && Math.abs(snowColor.g - expected) < 0.01 && Math.abs(snowColor.b - expected) < 0.01);
+
+  const visiblePuddle = layer._puddlePool.find((s) => s.mesh.visible);
+  T('夜④-水洼材质颜色同样被压暗（同一个坑，两处一起修，不能只修雪盖漏水洼）',
+    !!visiblePuddle && visiblePuddle.mesh.material.color.r < 0.99);
+
+  // 模拟"换图后雪盖 mesh 被重建"：重建时新材质默认是满值白，_applyTint 必须在
+  // update() 里跟着重新调用一遍，不能指望外部再手动调一次 setTint。
+  layer._disposeSnowMesh();
+  layer.update(groundTraceSystem, mapSystem);
+  const rebuiltColor = layer._snowMesh.material.color;
+  T('夜⑤-雪盖 mesh 重建后（换图场景）tint 依然生效，不会退回满值白色',
+    Math.abs(rebuiltColor.r - expected) < 0.01);
+
+  // ThreeRenderer 没法在 headless Node 里真的 new 出来（需要真实 WebGL 上下文），
+  // 跟 veg/skirt 的接线一样只能走源码级断言，钉住"setLighting 里确实调用了
+  // groundTrace.setTint"这条接线，不是只改了 GroundTraceLayer 自己却忘了接进
+  // 昼夜系统唯一的光照入口。
+  const trSrc = srcOf('src/presentation/ThreeRenderer.js');
+  T('夜⑥-ThreeRenderer.setLighting() 接了 groundTrace.setTint(unitTint)（跟 veg/skirt 同一条 unitTint 分支里）',
+    /if \(this\.groundTrace\?\.setTint\) this\.groundTrace\.setTint\(unitTint\);/.test(trSrc));
 }
 
 done();

@@ -25,6 +25,7 @@ import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 
 const cfg = () => (CONFIG.ui && CONFIG.ui.groundTraceFx) || {};
+const _tintColor = new THREE.Color();
 
 // 实心软边圆贴图：中心不透明、向外羽化，程序生成，无外部素材（同 RainRippleLayer
 // 的 makeRingTexture 思路，这里要的是实心圆而不是一圈环）。
@@ -54,6 +55,7 @@ export class GroundTraceLayer {
     this._snowTex = null;
     this._snowCanvas = null;
     this._snowMapId = null;
+    this._tint = undefined;
   }
 
   _build() {
@@ -246,6 +248,43 @@ export class GroundTraceLayer {
     }
     this._snowCanvas.getContext('2d').putImageData(img, 0, 0);
     this._snowTex.needsUpdate = true;
+    this._applyTint();
+  }
+
+  /**
+   * ==================== 2026-09-26 修复：夜里雪盖/水洼看不出天黑 ====================
+   * 用户报"雪覆盖的时候，夜晚已经看不出来是夜晚了，依旧亮堂堂的"。
+   *
+   * 根因跟裙边（MapSkirtLayer）v51.29 那次一模一样：水洼/雪盖都用
+   * `MeshBasicMaterial`（不吃场景光照，颜色只由 material.color × 贴图 决定），
+   * 而昼夜系统（DayNight.js）压暗画面靠的是调低方向光/半球光强度 + exposure——
+   * 这些手段对不吃光照的材质完全不起作用，唯一还在起效的只有 exposure 这一档
+   * 相对温和的整体曝光，远不如"真的被调暗的光源"降得多。于是雪盖/水洼在夜里
+   * 相对周围（吃了光照、真的变暗的地形/单位）显得格外亮，才有"看不出是夜晚"
+   * 的观感。
+   *
+   * 修法跟 MapSkirtLayer.setTint 同一个模式：昼夜系统算出的 unitTint 颜色
+   * （DayNight.unitTintOf，专门给"不吃光照但需要跟着昼夜变暗"的材质用）乘进
+   * material.color，而不是让这层材质自己去响应场景光照——见 ThreeRenderer.js
+   * setLighting() 里 veg/skirt 同款接线，这里补上第三个。
+   */
+  setTint(hex) {
+    this._tint = hex;
+    this._applyTint();
+  }
+
+  _applyTint() {
+    if (this._tint === undefined) return;
+    _tintColor.set(this._tint);
+    const puddleBase = cfg().puddleColor ?? 0x5b8fb0;
+    for (const s of this._puddlePool) {
+      s.mesh.material.color.set(puddleBase).multiply(_tintColor);
+    }
+    if (this._snowMesh) {
+      // 雪盖真实颜色现在写进纹理 RGB 通道（v55.1 积雪材质差异化），
+      // material.color 本身是中性白倍数——直接拿 tint 当倍数即可。
+      this._snowMesh.material.color.set(0xffffff).multiply(_tintColor);
+    }
   }
 
   dispose() {

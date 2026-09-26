@@ -309,6 +309,10 @@ export class ThreeRenderer {
       // v51.29：裙边改用 MeshBasicMaterial 后不再自动吃场景光照，昼夜响应靠这一句手动补——
       // 见 MapSkirtLayer.js 头注"为什么不用 MeshLambertMaterial"的排查记录。
       if (this.skirt?.setTint) this.skirt.setTint(unitTint);
+      // 2026-09-26 修复：雪盖/水洼同样是 MeshBasicMaterial（不吃场景光照），
+      // 用户报"雪覆盖时夜晚看不出来是夜晚，依旧亮堂堂的"——跟裙边同一个坑，
+      // 见 GroundTraceLayer.setTint 头注。
+      if (this.groundTrace?.setTint) this.groundTrace.setTint(unitTint);
     }
     if (background !== undefined && this.scene.background) this.scene.background.set(background); // C 组·天空：昼夜给天穹/边界底色染色
     if (sunColor !== undefined) this.sun.color.set(sunColor);
