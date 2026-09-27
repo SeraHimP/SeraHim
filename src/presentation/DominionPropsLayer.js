@@ -94,6 +94,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { stylizedPaletteOf } from '../data/Config.js';
 import { hash } from './VegetationLayer.js';
 import { RESOURCE_COLORS } from '../core/resourceBar.js';
+import { FX_PARTICLE_LAYER } from './PostFX.js';
 
 const toScene = (x, y, h = 0) => new THREE.Vector3(x, h, y);
 
@@ -484,11 +485,15 @@ function buildNexusFlank(group, pos, colorHex) {
 // 不影响小兵通行（没有碰撞体，只是渲染）。两种色块都从 deriveDesertRamp()
 // 派生，跟主沙色同一色相家族，只是明暗不同。
 const SAND_TEXTURE_STEP = 95;
-const SAND_TEXTURE_CHANCE = 0.3;
+const SAND_TEXTURE_CHANCE = 0.18;
+// 全图统一的风向（弧度）：路面沙纹与路外沙丘都顺着它拉长，读成"同一阵风吹出来的"。
+// 原来的圆团等大、各自随机朝向，截图里读成波点/奶酪孔。
+const WIND_ANGLE = 0.55;
 function buildSandTexture(group, map, SV, isWalkable, ramp) {
   if (!isWalkable) return;
-  const lightMat = mat(ramp.lightSand);
-  const shadowMat = mat(ramp.windShadow);
+  const corridor = new THREE.Color(SV.corridorColor || '#c9915a');
+  const lightMat = mat(corridor.clone().lerp(new THREE.Color('#ffffff'), 0.07).getHex());
+  const shadowMat = mat(corridor.clone().multiplyScalar(0.94).getHex());
   const blobGeo = new THREE.IcosahedronGeometry(1, 1);
   const { w: WW, h: WH } = map.world;
 
@@ -503,9 +508,9 @@ function buildSandTexture(group, map, SV, isWalkable, ramp) {
       const blob = new THREE.Mesh(blobGeo, light ? lightMat : shadowMat);
       // 极低矮的扁团块，贴着地面——是"色块"不是"土堆"，高度只用来避免 z-fight。
       blob.position.copy(toScene(x, y, 0.4));
-      const ex = 0.7 + hash(x + 3, y) * 0.7, ez = 0.7 + hash(x, y + 3) * 0.7;
-      blob.scale.set(r * ex, 1.6, r * ez);
-      blob.rotation.y = hash(x + 5, y + 5) * 6.2832;
+      blob.scale.set(r * (1.2 + hash(x + 3, y) * 0.8), 1.6, r * (0.22 + hash(x, y + 3) * 0.12));
+      blob.rotation.y = -WIND_ANGLE + (hash(x + 5, y + 5) - 0.5) * 0.35;
+      blob.layers.set(FX_PARTICLE_LAYER);   // 贴地色块不进描边预渲染，否则每条都被描一圈黑边
       group.add(blob);
     }
   }
@@ -584,6 +589,42 @@ function buildCanyonMonoliths(group, map, SV, isWalkable, nodePositions, ramp) {
         group.add(debris);
       }
       placed = true;
+    }
+  }
+}
+
+// ==================== 路外的沙丘 ====================
+// 路以外是一片更低的黄沙（terrainEdge 的底面），只有平面色会像一块沙色地板。
+// 这里撒一批大而低的长条沙丘，顺着 WIND_ANGLE 拉长，flatShading 让迎光面/背光面
+// 自然分出两档明暗——这是"中尺度"的地貌，个头比碎石大一个数量级，数量克制。
+const DUNE_STEP = 240;
+const DUNE_CHANCE = 0.4;
+function buildDunes(group, map, isWalkable, nodePositions) {
+  if (!isWalkable || !map.terrainEdge) return;
+  const floor = new THREE.Color(map.terrainEdge.abyssColor || '#d6ad6e');
+  const crestMat = mat(floor.clone().lerp(new THREE.Color('#fff4dc'), 0.1).getHex());
+  const bodyMat = mat(floor.clone().multiplyScalar(0.96).getHex());
+  const geo = new THREE.IcosahedronGeometry(1, 1);
+  const { w: WW, h: WH } = map.world;
+  const nearAnyNode = (x, y) => nodePositions.some((p) => Math.hypot(x - p.x, y - p.y) < 210);
+  for (let gx = -DUNE_STEP; gx < WW + DUNE_STEP; gx += DUNE_STEP) {
+    for (let gy = -DUNE_STEP; gy < WH + DUNE_STEP; gy += DUNE_STEP) {
+      const x = gx + (hash(gx + 21, gy) - 0.5) * DUNE_STEP * 0.8;
+      const y = gy + (hash(gx, gy + 21) - 0.5) * DUNE_STEP * 0.8;
+      if (hash(gx + 23, gy + 23) > DUNE_CHANCE) continue;
+      const len = 110 + hash(x, y) * 150, wid = 55 + hash(x + 1, y) * 55, h = 8 + hash(x, y + 1) * 8;
+      // 沙丘整体（含两端）都要落在不可走区，否则会顶穿路面边缘的斜坡。
+      const ca = Math.cos(WIND_ANGLE), sa = Math.sin(WIND_ANGLE);
+      const probes = [[0, 0], [len, 0], [-len, 0], [0, wid], [0, -wid]];
+      if (probes.some(([u, v]) => isWalkable(x + u * ca - v * sa, y + u * sa + v * ca))) continue;
+      if (nearAnyNode(x, y)) continue;
+      const dune = new THREE.Mesh(geo, hash(x + 7, y + 7) < 0.5 ? crestMat : bodyMat);
+      dune.position.copy(toScene(x, y, h * 0.15));
+      dune.scale.set(len, h, wid);
+      dune.rotation.y = -WIND_ANGLE + (hash(x + 9, y + 9) - 0.5) * 0.25;
+      // 沙丘是地形起伏不是物件：不描边（描边会把每座沙丘勾成一片叶子）。
+      dune.layers.set(FX_PARTICLE_LAYER);
+      group.add(dune);
     }
   }
 }
@@ -763,6 +804,7 @@ export class DominionPropsLayer {
     voidGroup.name = 'voidAccents';
     voidGroup.position.y = map.terrainEdge?.waterY ?? 0;
     group.add(voidGroup);
+    buildDunes(voidGroup, map, this._isWalkable, allPositions);
     buildCanyonMonoliths(voidGroup, map, SV, this._isWalkable, allPositions, ramp);
     buildTerrainAccents(voidGroup, map, SV, this._isWalkable, allPositions);
 

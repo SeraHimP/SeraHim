@@ -435,8 +435,9 @@ export class EffectsLayer {
 
     if (mapSystem?.active && map?.world) {
       const { w: WW, h: WH } = map.world;
-      // D2 世界边界框
-      B.rectStroke(0, 0, WW, WH, 4, rgbOf('#ffffff'), 0.18);
+      // D2 世界边界框：只在调试网格打开时画。常驻的话每张图都浮着一圈白色矩形框，
+      // 挖空型地图（冰封/水晶之痕）上尤其显眼——它不属于地形。
+      if (window.__gridOn) B.rectStroke(0, 0, WW, WH, 4, rgbOf('#ffffff'), 0.18);
       // D3 双方基地高地扇形 —— 默认不画（CONFIG.tuning.showBaseCircle，设置里可开）。
       // 关掉的只是这个圈的**画法**；基地光环是玩法效果，走 towerPassives，与此无关。
       if (CONFIG.tuning?.showBaseCircle) {

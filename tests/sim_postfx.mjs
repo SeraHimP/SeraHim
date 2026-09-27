@@ -258,7 +258,8 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
 {
   const prepassBlock2 = postfx.match(/render\(renderer[\s\S]{0,1800}?\n  \}/)?.[0] || '';
   T('晶①-NormalDepthPrepass 的 traverse 里对 userData.prepassSolid 开了白名单，不进"transparent 就隐藏"分支',
-    /if \(o\.userData && o\.userData\.prepassSolid\) return;/.test(prepassBlock2));
+    /const solidWhitelist = !!\(o\.userData && o\.userData\.prepassSolid\)/.test(prepassBlock2)
+    && /tr && !solidWhitelist/.test(prepassBlock2));
   T('晶②-白名单判断在"是否隐藏"之前生效（顺序对：先放行，再判断 transparent）',
     (() => {
       const iWhitelist = prepassBlock2.indexOf('o.userData.prepassSolid');

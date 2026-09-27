@@ -92,9 +92,7 @@ class NormalDepthPrepass extends Pass {
 
   render(renderer /*, writeBuffer, readBuffer */) {
     const prevTarget = renderer.getRenderTarget();
-    const prevOverride = this.scene.overrideMaterial;
     const prevBackground = this.scene.background;
-    this.scene.overrideMaterial = this._normalMaterial;
     this.scene.background = null; // 背景色不该被当成"某个物体的法线"参与边缘/遮蔽判定
     // 血条/护盾图标这类"永远画在最上层"的 HUD 精灵不该参与深度/遮蔽判定——见上方头注。
     const hadHudLayer = this.camera.layers.isEnabled(HUD_SPRITE_LAYER);
@@ -124,29 +122,63 @@ class NormalDepthPrepass extends Pass {
     // 用 userData 开一个显式白名单标记（而不是反过来给粒子挂标记）：只有明确
     // "我是实心几何、该正常参与预渲染"的物体才需要例外，默认规则不变，
     // 不会引入新的满屏黑麻点风险。
-    const hidden = [];
+    //
+    // ==================== 2026-09-27：逐物体换材质，不再用 scene.overrideMaterial ====================
+    // overrideMaterial 会无视原材质的 alphaTest。地形平面是一整块贴满世界包围盒的
+    // 平面，挖空区（terrainEdge 地图的路外区域）靠 alphaTest 丢弃——预渲染里它却是
+    // 一块完整的实心板：描边沿世界包围盒画出一圈矩形框，SSAO 也按这块看不见的板
+    // 去压暗下沉的底面。所以改成逐物体换：带 alphaTest+贴图的，换成同样做 alphaTest
+    // 的法线材质；其它网格照旧用统一的法线材质。点/线/精灵不进预渲染
+    // （法线材质画它们只会产生噪点，透明的本来就被排除了）。
+    const hidden = [], swapped = [];
     this.scene.traverse((o) => {
       if (!o.visible) return;
       if (!o.isMesh && !o.isPoints && !o.isLine && !o.isSprite) return;
-      if (o.userData && o.userData.prepassSolid) return; // 白名单：实心半透明几何，正常参与预渲染
       const m = o.material;
+      const solidWhitelist = !!(o.userData && o.userData.prepassSolid); // 白名单：实心半透明几何，正常参与预渲染
       const tr = Array.isArray(m) ? m.some((x) => x && x.transparent) : !!(m && m.transparent);
-      if (tr) { o.visible = false; hidden.push(o); }
+      if (!o.isMesh || (tr && !solidWhitelist)) { o.visible = false; hidden.push(o); return; }
+      swapped.push([o, m]);
+      o.material = (!Array.isArray(m) && m && m.alphaTest > 0 && m.map) ? this._alphaNormal(m) : this._normalMaterial;
     });
     renderer.setRenderTarget(this.renderTarget);
     renderer.clear();
     renderer.render(this.scene, this.camera);
     for (const o of hidden) o.visible = true;
+    for (const [o, m] of swapped) o.material = m;
     if (hadHudLayer) this.camera.layers.enable(HUD_SPRITE_LAYER);
     if (hadFxLayer) this.camera.layers.enable(FX_PARTICLE_LAYER);
-    this.scene.overrideMaterial = prevOverride;
     this.scene.background = prevBackground;
     renderer.setRenderTarget(prevTarget);
+  }
+
+  /** 与原材质同一张贴图、同一个 alphaTest 阈值的法线材质（按贴图缓存，贴图换了自动换新的）。 */
+  _alphaNormal(src) {
+    this._alphaCache = this._alphaCache || new Map();
+    const key = src.map.uuid + '|' + src.alphaTest;
+    let mat = this._alphaCache.get(key);
+    if (!mat) {
+      // MeshNormalMaterial 没有贴图槽，做不了 alphaTest；这里输出与它相同的编码
+      // （视空间法线 *0.5+0.5，不透明），外加按原贴图的 alpha 丢弃片元。
+      mat = new THREE.ShaderMaterial({
+        uniforms: { map: { value: src.map }, alphaTest: { value: src.alphaTest } },
+        vertexShader: `varying vec3 vN; varying vec2 vUv;
+          void main() { vUv = uv; vN = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform sampler2D map; uniform float alphaTest; varying vec3 vN; varying vec2 vUv;
+          void main() { if (texture2D(map, vUv).a < alphaTest) discard;
+            gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, 1.0); }`,
+      });
+      mat.userData.alphaNormal = true;
+      this._alphaCache.set(key, mat);
+    }
+    return mat;
   }
 
   dispose() {
     this.renderTarget.dispose();
     this._normalMaterial.dispose();
+    if (this._alphaCache) for (const m of this._alphaCache.values()) m.dispose();
   }
 }
 

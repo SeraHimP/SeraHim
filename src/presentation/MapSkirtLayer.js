@@ -116,7 +116,11 @@ export class MapSkirtLayer {
   build(mapSystem) {
     const map = mapSystem?.currentMap;
     const C = CONFIG.ui?.mapSkirt || {};
-    if (C.enabled === false || !map?.world) { this.dispose(); return; }
+    // 声明了 terrainEdge 的地图不需要裙边：TerrainEdgeLayer 的底面本来就铺到 3 倍地图边长。
+    // 裙边在 y=-15、底面在 waterY（更低），裙边只要有一点不透明就会盖住底面——
+    // 水晶之痕"路以外全是虚空"就是它（包围盒内按 40×40 网格逐顶点插值透明度，
+    // 大片深蓝加方块伪影）。
+    if (C.enabled === false || !map?.world || map.terrainEdge) { this.dispose(); return; }
     if (this.mesh && this._mapId === map.id) return; // 同图已建，跳过
     this.dispose();
     this._mapId = map.id;
@@ -132,27 +136,6 @@ export class MapSkirtLayer {
     const geo = new THREE.PlaneGeometry(SW, SH, segX, segZ);
     geo.rotateX(-Math.PI / 2);
 
-    // ==================== 环形/挖空地图的洞口修正 ====================
-    // 上面这条淡出公式的前提是"地形包围盒内部＝一定被地形盖住，裙边画实心也看不见"，
-    // 对三张老地图（可走区域是一整块贴合边界的陆地）成立。水晶之痕这类环形图会在
-    // 包围盒**内部**（外环中心）挖一个真正不可走的洞，交给 TerrainEdgeLayer 在更低处
-    // 铺深渊面——那个洞离地形边界很远，上面的公式仍判它是"内部"，强制 fade=1，
-    // 于是裙边的实色（此刻被昼夜染色成接近夜空的深蓝）整块盖在深渊面前面，画面上
-    // 洞里和地图外的虚空长一模一样，深渊/大型岩柱全部看不见。
-    // 只在 t<=0（原本恒为 1、判定为"包围盒内部"）的点上补判：声明了 terrainEdge
-    // 且该点落在不可走区，就把裙边淡出成 0，让位给深渊面。
-    // ⚠️ 用户实机反馈这版有个新 bug："除了道路以外的敌方都像是虚空一样"——
-    // 根因是第一版把这条 isWalkable 判定也套到了 t>0（真正的地图外沿、径向
-    // 淡出段）上：那一段的原始设计就是"越往外越透明，最终露出天空背景"，
-    // 是有意的渐变，不是需要被"挖空"的洞。裙边(scale默认3)比深渊面
-    // (abyssScale默认3，两者都是以各自基准的3倍)覆盖范围未必完全重合，
-    // t>0 时如果同样按不可走强制清零，会在深渊面盖不到、但裙边还没自然
-    // 淡完的那圈地带露出原始背景色（跟深渊色不同），看起来就是一圈圈、
-    // 一块块深色的"虚空"补丁，缝在本该平滑的径向渐变外沿上。
-    // 修法：这条洞口修正只在 t<=0 时生效，t>0 的径向淡出段完全恢复成
-    // 老公式，逐位不变——只有真正在包围盒内部的挖空区域才需要给深渊面让位。
-    const cutout = !!map.terrainEdge;
-    const walkFn = cutout && typeof mapSystem.isWalkable === 'function' ? mapSystem.isWalkable.bind(mapSystem) : null;
     const pos = geo.attributes.position;
     const fade = new Float32Array(pos.count);
     for (let i = 0; i < pos.count; i++) {
@@ -161,13 +144,7 @@ export class MapSkirtLayer {
       const distX = Math.max(0, Math.abs(lx) - 0.5) / halfExtra;
       const distZ = Math.max(0, Math.abs(lz) - 0.5) / halfExtra;
       const t = Math.max(0, Math.min(1, Math.max(distX, distZ))); // 0=贴着地形边界，1=裙边最外圈
-      let a;
-      if (t <= 0) {
-        a = (walkFn && !walkFn(px + WW / 2, pz + WH / 2)) ? 0 : 1;
-      } else {
-        a = Math.max(0, 1 - t / fadeFrac);
-      }
-      fade[i] = a;
+      fade[i] = t <= 0 ? 1 : Math.max(0, 1 - t / fadeFrac);
     }
     geo.setAttribute('fadeAlpha', new THREE.BufferAttribute(fade, 1));
     geo.computeVertexNormals();
