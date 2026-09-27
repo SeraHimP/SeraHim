@@ -202,13 +202,13 @@ function equip(e, skillId, ents, fx, bus) {
   const rendererSrc = fs.readdirSync(pdir).filter(f => f.endsWith('.js'))
     .map(f => fs.readFileSync(new URL(f, pdir), 'utf8')).join('\n');
   T('高地门槛线渲染代码已删除', !rendererSrc.includes('drawThreshold'));
-  // 期望常量更新：HA 788 → 460（见 src/data/maps/howling_abyss.js 里的说明）。
+  // 期望常量更新：HA 788 → 460。
 // 基地圈（圆心+半径）是【走廊模型】专有的概念。嚎哭深渊/扭曲丛林已改成 navgrid
 // 逐像素地形，压根没有基地圈 —— 这几条只对走廊模型的地图成立。
   T('SR 声明 baseOpenRadius（1185，六个墙角全落进射程）',
     MAPS.summoners_rift_v1.baseOpenRadius === 1185);
   T('嚎哭深渊/扭曲丛林已改 navgrid：不再声明基地圈',
-    MAPS.howling_abyss_v1.useNavgrid && MAPS.howling_abyss_v1.baseOpenRadius === undefined
+    MAPS.howling_abyss_frost_v1.useNavgrid && MAPS.howling_abyss_frost_v1.baseOpenRadius === undefined
     && MAPS.twisted_treeline_v1.useNavgrid && MAPS.twisted_treeline_v1.baseOpenRadius === undefined);
 
   const bus = new EventBus(), ents = new EntityContainer(bus);

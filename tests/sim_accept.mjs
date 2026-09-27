@@ -128,7 +128,7 @@ T(`屠戮对塔无效(对塔伤害${towerDealt.toFixed(1)}≈纯AD${meleeStats.a
 {
   const RANGE=180, REACH=35; // 近战贴脸攻击建筑时与塔心的距离
   const dd=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-  for (const name of ['summoners_rift','howling_abyss']) {
+  for (const name of ['summoners_rift','howling_abyss_frost']) {
     const mp=(await import('../src/data/maps/'+name+'.js'))[name];
     for (const fac of ['blue','red']) {
       const Bs=mp.buildings.filter(b=>b.faction===fac);

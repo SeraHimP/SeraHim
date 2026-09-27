@@ -570,11 +570,11 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   T('坑⑧-不再按 useNavgrid 给所有地图发召唤师峡谷的坑',
     !/m\.useNavgrid \? \(SR_PITS\[name\] \|\| null\) : null/.test(ms2));
   T('坑⑨-只有召唤师峡谷声明了坑', !!MAPS.summoners_rift_v1.pits
-    && !MAPS.howling_abyss_v1.pits && !MAPS.twisted_treeline_v1.pits);
+    && !MAPS.howling_abyss_frost_v1.pits && !MAPS.twisted_treeline_v1.pits);
 
   const bus3 = new EventBus(), ents3 = new EntityContainer(bus3);
   const mHA = new MapSystem(ents3, bus3); mHA.setCreateBuildingFn(() => null);
-  mHA.loadMap('howling_abyss_v1');
+  mHA.loadMap('howling_abyss_frost_v1');
   T('坑⑩-嚎哭深渊没有坑，也就没有被挖出来的坑洞（它是一座平桥）',
     mHA.getPit('baron') === null && mHA.getPit('dragon') === null);
 }

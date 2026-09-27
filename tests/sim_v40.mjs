@@ -41,7 +41,7 @@ function mkUnit(ents, type, faction, x, y, skills = []) {
 // ==================== ① 出兵点分离 ====================
 {
   const bus = new EventBus(), ents = new EntityContainer(bus);
-  for (const mid of ['summoners_rift_v1', 'howling_abyss_v1']) {
+  for (const mid of ['summoners_rift_v1', 'howling_abyss_frost_v1']) {
     const ms = new MapSystem(ents, bus); ms.setCreateBuildingFn(() => null); ms.loadMap(mid);
     const lws = new LaneWaveSystem(ents, bus, ms);
     const map = MAPS[mid];

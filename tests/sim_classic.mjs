@@ -63,8 +63,9 @@ const { T, done } = scoreboard('经典模式验收（模式×地图）');
   // v55.3：新增 confluence_v1（汇流战场，见 confluence.js 头注——用户深夜要求的
   // 超大型5路扇形汇流地图），常量从 6 改成 7，同样只加不改。
   // 统治战场·水晶之痕：新增 dominion_crystal_scar_v1，常量从 7 改成 8，同样只加不改。
+  // 2026-09-27：删除旧版嚎哭深渊 howling_abyss_v1（被冰封版取代），8 → 7。
   T('注①-summoners_rift_classic 不再单独注册（经典模式不是第四张地图）',
-    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 8);
+    !('summoners_rift_classic_v1' in MAPS) && Object.keys(MAPS).length === 7);
   T('注②-MapSystem 认得 __/_classic 后缀，能反查回经典模式版本',
     !!(new MapSystem(new EntityContainer(new EventBus()), new EventBus())
       .getMapById('summoners_rift_v1_classic')));
@@ -104,7 +105,7 @@ const { T, done } = scoreboard('经典模式验收（模式×地图）');
 
 // ==================== 四、嚎哭深渊/扭曲丛林经典模式：近似值行为形状 ====================
 {
-  for (const baseId of ['howling_abyss_v1', 'twisted_treeline_v1']) {
+  for (const baseId of ['howling_abyss_frost_v1', 'twisted_treeline_v1']) {
     const base = MAPS[baseId];
     const map = applyClassicMode(base);
     T(`近①-${baseId} 经典模式标签带"（经典）"后缀`, map.label === `${base.label}（经典）`);
@@ -292,7 +293,7 @@ ms.loadMap('summoners_rift_v1', MODES.classic.id);
   setMap('twisted_treeline_v1');
   T('路②-扭曲丛林只有两路，**没有中路**（用户报的就是这个）',
     mapLaneIds().join(',') === 'top,bot' && !mapLaneIds().includes('mid'));
-  setMap('howling_abyss_v1');
+  setMap('howling_abyss_frost_v1');
   T('路③-嚎哭深渊只有一路', mapLaneIds().join(',') === 'mid');
   app.mapSystem.currentMap = applyClassicMode(MAPS.summoners_rift_v1);
   T('路④-经典模式三路（沿用召唤师峡谷布局，模式变换不改地图几何）',
@@ -306,7 +307,7 @@ ms.loadMap('summoners_rift_v1', MODES.classic.id);
   setMap('twisted_treeline_v1');
   T('路⑥-在峡谷选了"中路"再切扭曲丛林 → 夹回该图第一条路', clampLaneId('mid') === 'top');
   T('路⑦-本图有的路原样保留', clampLaneId('bot') === 'bot');
-  setMap('howling_abyss_v1');
+  setMap('howling_abyss_frost_v1');
   T('路⑧-嚎哭深渊把 top/bot 都夹到 mid',
     clampLaneId('top') === 'mid' && clampLaneId('bot') === 'mid');
 

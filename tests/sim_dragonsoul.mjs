@@ -354,7 +354,7 @@ const anySoul = (e) => e._skillInstances.some(s => s.skillId.startsWith('dragons
   // ② 模拟"切换地图"：真实 MapSystem.loadMap() 的顺序是先发 map:loading（这里挂的
   // resetRun 应该在这一刻清空一切），再才逐个建新塔——用紧跟着手动调
   // equipExistingSoul 模拟"新塔刚被建出来"这一步。
-  bus.emit('map:loading', { mapId: 'howling_abyss_v1' });
+  bus.emit('map:loading', { mapId: 'howling_abyss_frost_v1' });
   const newTower = { id: ++window._uid, type: 'tower', alive: true, pos: { x: 0, y: 0 },
     baseStats: { ...CONFIG.templates.tower }, currentHP: 9000,
     _skillInstances: [], _mapFaction: 'blue', faction: 'blue', _mapTier: 'outer' };

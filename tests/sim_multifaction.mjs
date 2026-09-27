@@ -11,7 +11,6 @@ setupWindow({ waveNumber: 1 });
 import { FACTIONS, mapFactionsOf, laneSpawnsOf, towerRuleFor, scorerFactionOf } from '../src/systems/FactionSystem.js';
 import { summoners_rift } from '../src/data/maps/summoners_rift.js';
 import { twisted_treeline } from '../src/data/maps/twisted_treeline.js';
-import { howling_abyss } from '../src/data/maps/howling_abyss.js';
 import { EntityContainer } from '../src/core/EntityContainer.js';
 import { EventBus } from '../src/utils/EventBus.js';
 import { MapSystem } from '../src/systems/MapSystem.js';
@@ -57,7 +56,6 @@ const { T, done } = scoreboard('多阵营地基（map.factions / lane.spawns）�
 const MAPS = [
   ['summoners_rift', summoners_rift],
   ['twisted_treeline', twisted_treeline],
-  ['howling_abyss', howling_abyss],
 ];
 for (const [name, map] of MAPS) {
   T(`${name}：显式声明了 factions:[blue,red]`,

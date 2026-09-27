@@ -2193,7 +2193,7 @@ async function world() {
   T('光①-扭曲丛林光环：所有单位被动法力值+1/s', Math.abs(ttStats.manaRegen - 1) < 1e-6);
   T('光②-扭曲丛林光环：所有单位法术强度+10', Math.abs(ttStats.abilityPower - 10) < 1e-6);
 
-  ms.loadMap('howling_abyss_v1');
+  ms.loadMap('howling_abyss_frost_v1');
   const ha = mkEntity(ents, 'siege', { stats: { maxMana: 100, manaGainPct: 0 }, skills: ['active_siege_haste'] }, CONFIG);
   ms.update(1);
   const haStats = attr.calc(ha, fx.getEffects(ha.id));

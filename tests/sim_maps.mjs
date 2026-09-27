@@ -118,7 +118,7 @@ for (const map of Object.values(MAPS)) {
 
 // ==================== 两张新/重做的图，各自的专项 ====================
 {
-  const ha = MAPS['howling_abyss_v1'];
+  const ha = MAPS['howling_abyss_frost_v1'];
   T('[嚎哭深渊] 是单路', ha.lanes.length === 1);
   // 地形按标准小地图逐像素重描（navgrid）。用户原话：
   // "真正的嚎哭深渊两端有那个圆吗？？难道不是变成更宽的桥了吗？？"
@@ -243,7 +243,7 @@ for (const map of Object.values(MAPS)) {
     T(`[扭曲丛林] ${tier} 数值符合指定${bad.length ? '：' + bad.join('，') : ''}`, bad.length === 0);
   }
   // 召唤水晶/水晶枢纽两张新图共用同一组数值
-  const ha = MAPS['howling_abyss_v1'];
+  const ha = MAPS['howling_abyss_frost_v1'];
   for (const tier of ['nexus_lane', 'nexus_main']) {
     T(`[两张新图] ${tier} 数值一致（共享属性）`,
       ['maxHP', 'armor', 'magicResist', 'healthRegen'].every(k => ha.tierStats[tier][k] === tt.tierStats[tier][k]));
@@ -367,7 +367,7 @@ for (const map of Object.values(MAPS)) {
   }
   // ---- 嚎哭深渊：平桥，全图零高差 ----
   {
-    const ms = mk('howling_abyss_v1'), ha = MAPS['howling_abyss_v1'];
+    const ms = mk('howling_abyss_frost_v1'), ha = MAPS['howling_abyss_frost_v1'];
     T('[嚎哭深渊] 显式声明了 highground（不声明会退回老分支，在桥两端鼓两个包）',
       ha.highground !== undefined);
     const pts = [...ha.buildings.map(b => b.pos), { x: 1162, y: 1162 }, { x: 600, y: 1700 }];

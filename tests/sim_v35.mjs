@@ -219,7 +219,7 @@ function equip(e, skillId, ents, fx) {
   // 走廊半宽这个字段整个不存在了（走廊模型画不出"等宽直桥 + 两端变宽"）。
   T('路宽 SR 130（v35 Q4）', MAPS.summoners_rift_v1.walls.corridorHalfWidth === 130);
   T('嚎哭深渊/扭曲丛林已无走廊半宽（改 navgrid）',
-    MAPS.howling_abyss_v1.walls.corridorHalfWidth === undefined
+    MAPS.howling_abyss_frost_v1.walls.corridorHalfWidth === undefined
     && MAPS.twisted_treeline_v1.walls.corridorHalfWidth === undefined);
   T('兵线端点已同步新枢纽', MAPS.summoners_rift_v1.lanes.every(l =>
     l.waypoints[0].x === 305 && l.waypoints[0].y === 3226

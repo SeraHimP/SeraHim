@@ -13,7 +13,6 @@ import {
 } from '../src/data/mapComposition.js';
 import { summoners_rift } from '../src/data/maps/summoners_rift.js';
 import { twisted_treeline } from '../src/data/maps/twisted_treeline.js';
-import { howling_abyss } from '../src/data/maps/howling_abyss.js';
 import { MAPS as BUILTIN_MAPS_BY_ID } from '../src/data/maps/index.js';
 import { neutralCampsOf, campSpawnPoints } from '../src/systems/NeutralCampSystem.js';
 
@@ -43,7 +42,6 @@ const { T, done } = scoreboard('地形模板/玩法配置拆分与拼装验收')
 const MAPS = [
   ['summoners_rift', summoners_rift],
   ['twisted_treeline', twisted_treeline],
-  ['howling_abyss', howling_abyss],
 ];
 for (const [name, map] of MAPS) {
   const terrain = extractTerrainFromMap(map);
@@ -95,7 +93,6 @@ for (const [name, map] of MAPS) {
   const cases = [
     ['summoners_rift.js', 'SR_TERRAIN', 'SR_CONFIG', 'summoners_rift'],
     ['twisted_treeline.js', 'TT_TERRAIN', 'TT_CONFIG', 'twisted_treeline'],
-    ['howling_abyss.js', 'HA_TERRAIN', 'HA_CONFIG', 'howling_abyss'],
   ];
   for (const [file, terrainVar, configVar, exportName] of cases) {
     const src = readSrc(file);
@@ -127,15 +124,6 @@ for (const [name, map] of MAPS) {
   T('⑤summoners_rift：显式化后坑位解析与改动前一致（top/reverse + bot/forward，真实坑位坐标）',
     srPts[0].laneId === 'top' && srPts[0].direction === 'reverse' && srPts[0].pit
     && srPts[1].laneId === 'bot' && srPts[1].direction === 'forward' && srPts[1].pit);
-
-  const ha = BUILTIN_MAPS_BY_ID.howling_abyss_v1;
-  const haPts = campSpawnPoints(ha, fakeMapSystem(ha), 'dragon');
-  const midLaneHA = ha.lanes.find(l => l.id === 'mid');
-  const midOf = (wps) => wps[Math.floor(wps.length / 2)];
-  T('⑤howling_abyss：显式化后仍退化成"没有 top/bot，两个出生点都落回 mid 路点中点"（与改动前逐位一致）',
-    haPts[0].laneId === 'mid' && haPts[1].laneId === 'mid'
-    && haPts[0].direction === 'reverse' && haPts[1].direction === 'forward'
-    && haPts[0].pit.x === midOf(midLaneHA.waypoints).x && haPts[1].pit.x === midOf(midLaneHA.waypoints).x);
 }
 
 done();

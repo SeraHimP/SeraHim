@@ -241,7 +241,7 @@ T('游戏循环已导出供测试驱动（window.CTX.__gameLoop）', typeof wind
 {
   let err = null;
   try {
-    window.CTX.__mapSystem?.loadMap('howling_abyss_v1');
+    window.CTX.__mapSystem?.loadMap('howling_abyss_frost_v1');
   } catch (e) { err = e; }
   T('嚎哭深渊：地图加载无崩溃', !err, err?.message);
   if (!err) {

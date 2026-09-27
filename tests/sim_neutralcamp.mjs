@@ -69,7 +69,7 @@ function fakeMapSystem(map) {
     ptsT[0].laneId === 'top' && ptsT[0].pit.x === midOf(topLaneTT.waypoints).x && ptsT[0].pit.y === midOf(topLaneTT.waypoints).y
     && ptsT[1].laneId === 'bot' && ptsT[1].pit.x === midOf(botLaneTT.waypoints).x && ptsT[1].pit.y === midOf(botLaneTT.waypoints).y);
 
-  const ha = MAPS.howling_abyss_v1;
+  const ha = MAPS.howling_abyss_frost_v1;
   const msH = fakeMapSystem(ha);
   const ptsH = campSpawnPoints(ha, msH, 'dragon');
   const midLaneHA = ha.lanes.find(l => l.id === 'mid');
@@ -123,8 +123,8 @@ function dragonWorld(mapId) {
     && dBot._laneId === 'bot' && dBot._laneDirection === 'forward');
 }
 {
-  const { F } = dragonWorld('howling_abyss_v1');
-  const ha = MAPS.howling_abyss_v1;
+  const { F } = dragonWorld('howling_abyss_frost_v1');
+  const ha = MAPS.howling_abyss_frost_v1;
   const midLaneHA = ha.lanes.find(l => l.id === 'mid');
   const mid = midLaneHA.waypoints[Math.floor(midLaneHA.waypoints.length / 2)];
   const dTop = F.createDragon('dragon', { element: 'earth', absStats: { maxHP: 100, armor: 0, magicResist: 0, attackDamage: 1 }, pitSide: 'top' });

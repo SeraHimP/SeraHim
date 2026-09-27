@@ -128,7 +128,7 @@ function mkWorld() {
     const of = (tier) => blue.find(t => t._mapTier === tier && (t._laneId === lane || t._laneId == null));
     return { W, of, tiers: new Set(blue.map(t => t._mapTier)) };
   };
-  for (const mapId of ['twisted_treeline_v1', 'howling_abyss_v1']) {
+  for (const mapId of ['twisted_treeline_v1', 'howling_abyss_frost_v1']) {
     const p = probe(mapId);
     T(`[${mapId}] 确实没有内塔（这正是原实现踩空的地方）`, !p.tiers.has('inner'));
     T(`[${mapId}] 开局水晶塔受保护（改动前是裸的）`, isStructureProtected(p.W.ents, p.of('base')) === true);
@@ -226,7 +226,7 @@ function mkWorld() {
   const tt = MAPS['twisted_treeline_v1'].tierStats;
   T('[扭曲丛林] 水晶塔双抗 125', tt.base.armor === 125 && tt.base.magicResist === 125);
   T('[扭曲丛林] 枢纽塔双抗 200', tt.hq_tower.armor === 200 && tt.hq_tower.magicResist === 200);
-  const ha = MAPS['howling_abyss_v1'].tierStats;
+  const ha = MAPS['howling_abyss_frost_v1'].tierStats;
   T('[嚎哭深渊] 水晶塔 HP 5100', ha.base.maxHP === 5100);
   T('[嚎哭深渊] 枢纽塔 HP 4750', ha.hq_tower.maxHP === 4750);
 }
@@ -266,7 +266,7 @@ function mkWorld() {
     /function _rendBase\(entity, casterType, mode\)/.test(fs.readFileSync('src/core/skills/minionPassives.js', 'utf8')));
 
   // 所有地图小兵默认装备屠戮 —— 嚎哭深渊的排除开关连同整条传参链一起删了
-  T('[嚎哭深渊] 不再有 minionNoRend', MAPS['howling_abyss_v1'].minionNoRend === undefined);
+  T('[嚎哭深渊] 不再有 minionNoRend', MAPS['howling_abyss_frost_v1'].minionNoRend === undefined);
   T('main.js 里的 noRend 传参链也删干净了',
     !/noRend/.test(fs.readFileSync('src/main.js', 'utf8').replace(/^\s*\/\/.*$/gm, '')));
 }

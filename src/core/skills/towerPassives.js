@@ -698,8 +698,7 @@ export const towerPassives = {
   // defaultParams 里，天然被"技能数值编辑器"（src/ui/editor/open.js 的
   // _skillsWithParams，逐条扫 SkillLibrary 里声明了 defaultParams 的技能）自动收录，
   // 不用再单独接一次 UI；地图想要"这张图上这条魂是永久的"，跟加固城防的 regen
-  // 走同一套 map.skillOverrides 覆写机制即可（嚎哭深渊的水晶塔就是这么接的，
-  // 见 src/data/maps/howling_abyss.js）。
+  // 走同一套 map.skillOverrides 覆写机制即可。
   passive_iron_line: {
     id: 'passive_iron_line',
     applicableTypes: ['tower'],

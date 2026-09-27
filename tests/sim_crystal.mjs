@@ -71,7 +71,7 @@ mapSys.update(150);
 T('Q3 进度随时间推进(约50%)', Math.abs(nl._respawnProgress-0.5)<0.05);
 
 // ---- Q2: 切图不残留幽灵 ----
-mapSys.loadMap('howling_abyss_v1');
+mapSys.loadMap('howling_abyss_frost_v1');
 const ghosts=ents.getAllTowers(false).filter(e=>!e.alive&&e._respawnAt);
 T('Q2 切换地图后幽灵水晶被清除', ghosts.length===0);
 T('Q2 切图后重生队列清空', mapSys._respawnQueue.length===0);

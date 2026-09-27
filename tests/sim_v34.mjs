@@ -77,7 +77,7 @@ T('体积新值（LoL 对齐：近战/远程10 炮车12 超级14 图腾11）',
       T(`${mid}/${lane.id} 召唤水晶贴水晶塔后方≈110（实际${dc.toFixed(0)}）`, Math.abs(dc - 110) < 6);
     }
   }
-  T('嚎哭深渊河道已关闭（river:false）', MAPS.howling_abyss_v1.walls.river === false && MAPS.summoners_rift_v1.walls.river === undefined);
+  T('嚎哭深渊河道已关闭（river:false）', MAPS.howling_abyss_frost_v1.walls.river === false && MAPS.summoners_rift_v1.walls.river === undefined);
 }
 
 // ==================== ② Q3：碰撞重做回归 ====================

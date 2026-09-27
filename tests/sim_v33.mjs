@@ -213,7 +213,7 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   // 基地区可行走
   const c = mapSys.getBaseCircleCenter('blue'), r = mapSys.getBaseCircleRadius('blue');
   T('基地圈内可行走（半径与画布圈同源）', r > 0 && mapSys.isWalkable(c.x + r * 0.5, c.y - r * 0.5));
-  T('嚎哭深渊也有墙壁', (() => { const ms2 = new MapSystem(ents, bus); ms2.setCreateBuildingFn(() => null); ms2.loadMap('howling_abyss_v1'); return ms2.hasWalls(); })());
+  T('嚎哭深渊也有墙壁', (() => { const ms2 = new MapSystem(ents, bus); ms2.setCreateBuildingFn(() => null); ms2.loadMap('howling_abyss_frost_v1'); return ms2.hasWalls(); })());
 }
 
 // ==================== ⑥ 对战出兵：首波30s / 图腾 / 开关 / 截止45s ====================

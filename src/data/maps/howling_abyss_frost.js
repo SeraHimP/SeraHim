@@ -6,9 +6,8 @@ import { unpackBits, packBits } from '../navgrid.js';
  * howling_abyss_frost.js —— 嚎哭深渊·冰封风格重做
  *
  * 设计文档：docs/MAP-DESIGN-howling-abyss-frost.md（v0.2，用户已确认待定项）。
- * 原图 `howling_abyss.js`（`howling_abyss_v1`）**完全不动**——这是它的风格化副本，
- * 与 `demo_stylized.js` 相对于三张老地图的关系完全一样：新地图不改变已验证过的
- * 原图数值/测试，两条数据/两套渲染分支并存。
+ * 最初是旧版嚎哭深渊（howling_abyss_v1）的风格化副本；旧版已于 2026-09-27 删除，
+ * 这张图是嚎哭深渊唯一的版本。
  *
  * ==================== 地形/玩法数据：逐字段照抄 howling_abyss.js ====================
  * 桥的形状、建筑位置、塔属性、光环、出兵节奏——这次不评估/不改动任何这些数值，
@@ -351,8 +350,7 @@ export const howling_abyss_frost = {
   world: { w: 2325, h: 2325 },
   useNavgrid: true,
   // v0.6 起改用略微加宽的位图（原图的形态学膨胀版本，只给这张图用，见
-  // map_navgrids.js 里 HA_NAVGRID_FROST_WIDE 的头注）——原图 howling_abyss_v1
-  // 的 navgrid 完全不受影响，这张图从此不再"逐位复用原图"，是它自己的一份数据。
+  // map_navgrids.js 里 HA_NAVGRID_FROST_WIDE 的头注），是它自己的一份数据。
   // v0.7 起发布的是在它基础上"收到墙线"的版本（见上面头注④）：墙外侧那圈桥沿
   // 看得见但走不上去，墙重新是真正的碰撞边界。
   navgrid: HA_NAVGRID_FROST,

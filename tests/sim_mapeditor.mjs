@@ -38,7 +38,7 @@ const T = board.T;
   T('②-resolveBaseNavgrid 对没声明 navgrid 的地图兜底到 SR_NAVGRID',
     ng === SR_NAVGRID);
 
-  const ha = MAPS.howling_abyss_v1 || Object.values(MAPS).find(m => m.navgrid);
+  const ha = MAPS.howling_abyss_frost_v1 || Object.values(MAPS).find(m => m.navgrid);
   T('③-已经自带 navgrid 字段的地图（如嚎哭深渊/扭曲丛林），resolveBaseNavgrid 直接返回它自己的，不套兜底',
     ha && resolveBaseNavgrid(ha) === ha.navgrid);
 }
@@ -134,7 +134,7 @@ const T = board.T;
   regions.pits.baron.x = -999;
   T('③-改动草稿的 pits 不影响原地图对象（深克隆）', sr.pits.baron.x !== -999);
 
-  const howl = MAPS.howling_abyss_v1;
+  const howl = MAPS.howling_abyss_frost_v1;
   const regionsHowl = cloneRegionsForEdit(howl);
   T('④-嚎哭深渊没声明 pits → 草稿的 pits 是空对象（不是 undefined，表单可以直接读 .baron/.dragon）',
     typeof regionsHowl.pits === 'object' && regionsHowl.pits.baron === undefined && regionsHowl.pits.dragon === undefined);

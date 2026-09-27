@@ -319,7 +319,7 @@ const DT = 1 / 30;
   }
   // 全建筑仍可行走 + 兵线中心线无违例
   const bus = new EventBus(), ents = new EntityContainer(bus);
-  for (const mid of ['summoners_rift_v1', 'howling_abyss_v1']) {
+  for (const mid of ['summoners_rift_v1', 'howling_abyss_frost_v1']) {
     const ms = new MapSystem(ents, bus); ms.setCreateBuildingFn(() => null); ms.loadMap(mid);
     const map = MAPS[mid];
     T(`${mid} 全部建筑位置可行走`, map.buildings.every(b => ms.isWalkable(b.pos.x, b.pos.y)));

@@ -11,10 +11,9 @@
 //      上下文，测不出"几何摆得对不对"，只钉"接线有没有漏"。
 import { srcOf, scoreboard } from './_harness.mjs';
 import { MAPS } from '../src/data/maps/index.js';
-import { howling_abyss } from '../src/data/maps/howling_abyss.js';
 import { howling_abyss_frost, FROST_BRIDGE } from '../src/data/maps/howling_abyss_frost.js';
 import { CONFIG, stylizedPaletteOf } from '../src/data/Config.js';
-import { HA_NAVGRID, HA_NAVGRID_FROST_WIDE } from '../src/data/maps/map_navgrids.js';
+import { HA_NAVGRID_FROST_WIDE } from '../src/data/maps/map_navgrids.js';
 import { unpackBits } from '../src/data/navgrid.js';
 
 const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
@@ -22,7 +21,6 @@ const { T, done } = scoreboard('嚎哭深渊·冰封版验收');
 // ==================== 共享：把发布版 navgrid 当作可查询的地形 ====================
 // 下面好几组断言都要拿地形反查（收边验证、断口验证），工具函数提到模块作用域共用一份。
 const NAV_N = howling_abyss_frost.navgrid.n;
-const NAV_ORIG = unpackBits(HA_NAVGRID.bits, NAV_N);
 const NAV_WIDE = unpackBits(HA_NAVGRID_FROST_WIDE.bits, NAV_N);
 const NAV_PUB = unpackBits(howling_abyss_frost.navgrid.bits, NAV_N);
 // v55：实际用来画地面的那份（不再等于 WIDE —— 大陆改不规则形之后它跟着一起变形放大）。
@@ -46,15 +44,6 @@ const halfWidth = (bits, d, sign) => {
 };
 
 
-// ==================== 一、原图完全不动 ====================
-{
-  T('原①-howling_abyss_v1 依然注册着，字段没被这次改动动过', MAPS['howling_abyss_v1'] === howling_abyss);
-  T('原②-原图没有 visualStyle/paletteId（三张老地图逐位不变的既定规则）',
-    howling_abyss.visualStyle === undefined && howling_abyss.paletteId === undefined);
-  T('原③-原图的 obstacles 还是 26 个（13 弧长 × 两侧），这次没有改它',
-    Array.isArray(howling_abyss.obstacles) && howling_abyss.obstacles.length === 26);
-}
-
 // ==================== 二、新地图正确注册，声明字段齐全 ====================
 {
   T('注①-howling_abyss_frost_v1 已注册进 MAPS', MAPS['howling_abyss_frost_v1'] === howling_abyss_frost);
@@ -62,21 +51,17 @@ const halfWidth = (bits, d, sign) => {
   // 6，同样只加不改——见 summoners_rift_organic.js 头注/sim_classic.mjs 注①同款说明。
   // v55.3：新增 confluence_v1（汇流战场），常量从 6 改成 7，同样只加不改。
   // 统治战场·水晶之痕：新增 dominion_crystal_scar_v1，常量从 7 改成 8，同样只加不改。
-  T('注②-Object.keys(MAPS).length === 8（原7 张 + 这次新增1 张）', Object.keys(MAPS).length === 8);
+  // 2026-09-27：旧版嚎哭深渊删除，8 → 7。
+  T('注②-Object.keys(MAPS).length === 7', Object.keys(MAPS).length === 7);
   T('注③-visualStyle/paletteId 正确声明', howling_abyss_frost.visualStyle === 'stylized' && howling_abyss_frost.paletteId === 'frost');
   // ==================== v0.6/v0.7：navgrid 从"逐位复用原图"变成这张图自己的一份 ====================
   // v0.6 用户拍板：新描一份更宽的（HA_NAVGRID_FROST_WIDE），原图完全不动。
   // v0.7 用户拍板：墙往桥内侧回收，可走区域跟着收到墙线（"墙即碰撞边界"），
   // 所以发布版 navgrid 是在 WIDE 基础上削出来的第三份数据——它既不等于原图，
   // 也不等于 WIDE。下面这组断言钉的是这三者之间应有的关系。
-  T('原④-howling_abyss_v1 的 navgrid 还是 HA_NAVGRID 本身，没有被这次改动动过',
-    howling_abyss.navgrid === HA_NAVGRID);
-  T('注④-冰封版用自己的一份 navgrid，既不是原图那份，也不是未削边的 WIDE 那份',
-    howling_abyss_frost.navgrid !== howling_abyss.navgrid
-    && howling_abyss_frost.navgrid !== HA_NAVGRID_FROST_WIDE
-    && howling_abyss_frost.navgrid.n === HA_NAVGRID.n);
-  T('注④b-WIDE 是原图的超集（形态学膨胀只增不减，不会把原本能走的地方变不可走）',
-    NAV_WIDE.length === NAV_ORIG.length && NAV_ORIG.every((v, i) => v !== 1 || NAV_WIDE[i] === 1));
+  T('注④-冰封版用自己的一份 navgrid，不是未削边的 WIDE 那份',
+    howling_abyss_frost.navgrid !== HA_NAVGRID_FROST_WIDE
+    && howling_abyss_frost.navgrid.n === HA_NAVGRID_FROST_WIDE.n);
   // v55：这条从"整张图"收窄到"**桥身段**"。
   // 原来的口径是"收边只削不加"，那时两个基地区确实原样不动。
   // 现在用户要求把基地做成不规则大陆，且"可走区域面积不要差太多"——
@@ -100,8 +85,6 @@ const halfWidth = (bits, d, sign) => {
     })());
   T('注④d-发布版确实被削过（墙内收之后可走区域必然比 WIDE 少）',
     navSum(NAV_PUB) < navSum(NAV_WIDE));
-  T('注④e-发布版仍然比原图宽（内收 25 之后桥面没有比原来更窄，这是选这个内收量的前提）',
-    navSum(NAV_PUB) > navSum(NAV_ORIG));
 
   // 桥身段（避开两个基地圈）逐段量半宽——收边之后应该是一条几乎平的线，
   // 只在那唯一一处真凹口上明显缩进去。
@@ -150,16 +133,10 @@ const halfWidth = (bits, d, sign) => {
       return true;
     })());
 
-  T('注⑤-useNavgrid/walls/highground 与原图逐字段相同（navgrid 本身除外，上面单独断言过）',
-    howling_abyss_frost.useNavgrid === howling_abyss.useNavgrid
-    && JSON.stringify(howling_abyss_frost.walls) === JSON.stringify(howling_abyss.walls)
-    && JSON.stringify(howling_abyss_frost.highground) === JSON.stringify(howling_abyss.highground));
-  T('注⑥-obstacles（缺口）与原图逐位相同——用户拍板"保留缺口"，这份数据不能变',
-    JSON.stringify(howling_abyss_frost.obstacles) === JSON.stringify(howling_abyss.obstacles));
-  T('注⑦-tierStats/globalAura/lanes/buildings 数量与原图一致（数值不评估，照抄）',
-    JSON.stringify(Object.keys(howling_abyss_frost.tierStats)) === JSON.stringify(Object.keys(howling_abyss.tierStats))
-    && howling_abyss_frost.buildings.length === howling_abyss.buildings.length
-    && howling_abyss_frost.lanes.length === howling_abyss.lanes.length);
+  T('注⑤-走 navgrid、单路无河道', howling_abyss_frost.useNavgrid === true && howling_abyss_frost.walls?.river === false
+    && howling_abyss_frost.lanes.length === 1);
+  T('注⑥-obstacles（缺口）保持 26 个（13 弧长 × 两侧，用户拍板"保留缺口"）',
+    Array.isArray(howling_abyss_frost.obstacles) && howling_abyss_frost.obstacles.length === 26);
 }
 
 // ==================== 三、frostBridge：桥体装饰参数化坐标 ====================
@@ -418,8 +395,8 @@ const halfWidth = (bits, d, sign) => {
       for (let i = 0; i < NAV_PUB.length; i++) if (!NAV_PUB[i] && NAV_VIS[i]) ledge++;
       return ledge > 0;
     })());
-  T('沿④-其余地图都没有声明 visualNavgrid（这条接缝是可选的，不影响任何老地图）',
-    !howling_abyss.visualNavgrid);
+  T('沿④-其余地图都没有声明 visualNavgrid（这条接缝是可选的）',
+    Object.values(MAPS).filter(m => m.visualNavgrid).every(m => m.id === 'howling_abyss_frost_v1'));
   T('沿⑤-TerrainLayer 只在地图声明了 visualNavgrid 时才改用它画地面，否则照抄可走网格',
     /const paint = visualWalkOf\(map, grid\) \|\| walk;/.test(terrain)
     && /if \(!vg \|\| !vg\.bits \|\| !vg\.n \|\| !grid\) return null;/.test(terrain));
