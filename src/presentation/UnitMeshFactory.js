@@ -44,7 +44,7 @@ function boxProjectUV(px, py, pz, nx, ny, nz) {
 }
 
 // ---------- 合并工具：把 [{geo, matrix, color}] 压成单个带顶点色+UV 的 BufferGeometry ----------
-function mergeParts(parts) {
+export function mergeParts(parts, ao = true) {
   let n = 0;
   const prepped = parts.map(({ geo, matrix, color }) => {
     const g = geo.clone();
@@ -77,7 +77,7 @@ function mergeParts(parts) {
   out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   out.computeBoundingBox();
-  _applyFakeAO(pos, col, out.boundingBox);
+  if (ao) _applyFakeAO(pos, col, out.boundingBox);
   return out;
 }
 
@@ -225,6 +225,31 @@ const facStyle = (f) => FACTION_STYLE[f] || FACTION_STYLE.neutral;
  *   不传 / 缺字段时退回 FACTION_STYLE 的原值 —— 没声明这两项的地图画面**逐位不变**。
  *   ⚠️ 调用方必须把调色板 id 并进 `key`，否则换地图后会命中上一张图的缓存几何。
  */
+/**
+ * 雕像塔 / 新水晶造型的部件模型（PieceModel + 损毁清单 + 废墟），按参数缓存。
+ * towerMesh 拼几何、buildingFx 做掉块/爆炸/重生动画都从这里取同一份，保证动画里飞的就是模型上那块。
+ * 没开新造型（style !== 'statue'）时返回 null。
+ */
+const _pieceCache = new Map();
+export function buildingPiecesOf(kind, R, tier, faction, F) {
+  const on = kind === 'tower' ? CONFIG.ui?.statueTower?.style === 'statue'
+    : (kind === 'orb' || kind === 'gem') ? CONFIG.ui?.crystalShrine?.style === 'statue' : false;
+  if (!on) return null;
+  const k = `${kind}|${R}|${tier}|${faction}|${F.stone}|${F.trim}`;
+  let b = _pieceCache.get(k);
+  if (!b) {
+    b = kind === 'tower' ? statueTower(R, tier, faction, F) : crystalShrine(kind, R, faction, F);
+    _pieceCache.set(k, b);
+  }
+  return b;
+}
+
+/** 与 towerMesh 同一套石色规则（阵营默认 + 调色板覆写），给 buildingPiecesOf 的调用方用 */
+export function towerStoneOf(faction, pal = null) {
+  const F0 = facStyle(faction);
+  return (pal && (pal.stone || pal.trim)) ? { ...F0, stone: pal.stone || F0.stone, trim: pal.trim || F0.trim } : F0;
+}
+
 export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, faction, dmg = 0, pal = null) {
   let hit = _geoCache.get(key);
   if (!hit) {
@@ -239,16 +264,25 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     const add = (geo, m, c) => parts.push({ geo, matrix: m, color: c });
     // 雕像守卫造型（CONFIG.ui.statueTower.style === 'statue'）：只接管防御塔，水晶/枢纽仍走下面。
     // 损毁 = 按部件整块拿掉，见 towerStatue.js 头注。
-    const statue = kind === 'tower' && CONFIG.ui?.statueTower?.style === 'statue'
-      ? statueTower(R, tier, faction, F) : null;
+    const pb = buildingPiecesOf(kind, R, tier, faction, F);
+    const statue = kind === 'tower' ? pb : null;
     // 召唤水晶 / 水晶枢纽的新造型（CONFIG.ui.crystalShrine.style === 'statue'），见 crystalShrines.js
-    const shrine = (kind === 'orb' || kind === 'gem') && CONFIG.ui?.crystalShrine?.style === 'statue'
-      ? crystalShrine(kind, R, faction, F) : null;
+    const shrine = kind !== 'tower' ? pb : null;
+    // 动画进行中的两种中间态（buildingFx.js）：
+    //   fx.noRubbleFrom = s：这一档刚掉的部件还在半空，先不画它们躺在地上的碎块；
+    //   fx.assemble：重生拼装中，只画主体（不画任何部件、残根、碎块），部件由动画飞回来。
+    const fx = pal?.fx || null;
+    const stageParts = (b, d) => {
+      const st = b.stages[d];
+      if (fx?.assemble) return b.model.parts(b.model.order, new Set(b.model.order), true);
+      if (fx?.noRubbleFrom != null) { const old = new Set(b.stages[fx.noRubbleFrom] || []); return b.model.parts(st, new Set(st.filter((id) => !old.has(id)))); }
+      return b.model.parts(st);
+    };
 
     if (statue) {
       if (ruin) parts.push(...statue.ruin);
       else {
-        parts.push(...statue.model.parts(statue.stages[Math.max(0, Math.min(2, dmg))]));
+        parts.push(...stageParts(statue, Math.max(0, Math.min(2, dmg))));
         crystalR = statue.crystalR;
         crystalCy = statue.crystalCy;
         crystalGeo = new THREE.OctahedronGeometry(crystalR);
@@ -257,7 +291,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       if (ruin) parts.push(...shrine.ruin);
       else {
         const d = Math.max(0, Math.min(2, dmg));
-        parts.push(...shrine.model.parts(shrine.stages[d]));
+        parts.push(...stageParts(shrine, d));
         crystalR = shrine.crystalR;
         crystalCy = shrine.crystalCy;
         crystalGeo = chippedCrystal(kind, crystalR, d);   // 水晶本身也随损毁缺角

@@ -748,9 +748,22 @@ export class EffectsLayer {
           by = my + (snap.h - my) * done;
         }
         // 炮口偏在身侧（雕像塔的杖顶水晶）：出膛时在水晶处，飞行中逐渐并回真实弹道。
+        // 画出来的弹道是一条直线：炮口（水晶，可能偏在身侧）→ 落点。弹头和尾巴都按"沿这条线
+        // 走了几成"来放，高度也按同一个比例插——两者必须在同一条线上，否则尾巴会折一下。
+        // （第一版只把弹头挪到了水晶，尾巴高度仍按塔中心算的进度，用户实机看出"拖尾是错的"。）
         const [pox, poy] = offOf(p, p.attackerId);
         const sx0 = p.startX + pox, sy0 = p.startY + poy;
         x += pox * (1 - done); y += poy * (1 - done);
+        const lineLen = snap ? (Math.hypot(snap.x - sx0, snap.y - sy0) || 1) : 0;
+        // 沿炮口→落点的直线，往回退 back 个世界单位的那一点 [x, 高度, z]；没有落点快照时退回按方向推
+        const backOnLine = (back) => {
+          if (!snap) {
+            const ddx = x - sx0, ddy = y - sy0, dd = Math.hypot(ddx, ddy) || 1;
+            return [x - ddx / dd * back, by, y - ddy / dd * back];
+          }
+          const f = Math.max(0, done - back / lineLen);
+          return [sx0 + (snap.x - sx0) * f, my + (snap.h - my) * f, sy0 + (snap.y - sy0) * f];
+        };
         // 塔弹与兵弹的分野：CombatSystem 按攻击者类型给 size（塔 20 / 兵 12），这里据此
         // 分档。塔弹加拖尾 + 白亮核，兵弹保持两层——同屏兵弹上百，给它们加拖尾只会糊成一片。
         // #10 升温可视化：塔弹随 heat（0..1，穿透弹的升温层数）变"热"——尺寸增大、颜色向
@@ -768,20 +781,11 @@ export class EffectsLayer {
           //      而弹道是斜的，于是尾巴与红线分家 = 用户看到的"拖尾是水平的"）。
           // ---- Q2：收敛张扬度。升温对拖尾的加成从"越热越粗越亮"压到几乎只改颜色，
           //      尾巴也缩短：之前满升温时尾巴又长又亮，喧宾夺主。
-          const dx = x - sx0, dy2 = y - sy0;
-          const d = Math.hypot(dx, dy2);
+          const d = Math.hypot(x - sx0, y - sy0);
           if (d > 1) {
-            const ux = dx / d, uy2 = dy2 / d;
             const tail = Math.min(d, hsz * TRAIL_LEN);       // 尾巴长度（不超过已飞行距离）
-            const tx = x - ux * tail, tz = y - uy2 * tail;
-            // 尾端高度：用与弹头相同的插值规则求出该处的路径高度（关键——别再用 by）
-            // 尾端高度同样走快照（与弹头同一条路径规则），目标死亡后不再塌到 my
-            let ty = by;
-            if (snap) {
-              const tot = Math.hypot(snap.x - p.startX, snap.y - p.startY) || 1;
-              const doneT = Math.min(1, Math.max(0, Math.hypot(tx - p.startX, tz - p.startY) / tot));
-              ty = my + (snap.h - my) * doneT;
-            }
+            // 尾端与弹头在同一条炮口→落点直线上（高度同一套插值），目标死亡后沿用快照不塌
+            const [tx, ty, tz] = backOnLine(tail);
             this._trail(D, V, tx, ty, tz, x, by, y, hsz, heat, dcol, 1);
             // Q2：记下这一帧的尾迹快照。子弹命中即从列表消失，若不留残影，
             // 一整条尾巴会在命中的那一帧【整体瞬间消失】，看着很突兀（用户反馈）。
@@ -805,17 +809,10 @@ export class EffectsLayer {
         if (!isTower) {
           const bt = (CONFIG.ui && CONFIG.ui.bulletTrail) || {};
           if (bt.enabled !== false) {
-            const dx2 = x - sx0, dz2 = y - sy0;
-            const d2 = Math.hypot(dx2, dz2);
+            const d2 = Math.hypot(x - sx0, y - sy0);
             if (d2 > 1) {
               const tail = Math.min(d2, hsz * (bt.lenK ?? 0.9));
-              const tx2 = x - (dx2 / d2) * tail, tz2 = y - (dz2 / d2) * tail;
-              let ty2 = by;
-              if (snap) {
-                const tot2 = Math.hypot(snap.x - p.startX, snap.y - p.startY) || 1;
-                const dn = Math.min(1, Math.max(0, Math.hypot(tx2 - p.startX, tz2 - p.startY) / tot2));
-                ty2 = my + (snap.h - my) * dn;
-              }
+              const [tx2, ty2, tz2] = backOnLine(tail);
               this._trail(D, V, tx2, ty2, tz2, x, by, y, hsz * (bt.widthK ?? 0.55), 0, dcol, bt.alpha ?? 0.75);
             }
           }

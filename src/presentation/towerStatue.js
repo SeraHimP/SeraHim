@@ -105,6 +105,20 @@ export class PieceModel {
   }
   pieceParts(id) { return this.pieces.get(id)?.parts || []; }
 
+  /**
+   * 掉落的分解量：部件中心 c（原位）、落地后中心 dest、落地时的旋转 q 与缩放 s。
+   * rubbleMatrix = T(dest) · R(q) · S(s) · T(-c)；掉块动画按这几个量插值。
+   */
+  rubbleParams(id) {
+    const m = this.rubbleMatrix(id);
+    const p = this.pieces.get(id);
+    const c = new THREE.Vector3(); partsBox(p.parts).getCenter(c);
+    const dest = c.clone().applyMatrix4(m);
+    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    m.decompose(pos, q, sc);
+    return { c, dest, q, s: sc.x };
+  }
+
   /** 这块掉下去之后躺在哪：把部件原位几何变换到塔脚地面上的矩阵（与原 parts 矩阵左乘）。 */
   rubbleMatrix(id) {
     const p = this.pieces.get(id);
@@ -144,12 +158,12 @@ export class PieceModel {
    * @param {string[]} removed 拿掉的部件
    * @param {Set<string>|null} [noRubble] 这些拿掉的部件先不画碎块（掉块动画进行中，碎块由动画画）
    */
-  parts(removed = [], noRubble = null) {
+  parts(removed = [], noRubble = null, noStubs = false) {
     const out = [...this.base], gone = new Set(removed);
     for (const id of this.order) {
       const p = this.pieces.get(id);
       if (!gone.has(id)) { out.push(...p.parts); continue; }
-      if (!(p.parent && gone.has(p.parent))) out.push(...this.stubParts(id));
+      if (!noStubs && !(p.parent && gone.has(p.parent))) out.push(...this.stubParts(id));
       if (noRubble && noRubble.has(id)) continue;
       const rm = this.rubbleMatrix(id);
       for (const q of p.parts) out.push({ geo: q.geo, matrix: rm.clone().multiply(q.matrix), color: q.color });

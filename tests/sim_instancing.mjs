@@ -239,7 +239,8 @@ const { T, done } = scoreboard('单位本体合批（InstancedMesh，小兵+塔�
   T('dispose() 里释放 bodyInst', /this\.bodyInst\.dispose\(\)/.test(src));
   // 雕像塔的水晶在杖顶、偏在身侧：水平位置再加上按朝向转过的偏移（cox/coz）
   T('水晶每帧同步位置（gy+walkBob+crystalLocalY，水平加杖顶偏移），不再靠父子关系自动继承',
-    /en\.crystal\.position\.set\(e\.pos\.x \+ cox, gy \+ walkBob \+ \(en\.crystalLocalY \|\| 0\), e\.pos\.y \+ coz\)/.test(src));
+    // 重生动画里水晶从下往上升（crystalK），高度后面可以再减一项；前半截同步口径不变
+    /en\.crystal\.position\.set\(e\.pos\.x \+ cox, gy \+ walkBob \+ \(en\.crystalLocalY \|\| 0\)( - [^,]+)?, e\.pos\.y \+ coz\)/.test(src));
   T('没有外部文件依赖 en.unit 是真实 Object3D（否则合批换成代理对象会在别处炸）',
     !/\.unit\.(position|rotation|scale|matrixWorld|getWorldPosition)/.test(srcOf('src/presentation/ThreeRenderer.js'))
     && !/\.unit\.(position|rotation|scale|matrixWorld|getWorldPosition)/.test(srcOf('src/ui/CanvasController.js')));

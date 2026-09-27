@@ -1509,17 +1509,34 @@ export const CONFIG = {
       maxSunElevDeg: 34,
     },
 
+    // 建筑动画（buildingFx.js）。用户定稿："按这个做"——
+    //   ① 掉档（chunkFall）：抖 → 翻滚着掉到塔脚 → 落地弹一下扬起灰尘，停下后留作碎石；
+    //   ② 被摧毁（explode）：水晶闪白炸开成碎片，还在的部件向外飞散翻滚，主体倒下陷进地里，
+    //      冲击波 + 烟尘，碎石堆从地里拱出来；
+    //   ③ 召唤水晶重生（respawn）：碎石堆沉下去，部件倒着飞回原位，主体从地里升起，最后水晶升起长出来。
+    // dur 是整段秒数；其余区间都是 [开始, 结束]，按整段时长的比例（0..1）；长度量 × 建筑半径。
+    buildingFx: {
+      enabled: true,
+      chunkFall: { dur: 0.8, shake: 0.18, shakeAmp: 0.03, fallEnd: 0.8, hop: 0.12, bounce: 0.08, stagger: 0.12, dust: 3 },
+      explode: { dur: 1.5, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 10, shardSpeed: 3.2,
+                 speed: 2.4, up: 2.2, spin: 9, gravity: 9, topple: [0.08, 0.7], rubbleRise: [0.35, 0.85],
+                 plinthBelow: 0.5, smoke: 9, smokeColor: '#8d8579' },
+      respawn: { dur: 1.5, pileSink: [0, 0.5], fly: [0.1, 0.8], baseRise: [0, 0.45], crystal: [0.75, 1.0] },
+    },
+
     // 防御塔护盾外壳（shieldShell.js）。只看固定护盾 + 护盾（不含临时护盾），只包防御塔。
     // 用户定稿："贴身外壳"、"金白色"、"不要越厚越亮，但是要做出被打时候闪一下"。
     //   inflate 外壳比塔身外扩多少（× 建筑半径）；minY 这个高度以下不包（× 建筑半径，碎块/石台底部）
     //   color / rimColor 外壳主色 / 轮廓亮边色；base 正对镜头那面的底亮度；rimPower / rimStrength 轮廓光的锐度 / 强度
     //   sheenStrength / sheenFreq / sheenSpeed 上行光纹的强度 / 疏密（每世界单位）/ 速度（世界单位每秒）
-    //   flashStrength / flashDur 被打闪一下的强度 / 时长（秒）；fadeIn / fadeOut 出现 / 消失（秒）
+    //   flashStrength / flashDur 被打时轮廓光加强多少 / 持续多久（秒）；flashCooldown 两次闪之间至少隔几秒
+    //   maxAlpha 外壳最不透明到多少；fadeIn / fadeOut 出现 / 消失（秒）
+    //   外壳用普通透明混合、颜色不超过 1：到不了辉光（HDR Bloom）阈值，连续受击也不会糊成一团白光
     towerShield: {
       enabled: true, inflate: 0.08, minY: 0.35,
       color: '#ffd98a', rimColor: '#fff8e6', base: 0.02, rimPower: 2.6, rimStrength: 0.65,
       sheenStrength: 0.22, sheenFreq: 0.12, sheenSpeed: 22,
-      flashStrength: 1.6, flashDur: 0.25, fadeIn: 0.3, fadeOut: 0.45,
+      flashStrength: 0.6, flashDur: 0.25, flashCooldown: 0.35, maxAlpha: 0.6, fadeIn: 0.3, fadeOut: 0.45,
     },
 
     // 召唤水晶 / 水晶枢纽造型（crystalShrines.js）。style: 'statue' = 用户定稿的新造型

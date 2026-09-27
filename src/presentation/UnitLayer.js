@@ -36,7 +36,8 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
+import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
+import { BuildingFx } from './buildingFx.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
 import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
 import { towerFacingRad } from '../core/towerFacing.js';
@@ -133,6 +134,7 @@ export class UnitLayer {
     // v51.30/v51.31：单位本体合批（小兵+塔）——见 InstancedBodyLayer.js 头注。
     // 龙不合批（数量少、颜色任意导致 key 天然碎，合批收益趋近于零）。
     this.bodyInst = new BodyInstancer(this.scene);
+    this.bfx = new BuildingFx(this.scene);   // 建筑掉块 / 爆炸 / 重生动画（buildingFx.js）
   }
 
   /** 谁走合批路径：龙不合批（数量少、颜色任意导致 key 天然碎），其余（塔+全部小兵）都走。 */
@@ -155,7 +157,7 @@ export class UnitLayer {
     return id;
   }
 
-  _visualOf(e, ghost, ruin) {
+  _visualOf(e, ghost, ruin, fxMode = null) {
     if (e.type === 'tower') {
       const bSizes = CONFIG.buildingSizes || {};
       const bSize = e._modelSize || bSizes[e._mapTier] || bSizes.default || 28;
@@ -205,15 +207,19 @@ export class UnitLayer {
       const foundation = fd?.enabled ? { ...fd, ground: groundHex } : null;
       // 塔基的颜色由 groundHex 决定，而 groundHex 随地图变 —— 必须进 key，
       // 否则切图后会命中上一张图的几何（与下面 paletteId 同一个坑）。
-      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${palId}|${foundation ? groundHex : 'nf'}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}`;
+      // 动画中间态也进 key（与损毁档同理：不进 key 会命中别的状态缓存的几何）
+      const fxKey = !fxMode || showRuin ? '' : fxMode.assemble ? '|asm' : fxMode.noRubbleFrom != null ? `|nr${fxMode.noRubbleFrom}` : '';
+      const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${palId}|${foundation ? groundHex : 'nf'}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}${fxKey}`;
+      const stonePal = { stone: pal.towerStone, trim: pal.towerTrim };
       const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac, dmg,
-                          { stone: pal.towerStone, trim: pal.towerTrim, foundation });
+                          { ...stonePal, foundation, fx: showRuin ? null : fxMode });
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                // 雕像塔的水晶偏在身侧，血条（以塔中心为准）会横穿水晶——再抬高一截（× 建筑半径）
                barW: 80, barH: 6, barD: 10 + (m.crystal?.cx || m.crystal?.cz ? rSize * (CONFIG.ui?.statueTower?.barLift ?? 0.4) : 0),
                alpha: transparent ? 0.35 : 1, pulse: false,
-               ringR: rSize + 8, crystal: m.crystal, crystalColor: color };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
+               ringR: rSize + 8, crystal: m.crystal, crystalColor: color,
+               build: { kind, R: rSize, tier: vTier, faction: vFac, F: towerStoneOf(vFac, stonePal) } };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
     }
     if (e.type === 'dragon') {
       const color = e._dragonColor || '#c0392b';
@@ -554,6 +560,7 @@ export class UnitLayer {
   }
 
   remove(id) {
+    this.bfx.forget(id);
     const en = this.map.get(id);
     if (!en) return;
     if (en.unit.isInstancedProxy) en.unit.releaseSlot();   // 合批槽位放回自由表，供后续单位复用
@@ -1129,7 +1136,15 @@ export class UnitLayer {
     en.seen = this._frame;
     if (!ghost && !ruin) this._updatePose(e, en, tNow);
 
-    const vis = this._visualOf(e, ghost, ruin);
+    // 建筑动画：先认事件、拿到这一帧塔身的画法（掉档中不画新碎块 / 重生拼装中只画主体……）
+    const fxMode = e.type === 'tower' ? this.bfx.observe(e, ghost, ruin) : null;
+    const vis = this._visualOf(e, ghost, ruin, fxMode);
+    if (fxMode) {
+      if (vis.crystal) { en.fxCrystal = { lx: vis.crystal.cx || 0, ly: vis.crystal.cy, lz: vis.crystal.cz || 0, r: vis.crystal.r }; en.fxTopY = vis.topY; }
+      this.bfx.realize(e, { build: vis.build, color: vis.crystalColor, x: e.pos.x, z: e.pos.y,
+        y: this.mapSystem?.heightAt ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0,
+        rotY: en.faceFixed || 0, topY: en.fxTopY || vis.topY, crystal: en.fxCrystal || null });
+    }
     if (en.visKey !== vis.key) {
       en.visKey = vis.key;
       en.isTower = e.type === 'tower';   // 阴影档位判据：读实体类型，不靠模型高度猜
@@ -1223,7 +1238,7 @@ export class UnitLayer {
     if (en.poseHitT >= 0 && !en.isTower) {
       hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * HIT_SQUASH_AMOUNT;
     }
-    en.unit.scale.set(s * (1 + hitSquash * 0.5), s * (1 - hitSquash), s * (1 + hitSquash * 0.5));
+    en.unit.scale.set(s * (1 + hitSquash * 0.5), s * (1 - hitSquash) * (fxMode?.scaleY ?? 1), s * (1 + hitSquash * 0.5));
     // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。
     const gy = (this.mapSystem && this.mapSystem.heightAt) ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
     en.groundY = gy;
@@ -1235,7 +1250,7 @@ export class UnitLayer {
     // 塔从不挪动，poseWalkPhase 天然趋近 0，不需要额外按类型排除。
     const walkPhase = en.poseWalkPhase || 0;
     const walkBob = Math.abs(Math.sin(walkPhase)) * (vis.topY || 0) * WALK_BOB_FRAC;
-    en.unit.position.set(e.pos.x, gy + walkBob, e.pos.y);
+    en.unit.position.set(e.pos.x, gy + walkBob + (fxMode?.offsetY || 0) * (vis.topY || 0), e.pos.y);
     en.unit.rotation.z = Math.sin(walkPhase) * WALK_SWAY_RAD;
 
     // ==================== v54：接地暗斑（A4）====================
@@ -1267,7 +1282,11 @@ export class UnitLayer {
       // （护柱/台阶顶端往上多少），(en.faceFixed||0) 补回原来"作为子物体继承父级
       // yaw"的那部分朝向（水晶造型高度对称，这个补偿肉眼几乎看不出来，但补上更精确）。
       const [cox, coz] = this._crystalOffset(en);
-      en.crystal.position.set(e.pos.x + cox, gy + walkBob + (en.crystalLocalY || 0), e.pos.y + coz);
+      // 重生动画：水晶最后从中间升起、长出来（crystalK 0 → 1）
+      const ck = fxMode?.crystalK ?? 1;
+      en.crystal.position.set(e.pos.x + cox, gy + walkBob + (en.crystalLocalY || 0) - (1 - ck) * (en.crystalLocalY || 0) * 0.35, e.pos.y + coz);
+      en.crystal.scale.setScalar(Math.max(0.001, ck));
+      en.crystal.visible = ck > 0.01;
       const cc = CONFIG.ui?.crystal || {};
       const spin = cc.spin ?? CRYSTAL_SPIN;
       en.crystal.rotation.y = (en.faceFixed || 0) + tNow * spin;
@@ -1486,6 +1505,7 @@ export class UnitLayer {
    */
   update(deps, rel, tNow) {
     this._frame++;
+    this.bfx.update();
     const lodHideBar = rel < 1.35;   // 与 2D 的 lodBars 阈值同值
     const { entities } = deps;
 

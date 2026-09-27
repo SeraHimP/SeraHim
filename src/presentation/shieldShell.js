@@ -57,7 +57,7 @@ export function shellMaterial(R) {
       uColor: { value: new THREE.Color(S.color || '#ffd98a') }, uRimColor: { value: new THREE.Color(S.rimColor || '#fff8e6') },
       uBase: { value: S.base ?? 0.06 }, uRimPower: { value: S.rimPower ?? 2.2 }, uRim: { value: S.rimStrength ?? 1.1 },
       uSheen: { value: S.sheenStrength ?? 0.35 }, uSheenFreq: { value: (S.sheenFreq ?? 0.12) }, uSheenSpeed: { value: S.sheenSpeed ?? 22 },
-      uFlashK: { value: S.flashStrength ?? 1.6 },
+      uFlashK: { value: S.flashStrength ?? 0.6 }, uMaxA: { value: S.maxAlpha ?? 0.6 },
     },
     vertexShader: `
       uniform float uInflate;
@@ -74,7 +74,7 @@ export function shellMaterial(R) {
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: `
-      uniform float uTime, uAlpha, uFlash, uMinY, uBase, uRimPower, uRim, uSheen, uSheenFreq, uSheenSpeed, uFlashK;
+      uniform float uTime, uAlpha, uFlash, uMinY, uBase, uRimPower, uRim, uSheen, uSheenFreq, uSheenSpeed, uFlashK, uMaxA;
       uniform vec3 uColor, uRimColor;
       varying vec3 vN;
       varying vec3 vV;
@@ -85,12 +85,14 @@ export function shellMaterial(R) {
         float fres = pow(clamp(1.0 - abs(dot(N, normalize(vV))), 0.0, 1.0), uRimPower);
         float band = pow(0.5 + 0.5 * sin(vY * uSheenFreq - uTime * uSheenSpeed * uSheenFreq), 10.0);   // 缓慢上行的光纹
         float fadeIn = smoothstep(uMinY, uMinY + 6.0, vY);
-        float a = (uBase + fres * uRim + band * uSheen) * (1.0 + uFlash * uFlashK) * uAlpha * fadeIn;
-        vec3 c = mix(uColor, uRimColor, clamp(fres + uFlash * 0.5, 0.0, 1.0));
-        gl_FragColor = vec4(c * (1.0 + uFlash), clamp(a, 0.0, 1.0));
+        // 被打只让轮廓更实一点，颜色不超过 1：外壳用普通透明混合（不是叠加），
+        // 亮度永远到不了辉光阈值——叠加 + 颜色 ×(1+闪光) 的第一版在连续受击时把塔整个糊成一团白光。
+        float a = (uBase + fres * uRim * (1.0 + uFlash * uFlashK) + band * uSheen) * uAlpha * fadeIn;
+        vec3 c = mix(uColor, uRimColor, clamp(fres + uFlash * 0.3, 0.0, 1.0));
+        gl_FragColor = vec4(c, clamp(a, 0.0, uMaxA));
         #include <colorspace_fragment>
       }`,
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.FrontSide,
+    transparent: true, depthWrite: false, blending: THREE.NormalBlending, side: THREE.FrontSide,
   });
 }
 
@@ -104,7 +106,10 @@ export function shellMaterial(R) {
 export function stepShieldState(st, amount, dt) {
   const S = CONFIG.ui?.towerShield || {};
   const want = amount > 0;
-  if (st.prev > 0 && amount < st.prev - 1e-6) st.flash = 1;              // 被打（含被打穿的那一下）
+  // 被打（含被打穿的那一下）闪一下；两次闪之间至少隔 flashCooldown 秒——
+  // 一群小兵连续打的时候不能一直闪（用户："这个光快把我晃瞎了"）
+  st.cool = Math.max(0, (st.cool || 0) - dt);
+  if (st.prev > 0 && amount < st.prev - 1e-6 && st.cool <= 0) { st.flash = 1; st.cool = S.flashCooldown ?? 0.35; }
   st.prev = amount;
   st.flash = Math.max(0, st.flash - dt / Math.max(1e-3, S.flashDur ?? 0.25));
   const dur = want ? (S.fadeIn ?? 0.3) : (S.fadeOut ?? 0.45);
