@@ -53,9 +53,14 @@ export const IO_VERSION = 1;
 const isPlainObject = (v) =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
 
+// JSON.parse 会把 "__proto__" 解析成普通自有键；深合并时 dst.__proto__ 取到的是
+// Object.prototype，于是一份手改的存档就能给全局所有对象挂属性。这三个键一律不合并。
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /** 深合并 src 进 dst（就地）。数组整体替换——出兵编排的顺序就是语义，逐项合并会得到一个谁都没要过的顺序。 */
 export function deepMerge(dst, src) {
   for (const [k, v] of Object.entries(src || {})) {
+    if (UNSAFE_KEYS.has(k)) continue;
     if (isPlainObject(v)) {
       if (!isPlainObject(dst[k])) dst[k] = {};
       deepMerge(dst[k], v);
@@ -94,6 +99,26 @@ export function suggestedFileName(prefix = 'serahim-config') {
 }
 
 /**
+ * 导入文件里的字符串（自制单位/技能/地图的名字、描述……）会被编辑器和 HUD 拼进
+ * innerHTML。存档是可以在网上互传的文件，里面的 <img onerror=...> 会在打开编辑器时执行。
+ * 内置配置里没有任何字符串含尖括号（sim_tplio 有守门），所以这里直接去掉 < 和 >，
+ * 正常存档往返不受影响。
+ */
+function sanitizeStrings(v) {
+  if (typeof v === 'string') return v.replace(/[<>]/g, '');
+  if (Array.isArray(v)) return v.map(sanitizeStrings);
+  if (isPlainObject(v)) {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      if (UNSAFE_KEYS.has(k)) continue;
+      out[k.replace(/[<>]/g, '')] = sanitizeStrings(x);
+    }
+    return out;
+  }
+  return v;
+}
+
+/**
  * 导入。返回 { ok, groups, skipped, error }。
  * 白名单之外的键一律忽略并列进 skipped —— 导入的 JSON 可能是用户手改的，
  * 让它能往 CONFIG 上挂任意键等于给自己埋雷。
@@ -112,7 +137,7 @@ export function importTemplates(CONFIG, data) {
     if (!IO_GROUPS.includes(k)) { skipped.push(k); continue; }
     if (!isPlainObject(v)) { skipped.push(k); continue; }
     if (!isPlainObject(CONFIG[k])) CONFIG[k] = {};
-    deepMerge(CONFIG[k], v);
+    deepMerge(CONFIG[k], sanitizeStrings(v));
     groups.push(k);
   }
   return { ok: true, groups, skipped, error: null };
