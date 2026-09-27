@@ -1280,10 +1280,21 @@ export const CONFIG = {
     //   maxMix   —— 染色上限，防止把单位压成看不清的黑块
     // enabled: false 时 tint 恒为白，画面与本次改动前逐位一致。
     unitLighting: { enabled: true, strength: 2.2, maxMix: 0.80 },
-    // v50：小兵/龙的弹丸补一条**短**拖尾（用户："小兵/龙就是非常粗糙的点"）。
-    // 塔弹不走这里（它自己那条长尾 + 白芯不变）。lenK 是"尾长 = 弹径 × 本系数"，
-    // 塔弹是 2.2，这里给 0.9 —— 短到不会在上百条兵弹同屏时连成一片。
-    bulletTrail: { enabled: true, lenK: 0.9, widthK: 0.55, alpha: 0.75 },
+    // 弹道可视化（EffectsLayer + ProjectileMeshLayer）。用户定稿（2026-09-27）：
+    //   "A 为主，塔弹用 B"——小兵弹是低多边形实体弹，防御塔弹是能量光弹；巨龙"加纯视觉的吐息"。
+    //   命中效果做过一版，用户实机看后"命中特效太显眼了……不要命中特效了"，已删。
+    //   tower：塔弹光晕大小（× 弹径）、拖尾长度（× 弹径）
+    //   minion：实体弹头大小（× 弹径）、长宽比、弹头偏白多少、残影颗数与间距（× 弹头大小）
+    //   siege：哪些兵种走抛物线石弹、抛高（× 弹道长度，封顶 arcMax 世界单位）、石块大小、烟团数
+    //   warlock：术士弹绕转光点的颗数、半径（× 弹头大小）、转速、颜色
+    //   breath：巨龙吐息的开关、时长（秒）、碎块数、大小与散布（× 龙体大小的一半）、拖后比例、芯色
+    projectileFx: {
+      tower: { haloK: 1.25, trailLen: 4.2 },
+      minion: { sizeK: 0.3, boltLen: 1.9, boltWidth: 0.65, headWhite: 0.3, afterimages: 4, spacing: 1.6 },
+      siege: { kinds: ['siege', 'ram'], arcK: 0.3, arcMax: 70, stoneK: 0.42, smoke: 6, stoneColor: '#3c3a38', smokeColor: '#a89a86' },
+      warlock: { motes: 3, radius: 2.2, spin: 8, moteColor: '#e0b0ff' },
+      breath: { enabled: true, dur: 0.32, chunks: 7, size: 0.5, spread: 0.25, lag: 0.45, coreColor: '#fff0c0' },
+    },
     towerLight: {
       enabled: true,
       poolSize: 20,         // 真光源数量（恒定！数量一变全场材质重编译，见实现注释）

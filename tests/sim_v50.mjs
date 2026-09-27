@@ -470,13 +470,14 @@ const mk = (ents, t, x, f, hp = 100000) => {
 }
 
 // ==================== 七、兵弹不再是"一个点" ====================
+// 这一节原来钉"非塔弹补了一条短拖尾（CONFIG.ui.bulletTrail）"。2026-09-27 用户定稿弹道重做
+// （"A 为主，塔弹用 B"）：兵弹改成低多边形实体弹（弹头 + 残影），短拖尾与 bulletTrail 一并删除，
+// 行为由 sim_projectile_fx 钉。这里只留"兵弹不是一个点、有方向感"这条目的本身。
 {
   const fxSrc = srcOf('src/presentation/EffectsLayer.js');
-  T('弹①-非塔弹补了一条**短**拖尾（塔弹不受影响）',
-    /if \(!isTower\) \{[\s\S]{0,900}CONFIG\.ui && CONFIG\.ui\.bulletTrail/.test(fxSrc));
-  T('弹②-长度/开关软编码，且明显短于塔弹（避免上百条兵弹糊成一片）',
-    CONFIG.ui.bulletTrail.enabled === true
-    && CONFIG.ui.bulletTrail.lenK < 2.2);
+  T('弹①-非塔弹画成有朝向的实体弹（弹头 + 残影），不再是一个点',
+    /this\.pm\.minionBolt\(kind, \[x, by, y\]/.test(fxSrc));
+  T('弹②-旧的短拖尾配置已删（不留死配置）', CONFIG.ui.bulletTrail === undefined);
 }
 
 done();

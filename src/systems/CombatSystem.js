@@ -851,6 +851,7 @@ export class CombatSystem {
         speed: atkStats.bulletSpeed || (CONFIG.tuning?.defaultBulletSpeed ?? 400),
         color: bulletColor,
         size: attacker.type === 'tower' ? 20 : 12, // 渲染尺寸：小兵/巨龙弹丸比塔弹小一号
+        kind: attacker.type,                        // 渲染层按开火者分形（塔 / 远程兵 / 炮车 / 术士……），开火时快照
         heat: pierceHeat,                           // #10：升温可视化（0..1），渲染层据此变热
         pendingHit: hitInfo,
       });

@@ -39,6 +39,7 @@
  * 这是 3D 侧【优于】2D 的一处刻意差异：2D 第 5 步即摘除，不回填。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { ProjectileMeshLayer } from './ProjectileMeshLayer.js';
 import { CONFIG } from '../data/Config.js';
 
 const MAX_DYN_TRI = 24000;    // 动态线批三角形上限（电弧封顶 120 条 × 分段，余量充足）
@@ -372,6 +373,9 @@ export class EffectsLayer {
     this._statMapId = null;
     this._weaponCache = new WeakMap();   // 塔 → 当前武器技能 id（Q3 腐蚀判定用）
     this._seen = new Map();             // 子弹 → 上一帧尾迹快照（Q2 余烬用）
+    // 小兵实体弹 / 巨龙吐息（ProjectileMeshLayer.js）。不做命中效果（用户："不要命中特效了"）
+    this.pm = new ProjectileMeshLayer(scene);
+    this._dragonCd = new Map();         // 巨龙 id → 上一帧攻击冷却（跳增 = 刚打出一次攻击，吐一口）
     this._fading = [];                  // 正在淡出的尾迹余烬
     // v43 P0-③：高度快照的**唯一**存放处。
     // 这里原本是三份几乎一样的 WeakMap（_beamEndY / _beamStartY / _projTgt），
@@ -694,6 +698,7 @@ export class EffectsLayer {
     // Q2：本帧还活着的塔弹尾迹收集在 live 里，帧末与上一帧对比，
     // 消失的那些转入 _fading 做淡出——命中不再是"一整条尾巴瞬间没了"。
     this._fxFrame = (this._fxFrame || 0) + 1;
+    this.pm.begin();
     const live = [];
     if (projectiles?.getProjectiles) {
       for (const p of projectiles.getProjectiles()) {
@@ -783,7 +788,7 @@ export class EffectsLayer {
           //      尾巴也缩短：之前满升温时尾巴又长又亮，喧宾夺主。
           const d = Math.hypot(x - sx0, y - sy0);
           if (d > 1) {
-            const tail = Math.min(d, hsz * TRAIL_LEN);       // 尾巴长度（不超过已飞行距离）
+            const tail = Math.min(d, hsz * (CONFIG.ui?.projectileFx?.tower?.trailLen ?? TRAIL_LEN));   // 尾巴长度（不超过已飞行距离）
             // 尾端与弹头在同一条炮口→落点直线上（高度同一套插值），目标死亡后沿用快照不塌
             const [tx, ty, tz] = backOnLine(tail);
             this._trail(D, V, tx, ty, tz, x, by, y, hsz, heat, dcol, 1);
@@ -797,41 +802,59 @@ export class EffectsLayer {
           }
           if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.4 + heat * 0.4), dcol, 0.07 + heat * 0.08, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕（压淡）
         }
-        // ==================== v50：兵弹/龙弹不再是"一个点" ====================
-        // 用户："目前的可视化弹道也过时了，塔的可以不用改，小兵/龙就是非常粗糙的点。"
-        //
-        // 这一版之前非塔弹只画两层同心光晕 —— 静止看是个圆点，飞起来也看不出方向。
-        // 当年不给它们加拖尾的理由写在上面："同屏兵弹上百，给它们加拖尾只会糊成一片"。
-        // 那个担心是对的，但结论下重了：塔弹的尾巴长 2.2 倍弹径又带白芯，
-        // 上百条确实会糊；而**一小截短streak**只多一个四边形、长度不到塔弹尾巴的三分之一，
-        // 既看得出速度方向，也不会连成一片。所以这里给非塔弹补一条**短**尾，
-        // 长度/开关都在 CONFIG.ui.bulletTrail 里（不想要就关掉，塔弹不受影响）。
-        if (!isTower) {
-          const bt = (CONFIG.ui && CONFIG.ui.bulletTrail) || {};
-          if (bt.enabled !== false) {
-            const d2 = Math.hypot(x - sx0, y - sy0);
-            if (d2 > 1) {
-              const tail = Math.min(d2, hsz * (bt.lenK ?? 0.9));
-              const [tx2, ty2, tz2] = backOnLine(tail);
-              this._trail(D, V, tx2, ty2, tz2, x, by, y, hsz * (bt.widthK ?? 0.55), 0, dcol, bt.alpha ?? 0.75);
-            }
-          }
+        if (isTower) {
+          // 防御塔弹：能量光弹（用户定稿"塔弹用 B"）——光晕 / 核心 / 白亮弹芯
+          const PT = (CONFIG.ui?.projectileFx?.tower) || {};
+          Q.sprite3(x, by, y, hsz * (PT.haloK ?? 1.25), dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
+          Q.sprite3(x, by, y, hsz * 0.45, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
+          Q.sprite3(x, by, y, hsz * (0.2 + heat * 0.10), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
+          continue;
         }
-        // ==================== v51：兵弹/龙弹重做（参照塔弹的分层，不是另起一套）====================
-        // 用户："新版的小兵/龙的弹道不好看……这两个玩意叠加到一块太难看了。"
-        // "这两个玩意"指 v50 补的那条短拖尾（_trail，宽度 hsz*widthK）与紧挨着画的
-        // 光晕（同一个 hsz）——两个大小相近的色块贴在一起，读出来是一坨糊在一起的团，
-        // 不是"弹头 + 一截尾巴"。塔弹之所以不糊，是因为它多一层**白亮弹芯**把视觉焦点
-        // 收回一个点，光晕退成背景光晕；兵弹/龙弹此前没有这一层，光晕和拖尾谁都不让谁。
-        // 所以不是重新发明一套，是把塔弹已经在用的"光晕退到底、白芯收焦点"这条规则
-        // 原样搬过来，兵弹只是整体尺度更小（isTower 已经在管这件事，不用再分叉）。
-        const haloSz = isTower ? hsz : hsz * 0.82;   // 兵弹光晕收窄一圈，给拖尾让出空间
-        Q.sprite3(x, by, y, haloSz, dcol, isTower ? 1 : 0.85, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);   // 光晕
-        Q.sprite3(x, by, y, hsz * 0.4, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);    // 核心
-        Q.sprite3(x, by, y, hsz * (isTower ? (0.18 + heat * 0.10) : 0.24), rgbOf('#ffffff'), 1,
-          V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);  // 白亮弹芯——兵弹/龙弹现在也有，收拢视觉焦点
+        // 小兵 / 分裂弹：低多边形实体弹（用户定稿"A 为主"）。按开火那一刻快照的兵种（p.kind）分形。
+        const kind = p.kind || 'ranged';
+        const lob = (CONFIG.ui?.projectileFx?.siege?.kinds || ['siege', 'ram']).includes(kind);
+        if (lob) {
+          // 炮车：抛物线石弹（纯视觉——伤害时机与落点不变，只是画的时候中间抬高）
+          const S2 = CONFIG.ui?.projectileFx?.siege || {};
+          const arcH = Math.min(S2.arcMax ?? 70, (lineLen || 100) * (S2.arcK ?? 0.3));
+          const arcAt = (f) => arcH * 4 * f * (1 - f);
+          const head = [x, by + arcAt(done), y];
+          const back = (dist) => {
+            if (!snap) return null;
+            const f = done - dist / lineLen;
+            if (f <= 0) return null;
+            return [sx0 + (snap.x - sx0) * f, my + (snap.h - my) * f + arcAt(f), sy0 + (snap.y - sy0) * f];
+          };
+          this.pm.siegeStone(head, gsz, dcol.getHex(), back, done);
+          continue;
+        }
+        const dxh = snap ? snap.x - sx0 : x - sx0, dzh = snap ? snap.y - sy0 : y - sy0, dyh = snap ? snap.h - my : 0;
+        const dl = Math.hypot(dxh, dyh, dzh) || 1;
+        this.pm.minionBolt(kind, [x, by, y], { x: dxh / dl, y: dyh / dl, z: dzh / dl }, gsz, dcol.getHex(),
+          (dist) => { const b2 = backOnLine(dist); return b2 && Math.hypot(b2[0] - sx0, b2[2] - sy0) > 0.5 ? b2 : null; });
       }
     }
+
+    // ---- 巨龙吐息（纯视觉）：攻击冷却跳增 = 刚打出一次攻击，朝目标吐一口 ----
+    if (CONFIG.ui?.projectileFx?.breath?.enabled !== false && entities?.getByType) {
+      const seen = new Set();
+      for (const dg of entities.getByType('dragon', true)) {
+        seen.add(dg.id);
+        const cd = dg.attackCooldown || 0, prev = this._dragonCd.get(dg.id);
+        this._dragonCd.set(dg.id, cd);
+        if (prev == null || cd <= prev + 0.02) continue;
+        const tg = dg.targetId != null ? entities.get(dg.targetId) : null;
+        if (!tg?.pos || !dg.pos) continue;
+        const ddx = tg.pos.x - dg.pos.x, ddz = tg.pos.y - dg.pos.y, dd = Math.hypot(ddx, ddz) || 1;
+        const reach = (CONFIG.dragonSizes?.[dg._isAncient ? 'ancient' : 'element'] ?? 30) * 0.5;
+        const mouthY = (MYOF(dg.id) ?? 30) * 0.65;
+        this.pm.breath([dg.pos.x + ddx / dd * reach, mouthY, dg.pos.y + ddz / dd * reach],
+                       [tg.pos.x, (MYOF(tg.id) ?? 10) * 0.6, tg.pos.y], new THREE.Color(dg._dragonColor || '#ff8a3d').getHex(),
+                       (CONFIG.dragonSizes?.element ?? 30) * 0.5);
+      }
+      for (const id of this._dragonCd.keys()) if (!seen.has(id)) this._dragonCd.delete(id);
+    }
+    this.pm.end();
 
     // ---- Q2 拖尾余烬：本帧不在场的尾迹转入淡出队列，短暂留一下再消失 ----
     for (const [p, sn] of this._seen) {
