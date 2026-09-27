@@ -149,7 +149,7 @@ export class MapSystem {
     // 由 loadMap() 直接换到这张图（见那边头注），普通/经典模式的地图网格
     // 不应该再出现它。getMapById()/loadMap() 仍然认得这个 id，不受影响。
     return Object.values(this._mapRegistry())
-      .filter(m => m.id !== LIVE_EDIT_SESSION_MAP_ID && m.id !== DOMINION_MODE_MAP_ID)
+      .filter(m => m.id !== LIVE_EDIT_SESSION_MAP_ID && m.id !== DOMINION_MODE_MAP_ID && !m.hiddenFromPicker)
       .map(m => ({ id: m.id, label: m.label }));
   }
 

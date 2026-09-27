@@ -203,7 +203,7 @@ export class ThreeRenderer {
     this.groundTrace = new GroundTraceLayer(this.scene); // Q4 天气重做：水洼贴花+雪盖遮罩
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
-    this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap));
+    this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap), mapSystem?.currentMap);
     this.units = new UnitLayer(this.scene);
     // v44：GLB 模型库整条删除（用户定稿："全部程序化，删 GLB"）。
     // 值得记一笔的是它**默认就是关的**（useModels = false）——
@@ -230,7 +230,7 @@ export class ThreeRenderer {
     this.setHDR(null);
 
     // 切图后地面必须整体重建（贴图尺寸、世界尺寸都变了）
-    eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap)); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); this._torchPts = null; });
+    eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap), mapSystem?.currentMap); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); this._torchPts = null; });
     // 清理保险 A：死亡事件即时删（保险 B = UnitLayer.update 里的帧戳兜底扫描）
     eventBus?.on?.('entity:death', ({ entityId }) => this.units.remove(entityId));
   }
@@ -248,7 +248,9 @@ export class ThreeRenderer {
     return map?.theme || String(map?.id || '').replace(/_classic/, '').replace(/_v\d+$/, '') || 'default';
   }
 
-  async _loadMaterials(theme = 'default') {
+  async _loadMaterials(theme = 'default', map = null) {
+    // 风格化地图不叠材质贴图（见 _rebuildTerrain 的 composed 分支），探测主题目录只会产生 404。
+    if (map?.visualStyle === 'stylized') return;
     if (this._texTheme === theme) return;
     this._texTheme = theme;
     // 先找主题目录，缺哪张就回落到 assets/textures/ 根目录的通用图。

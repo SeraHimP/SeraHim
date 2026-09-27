@@ -143,6 +143,8 @@ const CONFLUENCE_TERRAIN = {
 const CONFLUENCE_CONFIG = {
   id: 'confluence_v1',
   label: '汇流战场',
+  // 2026-09-27：从玩家的"选择地图"列表里隐藏（半成品/探路图），代码与测试保留。
+  hiddenFromPicker: true,
   factions: [FACTIONS.BLUE, FACTIONS.RED],
 
   // 复用已有的"default"风格化调色板（没有任何地图在用，且本图的"不可走区域=

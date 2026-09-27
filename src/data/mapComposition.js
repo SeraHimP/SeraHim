@@ -95,22 +95,29 @@ export const CONFIG_FIELDS = [
   // composeMap() 又要用这个字段的图，同一个坑、同一个原因：不写进白名单会被
   // composeMap() 静默丢弃，画面上什么也不会发生，且没有任何报错提示。
   'terrainEdge',
+  // 为 true 时不出现在"选择地图"列表里（半成品/探路图），loadMap(id) 仍可加载。
+  'hiddenFromPicker',
 ];
 
 /**
  * 把一份地形模板和一份玩法配置拼成一个完整地图对象——形状与手写的地图源码
  * （summoners_rift.js 那种）完全一致，可以直接存进 CONFIG.customMaps[id]。
  * @param {{terrain:object, config:object}} o
- *   terrain 只读 TERRAIN_FIELDS 里的字段，config 只读 CONFIG_FIELDS 里的字段
- *   （多传了不认识的字段会被忽略，缺的字段拼出来的地图对象里就没有那个 key，
- *   跟"手写地图源码时那个字段本来就没写"是同一回事，下游系统各自的
- *   `map.xxx ?? 默认值` 兜底逻辑照常生效）。
+ *   terrain 只认 TERRAIN_FIELDS，config 只认 CONFIG_FIELDS（外加 id/label）。
+ *   出现名单外的字段直接抛错：原来是静默丢弃，dominionNodes/waveEditorLaneIds/
+ *   terrainEdge 先后因此"写了没效果、也不报错"。缺的字段照旧可以不写。
  * @returns {object} 完整地图对象
  */
 export function composeMap({ terrain, config }) {
   if (!terrain) throw new Error('composeMap: terrain 不能为空');
   if (!config) throw new Error('composeMap: config 不能为空');
   if (!config.id) throw new Error('composeMap: config.id 不能为空');
+  const unknown = (obj, allowed) => Object.keys(obj).filter(k => k !== 'id' && k !== 'label' && !allowed.includes(k));
+  const badT = unknown(terrain, TERRAIN_FIELDS), badC = unknown(config, CONFIG_FIELDS);
+  if (badT.length || badC.length) {
+    throw new Error(`composeMap(${config.id}): 未登记的字段 ${[...badT.map(k => 'terrain.' + k), ...badC.map(k => 'config.' + k)].join(', ')}`
+      + ' —— 先加进 mapComposition.js 的 TERRAIN_FIELDS / CONFIG_FIELDS');
+  }
   const out = { id: config.id, label: config.label || config.id };
   for (const k of TERRAIN_FIELDS) if (terrain[k] !== undefined) out[k] = terrain[k];
   for (const k of CONFIG_FIELDS) if (config[k] !== undefined) out[k] = config[k];

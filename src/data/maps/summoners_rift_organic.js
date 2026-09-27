@@ -40,6 +40,8 @@ const SR_ORGANIC_CONFIG = {
   ...SR_CONFIG,
   id: 'summoners_rift_organic_v1',
   label: '召唤师峡谷·蜿蜒版',
+  // 2026-09-27：从玩家的"选择地图"列表里隐藏（半成品/探路图），代码与测试保留。
+  hiddenFromPicker: true,
   lanes: [
     {
       id: 'top',

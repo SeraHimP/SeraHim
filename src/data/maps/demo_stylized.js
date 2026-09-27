@@ -46,6 +46,8 @@ const B = {
 export const demo_stylized = {
   id: 'demo_stylized_v1',
   label: '风格化地图',
+  // 2026-09-27：从玩家的"选择地图"列表里隐藏（半成品/探路图），代码与测试保留。
+  hiddenFromPicker: true,
   factions: [FACTIONS.BLUE, FACTIONS.RED],
   visualStyle: 'stylized',   // 唯一驱动这张图走风格化渲染分支的字段
 
