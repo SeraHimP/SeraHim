@@ -1,4 +1,4 @@
-import { canTarget, isStructureProtected, enemyUnitsInRadius } from './FactionSystem.js';
+import { canTarget, isStructureProtected, enemyUnitsInRadius, FACTIONS } from './FactionSystem.js';
 import { AISystem } from './AISystem.js';
 import { hasRamCannon } from './CombatSystem.js';
 import { canFire, wrapPi, angleTo } from './FacingSystem.js';
@@ -899,8 +899,19 @@ export class LaneMovementSystem {
     for (const o of this.entities.findInRadius(minion.pos.x, minion.pos.y, rSelf + 80, ['tower'], false)) {
       if (!o.pos || o.id === minion.targetId) continue;
       const isRuin = !o.alive && !!o._ruin;
-      const sameFac = (o._mapFaction || o.faction) === minion._mapFaction;
-      if (!(isRuin || (o.alive && sameFac))) continue;
+      const oFac = o._mapFaction || o.faction;
+      const sameFac = oFac === minion._mapFaction;
+      // 2026-09-27 用户报"防御塔和小兵穿模"——根因：中立塔（水晶之痕的据点在
+      // 被占领之前就是这个状态，_mapFaction==='neutral'）原来完全没进这条判据：
+      // sameFac 对蓝/红双方都恒为假（中立≠蓝，中立≠红），isRuin 也不成立，于是
+      // 中立据点在这里被判定成"既不是己方塔也不是废墟"，双方小兵都不会把它当
+      // 障碍绕行，直接从模型里穿过去。中立塔不是任何一方的"索敌目标"这个顾虑
+      // （敌方活塔不纳入是为了不让小兵绕着攻击目标转圈）不适用于它——中立塔
+      // 谁都能打，但正在穿过它、没有把它设为目标的小兵，仍然应该把它当障碍绕开，
+      // 跟同阵营塔的处理逻辑相同。o.id===minion.targetId 那行已经排除了"正在
+      // 攻击它的小兵"，不会因为这条改动而影响正常的索敌/攻击流程。
+      const isNeutral = oFac === FACTIONS.NEUTRAL || !oFac;
+      if (!(isRuin || (o.alive && (sameFac || isNeutral)))) continue;
       const ox = minion.pos.x - o.pos.x, oy = minion.pos.y - o.pos.y;
       const od = Math.hypot(ox, oy) || 0.001;
       // Q4：半径必须乘上塔模型的【视觉放大系数】。渲染层把塔/废墟画大了 1.25×（水晶 1.10×），
