@@ -21,7 +21,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 import { statueTower } from './towerStatue.js';
-import { crystalShrine, chippedCrystal } from './crystalShrines.js';
+import { crystalShrine, crystalGeoOf, ruinShardsGeo } from './crystalShrines.js';
 
 const _geoCache = new Map();
 const _matCache = new Map();
@@ -256,6 +256,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     const R = bSize, parts = [];
     let crystalGeo = null, crystalCy = 0, crystalR = 0;   // Q6：水晶单独成件，不并入石身
     let crystalMuzzleK = 0;   // v43 Q8：炮口相对水晶中心上移的比例（× crystalR），0 = 正中心
+    let crystalSpinK = 1;     // 水晶自转倍率：召唤水晶等待重生时的悬浮碎晶转得慢
     const F0 = facStyle(faction);
     // v54：地图调色板可以覆写石色/亮色。塔要和这张图的城墙同源，否则融不进去。
     const F = (pal && (pal.stone || pal.trim))
@@ -288,13 +289,21 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         crystalGeo = new THREE.OctahedronGeometry(crystalR);
       }
     } else if (shrine) {
-      if (ruin) parts.push(...shrine.ruin);
-      else {
+      if (ruin) {
+        parts.push(...shrine.ruin);
+        // 召唤水晶会重生：碎石堆上方悬着几块慢慢转的碎晶（用正常水晶的材质）。枢纽被摧毁就是一局结束，不带。
+        if (kind === 'orb' && shrine.ruinShardY != null) {
+          crystalR = shrine.crystalR;
+          crystalCy = shrine.ruinShardY;
+          crystalGeo = ruinShardsGeo(crystalR);
+          crystalSpinK = CONFIG.ui?.crystalShrine?.ruinShards?.spinK ?? 0.4;
+        }
+      } else {
         const d = Math.max(0, Math.min(2, dmg));
         parts.push(...stageParts(shrine, d));
         crystalR = shrine.crystalR;
         crystalCy = shrine.crystalCy;
-        crystalGeo = chippedCrystal(kind, crystalR, d);   // 水晶本身也随损毁缺角
+        crystalGeo = crystalGeoOf(kind, crystalR);   // 水晶永远完整（用户："水晶不要掉块"）
         crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
       }
     } else if (ruin) {
@@ -954,7 +963,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     }
     hit = pack(parts);
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
-    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR, cx: statue ? statue.crystalX : 0, cz: statue ? statue.crystalZ : 0 }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
+    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR, cx: statue ? statue.crystalX : 0, cz: statue ? statue.crystalZ : 0, spinK: crystalSpinK }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
   }

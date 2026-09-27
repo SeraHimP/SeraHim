@@ -1202,6 +1202,7 @@ export class UnitLayer {
         en.crystalLocalY = vis.crystal.cy;
         // 雕像塔的水晶在杖顶，不在中轴上：记下模型坐标里的水平偏移，按塔的朝向转到世界里
         en.crystalLocalX = vis.crystal.cx || 0;
+        en.crystalSpinK = vis.crystal.spinK ?? 1;
         en.crystalLocalZ = vis.crystal.cz || 0;
       } else if (en.crystal) {
         this._disposeCrystal(en);
@@ -1293,7 +1294,7 @@ export class UnitLayer {
       en.crystal.scale.setScalar(Math.max(0.001, ck));
       en.crystal.visible = ck > 0.01;
       const cc = CONFIG.ui?.crystal || {};
-      const spin = cc.spin ?? CRYSTAL_SPIN;
+      const spin = (cc.spin ?? CRYSTAL_SPIN) * (en.crystalSpinK ?? 1);
       en.crystal.rotation.y = (en.faceFixed || 0) + tNow * spin;
       // 粒子尺寸：正交相机下 gl_PointSize 是【像素】且不随缩放变，必须自己按 像素/世界单位 换算，
       // 否则缩小看全图时粒子把塔糊成一团。上限 CRYSTAL_PT_MAX_PX 防近距离过大。

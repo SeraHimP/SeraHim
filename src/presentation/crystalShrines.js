@@ -7,10 +7,11 @@
  *     中间一圈短柱围着巨晶。
  * 造型语言与雕像塔一致：蓝方庄重、沉稳（对称、方正），红方混沌、尖锐（尖角、倾斜、不对称）。
  *
- * 攻击水晶在中轴上（炮口不偏），大小与高度三档一致；损毁时水晶本身也缺角（chippedCrystal）。
+ * 攻击水晶在中轴上，大小与高度三档一致，永远完整（crystalGeoOf）；召唤水晶等待重生时换成几块悬浮碎晶（ruinShardsGeo）。
  */
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
+import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { PieceModel, hash01, orderStatue, chaosStatue, statueColors, rubblePile } from './towerStatue.js';
 
 const T = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
@@ -30,32 +31,32 @@ const faceIn = (a) => Math.atan2(-Math.cos(a), -Math.sin(a));
 const faceOut = (a) => Math.atan2(Math.cos(a), Math.sin(a));
 
 /**
- * 损毁时攻击水晶本身也缺角：把某个方向上的顶点往中心压（同一方向的顶点一起动，面不会裂开）。
- * 形状只由 (kind, r, dmg) 决定，可缓存。
+ * 攻击水晶的几何：召唤水晶二十面体、水晶枢纽八面体。
+ * 正常 / 轻损 / 重损三档用同一份几何，永远完整（用户："正常/轻损/重损的水晶模型不要变！水晶不要掉块！"）。
  */
-export function chippedCrystal(kind, r, dmg) {
-  const g = (kind === 'gem' ? new THREE.OctahedronGeometry(r) : new THREE.IcosahedronGeometry(r, 0)).toNonIndexed();
-  if (dmg > 0) {
-    const cfg = CONFIG.ui?.crystalShrine || {};
-    const dents = dmg === 1 ? (cfg.dentsLight || [[0.6, 0.7, 0.4, 0.62]])
-                            : (cfg.dentsHeavy || [[0.6, 0.7, 0.4, 0.5], [-0.7, -0.2, 0.6, 0.62], [0, 1, 0, 0.55]]);
-    // 每个缺口压的是"离这个方向最近的那个角"——八面体只有 6 个角，用固定阈值会一个都挑不中
-    const p = g.attributes.position, v = new THREE.Vector3(), d = new THREE.Vector3();
-    const dirs = [];
-    for (let i = 0; i < p.count; i++) dirs.push(v.fromBufferAttribute(p, i).clone().normalize());
-    const scale = new Float32Array(p.count).fill(1);
-    for (const [dx, dy, dz, k] of dents) {
-      d.set(dx, dy, dz).normalize();
-      const best = Math.max(...dirs.map((u) => u.dot(d)));
-      dirs.forEach((u, i) => { if (u.dot(d) >= best - 1e-4) scale[i] = Math.min(scale[i], k); });
-    }
-    for (let i = 0; i < p.count; i++) {
-      v.fromBufferAttribute(p, i).multiplyScalar(scale[i]);
-      p.setXYZ(i, v.x, v.y, v.z);
-    }
+export function crystalGeoOf(kind, r) {
+  return kind === 'gem' ? new THREE.OctahedronGeometry(r) : new THREE.IcosahedronGeometry(r, 0);
+}
+
+/**
+ * 召唤水晶"等待重生"时的水晶：几块碎晶悬在碎石堆上方，慢慢转（象征一会儿会重生）。
+ * 用户："召唤水晶的损毁模型……应该还包含悬浮在半空中的水晶碎片在缓慢旋转"、"底座中的水晶也要做成和正常水晶一样的材质"
+ * ——这份几何交给 UnitLayer 当"水晶"画，走的就是正常水晶的材质与自转。
+ */
+export function ruinShardsGeo(r) {
+  const C = CONFIG.ui?.crystalShrine?.ruinShards || {};
+  const n = C.count ?? 5;
+  const geos = [];
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2 + 0.4;
+    const g = new THREE.OctahedronGeometry(r * (C.size ?? 0.34) * (0.75 + hash01(i, 5) * 0.5), 0);
+    g.scale(0.8, 1.5, 0.8);
+    g.rotateZ((hash01(i, 6) - 0.5) * 0.9);
+    g.rotateX((hash01(i, 7) - 0.5) * 0.9);
+    g.translate(Math.cos(a) * r * (C.spread ?? 0.75), r * (hash01(i, 8) - 0.5) * (C.heightJitter ?? 0.7), Math.sin(a) * r * (C.spread ?? 0.75));
+    geos.push(g);
   }
-  g.computeVertexNormals();
-  return g;
+  return mergeGeometries(geos);
 }
 
 /**
@@ -74,6 +75,7 @@ export function crystalShrine(kind, R, faction, F) {
   const s1 = r.light.filter(has), s2 = [...s1, ...r.heavy.filter(has)];
   const rc = CONFIG.ui?.crystalShrine?.ruin || {};
   return { model: m, stages: [[], s1, s2], crystalCy: r.crystalCy, crystalR: r.crystalR, figures: r.figures, support: r.support,
+           ruinShardY: r.ruinShardY ?? null,
            ruin: rubblePile(m, R, col, { keepBelow: r.keepBelow, moundHeight: r.moundHeight, spread: rc.spread ?? 1.0, blocks: rc.blocks ?? 18, pieceScale: rc.pieceScale }) };
 }
 
@@ -111,6 +113,7 @@ function inhibBearers(m, R, col, red) {
   const crystalR = R * (cfg.orbCrystalR ?? 0.42);
   return {
     crystalR, crystalCy: R * 0.26 + K * R * 1.5 + crystalR * 0.35, keepBelow: 0.3, moundHeight: 0.3,
+    ruinShardY: R * (cfg.ruinShards?.height ?? 0.95),
     figures, support: { y: R * 0.16, r: R * 0.94 * Math.cos(Math.PI / (red ? 7 : 10)) },   // 台面内切圆半径
     light: ['f0.arm1', 'f0.plate1', 'f1.cape', 'edge1', 'edge4', 'rune2'],
     heavy: ['f0.torso', 'f1.arm-1', 'f1.plate-1', 'f2.arm1', 'f2.cape', 'edge2', 'edge5', 'edge0', 'rune1', 'rune4'],
@@ -201,9 +204,10 @@ function nexusTemple(m, R, col, red) {
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * Math.PI * 2 + Math.PI / 4;
     const x = Math.cos(a) * gr, z = Math.sin(a) * gr;
-    figures.push({ x, z, y: top, r: R * 0.25 });
-    m.add(red ? Cy(R * 0.18, R * 0.25, R * 0.14, 5) : Cy(R * 0.2, R * 0.25, R * 0.14, 8), T(x, top + R * 0.07, z), shade(col.trim, 0.8));
-    m.prefixed(`g${i}.`, () => m.within(C(T(x, top + R * 0.14, z), RY(faceOut(a)), S(K * R)), () => {
+    // 守卫直接站在台面上（不再垫台座）：原来脚下那块浅色台座在这个视角下读成"托着守卫的一块浮板"，
+    // 用户两次说"守卫是悬空着的"。袍摆底圆（局部半径 0.34）直接落在台面上。
+    figures.push({ x, z, y: top, r: 0.34 * K * R });
+    m.prefixed(`g${i}.`, () => m.within(C(T(x, top, z), RY(faceOut(a)), S(K * R)), () => {
       const staff = red ? chaosStatue(m, col, 1) : orderStatue(m, col, 1);
       m.add(new THREE.OctahedronGeometry(0.07), T(staff.x, staff.top + 0.2, staff.z), shade(col.armor, 1.5));   // 杖顶小晶
     }));

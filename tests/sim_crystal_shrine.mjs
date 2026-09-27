@@ -6,7 +6,7 @@ setupWindow();
 
 const THREE = await import('../vendor/three.module.js');
 const { CONFIG } = await import('../src/data/Config.js');
-const { crystalShrine, chippedCrystal } = await import('../src/presentation/crystalShrines.js');
+const { crystalShrine, crystalGeoOf, ruinShardsGeo } = await import('../src/presentation/crystalShrines.js');
 const { partsBox } = await import('../src/presentation/towerStatue.js');
 const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
 const { T, done } = scoreboard('召唤水晶 / 水晶枢纽');
@@ -21,7 +21,7 @@ const F = { stone: '#b9c6d6', trim: '#eaf2fd' };
   T('①c枢纽碰撞半径盖住圣殿台面（台面外沿 1.3R）', (vz.nexus_main ?? vz.default) >= 1.3);
   T('①开关、守卫大小、水晶半径、缺角位置、废墟参数都在 CONFIG.ui.crystalShrine（软编码）',
     ['statue', 'classic'].includes(S.style) && S.bearerScale > 0 && S.guardianScale > 0 && S.orbCrystalR > 0 && S.gemCrystalR > 0
-    && S.dentsLight.length && S.dentsHeavy.length && S.ruin);
+    && S.ruinShards.count > 0 && S.ruin);
 }
 
 for (const [kind, R, name] of [['orb', 34, '召唤水晶'], ['gem', 44, '水晶枢纽']]) {
@@ -45,12 +45,9 @@ for (const [kind, R, name] of [['orb', 34, '召唤水晶'], ['gem', 44, '水晶�
       JSON.stringify(crystalShrine(kind, R, fac, F).stages) === JSON.stringify(sh.stages)
       && partsBox(crystalShrine(kind, R, fac, F).ruin).max.y === ruin.max.y);
   }
-  // 水晶本身缺角：顶点被压进去（包围半径不变或变小），三档形状不同
-  const g = [0, 1, 2].map((d) => chippedCrystal(kind, 10, d));
-  const maxR = (geo) => { let r = 0; const p = geo.attributes.position; for (let i = 0; i < p.count; i++) r = Math.max(r, Math.hypot(p.getX(i), p.getY(i), p.getZ(i))); return r; };
-  const minR = (geo) => { let r = Infinity; const p = geo.attributes.position; for (let i = 0; i < p.count; i++) r = Math.min(r, Math.hypot(p.getX(i), p.getY(i), p.getZ(i))); return r; };
-  T(`⑨${name}：水晶随损毁缺角（完好的顶点都在半径上，轻损、重损越压越深）`,
-    Math.abs(minR(g[0]) - 10) < 1e-3 && minR(g[1]) < 9 && minR(g[2]) <= minR(g[1]) && maxR(g[2]) <= 10 + 1e-6);
+  // 用户："正常/轻损/重损的水晶模型不要变！水晶不要掉块！"——几何只由 (kind, 半径) 决定，与损毁无关，就是原来那颗
+  const g = crystalGeoOf(kind, 10), n0 = kind === 'gem' ? 8 * 3 : 20 * 3;
+  T(`⑨${name}：水晶几何完整、就是原来那颗（${kind === 'gem' ? '八面体' : '二十面体'}）`, g.attributes.position.count === n0);
 }
 
 {
@@ -60,9 +57,21 @@ for (const [kind, R, name] of [['orb', 34, '召唤水晶'], ['gem', 44, '水晶�
     const ms = [0, 1, 2].map((d) => towerMesh(`shrine-test|${kind}|${d}`, '#5b9bd5', 40, '', kind, false, false, 'nexus', 'blue', d, null));
     T(`⑩${kind}：towerMesh 接入后三档 topY / muzzleY 逐位相等（炮口不跳）`,
       ms.every((m) => m.topY === ms[0].topY && m.muzzleY === ms[0].muzzleY));
-    T(`⑪${kind}：三档水晶几何不同（缺角），水晶在中轴上`,
-      ms[0].crystal.geo !== ms[2].crystal.geo && ms.every((m) => !m.crystal.cx && !m.crystal.cz));
-    T(`⑫${kind}：废墟没有水晶`, !towerMesh(`shrine-test|${kind}|ruin`, '#5b9bd5', 40, '', kind, false, true, 'nexus', 'blue', 0, null).crystal);
+    const cnt = (m) => m.crystal.geo.attributes.position.count;
+    T(`⑪${kind}：三档水晶一模一样（不掉块），水晶在中轴上`,
+      ms.every((m) => cnt(m) === cnt(ms[0]) && m.crystal.r === ms[0].crystal.r) && ms.every((m) => !m.crystal.cx && !m.crystal.cz));
+    const ruinM = towerMesh(`shrine-test|${kind}|ruin`, '#5b9bd5', 40, '', kind, false, true, 'nexus', 'blue', 0, null);
+    if (kind === 'orb') {
+      // 用户："召唤水晶的损毁模型……应该还包含悬浮在半空中的水晶碎片在缓慢旋转（象征一会重生）"
+      T('⑫召唤水晶等待重生：碎石堆上方悬着几块碎晶（按水晶画 = 正常水晶的材质），转得比正常水晶慢',
+        !!ruinM.crystal && ruinM.crystal.spinK < 1 && cnt(ruinM) === 8 * 3 * CONFIG.ui.crystalShrine.ruinShards.count);
+      ruinM.crystal.geo.computeBoundingBox();
+      const pileTop = partsBox([{ geo: ruinM.geo, matrix: new THREE.Matrix4() }]).max.y;
+      const shardLow = ruinM.crystal.cy + ruinM.crystal.geo.boundingBox.min.y;
+      T(`⑫b碎晶是悬空的：最低一块的底（${shardLow.toFixed(1)}）高过碎石堆顶（${pileTop.toFixed(1)}）`, shardLow > pileTop);
+    } else {
+      T('⑫水晶枢纽被摧毁（一局结束）：没有悬浮碎晶', !ruinM.crystal);
+    }
   }
   CONFIG.ui.crystalShrine.style = 'classic';
   const cl = towerMesh('shrine-test|classic', '#5b9bd5', 40, '', 'gem', false, false, 'nexus', 'blue', 0, null);

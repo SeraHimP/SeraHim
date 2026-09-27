@@ -1563,16 +1563,15 @@ export const CONFIG = {
     //   bearerScale / guardianScale：托举守卫 / 枢纽守卫的大小（× 建筑半径）
     //   bearerRadius / guardianRadius：守卫站在离中心多远（× 建筑半径）——台座/袍摆必须整个落在台面内
     //   orbCrystalR / gemCrystalR：两种攻击水晶的半径（× 建筑半径）
-    //   dentsLight / dentsHeavy：水晶本身缺角的位置与深度 [方向x, y, z, 压到原半径的几成]
+    //   ruinShards：召唤水晶等待重生时悬在碎石堆上的碎晶（颗数、大小、散开半径、高度 × 建筑半径、自转倍率）
     //   ruin：废墟碎石丘铺开半径（× 建筑半径）、额外石块数、倒下的守卫/柱子缩放
     crystalShrine: {
       style: 'statue',
       bearerScale: 0.72, bearerRadius: 0.55,
-      guardianScale: 0.62, guardianRadius: 0.66,
+      guardianScale: 0.46, guardianRadius: 0.66,
       orbCrystalR: 0.42,
       gemCrystalR: 0.6,
-      dentsLight: [[0.6, 0.7, 0.4, 0.62]],
-      dentsHeavy: [[0.6, 0.7, 0.4, 0.5], [-0.7, -0.2, 0.6, 0.62], [0, 1, 0, 0.55]],
+      ruinShards: { count: 5, size: 0.34, spread: 0.75, heightJitter: 0.7, height: 1.45, spinK: 0.4 },
       ruin: { spread: 1.0, blocks: 18, pieceScale: 0.65 },
     },
 
