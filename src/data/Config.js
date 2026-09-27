@@ -27,6 +27,10 @@ const UNIT_STAT_DEFAULTS = {
 
 export const CONFIG = {
   gameRules: {
+    // 基地高地城墙的碰撞（只对声明了 map.baseWalls 的图生效，目前是召唤师峡谷）：
+    // true = 只有墙体本身挡人，墙后那一大片围墙带能走（用户："实际的墙就薄薄一层"）；
+    // false = 整条围墙带都不能走（改动前的玩法）。
+    baseWallThinCollision: true,
     waveInterval: 45,
     firstWaveDelay: 20,
     shieldRegenDelay: 8,

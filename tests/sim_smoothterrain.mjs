@@ -58,7 +58,7 @@ const isA = (px, W, x, y) => px[(y * W + x) * 4] === 255;
   const src = fs.readFileSync(new URL('../src/presentation/TerrainLayer.js', import.meta.url), 'utf8');
   T('⑨TerrainLayer 在开关打开时走 smoothLabelsToRGBA，关闭时保留逐格最近邻路径',
     /if \(smooth\)[\s\S]{0,300}smoothLabelsToRGBA/.test(src) && /imageSmoothingEnabled = false/.test(src));
-  T('⑩地面形状按原生 navgrid 重采样（不是从 8 单位格二次量化）', /smoothNavWalk\(map, grid, paint0\)/.test(src));
+  T('⑩地面形状按原生 navgrid 重采样（不是从 8 单位格二次量化）', /smoothNavWalk\(map, grid, paint0(, mapSystem)?\)/.test(src));
   const dlg = fs.readFileSync(new URL('../src/ui/SettingsDialog.js', import.meta.url), 'utf8');
   T('⑪设置面板有开关，并且会重建地形缓存', /setTerrainSmoothBtn/.test(dlg) && /invalidateTerrain/.test(dlg));
   const w = CONFIG.ui.water;

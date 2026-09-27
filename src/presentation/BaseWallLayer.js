@@ -15,7 +15,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
-import { baseWallMask, baseWallRuns } from '../data/baseCircle.js';
+import { baseWallMask, baseWallRuns, baseWallThickness } from '../data/baseCircle.js';
 import { unpackBits, navgridOf } from '../data/navgrid.js';
 import { mergeGeometries } from '../../vendor/BufferGeometryUtils.js';
 import { withColor, hash } from './VegetationLayer.js';
@@ -75,7 +75,7 @@ export class BaseWallLayer {
         const rotY = -(p.ang + Math.PI / 2);                  // 沿基地圈切线
         const tx = Math.cos(p.ang + Math.PI / 2), ty = Math.sin(p.ang + Math.PI / 2);
         const base = heightAt(p.x, p.y);
-        const T = Math.min(W.thicknessMax ?? 24, Math.max(W.thicknessMin ?? 14, p.width * 0.5));
+        const T = baseWallThickness(p.width, W);      // 与碰撞（baseWallFootprint）同一个厚度
         for (let c = 0; c < courses; c++) {
           const off = (c % 2) * block / 2;                    // 错缝：奇数层半块偏移
           box(block - 1.6, courseH - 1.2, T, p.x + tx * off, base + courseH * (c + 0.5), p.y + ty * off, rotY, shade(k * 3 + c, 0.14));

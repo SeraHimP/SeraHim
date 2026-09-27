@@ -5,7 +5,7 @@ import { forestZoneAt } from '../data/mapValidate.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected, mapFactionsOf } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
-import { baseCircleCenter } from '../data/baseCircle.js';
+import { baseCircleCenter, applyThinBaseWalls } from '../data/baseCircle.js';
 import { unpackBits, unpackByteGrid } from '../data/navgrid.js';
 import { LIVE_EDIT_SESSION_MAP_ID } from '../data/mapEditorCore.js';
 import { resolveAuraEffectValue } from './AuraValueResolver.js';
@@ -961,7 +961,10 @@ export class MapSystem {
       // 笔刷要用同一份编解码逻辑序列化画好的地形，不能各写一份、容易悄悄跑偏）。
       // atob 在浏览器有、Node 18+ 全局也有；都没有就退回走廊模型（不炸），
       // unpackBits 内部处理这个兜底，这里只需要判断返回值。
-      const bits = unpackBits(NG.bits, n);
+      const raw = unpackBits(NG.bits, n);
+      // 基地城墙：设计数据里的围墙带打开，只有墙体本身挡人（见 baseCircle.applyThinBaseWalls）。
+      const bits = raw && applyThinBaseWalls(this.currentMap, raw, n, CONFIG.ui?.baseWall || {},
+        CONFIG.gameRules?.baseWallThinCollision !== false);
       if (bits) this._nav = { n, bits };
     }
     return this._nav;

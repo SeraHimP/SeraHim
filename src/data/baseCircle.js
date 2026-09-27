@@ -188,3 +188,63 @@ export function baseWallRuns(map, mask, n, spacing = 18) {
   }
   return runs;
 }
+
+/** 城墙在某个中线点的厚度：墙带宽度的一半，夹在 [thicknessMin, thicknessMax]。画墙和碰撞共用。 */
+export function baseWallThickness(bandWidth, cfg = {}) {
+  return Math.min(cfg.thicknessMax ?? 24, Math.max(cfg.thicknessMin ?? 14, bandWidth * 0.5));
+}
+
+/**
+ * 城墙实际占的格子（n×n）：每个中线点一块 blockLength × 厚度 的砖段，外加每截墙两端的墩台。
+ * 与 BaseWallLayer 画出来的墙逐块对应——"看到的墙就是挡人的墙"。
+ * 光栅化后再补一遍对角缝：两个只在对角相接的墙格之间，单位不能斜着钻过去。
+ */
+export function baseWallFootprint(map, mask, n, cfg = {}) {
+  const out = new Uint8Array(n * n);
+  if (!mask) return out;
+  const cw = map.world.w / n, ch = map.world.h / n;
+  const block = cfg.blockLength ?? 18, pillar = cfg.pillarSize ?? 30;
+  const mark = (x, y) => {
+    const i = Math.floor(x / cw), j = Math.floor(y / ch);
+    if (i >= 0 && j >= 0 && i < n && j < n) out[j * n + i] = 1;
+  };
+  const rect = (cx, cy, ang, len, dep) => {
+    const tx = Math.cos(ang + Math.PI / 2), ty = Math.sin(ang + Math.PI / 2);   // 沿墙
+    const nx = Math.cos(ang), ny = Math.sin(ang);                               // 垂直墙
+    const step = Math.min(cw, ch) / 3;
+    for (let a = -len / 2; a <= len / 2; a += step) {
+      for (let b = -dep / 2; b <= dep / 2; b += step) mark(cx + tx * a + nx * b, cy + ty * a + ny * b);
+    }
+  };
+  for (const run of baseWallRuns(map, mask, n, block)) {
+    run.forEach((p, i) => {
+      rect(p.x, p.y, p.ang, block, baseWallThickness(p.width, cfg));
+      if (i === 0 || i === run.length - 1) rect(p.x, p.y, p.ang, pillar, pillar);
+    });
+  }
+  for (let j = 0; j < n - 1; j++) {
+    for (let i = 0; i < n - 1; i++) {
+      const a = out[j * n + i], b = out[j * n + i + 1], c = out[(j + 1) * n + i], d = out[(j + 1) * n + i + 1];
+      if (a && d && !b && !c) out[j * n + i + 1] = 1;
+      if (b && c && !a && !d) out[j * n + i] = 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * 运行时可走位图：设计数据（map.navgrid）里的"围墙带"整片打开，只把城墙实际占的格子封回去。
+ * 用户："高地墙往里的那一块，地面是不可走有一大块，实际的墙就薄薄一层"——
+ * 能不能走由墙本身决定，不由那条带子决定。兵线口子、野区都不受影响。
+ * 地图没声明 baseWalls 或 CONFIG.gameRules.baseWallThinCollision === false 时原样返回。
+ * @returns {Uint8Array} 新位图（不改传入的 bits）
+ */
+export function applyThinBaseWalls(map, bits, n, cfg = {}, enabled = true) {
+  if (!enabled || !map?.baseWalls) return bits;
+  const mask = baseWallMask(map, bits, n, cfg.wallFraction ?? 0.5);
+  if (!mask) return bits;
+  const foot = baseWallFootprint(map, mask, n, cfg);
+  const out = Uint8Array.from(bits);
+  for (let k = 0; k < n * n; k++) if (mask[k]) out[k] = foot[k] ? 0 : 1;
+  return out;
+}

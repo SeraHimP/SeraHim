@@ -96,12 +96,15 @@ function visualWalkOf(map, grid) {
  * 可走判定不受影响（仍然只认 navgrid 最近邻）；grid.walk 比 navgrid 多出来的阻挡
  * （例如"河道不可行走"开关）照样保留——那些格子在两边都判成不可走。
  */
-function smoothNavWalk(map, grid, fallback) {
+function smoothNavWalk(map, grid, fallback, mapSystem = null) {
+  // 优先读 MapSystem 的运行时位图（已经把基地围墙带按"只有墙体挡人"改过）；
+  // 声明了 visualNavgrid 的图（冰封）按它画；都没有时退回地图数据本身，
   // 与 MapSystem._navgrid() 同一条兜底：没声明 navgrid 的 useNavgrid 地图用峡谷那张。
+  const live = !map.visualNavgrid?.bits && mapSystem?._navgrid?.();
   const src = map.visualNavgrid?.bits ? map.visualNavgrid : (map.navgrid || SR_NAVGRID);
-  if (!src || !src.bits || !src.n) return fallback;
-  const n = src.n;
-  const bits = unpackBits(src.bits, n);
+  if (!live && (!src || !src.bits || !src.n)) return fallback;
+  const n = live ? live.n : src.n;
+  const bits = live ? live.bits : unpackBits(src.bits, n);
   if (!bits) return fallback;
   const { nx, ny, walk } = grid;
   const at = (i, j) => (i < 0 || j < 0 || i >= n || j >= n) ? 0 : bits[j * n + i];
@@ -263,7 +266,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
     // 画地面用的形状可以与"能不能走"分开（见 visualWalkOf 头注）；没声明就还是照抄可走网格。
     const paint0 = visualWalkOf(map, grid) || walk;
-    const paint = (CONFIG.ui?.terrainSmooth?.enabled !== false) ? smoothNavWalk(map, grid, paint0) : paint0;
+    const paint = (CONFIG.ui?.terrainSmooth?.enabled !== false) ? smoothNavWalk(map, grid, paint0, mapSystem) : paint0;
 
     // ==================== v58：走廊 / 野区二分（森林风格地图新增）====================
     // 用户："召唤师峡谷是森林风格。"——LoL 原图里可走区域并不是一片同色：兵线走廊是
