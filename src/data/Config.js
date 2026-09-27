@@ -887,7 +887,7 @@ export const CONFIG = {
   // 否则小兵会按"未放大的半径"贴到塔面上 —— 画面上就是穿进模型里（Q4 废墟穿模的根因，
   // 活体塔同理，只是废墟没有血条/射程圈遮挡所以最容易被看出来）。
   // UnitLayer 与 LaneMovementSystem 共读这一份，改一处两边同步。
-  towerVizScale: { nexus_lane: 1.10, nexus_main: 1.10, default: 1.25 },
+  towerVizScale: { nexus_lane: 1.10, nexus_main: 1.34, default: 1.25 },
 
   // ==================== 对战成长表（Q2：从 main.js 的硬编码常量搬到这里）====================
   // 纯固定值/波，杜绝复利后期爆炸；只动 最大生命/攻击力/双抗。
@@ -1514,7 +1514,7 @@ export const CONFIG = {
     //   dentsLight / dentsHeavy：水晶本身缺角的位置与深度 [方向x, y, z, 压到原半径的几成]
     //   ruin：废墟碎石丘铺开半径（× 建筑半径）、额外石块数、倒下的守卫/柱子缩放
     crystalShrine: {
-      style: 'classic',
+      style: 'statue',
       bearerScale: 0.72,
       guardianScale: 0.62,
       orbCrystalR: 0.42,
@@ -2573,7 +2573,7 @@ export const CONFIG = {
   // ⚠️ 这张表同时是**碰撞与避障半径**的来源，所以调它会一并改变小兵绕塔的手感，不只是观感。
   buildingSizes: {
     outer: 32, inner: 32, base: 32, hq_tower: 32,
-    nexus_lane: 34, nexus_main: 44, default: 32,
+    nexus_lane: 34, nexus_main: 57, default: 32,
   },
 
   // v45：龙的显示尺寸。原来写死在两处（UnitLayer 的 size 与 UnitMeshFactory 的 S），

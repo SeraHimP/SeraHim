@@ -14,6 +14,11 @@ const { T, done } = scoreboard('召唤水晶 / 水晶枢纽');
 const F = { stone: '#b9c6d6', trim: '#eaf2fd' };
 {
   const S = CONFIG.ui.crystalShrine;
+  // 用户："把水晶枢纽的模型做的大一些！（面积大一些）"、"模型的碰撞就是按照模型的实际尺寸来计算的！"
+  // 所以放大走 buildingSizes（画面与碰撞同源），并且碰撞半径（× towerVizScale）要盖住圣殿台面。
+  const bs = CONFIG.buildingSizes, vz = CONFIG.towerVizScale;
+  T('①b枢纽明显比召唤水晶、塔大（面积大）', bs.nexus_main >= bs.nexus_lane * 1.5 && bs.nexus_main >= bs.outer * 1.6);
+  T('①c枢纽碰撞半径盖住圣殿台面（台面外沿 1.3R）', (vz.nexus_main ?? vz.default) >= 1.3);
   T('①开关、守卫大小、水晶半径、缺角位置、废墟参数都在 CONFIG.ui.crystalShrine（软编码）',
     ['statue', 'classic'].includes(S.style) && S.bearerScale > 0 && S.guardianScale > 0 && S.orbCrystalR > 0 && S.gemCrystalR > 0
     && S.dentsLight.length && S.dentsHeavy.length && S.ruin);
@@ -60,6 +65,51 @@ for (const [kind, R, name] of [['orb', 34, '召唤水晶'], ['gem', 44, '水晶�
   const cl = towerMesh('shrine-test|classic', '#5b9bd5', 40, '', 'gem', false, false, 'nexus', 'blue', 0, null);
   T('⑬切回 classic 仍是原来的祭坛（水晶是正八面体、不缺角）', cl.crystal && cl.crystal.geo.type === 'OctahedronGeometry');
   CONFIG.ui.crystalShrine.style = prev;
+}
+
+{
+  // 用户："更改完模型大小后，为了确保显示效果，所有地图相应的塔位需要调整防止穿模"、
+  // "模型的碰撞就是按照模型的实际尺寸来计算的！"——
+  // 占地半径取模型真实包围（石台外沿）与碰撞半径（buildingSizes × towerVizScale）的较大者，
+  // 所有内置地图上任意两座建筑的占地圈不相交、也不压到不可走的地面上。
+  const { createSimulation } = await import('../src/simulation.js');
+  const { MAPS } = await import('../src/data/maps/index.js');
+  const { statueTower } = await import('../src/presentation/towerStatue.js');
+  const footK = {};
+  // 真实水平半径：逐顶点变换后取离中轴最远的那个（包围盒会被旋转过的八角台放大约 √2 倍）
+  const horiz = (parts) => {
+    let r = 0; const v = new THREE.Vector3();
+    for (const q of parts) {
+      const p = q.geo.attributes.position;
+      for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(q.matrix); r = Math.max(r, Math.hypot(v.x, v.z)); }
+    }
+    return r;
+  };
+  for (const t of ['outer', 'inner', 'base', 'hq_tower']) footK[t] = Math.max(...['blue', 'red'].map((f) => horiz(statueTower(1, t, f, F).model.base) ));
+  footK.nexus_lane = Math.max(...['blue', 'red'].map((f) => horiz(crystalShrine('orb', 1, f, F).model.base)));
+  footK.nexus_main = Math.max(...['blue', 'red'].map((f) => horiz(crystalShrine('gem', 1, f, F).model.base)));
+  const vz = CONFIG.towerVizScale, bs = CONFIG.buildingSizes;
+  T(`⑭碰撞半径盖住模型占地（碰撞系数 ≥ 石台外沿：${Object.entries(footK).map(([k, v]) => k + ' ' + v.toFixed(2)).join('，')}）`,
+    Object.entries(footK).every(([t, k]) => (vz[t] ?? vz.default) >= k - 0.02));
+  let bad = [], blocked = [];
+  for (const id of Object.keys(MAPS)) {
+    const sim = createSimulation(); sim.mapSystem.loadMap(id);
+    const bl = sim.entityContainer.getAll().filter((e) => e.type === 'tower');
+    const rad = (e) => (e._modelSize || bs[e._mapTier] || bs.default) * Math.max(footK[e._mapTier] ?? footK.outer, vz[e._mapTier] ?? vz.default);
+    for (let i = 0; i < bl.length; i++) for (let j = i + 1; j < bl.length; j++) {
+      const a = bl[i], b = bl[j];
+      if (Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) < rad(a) + rad(b)) bad.push(`${id}:${a._mapTier}↔${b._mapTier}`);
+    }
+    for (const e of bl) {
+      const r = (e._modelSize || bs[e._mapTier] || bs.default) * (footK[e._mapTier] ?? footK.outer);
+      for (let k = 0; k < 16; k++) {
+        const a = k / 16 * Math.PI * 2;
+        if (!sim.mapSystem.isWalkable(e.pos.x + Math.cos(a) * r, e.pos.y + Math.sin(a) * r)) { blocked.push(`${id}:${e._mapTier}#${e.id}`); break; }
+      }
+    }
+  }
+  T(`⑮所有内置地图上建筑之间不穿模（${bad.join(' ') || '无重叠'}）`, bad.length === 0);
+  T(`⑯所有内置地图上建筑的石台不压进悬崖/树林（${blocked.join(' ') || '无'}）`, blocked.length === 0);
 }
 
 done();
