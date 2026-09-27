@@ -274,6 +274,12 @@ export class LaneWaveSystem {
    * 实测径向：枢纽水晶 446 → 出兵点 515/545/512 < 枢纽塔 559，仍在塔身后。
    * 红蓝共用同一算法（红方取末端路点与倒数第二个路点的方向），天然对称。
    */
+  /** 对外：某条路、某个方向的出兵点（手动生成的兵也从这里出，见 main.js onAddMinion） */
+  spawnPointFor(laneId, direction) {
+    const lane = this.mapSystem.getLane(laneId);
+    return lane ? this._laneSpawnPoint(lane, direction) : null;
+  }
+
   _laneSpawnPoint(lane, direction) {
     const wps = lane.waypoints;
     const SPAWN_OFFSET = 100;

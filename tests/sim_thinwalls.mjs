@@ -31,7 +31,9 @@ T('④三条兵线的路点全都能走', m.lanes.every((l) => l.waypoints.every
 
 {
   // ⑤ 不能绕开兵线口子从野区进基地：去掉兵线走廊后，没有哪块连通区域同时连着基地内部和远处野区。
-  const cw = m.world.w / n, ch = m.world.h / n, hw = m.walls?.corridorHalfWidth ?? 130;
+  // 兵线口子的宽度 = 墙头离兵线中线的距离（laneClear）。用户要求"把墙往里面收一收，不要在路线上"之后，
+  // 口子比走廊（130）宽出一截，那一条紧贴兵线的空地本来就是口子的一部分，不算"绕开口子进基地"。
+  const cw = m.world.w / n, ch = m.world.h / n, hw = Math.max(m.walls?.corridorHalfWidth ?? 130, W.laneClear ?? 0);
   const r0 = m.baseOpenRadius || m.baseCircleRadius;
   const corridor = new Uint8Array(n * n), inBase = new Uint8Array(n * n), far = new Uint8Array(n * n);
   for (let k = 0; k < n * n; k++) {

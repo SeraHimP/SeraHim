@@ -36,7 +36,7 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
+import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, dotTexture } from './UnitMeshFactory.js';
 import { BuildingFx } from './buildingFx.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
 import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
@@ -484,8 +484,8 @@ export class UnitLayer {
     if (!en.crystal) return;
     this.scene.remove(en.crystal); this.infoObjs--;
     if (en.crystal.material) en.crystal.material.dispose();
-    en.crystal.traverse(o => { if (o.isPoints) { o.geometry.dispose(); o.material.dispose(); } });
-    en.crystal = null; en.crystalPts = null;
+    en.crystal.traverse(o => { if (o.isPoints) { o.geometry.dispose(); o.material.dispose(); } if (o.isSprite) o.material.dispose(); });
+    en.crystal = null; en.crystalPts = null; en.crystalHalo = null;
   }
 
   // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
@@ -1191,6 +1191,11 @@ export class UnitLayer {
         cm.userData.prepassSolid = true;
         cm.renderOrder = ORDER_UNIT;
         this.scene.add(cm); this.infoObjs++;
+        // 水晶光晕：一团队伍色的柔光，平时淡淡一圈、充能时变亮、开火那一下鼓起来（见下面"攻击辉光"）
+        const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color: vis.crystalColor, transparent: true,
+          opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+        halo.layers.set(FX_PARTICLE_LAYER);
+        cm.add(halo); en.crystalHalo = halo; en.crystalR = vis.crystal.r || 8;
         const pts = crystalParticles(vis.crystalColor, vis.crystal.r || 8);  // Q6：绕水晶公转的发光粒子（随水晶慢转）
         cm.add(pts); en.crystalPts = pts;
         en.crystal = cm;
@@ -1316,7 +1321,9 @@ export class UnitLayer {
       // 失去目标时不瞬间归零，而是按 CRYSTAL_FADE 速率平滑滑回基准（用户要求的过渡）。
       const gdt = Math.max(0, Math.min(0.1, tNow - (en._glowT || tNow))); en._glowT = tNow;
       const cd = e.attackCooldown || 0;
-      if (cd > (en._lastCd || 0) + 0.05) en._cdMax = cd;   // 冷却跳增 = 刚开了一炮，记下本轮周期
+      const HL = CONFIG.ui?.crystal?.halo || {};
+      if (cd > (en._lastCd || 0) + 0.05) { en._cdMax = cd; en._firePulse = 1; }   // 冷却跳增 = 刚开了一炮，记下本轮周期、光晕鼓一下
+      en._firePulse = Math.max(0, (en._firePulse || 0) - gdt / Math.max(0.05, HL.pulseDur ?? 0.35));
       en._lastCd = cd;
 
       const wid = this._weaponIdOf(e);
@@ -1343,7 +1350,18 @@ export class UnitLayer {
       // Bloom 跑在【线性 HDR 缓冲】上、阈值是 1.0，场景里如果没有任何东西超过 1.0，
       // 辉光就永远抓不到东西 —— 这正是"管线是 HDR 但看着不像 HDR"的原因。
       // 塔顶水晶是全场最适合当高光源的东西，夜里让它真的过曝。
-      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE + this._nightEmi();
+      const pulse = en._firePulse * en._firePulse;   // 鼓起来快、收回去慢
+      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE + this._nightEmi() + pulse * (HL.emissivePulse ?? 0.8);
+      // 攻击辉光（用户："防御塔攻击时水晶的发光特效太不明显了"，参考英雄联盟塔顶水晶开火时那一大团光）。
+      // 用柔光贴片而不是再抬自发光：自发光只亮水晶本身那几个面，缩到实机大小看不出来；
+      // 光晕能把光铺到水晶外面一圈。透明度有上限（maxAlpha），不会像护盾第一版那样晃眼。
+      if (en.crystalHalo) {
+        const r = en.crystalR || 8, ch = Math.min(1, en._charge || 0);
+        const sc = r * ((HL.idleScale ?? 2.6) + ch * (HL.chargeScale ?? 1.0) + pulse * (HL.pulseScale ?? 2.4));
+        en.crystalHalo.scale.set(sc, sc, 1);
+        en.crystalHalo.material.opacity = Math.min(HL.maxAlpha ?? 0.85, (HL.idleAlpha ?? 0.22) + ch * (HL.chargeAlpha ?? 0.3) + pulse * (HL.pulseAlpha ?? 0.55));
+        en.crystalHalo.visible = HL.enabled !== false;
+      }
       // 粒子随充能变亮（不再收拢/外弹——那也是"攒一发"的语义）
       if (en.crystalPts && this.particlesOn) {
         en.crystalPts.material.uniforms.uOpacity.value = Math.max(0, Math.min(1, 0.55 + chargeE * 0.45));

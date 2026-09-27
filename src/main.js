@@ -459,8 +459,13 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
       if (!mapSystem.getLane(resolvedLaneId)) {
         resolvedLaneId = mapSystem.currentMap.lanes?.[0]?.id || resolvedLaneId;
       }
+      // 出生点 = 这条路的出兵点（与正常波次同一个：从枢纽沿本路方向外推），不是枢纽正中心。
+      // 用户："水晶枢纽和枢纽塔之间距离太小，我手动生成兵会卡住出不去"——根因是原来直接生在
+      // 枢纽坐标上：枢纽放大后碰撞半径 76，兵一出生就被挤出去，正好挤进枢纽与枢纽塔之间
+      // 只有十来单位宽的缝里，出不去。正常波次一直是从出兵点出的，所以只有手动生成会卡。
+      const sp = laneWaveSystem.spawnPointFor(resolvedLaneId, dir) || { x: px, y: py };
       for (let i = 0; i < count; i++) {
-        createMinion(type, px + (Math.random() - 0.5) * 16, py + (Math.random() - 0.5) * 16,
+        createMinion(type, sp.x + (Math.random() - 0.5) * 16, sp.y + (Math.random() - 0.5) * 16,
           1, 1, { faction, laneId: resolvedLaneId, direction: dir, growthFlat: gf });
       }
       uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${resolvedLaneId} 路`, 'spawn');

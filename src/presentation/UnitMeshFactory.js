@@ -1604,7 +1604,8 @@ export function crystalMaterial(color) {
 // Q6：水晶粒子——绕水晶悬浮的一圈发光尘埃（加法混合，类 LoL）。作为水晶 Mesh 的子物体挂上，
 // 随水晶慢转而公转。软圆点贴图全局共享（懒建，headless 不触发）；几何/材质逐塔独立、需 dispose。
 let _dotTex = null;
-function dotTexture() {
+/** 柔和圆点贴图（水晶光点、水晶光晕共用；无头环境返回 null） */
+export function dotTexture() {
   if (_dotTex) return _dotTex;
   if (typeof document === 'undefined') return null;   // 无头测试环境没有 canvas，贴图留空即可
   const c = document.createElement('canvas'); c.width = c.height = 32;

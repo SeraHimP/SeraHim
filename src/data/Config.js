@@ -1226,6 +1226,11 @@ export const CONFIG = {
       //   glow 亮度倍数（> 1 才会被辉光抓到）；maxPx 光点屏幕尺寸上限（像素）
       motes: { count: 28, radius: [0.8, 2.0], speed: [0.16, 0.32], rise: 2.6, below: 1.0, swirl: 0.9,
                twinkle: 5.0, size: 0.5, whiteMix: 0.45, glow: 1.8, maxPx: 12 },
+      // 水晶光晕（用户："防御塔攻击时水晶的发光特效太不明显了"）。大小 × 水晶半径：
+      //   平时 idleScale、充能满再加 chargeScale、开火那一下再鼓 pulseScale（pulseDur 秒收回）；
+      //   透明度同理三段相加，封顶 maxAlpha（不晃眼）；emissivePulse 开火时水晶自身自发光再加多少
+      halo: { enabled: true, idleScale: 2.6, chargeScale: 1.0, pulseScale: 2.4, idleAlpha: 0.22, chargeAlpha: 0.3,
+              pulseAlpha: 0.55, maxAlpha: 0.85, pulseDur: 0.35, emissivePulse: 0.8 },
     },
     // ==================== v55.9：水晶边缘发光描边（Fresnel rim）====================
     // 用户反馈"水晶材质像塑料片"，选定方向"边缘发光描边"——见
@@ -1438,6 +1443,9 @@ export const CONFIG = {
     baseWall: {
       wallFraction: 0.5, height: 34, courses: 3, blockLength: 18, thicknessMin: 14, thicknessMax: 24,
       copingHeight: 2.6, copingColor: '#a9a293', merlonHeight: 8, pillarSize: 30, pillarExtraHeight: 18,
+      // 每截墙两头离兵线中线至少多远（世界单位）：兵线走廊半宽 130 + 墩台对角半宽 21 + 余量。
+      // 用户："城墙的两侧会和小兵穿模重合，把墙往里面收一收，不要在路线上"
+      laneClear: 155,
     },
 
 

@@ -140,9 +140,25 @@ export function baseWallLookup(map, navgrid, wallFraction = 0.5) {
  * @param {Uint8Array} mask baseWallMask 的结果（n×n）
  * @param {number} n
  * @param {number} [spacing=18] 输出点沿弧长的间距（世界单位）
+ * @param {number} [laneClear=0] 每截墙两头离兵线中线至少这么远（世界单位），更近的墙头砍掉。
+ *   用户实拍圈出来："城墙的两侧会和小兵穿模重合，把墙往里面收一收，不要在路线上"——
+ *   原来墙头（连墩台）离兵线中线只有 87~128，而兵线走廊半宽是 130，墩台整个杵在兵走的路上。
+ *   画墙（BaseWallLayer）和碰撞（baseWallFootprint）传同一个值，砍掉的那截两边一起没了。
  * @returns {Array<Array<{x:number,y:number,width:number,ang:number}>>} 每截墙一串点，ang 是该点相对基地圈心的方位角
  */
-export function baseWallRuns(map, mask, n, spacing = 18) {
+/** 点到折线的最近距离（不从 mapValidate 引 projectOntoPolyline：那边已经 import 本文件，免得成环） */
+function distToPolyline(wps, x, y) {
+  let best = Infinity;
+  for (let i = 0; i + 1 < wps.length; i++) {
+    const a = wps[i], b = wps[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / L2));
+    best = Math.min(best, Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t)));
+  }
+  return best;
+}
+
+export function baseWallRuns(map, mask, n, spacing = 18, laneClear = 0) {
   if (!mask || !map?.world) return [];
   const cw = map.world.w / n, ch = map.world.h / n;
   const inWall = (x, y) => {
@@ -183,6 +199,11 @@ export function baseWallRuns(map, mask, n, spacing = 18) {
         acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
         if (acc >= spacing) { out.push(pts[i]); acc = 0; }
       }
+      if (laneClear > 0 && map.lanes?.length) {
+        const nearLane = (p) => map.lanes.some((l) => distToPolyline(l.waypoints, p.x, p.y) < laneClear);
+        while (out.length && nearLane(out[0])) out.shift();
+        while (out.length && nearLane(out[out.length - 1])) out.pop();
+      }
       if (out.length >= 2) runs.push(out);
     }
   }
@@ -216,7 +237,7 @@ export function baseWallFootprint(map, mask, n, cfg = {}) {
       for (let b = -dep / 2; b <= dep / 2; b += step) mark(cx + tx * a + nx * b, cy + ty * a + ny * b);
     }
   };
-  for (const run of baseWallRuns(map, mask, n, block)) {
+  for (const run of baseWallRuns(map, mask, n, block, cfg.laneClear ?? 0)) {
     run.forEach((p, i) => {
       rect(p.x, p.y, p.ang, block, baseWallThickness(p.width, cfg));
       if (i === 0 || i === run.length - 1) rect(p.x, p.y, p.ang, pillar, pillar);

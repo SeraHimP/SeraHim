@@ -50,7 +50,7 @@ export class BaseWallLayer {
     const W = CONFIG.ui?.baseWall || {};
     const mask = baseWallMask(map, bits, NG.n, W.wallFraction ?? 0.5);
     const block = W.blockLength ?? 18;
-    const runs = baseWallRuns(map, mask, NG.n, block);
+    const runs = baseWallRuns(map, mask, NG.n, block, W.laneClear ?? 0);   // 与碰撞同一个 laneClear
     if (!runs.length) return;
 
     const H = W.height ?? 34, courses = Math.max(1, W.courses ?? 3), courseH = H / courses;
