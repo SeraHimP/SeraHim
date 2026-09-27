@@ -15,19 +15,23 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tool = path.join(root, 'tools', 'balance_tower.mjs');
 let pass = 0, fail = 0;
 const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
 
-const run = (args) => spawnSync('node', [tool, ...args], { encoding: 'utf8' });
+// 私有落盘目录：仓库的 .balance/ 会被并行的 sim_balance_soul_runner 清空，也不该混进用户的结果。
+// 目录名仍叫 .balance，⑧"输出提示了落盘路径"照原样匹配。
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'serahim-tower-'));
+const balanceDir = path.join(tmpRoot, '.balance');
+const run = (args) => spawnSync('node', [tool, ...args], { encoding: 'utf8', env: { ...process.env, BALANCE_OUT_DIR: balanceDir } });
 
 // 每次跑都会自动落盘到 .balance/（见下面⑧），这份测试全程会触发好几次真实的
 // 子进程调用——先记一份"跑之前 .balance/ 里有什么"，最后统一把这次测试自己
 // 造出来的 tower_sweep_* 文件清掉，不在仓库工作目录里留垃圾（虽然已经
 // gitignore，但保持这个目录干净，不给下次手动跑的人添乱）。
-const balanceDir = path.join(root, '.balance');
 const balanceBefore = new Set(await fs.promises.readdir(balanceDir).catch(() => []));
 
 // ---- ① 可复现：同参数两次运行输出完全一致 ----
@@ -35,6 +39,7 @@ const A = run(['--runs', '2', '--minutes', '3', '--pick', 'piercing']);
 const B = run(['--runs', '2', '--minutes', '3', '--pick', 'piercing']);
 T('工具正常退出', A.status === 0 && B.status === 0);
 if (A.status !== 0) console.log(A.stderr.slice(0, 800));
+if (B.status !== 0) console.log(B.stderr.slice(0, 800));
 // 落盘路径带时间戳（tower_sweep_<ISO时间>.log/.json），跟"耗时"一样每次跑都
 // 不一样，可复现性比对时一并剔除，不然会被这两行的时间戳字符串误判成"不一致"。
 const strip = (s) => s.split('\n')
@@ -109,6 +114,8 @@ for (const f of balanceFinal) {
     await fs.promises.unlink(path.join(balanceDir, f)).catch(() => {});
   }
 }
+
+fs.rmSync(tmpRoot, { recursive: true, force: true });
 
 console.log(`防御塔强度对照工具（balance_tower.mjs）验收: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

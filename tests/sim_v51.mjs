@@ -636,8 +636,8 @@ async function world() {
   T('长③-growthFlat.ap 真的加到了 abilityPower 上（不是只在配置表里存在没接线）',
     Math.abs((withGrowth.baseStats.abilityPower - noGrowth.baseStats.abilityPower) - 20) < 1e-9);
 
-  const mainSrc = srcOf('src/main.js');
-  T('长④-main.js 的成长取值函数把 ap 也算进去了（不是只有 hp/ad/res 三项）',
+  const mainSrc = srcOf('src/simulation.js');  // v60：battleGrowthFlat 随装配搬到 simulation.js
+  T('长④-battleGrowthFlat 成长取值函数把 ap 也算进去了（不是只有 hp/ad/res 三项）',
     /ap:\s*\(f\.ap \|\| 0\) \* n/.test(mainSrc));
 
   const schemaSrc = srcOf('src/data/schema/index.js');

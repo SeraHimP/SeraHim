@@ -131,12 +131,15 @@ const mkE = (ents, type, x, y, extra = {}) => {
   // 这正是 FacingSystem 头注里写的那件事（规则留在渲染层 = 无头模式里规则消失），
   // 我把规则下沉到模拟层却忘了接工具，绕一圈踩回同一个坑。已接上并钉住。
   {
+    // v60：工具不再手抄系统表，改用 src/simulation.js 的 createSimulation()，
+    // 顺序只有 step() 一份（sim_simulation 另外按实际调用次序钉了一遍）。
     const bm = srcOf('tools/balance_matrix.mjs');
-    T('工①-平衡工具接了 FacingSystem（否则测的不是游戏里的规则）',
-      /new FacingSystem\(/.test(bm) && /facing\.update\(SIM_DT\)/.test(bm));
-    T('工②-更新顺序与 main.js 的 stepSimulation 一致（移动/碰撞之后）', (() => {
-      const i = ['coll.update', 'facing.update', 'combat.update'].map(n => bm.indexOf(n));
-      return i.every(x => x >= 0) && i[0] < i[1] && i[1] < i[2];
+    const sj = srcOf('src/simulation.js');
+    T('工①-平衡工具走共用装配点，而装配点接了 FacingSystem（否则测的不是游戏里的规则）',
+      /createSimulation\(/.test(bm) && /new FacingSystem\(/.test(sj) && /facingSystem\.update\(dt\)/.test(sj));
+    T('工②-step() 里朝向排在移动/碰撞之后', (() => {
+      const i = ['laneMovementSystem.update', 'collisionSystem.update', 'facingSystem.update'].map(n => sj.indexOf(n));
+      return i.every(x => x >= 0) && i[0] < i[2] && i[1] < i[2];
     })());
   }
 

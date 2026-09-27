@@ -78,24 +78,12 @@ let FORCE_SOUL = null;
 let FORCE_POWER = null;   // v44：巨龙之力对照档（元素 key），给蓝方叠满层
 const JSON_OUT = arg('json', '');
 
-const { EntityContainer } = await import('../src/core/EntityContainer.js');
-const { EventBus } = await import('../src/utils/EventBus.js');
-const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+const { createSimulation, SIM_DT } = await import('../src/simulation.js');
 const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
 const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-const { CombatSystem } = await import('../src/systems/CombatSystem.js');
-const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
-const { MapSystem } = await import('../src/systems/MapSystem.js');
-const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
-const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
-const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
-const { FacingSystem } = await import('../src/systems/FacingSystem.js');
 const { DragonSystem, dragonPowerBuffs } = await import('../src/systems/DragonSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
-// v48：工具改用与 main.js 同一批实体工厂（见 runOne 里那段长注释）。
-const { createFactories, effectiveMaxHP } = await import('../src/core/factories.js');
-const { BuffSystem } = await import('../src/systems/BuffSystem.js');
-const { WorldState } = await import('../src/systems/WorldState.js');
+const { effectiveMaxHP } = await import('../src/core/factories.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { FACTIONS } = await import('../src/systems/FactionSystem.js');
 
@@ -109,7 +97,6 @@ const { FACTIONS } = await import('../src/systems/FactionSystem.js');
 const MAX_MIN = minutesArg != null ? parseFloat(minutesArg)
   : (Number.isFinite(CONFIG.gameRules?.maxSimMinutes) ? CONFIG.gameRules.maxSimMinutes : Infinity);
 
-const SIM_DT = 1 / 30;
 let FORCE_ENTROPY = null;   // 熵扫档时由 runCell 的 apply 钩子钉住
 
 // 可复现的随机：整局把 Math.random 换成种子发生器，跑完还原。
@@ -142,92 +129,30 @@ function runOne(seed) {
     return fac ? !!r[fac] : (r.blue || r.red);
   };
 
-  const bus = new EventBus();
-  const ents = new EntityContainer(bus);
-  const fx = new EffectRegistry(bus);
-  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
-  const proj = new ProjectileSystem(ents, bus, combat);
-  combat.setProjectileSystem(proj);
-  const buffs = new BuffSystem(fx, ents, bus, combat);
-  const mapSys = new MapSystem(ents, bus);
-  mapSys.setEffectRegistry(fx);
-  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, mapSys);
-  const coll = new CollisionSystem(ents, mapSys);
-  // ⚠️ 朝向系统**必须**跑。它不跑的话 entity._facing 恒为 undefined，
-  // canFire 走"还没跑过一帧就不卡第一下"的兜底、一律返回 true ——
-  // 于是"必须转过来才能打"这条规则在**平衡测量里整个不存在**，测出来的数不是游戏里的数。
-  // 这正是 FacingSystem 头注里写的那件事：把规则留在渲染层的话，无头模式里规则会消失。
-  // 我把规则下沉到了模拟层，却忘了把系统接进这个工具 —— 绕一圈又踩回同一个坑。
-  const facing = new FacingSystem(ents);
-  const waves = new LaneWaveSystem(ents, bus, mapSys);
-  const world = new WorldState({ entities: ents, bus });
+  // 2026-09-27：改用 src/simulation.js——与游戏 main.js 同一套系统、同一套接线、同一个
+  // step()。原来这里手抄了一份更新顺序，漏了 ManaSystem（主动技能从不施放）、
+  // WeatherSystem、DragonSystem、LaneAvengerSystem、GroundTraceSystem，
+  // 对统治战场地图还没有 DominionSystem：量的是另一个游戏。
+  // ⚠️ 因此本次之前的平衡结论不能与之后的直接比较。
+  const sim = createSimulation();
+  const { eventBus: bus, entityContainer: ents, effectRegistry: fx,
+          mapSystem: mapSys, laneWaveSystem: waves, worldState: world, factories: F } = sim;
   // 熵档位：钉死在某个值扫曲线（此时三核不推进）。传 null 则由三核按对局事件自然演化。
   world.forceEntropy(FORCE_ENTROPY);
-  AttributeCalculator.setWorldState(world);
 
   const score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
 
-  // ==================== v48：改用**真实工厂**建实体 ====================
-  // 这里原来自己手搓塔与小兵的实体字面量 —— 那是 createBuilding / createMinion 之外的
-  // **第三份**实现，而且早就长歪了。逐条列出它与游戏的差别（每一条都直接影响本工具要量的东西）：
-  //
-  //   ① `currentHP = baseStats.maxHP` 写在装龙魂**之前**。带 maxHPPct 的四条魂
-  //      （炎5% / 山6% / 雷4% / 毒4%）因此在出生那一刻就少了自己那份血 ——
-  //      **正好把要测的增益扣掉一部分**，而且给得越多扣得越多。
-  //      这与用户报的"第二波龙不是满血"是同一个 bug，v47 已在 factories 里修掉，
-  //      工具这一份没跟上。
-  //   ② 塔的属性走一张**八字段白名单**（v43 Q9 在 createBuilding 里删掉的那张），
-  //      attackType / bulletSpeed / damageReduction / 四个穿透字段全被丢掉。
-  //   ③ 塔**只装武器**：没有身份技能、没有【加固城防】、没有塔成长、没有镀层。
-  //      山魂给的是减伤与格挡、潮魂给的是回血，而加固城防正是"回血与生命节点封顶"那条 ——
-  //      少了它，量的是另一个游戏里的山魂/潮魂。
-  //   ④ 小兵**只装屠戮**：攻城车护盾、炮兵指挥官、超级兵指挥官全没有。
-  //      v48 的攻城车改动（攻城疲惫 + 破甲重击）整个挂在 passive_siege_weapon 上，
-  //      不装它就等于那批改动在平衡测量里不存在。
-  //   ⑤ 小兵成长漏了地图级 minionGrowth 覆写，换地图跑时曲线是错的。
-  //
-  // 这正是本文件上面那段 FacingSystem 注释里写过的同一个坑：
-  // "把规则留在别处，无头模式里规则就会消失"。当时我修的是朝向那一条，
-  // 没意识到**整个实体构造**都是这个形状。现在直接调 createFactories，
-  // 与 main.js 用的是同一批函数，工具与游戏之间不再有"第二套实体"。
-  //
-  // ⚠️ 因此**历史数值不可与本轮直接比较**：塔从此带加固城防与成长、小兵带全部默认被动，
-  // 基线本身就换了一把尺子。本轮所有结论都基于重新跑出来的基线。
-  const dragons = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
-  dragons.setMapLookup((id) => mapSys.getMapById?.(id) || null);
-  dragons.setCombatSystem(combat);
-  const F = createFactories({
-    entityContainer: ents, effectRegistry: fx, eventBus: bus,
-    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
-    mapSystem: mapSys, dragonSystem: dragons,
-    // 工具不需要界面，但工厂会往日志里写字 —— 给个空实现，别让它去碰 DOM。
-    uiManager: { log() {} },
-  });
-  dragons.setCreateEntity(F.createDragon);
-  // 注：DragonSystem **不进主循环**（下面没有 dragons.update）。对照要量的是
-  // "拿到魂之后的强度差"，不是"抢龙的难易"—— 两件事混在一起的话，
-  // 抢龙成功率会把魂本身的强度整个掩盖掉。这与 equipForcedSoul 的设计是同一条理由。
-
-  // ---- 建筑 ----
+  // 龙魂/巨龙之力对照档：给蓝方装上要量的魂/力之后必须补满血（见 forceAndRefill 头注）。
+  // 工厂与成长口径都是 simulation.js 那一份，这里只在外面包一层"装魂 + 补血"。
   mapSys.setCreateBuildingFn((opt) => {
     const e = F.createBuilding(opt);
-    if (e) forceAndRefill(e, fx, ents, bus);   // 龙魂 / 巨龙之力对照档
+    if (e) forceAndRefill(e, fx, ents, bus);
     return e;
   });
-
-  // ---- 小兵 ----
-  // 成长口径与 main.js 的 battleGrowthFlat 完全一致（含地图级 minionGrowth 覆写）。
-  const growth = (type) => {
-    const n = Math.max(0, (waves.waveNumber || 1) - 1);
-    const G = CONFIG.battleGrowth || {};
-    const mapG = mapSys.currentMap?.minionGrowth?.[type] || {};
-    const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
-    return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n };
-  };
   waves.setCreateMinion((type, x, y, faction, laneId, direction) => {
     const e = F.createMinion(type, x, y, 1, 1, {
       faction, laneId, direction,
-      growthFlat: growth(type),
+      growthFlat: sim.battleGrowthFlat(type),
       templateOverride: mapSys.currentMap?.minionTemplates?.[type],
     });
     if (e) forceAndRefill(e, fx, ents, bus);
@@ -246,34 +171,18 @@ function runOne(seed) {
   mapSys.loadMap(MAP_ID);
 
   // ---- 主循环 ----
-  const maxT = MAX_MIN * 60;
+  const maxFrames = MAX_MIN * 60 / SIM_DT;
   let winner = null;
-  let frame = 0;
-  for (let t = 0; t < maxT; t += SIM_DT) {
-    frame++;
-    window.gameTime = t;
-    AttributeCalculator.tick();
-    ents.rebuildGridIfNeeded(AttributeCalculator._frame);
-    world.update(SIM_DT, t);
-    waves.update(SIM_DT);
-    move.update(SIM_DT);
-    coll.update(SIM_DT);
-    facing.update(SIM_DT);   // 顺序与 main.js 的 stepSimulation 一致：移动/碰撞之后
-    combat.update(SIM_DT);
-    proj.update(SIM_DT);
-    buffs.update(SIM_DT);
-    fx.update(SIM_DT);
-    mapSys.update(SIM_DT);
+  for (let frame = 1; frame <= maxFrames; frame++) {
+    sim.step(SIM_DT);
     ents.purgeDead();
-
-    // 胜负：水晶枢纽被摧毁。用【帧计数】而不是 (t*30)%30——t 是 1/30 累加出来的，
-    // 浮点误差让 t*30 很快就不再是整数，这个取模条件会随机漏检。
+    // 胜负：水晶枢纽被摧毁。用帧计数判"每秒"，不用 (t*30)%30（浮点误差会随机漏检）。
     if (frame % 30 === 0) {
       for (const fac of ['blue', 'red']) {
         const nexus = ents.getAllTowers(false).find(e => e._mapTier === 'nexus_main' && e._mapFaction === fac);
         if (nexus && !nexus.alive) { winner = fac === 'blue' ? 'red' : 'blue'; break; }
       }
-      if (winner) { window.gameTime = t; break; }
+      if (winner) break;
     }
   }
 
@@ -487,6 +396,16 @@ if (SWEEP === 'dayNight') {
   cells.push(['基线（所有耦合关闭）', () => {}, () => {}]);
 }
 
+// 龙魂/巨龙之力对照：要量的是"拿到魂/力之后的强度差"，不是"抢龙的难易"——
+// 整个对照（含它自己的基线档）都关掉真实刷龙，否则抢龙成功率会把魂本身的强度掩盖掉。
+if (SWEEP === 'soul' || SWEEP === 'power') {
+  for (const c of cells) {
+    const [apply, restore] = [c[1], c[2]];
+    c[1] = () => { c._spawn0 = CONFIG.dragonToggles.spawn; CONFIG.dragonToggles.spawn = false; apply(); };
+    c[2] = () => { restore(); CONFIG.dragonToggles.spawn = c._spawn0; };
+  }
+}
+
 // ==================== 跑 ====================
 if (PICK) {
   const keys = PICK.split(',').map(k => k.trim()).filter(Boolean);
@@ -500,6 +419,13 @@ if (PICK) {
 }
 const minLabel = Number.isFinite(MAX_MIN) ? `单局上限 ${MAX_MIN} 分钟` : '单局不设时长上限（跑到分出胜负为止）';
 console.log(`批量对局模拟：地图 ${MAP_ID}，每档 ${RUNS} 局，${minLabel}，档位 ${cells.length} 个${NO_ENTROPY ? '，熵已关闭' : ''}`);
+{
+  const { MAPS } = await import('../src/data/maps/index.js');
+  if (MAPS[MAP_ID]?.dominionNodes) {
+    console.log('⚠️ 这是统治战场地图：本工具的"推进度"只数防御塔档位，看不到据点占领与水晶掉血。'
+      + '请改用 node tools/balance_dominion.mjs。');
+  }
+}
 console.log('（纯 headless，使用真实的 MapSystem/LaneWaveSystem/CombatSystem，非简化模型）\n');
 
 // --no-entropy：整批统一关掉三核推进（见上面 NO_ENTROPY 定义处的说明——不是为了

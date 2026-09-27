@@ -151,7 +151,7 @@ const buckets = Array.from({ length: JOBS }, () => []);
 TIERS.forEach((t, i) => buckets[i % JOBS].push(t));
 
 const ts = new Date().toISOString().replace(/[:.]/g, '-');
-const outDir = path.join(ROOT, '.balance');
+const outDir = process.env.BALANCE_OUT_DIR || path.join(ROOT, '.balance');  // 测试用私有目录，见 parallelRunner.ensureBalanceDir
 fs.mkdirSync(outDir, { recursive: true });
 const logPath = path.join(outDir, `${SWEEP}_sweep_${ts}.log`);
 const jsonPath = path.join(outDir, `${SWEEP}_sweep_${ts}.json`);

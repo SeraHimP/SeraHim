@@ -63,7 +63,7 @@ import fs from 'fs';
 // 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
 // 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
 // 本仓库栽过太多次的空断言，正是这个形状。
-const mainSrc=['../src/main.js','../src/core/factories.js']
+const mainSrc=['../src/main.js','../src/simulation.js','../src/core/factories.js']
   .map(f=>fs.readFileSync(new URL(f, import.meta.url),'utf8')).join('\n');
 // Q2：成长表搬到 CONFIG.battleGrowth，断言改读真值（仍是纯固定值/波，无复利项）。
 T('成长为固定值表(Q2)',

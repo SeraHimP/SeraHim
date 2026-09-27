@@ -759,10 +759,10 @@ const FULL = DCFG.captureFull;
   T('②-_resolveHit 命中据点分支直接 return，什么都不做', /if \(target\.isCapturePoint\) return;/.test(combatSrc));
   T('③-performAttackDirect 命中据点分支同样直接 return 0', /if \(target\.isCapturePoint\) return 0;/.test(combatSrc));
 
-  const mainSrc = srcOf('src/main.js');
-  T('④-main.js 造了 DominionSystem（不再需要接到 combatSystem，两者已经解耦）',
+  const mainSrc = srcOf('src/simulation.js');  // v60：仿真装配从 main.js 搬到 simulation.js
+  T('④-仿真装配点造了 DominionSystem（不再需要接到 combatSystem，两者已经解耦）',
     /new DominionSystem\(/.test(mainSrc) && !/combatSystem\.setDominionSystem/.test(mainSrc));
-  T('⑤-main.js 主循环里调用了 dominionSystem.update(dt)', /dominionSystem\.update\(dt\)/.test(mainSrc));
+  T('⑤-step() 里调用了 dominionSystem.update(dt)', /dominionSystem\.update\(dt\)/.test(mainSrc));
   T('⑥-map:loading 里 reset、map:loaded 里 initMap（跟 DragonSystem 同一套时序）',
     /dominionSystem\.reset\(\)/.test(mainSrc) && /dominionSystem\.initMap\(mapSystem\.currentMap\)/.test(mainSrc));
   T('⑦-dominionSystem 也注入了 createMinion（复用 main.js 的兵种工厂）',

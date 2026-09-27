@@ -55,27 +55,12 @@ const POINT_NAME = { boneyard: '兽骨场', blue_base: '商栈', refinery: '精�
 const FAC_LABEL = { blue: '蓝方', red: '红方', neutral: '中立' };
 const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
-const { EntityContainer } = await import('../src/core/EntityContainer.js');
-const { EventBus } = await import('../src/utils/EventBus.js');
-const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+const { createSimulation, SIM_DT } = await import('../src/simulation.js');
 const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
-const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-const { CombatSystem } = await import('../src/systems/CombatSystem.js');
-const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
-const { MapSystem } = await import('../src/systems/MapSystem.js');
-const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
-const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
-const { FacingSystem } = await import('../src/systems/FacingSystem.js');
-const { DominionSystem } = await import('../src/systems/DominionSystem.js');
-const { DragonSystem } = await import('../src/systems/DragonSystem.js');
-const { BuffSystem } = await import('../src/systems/BuffSystem.js');
-const { WorldState } = await import('../src/systems/WorldState.js');
-const { createFactories, effectiveMaxHP } = await import('../src/core/factories.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { FACTIONS } = await import('../src/systems/FactionSystem.js');
 
 const MAX_MIN = minutesArg != null ? parseFloat(minutesArg) : Infinity;
-const SIM_DT = 1 / 30;
 
 // 可复现的随机：整局把 Math.random 换成种子发生器，跑完还原（与 balance_matrix.mjs 同一套做法）。
 const { seedRandom: seedRandomLogic } = await import('../src/core/rng.js');
@@ -105,42 +90,10 @@ function runOne(seed) {
     return fac ? !!r[fac] : (r.blue || r.red);
   };
 
-  const bus = new EventBus();
-  const ents = new EntityContainer(bus);
-  const fx = new EffectRegistry(bus);
-  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
-  const proj = new ProjectileSystem(ents, bus, combat);
-  combat.setProjectileSystem(proj);
-  const buffs = new BuffSystem(fx, ents, bus, combat);
-  const mapSys = new MapSystem(ents, bus);
-  mapSys.setEffectRegistry(fx);
-  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, mapSys);
-  const coll = new CollisionSystem(ents, mapSys);
-  const facing = new FacingSystem(ents);
-  const world = new WorldState({ entities: ents, bus });
-  AttributeCalculator.setWorldState(world);
-
-  const dominion = new DominionSystem(ents, bus);
-  dominion.setEffectRegistry(fx);
-
-  // Dominion 地图没有龙坑（map.dragon 未声明），DragonSystem 不进主循环
-  // （下面没有 dragons.update）——只是 createFactories() 的必填依赖，跟
-  // balance_matrix.mjs 造它的理由一样：工具与 main.js 用同一批工厂函数，
-  // 不能因为这张图用不上龙就单独搞一套"更简化"的实体构造。
-  const dragons = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
-  dragons.setMapLookup((id) => mapSys.getMapById?.(id) || null);
-  dragons.setCombatSystem(combat);
-  const F = createFactories({
-    entityContainer: ents, effectRegistry: fx, eventBus: bus,
-    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
-    mapSystem: mapSys, dragonSystem: dragons,
-    uiManager: { log() {} },
-  });
-  dragons.setCreateEntity(F.createDragon);
-
-  mapSys.setCreateBuildingFn((opt) => F.createBuilding(opt));
-  dominion.setCreateMinion((type, x, y, faction, laneId, direction) =>
-    F.createMinion(type, x, y, 1, 1, { faction, laneId, direction }));
+  // 与游戏同一套系统、接线与 step()（src/simulation.js）。原来这里手抄了一份，
+  // 缺法力（主动技能不施放）、天气、哀兵、地面痕迹。
+  const sim = createSimulation();
+  const { eventBus: bus, entityContainer: ents, mapSystem: mapSys, dominionSystem: dominion } = sim;
 
   const score = { blue: { kills: 0 }, red: { kills: 0 } };
   let firstCaptureAt = null;
@@ -155,8 +108,7 @@ function runOne(seed) {
     if (e.type !== 'tower') score[scorer].kills++;
   });
 
-  mapSys.loadMap(MAP_ID);
-  dominion.initMap(mapSys.currentMap);
+  mapSys.loadMap(MAP_ID);   // map:loaded 里 simulation.js 会调 dominion.initMap
 
   const pointNodes = dominion.nodes.filter((n) => n.kind === 'point');
   const prevOwner = new Map(pointNodes.map((n) => [n.id, n.captureOwner]));
@@ -167,19 +119,7 @@ function runOne(seed) {
   let frame = 0;
   for (let t = 0; t < maxT; t += SIM_DT) {
     frame++;
-    window.gameTime = t;
-    AttributeCalculator.tick();
-    ents.rebuildGridIfNeeded(AttributeCalculator._frame);
-    world.update(SIM_DT, t);
-    move.update(SIM_DT);
-    coll.update(SIM_DT);
-    facing.update(SIM_DT);
-    combat.update(SIM_DT);
-    proj.update(SIM_DT);
-    buffs.update(SIM_DT);
-    fx.update(SIM_DT);
-    dominion.update(SIM_DT);
-    mapSys.update(SIM_DT);
+    sim.step(SIM_DT);
     ents.purgeDead();
 
     if (VERBOSE) {

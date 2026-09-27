@@ -74,9 +74,9 @@ function mkWorld() {
   T('MapSystem 在【创建建筑之前】发 map:loading',
     /this\.eventBus\.emit\('map:loading'[\s\S]{0,200}if \(this\.createBuildingFn\)/
       .test(fs.readFileSync('src/systems/MapSystem.js', 'utf8')));
-  T('main.js 在 map:loading 里把时钟归零（而不是只在 map:loaded）',
+  T('仿真装配点在 map:loading 里把时钟归零（而不是只在 map:loaded）',
     /eventBus\.on\('map:loading', \(\) => \{[\s\S]{0,200}CTX\.gameTime = 0;/
-      .test(fs.readFileSync('src/main.js', 'utf8')));
+      .test(fs.readFileSync('src/simulation.js', 'utf8')));
 
   const fresh = run(0, 900);
   const dirty = run(300, 900);   // 复刻"玩家先待了 5 分钟再切图"

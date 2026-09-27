@@ -21,7 +21,7 @@ import fs from 'fs';
 // 【组合根】的装配逻辑，不是「main.js 这个文件」，所以读的是两份源码的拼接。
 // 只读 main.js 的话，`!src.includes(X)` 这类否定断言会因为「搬走了」而假通过 ——
 // 本仓库栽过太多次的空断言，正是这个形状。
-const mainSrc = ['../src/main.js','../src/core/factories.js']
+const mainSrc = ['../src/main.js','../src/simulation.js','../src/core/factories.js']
   .map(f => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
 T('main.js 不再持有 BATTLE_GROWTH_FLAT 常量', !mainSrc.includes('BATTLE_GROWTH_FLAT ='));
 T('成长取值支持 map.minionGrowth 覆写（同一兵种可跨地图不同）',

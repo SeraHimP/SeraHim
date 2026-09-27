@@ -98,26 +98,14 @@ const { fileURLToPath } = await import('url');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { isWorkerProcess, runWorker, runOrchestrator, ensureBalanceDir } = await import('./lib/parallelRunner.mjs');
 
-const { EntityContainer } = await import('../src/core/EntityContainer.js');
-const { EventBus } = await import('../src/utils/EventBus.js');
-const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
+const { createSimulation, SIM_DT } = await import('../src/simulation.js');
 const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
 const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-const { CombatSystem } = await import('../src/systems/CombatSystem.js');
-const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
-const { MapSystem } = await import('../src/systems/MapSystem.js');
-const { LaneMovementSystem } = await import('../src/systems/LaneMovementSystem.js');
-const { LaneWaveSystem } = await import('../src/systems/LaneWaveSystem.js');
-const { CollisionSystem } = await import('../src/systems/CollisionSystem.js');
-const { FacingSystem } = await import('../src/systems/FacingSystem.js');
-const { DragonSystem } = await import('../src/systems/DragonSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
-const { createFactories } = await import('../src/core/factories.js');
-const { BuffSystem } = await import('../src/systems/BuffSystem.js');
-const { WorldState } = await import('../src/systems/WorldState.js');
 const { CONFIG } = await import('../src/data/Config.js');
+// 塔武器对照不刷龙：抢龙的成败会把塔武器本身的强度差掩盖掉（独立进程，不用还原）。
+CONFIG.dragonToggles.spawn = false;
 
-const SIM_DT = 1 / 30;
 
 // 8 种塔武器（见 src/core/skills/weapons.js 的 weapon_* 定义）——这是本工具
 // 唯一要横向对照的维度。召唤师峡谷地图本身给不同档位塔配了不同默认武器
@@ -212,34 +200,16 @@ async function runOne(seed, defenderWeapon, ctx = {}) {
   // 随机指派进攻方——用已经切到种子发生器的 Math.random，同一个 seed 每次跑结果一致。
   CURRENT_ATTACKER = Math.random() < 0.5 ? 'blue' : 'red';
 
-  const bus = new EventBus();
-  const ents = new EntityContainer(bus);
-  const fx = new EffectRegistry(bus);
-  const combat = new CombatSystem(ents, fx, bus, SkillLibrary);
-  const proj = new ProjectileSystem(ents, bus, combat);
-  combat.setProjectileSystem(proj);
-  const buffs = new BuffSystem(fx, ents, bus, combat);
-  const mapSys = new MapSystem(ents, bus);
-  mapSys.setEffectRegistry(fx);
-  const move = new LaneMovementSystem(ents, fx, AttributeCalculator, combat, mapSys);
-  const coll = new CollisionSystem(ents, mapSys);
-  const facing = new FacingSystem(ents);
-  const waves = new LaneWaveSystem(ents, bus, mapSys);
-  const world = new WorldState({ entities: ents, bus });
+  // 与游戏同一套系统、接线与 step()（src/simulation.js）。原来这里手抄了一份更新顺序，
+  // 缺法力（主动技能不施放）、天气、巨龙、哀兵、地面痕迹——牧灵法阵幻兽不生成那个
+  // 真实 bug（见下面 combat.setCreateMinion 旁的旧注释）就是手抄接线漏掉一步造成的。
+  // 塔武器对照不需要刷龙（抢龙会把塔本身的强度差掩盖掉），整轮关掉刷龙，跑完还原。
+  const sim = createSimulation();
+  const { eventBus: bus, entityContainer: ents, effectRegistry: fx, combatSystem: combat,
+          mapSystem: mapSys, laneWaveSystem: waves, worldState: world, factories: F } = sim;
   world.forceEntropy(null);
-  AttributeCalculator.setWorldState(world);
 
   const score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
-  const dragons = new DragonSystem(ents, bus, fx, SkillLibrary, AttributeCalculator);
-  dragons.setMapLookup((id) => mapSys.getMapById?.(id) || null);
-  dragons.setCombatSystem(combat);
-  const F = createFactories({
-    entityContainer: ents, effectRegistry: fx, eventBus: bus,
-    skillLibrary: SkillLibrary, attrCalc: AttributeCalculator,
-    mapSystem: mapSys, dragonSystem: dragons,
-    uiManager: { log() {} },
-  });
-  dragons.setCreateEntity(F.createDragon);
 
   // combat 字段是必须的：passive_test_tower_attacker 的 onEquip 靠 ctx.combat?.skills
   // 拿到 SkillLibrary 去查旧武器的 onUnequip（与 weapons.js 里 atkmode_charge/
@@ -252,17 +222,10 @@ async function runOne(seed, defenderWeapon, ctx = {}) {
     return e;
   });
 
-  const growth = (type) => {
-    const n = Math.max(0, (waves.waveNumber || 1) - 1);
-    const G = CONFIG.battleGrowth || {};
-    const mapG = mapSys.currentMap?.minionGrowth?.[type] || {};
-    const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
-    return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n };
-  };
   waves.setCreateMinion((type, x, y, faction, laneId, direction) => {
     const e = F.createMinion(type, x, y, 1, 1, {
       faction, laneId, direction,
-      growthFlat: growth(type),
+      growthFlat: sim.battleGrowthFlat(type),
       templateOverride: mapSys.currentMap?.minionTemplates?.[type],
     });
     if (e) applyAttackerMinionBuff(e, skillCtx);
@@ -297,19 +260,7 @@ async function runOne(seed, defenderWeapon, ctx = {}) {
   let frame = 0;
   for (let t = 0; t < maxT; t += SIM_DT) {
     frame++;
-    window.gameTime = t;
-    AttributeCalculator.tick();
-    ents.rebuildGridIfNeeded(AttributeCalculator._frame);
-    world.update(SIM_DT, t);
-    waves.update(SIM_DT);
-    move.update(SIM_DT);
-    coll.update(SIM_DT);
-    facing.update(SIM_DT);
-    combat.update(SIM_DT);
-    proj.update(SIM_DT);
-    buffs.update(SIM_DT);
-    fx.update(SIM_DT);
-    mapSys.update(SIM_DT);
+    sim.step(SIM_DT);
     ents.purgeDead();
 
     if (frame % 30 === 0) {

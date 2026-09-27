@@ -1,31 +1,12 @@
-import { EntityContainer } from './core/EntityContainer.js';
 import { CTX } from './core/GameContext.js';
-import { EffectRegistry } from './core/EffectRegistry.js';
-import { SkillLibrary } from './core/SkillLibrary.js';
-import { AttributeCalculator } from './core/AttributeCalculator.js';
-import { CombatSystem } from './systems/CombatSystem.js';
-import { ProjectileSystem } from './systems/ProjectileSystem.js';
-import { BuffSystem } from './systems/BuffSystem.js';
-import { ManaSystem } from './systems/ManaSystem.js';
-import { DragonSystem, DRAGON_ELEMENTS } from './systems/DragonSystem.js';
-import { MapSystem } from './systems/MapSystem.js';
-import { WeatherSystem } from './systems/WeatherSystem.js';
-import { WorldState } from './systems/WorldState.js';
+import { DRAGON_ELEMENTS } from './systems/DragonSystem.js';
 import { WeatherPanel } from './ui/WeatherPanel.js';
-import { LaneMovementSystem } from './systems/LaneMovementSystem.js';
-import { GroundTraceSystem } from './systems/GroundTraceSystem.js';
-import { FacingSystem, setWeatherSystem as setFacingWeatherSystem } from './systems/FacingSystem.js';
-import { LaneWaveSystem } from './systems/LaneWaveSystem.js';
-import { CollisionSystem } from './systems/CollisionSystem.js';
-import { LaneAvengerSystem } from './systems/LaneAvengerSystem.js';
-import { DominionSystem } from './systems/DominionSystem.js';
 import { FACTIONS, canTarget, towerRuleFor, mapFactionsOf, scorerFactionOf } from './systems/FactionSystem.js';
 import { ThreeRenderer } from './presentation/ThreeRenderer.js';
 import { ThreeCameraController } from './presentation/ThreeCameraController.js';
 import { dayNightAt, DAY_PERIOD, resolveDayPhase, applyWeatherOvercast, applyWeatherTempTint } from './presentation/DayNight.js';
-import { EventBus } from './utils/EventBus.js';
 import { equipSkill } from './core/skillParams.js';
-import { createFactories, effectiveMaxHP } from './core/factories.js';
+import { effectiveMaxHP } from './core/factories.js';
 import { CONFIG } from './data/Config.js';
 import { UIManager } from './ui/UIManager.js';
 import { CanvasController } from './ui/CanvasController.js';
@@ -40,6 +21,7 @@ import { DebugLogger } from './utils/DebugLogger.js';
 import { syncAll as syncCustomContent } from './data/customContent.js';
 import { WorldHud } from './ui/WorldHud.js';
 import { seedRandom } from './core/rng.js';
+import { createSimulation, SIM_DT } from './simulation.js';
 
 seedRandom(Date.now());   // 逻辑随机数默认是固定种子（测试可复现），真实游戏每局用时钟重新播种
 CTX._uid = 0;
@@ -60,11 +42,6 @@ window.CTX = CTX;
 
 
 
-const eventBus = new EventBus();
-const entityContainer = new EntityContainer();
-const effectRegistry = new EffectRegistry(eventBus);
-const skillLibrary = SkillLibrary;
-
 // 自制内容（用户在编辑器里做出来的状态/技能/兵种）载入进引擎。
 // 必须在装配阶段就做：自制技能要注册进 SkillLibrary、自制兵种要展开进
 // CONFIG.templates，晚于建筑/出兵初始化就会出现"存档里有、这一局却没有"。
@@ -76,19 +53,17 @@ const skillLibrary = SkillLibrary;
   // 坏内容不静默丢弃：用户会以为自己的作品还在。
   for (const e of r.errors) console.warn('[自制内容] ' + e);
 }
-const attrCalc = AttributeCalculator;
 
-const combatSystem = new CombatSystem(entityContainer, effectRegistry, eventBus, skillLibrary);
-const projectileSystem = new ProjectileSystem(entityContainer, eventBus, combatSystem);
-combatSystem.setProjectileSystem(projectileSystem);
-const buffSystem = new BuffSystem(effectRegistry, entityContainer, eventBus, combatSystem);
-// v51：技能增幅（自动生效）与韧性（缩短控制/减速）都要在 EffectRegistry.apply() 里
-// 现读施法者/受术者的属性表，所以注入实体表 + 属性计算器——不注入时两条新逻辑整段短路。
-effectRegistry.setStatSource(entityContainer, attrCalc);
-const dragonSystem = new DragonSystem(entityContainer, eventBus, effectRegistry, skillLibrary, attrCalc);
-// v51：单位资源条（法力/能量/充能）+ 主动技能施放。没有装备"主动"类技能的单位，
-// 法力恒为 0（用户定稿），maxMana 填多少都不生效——见 ManaSystem 头注。
-const manaSystem = new ManaSystem(entityContainer, effectRegistry, eventBus, skillLibrary, attrCalc, combatSystem);
+// 全部仿真系统、接线、地图切换重置、步进顺序都在 simulation.js（与平衡工具/测试共用）。
+// 工厂日志要写到 UIManager，而 UIManager 构造时要用仿真里的实体表——先用一个转发器占位。
+let _log = () => {};
+const sim = createSimulation({ log: (...a) => _log(...a) });
+const {
+  eventBus, entityContainer, effectRegistry, skillLibrary, attrCalc,
+  combatSystem, projectileSystem, dragonSystem, mapSystem, weatherSystem, worldState,
+  groundTraceSystem, laneWaveSystem, laneAvengerSystem, dominionSystem, battleGrowthFlat,
+} = sim;
+const { createTower, createMinion, createDragon } = sim.factories;
 
 // v2.5D 第5步：2D 渲染器已摘除，Three 是唯一渲染器。
 // glCanvas 现在既是画面也是输入面（事件绑在它的父元素 #canvasWrap 上）。
@@ -96,26 +71,8 @@ const manaSystem = new ManaSystem(entityContainer, effectRegistry, eventBus, ski
 // 只是没有画面，全链路用 ?. 保护，不崩。
 const glCanvas = document.getElementById('glCanvas');
 const uiManager = new UIManager(entityContainer, effectRegistry, attrCalc);
+_log = uiManager.log.bind(uiManager);
 
-// 声明顺序在这里是有语义的：const 有暂时性死区，任何"先用后声明"都会直接抛
-// ReferenceError 让整个 main.js 加载失败、游戏起不来（v25 事故的成因）。
-// mapSystem 必须先于 renderer3d / canvasController 声明——后两者构造时就要用它。
-const mapSystem = new MapSystem(entityContainer, eventBus);
-mapSystem.setEffectRegistry(effectRegistry); // Q5：召唤水晶"重生中"状态展示
-
-// 全局天气系统：连续演化的权重场，通过 AttributeCalculator 的修正层影响全体单位。
-// 默认关闭（独立总开关，在设置面板里开）。
-const weatherSystem = new WeatherSystem(eventBus);
-attrCalc.setWeatherSystem(weatherSystem);
-// Q4 天气重做：风的结构性机制（转身变慢）不经过 AttributeCalculator 的合并管线，
-// FacingSystem 是模块级函数，用同一套"延迟绑定"注入天气引用（见 FacingSystem.js 头注）。
-setFacingWeatherSystem(weatherSystem);
-
-// P3：世界状态聚合层（天气/昼夜/熵/龙魂 的统一落点）。
-// 所有耦合默认关闭（CONFIG.world.couplings），全关时行为与接入前逐位一致；
-// 逐条打开即可引入昼夜阵营非对称、熵等玩法，而不必再改各系统内部。
-const worldState = new WorldState({ weather: weatherSystem, dragons: dragonSystem, entities: entityContainer, bus: eventBus });
-attrCalc.setWorldState(worldState);
 CTX.__world = worldState;   // UI/调试入口
 CTX.__CONFIG = CONFIG;      // UI/调试入口：控制台与无头冒烟里直接读写配置（与模块里是同一个对象）
 CTX.__weather = weatherSystem; // UI/调试入口
@@ -264,78 +221,9 @@ CTX.__dayNightForce = null;   // null=跟随天气；true=强制昼夜；false=�
 CTX.__dayNight = (on) => { CTX.__dayNightForce = (on == null ? null : on !== false); };
 CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || (CONFIG.world?.dayLenSec ?? 0) + (CONFIG.world?.nightLenSec ?? 0) || DAY_PERIOD); };
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
-const laneMovementSystem = new LaneMovementSystem(entityContainer, effectRegistry, attrCalc, combatSystem, mapSystem, weatherSystem);
-// Q4 天气重做：地面痕迹层（水洼/雪盖），见 GroundTraceSystem.js 头注。
-const groundTraceSystem = new GroundTraceSystem(entityContainer, effectRegistry, mapSystem, weatherSystem);
 CTX.__groundTrace = groundTraceSystem; // 渲染层/调试入口
-const laneWaveSystem = new LaneWaveSystem(entityContainer, eventBus, mapSystem);
-// v51.33：出兵编排"广播"需要的依赖，见 LaneWaveSystem 构造函数头注。
-laneWaveSystem.setBroadcastDeps({ effectRegistry, attrCalc, combat: combatSystem, dragonSystem, worldState });
-const collisionSystem = new CollisionSystem(entityContainer, mapSystem);
-// v45：朝向/转身。排在移动之后（用最新位置转），攻击门读的是上一帧的朝向 ——
-// 见 FacingSystem 头注的「时序」一节。
-const facingSystem = new FacingSystem(entityContainer);
-const laneAvengerSystem = new LaneAvengerSystem(entityContainer, effectRegistry, eventBus, mapSystem); // v33 Q20：哀兵
-// 统治战场·水晶之痕：据点占领/动态归属出兵/水晶掉血，见 DominionSystem.js 头注。
-// 普通地图（无 map.dominionNodes）下 active=false，update() 直接早退，零影响。
-const dominionSystem = new DominionSystem(entityContainer, eventBus);
-dominionSystem.setEffectRegistry(effectRegistry); // 据点占领翻转时装/卸武器技能要用它
-
 
 CTX.__app = { entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, dominionSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
-
-// ---------- 创建单位 ----------
-// v43 P1-④：塔 / 对战建筑 / 小兵 / 巨龙 四个工厂已搬到 src/core/factories.js。
-// 那是一次**纯位移**（函数体逐字未动），只是把原来靠本文件模块作用域拿到的
-// 那堆单例改成显式注入。搬迁的理由与"为什么没用闭包包起来"写在那个文件的头注释里。
-const { createTower, createBuilding, createMinion, createDragon } = createFactories({
-  entityContainer, effectRegistry, eventBus, skillLibrary, attrCalc, mapSystem, dragonSystem, uiManager,
-});
-mapSystem.setCreateBuildingFn(createBuilding);
-dragonSystem.setCreateEntity(createDragon);
-// v45：让巨龙系统能问"这张图声明了 dragon 吗"。注入而不是 import MAPS：
-// 自制地图存在 MapSystem 那边，直接 import 只能看到内置的三张。
-dragonSystem.setMapLookup((id) => mapSystem.getMapById?.(id) || null);
-// v43：龙的「宿怨」被动（对某阵营的减伤/增伤随该阵营击杀数增长）在 CombatSystem 里结算，
-// 击杀数由 DragonSystem 灌过去 —— 这里做一次注入，避免两个系统互相 import。
-dragonSystem.setCombatSystem(combatSystem);
-// 对战模式成长（Q2 再重做）：纯固定值/波，杜绝复利后期爆炸，只动 最大生命/攻击力/双抗。
-// 数值经仿真校准：10分钟（约20波）时穿透塔单发 ≈ 近战44.9%/远程69.0%/炮车13.7%/超级兵4.3% 生命，
-// 对齐 LoL 参考值（45/70/14/5）。无百分比分量 → 负基值属性（如超级兵魔抗-30）天然只吃固定增量。
-// 数值偏保守，为龙魂等后续增益留出空间。
-// Q10：攻击力成长降至原值 75%、双抗成长降至原值 33%（生命成长不变）。
-// 成长表已搬进 CONFIG.battleGrowth（Q2：软编码，模板编辑器可改、地图可覆写）。
-// 这里只保留取值逻辑：CONFIG 基表 → map.minionGrowth 覆写（浅合并，按兵种）。
-function battleGrowthFlat(type) {
-  const n = Math.max(0, (laneWaveSystem.waveNumber || 1) - 1); // 第1波为基准无成长
-  const G = CONFIG.battleGrowth || {};
-  // 地图覆写：同一兵种在不同地图上可以有完全不同的成长曲线（用户要求预留）
-  const mapG = mapSystem.currentMap?.minionGrowth?.[type] || {};
-  const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
-  // v51.3：新增 ap（法术强度）成长——只有显式写了 ap 字段的类型才非零，没写这个键
-  // 就天然是 0，不用另外按类型分支。本轮（数值平衡重做）起，"谁有 ap 成长"不再
-  // 按"是不是大型小兵"分配，改按"这个兵种当前走物理还是魔法输出"分配（魔法系：
-  // ranged/totem/warlock/corrupt 有 ap 成长、ad 成长清零；物理系反过来），
-  // 见 Config.js battleGrowth 的头注。
-  return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n, ap: (f.ap || 0) * n };
-}
-laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) => {
-  // 按 laneWaveSystem 自己的独立波次计数成长。
-  const ent = createMinion(type, x, y, 1, 1, { faction, laneId, direction, growthFlat: battleGrowthFlat(type), templateOverride: mapSystem.currentMap?.minionTemplates?.[type] });
-  // v42: template override now happens inside createMinion (before growth), passed via templateOverride
-  // The growth is already applied on top of template values inside createMinion.
-  return ent;
-});
-// Q5：唤灵兵召唤幻灵——技能 onCast 里唯一稳定能拿到的引擎入口是 ctx.combat，
-// 所以把 createMinion 也注入到 combatSystem 上（见 CombatSystem.setCreateMinion
-// 的头注）。故意不带波次成长（growthFlat 不传 = 0 成长），也不挂 laneId/direction
-// ——幻灵不推线，不属于任何一条波次编排。
-combatSystem.setCreateMinion((type, x, y, faction, hpScale, attrScale) =>
-  createMinion(type, x, y, hpScale, attrScale, { faction }));
-// 水晶之痕出兵：走据点自己的独立波次计数，不挂 laneWaveSystem 的成长曲线
-// （据点出兵节奏由 CONFIG.dominion.waveInterval 单独控制，见 DominionSystem._tickWaves）。
-dominionSystem.setCreateMinion((type, x, y, faction, laneId, direction) =>
-  createMinion(type, x, y, 1, 1, { faction, laneId, direction }));
 
 // 龙魂事件日志
 eventBus.on('dragon:killed', (d) => {
@@ -405,46 +293,8 @@ eventBus.on('entity:death', ({ entityId }) => {
     CTX.__score[scorer].kills++;
   }
 });
-// ⚠️ 时钟必须在【建筑创建之前】归零 —— 这是 map:loading，不是 map:loaded。
-//
-// 用户报的"所有地图的塔都不会正常成长"就出在这个时序上：
-// 塔成长被动在 onEquip 里记 `t0 = window.gameTime`，而建筑是在 loadMap 的中段创建的；
-// 原来只有 map:loaded（loadMap 的**最后一行**）里才 `CTX.gameTime = 0`，
-// 于是 t0 记的是【归零之前】那个时间 —— 玩家在沙盒/菜单里待了多久，
-// 成长就被推迟多久（elapsed = max(0, gameTime − t0) 要等 gameTime 重新爬回 t0 才开始走）。
-// 实测：载图时 gameTime=300，跑满 15 分钟只长到 9 层（正常 14 层）；
-// 待得越久越像"完全不长"，切第二张图必中。
-eventBus.on('map:loading', () => {
-  CTX.gameTime = 0;
-  CTX.waveNumber = 0;
-  CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
-  // v59 自查修复：飞行中的子弹/光束原来只在【重置本局】按钮（__resetRun）里手动清过，
-  // 走"选地图"菜单/地图编辑器切图这条最常见的路径（直接调 mapSystem.loadMap()，
-  // 不经过 __resetRun）完全没人清——上一张图残留的子弹会带着已经不存在的
-  // targetId 飞到新地图上（entities.get 找不到目标时会冻结在最后已知落点继续飞，
-  // 见 ProjectileSystem.update 的 B2 逻辑），表现为"新地图刚加载就有几发凭空出现
-  // 的幽灵子弹"。跟龙魂那条一样是"切图该完全初始化却漏了一处"，这里补上，
-  // __resetRun 里原来那两行显式清空就可以删掉了（loadMap 会自动带出这一步）。
-  projectileSystem.projectiles.length = 0;
-  projectileSystem.beams.clear();
-  dominionSystem.reset(); // 上一局的据点占领状态不带到新的一局
-});
 eventBus.on('map:loaded', (d) => {
   CTX.__score = { blue: { kills: 0, towers: 0 }, red: { kills: 0, towers: 0 } };
-  dominionSystem.initMap(mapSystem.currentMap); // 无 dominionNodes 的地图上这里是空操作
-  weatherSystem.reset(); // 每次载图重新随机：起始权重、变化快慢（θ）全部重抽
-  groundTraceSystem.reset(); // 上一局的水洼/雪盖不带到新的一局
-  // v42: full state reset on map switch
-  // 时钟三项已在上面的 map:loading 里归零（必须早于建筑创建，见那段注释）。
-  // 这里保留一次幂等重置，兜住"有人直接 emit map:loaded"的路径。
-  CTX.gameTime = 0;
-  CTX.waveNumber = 0;
-  CTX._nextWaveTime = CONFIG.gameRules.firstWaveDelay || 20;
-  laneWaveSystem.waveNumber = 0;
-  laneWaveSystem._mapWaveApplied = undefined;
-  laneWaveSystem._clock = 0;
-  laneWaveSystem._spawnQueue.length = 0;
-  laneWaveSystem.nextWaveTime = 30; // will be overridden by map config on next update
   uiManager.log(`🗺️ 地图已加载：${d.label}`, 'spawn');
   DebugLogger.log('map', `地图加载: ${d.mapId} (${d.label})`);
 });
@@ -752,32 +602,11 @@ canvasController.onDeselect = () => uiManager.clearSelection();
 // 游戏时间保持与现实同速。补步预算（v44 改为墙钟毫秒，见 gameLoop）防"模拟自身超支→越补越欠"的死亡螺旋：
 // 达到上限时丢弃欠账（表现为轻微慢动作），这只在模拟本体过载的极端情况下发生。
 // 30Hz 模拟顺带把模拟开销砍半（移速 78px/s 下单步 2.6px，视觉无感）。
-const SIM_DT = 1 / 30;
 let _lastTs = 0, _acc = 0;
 
 // 性能分解统计：滚动窗口累计 模拟/渲染/DOM 耗时，PerfHud 低频读取。
 const PERF = { sim: 0, render: 0, dom: 0, n: 0, steps: 0, t: 0 };
 CTX.__perf = PERF;
-
-function stepSimulation(dt) {
-  CTX.gameTime += dt;
-  effectRegistry.update(dt);
-  buffSystem.update(dt);
-  dragonSystem.update(dt);
-  combatSystem.update(dt);
-  manaSystem.update(dt);      // v51：资源条推进 + 满了就施放主动技能
-  weatherSystem.update(dt);   // 天气演化（权重场，enabled=false 时零开销）
-  worldState.update(dt, CTX.gameTime);   // P3：昼夜相位 / 熵 / 龙魂统计（耦合默认全关）
-  mapSystem.update(dt);       // 召唤水晶重生计时（仅对战模式内部生效）
-  laneWaveSystem.update(dt);
-  dominionSystem.update(dt); // 水晶之痕：据点出兵节奏 + 水晶掉血（普通地图 active=false 直接早退）
-      laneMovementSystem.update(dt);
-      collisionSystem.update(dt);
-  facingSystem.update(dt);      // v45：朝向必须在移动/碰撞之后，才用得上这一帧的位置
-  laneAvengerSystem.update(dt); // v33 Q20：哀兵光环（0.5s 节奏内部节流）
-  groundTraceSystem.update(dt); // Q4 天气重做：水洼/雪盖生成+消退+效果应用，排在移动之后用当帧新位置
-  projectileSystem.update(dt);
-}
 
 function gameLoop(timestamp) {
   if (!_lastTs) _lastTs = timestamp;
@@ -807,10 +636,7 @@ function gameLoop(timestamp) {
     const budgetMs = (CONFIG.tuning?.simBudgetMs) ?? 12;
     const tSim0 = performance.now();
     while (_acc >= SIM_DT) {
-      // 每个模拟步都要让属性缓存失效并重建空间网格——位置/效果在步进中变化
-      attrCalc.tick();
-      entityContainer.rebuildGridIfNeeded(attrCalc._frame);
-      stepSimulation(SIM_DT);
+      sim.step(SIM_DT);
       _acc -= SIM_DT;
       steps++;
       // 至少跑一步（否则低帧率时永远追不上），之后按墙钟时间收

@@ -27,7 +27,8 @@ const board = scoreboard('v43验收');
 // v43 P1-4: 塔/建筑/小兵/巨龙四个工厂已搬去 src/core/factories.js。
 // 本套里凡是钉「组合根装配」的断言读的都是这个拼接，而不是单独的 main.js ——
 // 只读 main.js 会让 `!src.includes(X)` 因为「搬走了」而假通过（本仓库的经典空断言形状）。
-const ROOT_SRC = srcOf('src/main.js') + '\n' + srcOf('src/core/factories.js');
+// v60：仿真装配（系统/工厂接线/map:loading 重置）搬到 src/simulation.js，组合根 = main + simulation。
+const ROOT_SRC = srcOf('src/main.js') + '\n' + srcOf('src/simulation.js') + '\n' + srcOf('src/core/factories.js');
 const T = board.T;
 const attr = AttributeCalculator;
 // 源码断言统一走 harness 的 srcOf（**默认剥注释**）。
@@ -887,7 +888,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('重③b-飞行物清空挂在 map:loading 监听器里（不只是 __resetRun 专属，选地图/编辑器切图也要清）',
     (() => {
       const i = mainSrc.indexOf("eventBus.on('map:loading'");
-      const j = mainSrc.indexOf('\n});', i);
+      const j = mainSrc.indexOf('\n  });', i);
       const block = mainSrc.slice(i, j > i ? j : i + 800);
       return /projectileSystem\.projectiles\.length = 0;/.test(block)
         && /projectileSystem\.beams\.clear\(\);/.test(block);
@@ -1104,6 +1105,7 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 // 行数是会变的，"组合根里不该再有工厂函数定义"才是形状。
 {
   const mj = srcOf('src/main.js');
+  const sj = srcOf('src/simulation.js');
   const fac = srcOf('src/core/factories.js');
 
   T('拆①-四个工厂的定义已不在 main.js 里',
@@ -1112,17 +1114,19 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('拆②-四个工厂的定义在 factories.js 里',
     /\nfunction createTower\(/.test(fac) && /\nfunction createBuilding\(/.test(fac)
     && /\nfunction createMinion\(/.test(fac) && /\nfunction createDragon\(/.test(fac));
-  T('拆③-main.js 通过 createFactories 显式注入依赖（不是靠全局变量偷渡）',
-    /import \{ createFactories(, \w+)* \} from '\.\/core\/factories\.js';/.test(mj)
-    && /const \{ createTower, createBuilding, createMinion, createDragon \} = createFactories\(\{/.test(mj));
+  // v60：装配搬到 simulation.js，main.js 从 sim.factories 取工厂。
+  T('拆③-仿真装配点通过 createFactories 显式注入依赖（不是靠全局变量偷渡）',
+    /import \{ createFactories(, \w+)* \} from '\.\/core\/factories\.js';/.test(sj)
+    && /const factories = createFactories\(\{/.test(sj)
+    && /= sim\.factories;/.test(mj));
   T('拆④-依赖缺一个就当场抛错（否则场上会出现一堆 undefined 引发的天书报错）',
     /throw new Error\('createFactories: 依赖缺失 ' \+ k\)/.test(fac));
   // 沙盒模式删除后 waveSystem 也一并删了，第三条接线换成 laneWaveSystem 那条
   // （它才是现在唯一的出兵入口，见 main.js 里 laneWaveSystem.setCreateMinion 那段）。
   T('拆⑤-四条接线仍在组合根里（谁给谁装工厂，这件事必须一眼看得见）',
-    /mapSystem\.setCreateBuildingFn\(createBuilding\);/.test(mj)
-    && /dragonSystem\.setCreateEntity\(createDragon\);/.test(mj)
-    && /laneWaveSystem\.setCreateMinion\(\(type, x, y, faction, laneId, direction\) => \{/.test(mj)
+    /mapSystem\.setCreateBuildingFn\(createBuilding\);/.test(sj)
+    && /dragonSystem\.setCreateEntity\(createDragon\);/.test(sj)
+    && /laneWaveSystem\.setCreateMinion\(\(type, x, y, faction, laneId, direction\) =>/.test(sj)
     && /CTX\.createTower = createTower;/.test(mj));
   T('拆⑥-factories.js 不反向 import main.js（组合根是单向的，反过来就成环）',
     !/from '\.\.\/main\.js'/.test(fac) && !/from '\.\/main\.js'/.test(fac));

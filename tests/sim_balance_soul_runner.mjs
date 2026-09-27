@@ -28,6 +28,7 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runnerSrc = fs.readFileSync(path.join(root, 'tools', 'run_balance_soul.mjs'), 'utf8');
@@ -51,11 +52,15 @@ if (runnerSouls && matrixSouls) {
 }
 
 // ---- ② 真跑一遍：用最小规模（--runs 1 --minutes 1 --jobs 2）确认管线本身是好的 ----
-const tmpDir = path.join(root, '.balance');
+// 私有落盘目录（BALANCE_OUT_DIR）：以前直接 rm -rf 仓库里的 .balance/，
+// 一来会删掉用户自己跑出来的结果，二来 --jobs 并行时会把 sim_towerbalance 正在写的目录删掉。
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'serahim-soul-'));
+const tmpDir = path.join(tmpRoot, '.balance');
+const ENV = { ...process.env, BALANCE_OUT_DIR: tmpDir };
 fs.rmSync(tmpDir, { recursive: true, force: true });   // 跑之前清一次，避免读到上次留下的文件误判
 const runner = path.join(root, 'tools', 'run_balance_soul.mjs');
 const r = spawnSync('node', [runner, '--runs', '1', '--minutes', '1', '--jobs', '2'],
-  { encoding: 'utf8', cwd: root, timeout: 90_000 });
+  { encoding: 'utf8', cwd: root, env: ENV, timeout: 90_000 });
 T('run_balance_soul.mjs 正常退出（0）', r.status === 0);
 if (r.status !== 0) console.log((r.stdout || '').slice(-1500), (r.stderr || '').slice(-1500));
 
@@ -97,7 +102,7 @@ if (runnerPowers && matrixEls) {
 {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   const rp = spawnSync('node', [runner, '--sweep', 'power', '--runs', '1', '--minutes', '1', '--jobs', '2'],
-    { encoding: 'utf8', cwd: root, timeout: 90_000 });
+    { encoding: 'utf8', cwd: root, env: ENV, timeout: 90_000 });
   T('--sweep power：正常退出（0）', rp.status === 0);
   if (rp.status !== 0) console.log((rp.stdout || '').slice(-1500), (rp.stderr || '').slice(-1500));
   const filesP = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
@@ -122,7 +127,7 @@ if (runnerPowers && matrixEls) {
 {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   const r2 = spawnSync('node', [runner, '--pick', 'fire,water,基线', '--runs', '1', '--minutes', '1', '--jobs', '2'],
-    { encoding: 'utf8', cwd: root, timeout: 90_000 });
+    { encoding: 'utf8', cwd: root, env: ENV, timeout: 90_000 });
   T('--pick 三档：正常退出（0）', r2.status === 0);
   if (r2.status !== 0) console.log((r2.stdout || '').slice(-1500), (r2.stderr || '').slice(-1500));
   const files2 = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [];
@@ -142,11 +147,12 @@ if (runnerPowers && matrixEls) {
 
   // 写错档名：应该直接报错退出，不能悄悄当成全量跑掉（用户会白等一整轮）。
   const r3 = spawnSync('node', [runner, '--pick', 'notarealsoul', '--runs', '1', '--minutes', '1'],
-    { encoding: 'utf8', cwd: root, timeout: 30_000 });
+    { encoding: 'utf8', cwd: root, env: ENV, timeout: 30_000 });
   T('--pick 写错档名：非 0 退出（拒绝悄悄跑成全量）', r3.status !== 0);
   T('--pick 写错档名：错误信息里点名是哪个档位不认识', /notarealsoul/.test(r3.stderr || ''));
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
 console.log(`龙魂平衡本地跑批验收: ${pass} 通过 / ${fail} 失败`);
+fs.rmSync(tmpRoot, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);

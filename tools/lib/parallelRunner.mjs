@@ -290,8 +290,10 @@ export async function runOrchestrator(opts) {
 
 // 供需要落盘/找目录的调用方复用，不用各自重复这几行。
 export function ensureBalanceDir(rootUrl) {
+  // BALANCE_OUT_DIR：测试给每个子进程一个私有目录。两套测试共用 .balance/ 时，
+  // 一边 rm -rf 一边写，--jobs 并行跑会随机失败，还会删掉用户自己跑出来的结果。
   const root = path.resolve(path.dirname(fileURLToPath(rootUrl)), '..');
-  const dir = path.join(root, '.balance');
+  const dir = process.env.BALANCE_OUT_DIR || path.join(root, '.balance');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
