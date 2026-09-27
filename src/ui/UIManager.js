@@ -1017,18 +1017,36 @@ export class UIManager {
    * 口径统一。返回形状与 _statParts 一致（{now, base, delta, cls}），供主格子/
    * 悬浮预览/点开窗口三处共用。
    */
+  /**
+   * 2026-09-27 用户定稿"属性面板中的显示的攻击力，应该是经过所有渠道加成过后
+   * （比如伤害增幅等）的最终伤害值"——原来这里只显示 AD/AP 原始分量本身
+   * （见下面 magicCoef 那套判定），不含伤害增幅（damageAmpPct），跟真实命中
+   * 时算出来的伤害数字不是一回事，补上 ×(1+伤害增幅%) 这一层。用户随后
+   * 追加"不显示攻击特效，这个和攻击力是单独分开的"——onHitDamage/
+   * onHitPercentDamage 明确不计入这里（它们本来就各自有自己的格子/说明），
+   * 暴击倍率、preDamageMult 等概率性或特例乘子同样不计入——这里显示的是
+   * "稳定命中一次的基础伤害"，跟【暴击伤害】格子分开显示是有意的，不重复。
+   * r(v) 保留原来的精度规则（小值保两位小数，大值取整）。
+   */
   _attackDamageParts(entity, stats) {
     const rawType = entity?.baseStats?.attackType;
     const isAdaptive = rawType === 'adaptive';
-    if (!isAdaptive) return this._statParts('attackDamage', entity, stats);
-    const isMagic = this.attrCalc.resolveAttackType(stats) === 'magic';
+    // 非自适应类型不管 attackType 标的是 physical/magic/true，伤害数值恒取
+    // attackDamage（CombatSystem.performAttack 的 baseDamage 计算同一条判据，
+    // 只有 adaptive 才会切到 abilityPower）——isMagic 因此只在自适应分支里才
+    // 可能为真，避免"非自适应魔法塔却按法术强度显示"的口径分裂。
+    const isMagic = isAdaptive && this.attrCalc.resolveAttackType(stats) === 'magic';
     const statKey = isMagic ? 'abilityPower' : 'attackDamage';
     const magicCoef = isMagic ? (CONFIG.tuning?.adaptiveDamage?.apMagicDamagePct ?? 60) / 100 : 1;
-    const now = (stats?.[statKey] || 0) * magicCoef;
-    const rawBase = entity?.baseStats?.[statKey];
     const r = (v) => (Math.abs(v) < 10 ? Math.round(v * 100) / 100 : Math.round(v));
+    const nowCore = (stats?.[statKey] || 0) * magicCoef;
+    const now = nowCore * (1 + (stats?.damageAmpPct || 0) / 100);
+    const rawBase = entity?.baseStats?.[statKey];
     if (!Number.isFinite(rawBase)) return { now: r(now), base: null, delta: 0, cls: '' };
-    const baseVal = rawBase * magicCoef;
+    // base 同样按"零外部加成时会是多少"的口径走一遍相同公式（含 baseStats 自身
+    // 的 damageAmpPct，多数单位模板这项是 0），保持"现在值=基础值+修正"的展示
+    // 惯例继续成立。
+    const baseVal = rawBase * magicCoef * (1 + (entity.baseStats?.damageAmpPct || 0) / 100);
     const delta = now - baseVal;
     const clean = Math.abs(delta) < 0.005 ? 0 : delta;
     return { now: r(now), base: r(baseVal), delta: r(clean), cls: clean > 0 ? 'stat-up' : clean < 0 ? 'stat-down' : '' };
