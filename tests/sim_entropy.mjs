@@ -231,7 +231,9 @@ T('两方修正互为镜像（同幅反向）',
 
 const rows = wA.getBreakdown(mkUnit('red'));
 const erow = rows.find(r => r.source.startsWith('熵'));
-T('getBreakdown 说得出三核构成与最终加成', !!erow && /黑核/.test(erow.detail) && /攻击力/.test(erow.detail));
+// 2026-09-27：全局"攻击力"字段改名"物理攻击"（见 WorldState.js getBreakdown()
+// 头注同一次改名），detail 文案里的措辞跟着变了，这里从 /攻击力/ 改成 /物理攻击/。
+T('getBreakdown 说得出三核构成与最终加成', !!erow && /黑核/.test(erow.detail) && /物理攻击/.test(erow.detail));
 console.log('  ' + wA.entropySystem.describe());
 
 // ---- ⑧ 熵值进缓存键：熵变了属性必须跟着变 ----

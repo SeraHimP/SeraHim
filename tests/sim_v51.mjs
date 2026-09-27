@@ -1377,9 +1377,11 @@ async function world() {
     && /data-efftype="dot"/.test(pickerHtml) && !/class="effect-type-select"/.test(pickerHtml));
 
   const statParamsHtml = EDITOR_PAGES_SKILLEFFECT._renderEffectParams('stat');
+  // 2026-09-27：全局"攻击力"字段改名"物理攻击"（用户定稿，UIManager.js 等处
+  // 同一次改名），这里的卡片标签跟着变了，断言从 /攻击力/ 改成 /物理攻击/。
   T('状态②-属性选择器改成可搜索卡片网格，标签是中文（不是裸的 attackDamage 这种字段名）',
     /effect-stat-grid/.test(statParamsHtml) && /effect-stat-filter/.test(statParamsHtml)
-    && statParamsHtml.includes('攻击力') && /data-effstat="attackDamage"/.test(statParamsHtml));
+    && statParamsHtml.includes('物理攻击') && /data-effstat="attackDamage"/.test(statParamsHtml));
   T('状态③-持续时间新增独立的"永久"勾选框，不再是"填≤0才是永久"这条隐藏规则',
     /effect-permanent/.test(statParamsHtml));
   T('状态④-数值输入框统一用 .editor-number（不再是手写内联深色样式）',

@@ -330,17 +330,27 @@ const FULL = DCFG.captureFull;
 
   const pointEvery = DCFG.pointWaveEvery ?? 2;
 
-  // 2026-09-26 第四轮：用户定稿"基地每波出兵，据点改为每2波出兵"——奇数波
-  // （_waveCount % 2 !== 0）据点应该完全不出兵，只有偶数波才出。
+  // 2026-09-27 用户定稿"据点改为每3波才出兵，计算第一波的方式是——当某阵营
+  // 最后一次夺取该据点后，每夺取一次该据点的波数清零重新计算"——从"全局
+  // _waveCount 取模（奇偶交替）"改成"每个据点自己独立计数（node._pointWaveCount），
+  // 夺取时清零"。_setOwner() 在上面的占领循环里刚把这个节点从中立翻转成蓝方时
+  // 已经清过一次零，这里手动重置的 ds._waveTimer/_waveCount 只影响"波次时钟"本身
+  // 走到哪一格，不影响 node._pointWaveCount 已经清零这个事实——两者本来就是
+  // DominionSystem._tickWaves() 头注里说的"两个独立时钟"。pointEvery 现在是 3，
+  // 前两波（count=1、2）轮空，第 3 波才真正出兵。
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // _waveCount=1（奇数）
-  T('①-第 1 波（奇数）据点不出兵，用户定稿"据点改为每2波出兵"', spawned.length === 0);
+  ds.update(DCFG.waveInterval + 0.01); // node._pointWaveCount=1
+  T('①-第 1 波据点不出兵（pointEvery=3，还没到）', spawned.length === 0);
 
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // _waveCount=2（偶数，第一次真正出兵）
+  ds.update(DCFG.waveInterval + 0.01); // node._pointWaveCount=2
+  T('①b-第 2 波仍不出兵', spawned.length === 0);
+
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01); // node._pointWaveCount=3（第一次真正出兵）
   const fwd1 = spawned.filter(s => s.direction === node.segForward.direction);
   const rev1 = spawned.filter(s => s.direction === node.segReverse.direction);
-  T('②-第 2 波（偶数）顺时针方向出了 2 近战 + 1 远程，不含任何炮兵（据点已经不再生成炮兵）',
+  T('②-第 3 波顺时针方向出了 2 近战 + 1 远程，不含任何炮兵（据点已经不再生成炮兵）',
     fwd1.filter(s => s.type === 'melee').length === 2 && fwd1.filter(s => s.type === 'ranged').length === 1
     && fwd1.filter(s => s.type === 'siege').length === 0);
   T('③-逆时针方向也出了完全一样的一整套（不是把预算拆开轮流分给两边）',
@@ -351,12 +361,16 @@ const FULL = DCFG.captureFull;
   T('④c-据点默认不出超级兵', !spawned.some(s => s.type === 'super'));
 
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // _waveCount=3（奇数，又不出兵）
-  T('⑤-第 3 波（奇数）又轮空不出兵，确认不是只有第 1 波特殊', spawned.length === 0);
+  ds.update(DCFG.waveInterval + 0.01); // node._pointWaveCount=4，又轮空
+  T('⑤-第 4 波又轮空不出兵，确认不是只有第 3 波特殊', spawned.length === 0);
 
   spawned.length = 0;
-  ds.update(DCFG.waveInterval + 0.01); // _waveCount=4（偶数，第二次出兵）
-  T('⑥-第 4 波（偶数）跟第 2 波完全一样的编排（据点出兵没有隔波+1这种概念了，是"每2波一次"的节奏本身，本波仅这一个已占领据点：2+1 两个方向共6个单位）',
+  ds.update(DCFG.waveInterval + 0.01); // node._pointWaveCount=5，仍轮空
+  T('⑤b-第 5 波仍轮空', spawned.length === 0);
+
+  spawned.length = 0;
+  ds.update(DCFG.waveInterval + 0.01); // node._pointWaveCount=6（第二次出兵，3的下一个倍数）
+  T('⑥-第 6 波跟第 3 波完全一样的编排（每3波一次的节奏本身，本波仅这一个已占领据点：2+1 两个方向共6个单位）',
     spawned.length === 6
     && spawned.filter(s => s.type === 'melee').length === 4 && spawned.filter(s => s.type === 'ranged').length === 2
     && spawned.filter(s => s.type === 'siege').length === 0);
@@ -679,11 +693,21 @@ const FULL = DCFG.captureFull;
   // 2026-09-26 第三轮：用户实机测过第二轮的 30% 之后仍反馈"还是太低了"——
   // 说明"不超过原始35%基准"这条第二轮自己加的隐性上限本身就是错的，这次
   // 改钉"比第二轮的 30% 继续强化"，不再假设存在任何固定上限。
-  T('①-据点攻击力（占领后）比第二轮的 30% 继续强化', (DCFG.pointDamagePct ?? 30) > 30);
-  T('①b-中立时的攻击力也同步提高（用户定稿"中立状态和占领状态的攻击都提高"），且仍然低于占领后（维持"中立弱、占领强"的层级关系不能被"都提高"这条要求打破）',
-    (DCFG.pointNeutralDamagePct ?? 15) > 15 && DCFG.pointNeutralDamagePct < DCFG.pointDamagePct);
-  T('②-新增据点攻速系数，且是提升方向（"略微提升"≈>100%）',
-    (DCFG.pointAttackSpeedPct ?? 100) > 100);
+  // 2026-09-27（本轮·水晶之痕光环+33%→+67%伤害增幅翻倍）：用户定稿"对应所有
+  // 据点的基础攻击和据点占领增益的物理攻击加成都要大幅削弱"——pointDamagePct
+  // 50→20、pointNeutralDamagePct 25→10，方向从"逐轮继续强化"反转成"这一轮
+  // 大幅削弱"，不再是单调递增的故事。钉的是"仍大幅弱于此前的50%这一版本"+
+  // "中立弱、占领强"这条层级关系不能丢，不钉 20/10 这两个起草值本身
+  // （待 balance_matrix/实机校准，见 Config.js 头注）。
+  T('①-据点攻击力（占领后）为配合光环伤害增幅翻倍而大幅削弱，弱于此前 50% 这一版本',
+    DCFG.pointDamagePct > 0 && DCFG.pointDamagePct < 50);
+  T('①b-中立时的攻击力同样大幅削弱（此前 25%），但仍然低于占领后（"中立弱、占领强"层级关系不变）',
+    DCFG.pointNeutralDamagePct > 0 && DCFG.pointNeutralDamagePct < 25 && DCFG.pointNeutralDamagePct < DCFG.pointDamagePct);
+  // 2026-09-27：pointAttackSpeedPct（相对塔模板的百分比）整个字段已删除，改成
+  // 直接存绝对每秒攻击次数 pointAttackSpeed——不再有"中立更低、占领更高"这个
+  // 维度，中立/占领现在共用同一个绝对值（见 initMap() 创建时的头注）。
+  T('②-据点攻速改成绝对每秒攻击次数（不再是相对塔模板换算的百分比），中立/占领共用同一个值',
+    typeof DCFG.pointAttackSpeed === 'number' && DCFG.pointAttackSpeed > 0 && DCFG.pointAttackSpeedPct === undefined);
   T('③-小兵占领速度整体提高（capturePower 各项都比原型草案的基准更高）',
     DCFG.capturePower.melee > 1.0 && DCFG.capturePower.ranged > 0.75
     && DCFG.capturePower.siege > 0.75 && DCFG.capturePower.super > 2.2);
@@ -702,10 +726,26 @@ const FULL = DCFG.captureFull;
   window.gameTime = 0;
   while (node.captureOwner === FACTIONS.NEUTRAL) { window.gameTime += tickSec; ds.update(tickSec); }
   const finalDamage = attr.calc(node.entity, fx.getEffects(node.entity.id)).attackDamage;
-  T('④-占领后据点的攻击力确实是 tpl 的 pointDamagePct%（不是某个写死的数；现在是 baseStats 中立基线 + 一条可见效果的加成合计）',
-    Math.abs(finalDamage - tpl.attackDamage * (DCFG.pointDamagePct / 100)) < 1e-6);
-  T('⑤-占领后据点的攻速确实是 tpl 的 pointAttackSpeedPct%（新增的这个维度真的生效了）',
-    Math.abs(node.entity.baseStats.baseAttackSpeed - tpl.baseAttackSpeed * (DCFG.pointAttackSpeedPct / 100)) < 1e-6);
+  // 2026-09-27："据点占领增益的数值应该随着游戏进程不断变大，前期的数值应该
+  // 再小一些"——占领瞬间不再是直接给满 pointDamagePct%，而是 baseStats 中立
+  // 基线 + 一条按 gameTime 从 pointCaptureBuffStartFrac 线性爬升到 100% 的
+  // EffectRegistry 效果（见 _refreshCaptureBuff() 头注）。这里按生产代码同一套
+  // 公式重算一遍期望值，验证的是"确实按这条公式接线"，不是"占领瞬间就满值"
+  // 这个已经被用户否掉的旧假设。
+  const rampMinutes = DCFG.pointCaptureBuffRampMinutes ?? 20;
+  const startFrac = DCFG.pointCaptureBuffStartFrac ?? 0.3;
+  const growth = Math.max(0, Math.min(1, (window.gameTime / 60) / rampMinutes));
+  const frac = startFrac + (1 - startFrac) * growth;
+  const fullDelta = (tpl.attackDamage || 0) * (DCFG.pointDamagePct - DCFG.pointNeutralDamagePct) / 100;
+  const expectedDamage = tpl.attackDamage * (DCFG.pointNeutralDamagePct / 100) + fullDelta * frac;
+  T('④-占领后据点的攻击力 = baseStats 中立基线 + 按 gameTime 爬升的占领增益效果（不是占领瞬间就写死满值）',
+    Math.abs(finalDamage - expectedDamage) < 1e-6);
+  // 2026-09-27：pointAttackSpeedPct 整条"中立/占领分两档、按塔模板百分比换算"
+  // 的机制已删除。baseAttackSpeed 现在是 initMap() 创建时一次性写死的绝对值
+  // cfg.pointAttackSpeed，占领翻转（_setOwner）根本不再碰这个字段——射程/攻速
+  // 两项"中立占领共用同一个值"，只有攻击力单独区分（见 _setOwner 头注）。
+  T('⑤-据点攻速是绝对值 pointAttackSpeed，占领前后不变（不像攻击力那样区分中立/占领，也不随时间爬升）',
+    node.entity.baseStats.baseAttackSpeed === (DCFG.pointAttackSpeed ?? 1.0));
 }
 
 // ==================== 十四、main.js / CombatSystem.js / UnitLayer.js / FactionSystem.js 源码接线核对 ====================
@@ -996,8 +1036,10 @@ const FULL = DCFG.captureFull;
   }, C);
   window.gameTime += tickSec; ds.update(tickSec);
   const dropWithDefender = FULL - node.capturePct;
-  T('②-驻守小兵在场时，敌方这一 tick 的净占领压力正好打五折（用户给的具体数字：50%）',
-    Math.abs(dropWithDefender - dropNoDefender * 0.5) < 1e-6);
+  // 2026-09-27 用户改口"驻守减速的数值改为降低33%（降低至67%）"——50→33，
+  // 具体数字，不是起草值（见 Config.js defenderSlowPct 头注）。
+  T('②-驻守小兵在场时，敌方这一 tick 的净占领压力打折（用户改口后的具体数字：降低33%）',
+    Math.abs(dropWithDefender - dropNoDefender * (1 - DCFG.defenderSlowPct / 100)) < 1e-6);
 
   // 驻守小兵走出据点攻击范围之后，敌方占领速度应该恢复正常——不是"来过就永久打折"。
   node.captureOwner = FACTIONS.BLUE; node.capturePct = FULL;
@@ -1009,7 +1051,7 @@ const FULL = DCFG.captureFull;
   T('③-驻守小兵离开攻击范围之后，敌方占领速度恢复正常（不再打折）',
     Math.abs(dropAfterLeaving - dropNoDefender) < 1e-6);
 
-  T('④-defenderSlowPct 定稿为 50（用户给的具体数字，不是起草值）', DCFG.defenderSlowPct === 50);
+  T('④-defenderSlowPct 定稿为 33（用户改口后的具体数字，不是起草值）', DCFG.defenderSlowPct === 33);
 }
 
 // ==================== 十九b、驻守减速必须在状态栏可见（用户追加返工）====================
@@ -1058,15 +1100,21 @@ const FULL = DCFG.captureFull;
   ds.initMap(map);
   const node = ds.nodes.find(n => n.kind === 'point');
 
+  // gameTime 显式清零：占领增益按 gameTime 从 pointCaptureBuffStartFrac 爬升到
+  // 100%（见 _refreshCaptureBuff() 头注），gameTime=0 时应该正好停在起始比例，
+  // 不是"占领瞬间已满值"这个已经被用户否掉的旧假设。
+  window.gameTime = 0;
   ds._setOwner(node, FACTIONS.BLUE, FULL);
   const buffEffect = fx.getEffects(node.entity.id).find((e) => e.blueprint.name === '据点占领增益');
   T('①-占领之后据点身上挂了一条可见的"据点占领增益"效果（不再是静默改 baseStats）',
     !!buffEffect && buffEffect.blueprint.statKey === 'attackDamage');
 
   const tpl = C.templates.tower;
-  const expectedTotal = tpl.attackDamage * (DCFG.pointDamagePct / 100);
+  const startFrac = DCFG.pointCaptureBuffStartFrac ?? 0.3;
+  const fullDelta = (tpl.attackDamage || 0) * (DCFG.pointDamagePct - DCFG.pointNeutralDamagePct) / 100;
+  const expectedTotal = tpl.attackDamage * (DCFG.pointNeutralDamagePct / 100) + fullDelta * startFrac;
   const stats = attr.calc(node.entity, fx.getEffects(node.entity.id));
-  T('②-基线(中立值)+这条效果的加成 = 跟改动前完全一样的占领后总攻击力（数值不变，只是拆开了）',
+  T('②-基线(中立值)+这条效果的加成（gameTime=0，按起始比例 pointCaptureBuffStartFrac 折算，不是满值）= 占领后总攻击力',
     Math.abs(stats.attackDamage - expectedTotal) < 1e-6);
 
   ds._setOwner(node, FACTIONS.NEUTRAL, 0);
@@ -1144,8 +1192,9 @@ const FULL = DCFG.captureFull;
     /\.dnb-dot\s*\{/.test(htmlSrc));
 }
 
-// ==================== 二十二：水晶之痕光环——所有单位伤害增幅+33% ====================
-// 用户定稿："新增地图级光环，水晶之痕光环——所有单位伤害增幅+33%"。跟扭曲丛林/
+// ==================== 二十二：水晶之痕光环——所有单位伤害增幅+67% ====================
+// 用户定稿："新增地图级光环，水晶之痕光环——所有单位伤害增幅+33%"，本轮又追加
+// 定稿"水晶之痕光环+33%伤害增幅改为+67%伤害增幅"——33→67，跟扭曲丛林/
 // 嚎哭深渊冰封版同一套 MapSystem._applyGlobalAura 机制（那套通用机制本身已经
 // 在 sim_globalaura.mjs 和 sim_v51.mjs 里覆盖过），这里只验证【这张图】的
 // 声明值真的接上了，做法照抄 sim_v51.mjs 里"光①~光④"那组断言的模式。
@@ -1159,18 +1208,25 @@ const FULL = DCFG.captureFull;
   const unit = mkEntity(ents, 'melee', {}, C);
   ms.update(1);
   const stats = attr.calc(unit, fx.getEffects(unit.id));
-  T('①-水晶之痕光环：所有单位伤害增幅+33%（真接上了 damageAmpPct，不是只停在地图数据里没人读）',
-    Math.abs(stats.damageAmpPct - 33) < 1e-6);
+  T('①-水晶之痕光环：所有单位伤害增幅+67%（真接上了 damageAmpPct，不是只停在地图数据里没人读）',
+    Math.abs(stats.damageAmpPct - 67) < 1e-6);
 
   const tower = mkEntity(ents, 'tower', { faction: FACTIONS.BLUE }, C);
   ms.update(1);
   const towerStats = attr.calc(tower, fx.getEffects(tower.id));
   T('②-光环真的对塔也生效（用户口径"所有单位"含防御塔，跟其它两张图的既有先例一致）',
-    Math.abs(towerStats.damageAmpPct - 33) < 1e-6);
+    Math.abs(towerStats.damageAmpPct - 67) < 1e-6);
 }
 
 // ==================== 二十三、水晶枢纽低血量额外超级兵 ====================
 // 用户定稿："若某阵营水晶枢纽生命值低于75，则该阵营每2次出兵额外生成一个超级兵"。
+// 2026-09-27 重新定稿（作废了原来"低于阈值后每几波一直出"那版）："低血量生成
+// 超级兵的规则改一下，在生命值第一次低于500/300/150/50时，每达到一个阈值后
+// （可累加，某个阈值生效过一次就作废），下次在基地出兵额外增加1超级兵……之前
+// 的规则是只要低于某血量后就每几波一直出，不要这个规则了"——lowHpNexusThreshold
+// + lowHpNexusBonusEvery（"低于阈值后每几波一直出，没有上限"）整条机制作废，
+// 改成 lowHpNexusSuperThresholds 四档【绝对生命值】里程碑，每档一辈子只触发
+// 一次（见 DominionSystem._tickWaves() 的 node._consumedLowHpThresholds）。
 {
   const { ents, CONFIG: C } = await makeWorld();
   const bus = { emit() {}, on() {} };
@@ -1189,19 +1245,35 @@ const FULL = DCFG.captureFull;
   window.gameTime = 0;
   const interval = DCFG.waveInterval ?? 20;
   const bonusEvery = Math.max(1, DCFG.bonusWaveEvery ?? 1);
-  const wavesNeeded = 8 * bonusEvery; // 跑够多波，覆盖至少 8 次这个水晶枢纽自己的出兵
-  for (let i = 0; i < wavesNeeded; i++) { window.gameTime += interval; ds.update(interval); }
-  T('①-血量充足时，正常出兵不会带超级兵（先测出基准，确认下面的差异不是巧合）',
+  // 每组循环恰好 bonusEvery 步：连续 bonusEvery 个整数里必然正好命中一个
+  // "水晶枢纽自己出兵"的波次（this._waveCount % bonusEvery === 0），不用像
+  // 改动前那样跑一大串波次去统计频率——新机制是"消耗掉的档位数"而不是"频率"，
+  // 每组只需要观察恰好一次出兵。
+  for (let i = 0; i < bonusEvery; i++) { window.gameTime += interval; ds.update(interval + 0.01); }
+  T('①-血量充足（高于最高档 500）时，正常出兵不会带超级兵（先测出基准，确认下面的差异不是巧合）',
     superCount === 0);
 
-  blueNexus.currentHP = (DCFG.lowHpNexusThreshold ?? 75) - 1; // 打到阈值以下
+  blueNexus.currentHP = 499; // 跌破最高档 500，尚未跌破 300
   superCount = 0;
-  for (let i = 0; i < wavesNeeded; i++) { window.gameTime += interval; ds.update(interval); }
-  T('②-血量低于阈值后，蓝方每 lowHpNexusBonusEvery 次出兵确实多出一个超级兵',
-    superCount === Math.floor(8 / (DCFG.lowHpNexusBonusEvery ?? 2)));
+  for (let i = 0; i < bonusEvery; i++) { window.gameTime += interval; ds.update(interval + 0.01); }
+  T('②-血量第一次跌破 500 档后，下一次出兵额外 +1 超级兵', superCount === 1);
 
-  T('③-lowHpNexusThreshold/lowHpNexusBonusEvery 定稿为 75/2（用户给的具体数字，不是起草值）',
-    DCFG.lowHpNexusThreshold === 75 && DCFG.lowHpNexusBonusEvery === 2);
+  superCount = 0;
+  for (let i = 0; i < bonusEvery; i++) { window.gameTime += interval; ds.update(interval + 0.01); }
+  T('②b-500 档已消耗过，血量没有新跌破任何档位时不会重复触发（不是"只要低于就一直出"）',
+    superCount === 0);
+
+  blueNexus.currentHP = 120; // 一口气跌破 300、150 两档（还没到 50）
+  superCount = 0;
+  for (let i = 0; i < bonusEvery; i++) { window.gameTime += interval; ds.update(interval + 0.01); }
+  T('③-一次性跌破多个新档位（300、150）时，下一次出兵按新跌破的档位数各自累加（+2，不是只生效一档）',
+    superCount === 2);
+
+  T('④-lowHpNexusSuperThresholds 定稿为四档 [500,300,150,50]（用户给的具体数字，不是起草值）',
+    Array.isArray(DCFG.lowHpNexusSuperThresholds)
+    && DCFG.lowHpNexusSuperThresholds.length === 4
+    && DCFG.lowHpNexusSuperThresholds[0] === 500 && DCFG.lowHpNexusSuperThresholds[1] === 300
+    && DCFG.lowHpNexusSuperThresholds[2] === 150 && DCFG.lowHpNexusSuperThresholds[3] === 50);
 }
 
 // ==================== 二十四、水晶枢纽热寂：30分钟后每秒固定掉0.5血，防止僵局 ====================
