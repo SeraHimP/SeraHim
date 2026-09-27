@@ -490,7 +490,7 @@ export function rubblePile(m, R, col, opts = {}) {
     if (!pc.parts.length) continue;
     const bb = partsBox(pc.parts), c = new THREE.Vector3(); bb.getCenter(c);
     const a = hash01(k, 41) * Math.PI * 2, r = R * spread * Math.sqrt(hash01(k, 42)) * 0.9;
-    const sc = (cfg.pieceScale ?? 0.8);
+    const sc = opts.pieceScale ?? cfg.pieceScale ?? 0.8;
     const rot = pc.cloth ? C(RY(hash01(k, 43) * 6.28), RX(Math.PI / 2 - 0.1), S(sc))
                          : C(RY(hash01(k, 43) * 6.28), RZ(hash01(k, 44) * 2.4), RX(hash01(k, 45) * 1.2), S(sc));
     const mm = C(rot, T(-c.x, -c.y, -c.z));

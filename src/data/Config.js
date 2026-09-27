@@ -1507,6 +1507,23 @@ export const CONFIG = {
       maxSunElevDeg: 34,
     },
 
+    // 召唤水晶 / 水晶枢纽造型（crystalShrines.js）。style: 'statue' = 用户定稿的新造型
+    // （召唤水晶：三尊守卫托举；枢纽：四尊守卫的圣殿），'classic' = 原来的祭坛。
+    //   bearerScale / guardianScale：托举守卫 / 枢纽守卫的大小（× 建筑半径）
+    //   orbCrystalR / gemCrystalR：两种攻击水晶的半径（× 建筑半径）
+    //   dentsLight / dentsHeavy：水晶本身缺角的位置与深度 [方向x, y, z, 压到原半径的几成]
+    //   ruin：废墟碎石丘铺开半径（× 建筑半径）、额外石块数、倒下的守卫/柱子缩放
+    crystalShrine: {
+      style: 'classic',
+      bearerScale: 0.72,
+      guardianScale: 0.62,
+      orbCrystalR: 0.42,
+      gemCrystalR: 0.6,
+      dentsLight: [[0.6, 0.7, 0.4, 0.62]],
+      dentsHeavy: [[0.6, 0.7, 0.4, 0.5], [-0.7, -0.2, 0.6, 0.62], [0, 1, 0, 0.55]],
+      ruin: { spread: 1.0, blocks: 18, pieceScale: 0.65 },
+    },
+
     // 防御塔造型（towerStatue.js）。style: 'statue' = 雕像守卫 + 按部件掉块的损毁；
     // 'classic' = 原来的塔楼造型。用户在两个原型里选了雕像（B），要求"蓝色庄重、沉稳，
     // 红色混沌、尖锐"，损毁"再极端一些"。

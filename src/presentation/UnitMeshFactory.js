@@ -21,6 +21,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 import { statueTower } from './towerStatue.js';
+import { crystalShrine, chippedCrystal } from './crystalShrines.js';
 
 const _geoCache = new Map();
 const _matCache = new Map();
@@ -240,6 +241,9 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     // 损毁 = 按部件整块拿掉，见 towerStatue.js 头注。
     const statue = kind === 'tower' && CONFIG.ui?.statueTower?.style === 'statue'
       ? statueTower(R, tier, faction, F) : null;
+    // 召唤水晶 / 水晶枢纽的新造型（CONFIG.ui.crystalShrine.style === 'statue'），见 crystalShrines.js
+    const shrine = (kind === 'orb' || kind === 'gem') && CONFIG.ui?.crystalShrine?.style === 'statue'
+      ? crystalShrine(kind, R, faction, F) : null;
 
     if (statue) {
       if (ruin) parts.push(...statue.ruin);
@@ -248,6 +252,16 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         crystalR = statue.crystalR;
         crystalCy = statue.crystalCy;
         crystalGeo = new THREE.OctahedronGeometry(crystalR);
+      }
+    } else if (shrine) {
+      if (ruin) parts.push(...shrine.ruin);
+      else {
+        const d = Math.max(0, Math.min(2, dmg));
+        parts.push(...shrine.model.parts(shrine.stages[d]));
+        crystalR = shrine.crystalR;
+        crystalCy = shrine.crystalCy;
+        crystalGeo = chippedCrystal(kind, crystalR, d);   // 水晶本身也随损毁缺角
+        crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
       }
     } else if (ruin) {
       // ==================== 废墟（v44 重做）====================
