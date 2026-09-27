@@ -1,116 +1,78 @@
-# 架构地图与工程纪律
+# 架构地图
 
-> 本文件是项目的"账本"。上下文/会话丢失后，先读这里再动代码。
+> 一页纸的"哪个文件管什么"。规则、坑位、测试与提交规范在 `docs/DEVELOPMENT.md`，
+> 那份是权威；这里只放地图，二者冲突时以 DEVELOPMENT.md 为准。
+> v60 重写：旧版描述的是 2D CanvasRenderer 与沙盒模式时代，已经不成立。
 
-## 模块地图（依赖方向：data ← core ← systems ← presentation/ui，无循环）
+## 依赖方向
+
+```
+data  ←  core  ←  systems  ←  simulation.js  ←  main.js
+                         ↖  presentation / ui（只读实体）
+```
+
+- `src/systems`、`src/core`、`src/data`、`src/simulation.js` **不许 import `presentation/` 或 `ui/`**
+  （`tests/sim_layering.mjs` 守着）。
+- 系统之间不互相 import，耦合走 EventBus、WorldState，或在 `simulation.js` 里接线。
+- 逻辑层随机数一律走 `core/rng.js` 的 `random()`（可播种），不许直接 `Math.random()`
+  （`tests/sim_determinism.mjs` 守着）；渲染层的纯装饰随机不受限。
+
+## 两个入口
+
+| 文件 | 职责 |
+|---|---|
+| `src/simulation.js` | **仿真唯一装配点**：`createSimulation({log})` 构造全部系统、工厂接线、换图时的仿真状态重置，并提供唯一的 `step(dt)`。游戏、三个平衡工具、全栈测试都从这里拿。 |
+| `src/main.js` | 浏览器入口：界面、渲染器、计分板、按钮、游戏循环（每个固定步调 `sim.step(SIM_DT)`）。不再自己构造系统。 |
+
+## 模块地图
 
 | 层 | 模块 | 职责 |
 |---|---|---|
-| data | `Config.js` | 模板、阵营覆写层 `factionOverrides`、建筑体积、**对战调参表 `tuning`**（调平衡改这里，别翻系统源码） |
-| data | `maps/` | 地图注册表（`index.js`）。地图自带：`world` 尺寸、`lanes` 路点、`buildings`、可选 `tierStats` 覆写、可选 `skills`（建筑默认技能覆写）、可选 `minionNoRend` |
-| core | `EntityContainer` | 实体仓库 + 空间网格（GRID_CELL=100）。`findInRadius` 是全部索敌/光环/碰撞的地基。`purgeDead` 豁免 `_respawnAt` 尸体 |
-| core | `AttributeCalculator` | 属性合成（基础+效果）。**每模拟步 tick 一次使缓存失效**；渲染复用最后一步的缓存（不许在渲染帧 tick，见 main.js 注释） |
-| core | `EffectRegistry` | 全部增益/减益/成长/状态的唯一通道。UI 的进度环 = remaining/duration；`alwaysShowStacks` 让层数徽标从第 1 层显示 |
-| core | `skills/` | 技能库（45+）。onFrame 有 try-catch 兜底（单技能抛错只跳过不冻结）。塔成长为阶梯制（层变化才 apply，层间直写 remainingTime，防闪烁） |
-| systems | `LaneMovementSystem` | 对战小兵 AI。核心规则（血泪换来，别乱动）：射程内必停下打；追击目标每步重估为最近敌（等速追击不朝你走的目标**永远追不上**，粘性远追会形成永不相遇的轨道）；脱战回归按最近线段投影重定位 |
-| systems | `CollisionSystem` | 锚定阻尼分离（攻击中单位近似不可推动），治"围攻血球膨胀" |
-| systems | `MapSystem` | 地图装载/水晶重生（尸体原地复活）/守家圈。TIER_STATS 为峡谷默认，地图可覆写 |
-| systems | `CombatSystem` | 攻击结算、技能 onFrame 驱动、伤害管线（damageReduction/穿透/护盾次序在此） |
-| presentation | `CanvasRenderer` | 固定步长下的 60fps 渲染：精灵缓存、两档 LOD（<0.5 藏小兵血条，<0.35 圆点）、闪电光束用渲染墙钟（不用 30Hz gameTime，否则流动卡顿） |
-| data | `Weather.js` | 天气定义（5 基础 + 12 极端），完全数据驱动：加天气 = 加配置对象 |
-| systems | `WeatherSystem` | OU 过程 + Softmax 的连续权重场。极端天气按阈值涌现，强度 = (占比−阈值)/(1−阈值)。天气 buff 走 AttributeCalculator 修正层（O(1)），**不进 EffectRegistry**（每帧给上千单位 apply 会闪且慢） |
-| ui | `WeatherPanel` | 滚动预报条（堆叠面积图，左=现在右=未来）+ 配置面板（总开关 + 每种天气独立开关） |
-| ui | `UIManager` | 点选面板（O(1)/帧）+ 顶栏脏检查。`AttributeEditor`（1335 行，**挂账待拆**） |
+| data | `Config.js` | 全部可调数值、调色板 `stylizedPalettes`、界面/渲染开关 `ui.*` |
+| data | `maps/` | 地图注册表。`mapComposition.js` 把地形（TERRAIN_FIELDS）与玩法（CONFIG_FIELDS）拼成地图，未登记字段直接报错 |
+| data | `schema/` | 字段注册表：编辑器与运行时的唯一取值口径 |
+| data | `templateIO.js` | 存档导出/导入（导入时防原型链污染、去尖括号） |
+| data | `landmarks.js` | 地标规划（坑、基地广场），纯数据 |
+| data | `mapValidate.js` / `navOutline.js` / `navgrid.js` | 路/野区分级、navgrid 编解码与平滑轮廓 |
+| core | `EntityContainer` | 实体仓库 + 空间网格 |
+| core | `AttributeCalculator` | 属性合成（每步 tick 失效缓存） |
+| core | `EffectRegistry` | 全部增益/减益/状态的唯一通道 |
+| core | `SkillLibrary` / `skills/` / `skillParams.js` / `behaviorVM.js` | 技能定义、参数三层解析、自制技能解释器 |
+| core | `factories.js` | 实体工厂（塔/建筑/小兵/巨龙），由 simulation.js 注入依赖 |
+| core | `healing.js` | 唯一的回血入口（`_noHeal` 在这里拦） |
+| core | `reviveState.js` | 塔损毁档的记录（仿真每步）与复活时的唯一清单 |
+| core | `dayCycle.js` / `towerFacing.js` / `rng.js` | 昼夜相位、塔的静态朝向、可播种随机数 |
+| systems | `CombatSystem` / `ProjectileSystem` / `BuffSystem` / `ManaSystem` | 战斗结算、弹道、增益、法力与主动技能 |
+| systems | `LaneWaveSystem` / `LaneMovementSystem` / `CollisionSystem` / `FacingSystem` | 出兵、兵线移动、碰撞分离、朝向 |
+| systems | `MapSystem` | 地图装载、可走判定（navgrid）、河道/高度场、建筑重生 |
+| systems | `DragonSystem` / `NeutralCampSystem` | 巨龙与中立营地 |
+| systems | `WeatherSystem` / `WorldState` / `EntropySystem` / `GroundTraceSystem` | 天气、昼夜/世界耦合、熵、地面痕迹 |
+| systems | `DominionSystem` | 统治战场（水晶之痕）据点与水晶枢纽 |
+| presentation | `ThreeRenderer` | Three.js r169 渲染器，管理下面各层的 build/update |
+| presentation | `TerrainLayer` / `smoothLabels.js` | 地面底图烘焙（navgrid 图按原生网格平滑放大；挖空图按矢量轮廓） |
+| presentation | `TerrainEdgeLayer` / `MapSkirtLayer` / `WaterLayer` | 崖壁与低一层地面、地图裙边、河道水面 |
+| presentation | `VegetationLayer` / `BoundaryDecorLayer` / `LandmarkLayer` / `HowlingAbyssDecor` / `DominionPropsLayer` | 植被、边界装饰、地标、各图专属装饰 |
+| presentation | `UnitLayer` / `UnitMeshFactory` / `EffectsLayer` / `PostFX` | 单位模型、特效、后处理（描边/SSAO/FXAA） |
+| ui | `UIManager` / `WorldHud` / `SettingsDialog` / `ModeDialog` | HUD、设置、选图 |
+| ui | `AttributeEditor` + `editor/` | 模板/属性编辑器 |
+| ui | `MapEditorDialog` / `mapEditorSession.js` | 地图编辑器 |
 
-## 定标法
-一切几何 = 真实 LoL 坐标 × 0.24（塔射程 180 : LoL 750）。地图坐标系：canvas 标准（y 向下），蓝方左下、红方右上，红方 = 蓝方绕中心 180° 旋转。
+## 工具
 
-## 工程纪律（违者返工）
-0. **`tests/sim_runtime.mjs` 是最重要的一道关**：用 DOM 桩把【真实的游戏循环】跑起来
-   （沙盒 200 帧 + 对战 200 帧 + 天气开启 + 按阵营开关 + 深渊图）。
-   v25 事故：CombatSystem 里把循环变量 `tower` 误写成 `entity`，每帧 ReferenceError、
-   游戏完全卡死——而当时 12 套仿真【全绿】，因为它们都只 import 子系统做单元测试，
-   **从没有任何测试真正跑过游戏循环本体**。单元测试再多也挡不住这个。
-   （静态作用域分析试过：手写正则误报率太高，误报比漏报更有害。放弃。）
-0b. **`tests/sim_boot.mjs`**：全部源文件语法检查 + main.js 作用域引用体检。
-   v10 事故教训：基地光环补丁被贴进了 `createTower`（该函数没有 `tier`），开机 ReferenceError、
-   界面全黑，而当时 6 套仿真全绿——因为它们都直接 import 各系统，**从不加载 main.js**，
-   组合根整个漏在测试之外。任何跨函数的补丁，务必确认贴对了函数。
-1. **任何改动交付前 `npm test` 全绿**（7 套、120+ 断言，含能失败的冒烟与启动体检）。新机制必须带新断言。
-2. **补丁必须带断言**（Python replace 必须 assert 命中）——v5 曾因带 `\r` 的模式静默失败导致整批修复没落盘。全仓已统一 LF，保持。
-3. 数值平衡改动走仿真校准（参照 tests/ 里的校准脚本模式），不拍脑袋。
-4. 用户工作流：动手前确认到零疑问；数值委托 Claude、架构用户有否决权。
+| 工具 | 用途 |
+|---|---|
+| `tools/balance_matrix.mjs` | 批量对局（兵线图）；`--sweep soul/power` 龙魂/巨龙之力扫描 |
+| `tools/balance_dominion.mjs` | 统治战场专用；`--verbose` 单局全局实况 |
+| `tools/balance_tower.mjs` | 防御塔武器强度对照 |
+| `tools/run_balance_soul.mjs` | 本地多进程跑龙魂扫描 |
 
-## 挂账债务（按批清偿，勿混入功能批）
-- AttributeEditor 按 tab 拆分（需用户过拆法 + 实机测试窗口）
-- EntityFactory 从 main.js 抽离（main 回归纯组合根）
-- window.* 全局收编 GameState（gameTime/waveNumber/_uid；影响全部测试脚手架）
-- 选中卡技能槽每帧 innerHTML 重建（若实测 tooltip 闪烁，凶手是它）
-- getEffects 每调用分配新数组（实测 1043 单位 5.35ms 不疼，账记着）
-- PixiJS：仅当渲染项在目标规模逼近 8ms 才考虑（现渲染 2.73ms，远未到）
+前三个都走 `createSimulation()`，与游戏同一套系统与步进顺序（`run_balance_soul` 调的是 `balance_matrix`）。结果落盘到 `.balance/`，
+环境变量 `BALANCE_OUT_DIR` 可改目录（测试用它隔离）。
 
+## 定标
 
----
-
-## Changelog [DeepSeek]
-
-
-
-
-
-
-
-
-
-### 2026-07-19 #8 ? Quick Mode map (Summoner's Rift 15-min) [DeepSeek]
-### 2026-07-19 #8 ? Quick Mode map (Summoner's Rift, 15-min) [DeepSeek]
-- Added: src/data/maps/summoners_rift_quick.js ? inherits classic layout, adds quickModeSettings { waveInterval:15, hpMult:0.7, adMult:1.4, growthMult:1.5, spawnGap:0.3, nexusRespawnTime:150 }
-- Modified: src/data/maps/index.js ? registered summoners_rift_quick
-- Modified: src/systems/LaneWaveSystem.js ? reads quickModeSettings on first update to accelerate waves
-- Modified: src/main.js ? LaneWaveSystem createMinion wrapper applies HP/AD multipliers for quick mode
-### 2026-07-19 #7 ? AttributeEditor section dividers [DeepSeek]
-- Modified: src/ui/AttributeEditor.js ? added 4 SECTION comment dividers for navigability
-- Status: All P0-P3 tasks complete. TODO list cleared.
-### 2026-07-19 #6 ? AI system separation [DeepSeek]
-- Added: src/systems/AISystem.js ? stateless target acquisition + line-of-sight (extracted from LaneMovementSystem)
-- Modified: src/systems/LaneMovementSystem.js ? delegates scanEnemies/hasLineOfSight to AISystem
-- Modified: src/main.js ? removed AISystem.setRefs (stateless, no init needed)
-### 2026-07-19 #5 ? Complete JSON template migration [DeepSeek]
-- Added: src/data/templates/ ? all 9 unit types as JSON (tower, melee, ranged, siege, super, totem, warlock, corrupt, ram)
-- Added: src/data/templates/index.js ? async loader with loadTemplates()
-### 2026-07-19 #4 ? Event System + Dev Guide + JSON Templates
-- Added: src/core/GameEvents.js ? 14 canonical event type constants
-- Added: src/data/templates/ ? tower.json / melee.json / ranged.json
-- Modified: Role comments on 6 core files (EntityContainer, EffectRegistry, AttributeCalculator, CombatSystem, LaneMovementSystem, CollisionSystem)
-
-### 2026-07-19 #3 ? Entity JSDoc typedef
-- Modified: src/core/EntityFactory.js ? full @typedef {object} Entity (20+ _-prefixed properties)
-
-### 2026-07-19 #2 ? GameContext + SkillLibrary plugin
-- Added: src/core/GameContext.js ? centralized state, CTX.* <-> window.* sync
-- Modified: src/core/SkillLibrary.js ? register()/get()/has()/ids()
-- Modified: src/main.js ? window.* init -> CTX.*
-- Modified: src/systems/LaneMovementSystem.js ? removed _findAnchorSlot teleport
-- Modified: src/systems/CollisionSystem.js ? OVERLAP_ALLOW 0.85 -> 1.0
-
-### 2026-07-19 #1 ? Ram unit + spawn optimization
-- Modified: src/data/Config.js ? waveRamInterval/ramMinWave; spawnGap 0.35 -> 0.55
-- Modified: src/systems/LaneWaveSystem.js ? ram from hardcoded to CONFIG
-- Modified: src/ui/UnitAddDialog.js ? MINION_TYPES includes ram
-- Modified: src/ui/AttributeEditor.js ? all _TPL_* include ram
-- Modified: src/data/UnitTemplates.js ? added warlock/corrupt/ram
-
----
-
-## New Architecture Rules [DeepSeek]
-
-- Always full backup before changes (.backups/ dir, timestamped)
-- Update this file after every change session
-- All new events MUST use GameEvents.js constants (no bare strings)
-- All runtime _-prefixed entity props documented in EntityFactory.js @typedef
-- New skills use SkillLibrary.register() ? never mutate SkillLibrary directly
-
----
+一切几何 = 真实 LoL 坐标 × 0.24（塔射程 180 : LoL 750）。坐标系：canvas 标准（y 向下）；
+渲染里世界 (x, y) 对应 Three.js 的 (x, 高度, y)。
 
 ## 技能文案规范（用户定稿 · Q3）
 

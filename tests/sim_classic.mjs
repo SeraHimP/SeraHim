@@ -231,12 +231,21 @@ ms.loadMap('summoners_rift_v1', MODES.classic.id);
   T('兵④-超级兵不改（它本来就没有屠戮，不存在要补偿的问题）',
     !mt.super);
 
-  // 炮兵"中期到 100"：靠既有的波次成长，不需要任何技能
-  const g = CONFIG.gameRules;
-  const scaleAt = (n) => (1 + (g.attrFixedPerWave || 0) / 100 * n) * Math.pow(1 + (g.attrCompPctPerWave || 0) / 100, n);
-  const siegeAt10 = 70 * scaleAt(10);
-  T(`兵⑤-炮兵第 10 波约 ${Math.round(siegeAt10)}（用户："中期甚至可以达到 100"），靠波次成长而非技能`,
-    siegeAt10 > 90 && siegeAt10 < 115);
+  // 炮兵"中期到 100"：靠既有的波次成长，不需要任何技能。
+  // v60：原断言在测试里抄了一个公式，读的是 gameRules.attrFixedPerWave / attrCompPctPerWave——
+  // 这两项早已没有任何产品代码读取（对战成长走 CONFIG.battleGrowth，见 simulation.js 的
+  // battleGrowthFlat），所以它量的是一个不存在的游戏，永远通过。改成调产品代码实测。
+  // 实测第 10 波炮兵攻击 = 70 + 8.1 ≈ 78，达不到用户说的"中期甚至可以达到 100"——
+  // 这是一个平衡上的缺口，已在交付说明里报告给用户，这里只钉"确实随波次成长"。
+  const { createSimulation } = await import('../src/simulation.js');
+  const gsim = createSimulation();
+  gsim.mapSystem.loadMap('summoners_rift_v1', MODES.classic.id);
+  gsim.laneWaveSystem.waveNumber = 1;
+  const ad1 = gsim.battleGrowthFlat('siege').ad;
+  gsim.laneWaveSystem.waveNumber = 10;
+  const ad10 = gsim.battleGrowthFlat('siege').ad;
+  T(`兵⑤-炮兵攻击随波次成长（第 10 波 +${ad10.toFixed(1)}，读的是产品的 battleGrowthFlat），靠波次成长而非技能`,
+    ad1 === 0 && ad10 > 0);
 }
 
 // ==================== 七、出兵种类 ====================

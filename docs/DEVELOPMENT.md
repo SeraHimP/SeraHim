@@ -54,13 +54,14 @@ open(p, 'w', encoding='utf-8').write(out)   # 再开写句柄
 ### 0.2 交付前 `npm test` 必须全绿
 
 ```bash
-node tests/run_all.mjs      # 约 6~9 分钟，41 套
+node tests/run_all.mjs --jobs 4   # 约 2~3 分钟；不带 --jobs 顺序跑约 6~9 分钟
 ```
 
 不要用"失败集合没变"当通过标准（本项目曾长期带着 6 个失败用例，
 后来查明 5 个是断言自己写错了，不是产品 bug）。**基线是 0 失败。**
 
-新增行为**必须**配一套 `tests/sim_*.mjs` 并注册进 `tests/run_all.mjs` 的 `suites` 数组。
+新增行为**必须**配一套 `tests/sim_*.mjs` 并注册进 `tests/run_all.mjs` 的 `suites` 数组
+（套数以那个数组为准，v60 时是 104 套）。
 没有断言守着的行为，下一个人改两行就没了。
 
 ### 0.3 一切数值都必须软编码
@@ -88,8 +89,15 @@ docs/
   DEVELOPMENT.md       ← 本文件
   ui-standard.md       界面设计规范 + 待改造清单
 src/
-  main.js              主循环 + 装配（唯一允许"认识所有系统"的地方）
+  simulation.js        仿真唯一装配点：createSimulation() 构造全部系统与接线，唯一的 step()
+                       （游戏、平衡工具、全栈测试共用；唯一允许"认识所有系统"的地方）
+  main.js              浏览器入口：界面、渲染、游戏循环（调 sim.step），不再自己构造系统
   core/                无渲染依赖的纯逻辑
+    rng.js               逻辑层唯一随机源（可播种；systems/core 里禁止 Math.random）
+    dayCycle.js          昼夜时长与相位换算（从 presentation/DayNight.js 拆出）
+    towerFacing.js       塔的静态朝向
+    reviveState.js       塔损毁档（仿真每步记录）+ 复活时的唯一清单
+    healing.js           唯一回血入口
     EntityContainer.js   实体存储 + 空间哈希网格
     AttributeCalculator.js 属性合成（帧级缓存）
     EffectRegistry.js    效果/状态
@@ -102,7 +110,8 @@ src/
   data/
     Config.js            全部可调数值
     schema/index.js      字段注册表：编辑器与运行时的**唯一**取值口径
-    templateIO.js        配置导出/导入（可 headless 测）
+    templateIO.js        配置导出/导入（可 headless 测；导入时防原型链污染、去尖括号）
+    landmarks.js         地标规划：坑、基地广场（按 map.landmarks 开启）
     waveComposition.js   出兵编排 + 条件表（引擎与编辑器共用）
     dragonCurve.js       巨龙曲线（引擎与编辑器共用）
     towerModels.js       建筑模型角色清单
@@ -120,6 +129,9 @@ src/
       events.js            事件绑定 + 应用修改
 tools/
   balance_matrix.mjs   headless 批量对局模拟（--map 可指定地图）
+  balance_dominion.mjs 统治战场专用（--verbose 单局全局实况）
+  balance_tower.mjs    防御塔武器强度对照
+                       三个工具都走 createSimulation()；BALANCE_OUT_DIR 可改落盘目录
   killrate.mjs         击杀率探针
   legacy-verify/       历史一次性验证脚本（存档，不再维护）
 tests/
@@ -151,7 +163,8 @@ CONFIG（+ 地图覆写 + 阵营覆写）
 ### 系统间禁止互相 import
 
 耦合一律走 `EventBus`，或在 `WorldState.update()` 里**单向**求值。
-需要跨系统联动时（例：水晶重建后补发龙魂），在 `main.js` 里监听事件来接，
+需要跨系统联动时（例：水晶重建后补发龙魂），在 `simulation.js`（影响对局的接线）
+或 `main.js`（纯界面的接线）里监听事件来接，
 不要让 `MapSystem` 去 import `DragonSystem`。
 
 **例外：`src/data/` 下的纯数据模块可以被任何人 import。**
@@ -176,8 +189,10 @@ CONFIG（+ 地图覆写 + 阵营覆写）
 
 渲染状态一律放渲染层自己的 entry / `WeakMap`
 （见 `EffectsLayer` 的 `_beamEndY`、`UnitLayer` entry 上的 `ringHot`/`ringWant`）。
-往实体上挂 `_renderXxx` 会污染逻辑层的序列化、克隆、存档，
-而且沙盒/对战两套流程下生命周期不一致。
+往实体上挂 `_renderXxx` 会污染逻辑层的序列化、克隆、存档。
+如果某个"显示状态"其实是历史（例：塔的损毁档只增不减），它属于仿真——
+v60 之前损毁档写在 UnitMeshFactory 里，只有被画出来的帧才会推进，后台标签页里
+掉血又被奶回的塔永远不进重度损毁。现在由 `simulation.step()` 记录，渲染层只读。
 
 ### 3.2 空间网格改了实体集合就要 `markDirty()`
 
@@ -303,7 +318,6 @@ CONFIG.templates.tower
 - 条件（`when`）来自 `WAVE_CONDITIONS` 注册表，41 条。加新条件**只改这张表**。
 - 判定所需的世界快照由 `LaneWaveSystem` 每波组装一次（不是每条规则各查一遍）。
   **拿不到快照时一律放行**——宁可多出兵，也不要一条规则静默失效却不报错。
-- `gameRules` 里的 `waveXxxCount` / `waveXxxInterval` 只影响**沙盒模式**。
 
 ---
 
@@ -359,9 +373,13 @@ CONFIG.templates.tower
 | id | 名称 | 世界 | 路 | 每方建筑 |
 |---|---|---|---|---|
 | `summoners_rift_v1` | 召唤师峡谷 | 3552² | 3 | 外/内/水晶防御塔×3路 + 枢纽防御塔×2 + 召唤水晶×3 + 水晶枢纽 |
-| `summoners_rift_quick_v2` | Quick Mode | 3552² | 3 | 同上（节奏加快） |
-| `howling_abyss_v1` | 嚎哭深渊 | 2325² | 1 | 外塔 + 水晶防御塔 + 召唤水晶 + 枢纽防御塔×2 + 水晶枢纽 |
-| `twisted_treeline_v1` | 扭曲丛林 | 3000×1400 | 2 | 每路（外塔+内塔+召唤水晶）+ 枢纽防御塔 + 水晶枢纽 |
+| `twisted_treeline_v1` | 扭曲丛林 | 3008×1388 | 2 | 每路（外塔+内塔+召唤水晶）+ 枢纽防御塔 + 水晶枢纽 |
+| `howling_abyss_frost_v1` | 嚎哭深渊·冰封 | 2325² | 1 | 外塔 + 水晶防御塔 + 召唤水晶 + 枢纽防御塔×2 + 水晶枢纽 |
+| `dominion_crystal_scar_v1` | 统治战场·水晶之痕 | 2200² | 环形 | 5 个据点 + 水晶枢纽（统治战场模式，平衡用 `balance_dominion`） |
+
+另有三张**不在选图列表里**的图（`hiddenFromPicker: true`，代码与测试保留）：
+`summoners_rift_organic_v1`（蜿蜒版峡谷）、`confluence_v1`（汇流战场，5 路）、`demo_stylized_v1`。
+旧版嚎哭深渊 `howling_abyss_v1` 已在 v60 删除，被冰封版取代。
 
 ### 六.2 做一张新地图
 
@@ -511,7 +529,7 @@ Three 的前向渲染把光源数量编进着色器，**数量一变就要重编
   测试里把方法从源码里借出来直接调，逐档比对。
   **不要在测试里抄一份公式**——抄的那份永远会通过。
 - **浏览器里测不了的就别硬测**。射程圈的渐显曾试过在浏览器里量：
-  沙盒的移动/分离力会把钉住的小兵推走，探测又有 0.25s 节流，
+  场上的移动/分离力会把钉住的小兵推走，探测又有 0.25s 节流，
   读到的距离和探测时的距离经常不是同一个，数值乱跳。**那种测法即使通过也说明不了任何事。**
 - **纯渲染的东西靠 headless Chromium 实拍核对**，测试里只断言"配置软编码"与"实现走对了路"。
 
@@ -550,7 +568,13 @@ node tools/balance_matrix.mjs --sweep dayNight          # 扫昼夜加成
 node tools/balance_matrix.mjs --json out.json           # 落盘便于前后对比
 ```
 
-它跑的是**真实**的 `MapSystem`/`LaneWaveSystem`/`CombatSystem`，不是简化模型。同一命令可复现。
+它跑的是 `createSimulation()`——与游戏**同一套**系统、接线和步进顺序，不是简化模型。
+同一命令可复现（每一局按局号播种逻辑随机数 `core/rng.js`，N 局是 N 个不同但固定的样本）。
+
+**v60 之前的平衡结论与之后的不可直接比较。** 在那之前三个工具各自手抄了一份系统表，
+漏了法力（主动技能从不施放）、天气、巨龙、哀兵、地面痕迹，`balance_matrix` 甚至没有
+统治战场的据点系统——所以它在水晶之痕上"全是平局"是工具的问题，不是地图的问题。
+统治战场用 `tools/balance_dominion.mjs`。
 
 **判读要点**：基线对局 40 分钟内**基本打不出胜负**，所以主信号是**推进度差**而不是胜率。
 推进度 = 已打掉的档位数（外1/内2/水晶3/召唤水晶4/枢纽5）+ 最前线那座的掉血比例。

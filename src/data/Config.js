@@ -29,19 +29,10 @@ export const CONFIG = {
   gameRules: {
     waveInterval: 45,
     firstWaveDelay: 20,
-    hpFixedPerWave: 2,
-    hpCompPctPerWave: 0.3,
-    attrFixedPerWave: 3.5,
-    attrCompPctPerWave: 0.4,
     shieldRegenDelay: 8,
     onHitArmorPen: 30,
     lifeStealToHealth: 50,
     lifeStealToShield: 50,
-    waveMeleeCount: 3,
-    waveRangedCount: 3,
-    waveSiegeSuperInterval: 2,
-    waveSuperFromWave: 20,
-    waveTotemInterval: 5,
     // ==================== 支援兵种数值（用户定稿的重做）====================
     // 三个兵种的定位：图腾=续航/减伤、术士=增伤/破防、蚀骨=近战破甲。
     // 全部软编码，源码里不留魔数。

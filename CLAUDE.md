@@ -21,7 +21,7 @@
 ## 1. 交付前 `npm test` 必须全绿
 
 ```bash
-node tests/run_all.mjs      # 约 5~8 分钟，41 套
+node tests/run_all.mjs --jobs 4   # 约 2~3 分钟；顺序跑约 6~9 分钟
 ```
 
 **基线是 0 失败。** 不要用"失败集合没变"当通过标准（本项目曾长期带着 6 个失败用例，
@@ -40,6 +40,11 @@ node tests/run_all.mjs      # 约 5~8 分钟，41 套
 参数化时**默认值必须与参数化前逐位一致**——"加开关"和"改行为"是两件事，要分两次做
 （见 `docs/DEVELOPMENT.md` §8.3）。另外注意：**同一技能在不同地图上可能表现不同**，
 技能参数要留地图级覆写的余地（见 `MapSystem` 的 `_params` 注入）。
+
+**边界在哪（v60 补充）**：必须进 Config 的是**玩法数值**（伤害、血量、冷却、成长、出兵节奏……）
+和**用户会想调的画面参数**（配色、密度、开关、强度）。纯装饰几何的局部常量
+（一根柱子的半径、一块石头的收分）可以留作模块内**具名常量**，写清含义即可——
+`DominionPropsLayer.js` 头注里有这条先例。拿不准算哪一类，就进 Config。
 
 ## 3. 改了期望常量，必须在提交信息里逐项报告
 
@@ -71,10 +76,20 @@ node tests/run_all.mjs      # 约 5~8 分钟，41 套
 
 ---
 
+## 注释写法（v60 起，只管新写的注释）
+
+代码注释写**现状和原因**：这段为什么这样做、不这样会出什么问题、用户定稿的原话是什么。
+**版本流水账**（"v45 改成……，v51 又改成……"）写进提交信息，不要再往注释里堆——
+注释越堆越长，读的人分不清哪句还成立。已有的历史注释不必专门去改；
+改到某段代码时，顺手把已经不成立的那几句删掉。
+
+---
+
 ## 常用命令
 
 ```bash
-node tests/run_all.mjs                                    # 全量回归
+node tests/run_all.mjs --jobs 4                           # 全量回归
 node tools/balance_matrix.mjs --runs 20 --minutes 40      # 要下平衡结论就用这个
 node tools/balance_matrix.mjs --map twisted_treeline_v1   # 换地图跑
+node tools/balance_dominion.mjs --verbose                 # 统治战场（水晶之痕）专用
 ```
