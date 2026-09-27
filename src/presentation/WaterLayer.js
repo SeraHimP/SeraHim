@@ -10,6 +10,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
+import { landmarkPlan, inPitFloor } from '../data/landmarks.js';
 
 const _wA = new THREE.Color(), _wB = new THREE.Color();
 
@@ -104,7 +105,12 @@ export class WaterLayer {
 
     // 水面 = 整张地图大小的平面 + 河带 alpha 遮罩。比"旋转的长条"好在：
     //   ① 天然裁进地图边界（长条会从四角戳出去）；② 河带定义与 heightAt 逐像素一致；③ 岸边可羽化。
-    this.mask = riverMaskTexture(WW, WH, (x, z) => mapSystem.riverFactor(x, z));
+    // v60：声明了地标坑的地图，坑底不盖水（坑底颜色画在地形底图上，见 TerrainLayer.drawLandmarks）。
+    const plan = landmarkPlan(map, (n) => mapSystem.getPit(n));
+    const pitOn = plan && plan.pits.length;
+    this.mask = riverMaskTexture(WW, WH, pitOn
+      ? (x, z) => mapSystem.riverFactor(x, z) * (1 - inPitFloor(plan, x, z))
+      : (x, z) => mapSystem.riverFactor(x, z));
     const geo = new THREE.PlaneGeometry(WW, WH, 1, 1);
     geo.rotateX(-Math.PI / 2);                        // 躺平到 XZ
     // 材质用 Lambert（【无镜面反射】）而不是 Standard：低粗糙度+金属度会在太阳方向打出一大片高光，

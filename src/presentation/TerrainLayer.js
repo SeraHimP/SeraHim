@@ -20,6 +20,7 @@ import { baseCircleCenter, isInBaseWallRing } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
 import { smoothLabelsToRGBA, sampleFieldRGBA } from './smoothLabels.js';
 import { SR_NAVGRID } from '../data/maps/sr_navgrid.js';
+import { landmarkPlan, landmarkConfig } from '../data/landmarks.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
 import { forestZoneCells } from '../data/mapValidate.js';
 
@@ -54,6 +55,18 @@ export function invalidateTerrainCache(mapId) {
  * @param grid       WallLayer 的可走网格 { walk, nx, ny }（navgrid 地图才有意义）
  * @param mapSystem  用于取河道强度场（riverFactor）；缺省则不画河
  */
+/** 最小的 hex 颜色明暗调整（本模块是纯 2D 画布，不为这一件事引 THREE）。k>0 提亮、k<0 压暗。 */
+class HexShade {
+  constructor(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '') || [0, '8f8879'];
+    this.c = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  }
+  lift(k) {
+    const f = (v) => Math.round(k >= 0 ? v + (255 - v) * k : v * (1 + k));
+    return `rgb(${this.c.map(f).join(',')})`;
+  }
+}
+
 /**
  * 可选的"只用来画地面形状"的位图（`map.visualNavgrid`）→ 与 grid 同分辨率的 0/1 表。
  *
@@ -192,6 +205,43 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     }
   };
   const riverAt = mapSystem ? ((x, y) => mapSystem.riverFactor(x, y)) : null;
+
+  // v60：地标的地面部分（坑底、铺石广场），画在河道之后——坑底要盖住河色。
+  // 立石在 LandmarkLayer（3D）。只有声明了 map.landmarks 的地图才有。
+  const drawLandmarks = () => {
+    const plan = landmarkPlan(map, mapSystem ? (n) => mapSystem.getPit(n) : null);
+    if (!plan) return;
+    const L = landmarkConfig(map);
+    for (const p of plan.pits) {
+      const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+      gr.addColorStop(0, L.pitFloorColor); gr.addColorStop(0.85, L.pitFloorColor);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(p.x, p.y, p.r, 0, 2 * Math.PI); g.fill();
+    }
+    if (plan.plazas.length) {
+      const rock = new HexShade(stylizedPaletteOf(map).rockColor || '#8f8879');
+      const stone = rock.lift(L.plazaStoneLift ?? 0.25), joint = rock.lift(-0.35);
+      for (const pz of plan.plazas) {
+        g.fillStyle = stone;
+        g.beginPath(); g.arc(pz.x, pz.y, pz.r, 0, 2 * Math.PI); g.fill();
+        g.strokeStyle = joint; g.lineWidth = 3;
+        for (let i = 1; i <= pz.rings; i++) {
+          g.beginPath(); g.arc(pz.x, pz.y, pz.r * i / (pz.rings + 1), 0, 2 * Math.PI); g.stroke();
+        }
+        const r0 = pz.r / (pz.rings + 1);
+        for (let i = 0; i < pz.spokes; i++) {
+          const a = i / pz.spokes * Math.PI * 2;
+          g.beginPath();
+          g.moveTo(pz.x + Math.cos(a) * r0, pz.y + Math.sin(a) * r0);
+          g.lineTo(pz.x + Math.cos(a) * pz.r, pz.y + Math.sin(a) * pz.r);
+          g.stroke();
+        }
+        g.lineWidth = 6;
+        g.beginPath(); g.arc(pz.x, pz.y, pz.r, 0, 2 * Math.PI); g.stroke();   // 外圈路缘
+      }
+    }
+  };
 
   // ============ Q4：navgrid 地图 —— 底图直接由真实可走网格生成 ============
   // 此前底图是"沿兵线折线描三层粗线"画出来的走廊模型；而地形的真实形状早已换成 navgrid。
@@ -346,6 +396,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
       out.data.set(smoothLabelsToRGBA(labels, nx, ny, PAL, c.width, c.height, SM.blur ?? 1 / 6));
       g.putImageData(out, 0, 0);
       drawRiver(riverAt);
+      drawLandmarks();
       tintBases();
       _terrainCache.set(key, c);
       return c;
@@ -359,6 +410,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     g.drawImage(cell, 0, 0, WW, WH);
     g.imageSmoothingEnabled = true;
     drawRiver(riverAt);
+    drawLandmarks();
     tintBases();
     _terrainCache.set(key, c);
     return c;

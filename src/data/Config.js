@@ -1356,6 +1356,20 @@ export const CONFIG = {
     // 只影响画面；能不能走仍然只认 navgrid。
     terrainSmooth: { enabled: true, blur: 1 / 6, riverSampleWorld: 8 },
 
+    // ==================== v60：地标（龙坑/男爵坑、基地广场）====================
+    // 按地图声明开启（map.landmarks = { pits: true, plazas: true, ...覆写 }），
+    // 见 data/landmarks.js。这里是基表，地图可以逐项覆写。
+    //   pitStones / pitGapDeg：坑沿立石数量、两个缺口各自的半角（度）
+    //   pitStoneSize / pitStoneHeight：立石平均半径/高度（世界单位）
+    //   pitFloorColor：坑底颜色（盖掉河道色、且坑内不盖水面）
+    //   plazaRadius / plazaRings / plazaSpokes：广场半径、同心接缝圈数、放射接缝条数
+    //   plazaStoneLift：广场铺石色相对调色板 rockColor 的提亮比例
+    landmarks: {
+      pitStones: 16, pitGapDeg: 26, pitStoneSize: 14, pitStoneHeight: 26, pitRadiusScale: 1,
+      pitFloorColor: '#b89c68',
+      plazaRadius: 240, plazaRings: 3, plazaSpokes: 12, plazaStoneLift: 0.25,
+    },
+
     // ==================== v45：地图火炬（夜间补光）====================
     // 用户："实在不行可以在地图中增加光源（火炬等）。""扭曲丛林这张图晚上看起来很怪。"
     //

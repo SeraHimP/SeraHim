@@ -136,6 +136,8 @@ const TT_CONFIG = {
   // 巨圈 —— 用户看到的"基地圈可视化乱七八糟"就是这个。圆心显式给到水晶枢纽上。
   baseCenters: { blue: { x: 584, y: 676 }, red: { x: 2424, y: 676 } },
   baseCircleRadius: 300,
+  // v60：水晶枢纽脚下铺石广场（本图没有坑）。见 data/landmarks.js。
+  landmarks: { plazas: true, plazaRadius: 170 },
 
   neutralCamps: [{
     id: 'dragon', unitType: 'dragon', label: '巨龙',

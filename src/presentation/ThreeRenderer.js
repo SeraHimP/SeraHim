@@ -30,6 +30,7 @@ import { VegetationLayer } from './VegetationLayer.js';
 import { HowlingAbyssDecor } from './HowlingAbyssDecor.js';
 import { BoundaryDecorLayer } from './BoundaryDecorLayer.js';
 import { DominionPropsLayer } from './DominionPropsLayer.js';
+import { LandmarkLayer } from './LandmarkLayer.js';
 import { MapSkirtLayer } from './MapSkirtLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
@@ -188,6 +189,7 @@ export class ThreeRenderer {
     // 2026-09-26：统治战场·据点环境装饰（风车/钻机/采石场/兽骨场/精炼厂），
     // 通用件——自带 dominionNodes 判据+同图跳过守卫，见 DominionPropsLayer.js 头注。
     this.dominionProps = new DominionPropsLayer(this.scene);
+    this.landmarks = new LandmarkLayer(this.scene);   // 坑沿立石圈（只在声明了 map.landmarks 的图上建）
     this.terrainEdge = new TerrainEdgeLayer(this.scene);   // v55：陆地厚度（崖壁 + 下沉深渊面），通用件
     if (this.mapSystem?.isWalkable) {
       this.frostDecor.setWalkableFn((x, y) => this.mapSystem.isWalkable(x, y));
@@ -465,6 +467,7 @@ export class ThreeRenderer {
     this.frostDecor?.setShadowLevel?.(lv);
     this.terrainEdge?.setShadowLevel?.(lv);
     this.dominionProps?.setShadowLevel?.(lv);
+    this.landmarks?.setShadowLevel?.(lv);
     this.gl.shadowMap.needsUpdate = true;
     return lv;
   }
@@ -934,6 +937,7 @@ export class ThreeRenderer {
     if (this.frostDecor) this.frostDecor._mapId = null;
     if (this.boundaryDecor) this.boundaryDecor._mapId = null;
     if (this.dominionProps) this.dominionProps._mapId = null;
+    if (this.landmarks) this.landmarks._mapId = null;
   }
 
   /**
@@ -1072,7 +1076,8 @@ export class ThreeRenderer {
     this.terrainEdge.build(this.mapSystem);   // v55：先建崖壁与深渊面（其它装饰要坐在它上面）
     this.frostDecor.build(this.mapSystem);   // 嚎哭深渊·冰封版专属装饰（自带 paletteId 判断+同图跳过守卫）
     this.boundaryDecor.build(this.mapSystem);   // v58：森林风格城墙柱子 + 野区边缘树石（自带 jungleColor 判断+同图跳过守卫）
-    this.dominionProps.build(this.mapSystem);   // 统治战场·据点环境装饰（自带 dominionNodes 判断+同图跳过守卫）
+    this.dominionProps.build(this.mapSystem);
+    this.landmarks.build(this.mapSystem);       // 地标立石（自带 map.landmarks 判断+同图跳过守卫）   // 统治战场·据点环境装饰（自带 dominionNodes 判断+同图跳过守卫）
     if (this.skirtOn) this.skirt.build(this.mapSystem); // v51.27：地图外围裙边（自己的贴图/纯色，见 MapSkirtLayer）
     this.water.build(this.mapSystem);                 // P1：河道水面同上
   }
