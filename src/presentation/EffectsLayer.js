@@ -93,6 +93,16 @@ const BEAM_CORE_K = 0.16;  // 白芯相对主体的宽度比（细才好看，�
 // Q3：腐蚀塔不画红线，改为从塔向射程边缘扩散的毒雾波纹
 // v43 Q8：腐蚀型的 2D 环常量已随实现一起迁到 presentation/CorrosionLayer.js（改为 3D 雾球）。
 
+/**
+ * 塔弹命中（子弹从列表里消失）后 t 秒，尾迹余烬还剩几成（0 = 收掉）。长度与不透明度都乘它。
+ * 时长与曲线在 CONFIG.ui.projectileFx.tower.trailFade / trailFadePow。
+ */
+export function trailEmberK(t) {
+  const PT = CONFIG.ui?.projectileFx?.tower || {};
+  const k = 1 - t / (PT.trailFade ?? TRAIL_FADE);
+  return k <= 0 ? 0 : Math.pow(k, PT.trailFadePow ?? 2);
+}
+
 class Batch {
   constructor(scene, maxTri, opts = {}) {
     this.max = maxTri;
@@ -866,10 +876,9 @@ export class EffectsLayer {
     for (let i = this._fading.length - 1; i >= 0; i--) {
       const s = this._fading[i];
       s.t += dtWall;
-      const k = 1 - s.t / TRAIL_FADE;
-      if (k <= 0) { this._fading.splice(i, 1); continue; }
-      // 余烬同时缩短：尾端向弹着点收拢，读作"打中后一闪而散"，而不是原地淡掉一整条
-      const kk = k * k;
+      const kk = trailEmberK(s.t);
+      if (kk <= 0) { this._fading.splice(i, 1); continue; }
+      // 余烬同时缩短：尾端向弹着点收拢，同时变淡（kk 同时管长度和不透明度）
       const sx = s.x + (s.tx - s.x) * kk, sz = s.y + (s.tz - s.y) * kk;
       const sy2 = s.by + (s.ty - s.by) * kk;
       this._trail(D, V, sx, sy2, sz, s.x, s.by, s.y, s.hsz, s.heat, s.col, kk);
