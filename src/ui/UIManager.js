@@ -1893,7 +1893,7 @@ export class UIManager {
     card.dataset.id = tower.id;
     // v33（Q11）：右上角"普通塔"卡片与阵营徽标已移除/上移到面板头部——卡片头只留血条以上内容
     card.innerHTML = `
-      <div class="bar-row">
+      <div class="bar-row" id="tower-hprow-${tower.id}">
         <div class="bar-track tower-bar" id="tower-bar-${tower.id}">
           <div class="bar-hp-trail" id="tower-trail-${tower.id}"></div>
           <div class="bar-hp" id="tower-hp-${tower.id}"></div>
@@ -1903,7 +1903,7 @@ export class UIManager {
           <div class="bar-shield-plain" id="tower-sp-${tower.id}"></div>
         </div>
       </div>
-      <div class="bar-text">
+      <div class="bar-text" id="tower-hptextrow-${tower.id}">
         <span id="tower-hptext-${tower.id}"></span>
         <span class="shield-total" id="tower-shieldtext-${tower.id}"></span>
       </div>
@@ -1948,6 +1948,32 @@ export class UIManager {
   updateTowerCard(card, tower) {
     const id = tower.id;
     const stats = this.attrCalc.calc(tower, this.effects.getEffects(id));
+    // 2026-09-27 用户定稿："据点的单位属性窗口中，把血条（1/1）隐藏"——据点
+    // （tower.isCapturePoint）没有 HP 概念，maxHP/currentHP 只是恒定占位值 1/1
+    // （见 DominionSystem.initMap 头注），这条血条对玩家没有任何信息量，只会让人
+    // 误以为据点有"1点血"。占领进度已经走下面的法力条位置显示（resourceBar.js
+    // 的 isCapturePoint 分支），血条这里直接隐藏整行（含下方的数字文本行），
+    // 不再计算/渲染任何 HP 相关内容。
+    const hpRow = card.querySelector(`#tower-hprow-${id}`);
+    const hpTextRow = card.querySelector(`#tower-hptextrow-${id}`);
+    if (tower.isCapturePoint) {
+      if (hpRow) hpRow.style.display = 'none';
+      if (hpTextRow) hpTextRow.style.display = 'none';
+      this._updateResourceBar(card, 'tower', id, tower);
+      const attrsContainer0 = card.querySelector(`#tower-attrs-${id}`);
+      if (attrsContainer0) this._setAttrs(attrsContainer0, this._baseAttrsHtml(tower, stats));
+      const attrsExtContainer0 = card.querySelector(`#tower-attrs-ext-${id}`);
+      if (attrsExtContainer0) this._setAttrs(attrsExtContainer0, this._extAttrsHtml(tower, stats));
+      const skillContainer0 = card.querySelector(`#tower-skills-${id}`);
+      this._updateSkillSlots(skillContainer0, tower._skillInstances || [], tower);
+      const effectsContainer0 = card.querySelector(`#tower-effects-${id}`);
+      this._updateEffectIcons(effectsContainer0, this.effects.getEffects(id).filter(e => !HIDDEN_STATUS_EFFECT_NAMES.has(e.blueprint.name)));
+      this._updateWeatherRow(card, tower);
+      this._updateWorldRow(card, tower);
+      return;
+    }
+    if (hpRow) hpRow.style.display = '';
+    if (hpTextRow) hpTextRow.style.display = '';
     const maxHP = stats.maxHP || 1;
     const hpFrac = Math.max(0, Math.min(1, tower.currentHP / maxHP));
 
