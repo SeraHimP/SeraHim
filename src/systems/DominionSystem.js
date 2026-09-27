@@ -514,17 +514,27 @@ export class DominionSystem {
         const oppCount = node.faction === FACTIONS.BLUE ? redCount : blueCount;
         const deficit = Math.max(0, oppCount - myCount);
         if (deficit > 0) budget.siege = (budget.siege || 0) + deficit;
-        // 2026-09-26 用户追加定稿："若某阵营水晶枢纽生命值低于75，则该阵营每2次
-        // 出兵额外生成一个超级兵"——按这个水晶枢纽节点自己出过几次兵计数
-        // （node._nexusSpawnCount，不是共用的 _waveCount，两个水晶枢纽的节奏
-        // 本来就不必同步），低于阈值时每 lowHpNexusBonusEvery 次追加一个超级兵。
-        node._nexusSpawnCount = (node._nexusSpawnCount || 0) + 1;
+        // 2026-09-27 重新定稿（作废了原来"低于阈值后每几波一直出"那版）：
+        // "在生命值第一次低于500/300/150/50时，每达到一个阈值后（可累加，
+        // 某个阈值生效过一次就作废），下次在基地出兵额外增加1超级兵"——
+        // 每个水晶枢纽自己维护一份"哪些档位已经消耗过"的记录
+        // （node._consumedLowHpThresholds），在它自己出兵的这一刻检查还没
+        // 消耗过的档位里当前血量已经跌破了哪些，一次性全部消耗掉、各自
+        // +1（"可累加"），消耗过的档位标记后永久不再触发——不需要额外的
+        // "已跌破但还没出兵"中间状态：血量只降不升（水晶枢纽没有回血
+        // 手段），在出兵这一刻直接读当前血量判定，效果等同于"跌破后到
+        // 下一次出兵才生效"。
         const myNexus = this.entities.getAllTowers(false)
           .find((t) => t._mapTier === 'nexus_main' && t._mapFaction === node.faction);
-        const lowHp = myNexus && myNexus.alive && myNexus.currentHP < (cfg.lowHpNexusThreshold ?? 75);
-        if (lowHp && node._nexusSpawnCount % Math.max(1, cfg.lowHpNexusBonusEvery ?? 2) === 0) {
-          budget.super = (budget.super || 0) + 1;
+        node._consumedLowHpThresholds = node._consumedLowHpThresholds || new Set();
+        let lowHpBonus = 0;
+        if (myNexus && myNexus.alive) {
+          for (const t of (cfg.lowHpNexusSuperThresholds || [])) {
+            if (node._consumedLowHpThresholds.has(t)) continue;
+            if (myNexus.currentHP < t) { node._consumedLowHpThresholds.add(t); lowHpBonus++; }
+          }
         }
+        if (lowHpBonus > 0) budget.super = (budget.super || 0) + lowHpBonus;
         this._spawnBudget(node, node.faction, budget, toggleStart);
       }
     }
