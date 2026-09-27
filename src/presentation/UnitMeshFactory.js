@@ -20,6 +20,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
+import { statueTower } from './towerStatue.js';
 
 const _geoCache = new Map();
 const _matCache = new Map();
@@ -235,8 +236,20 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       ? { ...F0, stone: pal.stone || F0.stone, trim: pal.trim || F0.trim }
       : F0;
     const add = (geo, m, c) => parts.push({ geo, matrix: m, color: c });
+    // 雕像守卫造型（CONFIG.ui.statueTower.style === 'statue'）：只接管防御塔，水晶/枢纽仍走下面。
+    // 损毁 = 按部件整块拿掉，见 towerStatue.js 头注。
+    const statue = kind === 'tower' && CONFIG.ui?.statueTower?.style === 'statue'
+      ? statueTower(R, tier, faction, F) : null;
 
-    if (ruin) {
+    if (statue) {
+      if (ruin) parts.push(...statue.ruin);
+      else {
+        parts.push(...statue.model.parts(statue.stages[Math.max(0, Math.min(2, dmg))]));
+        crystalR = statue.crystalR;
+        crystalCy = statue.crystalCy;
+        crystalGeo = new THREE.OctahedronGeometry(crystalR);
+      }
+    } else if (ruin) {
       // ==================== 废墟（v44 重做）====================
       // 用户："塔被摧毁的模型也优化一下。然后召唤水晶/水晶枢纽被摧毁的模型，
       //        上面的水晶碎片没有更改材质，看起来不好看。"
@@ -893,7 +906,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     }
     hit = pack(parts);
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
-    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
+    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR, cx: statue ? statue.crystalX : 0, cz: statue ? statue.crystalZ : 0 }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
   }

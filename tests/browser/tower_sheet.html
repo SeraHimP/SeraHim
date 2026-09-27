@@ -59,7 +59,7 @@ for (let i = 0; i < COLS.length; i++) {
   if (m.crystal) {
     const cm = new THREE.Mesh(m.crystal.geo,
       new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8 }));
-    cm.position.y = m.crystal.cy;
+    cm.position.set(m.crystal.cx || 0, m.crystal.cy, m.crystal.cz || 0);   // 雕像塔的水晶在杖顶，偏在身侧
     group.add(cm);
   }
   // 摄像机对准这一格

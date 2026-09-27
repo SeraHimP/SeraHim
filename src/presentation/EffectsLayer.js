@@ -473,10 +473,23 @@ export class EffectsLayer {
    * @param view  { vx,vy,vz, ux,uy,uz } 摄像机视线与上方向（摄像机不偏航，故为常量）
    * @param muzzleOf(entityId) → 该实体的炮口高度；实体不在则 null（调用方用快照兜底）。
    */
-  update(deps, zoom, lodDots, view, muzzleOf) {
+  update(deps, zoom, lodDots, view, muzzleOf, muzzleOffsetOf) {
     const V = view || { vx: 0, vy: -1, vz: 0, ux: 0, uy: 1, uz: 0, rx: 1, ry: 0, rz: 0 };
     // v43 P0-③：只剩"按实体 id 取高度"这一条路，坐标反查（旧的 muzzleY(x,z)）已删。
     const MYOF = muzzleOf || (() => null);
+    // 炮口的水平偏移（雕像塔的水晶在杖顶、偏在身侧）。实体没了用快照，与 hOf 同一套规矩。
+    const MOF = muzzleOffsetOf || (() => null);
+    const ZERO2 = [0, 0];
+    const offOf = (owner, entityId) => {
+      const live = entityId != null ? MOF(entityId) : null;
+      let box = this._snap.get(owner);
+      if (live) {
+        if (!box) { box = {}; this._snap.set(owner, box); }
+        box.off = live;
+        return live;
+      }
+      return (box && box.off) || ZERO2;
+    };
     // ==================== v43 P0-③：高度只有一条取法 ====================
     // 旧的 MY(x, z)（按【坐标】就近搜索炮口高度）已经删除。它是个错误的抽象：
     // 单位一死就搜不到 → 返回 0 → 轨迹当场塌到地面；混战时还会搜到旁边另一个单位身上。
@@ -533,7 +546,8 @@ export class EffectsLayer {
       const tgt = entities.get(t.targetId);
       if (!tgt || !tgt.alive || !tgt.pos) continue;
       // 红线两端都是**活着的实体**（上面已判 alive），直接按 id 取高，无需快照
-      D.seg3(t.pos.x, MYOF(t.id) ?? 0, t.pos.y,
+      const [aox, aoy] = MOF(t.id) || ZERO2;
+      D.seg3(t.pos.x + aox, MYOF(t.id) ?? 0, t.pos.y + aoy,
               tgt.pos.x, (MYOF(tgt.id) ?? 0) * 0.6, tgt.pos.y,
               screenW(AL_W), red, AL_A, V.vx, V.vy, V.vz);
     }
@@ -552,7 +566,8 @@ export class EffectsLayer {
       for (const petId of petIds) {
         const pet = entities.get(petId);
         if (!pet || !pet.alive || !pet.pos) continue;
-        D.seg3(t.pos.x, MYOF(t.id) ?? 0, t.pos.y,
+        const [lox, loy] = MOF(t.id) || ZERO2;
+        D.seg3(t.pos.x + lox, MYOF(t.id) ?? 0, t.pos.y + loy,
                 pet.pos.x, (MYOF(pet.id) ?? 0) * 0.6, pet.pos.y,
                 screenW(AL_W), green, AL_A, V.vx, V.vy, V.vz);
       }
@@ -596,6 +611,8 @@ export class EffectsLayer {
         // 起点（塔的炮口）与末端（目标身上）都走统一快照：实体在就刷新、没了用最后一次。
         // 这两处历史上各自栽过一次"死了之后塌到地面"，现在共用同一份实现。
         const sy = hOf(b, 'start', b.attackerId);
+        const [box, boy] = offOf(b, b.attackerId);
+        const bsx = b.startX + box, bsz = b.startY + boy;   // 起点 = 塔的水晶（可能偏在身侧）
         // ==================== 末端高度：目标一死就【冻结】 ====================
         // 用户："闪电杖攻击该目标死亡后会瞬间往下移动（就像是目标突然跳到了下面一样）。"
         // 上一版的冻结条件是 `b.fadeT === undefined`，也就是【等光束的 ttl 走完 0.4s
@@ -617,10 +634,10 @@ export class EffectsLayer {
         // 外面两层改用软边带（中线不透明、两侧渐变到全透），只有最细的白芯保持实心：
         // 细到几个像素时实心反而是需要的"芯"，不会显得死板。
         const soft = (width, color, alpha) =>
-          D.softSeg3(b.startX, sy, b.startY, b.endX, ey, b.endY, width, color, alpha, V.vx, V.vy, V.vz);
+          D.softSeg3(bsx, sy, bsz, b.endX, ey, b.endY, width, color, alpha, V.vx, V.vy, V.vz);
         soft(w * BEAM_GLOW_K * breathe, col, fade * (0.14 + charge * 0.30));  // ① 外层辉光
         soft(w * breathe, col, fade * (0.55 + charge * 0.40));                // ② 主体
-        D.seg3(b.startX, sy, b.startY, b.endX, ey, b.endY,                    // ③ 白芯（细，实心）
+        D.seg3(bsx, sy, bsz, b.endX, ey, b.endY,                    // ③ 白芯（细，实心）
                Math.max(0.6, w * BEAM_CORE_K) * breathe, WHITE,
                fade * (0.30 + charge * 0.60), V.vx, V.vy, V.vz);
 
@@ -638,7 +655,7 @@ export class EffectsLayer {
         //   · 速度随充能升高：充满时明显更急，充能过程自带视觉反馈。
         const F = (CONFIG.ui && CONFIG.ui.beamFlow) || {};
         if (F.enabled !== false) {
-          const bx = b.endX - b.startX, bz = b.endY - b.startY;
+          const bx = b.endX - bsx, bz = b.endY - bsz;
           const blen = Math.hypot(bx, bz);
           if (blen > 4) {
             const spd = (F.speed ?? 200) + charge * (F.speedCharge ?? 320);   // px/s
@@ -653,8 +670,8 @@ export class EffectsLayer {
               if (win <= 0.03) continue;
               const t0 = Math.max(0, t - half), t1 = Math.min(1, t + half);
               if (t1 - t0 < 1e-3) continue;
-              const X0 = b.startX + bx * t0, Z0 = b.startY + bz * t0, Y0 = sy + (ey - sy) * t0;
-              const X1 = b.startX + bx * t1, Z1 = b.startY + bz * t1, Y1 = sy + (ey - sy) * t1;
+              const X0 = bsx + bx * t0, Z0 = bsz + bz * t0, Y0 = sy + (ey - sy) * t0;
+              const X1 = bsx + bx * t1, Z1 = bsz + bz * t1, Y1 = sy + (ey - sy) * t1;
               const aBase = fade * win * (F.alpha ?? 0.5) * (0.35 + 0.65 * charge);
               // 两层：宽的软斑给"体积"，细的白芯给"速度感"
               D.softSeg3(X0, Y0, Z0, X1, Y1, Z1, w * (F.widthK ?? 1.5) * breathe,
@@ -680,8 +697,8 @@ export class EffectsLayer {
     const live = [];
     if (projectiles?.getProjectiles) {
       for (const p of projectiles.getProjectiles()) {
-        const x = p.currentX !== undefined ? p.currentX : p.startX;
-        const y = p.currentY !== undefined ? p.currentY : p.startY;
+        let x = p.currentX !== undefined ? p.currentX : p.startX;
+        let y = p.currentY !== undefined ? p.currentY : p.startY;
         const col = rgbOf(p.color || '#e8563f');
         const gsz = p.size || 20;        // v2.5D（Q1）：小兵/巨龙弹丸 12，塔弹 20
         // 高度：出膛时在炮口，飞行中线性降到目标身高的六成（弹着点在躯干而非头顶）。
@@ -724,11 +741,16 @@ export class EffectsLayer {
           this._projTgt.set(p, snap);
         }
         let by = my;
+        let done = 0;
         if (snap) {
           const tot = Math.hypot(snap.x - p.startX, snap.y - p.startY) || 1;
-          const done = Math.min(1, Math.hypot(x - p.startX, y - p.startY) / tot);
+          done = Math.min(1, Math.hypot(x - p.startX, y - p.startY) / tot);
           by = my + (snap.h - my) * done;
         }
+        // 炮口偏在身侧（雕像塔的杖顶水晶）：出膛时在水晶处，飞行中逐渐并回真实弹道。
+        const [pox, poy] = offOf(p, p.attackerId);
+        const sx0 = p.startX + pox, sy0 = p.startY + poy;
+        x += pox * (1 - done); y += poy * (1 - done);
         // 塔弹与兵弹的分野：CombatSystem 按攻击者类型给 size（塔 20 / 兵 12），这里据此
         // 分档。塔弹加拖尾 + 白亮核，兵弹保持两层——同屏兵弹上百，给它们加拖尾只会糊成一片。
         // #10 升温可视化：塔弹随 heat（0..1，穿透弹的升温层数）变"热"——尺寸增大、颜色向
@@ -746,7 +768,7 @@ export class EffectsLayer {
           //      而弹道是斜的，于是尾巴与红线分家 = 用户看到的"拖尾是水平的"）。
           // ---- Q2：收敛张扬度。升温对拖尾的加成从"越热越粗越亮"压到几乎只改颜色，
           //      尾巴也缩短：之前满升温时尾巴又长又亮，喧宾夺主。
-          const dx = x - p.startX, dy2 = y - p.startY;
+          const dx = x - sx0, dy2 = y - sy0;
           const d = Math.hypot(dx, dy2);
           if (d > 1) {
             const ux = dx / d, uy2 = dy2 / d;
@@ -783,7 +805,7 @@ export class EffectsLayer {
         if (!isTower) {
           const bt = (CONFIG.ui && CONFIG.ui.bulletTrail) || {};
           if (bt.enabled !== false) {
-            const dx2 = x - p.startX, dz2 = y - p.startY;
+            const dx2 = x - sx0, dz2 = y - sy0;
             const d2 = Math.hypot(dx2, dz2);
             if (d2 > 1) {
               const tail = Math.min(d2, hsz * (bt.lenK ?? 0.9));

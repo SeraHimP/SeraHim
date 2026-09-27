@@ -237,8 +237,9 @@ const { T, done } = scoreboard('单位本体合批（InstancedMesh，小兵+塔�
     /this\.bodyInst\.setShadowLevel\(level\)/.test(src));
   T('remove(id) 里合批单位走 releaseSlot 而不是 scene.remove', /if \(en\.unit\.isInstancedProxy\) en\.unit\.releaseSlot\(\);/.test(src));
   T('dispose() 里释放 bodyInst', /this\.bodyInst\.dispose\(\)/.test(src));
-  T('水晶每帧同步位置（gy+walkBob+crystalLocalY），不再靠父子关系自动继承',
-    /en\.crystal\.position\.set\(e\.pos\.x, gy \+ walkBob \+ \(en\.crystalLocalY \|\| 0\), e\.pos\.y\)/.test(src));
+  // 雕像塔的水晶在杖顶、偏在身侧：水平位置再加上按朝向转过的偏移（cox/coz）
+  T('水晶每帧同步位置（gy+walkBob+crystalLocalY，水平加杖顶偏移），不再靠父子关系自动继承',
+    /en\.crystal\.position\.set\(e\.pos\.x \+ cox, gy \+ walkBob \+ \(en\.crystalLocalY \|\| 0\), e\.pos\.y \+ coz\)/.test(src));
   T('没有外部文件依赖 en.unit 是真实 Object3D（否则合批换成代理对象会在别处炸）',
     !/\.unit\.(position|rotation|scale|matrixWorld|getWorldPosition)/.test(srcOf('src/presentation/ThreeRenderer.js'))
     && !/\.unit\.(position|rotation|scale|matrixWorld|getWorldPosition)/.test(srcOf('src/ui/CanvasController.js')));

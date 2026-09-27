@@ -536,9 +536,14 @@ const mkE = (ents, type, x, y, extra = {}) => {
   const lipHRatio = lipHRatioM ? Number(lipHRatioM[1]) : 0.16;
   if (THREE) {
     const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    // 这组钉的是塔楼（classic）造型"水晶嵌进卡口"的几何关系；雕像塔的水晶在杖顶，
+    // 另由 sim_statue_tower 钉。这里显式切到 classic 生成，钉的对象不变。
+    const { CONFIG: CFG46 } = await import('../src/data/Config.js');
+    const prevStyle = CFG46.ui.statueTower.style;
+    CFG46.ui.statueTower.style = 'classic';
     for (const fac of ['blue', 'red']) {
       for (const tier of ['outer', 'inner', 'base', 'hq_tower']) {
-        const m = towerMesh(`v54|${fac}|${tier}`, '#5b9bd5', 34, '', 'tower', false, false, tier, fac, 0);
+        const m = towerMesh(`v54|classic|${fac}|${tier}`, '#5b9bd5', 34, '', 'tower', false, false, tier, fac, 0);
         m.geo.computeBoundingBox();
         T(`损⑱b-${fac}/${tier}：水晶坐在石身上（底面不高于石身顶面，不悬空）`,
           m.crystal.cy - m.crystal.r <= m.geo.boundingBox.max.y + 1e-6);
@@ -549,6 +554,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
           embed > 1e-6 && embed <= m.crystal.r * lipHRatio + 1e-6);
       }
     }
+    CFG46.ui.statueTower.style = prevStyle;
   }
 
   // v47：清零改走 core/reviveState.clearDamageMarks 这一份唯一清单。

@@ -1507,6 +1507,31 @@ export const CONFIG = {
       maxSunElevDeg: 34,
     },
 
+    // 防御塔造型（towerStatue.js）。style: 'statue' = 雕像守卫 + 按部件掉块的损毁；
+    // 'classic' = 原来的塔楼造型。用户在两个原型里选了雕像（B），要求"蓝色庄重、沉稳，
+    // 红色混沌、尖锐"，损毁"再极端一些"。
+    //   statueScale / columnExtra：四档雕像的放大倍数、立柱比外塔高出多少（× 建筑半径）
+    //   ruin：废墟碎石丘的高度/铺开半径（× 建筑半径）、碎块缩放、额外石块数
+    //   crystalLift：水晶中心比杖顶托爪尖高出多少（× 水晶半径；1 = 水晶底刚好贴着托爪尖）
+    //   rubbleDist：掉下来的部件落在离中轴多远（× 建筑半径，[近, 远]）
+    //   rubbleScale：碎块相对原部件的缩放；stubShade：断口残根的明度系数
+    //   colors：雕像各部分的颜色（石环/立柱跟随地图调色板的塔石色）
+    statueTower: {
+      style: 'classic',
+      statueScale: { outer: 1.45, inner: 1.45, base: 1.5, hq_tower: 1.6 },
+      columnExtra: { outer: 0, inner: 0.15, base: 0.3, hq_tower: 0.45 },
+      ruin: { moundHeight: 0.42, spread: 0.95, pieceScale: 0.8, blocks: 16 },
+      crystalLift: 1.05,
+      rubbleDist: [1.0, 1.45],
+      rubbleScale: 0.72,
+      stubShade: 0.5,
+      colors: {
+        blue:    { statue: '#d9e0ea', armor: '#3f78c4', cloth: '#2f62a8', metal: '#eaf2fd', dark: '#3a4456' },
+        red:     { statue: '#6a4a45', armor: '#b3312a', cloth: '#8a2320', metal: '#e3b98a', dark: '#2e2424' },
+        neutral: { statue: '#cfcac0', armor: '#8a92a0', cloth: '#6d7482', metal: '#e8e4dc', dark: '#3d3a36' },
+      },
+    },
+
     // ==================== v54：接地暗斑（A4）====================
     // 用户："最重要的就是塔/小兵和环境的割裂感！"
     // 每个单位脚下一片跟随的暗色圆斑。它**不吃阴影贴图开销**，所以即使玩家把画质

@@ -579,6 +579,24 @@ export class UnitLayer {
     return (en.groundY || 0) + (en.muzzleY || en.topY || 0);
   }
 
+  /**
+   * 炮口相对实体中心的水平偏移（地图坐标 [dx, dy]）。雕像塔的水晶在杖顶、偏在身侧，
+   * 弹道/红线/光束要从水晶出发而不是从塔中心。没有偏移的单位返回 [0, 0]；查不到返回 null。
+   */
+  muzzleOffsetOf(entityId) {
+    const en = this.map.get(entityId);
+    if (!en) return null;
+    return this._crystalOffset(en);
+  }
+
+  /** 模型坐标里的水晶偏移按塔的朝向（rotation.y = faceFixed）转到世界 XZ。 */
+  _crystalOffset(en) {
+    const lx = en.crystal ? (en.crystalLocalX || 0) : 0, lz = en.crystal ? (en.crystalLocalZ || 0) : 0;
+    if (!lx && !lz) return [0, 0];
+    const a = en.faceFixed || 0, c = Math.cos(a), s = Math.sin(a);
+    return [lx * c + lz * s, -lx * s + lz * c];
+  }
+
   setShadowLevel(level) {
     this.shadowLevel = level;
     // 已在场的单位立即生效：visKey 未变不会重走装配分支，故这里直接刷一遍
@@ -1124,6 +1142,9 @@ export class UnitLayer {
         cm.add(pts); en.crystalPts = pts;
         en.crystal = cm;
         en.crystalLocalY = vis.crystal.cy;
+        // 雕像塔的水晶在杖顶，不在中轴上：记下模型坐标里的水平偏移，按塔的朝向转到世界里
+        en.crystalLocalX = vis.crystal.cx || 0;
+        en.crystalLocalZ = vis.crystal.cz || 0;
       } else if (en.crystal) {
         this._disposeCrystal(en);
       }
@@ -1207,7 +1228,8 @@ export class UnitLayer {
       // 位置/朝向要在这里显式同步——crystalLocalY 是建造时算好的局部偏移
       // （护柱/台阶顶端往上多少），(en.faceFixed||0) 补回原来"作为子物体继承父级
       // yaw"的那部分朝向（水晶造型高度对称，这个补偿肉眼几乎看不出来，但补上更精确）。
-      en.crystal.position.set(e.pos.x, gy + walkBob + (en.crystalLocalY || 0), e.pos.y);
+      const [cox, coz] = this._crystalOffset(en);
+      en.crystal.position.set(e.pos.x + cox, gy + walkBob + (en.crystalLocalY || 0), e.pos.y + coz);
       const cc = CONFIG.ui?.crystal || {};
       const spin = cc.spin ?? CRYSTAL_SPIN;
       en.crystal.rotation.y = (en.faceFixed || 0) + tNow * spin;
