@@ -555,7 +555,8 @@ export const towerPassives = {
           perStackPercent: 5,
           stackPolicy: 'stack',
           permanent: true,
-          description: `攻击力+${s*5}%`,
+          // 2026-09-27：statKey 是 attackDamage 基础属性本身，同一次"攻击力→物理攻击"改名。
+          description: `物理攻击+${s*5}%`,
         }, 'passive_frost_plating');
         ctx.effectRegistry.apply(entityId, {
           name: '冰霜镀层',
@@ -911,10 +912,13 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
     // 成长效果），文案这三处（description/descTemplate/getDescTemplate）从来没跟着
     // 改，玩家点开面板只看到"攻击力阶梯成长"，法强涨到多少全靠猜。这里把法强步进
     // 值（_towerApStepFor(stepAD)）也写进文案，与 onFrame 实际结算共用同一个函数。
-    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟攻击力+${stepAD}、法术强度+${_towerApStepFor(stepAD)}` +
-      `（法强成长为攻击力成长的${Math.round((CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667) * 1000) / 10}%，共${totalSteps}层至${capAD}封顶）` +
+    // 2026-09-27：这几处 description/descTemplate/getDescTemplate 里的"攻击力"
+    // 说的都是 attackDamage 这个基础属性本身的阶梯成长，同一次"攻击力→物理攻击"
+    // 改名（用户定稿"物理攻击是基本属性，攻击力是实际每次能打出多少伤害"）。
+    description: `唯一被动——${name}：从${_fmtMin(adStartT)}分钟起每分钟物理攻击+${stepAD}、法术强度+${_towerApStepFor(stepAD)}` +
+      `（法强成长为物理攻击成长的${Math.round((CONFIG.tuning?.towerGrowth?.apRatioOfAd ?? 0.667) * 1000) / 10}%，共${totalSteps}层至${capAD}封顶）` +
       (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}分钟起双抗每分钟+1（不封顶）` : '') + '。',
-    descTemplate: `唯一被动——${name}：攻击力阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），` +
+    descTemplate: `唯一被动——${name}：物理攻击阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），` +
      `每分钟+${stepAD}/+${_towerApStepFor(stepAD)}共${totalSteps}层至 ${capAD} 封顶` +
      (resistGrowthStartT ? `；${_fmtMin(resistGrowthStartT)}:00 起双抗 +1/分钟` : '') + '。',
    // v42: dynamic descTemplate that respects per-map inst._params overrides
@@ -925,7 +929,7 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
      var stepAP = _towerApStepFor(stepAD);
      var steps = p.totalSteps || totalSteps;
      var resistT = p.resistGrowthStartT ?? resistGrowthStartT;
-     return '唯一被动——' + name + '：攻击力阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），每分钟+' + stepAD + '/+' + stepAP + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistT ? '；' + _fmtMin(resistT) + ':00起双抗+1/分钟' : '') + '。';
+     return '唯一被动——' + name + '：物理攻击阶梯成长（当前加成{val}）、法术强度阶梯成长（当前加成{apVal}），每分钟+' + stepAD + '/+' + stepAP + '共' + steps + '层至 ' + capAD + ' 封顶' + (resistT ? '；' + _fmtMin(resistT) + ':00起双抗+1/分钟' : '') + '。';
    },
    computeCurrent: (entity, ctx) => {
       const inst = (entity._skillInstances || []).find(i => i.skillId === id);
@@ -1003,8 +1007,8 @@ function _makeTowerGrowth({ id, name, startAD, capAD, adStartT, resistGrowthStar
             stackable: true, maxStacks: effectiveTotalSteps, stackPolicy: 'refresh',
             alwaysShowStacks: true, uniquePassive: true,
             description: capped
-              ? `攻击力+${steps * effectiveStepAD}（已封顶 ${steps}/${effectiveTotalSteps} 层）`
-              : `攻击力+${steps * effectiveStepAD}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
+              ? `物理攻击+${steps * effectiveStepAD}（已封顶 ${steps}/${effectiveTotalSteps} 层）`
+              : `物理攻击+${steps * effectiveStepAD}（第 ${steps}/${effectiveTotalSteps} 层，进度环=下一层倒计时）`,
           }, id + '_ad', );
           // Q3：塔默认改自适应伤害（不再强制魔法），成长也从"只涨攻击力"改成
           // "物理攻击、法术强度同步涨"。本轮追加：法强步进不再 1:1 镜像攻击力

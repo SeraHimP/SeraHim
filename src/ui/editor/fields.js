@@ -12,7 +12,10 @@ export const FIELD_META = {
   currentHP:          { label: '当前生命', min: 0, max: 20000, step: 50 },
   healthRegen:        { label: '生命回复/秒', min: 0, max: 200, step: 1 },
   baseHealthRegenMod: { label: '基础生命值恢复', min: 0, max: 5, step: 0.1 },
-  attackDamage:       { label: '攻击力', min: 0, max: 2000, step: 5 },
+  // 2026-09-27 用户定稿"攻击力和物理攻击是不同的……物理攻击是基本属性"——这里编辑
+  // 的是 attackDamage 基础属性本身，跟 DetailModal.js/dragonSouls.js/schema/index.js
+  // 同一次改名、同一个理由。
+  attackDamage:       { label: '物理攻击', min: 0, max: 2000, step: 5 },
   baseAttackSpeed:    { label: '基础攻速', min: 0.1, max: 5, step: 0.05 },
   bonusAttackSpeedPct:{ label: '攻速加成%', min: -100, max: 500, step: 5 },
   attackSpeedRatio:   { label: '攻击速度收益率', min: 0, max: 2, step: 0.05 },

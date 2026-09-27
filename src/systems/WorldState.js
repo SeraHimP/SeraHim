@@ -281,7 +281,8 @@ export class WorldState {
       rows.push({
         source: `熵 ${(this.entropy.value * 100).toFixed(0)}%`,
         detail: favored
-          ? `${this.entropySystem.describe()} → 本方 ${sign > 0 ? '+' : ''}${(sign * (g.attackDamagePct ?? 0)).toFixed(1)}% 攻击力、` +
+          // 2026-09-27：attackDamagePct 调的是 attackDamage 基础属性本身，同一次改名。
+          ? `${this.entropySystem.describe()} → 本方 ${sign > 0 ? '+' : ''}${(sign * (g.attackDamagePct ?? 0)).toFixed(1)}% 物理攻击、` +
             `${sign > 0 ? '+' : ''}${(sign * (g.armorFlat ?? 0)).toFixed(1)} 护甲`
           : '中性（无修正）',
         favored,

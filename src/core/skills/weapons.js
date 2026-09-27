@@ -209,7 +209,9 @@ export const weapons = {
     get descTemplate() {
       const W = CONFIG.tuning?.weapons || {};
       const pct = W.lightningApConvertPct ?? 100;
-      return `唯一被动——闪电杖：将（{xx}=攻击力×100%）攻击力转化为（{yy}=攻击力×${pct}%）法术强度；`
+      // 2026-09-27：这里转走/换算的都是 attackDamage 基础属性本身，同一次
+      // "攻击力→物理攻击"改名。
+      return `唯一被动——闪电杖：将（{xx}=物理攻击×100%）物理攻击转化为（{yy}=物理攻击×${pct}%）法术强度；`
         + `每秒固定4次魔法伤害，每次造成（{val}=20%×法术强度×充能倍率）魔法伤害，完全独立于攻速；`
         + `充能随攻速加快（攻速1.0约12秒充满，切换目标严格归零），伤害倍率随充能升至1.8倍、`
         + `无视防御升至67%；满充能时对目标施加重伤（治疗与护盾强度-40%）；`
@@ -462,7 +464,8 @@ export const weapons = {
     get description() { return weapons.weapon_explosive.descTemplate; },
     get descTemplate() {
       const p = weapons.weapon_explosive.defaultParams;
-      return `唯一被动——爆炸：攻击力${p.attackDamagePct - 100}%，命中造成半径${p.radius}的溅射伤害（中心60%，边缘5%指数衰减）。`;
+      // 2026-09-27：attackDamagePct 调的是 attackDamage 基础属性本身，同一次改名。
+      return `唯一被动——爆炸：物理攻击${p.attackDamagePct - 100}%，命中造成半径${p.radius}的溅射伤害（中心60%，边缘5%指数衰减）。`;
     },
     effects: [],
     onEquip: (entityId, instance, ctx) => {
@@ -521,7 +524,8 @@ export const weapons = {
     get description() { return weapons.weapon_corrosion.descTemplate; },
     get descTemplate() {
       const p = weapons.weapon_corrosion.defaultParams;
-      return `唯一被动——腐蚀：持续对射程内所有敌人叠加两种中毒（可选类型50%+真实50%，各每层攻击力${p.perStackAdPct}%/秒，最多${p.poisonMaxStacks}层）；`
+      // 2026-09-27：perStackAdPct 调的是 attackDamage 基础属性本身，同一次改名。
+      return `唯一被动——腐蚀：持续对射程内所有敌人叠加两种中毒（可选类型50%+真实50%，各每层物理攻击${p.perStackAdPct}%/秒，最多${p.poisonMaxStacks}层）；`
         + `叠层速度随攻速；额外施加减速（每层${p.slowPctPerStack}%，上限${p.slowPctPerStack * p.slowMaxStacks}%）与减攻速（每层${p.atkSpeedDownPctPerStack}%，上限${p.atkSpeedDownPctPerStack * p.atkSpeedDownMaxStacks}%）。`;
     },
     specialAttack: true,
@@ -583,7 +587,7 @@ export const weapons = {
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
           stackable: true, maxStacks: poisonMaxStacks, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: `唯一被动——腐蚀·毒素：每秒（{val}=攻击力${perStackAdPct}%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多${poisonMaxStacks}层。`,
+          descTemplate: `唯一被动——腐蚀·毒素：每秒（{val}=物理攻击${perStackAdPct}%×层数）${chosenType==='magic'?'魔法':chosenType==='physical'?'物理':'真实'}伤害，最多${poisonMaxStacks}层。`,
           description: `毒素（{stacks}/${poisonMaxStacks}层）`,
         }, 'weapon_corrosion_poisonA', { casterId: entityId });
 
@@ -594,7 +598,7 @@ export const weapons = {
           flatValue: perStackDmg, perStackFlat: perStackDmg,
           tickInterval: 1, duration: 5,
           stackable: true, maxStacks: poisonMaxStacks, stackPolicy: 'stack', uniquePassive: true,
-          descTemplate: `唯一被动——腐蚀·剧毒：每秒（{val}=攻击力${perStackAdPct}%×层数）真实伤害，最多${poisonMaxStacks}层。`,
+          descTemplate: `唯一被动——腐蚀·剧毒：每秒（{val}=物理攻击${perStackAdPct}%×层数）真实伤害，最多${poisonMaxStacks}层。`,
           description: `剧毒（{stacks}/${poisonMaxStacks}层）`,
         }, 'weapon_corrosion_poisonB', { casterId: entityId });
 

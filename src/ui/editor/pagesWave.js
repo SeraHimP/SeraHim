@@ -54,7 +54,9 @@ export const EDITOR_PAGES_WAVE = {
     html += range('ancientFirstDelay', '首条远古龙', c.ancientFirstDelay, '成魂结算后到第一条远古龙');
     html += range('ancientInterval', '远古龙后续间隔', c.ancientInterval, '');
 
-    const CURVES = [['maxHP', '生命'], ['resist', '双抗（护甲=魔法抗性）'], ['attackDamage', '攻击力']];
+    // 2026-09-27：attackDamage 这条曲线调的是基础属性本身的成长，同一次
+    // "攻击力→物理攻击"改名（见 DetailModal.js/schema/index.js 等处头注）。
+    const CURVES = [['maxHP', '生命'], ['resist', '双抗（护甲=魔法抗性）'], ['attackDamage', '物理攻击']];
     html += `<div style="font-size:12px;color:var(--text-dim);margin:14px 0 4px;border-top:1px solid #2d3540;padding-top:10px;">
       强度曲线　<span style="font-size:10px;color:var(--text-mute);">
       第 w 条 = w≤拐点 ? 起点+(w−1)×前段增量 : 起点+(拐点−1)×前段增量+(w−拐点)×后段增量，再按上限截顶</span></div>`;

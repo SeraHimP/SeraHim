@@ -541,8 +541,10 @@ export const dragonSouls = {
     get description() {
       const p = P('blood');
       const vamp = p.lifeStealPct ?? 10;
+      // 2026-09-27：attackDamagePct 调的是 attackDamage 基础属性本身，同一次
+      // "攻击力→物理攻击"改名。
       return `生命值越低增益越高，在 ${p.peakAtHPPct ?? 33}% 生命时达到峰值并保持：`
-        + `攻击力 +${p.attackDamagePct ?? 30}%、攻速 +${p.bonusAttackSpeedPct ?? 25}%、`
+        + `物理攻击 +${p.attackDamagePct ?? 30}%、攻速 +${p.bonusAttackSpeedPct ?? 25}%、`
         + `全能吸血 +${vamp}%（对防御塔按 ${CONFIG.dragonSouls?.vampTowerScalePct ?? 33}% 生效，`
         + `即 +${towerVampScaled(vamp)}%）。`;
     },
@@ -783,8 +785,11 @@ const SOUL_STAT_KEYS = ['fire', 'water', 'earth', 'thunder', 'wind', 'dark', 'po
 
 // 属性中文名。只覆盖龙魂用得到的那几项 —— 面板那份完整表在 UI 层（editor/fields.js），
 // core 不该反向依赖 UI，所以这里留一份小的。多出来的键会原样显示，不会漏说。
+// 2026-09-27 用户定稿"攻击力和物理攻击是不同的……把目前所有攻击力+XX%都改为
+// 物理攻击+XX%"——同 DetailModal.js 的 STAT_LABELS 头注，这里改的是龙魂描述专用的
+// 小字典，跟那份是两处独立维护（core 不能反向依赖 UI，见上面头注），逻辑一致。
 const STAT_LABEL = {
-  attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔法抗性',
+  attackDamage: '物理攻击', maxHP: '最大生命', armor: '护甲', magicResist: '魔法抗性',
   healShieldPowerPct: '治疗与护盾强度', healthRegen: '生命回复',
   armorPenFlat: '固定护甲穿透', magicPenFlat: '固定法术穿透',
   bonusAttackSpeedPct: '攻速', attackRange: '攻击距离',

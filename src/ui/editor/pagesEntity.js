@@ -254,6 +254,22 @@ export const EDITOR_PAGES_ENTITY = {
         <button class="editor-tab ${fac === 'neutral' ? 'active' : ''}" data-op="fac" data-v="neutral">⚪ 中立</button>
       </div></div>`;
 
+    // 2026-09-27 用户定稿"在运维界面新增据点占领百分比设置（仅水晶之痕生效）"——
+    // 只有据点实体（entity.isCapturePoint）且当前地图是水晶之痕（dominionSystem.active）
+    // 才渲染这一行，其它地图/其它实体类型完全不受影响。
+    const ds = (window.CTX?.__app || window.__app)?.dominionSystem;
+    if (entity.isCapturePoint && ds?.active) {
+      const dNode = ds.nodes?.find(n => n.entity && n.entity.id === entity.id);
+      const curPct = dNode ? dNode.capturePct : 0;
+      const full = CONFIG.dominion?.captureFull ?? 100;
+      html += `<div class="slider-row"><label>据点占领值</label>
+        <div style="flex:1;display:flex;gap:6px;align-items:center;">
+          <input type="number" id="editorCapturePct" min="${-full}" max="${full}" step="1" value="${curPct}" style="width:80px;">
+          <button class="editor-tab" data-op="capturepctapply">应用</button>
+          <span style="font-size:11px;color:var(--text-mute);">范围 ${-full}~${full}，正=蓝方，负=红方，0=中立</span>
+        </div></div>`;
+    }
+
     if (isTower) {
       html += `<div class="slider-row" style="align-items:flex-start;"><label style="padding-top:5px;">层级</label>
         <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap;">
@@ -284,8 +300,13 @@ export const EDITOR_PAGES_ENTITY = {
     overlay.querySelectorAll('[data-op]').forEach(btn => {
       if (btn.disabled) return;
       btn.addEventListener('click', () => {
-        const op = btn.dataset.op, v = btn.dataset.v;
-        this._applyOps(entity, op, v, ec, app, logFn);
+        const op = btn.dataset.op;
+        // "应用" 按钮没有 data-v（值来自旁边的数字输入框，不是按钮自身），
+        // 单独读一次，其余按钮维持原来的 data-v 取值方式。
+        const v = op === 'capturepctapply'
+          ? overlay.querySelector('#editorCapturePct')?.value
+          : btn.dataset.v;
+        this._applyOps(entity, op === 'capturepctapply' ? 'capturepct' : op, v, ec, app, logFn);
         rerender();
       });
     });
@@ -352,10 +373,42 @@ export const EDITOR_PAGES_ENTITY = {
       // v43：白名单补上 neutral。不补的话“中立”按钮点下去会静默失败，
       // 比没有那个按钮更糟——控件摆在那儿却不起作用，会让人相信一件假事。
       if (v !== 'blue' && v !== 'red' && v !== 'neutral') return;
-      e._mapFaction = v; e.faction = v;
+      // 2026-09-27 用户反馈"在据点上手动设为中立后，充能条还显示原阵营100%，且
+      // 原阵营小兵无法再次占领该塔"——根因：据点是水晶之痕专属的特殊实体，它自己的
+      // 阵营账本（node.captureOwner/capturePct，画板/属性面板充能条读的
+      // entity._capturePct/_captureOwner 镜像也来自这份账本，见 DominionSystem.
+      // _syncCaptureDisplay）由 DominionSystem 独立维护，不是靠 entity.faction 本身。
+      // 这条操作原来只改 entity._mapFaction/faction，完全没通知 DominionSystem，于是
+      // 两边账本立刻对不上：画板还在显示旧值，_tickCapture()/_advance() 的占领判定
+      // 也仍然认为该点属于旧阵营（“己方打不动自己的点”那条早退会把旧阵营自己的
+      // 攻击直接吞掉，表现就是“怎么打都占不回来”）。据点必须经 DominionSystem.
+      // _setOwner() 走一遍才能让两边账本保持一致，其余（塔/水晶等）实体沿用原逻辑。
+      const ds = app?.dominionSystem;
+      const node = e.isCapturePoint && ds?.active ? ds.nodes.find(n => n.entity && n.entity.id === e.id) : null;
+      if (node) {
+        const full = CONFIG.dominion?.captureFull ?? 100;
+        const val = v === 'blue' ? full : v === 'red' ? -full : 0;
+        ds._setOwner(node, v, val);
+      } else {
+        e._mapFaction = v; e.faction = v;
+      }
       e.targetId = null;          // 不清目标它会继续打原来的队友
       if (e._ramLockId) e._ramLockId = null;
       logFn(`${tag} 🎌 ${name} 阵营 → ${{ blue: '蓝方', red: '红方', neutral: '中立' }[v]}`, 'spawn');
+
+    } else if (op === 'capturepct') {
+      // 2026-09-27 用户定稿"在运维界面新增据点占领百分比设置（仅水晶之痕生效）"——
+      // 只对据点实体、且当前地图是水晶之痕（DominionSystem.active）才有意义，其它
+      // 情况静默忽略（控件本身也只在满足条件时才渲染，见 _renderOpsContent）。
+      const ds = app?.dominionSystem;
+      if (!e.isCapturePoint || !ds?.active) return;
+      const node = ds.nodes.find(n => n.entity && n.entity.id === e.id);
+      if (!node) return;
+      const full = CONFIG.dominion?.captureFull ?? 100;
+      const val = Math.max(-full, Math.min(full, Number(v) || 0));
+      const owner = val > 0 ? 'blue' : val < 0 ? 'red' : 'neutral';
+      ds._setOwner(node, owner, val);
+      logFn(`${tag} 🎯 ${name} 占领值 → ${val}（${{ blue: '蓝方', red: '红方', neutral: '中立' }[owner]}）`, 'spawn');
 
     } else if (op === 'tier') {
       if (e.type !== 'tower') return;

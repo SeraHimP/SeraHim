@@ -596,11 +596,22 @@ document.getElementById('addUnitBtn').addEventListener('click', () => {
       const px = nexus ? nexus.pos.x : 1776, py = nexus ? nexus.pos.y : 1776;
       const dir = faction === FACTIONS.BLUE ? 'forward' : 'reverse';
       const gf = growth ? battleGrowthFlat(type) : null;
+      // 2026-09-27 用户反馈"手动生成的小兵在水晶之痕地图中和水晶枢纽穿模卡住不动了"
+      // ——根因：这个弹窗只提供经典三路地图的路名（top/mid/bot），而水晶之痕这类
+      // 环形地图只有一条兵线、id 叫 'ring'，不叫 'mid'。LaneMovementSystem.
+      // _advanceAlongLane() 读 mapSystem.getLane('mid') 拿到 null 就直接 return，
+      // 小兵永远停在出生点不动——出生点正好是水晶枢纽坐标，看起来就是"穿模卡死"。
+      // 这里做一个不针对具体地图硬编码的兜底：请求的 laneId 在当前地图上不存在时，
+      // 退回当前地图上真实存在的第一条兵线，不假设地图一定有 top/mid/bot 这三条。
+      let resolvedLaneId = laneId || 'mid';
+      if (!mapSystem.getLane(resolvedLaneId)) {
+        resolvedLaneId = mapSystem.currentMap.lanes?.[0]?.id || resolvedLaneId;
+      }
       for (let i = 0; i < count; i++) {
         createMinion(type, px + (Math.random() - 0.5) * 16, py + (Math.random() - 0.5) * 16,
-          1, 1, { faction, laneId: laneId || 'mid', direction: dir, growthFlat: gf });
+          1, 1, { faction, laneId: resolvedLaneId, direction: dir, growthFlat: gf });
       }
-      uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${laneId || 'mid'} 路`, 'spawn');
+      uiManager.log(`➕ ${faction === FACTIONS.BLUE ? '🔵蓝方' : '🔴红方'}生成 ${count} 个 ${type} 兵 → ${resolvedLaneId} 路`, 'spawn');
     },
     // v51.9 修复：用户"添加单位窗口中添加巨龙，无论添加多少条，巨龙的属性都是
     // 最开始的，并未成长"——根因是这里算强度用的 dragonSystem.elementDragonSpawned + 1

@@ -4,8 +4,16 @@ import { renderSkillDescription } from '../core/SkillLibrary.js';
 import { soulStatMods } from '../core/skills/dragonSouls.js';
 
 // 属性名 → 中文标签（共享常量：UIManager 的天气影响行也用它，避免两处定义漂移）
+// 2026-09-27 用户定稿："目前攻击力和物理攻击是不同的！！把目前所有攻击力+XX%都改为
+// 物理攻击+XX%。物理攻击是基本属性，而攻击力是反映着该单位实际每次能打出多少伤害"——
+// attackDamage 这个 statKey 本身就是"基础值+修正"的那个原始属性（v51.28 Q2 已经定过
+// 这个区分，见 statPanelLayout.js 的 RELATED_STATS 头注），这张表是效果/光环/天气等
+// 通用描述共用的属性名字典，凡是这里读出来的名字都是在描述"这个属性本身涨了多少"，
+// 不是"造成的实际伤害"，所以统一改成【物理攻击】。主属性面板格子自己的标签
+// （statPanelLayout.js 的 BASE_ATTR_ROWS 与 statDocs.js 的 attackDamage.label）显示的
+// 是另一个概念（自适应实际伤害），那两处不属于这张通用字典，不受这次改动影响。
 export const STAT_LABELS = {
-  attackDamage: '攻击力', maxHP: '最大生命', armor: '护甲', magicResist: '魔法抗性',
+  attackDamage: '物理攻击', maxHP: '最大生命', armor: '护甲', magicResist: '魔法抗性',
   moveSpeed: '移速', attackRange: '攻击距离', bonusAttackSpeedPct: '攻速',
   damageReduction: '伤害减免', damageAmpPct: '伤害增幅', allStatsPct: '全属性',
   coreStatsPct: '核心属性',
@@ -320,7 +328,9 @@ export const DetailModal = {
       `──────────────`,
       `生命值: ${Math.round(entity.currentHP)} / ${Math.round(stats.maxHP)}`,
       `护盾: 固定 ${Math.round(entity.shieldFixedCurrent || 0)} / ${Math.round(stats.shieldFixedMax || 0)}  |  临时 ${Math.round(entity.tempShield || 0)}  |  护盾 ${Math.round(entity.plainShield || 0)}`,
-      `攻击力: ${Math.round(stats.attackDamage)}`,
+      // 2026-09-27：这里打印的是 attackDamage 基础属性本身（不是自适应算出来的
+      // 实际伤害），同一次"攻击力→物理攻击"改名。
+      `物理攻击: ${Math.round(stats.attackDamage)}`,
       `攻速: ${stats.baseAttackSpeed.toFixed(2)} (加成 ${Math.round(stats.bonusAttackSpeedPct)}%)`,
       `护甲: ${Math.round(stats.armor)}  |  魔法抗性: ${Math.round(stats.magicResist)}`,
       `穿透: ${Math.round(stats.armorPenPercent)}% + ${Math.round(stats.armorPenFlat)}  |  法术穿透: ${Math.round(stats.magicPenPercent)}% + ${Math.round(stats.magicPenFlat)}`,

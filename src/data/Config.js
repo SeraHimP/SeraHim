@@ -2870,12 +2870,22 @@ export const CONFIG = {
     // 范围现在同时也是"驻守判定范围"，稍微加大能让驻守判定更宽松一点，
     // 不是纯粹为了打得更远。
     pointRangePct: 130,        // 普通塔射程的 130%（中立/占领共用）
-    pointAttackSpeedPct: 150,  // 普通塔基础攻速的 150%（用户定稿"攻速改为1.5"，中立/占领共用）
+    // 2026-09-27：用户这次直接给了绝对数字"攻击速度调整为1.00"（不是相对
+    // 普通塔基础攻速的百分比）——上一轮 pointAttackSpeedPct=150% 是按塔模板
+    // 150% 换算，但塔模板 baseAttackSpeed=0.833，换算下来其实是 1.25 而不是
+    // 用户当时想要的字面 1.5（详见旧注释里"不是绝对的每秒1.5次"那段自认的
+    // 妥协）。这次改成直接存绝对值，不再经过塔模板二次换算，字面数字就是
+    // 实际每秒攻击次数，避免同样的偏差再发生一次。
+    pointAttackSpeed: 1.0,     // 据点每秒攻击次数（绝对值，中立/占领共用）
     // ---- 动态归属出兵 ----
     waveInterval: 20,     // 每个"完全占领"的据点，每隔这么多秒出一波兵
-    // 2026-09-26 第四轮：用户定稿"基地每波出兵，据点改为每2波出兵"——据点出兵
-    // 节奏单独拉慢一档，跟基地（bonusWaveEvery，见下面）解耦成两条独立的节奏。
-    pointWaveEvery: 2,
+    // 2026-09-27：用户定稿"据点改为每3波才出兵，计算第一波的方式是——当某
+    // 阵营最后一次夺取该据点后，每夺取一次该据点的波数清零重新计算"——原来
+    // 用的是全局 _waveCount 取模（所有据点共用一条节奏），现在改成每个据点
+    // 自己独立计数（node._pointWaveCount），且在 _setOwner() 每次翻转为非
+    // 中立时清零，见 DominionSystem._tickWaves()/_setOwner()。2→3 是用户
+    // 给的具体数字。
+    pointWaveEvery: 3,
     // 2026-09-26 返工：据点的出兵编制（"2近战2远程+隔波炮兵"）改走标准出兵
     // 编排系统（compositionFor/buildWaveOrder，见 CONFIG.gameRules.
     // laneWaveCompositionByLane 的 ring_fwd/ring_rev 两个伪路）——原来这里的
@@ -2957,12 +2967,16 @@ export const CONFIG = {
     // ±(captureFull × 这个百分比) 之内，防止扎堆围攻把占领速度顶到离谱的数字。
     // 2026-09-26 二次定稿："每秒最大占领进度由10%改为7%"——用户给了具体数字，
     // 不是起草值，收窄上限让扎堆围攻的封顶速度比原来慢近三成。
-    maxCaptureRatePctPerSec: 7,
+    // 2026-09-27 三次定稿："每秒最大攻占速度7%改为10%"——用户实测后改回，
+    // 同样是具体数字，不是起草值。
+    maxCaptureRatePctPerSec: 10,
     // 2026-09-26 第五轮：用户定稿"若我方据点的攻击范围内还存在我方小兵，则
     // 敌方的占领速度降低50%"——这是用户给的具体数字（50），不是起草值。
     // 见 DominionSystem._tickCapture() 的驻守检测（按阵营+据点自己的攻击
     // 范围找，不看 targetId，因为己方小兵不可能把 targetId 设成自己的据点）。
-    defenderSlowPct: 50,
+    // 2026-09-27：用户改口"驻守减速的数值改为降低33%（降低至67%）"——50→33，
+    // 具体数字。
+    defenderSlowPct: 33,
     // 用户定稿："若据点脱离战斗状态，此时会慢慢恢复该状态下的值。"
     // "脱离战斗状态" = 两方都超过这么多秒没再对这个据点造成过占领压力
     // （不只是不再互相矛盾——完全没人打了）。跟本仓库其它地方"脱战"判定
@@ -2981,7 +2995,9 @@ export const CONFIG = {
     // %号，跟本文件其它明确写了"%"的字段区分对待）、"每2次出兵"按 DominionSystem.
     // _tickWaves() 里这个水晶枢纽自己出兵的次数计（不是全局波次 _waveCount，
     // 那个数字两个水晶枢纽共用，按它算的话双方节奏会不同步）。
-    lowHpNexusThreshold: 75,
+    // 2026-09-27：用户改口"生成超级兵的阈值生命值75改为150"——枢纽满血已经从
+    // 500 提到 750，75 这个阈值相对变得更难触发，改成150维持类似的触发比例。
+    lowHpNexusThreshold: 150,
     lowHpNexusBonusEvery: 2,
     // ②"为了防止僵局，在30分钟后所有阵营的水晶枢纽每秒减少0.5生命值（状态——
     // 热寂）"——跟 tuning.heatDeath 那套"扣当前最大生命值的百分比"是完全不同的
@@ -2992,6 +3008,20 @@ export const CONFIG = {
     // 跟据点数差驱动的那份掉血相互独立、可以叠加。
     nexusHeatDeathTriggerAtMin: 30,
     nexusHeatDeathDrainPerSec: 0.5,
+    // ==================== 2026-09-27：据点占领增益随时间成长 ====================
+    // 用户定稿："据点占领增益的数值应该随着游戏进程不断变大，前期的数值应该
+    // 再小一些"——原来 DominionSystem._setOwner() 里那条"据点占领增益"是
+    // 占领那一刻算好就固定不变的一次性数值（(pointDamagePct-pointNeutralDamagePct)
+    // 换算出的攻击力差值），现在改成随游戏时长线性成长：占领瞬间只给
+    // pointCaptureBuffStartFrac 这一档比例，随时间线性爬升到 pointCaptureBuffRampMinutes
+    // 分钟时长到 100%（封顶，不会继续涨），中途每个 _tickCapture 周期都会
+    // 按当前 window.gameTime 重新算一遍并刷新到 EffectRegistry（同一
+    // stackKey 会自动替换，不会叠加），见 DominionSystem._refreshCaptureBuff()。
+    // 用户没给具体数字（只给了方向"前期小、后期大"），这里起草 30% 起步、
+    // 20 分钟涨满，跟其它"用户只给方向没给数字"的字段一样待 balance_matrix/
+    // 实机校准。
+    pointCaptureBuffStartFrac: 0.3,
+    pointCaptureBuffRampMinutes: 20,
   },
 };
 

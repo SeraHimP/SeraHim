@@ -122,7 +122,7 @@ export class DominionSystem {
     // 允许中立据点攻击任意一方（跟中立野怪同一条判据），于是中立据点会对
     // 最先靠近的任何一方开火——据点从"谁先摸到就是谁的"变成"要打一架才能
     // 拿下"。射程/攻速这两项不分中立/占领，一律套用 pointRangePct/
-    // pointAttackSpeedPct，归属翻转不需要跟着重新装卸武器，见 _setOwner() 头注。
+    // pointAttackSpeed，归属翻转不需要跟着重新装卸武器，见 _setOwner() 头注。
     // 2026-09-26 第四轮·补充：用户追加定稿"据点在中立状态下攻击力低，在某方
     // 占领之后攻击力提高"——攻击力单独拆出来，不再跟射程/攻速一样"一律套用"：
     // 中立时用 pointNeutralDamagePct（更低），占领后用 pointDamagePct（更高），
@@ -141,7 +141,11 @@ export class DominionSystem {
           ...tpl,
           attackDamage: (tpl.attackDamage || 0) * ((cfg.pointNeutralDamagePct ?? cfg.pointDamagePct ?? 12) / 100),
           attackRange: (tpl.attackRange || 0) * ((cfg.pointRangePct ?? 82) / 100),
-          baseAttackSpeed: (tpl.baseAttackSpeed || 0) * ((cfg.pointAttackSpeedPct ?? 100) / 100),
+          // 2026-09-27：改成直接存绝对每秒攻击次数（cfg.pointAttackSpeed），不再
+          // 经过塔模板 baseAttackSpeed 二次换算——用户这次给的是字面数字"1.00"，
+          // 旧的百分比换算口径会因为塔模板本身的 baseAttackSpeed 不是整数而产生
+          // 偏差（见 Config.js 里 pointAttackSpeed 字段头注）。
+          baseAttackSpeed: cfg.pointAttackSpeed ?? 1.0,
           maxHP: 1, healthRegen: 0, shieldFixedMax: 0,
         },
         currentHP: 1,
@@ -263,14 +267,41 @@ export class DominionSystem {
       if (owner !== FACTIONS.NEUTRAL) {
         const neutralPct = cfg.pointNeutralDamagePct ?? cfg.pointDamagePct ?? 12;
         const capturedPct = cfg.pointDamagePct ?? 12;
-        const delta = (tpl.attackDamage || 0) * (capturedPct - neutralPct) / 100;
-        node._captureBuffEffectId = this.effectRegistry.apply(e.id, {
-          name: '据点占领增益', icon: '⚔️', kind: 'stat', statKey: 'attackDamage',
-          flatValue: delta, permanent: true,
-        }, 'dominion_point_capture');
+        // 2026-09-27：这个差值现在只是"涨满之后"的封顶值，不再是占领瞬间就
+        // 直接给的数值——见 _refreshCaptureBuff() 的时间成长换算。
+        node._captureBuffFullDelta = (tpl.attackDamage || 0) * (capturedPct - neutralPct) / 100;
+        this._refreshCaptureBuff(node);
       }
     }
+    // 2026-09-27：用户定稿"据点改为每3波才出兵，计算第一波的方式是——当某
+    // 阵营最后一次夺取该据点后，每夺取一次该据点的波数清零重新计算"——每次
+    // 翻转为非中立（也就是"夺取"这一刻）把这个据点自己的出兵波数计数器清零，
+    // 见 _tickWaves() 里怎么用这个计数器。
+    if (owner !== FACTIONS.NEUTRAL) node._pointWaveCount = 0;
     this._syncCaptureDisplay(node);
+  }
+
+  /**
+   * 2026-09-27：用户定稿"据点占领增益的数值应该随着游戏进程不断变大，前期的
+   * 数值应该再小一些"——把 _setOwner() 里算好的"封顶值"(node._captureBuffFullDelta)
+   * 按当前游戏时长线性换算成"当前应该给多少"，重新 apply 一次。EffectRegistry
+   * 按 blueprint.name+statKey 的 stackKey 自动识别成同一条效果并替换掉旧值，
+   * 不会因为反复调用而叠加出多份。由 _tickCapture() 对每个已占领的据点每帧
+   * 调用一次，保证增益是连续爬升而不是分段跳变。
+   */
+  _refreshCaptureBuff(node) {
+    if (!this.effectRegistry || !node.entity || node.captureOwner === FACTIONS.NEUTRAL) return;
+    const cfg = CONFIG.dominion || {};
+    const now = (typeof window !== 'undefined' && window.gameTime) || 0;
+    const rampMinutes = Math.max(1e-6, cfg.pointCaptureBuffRampMinutes ?? 20);
+    const startFrac = cfg.pointCaptureBuffStartFrac ?? 0.3;
+    const growth = Math.max(0, Math.min(1, (now / 60) / rampMinutes));
+    const frac = startFrac + (1 - startFrac) * growth;
+    const delta = (node._captureBuffFullDelta || 0) * frac;
+    node._captureBuffEffectId = this.effectRegistry.apply(node.entity.id, {
+      name: '据点占领增益', icon: '⚔️', kind: 'stat', statKey: 'attackDamage',
+      flatValue: delta, permanent: true,
+    }, 'dominion_point_capture');
   }
 
   update(dt) {
@@ -322,6 +353,9 @@ export class DominionSystem {
     const minions = this.entities.getAllMinions ? this.entities.getAllMinions(true) : [];
     for (const node of this.nodes) {
       if (node.kind !== 'point' || !node.entity) continue;
+      // 2026-09-27：占领增益随时间成长，每帧都要重新算一遍当前该给多少
+      // （不只是占领那一刻算一次），见 _refreshCaptureBuff() 头注。
+      this._refreshCaptureBuff(node);
       let bluePower = 0, redPower = 0, blueHere = false, redHere = false;
       for (const m of minions) {
         if (!m.alive || m.targetId !== node.entity.id) continue;
@@ -468,7 +502,10 @@ export class DominionSystem {
     for (const node of this.nodes) {
       if (node.kind === 'point') {
         if (node.captureOwner === FACTIONS.NEUTRAL) continue;
-        if (this._waveCount % pointEvery !== 0) continue;
+        // 2026-09-27：改成每个据点自己独立计数（不再用全局 _waveCount 取模），
+        // 且在 _setOwner() 每次翻转为非中立（即"夺取"）时清零——见那边的头注。
+        node._pointWaveCount = (node._pointWaveCount || 0) + 1;
+        if (node._pointWaveCount % pointEvery !== 0) continue;
         this._spawnPointWave(node, node.captureOwner);
       } else if (node.kind === 'nexus' && this._waveCount % bonusEvery === 0) {
         const budget = { ...cfg.bonusWaveComposition };

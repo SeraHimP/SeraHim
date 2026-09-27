@@ -128,7 +128,10 @@ const TOWER_STATS = [
   NUM('maxHP', '最大生命', 1, 50000, 50),
   NUM('armor', '护甲', -100, 500, 1),
   NUM('magicResist', '魔法抗性', -100, 500, 1),
-  NUM('attackDamage', '攻击力', 0, 3000, 1),
+  // 2026-09-27 用户定稿"攻击力和物理攻击是不同的……物理攻击是基本属性"——这里
+  // 编辑的就是 attackDamage 这个基础属性本身（不是自适应算出来的实际伤害），
+  // 改名跟 DetailModal.js/dragonSouls.js 那两张通用字典同一次改动、同一个理由。
+  NUM('attackDamage', '物理攻击', 0, 3000, 1),
   NUM('baseAttackSpeed', '基础攻速', 0, 10, 0.01),
   NUM('attackRange', '攻击距离', 0, 1000, 5),
   NUM('healthRegen', '生命恢复', -100, 500, 1),
@@ -139,7 +142,7 @@ const MINION_STATS = [
   NUM('maxHP', '最大生命', 1, 50000, 10),
   NUM('armor', '护甲', -100, 500, 1),
   NUM('magicResist', '魔法抗性', -100, 500, 1),
-  NUM('attackDamage', '攻击力', 0, 3000, 1),
+  NUM('attackDamage', '物理攻击', 0, 3000, 1),
   NUM('baseAttackSpeed', '基础攻速', 0, 10, 0.01),
   NUM('attackRange', '攻击距离', 0, 1000, 5),
   NUM('moveSpeed', '移动速度', 0, 500, 1),
@@ -148,7 +151,9 @@ const MINION_STATS = [
 
 const GROWTH_FIELDS = [
   NUM('hp', '最大生命 /波', 0, 200, 0.1),
-  NUM('ad', '攻击力 /波', 0, 50, 0.05),
+  // 2026-09-27：这里的 'ad' 对应的还是 attackDamage 基础属性的每波成长（见
+  // battleGrowth 的消费处），同一次"攻击力→物理攻击"改名。
+  NUM('ad', '物理攻击 /波', 0, 50, 0.05),
   NUM('res', '双抗 /波', 0, 20, 0.05),
   // v51.3：大型小兵的法术强度成长（见 CONFIG.battleGrowth 头注）。
   NUM('ap', '法术强度 /波', 0, 50, 0.1),
