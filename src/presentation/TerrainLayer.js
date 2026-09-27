@@ -377,7 +377,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     // 类别：0 道路 1 林缘 2 森林 3 深林 4 图外 5 围墙地基 6 挖空
     // 野区"树冠"布局（用户定稿）：地面只有三层——土路 / 草地 / 树林地面。
     // 不可走区（除基地围墙外）一律是树林地面，上面由 VegetationLayer 盖满树冠。
-    const canopy = jungleActive && SV.jungleLayout === 'canopy';
+    const canopy = jungleActive && (SV.jungleLayout === 'canopy' || SV.jungleLayout === 'terraces');
     // 树冠布局下，墙脚地面只画在真正砌墙的地方（见 baseWallMask）；没砌墙的环带是树林。
     const wallAt = canopy ? baseWallLookup(map, navgridOf(map), CONFIG.ui?.baseWall?.wallFraction ?? 0.5) : null;
     const [flR, flG, flB] = canopy ? hex2rgb(SV.forestFloorColor, '2b5a33') : [dpR, dpG, dpB];

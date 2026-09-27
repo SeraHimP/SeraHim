@@ -31,15 +31,15 @@ const tt = list.find((m) => m.id === 'twisted_treeline_v1');
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(mf.corridorColor.slice(i, i + 2), 16));
     return r > g && b > g;
   })());
-  // 原来的"障碍物换岩石色"已被用户否掉（"区分可走不可走不是改个颜色"），改成树冠盖满，见 sim_jungle_canopy。
-  T('③扭曲丛林的野区障碍物走树冠布局（有东西挡着，不是换个颜色）',
-    mf.jungleLayout === 'canopy' && !!mf.forestFloorColor && mf.obstacleColor === undefined);
+  // 原来的"障碍物换岩石色"已被用户否掉（"区分可走不可走不是改个颜色"），改成用树林/台地挡着，见 sim_jungle_terraces。
+  T('③扭曲丛林的野区障碍物走台地布局（有东西挡着，不是换个颜色）',
+    mf.jungleLayout === 'terraces' && !!mf.forestFloorColor && mf.obstacleColor === undefined);
   T('④扭曲丛林关掉了沿路等距排开的边界柱', tt.boundaryPillars === false);
 }
 {
   const f = P.forest;
   T(`⑦召唤师峡谷走廊降饱和（${sat(f.corridorColor).toFixed(2)}，改前 0.42）`, sat(f.corridorColor) < 0.35);
-  T('⑧召唤师峡谷野区走树冠布局（代替上一轮的"更少、更大"）', f.jungleLayout === 'canopy' && f.vegetationStep === undefined);
+  T('⑧召唤师峡谷野区走台地布局（代替上一轮的"更少、更大"）', f.jungleLayout === 'terraces' && f.vegetationStep === undefined);
   const fr = P.frost;
   T('⑨冰封的阵营底色收窄、减淡', fr.baseTintRadiusFrac < 0.30 && fr.baseTintAlpha < 0.20);
 }

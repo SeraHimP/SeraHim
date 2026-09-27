@@ -1389,6 +1389,28 @@ export const CONFIG = {
       groundNoiseAlpha: 0.05,
     },
 
+    // ==================== 野区：台地 + 分片树林（jungleLayout:'terraces'）====================
+    // 用户看过实机截图后定稿的一版，见 data/jungleTerraces.js 头注。
+    //   outcropMaxCells：不可走区小于这么多格（256 格网格）就做成台地；outcropRiverProbe：离河多近也做成台地
+    //   outcropHeightMin/Max/PerRootCell：台地高度 = min(Max, Min + √格数 × PerRootCell)
+    //   outcropDetailMax/PerCells：台面上灌木/小石头的数量上限与"每多少格一个"
+    //   outcropTopLift：台面比周围草地亮多少（HSL 明度）
+    //   speciesPatch：树种斑块大小（一片以针叶为主、另一片以阔叶为主）；speciesMix：斑块里混入另一种的概率
+    //   treeStep：树林采样步长；edgeProbe：离可走区多近算边缘；edgeDensity：边缘那一排的密度
+    //   clusterPatch / innerDensityMin/Max：树林内部成团的斑块大小与密度范围（低的地方就是空地）
+    //   heroChance：内部偶尔一棵特别大的树；clearingDetailChance：空地里零星石头/灌木
+    //   edgeRockChance / rockScaleMin/Max：边缘夹石头的概率与体量
+    //   borderDepth：地图外圈的林带只做靠里这么宽
+    //   bushStep / bushBand / bushChance：草地上贴着树林的矮灌木
+    jungleTerraces: {
+      outcropMaxCells: 110, outcropRiverProbe: 70, outcropHeightMin: 18, outcropHeightMax: 44, outcropHeightPerRootCell: 1.6,
+      outcropDetailMax: 6, outcropDetailPerCells: 70, outcropTopLift: 0.07,
+      speciesPatch: 700, speciesMix: 0.15, treeStep: 26, edgeProbe: 28, edgeDensity: 0.7,
+      clusterPatch: 170, innerDensityMin: 0.12, innerDensityMax: 0.85, heroChance: 0.04, clearingDetailChance: 0.08,
+      edgeRockChance: 0.1, rockScaleMin: 1.0, rockScaleMax: 1.8, borderDepth: 150,
+      bushStep: 44, bushBand: 34, bushChance: 0.14,
+    },
+
     // ==================== 基地高地城墙 ====================
     // 用户："召唤师峡谷的高地塔（召唤水晶塔）前方不可走的区域应该是有石墙挡着的，
     // 而不是换了个颜色，实际上地表还是空着的"。定稿（用户看了实机截图二选一）：城墙——
@@ -2069,9 +2091,12 @@ export const CONFIG = {
       // 可走野区才长——跟 default palette 的"只在不可走区域长树"是两套不同的
       // 分类依据，森林风格地图的野区本身就是可走的，不能沿用 default 那套判据。
       vegetationMode: 'jungle',
-      // 野区布局（用户定稿，见 CONFIG.ui.jungleCanopy 头注）：地面三层——土路 / 草地
-      // （jungleColor）/ 树林（forestFloorColor，不可走区的地面，被树冠盖满）。
-      jungleLayout: 'canopy',
+      // 野区布局：台地 + 分片树林（见 CONFIG.ui.jungleTerraces / data/jungleTerraces.js）。
+      // 地面三层：土路 / 草地（jungleColor）/ 树林地面（forestFloorColor）。
+      jungleLayout: 'terraces',
+      // 针叶树的两层冠色（阔叶树用 treeCrownColorA/B）
+      coniferColorA: '#3f7d4a',
+      coniferColorB: '#346c3f',
       forestFloorColor: '#2b5a33',
     },
     // 嚎哭深渊·冰封版专用（见设计文档第 4.1 节）。这张图没有"树/野区"这个概念
@@ -2168,8 +2193,11 @@ export const CONFIG = {
       // 深色的塔和小兵站在浅色路面上才看得见。
       // 野区布局同 forest：不可走区的地面是 forestFloorColor，上面被扭曲树冠盖满、
       // 边缘夹石头——看得出"为什么走不过去"，而不是地上一块深色。
-      jungleLayout: 'canopy',
+      jungleLayout: 'terraces',
       forestFloorColor: '#241030',
+      // 本图的格子是 11.75×5.4 世界单位（峡谷是 13.9×13.9），同样大小的障碍格子数多两三倍，
+      // 台地门槛按本图的格子数给，否则全图只会出一块台地。
+      terraceOverrides: { outcropMaxCells: 300 },
     },
   },
 

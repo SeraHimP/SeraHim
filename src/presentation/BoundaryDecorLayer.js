@@ -121,7 +121,7 @@ export class BoundaryDecorLayer {
     const natTrees = [], natRocks = [], styledPosts = [];
     // 树冠布局的图上，边缘那一排树/石由 VegetationLayer 按 data/jungleCanopy.js 摆，
     // 这里再撒一层会重叠、也会撒到草地上（用户说的"乱七八糟"）。只保留石墙笔刷那一类。
-    const canopyLayout = SV.jungleLayout === 'canopy';
+    const canopyLayout = SV.jungleLayout === 'canopy' || SV.jungleLayout === 'terraces';
     for (let gx = edge; gx < WW - edge; gx += NAT_SPACING) {
       for (let gy = edge; gy < WH - edge; gy += NAT_SPACING) {
         const x = gx + (hash(gx + 31, gy) - 0.5) * NAT_SPACING * NAT_JITTER;

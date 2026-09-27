@@ -81,8 +81,9 @@ for (const id of ['summoners_rift_v1', 'twisted_treeline_v1']) {
 
 {
   const P = CONFIG.stylizedPalettes;
-  T('⑫两张图地面三层：土路 / 草地 / 树林地面，都走树冠布局',
-    ['forest', 'magicForest'].every((k) => P[k].jungleLayout === 'canopy' && P[k].forestFloorColor && P[k].jungleColor && P[k].corridorColor));
+  // 两张图现在走台地布局（jungleTerraces，见 sim_jungle_terraces）；树冠布局仍可由调色板选用。
+  T('⑫两张图地面三层：土路 / 草地 / 树林地面，都走台地布局',
+    ['forest', 'magicForest'].every((k) => P[k].jungleLayout === 'terraces' && P[k].forestFloorColor && P[k].jungleColor && P[k].corridorColor));
   T('⑬TerrainLayer 在树冠布局下把可走区只分成路/草地、不可走区一律是树林地面',
     /if \(canopy\) lab = on \? \(lab === 0 \? 0 : 2\) : 3;/.test(src('presentation/TerrainLayer.js')));
   T('⑭BoundaryDecorLayer 在树冠布局下不再往草地边上额外撒树石', /if \(canopyLayout\) continue;/.test(src('presentation/BoundaryDecorLayer.js')));

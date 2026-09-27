@@ -1,3 +1,4 @@
+import { terracePlan } from '../data/jungleTerraces.js';
 import { baseWallLookup } from '../data/baseCircle.js';
 import { navgridOf } from '../data/navgrid.js';
 /**
@@ -78,6 +79,22 @@ export function stylizedTreeGeo(map, deep = false) {
   return mergeGeometries(parts);
 }
 
+/**
+ * 针叶树：细树干 + 三层收分的七棱锥。与阔叶树（圆团树冠）分片出现，一片区域以哪种
+ * 为主由 jungleTerraces 的树种噪声场决定。扭曲丛林（treeShape:'twisted'）没有针叶树，
+ * 这一类改用深色的扭曲树。
+ */
+export function coniferGeo(map) {
+  const SV = stylizedPaletteOf(map);
+  if (SV.treeShape === 'twisted') return stylizedTreeGeo(map, true);
+  const A = SV.coniferColorA || '#3f7d4a', B = SV.coniferColorB || '#346c3f';
+  const parts = [withColor(new THREE.CylinderGeometry(2.2, 3.2, 12, 6).translate(0, 6, 0).toNonIndexed(), SV.treeTrunkColor || '#5a4326')];
+  for (const [r, h, y, c] of [[15, 20, 20, B], [11.5, 17, 31, A], [7.5, 14, 41, B]]) {
+    parts.push(withColor(new THREE.ConeGeometry(r, h, 7).translate(0, y, 0).toNonIndexed(), c));
+  }
+  return mergeGeometries(parts);
+}
+
 // v51.18：扭曲树干——3 段圆柱依次绕 X/Z 轴偏转再首尾相接（每段的变换 = 上一段
 // 变换叠加自己这一节的旋转，不是各自独立摆一个角度），累积出一条弯折的 S 形剪影。
 // 返回 { trunkParts: 已变换好的几何数组, tipPos: 最后一段顶端的世界坐标（给树冠挂载点用）}。
@@ -112,7 +129,10 @@ export class VegetationLayer {
   constructor(scene) { this.scene = scene; this.meshes = []; this._mapId = null; }
 
   clear() {
-    for (const m of this.meshes) { this.scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+    for (const m of this.meshes) {
+      this.scene.remove(m); m.geometry.dispose();
+      for (const mt of [].concat(m.material)) mt.dispose();   // 台地是两个材质（顶/侧）
+    }
     this.meshes = [];
     // 换图/重建时把风摆动注册表也清空——VegetationShaderPatch 的登记表是模块级
     // 全局的（只有这个文件在用它），不清的话旧地图那批已经 dispose 掉的材质会
@@ -143,12 +163,25 @@ export class VegetationLayer {
     const { w: WW, h: WH } = map.world;
     const heightAt = mapSystem.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
     const walk = (x, y) => mapSystem.isWalkable(x, y);
-    const trees = [], deepTrees = [], rocks = [], bushes = [];
+    const trees = [], deepTrees = [], rocks = [], bushes = [], conifers = [];
     // navgrid 地形下墙块较窄（野区可走、只有墙块不可走），内部余量过大会几乎选不出点 → 放宽到 26。
     const STEP = 55, margin = 26, edge = 90;   // 采样步长 / 内部余量(不贴车道边，仅 default/frost 分支用) / 离图边余量
     // 树冠布局（见 data/jungleCanopy.js）：不可走区盖满树、边缘夹石头、草地只贴边放灌木。
-    const canopyMode = jungleMode && stylizedPaletteOf(map).jungleLayout === 'canopy';
-    if (canopyMode) {
+    const layout = jungleMode ? stylizedPaletteOf(map).jungleLayout : null;
+    const canopyMode = layout === 'canopy';
+    if (layout === 'terraces') {
+      // 台地 + 分片树林（见 data/jungleTerraces.js）。台面上的东西摆在台面高度。
+      const NGr = mapSystem._navgrid?.();
+      const plan = terracePlan(map, walk, baseWallLookup(map, navgridOf(map), CONFIG.ui?.baseWall?.wallFraction ?? 0.5),
+        (x, y) => mapSystem.riverFactor(x, y), NGr?.n ?? 256, NGr?.bits ?? null);
+      for (const t of plan.trees) {
+        const rec = [t.x, (t.onTop ?? 0) + heightAt(t.x, t.y), t.y, t.s, t.rot];
+        (t.species === 'conifer' ? conifers : t.deep ? deepTrees : trees).push(rec);
+      }
+      for (const [x, y, s, rot, top] of plan.rocks) rocks.push([x, (top ?? 0) + heightAt(x, y), y, s, rot]);
+      for (const [x, y, s, rot, top] of plan.bushes) bushes.push([x, (top ?? 0) + heightAt(x, y), y, s, rot]);
+      this._buildOutcrops(map, plan.outcrops, heightAt);
+    } else if (canopyMode) {
       const wallFn = baseWallLookup(map, navgridOf(map), CONFIG.ui?.baseWall?.wallFraction ?? 0.5);
       const plan = canopyPlan(map, walk, wallFn);
       const put = (arr, list) => { for (const [x, y, s, rot] of list) arr.push([x, heightAt(x, y), y, s, rot]); };
@@ -269,6 +302,7 @@ export class VegetationLayer {
       place(stylizedTreeGeo(map, false), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), trees, null, true);
       // v59：深林树用更暗的深色变体（treeCrownDeepA/B），单独一个 InstancedMesh。
       place(stylizedTreeGeo(map, true), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), deepTrees, null, true);
+      place(coniferGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), conifers, null, true);
       place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), rocks, null);
       place(new THREE.IcosahedronGeometry(14, 0).scale(1, 0.6, 1), new THREE.MeshLambertMaterial({ color: SV.treeCrownColorB || '#6cbb5e', flatShading: true }), bushes, null);
     } else {
@@ -303,6 +337,38 @@ export class VegetationLayer {
    * 只被昼夜的明暗/冷暖乘调，不会被昼夜颜色整个吃掉。
    */
   /**
+   * 台地：每块轮廓挤出成低多边形台地——台面草色（比周围草地亮一档）、崖壁岩色
+   * （ExtrudeGeometry 的材质组 0 = 顶/底面，1 = 侧面）。轮廓就是这块不可走区。
+   * 每块一个 Mesh：合并几何会把分组改成"每个输入几何一组"，材质就对不上了。
+   */
+  _buildOutcrops(map, outcrops, heightAt) {
+    if (!outcrops || !outcrops.length) return;
+    const SV = stylizedPaletteOf(map);
+    const top = SV.outcropTopColor ? new THREE.Color(SV.outcropTopColor)
+      : new THREE.Color(SV.jungleColor || '#5a9a55').offsetHSL(0.02, 0, CONFIG.ui?.jungleTerraces?.outcropTopLift ?? 0.07);
+    const mats = [
+      new THREE.MeshLambertMaterial({ color: top, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8f8879', flatShading: true, side: THREE.DoubleSide }),
+    ];
+    for (const oc of outcrops) {
+      for (const pts of oc.loops) {
+        let cx = 0, cy = 0;
+        for (const [x, y] of pts) { cx += x; cy += y; }
+        const base = heightAt(cx / pts.length, cy / pts.length) - 1;
+        const g = new THREE.ExtrudeGeometry(new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y))),
+          { depth: oc.height, bevelEnabled: false });
+        g.rotateX(Math.PI / 2); g.translate(0, base + oc.height, 0);
+        const ms = mats.map((mt) => mt.clone());
+        const mesh = new THREE.Mesh(g, ms);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        mesh.userData.baseColors = ms.map((mt) => mt.color.clone());
+        this.scene.add(mesh); this.meshes.push(mesh);
+      }
+    }
+    for (const mt of mats) mt.dispose();
+  }
+
+  /**
    * 每帧调用：把风强度写进树/深林树的摆动 shader。dt 走墙钟（暂停时风也该继续
    * 吹，跟 WeatherLayer/WaterLayer 同口径），windStrength 是风的 charge（0~1）。
    */
@@ -335,6 +401,10 @@ export class VegetationLayer {
     this._tint = hex;
     const t = new THREE.Color(hex);
     for (const m of this.meshes) {
+      if (Array.isArray(m.material)) {   // 台地：顶/侧两个材质，各乘各的底色
+        m.material.forEach((mt, i) => { const b = m.userData.baseColors?.[i]; if (b) mt.color.copy(b).multiply(t); });
+        continue;
+      }
       if (!m.material?.color) continue;
       const base = m.userData.baseColor;
       if (base) m.material.color.copy(base).multiply(t);
