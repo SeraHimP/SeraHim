@@ -13,8 +13,12 @@ import { CONFIG } from '../data/Config.js';
 
 const _wA = new THREE.Color(), _wB = new THREE.Color();
 
-// 程序化涟漪法线贴图：两组不同频率/朝向的正弦叠加 → 交错波纹，平铺无缝（用整数周期）。
-function rippleNormalTexture(size = 256) {
+// 程序化涟漪法线贴图：多组不同频率/朝向的正弦叠加 → 交错波纹，平铺无缝（用整数周期）。
+// v60：原来只有两组斜向波，俯视时读成一道道等距的斜条纹（审查截图里召唤师峡谷的河）。
+// 再加两组方向/频率错开的波把规律打散；CONFIG.ui.water.rippleWaves=2 回到原来的两组。
+const RIPPLE_WAVES = [[3, 2, 0.5], [2, -4, 0.35], [5, 1, 0.22], [-1, 6, 0.18]];
+function rippleNormalTexture(size = 256, waves = 4) {
+  const W = RIPPLE_WAVES.slice(0, Math.max(1, Math.min(RIPPLE_WAVES.length, waves)));
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d');
@@ -24,11 +28,12 @@ function rippleNormalTexture(size = 256) {
     for (let x = 0; x < size; x++) {
       const u = x / size, v = y / size;
       // 高度场：两列斜向行波（整数周期保证平铺接缝连续）
-      const h = Math.sin((u * 3 + v * 2) * TAU) * 0.5 + Math.sin((u * 2 - v * 4) * TAU) * 0.35;
+      const hf = (uu, vv) => W.reduce((s, [a, b, amp]) => s + Math.sin((uu * a + vv * b) * TAU) * amp, 0);
+      const h = hf(u, v);
       // 数值微分求切向斜率 → 法线
       const e = 1 / size;
-      const hx = Math.sin(((u + e) * 3 + v * 2) * TAU) * 0.5 + Math.sin(((u + e) * 2 - v * 4) * TAU) * 0.35;
-      const hy = Math.sin((u * 3 + (v + e) * 2) * TAU) * 0.5 + Math.sin((u * 2 - (v + e) * 4) * TAU) * 0.35;
+      const hx = hf(u + e, v);
+      const hy = hf(u, v + e);
       const nx = -(hx - h) / e * 0.06, ny = -(hy - h) / e * 0.06, nz = 1;
       const len = Math.hypot(nx, ny, nz);
       const i = (y * size + x) * 4;
@@ -93,7 +98,8 @@ export class WaterLayer {
     const { w: WW, h: WH } = map.world;
     const cfg = map.heightZones || {};
     const depth = cfg.riverDepth ?? -10;
-    this.tex = rippleNormalTexture();
+    const wcfg0 = (CONFIG.ui && CONFIG.ui.water) || {};
+    this.tex = rippleNormalTexture(256, wcfg0.rippleWaves ?? 4);
     this.tex.repeat.set(WW / 150, WH / 150);          // 细密涟漪（平铺越多波纹越小，避免方格感）
 
     // 水面 = 整张地图大小的平面 + 河带 alpha 遮罩。比"旋转的长条"好在：
@@ -107,7 +113,7 @@ export class WaterLayer {
     const wcfg = (CONFIG.ui && CONFIG.ui.water) || {};
     const mat = new THREE.MeshLambertMaterial({
       color: wcfg.color ?? '#35707c', transparent: true, opacity: wcfg.opacity ?? 0.55,
-      normalMap: this.tex, normalScale: new THREE.Vector2(0.35, 0.35),
+      normalMap: this.tex, normalScale: new THREE.Vector2(wcfg.rippleStrength ?? 0.28, wcfg.rippleStrength ?? 0.28),
       alphaMap: this.mask,        // 只有河带处不透明
       depthWrite: false,          // 半透明水面不写深度，避免挡住河床里的单位/贴花
     });

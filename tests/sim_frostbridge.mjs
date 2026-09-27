@@ -398,7 +398,9 @@ const halfWidth = (bits, d, sign) => {
   T('沿④-其余地图都没有声明 visualNavgrid（这条接缝是可选的）',
     Object.values(MAPS).filter(m => m.visualNavgrid).every(m => m.id === 'howling_abyss_frost_v1'));
   T('沿⑤-TerrainLayer 只在地图声明了 visualNavgrid 时才改用它画地面，否则照抄可走网格',
-    /const paint = visualWalkOf\(map, grid\) \|\| walk;/.test(terrain)
+    // v60：平滑路径（smoothNavWalk）同样优先读 visualNavgrid。
+    /const paint0 = visualWalkOf\(map, grid\) \|\| walk;/.test(terrain)
+    && /map\.visualNavgrid\?\.bits \? map\.visualNavgrid/.test(terrain)
     && /if \(!vg \|\| !vg\.bits \|\| !vg\.n \|\| !grid\) return null;/.test(terrain));
   // ==================== v1.0 阶段二：配色 / 色调映射 / 水域环境 ====================
   // 用户确认的三件事：往 Thronefall 雪地那张靠、顺手修"冷色被压成灰绿"的老问题、

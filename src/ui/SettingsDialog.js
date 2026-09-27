@@ -193,6 +193,9 @@ export const SettingsDialog = {
           <div class="slider-row"><label title="夜晚塔会照亮射程×1.2 的范围（真光源，能照到小兵）">塔夜间照明</label>
             <button id="setTowerLightBtn" style="flex:1;">${CONFIG.ui?.towerLight?.enabled !== false ? '🔦 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
           </div>
+          <div class="slider-row"><label title="召唤师峡谷/扭曲丛林的道路、森林、河道交界从格子台阶改成平滑曲线（只影响画面，不影响能不能走）">地面边界平滑</label>
+            <button id="setTerrainSmoothBtn" style="flex:1;">${CONFIG.ui?.terrainSmooth?.enabled !== false ? '〰️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）'}</button>
+          </div>
           <div class="slider-row"><label title="auto=选中或有敌人时显示；always=一直显示（旧行为）；selected=只看选中">射程圈显示</label>
             <button id="setRingModeBtn" style="flex:1;">${
               ({ auto: '🎯 智能（选中/有敌人）', always: '👁 一直显示', selected: '🖱 只看选中' })[CONFIG.ui?.rangeRing?.mode || 'auto']
@@ -377,6 +380,12 @@ export const SettingsDialog = {
         CONFIG.ui.towerLight.enabled = CONFIG.ui.towerLight.enabled === false;
         ev.target.textContent = CONFIG.ui.towerLight.enabled
           ? '🔦 已开启（点击关闭）' : '⭕ 已关闭（点击开启）';
+      });
+      document.getElementById('setTerrainSmoothBtn')?.addEventListener('click', (ev) => {
+        CONFIG.ui.terrainSmooth.enabled = CONFIG.ui.terrainSmooth.enabled === false;
+        ev.target.textContent = CONFIG.ui.terrainSmooth.enabled
+          ? '〰️ 已开启（点击关闭）' : '⭕ 已关闭（点击开启）';
+        window.__three?.invalidateTerrain?.();   // 底图是缓存的，不重建看不到变化
       });
       document.getElementById('setRingModeBtn')?.addEventListener('click', (ev) => {
         const order = ['auto', 'always', 'selected'];

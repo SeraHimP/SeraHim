@@ -18,6 +18,8 @@
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter, isInBaseWallRing } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
+import { smoothLabelsToRGBA, sampleFieldRGBA } from './smoothLabels.js';
+import { SR_NAVGRID } from '../data/maps/sr_navgrid.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
 import { forestZoneCells } from '../data/mapValidate.js';
 
@@ -82,6 +84,45 @@ function visualWalkOf(map, grid) {
   return out;
 }
 
+/**
+ * v60：地面形状按**原生 navgrid 分辨率**的双线性 0.5 等值线重采样到 grid 上。
+ *
+ * grid.walk 是 WallLayer 按 8 单位格对 isWalkable 最近邻采样出来的；navgrid 本身是
+ * 256 格（召唤师峡谷每格 13.9 单位，扭曲丛林 11.75×5.4 单位）。两次量化之后每一级
+ * 原生台阶落到 8 单位格上变成 1~2 格宽的不规则台阶，后面再怎么平滑放大也拉不直。
+ * 这里在原生格心之间做双线性插值取 ≥0.5，得到的边界本身就是斜线/曲线。
+ *
+ * 可走判定不受影响（仍然只认 navgrid 最近邻）；grid.walk 比 navgrid 多出来的阻挡
+ * （例如"河道不可行走"开关）照样保留——那些格子在两边都判成不可走。
+ */
+function smoothNavWalk(map, grid, fallback) {
+  // 与 MapSystem._navgrid() 同一条兜底：没声明 navgrid 的 useNavgrid 地图用峡谷那张。
+  const src = map.visualNavgrid?.bits ? map.visualNavgrid : (map.navgrid || SR_NAVGRID);
+  if (!src || !src.bits || !src.n) return fallback;
+  const n = src.n;
+  const bits = unpackBits(src.bits, n);
+  if (!bits) return fallback;
+  const { nx, ny, walk } = grid;
+  const at = (i, j) => (i < 0 || j < 0 || i >= n || j >= n) ? 0 : bits[j * n + i];
+  const out = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) {
+    const fy = (j + 0.5) / ny * n - 0.5, j0 = Math.floor(fy), ty = fy - j0;
+    for (let i = 0; i < nx; i++) {
+      const fx = (i + 0.5) / nx * n - 0.5, i0 = Math.floor(fx), tx = fx - i0;
+      const v = (1 - ty) * ((1 - tx) * at(i0, j0) + tx * at(i0 + 1, j0))
+              + ty * ((1 - tx) * at(i0, j0 + 1) + tx * at(i0 + 1, j0 + 1));
+      let on = v >= 0.5 ? 1 : 0;
+      // 最近邻 navgrid 说可走、grid.walk 却不可走 = 额外阻挡，照抄 grid.walk。
+      if (on && !walk[j * nx + i]) {
+        const ni = Math.min(n - 1, Math.floor((i + 0.5) / nx * n)), nj = Math.min(n - 1, Math.floor((j + 0.5) / ny * n));
+        if (bits[nj * n + ni]) on = 0;
+      }
+      out[j * nx + i] = on;
+    }
+  }
+  return out;
+}
+
 export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // Q4：navgrid 地图的底图改由【真实可走网格】生成，与走廊模型产出的底图不是一回事，
   // 故缓存键要带上模式，切换时不会拿到上一版。
@@ -121,8 +162,25 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
   // 河道（装饰）：v34 起地图可声明 walls.river:false 关闭（嚎哭深渊是冰桥，没有河道）。
   // Q5：不再画"整条对角线"，改为逐格采样 MapSystem.riverFactor —— 与水面/河床同一个场，
   // 于是路面处自动没有河色（用户定稿：只有被三路切出来的那两段是河）。
+  const SM = CONFIG.ui?.terrainSmooth || {};
+  const smooth = SM.enabled !== false;
   const drawRiver = (riverAt) => {
     if (map.walls?.river === false || !riverAt) return;
+    if (smooth) {
+      // 平滑版：按 riverSampleWorld 采样成小图，交给 drawImage 双线性放大。
+      // 原来 16 单位一块 fillRect，河岸是台阶、半透明方块相接处还有条纹。
+      const step = Math.max(2, SM.riverSampleWorld ?? 8);
+      const rw = Math.ceil(WW / step), rh = Math.ceil(WH / step);
+      const rc = document.createElement('canvas');
+      rc.width = rw; rc.height = rh;
+      const rg = rc.getContext('2d');
+      const im = rg.createImageData(rw, rh);
+      im.data.set(sampleFieldRGBA(riverAt, rw, rh, step, step, [60, 120, 150], 0.35));
+      rg.putImageData(im, 0, 0);
+      g.imageSmoothingEnabled = true;
+      g.drawImage(rc, 0, 0, rw * step, rh * step);
+      return;
+    }
     const STEP = 16;                                  // 世界单位；底图是半分辨率，16 已足够细
     for (let y = 0; y < WH; y += STEP) {
       for (let x = 0; x < WW; x += STEP) {
@@ -158,7 +216,8 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     const [corR, corG, corB] = stylized ? hex2rgb(SV.corridorColor, 'c9a06b') : [0x2b, 0x36, 0x47];
     const [gndR, gndG, gndB] = stylized ? hex2rgb(SV.groundColor, '151c26') : [0x15, 0x1c, 0x26];
     // 画地面用的形状可以与"能不能走"分开（见 visualWalkOf 头注）；没声明就还是照抄可走网格。
-    const paint = visualWalkOf(map, grid) || walk;
+    const paint0 = visualWalkOf(map, grid) || walk;
+    const paint = (CONFIG.ui?.terrainSmooth?.enabled !== false) ? smoothNavWalk(map, grid, paint0) : paint0;
 
     // ==================== v58：走廊 / 野区二分（森林风格地图新增）====================
     // 用户："召唤师峡谷是森林风格。"——LoL 原图里可走区域并不是一片同色：兵线走廊是
@@ -263,26 +322,37 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     // 不是裸露的虚空。只在森林风格+有兵线的地图上判定，与其它 v59 特性同一个开关。
     const [wallR, wallG, wallB] = stylized && SV.rockColor ? hex2rgb(SV.rockColor, '8f8879') : [gndR, gndG, gndB];
     const cellW2 = WW / nx, cellH2 = WH / ny;
+    // 每格先归成一个类别，再决定怎么放大（见 smoothLabels.js）。
+    // 类别：0 道路 1 林缘 2 森林 3 深林 4 图外 5 围墙地基 6 挖空
+    const PAL = [[corR, corG, corB, 255], [edgR, edgG, edgB, 255], [jngR, jngG, jngB, 255], [dpR, dpG, dpB, 255],
+      [gndR, gndG, gndB, 255], [wallR, wallG, wallB, 255], [0, 0, 0, 0]];
+    const labels = new Uint8Array(nx * ny);
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
       // v59：0=道路 1=林缘 2=普通森林 3=深林；未开森林分级时 zoneAt 为 null，
       // 全部按老逻辑当"路"（zone 0），三张老地图与 demo_stylized_v1 逐位不变。
-      const zone = zoneAt ? zoneAt[k] : 0;
-      let r, gg, b;
-      if (zone === 1) { r = edgR; gg = edgG; b = edgB; }
-      else if (zone === 2) { r = jngR; gg = jngG; b = jngB; }
-      else if (zone === 3) { r = dpR; gg = dpG; b = dpB; }
-      else { r = corR; gg = corG; b = corB; }
-      let gr = gndR, gg2 = gndG, gb2 = gndB;
+      let lab = on ? (zoneAt ? zoneAt[k] : 0) : 4;
       if (!on && jungleActive) {
         const gx = k % nx, gy = (k / nx) | 0;
         const wx = (gx + 0.5) * cellW2, wy = (gy + 0.5) * cellH2;
-        if (isInBaseWallRing(map, wx, wy)) { gr = wallR; gg2 = wallG; gb2 = wallB; }
+        if (isInBaseWallRing(map, wx, wy)) lab = 5;
       }
-      im.data[k * 4]     = on ? r : gr;
-      im.data[k * 4 + 1] = on ? gg : gg2;
-      im.data[k * 4 + 2] = on ? b : gb2;
-      im.data[k * 4 + 3] = (cutout && !on) ? 0 : 255;
+      if (cutout && !on) lab = 6;
+      labels[k] = lab;
+    }
+    if (smooth) {
+      // v60：类别边界平滑放大，直接写到底图分辨率上（putImageData 不吃 g.scale）。
+      const out = g.createImageData(c.width, c.height);
+      out.data.set(smoothLabelsToRGBA(labels, nx, ny, PAL, c.width, c.height, SM.blur ?? 1 / 6));
+      g.putImageData(out, 0, 0);
+      drawRiver(riverAt);
+      tintBases();
+      _terrainCache.set(key, c);
+      return c;
+    }
+    for (let k = 0; k < nx * ny; k++) {
+      const col = PAL[labels[k]];
+      im.data[k * 4] = col[0]; im.data[k * 4 + 1] = col[1]; im.data[k * 4 + 2] = col[2]; im.data[k * 4 + 3] = col[3];
     }
     cg.putImageData(im, 0, 0);
     g.imageSmoothingEnabled = false;                  // 最近邻：格边界与 navgrid 严格对齐
