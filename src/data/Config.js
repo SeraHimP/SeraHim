@@ -1073,11 +1073,7 @@ export const CONFIG = {
     //
     // 现在的口径是反过来算：你填"在半径边缘还想剩多少照度"（edgeLux），
     // 代码用 intensity = edgeLux × 半径^decay 反推坎德拉。这样这几个数是可直接理解的。
-    // 塔顶水晶与绕它公转的粒子（用户："水晶和粒子的旋转速度改为不同，那么看起来更好"）。
-    // 单位是弧度/秒，正负号 = 转向。
-    // ⚠️ 粒子是水晶 Mesh 的**子节点**，默认继承水晶的旋转 —— 不给它相对角速度的话
-    // 两者严丝合缝一起转，看起来像焊死的。实现里给的是 (particleSpin − spin)，
-    // 于是这里填的 particleSpin 就是粒子的【世界】转速，两个数各调各的互不影响。
+    // 塔顶水晶的自转与旁边悬浮的光点（见 CONFIG.ui.crystal 处的说明）。
     // 闪电杖光束的【流动】效果（用户："我想要闪电杖的攻击轨迹有流动效果
     //（不是那种虚线的效果，之前做过效果太差）"）。
     // 做法不是把光切成虚线，而是在连续的三层光带**上面叠**几团顺着跑的亮斑：
@@ -1222,8 +1218,14 @@ export const CONFIG = {
       updateIntervalSec: 0.75,
     },
     crystal: {
-      spin: 0.6,           // 水晶本体（保持原值，改动前就是这个数）
-      particleSpin: -0.42, // 粒子。反向 + 约 0.7 倍速 —— 反向比"同向但快一点"容易看出来得多
+      spin: 0.6,           // 水晶本体自转（弧度/秒）
+      // 水晶旁边悬浮的细小光点（UnitMeshFactory.crystalParticles）。长度量都 × 水晶半径。
+      //   count 颗数；radius [近, 远] 出生圈半径；speed [慢, 快] 每秒走完几轮生命（上飘一次）；
+      //   rise 一轮往上飘多高；below 出生点比水晶中心低多少；swirl 一轮绕转多少弧度；
+      //   twinkle 闪烁频率；size 光点世界尺寸；whiteMix 偏白那几颗的白色比例；
+      //   glow 亮度倍数（> 1 才会被辉光抓到）；maxPx 光点屏幕尺寸上限（像素）
+      motes: { count: 28, radius: [0.8, 2.0], speed: [0.16, 0.32], rise: 2.6, below: 1.0, swirl: 0.9,
+               twinkle: 5.0, size: 0.5, whiteMix: 0.45, glow: 1.8, maxPx: 12 },
     },
     // ==================== v55.9：水晶边缘发光描边（Fresnel rim）====================
     // 用户反馈"水晶材质像塑料片"，选定方向"边缘发光描边"——见
@@ -1507,16 +1509,30 @@ export const CONFIG = {
       maxSunElevDeg: 34,
     },
 
+    // 防御塔护盾外壳（shieldShell.js）。只看固定护盾 + 护盾（不含临时护盾），只包防御塔。
+    // 用户定稿："贴身外壳"、"金白色"、"不要越厚越亮，但是要做出被打时候闪一下"。
+    //   inflate 外壳比塔身外扩多少（× 建筑半径）；minY 这个高度以下不包（× 建筑半径，碎块/石台底部）
+    //   color / rimColor 外壳主色 / 轮廓亮边色；base 正对镜头那面的底亮度；rimPower / rimStrength 轮廓光的锐度 / 强度
+    //   sheenStrength / sheenFreq / sheenSpeed 上行光纹的强度 / 疏密（每世界单位）/ 速度（世界单位每秒）
+    //   flashStrength / flashDur 被打闪一下的强度 / 时长（秒）；fadeIn / fadeOut 出现 / 消失（秒）
+    towerShield: {
+      enabled: true, inflate: 0.08, minY: 0.35,
+      color: '#ffd98a', rimColor: '#fff8e6', base: 0.02, rimPower: 2.6, rimStrength: 0.65,
+      sheenStrength: 0.22, sheenFreq: 0.12, sheenSpeed: 22,
+      flashStrength: 1.6, flashDur: 0.25, fadeIn: 0.3, fadeOut: 0.45,
+    },
+
     // 召唤水晶 / 水晶枢纽造型（crystalShrines.js）。style: 'statue' = 用户定稿的新造型
     // （召唤水晶：三尊守卫托举；枢纽：四尊守卫的圣殿），'classic' = 原来的祭坛。
     //   bearerScale / guardianScale：托举守卫 / 枢纽守卫的大小（× 建筑半径）
+    //   bearerRadius / guardianRadius：守卫站在离中心多远（× 建筑半径）——台座/袍摆必须整个落在台面内
     //   orbCrystalR / gemCrystalR：两种攻击水晶的半径（× 建筑半径）
     //   dentsLight / dentsHeavy：水晶本身缺角的位置与深度 [方向x, y, z, 压到原半径的几成]
     //   ruin：废墟碎石丘铺开半径（× 建筑半径）、额外石块数、倒下的守卫/柱子缩放
     crystalShrine: {
       style: 'statue',
-      bearerScale: 0.72,
-      guardianScale: 0.62,
+      bearerScale: 0.72, bearerRadius: 0.55,
+      guardianScale: 0.62, guardianRadius: 0.66,
       orbCrystalR: 0.42,
       gemCrystalR: 0.6,
       dentsLight: [[0.6, 0.7, 0.4, 0.62]],
@@ -1530,6 +1546,7 @@ export const CONFIG = {
     //   statueScale / columnExtra：四档雕像的放大倍数、立柱比外塔高出多少（× 建筑半径）
     //   ruin：废墟碎石丘的高度/铺开半径（× 建筑半径）、碎块缩放、额外石块数
     //   crystalLift：水晶中心比杖顶托爪尖高出多少（× 水晶半径；1 = 水晶底刚好贴着托爪尖）
+    //   barLift：血条再抬高多少（× 建筑半径）——水晶偏在身侧，不抬的话血条横穿水晶
     //   rubbleDist：掉下来的部件落在离中轴多远（× 建筑半径，[近, 远]）
     //   rubbleScale：碎块相对原部件的缩放；stubShade：断口残根的明度系数
     //   colors：雕像各部分的颜色（石环/立柱跟随地图调色板的塔石色）
@@ -1539,6 +1556,7 @@ export const CONFIG = {
       columnExtra: { outer: 0, inner: 0.15, base: 0.3, hq_tower: 0.45 },
       ruin: { moundHeight: 0.42, spread: 0.95, pieceScale: 0.8, blocks: 16 },
       crystalLift: 1.05,
+      barLift: 0.4,
       rubbleDist: [1.0, 1.45],
       rubbleScale: 0.72,
       stubShade: 0.5,

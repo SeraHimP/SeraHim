@@ -44,7 +44,8 @@ import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor, TRAIL_COLOR } from
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS } from '../core/resourceBar.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
-import { HUD_SPRITE_LAYER } from './PostFX.js';
+import { HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
+import { shellGeometry, shellMaterial, stepShieldState } from './shieldShell.js';
 
 // ==================== v51.6：龙魂环按元素配色 ====================
 // 用户："获得龙魂的某一方，塔下面都会有光圈。这个光圈的颜色目前是不会变的，
@@ -209,7 +210,9 @@ export class UnitLayer {
                           { stone: pal.towerStone, trim: pal.towerTrim, foundation });
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
-               barW: 80, barH: 6, barD: 10, alpha: transparent ? 0.35 : 1, pulse: false,
+               // 雕像塔的水晶偏在身侧，血条（以塔中心为准）会横穿水晶——再抬高一截（× 建筑半径）
+               barW: 80, barH: 6, barD: 10 + (m.crystal?.cx || m.crystal?.cz ? rSize * (CONFIG.ui?.statueTower?.barLift ?? 0.4) : 0),
+               alpha: transparent ? 0.35 : 1, pulse: false,
                ringR: rSize + 8, crystal: m.crystal, crystalColor: color };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值
     }
     if (e.type === 'dragon') {
@@ -439,6 +442,38 @@ export class UnitLayer {
   // 水晶几何是共享缓存（不释放）；子物体粒子（Points）的几何/材质逐塔独立（释放）。软圆点贴图全局共享（不释放）。
   // v51.31：本体合批之后水晶不再是 en.unit 的子物体（本体现在多半是合批槽位，没有
   // 子物体这个概念了），水晶是场景里的独立顶层 Mesh，这里必须显式摘场景，否则会漏删。
+  /**
+   * 防御塔护盾外壳（见 shieldShell.js）。只看固定护盾 + 护盾，不看临时护盾；
+   * 召唤水晶/水晶枢纽不包（用户："仅包含防御塔"）。
+   */
+  _syncShieldShell(e, en, dead, y) {
+    const S = CONFIG.ui?.towerShield || {};
+    const isTowerKind = e._mapTier !== 'nexus_lane' && e._mapTier !== 'nexus_main' && !e.isCapturePoint;
+    const amount = (S.enabled === false || dead || !e.alive || !isTowerKind) ? 0 : (e.shieldFixedCurrent || 0) + (e.plainShield || 0);
+    if (!en.shieldSt) { if (amount <= 0) return; en.shieldSt = { alpha: 0, flash: 0, prev: 0, t: performance.now() }; }
+    const st = en.shieldSt, now = performance.now();
+    const dt = Math.min(0.1, (now - st.t) / 1000); st.t = now;
+    const keep = stepShieldState(st, amount, dt);
+    if (!keep || !en.bodyGeo) { this._disposeShieldShell(en); return; }
+    if (!en.shieldShell) {
+      en.shieldShell = new THREE.Mesh(shellGeometry(en.bodyGeo), shellMaterial(en.bodySize || 32));
+      en.shieldShell.renderOrder = ORDER_UNIT + 1;
+      en.shieldShell.layers.set(FX_PARTICLE_LAYER);   // 不进法线深度预渲染（与水晶粒子同理，否则描边会勾出外壳）
+      this.scene.add(en.shieldShell); this.infoObjs++;
+    } else if (en.shieldShell.geometry !== shellGeometry(en.bodyGeo)) {
+      en.shieldShell.geometry = shellGeometry(en.bodyGeo);   // 掉档换了塔身几何，外壳跟着换（几何是共享缓存，不释放）
+    }
+    en.shieldShell.position.set(e.pos.x, y, e.pos.y);
+    en.shieldShell.rotation.y = en.faceFixed || 0;
+    const u = en.shieldShell.material.uniforms;
+    u.uTime.value = now / 1000; u.uAlpha.value = st.alpha; u.uFlash.value = st.flash;
+  }
+
+  _disposeShieldShell(en) {
+    if (en.shieldShell) { this.scene.remove(en.shieldShell); this.infoObjs--; en.shieldShell.material.dispose(); en.shieldShell = null; }
+    en.shieldSt = null;
+  }
+
   _disposeCrystal(en) {
     if (!en.crystal) return;
     this.scene.remove(en.crystal); this.infoObjs--;
@@ -527,6 +562,7 @@ export class UnitLayer {
     // 单位的几何与材质由 UnitMeshFactory 按 key 全局共享，此处【不得】dispose——
     // 释放它会连带弄坏所有同 key 的其他单位。共享资源随 disposeMeshCache 统一释放。
     this._disposeCrystal(en);     // Q6：水晶材质逐塔独立，需释放
+    this._disposeShieldShell(en); // 护盾外壳材质逐塔独立
     en.bar.material.dispose();
     en.barTex.dispose();          // per-entity 纹理；共享单位纹理不在此释放
     this._clearInfo(en);          // E 组对象（几何/材质共享，摘场景即可；盾牌 material 独立需释放）
@@ -1114,6 +1150,7 @@ export class UnitLayer {
           en.unit = new InstancedUnitProxy(this.bodyInst);
         }
         en.unit.bindSlot(vis.key, vis.geo, vis.mat, en.isTower);
+        en.bodyGeo = vis.geo; en.bodySize = vis.size;   // 护盾外壳跟着当前塔身几何走
         en.unitIsModel = false;
       } else {
         // 单 Mesh（龙）：从合批槽位切回时重建 Mesh 壳，否则换共享几何/材质引用。
@@ -1122,6 +1159,7 @@ export class UnitLayer {
           this._installUnit(en, new THREE.Mesh(vis.geo, vis.mat)); en.unitIsModel = false;
         }
         else { en.unit.geometry = vis.geo; en.unit.material = vis.mat; }
+        en.bodyGeo = vis.geo; en.bodySize = vis.size;
       }
 
       if (vis.crystal) {
@@ -1239,18 +1277,13 @@ export class UnitLayer {
         en.crystalPts.visible = this.particlesOn;
         if (this.particlesOn) {
           const px = (en.crystalPts.userData.worldSize || 4) * this.pxPerUnit;
-          en.crystalPts.material.size = Math.max(1, Math.min(CRYSTAL_PT_MAX_PX, px));
+          const u = en.crystalPts.material.uniforms;
+          u.uSize.value = Math.max(1, Math.min(CONFIG.ui?.crystal?.motes?.maxPx ?? CRYSTAL_PT_MAX_PX, px));
+          u.uTime.value = tNow;
         }
-        // ==================== 粒子与水晶【转速不同】（用户要求）====================
-        // 粒子是水晶 Mesh 的**子节点**（crystalParticles 被 cm.add 进去了），
-        // 所以它默认继承水晶的旋转 —— 两者严丝合缝地一起转，看起来像焊死在一块儿的。
-        // 想让它们相对转动，就得给子节点一个**相对**角速度：
-        //   子节点世界角速度 = 水晶角速度 + 子节点自身角速度
-        // 所以要达到目标世界角速度 ptsSpin，自身要转 (ptsSpin − spin)。
-        // 直接把 pts.rotation.y 设成 tNow * ptsSpin 是错的 —— 那样它的世界转速会变成
-        // spin + ptsSpin，两个数一起调时永远对不上你想要的效果。
-        const ptsSpin = cc.particleSpin ?? -0.42;   // 负号 = 反向转，反向比同向异速更容易看出来
-        en.crystalPts.rotation.y = tNow * (ptsSpin - spin);
+        // 光点是水晶 Mesh 的子节点，会继承水晶的自转；这里抵消掉，光点自己在着色器里慢慢绕、往上飘
+        //（用户："不要原来常驻一成不变的粒子然后旋转"）。
+        en.crystalPts.rotation.y = -en.crystal.rotation.y;
       }
       // ---- Q3：水晶随「充能」变亮（只有穿透型 / 闪电杖两种武器有这个表现）----
       // 上一版做成了"蓄力涨大 + 粒子收拢 + 开火弹跳"，两处不对：
@@ -1294,7 +1327,7 @@ export class UnitLayer {
       en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE + this._nightEmi();
       // 粒子随充能变亮（不再收拢/外弹——那也是"攒一发"的语义）
       if (en.crystalPts && this.particlesOn) {
-        en.crystalPts.material.opacity = Math.max(0, Math.min(1, 0.45 + chargeE * 0.45));
+        en.crystalPts.material.uniforms.uOpacity.value = Math.max(0, Math.min(1, 0.55 + chargeE * 0.45));
       }
     }
 
@@ -1332,6 +1365,7 @@ export class UnitLayer {
       // 新对象的 rotation 是 0 —— 只赋一次的话，塔一掉血就会"啪"地转回正北。
       // 赋值本身是一次浮点写入，比记一个"要不要重赋"的脏标记还便宜。
       if (en.faceFixed !== null) en.unit.rotation.y = en.faceFixed;
+      this._syncShieldShell(e, en, ghost || ruin, gy + walkBob);
     }
     if (en.facing) {
       if (e._facing !== undefined) en.faceT = e._facing;

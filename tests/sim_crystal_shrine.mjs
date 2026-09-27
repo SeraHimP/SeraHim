@@ -34,6 +34,9 @@ for (const [kind, R, name] of [['orb', 34, '召唤水晶'], ['gem', 44, '水晶�
     T(`④${tag}：守卫的头不掉（没有 hood 类部件被拿掉）`, !s2.some((id) => /hood/.test(id)));
     const figures = new Set(sh.model.order.map((id) => id.split('.')[0]).filter((p) => /^[fg]\d$/.test(p)));
     T(`⑤${tag}：${kind === 'orb' ? '三尊托举守卫' : '四尊圣殿守卫'}（${figures.size}）`, figures.size === (kind === 'orb' ? 3 : 4));
+    // 用户："水晶枢纽的守卫不是完全在底座上，有一半是悬空的……不要让守卫悬空！！！"
+    const hang = sh.figures.filter((f) => Math.hypot(f.x, f.z) + f.r > sh.support.r + 1e-6 || Math.abs(f.y - sh.support.y) > 1e-6);
+    T(`④b${tag}：每尊守卫的脚下整个落在台面上（不悬空：${hang.length} 尊越界）`, sh.figures.length > 0 && hang.length === 0);
     const body = partsBox(sh.model.parts([]));
     T(`⑥${tag}：水晶悬在建筑之上、在中轴（底面高于守卫手/柱顶的大半）`, sh.crystalCy - sh.crystalR > body.max.y * 0.45);
     const ruin = partsBox(sh.ruin);

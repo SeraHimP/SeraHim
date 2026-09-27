@@ -1572,6 +1572,7 @@ export function crystalMaterial(color) {
 let _dotTex = null;
 function dotTexture() {
   if (_dotTex) return _dotTex;
+  if (typeof document === 'undefined') return null;   // 无头测试环境没有 canvas，贴图留空即可
   const c = document.createElement('canvas'); c.width = c.height = 32;
   const g = c.getContext('2d');
   const grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
@@ -1581,29 +1582,76 @@ function dotTexture() {
   _dotTex = new THREE.CanvasTexture(c); _dotTex.colorSpace = THREE.SRGBColorSpace;
   return _dotTex;
 }
+/**
+ * 水晶旁边悬浮的细小光点。用户："在水晶旁边悬浮一些细小的粒子（不要原来常驻一成不变的粒子
+ * 然后旋转）"，参考英雄联盟防御塔水晶。
+ * 每颗光点在水晶周围一圈里出生，慢慢往上飘、带一点绕转和左右晃，淡入—闪烁—淡出，然后换个
+ * 位置重新出生。整套运动在顶点着色器里按时间算（uTime），CPU 每帧只写几个 uniform。
+ * 参数在 CONFIG.ui.crystal.motes。
+ */
 export function crystalParticles(color, r) {
-  const N = 16, pos = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {                    // 螺旋分布在水晶周围一层薄壳里（确定性，无随机）
-    const a = i * 2.399963;                         // 黄金角 → 均匀铺开
-    const rad = r * (0.95 + 0.55 * ((i * 0.618) % 1));
-    pos[i * 3] = Math.cos(a) * rad;
-    pos[i * 3 + 1] = r * (-0.5 + 1.6 * ((i * 0.373) % 1));
-    pos[i * 3 + 2] = Math.sin(a) * rad;
-  }
+  const M = CONFIG.ui?.crystal?.motes || {};
+  const N = Math.max(1, M.count ?? 22);
+  const pos = new Float32Array(N * 3), seed = new Float32Array(N * 4);
+  const h = (i, k) => { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };   // 确定性伪随机
+  for (let i = 0; i < N; i++) seed.set([h(i, 1), h(i, 2), h(i, 3), h(i, 4)], i * 4);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  // 尺寸：正交相机下 three 的 sizeAttenuation 【完全失效】（着色器里 gl_PointSize *= scale/-z
-  // 只在透视相机分支执行），gl_PointSize 就是固定像素数 → 缩小看全图时塔只剩几像素、粒子仍占那么多
-  // 像素，糊成一团。故这里只给"世界半径"，由 UnitLayer 每帧按 像素/世界单位 换算成 size。
-  const mat = new THREE.PointsMaterial({
-    size: 1, map: dotTexture(), color,
-    transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending,
-    depthWrite: false, sizeAttenuation: false,
+  geo.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, r, 0), r * 4);   // 位置在着色器里算，包围球手给
+  const [rad0, rad1] = M.radius || [0.7, 1.7];
+  const [sp0, sp1] = M.speed || [0.16, 0.32];
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uSize: { value: 4 }, uOpacity: { value: 0.9 },
+      uColor: { value: new THREE.Color(color) }, uMap: { value: dotTexture() },
+      uR: { value: r }, uRad: { value: new THREE.Vector2(rad0, rad1) }, uSpeed: { value: new THREE.Vector2(sp0, sp1) },
+      uRise: { value: M.rise ?? 2.2 }, uSink: { value: M.below ?? 0.8 }, uSwirl: { value: M.swirl ?? 0.9 },
+      uTwinkle: { value: M.twinkle ?? 5.0 }, uWhite: { value: M.whiteMix ?? 0.35 }, uGlow: { value: M.glow ?? 1.0 },
+    },
+    vertexShader: `
+      attribute vec4 seed;
+      uniform float uTime, uSize, uR, uRise, uSink, uSwirl, uTwinkle;
+      uniform vec2 uRad, uSpeed;
+      varying float vA;
+      varying float vW;
+      void main() {
+        float spd = mix(uSpeed.x, uSpeed.y, seed.y);
+        float t = uTime * spd + seed.x * 17.0;
+        float life = fract(t);
+        float gen = floor(t);                        // 第几轮：每轮换一个出生点
+        float g1 = fract(sin((gen + seed.z * 91.0) * 12.9898) * 43758.5453);
+        float g2 = fract(sin((gen + seed.w * 57.0) * 78.233) * 43758.5453);
+        float ang = g1 * 6.2831853 + life * uSwirl;
+        float rad = uR * mix(uRad.x, uRad.y, g2) * (1.0 - 0.25 * life);
+        vec3 p = vec3(cos(ang) * rad, -uR * uSink + life * uR * uRise, sin(ang) * rad);
+        p.x += sin(uTime * 1.7 + seed.z * 30.0) * uR * 0.08;
+        p.z += cos(uTime * 1.3 + seed.w * 30.0) * uR * 0.08;
+        vA = sin(3.14159265 * life) * (0.65 + 0.35 * sin(uTime * uTwinkle + seed.x * 40.0));
+        vW = seed.w;
+        gl_PointSize = uSize * mix(0.45, 1.0, seed.z);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: `
+      uniform sampler2D uMap;
+      uniform vec3 uColor;
+      uniform float uOpacity, uWhite, uGlow;
+      varying float vA;
+      varying float vW;
+      void main() {
+        vec4 tex = texture2D(uMap, gl_PointCoord);
+        vec3 c = mix(uColor, vec3(1.0), uWhite * step(0.6, vW));   // 少数几颗偏白，像火星
+        gl_FragColor = vec4(c * uGlow, tex.a * vA * uOpacity);   // uGlow > 1 让辉光（Bloom）抓得到
+        #include <colorspace_fragment>
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });
   const pts = new THREE.Points(geo, mat);
-    // 水晶粒子同样排除出法线深度预渲染（描边 bug 根因之一，见 PostFX.js 头注）。
-    pts.layers.set(FX_PARTICLE_LAYER);
-  pts.userData.worldSize = r * 0.5;   // 期望的世界尺寸（UnitLayer 换算用）
+  pts.frustumCulled = false;
+  // 水晶粒子同样排除出法线深度预渲染（描边 bug 根因之一，见 PostFX.js 头注）。
+  pts.layers.set(FX_PARTICLE_LAYER);
+  // 期望的世界尺寸：正交相机下 gl_PointSize 是像素，由 UnitLayer 每帧按 像素/世界单位 换算成 uSize
+  pts.userData.worldSize = r * (M.size ?? 0.22);
   return pts;
 }
 

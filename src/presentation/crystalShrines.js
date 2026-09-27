@@ -73,7 +73,7 @@ export function crystalShrine(kind, R, faction, F) {
   const has = (id) => m.pieces.has(id);
   const s1 = r.light.filter(has), s2 = [...s1, ...r.heavy.filter(has)];
   const rc = CONFIG.ui?.crystalShrine?.ruin || {};
-  return { model: m, stages: [[], s1, s2], crystalCy: r.crystalCy, crystalR: r.crystalR,
+  return { model: m, stages: [[], s1, s2], crystalCy: r.crystalCy, crystalR: r.crystalR, figures: r.figures, support: r.support,
            ruin: rubblePile(m, R, col, { keepBelow: r.keepBelow, moundHeight: r.moundHeight, spread: rc.spread ?? 1.0, blocks: rc.blocks ?? 18, pieceScale: rc.pieceScale }) };
 }
 
@@ -82,7 +82,8 @@ function inhibBearers(m, R, col, red) {
   const cfg = CONFIG.ui?.crystalShrine || {};
   // 圆台：蓝方十边正圆，红方七边、偏心、边上一圈外翻的尖石
   m.add(red ? Cy(R * 0.94, R * 1.06, R * 0.16, 7) : Cy(R * 0.96, R * 1.06, R * 0.16, 10), C(T(red ? R * 0.03 : 0, R * 0.08, 0), RY(red ? 0.25 : 0)), shade(col.stone, 0.62));
-  m.add(red ? Cy(R * 0.6, R * 0.7, R * 0.1, 5) : Cy(R * 0.62, R * 0.7, R * 0.1, 10), C(T(0, R * 0.21, 0), RY(red ? 0.6 : 0)), shade(col.stone, 0.74));
+  // 中间一方小祭坛（守卫站在大台面上，不站在它上面——站在窄台阶边上会有半边悬空）
+  m.add(red ? Cy(R * 0.26, R * 0.32, R * 0.1, 5) : Cy(R * 0.28, R * 0.32, R * 0.1, 10), C(T(0, R * 0.21, 0), RY(red ? 0.6 : 0)), shade(col.stone, 0.74));
   for (let i = 0; i < 6; i++) {   // 队伍色符文环：六段弧，碎的时候一段一段掉
     m.piece(`rune${i}`, { stub: 0 }, () => m.add(new THREE.TorusGeometry(R * 0.8, R * 0.025, 3, 5, Math.PI / 3 * (red ? 0.8 : 0.92)),
       C(T(0, R * 0.165, 0), RX(Math.PI / 2), RZ(i * Math.PI / 3 + (red ? hash01(i, 9) * 0.3 : 0))), col.armor));
@@ -99,14 +100,18 @@ function inhibBearers(m, R, col, red) {
       }
     });
   }
-  const top = R * 0.26, K = cfg.bearerScale ?? 0.72;
+  const top = R * 0.16, K = cfg.bearerScale ?? 0.72, fr = R * (cfg.bearerRadius ?? 0.55);
+  const figures = [];
   for (let i = 0; i < 3; i++) {
     const a = i / 3 * Math.PI * 2 + Math.PI / 2;
-    m.prefixed(`f${i}.`, () => m.within(C(T(Math.cos(a) * R * 0.6, top, Math.sin(a) * R * 0.6), RY(faceIn(a)), S(K * R)), () => bearer(m, col, red)));
+    const x = Math.cos(a) * fr, z = Math.sin(a) * fr;
+    m.prefixed(`f${i}.`, () => m.within(C(T(x, top, z), RY(faceIn(a)), S(K * R)), () => bearer(m, col, red)));
+    figures.push({ x, z, y: top, r: 0.34 * K * R });   // 袍摆底半径 0.34（局部）
   }
   const crystalR = R * (cfg.orbCrystalR ?? 0.42);
   return {
-    crystalR, crystalCy: top + K * R * 1.5 + crystalR * 0.35, keepBelow: 0.3, moundHeight: 0.3,
+    crystalR, crystalCy: R * 0.26 + K * R * 1.5 + crystalR * 0.35, keepBelow: 0.3, moundHeight: 0.3,
+    figures, support: { y: R * 0.16, r: R * 0.94 * Math.cos(Math.PI / (red ? 7 : 10)) },   // 台面内切圆半径
     light: ['f0.arm1', 'f0.plate1', 'f1.cape', 'edge1', 'edge4', 'rune2'],
     heavy: ['f0.torso', 'f1.arm-1', 'f1.plate-1', 'f2.arm1', 'f2.cape', 'edge2', 'edge5', 'edge0', 'rune1', 'rune4'],
   };
@@ -168,12 +173,15 @@ function nexusTemple(m, R, col, red) {
   const cfg = CONFIG.ui?.crystalShrine || {};
   const segs = red ? 7 : 8;
   m.add(Cy(R * 1.2, R * 1.3, R * 0.14, segs), C(T(red ? R * 0.03 : 0, R * 0.07, 0), RY(red ? 0.3 : Math.PI / 8)), shade(col.stone, 0.56));
-  m.add(Cy(R * 1.0, R * 1.1, R * 0.14, red ? 5 : 8), C(T(red ? -R * 0.03 : 0, R * 0.21, 0), RY(red ? 0.9 : Math.PI / 8)), shade(col.stone, 0.64));
+  // 上层台面承着四尊守卫：红方用七边（五边形边心距只有 0.81R，守卫台座会悬出去）
+  const upR = red ? 1.06 : 1.0, upN = red ? 7 : 8;
+  m.add(Cy(R * upR, R * (upR + 0.1), R * 0.14, upN), C(T(0, R * 0.21, 0), RY(red ? 0.9 : Math.PI / 8)), shade(col.stone, 0.64));
   const top = R * 0.28;
   m.add(Cy(R * 0.5, R * 0.6, R * 0.24, segs), T(0, top + R * 0.12, 0), shade(col.stone, 0.76));
   m.add(Cy(R * 0.61, R * 0.61, R * 0.05, segs), T(0, top + R * 0.04, 0), col.armor);
-  for (let i = 0; i < 8; i++) {
-    const a = i / 8 * Math.PI * 2;
+  // 四根短柱在正方向上，与斜角上的四尊守卫错开（八根会跟守卫的台座撞在一起）
+  for (let i = 0; i < 4; i++) {
+    const a = i / 4 * Math.PI * 2;
     const x = Math.cos(a) * R * 0.74, z = Math.sin(a) * R * 0.74;
     m.piece(`pillar${i}`, { stub: 0.35 }, () => {
       if (red) {   // 高低不一、向外斜的尖柱
@@ -186,10 +194,14 @@ function nexusTemple(m, R, col, red) {
       }
     });
   }
-  const K = cfg.guardianScale ?? 0.62;
+  // 四尊守卫站在上层台面的斜角上，台座整个落在台面以内（原来摆在 0.98R，台面内切圆只有 0.92R，
+  // 台座有三分之一悬在台外——用户实拍圈出来的）
+  const K = cfg.guardianScale ?? 0.62, gr = R * (cfg.guardianRadius ?? 0.66);
+  const figures = [];
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * Math.PI * 2 + Math.PI / 4;
-    const x = Math.cos(a) * R * 0.98, z = Math.sin(a) * R * 0.98;
+    const x = Math.cos(a) * gr, z = Math.sin(a) * gr;
+    figures.push({ x, z, y: top, r: R * 0.25 });
     m.add(red ? Cy(R * 0.18, R * 0.25, R * 0.14, 5) : Cy(R * 0.2, R * 0.25, R * 0.14, 8), T(x, top + R * 0.07, z), shade(col.trim, 0.8));
     m.prefixed(`g${i}.`, () => m.within(C(T(x, top + R * 0.14, z), RY(faceOut(a)), S(K * R)), () => {
       const staff = red ? chaosStatue(m, col, 1) : orderStatue(m, col, 1);
@@ -199,8 +211,9 @@ function nexusTemple(m, R, col, red) {
   const crystalR = R * (cfg.gemCrystalR ?? 0.6);
   return {
     crystalR, crystalCy: top + R * 0.24 + R * 0.35 + crystalR, keepBelow: 0.32,
-    light: ['g0.plate-1_1', 'g0.plate-1_2', 'g0.plate-1_3', 'g1.clothF-1', 'g2.cloak1', 'g3.plate1_2', 'pillar1', 'pillar5'],
+    figures, support: { y: top, r: R * upR * Math.cos(Math.PI / upN) },
+    light: ['g0.plate-1_1', 'g0.plate-1_2', 'g0.plate-1_3', 'g1.clothF-1', 'g2.cloak1', 'g3.plate1_2', 'pillar1'],
     heavy: ['g0.pauldron-1', 'g0.arm-1', 'g0.chest-1', 'g2.pauldron1', 'g2.arm1', 'g1.chest1', 'g1.cloak0', 'g3.clothF1',
-            'g3.cloak2', 'g1.prong1', 'pillar2', 'pillar3', 'pillar6', 'pillar0'],
+            'g3.cloak2', 'g1.prong1', 'pillar2', 'pillar3', 'pillar0'],
   };
 }
