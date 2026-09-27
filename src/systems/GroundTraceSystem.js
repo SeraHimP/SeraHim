@@ -90,6 +90,16 @@ export class GroundTraceSystem {
   }
 
   update(dt) {
+    // 天气关掉：水洼、积雪立刻清空（不是慢慢退）。用户："在关闭天气后天气可视化效果也应该一并关闭"。
+    // 雪盖网格清零而不是置空——地面雪、树上的雪、边界装饰、塔身积雪都按各自正常的更新路径读到 0，
+    // 不用每一层各自再判断一遍"天气关了没有"。
+    if (!this.weather?.enabled) {
+      if (this.puddles.length) this.puddles = [];
+      if (this.snowGrid) this.snowGrid.fill(0);
+      this.snowGlobalTarget = 0;
+      this._rainSustainT = 0;
+      return;
+    }
     this._updatePuddles(dt);
     this._updateSnowCover(dt);
     this._applyEffects();

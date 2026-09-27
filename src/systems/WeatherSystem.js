@@ -538,6 +538,10 @@ export class WeatherSystem {
 
   /** 某天气的当前充能值（0~1） */
   getCharge(id) {
+    // 天气关掉时一律读 0。用户："手动关闭天气后，天气可视化效果依旧会残留"——
+    // 关掉后 update() 不再推进，充能停在关掉那一刻的值；渲染层的雷光、风摆、雾都直接读它，
+    // 于是一直按关掉前的天气在画。
+    if (!this.enabled) return 0;
     return this._charge[id] ?? this._extremeCharge[id] ?? 0;
   }
 
