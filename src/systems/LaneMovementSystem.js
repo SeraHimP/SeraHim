@@ -5,7 +5,7 @@ import { canFire, wrapPi, angleTo } from './FacingSystem.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
 import { lookaheadOnPolyline, projectOntoPolyline } from '../data/mapValidate.js';
 import { applyHeal } from '../core/healing.js';
-import { towerFacingRad } from '../presentation/towerFacing.js';
+import { towerFacingRad } from '../core/towerFacing.js';
 
 /**
  * LaneMovementSystem.js

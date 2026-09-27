@@ -215,35 +215,8 @@ const FACTION_STYLE = {
 };
 const facStyle = (f) => FACTION_STYLE[f] || FACTION_STYLE.neutral;
 
-/**
- * ==================== v45：建筑损毁档（0 完好 / 1 轻度 / 2 重度）====================
- * 用户定稿："每种塔有不同生命节点下的模型，以内塔举例（生命节点为 33/67/100），
- * 67-100 就是正常模型，33-67 为看起来轻度损毁，0-33 看起来重度损毁。"
- * 追加定稿："塔的模型损毁是**不可逆**的，只会从低损毁向高损毁转变。
- * 并且塔手动重生时要恢复零损毁的模型。"
- *
- * 做法上没有"做三个模型"这回事 —— towerMesh 本来就是参数化拼件（parts[] + key 缓存），
- * 而废墟(ruin)早就是 key 里的一档。损毁只是同一个 builder 的第三个维度：
- * 掉冠 / 塌一段 / 换焦黑色 / 加碎石。三档共用一份代码，几何仍然全缓存。
- *
- * **不可逆**这条让实现变简单而不是变难：不需要向下的滞回（血量在阈值附近抖动时
- * 模型来回重建是这类功能最典型的坑），只需要 `stage = max(已有, 按血量算出的)`。
- * 复位由复活流程显式清掉 `_dmgStage` 完成 —— **唯一清单在 core/reviveState.js**。
- * v47 之前它是写在 MapSystem 复活分支里的一句 `delete`，而复活其实有两条路
- *（重生队列 + 编辑器的【设为存活】），第二条没跟上，手动复活的塔模型停在重度损毁。
- * 新增复活入口时改那一份清单即可，不要在自己这边再 delete 一次。
- */
-export function towerDamageStage(e, hpFrac) {
-  const c = CONFIG.ui?.towerDamage || {};
-  if (c.enabled === false) return 0;
-  const nodes = c.nodes || [33, 67];   // [重度上界, 轻度上界]，单位 %
-  const pct = Math.max(0, Math.min(1, hpFrac)) * 100;
-  const now = pct < nodes[0] ? 2 : pct < nodes[1] ? 1 : 0;
-  const prev = e._dmgStage || 0;
-  const stage = Math.max(prev, now);   // 单向：只增不减
-  if (stage !== prev) e._dmgStage = stage;
-  return stage;
-}
+// v45 建筑损毁档（0 完好 / 1 轻度 / 2 重度，不可逆）的规则与记录在 core/reviveState.js：
+// 档位由仿真步进记到实体上，渲染层只读（displayTowerDamageStage）。
 
 /**
  * @param {object|null} pal 地图调色板里的塔配色 { stone, trim }（见 CONFIG.stylizedPalettes）。

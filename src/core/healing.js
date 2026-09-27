@@ -61,13 +61,13 @@ export function applyHeal(entity, amount, power, maxHP, capHP) {
   // 拦在这里（本文件头注写的"全仓库唯一的回血入口"）而不是在 CombatSystem
   // 那一个调用点单独判断，是为了以后任何新的回血来源（技能治疗、光环、
   // 天气……）都自动受这条规则约束，不需要每个调用点各自记得判一遍——本文件
-  // 存在的理由本来就是"漏一处就等于又埋一个坑"。entity._untargetable 只有
-  // DominionSystem.initMap() 会给水晶枢纽这一种实体标（"通用逃生舱"，
-  // isStructureProtected 也复用它挡攻击，见 FactionSystem.js 头注），语义上
-  // 正好是"这个实体完全隔绝于场上一切外部交互"，挡掉正向回血是同一个语义的
-  // 自然延伸。手动运维面板直接改 currentHP/baseStats，不经过这个函数，不受
-  // 这条限制影响，符合用户"除手动设置外"这个例外。
-  if (entity && entity._untargetable) return 0;
+  // 存在的理由本来就是"漏一处就等于又埋一个坑"。
+  // 标记用专门的 `_noHeal`（DominionSystem.initMap() 给水晶枢纽标）。以前借用的是
+  // `_untargetable`——那是"不能被选为攻击目标"，与"不能回血"是两条规则，
+  // 借用的话以后谁给别的单位标一个不可选中（比如隐身/无敌），它就顺带失去了回血。
+  // 手动运维面板直接改 currentHP/baseStats，不经过这个函数，不受这条限制影响，
+  // 符合用户"除手动设置外"这个例外。
+  if (entity && entity._noHeal) return 0;
   if (!entity || !entity.alive || !(amount > 0)) return 0;
   const cap = Math.min(maxHP ?? Infinity, capHP ?? Infinity);
   const before = entity.currentHP || 0;

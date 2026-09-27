@@ -23,7 +23,7 @@ import { SkillLibrary } from '../src/core/SkillLibrary.js';
 import { AttributeCalculator } from '../src/core/AttributeCalculator.js';
 import { CombatSystem } from '../src/systems/CombatSystem.js';
 import { WorldState } from '../src/systems/WorldState.js';
-import { towerFacingRad } from '../src/presentation/towerFacing.js';
+import { towerFacingRad } from '../src/core/towerFacing.js';
 
 const { T, done } = scoreboard('多阵营地基（map.factions / lane.spawns）验收');
 

@@ -287,7 +287,7 @@ export class CombatSystem {
         // v35（Q5）：生命恢复封顶——"加固城防"类被动设置 _regenCapHP（当前血量所在
         // 区间的上界节点），恢复只能回到节点、不能越过；无被动时封顶=满血。
         // 治疗与护盾强度在这里生效（改动前不吃，光龙的 +8% 等于白买；见 core/healing.js）。
-        // 2026-09-27：水晶枢纽（_untargetable）不能被任何形式回血——拦截点在
+        // 2026-09-27：水晶枢纽（_noHeal）不能被任何形式回血——拦截点在
         // applyHeal() 本身（core/healing.js），不在这里单独判断，见那边头注。
         applyHeal(entity, regen * regenMod * dt, healPowerOf(stats),
                   stats.maxHP || entity.currentHP, entity._regenCapHP);

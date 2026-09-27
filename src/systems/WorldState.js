@@ -23,7 +23,7 @@
  * 龙魂同理：souls 已接入统计，规则（6 龙 ≥4 成魂）待实现。
  */
 import { CONFIG } from '../data/Config.js';
-import { DAY_PERIOD, resolveDayPhase } from '../presentation/DayNight.js';
+import { DAY_PERIOD, resolveDayPhase } from '../core/dayCycle.js';
 import { EntropySystem } from './EntropySystem.js';
 import { mapFactionsOf } from './FactionSystem.js';
 import { tierOf } from '../data/Weather.js';

@@ -36,9 +36,10 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, towerDamageStage } from './UnitMeshFactory.js';
+import { towerMesh, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing } from './UnitMeshFactory.js';
+import { displayTowerDamageStage } from '../core/reviveState.js';
 import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
-import { towerFacingRad } from './towerFacing.js';
+import { towerFacingRad } from '../core/towerFacing.js';
 import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS } from '../core/resourceBar.js';
@@ -186,7 +187,7 @@ export class UnitLayer {
       // 与 v44「四个档次长得一样」是同一个坑（那次是 tier/faction 没进 key）。
       // 已经是废墟(showRuin)时不再分档：废墟有自己一套造型，再叠损毁没有意义。
       const hpMax = e.baseStats?.maxHP || 1;
-      const dmg = showRuin ? 0 : towerDamageStage(e, (e.currentHP || 0) / hpMax);
+      const dmg = showRuin ? 0 : displayTowerDamageStage(e, (e.currentHP || 0) / hpMax);
       // v54：塔的石色跟随**地图调色板**（见 CONFIG.stylizedPalettes 的 towerStone/towerTrim）。
       // ⚠️ paletteId 必须进 key —— 几何是按 key 全局缓存的，不进 key 的话换到另一张
       //    调色板的地图后会直接命中上一张图的几何，颜色跟着错，而且**只在切图时复现**，

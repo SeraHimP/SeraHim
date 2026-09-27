@@ -16,6 +16,7 @@ import { EffectRegistry } from './core/EffectRegistry.js';
 import { SkillLibrary } from './core/SkillLibrary.js';
 import { AttributeCalculator } from './core/AttributeCalculator.js';
 import { createFactories } from './core/factories.js';
+import { recordTowerDamage } from './core/reviveState.js';
 import { EventBus } from './utils/EventBus.js';
 import { CONFIG } from './data/Config.js';
 import { CombatSystem } from './systems/CombatSystem.js';
@@ -155,6 +156,8 @@ export function createSimulation({ log = () => {} } = {}) {
     laneAvengerSystem.update(dt);
     groundTraceSystem.update(dt);
     projectileSystem.update(dt);
+    // 塔的损毁档是不可逆的历史，由仿真记录（见 core/reviveState.js）。
+    recordTowerDamage(entityContainer.getAllTowers(true));
   }
 
   return {

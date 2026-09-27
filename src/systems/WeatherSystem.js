@@ -4,7 +4,7 @@ import { WEATHER_SKILL_MODS } from '../data/weatherSkillMods.js';
 // （颜色插值用 THREE.Color，但不碰场景/渲染），headless Node 环境下同样可以
 // 安全 import——sim_daynight.mjs 早就这么用了。WeatherSystem 不反向被 DayNight
 // 依赖，不会形成循环 import。
-import { resolveDayPhase } from '../presentation/DayNight.js';
+import { resolveDayPhase } from '../core/dayCycle.js';
 
 // v35 性能：极端天气条目静态缓存——充能方程每步都要遍历全部极端天气，
 // 前向模拟一次跑 240+ 步，每步 Object.entries 重建数组是纯浪费（15ms → ~4ms）。

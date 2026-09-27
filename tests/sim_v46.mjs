@@ -419,7 +419,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
 
 // ==================== 八、损毁档（不可逆 + 重生清零）====================
 {
-  const { towerDamageStage } = await import('../src/presentation/UnitMeshFactory.js');
+  const { towerDamageStage } = await import('../src/core/reviveState.js');
   const e = {};
   T('损①-满血 = 0 档', towerDamageStage(e, 1.0) === 0);
   T('损②-掉到 67 以下 = 轻度', towerDamageStage(e, 0.50) === 1);
@@ -713,7 +713,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
 // 用户："路径上塔的朝向也需要修改，看图……另一阵营同理。"
 //        "枢纽塔那里注意看一下，两侧的看向对角线但是略微朝两侧一些。"
 {
-  const { towerFacingRad } = await import('../src/presentation/towerFacing.js');
+  const { towerFacingRad } = await import('../src/core/towerFacing.js');
   const { MAPS: M3 } = await import('../src/data/maps/index.js');
   const map = M3.summoners_rift_v1;
   const deg = (r) => (r === null ? null : Math.round(r * 180 / Math.PI));

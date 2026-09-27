@@ -189,7 +189,8 @@ export class DominionSystem {
     if (this.effectRegistry) {
       const ctx = { entityContainer: this.entities, effectRegistry: this.effectRegistry, eventBus: this.eventBus, waveNumber: (typeof window !== 'undefined' && window.CTX?.waveNumber) || 0 };
       for (const e of this.entities.getAllTowers(false)) {
-        if (e._mapTier === 'nexus_main') e._untargetable = true;
+        // 两条独立规则各用各的标记：不可被索敌（_untargetable）、不可回血（_noHeal，见 core/healing.js）。
+        if (e._mapTier === 'nexus_main') { e._untargetable = true; e._noHeal = true; }
         if (e._mapTier !== 'nexus_main' && !e.isCapturePoint) continue;
         if ((e._skillInstances || []).some((s) => s.skillId === 'weapon_piercing')) continue;
         equipSkill(e, 'weapon_piercing', ctx, SkillLibrary);
@@ -631,7 +632,7 @@ export class DominionSystem {
    * 手动设置属性之外）"——这条本来就只有减法（下面只有 `Math.max(0,
    * currentHP - amount)`，没有任何加回去的分支），水晶枢纽的 tierStats 也没
    * 声明 healthRegen（Config.js 里固定 0），场上也没有任何治疗兵/技能会把
-   * `_untargetable` 的水晶枢纽当治疗目标——现状已经满足这条要求，这里不用
+   * `_noHeal` 的水晶枢纽当治疗目标——现状已经满足这条要求，这里不用
    * 新增代码，写这段注释只是把"不会加血"这个不变量明确钉下来，防止以后
    * 哪次改动不小心给它接上了某个通用的回血/护盾机制。
    */
