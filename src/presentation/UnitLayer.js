@@ -476,6 +476,19 @@ export class UnitLayer {
    * 防御塔护盾外壳（见 shieldShell.js）。只看固定护盾 + 护盾，不看临时护盾；
    * 召唤水晶/水晶枢纽不包（用户："仅包含防御塔"）。
    */
+  /**
+   * 结构保护 🛡️ 图标跟着血条走（用户："防御塔结构保护那个🛡️图标的位置也应该优化一下"）。
+   * 原来放在模型最高点上方 22 像素——雕像塔的水晶偏在杖顶一侧，图标悬在水晶和光点旁边，像是飘着的。
+   * 现在锚点与血条相同（塔顶），偏移在精灵 center 里给：
+   *   血条显示时 —— 贴在血条左端外侧、与血条垂直居中，不压血条；
+   *   血条隐藏时（结构保护且满血）—— 居中放在血条本来的位置，不孤零零挂在左上角。
+   */
+  _placeShieldIcon(en, barShown) {
+    const SI = CONFIG.ui?.structureShieldIcon || {};
+    const sz = SI.size ?? 16, bw = en.barW || 80, bd = en.barD || 10;
+    en.shield.center.set(barShown ? 0.5 + (bw / 2 + (SI.gap ?? 4) + sz / 2) / sz : 0.5, 0.5 - bd / sz);
+  }
+
   _syncShieldShell(e, en, dead, y) {
     const S = CONFIG.ui?.towerShield || {};
     const isTowerKind = e._mapTier !== 'nexus_lane' && e._mapTier !== 'nexus_main' && !e.isCapturePoint;
@@ -947,7 +960,7 @@ export class UnitLayer {
       en.own = this._removeFlat(en.own); en.ownKey = '';
     }
 
-    // --- E2 结构保护盾牌：共享纹理 sprite，屏幕空间悬于血条上方（2D: y - bSize - 26 居中） ---
+    // --- E2 结构保护盾牌：共享纹理 sprite，屏幕空间贴在血条左端 ---
     if (isStructureProtected(entities, e)) {
       if (!en.shield) {
         const mat = new THREE.SpriteMaterial({ map: this._shieldTexture(),
@@ -955,13 +968,14 @@ export class UnitLayer {
                                                fog: false });  // 同血条：HUD 不吃雾，见上方注释
         en.shield = new THREE.Sprite(mat);
         en.shield.renderOrder = ORDER_SHIELD;
-        en.shield.scale.set(16, 16, 1);
-        en.shield.center.set(0.5, 0.5 - 22 / 16); // 立体化后模型自带高度，屏幕余量只留血条上方一点
+        const SI = CONFIG.ui?.structureShieldIcon || {};
+        const sz = SI.size ?? 16;
+        en.shield.scale.set(sz, sz, 1);
         en.shield.layers.set(HUD_SPRITE_LAYER); // 同血条，见上方 bar.layers.set 那处注释
         this.scene.add(en.shield); this.infoObjs++;
         en.shieldOn = true;
       }
-      en.shield.position.set(x, (en.topY || 0) + en.groundY, z);
+      en.shield.position.set(x, (en.topY || 0) + en.groundY, z);   // 锚点与血条相同；偏移见下方 _placeShieldIcon
     } else if (en.shield) {
       this.scene.remove(en.shield); this.infoObjs--;
       en.shield.material.dispose();
@@ -1263,6 +1277,7 @@ export class UnitLayer {
       // 血条现在浮在【模型顶端】的世界高度上，再用 center 做一点屏幕空间余量。
       // 纸片人时代 barD 要补出整个贴图高度，立体化后模型自己有高度，余量因此小得多。
       en.bar.center.set(0.5, 0.5 - vis.barD / vis.barH);
+      en.barW = vis.barW; en.barD = vis.barD;   // 结构保护图标贴在血条左端，要知道血条多宽、抬多高
     }
     // ==================== Week1·Day3-4：攻击前后摇接入 ====================
     // 排期原话"整体缩放脉冲或朝目标方向的短促前倾"二选一，这里选缩放脉冲——
@@ -1489,6 +1504,7 @@ export class UnitLayer {
       showBar = ghost || e.type === 'dragon' || !lodHideBar;
     }
     en.bar.visible = showBar;
+    if (en.shield) this._placeShieldIcon(en, showBar);
     if (showBar) {
       let barKey, maxHP = 1, hpIncFrac = 0, resIncFrac = 0, resTrailFrac = 0;
       if (ghost) {

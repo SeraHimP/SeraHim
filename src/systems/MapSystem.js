@@ -1,4 +1,5 @@
 import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
+import { structureRadius } from '../data/structureRadius.js';
 import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode, DOMINION_MODE_MAP_ID } from '../data/maps/modeTransforms.js';
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { forestZoneAt } from '../data/mapValidate.js';
@@ -278,19 +279,17 @@ export class MapSystem {
    * 字段，循环体直接是空数组，不受影响。
    */
   _computeWaypointBlock(map) {
-    const sizes = CONFIG.buildingSizes || {};
-    const vz = CONFIG.towerVizScale || {};
     const capturePoints = (map.dominionNodes || []).filter((n) => n.kind === 'point');
     for (const lane of (map.lanes || [])) {
       const out = new Array(lane.waypoints.length).fill(-Infinity);
       for (let i = 0; i < lane.waypoints.length; i++) {
         const w = lane.waypoints[i];
         for (const b of (map.buildings || [])) {
-          const r = (sizes[b.tier] || sizes.default || 28) * (vz[b.tier] ?? vz.default ?? 1);
+          const r = structureRadius(b.tier);   // 与避障同一个半径（模型实际外轮廓）
           out[i] = Math.max(out[i], r - Math.hypot(b.pos.x - w.x, b.pos.y - w.y));
         }
         for (const n of capturePoints) {
-          const r = (sizes.capture_point || sizes.default || 28) * (vz.capture_point ?? vz.default ?? 1);
+          const r = structureRadius('capture_point');
           out[i] = Math.max(out[i], r - Math.hypot(n.pos.x - w.x, n.pos.y - w.y));
         }
       }

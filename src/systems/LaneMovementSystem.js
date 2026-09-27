@@ -1,8 +1,9 @@
 import { canTarget, isStructureProtected, enemyUnitsInRadius, FACTIONS } from './FactionSystem.js';
+import { structureRadius } from '../data/structureRadius.js';
 import { AISystem } from './AISystem.js';
 import { hasRamCannon } from './CombatSystem.js';
 import { canFire, wrapPi, angleTo } from './FacingSystem.js';
-import { CONFIG, MINION_SIZES } from '../data/Config.js';
+import { CONFIG, MINION_SIZES, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
 import { lookaheadOnPolyline, projectOntoPolyline } from '../data/mapValidate.js';
 import { applyHeal } from '../core/healing.js';
 import { towerFacingRad } from '../core/towerFacing.js';
@@ -213,7 +214,7 @@ export class LaneMovementSystem {
         if (locked !== target) { target = locked; minion.targetId = locked ? locked.id : null; }
       }
 
-      const targetInRange = target && ((target.pos.x - minion.pos.x) ** 2 + (target.pos.y - minion.pos.y) ** 2) <= range * range;
+      const targetInRange = target && ((target.pos.x - minion.pos.x) ** 2 + (target.pos.y - minion.pos.y) ** 2) <= this._reach(minion, target, range) ** 2;
       if (!targetInRange) {
         // v37（Q2）：追击目标短粘性 0.35s——每帧重估最近敌导致追击方向频繁抖动。
         // 关键约束（不能破坏 v33 反"旋转木马"设计）：粘性【仅当目标仍在被接近】时生效；
@@ -247,7 +248,8 @@ export class LaneMovementSystem {
         // v37（Q2）：脱锚滞回——近战抽搐的根因。已锚定的兵用【1.15×射程】判定脱离，
         // 未锚定用原射程判定进入。没有滞回时：目标兵在射程边缘挪动 → 本帧锚定站定、
         // 下帧超出射程追一步、再下帧又进射程锚定……走一步停一步（LoL 同样有脱锚缓冲）。
-        const holdRange = minion._anchored ? range * 1.15 : range;
+        const reachR = this._reach(minion, target, range);   // 打建筑：从建筑外沿量（近战不钻进塔身）
+        const holdRange = minion._anchored ? reachR + range * 0.15 : reachR;
         if (distSq <= holdRange * holdRange) {
           // ---- 5a. 射程内：站定输出（锚定标记供碰撞系统识别，锚定单位几乎不可推动） ----
           minion._anchored = true;
@@ -275,7 +277,7 @@ export class LaneMovementSystem {
           // 做一次落位搜索（与已锚定同伴重叠时沿攻击弧找最近空位），之后位置冻结，
           // 由 CollisionSystem 把它当静态障碍。
           if (!minion._slotted) {
-            this._findAnchorSlot(minion, target, range);
+            this._findAnchorSlot(minion, target, reachR);
             minion._slotted = true;
           }
         } else {
@@ -575,7 +577,7 @@ export class LaneMovementSystem {
     if (target) {
       const dx = target.pos.x - minion.pos.x, dy = target.pos.y - minion.pos.y;
       const distSq = dx * dx + dy * dy;
-      if (distSq <= range * range) {
+      if (distSq <= this._reach(minion, target, range) ** 2) {
         if (minion.attackCooldown <= 0 && canFire(minion, target)) {
           this.combat.performAttack(minion, target);
           const finalAS = this.combat.finishAttack(minion, target, this.attrCalc.calcAttackSpeedOf(stats));
@@ -638,10 +640,24 @@ export class LaneMovementSystem {
   // 单次空间网格局部查询，同时返回：{ nearest: 索敌半径内最近【可视】敌, inRange: 攻击射程内最近敌 }。
   // v37：nearest 带视线检查（按距离排序逐个查，通常第一个就命中；上限查 6 个防极端开销）；
   // inRange（≤攻击射程，很近）默认可视不做检查。
+  /**
+   * 对这个目标的有效射程。打建筑时从建筑外沿量起（中心距 - 碰撞半径）：
+   * 用户："塔和小兵穿模了！！！！不要出现任何穿模！！！！"——射程按中心距算时，近战兵（射程 30）要打半径 45 的塔，
+   * 就得走到离塔心 30 以内，整个钻进塔身；避障又把"当前攻击目标"排除在外，没有东西拦它。
+   * 近战（射程 ≤ MELEE_RANGE_THRESHOLD，以及巨龙）：射程 + 建筑半径；
+   * 远程：射程本来就远大于塔的半径，不加（否则远程兵能在塔的射程外白打塔），只保证不小于"建筑半径 + 间隙"。
+   */
+  _reach(minion, target, range) {
+    if (!target || target.type !== 'tower') return range;
+    const R = structureRadius(target._mapTier, target._modelSize);
+    const melee = minion.type === 'dragon' || (minion.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD;
+    return melee ? range + R : Math.max(range, R + (CONFIG.tuning?.rangedStructureGap ?? 12));
+  }
+
   _scanEnemies(minion, acqRadius, attackRange) {
     const nearby = this.entities.findInRadius(minion.pos.x, minion.pos.y, acqRadius, null, true);
     const candidates = [];
-    let inRange = null, inRangeD = attackRange * attackRange;
+    let inRange = null, inRangeD = Infinity;
     const ign = minion._ignoreTarget; // v37：罚站自愈的短期黑名单（追不到的目标暂时不锁）
     const now = window.gameTime || 0;
     for (const other of nearby) {
@@ -652,7 +668,8 @@ export class LaneMovementSystem {
       if (isStructureProtected(this.entities, other)) continue; // 受保护水晶不可选中
       const dx = other.pos.x - minion.pos.x, dy = other.pos.y - minion.pos.y;
       const d = dx * dx + dy * dy;
-      if (d < inRangeD) { inRangeD = d; inRange = other; } // 射程内：不吃黑名单也不查视线（贴脸必打）
+      const rr = this._reach(minion, other, attackRange);
+      if (d < rr * rr && d < inRangeD) { inRangeD = d; inRange = other; } // 射程内：不吃黑名单也不查视线（贴脸必打）
       if (ign && ign.id === other.id && now < ign.until) continue;
       candidates.push({ e: other, d });
     }
@@ -916,9 +933,8 @@ export class LaneMovementSystem {
       const od = Math.hypot(ox, oy) || 0.001;
       // Q4：半径必须乘上塔模型的【视觉放大系数】。渲染层把塔/废墟画大了 1.25×（水晶 1.10×），
       // 而这里一直按未放大的尺寸算，于是小兵贴到"逻辑表面"时早已插进模型里 —— 就是穿模。
-      const vz = (CONFIG.towerVizScale || {});
-      const k = vz[o._mapTier] ?? vz.default ?? 1;
-      const rSum = rSelf + (o._modelSize || (CONFIG.buildingSizes && CONFIG.buildingSizes[o._mapTier]) || 28) * k;
+      // 碰撞半径 = 模型实际外轮廓（structureRadius：名义半径 × 视觉系数 × 外轮廓系数），不是名义半径——否则贴着就插进底座
+      const rSum = rSelf + structureRadius(o._mapTier, o._modelSize);
       if (od > rSum + 26) continue;
       const ux = ox / od, uy = oy / od;
       const closeness = Math.max(0, 1 - (od - rSum) / 26);

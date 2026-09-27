@@ -23,9 +23,110 @@
 import * as THREE from '../../vendor/three.module.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
+import { fogNoiseTexture } from './fogNoise.js';
+import { weatherGroundState, setWeatherGroundSnow } from './weatherGround.js';
 
 const cfg = () => (CONFIG.ui && CONFIG.ui.groundTraceFx) || {};
 const _tintColor = new THREE.Color();
+
+// ==================== 积雪/水洼的着色（用户："目前的积雪/水洼的可视化效果也不太好，你优化一下"） ====================
+// 原来：雪盖是 48×48 网格双线性放大的一整片白雾，边缘糊成一圈渐变，读不出"雪"；
+//       水洼是一叠半透明的纯色圆片，互相压出一圈圈深色叠痕，也读不出"水"。
+// 现在两者都按【世界坐标】采样体积雾那张共享噪声（fogNoise.js）：
+//   雪：雪深 × 噪声 → 阈值收边，薄雪是一块块有清楚边缘的雪斑、厚雪连成一片；
+//       薄处偏冷蓝、厚处纯白，表面带细微明暗起伏和稀疏闪光。
+//   水：水面颜色由世界坐标决定（天光反射的明暗带 + 一道高光），相邻子圆重叠处颜色一致、看不出拼接；
+//       轮廓按噪声扭成不规则形状；外面一圈半透明深色"湿土"（单独一池、先画，被水面盖住）；
+//       下雨时水面上有雨点砸出的小涟漪。
+// 参数在 CONFIG.ui.groundTraceFx。
+const _gtShared = { uGtNoise: { value: null }, uGtTime: { value: 0 }, uGtRain: { value: 0 } };
+function _gtUniforms() { if (!_gtShared.uGtNoise.value) _gtShared.uGtNoise.value = fogNoiseTexture(); return _gtShared; }
+
+function _worldPosVarying(shader) {
+  shader.vertexShader = 'varying vec3 vGtPos;\n' + shader.vertexShader.replace('#include <project_vertex>',
+    '#include <project_vertex>\n  vGtPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+}
+
+function patchSnowMaterial(mat) {
+  const C = cfg();
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, _gtUniforms(), {
+      uGtScale: { value: C.snowNoiseScale ?? 0.0045 },
+      uGtEdge: { value: new THREE.Vector2(...(C.snowEdge ?? [0.05, 0.13])) },
+      uGtPatchA: { value: C.snowPatchAlpha ?? 0.5 },
+      uGtSparkle: { value: C.snowSparkle ?? 0.22 },
+      uGtThinTint: { value: new THREE.Color(C.snowThinTint ?? '#d9e6fa') },
+    });
+    _worldPosVarying(shader);
+    shader.fragmentShader = `
+uniform sampler2D uGtNoise; uniform float uGtTime, uGtScale, uGtPatchA, uGtSparkle; uniform vec2 uGtEdge; uniform vec3 uGtThinTint;
+varying vec3 vGtPos;
+` + shader.fragmentShader.replace('#include <alphamap_fragment>', `#include <alphamap_fragment>
+  {
+    vec4 gn = texture2D(uGtNoise, vGtPos.xz * uGtScale);
+    vec4 gf = texture2D(uGtNoise, vGtPos.xz * uGtScale * 5.0 + 0.37);
+    float d = diffuseColor.a;
+    float nn = clamp((gn.r - 0.5) * 2.6 + 0.5, 0.0, 1.0);   // fBm 本身起伏不大，拉开对比才出得来一块块雪斑
+    float s = d * (0.25 + 1.5 * nn) + (gf.b - 0.5) * 0.04 * d;
+    float cov = smoothstep(uGtEdge.x, uGtEdge.y, s);
+    diffuseColor.a = cov * max(d, min(uGtPatchA, d * 3.0));
+    float shade = 0.86 + 0.24 * gf.b + 0.12 * (gn.g - 0.5);
+    diffuseColor.rgb *= mix(uGtThinTint, vec3(1.0), smoothstep(0.08, 0.45, d)) * shade;
+    vec2 cell = floor(vGtPos.xz * 0.4);
+    float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+    float tw = step(0.988, h) * max(0.0, sin(uGtTime * 2.6 + h * 60.0));
+    diffuseColor.rgb += tw * uGtSparkle * cov * diffuse;
+  }`);
+  };
+  mat.customProgramCacheKey = () => 'gt-snow1';
+}
+
+function patchPuddleMaterial(mat, rim) {
+  const C = cfg();
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, _gtUniforms(), {
+      uGtScale: { value: C.puddleNoiseScale ?? 0.02 },
+      uGtRimScale: { value: C.puddleRimScale ?? 1.3 },
+      uGtRipple: { value: C.puddleRipple ?? 0.35 },
+    });
+    _worldPosVarying(shader);
+    shader.vertexShader = shader.vertexShader.replace('void main() {', 'varying vec2 vGtUv;\nvoid main() {\n  vGtUv = uv;');
+    shader.fragmentShader = `
+uniform sampler2D uGtNoise; uniform float uGtTime, uGtRain, uGtScale, uGtRimScale, uGtRipple;
+varying vec3 vGtPos; varying vec2 vGtUv;
+` + shader.fragmentShader.replace('#include <map_fragment>', `
+  vec4 gn = texture2D(uGtNoise, vGtPos.xz * uGtScale);
+  float r = length(vGtUv - 0.5) * 2.0;
+  float edge = 0.8 + (gn.r - 0.5) * 0.45;
+${rim ? `
+  float rc = r * uGtRimScale;
+  diffuseColor.a *= smoothstep(edge - 0.12, edge + 0.04, rc) * (1.0 - smoothstep(0.7, 1.0, r));
+` : `
+  diffuseColor.a *= 1.0 - smoothstep(edge - 0.1, edge, r);
+  // 天光反射：世界坐标上的明暗云影（相邻子圆重叠处颜色一致）+ 沿一个方向拉长的高光条
+  vec4 gs = texture2D(uGtNoise, vGtPos.xz * uGtScale * 0.6);
+  vec4 gl = texture2D(uGtNoise, vec2(vGtPos.x + vGtPos.z, vGtPos.x - vGtPos.z) * uGtScale * vec2(0.15, 1.2));
+  float sky = smoothstep(0.3, 0.7, gs.g);
+  vec3 baseW = diffuseColor.rgb;
+  diffuseColor.rgb = baseW * mix(0.5, 1.25, sky);
+  float glint = smoothstep(0.6, 0.72, gl.r);
+  diffuseColor.rgb += glint * 0.9 * baseW;
+  // 岸边一圈稍浅（浅水/反光）
+  diffuseColor.rgb *= 1.0 + 0.3 * smoothstep(edge - 0.3, edge - 0.05, r);
+  // 雨点涟漪：世界坐标 9 单位一格，每格一个随机位置/相位的扩散小环
+  if (uGtRain > 0.01) {
+    vec2 q = vGtPos.xz / 9.0, id = floor(q), f = fract(q) - 0.5;
+    float h = fract(sin(dot(id, vec2(127.1, 311.7))) * 43758.5453);
+    vec2 off = vec2(fract(h * 17.0), fract(h * 31.0)) - 0.5;
+    float t = fract(uGtTime * (0.8 + h * 0.6) + h);
+    float dd = length(f - off * 0.4);
+    float ring = (1.0 - smoothstep(0.0, 0.07, abs(dd - t * 0.42))) * (1.0 - t) * step(h, uGtRain);
+    diffuseColor.rgb += ring * uGtRipple * 3.0 * baseW;
+  }
+`}`);
+  };
+  mat.customProgramCacheKey = () => rim ? 'gt-puddle-rim1' : 'gt-puddle1';
+}
 
 // 实心软边圆贴图：中心不透明、向外羽化，程序生成，无外部素材（同 RainRippleLayer
 // 的 makeRingTexture 思路，这里要的是实心圆而不是一圈环）。
@@ -65,21 +166,26 @@ export class GroundTraceLayer {
     this._geo = new THREE.PlaneGeometry(1, 1);
     this._geo.rotateX(-Math.PI / 2);
     const maxPuddle = Math.max(1, C.maxPuddleCircles ?? 150);
-    const mk = (color) => {
+    const mk = (color, rim = false) => {
       const mat = new THREE.MeshBasicMaterial({
         map: this._tex, color, transparent: true, opacity: 0, depthWrite: false,
       });
+      patchPuddleMaterial(mat, rim);
       const mesh = new THREE.Mesh(this._geo, mat);
       mesh.visible = false;
       // 半透明贴花排除出法线/深度预渲染，同 RainRippleLayer 的理由：
       // 否则会在描边/SSAO 里画出一圈假轮廓。
       mesh.layers.set(FX_PARTICLE_LAYER);
       mesh.frustumCulled = false;
-      mesh.renderOrder = 24; // 水面波纹（25）之下一点，贴花本来就该先于波纹铺在地上
+      // 水面波纹（25）之下一点，贴花本来就该先于波纹铺在地上；湿土圈（23.5）先画，被水面盖住，
+      // 相邻子圆的湿土圈就不会压进别的子圆的水面里
+      mesh.renderOrder = rim ? 23.5 : 24;
       this.scene.add(mesh);
       return { mesh };
     };
     for (let i = 0; i < maxPuddle; i++) this._puddlePool.push(mk(C.puddleColor ?? 0x5b8fb0));
+    this._rimPool = [];
+    for (let i = 0; i < maxPuddle; i++) this._rimPool.push(mk(C.puddleRimColor ?? 0x2c2a22, true));
     this._built = true;
   }
 
@@ -144,6 +250,7 @@ export class GroundTraceLayer {
       color: 0xffffff, transparent: true,
       map: tex, alphaMap: tex, depthWrite: false,
     });
+    patchSnowMaterial(mat);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(WW / 2, mapSystem?.heightAt ? 0 : lift, WH / 2);
     mesh.renderOrder = 23; // 压在水洼贴花（24）之下——雪盖是更底层的地表状态
@@ -170,7 +277,9 @@ export class GroundTraceLayer {
 
   _hideAll() {
     for (const s of this._puddlePool) s.mesh.visible = false;
+    for (const s of this._rimPool || []) s.mesh.visible = false;
     if (this._snowMesh) this._snowMesh.material.opacity = 0;
+    setWeatherGroundSnow(null, false);
   }
 
   /**
@@ -184,26 +293,38 @@ export class GroundTraceLayer {
     const baseAlpha = C.alpha ?? 0.45;
     const heightAt = mapSystem?.heightAt ? (x, z) => mapSystem.heightAt(x, z) : () => 0;
 
+    const U = _gtUniforms();
+    U.uGtTime.value = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    U.uGtRain.value = weatherGroundState().wet;   // 雨点涟漪跟地面湿度同一个量（已平滑）
+    const rimScale = C.puddleRimScale ?? 1.3, rimAlpha = C.puddleRimAlpha ?? 0.35;
     let pi = 0;
     for (const p of groundTraceSystem.getPuddles()) {
       if (p.strength <= 0) continue;
       for (const so of p.subOffsets) {
         if (pi >= this._puddlePool.length) break;
-        const x = p.x + so.dx, z = p.y + so.dy;
+        // 水面高度取圆心和四周的最高处：台阶边上的水洼按圆心高度放的话，会被高出来那一侧的地面切掉一条直边
+        const x = p.x + so.dx, z = p.y + so.dy, rr = so.r * 0.8;
+        const y = Math.max(heightAt(x, z), heightAt(x + rr, z), heightAt(x - rr, z), heightAt(x, z + rr), heightAt(x, z - rr));
+        const rimSlot = this._rimPool[pi];
         const slot = this._puddlePool[pi++];
-        slot.mesh.position.set(x, heightAt(x, z) + 0.35, z);
+        slot.mesh.position.set(x, y + 0.35, z);
         slot.mesh.scale.set(so.r, 1, so.r);
         slot.mesh.material.opacity = baseAlpha * p.strength;
         slot.mesh.visible = true;
+        rimSlot.mesh.position.set(x, y + 0.3, z);
+        rimSlot.mesh.scale.set(so.r * rimScale, 1, so.r * rimScale);
+        rimSlot.mesh.material.opacity = rimAlpha * p.strength;
+        rimSlot.mesh.visible = true;
       }
       if (pi >= this._puddlePool.length) break;
     }
-    for (let i = pi; i < this._puddlePool.length; i++) this._puddlePool[i].mesh.visible = false;
+    for (let i = pi; i < this._puddlePool.length; i++) { this._puddlePool[i].mesh.visible = false; this._rimPool[i].mesh.visible = false; }
 
     const snow = groundTraceSystem.getSnowCover?.();
-    if (!snow) { if (this._snowMesh) this._snowMesh.material.opacity = 0; return; }
+    if (!snow) { if (this._snowMesh) this._snowMesh.material.opacity = 0; setWeatherGroundSnow(null, false); return; }
     this._ensureSnowMesh(mapSystem, snow.resolution);
     if (!this._snowMesh) return;
+    setWeatherGroundSnow(this._snowTex, true);   // 台面（高出雪盖网格的表面）读同一张雪深图，见 weatherGround.js
     // v55.4 修复：material.opacity 是整块平面共用的一个标量，纹理 alpha 通道只能在
     // 【它以内】按局部雪深往下调，调不出它的上限——之前野区局部雪深拉满时纹理
     // alpha 也顶到 255，等效不透明度正好卡在 snowCoverAlpha（0.6）这个天花板，
@@ -280,6 +401,8 @@ export class GroundTraceLayer {
     for (const s of this._puddlePool) {
       s.mesh.material.color.set(puddleBase).multiply(_tintColor);
     }
+    const rimBase = cfg().puddleRimColor ?? 0x2c2a22;
+    for (const s of this._rimPool || []) s.mesh.material.color.set(rimBase).multiply(_tintColor);
     if (this._snowMesh) {
       // 雪盖真实颜色现在写进纹理 RGB 通道（v55.1 积雪材质差异化），
       // material.color 本身是中性白倍数——直接拿 tint 当倍数即可。
@@ -289,10 +412,11 @@ export class GroundTraceLayer {
 
   dispose() {
     if (this._built) {
-      for (const s of this._puddlePool) {
+      for (const s of [...this._puddlePool, ...(this._rimPool || [])]) {
         this.scene.remove(s.mesh);
         s.mesh.material.dispose();
       }
+      this._rimPool = [];
       this._geo?.dispose();
       this._tex?.dispose();
       this._puddlePool = [];

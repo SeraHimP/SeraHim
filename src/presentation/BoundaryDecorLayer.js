@@ -33,6 +33,7 @@ import { baseCircleCenter } from '../data/baseCircle.js';
 import { withColor, stylizedTreeGeo, hash } from './VegetationLayer.js';
 import { applySnowTint, updateSnowInstances } from './VegetationShaderPatch.js';
 import { sampleSnowGrid } from '../systems/GroundTraceSystem.js';
+import { applyWeatherGround } from './weatherGround.js';
 import { CONFIG } from '../data/Config.js';
 
 // ==================== 城墙（柱子）====================
@@ -182,6 +183,7 @@ export class BoundaryDecorLayer {
         inst.geometry.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(arr.length), 1));
         inst.userData.snowPositions = snowPositions;
         applySnowTint(inst.geometry, mat);
+        applyWeatherGround(mat, { dust: true });   // 野区边缘的树石：沙暴里蒙一层沙，跟地面一起变
       }
       this.scene.add(inst); this.meshes.push(inst);
     };

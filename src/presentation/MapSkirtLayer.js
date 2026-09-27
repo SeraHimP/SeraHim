@@ -52,6 +52,7 @@
  * 肉眼分辨不出"没有跟着地形起伏"这件事。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { applyWeatherGround } from './weatherGround.js';
 import { CONFIG } from '../data/Config.js';
 
 const _texLoader = new THREE.TextureLoader();
@@ -154,6 +155,7 @@ export class MapSkirtLayer {
       map: this._defaultTex, transparent: true, depthWrite: false,
     });
     _patchFadeAlpha(mat);
+    applyWeatherGround(mat);   // 裙边也跟着天气变（沙暴铺沙、雪天结霜……），否则地图外一圈还是原色
     if (this._tint) mat.color.set(this._tint); // 重建时把当前昼夜染色补回去
 
     const mesh = new THREE.Mesh(geo, mat);

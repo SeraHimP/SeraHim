@@ -22,6 +22,7 @@ export const IO_GROUPS = [
   'towerTierWeapon',      // 分层塔武器
   'towerVizScale',        // 建筑可视半径倍率（同时影响避障，见 EntityContainer）
   'buildingSizes',
+  'buildingFootprintK',   // 建筑碰撞外轮廓系数（碰撞 = 模型实际外轮廓，见 structureRadius.js）
   'factionOverrides',     // 阵营覆写层
   'battleGrowth',         // 对战成长
   'rend',                 // 屠戮

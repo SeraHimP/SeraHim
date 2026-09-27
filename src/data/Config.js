@@ -888,6 +888,9 @@ export const CONFIG = {
   // 活体塔同理，只是废墟没有血条/射程圈遮挡所以最容易被看出来）。
   // UnitLayer 与 LaneMovementSystem 共读这一份，改一处两边同步。
   towerVizScale: { nexus_lane: 1.10, nexus_main: 1.34, default: 1.25 },
+  // 建筑碰撞半径相对显示半径的外轮廓系数（src/data/structureRadius.js）：雕像塔底座 / 塔基台面、枢纽台阶
+  // 比名义半径宽，碰撞按实际外轮廓算才不穿模（用户："不要出现任何穿模"）。取值 ≥ 实测外轮廓，测试用真实模型钉住。
+  buildingFootprintK: { outer: 1.19, inner: 1.19, base: 1.21, hq_tower: 1.21, nexus_lane: 1.11, nexus_main: 1.35, capture_point: 1, default: 1.21 },
 
   // ==================== 对战成长表（Q2：从 main.js 的硬编码常量搬到这里）====================
   // 纯固定值/波，杜绝复利后期爆炸；只动 最大生命/攻击力/双抗。
@@ -1170,10 +1173,35 @@ export const CONFIG = {
       // 具体强弱下一轮跑起来看效果再调。
       dustWindDriveFactor: 0.8,  // 风充能折算成浮尘可见度的系数
       dustWindPushSpeed: 60,     // 风充能=1时，浮尘的持续横移速度（世界单位/秒）
+      // 沙暴：浮尘池换成沙粒（WeatherLayer._updateDust）。sandMax 满充能沙粒数；sandColor/sandAlpha/sandSize 外观；
+      // sandCeilK 沙粒飘的高度占天花板比例（比浮尘更贴地）；sandPushSpeed 横吹速度；sandMirageK 蜃景折算成沙粒的系数
+      sandMax: 520, sandColor: 0xd6a760, sandAlpha: 0.42, sandSize: 5, sandCeilK: 0.3, sandPushSpeed: 320, sandMirageK: 0.3,
       // 雾是一张贴在单位上方的薄纱片，不是 scene.fog（见 WeatherLayer 头注）。
       // alpha 是实拍调下来的：0.42 时满充能会把整屏刷成灰白，战场完全读不出来
       //（连地图外的空白都一起糊）；0.20 还是偏重，这一轮收到 0.15。
       fogY: 110, fogAlpha: 0.15
+    },
+    // 天气落到地面上（weatherGround.js）：地形/高地顶面/裙边随天气变色。
+    // sources：每个地表通道由哪些天气的充能驱动（取 充能×系数 的最大值）；response：平滑时间常数（秒）。
+    //   sandMax 沙盖满时的最大覆盖比例（<1 保留一点原有布局）；sandRipple 沙纹明暗幅度
+    //   wetDarken 雨天压暗比例；wetSat 雨天饱和度提升；frostMix 雪天偏冷去饱和比例；frostSpeck 白霜斑点强度
+    //   fadeDesat 雾/霾去饱和比例；scorchMix 烈日发黄比例；noiseScale 噪声世界频率；windDir 沙纹拉长方向（与雾流向一致）
+    weatherGround: {
+      enabled: true, response: 1.5,
+      sources: {
+        sand: { sandstorm: 1, mirage: 0.45 },
+        wet: { rain: 1, downpour: 1, thunderstorm: 1, flood: 1, freezing_rain: 0.8, sunshower: 0.6 },
+        frost: { snow: 1, blizzard: 1, whiteout: 1, snowblind: 1, freezing_rain: 0.6 },
+        fade: { fog: 1, haze_surge: 1, densefog: 1 },
+        scorch: { scorch: 1 },
+      },
+      sandColor: '#d2ab6c', sandMax: 0.88, sandRipple: 0.1,
+      wetDarken: 0.32, wetSat: 0.25,
+      frostColor: '#eef4fa', frostMix: 0.5, frostSpeck: 0.35,
+      fadeDesat: 0.45, scorchMix: 0.55,
+      noiseScale: 0.0016, windDir: [1, 0.57],
+      vegDust: 0.35,      // 沙暴里植被（树冠/灌木/岩石）蒙沙的比例
+      riverMaskRes: 128,  // 河道遮罩分辨率（沙/烈日不往河床上铺）
     },
     // ==================== v54 第二轮重做：雷暴 Signature——偶发全屏闪光 ====================
     // 纯视觉，不带任何机制惩罚（见 Weather.js thunderstorm 的头注）。DOM 覆盖层
@@ -1255,8 +1283,16 @@ export const CONFIG = {
     groundTraceFx: {
       enabled: true,
       maxPuddleCircles: 150, // 水洼子圆的实例池上限（所有水洼的子圆总数封顶）
-      alpha: 0.45,
-      puddleColor: 0x5b8fb0, // 水色，偏冷偏灰（不是鲜艳的蓝，贴在地面上不能太跳）
+      // 水面不透明度（再乘水洼强度）。水面颜色按世界坐标算、相邻子圆重叠处一致，所以可以给得很实，
+      // 读得出"一汪水"而不是一层蓝色薄膜
+      alpha: 0.82,
+      puddleColor: 0x46647a, // 水色：暗、偏冷偏灰的天光反射（原 0x5b8fb0 在实心水面上读成一块块亮蓝贴纸）
+      puddleRimColor: 0x2c2a22, puddleRimAlpha: 0.45, puddleRimScale: 1.3, // 水洼外一圈湿土：颜色/不透明度/相对水面的半径倍数
+      puddleNoiseScale: 0.02,  // 水洼轮廓扭曲的噪声世界频率
+      puddleRipple: 0.35,      // 下雨时水面雨点涟漪亮度
+      // 积雪：雪深×噪声后在 snowEdge 区间收边（薄雪成一块块雪斑、厚雪连成片）；
+      // snowPatchAlpha 薄雪斑的最低不透明度；snowThinTint 薄雪的冷蓝色；snowSparkle 雪面闪光亮度
+      snowNoiseScale: 0.0045, snowEdge: [0.05, 0.13], snowPatchAlpha: 0.5, snowThinTint: '#d9e6fa', snowSparkle: 0.22,
       // v54：雪盖改成整地图 alpha 遮罩（见 GroundTraceLayer.js 头注），不再是
       // 实例池贴花，trailColor/maxTrailPoints 已废弃删除。
       snowCoverColor: 0xf4f8fc, // 雪盖色，浅冷白——路面/无森林分区数据的地图仍是这个颜色，逐位不变
@@ -1582,6 +1618,8 @@ export const CONFIG = {
     //   walkBlend 起步 / 停下的过渡快慢；wingFlap / wingFreq 龙翼扇动幅度与频率；bite 扑咬幅度；tailSway 尾摆幅度；
     //   strideK 每走多少倍单位尺寸迈完一整步（走路相位按距离推进）；moveHold 位置多久没变才算停下（秒，渲染帧比仿真步密）；
     //   mainArmWalk 走路时主手（连同武器）摆幅是臂摆幅的几倍（用户："兵移动的时候，手中的武器也跟随小幅度摆动"）
+    // 结构保护 🛡️ 图标：贴在血条左端外侧、与血条垂直居中。size 图标边长、gap 与血条的间隙（与血条同一世界单位）
+    structureShieldIcon: { size: 16, gap: 4 },
     // 龙魂标识（soulEmblem.js）：建筑按完好模型贴地那段（底部 heightFrac 高度以内）的外轮廓 + towerMargin 定半径，
     // 小兵按单位尺寸；towerWidth / unitWidth 参与半径留边；emblemScale 地纹相对半径的放大；
     // spin 转速（弧度/秒）、alpha 亮度、pulse / pulseSpeed 呼吸幅度与快慢；motes 建筑脚下是否飘元素光点、
@@ -2350,6 +2388,8 @@ export const CONFIG = {
   },
 
   tuning: {
+    // 远程单位打建筑时有效射程的保底：不小于"建筑碰撞半径 + 这段间隙"（LaneMovementSystem._reach），防贴进塔身
+    rangedStructureGap: 12,
 
     // v44 每帧留给【模拟】的墙钟预算（毫秒）。超过就把剩下的账留到下一帧。
     // 这是「单位一多就特别卡」的解药：原来限的是步数，而单步耗时随单位数增长，
@@ -3040,8 +3080,9 @@ export const CONFIG = {
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // 主动技能"唤灵"：法力攒满后召唤一只幻灵，见 actives.js 的 active_summoner_call。
-      // baseManaRegenMod（编辑器里叫"基础法力恢复"）：用户（2026-09-27）"唤灵兵的基础法力恢复改为4"
-      maxMana: 120, manaRegen: 2, baseManaRegenMod: 4,
+      // 基础法力恢复（baseManaRegenMod）回到默认 1；回蓝加成改由被动"灵契"给（passive_summoner_spirit_link）：
+      // 用户："唤灵兵的基础法力恢复回调为默认值。新增被动技能：获得100%基础法力值恢复，每存在一个幻灵，额外获得33%基础法力值恢复"
+      maxMana: 120, manaRegen: 2,
     },
     dragon: {
       label: '巨龙', type: 'dragon',

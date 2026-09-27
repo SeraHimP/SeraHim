@@ -53,5 +53,5 @@ export const DEFAULT_MINION_PASSIVES = {
   // 让技能栏里至少能看到这件事，数值仍然读同一份 CONFIG.gameRules.supportUnits.engineer。
   'engineer': ['passive_engineer_repair'],
   // Q5：唤灵兵——唯一主动技能"唤灵"（active_summoner_call），法力攒满召唤幻灵。
-  'summoner': ['active_summoner_call'],
+  'summoner': ['active_summoner_call', 'passive_summoner_spirit_link'],
 };

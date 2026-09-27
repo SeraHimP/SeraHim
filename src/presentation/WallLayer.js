@@ -24,6 +24,7 @@
  * 实测见 buildStats()，超预算时调大 CELL 即可，几何逻辑不变。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { applyWeatherGround } from './weatherGround.js';
 
 const CELL = 8;            // 采样格边长（世界单位）。崖面阶梯粒度 = 此值
 // 墙体高度。走廊半宽 130，取其一半略多，俯视 45° 下不会糊住走廊。
@@ -163,9 +164,10 @@ export class WallLayer {
 
     const topGeo = new THREE.PlaneGeometry(WW, WH);
     topGeo.rotateX(-Math.PI / 2);
-    const topMat = new THREE.MeshLambertMaterial({
+    // 高地顶面与地面同一张贴图，天气地表（weatherGround.js）也得一起变，否则沙暴里高地还是绿的
+    const topMat = applyWeatherGround(new THREE.MeshLambertMaterial({
       map: terrainTex, alphaMap: maskTex, transparent: false, alphaTest: 0.5,
-    });
+    }), { snow: true });
     this.top = new THREE.Mesh(topGeo, topMat);
     this.top.position.set(WW / 2, WALL_H, WH / 2);
     this.top.renderOrder = ORDER_WALL;

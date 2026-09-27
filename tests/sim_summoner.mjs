@@ -296,7 +296,21 @@ function fakeCreateMinion(ents, CONFIG) {
 {
   const { CONFIG } = await import('../src/data/Config.js');
   const { DragonSystem } = await import('../src/systems/DragonSystem.js');
-  T('基础法力恢复（baseManaRegenMod）= 4（用户："唤灵兵的基础法力恢复改为4"）', CONFIG.templates.summoner.baseManaRegenMod === 4);
+  // 用户后来改口："唤灵兵的基础法力恢复回调为默认值。新增被动技能：获得100%基础法力值恢复，每存在一个幻灵，额外获得33%"
+  T('基础法力恢复回到默认（模板不再单独写 baseManaRegenMod）', CONFIG.templates.summoner.baseManaRegenMod === undefined || CONFIG.templates.summoner.baseManaRegenMod === 1);
+  {
+    const { minionPassives } = await import('../src/core/skills/minionPassives.js');
+    const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
+    const def = minionPassives.passive_summoner_spirit_link;
+    const alive = new Map([[1, { alive: true }], [2, { alive: true }], [3, { alive: false }]]);
+    const ctx = { entityContainer: { get: (id) => alive.get(id) } };
+    const bonus = (ids) => def.manaRegenModBonus({ _summonedIds: ids }, { _params: def.defaultParams }, ctx);
+    T('灵契：没有幻灵 +100%；每只活着的幻灵再 +33%（死掉的不算）；唤灵兵默认装备',
+      Math.abs(bonus([]) - 1) < 1e-9 && Math.abs(bonus([1]) - 1.33) < 1e-9 && Math.abs(bonus([1, 2, 3]) - 1.66) < 1e-9
+      && DEFAULT_MINION_PASSIVES.summoner.includes('passive_summoner_spirit_link'));
+    const ms = (await import('fs')).readFileSync(new URL('../src/systems/ManaSystem.js', import.meta.url), 'utf8');
+    T('ManaSystem 把技能给的基础法力恢复加成累加到 baseManaRegenMod 上', /regenMod \+= d\.manaRegenModBonus\(entity, inst/.test(ms));
+  }
   // 用户："召唤出的衍生物不获得龙魂"——幻灵 / 牧灵幻兽建兵时就带 _isSummoned，发龙魂的门认它
   T('召唤物（幻灵 / 牧灵幻兽）不拿龙魂；同类型的普通单位照旧按配置',
     DragonSystem.SOUL_REWARD_OK({ type: 'summoner' }) === true

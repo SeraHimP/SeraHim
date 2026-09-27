@@ -69,7 +69,8 @@ export class WeatherLayer {
     const C = this._cfg();
     const MAXR = C.maxRain ?? 1400;
     const MAXS = C.maxSnow ?? 900;
-    const MAXD = C.maxDust ?? 260;
+    // 沙暴时浮尘池换成沙粒，粒子数要多得多，池子按两者较大者分配
+    const MAXD = Math.max(C.maxDust ?? 260, C.sandMax ?? 0);
 
     // ---- 雨：线段批（每滴一条短线，头尾两个顶点）----
     this._rainPos = new Float32Array(MAXR * 6);
@@ -186,7 +187,7 @@ export class WeatherLayer {
 
     this._updateRain(rain, wind, top, C);
     this._updateSnow(snow, wind, top, C);
-    this._updateDust(clear, wind, top, C);
+    this._updateDust(clear, wind, top, C, Math.max(ch('sandstorm'), ch('mirage') * (C.sandMirageK ?? 0.3)));
     this._updateFog(fog, C);
   }
 
@@ -273,16 +274,24 @@ export class WeatherLayer {
   //   ② 风大时叠加一段【持续横移】（drift，跟时间线性累积，会绕着盒子转圈而
   //     不是原地打转），跟原有的正弦左右摆（sway）是两回事——sway 在风小的时候
   //     也有，读作"飘"；drift 只有风起来了才明显，读作"被吹跑"。
-  _updateDust(clearK, wind, top, C) {
-    const P = this._dust, max = P.arr.length / 3;
-    const driveK = Math.max(clearK, wind * (C.dustWindDriveFactor ?? 0.8));
-    const n = Math.round(max * driveK);
-    P.mat.opacity = (C.dustAlpha ?? 0.30) * Math.min(1, driveK * 1.6);
+  // 沙暴（sand>0）：同一池粒子换成沙粒——更多、更黄、更贴地、被风横着吹跑，
+  // 跟地面铺沙（weatherGround.js）和沙尘雾（PostFX 雾通道换沙色）一起读成"起沙暴了"。
+  _updateDust(clearK, wind, top, C, sand = 0) {
+    const P = this._dust, poolMax = P.arr.length / 3;
+    const dustK = Math.max(clearK, wind * (C.dustWindDriveFactor ?? 0.8));
+    const driveK = Math.max(dustK, sand);
+    const sandW = driveK > 0 ? sand / driveK : 0;     // 0=普通浮尘，1=全是沙粒
+    const max = Math.round((C.maxDust ?? 260) + (poolMax - (C.maxDust ?? 260)) * sandW);
+    const n = Math.min(poolMax, Math.round(max * driveK));
+    P.mat.opacity = ((C.dustAlpha ?? 0.30) + ((C.sandAlpha ?? 0.4) - (C.dustAlpha ?? 0.30)) * sandW) * Math.min(1, driveK * 1.6);
+    P.mat.color.set(C.dustColor ?? 0xffe3a8).lerp(this._sandCol || (this._sandCol = new THREE.Color(C.sandColor ?? 0xd6a760)), sandW);
+    P.mat.size = (C.dustSize ?? 7) + ((C.sandSize ?? 5) - (C.dustSize ?? 7)) * sandW;
     P.obj.visible = n > 0;
     if (n <= 0) { P.geo.setDrawRange(0, 0); return; }
     const B = this._box;
-    const ceil = top * 0.5;   // 浮尘只在低空飘，不铺满整个高度
-    const windPush = wind * (C.dustWindPushSpeed ?? 60);
+    const ceil = top * (0.5 + ((C.sandCeilK ?? 0.3) - 0.5) * sandW);   // 浮尘只在低空飘；沙粒更贴地
+    wind = Math.max(wind, sand);
+    const windPush = wind * ((C.dustWindPushSpeed ?? 60) + ((C.sandPushSpeed ?? 320) - (C.dustWindPushSpeed ?? 60)) * sandW);
     for (let i = 0; i < n; i++) {
       const ph = hash01(i, 11);
       // 上浮而不是下落 —— 逆着雨雪的方向，一眼能分辨

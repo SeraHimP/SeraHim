@@ -325,6 +325,31 @@ export const minionPassives = {
     },
   },
 
+  // ==================== 唤灵兵：灵契（回蓝随幻灵数增长）====================
+  // 用户："新增被动技能：获得100%基础法力值恢复，每存在一个幻灵，额外获得33%基础法力值恢复。"
+  // "基础法力恢复"就是 baseManaRegenMod（ManaSystem 按它乘被动回蓝）。它不走 AttributeCalculator 的加成管线，
+  // 所以这里不挂 stat 效果，而是声明 manaRegenModBonus 钩子：ManaSystem 每帧把单位身上所有技能给的加成
+  // 累加到 baseManaRegenMod 上。幻灵数按施法者名下（_summonedIds）还活着的算，与"唤灵"的 maxAlive 同一口径。
+  passive_summoner_spirit_link: {
+    id: 'passive_summoner_spirit_link',
+    applicableTypes: ['summoner'],
+    name: '灵契',
+    icon: '🔗',
+    category: 'passive',
+    defaultParams: { basePct: 100, perSpiritPct: 33 },
+    get description() {
+      const p = this.defaultParams;
+      return `获得 ${p.basePct}% 基础法力恢复；自己名下每存在一只幻灵，额外获得 ${p.perSpiritPct}% 基础法力恢复。`;
+    },
+    get descTemplate() { return '唯一被动——灵契：' + this.description; },
+    effects: [],
+    manaRegenModBonus: (entity, instance, ctx) => {
+      const p = instance?._params || minionPassives.passive_summoner_spirit_link.defaultParams;
+      const alive = (entity._summonedIds || []).filter((id) => { const s = ctx?.entityContainer?.get(id); return s && s.alive; }).length;
+      return ((p.basePct ?? 100) + alive * (p.perSpiritPct ?? 33)) / 100;
+    },
+  },
+
   passive_siege_shield: {
     id: 'passive_siege_shield',
     applicableTypes: ['siege'],

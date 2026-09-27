@@ -39,6 +39,7 @@ import { WaterLayer } from './WaterLayer.js';
 import { RainRippleLayer } from './RainRippleLayer.js';
 import { GroundTraceLayer } from './GroundTraceLayer.js';
 import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
+import { applyWeatherGround, updateWeatherGround, setWeatherGroundMap } from './weatherGround.js';
 import { torchPoints } from './torchPlacement.js';
 import { CONFIG } from '../data/Config.js';
 import { resolveDayPhase } from './DayNight.js';
@@ -1074,7 +1075,8 @@ export class ThreeRenderer {
     // 用 alphaTest（片元 discard）而不是 transparent：discard 的深度写入是正确的，
     // 半透明混合会把 SSAO / 描边的法线深度预渲染搞乱，还会引入排序问题。
     const cutout = !!map.terrainEdge;
-    const mat = new THREE.MeshLambertMaterial({ map: tex, alphaTest: cutout ? 0.5 : 0 });
+    setWeatherGroundMap(ms);   // 天气地表：世界尺寸 + 河道遮罩
+    const mat = applyWeatherGround(new THREE.MeshLambertMaterial({ map: tex, alphaTest: cutout ? 0.5 : 0 }));
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = this.shadowLevel !== 'off';
     mesh.position.set(WW / 2, 0, WH / 2);
@@ -1362,6 +1364,13 @@ export class ThreeRenderer {
       this.weatherFx.update(window.__weather || null, this._target,
                             this.width / z, (this.height / z) / sinP + depthPad,
                             this._lightDt || 0.016, this.azimuthDeg || 0);
+    }
+    // 天气落到地面上（沙暴铺沙、雨天地湿、雪天结霜、雾天褪色），见 weatherGround.js 头注。
+    // 天气可视化关掉时各通道平滑回 0，地面回到原色。
+    {
+      const wg = CONFIG.ui?.weatherGround?.windDir || [1, 0.57];
+      updateWeatherGround(this.weatherFx?.enabled !== false ? (window.__weather || null) : null,
+                          this._lightDt || 0.016, { x: wg[0], y: wg[1] });
     }
     // Phase 1：雨滴打在水面上的波纹——只在有水面的图上生成，dt 走墙钟（与水面/
     // 天气可视化同口径，暂停时雨还在下、水波也该继续）。

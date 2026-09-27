@@ -182,7 +182,12 @@ export class ManaSystem {
       // 攻击/受击回蓝走 manaGainPct，两条互不影响。
       if (stats.manaRegen) {
         const gainPct = Math.max(0, 1 + (stats.manaGainPct || 0) / 100);
-        const regenMod = entity.baseStats?.baseManaRegenMod ?? 1;
+        // 技能可以给基础法力恢复加成（manaRegenModBonus 钩子，例：唤灵兵的"灵契"）
+        let regenMod = entity.baseStats?.baseManaRegenMod ?? 1;
+        for (const inst of entity._skillInstances || []) {
+          const d = this.skills?.[inst.skillId];
+          if (d?.manaRegenModBonus && !inst._disabled) regenMod += d.manaRegenModBonus(entity, inst, { entityContainer: this.entities }) || 0;
+        }
         entity._mana = Math.min(max, entity._mana + stats.manaRegen * regenMod * gainPct * dt);
       }
       if (entity._mana < max) continue;

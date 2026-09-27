@@ -18,6 +18,7 @@ import { isInBaseWallRing } from '../data/baseCircle.js';
 import { applyWindSway, updateWindSway, clearWindSwayRegistry,
          applySnowTint, updateSnowInstances } from './VegetationShaderPatch.js';
 import { sampleSnowGrid } from '../systems/GroundTraceSystem.js';
+import { applyWeatherGround } from './weatherGround.js';
 import { CONFIG } from '../data/Config.js';
 
 // v58：导出给 BoundaryDecorLayer 复用——野区内部（不可走的迷宫墙块）边界的
@@ -292,6 +293,7 @@ export class VegetationLayer {
       inst.geometry.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(arr.length), 1));
       inst.userData.snowPositions = snowPositions;
       applySnowTint(inst.geometry, mat);
+      applyWeatherGround(mat, { dust: true });   // 沙暴里树/灌木/岩石也蒙一层沙，跟地面铺沙一起变
       this.scene.add(inst); this.meshes.push(inst);
     };
     if (stylized) {
@@ -359,6 +361,7 @@ export class VegetationLayer {
           { depth: oc.height, bevelEnabled: false });
         g.rotateX(Math.PI / 2); g.translate(0, base + oc.height, 0);
         const ms = mats.map((mt) => mt.clone());
+        applyWeatherGround(ms[0], { snow: true });   // 台面跟地面一起随天气变（铺沙/积雪/变湿），否则沙暴、下雪时台地还是一块块绿的
         const mesh = new THREE.Mesh(g, ms);
         mesh.castShadow = true; mesh.receiveShadow = true;
         mesh.userData.baseColors = ms.map((mt) => mt.color.clone());
