@@ -8,6 +8,7 @@ setupWindow();
 const THREE = await import('../vendor/three.module.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { ProjectileMeshLayer } = await import('../src/presentation/ProjectileMeshLayer.js');
+const { trailEmberK } = await import('../src/presentation/EffectsLayer.js');
 const { T, done } = scoreboard('弹道可视化');
 const src = (f) => fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
 const fx = src('presentation/EffectsLayer.js'), pmSrc = src('presentation/ProjectileMeshLayer.js'), cs = src('systems/CombatSystem.js');
@@ -26,6 +27,18 @@ const fx = src('presentation/EffectsLayer.js'), pmSrc = src('presentation/Projec
   T('⑥炮车抛物线只是画面（伤害时机与落点不变）：抛高只加在画出来的高度上', /const head = \[x, by \+ arcAt\(done\), y\]/.test(fx));
   T('⑦没有命中效果（塔弹、小兵弹、吐息结尾都不放）',
     !/impact\(/.test(pmSrc) && !/sparks|shards/.test(pmSrc.replace(/\/\*[\s\S]*?\*\//, '')) && !/_hitTrack/.test(fx));
+}
+{
+  // 用户："防御塔弹道的拖尾在命中敌人后要缓慢消失而不是直接消失，之前踩过坑"
+  // 原来淡出 0.13 秒、曲线 k²：半程只剩 25%，肉眼看就是"一打中尾巴就没了"。
+  const P = CONFIG.ui.projectileFx.tower, F = P.trailFade;
+  T(`⑦b命中后拖尾余烬淡出时长在配置里、至少 0.35 秒（现 ${F}s）`, F >= 0.35);
+  T('⑦c余烬从满开始、单调变淡、到时长收掉',
+    trailEmberK(0) === 1 && trailEmberK(F * 0.25) > trailEmberK(F * 0.5) && trailEmberK(F * 0.5) > trailEmberK(F * 0.75) && trailEmberK(F) === 0);
+  T(`⑦d"缓慢"：0.1 秒时还剩大半（${trailEmberK(0.1).toFixed(2)}），淡出一半的时刻不早于 0.2 秒`,
+    trailEmberK(0.1) > 0.6 && trailEmberK(0.2) >= 0.5 - 1e-9);
+  T('⑦e淡出队列在"本帧不在场"的子弹上启动（子弹消失那一帧不整条消失），且按墙钟推进',
+    /if \(sn\.f === this\._fxFrame\) continue;/.test(fx) && /s\.t \+= dtWall;\s*const kk = trailEmberK\(s\.t\);/.test(fx));
 }
 {
   // 实例池：小兵弹 = 1 个弹头 + 若干残影；术士多三颗光点；吐息播完自动收掉

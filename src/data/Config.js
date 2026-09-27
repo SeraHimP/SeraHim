@@ -1294,7 +1294,7 @@ export const CONFIG = {
     //   warlock：术士弹绕转光点的颗数、半径（× 弹头大小）、转速、颜色
     //   breath：巨龙吐息的开关、时长（秒）、碎块数、大小与散布（× 龙体大小的一半）、拖后比例、芯色
     projectileFx: {
-      tower: { haloK: 1.25, trailLen: 4.2, trailFade: 0.13, trailFadePow: 2 },
+      tower: { haloK: 1.25, trailLen: 4.2, trailFade: 0.5, trailFadePow: 1 },
       minion: { sizeK: 0.3, boltLen: 1.9, boltWidth: 0.65, headWhite: 0.3, afterimages: 4, spacing: 1.6 },
       siege: { kinds: ['siege', 'ram'], arcK: 0.3, arcMax: 70, stoneK: 0.42, smoke: 6, stoneColor: '#3c3a38', smokeColor: '#a89a86' },
       warlock: { motes: 3, radius: 2.2, spin: 8, moteColor: '#e0b0ff' },
