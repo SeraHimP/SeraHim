@@ -10,6 +10,7 @@ import { resolveDayPhase } from '../presentation/DayNight.js';
 // 前向模拟一次跑 240+ 步，每步 Object.entries 重建数组是纯浪费（15ms → ~4ms）。
 const EXTREME_ENTRIES = Object.entries(EXTREME_WEATHERS);
 import { CONFIG } from '../data/Config.js';
+import { random } from '../core/rng.js';
 
 /**
  * WeatherSystem.js —— 全局天气系统
@@ -136,7 +137,7 @@ export class WeatherSystem {
     this._fcCache = null;
     this._invalidateForecast();
     this._invalidateWeatherReadout(); // v51.26：重开一局，天气从零算起，缓存不能带着上一局的值
-    this._rng = _makeRng(seed ?? (Math.random() * 1e9) | 0);
+    this._rng = _makeRng(seed ?? (random() * 1e9) | 0);
 
     // 气象轴 v1：温度自己一条独立的 θ/σ，比天气系统事件慢得多（见 AXIS_TARGET_DURATION_*
     // 头注），也是每局单独随机一次——同一张图不会每局温度轴节奏都一样。

@@ -39,7 +39,9 @@ import { MapEditorBoardTool } from './ui/MapEditorBoardTool.js';
 import { DebugLogger } from './utils/DebugLogger.js';
 import { syncAll as syncCustomContent } from './data/customContent.js';
 import { WorldHud } from './ui/WorldHud.js';
+import { seedRandom } from './core/rng.js';
 
+seedRandom(Date.now());   // 逻辑随机数默认是固定种子（测试可复现），真实游戏每局用时钟重新播种
 CTX._uid = 0;
 DebugLogger.hookConsole();
 CTX.waveNumber = 0;

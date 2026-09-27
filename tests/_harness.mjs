@@ -17,6 +17,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { seedRandom } from '../src/core/rng.js';
 
 const ROOT = new URL('../', import.meta.url).pathname;
 
@@ -25,6 +26,8 @@ const ROOT = new URL('../', import.meta.url).pathname;
  * 很多模块在模块级就读 window（如 CONFIG 的 getter、SkillLibrary 的注册期规范化）。
  */
 export function setupWindow(extra = {}) {
+  // 逻辑层的随机数（src/core/rng.js）按固定种子走：同一个测试每次跑出同一个结果。
+  seedRandom(extra.seed ?? 20260927);
   globalThis.window = { gameTime: 0, waveNumber: 0, _uid: 0, CTX: {}, ...extra };
   return globalThis.window;
 }

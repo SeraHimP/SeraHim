@@ -240,7 +240,6 @@ export class EffectRegistry {
       // 自然到期一起消失（见 _recalcEffectValues 的头注）。
       shieldRemaining: 0,
       customData: options.customData ?? null,
-      _createdAt: Date.now(),
       _auraStamp: this._clock,
     };
     this._recalcEffectValues(instance);

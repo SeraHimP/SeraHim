@@ -78,8 +78,10 @@ const MAX_MIN = minutesArg != null ? parseFloat(minutesArg) : Infinity;
 const SIM_DT = 1 / 30;
 
 // 可复现的随机：整局把 Math.random 换成种子发生器，跑完还原（与 balance_matrix.mjs 同一套做法）。
+const { seedRandom: seedRandomLogic } = await import('../src/core/rng.js');
 const _realRandom = Math.random;
 function _seedRandom(seed) {
+  seedRandomLogic(seed);
   let s = (seed * 2654435761) >>> 0 || 1;
   Math.random = () => {
     s ^= s << 13; s >>>= 0;

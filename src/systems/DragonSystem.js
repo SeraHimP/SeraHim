@@ -2,6 +2,7 @@ import { CONFIG } from '../data/Config.js';
 import { dragonCfg, dragonStatsAt, dragonIntervalAt, rollInRange, rollDragonInterval } from '../data/dragonCurve.js';
 import { statMod } from '../core/statMod.js';
 import { FACTIONS } from './FactionSystem.js';
+import { random } from '../core/rng.js';
 
 /**
  * DragonSystem.js
@@ -126,7 +127,7 @@ export class DragonSystem {
     // 会交替，但"每一局的第一条龙固定先威胁蓝方"这件事本身就是个不对称——红方
     // 永远先手拿到"抢第一条龙、顺势推蓝方"的地理优势，蓝方永远没有。改成每局开局
     // 随机决定首条从哪个坑出，之后的交替逻辑不变（组内仍然公平轮流）。
-    this._nextPitSide = Math.random() < 0.5 ? 'top' : 'bot';
+    this._nextPitSide = random() < 0.5 ? 'top' : 'bot';
 
     this._bindDeath();
     this._bindMap();
@@ -191,7 +192,7 @@ export class DragonSystem {
     this.souls = { blue: [], red: [] };
     this.soulResolved = false;
     this.soulOwner = null;
-    this._nextPitSide = Math.random() < 0.5 ? 'top' : 'bot';   // 同上：重开一局也要重新随机首条龙坑
+    this._nextPitSide = random() < 0.5 ? 'top' : 'bot';   // 同上：重开一局也要重新随机首条龙坑
   }
 
   /** 元素龙总数与成魂门槛（软编码）。 */
@@ -323,7 +324,7 @@ export class DragonSystem {
     let element = null;
     if (!isAncient) {
       const keys = Object.keys(DRAGON_ELEMENTS);
-      element = keys[Math.floor(Math.random() * keys.length)];
+      element = keys[Math.floor(random() * keys.length)];
       this.elementDragonSpawned++;
     } else {
       this.ancientSpawned++;
@@ -633,7 +634,7 @@ export class DragonSystem {
         if (cnt > bestCount) { bestCount = cnt; best = el; ties = [el]; }
         else if (cnt === bestCount && cnt > 0) { ties.push(el); }
       }
-      if (ties.length > 1) best = ties[Math.floor(Math.random() * ties.length)];
+      if (ties.length > 1) best = ties[Math.floor(random() * ties.length)];
       if (best) {
         const soulId = DRAGON_ELEMENTS[best].soul;
         this.soulOwner = owner;

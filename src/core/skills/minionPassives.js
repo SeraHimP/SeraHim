@@ -2,6 +2,7 @@ import { makeAuraPassive, AURA_THROTTLE } from './_helpers.js';
 import { CONFIG } from '../../data/Config.js';
 import { healPowerFor, applyHeal } from '../healing.js';
 import { alliesInRadius } from '../../systems/FactionSystem.js';
+import { random } from '../rng.js';
 
 // "小兵单位"判定：塔和巨龙不算，其余（含超级兵等大型兵）都算。
 const isMinionUnit = (e) => e && e.type !== 'tower' && e.type !== 'dragon';
@@ -933,7 +934,7 @@ const ramPassive = {
       const now = (typeof window !== 'undefined' && window.gameTime) || 0;
       instance.state = instance.state || {};
       if (now < (instance.state.shieldNextAt || 0)) return; // 冷却里，这次挨打不触发
-      if (Math.random() * 100 >= (p.shieldChancePct ?? 25)) return; // 没抽中
+      if (random() * 100 >= (p.shieldChancePct ?? 25)) return; // 没抽中
       instance.state.shieldNextAt = now + (p.shieldCooldownSec ?? 6);
       const self = ctx.entityContainer.get(targetId);
       if (!self || !self.alive) return;

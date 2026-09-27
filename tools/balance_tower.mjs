@@ -132,8 +132,10 @@ const WEAPON_LABEL = {
 // weapon:null，不攻击——跟地图文件本身的声明一致，不覆写这两档）。
 const WEAPON_TOWER_TIERS = new Set(['outer', 'inner', 'base', 'hq_tower']);
 
+const { seedRandom: seedRandomLogic } = await import('../src/core/rng.js');
 const _realRandom = Math.random;
 function _seedRandom(seed) {
+  seedRandomLogic(seed);
   let s = (seed * 2654435761) >>> 0 || 1;
   Math.random = () => {
     s ^= s << 13; s >>>= 0;

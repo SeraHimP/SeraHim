@@ -694,9 +694,13 @@ function tickNovaCharge(combat, ctx, tower, dt) {
   T('机制①-命中目标后附带减速效果', !!slowEff);
   T('机制②-减速幅度≈onHitSlowPct', slowEff && Math.abs(slowEff.blueprint.percentValue - (p.onHitSlowPct ?? -20)) < 1e-6);
 
-  const realRandom = Math.random;
-  try {
-    Math.random = () => 0; // 保证抽中
+  // 逻辑层随机数走 src/core/rng.js：找一个"第一次抽样就落在概率内"的种子再调用，保证抽中。
+  const { seedRandom, random } = await import('../src/core/rng.js');
+  const chance = (p.shieldChancePct ?? 25) / 100;
+  let hitSeed = 1;
+  for (; hitSeed < 10000; hitSeed++) { seedRandom(hitSeed); if (random() < chance) break; }
+  seedRandom(hitSeed);
+  {
     SkillLibrary.passive_pet_spirit_guard.onBeingAttacked(pet.id, target.id, inst, ctx);
     const shieldEff = fx.getEffectByName(pet.id, '灵体守护盾');
     T('机制③-受击时抽中概率会给自己上一层护盾', !!shieldEff);
@@ -706,8 +710,6 @@ function tickNovaCharge(combat, ctx, tower, dt) {
     SkillLibrary.passive_pet_spirit_guard.onBeingAttacked(pet.id, target.id, inst, ctx);
     T('机制⑤-冷却期内再次挨打不会重复触发（护盾效果实例没有变成两份/叠加两次）',
       fx.getEffects(pet.id).filter(e => e.blueprint.name === '灵体守护盾').length === 1);
-  } finally {
-    Math.random = realRandom;
   }
 }
 

@@ -6,6 +6,7 @@ import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from
 import { resolveSkillParams } from '../core/skillParams.js';
 import { canFire } from './FacingSystem.js';
 import { attackerCategoryOf, ENV_CATEGORY } from '../core/damageAttribution.js';
+import { random } from '../core/rng.js';
 
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
@@ -803,7 +804,7 @@ export class CombatSystem {
       attackType: resolvedAttackType,
       // v51：普攻默认能暴击（暴击率默认0，没有来源加成时恒不触发），在开火那一刻掷骰
       // 并快照——与其余攻击方数值同一时序，命中结算时不会因为攻击者已死而判不出来。
-      isCrit: Math.random() * 100 < (atkStats.critChance || 0),
+      isCrit: random() * 100 < (atkStats.critChance || 0),
       critMult: (CONFIG.tuning?.crit?.baseCritDamagePct ?? 200) + (atkStats.critDamagePct || 0),
       // v49：穿透四项也在开火那一刻快照。
       // 用户："无论攻击单位是否死亡，只要发出去的子弹就造成伤害。"
@@ -902,7 +903,7 @@ export class CombatSystem {
     // 唯一有意义的边界之一：普攻能被躲开，技能是判定命中之后的数值结算，不走这里）。
     // 掷骰放在命中结算这一刻（用目标此刻的闪避率），不在开火时快照——闪避是防御方属性，
     // 应该用命中那一刻的实时数值，与护甲/护盾同一口径。
-    if (Math.random() * 100 < (defStats.evasionPct || 0)) {
+    if (random() * 100 < (defStats.evasionPct || 0)) {
       this.eventBus.emit('damage:evaded', { sourceId: attacker?.id ?? null, targetId: target.id });
       return;
     }
@@ -1569,7 +1570,7 @@ export class CombatSystem {
     // "不是普攻"（同一个 options.basicAttack）+ "持有【技能暴击】状态"，不需要额外的
     // "这个技能算不算伤害性"标记——凡是调了 performAttackDirect 就已经是在造成伤害了。
     if (!options.basicAttack && attacker && this.effects.isSkillCrit(attacker.id)) {
-      if (Math.random() * 100 < (atkStats.critChance || 0)) {
+      if (random() * 100 < (atkStats.critChance || 0)) {
         damage *= (CONFIG.tuning?.crit?.skillCritDamagePct ?? 150) / 100;
       }
     }

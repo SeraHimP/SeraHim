@@ -115,8 +115,10 @@ let FORCE_ENTROPY = null;   // 熵扫档时由 runCell 的 apply 钩子钉住
 // 可复现的随机：整局把 Math.random 换成种子发生器，跑完还原。
 // 不这么做的话 seed 参数就是摆设——同一档的 N 局会因为出兵抖动完全同轨，
 // "跑 20 局取平均"退化成"跑 1 局抄 20 遍"，胜率数字看着稳其实没有任何样本量。
+const { seedRandom: seedRandomLogic } = await import('../src/core/rng.js');
 const _realRandom = Math.random;
 function _seedRandom(seed) {
+  seedRandomLogic(seed);
   let s = (seed * 2654435761) >>> 0 || 1;
   Math.random = () => {
     s ^= s << 13; s >>>= 0;

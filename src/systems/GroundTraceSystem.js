@@ -1,6 +1,7 @@
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { EXTREME_WEATHERS } from '../data/Weather.js';
 import { forestZoneAt } from '../data/mapValidate.js';
+import { random } from '../core/rng.js';
 
 /**
  * 供渲染层（VegetationLayer/BoundaryDecorLayer）按世界坐标点采样雪深——与
@@ -175,8 +176,8 @@ export class GroundTraceSystem {
     const world = ms?.currentMap?.world;
     if (!ms || !world) return null;
     for (let i = 0; i < 20; i++) {
-      const x = Math.random() * world.w;
-      const y = Math.random() * world.h;
+      const x = random() * world.w;
+      const y = random() * world.h;
       if (!ms.isWalkable || ms.isWalkable(x, y)) return { x, y };
     }
     return null;
@@ -191,18 +192,18 @@ export class GroundTraceSystem {
     const ms = this.mapSystem;
     const lanes = ms?.currentMap?.lanes;
     if (!ms || !Array.isArray(lanes) || !lanes.length) return null;
-    const lane = lanes[Math.floor(Math.random() * lanes.length)];
+    const lane = lanes[Math.floor(random() * lanes.length)];
     const wps = lane?.waypoints;
     if (!wps || wps.length < 2) return null;
-    const i = Math.floor(Math.random() * (wps.length - 1));
+    const i = Math.floor(random() * (wps.length - 1));
     const a = wps[i], b = wps[i + 1];
-    const t = Math.random();
+    const t = random();
     const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
     // 垂直于路段方向的单位向量，偏移量在 [-spread, spread] 内随机。
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy) || 1;
     const nx = -dy / len, ny = dx / len;
-    const off = (Math.random() * 2 - 1) * spread;
+    const off = (random() * 2 - 1) * spread;
     const x = px + nx * off, y = py + ny * off;
     if (ms.isWalkable && !ms.isWalkable(x, y)) return null;
     return { x, y };
@@ -214,7 +215,7 @@ export class GroundTraceSystem {
     const laneRatio = cfg.laneWeightRatio ?? 0.75;
     const spread = cfg.laneSpread ?? 220;
     let pos = null;
-    if (Math.random() < laneRatio) pos = this._randomLaneNearbyPoint(spread);
+    if (random() < laneRatio) pos = this._randomLaneNearbyPoint(spread);
     if (!pos) pos = this._randomWalkablePoint();
     if (!pos) return;
     // 距离够近的已有水洼直接合并进去，而不是各自独立——"水洼可以连接到一块"。
@@ -234,14 +235,14 @@ export class GroundTraceSystem {
 
   _makeSubOffsets(cfg) {
     const n = (cfg.subCirclesPerPatchMin ?? 3)
-      + Math.floor(Math.random() * ((cfg.subCirclesPerPatchMax ?? 6) - (cfg.subCirclesPerPatchMin ?? 3) + 1));
+      + Math.floor(random() * ((cfg.subCirclesPerPatchMax ?? 6) - (cfg.subCirclesPerPatchMin ?? 3) + 1));
     const out = [];
     for (let i = 0; i < n; i++) {
       const rMin = cfg.subRadiusMin ?? 50, rMax = cfg.subRadiusMax ?? 90;
-      const r = rMin + Math.random() * (rMax - rMin);
+      const r = rMin + random() * (rMax - rMin);
       // 子圆中心撒在一个比半径稍大的圈内，让整片形状不规则又保持大致连成一片。
-      const ang = Math.random() * Math.PI * 2;
-      const dist = Math.random() * r * 0.8;
+      const ang = random() * Math.PI * 2;
+      const dist = random() * r * 0.8;
       out.push({ dx: Math.cos(ang) * dist, dy: Math.sin(ang) * dist, r });
     }
     return out;

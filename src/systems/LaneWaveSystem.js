@@ -3,6 +3,7 @@ import { CONFIG } from '../data/Config.js';
 import { buildWaveOrder, buildBroadcastOrder } from '../data/waveComposition.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { resolveSkillParams } from '../core/skillParams.js';
+import { random } from '../core/rng.js';
 
 /**
  * LaneWaveSystem.js
@@ -303,8 +304,8 @@ export class LaneWaveSystem {
     const L = Math.hypot(dx, dy) || 1;
     const px = -dy / L, py = dx / L; // perpendicular unit vector
     const offset = (col - (numCols - 1) / 2) * colSp;
-    const jx = (Math.random() - 0.5) * 6;
-    const jy = (Math.random() - 0.5) * 6;
+    const jx = (random() - 0.5) * 6;
+    const jy = (random() - 0.5) * 6;
     const x = startPoint.x + px * offset + jx;
     const y = startPoint.y + py * offset + jy;
     this.createMinion(type, x, y, faction, laneId, direction);

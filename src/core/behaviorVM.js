@@ -28,6 +28,7 @@
  */
 import { CONFIG } from '../data/Config.js';
 import { applyHeal, grantTempShield, healPowerFor } from './healing.js';
+import { random } from './rng.js';
 
 // ==================== 原语表 ====================
 // 加新原语只改这两张表；表本身也是"编辑器该显示哪些选项"的唯一来源，
@@ -58,7 +59,7 @@ export const CONDITIONS = {
   hasShield:   { label: '目标有护盾',   arg: 'none',   fn: (c) => !!(c.target && ((c.target.shieldFixedCurrent || 0) + (c.target.tempShield || 0)) > 0) },
   distLt:      { label: '距离小于',     arg: 'number', fn: (c, v) => c.dist != null && c.dist < v },
   distGt:      { label: '距离大于',     arg: 'number', fn: (c, v) => c.dist != null && c.dist > v },
-  chance:      { label: '概率%',        arg: 'number', fn: (c, v) => Math.random() * 100 < v },
+  chance:      { label: '概率%',        arg: 'number', fn: (c, v) => random() * 100 < v },
 };
 
 /**
