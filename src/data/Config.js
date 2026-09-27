@@ -1517,7 +1517,7 @@ export const CONFIG = {
     //   rubbleScale：碎块相对原部件的缩放；stubShade：断口残根的明度系数
     //   colors：雕像各部分的颜色（石环/立柱跟随地图调色板的塔石色）
     statueTower: {
-      style: 'classic',
+      style: 'statue',
       statueScale: { outer: 1.45, inner: 1.45, base: 1.5, hq_tower: 1.6 },
       columnExtra: { outer: 0, inner: 0.15, base: 0.3, hq_tower: 0.45 },
       ruin: { moundHeight: 0.42, spread: 0.95, pieceScale: 0.8, blocks: 16 },
