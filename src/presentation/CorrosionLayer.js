@@ -30,6 +30,56 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
+import { fogNoiseTexture } from './fogNoise.js';
+
+/**
+ * ==================== 2026-09-27：体积雾着色 ====================
+ * 用户："腐蚀性塔的可视化弹道效果也改为体积雾的，然后每波脉冲那个雾的效果也要做出来"。
+ * 上面那套（常驻射程球 / 有兵才发波 / 发波间隔 = 攻速）语义不变，换的是【质感】：
+ * 球不再是一层均匀的半透明壳，而是按"视线穿过球体的厚度"累积浓度的体积雾——
+ * 从球面进入点沿视线方向（正交相机，方向恒定）在球内取几点，查世界空间分形噪声（fogNoise.js，
+ * 与天气雾同一张）算平均浓度，alpha = 1 - exp(-厚度 × 浓度)。于是中间厚、边缘柔、带流动的雾丝；
+ * 地面以下的那段不算（视线打到地面就截断）。
+ * 脉冲波用同一个着色器的"空心壳"模式：浓度只集中在一层向外扩张的壳里（uShell > 0），
+ * 读起来是一圈翻涌着推出去的毒雾浪，越往外越淡。
+ */
+const FOG_VS = `
+  varying vec3 vWorld;
+  void main() {
+    vec4 w = modelMatrix * vec4(position, 1.0);
+    vWorld = w.xyz;
+    gl_Position = projectionMatrix * viewMatrix * w;
+  }
+`;
+const FOG_FS = `
+  uniform vec3 uColor; uniform float uAlpha; uniform float uDensity;
+  uniform vec3 uCenter; uniform float uRadius; uniform float uGround;
+  uniform vec3 uViewDir; uniform float uTime; uniform float uNoiseScale; uniform float uShell; uniform float uLow; uniform float uCore;
+  uniform sampler2D tNoise;
+  varying vec3 vWorld;
+  float dens(vec3 q) {
+    vec2 p = q.xz * uNoiseScale + vec2(q.y * 0.004, -q.y * 0.003);
+    vec2 wp = (texture2D(tNoise, p * 0.7 + vec2(uTime * 0.013, uTime * 0.009)).gb - 0.5) * 0.45;
+    float n = texture2D(tNoise, p + wp + vec2(-uTime * 0.021, uTime * 0.017)).r * 0.65
+            + texture2D(tNoise, p * 2.3 - wp + vec2(uTime * 0.03, -uTime * 0.02)).r * 0.35;
+    float d = smoothstep(0.25, 0.75, n);
+    float r = length(q - uCenter) / uRadius;                      // 以水晶为心的球：雾从水晶向四周散开
+    if (uLow > 0.0) d *= exp(-max(0.0, q.y - uGround) / (uRadius * uLow));   // 可选：越贴地越浓（lowK = 0 关掉）
+    if (uShell > 0.0) d *= smoothstep(1.0 - uShell, 1.0 - uShell * 0.4, r) * (1.0 - smoothstep(0.92, 1.0, r));   // 雾浪：一圈外扩的环
+    else d *= smoothstep(uCore, uCore + 0.25, r) * (1.0 - smoothstep(0.8, 1.0, r));   // 常驻：水晶周围一圈留空（塔身看得清），到射程边缘才淡出
+    return d;
+  }
+  void main() {
+    vec3 d = normalize(uViewDir);
+    float chord = max(0.0, 2.0 * dot(uCenter - vWorld, d));
+    if (d.y < -0.0001) chord = min(chord, max(0.0, (vWorld.y - uGround) / -d.y));   // 地面以下不算
+    float acc = 0.0;
+    for (int i = 0; i < 4; i++) acc += dens(vWorld + d * chord * (float(i) + 0.5) / 4.0);
+    acc /= 4.0;
+    float a = (1.0 - exp(-uDensity * acc * chord / uRadius)) * uAlpha;
+    gl_FragColor = vec4(uColor * (0.85 + 0.3 * acc), a);
+  }
+`;
 
 /**
  * 可被腐蚀叠层的敌方单位类型，供雾特效判断"附近有没有中毒目标"用。
@@ -66,11 +116,21 @@ export class CorrosionLayer {
     for (const w of rec.waves) w.mesh.visible = false;
   }
 
-  _mkMesh(color, opacity) {
-    const mat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity,
-      depthWrite: false, side: THREE.DoubleSide,
+  _mkMesh(color, opacity, shell = 0) {
+    const c = cfg();
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(color) }, uAlpha: { value: opacity }, uDensity: { value: shell ? (c.waveDensity ?? 6) : (c.fogDensity ?? 4) },
+        uCenter: { value: new THREE.Vector3() }, uRadius: { value: 1 }, uGround: { value: 0 },
+        uViewDir: { value: new THREE.Vector3(0, -1, 0) }, uTime: { value: 0 },
+        uNoiseScale: { value: c.noiseScale ?? 0.006 }, uShell: { value: shell }, tNoise: { value: fogNoiseTexture() },
+        uLow: { value: c.lowK ?? 0 }, uCore: { value: c.coreClear ?? 0.12 },
+      },
+      vertexShader: FOG_VS, fragmentShader: FOG_FS,
+      transparent: true, depthWrite: false, side: THREE.FrontSide,
     });
+    // 兼容老接口：opacity 读写转到 uAlpha（下面发波 / 常驻球的浓淡仍按 material.opacity 写）
+    Object.defineProperty(mat, 'opacity', { get: () => mat.uniforms.uAlpha.value, set: (v) => { if (mat.uniforms) mat.uniforms.uAlpha.value = v; }, configurable: true });
     const m = new THREE.Mesh(this._geo, mat);
     m.renderOrder = cfg().renderOrder ?? 20;
     m.frustumCulled = false;   // 球心在塔上但半径很大，剔除盒容易误判
@@ -78,12 +138,21 @@ export class CorrosionLayer {
     return m;
   }
 
+  /** 体积雾着色器每帧要的量：球心 / 半径 / 地面高度 / 视线方向 / 时间 */
+  _sync(mesh, radius, ground) {
+    const u = mesh.material.uniforms;
+    if (!u) return;
+    u.uCenter.value.copy(mesh.position); u.uRadius.value = Math.max(1, radius); u.uGround.value = ground;
+    if (this.camera) this.camera.getWorldDirection(u.uViewDir.value);
+    u.uTime.value = this._t;
+  }
+
   /**
    * @param deps { entities, attrCalc, effects }
    * @param dtWall 墙钟秒
    * @param weaponOf(tower) → 该塔当前武器技能 id（复用 EffectsLayer 的缓存版本）
    */
-  update(deps, dtWall, weaponOf) {
+  update(deps, dtWall, weaponOf, crystalOf = null) {
     if (!this.enabled || !deps || !deps.entities) return;
     const c = cfg();
     if (c.enabled === false) { for (const rec of this._per.values()) this._hide(rec); return; }
@@ -117,8 +186,14 @@ export class CorrosionLayer {
 
       // ---- ① 常驻射程球 ----
       rec.dome.visible = true;
-      rec.dome.position.set(t.pos.x, c.domeLift ?? 0, t.pos.y);
+      // 圆心：塔杖顶的水晶（拿不到时退回塔脚）。雾从水晶向四周散开、脉冲从水晶往外推；
+      // 半径仍是有效射程，毒圈生效范围不变（那由 weapon_corrosion 按塔的坐标判定，这里只是画面）。
+      const cp = crystalOf ? crystalOf(t) : null;
+      const gY = this.mapSystem?.heightAt ? this.mapSystem.heightAt(t.pos.x, t.pos.y) : 0;
+      if (cp) rec.dome.position.set(cp.x, cp.y, cp.z);
+      else rec.dome.position.set(t.pos.x, c.domeLift ?? 0, t.pos.y);
       rec.dome.scale.setScalar(range);
+      this._sync(rec.dome, range, gY);
 
       // ---- ② 射程内有没有可中毒的敌人 ----
       // 判据与 weapon_corrosion.onFrame 完全同源：同一张类型表、同一个半径、同一个阵营过滤。
@@ -147,7 +222,7 @@ export class CorrosionLayer {
         if (this._t >= rec.nextAt) {
           rec.nextAt = this._t + interval;
           if (rec.waves.length < maxWaves) {
-            rec.waves.push({ mesh: this._mkMesh(color, waveAlpha), t: 0 });
+            rec.waves.push({ mesh: this._mkMesh(color.clone().lerp(new THREE.Color('#ffffff'), c.waveLighten ?? 0.25), waveAlpha, c.waveShell ?? 0.35), t: 0 });
           } else {
             // 池满：回收最老的那一波重新出发（不再 new，网格数封顶）
             let oldest = rec.waves[0];
@@ -167,6 +242,7 @@ export class CorrosionLayer {
         w.mesh.visible = true;
         w.mesh.position.copy(rec.dome.position);
         w.mesh.scale.setScalar(range * (waveStartK + (1 - waveStartK) * p));
+        this._sync(w.mesh, range * (waveStartK + (1 - waveStartK) * p), rec.dome.material.uniforms.uGround.value);
         // 越往外越淡（平方衰减：靠近塔身时厚、到边缘几乎化开）
         w.mesh.material.opacity = waveAlpha * (1 - p) * (1 - p);
       }

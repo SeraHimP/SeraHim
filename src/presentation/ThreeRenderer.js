@@ -219,6 +219,8 @@ export class ThreeRenderer {
     // 单独成层是因为它要的是真网格（双面低透明球才有体积感），
     // 而 EffectsLayer 是三角批 —— 两者的资源生命周期完全不同。
     this.corrosionFx = new CorrosionLayer(this.scene);
+    this.corrosionFx.camera = this.camera;       // 体积雾要视线方向
+    this.corrosionFx.mapSystem = mapSystem;      // 与地面求交（地面以下的那段雾不算）
     this._target = new THREE.Vector3();
     this._terrainMesh = null;
     this._terrainMapId = null;
@@ -234,7 +236,9 @@ export class ThreeRenderer {
     this.setHDR(null);
 
     // 切图后地面必须整体重建（贴图尺寸、世界尺寸都变了）
-    eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap), mapSystem?.currentMap); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); this._torchPts = null; });
+    eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap), mapSystem?.currentMap); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); this._torchPts = null;
+      // 建筑动画（掉块 / 爆炸 / 重生）的特效材质先编译好，事件那一刻不再现编译着色器（会卡一下）
+      this.units.bfx.prewarm(this.gl, this.camera); });
     // 清理保险 A：死亡事件即时删（保险 B = UnitLayer.update 里的帧戳兜底扫描）
     // 塔死后留成废墟（EntityContainer.purgeDead 豁免它），渲染条目不能在死亡这一刻摘掉：
     // 摘掉会连带 bfx.forget，下一帧废墟被当成"第一次见到"，被摧毁的爆炸就永远不播
@@ -1322,7 +1326,11 @@ export class ThreeRenderer {
       // v43 Q8：腐蚀雾。复用 EffectsLayer 的武器缓存（同一份 WeakMap，别再查第二遍），
       // dt 走**墙钟**——暂停时雾该继续飘，与 WeatherLayer 同口径。
       if (this.corrosionFx) {
-        this.corrosionFx.update(this.deps, this._lightDt || 0.016, (t) => this.fx._weaponOf(t));
+        // 毒雾的圆心 = 塔杖顶的水晶（用户："腐蚀性武器的体积雾的圆心应该是塔手杖上的水晶"）；只是画面，毒圈生效范围不变
+        this.corrosionFx.update(this.deps, this._lightDt || 0.016, (t) => this.fx._weaponOf(t), (t) => {
+          const off = this.units.muzzleOffsetOf(t.id) || [0, 0], y = this.units.muzzleYOf(t.id);
+          return y == null ? null : { x: t.pos.x + off[0], y, z: t.pos.y + off[1] };
+        });
       }
     }
     this._syncTowerLights(controller);
@@ -1396,8 +1404,10 @@ export class ThreeRenderer {
         // v54 §9.8：极端天气 Signature——按 id 直接查表，不用扫描全部激活极端天气。
         const exCharge = (id) => (ws?.getCharge ? (ws.getCharge(id) || 0) : 0);
         // 飓风 Signature：若同时有雾，流速也跟着拉满（取风充能与飓风充能较大者）。
-        const windCharge = Math.max(ws?.getCharge ? (ws.getCharge('wind') || 0) : 0, exCharge('hurricane'));
         const sandstormCharge = exCharge('sandstorm');
+        // 沙暴：沙流跟着风跑（流速按满风算），并沿风向拉长成一股股沙带，而不是一层均匀的黄
+        const windCharge = Math.max(ws?.getCharge ? (ws.getCharge('wind') || 0) : 0, exCharge('hurricane'),
+          sandstormCharge * (CONFIG.volumetricFog?.sandstormFlow ?? 1));
         // 沙暴借用雾通道当沙尘层——两个来源取更强的那个驱动浓度，不是相加。
         this.fogPass.setStrength(Math.max(fogCharge, sandstormCharge));
         this.fogPass.setColor?.(sandstormCharge > fogCharge
@@ -1407,7 +1417,8 @@ export class ThreeRenderer {
         this.fogPass._advanceNoise?.(this._lightDt || 0.016, windCharge);
         this.fogPass._syncCamera?.();
         this.fogPass.setUvWobble?.(exCharge('mirage') * 1.5); // 蜃景：热浪扭曲
-        this.fogPass.setNoiseStretch?.(1 + exCharge('haze_surge') * 2.2); // 霾潮：方向感
+        this.fogPass.setNoiseStretch?.(1 + Math.max(exCharge('haze_surge') * 2.2,
+          sandstormCharge * (CONFIG.volumetricFog?.sandstormStretch ?? 2.6))); // 霾潮 / 沙暴：方向感
         this.fogPass.setMaxStrengthMul?.(1 + exCharge('densefog') * 0.25); // 浓雾：浓度上限抬高
       }
       // 雷暴 Signature（lightningFlash）：纯视觉、不带机制惩罚的偶发全屏闪光。

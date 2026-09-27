@@ -16,6 +16,7 @@
  * 关掉时对帧时间零影响（NormalDepthPrepass 也会跟着两个开关一起短路，不白渲染）。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { fogNoiseTexture } from './fogNoise.js';
 import { CONFIG } from '../data/Config.js';
 import { Pass } from '../../vendor/postprocessing/Pass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
@@ -473,23 +474,7 @@ export function createOutlinePass(prepass, width, height) {
 // 复用 NormalDepthPrepass 的深度图和 SSAO/描边已有的正交重建公式；不需要法线，
 // 也不需要新开一个预渲染 Pass。世界坐标由 viewMatrixInverse（即 camera.matrixWorld）
 // 把重建出的视空间坐标转回去——正交相机没有透视除法，这一步是纯矩阵乘法。
-function buildFogNoiseTexture(size = 64) {
-  const data = new Float32Array(size * size * 4);
-  for (let i = 0; i < size * size; i++) {
-    const v = Math.random();
-    data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 1;
-  }
-  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.FloatType);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  // 双线性过滤把粗粒度随机网格插值成平滑的团块状噪声（经典"value noise"廉价做法，
-  // 不需要在 GLSL 里另写 Perlin/Simplex 函数）。
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return tex;
-}
+// 噪声贴图见 fogNoise.js（可平铺的平滑分形噪声；原来的 64² 纯随机值噪声放大后是方块 + 细颗粒，看着粗糙）。
 
 const FogShader = {
   vertexShader: `
@@ -514,7 +499,12 @@ const FogShader = {
     uniform vec2 noiseOffset;      // 随真实时间缓慢累加，让雾团"呼吸"（与镜头运动无关）
     uniform vec2 noiseStretch;     // 世界空间噪声采样的各向异性拉伸（霾潮 Signature 用，默认(1,1)）
     uniform float uvWobble;        // >0 时对场景采样做轻微 UV 位移，热浪扭曲感（蜃景 Signature）
+    uniform vec2 coverage;         // 噪声 → 浓度的阈值区间：低于 x 几乎无雾（留出淡区），高于 y 满浓
+    uniform float warpStrength;    // 域扭曲强度：把雾团拉成丝缕
+    uniform float heightJitter;    // 雾顶随噪声起伏的高度（世界单位），不再是一刀切的平顶
+    uniform float litBoost;        // 浓处提亮（厚雾更亮一点，有体积感）
     ${ORTHO_RECONSTRUCT_GLSL}
+    float fogHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
     void main() {
       // 蜃景 Signature：用噪声纹理再采样一次，对场景采样做极轻微的 UV 位移，
@@ -533,19 +523,28 @@ const FogShader = {
       vec3 viewPos = reconstructViewPos(vUv, depth);
       vec3 worldPos = (viewMatrixInverse * vec4(viewPos, 1.0)).xyz;
 
-      float h = max(0.0, worldPos.y - baseHeight);
+      // 世界空间分形噪声（fogNoise.js）：域扭曲 + 两层反向流动 + 高频细节。
+      // 大雾团是几百个世界单位的尺度，中间留出淡区；丝缕随风慢慢流。
+      vec2 p = worldPos.xz * noiseScale;
+      vec2 warp = (texture2D(tNoise, p * 0.61 + noiseOffset * 0.7).gb - 0.5) * warpStrength;
+      float n1 = texture2D(tNoise, (p + warp) * noiseStretch + noiseOffset).r;
+      float n2 = texture2D(tNoise, (p * 2.07 - warp * 0.6) * noiseStretch - noiseOffset * 1.37 + vec2(0.37, 0.11)).r;
+      float det = texture2D(tNoise, p * 7.0 + noiseOffset * 2.3).b;
+      float nRaw = n1 * 0.62 + n2 * 0.38;
+      float n = smoothstep(coverage.x, coverage.y, nRaw) * (0.82 + 0.36 * det);
+      float noise = mix(1.0, n * 1.35, clamp(noiseStrength, 0.0, 1.0));
+
+      // 雾顶随噪声起伏：浓的地方雾层更高
+      float h = max(0.0, worldPos.y - baseHeight - n * heightJitter);
       float heightFactor = exp(-h * heightFalloff);
 
       float dist = max(0.0, -viewPos.z);
       float distFactor = 1.0 - exp(-dist * density);
 
-      vec2 nUv = worldPos.xz * noiseScale * noiseStretch + noiseOffset;
-      float n1 = texture2D(tNoise, nUv).r;
-      float n2 = texture2D(tNoise, nUv * 2.13 + vec2(5.2, 1.7)).r;
-      float noise = mix(1.0, n1 * 0.65 + n2 * 0.35 + 0.2, clamp(noiseStrength, 0.0, 1.0));
-
       float amount = clamp(heightFactor * distFactor * noise * fogStrength, 0.0, 1.0);
-      vec3 col = mix(base.rgb, fogColor, amount);
+      amount = clamp(amount + (fogHash(gl_FragCoord.xy) - 0.5) * (2.0 / 255.0), 0.0, 1.0);   // 抖动，去色带
+      vec3 fc = fogColor * (1.0 - litBoost * 0.5 + litBoost * n);
+      vec3 col = mix(base.rgb, fc, amount);
       gl_FragColor = vec4(col, base.a);
     }
   `,
@@ -568,6 +567,10 @@ export function createFogPass(prepass, camera, width, height) {
       noiseOffset: { value: new THREE.Vector2(0, 0) },
       noiseStretch: { value: new THREE.Vector2(1, 1) },
       uvWobble: { value: 0 },
+      coverage: { value: new THREE.Vector2(0.32, 0.72) },
+      warpStrength: { value: 0.35 },
+      heightJitter: { value: 40 },
+      litBoost: { value: 0.18 },
       ...cameraUniforms(camera),
     },
     vertexShader: FogShader.vertexShader,
@@ -575,7 +578,7 @@ export function createFogPass(prepass, camera, width, height) {
   };
   const pass = new ShaderPass(shader);
   pass.uniforms.tDepth.value = prepass.renderTarget.depthTexture;
-  pass.uniforms.tNoise.value = buildFogNoiseTexture();
+  pass.uniforms.tNoise.value = fogNoiseTexture();
   // 观感参数全部走 CONFIG.volumetricFog（第 2 条铁律，与 CONFIG.outline 同级），
   // 改配置即可，不用动着色器。
   const c = CONFIG.volumetricFog || {};
@@ -585,6 +588,10 @@ export function createFogPass(prepass, camera, width, height) {
   if (c.density !== undefined) pass.uniforms.density.value = c.density;
   if (c.noiseScale !== undefined) pass.uniforms.noiseScale.value = c.noiseScale;
   if (c.noiseStrength !== undefined) pass.uniforms.noiseStrength.value = c.noiseStrength;
+  if (c.coverage) pass.uniforms.coverage.value.set(c.coverage[0], c.coverage[1]);
+  if (c.warpStrength !== undefined) pass.uniforms.warpStrength.value = c.warpStrength;
+  if (c.heightJitter !== undefined) pass.uniforms.heightJitter.value = c.heightJitter;
+  if (c.litBoost !== undefined) pass.uniforms.litBoost.value = c.litBoost;
   const maxStrength = c.maxStrength ?? 0.8;
   const noiseSpeed = c.noiseSpeed ?? 4;
   // v54 §9.3：雾-风联动——风越大流速越快。风目前只有强度没有方向，这轮做不了
@@ -618,7 +625,9 @@ export function createFogPass(prepass, camera, width, height) {
   // （真实风向数据接入前的近似）。stretch<=1 时退回各向同性。
   pass.setNoiseStretch = (stretch) => {
     const s = Math.max(1, stretch || 1);
-    pass.uniforms.noiseStretch.value.set(s, 1 / s);
+    // 沿流动方向（_advanceNoise 主要往 +x 推）拉长：x 方向频率降、z 方向频率升 → 横向的一股股流带。
+    // 反过来拉（s, 1/s）会得到和流动方向垂直的竖条，像帘子不像被风吹。
+    pass.uniforms.noiseStretch.value.set(1 / s, s);
   };
   // 沙暴 Signature（sandstormReversal）：雾通道复用成土黄色沙尘层——沙暴没有自己
   // 独立的体积渲染层，颜色可以随时切回默认雾色。

@@ -306,9 +306,9 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q8③ 索敌闸门确实删了',
     !/tower\._mapTier === 'nexus_lane' \|\| tower\._mapTier === 'nexus_main'\) return null/.test(cs));
   T('Q8④ 真正的保险仍在（没装武器的塔连索敌都不进）', /const hasWeapon = /.test(cs));
-  // 炮口：水晶本体很大，从几何中心出膛看着像"子弹从石头里钻出来"
-  T('Q8⑤ 水晶炮口抬到接近尖端（可软编码）',
-    (CONFIG.ui?.muzzle?.nexusTopK ?? 0) > 0);
+  // 炮口：用户（2026-09-27）"召唤水晶/水晶枢纽如果装配了武器，子弹应该是从水晶的正中心射出来的"
+  T('Q8⑤ 水晶炮口在水晶正中心（系数软编码，= 0）',
+    CONFIG.ui?.muzzle?.nexusTopK === 0);
   const umf = srcOf(('../src/presentation/UnitMeshFactory.js'));
   T('Q8⑥ 炮口高度用了这个系数', /crystalCy \+ crystalR \* crystalMuzzleK/.test(umf));
 }
@@ -595,7 +595,11 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
 {
   const cl = srcOf(('../src/presentation/CorrosionLayer.js'));
   T('Q8⑦ 用的是球体网格，不是 2D 环', /new THREE\.SphereGeometry\(1,/.test(cl));
-  T('Q8⑧ 雾的观感靠"双面 + 不写深度 + 低透明"', /depthWrite: false, side: THREE\.DoubleSide/.test(cl));
+  // 2026-09-27 用户："腐蚀性塔的可视化弹道效果也改为体积雾的，然后每波脉冲那个雾的效果也要做出来"——
+  // 从"双面低透明球壳"换成按视线穿过厚度累积浓度的体积雾着色器；脉冲波是同一着色器的空心壳模式
+  T('Q8⑧ 雾是体积雾：不写深度、按视线厚度 × 噪声浓度累积（1 - exp），脉冲波为空心壳',
+    /depthWrite: false, side: THREE\.FrontSide/.test(cl) && /1\.0 - exp\(-uDensity \* acc \* chord \/ uRadius\)/.test(cl)
+    && /waveAlpha, c\.waveShell \?\? 0\.35\)/.test(cl) && /fogNoiseTexture\(\)/.test(cl));
   T('Q8⑨ 常驻球半径 = 有效射程', /scale\.setScalar\(range\)/.test(cl));
   T('Q8⑩ 只有射程内有敌人才发波', /if \(hasFoe\) \{/.test(cl) && /hasFoe = true; break;/.test(cl));
   T('Q8⑪ 发波节奏 = 1/当前攻速（与 weapon_corrosion 的叠层节奏同源）',

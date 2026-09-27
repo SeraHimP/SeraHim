@@ -231,7 +231,8 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
   T('渲⑬-ThreeRenderer 每帧把雾-风联动 + 四条 Signature 的充能接进 fogPass',
     /this\.fogPass\._advanceNoise\?\.\(this\._lightDt \|\| 0\.016, windCharge\)/.test(renderer)
     && /this\.fogPass\.setUvWobble\?\.\(exCharge\('mirage'\)/.test(renderer)
-    && /this\.fogPass\.setNoiseStretch\?\.\(1 \+ exCharge\('haze_surge'\)/.test(renderer)
+    // 2026-09-27：沙暴也走这条拉伸（一股股沙带），写法变成 max(霾潮, 沙暴)，意图不变
+    && /this\.fogPass\.setNoiseStretch\?\.\(1 \+ Math\.max\(exCharge\('haze_surge'\)/.test(renderer)
     && /this\.fogPass\.setMaxStrengthMul\?\.\(1 \+ exCharge\('densefog'\)/.test(renderer));
   T('渲⑭-雷暴 Signature：_updateLightning 方法存在，充能过低时清空计时器（不是常驻挂着的空闪）',
     /_updateLightning\(dt\)\s*\{/.test(renderer)

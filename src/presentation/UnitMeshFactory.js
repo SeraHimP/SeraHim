@@ -279,6 +279,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     const stageParts = (b, d) => {
       const st = b.stages[d];
       if (fx?.assemble) return b.model.parts(b.model.order, new Set(b.model.order), true);
+      // 只要还立着的部分（掉下来的部件不留碎石）：护盾外壳用它，不包地上的碎块
+      if (fx?.standing) return b.model.parts(st, new Set(st));
       if (fx?.noRubbleFrom != null) { const old = new Set(b.stages[fx.noRubbleFrom] || []); return b.model.parts(st, new Set(st.filter((id) => !old.has(id)))); }
       return b.model.parts(st);
     };

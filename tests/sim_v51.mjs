@@ -2386,9 +2386,12 @@ async function world() {
   // 龙魂环应该也相应改为圆形的……龙魂环应该是根据模型的外轮廓自适应显示的"。原来塔按碰撞半径 × 0.85、
   // 蓝方阶梯塔用方环（环④⑤⑤c⑤d 钉的是那一版），现在建筑一律圆环、半径按模型贴地那段的外轮廓量。
   T('环④-小兵走 vis.ringR；建筑按模型外轮廓（footprintRadius）+ 半个环宽 + 边距',
-    /: \(vis\.ringR \|\| 12\)/.test(ul) && /footprintRadius\(vis\.geo, SR\.heightFrac \?\? 0\.35\) \+ ringW \* 0\.5 \+ \(SR\.towerMargin \?\? 3\)/.test(ul));
-  T('环⑤-龙魂环一律圆环（塔身已换成圆底座的雕像塔，没有方塔了）',
-    /this\._flatGeo\('ring', r, ringW\)/.test(ul) && !/squareRing/.test(ul.slice(ul.indexOf('_syncSoulRing(e, en, vis, ghost, ruin) {'), ul.indexOf('_clearInfo(en) {'))));
+    /: \(vis\.ringR \|\| 12\)/.test(ul) && /footprintRadius\(en\.ringGeo \|\| vis\.geo, SR\.heightFrac \?\? 0\.35\) \+ ringW \* 0\.5 \+ \(SR\.towerMargin \?\? 3\)/.test(ul)
+    // 用户："龙魂环的大小以初始模型（正常模型）的大小为基准"——量的是完好模型（intactProxy），不是带碎石的当前几何
+    && /en\.ringGeo = this\._visualOf\(intactProxy\(e\), false, false, null\)\.geo/.test(ul));
+  // 用户（2026-09-27）："龙魂环的显示效果太 low 了，想一个其他显示的方式"——改为元素色魔法阵地纹（soulEmblem.js）
+  T('环⑤-龙魂标识是元素色魔法阵地纹（圆形，不再是细环 / 方环）',
+    /this\._flatMesh\(soulEmblemGeometry\(size\), soulEmblemMaterial\(color\)\)/.test(ul) && !/squareRing/.test(ul.slice(ul.indexOf('_syncSoulRing(e, en, vis, ghost, ruin) {'), ul.indexOf('_clearInfo(en) {'))));
   T('环⑤b-环宽软编码，且比选中光圈的核心环（2.5）细',
     CONFIG.ui.soulRing.towerWidth < 2.5 && CONFIG.ui.soulRing.unitWidth < 2.5 && /_flatGeo\('ring', r, 2\.5\)/.test(ul));
   {
@@ -2429,8 +2432,9 @@ async function world() {
   // 塔的朝向早在 _syncOne 里算好并缓存在 en.faceFixed（同一份值，见"向⑫"那条断言），
   // 这里直接复用，不新算一份、也不新引入字段。圆环各向同性，赋不赋值肉眼看不出区别，
   // 所以直接对两种形状统一赋值，不必为方形单独分支。
-  T('环⑨-龙魂环（含方形）跟随塔朝向：rotation.y 复用 en.faceFixed，且在每帧都重新赋值（不是只在新建时赋一次）',
-    /en\.soul\.position\.set\(e\.pos\.x, RING_LIFT \+ en\.groundY, e\.pos\.y\);\s*\n[\s\S]{0,600}if \(en\.faceFixed !== null && en\.faceFixed !== undefined\) en\.soul\.rotation\.y = en\.faceFixed;/.test(ul));
+  T('环⑨-地纹每帧慢转 + 呼吸（位置 / 旋转 / 亮度每帧都重新赋值），建筑脚下另有往上飘的元素光点',
+    /en\.soul\.position\.set\(e\.pos\.x, RING_LIFT \+ en\.groundY, e\.pos\.y\);\s*\n\s*en\.soul\.rotation\.y = t \* \(SR\.spin/.test(ul)
+    && /soulPulse\(t, SR\.pulseSpeed/.test(ul) && /en\.soulPts = crystalParticles\(color/.test(ul));
 
   // 颜色表本身的行为：每种元素都能查到色值，且与 DRAGON_ELEMENTS 定义的颜色一致
   // （这里直接跑一遍构建函数体同款逻辑核对，不是又对着源码字符串猜）。

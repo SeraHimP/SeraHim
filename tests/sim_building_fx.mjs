@@ -96,6 +96,37 @@ const R = 32, F = { stone: '#b9c6d6', trim: '#eaf2fd' };
     SW.domeR > 0 && SW.alpha <= 0.8 && SW.dustR > 0 && /const dome = new THREE\.Mesh/.test(bf) && /const dustRing = /.test(bf));
 }
 {
+  // 用户："损毁爆炸的动画顶部中间会有一个大白方块出现"——闪白精灵没有贴图，画出来就是一整块正方形
+  const bf = src('presentation/buildingFx.js');
+  T('㉑爆炸闪白带圆形柔光贴图（不是白方块）', /_flashMat\(\) \{ return new THREE\.SpriteMaterial\(\{ map: dotTexture\(\)/.test(bf));
+  // 用户："塔播放损毁动画的时候，游戏会突然卡一下"
+  const ul = src('presentation/UnitLayer.js'), tr = src('presentation/ThreeRenderer.js');
+  T('㉒卡顿①：特效材质在地图加载时预编译（且不释放，否则着色器程序被回收）',
+    /this\.units\.bfx\.prewarm\(this\.gl, this\.camera\)/.test(tr) && /this\._warmKeep = /.test(bf) && !/for \(const m of mats\) if \(m !== unitMaterial\(false\)\) m\.dispose\(\)/.test(bf));
+  T('㉓卡顿②：各损毁档塔身 / 掉块中间态 / 只含立着部分 / 废墟 / 碎片网格在空闲帧里分批预建',
+    /_queueTowerWarm\(e\)/.test(ul) && /this\._runWarm\(\)/.test(ul) && /noRubbleFrom: d - 1/.test(ul) && /standing: true/.test(ul) && /warmPieces\(pb, b\.R\)/.test(ul));
+  // 碎片几何缓存：同一块部件只合并一次，动画结束不释放
+  const prevT = CONFIG.ui.statueTower.style; CONFIG.ui.statueTower.style = 'statue';
+  const { buildingPiecesOf, towerStoneOf } = await import('../src/presentation/UnitMeshFactory.js');
+  const fx = new BuildingFx(new THREE.Scene());
+  const pb = buildingPiecesOf('tower', 32, 'outer', 'blue', towerStoneOf('blue'));
+  fx.warmPieces(pb, 32);
+  const id0 = pb.model.order[0];
+  T('㉔碎片几何按部件缓存（预建后事件里直接取，不再现合并）', fx._pieceGeo(pb, id0) === fx._pieceGeo(pb, id0) && fx._pieceGeo(pb, id0).userData.shared === true);
+  CONFIG.ui.statueTower.style = prevT;
+}
+{
+  // 用户："塔已经损毁掉在地上的部分就不要再施加护盾特效了"
+  const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+  const prevT = CONFIG.ui.statueTower.style; CONFIG.ui.statueTower.style = 'statue';
+  const full = towerMesh('shell|2', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 2, null);
+  const stand = towerMesh('shell|2|st', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 2, { fx: { standing: true } });
+  const ul = src('presentation/UnitLayer.js');
+  T('㉕护盾外壳只包还立着的部分：重损塔的"只含立着部分"几何比完整几何少（地上的碎块不在里面），外壳用它',
+    stand.geo.getAttribute('position').count < full.geo.getAttribute('position').count && /const src = en\.shellGeo \|\| en\.bodyGeo;/.test(ul));
+  CONFIG.ui.statueTower.style = prevT;
+}
+{
   // 用户："塔攻击的时候附近新增那个光晕很丑，删掉。改为进一步加大水晶的亮度"
   const ul = src('presentation/UnitLayer.js');
   const AG = CONFIG.ui.crystal.attackGlow;

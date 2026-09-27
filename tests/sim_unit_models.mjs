@@ -115,6 +115,28 @@ T('⑭巨龙：对角两组腿、双翼扇动、颈头扑咬、尾巴摆', [BONE
   T(`⑯攻击：打出一次就从 0 开始，走完一个攻击动作（${dur.toFixed(2)}s，配置 ${U.anim.attackDur}s）后结束`, a0 === 0 && Math.abs(dur - U.anim.attackDur) < 0.05);
 }
 
+// 用户："小兵移动的时候有腿的单位腿并不会动，看起来就像是平移一样"——根因：渲染帧比仿真步密，
+// 位置没变的那几帧把走路相位 × 0.9 往 0 拉，腿几乎不摆。模拟 120Hz 渲染、60Hz 移动（隔一帧才动一次）：
+{
+  const { UnitLayer } = await import('../src/presentation/UnitLayer.js');
+  const pose = UnitLayer.prototype._updatePose;
+  const e = { pos: { x: 0, y: 0 }, attackCooldown: 0 };
+  const en = { lastX: null, lastZ: null, bodySize: 10 };
+  const phases = [];
+  for (let f = 0; f < 240; f++) {
+    if (f % 2 === 0) e.pos.x += 55 / 60;            // 移速 55，仿真 60Hz
+    pose.call({}, e, en, f / 120);
+    phases.push(en.poseWalkPhase || 0);
+  }
+  const mono = phases.every((p, i) => i === 0 || p >= phases[i - 1] - 1e-9);
+  const cycles = (phases[239] - phases[0]) / (Math.PI * 2);
+  T(`㉘高刷屏上隔帧移动：走路相位一直前进（2 秒迈了 ${cycles.toFixed(1)} 整步）、走路幅度保持在 1（${en.anim.walk.toFixed(2)}）`,
+    mono && cycles > 1.2 && cycles < 6 && en.anim.walk > 0.95);
+  for (let f = 240; f < 360; f++) pose.call({}, e, en, f / 120);   // 停下 1 秒
+  T('㉙停下后走路幅度平滑降到 0（腿收回），相位不再被拉回 0', en.anim.walk < 0.05 && en.poseWalkPhase === phases[239]);
+}
+T('㉚走路时主手（连同武器）小幅摆动，幅度软编码', U.anim.mainArmWalk > 0.6 && animMaterials(true).userData.animUniforms.uAnimK3.value.z === U.anim.mainArmWalk);
+
 // ---- 材质 / 着色器 ----
 {
   const m = animMaterials(true);

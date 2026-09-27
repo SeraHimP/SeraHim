@@ -291,4 +291,21 @@ function fakeCreateMinion(ents, CONFIG) {
   }
 }
 
+
+// ==================== 2026-09-27：基础法力恢复 4、召唤物不拿龙魂 ====================
+{
+  const { CONFIG } = await import('../src/data/Config.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  T('基础法力恢复（baseManaRegenMod）= 4（用户："唤灵兵的基础法力恢复改为4"）', CONFIG.templates.summoner.baseManaRegenMod === 4);
+  // 用户："召唤出的衍生物不获得龙魂"——幻灵 / 牧灵幻兽建兵时就带 _isSummoned，发龙魂的门认它
+  T('召唤物（幻灵 / 牧灵幻兽）不拿龙魂；同类型的普通单位照旧按配置',
+    DragonSystem.SOUL_REWARD_OK({ type: 'summoner' }) === true
+    && DragonSystem.SOUL_REWARD_OK({ type: 'summoner', _isSummoned: true }) === false
+    && DragonSystem.SOUL_REWARD_OK({ type: 'melee', _petOwnerId: 3 }) === false);
+  const fs = await import('fs');
+  const fac = fs.readFileSync(new URL('../src/core/factories.js', import.meta.url), 'utf8');
+  const act = fs.readFileSync(new URL('../src/core/skills/actives.js', import.meta.url), 'utf8');
+  T('幻灵在建兵那一刻就打上 _isSummoned（龙魂是建兵过程中发的，事后再打挡不住）',
+    /mapOpts\?\.summoned \? \{ _isSummoned: true \}/.test(fac) && /createMinion\('melee', self\.pos\.x, self\.pos\.y, faction, scale, scale, \{ summoned: true \}\)/.test(act));
+}
 done();

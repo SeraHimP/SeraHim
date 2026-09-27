@@ -107,7 +107,7 @@ uniform vec4 uAnim;
 #endif
 uniform vec4 uAnimK;   // 腿摆幅, 臂摆幅, 攻击抬手, 攻击劈下
 uniform vec4 uAnimK2;  // 翼扇动幅度, 翼扇动频率, 扑咬幅度, 尾摆幅度
-uniform vec2 uAnimK3;  // 攻击抬手占攻击时长的比例, 劈下占的比例
+uniform vec3 uAnimK3;  // 攻击抬手占攻击时长的比例, 劈下占的比例, 走路时主手（连同武器）摆幅相对臂摆幅的倍数
 mat3 uaRotX(float a) { float c = cos(a), s = sin(a); return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c); }
 mat3 uaRotY(float a) { float c = cos(a), s = sin(a); return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c); }
 mat3 uaRotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }
@@ -138,7 +138,7 @@ void unitAnim(inout vec3 p, inout vec3 n) {
   if (b == 1) R = uaRotX(sin(ph) * uAnimK.x * walk * k);
   else if (b == 2) R = uaRotX(-sin(ph) * uAnimK.x * walk * k);
   else if (b == 3) R = uaRotX(-sin(ph) * uAnimK.y * walk * k * 0.6);
-  else if (b == 4) R = uaRotX(sin(ph) * uAnimK.y * walk * 0.6 + uaSwing(at) * k);
+  else if (b == 4) R = uaRotX(sin(ph) * uAnimK.y * walk * uAnimK3.z + uaSwing(at) * k);
   else if (b == 5) R = uaRotX(ph * k);
   else if (b == 6) off = vec3(0.0, 0.0, -uaPulse(at) * k);
   else if (b == 7) off = vec3(0.0, sin(tm * 2.1 + aPivot.x * 0.37 + aPivot.z * 0.23) * k, 0.0);
@@ -146,7 +146,7 @@ void unitAnim(inout vec3 p, inout vec3 n) {
   else if (b == 9) R = uaRotZ(k * (sin(tm * uAnimK2.y) * uAnimK2.x + uaPulse(at) * uAnimK2.x * 1.6));
   else if (b == 10) R = uaRotX(uaPulse(at) * uAnimK2.z * k);
   else if (b == 11) R = uaRotY((sin(tm * 1.7) * 0.5 + sin(ph) * walk * 0.5) * uAnimK2.w * k);
-  else if (b == 12) R = uaRotX(sin(ph) * uAnimK.y * walk * 0.4 + uaThrust(at) * k);
+  else if (b == 12) R = uaRotX(sin(ph) * uAnimK.y * walk * uAnimK3.z * 0.6 + uaThrust(at) * k);
   p = R * (p - aPivot) + aPivot + off;
   n = R * n;
 }
@@ -157,7 +157,7 @@ function uniformsFromConfig() {
   return {
     uAnimK: { value: new THREE.Vector4(A.legSwing ?? 0.55, A.armSwing ?? 0.35, A.windup ?? 2.0, A.strike ?? 0.6) },
     uAnimK2: { value: new THREE.Vector4(A.wingFlap ?? 0.22, A.wingFreq ?? 2.4, A.bite ?? 0.45, A.tailSway ?? 0.25) },
-    uAnimK3: { value: new THREE.Vector2(A.windupFrac ?? 0.4, A.strikeFrac ?? 0.2) },
+    uAnimK3: { value: new THREE.Vector3(A.windupFrac ?? 0.4, A.strikeFrac ?? 0.2, A.mainArmWalk ?? 0.9) },
   };
 }
 

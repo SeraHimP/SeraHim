@@ -1085,19 +1085,28 @@ export const CONFIG = {
       color: '#7bc96f',      // 与腐蚀 debuff 同色系
       segW: 20, segH: 14,    // 球的经纬分段（低模：要的是团雾不是宝石，面数 ~500）
       renderOrder: 20,
-      domeLift: 0,           // 球心离地高度（0 = 以塔脚为心，上半球罩住射程范围）
-      domeAlphaIdle: 0.045,  // 射程内没兵：较淡的常驻雾区
-      domeAlphaBusy: 0.085,  // 射程内有兵：略浓
+      domeLift: 0,           // 拿不到水晶位置时的球心离地高度（正常以塔杖顶的水晶为心）
+      // 体积雾着色（用户："腐蚀性塔的可视化弹道效果也改为体积雾的，然后每波脉冲那个雾的效果也要做出来"）：
+      // 下面的 alpha 是"不透明度上限"，实际不透明度 = alpha × (1 - exp(-浓度 × 视线穿过的厚度))。
+      domeAlphaIdle: 0.35,   // 射程内没兵：较淡的常驻雾区
+      domeAlphaBusy: 0.55,   // 射程内有兵：略浓
       domeLerp: 3.0,         // 浓淡切换速率（每秒），防止最后一个兵死掉时"啪"地变淡
       maxWaves: 4,           // 每塔同时在飞的雾波上限（网格数封顶，极端攻速也不会堆爆）
       waveLife: 1.1,         // 一波从塔心扩到射程边缘要几秒
-      waveAlpha: 0.22,       // 刚发出时的不透明度（之后按 (1-p)² 衰减）
+      waveAlpha: 0.85,       // 刚发出时的不透明度上限（之后按 (1-p)² 衰减）
       waveStartK: 0.08,      // 起始半径占射程的比例
+      fogDensity: 2.2,       // 常驻雾的浓度（× 视线穿过的厚度 / 半径）
+      waveDensity: 14,       // 脉冲雾浪的浓度
+      waveLighten: 0.4,      // 雾浪比常驻雾亮多少（往白里调），外扩时读得出来
+      coreClear: 0.12,       // 水晶周围留空的半径（× 射程）：塔身不被雾蒙住
+      lowK: 0,               // 毒雾贴地程度：>0 时浓度按 exp(-离地高度 / (半径 × lowK)) 衰减；0 = 以水晶为心的球形雾
+      waveShell: 0.45,       // 雾浪壳的厚度（占当前半径的比例）
+      noiseScale: 0.006,     // 毒雾噪声的世界空间频率（越大雾丝越碎）
     },
-    // v43 Q8：炮口位置微调。水晶类建筑（召唤水晶/水晶枢纽）的宝石本体很大，
-    // 从几何中心出膛看着像"子弹从石头里钻出来"；nexusTopK = 炮口相对中心上移多少个半径。
-    // 0 = 正中心（旧行为），1 = 尖端。
-    muzzle: { nexusTopK: 0.9 },
+    // 召唤水晶 / 水晶枢纽装了武器时的炮口：nexusTopK = 炮口相对水晶中心上移多少个半径（0 = 正中心，1 = 尖端）。
+    // 用户（2026-09-27）："召唤水晶/水晶枢纽如果装配了武器，子弹应该是从水晶的正中心射出来的"——
+    // 以前抬到 0.9（担心从石头里钻出来）；现在水晶悬在建筑上方、四周是空的，从正中心出膛不会穿模。
+    muzzle: { nexusTopK: 0 },
     // v43 Q4：攻击指示红线的样式。**塔与攻城车共用同一份** ——
     // 用户："攻城车的红线样式应该和塔的是一样的"。旧实现两处各写各的
     //（塔 0.5px/α0.5，攻城车 0.9px/α0.55），改一处忘另一处是迟早的事。
@@ -1570,9 +1579,15 @@ export const CONFIG = {
     //   "龙……通过装饰 + 龙的颜色区分"——dragonAccent 是各元素装饰件的点缀色（火焰尖、冰棱、熔岩缝……）；
     //   anim：legSwing 腿摆幅、armSwing 臂摆幅（弧度）；windup / strike 攻击先抬手、再劈下的角度；
     //   windupFrac / strikeFrac 抬手、劈下各占攻击动作的比例；attackDur 攻击动作时长（秒）；
-    //   walkBlend 起步 / 停下的过渡快慢；wingFlap / wingFreq 龙翼扇动幅度与频率；bite 扑咬幅度；tailSway 尾摆幅度。
-    // 龙魂环：建筑按模型贴地那段（底部 heightFrac 高度以内）的外轮廓 + towerMargin 画圆环；环宽 towerWidth / unitWidth
-    soulRing: { heightFrac: 0.35, towerMargin: 3, towerWidth: 2.0, unitWidth: 1.6 },
+    //   walkBlend 起步 / 停下的过渡快慢；wingFlap / wingFreq 龙翼扇动幅度与频率；bite 扑咬幅度；tailSway 尾摆幅度；
+    //   strideK 每走多少倍单位尺寸迈完一整步（走路相位按距离推进）；moveHold 位置多久没变才算停下（秒，渲染帧比仿真步密）；
+    //   mainArmWalk 走路时主手（连同武器）摆幅是臂摆幅的几倍（用户："兵移动的时候，手中的武器也跟随小幅度摆动"）
+    // 龙魂标识（soulEmblem.js）：建筑按完好模型贴地那段（底部 heightFrac 高度以内）的外轮廓 + towerMargin 定半径，
+    // 小兵按单位尺寸；towerWidth / unitWidth 参与半径留边；emblemScale 地纹相对半径的放大；
+    // spin 转速（弧度/秒）、alpha 亮度、pulse / pulseSpeed 呼吸幅度与快慢；motes 建筑脚下是否飘元素光点、
+    // moteRadius 光点散布半径（× 半径）、moteSize 光点大小（世界单位）
+    soulRing: { heightFrac: 0.35, towerMargin: 3, towerWidth: 2.0, unitWidth: 1.6, emblemScale: 1.08,
+                spin: 0.35, alpha: 0.75, pulse: 0.3, pulseSpeed: 1.6, motes: true, moteRadius: 0.75, moteSize: 3 },
     unitModels: {
       order: { armor: '#d6dde6', trim: '#d8b25a', dark: '#2a3446', eye: '#9fe0ff', wood: '#8a6a44', leather: '#6b4f35' },
       chaos: { armor: '#5a3a3e', trim: '#e2d3b0', dark: '#2a1c1f', eye: '#ffb23e', wood: '#4a3328', leather: '#3a2a24' },
@@ -1584,6 +1599,7 @@ export const CONFIG = {
       anim: {
         legSwing: 0.55, armSwing: 0.35, windup: 2.0, strike: 0.6, windupFrac: 0.4, strikeFrac: 0.2,
         attackDur: 0.45, walkBlend: 8, wingFlap: 0.22, wingFreq: 2.4, bite: 0.45, tailSway: 0.25,
+        strideK: 2.6, moveHold: 0.2, mainArmWalk: 0.9,
       },
     },
 
@@ -2122,8 +2138,14 @@ export const CONFIG = {
     baseHeight: 0,          // 世界 Y，雾"根部"高度——贴合地面
     heightFalloff: 0.006,   // 越大雾层越薄越贴地
     density: 0.00028,       // 距离（视空间深度）指数衰减系数
-    noiseScale: 0.004,      // 世界空间噪声频率
-    noiseStrength: 0.5,     // 噪声对浓度的调制幅度，0=纯均匀雾、1=完全由噪声主导
+    // 用户（2026-09-27）："虽然体积雾做出来了，但是看起来很粗糙"——原来 64² 随机值噪声 + 高频（0.004）
+    // = 满屏细颗粒。现在是可平铺的平滑分形噪声（fogNoise.js），频率降到大雾团的尺度，加域扭曲与覆盖阈值。
+    noiseScale: 0.0011,     // 世界空间噪声频率（越小雾团越大）
+    noiseStrength: 0.85,    // 噪声对浓度的调制幅度，0=纯均匀雾、1=完全由噪声主导
+    coverage: [0.32, 0.72], // 噪声 → 浓度的阈值区间：低于前者几乎无雾（淡区），高于后者满浓
+    warpStrength: 0.35,     // 域扭曲强度：把雾团拉成丝缕
+    heightJitter: 40,       // 雾顶随噪声起伏的高度（世界单位）
+    litBoost: 0.18,         // 浓处提亮的幅度（厚雾更亮一点，有体积感）
     noiseSpeed: 4,          // 噪声随真实时间缓慢漂移的速度，让雾"呼吸"，与镜头运动无关
     maxStrength: 0.8,       // 满充能时的视觉浓度上限
     // v54 第二轮重做 §9.3：雾-风联动。用户反馈"雾静止不动看起来很假"——噪声流速
@@ -2133,6 +2155,8 @@ export const CONFIG = {
     windBoostFactor: 2,
     // 沙暴 Signature（sandstormReversal）借用同一条雾通道渲染成沙尘层的颜色。
     sandstormColor: '#c9a15a',
+    sandstormStretch: 2.6,  // 沙暴时噪声沿风向拉长的倍数（一股股沙带）
+    sandstormFlow: 1,       // 沙暴时流速按多大的风算（1 = 满风）
   },
 
   // ==================== 色调映射（tone mapping）====================
@@ -3016,7 +3040,8 @@ export const CONFIG = {
       attackType: 'adaptive', spawnDistance: 300, queueSpacing: 20,
       ...UNIT_STAT_DEFAULTS,
       // 主动技能"唤灵"：法力攒满后召唤一只幻灵，见 actives.js 的 active_summoner_call。
-      maxMana: 120, manaRegen: 2,
+      // baseManaRegenMod（编辑器里叫"基础法力恢复"）：用户（2026-09-27）"唤灵兵的基础法力恢复改为4"
+      maxMana: 120, manaRegen: 2, baseManaRegenMod: 4,
     },
     dragon: {
       label: '巨龙', type: 'dragon',

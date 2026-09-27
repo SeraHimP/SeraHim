@@ -402,7 +402,7 @@ export const actives = {
 
       const faction = self._mapFaction || self.faction;
       const scale = (p.hpScalePct ?? 65) / 100;
-      const spirit = ctx.combat.createMinion('melee', self.pos.x, self.pos.y, faction, scale, scale);
+      const spirit = ctx.combat.createMinion('melee', self.pos.x, self.pos.y, faction, scale, scale, { summoned: true });
       if (!spirit) return false;
       spirit._isSummoned = true;
       spirit._summonDrainPctPerSec = p.drainPctPerSec ?? 7;

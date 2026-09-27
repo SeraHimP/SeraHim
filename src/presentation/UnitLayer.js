@@ -36,7 +36,7 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, currentUnitTint } from './UnitMeshFactory.js';
+import { buildingPiecesOf, towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, currentUnitTint } from './UnitMeshFactory.js';
 import { animMaterials, disposeAnimMaterials, stepAnimState } from './unitRig.js';
 import { BuildingFx } from './buildingFx.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
@@ -48,6 +48,7 @@ import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS } from '../core/reso
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
 import { HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
 import { shellGeometry, shellMaterial, stepShieldState } from './shieldShell.js';
+import { soulEmblemGeometry, soulEmblemMaterial, soulPulse } from './soulEmblem.js';
 
 // ==================== v51.6：龙魂环按元素配色 ====================
 // 用户："获得龙魂的某一方，塔下面都会有光圈。这个光圈的颜色目前是不会变的，
@@ -96,7 +97,6 @@ const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-figh
 // docs/Q4-RENDERING-REDESIGN.md 第 11 节：走路相位推进速度、攻击前后摇/受击反馈的
 // 持续时长。这一步只搭状态管线（en.poseWalkPhase/poseAttackT/poseHitT），Day2 起才会
 // 把它们接进 en.unit 的 scale/rotation——这些常量现在不生效在任何 transform 上。
-const WALK_CYCLE_SPEED = 6.0;    // 走路相位推进速度（弧度/秒），每半个周期一次起伏（对应一步）
 const ATTACK_POSE_DUR = 0.35;    // 攻击前后摇窗口时长（秒）
 const HIT_POSE_DUR = 0.25;       // 受击反馈窗口时长（秒）
 const WALK_BOB_FRAC = 0.05;      // 走路起伏幅度：模型高度(vis.topY)的比例，大小单位手感统一
@@ -123,6 +123,11 @@ const BAR_W = 64, BAR_H = 8;
  * 按几何缓存：同一份塔身几何只量一次。
  */
 const _footprint = new WeakMap();
+/** 同一座塔的"完好"替身：满血、损毁档 0（用来取完好模型的几何，量龙魂环） */
+function intactProxy(e) {
+  return Object.create(e, { _dmgStage: { value: 0 }, currentHP: { value: e.baseStats?.maxHP ?? 1e9 } });
+}
+
 export function footprintRadius(geo, heightFrac) {
   let r = _footprint.get(geo);
   if (r !== undefined) return r;
@@ -226,7 +231,7 @@ export class UnitLayer {
       // 塔基的颜色由 groundHex 决定，而 groundHex 随地图变 —— 必须进 key，
       // 否则切图后会命中上一张图的几何（与下面 paletteId 同一个坑）。
       // 动画中间态也进 key（与损毁档同理：不进 key 会命中别的状态缓存的几何）
-      const fxKey = !fxMode || showRuin ? '' : fxMode.assemble ? '|asm' : fxMode.noRubbleFrom != null ? `|nr${fxMode.noRubbleFrom}` : '';
+      const fxKey = !fxMode || showRuin ? '' : fxMode.assemble ? '|asm' : fxMode.standing ? '|st' : fxMode.noRubbleFrom != null ? `|nr${fxMode.noRubbleFrom}` : '';
       const key = `t|${color}|${wid}|${kind}|${vTier}|${vFac}|${rSize}|${dmg}|${palId}|${foundation ? groundHex : 'nf'}|${transparent ? 'g' : ''}${showRuin ? 'r' : ''}${fxKey}`;
       const stonePal = { stone: pal.towerStone, trim: pal.towerTrim };
       const m = towerMesh(key, color, rSize, wid, kind, transparent, showRuin, vTier, vFac, dmg,
@@ -479,14 +484,15 @@ export class UnitLayer {
     const st = en.shieldSt, now = performance.now();
     const dt = Math.min(0.1, (now - st.t) / 1000); st.t = now;
     const keep = stepShieldState(st, amount, dt);
-    if (!keep || !en.bodyGeo) { this._disposeShieldShell(en); return; }
+    const src = en.shellGeo || en.bodyGeo;
+    if (!keep || !src) { this._disposeShieldShell(en); return; }
     if (!en.shieldShell) {
-      en.shieldShell = new THREE.Mesh(shellGeometry(en.bodyGeo), shellMaterial(en.bodySize || 32));
+      en.shieldShell = new THREE.Mesh(shellGeometry(src), shellMaterial(en.bodySize || 32));
       en.shieldShell.renderOrder = ORDER_UNIT + 1;
       en.shieldShell.layers.set(FX_PARTICLE_LAYER);   // 不进法线深度预渲染（与水晶粒子同理，否则描边会勾出外壳）
       this.scene.add(en.shieldShell); this.infoObjs++;
-    } else if (en.shieldShell.geometry !== shellGeometry(en.bodyGeo)) {
-      en.shieldShell.geometry = shellGeometry(en.bodyGeo);   // 掉档换了塔身几何，外壳跟着换（几何是共享缓存，不释放）
+    } else if (en.shieldShell.geometry !== shellGeometry(src)) {
+      en.shieldShell.geometry = shellGeometry(src);   // 掉档换了塔身几何，外壳跟着换（几何是共享缓存，不释放）
     }
     en.shieldShell.position.set(e.pos.x, y, e.pos.y);
     en.shieldShell.rotation.y = en.faceFixed || 0;
@@ -606,7 +612,7 @@ export class UnitLayer {
     this.map.delete(id);
   }
 
-  clear() { for (const id of [...this.map.keys()]) this.remove(id); }
+  clear() { for (const id of [...this.map.keys()]) this.remove(id); this._warmQ = []; }
 
   dispose() {
     this.clear();
@@ -718,6 +724,7 @@ export class UnitLayer {
 
   _clearSoulRing(en) {
     en.soul = this._removeFlat(en.soul);
+    if (en.soulPts) { this.scene.remove(en.soulPts); en.soulPts.material.dispose(); en.soulPts.geometry.dispose(); en.soulPts = null; }
     en.soulKey = '';
   }
 
@@ -744,27 +751,33 @@ export class UnitLayer {
     const SR = CONFIG.ui?.soulRing || {};
     const ringW = isTowerRing ? (SR.towerWidth ?? 2.0) : (SR.unitWidth ?? 1.6);
     const r = isTowerRing && vis.geo
-      ? footprintRadius(vis.geo, SR.heightFrac ?? 0.35) + ringW * 0.5 + (SR.towerMargin ?? 3)
+      ? footprintRadius(en.ringGeo || vis.geo, SR.heightFrac ?? 0.35) + ringW * 0.5 + (SR.towerMargin ?? 3)
       : (vis.ringR || 12);
-    const key = 'rd|' + r + '|' + ringW + '|' + color;
+    // 龙魂标识：元素色魔法阵地纹（慢转、呼吸）+ 建筑脚下往上飘的元素光点（soulEmblem.js）。
+    // 用户："龙魂环的显示效果太 low 了……能让我知道该单位已经获取了龙魂"——原来是一道和选中光圈同类的细环。
+    const size = r * (SR.emblemScale ?? 1.08);
+    const key = 'em|' + Math.round(size * 10) + '|' + color + '|' + (isTowerRing ? 't' : 'u');
     if (en.soulKey !== key) {
       this._clearSoulRing(en);
       en.soulKey = key;
-      // v51.6 追补：用户"龙魂这个环太粗了，细一些"——3 与选中光圈的核心环（2.5）
-      // 几乎一样粗，两种含义不同的环粗细却分不清，改细一点（1.6）以示区分。
-      // 追加需求：塔这一档又单独加粗到 2.0（见上面 ringW），小兵仍是当初改细的 1.6。
-      en.soul = this._flatMesh(this._flatGeo('ring', r, ringW), this._flatMat(color, 1));
+      en.soul = this._flatMesh(soulEmblemGeometry(size), soulEmblemMaterial(color));
+      if (isTowerRing && (SR.motes ?? true)) {
+        en.soulPts = crystalParticles(color, r * (SR.moteRadius ?? 0.75));
+        en.soulPts.userData.worldSize = SR.moteSize ?? 3;
+        this.scene.add(en.soulPts);
+      }
     }
+    const t = performance.now() / 1000;
     en.soul.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
-    // Q20：蓝方塔的方形龙魂环没有跟随塔的朝向——圆环各向同性转不转都一样，从没人管过
-    // 这个朝向；方框不是，之前干脆没写 rotation.y，永远停在几何体的出厂朝向（0），
-    // 边角就跟塔身的实际朝向对不上。塔的朝向是 en.faceFixed（同一份已算好的值，
-    // 见上面 en.unit.rotation.y = en.faceFixed 那段），这里直接复用，不再另起一份。
-    // 圆环也一并赋值——各向同性下赋不赋都一个样，不必为它单独加分支。
-    // 每帧都要赋（不能只在新建 en.soul 那一次赋）：key 变化时上面会整个换新 Mesh，
-    // 新对象 rotation 归零，只赋一次的话下一次换模型就会"啪"地转回正北，
-    // 与 en.unit.rotation.y 那段的道理完全一样。
-    if (en.faceFixed !== null && en.faceFixed !== undefined) en.soul.rotation.y = en.faceFixed;
+    en.soul.rotation.y = t * (SR.spin ?? 0.35);
+    en.soul.material.opacity = (SR.alpha ?? 0.75) * (1 - (SR.pulse ?? 0.3) + (SR.pulse ?? 0.3) * soulPulse(t, SR.pulseSpeed ?? 1.6));
+    if (en.soulPts) {
+      en.soulPts.visible = this.particlesOn;
+      en.soulPts.position.set(e.pos.x, en.groundY + r * 0.15, e.pos.y);
+      const u = en.soulPts.material.uniforms;
+      u.uSize.value = Math.max(1, Math.min(CONFIG.ui?.crystal?.motes?.maxPx ?? CRYSTAL_PT_MAX_PX, (en.soulPts.userData.worldSize || 3) * this.pxPerUnit));
+      u.uTime.value = t;
+    }
   }
 
   _clearInfo(en) {
@@ -1114,15 +1127,22 @@ export class UnitLayer {
   _updatePose(e, en, tNow) {
     const pdt = Math.max(0, Math.min(0.1, tNow - (en._poseT || tNow))); en._poseT = tNow;
 
-    // 走路相位：只在真的挪动了才推进；停下来时相位按指数衰减慢慢归零，不是瞬间归位
-    // （避免 Day2 接上摆动动画后"一停就僵直"的突兀感）。lastX/lastZ 是本文件早年
-    // 留下但从没被用过的字段（声明了却没人读写），这里把它做实，不新开字段。
+    // 走路相位：按【走过的距离】推进（每走 strideK × 单位尺寸迈完一整步，左右各一次），走得快腿就摆得快。
+    // 用户："小兵移动的时候有腿的单位腿并不会动，看起来就像是平移一样"。原来按时间推进、且"这一帧位置没变"
+    // 就把相位 × 0.9 往 0 拉——渲染帧比仿真步密（高刷屏上两三帧才动一次），相位每隔一帧就被拉回去，
+    // 腿几乎不摆。现在：没动的那几帧相位保持不动；"在走"带一个短暂保持窗口（moveHold 秒）才算停下，
+    // 停下后由平滑的走路幅度（unitRig.stepAnimState）把腿收回。
     const dx = en.lastX === null ? 0 : e.pos.x - en.lastX;
     const dz = en.lastZ === null ? 0 : e.pos.y - en.lastZ;
     en.lastX = e.pos.x; en.lastZ = e.pos.y;
-    const moving = (dx * dx + dz * dz) > 1e-6;
+    const dist = Math.hypot(dx, dz);
+    const AN = CONFIG.ui?.unitModels?.anim || {};
+    en._moveHold = dist > 1e-3 ? (AN.moveHold ?? 0.2) : Math.max(0, (en._moveHold || 0) - pdt);
+    const moving = en._moveHold > 0;
     en.poseMoving = moving;
-    en.poseWalkPhase = moving ? (en.poseWalkPhase || 0) + pdt * WALK_CYCLE_SPEED : (en.poseWalkPhase || 0) * 0.9;
+    if (dist > 1e-3 && dist < (en.bodySize || 10) * 4) {   // 瞬移（复活、编辑器拖动）不算走路
+      en.poseWalkPhase = ((en.poseWalkPhase || 0) + dist / ((AN.strideK ?? 2.6) * (en.bodySize || 10)) * Math.PI * 2) % (Math.PI * 2000);
+    }
 
     // 攻击前后摇：attackCooldown 跳增＝刚打出一次攻击，与水晶充能那段判"刚开了一炮"
     // （en._lastCd/_cdMax）同一手法，这里独立记一份 _poseLastCd，互不干扰。
@@ -1158,6 +1178,7 @@ export class UnitLayer {
 
     // 建筑动画：先认事件、拿到这一帧塔身的画法（掉档中不画新碎块 / 重生拼装中只画主体……）
     const fxMode = e.type === 'tower' ? this.bfx.observe(e, ghost, ruin) : null;
+    if (e.type === 'tower' && !ghost && !en._warmQueued && this.bfx.enabledFor(e)) { en._warmQueued = true; this._queueTowerWarm(e); }
     const vis = this._visualOf(e, ghost, ruin, fxMode);
     if (fxMode) {
       if (vis.crystal) { en.fxCrystal = { lx: vis.crystal.cx || 0, ly: vis.crystal.cy, lz: vis.crystal.cz || 0, r: vis.crystal.r }; en.fxTopY = vis.topY; }
@@ -1185,7 +1206,14 @@ export class UnitLayer {
           en.unit = new InstancedUnitProxy(this.bodyInst);
         }
         en.unit.bindSlot(vis.key, vis.geo, vis.mat, en.isTower);
-        en.bodyGeo = vis.geo; en.bodySize = vis.size;   // 护盾外壳跟着当前塔身几何走
+        en.bodyGeo = vis.geo; en.bodySize = vis.size;
+        // 护盾外壳只包还立着的部分（用户："塔已经损毁掉在地上的部分就不要再施加护盾特效了"）；
+        // 龙魂环按完好模型量外轮廓（用户："龙魂环的大小以初始模型（正常模型）的大小为基准"，
+        // 原来按当前几何量，掉在地上的碎块把环撑大了）
+        if (en.isTower && vis.build && !ghost && !ruin) {
+          en.shellGeo = this._visualOf(e, false, false, { standing: true }).geo;
+          en.ringGeo = this._visualOf(intactProxy(e), false, false, null).geo;
+        } else { en.shellGeo = null; en.ringGeo = null; }
         en.unitIsModel = false;
       } else {
         // 单 Mesh（龙）：从合批槽位切回时重建 Mesh 壳，否则换共享几何/材质引用。
@@ -1278,9 +1306,10 @@ export class UnitLayer {
     // 整体形变，不需要新几何"真正能落地的那部分。幅度按模型高度(vis.topY)取比例：
     // 塔从不挪动，poseWalkPhase 天然趋近 0，不需要额外按类型排除。
     const walkPhase = en.poseWalkPhase || 0;
-    const walkBob = Math.abs(Math.sin(walkPhase)) * (vis.topY || 0) * WALK_BOB_FRAC;
+    const walkAmt = en.anim ? en.anim.walk : 0;   // 起伏 / 侧倾跟着走路幅度一起起停（相位不再归零）
+    const walkBob = Math.abs(Math.sin(walkPhase)) * (vis.topY || 0) * WALK_BOB_FRAC * walkAmt;
     en.unit.position.set(e.pos.x, gy + walkBob + (fxMode?.offsetY || 0) * (vis.topY || 0), e.pos.y);
-    en.unit.rotation.z = Math.sin(walkPhase) * WALK_SWAY_RAD;
+    en.unit.rotation.z = Math.sin(walkPhase) * WALK_SWAY_RAD * walkAmt;
     // 四肢动画参数：走路相位、走路幅度、攻击进度、时间（每个单位错开一点，悬浮件不齐步）
     if (vis.animated) {
       const an = en.anim || { walk: 0, atk: -1 };
@@ -1545,9 +1574,42 @@ export class UnitLayer {
   /**
    * 每帧同步。deps = { entities, attrCalc, effects }；rel = 当前缩放/全图缩放（LOD 用）。
    */
+  /**
+   * 空闲帧预建：一座塔在损毁 / 爆炸 / 重生时要用到的几何（各损毁档塔身、掉块中间态、只含立着部分、
+   * 废墟、重生拼装、碎片网格、护盾外壳）都在它第一次出现后的空闲帧里分批建好。
+   * 用户："塔播放损毁动画的时候，游戏会突然卡一下"——原来这些都是事件那一帧同步现建（每份 7–35ms）。
+   * 同配置的塔共用缓存（towerMesh 按 key 缓存），实际要建的份数不多。
+   */
+  _queueTowerWarm(e) {
+    const q = this._warmQ || (this._warmQ = []);
+    const at = (d) => Object.create(e, { _dmgStage: { value: d }, currentHP: { value: e.baseStats?.maxHP ?? 1e9 } });
+    const orb = e._mapTier === 'nexus_lane';
+    q.push(() => this._visualOf(at(0), false, false, null));
+    for (const d of [1, 2]) {
+      q.push(() => this._visualOf(at(d), false, false, null));
+      q.push(() => this._visualOf(at(d), false, false, { noRubbleFrom: d - 1 }));
+      q.push(() => shellGeometry(this._visualOf(at(d), false, false, { standing: true }).geo));
+    }
+    q.push(() => shellGeometry(this._visualOf(at(0), false, false, { standing: true }).geo));
+    q.push(() => this._visualOf(e, false, true, null));
+    if (orb) q.push(() => this._visualOf(at(0), false, false, { assemble: true }));
+    q.push(() => {
+      const b = this._visualOf(at(0), false, false, null).build;
+      const pb = b && buildingPiecesOf(b.kind, b.R, b.tier, b.faction, b.F);
+      if (pb) this.bfx.warmPieces(pb, b.R);
+    });
+  }
+  _runWarm() {
+    const q = this._warmQ;
+    if (!q || !q.length) return;
+    const t0 = performance.now(), budget = CONFIG.ui?.buildingFx?.warmBudgetMs ?? 3;
+    do { try { q.shift()(); } catch (err) { /* 预建失败不影响游戏，事件发生时照常现建 */ } } while (q.length && performance.now() - t0 < budget);
+  }
+
   update(deps, rel, tNow) {
     this._frame++;
     this.bfx.update();
+    this._runWarm();
     const lodHideBar = rel < 1.35;   // 与 2D 的 lodBars 阈值同值
     const { entities } = deps;
 

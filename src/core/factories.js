@@ -398,6 +398,8 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts) {
   const entity = {
     id: ++CTX._uid,
     type: type,
+    // 召唤物（唤灵兵的幻灵 / 牧灵法阵的幻兽）：建兵时就打标记——下面 equipExistingSoul 发龙魂时要认它
+    ...(mapOpts?.summoned ? { _isSummoned: true } : {}),
     alive: true,
     pos: { x: x || 820, y: y || 400 },
     baseStats: { ...tpl },

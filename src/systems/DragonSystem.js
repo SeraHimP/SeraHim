@@ -284,6 +284,8 @@ export class DragonSystem {
   static SOUL_REWARD_OK(e) {
     if (!e) return false;
     if (e.type === 'dragon') return false;
+    // 召唤物（幻灵 / 牧灵幻兽）不拿龙魂。用户："召唤出的衍生物不获得龙魂"
+    if (e._isSummoned || e._petOwnerId) return false;
     const targets = CONFIG.dragonRewardTargets && CONFIG.dragonRewardTargets.soul;
     if (targets && Object.prototype.hasOwnProperty.call(targets, e.type)) return !!targets[e.type];
     return e.type !== 'melee' && e.type !== 'ranged';

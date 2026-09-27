@@ -36,7 +36,10 @@ export function ramSplashRadius(e, target) {
   return mode === 'siege' ? (R.siegeSplash ?? 75) : (R.normalSplash ?? 25);
 }
 /** 近战单位 = 攻击距离 ≤ 阈值（近战30/超级兵/蚀骨兵 命中；炮车127.5/远程150/塔180 排除） */
-const isMeleeUnit = (e) => !!e && (e.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD;
+// 巨龙一律按近战：它是近身挥击（createDragon 里 bulletSpeed = 0），射程 80 只是"够得着"的距离。
+// 原来只按射程判，80 > 60 于是龙走了远程弹道，弹速取 0 + 星龙之力的 +6 = 6——
+// 用户报"星龙攻击时正常的弹道无法造成伤害……移动的特别特别慢"，就是这发以 6 的速度爬的子弹。
+const isMeleeUnit = (e) => !!e && (e.type === 'dragon' || (e.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD);
 // v2.5D（Q1）：模板未声明 bulletSpeed 的远程单位取此默认弹速（与防御塔同值）。
 // 想给某兵种单独手感，在 Config 模板里补 bulletSpeed 即可覆盖，此处无需再改。
 // 本轮搬进 CONFIG.tuning.defaultBulletSpeed（软编码唯一来源，属性面板也读同一个值，
@@ -848,7 +851,11 @@ export class CombatSystem {
         startY: attacker.pos.y,
         attackerId: attacker.id,   // v43 P0-③：渲染层按 id 取炮口高度（坐标反查已删）
         targetId: target.id,
-        speed: atkStats.bulletSpeed || (CONFIG.tuning?.defaultBulletSpeed ?? 400),
+        // 模板没声明弹速（基础 0 / 未定义）的单位：默认弹速 + 各种弹速加成。原来是"算出来的弹速非 0 就直接用"，
+        // 基础 0 + 一点加成（星龙之力 +6）就会得到一发几乎不动的子弹。
+        speed: (attacker.baseStats?.bulletSpeed > 0)
+          ? (atkStats.bulletSpeed || (CONFIG.tuning?.defaultBulletSpeed ?? 400))
+          : (CONFIG.tuning?.defaultBulletSpeed ?? 400) + Math.max(0, atkStats.bulletSpeed || 0),
         color: bulletColor,
         size: attacker.type === 'tower' ? 20 : 12, // 渲染尺寸：小兵/巨龙弹丸比塔弹小一号
         kind: attacker.type,                        // 渲染层按开火者分形（塔 / 远程兵 / 炮车 / 术士……），开火时快照

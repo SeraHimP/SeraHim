@@ -103,8 +103,9 @@ export function createSimulation({ log = () => {} } = {}) {
       templateOverride: mapSystem.currentMap?.minionTemplates?.[type],
     }));
   // 唤灵兵召唤幻灵：不带波次成长，不挂路（幻灵不推线）。
-  combatSystem.setCreateMinion((type, x, y, faction, hpScale, attrScale) =>
-    createMinion(type, x, y, hpScale, attrScale, { faction }));
+  // extra.summoned：召唤物（幻灵 / 牧灵幻兽）——建兵时就打上标记，龙魂发放在建兵过程中，事后再打就挡不住了
+  combatSystem.setCreateMinion((type, x, y, faction, hpScale, attrScale, extra) =>
+    createMinion(type, x, y, hpScale, attrScale, { faction, summoned: !!extra?.summoned }));
   // 水晶之痕出兵：据点有自己的出兵节奏，不挂 laneWaveSystem 的成长曲线。
   dominionSystem.setCreateMinion((type, x, y, faction, laneId, direction) =>
     createMinion(type, x, y, 1, 1, { faction, laneId, direction }));

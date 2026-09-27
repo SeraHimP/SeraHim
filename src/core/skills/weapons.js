@@ -1058,7 +1058,7 @@ export const weapons = {
         const standoff = towerR + (p.idleClearance ?? 40);
         const spirit = ctx.combat.createMinion('melee',
           tower.pos.x + Math.cos(angle) * standoff, tower.pos.y + Math.sin(angle) * standoff,
-          faction, 1, 1);
+          faction, 1, 1, { summoned: true });
         if (spirit) {
           // createMinion 按 type:'melee' 自动挂了近战兵的默认主动/被动（本能防御
           // 等）——用户定稿"不要复用近战兵的"，生成后立刻摘掉，只留幻兽自己的

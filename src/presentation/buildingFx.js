@@ -20,7 +20,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
-import { buildingPiecesOf, mergeParts, unitMaterial } from './UnitMeshFactory.js';
+import { buildingPiecesOf, mergeParts, unitMaterial, dotTexture } from './UnitMeshFactory.js';
 import { hash01, partsBox } from './towerStatue.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 
@@ -139,13 +139,75 @@ export class BuildingFx {
     this.scene.add(g);
     return g;
   }
-  _pieceMesh(parts) {
-    const mesh = new THREE.Mesh(mergeParts(parts, false), unitMaterial(false));
+  /**
+   * 部件网格。同一座塔的同一块部件几何只合并一次（缓存在 pieces 对象上），动画结束不释放——
+   * 事件发生那一刻临时合并几十块部件是损毁 / 爆炸时卡一下的来源之一，UnitLayer 在空闲帧里预先合并好。
+   */
+  _pieceGeo(pb, id) {
+    const c = pb._geoCache || (pb._geoCache = new Map());
+    let g = c.get(id);
+    if (!g) { g = mergeParts(id === '__ruin' ? pb.ruin : pb.model.pieceParts(id), false); g.userData.shared = true; c.set(id, g); }
+    return g;
+  }
+  /** 主体按高度切成"石台"与"石台以上"两截（爆炸时石台留下、上半截倒下），两截几何同样缓存 */
+  _baseSplit(pb, low) {
+    const key = '__split' + low.toFixed(3);
+    const c = pb._geoCache || (pb._geoCache = new Map());
+    if (!c.has(key)) {
+      const lo = pb.model.base.filter((p) => partsBox([p]).max.y <= low), hi = pb.model.base.filter((p) => partsBox([p]).max.y > low);
+      const g1 = mergeParts(lo, false); g1.userData.shared = true; c.set(key + 'lo', g1);
+      if (hi.length) { const g2 = mergeParts(hi, false); g2.userData.shared = true; c.set(key + 'hi', g2); }
+      c.set(key, true);
+    }
+    return { plinth: key + 'lo', upper: c.has(key + 'hi') ? key + 'hi' : null };
+  }
+  /** 预先合并一座建筑的所有部件几何（空闲帧里调用） */
+  warmPieces(pb, R) {
+    for (const id of pb.model.order) this._pieceGeo(pb, id);
+    if (pb.ruin) this._pieceGeo(pb, '__ruin');
+    if (R) this._baseSplit(pb, R * (cfg().explode?.plinthBelow ?? 0.5));
+  }
+  _pieceMesh(parts, pb = null, id = null) {
+    const mesh = new THREE.Mesh(pb ? this._pieceGeo(pb, id) : mergeParts(parts, false), unitMaterial(false));
     mesh.matrixAutoUpdate = false;
     mesh.castShadow = true;
     return mesh;
   }
+  // ---------- 特效材质：播放与预热走同一组工厂，参数一致，预热编译好的着色器程序才能被复用 ----------
   _puffMat(hex, opacity) { return new THREE.MeshLambertMaterial({ color: hex, transparent: true, opacity, depthWrite: false, flatShading: true }); }
+  _shardMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 1 }); }
+  _ringMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }); }
+  _dustRingMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, depthWrite: false, side: THREE.DoubleSide }); }
+  // 闪白必须带圆形柔光贴图：没贴图的精灵就是一整块正方形（用户："顶部中间会有一个大白方块"）
+  _flashMat() { return new THREE.SpriteMaterial({ map: dotTexture(), color: '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 }); }
+  _domeMat(SW) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(SW.color || '#fff4dc') }, uAlpha: { value: 0 }, uRim: { value: SW.rim ?? 2.2 } },
+      vertexShader: 'varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+      fragmentShader: 'uniform vec3 uColor; uniform float uAlpha; uniform float uRim; varying vec3 vN; varying vec3 vV; void main(){ float r = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uRim); gl_FragColor = vec4(uColor, r * uAlpha); }',
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    });
+  }
+
+  /**
+   * 预热：把掉块 / 爆炸 / 重生用到的每种特效材质先编译一遍（地图加载时调一次）。
+   * 用户："塔播放损毁动画的时候，游戏会突然卡一下"——这些材质都是事件那一刻才第一次出现，
+   * 着色器首次编译链接在真实显卡上要几十到几百毫秒，就卡在那一帧。
+   */
+  prewarm(renderer, camera) {
+    if (!renderer?.compile || this._warmKeep) return;
+    const g = new THREE.Group(), geo = new THREE.BoxGeometry(1, 1, 1);
+    const SW = cfg().explode?.shock || {};
+    const mats = [this._puffMat('#888888', 0.5), this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), unitMaterial(false)];
+    for (const m of mats) g.add(new THREE.Mesh(geo, m));
+    const sp = new THREE.Sprite(this._flashMat()); sp.layers.set(FX_PARTICLE_LAYER); g.add(sp);
+    g.position.set(0, -9999, 0);
+    this.scene.add(g);
+    try { renderer.compile(this.scene, camera); } catch (e) { /* 预热失败不影响游戏，照常在首次播放时编译 */ }
+    this.scene.remove(g);
+    // 材质不释放：three 按引用计数回收着色器程序，释放了预热就白做了（留着的只有七个小对象）
+    this._warmKeep = { geo, mats, sp };
+  }
 
   // ---------- ① 掉档 ----------
   _spawnChunks(ev, pb, info) {
@@ -154,7 +216,7 @@ export class BuildingFx {
     const ids = pb.stages[ev.to].filter((id) => !old.has(id));
     const root = this._root(info);
     const items = ids.map((id, i) => {
-      const mesh = this._pieceMesh(pb.model.pieceParts(id));
+      const mesh = this._pieceMesh(null, pb, id);
       root.add(mesh);
       return { mesh, rp: pb.model.rubbleParams(id), seed: i * 1.7, delay: hash01(i, 71) * (cfg().chunkFall?.stagger ?? 0.12) };
     });
@@ -195,7 +257,7 @@ export class BuildingFx {
     const [ra, rb] = E.rubbleRise || [0.35, 0.85];
     // 还在的部件：向外飞散、翻滚、落地停住，最后缩没（碎石堆接手）
     const flying = pb.model.order.filter((id) => !gone.has(id)).map((id, i) => {
-      const mesh = this._pieceMesh(pb.model.pieceParts(id));
+      const mesh = this._pieceMesh(null, pb, id);
       root.add(mesh);
       const c0 = new THREE.Vector3(); partsBox(pb.model.pieceParts(id)).getCenter(c0);
       const dir = new THREE.Vector3(c0.x, 0, c0.z);
@@ -208,9 +270,9 @@ export class BuildingFx {
     });
     // 主体：石台留在原地；石台以上（立柱 + 雕像身体）整截朝一个方向倒下、陷进地里
     const low = R * (E.plinthBelow ?? 0.5);
-    const plinth = this._pieceMesh(pb.model.base.filter((p) => partsBox([p]).max.y <= low));
-    const upper = pb.model.base.filter((p) => partsBox([p]).max.y > low);
-    const body = upper.length ? this._pieceMesh(upper) : null;
+    const split = this._baseSplit(pb, low);
+    const plinth = this._pieceMesh(null, pb, split.plinth);
+    const body = split.upper ? this._pieceMesh(null, pb, split.upper) : null;
     root.add(plinth); plinth.matrix.identity();
     if (body) root.add(body);
     const H = info.topY || R * 3;
@@ -218,12 +280,13 @@ export class BuildingFx {
     const tipAxis = new THREE.Vector3(Math.cos(tipA + Math.PI / 2), 0, Math.sin(tipA + Math.PI / 2));
     // 闪白 + 水晶碎片（从水晶所在位置炸开）
     const cp = info.crystal ? new THREE.Vector3(info.crystal.lx, info.crystal.ly, info.crystal.lz) : new THREE.Vector3(0, H * 0.8, 0);
-    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ color: '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 }));
+    const flash = new THREE.Sprite(this._flashMat());
+    flash.layers.set(FX_PARTICLE_LAYER);
     flash.position.copy(cp); root.add(flash);
     const shards = [];
     const nS = E.shards ?? 10, cr = info.crystal?.r || R * 0.3;
     for (let i = 0; i < nS; i++) {
-      const sh = new THREE.Mesh(new THREE.OctahedronGeometry(cr * 0.28, 0), new THREE.MeshBasicMaterial({ color: info.color, transparent: true, opacity: 1 }));
+      const sh = new THREE.Mesh(new THREE.OctahedronGeometry(cr * 0.28, 0), this._shardMat(info.color));
       const a = i / nS * Math.PI * 2, el = (hash01(i, 91) - 0.3) * 1.2;
       sh.userData.v = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el) + 0.4, Math.sin(a) * Math.cos(el)).multiplyScalar(R * (E.shardSpeed ?? 3.2));
       sh.position.copy(cp); root.add(sh); shards.push(sh);
@@ -232,16 +295,11 @@ export class BuildingFx {
     // 用户："爆炸的时候塔应该产生可视化冲击波"。壳只有边缘亮（视线掠过的地方），中间透明，
     // 普通混合 + 不透明度封顶，不会像护盾受击那次一样晃眼。
     const SW = E.shock || {};
-    const ring = new THREE.Mesh(new THREE.RingGeometry(SW.ringInner ?? 0.55, 1, 48), new THREE.MeshBasicMaterial({ color: E.ringColor || '#fff2d6', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(SW.ringInner ?? 0.55, 1, 48), this._ringMat(E.ringColor || '#fff2d6'));
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.6; root.add(ring);
-    const dustRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 48), new THREE.MeshBasicMaterial({ color: SW.dustColor || '#b9ab93', transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+    const dustRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 48), this._dustRingMat(SW.dustColor || '#b9ab93'));
     dustRing.rotation.x = -Math.PI / 2; dustRing.position.y = 0.4; root.add(dustRing);
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(SW.color || '#fff4dc') }, uAlpha: { value: 0 }, uRim: { value: SW.rim ?? 2.2 } },
-      vertexShader: 'varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
-      fragmentShader: 'uniform vec3 uColor; uniform float uAlpha; uniform float uRim; varying vec3 vN; varying vec3 vV; void main(){ float r = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uRim); gl_FragColor = vec4(uColor, r * uAlpha); }',
-      transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    }));
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), this._domeMat(SW));
     dome.layers.set(FX_PARTICLE_LAYER); root.add(dome);
     // 烟尘：一圈灰团往外、往上扩散后淡掉
     const puffs = [];
@@ -277,7 +335,7 @@ export class BuildingFx {
       }
       plinth.visible = x < rb;   // 碎石堆（含开裂的石台）升到位之后换它接手
       const fu = seg(x, 0, E.flash ?? 0.22);
-      flash.material.opacity = Math.sin(Math.PI * fu);
+      flash.material.opacity = Math.sin(Math.PI * fu) * (E.flashAlpha ?? 0.9);
       const fs = cr * (1 + fu * 5);
       flash.scale.set(fs, fs, fs);
       for (const sh of shards) {
@@ -320,11 +378,11 @@ export class BuildingFx {
     const R = info.build.R;
     const root = this._root(info);
     // 碎石堆：沉下去
-    const pile = this._pieceMesh(pb.ruin);
+    const pile = this._pieceMesh(null, pb, '__ruin');
     root.add(pile);
     // 部件：从各自的碎块位置倒着飞回原位（掉档动画倒放）
     const items = pb.model.order.map((id, i) => {
-      const mesh = this._pieceMesh(pb.model.pieceParts(id));
+      const mesh = this._pieceMesh(null, pb, id);
       root.add(mesh);
       return { mesh, rp: pb.model.rubbleParams(id), seed: i * 1.3, delay: hash01(i, 61) * 0.15 };
     });
@@ -365,7 +423,7 @@ export class BuildingFx {
     this.scene.remove(a.root);
     a.root.traverse((o) => {
       if (o.isMesh || o.isSprite) {
-        o.geometry?.dispose?.();
+        if (!o.geometry?.userData?.shared) o.geometry?.dispose?.();
         if (o.material && o.material !== unitMaterial(false)) o.material.dispose();
       }
     });
