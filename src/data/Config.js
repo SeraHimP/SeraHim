@@ -1226,11 +1226,9 @@ export const CONFIG = {
       //   glow 亮度倍数（> 1 才会被辉光抓到）；maxPx 光点屏幕尺寸上限（像素）
       motes: { count: 28, radius: [0.8, 2.0], speed: [0.16, 0.32], rise: 2.6, below: 1.0, swirl: 0.9,
                twinkle: 5.0, size: 0.5, whiteMix: 0.45, glow: 1.8, maxPx: 12 },
-      // 水晶光晕（用户："防御塔攻击时水晶的发光特效太不明显了"）。大小 × 水晶半径：
-      //   平时 idleScale、充能满再加 chargeScale、开火那一下再鼓 pulseScale（pulseDur 秒收回）；
-      //   透明度同理三段相加，封顶 maxAlpha（不晃眼）；emissivePulse 开火时水晶自身自发光再加多少
-      halo: { enabled: true, idleScale: 2.6, chargeScale: 1.0, pulseScale: 2.4, idleAlpha: 0.22, chargeAlpha: 0.3,
-              pulseAlpha: 0.55, maxAlpha: 0.85, pulseDur: 0.35, emissivePulse: 0.8 },
+      // 攻击时水晶自身变亮（用户先嫌"发光特效太不明显"，加过一圈外部光晕后又说"光晕很丑，删掉。改为进一步加大水晶的亮度"）：
+      //   chargeBoost 充能对自发光的加成再乘多少；emissivePulse 开火那一下自发光再加多少；pulseDur 这一下多久收回（秒）
+      attackGlow: { chargeBoost: 1.6, emissivePulse: 2.2, pulseDur: 0.35 },
     },
     // ==================== v55.9：水晶边缘发光描边（Fresnel rim）====================
     // 用户反馈"水晶材质像塑料片"，选定方向"边缘发光描边"——见
@@ -1290,13 +1288,16 @@ export const CONFIG = {
     //   命中效果做过一版，用户实机看后"命中特效太显眼了……不要命中特效了"，已删。
     //   tower：塔弹光晕大小（× 弹径）、拖尾长度（× 弹径）、命中后拖尾淡出时长（秒）与淡出曲线指数（越大前段掉得越快）
     //   minion：实体弹头大小（× 弹径）、长宽比、弹头偏白多少、残影颗数与间距（× 弹头大小）
-    //   siege：哪些兵种走抛物线石弹、抛高（× 弹道长度，封顶 arcMax 世界单位）、石块大小、烟团数
+    //   siege：kinds 哪些兵种走抛物线（只有攻城车，炮车直线）、stoneKinds 哪些兵种画石弹、stoneScale 各自的石块缩放、
+    //          抛高（× 弹道长度，封顶 arcMax 世界单位）、石块大小、烟团数
+    //   towerOnTowerK：塔打塔时瞄准目标塔身高的几成（0.5 = 中心）；小兵 / 龙打出的弹道不高于自己的炮口（打塔是水平的）
     //   warlock：术士弹绕转光点的颗数、半径（× 弹头大小）、转速、颜色
     //   breath：巨龙吐息的开关、时长（秒）、碎块数、大小与散布（× 龙体大小的一半）、拖后比例、芯色
     projectileFx: {
-      tower: { haloK: 1.25, trailLen: 4.2, trailFade: 0.5, trailFadePow: 1 },
-      minion: { sizeK: 0.3, boltLen: 1.9, boltWidth: 0.65, headWhite: 0.3, afterimages: 4, spacing: 1.6 },
-      siege: { kinds: ['siege', 'ram'], arcK: 0.3, arcMax: 70, stoneK: 0.42, smoke: 6, stoneColor: '#3c3a38', smokeColor: '#a89a86' },
+      tower: { haloK: 1.25, trailLen: 4.2, trailFade: 0.15, trailFadePow: 1 },
+      towerOnTowerK: 0.5,
+      minion: { sizeK: 0.26, boltLen: 1.9, boltWidth: 0.65, headWhite: 0.3, afterimages: 4, spacing: 1.6 },
+      siege: { kinds: ['ram'], stoneKinds: ['siege', 'ram'], stoneScale: { siege: 0.7, ram: 0.88 }, arcK: 0.3, arcMax: 70, stoneK: 0.42, smoke: 6, stoneColor: '#3c3a38', smokeColor: '#a89a86' },
       warlock: { motes: 3, radius: 2.2, spin: 8, moteColor: '#e0b0ff' },
       breath: { enabled: true, dur: 0.32, chunks: 7, size: 0.5, spread: 0.25, lag: 0.45, coreColor: '#fff0c0' },
     },
@@ -1539,7 +1540,12 @@ export const CONFIG = {
       chunkFall: { dur: 0.8, shake: 0.18, shakeAmp: 0.03, fallEnd: 0.8, hop: 0.12, bounce: 0.08, stagger: 0.12, dust: 3 },
       explode: { dur: 1.5, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 10, shardSpeed: 3.2,
                  speed: 2.4, up: 2.2, spin: 9, gravity: 9, topple: [0.08, 0.7], rubbleRise: [0.35, 0.85],
-                 plinthBelow: 0.5, smoke: 9, smokeColor: '#8d8579' },
+                 plinthBelow: 0.5, smoke: 9, smokeColor: '#8d8579',
+                 // 冲击波（用户："爆炸的时候塔应该产生可视化冲击波"）：ringInner 地面光环内径比例；
+                 // dome 半球壳播放区间、domeR 最大半径（× 建筑半径）、domeFlat 压扁比例、alpha 边缘不透明度上限、rim 边缘锐度；
+                 // dust 尘浪播放区间、dustR 最大半径、dustColor 颜色
+                 shock: { ringInner: 0.55, dome: [0.02, 0.5], domeR: 2.4, domeFlat: 0.7, alpha: 0.75, rim: 2.2, color: '#fff4dc',
+                          dust: [0.08, 0.8], dustR: 3.3, dustColor: '#b9ab93' } },
       respawn: { dur: 1.5, pileSink: [0, 0.5], fly: [0.1, 0.8], baseRise: [0, 0.45], crystal: [0.75, 1.0] },
     },
 
@@ -1565,6 +1571,8 @@ export const CONFIG = {
     //   anim：legSwing 腿摆幅、armSwing 臂摆幅（弧度）；windup / strike 攻击先抬手、再劈下的角度；
     //   windupFrac / strikeFrac 抬手、劈下各占攻击动作的比例；attackDur 攻击动作时长（秒）；
     //   walkBlend 起步 / 停下的过渡快慢；wingFlap / wingFreq 龙翼扇动幅度与频率；bite 扑咬幅度；tailSway 尾摆幅度。
+    // 龙魂环：建筑按模型贴地那段（底部 heightFrac 高度以内）的外轮廓 + towerMargin 画圆环；环宽 towerWidth / unitWidth
+    soulRing: { heightFrac: 0.35, towerMargin: 3, towerWidth: 2.0, unitWidth: 1.6 },
     unitModels: {
       order: { armor: '#d6dde6', trim: '#d8b25a', dark: '#2a3446', eye: '#9fe0ff', wood: '#8a6a44', leather: '#6b4f35' },
       chaos: { armor: '#5a3a3e', trim: '#e2d3b0', dark: '#2a1c1f', eye: '#ffb23e', wood: '#4a3328', leather: '#3a2a24' },

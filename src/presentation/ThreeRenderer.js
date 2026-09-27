@@ -236,7 +236,13 @@ export class ThreeRenderer {
     // 切图后地面必须整体重建（贴图尺寸、世界尺寸都变了）
     eventBus?.on?.('map:loaded', () => { this._loadMaterials(ThreeRenderer.themeOf(mapSystem?.currentMap), mapSystem?.currentMap); this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty(); this._torchPts = null; });
     // 清理保险 A：死亡事件即时删（保险 B = UnitLayer.update 里的帧戳兜底扫描）
-    eventBus?.on?.('entity:death', ({ entityId }) => this.units.remove(entityId));
+    // 塔死后留成废墟（EntityContainer.purgeDead 豁免它），渲染条目不能在死亡这一刻摘掉：
+    // 摘掉会连带 bfx.forget，下一帧废墟被当成"第一次见到"，被摧毁的爆炸就永远不播
+    // （用户："塔生命值掉光爆炸的动画没有"）。废墟由 UnitLayer.update 的死亡结构扫描接着画。
+    eventBus?.on?.('entity:death', ({ entityId }) => {
+      if (this.deps?.entities?.get?.(entityId)?.type === 'tower') return;
+      this.units.remove(entityId);
+    });
   }
 
   /**

@@ -71,6 +71,37 @@ const R = 32, F = { stone: '#b9c6d6', trim: '#eaf2fd' };
   const ul = src('presentation/UnitLayer.js'), um = src('presentation/UnitMeshFactory.js');
   T('⑭动画中间态进了几何缓存 key（不会命中别的状态的几何）', /fxKey/.test(ul) && /\|asm/.test(ul) && /\|nr\$\{fxMode\.noRubbleFrom\}/.test(ul));
   T('⑮动画里飞的部件与模型同一份（buildingPiecesOf 缓存）', /export function buildingPiecesOf/.test(um) && /buildingPiecesOf\(kind, R, tier, faction, F\)/.test(um));
+  // 用户："塔损毁掉渣的动画是正常的，但是塔生命值掉光爆炸的动画没有，你是没做还是 bug"——是 bug：
+  // ThreeRenderer 收到 entity:death 就 units.remove(id)，连带 bfx.forget，下一帧废墟被当成"第一次见到"，不播。
+  const tr = src('presentation/ThreeRenderer.js');
+  T('⑯死亡事件不摘塔的渲染条目（塔死后留成废墟，爆炸状态不能被忘掉）',
+    /entity:death'[\s\S]{0,400}type === 'tower'\) return;\s*this\.units\.remove\(entityId\)/.test(tr));
+  T('⑰刚死、还没打上 _ruin 的塔也按废墟同步（不断帧，兜底扫描不会删掉它）',
+    /if \(c\._respawnAt\) this\._syncOne\(c, true[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*else this\._syncOne\(c, false, deps, lodHideBar, tNow, true\);/.test(ul));
+}
+{
+  // 真的走一遍：活着见过 → 死了 → 认出爆炸（与 UnitLayer 在死亡前后连续调用 observe 的顺序一致）
+  const prevT = CONFIG.ui.statueTower.style; CONFIG.ui.statueTower.style = 'statue';
+  const fx = new BuildingFx(new THREE.Scene());
+  const e = { id: 7, type: 'tower', _mapTier: 'outer', alive: true, currentHP: 100, baseStats: { maxHP: 100 } };
+  fx.observe(e, false, false);
+  e.alive = false; e.currentHP = 0;
+  const m = fx.observe(e, false, true);
+  T('⑱活着见过的塔一死就播爆炸（废墟从地下拱出）', fx.byId.get(7).events.some((ev) => ev.type === 'explode') && m.offsetY < 0);
+  CONFIG.ui.statueTower.style = prevT;
+  // 冲击波（用户："爆炸的时候塔应该产生可视化冲击波"）
+  const SW = CONFIG.ui.buildingFx.explode.shock;
+  const bf = src('presentation/buildingFx.js');
+  T('⑲爆炸带冲击波：地面光环 + 尘浪 + 半球冲击波壳（边缘亮、不透明度封顶、不叠加混合），参数软编码',
+    SW.domeR > 0 && SW.alpha <= 0.8 && SW.dustR > 0 && /const dome = new THREE\.Mesh/.test(bf) && /const dustRing = /.test(bf));
+}
+{
+  // 用户："塔攻击的时候附近新增那个光晕很丑，删掉。改为进一步加大水晶的亮度"
+  const ul = src('presentation/UnitLayer.js');
+  const AG = CONFIG.ui.crystal.attackGlow;
+  T('⑳塔攻击的外部光晕已删，改为水晶自身更亮（充能加成 × chargeBoost、开火再加 emissivePulse）',
+    !/crystalHalo/.test(ul) && CONFIG.ui.crystal.halo === undefined && AG.chargeBoost > 1 && AG.emissivePulse > 0.8
+    && /chargeE \* \(HL\.chargeBoost/.test(ul));
 }
 
 done();

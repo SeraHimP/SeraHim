@@ -301,7 +301,8 @@ function mkWorld() {
   // 因为按坐标查高度那条路整个删掉了。断言意图不变，只换匹配式。
   T('没有快照时用 ProjectileSystem 冻结的最后落点补一张（否则子弹平飞）',
     /else if \(!snap && p\.lastTx != null\) \{/.test(src)
-    && /snap = \{ x: p\.lastTx, y: p\.lastTy, h: endHeightOf\(p, p\.targetId\) \};/.test(src));
+    // 2026-09-27：落点高度改由 shotEndH 按攻击者 / 目标类型算（小兵打塔水平、塔打塔瞄中心），意图不变
+    && /snap = \{ x: p\.lastTx, y: p\.lastTy, h: shotEndH\(tgtE\?\.type\) \};/.test(src));
   T('注释写清了为什么"目标活着时先记一笔"这条路走不通', /中间根本没轮到一次渲染帧/.test(src));
 }
 

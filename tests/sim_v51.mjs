@@ -2373,6 +2373,7 @@ async function world() {
 {
   const ul = srcOf('src/presentation/UnitLayer.js');
   const { DRAGON_ELEMENTS } = await import('../src/systems/DragonSystem.js');
+  const { CONFIG } = await import('../src/data/Config.js');
 
   T('环①-龙魂环颜色表按 DRAGON_ELEMENTS 的 color 构建（不是写死的金色）',
     /const SOUL_COLORS = \(\(\) => \{/.test(ul) && /m\[el\.soul\] = el\.color;/.test(ul));
@@ -2381,21 +2382,30 @@ async function world() {
   T('环③-龙魂环走独立的 _syncSoulRing，不再挤在"仅活体塔"的 _syncTowerInfo 里',
     /_syncSoulRing\(e, en, vis, ghost, ruin\)/.test(ul)
     && !/_syncTowerInfo[\s\S]{0,2000}dragonsoul_/.test(ul));
-  T('环④-尺寸走 vis.ringR（与选中光圈同一个"自适应单位大小"的值），不是写死的 32',
-    /const r = vis\.ringR \|\| 12;/.test(ul));
-  T('环⑤-默认都用圆环，只有蓝方阶梯方塔（outer/inner/base）才额外适配成方形环',
-    /const isNexusTier = e\._mapTier === 'nexus_lane' \|\| e\._mapTier === 'nexus_main';/.test(ul)
-    && /const square = e\.type === 'tower' && faction === 'blue' && !isNexusTier;/.test(ul)
-    && /_flatGeo\(square \? 'squareRing' : 'ring', r, ringW\)/.test(ul));
-  T('环⑤c-蓝方召唤水晶/水晶枢纽（圆形基座）被排除在方环之外，不会跟着阶梯方塔一起被套成方形',
-    /!isNexusTier/.test(ul) && /e\._mapTier === 'nexus_lane' \|\| e\._mapTier === 'nexus_main'/.test(ul));
-  T('环⑤b-环宽比选中光圈的核心环（2.5）细，两种含义不同的环能区分粗细（用户报"太粗了"）',
-    /_flatGeo\(square \? 'squareRing' : 'ring', r, ringW\)/.test(ul)
-    && /_flatGeo\('ring', r, 2\.5\)/.test(ul));
-  T('环⑤d-追加需求：塔的龙魂环单独收小半径(×0.85)+加粗(2.0)，小兵维持原样(×1, 1.6)',
-    /const isTowerRing = e\.type === 'tower';/.test(ul)
-    && /const r = \(vis\.ringR \|\| 12\) \* \(isTowerRing \? 0\.85 : 1\);/.test(ul)
-    && /const ringW = isTowerRing \? 2\.0 : 1\.6;/.test(ul));
+  // 用户（2026-09-27）："水晶枢纽/召唤水晶模型大小改了，导致可视龙魂环被挡住了……蓝方的塔重做了之后，
+  // 龙魂环应该也相应改为圆形的……龙魂环应该是根据模型的外轮廓自适应显示的"。原来塔按碰撞半径 × 0.85、
+  // 蓝方阶梯塔用方环（环④⑤⑤c⑤d 钉的是那一版），现在建筑一律圆环、半径按模型贴地那段的外轮廓量。
+  T('环④-小兵走 vis.ringR；建筑按模型外轮廓（footprintRadius）+ 半个环宽 + 边距',
+    /: \(vis\.ringR \|\| 12\)/.test(ul) && /footprintRadius\(vis\.geo, SR\.heightFrac \?\? 0\.35\) \+ ringW \* 0\.5 \+ \(SR\.towerMargin \?\? 3\)/.test(ul));
+  T('环⑤-龙魂环一律圆环（塔身已换成圆底座的雕像塔，没有方塔了）',
+    /this\._flatGeo\('ring', r, ringW\)/.test(ul) && !/squareRing/.test(ul.slice(ul.indexOf('_syncSoulRing(e, en, vis, ghost, ruin) {'), ul.indexOf('_clearInfo(en) {'))));
+  T('环⑤b-环宽软编码，且比选中光圈的核心环（2.5）细',
+    CONFIG.ui.soulRing.towerWidth < 2.5 && CONFIG.ui.soulRing.unitWidth < 2.5 && /_flatGeo\('ring', r, 2\.5\)/.test(ul));
+  {
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const { footprintRadius } = await import('../src/presentation/UnitLayer.js');
+    const prev = CONFIG.ui.crystalShrine.style; CONFIG.ui.crystalShrine.style = 'statue';
+    let ok = true;
+    for (const [kind, tier, R] of [['gem', 'nexus_main', 76], ['orb', 'nexus_lane', 40], ['tower', 'outer', 32]]) {
+      const m = towerMesh(`soul|${kind}`, '#5b9bd5', R, '', kind, false, false, tier, 'blue', 0, null);
+      m.geo.computeBoundingBox();
+      const plat = Math.max(-m.geo.boundingBox.min.x, m.geo.boundingBox.max.x) * 0.9;   // 台面外沿（下半段）
+      const rr = footprintRadius(m.geo, CONFIG.ui.soulRing.heightFrac) + CONFIG.ui.soulRing.towerMargin;
+      if (!(rr > R && rr >= plat * 0.95)) ok = false;
+    }
+    CONFIG.ui.crystalShrine.style = prev;
+    T('环⑤d-枢纽 / 召唤水晶 / 塔：龙魂环画在模型贴地外轮廓之外（不会被放大后的台面挡住）', ok);
+  }
   T('环⑥-幽灵/废墟/死亡单位不显示龙魂环', /if \(ghost \|\| ruin \|\| !e\.alive\)/.test(ul));
   // v51.6 修复：用户报"龙死了之后龙魂的颜色环残余在地面"，后来补充"不只是龙，
   // 其余单位的龙魂环也会残留"——根因是 remove(id)（单位被整个从 EntityContainer

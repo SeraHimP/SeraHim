@@ -16,7 +16,7 @@ const fx = src('presentation/EffectsLayer.js'), pmSrc = src('presentation/Projec
 {
   const P = CONFIG.ui.projectileFx;
   T('①参数都在 CONFIG.ui.projectileFx（塔弹 / 小兵弹 / 炮车 / 术士 / 吐息）',
-    P.tower.trailLen > 0 && P.minion.afterimages > 0 && P.siege.kinds.includes('siege') && P.warlock.motes > 0 && P.breath.enabled === true);
+    P.tower.trailLen > 0 && P.minion.afterimages > 0 && P.siege.stoneKinds.includes('siege') && P.warlock.motes > 0 && P.breath.enabled === true);
   T('②塔弹拖尾比原来长（能量光弹，原来是 2.2 倍弹径）', P.tower.trailLen > 2.2);
   T('③旧的兵弹短拖尾配置已删', CONFIG.ui.bulletTrail === undefined);
 }
@@ -24,19 +24,32 @@ const fx = src('presentation/EffectsLayer.js'), pmSrc = src('presentation/Projec
   T('④开火时快照开火者的类型（子弹飞行中开火者死了也知道该画成什么）', /kind: attacker\.type,/.test(cs));
   T('⑤塔弹走能量光弹（光晕 + 核心 + 白芯），小兵弹走实体弹、炮车走抛物线石弹',
     /if \(isTower\) \{[\s\S]{0,400}Q\.sprite3/.test(fx) && /this\.pm\.minionBolt\(/.test(fx) && /this\.pm\.siegeStone\(/.test(fx));
-  T('⑥炮车抛物线只是画面（伤害时机与落点不变）：抛高只加在画出来的高度上', /const head = \[x, by \+ arcAt\(done\), y\]/.test(fx));
+  T('⑥抛物线只是画面（伤害时机与落点不变）：抛高只加在画出来的高度上', /const head = \[x, by \+ arcAt\(done\), y\]/.test(fx));
+  // 用户："炮车的子弹应该是直的，目前你做成抛物线了，改掉。攻城车的抛物线很好不用改"
+  const PS = CONFIG.ui.projectileFx.siege;
+  T('⑥b只有攻城车走抛物线，炮车直线；两者都画石弹，炮车的石块更小',
+    PS.kinds.includes('ram') && !PS.kinds.includes('siege') && PS.stoneKinds.includes('siege') && PS.stoneScale.siege < PS.stoneScale.ram && PS.stoneScale.ram < 1
+    && /const arcH = lobbed \?/.test(fx));
+  // 用户："所有小兵单位的子弹可视化弄小一点点"
+  T('⑥c小兵实体弹比原来小一点（原 0.3 倍弹径）', CONFIG.ui.projectileFx.minion.sizeK < 0.3 && CONFIG.ui.projectileFx.minion.sizeK >= 0.2);
+  // 用户："小兵攻击塔的时候……弹道是水平打到塔上的（攻城车的抛物线除外）龙的弹道也是。如果是塔打塔的话，就是瞄准塔的中心"
+  T('⑥d小兵 / 龙（非抛射）的落点不高于自己的炮口；塔打塔瞄准中心；吐息同一规则',
+    /if \(p\.kind && p\.kind !== 'tower' && !lobbed\) return Math\.min\(my, full \* 0\.6\)/.test(fx)
+    && /p\.kind === 'tower' && tType === 'tower'\) return full \* \(PF\.towerOnTowerK/.test(fx) && CONFIG.ui.projectileFx.towerOnTowerK === 0.5
+    && /Math\.min\(mouthY, \(MYOF\(tg\.id\)/.test(fx));
   T('⑦没有命中效果（塔弹、小兵弹、吐息结尾都不放）',
     !/impact\(/.test(pmSrc) && !/sparks|shards/.test(pmSrc.replace(/\/\*[\s\S]*?\*\//, '')) && !/_hitTrack/.test(fx));
 }
 {
-  // 用户："防御塔弹道的拖尾在命中敌人后要缓慢消失而不是直接消失，之前踩过坑"
-  // 原来淡出 0.13 秒、曲线 k²：半程只剩 25%，肉眼看就是"一打中尾巴就没了"。
+  // 用户先说"拖尾在命中敌人后要缓慢消失而不是直接消失"（原来 0.13 秒、曲线 k²，半程只剩 25%），
+  // 改成 0.5 秒线性后又说"子弹拖尾渐隐的时间回调为 0.15s，目前的 0.5s 太长了"。
+  // 现在：0.15 秒、线性（不再 k²，所以不会头几帧就掉光）。
   const P = CONFIG.ui.projectileFx.tower, F = P.trailFade;
-  T(`⑦b命中后拖尾余烬淡出时长在配置里、至少 0.35 秒（现 ${F}s）`, F >= 0.35);
+  T(`⑦b命中后拖尾余烬淡出 0.15 秒（现 ${F}s）、线性`, Math.abs(F - 0.15) < 1e-9 && P.trailFadePow === 1);
   T('⑦c余烬从满开始、单调变淡、到时长收掉',
     trailEmberK(0) === 1 && trailEmberK(F * 0.25) > trailEmberK(F * 0.5) && trailEmberK(F * 0.5) > trailEmberK(F * 0.75) && trailEmberK(F) === 0);
-  T(`⑦d"缓慢"：0.1 秒时还剩大半（${trailEmberK(0.1).toFixed(2)}），淡出一半的时刻不早于 0.2 秒`,
-    trailEmberK(0.1) > 0.6 && trailEmberK(0.2) >= 0.5 - 1e-9);
+  T(`⑦d不是一下子消失：淡出过半时（${(F / 2).toFixed(3)}s）还剩一半（${trailEmberK(F / 2).toFixed(2)}）`,
+    trailEmberK(F / 2) >= 0.5 - 1e-9 && trailEmberK(F / 4) > 0.7);
   T('⑦e淡出队列在"本帧不在场"的子弹上启动（子弹消失那一帧不整条消失），且按墙钟推进',
     /if \(sn\.f === this\._fxFrame\) continue;/.test(fx) && /s\.t \+= dtWall;\s*const kk = trailEmberK\(s\.t\);/.test(fx));
 }

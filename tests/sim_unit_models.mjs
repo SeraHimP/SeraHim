@@ -64,6 +64,27 @@ T('⑨非人形辅助单位（图腾 / 术士 / 蚀骨 / 召唤物）没有腿�
   && has('totem', BONE.BOB, BONE.SPIN) && has('warlock', BONE.SPIN) && has('corrupt', BONE.WING));
 T('⑩重装车是低矮的载具（比人形兵矮）', buildMinion('heavy', '#5b9bd5', 13, 'blue').topY < buildMinion('melee', '#5b9bd5', 13, 'blue').topY);
 
+// 用户："小兵的模型重做弄得精细一些！！！目前兵的轮廓就是一个圆 + 一个圆台，太丑了！！完全重做！！！"
+// 钉行为形状：人形兵宽肩窄腰（V 形），四肢分开（腿骨上的顶点左右分成两团），不是一根圆柱身子
+{
+  // 只量躯干（骨号 0）：这个高度上还有前臂和手，算进去就不是"腰"了
+  const widthAt = (geo, y0, y1) => { const p = geo.getAttribute('position'), b = geo.getAttribute('aBone'); let w = 0;
+    for (let i = 0; i < p.count; i++) { const y = p.getY(i); if (Math.round(b.getX(i)) === 0 && y >= y0 && y <= y1) w = Math.max(w, Math.abs(p.getX(i))); } return w; };
+  let vOk = true;
+  const vBad = [];
+  for (const t of ['melee', 'engineer', '__custom__']) for (const f of ['blue', 'red']) {
+    const S = 10, g = buildMinion(t, f === 'blue' ? '#5b9bd5' : '#e0473f', S, f).geo;
+    const sh = widthAt(g, S * 1.12, S * 1.3), waist = widthAt(g, S * 0.8, S * 0.9);
+    if (!(sh > waist * 1.3)) { vOk = false; vBad.push(`${t}/${f} 肩${sh.toFixed(1)} 腰${waist.toFixed(1)}`); }
+  }
+  T(`㉕人形兵宽肩窄腰（肩宽 > 腰宽 × 1.3）${vBad.length ? '（' + vBad.join(' ') + '）' : ''}`, vOk);
+  const legSplit = (geo) => { const b = geo.getAttribute('aBone'), p = geo.getAttribute('position'); let l = 0, rr = 0;
+    for (let i = 0; i < b.count; i++) { const k = Math.round(b.getX(i)); if (k === BONE.LEG_L) l += p.getX(i) > 0 ? 1 : 0; if (k === BONE.LEG_R) rr += p.getX(i) < 0 ? 1 : 0; } return l > 0 && rr > 0; };
+  T('㉖两条腿分开建（左腿骨在 +X、右腿骨在 -X），不是一整个袍筒', ['melee', 'engineer'].every((t) => legSplit(buildMinion(t, '#5b9bd5', 10, 'blue').geo)));
+  const warl = bonesOf(buildMinion('warlock', '#5b9bd5', 10, 'blue').geo);
+  T('㉗术士兵不再是一整个圆锥：有两只袖子（主手 / 副手骨）', warl.has(BONE.ARM_MAIN) && warl.has(BONE.ARM_OFF));
+}
+
 // ---- 巨龙 ----
 const els = Object.keys(DRAGON_ELEMENTS);
 T(`⑪每种元素（${els.length} 种）+ 远古龙都有一套专属装饰`, els.every((e) => DRAGON_DECOR_KEYS.includes(e)) && DRAGON_DECOR_KEYS.includes('ancient'));

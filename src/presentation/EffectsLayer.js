@@ -736,10 +736,25 @@ export class EffectsLayer {
         // 与闪电杖光束末端那条是同一类错误（那边是查不到就退化成按坐标反查）。
         const tgtE = entities?.get?.(p.targetId);
         let snap = this._projTgt.get(p);
+        const PF = CONFIG.ui?.projectileFx || {};
+        const lobbed = (PF.siege?.kinds || ['ram']).includes(p.kind);
+        // 落点高度。用户："小兵攻击塔的时候……应该是小兵根据身高，弹道是水平打到塔上的（攻城车的抛物线除外）
+        // 龙的弹道也是。如果是塔打塔的话，就是瞄准塔的中心。"
+        //   · 小兵 / 龙（非抛射）：不高于自己的炮口 → 打塔是水平的，打矮个的兵仍落在躯干上；
+        //   · 塔打塔：瞄准目标塔的中心（身高 × towerOnTowerK）；
+        //   · 其余（塔打兵、抛射）：目标身高的六成。
+        // 目标类型记进快照：目标死后仍按同一规则算，不会突然换口径。
+        const shotEndH = (tType) => {
+          const full = hOf(p, 'end', p.targetId);
+          if (p.kind && p.kind !== 'tower' && !lobbed) return Math.min(my, full * 0.6);
+          if (p.kind === 'tower' && tType === 'tower') return full * (PF.towerOnTowerK ?? 0.5);
+          return full * 0.6;
+        };
         if (tgtE?.pos && tgtE.alive) {
           snap = snap || {};
           snap.x = tgtE.pos.x; snap.y = tgtE.pos.y;
-          snap.h = endHeightOf(p, p.targetId);
+          snap.tt = tgtE.type;
+          snap.h = shotEndH(snap.tt);
           this._projTgt.set(p, snap);
         } else if (!snap && p.lastTx != null) {
           // 目标在【这发子弹被画出来之前】就已经死了 —— 一次快照都没取到。
@@ -752,7 +767,7 @@ export class EffectsLayer {
           // 弹道于是照常从炮口斜落到那一点，而不是平飞。
           // 高度：目标实体已经没了，hOf 也没有它的快照 → 返回 0，
           // 也就是"落到它倒下的那块地上"，正是想要的观感。
-          snap = { x: p.lastTx, y: p.lastTy, h: endHeightOf(p, p.targetId) };
+          snap = { x: p.lastTx, y: p.lastTy, h: shotEndH(tgtE?.type) };
           this._projTgt.set(p, snap);
         }
         let by = my;
@@ -822,11 +837,12 @@ export class EffectsLayer {
         }
         // 小兵 / 分裂弹：低多边形实体弹（用户定稿"A 为主"）。按开火那一刻快照的兵种（p.kind）分形。
         const kind = p.kind || 'ranged';
-        const lob = (CONFIG.ui?.projectileFx?.siege?.kinds || ['siege', 'ram']).includes(kind);
-        if (lob) {
-          // 炮车：抛物线石弹（纯视觉——伤害时机与落点不变，只是画的时候中间抬高）
-          const S2 = CONFIG.ui?.projectileFx?.siege || {};
-          const arcH = Math.min(S2.arcMax ?? 70, (lineLen || 100) * (S2.arcK ?? 0.3));
+        const S2 = CONFIG.ui?.projectileFx?.siege || {};
+        const stone = (S2.stoneKinds || ['siege', 'ram']).includes(kind);
+        if (stone) {
+          // 石弹：攻城车（ram）走抛物线（纯视觉——伤害时机与落点不变，只是画的时候中间抬高）；
+          // 炮车（siege）直线飞（用户："炮车的子弹应该是直的……攻城车的抛物线很好不用改"）
+          const arcH = lobbed ? Math.min(S2.arcMax ?? 70, (lineLen || 100) * (S2.arcK ?? 0.3)) : 0;
           const arcAt = (f) => arcH * 4 * f * (1 - f);
           const head = [x, by + arcAt(done), y];
           const back = (dist) => {
@@ -835,7 +851,7 @@ export class EffectsLayer {
             if (f <= 0) return null;
             return [sx0 + (snap.x - sx0) * f, my + (snap.h - my) * f + arcAt(f), sy0 + (snap.y - sy0) * f];
           };
-          this.pm.siegeStone(head, gsz, dcol.getHex(), back, done);
+          this.pm.siegeStone(head, gsz * ((S2.stoneScale || {})[kind] ?? 1), dcol.getHex(), back, done);
           continue;
         }
         const dxh = snap ? snap.x - sx0 : x - sx0, dzh = snap ? snap.y - sy0 : y - sy0, dyh = snap ? snap.h - my : 0;
@@ -858,8 +874,9 @@ export class EffectsLayer {
         const ddx = tg.pos.x - dg.pos.x, ddz = tg.pos.y - dg.pos.y, dd = Math.hypot(ddx, ddz) || 1;
         const reach = (CONFIG.dragonSizes?.[dg._isAncient ? 'ancient' : 'element'] ?? 30) * 0.5;
         const mouthY = (MYOF(dg.id) ?? 30) * 0.65;
+        // 与小兵同一规则：不高于自己的嘴 → 吐向塔是水平的
         this.pm.breath([dg.pos.x + ddx / dd * reach, mouthY, dg.pos.y + ddz / dd * reach],
-                       [tg.pos.x, (MYOF(tg.id) ?? 10) * 0.6, tg.pos.y], new THREE.Color(dg._dragonColor || '#ff8a3d').getHex(),
+                       [tg.pos.x, Math.min(mouthY, (MYOF(tg.id) ?? 10) * 0.6), tg.pos.y], new THREE.Color(dg._dragonColor || '#ff8a3d').getHex(),
                        (CONFIG.dragonSizes?.element ?? 30) * 0.5);
       }
       for (const id of this._dragonCd.keys()) if (!seen.has(id)) this._dragonCd.delete(id);

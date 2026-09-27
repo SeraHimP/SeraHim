@@ -36,7 +36,7 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, dotTexture, currentUnitTint } from './UnitMeshFactory.js';
+import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, currentUnitTint } from './UnitMeshFactory.js';
 import { animMaterials, disposeAnimMaterials, stepAnimState } from './unitRig.js';
 import { BuildingFx } from './buildingFx.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
@@ -117,6 +117,23 @@ const ORDER_SEL = 6;                     // 选中光圈压在射程圈之上、
 
 // 血条画布分辨率：宽 64 = 量化粒度（1/64 条宽 ≈ 2D 的 80px 条上 1.25px，人眼阈值之下）
 const BAR_W = 64, BAR_H = 8;
+
+/**
+ * 模型贴地那一段（底部 heightFrac 高度以内）的最大水平半径——龙魂环按它贴着外轮廓画。
+ * 按几何缓存：同一份塔身几何只量一次。
+ */
+const _footprint = new WeakMap();
+export function footprintRadius(geo, heightFrac) {
+  let r = _footprint.get(geo);
+  if (r !== undefined) return r;
+  const p = geo.getAttribute('position');
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const lim = geo.boundingBox.min.y + (geo.boundingBox.max.y - geo.boundingBox.min.y) * heightFrac;
+  r = 0;
+  for (let i = 0; i < p.count; i++) if (p.getY(i) <= lim) r = Math.max(r, Math.hypot(p.getX(i), p.getZ(i)));
+  _footprint.set(geo, r);
+  return r;
+}
 
 export class UnitLayer {
   constructor(scene) {
@@ -487,7 +504,7 @@ export class UnitLayer {
     this.scene.remove(en.crystal); this.infoObjs--;
     if (en.crystal.material) en.crystal.material.dispose();
     en.crystal.traverse(o => { if (o.isPoints) { o.geometry.dispose(); o.material.dispose(); } if (o.isSprite) o.material.dispose(); });
-    en.crystal = null; en.crystalPts = null; en.crystalHalo = null;
+    en.crystal = null; en.crystalPts = null;
   }
 
   // 阴影档位下发：对 Mesh 与 Group（模型）一视同仁地遍历子网格设置。
@@ -719,28 +736,24 @@ export class UnitLayer {
     const soulSkill = (e._skillInstances || []).find(sk => sk.skillId.startsWith('dragonsoul_'));
     if (!soulSkill) { if (en.soul) this._clearSoulRing(en); return; }
     const color = SOUL_COLORS[soulSkill.skillId] || '#f6c94a';
-    // 追加需求："塔的龙魂圈略微往里收一收并且变得略微粗一些。"——只调塔（半径
-    // 往内收 15%、环宽从 1.6 加到 2.0），小兵的龙魂环维持原样，不跟着一起变。
+    // 建筑（塔 / 召唤水晶 / 水晶枢纽）的龙魂环按模型的实际外轮廓自适应：量出贴地那一段的最大水平半径，
+    // 外面再留一点边。用户："水晶枢纽/召唤水晶模型大小改了，导致可视龙魂环被挡住了"
+    // "蓝方的塔重做了之后，龙魂环应该也相应改为圆形的……龙魂环应该是根据模型的外轮廓自适应显示的"。
+    // 原来按碰撞半径 × 0.85 算（枢纽台面伸到 1.3 倍碰撞半径，环整圈压在模型底下），蓝方阶梯塔还用方环。
     const isTowerRing = e.type === 'tower';
-    const r = (vis.ringR || 12) * (isTowerRing ? 0.85 : 1);
-    const ringW = isTowerRing ? 2.0 : 1.6;
-    // v51.6 修复：用户报"蓝方召唤水晶/水晶枢纽是圆的，你怎么也给改成方的了"——
-    // 上一版条件是"蓝方的塔"就一律方，没把 nexus_lane/nexus_main（召唤水晶/水晶枢纽，
-    // 圆形水晶基座，与 outer/inner/base 那三档方形阶梯塔身完全是两种模型）分开，
-    // 圆底座的建筑因此也套了方环，边角露在外面。默认都走圆环（与选中光圈同一个
-    // 默认），只有【蓝方 + 阶梯方塔那三档】才需要额外适配成方环——判据复用
-    // isNexus 同一处已有的 tier 集合（_mapTier），不再自己另起一份。
-    const faction = e._mapFaction || e.faction;
-    const isNexusTier = e._mapTier === 'nexus_lane' || e._mapTier === 'nexus_main';
-    const square = e.type === 'tower' && faction === 'blue' && !isNexusTier;
-    const key = (square ? 'sq' : 'rd') + '|' + r + '|' + ringW + '|' + color;
+    const SR = CONFIG.ui?.soulRing || {};
+    const ringW = isTowerRing ? (SR.towerWidth ?? 2.0) : (SR.unitWidth ?? 1.6);
+    const r = isTowerRing && vis.geo
+      ? footprintRadius(vis.geo, SR.heightFrac ?? 0.35) + ringW * 0.5 + (SR.towerMargin ?? 3)
+      : (vis.ringR || 12);
+    const key = 'rd|' + r + '|' + ringW + '|' + color;
     if (en.soulKey !== key) {
       this._clearSoulRing(en);
       en.soulKey = key;
       // v51.6 追补：用户"龙魂这个环太粗了，细一些"——3 与选中光圈的核心环（2.5）
       // 几乎一样粗，两种含义不同的环粗细却分不清，改细一点（1.6）以示区分。
       // 追加需求：塔这一档又单独加粗到 2.0（见上面 ringW），小兵仍是当初改细的 1.6。
-      en.soul = this._flatMesh(this._flatGeo(square ? 'squareRing' : 'ring', r, ringW), this._flatMat(color, 1));
+      en.soul = this._flatMesh(this._flatGeo('ring', r, ringW), this._flatMat(color, 1));
     }
     en.soul.position.set(e.pos.x, RING_LIFT + en.groundY, e.pos.y);
     // Q20：蓝方塔的方形龙魂环没有跟随塔的朝向——圆环各向同性转不转都一样，从没人管过
@@ -1205,11 +1218,7 @@ export class UnitLayer {
         cm.userData.prepassSolid = true;
         cm.renderOrder = ORDER_UNIT;
         this.scene.add(cm); this.infoObjs++;
-        // 水晶光晕：一团队伍色的柔光，平时淡淡一圈、充能时变亮、开火那一下鼓起来（见下面"攻击辉光"）
-        const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture(), color: vis.crystalColor, transparent: true,
-          opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
-        halo.layers.set(FX_PARTICLE_LAYER);
-        cm.add(halo); en.crystalHalo = halo; en.crystalR = vis.crystal.r || 8;
+        en.crystalR = vis.crystal.r || 8;
         const pts = crystalParticles(vis.crystalColor, vis.crystal.r || 8);  // Q6：绕水晶公转的发光粒子（随水晶慢转）
         cm.add(pts); en.crystalPts = pts;
         en.crystal = cm;
@@ -1344,8 +1353,8 @@ export class UnitLayer {
       // 失去目标时不瞬间归零，而是按 CRYSTAL_FADE 速率平滑滑回基准（用户要求的过渡）。
       const gdt = Math.max(0, Math.min(0.1, tNow - (en._glowT || tNow))); en._glowT = tNow;
       const cd = e.attackCooldown || 0;
-      const HL = CONFIG.ui?.crystal?.halo || {};
-      if (cd > (en._lastCd || 0) + 0.05) { en._cdMax = cd; en._firePulse = 1; }   // 冷却跳增 = 刚开了一炮，记下本轮周期、光晕鼓一下
+      const HL = CONFIG.ui?.crystal?.attackGlow || {};
+      if (cd > (en._lastCd || 0) + 0.05) { en._cdMax = cd; en._firePulse = 1; }   // 冷却跳增 = 刚开了一炮，记下本轮周期、水晶猛亮一下
       en._firePulse = Math.max(0, (en._firePulse || 0) - gdt / Math.max(0.05, HL.pulseDur ?? 0.35));
       en._lastCd = cd;
 
@@ -1374,17 +1383,9 @@ export class UnitLayer {
       // 辉光就永远抓不到东西 —— 这正是"管线是 HDR 但看着不像 HDR"的原因。
       // 塔顶水晶是全场最适合当高光源的东西，夜里让它真的过曝。
       const pulse = en._firePulse * en._firePulse;   // 鼓起来快、收回去慢
-      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE + this._nightEmi() + pulse * (HL.emissivePulse ?? 0.8);
-      // 攻击辉光（用户："防御塔攻击时水晶的发光特效太不明显了"，参考英雄联盟塔顶水晶开火时那一大团光）。
-      // 用柔光贴片而不是再抬自发光：自发光只亮水晶本身那几个面，缩到实机大小看不出来；
-      // 光晕能把光铺到水晶外面一圈。透明度有上限（maxAlpha），不会像护盾第一版那样晃眼。
-      if (en.crystalHalo) {
-        const r = en.crystalR || 8, ch = Math.min(1, en._charge || 0);
-        const sc = r * ((HL.idleScale ?? 2.6) + ch * (HL.chargeScale ?? 1.0) + pulse * (HL.pulseScale ?? 2.4));
-        en.crystalHalo.scale.set(sc, sc, 1);
-        en.crystalHalo.material.opacity = Math.min(HL.maxAlpha ?? 0.85, (HL.idleAlpha ?? 0.22) + ch * (HL.chargeAlpha ?? 0.3) + pulse * (HL.pulseAlpha ?? 0.55));
-        en.crystalHalo.visible = HL.enabled !== false;
-      }
+      // 攻击时水晶本身更亮（用户："塔攻击的时候附近新增那个光晕很丑，删掉。改为进一步加大水晶的亮度"）：
+      // 充能部分再乘 chargeBoost，开火那一下再加 emissivePulse。只抬水晶自己的自发光，不在外面铺光晕贴片。
+      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE * (HL.chargeBoost ?? 1.6) + this._nightEmi() + pulse * (HL.emissivePulse ?? 2.2);
       // 粒子随充能变亮（不再收拢/外弹——那也是"攒一发"的语义）
       if (en.crystalPts && this.particlesOn) {
         en.crystalPts.material.uniforms.uOpacity.value = Math.max(0, Math.min(1, 0.55 + chargeE * 0.45));
@@ -1558,7 +1559,9 @@ export class UnitLayer {
     for (const c of entities.getAllTowers(false)) {
       if (c.alive) continue;
       if (c._respawnAt) this._syncOne(c, true, deps, lodHideBar, tNow, false);
-      else if (c._ruin) this._syncOne(c, false, deps, lodHideBar, tNow, true);
+      // 刚死、还没被打上 _ruin 的塔（手建的塔要等 purgeDead 才打）也按废墟画：中间断一帧，
+      // 兜底扫描就会把条目删掉、连带忘掉建筑动画的状态，被摧毁的爆炸就不播了
+      else this._syncOne(c, false, deps, lodHideBar, tNow, true);
     }
 
     // 兜底扫描：本帧没被遍历到的一律删（死亡事件漏发/purgeDead/切图/测试直改容器全覆盖）

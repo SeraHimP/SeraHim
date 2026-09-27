@@ -221,8 +221,9 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
 
   // ---- statPanelLayout.js 接入检查 ----
   const { RELATED_STATS, extAttrGroups } = await import('../src/ui/statPanelLayout.js');
-  T('Q5⑧-法力回复已进入面板分组（extAttrGroups）',
-    extAttrGroups().some(g => g.rows.some(r => r.key === 'manaRegen')));
+  // 用户（2026-09-27）："单位属性窗口中删除显示'法力回复/秒'这项"——原 Q5⑧ 钉的是它在面板里，现在反过来
+  T('Q5⑧-属性窗口不再显示法力回复这一格（用户要求删除）',
+    !extAttrGroups().some(g => g.rows.some(r => r.key === 'manaRegen')));
   T('Q3⑤-RELATED_STATS.healthRegen 含自身（未修正属性）',
     RELATED_STATS.healthRegen.includes('healthRegen'));
   T('Q5⑨-RELATED_STATS.manaRegen 含自身+基础法力恢复+法力获取加成',

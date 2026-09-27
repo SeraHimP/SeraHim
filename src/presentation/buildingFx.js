@@ -22,6 +22,7 @@ import { CONFIG } from '../data/Config.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
 import { buildingPiecesOf, mergeParts, unitMaterial } from './UnitMeshFactory.js';
 import { hash01, partsBox } from './towerStatue.js';
+import { FX_PARTICLE_LAYER } from './PostFX.js';
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const seg = (t, a, b) => clamp01((t - a) / Math.max(1e-6, b - a));
@@ -227,9 +228,21 @@ export class BuildingFx {
       sh.userData.v = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el) + 0.4, Math.sin(a) * Math.cos(el)).multiplyScalar(R * (E.shardSpeed ?? 3.2));
       sh.position.copy(cp); root.add(sh); shards.push(sh);
     }
-    // 冲击波：地面上一圈往外扩的光环
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 40), new THREE.MeshBasicMaterial({ color: E.ringColor || '#fff2d6', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    // 冲击波：地面上一圈往外扩的光环 + 一圈更慢的尘浪 + 一层向外膨胀的半球冲击波壳
+    // 用户："爆炸的时候塔应该产生可视化冲击波"。壳只有边缘亮（视线掠过的地方），中间透明，
+    // 普通混合 + 不透明度封顶，不会像护盾受击那次一样晃眼。
+    const SW = E.shock || {};
+    const ring = new THREE.Mesh(new THREE.RingGeometry(SW.ringInner ?? 0.55, 1, 48), new THREE.MeshBasicMaterial({ color: E.ringColor || '#fff2d6', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.6; root.add(ring);
+    const dustRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 48), new THREE.MeshBasicMaterial({ color: SW.dustColor || '#b9ab93', transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+    dustRing.rotation.x = -Math.PI / 2; dustRing.position.y = 0.4; root.add(dustRing);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(SW.color || '#fff4dc') }, uAlpha: { value: 0 }, uRim: { value: SW.rim ?? 2.2 } },
+      vertexShader: 'varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+      fragmentShader: 'uniform vec3 uColor; uniform float uAlpha; uniform float uRim; varying vec3 vN; varying vec3 vV; void main(){ float r = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uRim); gl_FragColor = vec4(uColor, r * uAlpha); }',
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    dome.layers.set(FX_PARTICLE_LAYER); root.add(dome);
     // 烟尘：一圈灰团往外、往上扩散后淡掉
     const puffs = [];
     const nP = E.smoke ?? 9;
@@ -279,6 +292,18 @@ export class BuildingFx {
       ring.scale.set(rr, rr, rr);
       ring.material.opacity = (1 - ru) * 0.9;
       ring.visible = ru < 1;
+      const [da, db] = SW.dome || [0.02, 0.5];
+      const du = seg(x, da, db);
+      const dr = R * (SW.domeR ?? 2.4) * easeOut(du) + 0.1;
+      dome.scale.set(dr, dr * (SW.domeFlat ?? 0.7), dr);
+      dome.material.uniforms.uAlpha.value = (SW.alpha ?? 0.75) * (1 - du) * Math.min(1, du * 6);
+      dome.visible = du > 0 && du < 1;
+      const [ea, eb] = SW.dust || [0.08, 0.8];
+      const eu = seg(x, ea, eb);
+      const er = R * (SW.dustR ?? 3.3) * easeOut(eu) + 0.1;
+      dustRing.scale.set(er, er, er);
+      dustRing.material.opacity = 0.55 * (1 - eu) * Math.min(1, eu * 5);
+      dustRing.visible = eu > 0 && eu < 1;
       for (const pf of puffs) {
         const pu = seg(x, 0.05, 1);
         const s2 = (0.4 + easeOut(pu) * 1.4) * pf.userData.k;
