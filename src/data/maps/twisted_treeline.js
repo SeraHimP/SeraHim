@@ -129,6 +129,9 @@ const TT_CONFIG = {
   // paletteId 指到新增的 magicForest 调色板（配色+扭曲树干形状都在那份调色板里）。
   visualStyle: 'stylized',
   paletteId: 'magicForest',
+  // v60：石柱+品红压顶的边界柱在这张图上关掉——150 单位网格采样、沿路等距成排，
+  // 审查截图里读成一排护栏桩。峡谷早就按用户要求关了同一类柱子。野区树/岩的自然边缘装饰不受影响。
+  boundaryPillars: false,
 
   // 基地光环圈：**只是玩法/视觉的圈，不再参与地形判定**（地形归 navgrid 管，
   // MapSystem.isWalkable 走 navgrid 分支时根本不看这两个字段）。

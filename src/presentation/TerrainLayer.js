@@ -18,7 +18,7 @@
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseCircleCenter, isInBaseWallRing } from '../data/baseCircle.js';
 import { unpackBits } from '../data/navgrid.js';
-import { smoothLabelsToRGBA, sampleFieldRGBA } from './smoothLabels.js';
+import { smoothLabelsToRGBA, sampleFieldRGBA, interiorObstacles } from './smoothLabels.js';
 import { SR_NAVGRID } from '../data/maps/sr_navgrid.js';
 import { landmarkPlan, landmarkConfig } from '../data/landmarks.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
@@ -315,8 +315,10 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
       // 阵营底色的圆心跟着基地圈走（原来写死在两个角上，扭曲丛林的基地不在角上）。
       // 305/326 是相对角点的内缩偏移，改成沿"角点→基地圈心"同向内缩同样的量。
       const bcB = baseCircleCenter(map, 'blue'), bcR = baseCircleCenter(map, 'red');
-      tintBase(bcB.x + 305, bcB.y - 326, WW * 0.30, 'rgba(91,155,213,0.20)');
-      tintBase(bcR.x - 326, bcR.y + 305, WW * 0.30, 'rgba(224,71,63,0.20)');
+      // v60：半径/透明度可由调色板覆写（冰封把红方一侧的雪染成了粉色）；默认 0.30 / 0.20。
+      const tr = WW * (SV.baseTintRadiusFrac ?? 0.30), ta = SV.baseTintAlpha ?? 0.20;
+      tintBase(bcB.x + 305, bcB.y - 326, tr, `rgba(91,155,213,${ta})`);
+      tintBase(bcR.x - 326, bcR.y + 305, tr, `rgba(224,71,63,${ta})`);
     };
 
     // ============ v55.1：挖空型地图 —— 地面按**平滑轮廓**填，不再逐格填色 ============
@@ -374,8 +376,11 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     const cellW2 = WW / nx, cellH2 = WH / ny;
     // 每格先归成一个类别，再决定怎么放大（见 smoothLabels.js）。
     // 类别：0 道路 1 林缘 2 森林 3 深林 4 图外 5 围墙地基 6 挖空
+    // 7 = 野区内部障碍物（不与地图外缘连通的不可走区），只有调色板声明了 obstacleColor 才分出来。
+    const [obR, obG, obB] = stylized && SV.obstacleColor ? hex2rgb(SV.obstacleColor, '4a3552') : [gndR, gndG, gndB];
     const PAL = [[corR, corG, corB, 255], [edgR, edgG, edgB, 255], [jngR, jngG, jngB, 255], [dpR, dpG, dpB, 255],
-      [gndR, gndG, gndB, 255], [wallR, wallG, wallB, 255], [0, 0, 0, 0]];
+      [gndR, gndG, gndB, 255], [wallR, wallG, wallB, 255], [0, 0, 0, 0], [obR, obG, obB, 255]];
+    const interior = (stylized && SV.obstacleColor) ? interiorObstacles(paint, nx, ny) : null;
     const labels = new Uint8Array(nx * ny);
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
@@ -387,6 +392,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
         const wx = (gx + 0.5) * cellW2, wy = (gy + 0.5) * cellH2;
         if (isInBaseWallRing(map, wx, wy)) lab = 5;
       }
+      if (lab === 4 && interior && interior[k]) lab = 7;
       if (cutout && !on) lab = 6;
       labels[k] = lab;
     }

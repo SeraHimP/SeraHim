@@ -106,7 +106,7 @@ const { T, done } = scoreboard('navgrid 轮廓 + 陆地厚度');
   T('厚③-地形挖空按 map.terrainEdge 声明开启（老地图不受影响）',
     /const cutout = !!map\.terrainEdge;/.test(tl)
     // v60：逐格填色改成先归类再放大，挖空是一个 alpha=0 的类别。
-    && /if \(cutout && !on\) lab = 6;/.test(tl) && /\[0, 0, 0, 0\]\];/.test(tl));
+    && /if \(cutout && !on\) lab = 6;/.test(tl) && /\[0, 0, 0, 0\]/.test(tl));
   T('厚④-挖空进了地形贴图缓存 key（否则同一张图会命中挖空前的贴图）',
     /map\.terrainEdge \? '#cut' : ''/.test(tl));
 

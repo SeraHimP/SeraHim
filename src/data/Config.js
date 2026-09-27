@@ -2002,7 +2002,9 @@ export const CONFIG = {
       groundColor: '#1c3322',
       // corridorColor 这次身兼两职：①未声明 jungleColor 的老用法（可走区整体一个色）；
       // ②本图声明了 jungleColor 后专指"兵线走廊"本身——夯实的泥土路，比周围草地更暖。
-      corridorColor: '#c2a06a',
+      // v60：#c2a06a → #b8a27c（饱和度约 0.42 → 0.28）。审查截图里整条走廊是一片橙色，
+      // 抢了塔和小兵的视觉层级；降饱和保持暖土色相，亮度基本不变。
+      corridorColor: '#b8a27c',
       // jungleColor：声明了这个字段，TerrainLayer/VegetationLayer 才会触发
       // "走廊 vs 野区"二分（v58 新增，见两处文件头注）——可走区域里离兵线够远的部分
       // 画成草地而不是跟路面同色，野区里也才会真的长树而不是一马平川。
@@ -2031,6 +2033,10 @@ export const CONFIG = {
       // 可走野区才长——跟 default palette 的"只在不可走区域长树"是两套不同的
       // 分类依据，森林风格地图的野区本身就是可走的，不能沿用 default 那套判据。
       vegetationMode: 'jungle',
+      // v60：野区植被改成"更少、更大"——审查截图里是满屏小树，读不出成片的林冠。
+      // 采样步长 55 → 68（数量约 ×0.65），体量 ×1.3。未声明这两项的调色板保持 55 / 1。
+      vegetationStep: 68,
+      vegetationScale: 1.3,
     },
     // 嚎哭深渊·冰封版专用（见设计文档第 4.1 节）。这张图没有"树/野区"这个概念
     // （不可走区域是水/浮冰，不是森林），`vegetationMode:'none'` 让 VegetationLayer
@@ -2049,6 +2055,10 @@ export const CONFIG = {
     frost: {
       groundColor: '#16233d',     // 不可走区域（深渊/冰下水体）基底：深藏蓝，整张图的暗部锚点
       corridorColor: '#dce9f2',   // 桥面：带蓝的近白（见上面取舍①）
+      // v60：阵营底色在这张图上收窄、减淡。默认 0.30×世界宽 / 0.20 透明度会把红方一侧
+      // 的雪地染成粉色一直漫到中桥（审查截图）；桥面近白，同样的透明度染色更显眼。
+      baseTintRadiusFrac: 0.16,
+      baseTintAlpha: 0.12,
       treeTrunkColor: '#6b7a85',  // 本图不生成树，保留字段仅为结构完整
       treeCrownColorA: '#8fa3b0',
       treeCrownColorB: '#a9bfc9',
@@ -2103,7 +2113,7 @@ export const CONFIG = {
     // 不是改个颜色能完成的，留到下一轮跟这套配色一起实机看了再定形状/密度。
     magicForest: {
       groundColor: '#160c22',
-      corridorColor: '#4a2f52',
+      corridorColor: '#a58cae',
       jungleColor: '#3d1f4a',
       forestEdgeColor: '#5c3568',
       forestDeepColor: '#241030',
@@ -2117,6 +2127,13 @@ export const CONFIG = {
       outlineOnByDefault: false,
       vegetationMode: 'jungle',
       treeShape: 'twisted',
+      // v60：审查结论"扭曲丛林读不出路"——路:野区亮度对比只有 1.22:1（冰封 12.65:1）。
+      // 保留紫色相，只把路面提亮：#4a2f52 → #a58cae，对野区 #3d1f4a 约 4.66:1。
+      // 深色的塔和小兵站在浅色路面上才看得见。
+      // obstacleColor：野区里的小块障碍物（不与地图外缘相连的不可走区）原来用
+      // groundColor #160c22 画，近乎纯黑，45° 俯视下被压扁成一道道"黑条"。
+      // 改成与岩石同色，读作岩丛，而不是地上的洞。
+      obstacleColor: '#4a3552',
     },
   },
 

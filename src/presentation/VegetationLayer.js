@@ -142,7 +142,10 @@ export class VegetationLayer {
     const walk = (x, y) => mapSystem.isWalkable(x, y);
     const trees = [], deepTrees = [], rocks = [], bushes = [];
     // navgrid 地形下墙块较窄（野区可走、只有墙块不可走），内部余量过大会几乎选不出点 → 放宽到 26。
-    const STEP = 55, margin = 26, edge = 90;   // 采样步长 / 内部余量(不贴车道边，仅 default/frost 分支用) / 离图边余量
+    // v60：调色板可声明 vegetationStep / vegetationScale（召唤师峡谷：更少、更大的树）；默认 55 / 1。
+    const VP = stylized ? stylizedPaletteOf(map) : {};
+    const STEP = VP.vegetationStep ?? 55, margin = 26, edge = 90;
+    const VS = VP.vegetationScale ?? 1;   // 采样步长 / 内部余量(不贴车道边，仅 default/frost 分支用) / 离图边余量
     for (let gx = edge; gx < WW - edge; gx += STEP) for (let gy = edge; gy < WH - edge; gy += STEP) {
       const x = gx + (hash(gx + 11, gy) - 0.5) * STEP * 0.8;
       const y = gy + (hash(gx, gy + 11) - 0.5) * STEP * 0.8;
@@ -184,7 +187,7 @@ export class VegetationLayer {
       // 不是墙顶，否则会悬空在空气里（没有台地接住它）。
       const y0 = stylized ? gh : WALL_H - 1.5;
       const r = hash(gx, gy);
-      const sc = 0.65, rot = hash(gx + 5, gy + 5) * 6.2832;
+      const sc = 0.65 * VS, rot = hash(gx + 5, gy + 5) * 6.2832;
       if (jungleMode) {
         if (onPath) {
           // 可走的路径/空地：只留极少量低矮灌木/零星石头做点缀，不摆树——
