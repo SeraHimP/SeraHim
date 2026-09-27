@@ -255,10 +255,17 @@ const DOMINION_CONFIG = {
   // 是 CombatSystem 里现成的"攻击方全伤害增幅"字段（见 performAttackDirect
   // 的 dmgAmp 取值），不是新造的属性——用户没有指定这是不是随时间增长的，
   // 直接给固定值 33，不套 twisted_treeline 那种 perMinute 累进写法。
+  // 2026-09-27：用户定稿"水晶之痕光环+33%伤害增幅改为+67%伤害增幅"——同一次
+  // 反馈里明确了这是"全图整体伤害都调高"的定位（不是单独针对某个单位类型），
+  // 相应把据点自己的基础攻击力（pointNeutralDamagePct/pointDamagePct）和
+  // 据点占领增益（两者相减换算出来的物理攻击加成，见 DominionSystem._setOwner()
+  // 的 _captureBuffFullDelta）一起往下砍，见下面 pointNeutralDamagePct/
+  // pointDamagePct 的头注——避免"全图伤害提高的同时，据点自己的输出也跟着
+  // 光环一起被放大"叠出比例失衡的双重强化。
   globalAura: {
     name: '水晶之痕光环', icon: '💎',
     effects: [
-      { statKey: 'damageAmpPct', flat: 33, label: '伤害增幅' },
+      { statKey: 'damageAmpPct', flat: 67, label: '伤害增幅' },
     ],
   },
 
