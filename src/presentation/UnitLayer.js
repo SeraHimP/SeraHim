@@ -1293,7 +1293,17 @@ export class UnitLayer {
     // en.faceFixed 这个字段**本来就在 entry 里**，声明了却从没被读写过 —— 是个死字段，
     // 显然当初想做这件事没做完。现在把它做实，而不是再加一个新字段。
     if (en.isTower && this.mapSystem?.currentMap) {
-      if (en.faceFixed === null) en.faceFixed = towerFacingRad(e, this.mapSystem.currentMap);
+      // 2026-09-27：据点（e.isCapturePoint，水晶之痕专属）的归属会在一局内多次
+      // 翻转（占领/反占/回中立），"算一次就固定"这条假设只对普通塔（归属终身
+      // 不变）成立——对据点如果还是只算一次，第一次算出来的角度会被冻结到底，
+      // 后续真正的占领反而不会再触发重算，塔转向会跟归属状态脱节。据点额外记一份
+      // "上次是按哪个阵营算的"（en._faceFacFor），归属变了就重算；普通塔不受影响
+      // （e.isCapturePoint 恒为假，走的还是原来那条"只算一次"的路径）。
+      const curFac = e.isCapturePoint ? (e._mapFaction || e.faction) : null;
+      if (en.faceFixed === null || (e.isCapturePoint && en._faceFacFor !== curFac)) {
+        en.faceFixed = towerFacingRad(e, this.mapSystem.currentMap);
+        en._faceFacFor = curFac;
+      }
       // ⚠️ 每帧**都要赋**，不能只在算出来那一次赋。
       // 换模型时（损毁档跳变、变废墟、幽灵态）_installUnit 会把 en.unit 整个换掉，
       // 新对象的 rotation 是 0 —— 只赋一次的话，塔一掉血就会"啪"地转回正北。

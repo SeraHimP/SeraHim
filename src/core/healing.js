@@ -49,6 +49,25 @@ export function healPowerFor(entity, ctx) {
  * 返回实际回复量。
  */
 export function applyHeal(entity, amount, power, maxHP, capHP) {
+  // 2026-09-27 用户报"严重bug！天气的回血会让水晶枢纽回血！！！这个绝对不
+  // 允许！！！此模式的水晶枢纽不能受到任何形式的回血（除手动设置外）"——
+  // 根因：CombatSystem.js 的生命恢复 tick 读的是 stats.healthRegen（经
+  // AttributeCalculator 合并全部效果后的最终值），水晶枢纽自己的
+  // baseStats.healthRegen 虽然固定 0（tierStats 没声明这一项），但天气这类
+  // 【全局光环】给场上所有单位统一加一份正的 healthRegen，不区分目标，水晶
+  // 枢纽一样吃得到——DominionSystem 那边"水晶枢纽血量只降不升"的不变量
+  // （见 _drainNexus 头注）当时只确认了"没有主动去 heal 它的代码路径"，没
+  // 料到全局光环这种"谁都加、谁都不特判"的加成能绕过去。
+  // 拦在这里（本文件头注写的"全仓库唯一的回血入口"）而不是在 CombatSystem
+  // 那一个调用点单独判断，是为了以后任何新的回血来源（技能治疗、光环、
+  // 天气……）都自动受这条规则约束，不需要每个调用点各自记得判一遍——本文件
+  // 存在的理由本来就是"漏一处就等于又埋一个坑"。entity._untargetable 只有
+  // DominionSystem.initMap() 会给水晶枢纽这一种实体标（"通用逃生舱"，
+  // isStructureProtected 也复用它挡攻击，见 FactionSystem.js 头注），语义上
+  // 正好是"这个实体完全隔绝于场上一切外部交互"，挡掉正向回血是同一个语义的
+  // 自然延伸。手动运维面板直接改 currentHP/baseStats，不经过这个函数，不受
+  // 这条限制影响，符合用户"除手动设置外"这个例外。
+  if (entity && entity._untargetable) return 0;
   if (!entity || !entity.alive || !(amount > 0)) return 0;
   const cap = Math.min(maxHP ?? Infinity, capHP ?? Infinity);
   const before = entity.currentHP || 0;

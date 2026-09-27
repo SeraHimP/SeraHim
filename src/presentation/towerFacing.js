@@ -73,7 +73,21 @@ export function towerFacingRad(entity, map, cfg = null) {
   const c = cfg || (CONFIG.ui && CONFIG.ui.towerFacing) || {};
   if (c.enabled === false) return null;
   if (!entity || !entity.pos || !map) return null;
-  const fac = entity._mapFaction || entity.faction;
+  const rawFac = entity._mapFaction || entity.faction;
+  // 2026-09-27 用户反馈"地图的初始塔在被占领过后就会变换正确的朝向，让塔在
+  // 地图初始化时就已经变成正确的朝向"——据点（isCapturePoint，水晶之痕专属）
+  // 中立状态下没有"己方/敌方"概念，原来的判据在这里直接 return null，
+  // UnitLayer 的 en.faceFixed 算出来是 null 就不会去设 rotation.y，渲染层
+  // 退回网格出厂朝向（0）——跟被占领后用规则②算出来的朝向对不上，玩家看到
+  // 的就是"占领的瞬间塔突然转了个方向"。给中立据点一个确定性的默认视角：
+  // 按"假设蓝方拥有它"来算（面朝红方水晶枢纽）——蓝方真的占领它时这个朝向
+  // 正好是对的，不会有"转一下"的观感；红方占领时会转 180°，这是归属真的
+  // 变了、画面理应给反馈，不是bug。这个默认视角本身是个武断的选择（中立
+  // 状态严格来说没有"正确"朝向，只有"看起来不突兀"），如果视觉上不是用户
+  // 想要的效果，留了 CONFIG.ui.towerFacing.flip 可以整体翻转。
+  const fac = (entity.isCapturePoint && (!rawFac || rawFac === FACTIONS.NEUTRAL))
+    ? FACTIONS.BLUE
+    : rawFac;
   if (!fac || fac === FACTIONS.NEUTRAL) return null;
 
   const nexusOf = (f) => (map.buildings || []).find(b =>
