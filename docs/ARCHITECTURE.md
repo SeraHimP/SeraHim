@@ -52,7 +52,7 @@ data  ←  core  ←  systems  ←  simulation.js  ←  main.js
 | presentation | `TerrainLayer` / `smoothLabels.js` | 地面底图烘焙（navgrid 图按原生网格平滑放大；挖空图按矢量轮廓） |
 | presentation | `TerrainEdgeLayer` / `MapSkirtLayer` / `WaterLayer` | 崖壁与低一层地面、地图裙边、河道水面 |
 | presentation | `VegetationLayer` / `BoundaryDecorLayer` / `LandmarkLayer` / `HowlingAbyssDecor` / `DominionPropsLayer` | 植被、边界装饰、地标、各图专属装饰 |
-| presentation | `UnitLayer` / `UnitMeshFactory` / `EffectsLayer` / `PostFX` | 单位模型、特效、后处理（描边/SSAO/FXAA） |
+| presentation | `UnitLayer` / `UnitMeshFactory` / `unitModels` / `dragonModel` / `unitRig` / `EffectsLayer` / `PostFX` | 单位模型（小兵按阵营风格、巨龙按元素装饰，部件挂骨由着色器驱动走路/攻击动画）、特效、后处理（描边/SSAO/FXAA） |
 | ui | `UIManager` / `WorldHud` / `SettingsDialog` / `ModeDialog` | HUD、设置、选图 |
 | ui | `AttributeEditor` + `editor/` | 模板/属性编辑器 |
 | ui | `MapEditorDialog` / `mapEditorSession.js` | 地图编辑器 |

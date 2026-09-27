@@ -36,7 +36,8 @@ import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { towerModelKind, towerModelTier } from '../data/towerModels.js';
 import { isStructureProtected } from '../systems/FactionSystem.js';
 import { nextPlatingNode } from './UnitInfo.js';
-import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, dotTexture } from './UnitMeshFactory.js';
+import { towerMesh, towerStoneOf, minionMesh, dragonMesh, unitMaterial, crystalMaterial, crystalParticles, needsFacing, dotTexture, currentUnitTint } from './UnitMeshFactory.js';
+import { animMaterials, disposeAnimMaterials, stepAnimState } from './unitRig.js';
 import { BuildingFx } from './buildingFx.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
 import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
@@ -228,9 +229,10 @@ export class UnitLayer {
       // 两处一旦不同步，血条与选中圈就会和模型对不上）。key 带上尺寸，改了立刻重建几何。
       const ds = CONFIG.dragonSizes || {};
       const size = anc ? (ds.ancient ?? 30) : (ds.element ?? 24);
-      const key = `d|${color}|${anc ? 1 : 0}|${size}`;
-      const m = dragonMesh(key, color, anc, size);
-      return { key, geo: m.geo, mat: m.mat, topY: m.topY, size,
+      const el = anc ? null : (e._element || null);   // 元素决定装饰（dragonModel.js）
+      const key = `d|${color}|${anc ? 1 : 0}|${size}|${el || ''}`;
+      const m = dragonMesh(key, color, anc, size, el);
+      return { key, geo: m.geo, mat: m.mat, topY: m.topY, size, animated: true,
                // v44：pulse 关掉。用户："不要一会大一会小那种效果。"
                // 全场只有龙设了这一项，它每帧把整个模型缩放 1±12%（3rad/s）——
                // 那是纸片人时代用来"让龙有存在感"的补偿，立体化之后纯属抖动。
@@ -257,7 +259,7 @@ export class UnitLayer {
     const color = faction === 'blue' ? '#5b9bd5' : faction === 'red' ? '#e0473f' : st.color;
     const key = `m|${rType}|${faction || 'none'}`;
     const m = minionMesh(key, color, st.size, rType, faction);
-    return { key, geo: m.geo, mat: m.mat, topY: m.topY, size: st.size,
+    return { key, geo: m.geo, mat: m.mat, topY: m.topY, size: st.size, animated: true,
              barW: 40, barH: 4, barD: 6, alpha: 1, pulse: false,
              ringR: st.size + 5, facing: needsFacing(rType) };
   }
@@ -570,6 +572,7 @@ export class UnitLayer {
     // 释放它会连带弄坏所有同 key 的其他单位。共享资源随 disposeMeshCache 统一释放。
     this._disposeCrystal(en);     // Q6：水晶材质逐塔独立，需释放
     this._disposeShieldShell(en); // 护盾外壳材质逐塔独立
+    if (en.animMat) { disposeAnimMaterials(en.animMat); en.animMat = null; }   // 巨龙的动画材质逐条独立
     en.bar.material.dispose();
     en.barTex.dispose();          // per-entity 纹理；共享单位纹理不在此释放
     this._clearInfo(en);          // E 组对象（几何/材质共享，摘场景即可；盾牌 material 独立需释放）
@@ -1105,12 +1108,16 @@ export class UnitLayer {
     const dz = en.lastZ === null ? 0 : e.pos.y - en.lastZ;
     en.lastX = e.pos.x; en.lastZ = e.pos.y;
     const moving = (dx * dx + dz * dz) > 1e-6;
+    en.poseMoving = moving;
     en.poseWalkPhase = moving ? (en.poseWalkPhase || 0) + pdt * WALK_CYCLE_SPEED : (en.poseWalkPhase || 0) * 0.9;
 
     // 攻击前后摇：attackCooldown 跳增＝刚打出一次攻击，与水晶充能那段判"刚开了一炮"
     // （en._lastCd/_cdMax）同一手法，这里独立记一份 _poseLastCd，互不干扰。
     const cd = e.attackCooldown || 0;
-    if (cd > (en._poseLastCd || 0) + 0.05) en.poseAttackT = 0;
+    en.poseFired = cd > (en._poseLastCd || 0) + 0.05;
+    if (en.poseFired) en.poseAttackT = 0;
+    // 四肢动画（unitRig.js）：走路幅度平滑起停、攻击进度 0..1
+    en.anim = stepAnimState(en.anim || { walk: 0, atk: -1 }, moving, en.poseFired, pdt);
     en._poseLastCd = cd;
     if (en.poseAttackT >= 0) {
       en.poseAttackT += pdt;
@@ -1169,11 +1176,18 @@ export class UnitLayer {
         en.unitIsModel = false;
       } else {
         // 单 Mesh（龙）：从合批槽位切回时重建 Mesh 壳，否则换共享几何/材质引用。
+        // 巨龙：每条龙一套动画材质（单体版，走 uniform），本体 / 描边 / 阴影同一姿势
+        let mat = vis.mat;
+        if (vis.animated) {
+          if (!en.animMat) { en.animMat = animMaterials(false); const t = currentUnitTint(); if (t) en.animMat.color.set(t); }
+          mat = en.animMat;
+        }
         if (!en.unit || !en.unit.isMesh) {
           if (en.unit && en.unit.isInstancedProxy) en.unit.releaseSlot();
-          this._installUnit(en, new THREE.Mesh(vis.geo, vis.mat)); en.unitIsModel = false;
+          this._installUnit(en, new THREE.Mesh(vis.geo, mat)); en.unitIsModel = false;
         }
-        else { en.unit.geometry = vis.geo; en.unit.material = vis.mat; }
+        else { en.unit.geometry = vis.geo; en.unit.material = mat; }
+        if (vis.animated) { en.unit.customDepthMaterial = mat.userData.depthMaterial; en.unit.userData.prepassMaterial = mat.userData.prepassMaterial; }
         en.bodyGeo = vis.geo; en.bodySize = vis.size;
       }
 
@@ -1258,6 +1272,14 @@ export class UnitLayer {
     const walkBob = Math.abs(Math.sin(walkPhase)) * (vis.topY || 0) * WALK_BOB_FRAC;
     en.unit.position.set(e.pos.x, gy + walkBob + (fxMode?.offsetY || 0) * (vis.topY || 0), e.pos.y);
     en.unit.rotation.z = Math.sin(walkPhase) * WALK_SWAY_RAD;
+    // 四肢动画参数：走路相位、走路幅度、攻击进度、时间（每个单位错开一点，悬浮件不齐步）
+    if (vis.animated) {
+      const an = en.anim || { walk: 0, atk: -1 };
+      if (en.animSeed == null) { let h = 0; for (const ch of String(e.id)) h = (h * 31 + ch.charCodeAt(0)) % 997; en.animSeed = h * 0.61; }
+      const tt = (tNow + en.animSeed) % 1000;
+      if (en.unit.isInstancedProxy) en.unit.setAnim(walkPhase, an.walk, an.atk, tt);
+      else if (en.animMat) en.animMat.userData.uAnim.value.set(walkPhase, an.walk, an.atk, tt);
+    }
 
     // ==================== v54：接地暗斑（A4）====================
     // 诊断见 docs/MAP-DESIGN-howling-abyss-frost.md 第 10 节。

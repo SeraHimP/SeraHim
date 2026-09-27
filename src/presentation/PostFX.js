@@ -139,7 +139,9 @@ class NormalDepthPrepass extends Pass {
       const tr = Array.isArray(m) ? m.some((x) => x && x.transparent) : !!(m && m.transparent);
       if (!o.isMesh || (tr && !solidWhitelist)) { o.visible = false; hidden.push(o); return; }
       swapped.push([o, m]);
-      o.material = (!Array.isArray(m) && m && m.alphaTest > 0 && m.map) ? this._alphaNormal(m) : this._normalMaterial;
+      // 小兵 / 巨龙的动画材质自带一份同样变形的法线材质（unitRig.js），否则描边画的是静止姿势
+      const own = o.userData?.prepassMaterial || (!Array.isArray(m) && m?.userData?.prepassMaterial);
+      o.material = own || ((!Array.isArray(m) && m && m.alphaTest > 0 && m.map) ? this._alphaNormal(m) : this._normalMaterial);
     });
     renderer.setRenderTarget(this.renderTarget);
     renderer.clear();

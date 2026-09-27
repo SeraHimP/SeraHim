@@ -1558,6 +1558,27 @@ export const CONFIG = {
       flashStrength: 0.6, flashDur: 0.25, flashCooldown: 0.35, maxAlpha: 0.6, fadeIn: 0.3, fadeOut: 0.45,
     },
 
+    // 小兵 / 巨龙造型与四肢动画（unitModels.js / dragonModel.js / unitRig.js）。用户定稿（2026-09-27）：
+    //   "小兵的模型参照不同阵营的风格来做"——跟塔同一套：蓝方庄重沉稳，红方混沌尖锐；衣料用阵营色，
+    //   order / chaos 是两边的甲、饰（金 / 骨）、暗部、眼光、木、皮革颜色；
+    //   "龙……通过装饰 + 龙的颜色区分"——dragonAccent 是各元素装饰件的点缀色（火焰尖、冰棱、熔岩缝……）；
+    //   anim：legSwing 腿摆幅、armSwing 臂摆幅（弧度）；windup / strike 攻击先抬手、再劈下的角度；
+    //   windupFrac / strikeFrac 抬手、劈下各占攻击动作的比例；attackDur 攻击动作时长（秒）；
+    //   walkBlend 起步 / 停下的过渡快慢；wingFlap / wingFreq 龙翼扇动幅度与频率；bite 扑咬幅度；tailSway 尾摆幅度。
+    unitModels: {
+      order: { armor: '#d6dde6', trim: '#d8b25a', dark: '#2a3446', eye: '#9fe0ff', wood: '#8a6a44', leather: '#6b4f35' },
+      chaos: { armor: '#5a3a3e', trim: '#e2d3b0', dark: '#2a1c1f', eye: '#ffb23e', wood: '#4a3328', leather: '#3a2a24' },
+      dragonAccent: {
+        fire: '#ffd24a', water: '#bff3ff', earth: '#8a7a66', thunder: '#fff38a', wind: '#e8fff8', dark: '#d9a6ff',
+        poison: '#c8ff5a', frost: '#eaffff', steel: '#e3e8ec', blood: '#efe4cf', magma: '#ffb13b', astral: '#fff6c8',
+        rift: '#b8f0ff', ancient: '#ffd76a',
+      },
+      anim: {
+        legSwing: 0.55, armSwing: 0.35, windup: 2.0, strike: 0.6, windupFrac: 0.4, strikeFrac: 0.2,
+        attackDur: 0.45, walkBlend: 8, wingFlap: 0.22, wingFreq: 2.4, bite: 0.45, tailSway: 0.25,
+      },
+    },
+
     // 召唤水晶 / 水晶枢纽造型（crystalShrines.js）。style: 'statue' = 用户定稿的新造型
     // （召唤水晶：三尊守卫托举；枢纽：四尊守卫的圣殿），'classic' = 原来的祭坛。
     //   bearerScale / guardianScale：托举守卫 / 枢纽守卫的大小（× 建筑半径）

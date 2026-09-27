@@ -152,8 +152,13 @@ const mkE = (ents, type, x, y, extra = {}) => {
 // ==================== 二、龙：模型朝向 ====================
 {
   const umf = srcOf('src/presentation/UnitMeshFactory.js');
-  T('龙模①-龙的几何被转正到全项目约定（正面 +Z）',
-    /hit\.geo\.rotateY\(Math\.PI\)/.test(umf));
+  // 龙直接朝 +Z 建（dragonModel.js）：头（扑咬骨）的顶点在 +Z 侧，尾（尾巴骨）在 -Z 侧
+  const { buildDragon } = await import('../src/presentation/dragonModel.js');
+  const { BONE } = await import('../src/presentation/unitRig.js');
+  const dg = buildDragon('#c0392b', 'fire', false, 30).geo;
+  const bz = (bone) => { const b = dg.getAttribute('aBone'), p = dg.getAttribute('position'); let s = 0, n = 0;
+    for (let i = 0; i < b.count; i++) if (Math.round(b.getX(i)) === bone) { s += p.getZ(i); n++; } return n ? s / n : 0; };
+  T('龙模①-龙的几何朝全项目约定（正面 +Z）：头在 +Z、尾在 -Z', bz(BONE.BITE) > 5 && bz(BONE.TAIL) < -5);
   T('龙模②-朝向白名单已删，判据与 FacingSystem 一致（除塔外全转）',
     /needsFacing\(type\) \{ return type !== 'tower'; \}/.test(umf) && !/FACING_TYPES/.test(umf));
 }

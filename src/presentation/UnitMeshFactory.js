@@ -22,6 +22,9 @@ import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 import { statueTower } from './towerStatue.js';
 import { crystalShrine, crystalGeoOf, ruinShardsGeo } from './crystalShrines.js';
+import { buildMinion } from './unitModels.js';
+import { buildDragon } from './dragonModel.js';
+import { liveAnimBodies } from './unitRig.js';
 
 const _geoCache = new Map();
 const _matCache = new Map();
@@ -981,350 +984,8 @@ const R_Y = (a) => new THREE.Matrix4().makeRotationY(a);   // v44：图腾/术�
 // pack() 再把整体抬起补偿 → 模型悬空、盾/弓/炮管错位。改 multiply 后部件落回本位、贴地。
 const compose = (m, ...rest) => rest.reduce((acc, x) => acc.multiply(x), m.clone());
 
-/** 通用步兵骨架：身体 + 肩甲 + 头。melee/ranged 在此之上加武器。 */
-function infantryParts(color, S, slim) {
-  const bodyH = S * (slim ? 1.35 : 1.25), headR = S * (slim ? 0.40 : 0.46);
-  const rTop = S * (slim ? 0.34 : 0.42), rBot = S * (slim ? 0.50 : 0.62);
-  const parts = [
-    { geo: new THREE.CylinderGeometry(rTop, rBot, bodyH, 8), matrix: T(0, bodyH / 2, 0), color },
-  ];
-  for (const sx of [-1, 1]) {
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.30, S * 0.26, S * 0.42),
-                 matrix: T(sx * S * 0.52, bodyH * 0.86, 0), color: shade(color, 0.7) });
-  }
-  const headY = bodyH + headR * 0.82;
-  parts.push({ geo: new THREE.SphereGeometry(headR, 12, 10), matrix: T(0, headY, 0), color: shade(color, 1.18) });
-  return { parts, bodyH, headY, headR };
-}
+// 小兵造型已搬到 unitModels.js（阵营风格 + 部件骨骼），巨龙造型在 dragonModel.js。
 
-const MINION_BUILDERS = {
-  // 近战兵：左手圆盾、右手短刃
-  melee(color, S) {
-    const { parts, bodyH } = infantryParts(color, S, false);
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.42, S * 0.42, S * 0.10, 10),
-                 matrix: compose(T(-S * 0.72, bodyH * 0.62, S * 0.16), R_X(Math.PI / 2)),
-                 color: shade(color, 0.55) });   // 圆盾（立起来的扁圆柱）
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.11, S * 1.05, S * 0.05),
-                 matrix: T(S * 0.66, bodyH * 0.95, S * 0.10), color: '#d8dee8' });  // 短刃
-    return parts;
-  },
-  // 远程兵：瘦削，斜挎长弓
-  ranged(color, S) {
-    const { parts, bodyH } = infantryParts(color, S, true);
-    parts.push({ geo: new THREE.TorusGeometry(S * 0.55, S * 0.055, 6, 12, Math.PI * 1.15),
-                 matrix: compose(T(-S * 0.60, bodyH * 0.78, 0), R_Z(-0.35)),
-                 color: '#c9a06a' });            // 弓臂（部分圆环 = 弯弓）
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.04, S * 0.04, S * 1.0, 4),
-                 matrix: compose(T(S * 0.30, bodyH * 0.95, 0), R_Z(-1.05)),
-                 color: '#e8e2d0' });            // 背着的箭
-    return parts;
-  },
-  // 炮兵 = 炮车：车体 + 四轮 + 前伸炮管
-  siege(color, S) {
-    const bodyH = S * 0.55, parts = [];
-    parts.push({ geo: new THREE.BoxGeometry(S * 1.15, bodyH, S * 1.55),
-                 matrix: T(0, S * 0.42 + bodyH / 2, 0), color });
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      parts.push({ geo: new THREE.CylinderGeometry(S * 0.40, S * 0.40, S * 0.16, 10),
-                   matrix: compose(T(sx * S * 0.62, S * 0.40, sz * S * 0.52), R_Z(Math.PI / 2)),
-                   color: shade(color, 0.45) });
-    }
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.20, S * 0.26, S * 1.35, 10),
-                 matrix: compose(T(0, S * 0.42 + bodyH + S * 0.16, S * 0.42), R_X(Math.PI / 2)),
-                 color: shade(color, 0.72) });   // 炮管，朝 +Z（前）
-    parts.push({ geo: new THREE.SphereGeometry(S * 0.28, 10, 8),
-                 matrix: T(0, S * 0.42 + bodyH + S * 0.16, -S * 0.28), color: shade(color, 0.9) });
-    return parts;
-  },
-  // 攻城车 = 投石机：车体 + 四轮 + 斜抛臂 + 抛篮 + 配重
-  ram(color, S) {
-    const bodyH = S * 0.42, parts = [];
-    parts.push({ geo: new THREE.BoxGeometry(S * 1.0, bodyH, S * 1.7),
-                 matrix: T(0, S * 0.38 + bodyH / 2, 0), color });
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      parts.push({ geo: new THREE.CylinderGeometry(S * 0.36, S * 0.36, S * 0.15, 10),
-                   matrix: compose(T(sx * S * 0.55, S * 0.36, sz * S * 0.58), R_Z(Math.PI / 2)),
-                   color: shade(color, 0.45) });
-    }
-    // 支架（人字形）+ 抛臂（向后上方斜举，蓄势待发的姿态最好认）
-    const pivY = S * 0.38 + bodyH + S * 0.55;
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.10, S * 1.1, S * 0.10),
-                   matrix: compose(T(sx * S * 0.34, pivY - S * 0.30, 0), R_Z(sx * 0.16)),
-                   color: shade(color, 0.55) });
-    }
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.13, S * 1.6, S * 0.13),
-                 matrix: compose(T(0, pivY + S * 0.30, -S * 0.42), R_X(0.72)),
-                 color: '#a9865c' });   // 抛臂
-    parts.push({ geo: new THREE.SphereGeometry(S * 0.30, 10, 8),
-                 matrix: T(0, pivY + S * 1.02, -S * 0.98), color: shade(color, 0.85) });  // 抛篮
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.36, S * 0.36, S * 0.36),
-                 matrix: T(0, pivY - S * 0.10, S * 0.56), color: shade(color, 0.4) });    // 配重
-    return parts;
-  },
-  // 超级兵 = 机甲：粗壮躯干 + 大方肩 + 方头 + 天线 + 双腿
-  super(color, S) {
-    const legH = S * 0.62, torsoH = S * 0.95, parts = [];
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.34, legH, S * 0.40),
-                   matrix: T(sx * S * 0.30, legH / 2, 0), color: shade(color, 0.5) });
-    }
-    parts.push({ geo: new THREE.BoxGeometry(S * 1.02, torsoH, S * 0.66),
-                 matrix: T(0, legH + torsoH / 2, 0), color });
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.72, S * 0.30, S * 0.50),
-                 matrix: T(0, legH + torsoH * 0.30, S * 0.28), color: shade(color, 1.2) }); // 胸甲
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.42, S * 0.46, S * 0.62),
-                   matrix: T(sx * S * 0.66, legH + torsoH * 0.86, 0), color: shade(color, 0.65) });
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.24, S * 0.70, S * 0.24),
-                   matrix: T(sx * S * 0.70, legH + torsoH * 0.38, 0), color: shade(color, 0.55) });
-    }
-    const headY = legH + torsoH + S * 0.26;
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.46, S * 0.44, S * 0.46),
-                 matrix: T(0, headY, 0), color: shade(color, 1.25) });
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.30, S * 0.10, S * 0.06),
-                 matrix: T(0, headY + S * 0.02, S * 0.24), color: '#ffd98a' });   // 目镜
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.035, S * 0.035, S * 0.55, 4),
-                 matrix: T(-S * 0.18, headY + S * 0.48, 0), color: shade(color, 0.6) }); // 天线
-    return parts;
-  },
-
-  // ==================== v44 补齐：这三种此前**没有任何专属造型** ====================
-  // 用户："目前现有的小兵模型也是一团糟，甚至有些兵用的是通用的模板。每个兵应该有自己的模型。"
-  // 说的就是它们：MINION_BUILDERS 里原本只有 melee/ranged/siege/ram/super 五项，
-  // 图腾兵/术士兵/蚀骨兵三种落到 `infantryParts(...)` 这个**通用步兵模板** ——
-  // 场上三种功能完全不同的兵长着同一副身板，只有颜色能区分。
-  // （GLB 那条路更少：只有四种有模型，而且默认还是关的。）
-
-  // 图腾兵：无腿，一根悬浮的图腾柱 + 环绕小石 + 顶端符文眼。
-  // 它是**辅助单位**，造型上刻意不像"人" —— 一眼能从兵线里挑出来。
-  totem(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.62), lite = shade(color, 1.25);
-    const H = S * 1.5;
-    for (let i = 0; i < 3; i++) {
-      const w = S * (0.62 - i * 0.09), h = H / 3;
-      parts.push({ geo: new THREE.BoxGeometry(w, h, w),
-                   matrix: compose(T(0, S * 0.34 + h * (i + 0.5), 0), R_Y(i * 0.4)), color });
-      parts.push({ geo: new THREE.BoxGeometry(w * 1.22, S * 0.07, w * 1.22),
-                   matrix: T(0, S * 0.34 + h * (i + 1), 0), color: dark });
-    }
-    const topY = S * 0.34 + H;
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.50, S * 0.22, S * 0.10),
-                 matrix: T(0, topY + S * 0.16, 0), color: dark });
-    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.17),
-                 matrix: T(0, topY + S * 0.16, 0), color: lite });
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * Math.PI * 2;
-      parts.push({ geo: new THREE.TetrahedronGeometry(S * 0.20),
-                   matrix: compose(T(Math.cos(a) * S * 0.78, S * 0.95, Math.sin(a) * S * 0.78), R_Y(a), R_Z(0.5)),
-                   color: shade(color, 0.85) });
-    }
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.55, S * 0.72, S * 0.34, 6),
-                 matrix: T(0, S * 0.17, 0), color: dark });
-    return parts;
-  },
-
-  // 术士兵：兜帽长袍 + 法杖 + 悬浮符文环。没有明显的头肩，剪影是个"锥"。
-  warlock(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.58), lite = shade(color, 1.3);
-    const robeH = S * 1.35;
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.34, S * 0.74, robeH, 8),
-                 matrix: T(0, robeH / 2, 0), color });
-    parts.push({ geo: new THREE.ConeGeometry(S * 0.42, S * 0.62, 8),
-                 matrix: T(0, robeH + S * 0.24, 0), color: dark });
-    parts.push({ geo: new THREE.SphereGeometry(S * 0.20, 8, 6),
-                 matrix: T(0, robeH + S * 0.10, S * 0.16), color: '#1c1f26' });
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.05, S * 0.06, S * 1.75, 5),
-                 matrix: compose(T(S * 0.56, robeH * 0.72, 0), R_Z(-0.16)), color: '#8a6b4a' });
-    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.22),
-                 matrix: T(S * 0.70, robeH * 0.72 + S * 0.92, 0), color: lite });
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * Math.PI * 2;
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.16, S * 0.05, S * 0.16),
-                   matrix: compose(T(S * 0.70 + Math.cos(a) * S * 0.34, robeH * 0.72 + S * 0.92, Math.sin(a) * S * 0.34), R_Y(a)),
-                   color: lite });
-    }
-    return parts;
-  },
-
-  // 蚀骨兵：佝偻的骨架 + 外露肋骨 + 镰爪。它是**减益单位**，造型走"病态"。
-  corrupt(color, S) {
-    const parts = [];
-    const bone = '#d9d3c4', dark = shade(color, 0.5);
-    const bodyH = S * 1.05;
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.30, S * 0.40, bodyH, 6),
-                 matrix: compose(T(0, bodyH * 0.55, S * 0.06), R_X(0.22)), color });
-    for (let i = 0; i < 4; i++) {
-      const yy = bodyH * (0.32 + i * 0.17);
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.72 - i * S * 0.06, S * 0.055, S * 0.11),
-                   matrix: compose(T(0, yy, S * 0.14), R_Z(0.05 * (i % 2 ? 1 : -1))), color: bone });
-    }
-    const headY = bodyH + S * 0.30;
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.34, S * 0.34, S * 0.42),
-                 matrix: compose(T(0, headY, S * 0.16), R_X(0.35)), color: bone });
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.07, S * 0.07, S * 0.05),
-                   matrix: T(sx * S * 0.09, headY + S * 0.03, S * 0.36), color: '#2a1a1a' });
-    }
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.09, S * 0.62, S * 0.05),
-                 matrix: compose(T(S * 0.52, bodyH * 0.72, 0), R_Z(-0.30)), color: bone });
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.08, S * 0.44, S * 0.05),
-                 matrix: compose(T(S * 0.74, bodyH * 1.06, 0), R_Z(-1.05)), color: bone });
-    for (let i = 0; i < 3; i++) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.05, S * 0.26, S * 0.05),
-                   matrix: compose(T(-S * 0.46 - i * S * 0.06, bodyH * 0.46, (i - 1) * S * 0.09), R_Z(0.35 + i * 0.12)),
-                   color: bone });
-    }
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.CylinderGeometry(S * 0.075, S * 0.10, S * 0.42, 5),
-                   matrix: compose(T(sx * S * 0.20, S * 0.21, 0), R_Z(sx * 0.16)), color: dark });
-    }
-    return parts;
-  },
-
-  // ==================== Q5批次：治疗兵/工程兵/唤灵兵/重装车/牧灵幻兽 ====================
-  // 这五种此前落在通用步兵模板 infantryParts 上（新兵种加进来时只顾了数值/AI，
-  // 造型一直没跟上），用户反馈"新兵种的对应的模型也要重做！不要复用现有的！"。
-  // 风格方向用户定稿"符文图腾化"：延续 totem/warlock 已有的"辅助单位不做人形、
-  // 靠悬浮几何+符文纹样区分"这条美术语言，而不是给这五种也套一个步兵身板。
-
-  // 治疗兵：疗愈图腾——细柱 + 顶端光晕环里嵌一个十字符文 + 环绕的"愈疗光点"。
-  healer(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.6), lite = shade(color, 1.35);
-    const H = S * 1.35;
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.42, S * 0.50, S * 0.20, 10),
-                 matrix: T(0, S * 0.10, 0), color: dark });   // 底座
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.16, S * 0.30, H, 8),
-                 matrix: T(0, S * 0.10 + H / 2, 0), color });
-    const topY = S * 0.10 + H;
-    parts.push({ geo: new THREE.TorusGeometry(S * 0.36, S * 0.045, 6, 16),
-                 matrix: compose(T(0, topY + S * 0.10, 0), R_X(Math.PI / 2)), color: lite });  // 光晕环
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.10, S * 0.42, S * 0.06),
-                 matrix: T(0, topY + S * 0.10, 0), color: '#ffe3ef' });   // 十字符文（竖）
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.42, S * 0.10, S * 0.06),
-                 matrix: T(0, topY + S * 0.10, 0), color: '#ffe3ef' });   // 十字符文（横）
-    parts.push({ geo: new THREE.SphereGeometry(S * 0.10, 8, 6),
-                 matrix: T(0, topY + S * 0.10, 0), color: lite });
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * Math.PI * 2 + 0.4;
-      parts.push({ geo: new THREE.SphereGeometry(S * 0.075, 6, 5),
-                   matrix: T(Math.cos(a) * S * 0.5, topY - S * 0.25 + Math.sin(i) * S * 0.1, Math.sin(a) * S * 0.5),
-                   color: lite });   // 环绕的愈疗光点
-    }
-    return parts;
-  },
-
-  // 工程兵：构装图腾——方正堆叠柱身 + 顶端齿轮符文环 + 侧挂扳手，呼应"机械/维修"。
-  engineer(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.55), lite = shade(color, 1.3);
-    const H = S * 1.2;
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.5, S * 0.62, S * 0.28, 8),
-                 matrix: T(0, S * 0.14, 0), color: dark });   // 底座
-    for (let i = 0; i < 2; i++) {
-      const w = S * (0.62 - i * 0.10), h = H / 2;
-      parts.push({ geo: new THREE.BoxGeometry(w, h, w),
-                   matrix: compose(T(0, S * 0.14 + h * (i + 0.5), 0), R_Y(i * 0.78)), color });
-      parts.push({ geo: new THREE.BoxGeometry(w * 1.2, S * 0.07, w * 1.2),
-                   matrix: T(0, S * 0.14 + h * (i + 1), 0), color: dark });
-    }
-    const topY = S * 0.14 + H;
-    parts.push({ geo: new THREE.TorusGeometry(S * 0.32, S * 0.09, 6, 8),
-                 matrix: T(0, topY + S * 0.14, 0), color: lite });   // 齿轮环主体
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.11, S * 0.11, S * 0.11),
-                   matrix: T(Math.cos(a) * S * 0.32, topY + S * 0.14, Math.sin(a) * S * 0.32), color: lite });
-    }   // 齿轮齿
-    parts.push({ geo: new THREE.BoxGeometry(S * 0.09, S * 0.62, S * 0.09),
-                 matrix: compose(T(S * 0.56, topY * 0.55, 0), R_Z(0.30)), color: dark });   // 侧挂扳手
-    for (const sx of [-1, 1]) {
-      parts.push({ geo: new THREE.BoxGeometry(S * 0.08, S * 0.16, S * 0.08),
-                   matrix: compose(T(S * 0.56 + sx * S * 0.10, topY * 0.55 + S * 0.34, 0), R_Z(0.30)), color: dark });
-    }
-    return parts;
-  },
-
-  // 唤灵兵：唤灵图腾——兜帽斗篷（与术士区分：不持法杖，改成套在身上的召唤符文环
-  // + 脚下召唤阵，呼应"召唤"而不是"施法"）。
-  summoner(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.55), lite = shade(color, 1.35);
-    const robeH = S * 1.15;
-    parts.push({ geo: new THREE.CylinderGeometry(S * 0.30, S * 0.66, robeH, 8),
-                 matrix: T(0, robeH / 2, 0), color });
-    parts.push({ geo: new THREE.ConeGeometry(S * 0.38, S * 0.5, 8),
-                 matrix: T(0, robeH + S * 0.20, 0), color: dark });
-    parts.push({ geo: new THREE.SphereGeometry(S * 0.17, 8, 6),
-                 matrix: T(0, robeH + S * 0.06, S * 0.14), color: '#1c1f26' });
-    parts.push({ geo: new THREE.TorusGeometry(S * 0.62, S * 0.05, 6, 16),
-                 matrix: compose(T(0, robeH * 0.55, 0), R_X(Math.PI / 2)), color: lite });   // 环绕符文环
-    parts.push({ geo: new THREE.TorusGeometry(S * 0.78, S * 0.045, 6, 16),
-                 matrix: compose(T(0, S * 0.04, 0), R_X(Math.PI / 2)), color: lite });   // 脚下召唤阵
-    for (let i = 0; i < 2; i++) {
-      const a = (i / 2) * Math.PI * 2 + 0.5;
-      parts.push({ geo: new THREE.OctahedronGeometry(S * 0.16),
-                   matrix: compose(T(Math.cos(a) * S * 0.62, robeH * 0.55, Math.sin(a) * S * 0.62), R_Y(a)),
-                   color: lite });
-    }
-    return parts;
-  },
-
-  // 重装车：龟甲壁垒——低矮宽厚的甲壳 + 四条短粗支柱 + 正面盾纹符文，读作"慢/硬壳/坦克"。
-  // 与其它单位相反：刻意压低整体高度、拉宽底盘，剪影跟又高又细的图腾/术士一眼区分开。
-  heavy(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.55), lite = shade(color, 1.25);
-    const legH = S * 0.34;
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      parts.push({ geo: new THREE.CylinderGeometry(S * 0.16, S * 0.20, legH, 8),
-                   matrix: T(sx * S * 0.58, legH / 2, sz * S * 0.78), color: dark });
-    }
-    parts.push({ geo: new THREE.BoxGeometry(S * 1.5, S * 0.5, S * 1.9),
-                 matrix: T(0, legH + S * 0.25, 0), color });
-    parts.push({ geo: new THREE.BoxGeometry(S * 1.24, S * 0.34, S * 1.6),
-                 matrix: T(0, legH + S * 0.5 + S * 0.17, 0), color: shade(color, 1.1) });   // 壳盖
-    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.22),
-                 matrix: compose(T(0, legH + S * 0.42, S * 0.96), R_X(Math.PI / 2)), color: lite });   // 盾纹符文
-    for (let i = 0; i < 3; i++) {
-      parts.push({ geo: new THREE.ConeGeometry(S * 0.12, S * 0.18, 5),
-                   matrix: T(0, legH + S * 0.5 + S * 0.34, -S * 0.7 + i * S * 0.5), color: dark });
-    }
-    return parts;
-  },
-
-  // 牧灵法阵幻兽：灵体碎晶——小巧的悬浮晶簇，刻意不做任何人形/兵种剪影。
-  // 用户明确要求"幻兽的模型就不要弄成小兵了，新做一个模型"——entity.type 本身仍是
-  // 'melee'（战斗/属性模板需要，不能动），渲染层通过 minionRenderType() 单独路由到这里，
-  // 见 SpriteFactory.js 头注与 UnitLayer._visualOf。
-  shepherd_pet(color, S) {
-    const parts = [];
-    const dark = shade(color, 0.6), lite = shade(color, 1.4);
-    const coreY = S * 0.62;
-    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.44, 0),
-                 matrix: compose(T(0, coreY, 0), R_Y(0.4)), color: lite });
-    parts.push({ geo: new THREE.OctahedronGeometry(S * 0.26, 0),
-                 matrix: compose(T(0, coreY, 0), R_Y(0.4 + Math.PI / 4)), color });
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * Math.PI * 2;
-      parts.push({ geo: new THREE.TetrahedronGeometry(S * 0.13),
-                   matrix: compose(T(Math.cos(a) * S * 0.5, coreY + Math.sin(i * 2) * S * 0.14, Math.sin(a) * S * 0.5), R_Y(a)),
-                   color: dark });
-    }
-    parts.push({ geo: new THREE.TorusGeometry(S * 0.34, S * 0.03, 5, 14),
-                 matrix: compose(T(0, S * 0.03, 0), R_X(Math.PI / 2)), color: lite });   // 贴地微光晕
-    return parts;
-  },
-};
-
-// 2026-09-20：唤灵兵的幻灵——用户定稿"这个模型改为召唤物的模型，用颜色区分"，
-// 直接复用上面牧灵法阵幻兽（shepherd_pet）同一个 builder，不重新画一份几何。
-// 两者靠 SpriteFactory.MINION_STYLE 里不同的 color 区分（青 vs 浅紫），造型本身
-// 就是同一个"悬浮晶簇"。
-MINION_BUILDERS.summon_spirit = MINION_BUILDERS.shepherd_pet;
 
 // ==================== 谁要转（v45 改为"除塔之外全都转"）====================
 // 这里原来是一张白名单（melee/ranged/siege/ram/super/warlock/corrupt），
@@ -1345,15 +1006,13 @@ export function needsFacing(type) { return type !== 'tower'; }
 export function minionMesh(key, color, size, type, faction) {
   let hit = _geoCache.get(key);
   if (!hit) {
-    const build = MINION_BUILDERS[type];
-    // v44：八个内置兵种现在**每一个都有自己的 builder**（图腾/术士/蚀骨是这一版补的）。
-    // 回退到通用步兵模板的只剩「玩家自制兵种」——那是合理的：自制兵种没有造型可言，
-    // 它靠颜色与图标区分。内置兵种再落到这条回退上就是漏做了，sim_v44 里有断言盯着。
-    void faction;   // 阵营差异目前只体现在颜色（由调用方传入 color），造型两边一致
-    hit = pack(build ? build(color, size) : infantryParts(color, size, false).parts);
+    // 造型在 unitModels.js：按阵营分两套风格（蓝方庄重沉稳、红方混沌尖锐），部件挂骨，
+    // 几何带 aBone / aPivot 属性，合批时由 InstancedBodyLayer 换上动画材质（走路 / 攻击）。
+    // 自制兵种没有专属造型，走不拿武器的阵营步兵，靠颜色与图标区分。
+    hit = buildMinion(type, color, size, faction);
     _geoCache.set(key, hit);
   }
-  return { geo: hit.geo, mat: unitMaterial(false), topY: hit.topY };
+  return { geo: hit.geo, mat: unitMaterial(false), topY: hit.topY, animated: true };
 }
 
 /** 巨龙：拉长的身体 + 头 + 双翼，比小兵大一圈，古龙更大 */
@@ -1383,123 +1042,19 @@ export function minionMesh(key, color, size, type, faction) {
  * 这种"注释写着一致、其实相反"的东西最坑，所以不靠改注释解决：
  * 造完之后把整块几何绕 Y 转 180°，让它**真的**朝 +Z，与全项目同一个约定。
  */
-export function dragonMesh(key, color, ancient, size = null) {
+export function dragonMesh(key, color, ancient, size = null, element = null) {
   let hit = _geoCache.get(key);
   if (!hit) {
     // 尺寸由调用方给（来自 CONFIG.dragonSizes）。省略时才回退到原来的写死值 ——
     // 保留回退是为了让这个函数单独调用时仍然能用，但正常路径一律走配置。
     const ds = CONFIG.dragonSizes || {};
     const S = size ?? (ancient ? (ds.ancient ?? 30) : (ds.element ?? 24));
-    const parts = [];
-    const dark = shade(color, 0.62);      // 腹部/腿/翼膜
-    const lite = shade(color, 1.22);      // 头/犄角/背板/尖端
-    const mid  = shade(color, 0.86);
-    const add = (geo, m, c) => parts.push({ geo, matrix: m, color: c });
-    const M = () => new THREE.Matrix4();
-    const rot = (rx, ry, rz) => M().makeRotationFromEuler(new THREE.Euler(rx, ry, rz));
-
-    const bodyY = S * 0.62;               // 躯干中心高度（四条腿把它撑起来）
-
-    // ---- 躯干：前胸粗、后腰细，两段拼出锥度，比单个压扁的球有体积感 ----
-    add(new THREE.SphereGeometry(S * 0.40, 10, 7),
-        M().makeScale(1.0, 0.92, 1.25).premultiply(T(0, bodyY, -S * 0.18)), color);
-    add(new THREE.SphereGeometry(S * 0.31, 10, 7),
-        M().makeScale(1.0, 0.88, 1.30).premultiply(T(0, bodyY * 0.96, S * 0.30)), color);
-    // 腹部（浅色一条，低多边形生物常用的分色）
-    add(new THREE.SphereGeometry(S * 0.26, 8, 6),
-        M().makeScale(1.0, 0.42, 1.5).premultiply(T(0, bodyY - S * 0.20, 0)), dark);
-
-    // ---- 颈 + 头：先有脖子再有头，这是旧造型最缺的一段 ----
-    add(new THREE.CylinderGeometry(S * 0.13, S * 0.19, S * 0.52, 7),
-        rot(-0.62, 0, 0).premultiply(T(0, bodyY + S * 0.30, -S * 0.44)), color);
-    // 头：楔形（前窄后宽），比锥体像头
-    add(new THREE.BoxGeometry(S * 0.26, S * 0.24, S * 0.42),
-        rot(-0.18, 0, 0).premultiply(T(0, bodyY + S * 0.56, -S * 0.76)), lite);
-    // 吻部
-    add(new THREE.ConeGeometry(S * 0.13, S * 0.26, 6),
-        rot(-Math.PI / 2 - 0.18, 0, 0).premultiply(T(0, bodyY + S * 0.52, -S * 1.02)), lite);
-    // 下颚
-    add(new THREE.BoxGeometry(S * 0.18, S * 0.08, S * 0.30),
-        rot(-0.10, 0, 0).premultiply(T(0, bodyY + S * 0.44, -S * 0.86)), dark);
-    // 犄角：元素龙一对、远古龙两对（剪影层面的区分）
-    const horns = ancient ? [[0.62, 0.30], [0.34, 0.62]] : [[0.52, 0.34]];
-    for (const [zk, spread] of horns) {
-      for (const sx of [-1, 1]) {
-        add(new THREE.ConeGeometry(S * 0.05, S * 0.30, 5),
-            rot(-0.5, 0, sx * 0.42).premultiply(
-              T(sx * S * spread * 0.30, bodyY + S * 0.74, -S * zk)), lite);
-      }
-    }
-
-    // ---- 四条腿 + 脚掌 ----
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const lx = sx * S * 0.26, lz = sz * S * 0.34;
-      add(new THREE.CylinderGeometry(S * 0.075, S * 0.10, bodyY * 0.62, 6),
-          T(lx, bodyY * 0.34, lz), dark);
-      add(new THREE.BoxGeometry(S * 0.17, S * 0.07, S * 0.21),
-          T(lx, S * 0.035, lz - S * 0.03), dark);
-    }
-
-    // ---- 双翼 ----
-    // 做法：**先把几何体自己平移到"内缘贴在原点"**，再整体旋转、再挪到肩点。
-    // 第一版是把三个矩阵 premultiply 串起来（rot → 局部平移 → base），
-    // 结果那个"局部平移"用的是世界轴而不是旋转后的坐标系，翼板被甩到身体外面
-    // 变成两根穿身而过的螺旋桨叶。几何体自带偏移之后，旋转天然绕内缘发生，
-    // 怎么转都还连在肩上。
-    //
-    // 姿态：这是一条**落地的**龙，翼不该像飞机一样平展。所以三个角一起给：
-    //   dihedral 上反角（翼尖抬高） + sweep 后掠（翼面向后拖） + 翼膜比翼骨更宽，
-    // 让剪影是"收在背上的一对翼"而不是两根横棍。
-    const span = S * 0.86, chord = S * 0.80;
-    const dihedral = 0.95, sweep = 0.62;
-    for (const sx of [-1, 1]) {
-      const shX = sx * S * 0.22, shY = bodyY + S * 0.30, shZ = -S * 0.06;
-      const pose = rot(0, sx * sweep, sx * dihedral);
-      // 翼骨（前缘）：底端在原点的柱体，沿 +Y 立起来，由 pose 摆成翼展方向
-      const bone = new THREE.CylinderGeometry(S * 0.036, S * 0.055, span, 5);
-      bone.translate(0, span / 2, 0);
-      add(bone, rot(0, sx * sweep, sx * (dihedral - Math.PI / 2 + 0.30))
-                  .premultiply(T(shX, shY, shZ)), mid);
-      // 翼膜：内缘在原点、向 +Y（翼展方向）铺开，chord 沿 Z 向后拖
-      const mem = new THREE.BoxGeometry(S * 0.022, span * 0.92, chord);
-      mem.translate(0, span * 0.46, chord * 0.34);
-      add(mem, rot(0, sx * sweep, sx * (dihedral - Math.PI / 2 + 0.30))
-                 .premultiply(T(shX, shY, shZ)), dark);
-      // 翼指：翼膜后缘的两根细骨，低多边形龙翼的辨识点
-      for (const k of [0.45, 0.80]) {
-        const rib = new THREE.CylinderGeometry(S * 0.022, S * 0.028, chord * 0.86, 4);
-        rib.rotateX(Math.PI / 2);
-        rib.translate(0, span * k, chord * 0.40);
-        add(rib, rot(0, sx * sweep, sx * (dihedral - Math.PI / 2 + 0.30))
-                   .premultiply(T(shX, shY, shZ)), mid);
-      }
-    }
-
-    // ---- 尾：三节递减 + 尾刺 ----
-    const tail = [[0.62, 0.13, 0.34], [0.94, 0.10, 0.30], [1.22, 0.07, 0.26]];
-    for (const [tz, tr, tl] of tail) {
-      add(new THREE.CylinderGeometry(S * tr * 0.8, S * tr, S * tl, 6),
-          rot(Math.PI / 2 - 0.10, 0, 0).premultiply(
-            T(0, bodyY - S * (tz - 0.62) * 0.18, S * tz)), color);
-    }
-    add(new THREE.ConeGeometry(S * 0.09, S * 0.28, 5),
-        rot(Math.PI / 2 - 0.10, 0, 0).premultiply(T(0, bodyY - S * 0.13, S * 1.48)), lite);
-
-    // ---- 背脊骨板：沿脊线由大到小，低多边形龙的标志性剪影 ----
-    const spine = ancient ? [0.28, 0.24, 0.20, 0.15, 0.11] : [0.20, 0.17, 0.14, 0.10];
-    spine.forEach((h, i) => {
-      add(new THREE.ConeGeometry(S * 0.055, S * h, 4),
-          rot(0.12, Math.PI / 4, 0).premultiply(
-            T(0, bodyY + S * 0.36, -S * 0.28 + i * S * 0.26)), lite);
-    });
-
-    hit = pack(parts);
-    // 归一到全项目的朝向约定（正面 = +Z）。这条龙上面所有部件都是按"头在 -Z"摆的，
-    // 与其重排几十个坐标（每改一处都可能把翼/尾摆错），不如整体转 180° —— 一行，且无歧义。
-    hit.geo.rotateY(Math.PI);
+    // 造型在 dragonModel.js：一副共用龙身 + 按元素换装饰（用户定稿"通过装饰 + 龙的颜色区分龙的不同类型"）。
+    // 直接朝 +Z 建，与全项目朝向约定一致。
+    hit = buildDragon(color, element, ancient, S);
     _geoCache.set(key, hit);
   }
-  return { geo: hit.geo, mat: unitMaterial(false), topY: hit.topY };
+  return { geo: hit.geo, mat: unitMaterial(false), topY: hit.topY, animated: true };
 }
 
 /**
@@ -1549,11 +1104,17 @@ export function unitMaterial(ghost) {
  *
  * 水晶（crystalMaterial）**不在此列**：它是自发光的，"夜里发亮"就是它的设定。
  */
+let _lastTint = null;
+/** 最近一次的昼夜染色（新建的动画材质要补染一次） */
+export function currentUnitTint() { return _lastTint; }
 export function setUnitTint(hex) {
   for (const k of ['solid', 'ghost']) {
     const m = _matCache.get(k);
     if (m) m.color.set(hex);
   }
+  // 小兵 / 巨龙的动画材质（unitRig.js）同样要染
+  for (const m of liveAnimBodies()) m.color.set(hex);
+  _lastTint = hex;
 }
 
 // Q6：水晶材质——玻璃/切面质感 + 自发光（队伍色）。每座塔【独立一份】（攻击辉光要逐塔调

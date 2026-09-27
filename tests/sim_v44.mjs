@@ -707,7 +707,8 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
     /\$\{vTier\}\|\$\{vFac\}/.test(ul));
 
   // ---- 小兵：八个内置兵种都有专属 builder ----
-  const builders = [...umf.matchAll(/^  (\w+)\(color, S\) \{/gm)].map(m => m[1]);
+  // 造型已搬到 unitModels.js（阵营风格 + 部件骨骼），专属造型清单由它导出
+  const { MINION_MODEL_TYPES: builders } = await import('../src/presentation/unitModels.js');
   const NEED = ['melee', 'ranged', 'siege', 'ram', 'super', 'totem', 'warlock', 'corrupt'];
   T(`模④-八个内置兵种都有专属造型（此前 totem/warlock/corrupt 落在通用步兵模板上）`,
     NEED.every(k => builders.includes(k)));

@@ -46,6 +46,18 @@ import * as THREE from '../../vendor/three.module.js';
 import { applySnowTint } from './VegetationShaderPatch.js';
 import { CONFIG } from '../data/Config.js';
 import { sampleSnowTarget } from '../systems/GroundTraceSystem.js';
+import { animMaterials } from './unitRig.js';
+import { currentUnitTint } from './UnitMeshFactory.js';
+
+/**
+ * 小兵的动画材质：全场小兵共用一份（合批版，走实例属性 aAnim）。
+ * 几何带 aBone / aPivot（unitRig.rigPack 打了 userData.animated 标记）的桶才用它。
+ */
+let _animMat = null;
+function sharedAnimMat() {
+  if (!_animMat) { _animMat = animMaterials(true); const t = currentUnitTint(); if (t) _animMat.color.set(t); }
+  return _animMat;
+}
 
 const INITIAL_CAPACITY = 24;
 
@@ -78,6 +90,14 @@ class BodyBucket {
     // 克隆的额外开销可以忽略；小兵桶继续用共享对象，不受影响，逐位不变。
     this.geo = isTower ? geo.clone() : geo;
     this.mat = isTower ? mat.clone() : mat;
+    // 带骨骼的几何（小兵）：换动画材质，每个实例多一个 aAnim（走路相位 / 走路幅度 / 攻击进度 / 时间）。
+    // 几何按 key 共享、一个 key 恰好一个桶，属性直接挂在共享几何上即可。
+    this.animated = !isTower && !!geo.userData?.animated;
+    if (this.animated) {
+      this.mat = sharedAnimMat();
+      this.geo.setAttribute('aAnim', new THREE.InstancedBufferAttribute(new Float32Array(this.capacity * 4), 4));
+      this.geo.getAttribute('aAnim').setUsage(THREE.DynamicDrawUsage);
+    }
     if (isTower) {
       this.geo.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(this.capacity), 1));
       applySnowTint(this.geo, this.mat);
@@ -85,6 +105,7 @@ class BodyBucket {
     }
     this.mesh = new THREE.InstancedMesh(this.geo, this.mat, this.capacity);
     this.mesh.frustumCulled = false;
+    this._wireAnim(this.mesh);
     const { cast, recv } = shadowFor(level, isTower);
     this.mesh.castShadow = cast; this.mesh.receiveShadow = recv;
     this.mesh.count = 0;
@@ -107,8 +128,15 @@ class BodyBucket {
       newPos.set(this._snowPosArr);
       this._snowPosArr = newPos;
     }
+    if (this.animated) {
+      const na = new Float32Array(cap * 4);
+      na.set(this.geo.getAttribute('aAnim').array);
+      this.geo.setAttribute('aAnim', new THREE.InstancedBufferAttribute(na, 4));
+      this.geo.getAttribute('aAnim').setUsage(THREE.DynamicDrawUsage);
+    }
     const mesh = new THREE.InstancedMesh(this.geo, this.mat, cap);
     mesh.frustumCulled = false;
+    this._wireAnim(mesh);
     mesh.castShadow = old.castShadow; mesh.receiveShadow = old.receiveShadow;
     for (let i = 0; i < old.count; i++) { old.getMatrixAt(i, _m4); mesh.setMatrixAt(i, _m4); }
     mesh.count = old.count;
@@ -143,6 +171,21 @@ class BodyBucket {
       arr[i] = depth * maxBlend;
     }
     attr.needsUpdate = true;
+  }
+
+  /** 动画桶：阴影深度与描边预渲染也走同一套变形（否则影子 / 描边是静止姿势） */
+  _wireAnim(mesh) {
+    if (!this.animated) return;
+    mesh.customDepthMaterial = this.mat.userData.depthMaterial;
+    mesh.userData.prepassMaterial = this.mat.userData.prepassMaterial;
+  }
+
+  /** 写一个实例的动画参数（非动画桶直接忽略） */
+  setAnim(idx, phase, walk, atk, time) {
+    if (!this.animated) return;
+    const a = this.geo.getAttribute('aAnim');
+    a.array[idx * 4] = phase; a.array[idx * 4 + 1] = walk; a.array[idx * 4 + 2] = atk; a.array[idx * 4 + 3] = time;
+    a.needsUpdate = true;
   }
 
   alloc() {
@@ -312,6 +355,11 @@ export class InstancedUnitProxy {
     // 用换槽前就已知道的位置（_x/_z 在损毁档切换时基本不变，_flush 会随即
     // 再同步一次），不需要等外部再传一次坐标进来。
     if (isTower) this._instancer.seedTowerSnow(this._slot, this._x, this._z);
+  }
+
+  /** 动画参数（走路相位、走路幅度 0..1、攻击进度 0..1 / -1、时间），见 unitRig.js */
+  setAnim(phase, walk, atk, time) {
+    if (this._slot) this._slot.bucket.setAnim(this._slot.index, phase, walk, atk, time);
   }
 
   releaseSlot() {
