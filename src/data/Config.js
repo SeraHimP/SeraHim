@@ -1355,11 +1355,52 @@ export const CONFIG = {
     //   pitFloorColor：坑底颜色（盖掉河道色、且坑内不盖水面）
     //   plazaRadius / plazaRings / plazaSpokes：广场半径、同心接缝圈数、放射接缝条数
     //   plazaStoneLift：广场铺石色相对调色板 rockColor 的提亮比例
+    //   plazaBlend：广场石色 = 路面色向调色板 rockColor 混合的比例（越小越接近地面）
+    //   plazaFeather：边缘羽化占半径的比例（没有硬边、没有路缘）
+    //   plazaWear：磨损斑块的深浅（0 = 没有）
+    //   用户定稿："保留但弱化"——去掉同心圈/放射线，只留一块颜色接近地面、稍微磨损的石地。
     landmarks: {
       pitStones: 16, pitGapDeg: 26, pitStoneSize: 14, pitStoneHeight: 26, pitRadiusScale: 1,
       pitFloorColor: '#b89c68',
-      plazaRadius: 240, plazaRings: 3, plazaSpokes: 12, plazaStoneLift: 0.25,
+      plazaRadius: 240, plazaBlend: 0.35, plazaFeather: 0.35, plazaWear: 0.06,
     },
+
+    // ==================== 野区：树冠盖满不可走区 ====================
+    // 用户："区分可走不可走不是改个颜色就区分了，重要要出来为什么不可走，是有树挡着，
+    // 还是墙挡着？"——定稿方案（2026-09-27 方案页）：
+    //   · 能走的野区是干净的草地，只在贴着树林的边上放少量矮灌木；
+    //   · 不能走的地方整块被树冠盖满（边缘一排正好压在边界上），边缘夹石头；
+    //   · 地面只留三层：土路 / 草地 / 树林。
+    // 调色板声明 jungleLayout:'canopy' 才生效。
+    //   interiorStep：树林内部的采样步长（世界单位）。树冠直径约 44×体量，步长要小于它才盖得满
+    //   scaleMin/Max：树的体量范围
+    //   edgeProbe：离可走区多近算"边缘"；edgeStep：边缘那一排的采样步长
+    //   edgeRockChance：边缘位置放石头（而不是树）的概率；rockScaleMin/Max：石头体量
+    //   bushBand：草地上离树林多近才可能长灌木；bushStep / bushChance：灌木的采样步长与概率
+    //   groundNoiseAlpha：地面很轻的明暗起伏（0 = 纯色）
+    jungleCanopy: {
+      interiorStep: 34, scaleMin: 0.95, scaleMax: 1.35,
+      edgeProbe: 26, edgeStep: 26, edgeRockChance: 0.25, rockScaleMin: 1.3, rockScaleMax: 2.1,
+      bushBand: 34, bushStep: 40, bushChance: 0.25,
+      groundNoiseAlpha: 0.05,
+    },
+
+    // ==================== 基地高地城墙 ====================
+    // 用户："召唤师峡谷的高地塔（召唤水晶塔）前方不可走的区域应该是有石墙挡着的，
+    // 而不是换了个颜色，实际上地表还是空着的"。定稿（用户看了实机截图二选一）：城墙——
+    // 错缝石砖、垛口、两端墩台，墙顶石色，金色只在墩台顶上。见 BaseWallLayer 头注。
+    // 只有声明了 map.baseWalls 的图才砌（目前只有召唤师峡谷）。
+    //   wallFraction：一块不可走小岛至少这么大比例落在围墙环带内，整块都算墙（见 baseWallMask）
+    //   height / courses / blockLength：墙身高度、石砖层数、每块砖沿墙方向的长度
+    //   thicknessMin / thicknessMax：墙厚（取墙带宽度的一半，夹在这两个值之间）
+    //   copingHeight / copingColor：墙顶压顶线的高度与颜色
+    //   merlonHeight：垛口高度（隔一块砖一个）
+    //   pillarSize / pillarExtraHeight：两端墩台的边长、比墙高出多少（墩台顶用调色板 wallCapColor）
+    baseWall: {
+      wallFraction: 0.5, height: 34, courses: 3, blockLength: 18, thicknessMin: 14, thicknessMax: 24,
+      copingHeight: 2.6, copingColor: '#a9a293', merlonHeight: 8, pillarSize: 30, pillarExtraHeight: 18,
+    },
+
 
     // ==================== v45：地图火炬（夜间补光）====================
     // 用户："实在不行可以在地图中增加光源（火炬等）。""扭曲丛林这张图晚上看起来很怪。"
@@ -2000,7 +2041,7 @@ export const CONFIG = {
       // "走廊 vs 野区"二分（v58 新增，见两处文件头注）——可走区域里离兵线够远的部分
       // 画成草地而不是跟路面同色，野区里也才会真的长树而不是一马平川。
       // 这是"森林风格"与"default"（单一可走色）的本质区别，其它字段大体相通。
-      jungleColor: '#4c9a5b',
+      jungleColor: '#5a9a55',
       // v59：野区不再是"路/野区"二选一的平面色块——用户反馈"没有峡谷的空间结构，
       // 只有峡谷的颜色"。改成沿离兵线距离分级的森林梯度（见 mapValidate.js 的
       // forestZoneAt）：越靠近兵线越浅、越靠近野区深处/障碍物越深，颜色和高度
@@ -2024,10 +2065,10 @@ export const CONFIG = {
       // 可走野区才长——跟 default palette 的"只在不可走区域长树"是两套不同的
       // 分类依据，森林风格地图的野区本身就是可走的，不能沿用 default 那套判据。
       vegetationMode: 'jungle',
-      // v60：野区植被改成"更少、更大"——审查截图里是满屏小树，读不出成片的林冠。
-      // 采样步长 55 → 68（数量约 ×0.65），体量 ×1.3。未声明这两项的调色板保持 55 / 1。
-      vegetationStep: 68,
-      vegetationScale: 1.3,
+      // 野区布局（用户定稿，见 CONFIG.ui.jungleCanopy 头注）：地面三层——土路 / 草地
+      // （jungleColor）/ 树林（forestFloorColor，不可走区的地面，被树冠盖满）。
+      jungleLayout: 'canopy',
+      forestFloorColor: '#2b5a33',
     },
     // 嚎哭深渊·冰封版专用（见设计文档第 4.1 节）。这张图没有"树/野区"这个概念
     // （不可走区域是水/浮冰，不是森林），`vegetationMode:'none'` 让 VegetationLayer
@@ -2121,10 +2162,10 @@ export const CONFIG = {
       // v60：审查结论"扭曲丛林读不出路"——路:野区亮度对比只有 1.22:1（冰封 12.65:1）。
       // 保留紫色相，只把路面提亮：#4a2f52 → #a58cae，对野区 #3d1f4a 约 4.66:1。
       // 深色的塔和小兵站在浅色路面上才看得见。
-      // obstacleColor：野区里的小块障碍物（不与地图外缘相连的不可走区）原来用
-      // groundColor #160c22 画，近乎纯黑，45° 俯视下被压扁成一道道"黑条"。
-      // 改成与岩石同色，读作岩丛，而不是地上的洞。
-      obstacleColor: '#4a3552',
+      // 野区布局同 forest：不可走区的地面是 forestFloorColor，上面被扭曲树冠盖满、
+      // 边缘夹石头——看得出"为什么走不过去"，而不是地上一块深色。
+      jungleLayout: 'canopy',
+      forestFloorColor: '#241030',
     },
   },
 

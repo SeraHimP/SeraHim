@@ -275,6 +275,8 @@ export const SR_CONFIG = {
   pits: SR_PITS,
   // v60：龙坑/男爵坑画出来（坑底 + 立石圈），水晶枢纽脚下铺石广场。见 data/landmarks.js。
   landmarks: { pits: true, plazas: true },
+  // 基地圈半径处那一圈不可走带（sr_navgrid.js 专门描的墙，三路留口）砌成连续石墙。
+  baseWalls: true,
 
   // 2026-09-04：中立营地显式化——原来靠 NeutralCampSystem.neutralCampsOf() 在
   // 没声明时按巨龙既定行为合成默认值（同一份 baron/top/reverse + dragon/bot/forward），

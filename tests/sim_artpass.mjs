@@ -6,7 +6,6 @@ setupWindow();
 
 const { CONFIG } = await import('../src/data/Config.js');
 const { MAPS } = await import('../src/data/maps/index.js');
-const { interiorObstacles } = await import('../src/presentation/smoothLabels.js');
 const { T, done } = scoreboard('峡谷/扭曲丛林/冰封画面修正');
 
 const P = CONFIG.stylizedPalettes;
@@ -32,36 +31,26 @@ const tt = list.find((m) => m.id === 'twisted_treeline_v1');
     const [r, g, b] = [1, 3, 5].map((i) => parseInt(mf.corridorColor.slice(i, i + 2), 16));
     return r > g && b > g;
   })());
-  T('③扭曲丛林的野区小障碍物有自己的颜色，而且不是近黑（相对亮度高于图外底色）',
-    !!mf.obstacleColor && lum(mf.obstacleColor) > lum(mf.groundColor) * 2);
+  // 原来的"障碍物换岩石色"已被用户否掉（"区分可走不可走不是改个颜色"），改成树冠盖满，见 sim_jungle_canopy。
+  T('③扭曲丛林的野区障碍物走树冠布局（有东西挡着，不是换个颜色）',
+    mf.jungleLayout === 'canopy' && !!mf.forestFloorColor && mf.obstacleColor === undefined);
   T('④扭曲丛林关掉了沿路等距排开的边界柱', tt.boundaryPillars === false);
-}
-{
-  // 内部障碍物判定：与外缘连通的不算，被可走区包住的才算。
-  const nx = 7, ny = 5, paint = new Uint8Array(nx * ny).fill(1);
-  for (let i = 0; i < nx; i++) { paint[i] = 0; paint[(ny - 1) * nx + i] = 0; }   // 上下边是图外
-  paint[2 * nx + 3] = 0;                                                        // 中间一块障碍
-  const io = interiorObstacles(paint, nx, ny);
-  T('⑤被可走区包住的不可走格算"内部障碍物"', io[2 * nx + 3] === 1);
-  T('⑥与地图外缘连通的不可走格不算', io[0] === 0 && io[(ny - 1) * nx] === 0);
 }
 {
   const f = P.forest;
   T(`⑦召唤师峡谷走廊降饱和（${sat(f.corridorColor).toFixed(2)}，改前 0.42）`, sat(f.corridorColor) < 0.35);
-  T('⑧召唤师峡谷植被"更少、更大"：步长 > 55 且体量 > 1', f.vegetationStep > 55 && f.vegetationScale > 1);
+  T('⑧召唤师峡谷野区走树冠布局（代替上一轮的"更少、更大"）', f.jungleLayout === 'canopy' && f.vegetationStep === undefined);
   const fr = P.frost;
   T('⑨冰封的阵营底色收窄、减淡', fr.baseTintRadiusFrac < 0.30 && fr.baseTintAlpha < 0.20);
 }
 {
   const src = (f) => fs.readFileSync(new URL('../src/presentation/' + f, import.meta.url), 'utf8');
   const tl = src('TerrainLayer.js'), vg = src('VegetationLayer.js');
-  T('⑩未声明新字段的调色板保持原值（默认 0.30/0.20、55/1、没有 obstacleColor 就不分类）',
-    /SV\.baseTintRadiusFrac \?\? 0\.30/.test(tl) && /SV\.baseTintAlpha \?\? 0\.20/.test(tl)
-    && /VP\.vegetationStep \?\? 55/.test(vg) && /VP\.vegetationScale \?\? 1/.test(vg)
-    && /\(stylized && SV\.obstacleColor\) \? interiorObstacles/.test(tl));
+  T('⑩未声明新字段的调色板保持原值（阵营底色默认 0.30 / 0.20）',
+    /SV\.baseTintRadiusFrac \?\? 0\.30/.test(tl) && /SV\.baseTintAlpha \?\? 0\.20/.test(tl));
   const others = Object.entries(P).filter(([k]) => !['forest', 'magicForest', 'frost'].includes(k));
   T('⑪其它调色板没有被顺手加上这些字段', others.every(([, v]) =>
-    v.obstacleColor === undefined && v.vegetationStep === undefined && v.baseTintAlpha === undefined));
+    v.jungleLayout === undefined && v.baseTintAlpha === undefined));
 }
 
 done();

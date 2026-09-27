@@ -119,6 +119,9 @@ export class BoundaryDecorLayer {
 
     // ---- 自然边缘候选：野区里"可走但贴着不可走障碍物"的网格点 ----
     const natTrees = [], natRocks = [], styledPosts = [];
+    // 树冠布局的图上，边缘那一排树/石由 VegetationLayer 按 data/jungleCanopy.js 摆，
+    // 这里再撒一层会重叠、也会撒到草地上（用户说的"乱七八糟"）。只保留石墙笔刷那一类。
+    const canopyLayout = SV.jungleLayout === 'canopy';
     for (let gx = edge; gx < WW - edge; gx += NAT_SPACING) {
       for (let gy = edge; gy < WH - edge; gy += NAT_SPACING) {
         const x = gx + (hash(gx + 31, gy) - 0.5) * NAT_SPACING * NAT_JITTER;
@@ -133,6 +136,7 @@ export class BoundaryDecorLayer {
         // 素材库笔刷唯一要改的行为，其余（没画过/画的是"自然"风格）逐位不变。
         const stoneNearby = probes.some(([px, py]) => !walk(px, py) && wallStyleAt(px, py) === 2);
         if (stoneNearby) { styledPosts.push([x, y]); continue; }
+        if (canopyLayout) continue;
         (hash(gx + 3, gy) < 0.6 ? natTrees : natRocks).push([x, y]);
       }
     }

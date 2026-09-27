@@ -73,6 +73,8 @@ export const CONFIG_FIELDS = [
   'visualStyle', 'paletteId',
   // v60：地标（坑/基地广场）的开关与覆写，纯画面字段，见 data/landmarks.js。
   'landmarks',
+  // 基地高地连续石墙（见 data/baseCircle.js baseWallMask），纯画面字段。
+  'baseWalls',
   // v51.22：BoundaryDecorLayer 城墙/围墙柱子装饰的开关，同样是纯画面字段。
   'boundaryPillars',
   // v55.3：作者手动声明的火炬点（torchPlacement.js 头注"地图自己声明的优先于

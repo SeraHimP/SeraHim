@@ -1,3 +1,4 @@
+import { unpackBits } from './navgrid.js';
 /**
  * baseCircle.js —— 基地圈圆心的**唯一**取值口。
  *
@@ -68,4 +69,122 @@ export function isInBaseWallRing(map, x, y, thickness = 60) {
     if (d >= r && d <= r + thickness) return true;
   }
   return false;
+}
+
+/**
+ * navgrid 原生分辨率下的"基地围墙"掩码。只有地图声明了 `baseWalls: true` 才有墙
+ * （召唤师峡谷：sr_navgrid.js 在基地圈半径处专门描了一圈墙、给三路留了口子；
+ * 扭曲丛林没有这种墙，环带里的不可走区是野区树林的一部分，不能被截成墙块）。
+ *
+ * 规则：不可走 且 格心在 isInBaseWallRing 环带内 → 墙；另外，一整块不可走小岛如果
+ * 至少 `wallFraction`（CONFIG.ui.baseWall）落在环带内，整块都算墙——否则墙体外侧
+ * 那一溜会被当成树林长出树来，挡住墙面。
+ *
+ * @param {object} map
+ * @param {Uint8Array} bits 可走位图（1=可走），n×n
+ * @param {number} n
+ * @param {number} [wallFraction=0.5]
+ * @returns {Uint8Array|null} 1 = 该格是墙；地图没声明 baseWalls 时返回 null
+ */
+export function baseWallMask(map, bits, n, wallFraction = 0.5) {
+  if (!map?.baseWalls || !map.world) return null;
+  const cw = map.world.w / n, ch = map.world.h / n;
+  const ring = (k) => isInBaseWallRing(map, (k % n + 0.5) * cw, (((k / n) | 0) + 0.5) * ch);
+  const out = new Uint8Array(n * n);
+  const seen = new Uint8Array(n * n);
+  for (let s = 0; s < n * n; s++) {
+    if (bits[s] || seen[s]) continue;
+    const q = [s], cells = []; seen[s] = 1;
+    while (q.length) {
+      const k = q.pop(); cells.push(k);
+      const x = k % n, y = (k / n) | 0;
+      if (x > 0 && !bits[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; q.push(k - 1); }
+      if (x < n - 1 && !bits[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; q.push(k + 1); }
+      if (y > 0 && !bits[k - n] && !seen[k - n]) { seen[k - n] = 1; q.push(k - n); }
+      if (y < n - 1 && !bits[k + n] && !seen[k + n]) { seen[k + n] = 1; q.push(k + n); }
+    }
+    const inRing = cells.filter(ring);
+    if (!inRing.length) continue;
+    const whole = inRing.length / cells.length >= wallFraction;
+    for (const k of (whole ? cells : inRing)) out[k] = 1;
+  }
+  return out;
+}
+
+const _wallLookupCache = new WeakMap();
+/**
+ * 世界坐标 → 是否基地石墙。TerrainLayer（墙脚地面）、jungleCanopy（墙上不长树）、
+ * BaseWallLayer（砌墙）三处读同一份掩码。按 map 对象缓存。
+ * @returns {((x:number,y:number)=>boolean)|null}
+ */
+export function baseWallLookup(map, navgrid, wallFraction = 0.5) {
+  if (!map?.baseWalls || !navgrid?.bits) return null;
+  const hit = _wallLookupCache.get(map);
+  if (hit && hit.bits === navgrid.bits) return hit.fn;
+  const n = navgrid.n, bits = unpackBits(navgrid.bits, n);
+  const mask = bits ? baseWallMask(map, bits, n, wallFraction) : null;
+  const cw = map.world.w / n, ch = map.world.h / n;
+  const fn = mask ? (x, y) => {
+    const i = Math.floor(x / cw), j = Math.floor(y / ch);
+    return i >= 0 && j >= 0 && i < n && j < n && mask[j * n + i] === 1;
+  } : null;
+  _wallLookupCache.set(map, { bits: navgrid.bits, fn });
+  return fn;
+}
+
+/**
+ * 基地石墙的中线：沿基地圈逐角度量出墙带的内外径，取中间；连续的一段角度就是一截墙。
+ * BaseWallLayer 沿这些中线砌城墙（墙体比墙带窄，站在墙带正中）。
+ *
+ * @param {object} map
+ * @param {Uint8Array} mask baseWallMask 的结果（n×n）
+ * @param {number} n
+ * @param {number} [spacing=18] 输出点沿弧长的间距（世界单位）
+ * @returns {Array<Array<{x:number,y:number,width:number,ang:number}>>} 每截墙一串点，ang 是该点相对基地圈心的方位角
+ */
+export function baseWallRuns(map, mask, n, spacing = 18) {
+  if (!mask || !map?.world) return [];
+  const cw = map.world.w / n, ch = map.world.h / n;
+  const inWall = (x, y) => {
+    const i = Math.floor(x / cw), j = Math.floor(y / ch);
+    return i >= 0 && j >= 0 && i < n && j < n && mask[j * n + i] === 1;
+  };
+  const runs = [];
+  const r0 = map.baseOpenRadius || map.baseCircleRadius;
+  if (!r0) return runs;
+  for (const f of ['blue', 'red']) {
+    const c = baseCircleCenter(map, f);
+    if (!c) continue;
+    const N = Math.ceil(2 * Math.PI * (r0 + 30) / 6);
+    const samples = [];
+    for (let i = 0; i < N; i++) {
+      const ang = i / N * Math.PI * 2;
+      let lo = Infinity, hi = -Infinity;
+      for (let rr = r0 - 20; rr <= r0 + 90; rr += 3) {
+        if (inWall(c.x + Math.cos(ang) * rr, c.y + Math.sin(ang) * rr)) { lo = Math.min(lo, rr); hi = Math.max(hi, rr); }
+      }
+      samples.push(hi - lo >= 8 ? { ang, mid: (lo + hi) / 2, width: hi - lo } : null);
+    }
+    // 从一个空档开始转一圈，跨 0° 的那截墙不会被切成两段
+    let start = samples.findIndex((q) => !q);
+    if (start < 0) start = 0;
+    let run = [];
+    const raw = [];
+    for (let k = 1; k <= N; k++) {
+      const q = samples[(start + k) % N];
+      if (q) run.push(q); else if (run.length) { raw.push(run); run = []; }
+    }
+    if (run.length) raw.push(run);
+    for (const rn of raw) {
+      const pts = rn.map((q) => ({ x: c.x + Math.cos(q.ang) * q.mid, y: c.y + Math.sin(q.ang) * q.mid, width: q.width, ang: q.ang }));
+      const out = [pts[0]];
+      let acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        if (acc >= spacing) { out.push(pts[i]); acc = 0; }
+      }
+      if (out.length >= 2) runs.push(out);
+    }
+  }
+  return runs;
 }

@@ -16,9 +16,9 @@
  * 走廊外沿一圈"墙缘"高光，读起来就是 LoL 小地图的结构。
  */
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
-import { baseCircleCenter, isInBaseWallRing } from '../data/baseCircle.js';
-import { unpackBits } from '../data/navgrid.js';
-import { smoothLabelsToRGBA, sampleFieldRGBA, interiorObstacles } from './smoothLabels.js';
+import { baseCircleCenter, isInBaseWallRing, baseWallLookup } from '../data/baseCircle.js';
+import { unpackBits, navgridOf } from '../data/navgrid.js';
+import { smoothLabelsToRGBA, sampleFieldRGBA } from './smoothLabels.js';
 import { SR_NAVGRID } from '../data/maps/sr_navgrid.js';
 import { landmarkPlan, landmarkConfig } from '../data/landmarks.js';
 import { mapOutline, invalidateMapOutline } from '../data/navOutline.js';
@@ -55,18 +55,6 @@ export function invalidateTerrainCache(mapId) {
  * @param grid       WallLayer 的可走网格 { walk, nx, ny }（navgrid 地图才有意义）
  * @param mapSystem  用于取河道强度场（riverFactor）；缺省则不画河
  */
-/** 最小的 hex 颜色明暗调整（本模块是纯 2D 画布，不为这一件事引 THREE）。k>0 提亮、k<0 压暗。 */
-class HexShade {
-  constructor(hex) {
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '') || [0, '8f8879'];
-    this.c = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
-  }
-  lift(k) {
-    const f = (v) => Math.round(k >= 0 ? v + (255 - v) * k : v * (1 + k));
-    return `rgb(${this.c.map(f).join(',')})`;
-  }
-}
-
 /**
  * 可选的"只用来画地面形状"的位图（`map.visualNavgrid`）→ 与 grid 同分辨率的 0/1 表。
  *
@@ -220,25 +208,33 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
       g.beginPath(); g.arc(p.x, p.y, p.r, 0, 2 * Math.PI); g.fill();
     }
     if (plan.plazas.length) {
-      const rock = new HexShade(stylizedPaletteOf(map).rockColor || '#8f8879');
-      const stone = rock.lift(L.plazaStoneLift ?? 0.25), joint = rock.lift(-0.35);
+      // 用户定稿"保留但弱化"：没有同心圈、放射线、路缘；颜色从路面色向石色只混一小步，
+      // 边缘羽化进地面，再叠几块很浅的磨损斑。
+      const mix = (h1, h2, t) => {
+        const p = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || '') || [0, '8f8879']; return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)); };
+        const A = p(h1), B = p(h2);
+        return A.map((v, i) => Math.round(v + (B[i] - v) * t));
+      };
+      const SVp = stylizedPaletteOf(map);
+      const [sr, sg, sb] = mix(SVp.corridorColor || '#b8a27c', SVp.rockColor || '#8f8879', L.plazaBlend ?? 0.35);
+      const feather = Math.max(0.01, Math.min(0.9, L.plazaFeather ?? 0.35));
+      const wear = L.plazaWear ?? 0;
       for (const pz of plan.plazas) {
-        g.fillStyle = stone;
+        const gr = g.createRadialGradient(pz.x, pz.y, 0, pz.x, pz.y, pz.r);
+        gr.addColorStop(0, `rgba(${sr},${sg},${sb},1)`);
+        gr.addColorStop(1 - feather, `rgba(${sr},${sg},${sb},1)`);
+        gr.addColorStop(1, `rgba(${sr},${sg},${sb},0)`);
+        g.fillStyle = gr;
         g.beginPath(); g.arc(pz.x, pz.y, pz.r, 0, 2 * Math.PI); g.fill();
-        g.strokeStyle = joint; g.lineWidth = 3;
-        for (let i = 1; i <= pz.rings; i++) {
-          g.beginPath(); g.arc(pz.x, pz.y, pz.r * i / (pz.rings + 1), 0, 2 * Math.PI); g.stroke();
+        if (wear > 0) {
+          let seed = Math.round(pz.x * 31 + pz.y);
+          const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+          for (let i = 0; i < 14; i++) {
+            const ang = rnd() * Math.PI * 2, d = rnd() * pz.r * (1 - feather);
+            g.fillStyle = rnd() < 0.6 ? `rgba(0,0,0,${wear})` : `rgba(255,255,255,${wear * 0.7})`;
+            g.beginPath(); g.arc(pz.x + Math.cos(ang) * d, pz.y + Math.sin(ang) * d, pz.r * (0.08 + rnd() * 0.14), 0, 2 * Math.PI); g.fill();
+          }
         }
-        const r0 = pz.r / (pz.rings + 1);
-        for (let i = 0; i < pz.spokes; i++) {
-          const a = i / pz.spokes * Math.PI * 2;
-          g.beginPath();
-          g.moveTo(pz.x + Math.cos(a) * r0, pz.y + Math.sin(a) * r0);
-          g.lineTo(pz.x + Math.cos(a) * pz.r, pz.y + Math.sin(a) * pz.r);
-          g.stroke();
-        }
-        g.lineWidth = 6;
-        g.beginPath(); g.arc(pz.x, pz.y, pz.r, 0, 2 * Math.PI); g.stroke();   // 外圈路缘
       }
     }
   };
@@ -376,23 +372,43 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     const cellW2 = WW / nx, cellH2 = WH / ny;
     // 每格先归成一个类别，再决定怎么放大（见 smoothLabels.js）。
     // 类别：0 道路 1 林缘 2 森林 3 深林 4 图外 5 围墙地基 6 挖空
-    // 7 = 野区内部障碍物（不与地图外缘连通的不可走区），只有调色板声明了 obstacleColor 才分出来。
-    const [obR, obG, obB] = stylized && SV.obstacleColor ? hex2rgb(SV.obstacleColor, '4a3552') : [gndR, gndG, gndB];
-    const PAL = [[corR, corG, corB, 255], [edgR, edgG, edgB, 255], [jngR, jngG, jngB, 255], [dpR, dpG, dpB, 255],
-      [gndR, gndG, gndB, 255], [wallR, wallG, wallB, 255], [0, 0, 0, 0], [obR, obG, obB, 255]];
-    const interior = (stylized && SV.obstacleColor) ? interiorObstacles(paint, nx, ny) : null;
+    // 野区"树冠"布局（用户定稿）：地面只有三层——土路 / 草地 / 树林地面。
+    // 不可走区（除基地围墙外）一律是树林地面，上面由 VegetationLayer 盖满树冠。
+    const canopy = jungleActive && SV.jungleLayout === 'canopy';
+    // 树冠布局下，墙脚地面只画在真正砌墙的地方（见 baseWallMask）；没砌墙的环带是树林。
+    const wallAt = canopy ? baseWallLookup(map, navgridOf(map), CONFIG.ui?.baseWall?.wallFraction ?? 0.5) : null;
+    const [flR, flG, flB] = canopy ? hex2rgb(SV.forestFloorColor, '2b5a33') : [dpR, dpG, dpB];
+    const PAL = [[corR, corG, corB, 255], [edgR, edgG, edgB, 255], [jngR, jngG, jngB, 255], [flR, flG, flB, 255],
+      [gndR, gndG, gndB, 255], [wallR, wallG, wallB, 255], [0, 0, 0, 0]];
     const labels = new Uint8Array(nx * ny);
+    // 很轻的明暗起伏：纯色大面积读起来像塑料，但起伏一重就又"乱七八糟"了，所以强度可配、默认很低。
+    const groundNoise = () => {
+      const a = CONFIG.ui?.jungleCanopy?.groundNoiseAlpha ?? 0;
+      if (!(a > 0)) return;
+      let seed = 97531;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      const N = Math.round(WW * WH / 9000);
+      // 每块起伏用径向渐变（中心 → 透明），实心圆的边在路面上会读成一圈圈的印子。
+      for (let i = 0; i < N; i++) {
+        const c = rnd() < 0.5 ? '255,255,255' : '0,0,0';
+        const x = rnd() * WW, y = rnd() * WH, r = 40 + rnd() * 90;
+        const gr = g.createRadialGradient(x, y, 0, x, y, r);
+        gr.addColorStop(0, `rgba(${c},${a})`); gr.addColorStop(1, `rgba(${c},0)`);
+        g.fillStyle = gr;
+        g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill();
+      }
+    };
     for (let k = 0; k < nx * ny; k++) {
       const on = paint[k];
       // v59：0=道路 1=林缘 2=普通森林 3=深林；未开森林分级时 zoneAt 为 null，
       // 全部按老逻辑当"路"（zone 0），三张老地图与 demo_stylized_v1 逐位不变。
       let lab = on ? (zoneAt ? zoneAt[k] : 0) : 4;
+      if (canopy) lab = on ? (lab === 0 ? 0 : 2) : 3;
       if (!on && jungleActive) {
         const gx = k % nx, gy = (k / nx) | 0;
         const wx = (gx + 0.5) * cellW2, wy = (gy + 0.5) * cellH2;
-        if (isInBaseWallRing(map, wx, wy)) lab = 5;
+        if (canopy ? (wallAt && wallAt(wx, wy)) : isInBaseWallRing(map, wx, wy)) lab = 5;
       }
-      if (lab === 4 && interior && interior[k]) lab = 7;
       if (cutout && !on) lab = 6;
       labels[k] = lab;
     }
@@ -401,6 +417,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
       const out = g.createImageData(c.width, c.height);
       out.data.set(smoothLabelsToRGBA(labels, nx, ny, PAL, c.width, c.height, SM.blur ?? 1 / 6));
       g.putImageData(out, 0, 0);
+      if (canopy) groundNoise();
       drawRiver(riverAt);
       drawLandmarks();
       tintBases();
@@ -415,6 +432,7 @@ export function buildTerrainLayer(map, grid = null, mapSystem = null) {
     g.imageSmoothingEnabled = false;                  // 最近邻：格边界与 navgrid 严格对齐
     g.drawImage(cell, 0, 0, WW, WH);
     g.imageSmoothingEnabled = true;
+    if (canopy) groundNoise();
     drawRiver(riverAt);
     drawLandmarks();
     tintBases();

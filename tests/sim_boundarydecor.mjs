@@ -147,7 +147,7 @@ const mk = (id) => {
 
   const tl2 = srcOf('src/presentation/TerrainLayer.js');
   T('围⑨-TerrainLayer 给基地围墙带的不可走格子换成石头色（不再是裸露的图外底色）',
-    /import \{ baseCircleCenter, isInBaseWallRing \} from '\.\.\/data\/baseCircle\.js';/.test(tl2) &&
+    /import \{ baseCircleCenter, isInBaseWallRing(, \w+)* \} from '\.\.\/data\/baseCircle\.js';/.test(tl2) &&
     /isInBaseWallRing\(map, wx, wy\)/.test(tl2));
 }
 

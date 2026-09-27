@@ -86,27 +86,3 @@ export function sampleFieldRGBA(fn, W, H, cellW, cellH, rgb, maxAlpha) {
   }
   return out;
 }
-
-/**
- * 不可走格里，哪些**不与地图外缘连通**（野区里的小块障碍物，而不是地图外面）。
- * 从四条边往里泛洪不可走格，泛洪不到的就是内部障碍物。返回 Uint8Array（1=内部）。
- */
-export function interiorObstacles(paint, nx, ny) {
-  const outside = new Uint8Array(nx * ny);
-  const stack = [];
-  const push = (i, j) => {
-    if (i < 0 || j < 0 || i >= nx || j >= ny) return;
-    const k = j * nx + i;
-    if (paint[k] || outside[k]) return;
-    outside[k] = 1; stack.push(k);
-  };
-  for (let i = 0; i < nx; i++) { push(i, 0); push(i, ny - 1); }
-  for (let j = 0; j < ny; j++) { push(0, j); push(nx - 1, j); }
-  while (stack.length) {
-    const k = stack.pop(), i = k % nx, j = (k / nx) | 0;
-    push(i + 1, j); push(i - 1, j); push(i, j + 1); push(i, j - 1);
-  }
-  const out = new Uint8Array(nx * ny);
-  for (let k = 0; k < nx * ny; k++) out[k] = (!paint[k] && !outside[k]) ? 1 : 0;
-  return out;
-}

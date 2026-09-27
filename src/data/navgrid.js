@@ -1,3 +1,4 @@
+import { SR_NAVGRID } from './maps/sr_navgrid.js';
 /**
  * navgrid.js —— navgrid（可行走位图）的编解码 + 笔刷纯函数
  *
@@ -244,4 +245,13 @@ export function despeckle(bits, n) {
     }
   }
   return bits;
+}
+
+/**
+ * 地图实际使用的 navgrid。与 MapSystem._navgrid() 同一条兜底：声明了 useNavgrid
+ * 却没带 navgrid 的地图（召唤师峡谷）用 SR_NAVGRID。渲染层要按原生分辨率取形状时走这里。
+ */
+export function navgridOf(map) {
+  if (!map?.useNavgrid) return null;
+  return map.navgrid || SR_NAVGRID;
 }

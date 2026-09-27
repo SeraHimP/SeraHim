@@ -4,7 +4,7 @@
  * 审查截图里召唤师峡谷的龙坑/男爵坑完全看不见（坑在河道里，风格化地图又不挖坑，
  * 只剩一片水），基地是一整片空地。地标让玩家一眼认出"这是哪里"：
  *   · 坑：沙色坑底 + 一圈立石，两个缺口——一个朝这个营地出兵的那条路，一个朝反方向。
- *   · 基地广场：每个水晶枢纽脚下一块铺石圆台（同心接缝 + 放射接缝）。
+ *   · 基地广场：每个水晶枢纽脚下一块颜色接近地面、边缘羽化的磨损石地。
  *
  * 按地图声明开启：`map.landmarks = { pits: true, plazas: true }`，可在里面覆写
  * CONFIG.ui.landmarks 的任何一项。没声明的地图（冰封、水晶之痕……）完全不受影响。
@@ -77,8 +77,7 @@ export function landmarkPlan(map, getPit) {
   if (L.plazas) {
     for (const b of map.buildings || []) {
       if (b.tier !== 'nexus_main' || !b.pos) continue;
-      out.plazas.push({ faction: b.faction, x: b.pos.x, y: b.pos.y, r: L.plazaRadius ?? 240,
-        rings: L.plazaRings ?? 3, spokes: L.plazaSpokes ?? 12 });
+      out.plazas.push({ faction: b.faction, x: b.pos.x, y: b.pos.y, r: L.plazaRadius ?? 240 });
     }
   }
   return out;
