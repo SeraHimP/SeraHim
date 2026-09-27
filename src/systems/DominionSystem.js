@@ -513,7 +513,31 @@ export class DominionSystem {
         const myCount = node.faction === FACTIONS.BLUE ? blueCount : redCount;
         const oppCount = node.faction === FACTIONS.BLUE ? redCount : blueCount;
         const deficit = Math.max(0, oppCount - myCount);
-        if (deficit > 0) budget.siege = (budget.siege || 0) + deficit;
+        // 2026-09-27 重新定稿：用户反馈"落后方多出炮车虽然能追赶，但导致后期
+        // 变成一段时间一边倒——谁家攒够了一堆炮车就横扫全场，直到另一方也攒了
+        // 一堆炮车"——根因是这条追赶量原来跟 deficit 线性挂钩且没有上限
+        // （budget.siege += deficit），炮车本身耐打不容易被消耗掉，于是差距一旦
+        // 拉开，落后方每次出兵都在往场上"存"炮车，攒到一定规模才被推出去用，
+        // 变成攒-崩的震荡节奏而不是平滑的追赶压力。同一个问题在
+        // _tickNexusDrain() 的据点数差掉血上已经出现过一次并用 sqrt 边际递减
+        // 解决过（见那边 nexusDrainPerPointPerSec 头注），这里复用同一个思路，
+        // 再加一道"场上追赶炮车数量封顶"：
+        //  ① 追赶量从线性 deficit 改成 sqrt(deficit) 取整（边际递减——差距越大，
+        //     多给的量增速越慢，不会随差距线性爆炸）；
+        //  ② 己方场上存活的炮车（siege 类型小兵，含底薪 bonusWaveComposition
+        //     里那份，不单独区分"追赶"和"底薪"两种来源——分开跟踪没有实际
+        //     意义，都是同一种单位）数量达到 siegeCatchUpAliveCap 时，这一波
+        //     不再额外多给，避免真的攒出一支能一波推平的炮车军团。
+        // 这两条数字都是起草值（用户只描述了症状要"想办法改进"，没给具体
+        // 公式/数字），待 balance_matrix 校准。
+        if (deficit > 0) {
+          const rawBonus = Math.ceil(Math.sqrt(deficit));
+          const cap = cfg.siegeCatchUpAliveCap ?? 6;
+          const aliveSiege = this.entities.getAllMinions(true)
+            .filter((m) => m.type === 'siege' && (m._mapFaction || m.faction) === node.faction).length;
+          const bonus = Math.max(0, Math.min(rawBonus, cap - aliveSiege));
+          if (bonus > 0) budget.siege = (budget.siege || 0) + bonus;
+        }
         // 2026-09-27 重新定稿（作废了原来"低于阈值后每几波一直出"那版）：
         // "在生命值第一次低于500/300/150/50时，每达到一个阈值后（可累加，
         // 某个阈值生效过一次就作废），下次在基地出兵额外增加1超级兵"——
