@@ -352,7 +352,7 @@ export const minionPassives = {
 
   passive_siege_shield: {
     id: 'passive_siege_shield',
-    applicableTypes: ['siege'],
+    applicableTypes: ['siege', 'heavy'],   // 重装车复用同一条（用户定稿）
     name: '防御护盾',
     icon: '🛡️',
     category: 'passive',

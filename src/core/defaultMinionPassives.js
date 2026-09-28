@@ -42,7 +42,8 @@ export const DEFAULT_MINION_PASSIVES = {
   'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison', 'passive_corrupt_rend'],
   // Q5：重装车——纯坦克，塔攻击优先级最高（见 CombatSystem.selectTarget 的
   // getPriority），对塔额外伤害+主动伤害减免。
-  'heavy': ['passive_heavy_vs_tower', 'active_heavy_bulwark'],
+  // 防御护盾（受防御塔伤害 -30%）复用炮兵那条被动（用户："重装车新增被动（可以复用炮兵的）防御护盾"）。
+  'heavy': ['passive_heavy_vs_tower', 'passive_siege_shield', 'active_heavy_bulwark'],
   // Q5：治疗兵——唯一被动"生命脉冲"（passive_healer_mend），按攻速节奏治疗
   // 最近的友军。无攻击敌方能力，不装备任何武器/攻击方式技能。
   'healer': ['passive_healer_mend'],

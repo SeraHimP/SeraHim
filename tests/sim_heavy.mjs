@@ -99,6 +99,32 @@ async function world() {
   T('接线③-出厂默认技能清单包含被动+主动两条',
     DEFAULT_MINION_PASSIVES.heavy.includes('passive_heavy_vs_tower')
     && DEFAULT_MINION_PASSIVES.heavy.includes('active_heavy_bulwark'));
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  T('接线④-重装车默认带防御护盾（复用炮兵的 passive_siege_shield，用户定稿）',
+    DEFAULT_MINION_PASSIVES.heavy.includes('passive_siege_shield')
+    && SkillLibrary.get('passive_siege_shield').applicableTypes.includes('heavy'));
+}
+
+// ==================== 防御护盾：真打一下，受塔伤害的倍率 = 1 − 30% ====================
+// 重装车还有在倍率之后扣的固定减伤，直接比总伤害会被它带偏；用两档伤害的差值比，固定项正好相消。
+{
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  const { createSimulation } = await import('../src/simulation.js');
+  const taken = (strip, raw) => {
+    const sim = createSimulation();
+    sim.mapSystem.loadMap('summoners_rift_v1');
+    const tower = sim.entityContainer.getAllTowers(true).find((t) => t._mapFaction === 'blue' && t._mapTier === 'outer');
+    const h = sim.laneWaveSystem.createMinion('heavy', tower.pos.x + 60, tower.pos.y, 'red', 'mid', 'reverse');
+    if (strip) h._skillInstances = h._skillInstances.filter((i) => i.skillId !== 'passive_siege_shield');
+    h.currentHP = 1e6;
+    const before = h.currentHP;
+    sim.combatSystem.performAttackDirect(tower.id, h.id, raw, 'physical');
+    return before - h.currentHP;
+  };
+  const withD = taken(false, 200) - taken(false, 100), withoutD = taken(true, 200) - taken(true, 100);
+  const pct = SkillLibrary.get('passive_siege_shield').defaultParams.reductionPct;
+  T(`护盾①-重装车受塔伤害降低 ${pct}%（伤害增量：有护盾 ${withD.toFixed(2)} / 无护盾 ${withoutD.toFixed(2)}）`,
+    withoutD > 0 && Math.abs(withD / withoutD - (1 - pct / 100)) < 1e-6);
 }
 
 // ==================== 六、编辑器/渲染层的类型枚举没有漏掉 heavy ====================
