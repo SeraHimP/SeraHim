@@ -16,18 +16,21 @@ const src = (f) => fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf
 const bs = CONFIG.buildingSizes, vz = CONFIG.towerVizScale, fd = CONFIG.ui.towerFoundation;
 const prevT = CONFIG.ui.statueTower.style, prevS = CONFIG.ui.crystalShrine.style;
 CONFIG.ui.statueTower.style = 'statue'; CONFIG.ui.crystalShrine.style = 'statue';
-const bad = [];
+const bad = [], loose = [];
 for (const [kind, tier] of [['tower', 'outer'], ['tower', 'inner'], ['tower', 'base'], ['tower', 'hq_tower'], ['orb', 'nexus_lane'], ['gem', 'nexus_main']]) {
-  for (const fac of ['blue', 'red']) for (const dmg of [0, 1, 2]) {
+  // 只量完好模型（损毁档 0）：用户定稿碰撞以初始模型为准，损毁后掉在地上的碎块允许穿过
+  for (const fac of ['blue', 'red']) for (const dmg of [0]) {
     const R = (bs[tier] || bs.default) * (vz[tier] ?? vz.default);
     const m = towerMesh(`clip|${kind}|${tier}|${fac}|${dmg}`, '#5b9bd5', R, '', kind, false, false, tier, fac, dmg,
       { foundation: fd?.enabled ? { ...fd, ground: '#2b3647' } : null, fx: { standing: true } });
     const foot = footprintRadius(m.geo, 0.3);   // 小兵身高范围内（模型下 30%）的外轮廓；地上的碎块不挡路，不算
     if (structureRadius(tier) < foot - 0.01) bad.push(`${tier}/${fac}/${dmg}: 碰撞 ${structureRadius(tier).toFixed(1)} < 外轮廓 ${foot.toFixed(1)}`);
+    if (structureRadius(tier) > foot * 1.05) loose.push(`${tier}/${fac}: 碰撞 ${structureRadius(tier).toFixed(1)} > 外轮廓 ${foot.toFixed(1)}×1.05`);
   }
 }
 CONFIG.ui.statueTower.style = prevT; CONFIG.ui.crystalShrine.style = prevS;
-T(`①所有建筑（6 种层级 × 蓝红 × 三个损毁档）碰撞半径 ≥ 模型实际外轮廓${bad.length ? '：' + bad.join('；') : ''}`, bad.length === 0);
+T(`①所有建筑（6 种层级 × 蓝红，完好模型）碰撞半径 ≥ 模型实际外轮廓${bad.length ? '：' + bad.join('；') : ''}`, bad.length === 0);
+T(`①b碰撞不比完好模型大出 5% 以上（不按损毁后地上的碎块放大；用户："小兵可以穿模塔下面掉落的那些东西"）${loose.length ? '：' + loose.join('；') : ''}`, loose.length === 0);
 T('②显示不变：外轮廓系数只乘在碰撞上（模型大小仍按 buildingSizes × towerVizScale）',
   !/buildingFootprintK/.test(src('presentation/UnitLayer.js')) && /structureRadius/.test(src('systems/LaneMovementSystem.js')));
 T('③避障与寻路阻挡用同一个半径（structureRadius），不再各算一份',

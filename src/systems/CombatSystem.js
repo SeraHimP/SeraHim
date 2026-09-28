@@ -853,13 +853,22 @@ export class CombatSystem {
         targetId: target.id,
         // 模板没声明弹速（基础 0 / 未定义）的单位：默认弹速 + 各种弹速加成。原来是"算出来的弹速非 0 就直接用"，
         // 基础 0 + 一点加成（星龙之力 +6）就会得到一发几乎不动的子弹。
-        speed: (attacker.baseStats?.bulletSpeed > 0)
-          ? (atkStats.bulletSpeed || (CONFIG.tuning?.defaultBulletSpeed ?? 400))
-          : (CONFIG.tuning?.defaultBulletSpeed ?? 400) + Math.max(0, atkStats.bulletSpeed || 0),
+        speed: this.effectiveBulletSpeed(attacker, atkStats),
         color: bulletColor,
         size: attacker.type === 'tower' ? 20 : 12, // 渲染尺寸：小兵/巨龙弹丸比塔弹小一号
         kind: attacker.type,                        // 渲染层按开火者分形（塔 / 远程兵 / 炮车 / 术士……），开火时快照
         heat: pierceHeat,                           // #10：升温可视化（0..1），渲染层据此变热
+        pendingHit: hitInfo,
+      });
+    } else if (this.projectiles && attacker.type === 'dragon' && target.pos && (CONFIG.gameRules?.dragon?.combat?.breathTravelSec ?? 0.32) > 0) {
+      // 巨龙：近身吐一口，伤害在吐息落到目标身上那一刻才结算（用户："龙的子弹还没打到小兵上就已经造成伤害了"）。
+      // 原来近战一律当场结算，而画面上吐息要飞 0.32 秒——伤害数字先跳、火才到。
+      // 走一发隐藏的定时弹：飞行时长 = 吐息时长（渲染层读同一个值），不画出来，吐息就是它的画面。
+      this.projectiles.fire({
+        startX: attacker.pos.x, startY: attacker.pos.y,
+        attackerId: attacker.id, targetId: target.id,
+        speed: 1, flightTime: CONFIG.gameRules?.dragon?.combat?.breathTravelSec ?? 0.32,
+        hidden: true, kind: 'dragon',
         pendingHit: hitInfo,
       });
     } else {
@@ -1348,6 +1357,19 @@ export class CombatSystem {
    * 走真实弹道而不是瞬时结算，是为了**看得见**（用户问"分裂后的小弹道怎么显示"）：
    * 小弹用比主弹更小的 size 与该元素的颜色，渲染层照原样画，不用改渲染代码。
    */
+  /**
+   * 攻击者实际的弹速。模板声明了 bulletSpeed 的（塔、术士兵）用属性表里的值；
+   * 没声明的（巨龙、远程兵……）用默认弹速 + 属性加成——它们属性表里的 bulletSpeed
+   * 只有加成那一截（星龙的星魂/星力 +6），直接拿来当速度就是每秒 6 个单位，几乎不动。
+   * 普攻和星魂分裂弹都走这里，两处口径不能分开写。
+   */
+  effectiveBulletSpeed(attacker, atkStats) {
+    const def = CONFIG.tuning?.defaultBulletSpeed ?? 400;
+    return (attacker?.baseStats?.bulletSpeed > 0)
+      ? (atkStats?.bulletSpeed || def)
+      : def + Math.max(0, atkStats?.bulletSpeed || 0);
+  }
+
   splitShot(attacker, origin, damage, attackType, opt = {}) {
     if (!attacker || !origin || !this.projectiles) return 0;
     const radius = opt.radius ?? 260;
@@ -1370,7 +1392,7 @@ export class CombatSystem {
         // "自己的分裂弹比普攻还慢"。改成调用方传什么速度就用什么（dragonsoul_astral
         // 传的是攻击者当前 bulletSpeed），没传时兜底 400（塔弹默认速度，与普通攻击
         // 同一基准，不再是一个孤立的数字）。
-        progress: 0, speed: opt.speed || 400,
+        progress: 0, speed: opt.speed || this.effectiveBulletSpeed(attacker, null),
         size: 7,                       // 比塔弹(20)/兵弹(12)都小 —— 一眼看出是分裂出来的
         color: opt.color || '#7c6cf5',
         directHit: {

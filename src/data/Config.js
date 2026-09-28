@@ -383,6 +383,8 @@ export const CONFIG = {
         // 拆塔要挨完整的对射。
         attackRange: 80,
         baseAttackSpeed: 0.5,
+        // 吐息飞行时长（秒）：伤害在吐息落到目标身上时结算，渲染层吐息画面也用这个时长，两边同步
+        breathTravelSec: 0.32,
         // v51.6：同 templates.* 那批一起改自适应（塔是唯一例外）。这里才是龙真正
         // 战斗时读的字段（factories.js 的 createDragon：`entity.baseStats.attackType
         // = c.attackType`，c 就是这个 combat 块——templates.dragon.attackType 那份
@@ -890,7 +892,9 @@ export const CONFIG = {
   towerVizScale: { nexus_lane: 1.10, nexus_main: 1.34, default: 1.25 },
   // 建筑碰撞半径相对显示半径的外轮廓系数（src/data/structureRadius.js）：雕像塔底座 / 塔基台面、枢纽台阶
   // 比名义半径宽，碰撞按实际外轮廓算才不穿模（用户："不要出现任何穿模"）。取值 ≥ 实测外轮廓，测试用真实模型钉住。
-  buildingFootprintK: { outer: 1.19, inner: 1.19, base: 1.21, hq_tower: 1.21, nexus_lane: 1.11, nexus_main: 1.35, capture_point: 1, default: 1.21 },
+  // 量的是【完好模型】（损毁档 0）：用户定稿"塔的模型碰撞是以初始模型（正常模型非损毁模型）来计算的，
+  // 小兵可以穿模塔下面掉落的那些东西"——损毁后掉在地上的碎块不挡路，不按它放大碰撞。
+  buildingFootprintK: { outer: 1.10, inner: 1.10, base: 1.19, hq_tower: 1.19, nexus_lane: 1.09, nexus_main: 1.33, capture_point: 1, default: 1.19 },
 
   // ==================== 对战成长表（Q2：从 main.js 的硬编码常量搬到这里）====================
   // 纯固定值/波，杜绝复利后期爆炸；只动 最大生命/攻击力/双抗。
@@ -1216,6 +1220,9 @@ export const CONFIG = {
     // 用户："下雨的时候雨滴打在水面上要形成波纹。"独立于 WaterLayer 的水面材质，
     // 只在河道范围内（复用 MapSystem.riverFactor 判定）按雨强度生成一批短命的
     // 扩散波纹环，见 RainRippleLayer.js 头注。数值都是占位，下一轮跑起来看效果再调。
+    // 雨点涟漪（着色器版，rainRipple.js）：水洼和河面共用。cell 每格世界单位（每格最多一个涟漪），
+    // speed 扩散速度，waterStrength 河面上的环亮度（水洼那边用 groundTraceFx.puddleRipple）
+    rainRipple: { enabled: true, cell: 9, speed: 0.8, waterStrength: 0.9 },
     rainRippleFx: {
       enabled: true,
       maxRipples: 24,        // 实例池上限（同时最多这么多个波纹在扩散）
@@ -1265,7 +1272,7 @@ export const CONFIG = {
                twinkle: 5.0, size: 0.5, whiteMix: 0.45, glow: 1.8, maxPx: 12 },
       // 攻击时水晶自身变亮（用户先嫌"发光特效太不明显"，加过一圈外部光晕后又说"光晕很丑，删掉。改为进一步加大水晶的亮度"）：
       //   chargeBoost 充能对自发光的加成再乘多少；emissivePulse 开火那一下自发光再加多少；pulseDur 这一下多久收回（秒）
-      attackGlow: { chargeBoost: 1.6, emissivePulse: 2.2, pulseDur: 0.35 },
+      attackGlow: { chargeBoost: 1.6, emissivePulse: 2.2, pulseDur: 0.35, heatMaxStacks: 4 },   // heatMaxStacks：穿透型升温满层（与 weapon_piercing.HEAT_MAX_STACKS 一致），水晶按 层数/满层 变亮
     },
     // ==================== v55.9：水晶边缘发光描边（Fresnel rim）====================
     // 用户反馈"水晶材质像塑料片"，选定方向"边缘发光描边"——见
@@ -1344,7 +1351,7 @@ export const CONFIG = {
       minion: { sizeK: 0.26, boltLen: 1.9, boltWidth: 0.65, headWhite: 0.3, afterimages: 4, spacing: 1.6 },
       siege: { kinds: ['ram'], stoneKinds: ['siege', 'ram'], stoneScale: { siege: 0.7, ram: 0.88 }, arcK: 0.3, arcMax: 70, stoneK: 0.42, smoke: 6, stoneColor: '#3c3a38', smokeColor: '#a89a86' },
       warlock: { motes: 3, radius: 2.2, spin: 8, moteColor: '#e0b0ff' },
-      breath: { enabled: true, dur: 0.32, chunks: 7, size: 0.5, spread: 0.25, lag: 0.45, coreColor: '#fff0c0' },
+      breath: { enabled: true, chunks: 7, size: 0.5, spread: 0.25, lag: 0.45, coreColor: '#fff0c0' },
     },
     towerLight: {
       enabled: true,
@@ -2390,6 +2397,16 @@ export const CONFIG = {
   tuning: {
     // 远程单位打建筑时有效射程的保底：不小于"建筑碰撞半径 + 这段间隙"（LaneMovementSystem._reach），防贴进塔身
     rangedStructureGap: 12,
+    // 寻路（NavPlanner.js）：网格 + 建筑障碍 + 兵线距离场 + A* 追击。
+    //   unitPad 建筑障碍按碰撞半径再外扩多少（≈小兵半径）；laneHalf 兵线走廊半宽（此内不加价）；
+    //   corridorPenalty 离开走廊的单格加价倍率（越大越贴着自己的路走）；goalRadius 距离场终点源半径；
+    //   probeDist 行军时往前探测多远被挡才改走距离场；holdSec 改走距离场后至少保持多久；
+    //   replanSec 追击路径最短重算间隔；maxExpand A* 扩展上限；detourMaxRatio/detourSlack 绕路超过
+    //   "直线×倍率+余量"就放弃目标；unreachableIgnoreSec 放弃后多久不再锁它；cellSize/maxGrid 无 navgrid 地图的网格
+    nav: { enabled: true, unitPad: 10, laneHalf: 60, corridorPenalty: 3, goalRadius: 160,
+           probeDist: 70, holdSec: 0.6, replanSec: 0.5, maxExpand: 8000,
+           detourMaxRatio: 2.5, detourSlack: 120, unreachableIgnoreSec: 3, cellSize: 14, maxGrid: 320,
+           startSearchCells: 10 },   // 起点在障碍格里时，往外找最近可走格的最大格数
 
     // v44 每帧留给【模拟】的墙钟预算（毫秒）。超过就把剩下的账留到下一帧。
     // 这是「单位一多就特别卡」的解药：原来限的是步数，而单步耗时随单位数增长，

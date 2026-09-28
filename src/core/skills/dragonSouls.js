@@ -676,14 +676,15 @@ export const dragonSouls = {
       // 头注），但分裂出来的星弹速度原来是硬编码 520，跟攻击者自己的 bulletSpeed
       // 完全脱钩——一座叠满星魂+星力的塔自身普攻弹速能到 560（400 基础 +80 魂 +80
       // 满层力），自己的招牌分裂弹反而比普攻还慢，正是用户报的"星龙的子弹速度特别慢"。
-      // 现在改成分裂弹速度＝攻击者当前弹速（与主武器完全同步），不再是一个和弹速
-      // 属性无关的写死数字。
+      // 分裂弹速度＝攻击者普攻的实际弹速（CombatSystem.effectiveBulletSpeed，与普攻同一口径）。
+      // 不能直接用属性表的 bulletSpeed：巨龙模板没有弹速，属性表里只有星魂/星力的 +6，
+      // 拿它当速度，星弹就以每秒 6 个单位的速度爬（用户："星龙的附加星弹依旧飞的特别慢"）。
       const atkStats = ctx.attrCalc.calc(atk, ctx.effectRegistry.getEffects(atk.id));
       ctx.combat.splitShot(atk, origin, base, ctx.attackType || 'physical', {
         splits: p.splits ?? 2,
         radius: p.radius ?? 260,
         onHitEffPct: p.onHitEffPct ?? 55,
-        speed: atkStats.bulletSpeed,
+        speed: ctx.combat.effectiveBulletSpeed(atk, atkStats),
       });
     },
   },

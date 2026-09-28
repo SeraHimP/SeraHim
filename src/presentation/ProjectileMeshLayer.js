@@ -113,7 +113,8 @@ export class ProjectileMeshLayer {
   /** 巨龙吐息：从嘴边到目标一团翻滚的元素色碎块（纯视觉） */
   breath(from, to, color, size) {
     const B = cfg().breath || {};
-    this.fx.push({ type: 'breath', t: 0, dur: B.dur ?? 0.32, from: from.slice(), to: to.slice(), color, size, seed: Math.random() * 1000 });
+    // 时长与伤害结算同一个值（CombatSystem 按它延迟巨龙的命中），画面落地 = 伤害落地
+    this.fx.push({ type: 'breath', t: 0, dur: CONFIG.gameRules?.dragon?.combat?.breathTravelSec ?? B.dur ?? 0.32, from: from.slice(), to: to.slice(), color, size, seed: Math.random() * 1000 });
   }
 
   /** 推进吐息，写进池里 */

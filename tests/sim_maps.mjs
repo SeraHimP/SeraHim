@@ -233,7 +233,8 @@ for (const map of Object.values(MAPS)) {
     // 原来 hq_tower/nexus_lane/nexus_main 各写 10，而技能层又给一份（加固城防 +3 / 水晶再生 +10）
     // —— 实测两座水晶拿到的是 20、枢纽塔 13。恢复的唯一来源改成技能层，双计不可能再发生。
     base:       { maxHP: 2250, armor: 125, magicResist: 125, baseAttackSpeed: 1.25,  healthRegen: 0 },
-    hq_tower:   { maxHP: 3750, armor: 200, magicResist: 200, baseAttackSpeed: 2.50,  healthRegen: 0 },
+    // 期望常量更新：枢纽塔攻速 2.50 -> 2.08（用户 2026-09-28 定稿）
+    hq_tower:   { maxHP: 3750, armor: 200, magicResist: 200, baseAttackSpeed: 2.08,  healthRegen: 0 },
     nexus_lane: { maxHP: 4000, armor: 20,  magicResist: 0,   healthRegen: 0 },
     nexus_main: { maxHP: 5500, armor: 0,   magicResist: 0,   healthRegen: 0 },
   };
@@ -379,4 +380,18 @@ for (const map of Object.values(MAPS)) {
 }
 
 console.log(`地图几何验收: ${pass} 通过 / ${fail} 失败`);
-process.exit(fail ? 1 : 0);
+process.exit(fail ? 1 : 0);// 所有地图所有塔的默认子弹速度都是 400（用户 2026-09-28："所有地图所有塔的默认子弹速度都应该是400"）。
+// 真建塔量：模板 → 地图 tierStats → 覆写，任何一层把它改掉这里都会红。
+{
+  const { createSimulation } = await import('../src/simulation.js');
+  const bad = [];
+  for (const id of ['summoners_rift_v1', 'twisted_treeline_v1', 'howling_abyss_frost_v1', 'dominion_crystal_scar_v1']) {
+    const sim = createSimulation(); sim.mapSystem.loadMap(id);
+    for (const t of sim.entityContainer.getAll().filter((e) => e.type === 'tower')) {
+      const st = sim.attrCalc.calc(t, sim.effectRegistry.getEffects(t.id));
+      if (t.baseStats.bulletSpeed !== 400 || st.bulletSpeed !== 400) bad.push(`${id}/${t._mapTier}: ${t.baseStats.bulletSpeed}/${st.bulletSpeed}`);
+    }
+  }
+  T(`[全部地图] 每座塔的默认子弹速度 = 400${bad.length ? '：' + bad.slice(0, 6).join('，') : ''}`, bad.length === 0);
+}
+

@@ -86,12 +86,11 @@ const towerVizScale = (tier) => _VZ()[tier] ?? _VZ().default ?? 1.25;
 const CRYSTAL_SPIN = 0.6, CRYSTAL_EMI_BASE = 0.7, CRYSTAL_EMI_PEAK = 1.6, CRYSTAL_GLOW_DECAY = 2.6;
 const CRYSTAL_PT_MAX_PX = 9;   // 粒子屏幕尺寸上限（像素），近距离不至于过大
 // Q3：小水晶随【充能】变亮（仅穿透型/闪电杖）。全部是渲染侧派生量，逻辑层零改动。
-// 用户定稿：不要涨大、不要开火弹跳；闪电杖读武器实例的持续充能，穿透型按冷却反推。
-const CRYSTAL_CHARGE_POW = 2.6;    // 蓄力曲线指数：越大越集中在临射前才亮起来
+// 用户定稿：不要涨大、不要开火弹跳；闪电杖读武器实例的持续充能，穿透型读升温层数。
+const CRYSTAL_CHARGE_POW = 1.4;    // 充能→亮度曲线指数：略大于 1，每多一层都看得出更亮，满层最亮
 const CRYSTAL_CHARGE_GAIN = 1.1;   // 蓄力对自发光的最大增量
 const CRYSTAL_RISE = 6.0;          // 充能亮度的上升速率（每秒），跟得上充能即可
 const CRYSTAL_FADE = 1.6;          // 失去目标后亮度滑回基准的速率（每秒）——过渡不突兀
-const CRYSTAL_WINDUP = 0.3;        // 锁定前摇时长（与 CONFIG.tuning.lockOnWindup 同值）
 const RING_LIFT = 0.6;   // 贴地环离地高度，避开与地面平面 z-fighting（与 EffectsLayer 同值）
 // ==================== 三周渲染排期 Week1·Day1：程序化动画状态时钟 ====================
 // docs/Q4-RENDERING-REDESIGN.md 第 11 节：走路相位推进速度、攻击前后摇/受击反馈的
@@ -1403,17 +1402,22 @@ export class UnitLayer {
       en._lastCd = cd;
 
       const wid = this._weaponIdOf(e);
+      // 闪电杖 / 穿透型：水晶亮度只跟充能走（用户："闪电杖水晶的亮度根据充能大小决定，充能越大越亮。
+      // 穿透型子弹的升温也同理，充能层数越多水晶越亮"）。这两种不吃"开火猛亮一下"——闪电杖攻速很高，
+      // 每次冷却跳增都闪一下，水晶就一直在高频地闪。
+      const chargeWeapon = wid === 'weapon_lightning' || wid === 'weapon_piercing';
+      if (chargeWeapon) en._firePulse = 0;
       let target = 0;                                      // 本帧"应该"达到的充能亮度 0..1
       if (e.targetId) {
         if (wid === 'weapon_lightning') {
           const inst = (e._skillInstances || []).find(i => i.skillId === 'weapon_lightning');
           target = Math.max(0, Math.min(1, inst?.state?.charge || 0));
         } else if (wid === 'weapon_piercing') {
-          const period = en._cdMax || 0;
-          target = period > 0.05 ? 1 - Math.max(0, Math.min(1, cd / period)) : 1;
-          const lockLeft = (e._lockUntil || 0) - (window.gameTime || 0);
-          if (lockLeft > 0) target = Math.min(target, 1 - Math.min(1, lockLeft / CRYSTAL_WINDUP));
-          target = Math.max(0, target);
+          // 升温层数 / 上限；换了目标层数就作废（结算层同样按目标清零）
+          const inst = (e._skillInstances || []).find(i => i.skillId === 'weapon_piercing');
+          const st = inst?.state || {};
+          const maxS = CONFIG.ui?.crystal?.attackGlow?.heatMaxStacks ?? 4;
+          target = st.heatTarget === e.targetId ? Math.max(0, Math.min(1, (st.heatStacks || 0) / maxS)) : 0;
         }
       }
       // 单向平滑：上升可以快（跟得上充能），回落走固定速率 → 切目标/脱战是"暗下去"而不是"啪一下灭"

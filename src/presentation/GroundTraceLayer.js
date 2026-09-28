@@ -24,7 +24,8 @@ import * as THREE from '../../vendor/three.module.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 import { fogNoiseTexture } from './fogNoise.js';
-import { weatherGroundState, setWeatherGroundSnow } from './weatherGround.js';
+import { setWeatherGroundSnow } from './weatherGround.js';
+import { RIPPLE_GLSL, rippleUniforms } from './rainRipple.js';
 
 const cfg = () => (CONFIG.ui && CONFIG.ui.groundTraceFx) || {};
 const _tintColor = new THREE.Color();
@@ -39,7 +40,7 @@ const _tintColor = new THREE.Color();
 //       轮廓按噪声扭成不规则形状；外面一圈半透明深色"湿土"（单独一池、先画，被水面盖住）；
 //       下雨时水面上有雨点砸出的小涟漪。
 // 参数在 CONFIG.ui.groundTraceFx。
-const _gtShared = { uGtNoise: { value: null }, uGtTime: { value: 0 }, uGtRain: { value: 0 } };
+const _gtShared = { uGtNoise: { value: null }, uGtTime: { value: 0 } };
 function _gtUniforms() { if (!_gtShared.uGtNoise.value) _gtShared.uGtNoise.value = fogNoiseTexture(); return _gtShared; }
 
 function _worldPosVarying(shader) {
@@ -84,7 +85,7 @@ varying vec3 vGtPos;
 function patchPuddleMaterial(mat, rim) {
   const C = cfg();
   mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, _gtUniforms(), {
+    Object.assign(shader.uniforms, _gtUniforms(), rippleUniforms, {
       uGtScale: { value: C.puddleNoiseScale ?? 0.02 },
       uGtRimScale: { value: C.puddleRimScale ?? 1.3 },
       uGtRipple: { value: C.puddleRipple ?? 0.35 },
@@ -92,9 +93,9 @@ function patchPuddleMaterial(mat, rim) {
     _worldPosVarying(shader);
     shader.vertexShader = shader.vertexShader.replace('void main() {', 'varying vec2 vGtUv;\nvoid main() {\n  vGtUv = uv;');
     shader.fragmentShader = `
-uniform sampler2D uGtNoise; uniform float uGtTime, uGtRain, uGtScale, uGtRimScale, uGtRipple;
+uniform sampler2D uGtNoise; uniform float uGtTime, uGtScale, uGtRimScale, uGtRipple;
 varying vec3 vGtPos; varying vec2 vGtUv;
-` + shader.fragmentShader.replace('#include <map_fragment>', `
+` + RIPPLE_GLSL + shader.fragmentShader.replace('#include <map_fragment>', `
   vec4 gn = texture2D(uGtNoise, vGtPos.xz * uGtScale);
   float r = length(vGtUv - 0.5) * 2.0;
   float edge = 0.8 + (gn.r - 0.5) * 0.45;
@@ -113,16 +114,8 @@ ${rim ? `
   diffuseColor.rgb += glint * 0.9 * baseW;
   // 岸边一圈稍浅（浅水/反光）
   diffuseColor.rgb *= 1.0 + 0.3 * smoothstep(edge - 0.3, edge - 0.05, r);
-  // 雨点涟漪：世界坐标 9 单位一格，每格一个随机位置/相位的扩散小环
-  if (uGtRain > 0.01) {
-    vec2 q = vGtPos.xz / 9.0, id = floor(q), f = fract(q) - 0.5;
-    float h = fract(sin(dot(id, vec2(127.1, 311.7))) * 43758.5453);
-    vec2 off = vec2(fract(h * 17.0), fract(h * 31.0)) - 0.5;
-    float t = fract(uGtTime * (0.8 + h * 0.6) + h);
-    float dd = length(f - off * 0.4);
-    float ring = (1.0 - smoothstep(0.0, 0.07, abs(dd - t * 0.42))) * (1.0 - t) * step(h, uGtRain);
-    diffuseColor.rgb += ring * uGtRipple * 3.0 * baseW;
-  }
+  // 雨点涟漪：与河道水面同一段代码、同一组 uniform（rainRipple.js）——两处是同一场雨
+  diffuseColor.rgb += rrRing(vGtPos.xz) * uGtRipple * 3.0 * baseW;
 `}`);
   };
   mat.customProgramCacheKey = () => rim ? 'gt-puddle-rim1' : 'gt-puddle1';
@@ -177,9 +170,10 @@ export class GroundTraceLayer {
       // 否则会在描边/SSAO 里画出一圈假轮廓。
       mesh.layers.set(FX_PARTICLE_LAYER);
       mesh.frustumCulled = false;
-      // 水面波纹（25）之下一点，贴花本来就该先于波纹铺在地上；湿土圈（23.5）先画，被水面盖住，
-      // 相邻子圆的湿土圈就不会压进别的子圆的水面里
-      mesh.renderOrder = rim ? 23.5 : 24;
+      // 地面贴花排在接触阴影(4)、地面光环(5)和血条(20)之前：原来是 24，比血条晚画，
+      // 半透明水洼就盖在了单位血条上（用户："水洼会意外的覆盖单位进度条的显示"）。
+      // 湿土圈（3.3）先画，被水面（3.6）盖住，相邻子圆的湿土圈就不会压进别的子圆的水面里
+      mesh.renderOrder = rim ? 3.3 : 3.6;
       this.scene.add(mesh);
       return { mesh };
     };
@@ -253,7 +247,7 @@ export class GroundTraceLayer {
     patchSnowMaterial(mat);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(WW / 2, mapSystem?.heightAt ? 0 : lift, WH / 2);
-    mesh.renderOrder = 23; // 压在水洼贴花（24）之下——雪盖是更底层的地表状态
+    mesh.renderOrder = 3; // 雪盖 < 湿土圈 < 水洼 < 接触阴影(4) < 地面光环(5) < 单位 < 血条(20)
     this.scene.add(mesh);
     this._snowMesh = mesh;
   }
@@ -295,7 +289,6 @@ export class GroundTraceLayer {
 
     const U = _gtUniforms();
     U.uGtTime.value = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-    U.uGtRain.value = weatherGroundState().wet;   // 雨点涟漪跟地面湿度同一个量（已平滑）
     const rimScale = C.puddleRimScale ?? 1.3, rimAlpha = C.puddleRimAlpha ?? 0.35;
     let pi = 0;
     for (const p of groundTraceSystem.getPuddles()) {

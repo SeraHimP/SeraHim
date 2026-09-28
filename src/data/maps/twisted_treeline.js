@@ -171,7 +171,7 @@ const TT_CONFIG = {
   tierStats: {
     outer:      { maxHP: 1750, shieldFixedMax: 0, healthRegen: 0, armor: 100, magicResist: 100, attackDamage: 152, baseAttackSpeed: 0.833 },
     base:       { maxHP: 2250, shieldFixedMax: 0, healthRegen: 0, armor: 125, magicResist: 125, attackDamage: 170, baseAttackSpeed: 1.25 },
-    hq_tower:   { maxHP: 3750, shieldFixedMax: 0, healthRegen: 0, armor: 200, magicResist: 200, attackDamage: 150, baseAttackSpeed: 2.50 },
+    hq_tower:   { maxHP: 3750, shieldFixedMax: 0, healthRegen: 0, armor: 200, magicResist: 200, attackDamage: 150, baseAttackSpeed: 2.08 },   // 用户定稿（2026-09-28）：2.50 → 2.08
     nexus_lane: { maxHP: 4000, shieldFixedMax: 0, healthRegen: 0, armor: 20,  magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
     nexus_main: { maxHP: 5500, shieldFixedMax: 0, healthRegen: 0, armor: 0,   magicResist: 0,   attackDamage: 0,   baseAttackSpeed: 0 },
   },

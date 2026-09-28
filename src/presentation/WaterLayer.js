@@ -10,6 +10,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
+import { applyRainRipple } from './rainRipple.js';
 import { landmarkPlan, inPitFloor } from '../data/landmarks.js';
 
 const _wA = new THREE.Color(), _wB = new THREE.Color();
@@ -123,6 +124,7 @@ export class WaterLayer {
       alphaMap: this.mask,        // 只有河带处不透明
       depthWrite: false,          // 半透明水面不写深度，避免挡住河床里的单位/贴花
     });
+    applyRainRipple(mat);   // 下雨时河面上的雨点涟漪，与水洼同一段代码（rainRipple.js）
     const mesh = new THREE.Mesh(geo, mat);
     // 水位：河床(depth) 与地面(0) 之间，略低于岸，读作"半满的河"
     mesh.position.set(WW / 2, depth * 0.35, WH / 2);

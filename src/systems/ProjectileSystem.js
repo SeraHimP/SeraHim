@@ -99,7 +99,8 @@ export class ProjectileSystem {
       if (totalDist < 1) { this._hit(p); this.projectiles.splice(i, 1); continue; }
       const speed = p.speed || 400;
       const step = speed * dt;
-      p.progress = (p.progress || 0) + step / totalDist;
+      // flightTime：按固定飞行时长推进（巨龙吐息——伤害要跟吐息画面同时落地，与距离无关）
+      p.progress = (p.progress || 0) + (p.flightTime > 0 ? dt / p.flightTime : step / totalDist);
       if (p.progress >= 1) { this._hit(p); this.projectiles.splice(i, 1); }
       else { p.currentX = p.startX + dx * p.progress; p.currentY = p.startY + dy * p.progress; }
     }

@@ -54,12 +54,19 @@ const _registry = new Set();
 // 凑巧签名一样时，谁先编译谁的版本就被别的材质错误地复用了。
 // 官方文档原话就是这个坑："If … onBeforeCompile … a unique customProgramCacheKey
 // must be set too, otherwise the renderer might reuse a shader program from a
-// different material." 这里给每个真正 patch 过的材质发一个全局自增的唯一签名，
-// 保证 three.js 永远不会把它跟别的材质错认成同一份 program。
-let _nextCacheKeyId = 1;
-function _forceUniqueProgramCacheKey(material) {
-  const id = _nextCacheKeyId++;
-  material.customProgramCacheKey = () => `vegShaderPatch_${id}`;
+// different material."
+//
+// 签名 = 该材质依次叠了哪些 patch（如 "wind+snow"），而不是每个材质一个全局自增 id：
+// 注入的着色器源码只由"叠了哪几层"决定（各层的数值都走 uniform），同一组合的材质本来就该共用
+// 同一份编译好的 program。用自增 id 时每个材质都是独一份——塔被摧毁换成废墟模型时，
+// 实例化层新建一个塔桶、克隆材质、挂雪效，就得当场重新编译一整份着色器，
+// 这正是"塔播放损毁动画的时候依然会出现小卡顿"的来源（实测：摧毁那一刻新增的程序就是它）。
+function _tagProgramCacheKey(material, tag) {
+  const ud = material.userData;
+  if (ud.vegBaseKey === undefined) ud.vegBaseKey = material.customProgramCacheKey.call(material);
+  ud.vegPatchTags = [...(ud.vegPatchTags || []), tag];
+  const key = `${ud.vegBaseKey}|vegShaderPatch:${ud.vegPatchTags.join('+')}`;
+  material.customProgramCacheKey = () => key;
 }
 
 /**
@@ -108,7 +115,7 @@ export function applyWindSway(geometry, material) {
   // 角频率不写死在 GLSL 字面量里——uWindTime 由 updateWindSway() 按 dt×freq 累加，
   // shader 侧永远只是 sin(uWindTime + instancePhase)，频率完全交给 JS 侧的累加
   // 节奏决定，CONFIG 改 freq 立刻生效，不用重新编译 shader。
-  _forceUniqueProgramCacheKey(material); // 见文件头 v55.3 修复记录
+  _tagProgramCacheKey(material, 'wind'); // 见文件头 v55.3 修复记录
   material.needsUpdate = true;
   _registry.add({ material, uniforms });
 }
@@ -201,7 +208,7 @@ export function applySnowTint(geometry, material) {
       + '  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), vSnowAmt);\n'
       + withVarying.slice(insertAt);
   };
-  _forceUniqueProgramCacheKey(material); // 见文件头 v55.3 修复记录
+  _tagProgramCacheKey(material, 'snow'); // 见文件头 v55.3 修复记录
   material.needsUpdate = true;
 }
 

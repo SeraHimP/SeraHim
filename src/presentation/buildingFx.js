@@ -195,18 +195,37 @@ export class BuildingFx {
    * 着色器首次编译链接在真实显卡上要几十到几百毫秒，就卡在那一帧。
    */
   prewarm(renderer, camera) {
-    if (!renderer?.compile || this._warmKeep) return;
-    const g = new THREE.Group(), geo = new THREE.BoxGeometry(1, 1, 1);
-    const SW = cfg().explode?.shock || {};
-    const mats = [this._puffMat('#888888', 0.5), this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), unitMaterial(false)];
-    for (const m of mats) g.add(new THREE.Mesh(geo, m));
-    const sp = new THREE.Sprite(this._flashMat()); sp.layers.set(FX_PARTICLE_LAYER); g.add(sp);
-    g.position.set(0, -9999, 0);
+    if (!renderer?.compile) return;
+    // 材质/网格只建一次；场景状态（雾、后处理、阴影）变了由渲染器再调一次，只重新编译
+    if (!this._warmKeep) {
+      const g = new THREE.Group(), geo = new THREE.BoxGeometry(1, 1, 1);
+      const SW = cfg().explode?.shock || {};
+      const mats = [this._puffMat('#888888', 0.5), this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), unitMaterial(false)];
+      for (const m of mats) {
+        const mesh = new THREE.Mesh(geo, m);
+        if (m === mats[mats.length - 1]) { mesh.castShadow = true; mesh.receiveShadow = true; }   // 同碎块（_pieceMesh）
+        g.add(mesh);
+      }
+      const sp = new THREE.Sprite(this._flashMat()); sp.layers.set(FX_PARTICLE_LAYER); g.add(sp);
+      g.position.set(0, -9999, 0);
+      // 材质不释放：three 按引用计数回收着色器程序，释放了预热就白做了（留着的只有七个小对象）
+      this._warmKeep = { g, geo, mats, sp };
+    }
+    const g = this._warmKeep.g;
     this.scene.add(g);
-    try { renderer.compile(this.scene, camera); } catch (e) { /* 预热失败不影响游戏，照常在首次播放时编译 */ }
+    // 着色器程序的签名里带着"画到哪"：直接上屏是 sRGB 输出 + 色调映射，后处理管线是先画进离屏缓冲
+    //（线性输出、不做色调映射）。原来只在上屏状态下编译了一遍，开着后处理时真正播放用的是另一份，
+    // 预热等于白做，摧毁那一刻照样现编译六个程序（实测）。两种目标各编译一遍。
+    try {
+      renderer.compile(this.scene, camera);
+      const prevRT = renderer.getRenderTarget();
+      const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+      renderer.setRenderTarget(rt);
+      renderer.compile(this.scene, camera);
+      renderer.setRenderTarget(prevRT);
+      rt.dispose();
+    } catch (e) { /* 预热失败不影响游戏，照常在首次播放时编译 */ }
     this.scene.remove(g);
-    // 材质不释放：three 按引用计数回收着色器程序，释放了预热就白做了（留着的只有七个小对象）
-    this._warmKeep = { geo, mats, sp };
   }
 
   // ---------- ① 掉档 ----------

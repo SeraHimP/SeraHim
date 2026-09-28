@@ -135,7 +135,13 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
   const sh = { uniforms: {}, vertexShader: 'void main() {\n#include <project_vertex>\n}', fragmentShader: 'void main() {\n#include <map_fragment>\n}' };
   core.mesh.material.onBeforeCompile(sh);
   T('水④-水面颜色按世界坐标算（相邻子圆重叠处颜色一致）+ 下雨时有雨点涟漪',
-    sh.fragmentShader.includes('vGtPos.xz * uGtScale') && sh.fragmentShader.includes('uGtRain'));
+    sh.fragmentShader.includes('vGtPos.xz * uGtScale') && sh.fragmentShader.includes('rrRing(vGtPos.xz)'));
+  T('水⑤-水洼/湿土圈/雪盖都排在血条（renderOrder 20）和地面光环（5）之前画，不会盖住血条（用户："水洼会意外的覆盖单位进度条的显示"）',
+    core.mesh.renderOrder < 4 && rim.mesh.renderOrder < 4 && layer._snowMesh.renderOrder < 4
+    && /const ORDER_UNIT = 10, ORDER_BAR = 20;/.test(srcOf('src/presentation/UnitLayer.js')));
+  T('水⑥-河面接上同一段雨点涟漪（用户："水洼中的雨滴特效应该同步到水面中"）',
+    /applyRainRipple\(mat\)/.test(srcOf('src/presentation/WaterLayer.js'))
+    && /updateRainRipple\(performance\.now\(\) \/ 1000, weatherGroundState\(\)\.wet\)/.test(srcOf('src/presentation/ThreeRenderer.js')));
   const snowSh = { uniforms: {}, vertexShader: 'void main() {\n#include <project_vertex>\n}', fragmentShader: 'void main() {\n#include <alphamap_fragment>\n}' };
   layer._snowMesh.material.onBeforeCompile(snowSh);
   T('雪①-雪盖按雪深×噪声收边（薄雪是一块块雪斑，不是一片糊边的白雾）',

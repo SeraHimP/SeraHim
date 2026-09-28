@@ -712,6 +712,7 @@ export class EffectsLayer {
     const live = [];
     if (projectiles?.getProjectiles) {
       for (const p of projectiles.getProjectiles()) {
+        if (p.hidden) continue;   // 巨龙吐息的定时命中弹：画面由吐息负责
         let x = p.currentX !== undefined ? p.currentX : p.startX;
         let y = p.currentY !== undefined ? p.currentY : p.startY;
         const col = rgbOf(p.color || '#e8563f');

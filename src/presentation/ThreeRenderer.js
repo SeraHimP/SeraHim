@@ -39,7 +39,8 @@ import { WaterLayer } from './WaterLayer.js';
 import { RainRippleLayer } from './RainRippleLayer.js';
 import { GroundTraceLayer } from './GroundTraceLayer.js';
 import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
-import { applyWeatherGround, updateWeatherGround, setWeatherGroundMap } from './weatherGround.js';
+import { applyWeatherGround, updateWeatherGround, setWeatherGroundMap, weatherGroundState } from './weatherGround.js';
+import { updateRainRipple } from './rainRipple.js';
 import { torchPoints } from './torchPlacement.js';
 import { CONFIG } from '../data/Config.js';
 import { resolveDayPhase } from './DayNight.js';
@@ -1371,6 +1372,8 @@ export class ThreeRenderer {
       const wg = CONFIG.ui?.weatherGround?.windDir || [1, 0.57];
       updateWeatherGround(this.weatherFx?.enabled !== false ? (window.__weather || null) : null,
                           this._lightDt || 0.016, { x: wg[0], y: wg[1] });
+      // 雨点涟漪（水洼 + 河面）：雨量跟地面湿度同一个量（已平滑），时间走墙钟
+      updateRainRipple(performance.now() / 1000, weatherGroundState().wet);
     }
     // Phase 1：雨滴打在水面上的波纹——只在有水面的图上生成，dt 走墙钟（与水面/
     // 天气可视化同口径，暂停时雨还在下、水波也该继续）。
@@ -1398,6 +1401,14 @@ export class ThreeRenderer {
     if (this.boundaryDecor) this.boundaryDecor.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
     // v55.3：塔也要有被雪覆盖的效果，同一节流口径，见 InstancedBodyLayer.BodyInstancer.updateSnow。
     if (this.units?.bodyInst) this.units.bodyInst.updateSnow(this._lightDt || 0.016, window.__groundTrace || null);
+    // 建筑动画特效材质的预热要跟着"着色器签名里的场景状态"走：场景雾（setLighting 在切图之后才挂上）、
+    // 后处理（画进离屏缓冲 = 线性输出、不做色调映射）、阴影开关都在签名里。原来只在切图那一刻编译一次，
+    // 那时还没有雾，真正爆炸时签名对不上，照样现编译——"塔播放损毁动画的时候依然会出现小卡顿"。
+    if (this.units?.bfx) {
+      const f = this.scene.fog;
+      const sig = `${f ? (f.isFogExp2 ? 'e' : 'l') : 'n'}|${this.postFX ? 1 : 0}|${this.gl.shadowMap.enabled ? 1 : 0}|${this.mapSystem?.currentMap?.id || ''}`;
+      if (sig !== this._bfxWarmSig) { this._bfxWarmSig = sig; this.units.bfx.prewarm(this.gl, this.camera); }
+    }
     // P1：走后处理管线（Bloom+ACES+FXAA+描边+SSAO）；关掉后处理或管线未就绪时回退直渲。
     if (this.postFX) {
       if (!this.composer) this._buildComposer();

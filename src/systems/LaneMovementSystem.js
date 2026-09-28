@@ -1,3 +1,4 @@
+import { NavPlanner } from './NavPlanner.js';
 import { canTarget, isStructureProtected, enemyUnitsInRadius, FACTIONS } from './FactionSystem.js';
 import { structureRadius } from '../data/structureRadius.js';
 import { AISystem } from './AISystem.js';
@@ -88,6 +89,52 @@ export class LaneMovementSystem {
     // （测试/无头场景可以不传，行为与接入前一致——getStructuralFactor 在天气
     // 关闭时恒返回 0，acqScale 恒为 1）。
     this.weather = weatherSystem;
+    // 寻路：网格 + 建筑障碍 + 兵线距离场 + A*（见 NavPlanner.js 头注）
+    this.nav = new NavPlanner(mapSystem, entityContainer);
+  }
+
+  _navOn() { return CONFIG.tuning?.nav?.enabled !== false && !!this.nav.grid; }
+
+  /**
+   * 追击时与目标之间没有直线通路 → 沿 A* 路径走。返回期望方向；不可达/绕路太长返回 null。
+   * 路径缓存在 minion._navPath，目标挪远了（超过两格）且距上次规划超过 replanSec 才重算。
+   */
+  _chaseViaPath(minion, target, reachR) {
+    const C = CONFIG.tuning?.nav || {};
+    const g = this.nav.grid;
+    const now = window.gameTime || 0;
+    const px = minion.pos.x, py = minion.pos.y, tx = target.pos.x, ty = target.pos.y;
+    const ignore = target.type === 'tower' ? target.id : 0;
+    let P = minion._navPath;
+    const stale = !P || P.tid !== target.id || P.i >= P.points.length
+      || (now - P.t > (C.replanSec ?? 0.5) && Math.hypot(tx - P.tx, ty - P.ty) > g.cw * 2);
+    if (stale) {
+      const res = this.nav.pathTo(px, py, tx, ty, Math.max(g.cw * 1.5, reachR * 0.9));
+      if (!res) {
+        // 自己站在障碍格里（贴着建筑/刚出生）时规划失败不代表目标够不着：先照直走，出了圈再规划
+        if (!this.nav.isFree(px, py)) {
+          const L0 = Math.hypot(tx - px, ty - py) || 1;
+          return { x: (tx - px) / L0, y: (ty - py) / L0 };
+        }
+        return null;
+      }
+      const straight = Math.hypot(tx - px, ty - py);
+      if (res.length > straight * (C.detourMaxRatio ?? 2.5) + (C.detourSlack ?? 120)) return null;
+      P = minion._navPath = { tid: target.id, t: now, tx, ty, points: res.points, i: 0 };
+      if (!P.points.length) return { x: (tx - px) / (straight || 1), y: (ty - py) / (straight || 1) };
+    }
+    // 拉直：往前找"从当前位置看得见的最远路径点"，最多往前看 10 个
+    for (let q = Math.min(P.points.length - 1, P.i + 10); q > P.i; q--) {
+      const pt = P.points[q];
+      if (this.nav.clear(px, py, pt.x, pt.y, ignore)) { P.i = q; break; }
+    }
+    let pt = P.points[P.i];
+    if (Math.hypot(pt.x - px, pt.y - py) < g.cw * 0.7) {
+      if (P.i < P.points.length - 1) pt = P.points[++P.i];
+      else { P.i++; return { x: (tx - px) / (Math.hypot(tx - px, ty - py) || 1), y: (ty - py) / (Math.hypot(tx - px, ty - py) || 1) }; }
+    }
+    const L = Math.hypot(pt.x - px, pt.y - py) || 1;
+    return { x: (pt.x - px) / L, y: (pt.y - py) / L };
   }
 
   update(dt) {
@@ -95,6 +142,7 @@ export class LaneMovementSystem {
     // 会把它整个漏在这个循环外面——不追、不打、原地站着，跟"召唤一只幻兽出去打"
     // 这句话直接矛盾。加一条 OR，让它也能进来，走下面自己的独立分支（见 _updatePet）。
     const minions = this.entities.getAllMinions(true).filter(m => m._mapFaction && (m._laneId || m._petOwnerId));
+    if (CONFIG.tuning?.nav?.enabled !== false) this.nav.sync();
 
     // Q4 天气重做（雾的结构性机制 B）：索敌半径的全局收缩系数，整帧只算一次
     // （与天气强度一样是"这一帧的全局状态"，不是逐单位的属性，参见
@@ -288,7 +336,24 @@ export class LaneMovementSystem {
           const dist = Math.sqrt(distSq);
           const speed = stats.moveSpeed || 30;
           const px = minion.pos.x, py = minion.pos.y;
-          this._steer(minion, dx / dist, dy / dist, speed, dt);
+          // 直线被墙/建筑挡住 → 走 A* 路径（野区 C 形凹口不再一头扎进去）；
+          // 找不到路或绕路太长 → 放弃这个目标一段时间，回去推线
+          let cx = dx / dist, cy = dy / dist;
+          if (this._navOn()) {
+            if (!this.nav.clear(px, py, target.pos.x, target.pos.y, target.type === 'tower' ? target.id : 0)) {
+              const dir = this._chaseViaPath(minion, target, reachR);
+              if (!dir) {
+                minion._ignoreTarget = { id: target.id, until: (window.gameTime || 0) + (CONFIG.tuning?.nav?.unreachableIgnoreSec ?? 3) };
+                minion.targetId = null;
+                minion._navPath = null;
+                continue;
+              }
+              cx = dir.x; cy = dir.y;
+            } else {
+              minion._navPath = null;
+            }
+          }
+          this._steer(minion, cx, cy, speed, dt);
           // v37（Q2）：罚站自愈——追击帧位移几乎为零（被墙/兵墙彻底卡死）持续 1 秒
           // → 放弃该目标并短期拉黑 2 秒（防止下一帧立即重锁同一个追不到的目标），
           // 回归行军。这是视线检查漏网情形的保底（如目标在收束段墙后极近处）。
@@ -799,6 +864,23 @@ export class LaneMovementSystem {
     const flow = window.__laneFlow === false ? null
                : this.mapSystem.laneFlowDir?.(minion._laneId, minion.pos.x, minion.pos.y);
     if (flow && flow.steps > LANE_FLOW_MIN_STEPS) { mx = flow.x; my = flow.y; }
+    // 正前方一小段被墙/建筑挡住（建筑压在路点折线上、野区凹口）→ 改沿兵线距离场的下坡方向走，
+    // 它绕得过建筑、也出得了凹口。之后保持 holdSec 秒再交还，免得在绕行边缘来回切换。
+    // 前方畅通时不接管——开阔路面上的行军与原来逐位相同。
+    if (this._navOn() && !lane.loop) {
+      const NC = CONFIG.tuning?.nav || {};
+      const now = window.gameTime || 0;
+      const probe = NC.probeDist ?? 70;
+      const px = minion.pos.x, py = minion.pos.y;
+      const blockedAhead = !this.nav.clear(px, py, px + mx * probe, py + my * probe);
+      if (blockedAhead || now < (minion._navHold || 0)) {
+        const d = this.nav.laneDir(minion._laneId, forward, px, py);
+        if (d) {
+          mx = d.x; my = d.y;
+          if (blockedAhead) minion._navHold = now + (NC.holdSec ?? 0.6);
+        }
+      }
+    }
     const speed = stats.moveSpeed || 30;
 
     // v36（Q5 寻路重做）：行军移动交给统一转向器 _steer——朝路点方向为主，

@@ -571,6 +571,17 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     { path: 'tuning.mana.onAttack', label: '全局·每次攻击回复法力', step: 0.5 },
     { path: 'tuning.mana.onHitTaken', label: '全局·每次受击回复法力', step: 0.5 },
   ],
+  // 寻路参数（NavPlanner.js）：同样是 CONFIG 上的全局调参，复用 _getPath/_setPath
+  _NAV_TUNING_FIELDS: [
+    { path: 'tuning.nav.laneHalf', label: '寻路·兵线走廊半宽', step: 5 },
+    { path: 'tuning.nav.corridorPenalty', label: '寻路·离开走廊加价倍率', step: 0.5 },
+    { path: 'tuning.nav.unitPad', label: '寻路·建筑障碍外扩', step: 1 },
+    { path: 'tuning.nav.probeDist', label: '寻路·行军前探距离', step: 5 },
+    { path: 'tuning.nav.holdSec', label: '寻路·绕行保持(秒)', step: 0.1 },
+    { path: 'tuning.nav.replanSec', label: '寻路·追击重算间隔(秒)', step: 0.1 },
+    { path: 'tuning.nav.detourMaxRatio', label: '寻路·最大绕路倍数', step: 0.1 },
+    { path: 'tuning.nav.unreachableIgnoreSec', label: '寻路·追不到后忽略(秒)', step: 0.5 },
+  ],
   _getPath(obj, path) {
     return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
   },
@@ -612,6 +623,13 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <input type="number" class="mana-tuning-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
     }).join('');
 
+    const navFields = this._NAV_TUNING_FIELDS.map(f => {
+      const v = this._getPath(CONFIG, f.path);
+      if (v === undefined) return '';
+      return `<div class="slider-row"><label style="font-size:11px;">${f.label}</label>
+        <input type="number" class="nav-tuning-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
+    }).join('');
+
     // 用户定稿：不用再有言语描述——原来这里有一段"每条耦合独立开关…
     // 熵：0=绝对秩序 0.5=中性 1=绝对混乱"的说明段落，含义已经在 _COUPLINGS 各条
     // 的 title/hint 里、以及下面滑条本身的取值范围里，去掉重复的大段文字。
@@ -629,6 +647,11 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">法力（全局，可修改）</div>
         ${manaFields}
         <button id="setManaTuningApplyBtn" style="margin-top:6px;width:100%;">✅ 应用法力回复数值</button>
+      </div>
+      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">寻路（全局，可修改）</div>
+        ${navFields}
+        <button id="setNavTuningApplyBtn" style="margin-top:6px;width:100%;">✅ 应用寻路数值</button>
       </div>`;
   },
 
@@ -664,6 +687,16 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         if (!isNaN(v) && v >= 0) { this._setPath(CONFIG, inp.dataset.path, v); n++; }
       });
       logFn(`⚡ 全局法力回复数值已更新（${n} 项）`, 'spawn');
+      render();
+    });
+    // 改完寻路参数，NavPlanner 下一帧按配置签名自动重建网格和距离场
+    overlay.querySelector('#setNavTuningApplyBtn')?.addEventListener('click', () => {
+      let n = 0;
+      overlay.querySelectorAll('.nav-tuning-field').forEach(inp => {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v) && v >= 0) { this._setPath(CONFIG, inp.dataset.path, v); n++; }
+      });
+      logFn(`🧭 寻路数值已更新（${n} 项）`, 'spawn');
       render();
     });
   },
