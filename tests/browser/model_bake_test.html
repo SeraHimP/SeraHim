@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>ModelLibrary 烘焙冒烟测试</title>
+<style>body{background:#222;color:#ddd;font:13px monospace}canvas{border:1px solid #444}</style></head>
+<body>
+<canvas id="cv" width="256" height="256"></canvas>
+<pre id="result">running…</pre>
+<script type="module">
+// 浏览器内验证 GLB 烘焙管线（无 self-证：真渲染 + 翻转灯光测受光响应）。
+// 由 tests/browser/run_bake_check.mjs 用 Playpright 打开、读 window.__result 断言。
+import * as THREE from '/vendor/three.module.js';
+import { ModelLibrary } from '/src/presentation/ModelLibrary.js';
+
+const W = 256;
+function meanRGBDiff(a, b) {           // 仅在 a 中可见（非背景）的像素上比较，返回平均通道差 + 可见像素数
+  let sum = 0, n = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    const vis = Math.max(a[i], a[i + 1], a[i + 2]) > 12;
+    if (!vis) continue;
+    n++;
+    sum += (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3;
+  }
+  return { diff: n ? sum / n : 0, nz: n };
+}
+
+async function run() {
+  const lib = new ModelLibrary('/assets/models/');
+  await lib.load();
+  const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('cv'), antialias: false, preserveDrawingBuffer: true });
+  renderer.setSize(W, W);
+  renderer.shadowMap.enabled = false;
+  const gl = renderer.getContext();
+
+  const cases = [
+    ['outer', 'red', false, 'red_tower'],
+    ['nexus_lane', 'red', false, 'red_lane_crystal'],
+    ['nexus_main', 'blue', false, 'blue_nexus'],
+    ['outer', 'red', true, 'red_tower_ruin'],
+    ['outer', 'blue', false, 'blue_tower'],
+  ];
+  const report = [];
+  for (const [tier, fac, ruin, label] of cases) {
+    const mdl = lib.forTower(tier, fac, ruin, 28);
+    if (!mdl) { report.push({ label, ok: false, err: 'forTower 返回 null' }); continue; }
+
+    // —— 静态检查：材质受光、有贴图与法线、底面≈0 ——
+    let meshes = 0, tris = 0, basic = false, litMat = true, hasMap = false, hasNormal = true;
+    const box = new THREE.Box3();
+    mdl.template.traverse(o => {
+      if (!o.isMesh) return;
+      meshes++;
+      const pos = o.geometry.getAttribute('position');
+      tris += (o.geometry.index ? o.geometry.index.count : pos.count) / 3;
+      if (!o.geometry.getAttribute('normal')) hasNormal = false;
+      const m = o.material;
+      if (m.isMeshBasicMaterial) basic = true;
+      if (!m.isMeshLambertMaterial && !m.isMeshStandardMaterial) litMat = false;
+      if (m.map) hasMap = true;
+      o.geometry.computeBoundingBox();
+      box.union(o.geometry.boundingBox);
+    });
+
+    // —— 受光响应：同模型、灯从 +X vs -X 各渲一帧，像素应显著变化（unlit 则纹丝不动）——
+    const scene = new THREE.Scene();
+    scene.add(mdl.template.clone());
+    scene.add(new THREE.AmbientLight(0x222222));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+    scene.add(dir); scene.add(dir.target);
+    const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
+    const rad = Math.max(size.x, size.y, size.z) || 1;
+    const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
+    cam.position.set(c.x, c.y + rad * 0.25, c.z + rad * 2.4); cam.lookAt(c);
+    dir.target.position.copy(c); dir.target.updateMatrixWorld();
+    const cap = () => { renderer.render(scene, cam); const px = new Uint8Array(W * W * 4); gl.readPixels(0, 0, W, W, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; };
+    dir.position.set(c.x + rad * 4, c.y + rad * 1.5, c.z + rad); dir.target.updateMatrixWorld();
+    const a = cap();
+    dir.position.set(c.x - rad * 4, c.y + rad * 1.5, c.z + rad); dir.target.updateMatrixWorld();
+    const b = cap();
+    const { diff, nz } = meanRGBDiff(a, b);
+
+    report.push({
+      label, ok: true, meshes, tris: Math.round(tris),
+      litMat, basic, hasMap, hasNormal,
+      topY: +mdl.topY.toFixed(2), muzzleY: +mdl.muzzleY.toFixed(2),
+      minY: +box.min.y.toFixed(2), maxY: +box.max.y.toFixed(2),
+      litResponse: +diff.toFixed(2), visiblePixels: nz,
+    });
+  }
+
+  // 判定：每例材质受光(非 basic)、有法线、底面≈0、渲染出像素、翻灯有明显响应。
+  const muzzleOK = report.find(r => r.label === 'red_tower');
+  const checks = {
+    allLit: report.every(r => r.ok && r.litMat && !r.basic),
+    allNormals: report.every(r => r.ok && r.hasNormal),
+    // 结构顶端对齐目标高度（可见塔身 = topY）；y=0 是地线，地下光柱 minY<0 保留在地下。
+    topAligned: report.every(r => r.ok && Math.abs(r.maxY - r.topY) < 0.6),
+    undergroundBelowGround: report.every(r => r.ok && r.minY < 0.01),
+    rendered: report.every(r => r.ok && r.visiblePixels > 400),
+    litResponds: report.every(r => r.ok && r.litResponse > 4),
+    towerMuzzle: !!muzzleOK && muzzleOK.muzzleY > 0 && muzzleOK.muzzleY <= muzzleOK.topY * 1.2,
+  };
+  const pass = Object.values(checks).every(Boolean);
+  return { ok: pass, checks, report };
+}
+
+try {
+  window.__result = await run();
+} catch (e) {
+  window.__result = { ok: false, error: (e && e.message) || String(e), stack: e && e.stack };
+}
+document.getElementById('result').textContent = JSON.stringify(window.__result, null, 2);
+window.__done = true;
+</script>
+</body>
+</html>
