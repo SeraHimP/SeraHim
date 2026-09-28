@@ -63,6 +63,12 @@ T('④外轮廓系数软编码，可在编辑器配置导入导出里改', !!CON
     }
   }
   attacked = tower.currentHP < hp0;
+  // 近战兵打塔时贴着外沿站（用户："近战兵和塔之间的距离太远了"）：正在打塔的近战兵，身体边缘到塔外轮廓的距离
+  const meleeGaps = made.filter((m) => m.type === 'melee' && m.targetId === tower.id && m._anchored)
+    .map((m) => Math.hypot(m.pos.x - tower.pos.x, m.pos.y - tower.pos.y) - R - (MINION_SIZES[m.type] ?? 10));
+  const gapMax = CONFIG.tuning.meleeStructureGap + 8;   // 间隙 + 挤位余量
+  T(`⑥正在打塔的近战兵贴着塔身站（身体边缘到外轮廓：${meleeGaps.map((g) => g.toFixed(0)).join('/') || '无'}，上限 ${gapMax}）`,
+    meleeGaps.length > 0 && meleeGaps.every((g) => g <= gapMax));
   T(`⑤实跑 20 秒：${made.length} 个敌兵打塔（塔掉血：${attacked}），没有兵钻进塔的外轮廓（最近 ${worst.toFixed(1)}，${who}）`, attacked && worst >= -0.5);
 }
 done();

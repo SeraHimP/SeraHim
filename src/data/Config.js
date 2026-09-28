@@ -1205,6 +1205,7 @@ export const CONFIG = {
       fadeDesat: 0.45, scorchMix: 0.55,
       noiseScale: 0.0016, windDir: [1, 0.57],
       vegDust: 0.35,      // 沙暴里植被（树冠/灌木/岩石）蒙沙的比例
+      sideSnow: 0.25,     // 带积雪的建筑物（台面、基地石墙、城墙柱）立面的积雪比例，顶面为满
       riverMaskRes: 128,  // 河道遮罩分辨率（沙/烈日不往河床上铺）
     },
     // ==================== v54 第二轮重做：雷暴 Signature——偶发全屏闪光 ====================
@@ -2397,6 +2398,8 @@ export const CONFIG = {
   tuning: {
     // 远程单位打建筑时有效射程的保底：不小于"建筑碰撞半径 + 这段间隙"（LaneMovementSystem._reach），防贴进塔身
     rangedStructureGap: 12,
+    // 近战单位打建筑时与建筑外沿的间隙：中心距 = 建筑碰撞半径 + 自身半径 + 这段间隙（贴着打，不隔空挥刀）
+    meleeStructureGap: 4,
     // 寻路（NavPlanner.js）：网格 + 建筑障碍 + 兵线距离场 + A* 追击。
     //   unitPad 建筑障碍按碰撞半径再外扩多少（≈小兵半径）；laneHalf 兵线走廊半宽（此内不加价）；
     //   corridorPenalty 离开走廊的单格加价倍率（越大越贴着自己的路走）；goalRadius 距离场终点源半径；

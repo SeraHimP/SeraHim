@@ -187,18 +187,20 @@ export class BoundaryDecorLayer {
       }
       this.scene.add(inst); this.meshes.push(inst);
     };
+    // 城墙柱 / 高地围墙：下雪时柱顶积满雪、柱身挂薄霜（读同一张雪深图，见 weatherGround.js）
+    const postMat = () => applyWeatherGround(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), { snow: true });
     if (showPillars) {
-      place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), posts, 1.0, 0.15);
+      place(wallPostGeo(SV), postMat(), posts, 1.0, 0.15);
       // 围墙用同一套柱子几何，尺寸略大一档——高地围墙是防御工事，视觉分量应该
       // 比兵线/野区边界那圈装饰性城墙更重一些。
-      place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), wallRingPosts, 1.3, 0.1);
+      place(wallPostGeo(SV), postMat(), wallRingPosts, 1.3, 0.1);
     }
     place(stylizedTreeGeo(map), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), natTrees, 0.85, 0.35, true);
     place(new THREE.IcosahedronGeometry(12, 0), new THREE.MeshLambertMaterial({ color: SV.rockColor || '#8a8f96', flatShading: true }), natRocks, 0.8, 0.4, true);
     // 高地石墙笔刷（素材库）：笔刷显式画的石墙，不受 showPillars 这个地图级默认
     // 开关约束——召唤师峡谷把默认城墙柱子关掉是"这张图整体不要柱子"这条全局
     // 偏好，但作者在野区某一段显式选了"石墙"风格是更具体的信号，应该覆盖它。
-    place(wallPostGeo(SV), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), styledPosts, 1.0, 0.15);
+    place(wallPostGeo(SV), postMat(), styledPosts, 1.0, 0.15);
   }
 
   /** 积雪野区可见性修复（v55.1）：节流刷新 natTrees/natRocks 的落雪程度，与

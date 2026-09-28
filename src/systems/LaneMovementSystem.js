@@ -716,7 +716,15 @@ export class LaneMovementSystem {
     if (!target || target.type !== 'tower') return range;
     const R = structureRadius(target._mapTier, target._modelSize);
     const melee = minion.type === 'dragon' || (minion.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD;
-    return melee ? range + R : Math.max(range, R + (CONFIG.tuning?.rangedStructureGap ?? 12));
+    // 近战：贴着建筑外沿打——中心距 = 建筑碰撞半径 + 自己的半径 + 一点间隙。
+    // 原来是"射程 + 建筑半径"，近战射程 30 比小兵半径 10 大出 20，兵站在离塔身二十来个单位的地方打，
+    // 看着隔空挥刀（用户："近战兵和塔之间的距离太远了"）。
+    if (melee) {
+      const rSelf = minion.type === 'dragon' ? (CONFIG.dragonSizes?.[minion._isAncient ? 'ancient' : 'element'] ?? 30) * 0.5
+        : (MINION_SIZES[minion.type] || 10);
+      return R + rSelf + (CONFIG.tuning?.meleeStructureGap ?? 4);
+    }
+    return Math.max(range, R + (CONFIG.tuning?.rangedStructureGap ?? 12));
   }
 
   _scanEnemies(minion, acqRadius, attackRange) {

@@ -41,7 +41,8 @@ export function weatherGroundUniforms() {
     uWgWorld: { value: new THREE.Vector2(1, 1) },
     uWgRiver: { value: null },
     uWgSnowTex: { value: null }, uWgSnowOn: { value: 0 },
-    uWgDust: { value: C.vegDust ?? 0.35 },   // 植被（树冠/灌木/岩石）在沙暴里蒙一层沙的比例
+    uWgDust: { value: C.vegDust ?? 0.35 },
+    uWgSideSnow: { value: C.sideSnow ?? 0.25 },   // 立面（墙身、柱身）的积雪比例，顶面为 1   // 植被（树冠/灌木/岩石）在沙暴里蒙一层沙的比例
   };
   _u.uWgRiver.value = _blankTex();
   _u.uWgSnowTex.value = _blankTex();
@@ -150,8 +151,9 @@ uniform vec2 uWgWind;
 uniform vec4 uWgK, uWgK2;
 uniform vec2 uWgWorld;
 uniform sampler2D uWgRiver, uWgSnowTex;
-uniform float uWgSnowOn, uWgDust;
+uniform float uWgSnowOn, uWgDust, uWgSideSnow;
 varying vec3 vWgPos;
+varying float vWgNy;
 vec3 wgApply(vec3 c) {
 #ifdef WG_DUST
   // 植被：沙暴里蒙一层沙（不铺沙纹、不做积雪——树上的雪另有 VegetationShaderPatch 负责）
@@ -209,6 +211,8 @@ vec3 wgApply(vec3 c) {
     float nn = clamp((n.r - 0.5) * 2.6 + 0.5, 0.0, 1.0);
     float s = d * (0.25 + 1.5 * nn);
     float cov = smoothstep(0.05, 0.13, s) * clamp(d * 2.2, 0.0, 1.0);
+    // 朝上的面积满雪，立面只挂一层薄霜（墙头、柱顶白，墙身仍看得出石头）
+    cov *= mix(uWgSideSnow, 1.0, smoothstep(0.35, 0.8, vWgNy));
     vec3 snowC = mix(vec3(0.85, 0.9, 0.98), vec3(1.0), smoothstep(0.08, 0.45, d)) * (0.94 + 0.1 * n.b);
     c = mix(c, snowC, cov);
   }
@@ -237,10 +241,21 @@ export function applyWeatherGround(material, opts = {}) {
     if (prev) prev.call(material, shader, renderer);
     if (!u.uWgNoise.value) u.uWgNoise.value = fogNoiseTexture();
     Object.assign(shader.uniforms, u);
-    shader.vertexShader = 'varying vec3 vWgPos;\n' + shader.vertexShader.replace('#include <project_vertex>',
-      '#include <project_vertex>\n  vWgPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-    shader.fragmentShader = (opts.snow ? '#define WG_SNOW\n' : '') + (opts.dust ? '#define WG_DUST\n' : '') + GLSL_HEAD + shader.fragmentShader.replace('#include <map_fragment>',
-      '#include <map_fragment>\n  diffuseColor.rgb = wgApply(diffuseColor.rgb);');
+    // 世界坐标与世界法线的 y（朝上的面才积雪）；实例化网格要先乘 instanceMatrix
+    shader.vertexShader = 'varying vec3 vWgPos;\nvarying float vWgNy;\n' + shader.vertexShader.replace('#include <project_vertex>',
+      `#include <project_vertex>
+  vec4 wgP = vec4(transformed, 1.0);
+  vec3 wgN = normal;
+#ifdef USE_INSTANCING
+  wgP = instanceMatrix * wgP;
+  wgN = mat3(instanceMatrix) * wgN;
+#endif
+  vWgPos = (modelMatrix * wgP).xyz;
+  vWgNy = normalize(mat3(modelMatrix) * wgN).y;`);
+    shader.fragmentShader = (opts.snow ? '#define WG_SNOW\n' : '') + (opts.dust ? '#define WG_DUST\n' : '') + GLSL_HEAD + shader.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n  diffuseColor.rgb = wgApply(diffuseColor.rgb);');
+    // ⚠️ 挂在 color_fragment（顶点色相乘）之后，不是 map_fragment 之后：顶点色材质（基地石墙、城墙柱、
+    // 风格化树）在 map 之后还要乘一次顶点色，挂早了白雪 × 石头色 = 石头色，积雪/蒙沙等于没做
   };
   material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + (opts.snow ? '|wg1s' : opts.dust ? '|wg1d' : '|wg1');
   material.needsUpdate = true;

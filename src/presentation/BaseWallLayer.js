@@ -14,6 +14,7 @@
  * 墙石取调色板 rockColor，墩台顶取 wallCapColor。
  */
 import * as THREE from '../../vendor/three.module.js';
+import { applyWeatherGround } from './weatherGround.js';
 import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
 import { baseWallMask, baseWallRuns, baseWallThickness } from '../data/baseCircle.js';
 import { unpackBits, navgridOf } from '../data/navgrid.js';
@@ -88,7 +89,7 @@ export class BaseWallLayer {
         }
       }
     }
-    const mesh = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+    const mesh = new THREE.Mesh(mergeGeometries(parts), applyWeatherGround(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), { snow: true }));
     const on = this.shadowLevel !== 'off';
     mesh.castShadow = on; mesh.receiveShadow = on;
     mesh.name = 'baseWalls';

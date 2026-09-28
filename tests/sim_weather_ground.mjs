@@ -59,7 +59,7 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
   const fakeShader = () => ({
     uniforms: {},
     vertexShader: 'void main() {\n#include <project_vertex>\n}',
-    fragmentShader: 'void main() {\n#include <map_fragment>\n}',
+    fragmentShader: 'void main() {\n#include <map_fragment>\n#include <color_fragment>\n}',
   });
   let prevCalled = false;
   const m = new THREE.MeshLambertMaterial();
@@ -68,8 +68,8 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
   WG.applyWeatherGround(m);
   const sh = fakeShader();
   m.onBeforeCompile(sh);
-  T('材①-地面材质片元里调用 wgApply，挂在 map_fragment 之后（在原贴图色上调制，保留布局明暗）',
-    /#include <map_fragment>\s*\n\s*diffuseColor\.rgb = wgApply\(diffuseColor\.rgb\)/.test(sh.fragmentShader));
+  T('材①-片元里调用 wgApply，挂在 color_fragment（顶点色）之后——在最终底色上调制，顶点色材质（石墙、城墙柱）的积雪才不会被石头色乘回去',
+    /#include <color_fragment>\s*\n\s*diffuseColor\.rgb = wgApply\(diffuseColor\.rgb\)/.test(sh.fragmentShader));
   T('材②-顶点里输出世界坐标（噪声按世界坐标采样，相邻材质接缝处纹理连续）', sh.vertexShader.includes('vWgPos = (modelMatrix'));
   T('材③-已有的 onBeforeCompile 先跑（裙边的淡出、植被的风摆/落雪不被覆盖）', prevCalled);
   T('材④-共享 uniform 注入（同一个对象，改一次全场生效）', sh.uniforms.uWgSand === WG.weatherGroundUniforms().uWgSand);
@@ -112,6 +112,12 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
   T('线⑤-地图外围裙边接上', /applyWeatherGround\(mat\)/.test(srcOf('src/presentation/MapSkirtLayer.js')));
   const V = srcOf('src/presentation/VegetationLayer.js');
   T('线⑥-台地顶面接上（带积雪）', /applyWeatherGround\(ms\[0\], \{ snow: true \}\)/.test(V));
+  T('线⑧-基地石墙与高地围墙柱下雪时积雪（用户："下雪的时候雪的效果并不能正确应用在高地的围墙上"）',
+    /applyWeatherGround\(new THREE\.MeshLambertMaterial\(\{ vertexColors: true, flatShading: true \}\), \{ snow: true \}\)/.test(srcOf('src/presentation/BaseWallLayer.js'))
+    && /const postMat = \(\) => applyWeatherGround\([^)]*\)[^;]*\{ snow: true \}\)/.test(srcOf('src/presentation/BoundaryDecorLayer.js')));
+  T('线⑨-积雪按面朝向：顶面满雪、立面薄霜；实例化网格先乘 instanceMatrix',
+    /cov \*= mix\(uWgSideSnow, 1\.0, smoothstep\(0\.35, 0\.8, vWgNy\)\)/.test(srcOf('src/presentation/weatherGround.js'))
+    && /wgP = instanceMatrix \* wgP;/.test(srcOf('src/presentation/weatherGround.js')));
   T('线⑦-植被与野区边缘树石蒙沙', /applyWeatherGround\(mat, \{ dust: true \}\)/.test(V)
     && /applyWeatherGround\(mat, \{ dust: true \}\)/.test(srcOf('src/presentation/BoundaryDecorLayer.js')));
 }
