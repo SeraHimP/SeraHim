@@ -36,7 +36,6 @@ import { MapSkirtLayer } from './MapSkirtLayer.js';
 import { WeatherLayer } from './WeatherLayer.js';
 import { CorrosionLayer } from './CorrosionLayer.js';
 import { WaterLayer } from './WaterLayer.js';
-import { RainRippleLayer } from './RainRippleLayer.js';
 import { GroundTraceLayer } from './GroundTraceLayer.js';
 import { compositeTerrain, loadTexture, ZONES, zoneGrid, placeholderTexture } from './TerrainMaterial.js';
 import { applyWeatherGround, updateWeatherGround, setWeatherGroundMap, weatherGroundState } from './weatherGround.js';
@@ -205,7 +204,6 @@ export class ThreeRenderer {
     this.skirtOn = true;
     this.water = new WaterLayer(this.scene);      // P1：河道水面（涟漪法线 + 滚动 UV）
     this.weatherFx = new WeatherLayer(this.scene); // 天气可视化（雨/雪/雾/风/晴的粒子与薄纱）
-    this.rainRipple = new RainRippleLayer(this.scene); // Phase 1：雨滴打在水面上的波纹（独立于水面材质）
     this.groundTrace = new GroundTraceLayer(this.scene); // Q4 天气重做：水洼贴花+雪盖遮罩
     this.tex = { ground: null, plateau: null, cliff: null };
     this._texTheme = null;
@@ -873,7 +871,6 @@ export class ThreeRenderer {
     return this.toneMapOn;
   }
   setWeatherFx(on) { this.weatherFx?.setEnabled(on); }
-  setRainRipple(on) { this.rainRipple?.setEnabled(on); }
 
   setVegetation(on) {
     this.vegOn = on !== false;
@@ -1374,11 +1371,6 @@ export class ThreeRenderer {
                           this._lightDt || 0.016, { x: wg[0], y: wg[1] });
       // 雨点涟漪（水洼 + 河面）：雨量跟地面湿度同一个量（已平滑），时间走墙钟
       updateRainRipple(performance.now() / 1000, weatherGroundState().wet);
-    }
-    // Phase 1：雨滴打在水面上的波纹——只在有水面的图上生成，dt 走墙钟（与水面/
-    // 天气可视化同口径，暂停时雨还在下、水波也该继续）。
-    if (this.rainRipple) {
-      this.rainRipple.update(this.water, this.mapSystem, window.__weather || null, this._lightDt || 0.016);
     }
     // Q4 天气重做：水洼贴花+雪盖遮罩——GroundTraceSystem 自己管生成/合并/消退的节奏
     // （在 main.js 的仿真步进里推进，不是墙钟驱动），这里只负责按它的当前状态画。

@@ -1217,22 +1217,9 @@ export const CONFIG = {
       peakAlpha: 0.55,               // 闪光峰值不透明度（再乘雷暴充能）
       fadeSec: 0.35,                 // 淡出时长
     },
-    // ==================== 本轮：雨滴打在水面上的波纹（天气×环境交互） ====================
-    // 用户："下雨的时候雨滴打在水面上要形成波纹。"独立于 WaterLayer 的水面材质，
-    // 只在河道范围内（复用 MapSystem.riverFactor 判定）按雨强度生成一批短命的
-    // 扩散波纹环，见 RainRippleLayer.js 头注。数值都是占位，下一轮跑起来看效果再调。
     // 雨点涟漪（着色器版，rainRipple.js）：水洼和河面共用。cell 每格世界单位（每格最多一个涟漪），
     // speed 扩散速度，waterStrength 河面上的环亮度（水洼那边用 groundTraceFx.puddleRipple）
     rainRipple: { enabled: true, cell: 9, speed: 0.8, waterStrength: 0.9 },
-    rainRippleFx: {
-      enabled: true,
-      maxRipples: 24,        // 实例池上限（同时最多这么多个波纹在扩散）
-      spawnRatePerSec: 6,    // 雨充能=1时，每秒生成的波纹数
-      minRiverFactor: 0.6,   // 生成点判定"够格算水面"的 riverFactor 阈值
-      maxRadius: 55,         // 波纹扩散到的最大半径（世界单位）
-      durMin: 0.6, durMax: 1.1,  // 单个波纹的存活时长区间（秒）
-      alpha: 0.55,
-    },
     // ==================== 本轮：风吹植被（天气×环境交互） ====================
     // 用户："风等也要有可视化效果。"只让树（含深林树）摆动，根部固定、顶部摆幅
     // 最大（弯曲量正比高度平方），每棵树独立相位（按坐标哈希，不按实例下标——
@@ -1285,7 +1272,7 @@ export const CONFIG = {
       strength: 1.4,  // 边缘光叠加强度（× emissive，随攻击蓄能同步变亮）
     },
     // ==================== 地面痕迹层渲染（水洼贴花+雪盖遮罩，Q4 天气重做 + v54 第二轮重做）====================
-    // 参考先例 RainRippleLayer.js 的实例池模式，见 GroundTraceLayer.js 头注。
+    // 固定大小的实例池模式，见 GroundTraceLayer.js 头注。
     // 逻辑侧的生成/合并/消退数值在 CONFIG.groundTrace（顶层），这里只管"画出来
     // 长什么样"——贴花颜色/透明度/池子上限。
     groundTraceFx: {

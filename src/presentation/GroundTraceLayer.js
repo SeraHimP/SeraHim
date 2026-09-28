@@ -1,7 +1,7 @@
 /**
  * GroundTraceLayer.js —— 水洼贴花 + 雪盖遮罩渲染（Q4 天气重做 + v54 第二轮重做）
  *
- * 水洼沿用 RainRippleLayer.js 的实例池模式——固定大小的 Mesh 池，共享几何+
+ * 水洼用实例池模式——固定大小的 Mesh 池，共享几何+
  * 各自独立材质（材质只在 _build() 时创建一次，之后只改 position/scale/opacity），
  * 没在用就 visible=false，不逐帧 new 对象。既然水洼本身不是逐帧连续动画的粒子，
  * 没必要维护"这个池槽位对应哪个水洼"这份映射——每帧直接按当前存在的水洼重新
@@ -121,8 +121,7 @@ ${rim ? `
   mat.customProgramCacheKey = () => rim ? 'gt-puddle-rim1' : 'gt-puddle1';
 }
 
-// 实心软边圆贴图：中心不透明、向外羽化，程序生成，无外部素材（同 RainRippleLayer
-// 的 makeRingTexture 思路，这里要的是实心圆而不是一圈环）。
+// 实心软边圆贴图：中心不透明、向外羽化，程序生成，无外部素材。
 function makeDiscTexture(size = 64) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -166,7 +165,7 @@ export class GroundTraceLayer {
       patchPuddleMaterial(mat, rim);
       const mesh = new THREE.Mesh(this._geo, mat);
       mesh.visible = false;
-      // 半透明贴花排除出法线/深度预渲染，同 RainRippleLayer 的理由：
+      // 半透明贴花排除出法线/深度预渲染：
       // 否则会在描边/SSAO 里画出一圈假轮廓。
       mesh.layers.set(FX_PARTICLE_LAYER);
       mesh.frustumCulled = false;

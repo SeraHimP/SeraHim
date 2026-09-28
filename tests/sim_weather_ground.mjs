@@ -1,3 +1,4 @@
+import fs from 'fs';
 // 天气与地图融为一体 + 积雪/水洼重做 + 沙暴沙粒 + 结构保护图标位置。
 // 用户："黄沙天气，但是地面依旧是绿色的……天气层和地图是完全割裂的，需要做到天气和地图是融为一体的。
 //        还有目前的积雪/水洼的可视化效果也不太好"；"防御塔结构保护那个🛡️图标的位置也应该优化一下"。
@@ -148,6 +149,9 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
   T('水⑥-河面接上同一段雨点涟漪（用户："水洼中的雨滴特效应该同步到水面中"）',
     /applyRainRipple\(mat\)/.test(srcOf('src/presentation/WaterLayer.js'))
     && /updateRainRipple\(performance\.now\(\) \/ 1000, weatherGroundState\(\)\.wet\)/.test(srcOf('src/presentation/ThreeRenderer.js')));
+  T('水⑦-河面原来那池简陋的大波纹环（RainRippleLayer）已删除（用户："把原先在水面上存在的简陋波纹特效删除"）',
+    !/RainRippleLayer/.test(srcOf('src/presentation/ThreeRenderer.js')) && !CONFIG.ui.rainRippleFx
+    && !fs.existsSync(new URL('../src/presentation/RainRippleLayer.js', import.meta.url)));
   const snowSh = { uniforms: {}, vertexShader: 'void main() {\n#include <project_vertex>\n}', fragmentShader: 'void main() {\n#include <alphamap_fragment>\n}' };
   layer._snowMesh.material.onBeforeCompile(snowSh);
   T('雪①-雪盖按雪深×噪声收边（薄雪是一块块雪斑，不是一片糊边的白雾）',
