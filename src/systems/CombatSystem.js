@@ -1001,7 +1001,7 @@ export class CombatSystem {
     // 而它本来的设计意图只是"顶着塔往前推"。收窄之后它对塔仍然耐揍，兵线里恢复正常体量。
     // 条件减伤依赖攻击来源，stat 管线拿不到攻击者，必须在引擎结算处判断。
     if (attacker?.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
-      damage *= 0.7;
+      damage *= this._siegeShieldMul(target);
     }
     // 哀兵（条件加成，用户定稿）：每层 +4% 对敌方小兵伤害、+10% 减免来自敌方小兵的伤害。
     // 与防御护盾同理——依赖攻击来源类型，stat 管线拿不到，必须在结算处判断。
@@ -1325,6 +1325,14 @@ export class CombatSystem {
     if (amp) damage *= (1 + amp / 100);
     if (red) damage *= Math.max(0, 1 - red / 100);
     return damage;
+  }
+
+  /** 防御护盾：受防御塔伤害的倍率 = 1 − 减伤%（技能参数 reductionPct，可按实例覆写） */
+  _siegeShieldMul(target) {
+    const inst = (target._skillInstances || []).find((i) => i.skillId === 'passive_siege_shield' && !i._disabled);
+    const def = this.skills?.passive_siege_shield;
+    const pct = inst?._params?.reductionPct ?? def?.defaultParams?.reductionPct ?? 30;
+    return 1 - pct / 100;
   }
 
   _hasSkill(entity, skillId) {
@@ -1685,7 +1693,7 @@ export class CombatSystem {
       }
       // v43：同上，来源收窄到只有塔
       if (attacker && attacker.type === 'tower' && this._hasSkill(target, 'passive_siege_shield')) {
-        mitigatedDamage *= 0.7;
+        mitigatedDamage *= this._siegeShieldMul(target);
       }
       // 哀兵条件加成（与 performAttack 路径一致）。它里面既有攻击方的增伤、
       // 也有防御方的减伤：增伤那半边属于攻击方的属性，不该被"无视防御"影响，

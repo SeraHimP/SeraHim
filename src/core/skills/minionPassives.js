@@ -356,8 +356,9 @@ export const minionPassives = {
     name: '防御护盾',
     icon: '🛡️',
     category: 'passive',
-    description: '受防御塔的伤害降低30%。',
-    descTemplate: '唯一被动——防御护盾：受到【防御塔】的伤害降低30%。',
+    defaultParams: { reductionPct: 30 },   // 受防御塔伤害降低的百分比（CombatSystem._siegeShieldMul 读它）
+    get description() { return `受防御塔的伤害降低${minionPassives.passive_siege_shield.defaultParams.reductionPct}%。`; },
+    get descTemplate() { return `唯一被动——防御护盾：受到【防御塔】的伤害降低${minionPassives.passive_siege_shield.defaultParams.reductionPct}%。`; },
     // 实现在 CombatSystem 的减免段（伤害来源需要判断攻击者类型，效果系统的
     // stat 管线只看防御方自身、拿不到攻击来源，所以这类"条件减伤"必须挂引擎钩子）。
     // CombatSystem 通过 _hasSkill(target, 'passive_siege_shield') 识别，此处仅作定义与展示。
