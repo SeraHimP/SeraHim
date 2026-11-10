@@ -110,6 +110,9 @@ export function applyClassicMode(baseMap) {
     label: `${baseMap.label}（经典）`,
     // 不声明 dragon 字段 = 这个模式不生成龙，与"只有声明了才生成"的既有口径一致。
     dragon: undefined,
+    // 召唤师峡谷的全局光环（移速递增 + 热寂）在经典模式里去掉（用户 2026-11-10："经典模式中删除召唤师峡谷光环"）。
+    // 只动这一张图：另两张图的光环用户没提，照旧。
+    globalAura: isSR ? undefined : baseMap.globalAura,
     tierStats,
     buildings,
     minionDefaultPassives: CLASSIC_MINION_PASSIVES,

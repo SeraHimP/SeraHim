@@ -96,11 +96,34 @@ const { T, done } = scoreboard('经典模式验收（模式×地图）');
   T('图⑤-召唤水晶/水晶枢纽血量也沿用原值',
     map.tierStats.nexus_lane.maxHP === sr.tierStats.nexus_lane.maxHP
     && map.tierStats.nexus_main.maxHP === sr.tierStats.nexus_main.maxHP);
+  T('图⑦-经典模式没有召唤师峡谷光环（用户："经典模式中删除召唤师峡谷光环"）',
+    !map.globalAura && !!sr.globalAura);
   T('图⑥-布局（建筑数量与坐标）与普通模式完全一致（经典模式不改地图几何）',
     map.buildings.length === sr.buildings.length
     && map.buildings.every((b, i) => b.pos.x === sr.buildings[i].pos.x
                                   && b.pos.y === sr.buildings[i].pos.y
                                   && b.tier === sr.buildings[i].tier));
+}
+
+// ==================== 三b、真跑：经典模式 8 分钟不出蚀骨兵 / 治疗兵，单位身上没有光环 ====================
+// 用户："取消蚀骨兵，治疗兵的生成"。出兵闸门（spawnEnabled）在经典模式里本来就关着它们，
+// 这里用真跑钉住——编排表里蚀骨兵第 2 波起、治疗兵第 5 波起，8 分钟足够覆盖。
+{
+  const { createSimulation } = await import('../src/simulation.js');
+  const sim = createSimulation();
+  sim.mapSystem.loadMap('summoners_rift_v1', 'classic');
+  const seen = new Set();
+  let auraSeen = false;
+  for (let f = 0; f < 30 * 60 * 8; f++) {
+    sim.step(1 / 30);
+    if (f % 30) continue;
+    for (const m of sim.entityContainer.getAllMinions(true)) {
+      seen.add(m.type);
+      if (!auraSeen && sim.effectRegistry.getEffects(m.id).some((e) => /光环|热寂/.test(e.name || ''))) auraSeen = true;
+    }
+  }
+  T(`跑①-经典模式 8 分钟只出基础兵（实际：${[...seen].join('/')}）`, seen.size > 0 && !seen.has('corrupt') && !seen.has('healer'));
+  T('跑②-经典模式单位身上没有召唤师峡谷光环 / 热寂效果', !auraSeen);
 }
 
 // ==================== 四、嚎哭深渊/扭曲丛林经典模式：近似值行为形状 ====================
