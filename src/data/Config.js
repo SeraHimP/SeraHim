@@ -1557,7 +1557,17 @@ export const CONFIG = {
     // ⚠️ 本块是**纯参数化**：每一项的默认值都与参数化前逐位一致
     //（ThreeRenderer 的 AMBIENT_SHARE/SUN_ELEV_DEG/... 常量、DayNight 的 KEYS 表）。
     // "加开关"和"改行为"是两件事，改数值是下一步的事，不在这一步做。
+    // 相机（2026-11 画面重构：透视相机）。fovDeg 竖向视野角；elevationDeg 默认俯仰角；
+    // nearK/farK 近远裁面相对机位距离的倍数（SSAO / 雾靠深度重建，near 不能太小）
+    camera: { fovDeg: 45, elevationDeg: 57, nearK: 0.04, farK: 8 },
+    // 程序化天空 / IBL（skyLight.js）：width/height 等距圆柱图分辨率；intensity 环境光总倍率；
+    // hemiShare 半球光保留的份额（其余由 IBL 提供）；sunGlow/sunDisc 太阳光晕与日轮亮度；
+    // quantize 太阳方向量化步长（超过才重算 PMREM）；background 是否把天空当背景
+    sky: { width: 256, height: 128, intensity: 1.0, hemiShare: 0.25, sunGlow: 0.35, sunDisc: 6, quantize: 0.03, background: true },
     lighting: {
+      sunGain: 1.6,          // 方向光相对"总辐照度 × (1-环境占比)"的倍率：PBR 材质要靠直射才有体积感
+      shadowFarK: 2.2,       // 阴影视锥沿视线方向最远罩到 机位距离 × 这个倍数
+      shadowMaxRadius: 2600, // 阴影视锥半径上限（全图视角下再大也没有精度）
       sunElevDeg: 55,        // 初始太阳仰角（DayNight 接管前的值）
       sunAzimDeg: 135,       // 初始方位：左上打光
       ambientShare: 0.40,    // 环境光占总辐照度的比例
@@ -1566,7 +1576,8 @@ export const CONFIG = {
       groundColor: '#40485a',// 半球光·下（地面反照）
       // 昼夜关键帧里太阳仰角的**上限**。90 = 不夹（与参数化前逐位一致）。
       // 调低它就能让全天的影子都变长 —— 这是 §10.3 的 A2。
-      maxSunElevDeg: 34,
+      // 2026-11：透视相机 + 真实地形后，34° 的上限让正午影子太长、地面全被阴影盖住，放宽到 62（KEYS 正午值）
+      maxSunElevDeg: 62,
     },
 
     // 建筑动画（buildingFx.js）。用户定稿："按这个做"——
@@ -1767,9 +1778,9 @@ export const CONFIG = {
     // v51.28：outline 三档全部改 false——用户报了轮廓描边的画面 bug，先禁用，
     // bug 以后再查再修。等 bug 修好，medium/high 想恢复描边只需要把这两个 true 改回来。
     qualityPresets: {
-      low:    { shadow: 'off',    bloom: false, outline: false, ssao: false, fog: false, resolutionScale: 0.6 },
-      medium: { shadow: 'static', bloom: true,  outline: true,  ssao: false, fog: true,  resolutionScale: 0.85 },
-      high:   { shadow: 'all',    bloom: true,  outline: true,  ssao: true,  fog: true,  resolutionScale: 1.0 },
+      low:    { shadow: 'off',    bloom: false, ssao: false, fog: false, resolutionScale: 0.6 },
+      medium: { shadow: 'static', bloom: true,  ssao: false, fog: true,  resolutionScale: 0.85 },
+      high:   { shadow: 'all',    bloom: true,  ssao: true,  fog: true,  resolutionScale: 1.0 },
       // 自动档的帧时判据（毫秒，对应 main.js PERF.render 的 250ms 窗口均值）：
       // 连续 autoDownTicks 次超过 autoDownMs 就降一档；连续 autoUpTicks 次低于
       // autoUpMs 才升一档——升档要求的次数更多，"偶尔快一帧"不该立刻贸然提画质，
@@ -1835,13 +1846,12 @@ export const CONFIG = {
       texturePath: 'assets/textures/env/skirt_horizon.png', // 用户提供的径向对称雾状渐变图
     },
 
-    // v51.27：自动线性雾，配合裙边一起给"纸片感"加一点近实远虚的纵深线索。
-    // 范围以相机真实距离 CAM_DIST 为基准动态算（见 ThreeRenderer._autoFog 头注），
-    // 这两个 offset 只用来微调"雾从哪开始"和"哪结束"，不是雾本身的距离。
+    // 大气透视（线性雾）：起止距离按【机位到注视点的距离】的倍数给，见 ThreeRenderer._autoFog。
+    // nearK ≥ 1 保证注视点附近清晰；farK 越大远景越通透。
     mapFog: {
       enabled: true,
-      nearOffset: 800,   // 雾开始起效的距离 = CAM_DIST + 这个值（越大雾越晚出现）
-      farOffset: 7000,   // 雾完全不透明的距离 = CAM_DIST + 地图半对角线 + 这个值
+      nearK: 1.1,
+      farK: 4.5,
     },
   },
 
@@ -2151,13 +2161,11 @@ export const CONFIG = {
   // （雨/雪/尘/雾这些粒子与薄纱被法线深度预渲染当成不透明物体，满屏黑麻点，
   // 见 PostFX.js 里 FX_PARTICLE_LAYER 的头注），修掉之后重新默认开启。
   // 用户对参考游戏的描述："thronefall 里的描边还是挺重的"，所以强度往重了给。
-  outline: {
-    enabled: true,
-    color: '#141a22',   // 冷黑。原来是暖黑 #1a1410（呼应塔灯暖光），但整套美术已经转冷
-    strength: 1.0,      // 0~1，原 0.85 —— 用户："描边还是挺重的"
-    lineWidth: 1.8,     // 采样偏移的像素倍数，原 1.6
-    depthBias: 0.003,   // 深度跳变阈值。调低会在平地上测出深度量化噪声，见 PostFX 头注
-    normalBias: 0.35,   // 法线夹角阈值，负责抓内部折角
+  // 后处理（2026-11 画面重构）。描边随卡通风格一起删除。
+  postfx: {
+    // SSAO：radius 采样半径（世界单位）、bias 深度容差、power 遮蔽曲线指数、strength 乘回画面的比例、halfRes 半分辨率
+    ssao: { radius: 16, bias: 0.5, power: 1.5, strength: 0.8, halfRes: true },
+    bloom: { strength: 0.35, radius: 0.5 },   // 阈值在 ui.hdr.bloomThreshold
   },
 
   // ==================== 任务 #178：伪体积雾 ====================
@@ -2170,7 +2178,7 @@ export const CONFIG = {
     color: '#c9d4de',      // 偏冷灰白，呼应整套已转冷的美术基调（同 outline 的注释）
     baseHeight: 0,          // 世界 Y，雾"根部"高度——贴合地面
     heightFalloff: 0.006,   // 越大雾层越薄越贴地
-    density: 0.00028,       // 距离（视空间深度）指数衰减系数
+    density: 0.0012,        // 距离（视空间深度）指数衰减系数。透视相机的视深是几百到两千（正交时是两万），同样的浓度观感要放大约 4 倍
     // 用户（2026-09-27）："虽然体积雾做出来了，但是看起来很粗糙"——原来 64² 随机值噪声 + 高频（0.004）
     // = 满屏细颗粒。现在是可平铺的平滑分形噪声（fogNoise.js），频率降到大雾团的尺度，加域扭曲与覆盖阈值。
     noiseScale: 0.0011,     // 世界空间噪声频率（越小雾团越大）

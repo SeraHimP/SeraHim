@@ -153,36 +153,35 @@ const { T, done } = scoreboard('地图裙边 + 自动雾效');
 
 // ==================== _autoFog：纯 JS 计算（跟 _autoAdjustQuality 一样摘 prototype 单测）====================
 {
+  // 2026-11 画面重构：透视相机下，大气透视按【机位距离】给（近处清晰、远处融进天光），不再按地图对角线。
   const autoFog = ThreeRenderer.prototype._autoFog;
-  const mkFake = (ww, wh) => ({ scene: new THREE.Scene(), mapSystem: ww ? { currentMap: { world: { w: ww, h: wh } } } : { currentMap: null } });
+  const mkFake = (camDist, fogColor) => ({ scene: new THREE.Scene(), _camDist: camDist, _fogColor: fogColor });
   const F = CONFIG.ui.mapFog;
 
-  const small = mkFake(2000, 2000);
-  autoFog.call(small);
-  T('小图也会起雾', !!small.scene.fog);
+  const near = mkFake(1000);
+  autoFog.call(near);
+  T('会起雾（线性雾）', !!near.scene.fog && near.scene.fog.isFog === true);
 
-  const big = mkFake(6000, 6000);
-  autoFog.call(big);
-  const halfDiagSmall = Math.hypot(2000, 2000) / 2, halfDiagBig = Math.hypot(6000, 6000) / 2;
-  T('near 与地图尺寸无关（只取决于相机距离与 nearOffset，不该随地图变）', small.scene.fog.near === big.scene.fog.near);
-  T('far 随地图对角线变大而变远（大图完全雾化的位置更远）', big.scene.fog.far > small.scene.fog.far);
-  T('far-near 之差按半对角线线性变化（公式：halfDiag + farOffset - nearOffset）',
-    Math.abs((big.scene.fog.far - big.scene.fog.near) - (halfDiagBig + (F.farOffset ?? 7000) - (F.nearOffset ?? 800))) < 1
-    && Math.abs((small.scene.fog.far - small.scene.fog.near) - (halfDiagSmall + (F.farOffset ?? 7000) - (F.nearOffset ?? 800))) < 1);
+  const far = mkFake(4000);
+  autoFog.call(far);
+  T('机位越远，雾的起止距离越远（拉远看全图时地图本身不能被雾吃掉）',
+    far.scene.fog.near > near.scene.fog.near && far.scene.fog.far > near.scene.fog.far);
+  T('起止距离 = 机位距离 × nearK / farK（两个系数在 CONFIG.ui.mapFog）',
+    Math.abs(near.scene.fog.near - 1000 * F.nearK) < 1e-6 && Math.abs(near.scene.fog.far - 1000 * F.farK) < 1e-6);
+  T('雾从机位到注视点的距离之外才开始（注视点附近是清晰的）', F.nearK >= 1 && F.farK > F.nearK);
 
-  const noMap = mkFake(0, 0);
-  autoFog.call(noMap);
-  T('没有当前地图时不报错，用默认半对角线兜底', !!noMap.scene.fog);
+  const noDist = mkFake(undefined);
+  autoFog.call(noDist);
+  T('还没同步过机位时不报错，用默认距离兜底', !!noDist.scene.fog);
 
-  const colored = mkFake(2000, 2000);
-  colored.scene.background = new THREE.Color('#112233');
+  const colored = mkFake(1000, '#112233');
   autoFog.call(colored);
-  T('雾色取自当前 scene.background（昼夜/天气怎么染色，雾跟着染，不用另开一条通路）',
+  T('雾色取自 setLighting 传下来的地平线色（昼夜/天气怎么染色，雾跟着染）',
     colored.scene.fog.color.getHexString() === '112233');
 
   const orig = CONFIG.ui.mapFog.enabled;
   CONFIG.ui.mapFog.enabled = false;
-  const off = mkFake(2000, 2000);
+  const off = mkFake(1000);
   autoFog.call(off);
   T('mapFog.enabled=false 时不设雾', off.scene.fog === null);
   CONFIG.ui.mapFog.enabled = orig;

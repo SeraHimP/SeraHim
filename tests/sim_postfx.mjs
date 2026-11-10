@@ -22,49 +22,44 @@ const settings = srcOf('src/ui/SettingsDialog.js');
 // 2026-09-05：描边那个"画面 bug"已查实真根因并修复（雨/雪/尘/雾被法线深度预渲染
 // 当成不透明物体 → 满屏黑麻点，见 PostFX.js 里 FX_PARTICLE_LAYER 的头注），
 // 所以这条断言从"默认关"翻过来钉"默认开、且默认值走 CONFIG 软编码"。
-T('渲①-描边默认开启且默认值走 CONFIG.outline.enabled（bug 已修，不再硬编码 false）',
-  /this\.outlineOn\s*=\s*CONFIG\.outline\?\.enabled\s*!==\s*false/.test(renderer)
-  && !/this\.outlineOn\s*=\s*false/.test(renderer)
+// 2026-11 画面重构：轮廓描边随卡通风格一起删除（写实画面没有描边）。
+T('渲①-描边已删除：渲染器里没有 outlinePass / outlineOn，CONFIG 里没有 outline 块',
+  !/outlinePass/.test(renderer) && !/this\.outlineOn/.test(renderer) && CONFIG.outline === undefined
   && /this\.ssaoOn\s*=\s*true/.test(renderer));
-T('渲①b-描边的观感参数（颜色/强度/线宽/阈值）全部从 CONFIG.outline 取，不写死在着色器里',
+T('渲①b-SSAO 的观感参数（半径/容差/曲线/强度/半分辨率）全部从 CONFIG.postfx.ssao 取',
   (() => {
-    const c = CONFIG.outline || {};
-    const okCfg = c.enabled === true && typeof c.color === 'string'
-      && typeof c.strength === 'number' && typeof c.lineWidth === 'number';
-    return okCfg && /pass\.uniforms\.outlineColor\.value\.set\(c\.color\)/.test(postfx)
-      && /pass\.uniforms\.outlineStrength\.value = c\.strength/.test(postfx);
+    const c = CONFIG.postfx?.ssao || {};
+    return typeof c.radius === 'number' && typeof c.bias === 'number' && typeof c.strength === 'number'
+      && /const c = CONFIG\.postfx\?\.ssao \|\| \{\};/.test(postfx);
   })());
-T('渲②-setOutline(on) 方法存在且写回 outlinePass.enabled', /setOutline\(on\)\s*\{[^}]*outlinePass[^}]*enabled[^}]*\}/.test(renderer));
+T('渲②-setOutline 保留为空操作（旧存档调它不炸），不再写任何 pass', /setOutline\(\) \{ return false; \}/.test(renderer));
 T('渲③-setSSAO(on) 方法存在且写回 ssaoPass.enabled', /setSSAO\(on\)\s*\{[^}]*ssaoPass[^}]*enabled[^}]*\}/.test(renderer));
-T('渲④-_buildComposer 里描边/SSAO 的 enabled 初值来自 outlineOn/ssaoOn（不是永远开）',
-  /this\.ssaoPass\.enabled\s*=\s*this\.ssaoOn/.test(renderer) && /this\.outlinePass\.enabled\s*=\s*this\.outlineOn/.test(renderer));
+T('渲④-_buildComposer 里 SSAO 的 enabled 初值来自 ssaoOn（不是永远开）',
+  /this\.ssaoPass\.enabled\s*=\s*this\.ssaoOn/.test(renderer));
 T('渲⑤-法线+深度预渲染 Pass（NormalDepthPrepass）接进了 composer 的 pass 链',
   /this\.composer\.addPass\(this\.normalDepthPrepass\)/.test(renderer));
-T('渲⑥-每帧渲染前会同步 SSAO 的相机 uniform（正交相机缩放会改变有效视锥，不同步就会算错）',
+T('渲⑥-每帧渲染前会同步 SSAO 的相机 uniform（透视相机的投影矩阵随缩放变，不同步就会算错）',
   /this\.ssaoPass\?\.\_syncCamera\?\.\(\)/.test(renderer));
 
 // ==================== PostFX.js 导出面 ====================
-T('模①-PostFX.js 导出 NormalDepthPrepass / createSSAOPass / createOutlinePass 三个接口',
+T('模①-PostFX.js 导出 NormalDepthPrepass / createSSAOPass / createFogPass（描边接口已删）',
   /export\s*\{\s*NormalDepthPrepass[^}]*\}/.test(postfx)
   && /export function createSSAOPass/.test(postfx)
-  && /export function createOutlinePass/.test(postfx));
+  && /export function createFogPass/.test(postfx)
+  && !/createOutlinePass/.test(postfx));
 T('模②-NormalDepthPrepass 用 MeshNormalMaterial 编码视空间法线（SSAO/描边都要这个口径）',
   /new THREE\.MeshNormalMaterial\(\)/.test(postfx));
 T('模③-NormalDepthPrepass 是"只产出纹理、不参与主色彩链"的旁路（needsSwap=false）',
   /this\.needsSwap\s*=\s*false/.test(postfx));
-T('模④-正交相机的视空间坐标重建公式已经处理了 camera.zoom（不是直接拿 left/right/top/bottom）',
-  /effectiveOrthoBounds/.test(postfx) && /2 \* camera\.zoom/.test(postfx));
-T('模⑤-outline 的深度边缘阈值是"保守"档位（≥0.002），不是当初踩过坑的 0.0006（会把平地的深度量化噪声也测成一堆假边缘）',
-  (() => {
-    const m = postfx.match(/depthBias:\s*\{\s*value:\s*([\d.]+)\s*\}/);
-    return !!m && parseFloat(m[1]) >= 0.002;
-  })());
+T('模④-视空间坐标重建走投影逆矩阵（透视 / 正交通用），不再按正交视锥的 left/right 线性插值',
+  /projectionMatrixInverse \* clip/.test(postfx) && !/effectiveOrthoBounds/.test(postfx));
+T('模⑤-SSAO 半分辨率算遮蔽 + 深度感知模糊后再乘回画面（不是全分辨率裸采样）',
+  /class SSAOPass extends Pass/.test(postfx) && /abs\(d1 - d0\) < 0\.002/.test(postfx) && /aoStrength/.test(postfx));
 
 // ==================== SettingsDialog UI ====================
-T('设①-画质面板有轮廓描边/SSAO 两个按钮', /id="setOutlineBtn"/.test(settings) && /id="setSsaoBtn"/.test(settings));
-T('设②-两个按钮都接了 bindFx，读写的是 outlineOn/ssaoOn 和 setOutline/setSSAO（不是只有个摆设按钮）',
-  /bindFx\('setOutlineBtn',\s*r => r\.outlineOn !== false,\s*\(r, v\) => r\.setOutline\(v\)/.test(settings)
-  && /bindFx\('setSsaoBtn',\s*r => r\.ssaoOn !== false,\s*\(r, v\) => r\.setSSAO\(v\)/.test(settings));
+T('设①-画质面板有 SSAO 按钮、没有描边按钮', !/id="setOutlineBtn"/.test(settings) && /id="setSsaoBtn"/.test(settings));
+T('设②-SSAO 按钮接了 bindFx，读写的是 ssaoOn 和 setSSAO（不是只有个摆设按钮）',
+  /bindFx\('setSsaoBtn',\s*r => r\.ssaoOn !== false,\s*\(r, v\) => r\.setSSAO\(v\)/.test(settings));
 
 // ==================== Week3·Day13-14：移动端分辨率自适应 + 画质分档 ====================
 T('设③-画质面板按 low/medium/high/auto 四档渲染按钮（含每档的中文标签）',
@@ -143,12 +138,12 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
   const q = CONFIG.ui.qualityPresets;
   // v51.28 因为描边有 bug 把三档全关了；bug 已在 f83a3c1 修好（透明物体不进法线深度预渲染），
   // 这里把 medium/high 开回来。描边是"把 3D 单位和 2D 地面缝在一起"最强的一招。
-  T('缝①-中/高画质档的描边已开回来（低档仍关，那是性能档）',
-    q.medium.outline === true && q.high.outline === true && q.low.outline === false);
+  T('缝①-画质档位表里没有描边项（描边已删）、SSAO 只在高档开',
+    !('outline' in q.medium) && q.high.ssao === true && q.low.ssao === false);
 
   const L = CONFIG.ui.lighting;
-  T(`缝②-太阳仰角上限已压低到 ${L.maxSunElevDeg}°（影子要够长才能把物体钉在地上）`,
-    L.maxSunElevDeg <= 45);
+  T(`缝②-太阳仰角上限 ${L.maxSunElevDeg}° 不到正头顶（透视相机下影子仍要有长度才能把物体钉在地上）`,
+    L.maxSunElevDeg <= 70);
 
   const gcfg = CONFIG.ui.groundContact;
   T('缝③-接地暗斑已软编码且默认开启', gcfg && gcfg.enabled === true
@@ -193,12 +188,12 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
   T('渲⑧-setFog(on) 方法存在且写回 fogPass.enabled', /setFog\(on\)\s*\{[^}]*fogPass[^}]*enabled[^}]*\}/.test(renderer));
   T('渲⑨-_buildComposer 里雾的 enabled 初值来自 fogOn（不是永远开）',
     /this\.fogPass\.enabled\s*=\s*this\.fogOn/.test(renderer));
-  T('渲⑩-雾接进了 composer 的 pass 链，且在描边之后、Bloom 之前',
+  T('渲⑩-雾接进了 composer 的 pass 链，且在 SSAO 之后、Bloom 之前',
     (() => {
-      const iOutline = renderer.indexOf('this.composer.addPass(this.outlinePass)');
+      const iSsao = renderer.indexOf('this.composer.addPass(this.ssaoPass)');
       const iFog = renderer.indexOf('this.composer.addPass(this.fogPass)');
       const iBloom = renderer.indexOf('this.composer.addPass(this.bloomPass)');
-      return iOutline > 0 && iFog > iOutline && iBloom > iFog;
+      return iSsao > 0 && iFog > iSsao && iBloom > iFog;
     })());
   T('渲⑪-每帧雾强度读 ws.getCharge(\'fog\')（与风吹植被 windCharge 同一口径：强度取充能不取占比；v54 沙暴 Signature 借用同一通道时取两者较大值驱动）',
     /const fogCharge = ws\?\.getCharge \? \(ws\.getCharge\('fog'\) \|\| 0\) : 0;/.test(renderer)

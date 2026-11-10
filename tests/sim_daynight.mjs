@@ -16,7 +16,7 @@ const { T, done } = scoreboard('DayNight（太阳方位角 + 天气压光）');
 // ==================== 源码形态：azim 列确实存在，main.js 确实接了 ====================
 {
   const src = srcOf('src/presentation/DayNight.js');
-  T('KEYS 表新增 azim 列', /azim:\s*105/.test(src) && /azim:\s*135/.test(src) && /azim:\s*165/.test(src));
+  T('KEYS 表有 azim 列（黎明偏东 < 正午 < 黄昏偏西）', /azim:\s*100/.test(src) && /azim:\s*135/.test(src) && /azim:\s*168/.test(src));
   T('dayNightAt 返回值带 sunAzimuth', /sunAzimuth:\s*a\.azim/.test(src));
   T('weatherOvercastFactor 已导出', /export function weatherOvercastFactor/.test(src));
   T('applyWeatherOvercast 已导出', /export function applyWeatherOvercast/.test(src));
@@ -48,10 +48,10 @@ const { T, done } = scoreboard('DayNight（太阳方位角 + 天气压光）');
   T('正午 sunAzimuth = 135°（与改动前固定值一致）', Math.abs(noon.sunAzimuth - 135) < 0.01);
 
   const dawn = dayNightAt(0, 480);
-  T('黎明 sunAzimuth = 105°', Math.abs(dawn.sunAzimuth - 105) < 0.01);
+  T('黎明 sunAzimuth = 100°（偏东）', Math.abs(dawn.sunAzimuth - 100) < 0.01);
 
   const dusk = dayNightAt(240, 480); // p=0.50 → 黄昏关键帧
-  T('黄昏 sunAzimuth = 165°', Math.abs(dusk.sunAzimuth - 165) < 0.01);
+  T('黄昏 sunAzimuth = 168°（偏西）', Math.abs(dusk.sunAzimuth - 168) < 0.01);
 
   const mid1 = dayNightAt(60, 480);  // p=0.125，介于黎明(105)与正午(135)之间
   T('黎明→正午之间的方位角单调过渡', mid1.sunAzimuth > 105 && mid1.sunAzimuth < 135);
@@ -136,7 +136,7 @@ const { T, done } = scoreboard('DayNight（太阳方位角 + 天气压光）');
   // 上限拉满 = 不夹。这条守的是"默认不改变行为"——参数化那一步必须是视觉空操作。
   L.maxSunElevDeg = 90;
   const noonFree = dayNightAt(120, 480).sunElevation;
-  T(`光③-上限 90 时不夹取（正午仍是关键帧原值 ${noonFree.toFixed(1)}°）`, noonFree > 80);
+  T(`光③-上限 90 时不夹取（正午仍是关键帧原值 ${noonFree.toFixed(1)}°）`, Math.abs(noonFree - 62) < 1e-6);
   L.maxSunElevDeg = sav;
 }
 

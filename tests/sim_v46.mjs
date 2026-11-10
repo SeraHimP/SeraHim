@@ -260,10 +260,10 @@ const mkE = (ents, type, x, y, extra = {}) => {
     // v51.26 新增了 azim（太阳方位角）列，插在 elev 和 exp 之间——
     // 这里放宽成 elev 和 exp 之间允许任意非 } 字符，不再要求两者字面相邻。
     const dn = srcRaw('src/presentation/DayNight.js');
-    const mid = /p: 0\.25[^}]*elev: 82,[^}]*exp: 1\.00, amb: 0\.30/.test(dn);
-    const dawn = /p: 0\.00[^}]*elev: 16,[^}]*exp: 0\.86, amb: 0\.52/.test(dn);
-    const night = /p: 0\.75[^}]*elev: 14,[^}]*exp: 0\.66, amb: 0\.68/.test(dn);
-    return mid && dawn && night;
+    // 2026-11 画面重构：昼夜表重标（白天 1.05 ↔ 午夜 0.42 拉开对比，夜里是冷蓝月光），
+    // 这条改钉"方向"：正午最亮、午夜最暗、黎明/黄昏在两者之间，且午夜仍 ≥ 0.4（不是纯黑）。
+    const exp = (p) => { const m = dn.match(new RegExp('p: ' + p + '[^}]*exp: ([\\d.]+)')); return m ? +m[1] : NaN; };
+    return exp('0\\.25') > exp('0\\.00') && exp('0\\.00') > exp('0\\.75') && exp('0\\.50') > exp('0\\.75') && exp('0\\.75') >= 0.4;
   })());
 }
 

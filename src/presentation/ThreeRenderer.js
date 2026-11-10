@@ -77,17 +77,21 @@ import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 import { FXAAShader } from '../../vendor/shaders/FXAAShader.js';
 import { setUnitTint } from './UnitMeshFactory.js';
 // 渲染重构 Week2·Day8-10：轮廓描边 + SSAO，见 PostFX.js 头注。
-import { NormalDepthPrepass, createSSAOPass, createOutlinePass, createFogPass, HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
+import { NormalDepthPrepass, createSSAOPass, createFogPass, HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
+import { SkyLight } from './skyLight.js';
 
 // 默认仰角。取值理由：45° 是本次交付的起点值，压缩系数 0.71；
 // LOL 实际约 56°（压缩 0.83）。取定手感后把最终值写死在这里，并在本行记录理由。
-export const CAM_ELEVATION_DEG = 45;
+// 透视相机的默认俯仰角。LoL / Dota2 都是 55–60° 的俯视透视：近处单位有透视缩放、远处略小，
+// 这一项就去掉了正交相机那种"摆在桌上的模型"的观感（docs/VISUAL-REWORK-REPORT.md §2）。
+export const CAM_ELEVATION_DEG = CONFIG.ui?.camera?.elevationDeg ?? 57;
+const CAM_FOV_OF = () => CONFIG.ui?.camera?.fovDeg ?? 45;
 
 const DEG = Math.PI / 180;
 
-// 正交摄像机下"摄像机离目标多远"不影响成像大小，只影响深度范围。
-// 取一个远大于世界尺寸（3552）的值，保证任何仰角下地面都落在 near/far 之间。
-const CAM_DIST = 20000;
+// 缩放语义不变：controller.zoom 仍是"目标点处每世界单位占多少 CSS 像素"。
+// 透视相机下机位距离由它反推：D = (H/2) / (zoom · tan(fov/2))。
+const camDistOf = (zoom, H) => (H / 2) / (Math.max(0.01, zoom) * Math.tan(CAM_FOV_OF() * DEG / 2));
 
 
 /**
@@ -148,17 +152,12 @@ export class ThreeRenderer {
     this.gl.toneMapping = toneMappingModeOf(CONFIG.toneMapping?.mode);
     this.gl.toneMappingExposure = CONFIG.toneMapping?.exposure ?? 1.0;
     this.composer = null; this.bloomPass = null; this.fxaaPass = null;
-    this.normalDepthPrepass = null; this.ssaoPass = null; this.outlinePass = null;
+    this.normalDepthPrepass = null; this.ssaoPass = null;
     this.fogPass = null;     // 任务 #178：伪体积雾
     this.postFX = true;      // 后处理总开关（关则直渲，Bloom/FXAA/描边/SSAO/雾 一并失效）
     this.bloomOn = true;     // 辉光
     this.fxaaOn = true;      // 抗锯齿
     this.toneMapOn = true;   // 色调映射（曲线见 CONFIG.toneMapping.mode）
-    // v51.28 因为一个画面 bug 把描边默认关掉，挂了很久。2026-09-05 查实真根因并修复
-    // （雨/雪/尘/雾被法线深度预渲染当成不透明物体 → 满屏黑麻点，见 PostFX.js 里
-    // FX_PARTICLE_LAYER 的头注，那里记了完整的证据链），因此重新默认开启。
-    // 默认值走 CONFIG.outline.enabled，跟其它观感参数一起软编码。
-    this.outlineOn = CONFIG.outline?.enabled !== false;
     this.ssaoOn = true;      // Week2·Day9-10：SSAO，默认开
     // 任务 #178：伪体积雾，默认值走 CONFIG.volumetricFog.enabled（第 2 条铁律，与 CONFIG.outline 同级）。
     this.fogOn = CONFIG.volumetricFog?.enabled !== false;
@@ -167,7 +166,8 @@ export class ThreeRenderer {
     // 与 2D 画布 CSS 背景 #0a0d12 一致，切换时不闪底色
     this.scene.background = new THREE.Color(0x0a0d12);
 
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, CAM_DIST * 3);
+    // 透视相机（2026-11 画面重构）。near/far 每帧按机位距离给，见 syncCameraFrom。
+    this.camera = new THREE.PerspectiveCamera(CAM_FOV_OF(), 1, 10, 20000);
     // 主相机（beauty pass）要能看见血条/护盾图标这类 HUD 精灵——只有法线/深度预渲染
     // 那个专用相机会在渲染时临时关掉这个 layer（PostFX.js 头注），不影响这里。
     this.camera.layers.enable(HUD_SPRITE_LAYER);
@@ -179,6 +179,10 @@ export class ThreeRenderer {
     this.lookHeightOffset = 0;   // 视角高度：机位+目标点同步沿世界 Y 轴平移的偏移量，见 setLookHeight 头注。
 
     this._buildLights();
+    // 天空 IBL：所有 PBR 材质的环境光来源，随昼夜重算（skyLight.js）
+    this.sky = new SkyLight(this.gl, this.scene);
+    this._skyParams = { sunDir: this._sunDir.clone(), skyZenith: '#5f8fd0', skyHorizon: '#c7d3de', ground: '#4a4a44', sunColor: '#fff2dc', gain: 1, intensity: 1 };
+    this.sky.update(this._skyParams);
     this.walls = new WallLayer(this.scene);
     this.veg = new VegetationLayer(this.scene);   // P1：野区植被（散布树/岩/灌木）
     this.vegOn = true;
@@ -337,7 +341,20 @@ export class ThreeRenderer {
       // 见 GroundTraceLayer.setTint 头注。
       if (this.groundTrace?.setTint) this.groundTrace.setTint(unitTint);
     }
-    if (background !== undefined && this.scene.background) this.scene.background.set(background); // C 组·天空：昼夜给天穹/边界底色染色
+    // 天空 IBL 跟着光照走：天顶 / 地平线取昼夜给的天空色与底色，太阳色与方向同步；
+    // 环境光占比映射成 environmentIntensity（半球光只保留很小一份，立面冷暖过渡仍在）
+    if (this.sky) {
+      const P = this._skyParams;
+      if (ambientSky !== undefined) P.skyZenith = ambientSky;
+      if (background !== undefined) P.skyHorizon = background;
+      if (ambientGround !== undefined) P.ground = ambientGround;
+      if (sunColor !== undefined) P.sunColor = sunColor;
+      if (opt.skyZenith) P.skyZenith = opt.skyZenith;
+      if (opt.skyHorizon) P.skyHorizon = opt.skyHorizon;
+      P.gain = opt.skyGain ?? P.gain;
+      const share = ambientShare ?? (this.hemi.intensity / IRRADIANCE_TARGET);
+      P.intensity = (CONFIG.ui?.sky?.intensity ?? 1) * (exposure ?? 1) * Math.max(0.2, share * 2.2);
+    }
     if (sunColor !== undefined) this.sun.color.set(sunColor);
     if (ambientSky !== undefined) this.hemi.color.set(ambientSky);
     if (ambientGround !== undefined) this.hemi.groundColor.set(ambientGround);
@@ -349,14 +366,18 @@ export class ThreeRenderer {
       const az = (sunAzimuth ?? SUN_AZIM_OF()) * DEG;
       this._sunDir.set(Math.cos(az) * Math.cos(e), Math.sin(e), Math.sin(az) * Math.cos(e)).normalize();
     }
+    if (this.sky) { this._skyParams.sunDir.copy(this._sunDir); this.sky.update(this._skyParams); }
     if (normalize) {
-      const share = ambientShare ?? (this.hemi.intensity / IRRADIANCE_TARGET);
+      const share = ambientShare ?? (this._ambientShare ?? AMBIENT_SHARE_OF());
+      this._ambientShare = share;
       const total = IRRADIANCE_TARGET * (exposure ?? 1);
-      this.hemi.intensity = total * share;
-      this.sun.intensity = total * (1 - share) / Math.max(0.05, this._sunDir.y);
+      // 环境光主要由天空 IBL 提供（见上），半球光只留 hemiShare 这一小份做立面冷暖
+      this.hemi.intensity = total * share * (CONFIG.ui?.sky?.hemiShare ?? 0.25);
+      this.sun.intensity = total * (1 - share) * (CONFIG.ui?.lighting?.sunGain ?? 1.6) / Math.max(0.25, this._sunDir.y);
     }
+    if (background !== undefined) this._fogColor = background;   // 大气透视的颜色 = 地平线天色
     if (fog !== undefined) {
-      this.scene.fog = fog ? new THREE.Fog(this.scene.background, fog.near ?? 500, fog.far ?? 4000) : null;
+      this.scene.fog = fog ? new THREE.Fog(new THREE.Color(this._fogColor || '#bcd4ec'), fog.near ?? 500, fog.far ?? 4000) : null;
     } else {
       // v51.27：调用方（main.js）不知道相机离场景多远，这条自动雾效自己算——见 _autoFog 头注。
       this._autoFog();
@@ -381,11 +402,13 @@ export class ThreeRenderer {
   _autoFog() {
     const F = (CONFIG.ui && CONFIG.ui.mapFog) || {};
     if (F.enabled === false) { this.scene.fog = null; return; }
-    const map = this.mapSystem?.currentMap;
-    const halfDiag = map?.world ? Math.hypot(map.world.w, map.world.h) / 2 : 2500;
-    const near = CAM_DIST + (F.nearOffset ?? 800);
-    const far = CAM_DIST + halfDiag + (F.farOffset ?? 7000);
-    this.scene.fog = new THREE.Fog(this.scene.background, near, far);
+    // 透视相机：大气透视按机位距离给——近处清晰，远处（延伸世界、地图远角）逐渐融进天光。
+    // 机位距离随缩放变，所以 render() 每帧同步一次 near/far（只是两个数，没有重建开销）。
+    const D = this._camDist || 1000;
+    const near = D * (F.nearK ?? 1.1), far = D * (F.farK ?? 4.5);
+    if (!this.scene.fog || !this.scene.fog.isFog) this.scene.fog = new THREE.Fog(new THREE.Color(this._fogColor || '#bcd4ec'), near, far);
+    else { this.scene.fog.near = near; this.scene.fog.far = far; }
+    if (this._fogColor !== undefined) this.scene.fog.color.set(this._fogColor);
   }
 
   /** 排查用：关/开材质贴图后重建地形。用于二分"画面问题出在贴图还是别处"。 */
@@ -496,19 +519,16 @@ export class ThreeRenderer {
    */
   _fitShadowToView(controller) {
     if (!this.sun.castShadow) return;
-    const zoom = controller?.zoom || 1;
-    const sinP = Math.sin(this.elevationDeg * DEG) || 1;
-    const halfW = (this.width / 2) / zoom;
-    const halfD = (this.height / 2) / zoom / sinP;   // 纵向被 sin(仰角) 压缩，反除回去
-    const r = Math.hypot(halfW, halfD) * 1.1;        // 10% 余量，防边缘物体投影被裁掉
-
+    // 透视相机：阴影视锥罩住"相机视锥与地面相交的区域"（看不到地面的方向按一段距离截断）
+    const D = this._camDist || 1000;
+    const corners = this._groundCorners(D * (CONFIG.ui?.lighting?.shadowFarK ?? 2.2));
     const t = this._target;
+    let r = 0;
+    for (const c of corners) r = Math.max(r, Math.hypot(c.x - t.x, c.z - t.z));
+    r = Math.min(r * 1.08, CONFIG.ui?.lighting?.shadowMaxRadius ?? 2600);
     this.sun.target.position.copy(t);
-    this.sun.position.set(t.x + this._sunDir.x * SUN_DIST,
-                          this._sunDir.y * SUN_DIST,
-                          t.z + this._sunDir.z * SUN_DIST);
-    // normalBias 必须随阴影贴图的【世界像素尺寸】走：视锥越大每贴图像素覆盖越多世界单位，
-    // 固定 bias 在全图视角下压不住大平面（高地顶面）的自阴影，整片会发黑。
+    this.sun.position.set(t.x + this._sunDir.x * SUN_DIST, this._sunDir.y * SUN_DIST, t.z + this._sunDir.z * SUN_DIST);
+    // normalBias 随阴影贴图的世界像素尺寸走（视锥越大每像素覆盖越多世界单位）
     this.sun.shadow.normalBias = (2 * r / SHADOW_MAP_OF()) * 2.2;
     const c = this.sun.shadow.camera;
     c.left = -r; c.right = r; c.top = r; c.bottom = -r;
@@ -545,13 +565,7 @@ export class ThreeRenderer {
     this.ssaoPass.enabled = this.ssaoOn;
     this.composer.addPass(this.ssaoPass);
 
-    this.outlinePass = createOutlinePass(this.normalDepthPrepass, w, h);
-    this.outlinePass.enabled = this.outlineOn;
-    this.composer.addPass(this.outlinePass);
-
-    // 任务 #178：伪体积雾，接在描边之后——雾是叠在"已经描完边的画面"上的大气层，
-    // 远处物体的轮廓线也该被雾糊淡，这跟真实雾的观感一致；放在 Bloom 之前则让
-    // Bloom 仍能抓到透雾发光的水晶/塔灯（雾后面的光源微微透出来才对）。
+    // 伪体积雾接在 SSAO 之后、Bloom 之前：Bloom 仍能抓到透雾发光的水晶（雾后面的光源微微透出来才对）。
     this.fogPass = createFogPass(this.normalDepthPrepass, this.camera, w, h);
     this.fogPass.enabled = this.fogOn;
     this.composer.addPass(this.fogPass);
@@ -559,8 +573,9 @@ export class ThreeRenderer {
     // 阈值软编码：原来写死 0.82，会把所有偏亮的颜色都糊开（画面偏"脏"）。
     // 提到 1.0 之后只抓【真正过曝】的东西 —— 前提是场景里真的有超过 1.0 的东西，
     // 这正是 towerLight.emissiveNight 要把自发光推到 1.8 的原因。
-    const bt = CONFIG.ui?.hdr?.bloomThreshold ?? 0.82;
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.4, bt); // strength/radius/threshold
+    const bt = CONFIG.ui?.hdr?.bloomThreshold ?? 1.0;
+    const B = CONFIG.postfx?.bloom || {};
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), B.strength ?? 0.35, B.radius ?? 0.5, bt); // strength/radius/threshold
     this.bloomPass.enabled = this.bloomOn;
     this.composer.addPass(this.bloomPass);
     this.fxaaPass = new ShaderPass(FXAAShader);
@@ -576,6 +591,7 @@ export class ThreeRenderer {
     const pr = this.gl.getPixelRatio();
     this.composer.setSize(w, h);
     this.bloomPass.setSize(w, h);
+    this.ssaoPass?.setSize?.(w * pr, h * pr);
     this.fxaaPass.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
   }
 
@@ -745,11 +761,8 @@ export class ThreeRenderer {
   setPostFX(on) { this.postFX = !!on; return this.postFX; }
   setBloom(on) { this.bloomOn = !!on; if (this.bloomPass) this.bloomPass.enabled = this.bloomOn; return this.bloomOn; }
   setFXAA(on) { this.fxaaOn = !!on; if (this.fxaaPass) this.fxaaPass.enabled = this.fxaaOn; return this.fxaaOn; }
-  // Week2·Day8-10：轮廓描边 / SSAO 独立开关（同一批"每项可独立开关"的先例）。
-  // 两者关闭时对应的 ShaderPass 被跳过，但共用的 normalDepthPrepass 仍会渲染——
-  // 只要两个开关有一个开着就需要它，省一次判断"谁还需要这份数据"的复杂度，
-  // 换来的多余开销只是一次法线材质的场景渲染，同屏单位规模下可以接受。
-  setOutline(on) { this.outlineOn = !!on; if (this.outlinePass) this.outlinePass.enabled = this.outlineOn; return this.outlineOn; }
+  // 轮廓描边已随画面重构删除（写实画面没有描边）；setOutline 保留为空操作，旧的设置存档调它不炸。
+  setOutline() { return false; }
   setSSAO(on) { this.ssaoOn = !!on; if (this.ssaoPass) this.ssaoPass.enabled = this.ssaoOn; return this.ssaoOn; }
   // 任务 #178：伪体积雾独立开关，同一批"每项可独立开关"的先例。
   setFog(on) { this.fogOn = !!on; if (this.fogPass) this.fogPass.enabled = this.fogOn; return this.fogOn; }
@@ -824,7 +837,6 @@ export class ThreeRenderer {
     this.qualityPreset = this.qualityAuto ? 'auto' : preset;
     this.setShadowLevel(p.shadow);
     this.setBloom(p.bloom);
-    this.setOutline(p.outline);
     this.setSSAO(p.ssao);
     this.setFog(p.fog);
     this.setResolutionScale(p.resolutionScale);
@@ -979,23 +991,37 @@ export class ThreeRenderer {
 
     const tx = (W / 2 - controller.offsetX) / zoom;
     const tz = (H / 2 - controller.offsetY) / zoom;
-    // 视角高度：机位与目标点一起沿世界 Y 轴平移 lookHeightOffset——两者同步移动，
-    // 相对几何（夹角、距离）不变，纯粹是把整套机位挪到另一个高度去看
-    // （见 setLookHeight 头注）。默认 0 时这一项不引入任何变化，与改动前完全一致。
     const ly = this.lookHeightOffset || 0;
     this._target.set(tx, ly, tz);
 
     const cam = this.camera;
-    cam.left = -W / 2; cam.right = W / 2;
-    cam.top = H / 2; cam.bottom = -H / 2;
-    cam.zoom = zoom;
-    cam.near = 1; cam.far = CAM_DIST * 3;
+    const D = camDistOf(zoom, H);
+    this._camDist = D;
+    cam.fov = CAM_FOV_OF(); cam.aspect = W / H;
+    // near/far 跟着机位距离走：near 太小浪费深度精度（SSAO / 雾都靠深度重建），far 要装下延伸世界
+    cam.near = Math.max(2, D * (CONFIG.ui?.camera?.nearK ?? 0.04));
+    cam.far = D * (CONFIG.ui?.camera?.farK ?? 8) + 3000;
     // 摄像机站在目标的 +Z 一侧向目标看；方位角把这一"站位"绕目标（绕 Y）转过 az。
-    cam.position.set(tx + CAM_DIST * cosP * sa, CAM_DIST * sinP + ly, tz + CAM_DIST * cosP * ca);
-    // up 显式给出（同样绕 az 旋转），避免仰角 90° 时与视线共线导致 lookAt 退化
+    cam.position.set(tx + D * cosP * sa, D * sinP + ly, tz + D * cosP * ca);
     cam.up.set(-sinP * sa, cosP, -sinP * ca);
     cam.lookAt(this._target);
     cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+  }
+
+  /** 相机视锥与地面（y=0）相交的四个角，看不到地面（视线过地平线）的角按 maxDist 截断 */
+  _groundCorners(maxDist) {
+    const cam = this.camera, out = [];
+    const ray = new THREE.Ray(), dir = new THREE.Vector3(), ndc = new THREE.Vector3();
+    for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      ndc.set(x, y, 0.5).unproject(cam);
+      dir.copy(ndc).sub(cam.position).normalize();
+      ray.set(cam.position, dir);
+      const t = dir.y < -1e-4 ? -cam.position.y / dir.y : Infinity;
+      const d = Math.min(t, maxDist);
+      out.push(new THREE.Vector3().copy(cam.position).addScaledVector(dir, d));
+    }
+    return out;
   }
 
   // ==================== 地面 ====================
@@ -1303,6 +1329,7 @@ export class ThreeRenderer {
     if (this._terrainDirty) this._rebuildTerrain();
     if (controller) this.syncCameraFrom(controller);
     this._fitShadowToView(controller);
+    this._autoFog();   // 大气透视的远近跟着机位距离走
     if (this.deps) {
       const rel = controller ? (controller.zoom / (controller._fitZoom || 1)) : 1;
       // 正交相机：可见世界高度 = (top−bottom)/zoom = H/zoom → 像素/世界单位 = zoom×DPR。

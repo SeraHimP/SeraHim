@@ -18,7 +18,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { fogNoiseTexture } from './fogNoise.js';
 import { CONFIG } from '../data/Config.js';
-import { Pass } from '../../vendor/postprocessing/Pass.js';
+import { Pass, FullScreenQuad } from '../../vendor/postprocessing/Pass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 
 /**
@@ -197,57 +197,33 @@ class NormalDepthPrepass extends Pass {
 // camera.zoom 随缩放实时变化）AO 半径和描边就会跟着算错——直接拿 camera.left 这些
 // 原始字段会在 zoom≠1 时悄悄错开，缩放到某个比例才会看出来，排查会很麻烦，这里先
 // 把陷阱写死在注释里。
-function effectiveOrthoBounds(camera) {
-  const cx = (camera.right + camera.left) / 2, cy = (camera.top + camera.bottom) / 2;
-  const dx = (camera.right - camera.left) / (2 * camera.zoom);
-  const dy = (camera.top - camera.bottom) / (2 * camera.zoom);
-  return { left: cx - dx, right: cx + dx, top: cy + dy, bottom: cy - dy };
-}
 function cameraUniforms(camera) {
-  const b = effectiveOrthoBounds(camera);
   return {
-    cameraNear: { value: camera.near },
-    cameraFar: { value: camera.far },
-    orthoLeft: { value: b.left },
-    orthoRight: { value: b.right },
-    orthoTop: { value: b.top },
-    orthoBottom: { value: b.bottom },
+    projectionMatrix: { value: camera.projectionMatrix.clone() },
+    projectionMatrixInverse: { value: camera.projectionMatrixInverse.clone() },
   };
 }
 function syncCameraUniforms(uniforms, camera) {
-  const b = effectiveOrthoBounds(camera);
-  uniforms.cameraNear.value = camera.near;
-  uniforms.cameraFar.value = camera.far;
-  uniforms.orthoLeft.value = b.left;
-  uniforms.orthoRight.value = b.right;
-  uniforms.orthoTop.value = b.top;
-  uniforms.orthoBottom.value = b.bottom;
+  uniforms.projectionMatrix.value.copy(camera.projectionMatrix);
+  uniforms.projectionMatrixInverse.value.copy(camera.projectionMatrixInverse);
 }
 
-// 正交相机深度/位置重建——两个 shader 都要用，写成 GLSL 片段字符串直接拼进各自的
-// fragmentShader 里（GLSL 没有跨文件 import，这是本仓库其它 vendor shader 一贯的
-// 做法：需要复用的函数体作为字符串拼接）。
-const ORTHO_RECONSTRUCT_GLSL = `
+// 深度 → 视空间位置重建。透视相机（现在的主相机）与正交相机通用：直接用投影逆矩阵，
+// 不再按正交视锥的 left/right/top/bottom 线性插值（那套只对正交成立，透视相机下 1/z 的双曲
+// 关系必须经过透视除法）。
+const RECONSTRUCT_GLSL = `
   uniform sampler2D tDepth;
-  uniform float cameraNear;
-  uniform float cameraFar;
-  uniform float orthoLeft;
-  uniform float orthoRight;
-  uniform float orthoTop;
-  uniform float orthoBottom;
+  uniform mat4 projectionMatrix;
+  uniform mat4 projectionMatrixInverse;
 
-  // 正交投影下深度是线性的：depth=0 是近裁面，depth=1 是远裁面，直接线性插值，
-  // 不像透视相机那样需要处理 1/z 的双曲线关系。
-  float viewZFromDepth(float depth) {
-    return -(cameraNear + depth * (cameraFar - cameraNear));
-  }
-
-  // 正交投影下同一像素的视空间 X/Y 与深度无关（所有光线互相平行），
-  // 直接由 UV 在视锥宽高上线性插值即可，不需要透视除法。
   vec3 reconstructViewPos(vec2 uv, float depth) {
-    float x = mix(orthoLeft, orthoRight, uv.x);
-    float y = mix(orthoBottom, orthoTop, uv.y);
-    return vec3(x, y, viewZFromDepth(depth));
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 v = projectionMatrixInverse * clip;
+    return v.xyz / v.w;
+  }
+  vec2 projectToUv(vec3 viewPos) {
+    vec4 c = projectionMatrix * vec4(viewPos, 1.0);
+    return c.xy / c.w * 0.5 + 0.5;
   }
 `;
 
@@ -290,174 +266,107 @@ function buildNoiseTexture() {
   return tex;
 }
 
-// 只保存 shader 源码，uniforms 的默认值由 createSSAOPass() 按传入的相机/尺寸现建
-// （半径/容差/强度这几个默认值写在那边，跟这里不重复维护一份）。
-const SSAOShader = {
-  vertexShader: `
+const SSAO_AO_FRAG = `
     varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = vec4(position.xy, 0.0, 1.0);
-    }
-  `,
-  fragmentShader: `
-    varying vec2 vUv;
-    uniform sampler2D tDiffuse;
     uniform sampler2D tNormal;
     uniform sampler2D tNoise;
     uniform vec3 kernel[${SSAO_KERNEL_SIZE}];
     uniform vec2 noiseScale;
     uniform float radius;
     uniform float bias;
-    uniform float aoStrength;
-    ${ORTHO_RECONSTRUCT_GLSL}
-
+    uniform float power;
+    ${RECONSTRUCT_GLSL}
     void main() {
-      vec4 base = texture2D(tDiffuse, vUv);
       float depth = texture2D(tDepth, vUv).x;
-      if (depth >= 1.0) { gl_FragColor = base; return; } // 天空/背景不参与
-
+      if (depth >= 1.0) { gl_FragColor = vec4(1.0); return; }
       vec3 viewPos = reconstructViewPos(vUv, depth);
       vec3 normal = normalize(texture2D(tNormal, vUv).xyz * 2.0 - 1.0);
       vec3 randomVec = normalize(vec3(texture2D(tNoise, vUv * noiseScale).xy, 0.0));
-
       vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
       vec3 bitangent = cross(normal, tangent);
       mat3 TBN = mat3(tangent, bitangent, normal);
-
       float occlusion = 0.0;
       for (int i = 0; i < ${SSAO_KERNEL_SIZE}; i++) {
         vec3 samplePos = viewPos + (TBN * kernel[i]) * radius;
-        // 正交投影：视空间点 → UV 是纯线性映射，不需要透视除法。
-        vec2 sampleUv = vec2(
-          (samplePos.x - orthoLeft) / (orthoRight - orthoLeft),
-          (samplePos.y - orthoBottom) / (orthoTop - orthoBottom)
-        );
+        vec2 sampleUv = projectToUv(samplePos);
         if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) continue;
-        float sampleDepth = texture2D(tDepth, sampleUv).x;
-        float sceneViewZ = viewZFromDepth(sampleDepth);
-        // sceneViewZ 更靠近 0（更靠近摄像机）说明那个屏幕位置真正渲染出来的东西
-        // 比采样点更近——采样点被挡住了。rangeCheck 避免"远处不相关的物体"误判。
+        float sceneViewZ = reconstructViewPos(sampleUv, texture2D(tDepth, sampleUv).x).z;
         float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(viewPos.z - sceneViewZ), 0.0001));
         occlusion += (sceneViewZ >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
       }
-      occlusion = 1.0 - (occlusion / float(${SSAO_KERNEL_SIZE}));
-      occlusion = mix(1.0, occlusion, aoStrength);
-      gl_FragColor = vec4(base.rgb * occlusion, base.a);
+      float ao = 1.0 - occlusion / float(${SSAO_KERNEL_SIZE});
+      gl_FragColor = vec4(vec3(pow(ao, power)), 1.0);
     }
-  `,
-};
+`;
+const SSAO_BLUR_FRAG = `
+    varying vec2 vUv; uniform sampler2D tAO; uniform sampler2D tDepth; uniform vec2 dir;
+    void main() {
+      float w[5]; w[0]=0.227; w[1]=0.195; w[2]=0.122; w[3]=0.054; w[4]=0.016;
+      float d0 = texture2D(tDepth, vUv).x;
+      float s = texture2D(tAO, vUv).r * w[0], n = w[0];
+      for (int i = 1; i < 5; i++) {
+        vec2 o = dir * float(i);
+        // 深度差太大的邻居不参与（不把前景的遮蔽糊到背景上）
+        float d1 = texture2D(tDepth, vUv + o).x, d2 = texture2D(tDepth, vUv - o).x;
+        float k1 = abs(d1 - d0) < 0.002 ? w[i] : 0.0, k2 = abs(d2 - d0) < 0.002 ? w[i] : 0.0;
+        s += texture2D(tAO, vUv + o).r * k1 + texture2D(tAO, vUv - o).r * k2; n += k1 + k2;
+      }
+      gl_FragColor = vec4(vec3(s / n), 1.0);
+    }
+`;
+const SSAO_COMP_FRAG = `
+    varying vec2 vUv; uniform sampler2D tDiffuse; uniform sampler2D tAO; uniform float aoStrength;
+    void main() { vec4 c = texture2D(tDiffuse, vUv); float ao = mix(1.0, texture2D(tAO, vUv).r, aoStrength); gl_FragColor = vec4(c.rgb * ao, c.a); }
+`;
+const FSQ_VERT = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 
-export function createSSAOPass(prepass, camera, width, height) {
-  // ShaderPass 构造时会自己 UniformsUtils.clone 一遍这份 uniforms（含 kernel 这个
-  // Vector3 数组——clone 对有 .clone() 方法的元素会逐个深拷贝），这里不用重复克隆。
-  const shader = {
-    uniforms: {
-      tDiffuse: { value: null },
-      tNormal: { value: null },
-      tDepth: { value: null },
-      tNoise: { value: null },
-      kernel: { value: buildSSAOKernel() },
-      noiseScale: { value: new THREE.Vector2(width / 4, height / 4) },
-      radius: { value: 60 },
-      bias: { value: 2 },
-      aoStrength: { value: 0.65 },
+/**
+ * SSAO：半分辨率算遮蔽 → 深度感知的两向模糊 → 乘回主画面。
+ * 原来是全分辨率、无模糊、正交相机专用；透视相机下半径按世界单位给（CONFIG.postfx.ssao）。
+ */
+class SSAOPass extends Pass {
+  constructor(prepass, camera, width, height) {
+    super();
+    this.camera = camera;
+    const c = CONFIG.postfx?.ssao || {};
+    this.scaleDiv = c.halfRes === false ? 1 : 2;
+    const hw = Math.max(1, Math.floor(width / this.scaleDiv)), hh = Math.max(1, Math.floor(height / this.scaleDiv));
+    const rtOpt = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+    this.aoRT = new THREE.WebGLRenderTarget(hw, hh, rtOpt);
+    this.blurRT = new THREE.WebGLRenderTarget(hw, hh, rtOpt);
+    this.aoMat = new THREE.ShaderMaterial({ uniforms: {
+      tNormal: { value: prepass.renderTarget.texture }, tDepth: { value: prepass.renderTarget.depthTexture },
+      tNoise: { value: buildNoiseTexture() }, kernel: { value: buildSSAOKernel() },
+      noiseScale: { value: new THREE.Vector2(hw / 4, hh / 4) },
+      radius: { value: c.radius ?? 16 }, bias: { value: c.bias ?? 0.5 }, power: { value: c.power ?? 1.5 },
       ...cameraUniforms(camera),
-    },
-    vertexShader: SSAOShader.vertexShader,
-    fragmentShader: SSAOShader.fragmentShader,
-  };
-  const pass = new ShaderPass(shader);
-  pass.uniforms.tNormal.value = prepass.renderTarget.texture;
-  pass.uniforms.tDepth.value = prepass.renderTarget.depthTexture;
-  pass.uniforms.tNoise.value = buildNoiseTexture();
-  pass.uniforms.noiseScale.value.set(width / 4, height / 4);
-  pass._syncCamera = () => syncCameraUniforms(pass.uniforms, camera);
-  pass.setSize = (w, h) => { pass.uniforms.noiseScale.value.set(w / 4, h / 4); };
-  return pass;
+    }, vertexShader: FSQ_VERT, fragmentShader: SSAO_AO_FRAG });
+    this.blurMat = new THREE.ShaderMaterial({ uniforms: { tAO: { value: null }, tDepth: { value: prepass.renderTarget.depthTexture }, dir: { value: new THREE.Vector2() } }, vertexShader: FSQ_VERT, fragmentShader: SSAO_BLUR_FRAG });
+    this.compMat = new THREE.ShaderMaterial({ uniforms: { tDiffuse: { value: null }, tAO: { value: null }, aoStrength: { value: c.strength ?? 0.8 } }, vertexShader: FSQ_VERT, fragmentShader: SSAO_COMP_FRAG });
+    this.fsq = new FullScreenQuad(this.aoMat);
+    this.hw = hw; this.hh = hh;
+    this.uniforms = this.aoMat.uniforms;   // 外部按 CONFIG 调参时走这个
+  }
+  _syncCamera() { syncCameraUniforms(this.aoMat.uniforms, this.camera); }
+  setSize(w, h) {
+    this.hw = Math.max(1, Math.floor(w / this.scaleDiv)); this.hh = Math.max(1, Math.floor(h / this.scaleDiv));
+    this.aoRT.setSize(this.hw, this.hh); this.blurRT.setSize(this.hw, this.hh);
+    this.aoMat.uniforms.noiseScale.value.set(this.hw / 4, this.hh / 4);
+  }
+  render(renderer, writeBuffer, readBuffer) {
+    this.fsq.material = this.aoMat; renderer.setRenderTarget(this.aoRT); this.fsq.render(renderer);
+    this.fsq.material = this.blurMat;
+    this.blurMat.uniforms.tAO.value = this.aoRT.texture; this.blurMat.uniforms.dir.value.set(1 / this.hw, 0); renderer.setRenderTarget(this.blurRT); this.fsq.render(renderer);
+    this.blurMat.uniforms.tAO.value = this.blurRT.texture; this.blurMat.uniforms.dir.value.set(0, 1 / this.hh); renderer.setRenderTarget(this.aoRT); this.fsq.render(renderer);
+    this.fsq.material = this.compMat; this.compMat.uniforms.tDiffuse.value = readBuffer.texture; this.compMat.uniforms.tAO.value = this.aoRT.texture;
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    if (this.clear) renderer.clear();
+    this.fsq.render(renderer);
+  }
 }
 
-// ==================== 轮廓描边 ====================
-// 深度 + 法线双路 Sobel 边缘检测：深度突变抓外轮廓（单位与背景/地形的分界），
-// 法线突变抓内部折角（塔身的棱、雉堞冠的转角）——只用深度会漏掉同一个物体内部
-// 该有描边的硬拐角，只用法线会漏掉两个深度接近但确实前后叠着的物体的分界。
-const OutlineShader = {
-  uniforms: {
-    tDiffuse: { value: null },
-    tNormal: { value: null },
-    tDepth: { value: null },
-    resolution: { value: new THREE.Vector2(1, 1) },
-    // 颜色/强度/线宽都从 CONFIG.outline 取（第 2 条铁律：不硬编码），这里只是 uniform
-    // 的初值，createOutlinePass 会按配置覆盖。
-    outlineColor: { value: new THREE.Color(0x1a1410) },
-    // depthBias 踩过一个坑：相机 near=1/far=60000（见 ThreeRenderer.syncCameraFrom），
-    // 但场景内容实际只占其中很小一段（近似几千个世界单位内），深度缓冲的精度被
-    // 这段"浪费在空气里"的巨大 far 挤占——调低这个阈值想多抓边缘，结果在完全平坦
-    // 的地面上也测出大量深度量化噪声（一片小黑点/十字紊纹）。这里调回更保守的值，
-    // 平坦地面的深度噪声压不过阈值、真正的轮廓（大深度跳变）仍然稳稳过线；内部折角
-    // 主要靠下面法线检测抓，法线不受深度精度问题影响。
-    depthBias: { value: 0.003 },
-    normalBias: { value: 0.35 },
-    outlineStrength: { value: 0.85 },
-    lineWidth: { value: 1.6 }, // 采样偏移的像素倍数——1.0 太细，2.5D 缩小视角下几乎看不见
-  },
-  vertexShader: `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = vec4(position.xy, 0.0, 1.0);
-    }
-  `,
-  fragmentShader: `
-    varying vec2 vUv;
-    uniform sampler2D tDiffuse;
-    uniform sampler2D tNormal;
-    uniform sampler2D tDepth;
-    uniform vec2 resolution;
-    uniform vec3 outlineColor;
-    uniform float depthBias;
-    uniform float normalBias;
-    uniform float outlineStrength;
-    uniform float lineWidth;
-
-    void main() {
-      vec4 base = texture2D(tDiffuse, vUv);
-      vec2 texel = (1.0 / resolution) * lineWidth;
-
-      float d0 = texture2D(tDepth, vUv).x;
-      float dx = texture2D(tDepth, vUv + vec2(texel.x, 0.0)).x - texture2D(tDepth, vUv - vec2(texel.x, 0.0)).x;
-      float dy = texture2D(tDepth, vUv + vec2(0.0, texel.y)).x - texture2D(tDepth, vUv - vec2(0.0, texel.y)).x;
-      float depthEdge = step(depthBias, length(vec2(dx, dy)));
-
-      vec3 n0 = normalize(texture2D(tNormal, vUv).xyz * 2.0 - 1.0);
-      vec3 nx = normalize(texture2D(tNormal, vUv + vec2(texel.x, 0.0)).xyz * 2.0 - 1.0);
-      vec3 ny = normalize(texture2D(tNormal, vUv + vec2(0.0, texel.y)).xyz * 2.0 - 1.0);
-      float normalEdge = step(normalBias, (1.0 - dot(n0, nx)) + (1.0 - dot(n0, ny)));
-
-      // 天空/背景（depth≈1）不描边，否则整个地平线会被画一圈线。
-      float sky = step(0.999, d0);
-      float edge = max(depthEdge, normalEdge) * (1.0 - sky);
-
-      vec3 col = mix(base.rgb, outlineColor, edge * outlineStrength);
-      gl_FragColor = vec4(col, base.a);
-    }
-  `,
-};
-
-export function createOutlinePass(prepass, width, height) {
-  const pass = new ShaderPass(OutlineShader);
-  pass.uniforms.tNormal.value = prepass.renderTarget.texture;
-  pass.uniforms.tDepth.value = prepass.renderTarget.depthTexture;
-  pass.uniforms.resolution.value.set(width, height);
-  // 描边的观感参数全部走 CONFIG.outline（第 2 条铁律），改配置即可，不用动着色器。
-  const c = CONFIG.outline || {};
-  if (c.color !== undefined) pass.uniforms.outlineColor.value.set(c.color);
-  if (c.strength !== undefined) pass.uniforms.outlineStrength.value = c.strength;
-  if (c.lineWidth !== undefined) pass.uniforms.lineWidth.value = c.lineWidth;
-  if (c.depthBias !== undefined) pass.uniforms.depthBias.value = c.depthBias;
-  if (c.normalBias !== undefined) pass.uniforms.normalBias.value = c.normalBias;
-  pass.setSize = (w, h) => { pass.uniforms.resolution.value.set(w, h); };
-  return pass;
+export function createSSAOPass(prepass, camera, width, height) {
+  return new SSAOPass(prepass, camera, width, height);
 }
 
 // ==================== Q4 天气重做：伪体积雾 ====================
@@ -503,7 +412,7 @@ const FogShader = {
     uniform float warpStrength;    // 域扭曲强度：把雾团拉成丝缕
     uniform float heightJitter;    // 雾顶随噪声起伏的高度（世界单位），不再是一刀切的平顶
     uniform float litBoost;        // 浓处提亮（厚雾更亮一点，有体积感）
-    ${ORTHO_RECONSTRUCT_GLSL}
+    ${RECONSTRUCT_GLSL}
     float fogHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
     void main() {

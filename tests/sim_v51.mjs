@@ -2073,7 +2073,7 @@ async function world() {
   T('高③-syncCameraFrom 里目标点的 Y 坐标改用 ly（不再恒为 0）',
     /const ly = this\.lookHeightOffset \|\| 0;\s*\n\s*this\._target\.set\(tx, ly, tz\);/.test(tr));
   T('高④-机位（cam.position）的 Y 分量也同步加了 ly——机位与目标点一起平移，不是只挪了目标点',
-    /cam\.position\.set\(tx \+ CAM_DIST \* cosP \* sa, CAM_DIST \* sinP \+ ly, tz \+ CAM_DIST \* cosP \* ca\);/.test(tr));
+    /cam\.position\.set\(tx \+ D \* cosP \* sa, D \* sinP \+ ly, tz \+ D \* cosP \* ca\);/.test(tr));
 
   const mm = srcOf('src/main.js');
   T('高⑤-main.js 接线 lookHeightSlider，走 renderer3d.setLookHeight（与俯仰角/方位角同一套接线手法）',
