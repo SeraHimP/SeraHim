@@ -208,6 +208,27 @@ CTX.__setLookHeight = (h) => renderer3d ? renderer3d.setLookHeight(h) : null;
 // 而"建筑有影子"的观感基本全留。当前无任何投影体，三档在画面上还看不出区别。
 renderer3d?.setShadowLevel('all');
 CTX.__setShadows = (lv) => renderer3d ? renderer3d.setShadowLevel(lv) : null;
+
+// ==================== 排查用的网址开关 ====================
+// 显卡相关的黑屏 / 花屏没法在开发环境复现（开发环境是软件渲染），让用户在自己机器上逐个关掉嫌疑功能来二分：
+//   ?aa=0 关抗锯齿   ?post=0 关全部后处理   ?shadow=0 关阴影   ?world=0 不建新地形   ?res=0.5 降渲染分辨率
+//   ?ssao=0 / ?fog=0 / ?bloom=0 单独关一项
+// 只在网址里写了才生效，不写时行为与原来逐位一致。出问题时的诊断框（ThreeRenderer._showGpuDiag）会列出这些开关。
+function applyDebugSwitches(r) {
+  if (!r || typeof location === 'undefined') return;
+  const q = new URLSearchParams(location.search);
+  const off = (k) => q.get(k) === '0';
+  if (off('aa')) r.setAA(false);
+  if (off('post')) r.setPostFX(false);
+  if (off('shadow')) r.setShadowLevel('off');
+  if (off('ssao')) r.setSSAO(false);
+  if (off('fog')) r.setFog(false);
+  if (off('bloom')) r.setBloom(false);
+  if (off('world')) { r.world.disabled = true; r.invalidateTerrain(); }
+  const res = parseFloat(q.get('res'));
+  if (Number.isFinite(res) && res > 0) r.setResolutionScale(res);
+}
+applyDebugSwitches(renderer3d);
 // 第 6.5 步排查开关：CTX.__textures(false) 关掉材质贴图重建地形，用于二分画面问题。
 // 注意单位侧【没有】对应开关——纸片人路径已在第 6.3 步移除，要回退只能换 zip。
 CTX.__textures = () => null;   // 旧的"关贴图排查"入口：地表改成程序化多层材质后没有可关的贴图层，留空壳免得旧脚本报错

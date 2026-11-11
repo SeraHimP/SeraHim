@@ -308,4 +308,22 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
 
 T('雾-render 每帧调用 _autoFog（机位距离一变雾就跟着变）', /this\._autoFog\(\);/.test(srcOf('src/presentation/ThreeRenderer.js')));
 
+// ==================== 显卡出问题时别静默黑屏 ====================
+// 用户在自己机器上黑屏、控制台每帧刷"glGetProgramiv: Program object expected"（上下文丢失后还在用旧着色器编号）；
+// 开发环境是软件渲染，复现不了。所以：丢失时停渲染 + 弹诊断框，并提供网址开关让用户在自己机器上二分。
+{
+  const tr = srcOf('src/presentation/ThreeRenderer.js');
+  const mainSrc = srcOf('src/main.js');
+  T('诊①-监听 webglcontextlost 并 preventDefault（浏览器才会尝试恢复上下文）',
+    /addEventListener\('webglcontextlost', \(e\) => \{\s*e\.preventDefault\(\);\s*diag\.lost = true;/.test(tr));
+  T('诊②-上下文丢了就不再渲染（不再每帧调 GL 刷错）', /render\(controller\) \{[\s\S]{0,120}if \(this\.gpuDiag\?\.lost\) return;/.test(tr));
+  T('诊③-恢复后自动刷新，但同一会话只刷一次（防止循环刷新）', /webglcontextrestored[\s\S]{0,300}sessionStorage[\s\S]{0,200}if \(n < 1\) location\.reload\(\);/.test(tr));
+  T('诊④-着色器编译失败时记下驱动给的日志（debug.onShaderError），并照常打到控制台',
+    /this\.gl\.debug\.onShaderError = /.test(tr) && /getShaderInfoLog\(fs\)/.test(tr) && /console\.error\('THREE\.WebGLProgram: Shader Error'/.test(tr));
+  T('诊⑤-网址开关：aa / post / shadow / ssao / fog / bloom / world / res 都接上了，且只在写了时生效',
+    ['aa', 'post', 'shadow', 'ssao', 'fog', 'bloom', 'world'].every((k) => new RegExp("off\\('" + k + "'\\)").test(mainSrc))
+    && /q\.get\(k\) === '0'/.test(mainSrc) && /parseFloat\(q\.get\('res'\)\)/.test(mainSrc) && /applyDebugSwitches\(renderer3d\);/.test(mainSrc));
+  T('诊⑥-?world=0 真的能跳过新地形（_rebuildTerrain 认 world.disabled）', /this\.world\.disabled\) \{ this\.world\.dispose\(\); return; \}/.test(tr));
+}
+
 done();

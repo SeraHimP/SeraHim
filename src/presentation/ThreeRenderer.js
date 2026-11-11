@@ -122,6 +122,7 @@ export class ThreeRenderer {
     this.deps = deps; // { entities, attrCalc, effects } —— UnitLayer 每帧读实体数据用（只读）
 
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this._installGpuDiagnostics(canvas);
     this._devicePixelRatio = window.devicePixelRatio || 1;
     this.resolutionScale = 1;    // Week3·Day13-14：移动端分辨率自适应，见 setResolutionScale
     // qualityPreset 留 null（不是随便挑一个如 'high' 当默认）——开局的实际画质组合
@@ -209,6 +210,70 @@ export class ThreeRenderer {
       if (this.deps?.entities?.get?.(entityId)?.type === 'tower') return;
       this.units.remove(entityId);
     });
+  }
+
+  /**
+   * 显卡出问题时别静默黑屏：把原因直接显示在画面上（用户报"黑屏、控制台刷 glGetProgramiv: Program object expected"，
+   * 那串刷屏是上下文丢失之后渲染器还拿着旧的着色器编号在用，真正的原因在它之前，而且我们的软件渲染复现不出来）。
+   *  · 着色器编译 / 链接失败：记下编译日志（three 的 debug.onShaderError），照常打到控制台。
+   *  · WebGL 上下文丢失：停止渲染（不再每帧刷错），弹出诊断框；浏览器恢复上下文后自动刷新一次（同一会话只自动刷新一次，防止循环）。
+   * 诊断框里有显卡型号、第一条报错和可以逐个试的网址开关（见 main.js 的 applyDebugSwitches）。
+   */
+  _installGpuDiagnostics(canvas) {
+    const diag = this.gpuDiag = { lost: false, errors: [], gpu: '' };
+    try {
+      const ctx = this.gl.getContext();
+      const ext = ctx.getExtension('WEBGL_debug_renderer_info');
+      diag.gpu = String(ext ? ctx.getParameter(ext.UNMASKED_RENDERER_WEBGL) : ctx.getParameter(ctx.RENDERER));
+    } catch (e) { /* 拿不到显卡型号不影响运行 */ }
+    this.gl.debug.onShaderError = (gl, program, vs, fs) => {
+      const log = [gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs)].filter(Boolean).join('\n').trim();
+      const msg = '着色器编译 / 链接失败：' + (log || '（驱动没有给出日志）');
+      console.error('THREE.WebGLProgram: Shader Error', log);
+      if (diag.errors.length < 5) diag.errors.push(msg.slice(0, 1200));
+      this._showGpuDiag('有着色器在这块显卡上编译失败，画面可能不完整');
+    };
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      diag.lost = true;
+      this._showGpuDiag('显卡把这个页面的渲染状态重置了（WebGL 上下文丢失），画面已停止');
+    }, false);
+    canvas.addEventListener('webglcontextrestored', () => {
+      let n = 0;
+      try { n = +(sessionStorage.getItem('seraGpuRestoreReload') || 0); sessionStorage.setItem('seraGpuRestoreReload', String(n + 1)); } catch (e) { n = 1; }
+      if (n < 1) location.reload();
+      else this._showGpuDiag('上下文又恢复了，但同一会话里已经自动刷新过一次，为防止循环不再自动刷新');
+    }, false);
+  }
+
+  _showGpuDiag(title) {
+    if (typeof document === 'undefined') return;
+    const d = this.gpuDiag;
+    let box = document.getElementById('gpuDiagBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'gpuDiagBox';
+      box.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:99999;max-height:70vh;overflow:auto;'
+        + 'background:rgba(20,22,28,0.96);color:#e8e8e8;border:1px solid #c0504d;border-radius:8px;padding:12px 14px;'
+        + 'font:13px/1.6 system-ui,sans-serif;white-space:pre-wrap;user-select:text;';
+      document.body.appendChild(box);
+    }
+    const q = (typeof location !== 'undefined') ? location.search : '';
+    box.textContent = [
+      '⚠️ ' + title,
+      '显卡：' + (d.gpu || '未知'),
+      '浏览器：' + (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
+      '当前网址开关：' + (q || '（无）'),
+      d.errors.length ? '报错：\n' + d.errors.join('\n---\n') : '报错：没有捕获到着色器报错（多半是驱动重置或显存不够）',
+      '',
+      '可以逐个试下面这些网址开关（加在 index.html 后面），看哪个能让画面恢复，把结果和这段文字一起发给开发者：',
+      '  ?aa=0       关抗锯齿（多重采样）',
+      '  ?post=0     关全部后处理（抗锯齿 / SSAO / 雾 / 泛光）',
+      '  ?shadow=0   关阴影',
+      '  ?world=0    不建新地形（只看单位和建筑）',
+      '  ?res=0.5    半分辨率渲染',
+      '  可以组合，例如 ?aa=0&shadow=0',
+    ].join('\n');
   }
 
   /**
@@ -834,7 +899,7 @@ export class ThreeRenderer {
   _rebuildTerrain() {
     this._terrainDirty = false;
     const ms = this.mapSystem, map = ms?.currentMap;
-    if (!(ms?.hasWalls?.() && map?.world)) { this.world.dispose(); return; }
+    if (!(ms?.hasWalls?.() && map?.world) || this.world.disabled) { this.world.dispose(); return; }
     if (this.world.builtFor(map)) return;
     setWeatherGroundMap(ms);   // 天气地表：世界尺寸 + 河道遮罩
     this.world.build(ms, { anisotropy: Math.min(8, this.gl.capabilities.getMaxAnisotropy()) });
@@ -882,6 +947,7 @@ export class ThreeRenderer {
 
   render(controller) {
     if (!this.width || !this.height) return;
+    if (this.gpuDiag?.lost) return;   // 上下文丢了：别再每帧调 GL（只会刷一屏"Program object expected"）
     {
       const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
       this._lightDt = this._lastRenderAt ? Math.min(0.1, t - this._lastRenderAt) : 0.016;
