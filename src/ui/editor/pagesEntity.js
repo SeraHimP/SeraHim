@@ -41,7 +41,8 @@ export const EDITOR_PAGES_ENTITY = {
       </div>` : '';
     const allKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
 
-    const coreKeys = ['maxHP', 'currentHP', 'healthRegen', 'baseHealthRegenMod'];
+    // 模板没有"当前生命"（那是场上单位的状态，模板里恒为 0，摆出来只会误导），只在编辑场上单位时显示
+    const coreKeys = isTemplate ? ['maxHP', 'healthRegen', 'baseHealthRegenMod'] : ['maxHP', 'currentHP', 'healthRegen', 'baseHealthRegenMod'];
     // v51.1：用户"新增那些属性之类的都要和对应的类别进行匹配"——之前全部落进"其他"，
     // 这里按属性的真实语义分类，不再让"其他"变成一个新属性的堆放场。
     //   攻击：法术强度/暴击/适应之力——都是"打出去更狠"这条线上的东西，跟攻击力同组。
@@ -435,7 +436,7 @@ export const EDITOR_PAGES_ENTITY = {
 
   _renderEffectContent(entity) {
     const effs = (window.CTX?.__app || window.__app)?.effectRegistry?.getEffects(entity.id) || [];
-    let html = `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
+    let html = `<div style="margin:8px 0;">`;
     if (effs.length === 0) {
       html += `<div style="color:#8b949e;font-size:12px;padding:8px;">暂无状态效果</div>`;
     } else {

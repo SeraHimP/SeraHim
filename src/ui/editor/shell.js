@@ -137,7 +137,7 @@ export const EDITOR_SHELL = {
                     + (P.apply ? this._renderApplyScopeBar() : '');
     const scopeBars = scopeBarsInner ? `<div class="tpl-scope-bars">${scopeBarsInner}</div>` : '';
     const head = `<div class="tpl-pane-head">
-      <span class="tpl-crumb">${this._nodeLabel()} · ${P.icon} ${P.label}</span>
+      <span class="tpl-crumb">${[this._nodeLabel(), `${P.icon} ${P.label}`].filter(Boolean).join(' · ')}</span>
       ${P.action === 'instant' ? '<span class="tpl-instant">⚡ 即点即生效</span>' : ''}
     </div>`;
     const note = this._pageScopeNote(P);
@@ -159,7 +159,7 @@ export const EDITOR_SHELL = {
             <button id="tplOpenBtn" title="从本地文件读取配置">📂 打开</button>
             <button id="tplImportBtn" title="粘贴 JSON 导入 / 复制 JSON 导出">📋 JSON</button>
             ${P.action === 'apply'
-              ? `<button id="templateApplyBtn" class="primary" title="${note}">应用 → ${this._nodeLabel()}·${P.writes}</button>`
+              ? `<button id="templateApplyBtn" class="primary" title="${note}">应用 → ${[this._nodeLabel(), P.writes].filter(Boolean).join('·')}</button>`
               : ''}
             <button id="templateCloseBtn">关闭</button>
           </div>

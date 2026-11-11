@@ -85,25 +85,20 @@ export const EDITOR_PAGES_GAMEPLAY_SKILLSTATE = {
    * 用户："还有状态上面的单位选择框，往下滑点一下就有回到最顶上了，需要修复。"
    *
    * 排查结论：跟"点的是哪个控件"无关——两页的 rerender() 都是整段
-   * `#templateContent.innerHTML = 重新渲染的整页字符串`，这会把 .gp-matrix-wrap
-   * 和 .gp-pool 这两个各自独立 overflow-y:auto 的滚动容器**连同旧节点一起销毁重建**，
+   * `#templateContent.innerHTML = 重新渲染的整页字符串`，滚动容器连同旧节点一起销毁重建，
    * 新节点的 scrollTop 天然是 0。矩阵格子勾选/技能三态点击/折叠按钮……只要走的是
    * 这条 rerender，无论点哪里都会把两个框都弹回顶部——不是某个按钮独有的毛病。
    *
-   * 修法：重新渲染前记下这两个滚动容器的 scrollTop，渲染完立刻按 id 找回同名容器
-   * 写回去。用类名找而不是记住具体是哪个 DOM 节点——反正是全量重建，节点本身
-   * 不可能复用，只有"这一类容器该停在哪个滚动位置"这件事需要跨重建保留。
+   * 修法：重新渲染前记下滚动容器的 scrollTop，渲染完按类名找回同名容器写回去
+   * （全量重建，节点不可能复用，只有"该停在哪个滚动位置"需要跨重建保留）。
    */
+  // Q1 起矩阵与技能池不再自带滚动条（一个窗口只有内容区一个滚动区），要保住的是内容区 .tpl-pane 的位置。
   _gpRerenderPreserveScroll(overlay, doRender) {
-    const wrap = overlay.querySelector('.gp-matrix-wrap');
-    const pool = overlay.querySelector('.gp-pool');
-    const wrapTop = wrap ? wrap.scrollTop : 0;
-    const poolTop = pool ? pool.scrollTop : 0;
+    const pane = overlay.querySelector('.tpl-pane');
+    const top = pane ? pane.scrollTop : 0;
     doRender();
-    const wrap2 = overlay.querySelector('.gp-matrix-wrap');
-    const pool2 = overlay.querySelector('.gp-pool');
-    if (wrap2) wrap2.scrollTop = wrapTop;
-    if (pool2) pool2.scrollTop = poolTop;
+    const pane2 = overlay.querySelector('.tpl-pane');
+    if (pane2) pane2.scrollTop = top;
   },
 
   _gpSelectedApplicableSet(cellSet) {

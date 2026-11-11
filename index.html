@@ -737,7 +737,9 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .skill-mode-toggle-single:hover { background: rgba(79,209,197,0.18); color: var(--text); }
 
 /* 游戏性·批量加技能/加状态：阵营×单位类型矩阵——用户定稿"铺平成一张表直接勾格子"。 */
-.gp-matrix-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: var(--radius-xs); }
+/* Q1 一致性规则：一个窗口只有一个滚动区（右侧内容区 .tpl-pane / 弹窗本体）。内容里的列表、矩阵不再自带滚动条——
+   用户原话"模板编辑器中批量添加技能窗口右面竟然有三个翻页的那个条"，就是内容区里又套了两层各自滚动的框。 */
+.gp-matrix-wrap { border: 1px solid var(--glass-border); border-radius: var(--radius-xs); }
 .gp-matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
 .gp-matrix th, .gp-matrix td { padding: 4px 8px; text-align: center; border-bottom: 1px solid var(--glass-border); }
 .gp-matrix th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-dim); font-weight: 400; }
@@ -783,7 +785,7 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 }
 .gp-all:hover { color: var(--text); border-color: var(--accent); }
 
-.gp-pool { max-height: 300px; overflow-y: auto; margin-top: 8px; }
+.gp-pool { margin-top: 8px; }
 .gp-pool-group {
   display: flex; align-items: center; gap: 4px; margin: 8px 0 4px;
   font-size: 11px; color: var(--text-mute); letter-spacing: 0.5px;
@@ -815,7 +817,7 @@ button.dragon:hover { background: linear-gradient(135deg, rgba(246,201,74,0.38),
 .uad-card .uad-label { font-size: 13px; font-weight: 600; margin-top: 6px; color: var(--text); }
 .uad-queue-box { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--glass-border); }
 .uad-queue-title { font-size: 12px; color: var(--gold); font-weight: 600; margin-bottom: 8px; }
-.uad-queue-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+.uad-queue-list { display: flex; flex-direction: column; gap: 5px; }
 .uad-queue-empty { font-size: 12px; color: var(--text-mute); padding: 10px 4px; }
 .uad-queue-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-3); border-radius: var(--radius-xs); font-size: 12px; }
 .uad-queue-item .uad-queue-icon { font-size: 16px; }

@@ -14,6 +14,7 @@ import { AttributeEditor } from './ui/AttributeEditor.js';
 import { UnitAddDialog } from './ui/UnitAddDialog.js';
 import { TOWER_MODEL_ROLES } from './data/towerModels.js';
 import { SettingsDialog } from './ui/SettingsDialog.js';
+import { installEscClose } from './ui/escClose.js';
 import { ModeDialog } from './ui/ModeDialog.js';
 import { MapEditorDialog } from './ui/MapEditorDialog.js';
 import { MapEditorBoardTool } from './ui/MapEditorBoardTool.js';
@@ -252,6 +253,7 @@ CTX.__dayPeriod = (sec) => { CTX.__dayPeriodSec = Math.max(5, +sec || (CONFIG.wo
 CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.max(0, Math.min(1, +p))); };
 CTX.__groundTrace = groundTraceSystem; // 渲染层/调试入口
 
+installEscClose();   // Q1：Esc 关闭最上层弹窗（点它自己的取消/关闭按钮）
 CTX.__app = { entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, dominionSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
 
 // 龙魂事件日志

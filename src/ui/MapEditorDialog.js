@@ -960,7 +960,7 @@ export const MapEditorDialog = {
         </div>
         <details style="margin-top:4px;">
           <summary style="font-size:11px;cursor:pointer;color:var(--text-mute);">技能（${(b.skills || []).length} 个已装）</summary>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;max-height:120px;overflow:auto;">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
             ${skillIds.map(id => `<label style="font-size:10px;display:flex;align-items:center;gap:2px;">
               <input type="checkbox" data-building-skill="${id}" ${(b.skills || []).includes(id) ? 'checked' : ''}>
               ${SkillLibrary[id]?.name || id}</label>`).join('')}
@@ -1321,7 +1321,7 @@ export const MapEditorDialog = {
           </div>
           <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
             <div style="font-size:12px;font-weight:600;margin-bottom:4px;">已自定义模板的塔</div>
-            <div id="mapEditorCustomizedList" style="display:flex;flex-direction:column;gap:2px;max-height:100px;overflow:auto;margin-bottom:2px;"></div>
+            <div id="mapEditorCustomizedList" style="display:flex;flex-direction:column;gap:2px;margin-bottom:2px;"></div>
           </div>
           <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color,#444);">
             <div style="font-size:12px;font-weight:600;margin-bottom:4px;">中立营地出生点（画布上的金色菱形）</div>

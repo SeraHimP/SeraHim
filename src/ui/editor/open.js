@@ -8,6 +8,7 @@
  * 逐字未动、缩进未动。AttributeEditor.js 用 Object.assign 把各块合成同一个对象，
  * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
  */
+import { paramLabel } from '../../data/paramLabels.js';
 import { CONFIG } from '../../data/Config.js';
 import { shellHtml } from '../dialogShell.js';
 import { SkillLibrary } from '../../core/SkillLibrary.js';
@@ -128,17 +129,12 @@ export const EDITOR_OPEN = {
   _renderSkillParamsContent() {
     const list = this._skillsWithParams();
     const ovr = CONFIG.skillOverrides || {};
-    let html = `<div class="pick-desc-box" style="margin-bottom:10px;">
-      ✨ 技能参数的叠加顺序：<b>技能出厂值 → 这里的全局覆写 → 地图级覆写</b>（后者压前者）。<br>
-      改这里等于改"所有地图上的基准值"。
-    </div>`;
+    let html = '';
 
     if (!list.length) {
       html += `<div style="color:#8b949e;font-size:12px;">当前没有声明了可覆写参数的技能。</div>`;
       return html;
     }
-    html += `<div style="font-size:11px;color:var(--text-mute);margin-bottom:8px;">
-      共 ${list.length} 个技能可调。只列出声明了可覆写参数的技能。</div>`;
 
     for (const { id, def, params } of list) {
       const o = ovr[id] || {};
@@ -146,13 +142,12 @@ export const EDITOR_OPEN = {
       html += `<div style="margin-bottom:10px;border:1px solid ${dirty ? '#58a6ff' : '#2d3540'};border-radius:4px;padding:8px;">
         <div style="font-size:12px;margin-bottom:6px;">
           ${def.icon || '✨'} <b>${def.name || id}</b>
-          <span style="font-size:10px;color:#8b949e;">${id}</span>
           ${dirty ? '<span style="font-size:9px;color:#58a6ff;border:1px solid #58a6ff;border-radius:3px;padding:0 3px;">已覆写</span>' : ''}
         </div>`;
       for (const [k, base] of Object.entries(params)) {
         const cur = o[k];
         html += `<div class="slider-row">
-          <label style="font-size:11px;" title="出厂值 ${base}">${k}</label>
+          <label style="font-size:11px;" title="${k}，出厂值 ${base}">${paramLabel(k)}</label>
           <input type="number" class="skillparam-input" data-skill="${id}" data-param="${k}"
                  step="${Math.abs(base) < 1 ? 0.05 : 1}" value="${cur ?? ''}"
                  placeholder="${base}（出厂）" style="width:100px;">

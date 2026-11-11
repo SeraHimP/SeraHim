@@ -137,9 +137,6 @@ export const SettingsDialog = {
               ${(CONFIG.tuning?.simSpeedOptions ?? [1, 2, 4, 8]).map(v => `<button data-speed="${v}" class="editor-tab ${(window.__gameSpeed || 1) === v ? 'active' : ''}">${v}x</button>`).join('')}
             </div>
           </div>
-          <div class="pick-desc-box" style="font-size:11px;line-height:1.7;">
-            倍率再高也只会「跑得慢一点」，不会卡住。
-          </div>
         </div>
         <div class="editor-section">
           <h4>🛡 战场规则</h4>

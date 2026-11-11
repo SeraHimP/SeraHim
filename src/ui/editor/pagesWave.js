@@ -366,10 +366,7 @@ export const EDITOR_PAGES_WAVE = {
     // ①兵种总开关 / ②出兵编排 / 预览 这几大块此前只用内联样式的小标题分隔，视觉上
     // 是一整面墙。这里改成与上面"运行时控制"（runtime 变量）同一套 .editor-section
     // + <h4> 卡片，读起来是几张边界清楚的卡片，不是一整页平铺的控件。
-    let html = runtime + `<div class="pick-desc-box" style="margin-bottom:10px;">
-      　<b>① 兵种总开关</b>　关掉的兵种下面怎么排都不会出。<br>
-      　<b>② 出兵编排</b>　数组顺序 = 出兵先后。
-    </div>`;
+    let html = runtime;
 
     // ---- ① 兵种总开关（原「生成规则」里逐个类型翻页才能看到，现在一屏全景）----
     // v51.26：被当前地图/模式覆写锁住的兵种（如经典模式关掉的术士/蚀骨/攻城车/图腾）
@@ -415,7 +412,7 @@ export const EDITOR_PAGES_WAVE = {
     html += `<div class="editor-section"><h4 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span>② 出兵编排（数组顺序 = 出兵先后）</span>
       <span style="font-size:10px;font-weight:400;color:${_own ? '#58a6ff' : 'var(--text-mute)'};">
-        作用域：${_who} × ${_laneTxt}${_own ? '（本格已有独立编排）' : '（当前显示继承来的那份，一改就会复制成本格专属）'}
+        作用域：${_who} × ${_laneTxt}${_own ? '（独立编排）' : '（继承）'}
       </span>
       <button id="woNoSpawnToggle" class="editor-tab ${_noSpawn ? '' : 'active'}" style="font-size:11px;"
         title="关闭 = 这个作用域（${_who} × ${_laneTxt}）完全不出兵，一键清空所有规则">

@@ -59,7 +59,8 @@ const AE_SRC = ['.' + '/src/ui/AttributeEditor.js',
   T('作用域条只在页面声明时才画', /P\.faction \? this\._renderFactionScopeBar/.test(AE_SRC)
     && /P\.apply \? this\._renderApplyScopeBar/.test(AE_SRC));
   T('说明行只描述该页真读的维度', /_pageScopeNote\(P\)/.test(AE_SRC));
-  T('【应用】按钮印出写入目标（用户不必猜）', /应用 → \$\{this\._nodeLabel\(\)\}·\$\{P\.writes\}/.test(AE_SRC));
+  // Q1：对象名为空的页面不再留一个多余的"·"，按非空段拼接
+  T('【应用】按钮印出写入目标（用户不必猜）', /应用 → \$\{\[this\._nodeLabel\(\), P\.writes\]\.filter\(Boolean\)\.join\('·'\)\}/.test(AE_SRC));
   T('只读页不画【应用】按钮', /P\.action === 'apply'/.test(AE_SRC));
 }
 

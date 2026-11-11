@@ -98,7 +98,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
       ? this._tierLabel(tier) : (CONFIG.templates[type]?.label || this._labelOf(type));
 
     let html = `<p style="color:var(--text-dim);font-size:11px;margin-bottom:8px;">新生成的 ${title} 入场时自动获得下列状态</p>`;
-    html += `<div style="margin:8px 0;max-height:300px;overflow-y:auto;">`;
+    html += `<div style="margin:8px 0;">`;
     if (list.length === 0) {
       html += `<div style="color:#8b949e;font-size:12px;padding:8px;">暂无默认状态效果</div>`;
     } else {
@@ -493,7 +493,7 @@ export const EDITOR_PAGES_SKILLEFFECT = {
     return `
       <div class="panel-sec">属性</div>
       <input type="text" class="effect-stat-filter editor-number" placeholder="🔍 搜索属性…" style="width:100%;">
-      <div class="pick-grid effect-stat-grid" style="max-height:160px;overflow-y:auto;margin-top:6px;">${cards}</div>
+      <div class="pick-grid effect-stat-grid" style="margin-top:6px;">${cards}</div>
       <input type="hidden" class="effect-stat-key" value="${this._EFFECT_STAT_KEYS[0]}">
       <div class="slider-row" style="margin-top:6px;"><label class="effect-flat-label">数值修正</label>
         <input type="number" step="0.5" class="effect-flat-value editor-number" value="0">
