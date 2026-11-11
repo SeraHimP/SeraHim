@@ -582,6 +582,75 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
     { path: 'tuning.nav.detourMaxRatio', label: '寻路·最大绕路倍数', step: 0.1 },
     { path: 'tuning.nav.unreachableIgnoreSec', label: '寻路·追不到后忽略(秒)', step: 0.5 },
   ],
+  // 地形与画面基础参数（2026-11 画面重构新增的软编码项）。改完点「应用」：地形整体重建（高度场 + 世界），
+  // 相机 / 雾 / 天空每帧或重算时读配置，自动生效；SSAO 直接写进着色器 uniform。
+  // 只放数值项；主题配色（CONFIG.terrain.themes）是一大块调色板，先不做界面。
+  _RENDER_TUNING_FIELDS: [
+    { path: 'terrain.ground.pathHalf', label: '地形·路面半宽', step: 2, rebuild: true },
+    { path: 'terrain.ground.pathFeather', label: '地形·路面到野地过渡宽', step: 2, rebuild: true },
+    { path: 'terrain.ground.pathDip', label: '地形·路面下凹', step: 0.2, rebuild: true },
+    { path: 'terrain.ground.rollAmp', label: '地形·野地大起伏幅度', step: 0.5, rebuild: true },
+    { path: 'terrain.ground.bumpAmp', label: '地形·野地小起伏幅度', step: 0.2, rebuild: true },
+    { path: 'terrain.ground.plateauK', label: '地形·基地台地高度比例', step: 0.05, rebuild: true },
+    { path: 'terrain.ground.baseFlatInner', label: '地形·基地铺平半径比例', step: 0.05, rebuild: true },
+    { path: 'terrain.river.widthK', label: '河·水道宽度比例', step: 0.02, rebuild: true },
+    { path: 'terrain.river.widthVar', label: '河·宽窄变化', step: 0.02, rebuild: true },
+    { path: 'terrain.river.meanderAmp', label: '河·左右摆动幅度', step: 5, rebuild: true },
+    { path: 'terrain.river.bank', label: '河·岸坡比例', step: 0.05, rebuild: true },
+    { path: 'terrain.river.bed', label: '河·浅滩河床高度', step: 0.5, rebuild: true },
+    { path: 'terrain.river.deepBed', label: '河·深潭河床高度', step: 1, rebuild: true },
+    { path: 'terrain.river.fordBed', label: '河·渡口河床高度', step: 0.5, rebuild: true },
+    { path: 'terrain.river.level', label: '河·水面高度', step: 0.5, rebuild: true },
+    { path: 'terrain.river.pitLakeK', label: '河·龙坑湖面半径比例', step: 0.05, rebuild: true },
+    { path: 'terrain.pit.floor', label: '龙坑·台面高度', step: 0.5, rebuild: true },
+    { path: 'terrain.cliff.width', label: '岩壁·崖面宽度', step: 2, rebuild: true },
+    { path: 'terrain.cliff.height', label: '岩壁·基础崖高', step: 2, rebuild: true },
+    { path: 'terrain.cliff.heightVar', label: '岩壁·崖高变化', step: 2, rebuild: true },
+    { path: 'terrain.cliff.edgeNoise', label: '岩壁·崖线不规则度', step: 1, rebuild: true },
+    { path: 'terrain.drop.width', label: '深渊·崖面宽度', step: 2, rebuild: true },
+    { path: 'terrain.outer.extent', label: '地图外·延伸距离', step: 100, rebuild: true },
+    { path: 'terrain.outer.peakHeight', label: '地图外·山体高度', step: 10, rebuild: true },
+    { path: 'terrain.outer.peakDist', label: '地图外·到山顶的距离', step: 50, rebuild: true },
+    { path: 'terrain.outer.blend', label: '地图外·过渡距离', step: 20, rebuild: true },
+    { path: 'terrain.field.targetN', label: '地形·高度场分辨率', step: 32, rebuild: true },
+    { path: 'terrain.shading.lightDay', label: '局部光·白天份量', step: 0.05 },
+    { path: 'terrain.shading.lightNight', label: '局部光·夜晚份量', step: 0.05 },
+    { path: 'postfx.aa.samples', label: '抗锯齿·采样数', step: 1, aa: true },
+    { path: 'postfx.aa.samplesHiDpi', label: '抗锯齿·高分屏采样数', step: 1, aa: true },
+    { path: 'postfx.ssao.radius', label: 'SSAO·半径', step: 1, ssao: 'radius' },
+    { path: 'postfx.ssao.strength', label: 'SSAO·强度', step: 0.05, ssao: 'aoStrength' },
+    { path: 'ui.camera.fovDeg', label: '相机·视场角', step: 1 },
+    { path: 'ui.mapFog.nearK', label: '大气透视·起始倍数', step: 0.1 },
+    { path: 'ui.mapFog.farK', label: '大气透视·全雾倍数', step: 0.1 },
+    { path: 'ui.sky.intensity', label: '天空环境光·强度', step: 0.05, sky: true },
+    { path: 'ui.sky.shareK', label: '天空环境光·占比系数', step: 0.1, sky: true },
+    { path: 'ui.lighting.sunGain', label: '太阳·强度倍率', step: 0.05 },
+  ],
+  /** 把上面字段表里改过的值写进 CONFIG，并让渲染器按需重建 / 刷新。返回写入的项数。 */
+  _applyRenderTuning(inputs) {
+    let n = 0, rebuild = false, aa = false, sky = false;
+    const ssao = {};
+    for (const inp of inputs) {
+      const v = parseFloat(inp.value);
+      if (!Number.isFinite(v)) continue;
+      const f = this._RENDER_TUNING_FIELDS.find((x) => x.path === inp.dataset.path);
+      if (!f || this._getPath(CONFIG, f.path) === v) continue;
+      this._setPath(CONFIG, f.path, v); n++;
+      rebuild ||= !!f.rebuild; aa ||= !!f.aa; sky ||= !!f.sky;
+      if (f.ssao) ssao[f.ssao] = v;
+    }
+    const r = (typeof window !== 'undefined') ? window.CTX?.__three : null;
+    if (r) {
+      if (rebuild) r.invalidateTerrain?.();
+      if (aa) r.setAA?.(r.aaOn);
+      if (sky && r.sky) r.sky._key = '';
+      if (r.ssaoPass) {
+        if (ssao.radius !== undefined) r.ssaoPass.aoMat.uniforms.radius.value = ssao.radius;
+        if (ssao.aoStrength !== undefined) r.ssaoPass.compMat.uniforms.aoStrength.value = ssao.aoStrength;
+      }
+    }
+    return n;
+  },
   _getPath(obj, path) {
     return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
   },
@@ -623,6 +692,12 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <input type="number" class="mana-tuning-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
     }).join('');
 
+    const renderFields = this._RENDER_TUNING_FIELDS.map(f => {
+      const v = this._getPath(CONFIG, f.path);
+      if (v === undefined) return '';
+      return `<div class="slider-row"><label style="font-size:11px;">${f.label}</label>
+        <input type="number" class="render-tuning-field" data-path="${f.path}" step="${f.step}" value="${v}" style="width:90px;"></div>`;
+    }).join('');
     const navFields = this._NAV_TUNING_FIELDS.map(f => {
       const v = this._getPath(CONFIG, f.path);
       if (v === undefined) return '';
@@ -652,6 +727,10 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">寻路（全局，可修改）</div>
         ${navFields}
         <button id="setNavTuningApplyBtn" style="margin-top:6px;width:100%;">✅ 应用寻路数值</button>
+      </div>
+      <div style="margin-top:8px;border-top:1px solid #2d3540;padding-top:8px;">
+        ${renderFields}
+        <button id="setRenderTuningApplyBtn" style="margin-top:6px;width:100%;">✅ 应用地形 / 画面数值（地形会整体重建）</button>
       </div>`;
   },
 
@@ -687,6 +766,11 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
         if (!isNaN(v) && v >= 0) { this._setPath(CONFIG, inp.dataset.path, v); n++; }
       });
       logFn(`⚡ 全局法力回复数值已更新（${n} 项）`, 'spawn');
+      render();
+    });
+    overlay.querySelector('#setRenderTuningApplyBtn')?.addEventListener('click', () => {
+      const n = this._applyRenderTuning(overlay.querySelectorAll('.render-tuning-field'));
+      logFn(`🏔️ 地形 / 画面数值已更新（${n} 项）`, 'spawn');
       render();
     });
     // 改完寻路参数，NavPlanner 下一帧按配置签名自动重建网格和距离场

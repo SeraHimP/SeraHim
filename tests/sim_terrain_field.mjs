@@ -119,4 +119,32 @@ for (const id of ['summoners_rift_v1', 'twisted_treeline_v1', 'howling_abyss_fro
   T('定⑤-没有地图时 heightAt 返回 0，不报错', flat.heightAt(10, 10) === 0);
 }
 
+// ==================== 六、编辑器入口（第 2 条铁律：新数值要在编辑器里可改）====================
+{
+  const { EDITOR_PAGES_GAMEPLAY_WORLD: P0 } = await import('../src/ui/editor/pagesGameplayWorld.js').then((m) => ({ EDITOR_PAGES_GAMEPLAY_WORLD: Object.values(m)[0] }));
+  const P = P0;
+  const F = P._RENDER_TUNING_FIELDS;
+  T('编①-字段表里每一项都对得上 CONFIG 里真实存在的数值', F.length > 20 && F.every((f) => typeof P._getPath(CONFIG, f.path) === 'number'));
+  T('编②-地形高度场的关键参数都有入口（路 / 河 / 龙坑 / 岩壁 / 深渊 / 地图外 / 分辨率）',
+    ['terrain.ground.pathHalf', 'terrain.river.level', 'terrain.river.fordBed', 'terrain.pit.floor', 'terrain.cliff.height', 'terrain.drop.width', 'terrain.outer.peakHeight', 'terrain.field.targetN']
+      .every((p) => F.some((f) => f.path === p)));
+  const calls = { invalidate: 0, aa: 0 };
+  const fakeR = { aaOn: true, invalidateTerrain: () => calls.invalidate++, setAA: () => calls.aa++, sky: { _key: 'x' },
+    ssaoPass: { aoMat: { uniforms: { radius: { value: 0 } } }, compMat: { uniforms: { aoStrength: { value: 0 } } } } };
+  window.CTX = { __three: fakeR };
+  const keep = { level: CONFIG.terrain.river.level, samples: CONFIG.postfx.aa.samples, radius: CONFIG.postfx.ssao.radius, fov: CONFIG.ui.camera.fovDeg, sky: CONFIG.ui.sky.intensity };
+  const inp = (path, value) => ({ value: String(value), dataset: { path } });
+  const n1 = P._applyRenderTuning([inp('terrain.river.level', keep.level - 1), inp('ui.camera.fovDeg', keep.fov)]);
+  T('编③-只写真正改了的项（视场角没改，不算）', n1 === 1 && CONFIG.terrain.river.level === keep.level - 1);
+  T('编④-改了地形参数会触发地形整体重建', calls.invalidate === 1);
+  P._applyRenderTuning([inp('postfx.aa.samples', keep.samples + 2), inp('postfx.ssao.radius', keep.radius + 3)]);
+  T('编⑤-改了抗锯齿采样数会刷新渲染目标，但不重建地形', calls.aa === 1 && calls.invalidate === 1);
+  T('编⑥-SSAO 半径直接写进着色器 uniform（它只在构造时读一次配置）', fakeR.ssaoPass.aoMat.uniforms.radius.value === keep.radius + 3);
+  P._applyRenderTuning([inp('ui.sky.intensity', CONFIG.ui.sky.intensity + 0.1)]);
+  T('编⑦-改了天空参数会让天空下一帧重算（清掉缓存键）', fakeR.sky._key === '');
+  T('编⑧-非数字输入被忽略', P._applyRenderTuning([inp('terrain.river.level', 'abc')]) === 0);
+  CONFIG.terrain.river.level = keep.level; CONFIG.postfx.aa.samples = keep.samples; CONFIG.postfx.ssao.radius = keep.radius;
+  CONFIG.ui.sky.intensity = keep.sky;
+}
+
 done();
