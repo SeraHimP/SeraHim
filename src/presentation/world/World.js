@@ -24,22 +24,40 @@ export class World {
     this.field = null; this._map = null;
     this.toggles = { foliage: true, water: true, ambient: true };
   }
-  builtFor(map) { return !!this.field && this._map === map; }
+  /** 这张图的世界已经【完整】建好（分帧建图做到一半时是 false，免得半成品被当成建好了而跳过后面几步）。 */
+  builtFor(map) { return !!this.field && this._map === map && this._complete === true; }
 
-  /** @param ms MapSystem  @param opts { anisotropy } */
+  /** 一次性建完（地图编辑器笔刷等不需要加载界面的场合）。@param ms MapSystem  @param opts { anisotropy } */
   build(ms, opts = {}) {
-    this.dispose();
-    const map = ms.currentMap, field = ms.terrainField();
-    if (!field) return;
-    const theme = terrainThemeOf(map);
-    this.field = field; this._map = map; this.theme = theme;
-    setWorldRect(field.W, field.H);
-    setWorldWater(field.waterLevel, theme.water?.tint);
-    this._add(buildWorldTerrain(field, theme, opts));
-    const tex = getWorldTextureSet(theme.layers, CONFIG.terrain.textureSize ?? 512, opts.anisotropy ?? 8);
-    this._add(buildWorldRocks(field, tex.rock, theme));
-    if (this.toggles.water) this._add(buildWorldWater(field, theme));
-    if (this.toggles.foliage) this._add(buildWorldFoliage(field, theme));
+    for (const st of this.buildSteps(ms, opts)) st.run();
+  }
+
+  /**
+   * 拆成若干步的建图：返回 [{ label, run }]，调用方每帧执行一步，中间可以刷新加载界面。
+   * 顺序与原来一次性建完时相同（高度场 → 地形 → 岩石 → 水 → 树），结果逐位一致。
+   */
+  buildSteps(ms, opts = {}) {
+    const steps = [];
+    let field = null, theme = null, tex = null;
+    steps.push({ label: '计算地形高度场', run: () => {
+      this.dispose();
+      this._complete = false;
+      const map = ms.currentMap; field = ms.terrainField();
+      if (!field) return;
+      theme = terrainThemeOf(map);
+      this.field = field; this._map = map; this.theme = theme;
+      setWorldRect(field.W, field.H);
+      setWorldWater(field.waterLevel, theme.water?.tint);
+    } });
+    steps.push({ label: '生成地表', run: () => { if (field) this._add(buildWorldTerrain(field, theme, opts)); } });
+    steps.push({ label: '堆砌岩壁', run: () => {
+      if (!field) return;
+      tex = getWorldTextureSet(theme.layers, CONFIG.terrain.textureSize ?? 512, opts.anisotropy ?? 8);
+      this._add(buildWorldRocks(field, tex.rock, theme));
+    } });
+    steps.push({ label: '注水', run: () => { if (field && this.toggles.water) this._add(buildWorldWater(field, theme)); } });
+    steps.push({ label: '种树', run: () => { if (field && this.toggles.foliage) this._add(buildWorldFoliage(field, theme)); this._complete = !!field; } });
+    return steps;
   }
   _add(part) { if (!part) return null; this.parts.push(part); if (part.group) this.group.add(part.group); return part; }
 
@@ -50,7 +68,7 @@ export class World {
   }
   dispose() {
     for (const p of this.parts) { if (p.group) this.group.remove(p.group); p.dispose?.(); }
-    this.parts.length = 0; this.field = null; this._map = null;
+    this.parts.length = 0; this.field = null; this._map = null; this._complete = false;
   }
   stats() { let meshes = 0; this.group.traverse((o) => { if (o.isMesh || o.isPoints) meshes++; }); return { meshes, parts: this.parts.length }; }
 }

@@ -46,6 +46,8 @@ await page.click('#modeBtn'); await page.waitForTimeout(300);
 if (await page.evaluate(() => window.CTX.__app.mapSystem.currentBaseMapId) !== MAP) await page.click(`[data-map-id="${MAP}"]`);
 await page.waitForTimeout(300); await page.click('#modeOkBtn'); await page.waitForTimeout(3000);
 
+// 先等进图加载（分帧建地形 + 编译着色器）完成：加载期间仿真是暂停的，而加载靠渲染推进
+await page.waitForFunction(() => !window.CTX.__three.isLoading?.(), null, { timeout: 300000 });
 // 快进：暂时把渲染换成空函数，只推进仿真，到目标时间再恢复
 await page.evaluate(() => { const r = window.CTX.__three; window.__probeRender = r.render.bind(r); r.render = () => {}; window.CTX.__gameSpeed = 8; });
 for (let i = 0; i < 900; i++) { if ((await page.evaluate(() => window.gameTime || 0)) >= TARGET) break; await page.waitForTimeout(1000); }

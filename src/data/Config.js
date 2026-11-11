@@ -1421,6 +1421,8 @@ export const CONFIG = {
     // 程序化天空 / IBL（skyLight.js）：width/height 等距圆柱图分辨率；intensity 环境光总倍率；
     // hemiShare 半球光保留的份额（其余由 IBL 提供）；sunGlow/sunDisc 太阳光晕与日轮亮度；
     // quantize 太阳方向量化步长（超过才重算 PMREM）；background 是否把天空当背景
+    // 进图加载界面：着色器异步编译最多等多久（毫秒），超时就先揭开画面（驱动不支持并行编译时兜底）
+    loading: { compileTimeoutMs: 8000 },
     sky: { width: 256, height: 128, intensity: 1.0, shareK: 3.0, hemiShare: 0.25, sunGlow: 0.35, sunDisc: 6, quantize: 0.03, background: true },
     lighting: {
       sunGain: 1.6,          // 方向光相对"总辐照度 × (1-环境占比)"的倍率：PBR 材质要靠直射才有体积感
@@ -2122,6 +2124,9 @@ export const CONFIG = {
     bloom: { strength: 0.35, radius: 0.5 },   // 阈值在 ui.hdr.bloomThreshold
     // 抗锯齿（MSAA 采样数）。高分屏（像素比 ≥ hiDpiRatio）用 samplesHiDpi：物理像素已经够密，采样数减半省带宽
     aa: { samples: 4, samplesHiDpi: 2, hiDpiRatio: 1.75 },
+    // 场景颜色进后处理前的上限（线性 HDR 值）。超过它的高光照样是纯白，只是泛光不再无限放大；
+    // 主要作用是挡住半精度溢出出来的无穷大和 NaN，它们会被泛光糊成大块黑斑（见 PostFX.ScenePass）。
+    sceneMax: 64,
   },
 
   // ==================== 任务 #178：伪体积雾 ====================

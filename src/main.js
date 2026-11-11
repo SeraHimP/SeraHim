@@ -211,14 +211,22 @@ CTX.__setShadows = (lv) => renderer3d ? renderer3d.setShadowLevel(lv) : null;
 
 // ==================== 排查用的网址开关 ====================
 // 显卡相关的黑屏 / 花屏没法在开发环境复现（开发环境是软件渲染），让用户在自己机器上逐个关掉嫌疑功能来二分：
-//   ?aa=0 关抗锯齿   ?post=0 关全部后处理   ?shadow=0 关阴影   ?world=0 不建新地形   ?res=0.5 降渲染分辨率
+//   ?aa=0 关抗锯齿（?aa=1 强制开，并清掉自动降级记录）   ?post=0 关全部后处理   ?shadow=0 关阴影   ?world=0 不建新地形   ?res=0.5 降渲染分辨率
 //   ?ssao=0 / ?fog=0 / ?bloom=0 单独关一项
 // 只在网址里写了才生效，不写时行为与原来逐位一致。出问题时的诊断框（ThreeRenderer._showGpuDiag）会列出这些开关。
 function applyDebugSwitches(r) {
   if (!r || typeof location === 'undefined') return;
   const q = new URLSearchParams(location.search);
   const off = (k) => q.get(k) === '0';
-  if (off('aa')) r.setAA(false);
+  // 抗锯齿自动降级：上次因为多重采样丢了上下文（ThreeRenderer._installGpuDiagnostics 记下的），这次直接关掉。
+  // ?aa=1 强制再开并清掉记录（换了显卡 / 驱动之后用）。
+  let aaFallback = false;
+  try {
+    if (q.get('aa') === '1') localStorage.removeItem('seraAAFallback');
+    else aaFallback = localStorage.getItem('seraAAFallback') === '1';
+  } catch (e) { /* 读不了就当没有记录 */ }
+  if (aaFallback) console.info('[画面] 上次在这台机器上多重采样抗锯齿导致显卡重置，已自动关闭抗锯齿（网址加 ?aa=1 可强制开启）');
+  if (off('aa') || aaFallback) r.setAA(false);
   if (off('post')) r.setPostFX(false);
   if (off('shadow')) r.setShadowLevel('off');
   if (off('ssao')) r.setSSAO(false);
@@ -645,7 +653,8 @@ function gameLoop(timestamp) {
   const speed = CTX.__gameSpeed || 1;
   const feed = realDt * speed;
 
-  if (!CTX.gamePaused) {
+  // 进图加载中（ThreeRenderer 分帧建地形、编译着色器）时仿真也停：别让兵在加载界面后面先走出去
+  if (!CTX.gamePaused && !renderer3d?.isLoading?.()) {
     _acc += feed;
     let steps = 0;
     // ==================== v44：预算从「步数」改成「墙钟时间」 ====================

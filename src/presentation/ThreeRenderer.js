@@ -29,6 +29,7 @@ import { CorrosionLayer } from './CorrosionLayer.js';
 import { GroundTraceLayer } from './GroundTraceLayer.js';
 import { updateWeatherGround, setWeatherGroundMap, weatherGroundState } from './weatherGround.js';
 import { World } from './world/World.js';
+import { LoadingScreen } from '../ui/LoadingScreen.js';
 import { updateRainRipple } from './rainRipple.js';
 import { CONFIG } from '../data/Config.js';
 import { resolveDayPhase } from './DayNight.js';
@@ -199,7 +200,7 @@ export class ThreeRenderer {
     this.setHDR(null);
 
     // 切图后地面必须整体重建（贴图尺寸、世界尺寸都变了）
-    eventBus?.on?.('map:loaded', () => { this._terrainDirty = true; this.units.clear(); this.fx.markStaticDirty();
+    eventBus?.on?.('map:loaded', () => { this._terrainDirty = true; this._loadingUI = true; this.units.clear(); this.fx.markStaticDirty();
       // 建筑动画（掉块 / 爆炸 / 重生）的特效材质先编译好，事件那一刻不再现编译着色器（会卡一下）
       this.units.bfx.prewarm(this.gl, this.camera); });
     // 清理保险 A：死亡事件即时删（保险 B = UnitLayer.update 里的帧戳兜底扫描）
@@ -236,7 +237,12 @@ export class ThreeRenderer {
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       diag.lost = true;
-      this._showGpuDiag('显卡把这个页面的渲染状态重置了（WebGL 上下文丢失），画面已停止');
+      // 已知：部分 Windows 显卡在"多重采样抗锯齿 + 新地形"时会让驱动重置上下文（用户实测 ?aa=0 就正常）。
+      // 开着多重采样时丢了上下文，就记下来，下次加载自动关掉抗锯齿（网址里写 ?aa=1 可以强制再开、并清掉这条记录）。
+      const aaWasOn = this.aaOn && (this.scenePass?.samples || 0) > 0;
+      if (aaWasOn) { try { localStorage.setItem('seraAAFallback', '1'); } catch (er) { /* 存不了就算了 */ } }
+      this._showGpuDiag('显卡把这个页面的渲染状态重置了（WebGL 上下文丢失），画面已停止'
+        + (aaWasOn ? '。下次加载会自动关闭抗锯齿（多重采样）' : ''));
     }, false);
     canvas.addEventListener('webglcontextrestored', () => {
       let n = 0;
@@ -896,14 +902,66 @@ export class ThreeRenderer {
   }
 
   // ==================== 地面 ====================
+  /**
+   * 重建世界。两种走法：
+   *  · 换图（map:loaded）：拆成若干步、每帧做一步，期间显示加载界面并暂停仿真（isLoading），
+   *    最后用 compileAsync 把场景里所有材质的着色器在显卡上编译好再揭开画面——
+   *    不然进图后第一次转镜头、第一次看到某种东西时还会再卡一下。
+   *  · 其它（地图编辑器笔刷改了位图、开关水面 / 植被）：一次性同步建完，不弹加载界面。
+   */
   _rebuildTerrain() {
     this._terrainDirty = false;
     const ms = this.mapSystem, map = ms?.currentMap;
-    if (!(ms?.hasWalls?.() && map?.world) || this.world.disabled) { this.world.dispose(); return; }
-    if (this.world.builtFor(map)) return;
+    const withUI = this._loadingUI; this._loadingUI = false;
+    if (!(ms?.hasWalls?.() && map?.world) || this.world.disabled) { this.world.dispose(); this._finishLoading(); return; }
+    if (this.world.builtFor(map)) { this._finishLoading(); return; }
     setWeatherGroundMap(ms);   // 天气地表：世界尺寸 + 河道遮罩
-    this.world.build(ms, { anisotropy: Math.min(8, this.gl.capabilities.getMaxAnisotropy()) });
-    this.gl.shadowMap.needsUpdate = true;
+    const opts = { anisotropy: Math.min(8, this.gl.capabilities.getMaxAnisotropy()) };
+    if (!withUI) { this.world.build(ms, opts); this.gl.shadowMap.needsUpdate = true; return; }
+    this._loading = { steps: this.world.buildSteps(ms, opts), i: 0, compiling: false, done: false, shown: false };
+    LoadingScreen.show(map.label || map.id);
+    LoadingScreen.progress(0, '准备中');
+  }
+
+  /** 加载中（仿真应暂停，main.js 的游戏循环读它）。 */
+  isLoading() { return !!this._loading; }
+
+  /** 每帧推进一步加载。返回 true 表示这一帧还在加载（不画场景）。 */
+  _stepLoading() {
+    const L = this._loading;
+    if (!L) return false;
+    const total = L.steps.length + 1;   // 最后一步是着色器编译
+    // 第一帧什么都不做：先把加载界面画出来，再开始卡主线程的建图（否则界面要等第一步做完才显示）
+    if (!L.shown) { L.shown = true; return true; }
+    if (L.i < L.steps.length) {
+      const st = L.steps[L.i++];
+      try { st.run(); } catch (e) { console.error('[加载] ' + st.label + ' 失败：', e); }
+      const next = L.steps[L.i];
+      LoadingScreen.progress(L.i / total, next ? next.label : '编译着色器');
+      return true;
+    }
+    if (!L.compiling) {
+      L.compiling = true;
+      this.gl.shadowMap.needsUpdate = true;
+      const done = () => { L.done = true; };
+      try {
+        const p = this.gl.compileAsync ? this.gl.compileAsync(this.scene, this.camera) : null;
+        if (p && p.then) p.then(done, done); else done();
+      } catch (e) { done(); }
+      // 兜底：驱动不支持并行编译时 compileAsync 可能很久才回来，最多等这么久就先揭开
+      setTimeout(done, CONFIG.ui?.loading?.compileTimeoutMs ?? 8000);
+      return true;
+    }
+    if (!L.done) return true;
+    this._finishLoading();
+    return false;
+  }
+
+  _finishLoading() {
+    if (!this._loading && !LoadingScreen.isVisible()) return;
+    this._loading = null;
+    LoadingScreen.progress(1, '');
+    LoadingScreen.hide();
   }
 
   // ===== 第 5 步：接手 CanvasController 面向渲染器的接口 =====
@@ -954,6 +1012,7 @@ export class ThreeRenderer {
       this._lastRenderAt = t;
     }
     if (this._terrainDirty) this._rebuildTerrain();
+    if (this._loading && this._stepLoading()) return;   // 加载中：这一帧只做一步建图，不画场景（加载界面盖着）
     if (controller) this.syncCameraFrom(controller);
     this._fitShadowToView(controller);
     this._autoFog();   // 大气透视的远近跟着机位距离走

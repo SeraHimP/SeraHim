@@ -323,7 +323,42 @@ T('雾-render 每帧调用 _autoFog（机位距离一变雾就跟着变）', /th
   T('诊⑤-网址开关：aa / post / shadow / ssao / fog / bloom / world / res 都接上了，且只在写了时生效',
     ['aa', 'post', 'shadow', 'ssao', 'fog', 'bloom', 'world'].every((k) => new RegExp("off\\('" + k + "'\\)").test(mainSrc))
     && /q\.get\(k\) === '0'/.test(mainSrc) && /parseFloat\(q\.get\('res'\)\)/.test(mainSrc) && /applyDebugSwitches\(renderer3d\);/.test(mainSrc));
-  T('诊⑥-?world=0 真的能跳过新地形（_rebuildTerrain 认 world.disabled）', /this\.world\.disabled\) \{ this\.world\.dispose\(\); return; \}/.test(tr));
+  T('诊⑥-?world=0 真的能跳过新地形（_rebuildTerrain 认 world.disabled，并关掉加载界面）', /this\.world\.disabled\) \{ this\.world\.dispose\(\); this\._finishLoading\(\); return; \}/.test(tr));
+}
+
+// ==================== 黑块闪烁 / 抗锯齿自动降级 / 可复现 ====================
+// 用户："移动画面的时候，偶发黑色大块闪（大概占屏幕的 1/9）"，关掉后处理就没有。
+// 实测水面正对太阳时场景缓冲里的高光到了 500~700，半精度再碰巧溢出成无穷大 / NaN，泛光把它糊成大块黑。
+{
+  const pfx = srcOf('src/presentation/PostFX.js'), tr = srcOf('src/presentation/ThreeRenderer.js'), mainSrc = srcOf('src/main.js');
+  T('闪①-场景拷出时清掉 NaN、把值夹在 [0, sceneMax]（进泛光前）',
+    /any\(isnan\(c\.rgb\)\) \? vec3\(0\.0\) : clamp\(c\.rgb, 0\.0, uMax\)/.test(pfx) && /uMax: \{ value: CONFIG\.postfx\?\.sceneMax/.test(pfx));
+  T('闪②-上限软编码，而且远高于正常画面的亮度（对正常像素是空操作）', typeof CONFIG.postfx.sceneMax === 'number' && CONFIG.postfx.sceneMax >= 16);
+  T('复①-SSAO 的采样核与噪声图用固定种子（不再每次刷新都随机，截图对比可复现）',
+    /seededRandom\(1013\)/.test(pfx) && /seededRandom\(2027\)/.test(pfx) && !/=\s*Math\.random\(\)|\(Math\.random\(\)/.test(pfx));
+  T('降①-开着多重采样时丢了上下文，记下"下次自动关抗锯齿"', /aaWasOn[\s\S]{0,120}localStorage\.setItem\('seraAAFallback', '1'\)/.test(tr));
+  T('降②-下次加载读到记录就关抗锯齿；?aa=1 强制再开并清掉记录',
+    /localStorage\.getItem\('seraAAFallback'\) === '1'/.test(mainSrc) && /q\.get\('aa'\) === '1'\) localStorage\.removeItem\('seraAAFallback'\)/.test(mainSrc)
+    && /if \(off\('aa'\) \|\| aaFallback\) r\.setAA\(false\);/.test(mainSrc));
+}
+
+// ==================== 进图加载界面（分帧建图）====================
+// 用户："进地图需要卡一会"。建图拆成若干步、每帧一步，期间显示加载界面、暂停仿真，最后异步编译着色器再揭开。
+{
+  const tr = srcOf('src/presentation/ThreeRenderer.js'), mainSrc = srcOf('src/main.js'), wd = srcOf('src/presentation/world/World.js');
+  T('载①-加载中 render 只推进一步建图、不画场景', /if \(this\._loading && this\._stepLoading\(\)\) return;/.test(tr));
+  T('载②-开始加载的那一帧先只显示界面（否则界面要等第一步卡完才出来）', /if \(!L\.shown\) \{ L\.shown = true; return true; \}/.test(tr));
+  T('载③-最后用 compileAsync 预编译着色器，并有超时兜底（超时时长软编码）',
+    /this\.gl\.compileAsync\(this\.scene, this\.camera\)/.test(tr) && /CONFIG\.ui\?\.loading\?\.compileTimeoutMs/.test(tr) && typeof CONFIG.ui.loading.compileTimeoutMs === 'number');
+  T('载④-加载中仿真暂停（兵不会在加载界面后面先走出去）', /if \(!CTX\.gamePaused && !renderer3d\?\.isLoading\?\.\(\)\)/.test(mainSrc));
+  T('载⑤-只有换图才弹加载界面（地图编辑器笔刷改位图仍是同步重建）', /'map:loaded', \(\) => \{ this\._terrainDirty = true; this\._loadingUI = true;/.test(tr)
+    && /if \(!withUI\) \{ this\.world\.build\(ms, opts\);/.test(tr));
+  T('载⑥-"这张图已建好"要等全部步骤做完（建到一半再触发一次换图不会把半成品当成品）',
+    /builtFor\(map\) \{ return !!this\.field && this\._map === map && this\._complete === true; \}/.test(wd) && /this\._complete = !!field;/.test(wd));
+  const { World } = await import('../src/presentation/world/World.js');
+  const steps = new World(new THREE.Scene()).buildSteps({ currentMap: null, terrainField: () => null });
+  T('载⑦-一次性建图与分帧建图走同一份步骤（高度场 → 地表 → 岩壁 → 水 → 树）',
+    steps.map((x) => x.label).join('/') === '计算地形高度场/生成地表/堆砌岩壁/注水/种树' && /for \(const st of this\.buildSteps\(ms, opts\)\) st\.run\(\);/.test(wd));
 }
 
 done();

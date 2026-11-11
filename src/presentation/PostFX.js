@@ -45,10 +45,19 @@ class ScenePass extends Pass {
       depthTexture: new THREE.DepthTexture(width, height),
     });
     this.rt.texture.name = 'ScenePass.color';
+    // 拷出来的同时清掉坏值：半精度缓冲里超过 65504 的值会变成无穷大（低粗糙度水面正对太阳时的镜面高光就能到这个量级），
+    // 计算出错的像素是 NaN。这两种值进了泛光，会在低分辨率层里被糊开成一大块黑——
+    // 用户报"移动画面时偶发黑色大块闪一下，大概占屏幕 1/9"，关掉后处理就没有，正是这个形状。
+    // 上限取 CONFIG.postfx.sceneMax：正常画面里的值远低于它，所以这一步对正常像素是空操作。
     this.copyMat = new THREE.ShaderMaterial({
-      uniforms: { tDiffuse: { value: this.rt.texture } },
+      uniforms: { tDiffuse: { value: this.rt.texture }, uMax: { value: CONFIG.postfx?.sceneMax ?? 64 } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-      fragmentShader: 'varying vec2 vUv; uniform sampler2D tDiffuse; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }',
+      fragmentShader: `varying vec2 vUv; uniform sampler2D tDiffuse; uniform float uMax;
+        void main() {
+          vec4 c = texture2D(tDiffuse, vUv);
+          c.rgb = any(isnan(c.rgb)) ? vec3(0.0) : clamp(c.rgb, 0.0, uMax);
+          gl_FragColor = c;
+        }`,
       depthTest: false, depthWrite: false,
     });
     this.fsq = new FullScreenQuad(this.copyMat);
@@ -126,12 +135,19 @@ const RECONSTRUCT_GLSL = `
 // 累积遮蔽率。核数量给到 12（低多边形场景不需要电影级精度，12 个足够消除明显的
 // 条纹感，同时对同屏两三百个单位的场景保留性能余量）。
 const SSAO_KERNEL_SIZE = 12;
+// 采样核和噪声图用固定种子生成。原来每次刷新页面都随机生成，AO 的颗粒次次不同，
+// 而且谁先消耗了随机数会改变它——截图对比工具因此分不清"画面真的变了"还是"只是随机核换了"。
+function seededRandom(seed) {
+  let s = seed >>> 0;
+  return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
 function buildSSAOKernel() {
+  const rnd = seededRandom(1013);
   const kernel = [];
   for (let i = 0; i < SSAO_KERNEL_SIZE; i++) {
     // 半球分布（z ∈ [0,1]，不是球面）+ 越靠近核心权重越大的加速插值——SSAO 的经典配方，
     // 让采样点更集中在离原点近的地方，减少大半径下的漏光。
-    let v = new THREE.Vector3(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random());
+    let v = new THREE.Vector3(rnd() * 2 - 1, rnd() * 2 - 1, rnd());
     v.normalize();
     let scale = i / SSAO_KERNEL_SIZE;
     scale = 0.1 + 0.9 * scale * scale; // lerp(0.1, 1.0, scale^2)
@@ -145,9 +161,10 @@ function buildSSAOKernel() {
 function buildNoiseTexture() {
   const size = 4;
   const data = new Float32Array(size * size * 4);
+  const rnd = seededRandom(2027);
   for (let i = 0; i < size * size; i++) {
-    data[i * 4] = Math.random() * 2 - 1;
-    data[i * 4 + 1] = Math.random() * 2 - 1;
+    data[i * 4] = rnd() * 2 - 1;
+    data[i * 4 + 1] = rnd() * 2 - 1;
     data[i * 4 + 2] = 0;
     data[i * 4 + 3] = 1;
   }

@@ -5,7 +5,7 @@
  * 用法：
  *   node tools/shots.mjs --out shots/before                       # 出一组截图
  *   node tools/shots.mjs --out shots/after --compare shots/before # 出一组并和上一组逐像素比
- *   可选：--maps a,b  --phases 0.25,0.75  --views overview,close  --advance 45  --size 1280x800  --threshold 0  --seed 7
+ *   可选：--maps a,b  --phases 0.25,0.75  --views overview,close  --advance 45  --size 1280x800  --threshold 0  --seed 7  --query ssao=0
  *
  * 可复现：页面加载前接管 requestAnimationFrame / performance.now / Date.now / Math.random，
  * 由本工具一帧一帧推进虚拟时钟（固定帧长、固定随机种子）。同一份代码跑两次，截图逐像素一致；
@@ -33,6 +33,7 @@ const [VW, VH] = arg('size', '1280x800').split('x').map(Number);
 const THRESHOLD = +arg('threshold', 0);
 const SEED = +arg('seed', 7);
 const COMPARE = arg('compare', '');
+const QUERY = arg('query', '');   // 给页面带网址开关，例如 ssao=0&shadow=0（见 main.js 的 applyDebugSwitches）
 
 fs.mkdirSync(OUT, { recursive: true });
 let chromium;
@@ -71,18 +72,21 @@ const page = await browser.newPage({ viewport: { width: VW, height: VH }, device
 page.setDefaultTimeout(900000);
 page.on('pageerror', (e) => console.log('页面错误:', e.message.slice(0, 300)));
 await page.addInitScript(installVirtualClock, SEED);
-await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
+await page.goto(`http://127.0.0.1:${server.address().port}/index.html${QUERY ? '?' + QUERY : ''}`);
 await page.waitForFunction(() => !!(window.CTX && window.CTX.__three && window.CTX.__app));
 await page.evaluate(() => window.__vt.step(3));
 
 for (const mapId of MAPS) {
   // 切图 → 快进（渲染换成空函数，只推进仿真）→ 暂停
-  const info = await page.evaluate(([id, adv]) => {
+  const info = await page.evaluate(async ([id, adv]) => {
     const C = window.CTX, r = C.__three;
     if (C.__weather) C.__weather.enabled = false;
     C.gamePaused = false;
     C.__app.mapSystem.loadMap(id);
-    window.__vt.step(2);
+    window.__vt.step(1);
+    // 等分帧建图 + 着色器异步编译完成。用 0 时长的帧推进：虚拟时钟不走，结果仍然可复现
+    for (let i = 0; i < 2000 && r.isLoading?.(); i++) { window.__vt.step(1, 0); await new Promise((res) => setTimeout(res, 5)); }
+    window.__vt.step(1);
     const realRender = r.render.bind(r); r.render = () => {};
     C.__gameSpeed = 8;
     const t0 = window.gameTime || 0;
