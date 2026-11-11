@@ -570,6 +570,13 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
   _MANA_TUNING_FIELDS: [
     { path: 'tuning.mana.onAttack', label: '全局·每次攻击回复法力', step: 0.5 },
     { path: 'tuning.mana.onHitTaken', label: '全局·每次受击回复法力', step: 0.5 },
+    // 同类的全局规则调参：枢纽防御塔重生（Q12）、攻城车对塔倍率与距离加伤（Q5）
+    { path: 'tuning.hqTowerRespawn.delaySec', label: '枢纽塔·重生等待(秒)', step: 10 },
+    { path: 'tuning.hqTowerRespawn.hpPct', label: '枢纽塔·重生生命(%)', step: 5 },
+    { path: 'tuning.hqTowerRespawn.maxTimes', label: '枢纽塔·每座可重生次数', step: 1 },
+    { path: 'gameRules.ram.siegeDamagePct', label: '攻城车·对塔伤害(%)', step: 10 },
+    { path: 'gameRules.ram.rangeBonusMaxPct', label: '攻城车·满射程距离加伤(%)', step: 10 },
+    { path: 'gameRules.ram.rangeBonusCurveK', label: '攻城车·距离加伤曲线陡度', step: 0.5 },
   ],
   // 寻路参数（NavPlanner.js）：同样是 CONFIG 上的全局调参，复用 _getPath/_setPath
   _NAV_TUNING_FIELDS: [

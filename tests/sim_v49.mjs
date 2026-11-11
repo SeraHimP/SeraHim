@@ -19,7 +19,7 @@ const { EventBus } = await import('../src/utils/EventBus.js');
 const { EffectRegistry } = await import('../src/core/EffectRegistry.js');
 const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
 const { AttributeCalculator: A } = await import('../src/core/AttributeCalculator.js');
-const { CombatSystem, ramSplashRadius, hasRamCannon } = await import('../src/systems/CombatSystem.js');
+const { CombatSystem, ramSplashRadius, hasRamCannon, ramDamageMult } = await import('../src/systems/CombatSystem.js');
 const { ProjectileSystem } = await import('../src/systems/ProjectileSystem.js');
 const { equipSkill } = await import('../src/core/skillParams.js');
 
@@ -236,10 +236,12 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
   const dMinion = h - m2.currentHP;
   const AD = CONFIG.templates.ram.attackDamage;
   // v49b：对建筑的倍率回到攻城车自己的 siegeDamagePct（充能的 damagePct 是中性 100）
-  T(`城⑦-对塔 = 攻城车的 siegeDamagePct（${Math.round(dTower)} ≈ ${Math.round(AD * R.siegeDamagePct / 100)}）`,
-    Math.abs(dTower - AD * R.siegeDamagePct / 100) < 2);
-  T(`城⑦-对兵 = 普通模式的伤害增幅（${Math.round(dMinion)} ≈ ${Math.round(AD * (1 + R.normalDamageAmpPct / 100))}）`,
-    Math.abs(dMinion - AD * (1 + R.normalDamageAmpPct / 100)) < 2);
+  // Q5：再与距离加伤相加（ramDamageMult），期望值按两者的实际距离 / 射程算
+  const rngR = A.calc(r2, []).attackRange;
+  const tOf = (u) => Math.hypot(u.pos.x - r2.pos.x, u.pos.y - r2.pos.y) / rngR;
+  const expT = AD * ramDamageMult(t2, tOf(t2)), expM = AD * ramDamageMult(m2, tOf(m2));
+  T(`城⑦-对塔 = siegeDamagePct + 距离加伤（${Math.round(dTower)} ≈ ${Math.round(expT)}）`, Math.abs(dTower - expT) < 2);
+  T(`城⑦-对兵 = 普通模式的伤害增幅 + 距离加伤（${Math.round(dMinion)} ≈ ${Math.round(expM)}）`, Math.abs(dMinion - expM) < 2);
   T('城⑧-「近战对攻城车 +100%」已按用户定稿删除', (() => {
     const mel = mk(e2, 'melee', 10, 'red');
     A.tick();
@@ -258,8 +260,8 @@ const mk = (ents, type, x, fac, hp = 100000, extra = {}) => {
   const CH = SkillLibrary.atkmode_charge.defaultParams;
   T('补①-攻城车所有状态下都充能（用户改稿），充能自身的倍率回归中性 100',
     CH.onlyVs === 'any' && CH.damagePct === 100);
-  T('补②-攻击力 70 / 对建筑 550%（Q5：700→550，用户定稿"攻城车太强了"削弱）',
-    CONFIG.templates.ram.attackDamage === 70 && R.siegeDamagePct === 550);
+  T('补②-攻击力 70 / 对建筑 150%（Q5 重做：550→150，远近差距改由距离加伤给）',
+    CONFIG.templates.ram.attackDamage === 70 && R.siegeDamagePct === 150);
   T('补③-普通模式 +33% 攻速走 baseAttackSpeed 的百分比，不走 bonusAttackSpeedPct', (() => {
     // 攻城车的攻速收益率是 0.05：正向加成要打 5% 的折，33% 只剩 1.65%，等于没有。
     // baseAttackSpeed 不过收益率 —— 这是选它的全部理由，钉住免得被"顺手改回去"。

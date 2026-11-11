@@ -25,6 +25,34 @@ export function hasRamCannon(e) {
   return !!e && !!e._skillInstances
     && e._skillInstances.some(i => i.skillId === 'passive_ram_cannon' && !i._disabled);
 }
+/**
+ * 攻城车的距离加伤（额外倍率，0 ~ rangeBonusMaxPct/100）。
+ * 用户（Q5）："攻城车攻击的目标距离越远，造成的伤害越高，在满射程下+350%伤害（指数级衰减，
+ * 行军/攻城模式下都生效）"；曲线定稿"越远涨得越快"——t = 中心距 / 当前射程（0..1），
+ * bonus = max × (e^(k·t) − 1) / (e^k − 1)。k 越大越"贴近满射程才有"，k→0 退化为线性。
+ * 中心距与射程是同一把尺子：远程单位打建筑的够得着距离就是 max(射程, 建筑半径+间隙) 的中心距。
+ */
+export function ramRangeBonus(rangeT) {
+  const R = CONFIG.gameRules?.ram || {};
+  const max = (R.rangeBonusMaxPct ?? 350) / 100;
+  if (!(max > 0)) return 0;
+  const t = Math.max(0, Math.min(1, rangeT || 0));
+  const k = R.rangeBonusCurveK ?? 3;
+  const shape = Math.abs(k) < 1e-6 ? t : (Math.exp(k * t) - 1) / (Math.exp(k) - 1);
+  return max * shape;
+}
+/**
+ * 攻城车对主目标的总倍率。用户定稿与对塔倍率"相加"：满射程打塔 = 1 + 0.5 + 3.5 = 5 倍。
+ * 对塔：siegeDamagePct/100 + 距离加成；对其余目标：1 + normalDamageAmpPct/100 + 距离加成。
+ */
+export function ramDamageMult(target, rangeT) {
+  const R = CONFIG.gameRules?.ram || {};
+  const base = isStructureUnit(target)
+    ? (R.siegeDamagePct ?? 150) / 100
+    : (1 + (R.normalDamageAmpPct ?? -33) / 100);
+  return Math.max(0, base + ramRangeBonus(rangeT));
+}
+
 /** 攻城车当前模式：打防御塔 = 'siege'，打别的 = 'normal'；没装攻城炮则 null。 */
 export function ramModeOf(e, target) {
   if (!hasRamCannon(e)) return null;
@@ -775,6 +803,10 @@ export class CombatSystem {
       // 注释：命中结算时攻击者可能已经死亡并被 EntityContainer.purgeDead() 移出
       // 容器，届时再查就晚了。
       attackerCategory: attackerCategoryOf(attacker, CONFIG.templates),
+      // 攻城车距离加伤：开火那一刻的"中心距 / 当前射程"快照（子弹飞行中目标移动不改变这一发的加成）
+      ramRangeT: hasRamCannon(attacker)
+        ? Math.hypot(target.pos.x - attacker.pos.x, target.pos.y - attacker.pos.y) / Math.max(1, atkStats.attackRange || 1)
+        : 0,
     };
 
     // ---- 弹道模型（v2.5D Q1）：所有单位统一 ----
@@ -896,12 +928,9 @@ export class CombatSystem {
     if (chargeP) totalRaw *= chargeP.damageMult;   // 充能武器自带的倍率（攻城车用中性 100）
     // 攻城车自己的两档：对建筑 siegeDamagePct%，对其余目标 normalDamageAmpPct。
     // v49b 起充能对所有目标生效，所以这两档不再与"要不要充能"绑在一起判 —— 只看目标是不是建筑。
-    if (hasRamCannon(attacker)) {
-      const R = CONFIG.gameRules?.ram || {};
-      totalRaw *= isStructureUnit(target)
-        ? (R.siegeDamagePct ?? 700) / 100
-        : (1 + (R.normalDamageAmpPct ?? -33) / 100);
-    }
+    // 距离加伤与这两档相加（见 ramDamageMult）。
+    const ramMult = hasRamCannon(attacker) ? ramDamageMult(target, hitInfo.ramRangeT) : 1;
+    totalRaw *= ramMult;
 
     // ---- 防御计算（支持护甲穿透和魔法穿透） ----
     const attackType = hitInfo.attackType;
@@ -1056,17 +1085,12 @@ export class CombatSystem {
     // （攻城 siegeSplash / 普通 normalSplash），所以这里要把两个来源取大的那个。
     // 溅射的基数把攻城模式那份增幅**除回去**：用户定稿的口径一直是
     // "额外增幅只对塔生效"，溅射打的是塔周围的别的单位，不该跟着吃。
-    const R49 = CONFIG.gameRules?.ram || {};
     const ramR = ramSplashRadius(attacker, target);
     const splashR = Math.max(attacker?.baseStats?.splashRadius || 0, ramR);
     if (splashR > 0) {
-      // 溅射把"只对主目标生效"的那两档增幅除回去（口径一直是：额外增幅只作用于主目标）
-      const siegeMult = (chargeP ? chargeP.damageMult : 1)
-        * (hasRamCannon(attacker)
-            ? (isStructureUnit(target) ? (R49.siegeDamagePct ?? 700) / 100
-                                       : (1 + (R49.normalDamageAmpPct ?? -33) / 100))
-            : 1);
-      this._applyExplosion(attacker, target, totalRaw / siegeMult, attackType, splashR, { attackerCategory: hitInfo.attackerCategory });
+      // 溅射把"只对主目标生效"的增幅（对塔倍率/普通模式减伤/距离加伤）除回去（口径一直是：额外增幅只作用于主目标）
+      const siegeMult = (chargeP ? chargeP.damageMult : 1) * ramMult;
+      this._applyExplosion(attacker, target, siegeMult > 0 ? totalRaw / siegeMult : 0, attackType, splashR, { attackerCategory: hitInfo.attackerCategory });
     }
   }
 

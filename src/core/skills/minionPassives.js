@@ -729,6 +729,7 @@ const ramPassive = {
     get description() {
       const R = CONFIG.gameRules?.ram || {};
       return `唯一被动——攻城炮：攻击带溅射（攻城模式半径 ${R.siegeSplash ?? 75}，普通模式半径 ${R.normalSplash ?? 25}）。`
+        + `目标越远伤害越高：满射程时 +${R.rangeBonusMaxPct ?? 350}%（越接近满射程涨得越快，两种模式都生效）。`
         + '攻击防御塔时进入【攻城模式】，攻击其他单位时进入【普通模式】；锁定一座建筑后不再改变目标，索敌优先防御塔。';
     },
     get descTemplate() { return this.description; },
@@ -823,7 +824,7 @@ const ramPassive = {
     applicableTypes: ['ram'], color: '#e67e22',
     get description() {
       const R = CONFIG.gameRules?.ram || {};
-      return `唯一被动——攻城模式：对防御塔造成 ${R.siegeDamagePct ?? 700}% 伤害。`
+      return `唯一被动——攻城模式：对防御塔造成 ${R.siegeDamagePct ?? 150}% 伤害（与距离加伤相加）。`
         + `每次攻击叠 ${R.fatiguePerAttack ?? 7} 层`
         + `【攻城疲惫】（每层攻速 ${R.fatigueLayerPct ?? -1}%，无上限叠加），攻城模式下**不恢复**。`
         + `充能被打断时每秒衰减当前充能的 ${CONFIG.tuning?.charge?.decayPctPerSec ?? 10}%。`;

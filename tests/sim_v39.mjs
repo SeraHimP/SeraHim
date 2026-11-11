@@ -248,14 +248,17 @@ function battle() {
   // 断言按配置算期望值，不再钉字面量 —— 这个数用户还会调。
   // v49b：充能的 damagePct 回归中性 100（充能是节奏，不是倍率），
   // 对建筑的倍率回到攻城车自己的 gameRules.ram.siegeDamagePct。
-  const _sp = CONFIG.gameRules.ram.siegeDamagePct / 100;
+  // Q5：再与距离加伤相加（ramDamageMult），期望值按实际距离 / 射程算
+  const { ramDamageMult: _rdm } = await import('../src/systems/CombatSystem.js');
+  const _tOf = (u) => Math.hypot(u.pos.x - R.pos.x, u.pos.y - R.pos.y) / attr.calc(R, []).attackRange;
+  const _sp = _rdm(T1, _tOf(T1));
   const _expTower = _AD * _sp * 100 / 140;
   T(`① 打建筑 ×${_sp}（${Math.round(dmgTower)} ≈ ${Math.round(_expTower)}）`,
     Math.abs(dmgTower - _expTower) < 3);
   const mn = mkUnit(ents2, 'melee', 'red', 30, 0);
   attr.tick(); h0 = mn.currentHP; combat.performAttack(R, mn);
   const dmgMinion = h0 - mn.currentHP;
-  const _np = 1 + CONFIG.gameRules.ram.normalDamageAmpPct / 100;
+  const _np = _rdm(mn, _tOf(mn));
   const _expMinion = _AD * _np * 100 / 115;
   T(`② 打小兵 ${CONFIG.gameRules.ram.normalDamageAmpPct}%（${Math.round(dmgMinion)} ≈ ${Math.round(_expMinion)}）`,
     Math.abs(dmgMinion - _expMinion) < 3);
