@@ -27,7 +27,7 @@
  */
 import { statMod } from '../statMod.js';
 import { applyHeal, healPowerFor, grantTempShield } from '../healing.js';
-import { MELEE_RANGE_THRESHOLD } from '../../data/Config.js';
+import { attackModeOf } from '../attackMode.js';
 import { CONFIG } from '../../data/Config.js';
 
 /** 取某条龙魂的参数（缺省回落到出厂值，编辑器改 CONFIG 即时生效）。 */
@@ -524,7 +524,7 @@ export const dragonSouls = {
       const atk = ctx.entityContainer.get(attackerId);
       if (!self || !atk || !atk.alive) return;
       if ((self.tempShield || 0) + (self.shieldFixedCurrent || 0) <= 0) return;   // 没盾不反弹
-      if ((atk.baseStats?.attackRange ?? 999) > MELEE_RANGE_THRESHOLD) return;     // 只反近战
+      if (attackModeOf(atk, ctx?.skillLibrary || ctx?.combat?.skills) !== 'melee') return;     // 只反近战（按攻击方式，Q3）
       const back = amount * ((p.reflectPct ?? 30) / 100);
       if (back > 0) ctx.combat?.performAttackDirect?.(entityId, attackerId, back, 'true', { _noProc: true });
     },

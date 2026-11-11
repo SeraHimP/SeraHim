@@ -8,6 +8,7 @@
  * 逐字未动、缩进未动。AttributeEditor.js 用 Object.assign 把各块合成同一个对象，
  * 因此所有 `this.xxx` 的跨块调用与拆分前完全一致 —— 它们本来就在同一个对象上。
  */
+import { ATTACK_MODES, ATTACK_MODE_LABELS, attackModeOf } from '../../core/attackMode.js';
 import { CONFIG } from '../../data/Config.js';
 import { SkillLibrary, renderSkillDescription, skillsByType } from '../../core/SkillLibrary.js';
 import { towerTierSource } from '../../data/schema/index.js';
@@ -50,7 +51,7 @@ export const EDITOR_PAGES_ENTITY = {
     //   法力：新开一组——这四项是一整套新概念（资源条），硬塞进上面任何一组
     //         都会让那一组变得答非所问，值得单独一个标签页。
     const attackKeys = ['attackDamage', 'abilityPower', 'baseAttackSpeed', 'bonusAttackSpeedPct',
-      'attackSpeedRatio', 'attackRange', 'attackType', 'bulletSpeed',
+      'attackSpeedRatio', 'attackRange', 'attackType', 'attackMode', 'bulletSpeed',
       'critChance', 'critDamagePct', 'adaptiveForce'];
     const defenseKeys = ['armor', 'magicResist', 'damageReduction', 'damageBlock', 'shieldFixedMax',
       'plainShieldFlat', 'tempShieldDecayPct', 'evasionPct', 'tenacityPct'];
@@ -85,7 +86,13 @@ export const EDITOR_PAGES_ENTITY = {
       for (const key of keys) {
         const value = data[key] ?? 0;
         const label = fieldLabel(key);
-        if (key === 'attackType') {
+        if (key === 'attackMode') {
+          // Q3：攻击方式四选一（近战/弹道/光束/范围）。塔装了武器时以武器声明为准，这里改的是单位自身的默认。
+          const cur = attackModeOf(target.baseStats ? target : { baseStats: data, type: data.type });
+          html += `<div class="slider-row"><label title="${key}">${label}</label><select data-key="${key}" data-orig="${cur}" class="editor-select">`;
+          for (const m of ATTACK_MODES) html += `<option value="${m}" ${cur === m ? 'selected' : ''}>${ATTACK_MODE_LABELS[m]}</option>`;
+          html += `</select></div>`;
+        } else if (key === 'attackType') {
           html += `<div class="slider-row"><label title="${key}">${label}</label><select data-key="${key}" data-orig="${value}" class="editor-select">`;
           // v51.1：补上 'adaptive'（自适应）——用户新增的伤害类型逻辑，忘了同步到这个
           // 下拉框，选不了就等于这条规则在编辑器里"不存在"。

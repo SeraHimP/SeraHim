@@ -7,6 +7,7 @@ import { resolveSkillParams } from '../core/skillParams.js';
 import { canFire } from './FacingSystem.js';
 import { attackerCategoryOf, ENV_CATEGORY, trackDamageTaken, applyEnvTrueDamage } from '../core/damageAttribution.js';
 import { random } from '../core/rng.js';
+import { attackModeOf } from '../core/attackMode.js';
 
 // 持续真实伤害在受伤统计里的归类（见 damageAttribution.applyEnvTrueDamage）
 const WEATHER_DMG_CATEGORY = Object.freeze({ key: 'env:weather', label: '天气' });
@@ -71,7 +72,7 @@ export function ramSplashRadius(e, target) {
 // 巨龙一律按近战：它是近身挥击（createDragon 里 bulletSpeed = 0），射程 80 只是"够得着"的距离。
 // 原来只按射程判，80 > 60 于是龙走了远程弹道，弹速取 0 + 星龙之力的 +6 = 6——
 // 用户报"星龙攻击时正常的弹道无法造成伤害……移动的特别特别慢"，就是这发以 6 的速度爬的子弹。
-const isMeleeUnit = (e) => !!e && (e.type === 'dragon' || (e.baseStats?.attackRange ?? 999) <= MELEE_RANGE_THRESHOLD);
+// 近战/弹道/光束/范围的判定统一走 core/attackMode.js 的 attackModeOf（Q3：不再按射程隐式推断）。
 // v2.5D（Q1）：模板未声明 bulletSpeed 的远程单位取此默认弹速（与防御塔同值）。
 // 想给某兵种单独手感，在 Config 模板里补 bulletSpeed 即可覆盖，此处无需再改。
 // 本轮搬进 CONFIG.tuning.defaultBulletSpeed（软编码唯一来源，属性面板也读同一个值，
@@ -821,17 +822,16 @@ export class CombatSystem {
     // 原先写死 attacker.type === 'tower'，小兵/巨龙一律瞬时结算、无可视弹道
     //（注释理由"防卡顿"属单文件时代遗留：实测 40 远程兵齐射峰值在飞弹仅 40 发）。
     //
-    // 判据用【射程】而不是 bulletSpeed —— 关键：十个模板里只有防御塔(400)和术士兵(320)
-    // 声明了 bulletSpeed，远程兵/炮兵/图腾兵/攻城车全是 undefined。若按 bulletSpeed>0 判，
-    // 这几个"看着就该有子弹"的兵种会被静默排除（第一版正是栽在这里）。
-    // isMeleeUnit 读 baseStats.attackRange ≤ MELEE_RANGE_THRESHOLD(60)，是本文件既有判据，
-    // 且读【基础】射程——射程 buff 不该把近战兵变成远程兵。
-    //
-    // 统一后的模型：
-    //   远程（射程 > 60）：可见弹道，飞行结束才结算伤害；模板缺 bulletSpeed 时用默认值
-    //   近战（射程 ≤ 60）：视作"弹速无穷大的弹道"——不可见、瞬时生效（巨龙射程 0 亦属此列）
+    // 判据是单位/武器显式声明的攻击方式（attackModeOf），不是 bulletSpeed 也不是射程：
+    //   弹道：可见弹道，飞行结束才结算伤害；模板缺 bulletSpeed 时建兵阶段已补默认弹速
+    //   近战：出手即结算、无弹道；巨龙另走一发隐藏的定时弹（吐息落地才结算）
+    //   光束 / 范围：有自己武器实现的（闪电杖、光棱、聚能炮、腐蚀）在 onBeforeAttack 里已经 skipProjectile 返回，
+    //               走到这里的是"模板声明了光束/范围、但没有专属武器"的单位，用下面的通用路径
     // 注意这【改变伤害时序】：远程单位伤害晚 0.3~0.8s 落地，目标先死则该发伤害整个消失。
-    if (this.projectiles && !isMeleeUnit(attacker) && attacker.pos && target.pos) {
+    // Q3：攻击方式显式声明（模板 attackMode / 武器 attackMode），不再按射程推断——
+    // 弹道即使射程为 1 也走弹道，近战射程再远也是出手即结算。
+    const mode = attackModeOf(attacker, this.skills);
+    if (this.projectiles && mode === 'projectile' && attacker.pos && target.pos) {
       // v33（Q6）：子弹颜色 = 阵营色（原按武器着色）；中立塔（_mapFaction==='neutral'）沿用暖橙
       const bulletColor = attacker._mapFaction === 'blue' ? '#5b9bd5'
         : attacker._mapFaction === 'red' ? '#e0473f'
@@ -861,8 +861,32 @@ export class CombatSystem {
         hidden: true, kind: 'dragon',
         pendingHit: hitInfo,
       });
+    } else if (mode === 'beam') {
+      // 光束（没有自己武器实现的单位走这条通用路径）：不吃弹速，命中当场结算，
+      // 画一条跟着攻击节奏刷新的光束（与闪电杖同一套 fireBeam），停手后自然淡出。
+      this._resolveHit(hitInfo);
+      if (this.projectiles?.fireBeam && attacker.pos && target.pos) {
+        const fac = attacker._mapFaction;
+        this.projectiles.fireBeam({
+          attackerId: attacker.id, targetId: target.id,
+          startX: attacker.pos.x, startY: attacker.pos.y, endX: target.pos.x, endY: target.pos.y,
+          charge: 1, life: Math.max(0.3, 1.2 / Math.max(0.1, this.attrCalc.calcAttackSpeedOf?.(atkStats) || 1)),
+          color: fac === 'blue' ? '#5b9bd5' : fac === 'red' ? '#e0473f' : '#f1c40f',
+        });
+      }
+    } else if (mode === 'area') {
+      // 范围（没有自己武器实现的单位走这条通用路径）：不吃弹速，射程内所有敌人各结算一份。
+      // 范围光环的画面还没有，记在交接清单给 Fable。
+      this._resolveHit(hitInfo);
+      const r = atkStats.attackRange || 0;
+      if (r > 0 && attacker.pos) {
+        for (const other of enemyUnitsInRadius(this.entities, attacker, r)) {
+          if (other.id === target.id || !other.alive) continue;
+          this._resolveHit({ ...hitInfo, targetId: other.id });
+        }
+      }
     } else {
-      // 无子弹速度（近战/无武器）：视为瞬时命中
+      // 近战：出手即结算，没有弹道
       this._resolveHit(hitInfo);
     }
   }

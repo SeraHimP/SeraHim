@@ -2736,7 +2736,7 @@ export const CONFIG = {
     //     没有装备"主动"类技能的单位，法力恒为 0，这几个数字填多少都没用）。
     //     攻击/受击回复法力已改成全局一份（CONFIG.tuning.mana），不在这四件套里。
     tower: {
-      label: '防御塔', type: 'tower',
+      label: '防御塔', type: 'tower', attackMode: 'projectile',   // 攻击方式（Q3）：melee 近战 / projectile 弹道 / beam 光束 / area 范围，见 core/attackMode.js
       // v35（Q5）：所有防御塔默认 生命恢复/固定护盾 = 0（用户定稿，手动建塔同样适用；
       // 恢复与护盾一律由被动提供）
       maxHP: 9000, healthRegen: 0, baseHealthRegenMod: 1.0,
@@ -2761,7 +2761,7 @@ export const CONFIG = {
       ...UNIT_STAT_DEFAULTS,
     },
     melee: {
-      label: '近战兵', type: 'melee',
+      label: '近战兵', type: 'melee', attackMode: 'melee',
       isLargeMinion: false, isMonster: false,
       // v33：350→500。基准：对战开局外塔（穿透型，含破甲+升温逐发爬升 ×1.0/×1.3/×1.6）
       // 恰好 3 发击杀（2 发打不死），仿真校验（tests/sim_v33.mjs）。
@@ -2784,7 +2784,7 @@ export const CONFIG = {
       maxMana: 25, manaRegen: 0,
     },
     ranged: {
-      label: '远程兵', type: 'ranged',
+      label: '远程兵', type: 'ranged', attackMode: 'projectile',
       isLargeMinion: false, isMonster: false,
       maxHP: 200, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 150,
@@ -2814,7 +2814,7 @@ export const CONFIG = {
       maxMana: 70, manaRegen: 0.5, abilityPower: 8,
     },
     siege: {
-      label: '炮兵', type: 'siege',
+      label: '炮兵', type: 'siege', attackMode: 'projectile',
       isLargeMinion: true, isMonster: false,
       // ==================== v43：炮兵整体下调（用户："炮兵的全属性调低"）====================
       // 起因：出场频率从每 3 波提到每 2 波（+50%），不配套下调的话推进强度会失控。
@@ -2843,7 +2843,7 @@ export const CONFIG = {
       maxMana: 50, manaRegen: 1,
     },
     totem: {
-      label: '图腾兵', type: 'totem',
+      label: '图腾兵', type: 'totem', attackMode: 'projectile',
       // v43：图腾兵改判为**大型小兵**。用户重新规定："除了近战兵和远程兵都是。"
       // 它本身只有 150 血、攻速 0.42，体量确实不大，但这个标记现在的语义是
       // "非近战/远程的特殊兵"，而不是"体型大" —— 龙魂奖励的发放范围按它来。
@@ -2874,7 +2874,7 @@ export const CONFIG = {
       abilityPower: 8,
     },
     super: {
-      label: '超级兵', type: 'super',
+      label: '超级兵', type: 'super', attackMode: 'melee',
       isLargeMinion: true, isMonster: false,
       maxHP: 2750, healthRegen: 7, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 50,   // v40（Q1 修复）：20→50。超级兵体型14+近战兵10=24 已超过原射程20，
@@ -2895,7 +2895,7 @@ export const CONFIG = {
       maxMana: 120, manaRegen: 1,
     },
     warlock: {
-      label: '术士兵', type: 'warlock',
+      label: '术士兵', type: 'warlock', attackMode: 'projectile',
       isLargeMinion: true, isMonster: false,
       maxHP: 520, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 170,
@@ -2926,7 +2926,7 @@ export const CONFIG = {
       abilityPower: 30,
     },
     corrupt: {
-      label: '蚀骨兵', type: 'corrupt',
+      label: '蚀骨兵', type: 'corrupt', attackMode: 'melee',
       isLargeMinion: true, isMonster: false,
       maxHP: 620, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 20,
@@ -2956,7 +2956,7 @@ export const CONFIG = {
     // 血 800（远高于远程兵，但双抗 0 且被近战克制）、AD 35、攻速 0.25（4秒一发）、
     // 射程 260（> 塔的 180，可越塔输出，塔打不到它）。
     ram: {
-      label: '攻城车', type: 'ram',
+      label: '攻城车', type: 'ram', attackMode: 'projectile',
       isLargeMinion: true, isMonster: false,
       maxHP: 800, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 312,   // v40：260 → +20% = 312
@@ -2991,7 +2991,7 @@ export const CONFIG = {
     // 对塔额外伤害刻意给得比攻城车（550%）温和很多——这只是坦着打的副产物，
     // 不能抢攻城车"专职破塔"这个定位的戏，见 passive_heavy_vs_tower。
     heavy: {
-      label: '重装车', type: 'heavy',
+      label: '重装车', type: 'heavy', attackMode: 'melee',
       isLargeMinion: true, isMonster: false,
       maxHP: 750, healthRegen: 2, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 30,
@@ -3015,7 +3015,7 @@ export const CONFIG = {
     // 兵的量级（不比图腾兵更肉——它不是拿来扛线的），healthRegen 基线较低，
     // 脱战后的"高额回复"由被动里的独立 aura 加成给，不写在模板基线里。
     healer: {
-      label: '治疗兵', type: 'healer',
+      label: '治疗兵', type: 'healer', attackMode: 'melee',
       isLargeMinion: true, isMonster: false,
       maxHP: 190, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 0,
@@ -3035,7 +3035,7 @@ export const CONFIG = {
     // 塔和原地待命之间切换），所以这里的 attackRange 不代表任何"够不够远"的判断，
     // 修复半径单独在 CONFIG.gameRules.supportUnits.engineer.repairRange 里配置。
     engineer: {
-      label: '工程兵', type: 'engineer',
+      label: '工程兵', type: 'engineer', attackMode: 'melee',
       isLargeMinion: true, isMonster: false,
       maxHP: 150, healthRegen: 1, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 0,
@@ -3054,7 +3054,7 @@ export const CONFIG = {
     // 以下的量级；maxMana/manaRegen 沿用图腾兵旧版"60秒一档"的节奏（见下方注释），
     // 幻灵存活12~15秒、两只上限，正常节奏下不会叠出好几只同时在场。
     summoner: {
-      label: '唤灵兵', type: 'summoner',
+      label: '唤灵兵', type: 'summoner', attackMode: 'projectile',
       isLargeMinion: true, isMonster: false,
       maxHP: 140, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 200,   // 用户："唤灵兵已经弱到天际了，增大射程"，定稿 200（原 120）
@@ -3074,7 +3074,7 @@ export const CONFIG = {
       maxMana: 120, manaRegen: 2,
     },
     dragon: {
-      label: '巨龙', type: 'dragon',
+      label: '巨龙', type: 'dragon', attackMode: 'melee',
       isLargeMinion: true, isMonster: true,
       maxHP: 8000, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 0, attackRange: 0,

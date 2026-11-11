@@ -9,7 +9,10 @@ const { T, done } = scoreboard('巨龙攻击结算');
 const cs = fs.readFileSync(new URL('../src/systems/CombatSystem.js', import.meta.url), 'utf8');
 
 T('①龙的射程确实超过近战线（所以必须显式按近战判，不能只看射程）', CONFIG.gameRules.dragon.combat.attackRange > MELEE_RANGE_THRESHOLD);
-T('②巨龙一律按近战：当场结算，不走弹道', /const isMeleeUnit = \(e\) => !!e && \(e\.type === 'dragon' \|\|/.test(cs));
+// Q3 起攻击方式显式声明：巨龙模板 attackMode = 'melee'，判定统一走 attackModeOf
+const { attackModeOf } = await import('../src/core/attackMode.js');
+T('②巨龙一律按近战：当场结算，不走弹道', CONFIG.templates.dragon.attackMode === 'melee'
+  && attackModeOf({ type: 'dragon', baseStats: { attackRange: 80 } }) === 'melee' && /mode === 'projectile'/.test(cs));
 T('③普攻弹速走 effectiveBulletSpeed（没声明弹速的单位 = 默认弹速 + 加成）',
   /speed: this\.effectiveBulletSpeed\(attacker, atkStats\)/.test(cs));
 // 行为：把"星龙之力"的弹速加成套到一个没声明弹速的远程单位上，算出来的弹速不低于默认值

@@ -31,6 +31,7 @@ const PET_INHERITED_STAT_FIELDS = [
 
 export const weapons = {
   weapon_piercing: {
+    attackMode: 'projectile',   // 攻击方式（Q3），见 core/attackMode.js
     id: 'weapon_piercing',
     applicableTypes: ['tower'],
     name: '穿透型子弹',
@@ -160,6 +161,7 @@ export const weapons = {
   },
 
   weapon_lightning: {
+    attackMode: 'beam',   // 攻击方式（Q3），见 core/attackMode.js
     // 单位统一用"百分数写百分数、秒写秒"，面板上直接可读。
     defaultParams: {
       chargeTimeAtAS1: 12,    // 攻速 1.0 时充满需要几秒（实际 = 本值 / 最终攻速）
@@ -435,6 +437,7 @@ export const weapons = {
   },
 
   weapon_explosive: {
+    attackMode: 'projectile',   // 攻击方式（Q3），见 core/attackMode.js
     // v51.30：平衡横向对照实测（tower_sweep_2026-09-24）——以穿透型（54.97分）为
     // 基准，爆炸型均存活40.55分，偏低约26%，需要加强。
     //
@@ -488,6 +491,7 @@ export const weapons = {
   //   选了之后所有关于它的平衡结论都得重新算一遍。）
 
   weapon_corrosion: {
+    attackMode: 'area',   // 攻击方式（Q3），见 core/attackMode.js
     // v51.30：平衡横向对照实测（tower_sweep_2026-09-24）——以穿透型（54.97分）为
     // 基准，腐蚀型均存活69.37分，全场最扛揍，偏高约26%，需要削弱。
     //
@@ -638,6 +642,7 @@ export const weapons = {
   //      脱战或换目标才清零（用户原话"和风魂区别开来"：风魂是命中叠层限时衰减的
   //      羊刀节奏，这条改成"咬着同一个目标就不掉层，换目标/脱战立即清零重来"）。
   weapon_barrage: {
+    attackMode: 'projectile',   // 攻击方式（Q3），见 core/attackMode.js
     // 2026-09-19 首次强度调整：用户实机反馈"连珠炮太弱了"。三个机制的【形状】
     // 是用户已经定过稿的（55%伤害/33%命中效率/攻速不走收益率/每层更少更多层，
     // 见下方各字段旁的原始设计注释），这次只调数值，不改机制本身：
@@ -763,6 +768,7 @@ export const weapons = {
   // 自己处理"没有目标怎么衰减"的原因：_tickCharge 在主循环里对每个实体都会跑，
   // 跟 nova 自己的 onFrame 是否被调用无关。
   weapon_nova: {
+    attackMode: 'beam',   // 充能光束、充满后一次范围爆发；不走子弹   // 攻击方式（Q3），见 core/attackMode.js
     // 2026-09-22：balance_tower.mjs 塔强度横向对照（防守方全部换成8种塔武器，
     // 进攻方拉满对照组）实测：聚能炮防守方均存活17.81分，全场倒数第二，只有
     // 最扛揍的腐蚀型（69.45分）的1/4——之前"比闪电杖(12s)更慢，符合低频"这句
@@ -1135,6 +1141,7 @@ export const weapons = {
   // 唯一区别是腐蚀命中【射程内全部】敌人，这里只挑最多 maxBranches 个（否则会退化
   // 成腐蚀的翻版，失去"多条独立光束"这个卖点）。
   weapon_prism: {
+    attackMode: 'beam',   // 攻击方式（Q3），见 core/attackMode.js
     defaultParams: {
       maxBranches: 4,          // 同时分裂的独立光束数上限
       basePct: 90,              // 只命中1个目标时，每条分支伤害相对自适应基础伤害的百分比

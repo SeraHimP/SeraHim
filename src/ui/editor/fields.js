@@ -21,6 +21,7 @@ export const FIELD_META = {
   attackSpeedRatio:   { label: '攻击速度收益率', min: 0, max: 2, step: 0.05 },
   attackRange:        { label: '攻击距离', min: 0, max: 800, step: 10 },
   bulletSpeed:        { label: '子弹速度', min: 0, max: 1200, step: 20 },
+  attackMode:         { label: '攻击方式' },
   splashRadius:       { label: '溅射半径', min: 0, max: 400, step: 10 },
   armor:              { label: '护甲', min: -100, max: 500, step: 5 },
   magicResist:        { label: '魔法抗性', min: -100, max: 500, step: 5 },
