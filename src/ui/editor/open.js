@@ -20,7 +20,7 @@ export const EDITOR_OPEN = {
     const entity = entityContainer.get(entityId);
     if (!entity) { logFn('❌ 实体不存在', 'death'); return; }
     const isTower = entity.type === 'tower';
-    const title = isTower ? `塔 #${entity.id}` : `${CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
+    const title = isTower ? `塔 #${entity.id}` : `${entity.baseStats?.label || CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
 
     // ==================== v44：换成与模板编辑器同一套外壳 ====================
     // 用户："单位编辑窗口也未修改（从属性窗口的编辑按钮点开的），依旧是旧UI。"

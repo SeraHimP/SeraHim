@@ -80,7 +80,7 @@ export const EDITOR_EVENTS = {
     });
 
     overlay.querySelector('#editorResetBtn').addEventListener('click', () => {
-      const title = entity.type === 'tower' ? `塔 #${entity.id}` : `${CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
+      const title = entity.type === 'tower' ? `塔 #${entity.id}` : `${entity.baseStats?.label || CONFIG.templates[entity.type]?.label || entity.type} #${entity.id}`;
       if (confirm(`重置 ${title} 为模板默认值？`)) {
         const tpl = CONFIG.templates[entity.type];
         if (tpl) {

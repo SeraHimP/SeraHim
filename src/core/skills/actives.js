@@ -379,9 +379,10 @@ export const actives = {
     id: 'active_summoner_call', name: '唤灵', icon: '👻', color: '#8e7cc3', category: 'active',
     applicableTypes: ['summoner'],
     defaultParams: { hpScalePct: 65, drainPctPerSec: 7, maxAlive: 2 },
+    spiritLabel: '幻灵',
     get description() {
       const p = this.defaultParams;
-      return `法力攒满后在自己脚下召唤一只幻灵（近战兵${p.hpScalePct}%属性，不成长，`
+      return `法力攒满后在自己脚下召唤一只幻灵（近战兵${p.hpScalePct}%属性，不成长，无技能，`
         + `随施法者一起索敌/推线），每秒衰减${p.drainPctPerSec}%最大生命，`
         + `衰减或战斗归零后死亡；同时最多存在${p.maxAlive}只。`;
     },
@@ -408,6 +409,14 @@ export const actives = {
       spirit._summonDrainPctPerSec = p.drainPctPerSec ?? 7;
       spirit._summonVisual = true;
       spirit._laneId = self._laneId; // 并入施法者自己的兵线AI（索敌/追击/推线），不再是死站桩
+      // 推进方向也要跟施法者一致。只抄 _laneId 不抄方向时，幻灵的 _laneDirection 是 undefined，
+      // LaneMovementSystem 按"不是 reverse 就是 forward"处理——红方的幻灵也朝红方基地走
+      // （用户："召唤物会错误的向红方基地推进，无论是哪个阵营的"）。
+      spirit._laneDirection = self._laneDirection;
+      // 幻灵借的是近战兵模板，createMinion 按类型挂上了近战兵的默认技能；面板标题也读模板名，
+      // 显示成"近战兵"。用户定稿：幻灵没有任何技能、不吃龙魂/巨龙之力，面板显示自己的名字。
+      spirit._skillInstances = [];
+      spirit.baseStats.label = actives.active_summoner_call.spiritLabel;
       self._summonedIds.push(spirit.id);
       return true;
     },

@@ -308,6 +308,8 @@ export class DragonSystem {
   static POWER_REWARD_OK(e) {
     if (!e) return false;
     if (e.type === 'dragon') return false;
+    // 召唤物同样不拿巨龙之力（用户："唤灵兵无任何技能（不吃龙魂/巨龙之力）"）
+    if (e._isSummoned || e._petOwnerId) return false;
     const targets = CONFIG.dragonRewardTargets && CONFIG.dragonRewardTargets.power;
     if (targets && Object.prototype.hasOwnProperty.call(targets, e.type)) return !!targets[e.type];
     return true;

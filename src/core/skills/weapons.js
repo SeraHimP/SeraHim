@@ -1066,6 +1066,7 @@ export const weapons = {
           spirit._skillInstances = (spirit._skillInstances || [])
             .filter(s => s.skillId !== 'active_melee_block' && s.skillId !== 'passive_melee_rend');
           spirit._isSummoned = true;       // 不记熵，跟幻灵同一个口径
+          spirit.baseStats.label = '幻兽';  // 借的是近战兵模板，不写的话面板标题显示"近战兵"
           spirit._petOwnerId = entityId;   // 拴绳依据：LaneMovementSystem._updatePet 找主人用
           spirit._petLeashRadius = p.leashRadius ?? 260;
           spirit._petIdleAngle = angle;         // 待机点角度，_updatePet 归位用

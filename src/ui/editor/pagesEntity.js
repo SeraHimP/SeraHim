@@ -319,7 +319,7 @@ export const EDITOR_PAGES_ENTITY = {
    */
   _applyOps(e, op, v, ec, app, logFn) {
     const tag = '[编辑器]';
-    const name = e.type === 'tower' ? `塔 #${e.id}` : `${CONFIG.templates[e.type]?.label || e.type} #${e.id}`;
+    const name = e.type === 'tower' ? `塔 #${e.id}` : `${e.baseStats?.label || CONFIG.templates[e.type]?.label || e.type} #${e.id}`;
 
     if (op === 'revive') {
       const maxHP = e.baseStats?.maxHP || 1;

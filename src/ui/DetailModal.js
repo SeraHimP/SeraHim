@@ -324,7 +324,7 @@ export const DetailModal = {
 
   _showDetail(label, entity, stats, effects) {
     const lines = [
-      `#${entity.id} ${CONFIG.templates[entity.type]?.label || entity.type}`,
+      `#${entity.id} ${entity.baseStats?.label || CONFIG.templates[entity.type]?.label || entity.type}`,
       `──────────────`,
       `生命值: ${Math.round(entity.currentHP)} / ${Math.round(stats.maxHP)}`,
       `护盾: 固定 ${Math.round(entity.shieldFixedCurrent || 0)} / ${Math.round(stats.shieldFixedMax || 0)}  |  临时 ${Math.round(entity.tempShield || 0)}  |  护盾 ${Math.round(entity.plainShield || 0)}`,

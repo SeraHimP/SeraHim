@@ -20,7 +20,7 @@
  * 代价是这个模块有隐式初始化顺序要求 —— 用 _assertReady 显式报错兜住，
  * 免得将来有人先 import 再忘了 createFactories，拿到一堆 undefined 报个天书。
  */
-import { CONFIG } from '../data/Config.js';
+import { CONFIG, MELEE_RANGE_THRESHOLD } from '../data/Config.js';
 import { CTX } from './GameContext.js';
 import { equipSkill } from './skillParams.js';
 import { FACTIONS } from '../systems/FactionSystem.js';
@@ -448,6 +448,15 @@ function createMinion(type, x, y, hpScale = 1.0, attrScale = 1.0, mapOpts) {
   entity.baseStats.healthRegen = tpl.healthRegen * attrScale;
   entity.baseStats.moveSpeed = tpl.moveSpeed || 30;
   entity.baseStats.attackRange = tpl.attackRange || 20;
+  // 远程单位没声明弹速时，把默认弹速写进基础属性。
+  // 不写的话基础值是 0，百分比修正（风天"子弹速度 -30%"等）乘在 0 上恒为 0，
+  // 战斗里又按"默认弹速 + 属性值"兜底——于是这类修正对远程兵/炮兵/攻城车完全无效，
+  // 只有声明了弹速的塔和术士兵吃得到（用户："子弹速度对于炮兵子弹/远程兵子弹不生效"）。
+  // 固定值加成（星龙 +6）在两种写法下结果相同。近战单位没有弹道，不补。
+  if (!(entity.baseStats.bulletSpeed > 0) && entity.baseStats.bulletSpeed !== 0
+      && entity.baseStats.attackRange > MELEE_RANGE_THRESHOLD) {
+    entity.baseStats.bulletSpeed = CONFIG.tuning?.defaultBulletSpeed ?? 400;
+  }
 
   // 小兵被动自动装备：模板编辑器中若已自定义 _templateSkills（哪怕是空数组），
   // 优先按用户设置生效；未做过任何自定义时才回退到默认硬编码被动。

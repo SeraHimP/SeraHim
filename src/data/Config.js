@@ -3044,7 +3044,7 @@ export const CONFIG = {
       label: '唤灵兵', type: 'summoner',
       isLargeMinion: true, isMonster: false,
       maxHP: 140, healthRegen: 0, baseHealthRegenMod: 1.0,
-      moveSpeed: 78, attackRange: 120,
+      moveSpeed: 78, attackRange: 200,   // 用户："唤灵兵已经弱到天际了，增大射程"，定稿 200（原 120）
       attackDamage: 3, baseAttackSpeed: 0.6, bonusAttackSpeedPct: 0, attackSpeedRatio: 0.667,
       armorPenFlat: 0, armorPenPercent: 0, magicPenFlat: 0, magicPenPercent: 0,
       armor: 5, magicResist: 5,

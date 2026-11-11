@@ -322,4 +322,47 @@ function fakeCreateMinion(ents, CONFIG) {
   T('幻灵在建兵那一刻就打上 _isSummoned（龙魂是建兵过程中发的，事后再打挡不住）',
     /mapOpts\?\.summoned \? \{ _isSummoned: true \}/.test(fac) && /createMinion\('melee', self\.pos\.x, self\.pos\.y, faction, scale, scale, \{ summoned: true \}\)/.test(act));
 }
+
+// ==================== 幻灵：跟施法者同方向推进、无技能、不吃巨龙之力、面板显示自己的名字 ====================
+// 用户："唤灵兵其召唤物会错误的向红方基地推进（无论是哪个阵营的），并且属性面板上的描述是近战兵需要修复，
+//        唤灵兵无任何技能（不吃龙魂/巨龙之力）"
+// 根因：唤灵只抄了施法者的 _laneId 没抄 _laneDirection，幻灵的方向是 undefined，
+// LaneMovementSystem 按"不是 reverse 就是 forward"处理，红方幻灵也朝红方基地走。
+{
+  const { createSimulation } = await import('../src/simulation.js');
+  const { DragonSystem } = await import('../src/systems/DragonSystem.js');
+  const { CONFIG: CONFIG_S } = await import('../src/data/Config.js');
+  for (const [faction, dir] of [['red', 'reverse'], ['blue', 'forward']]) {
+    const sim = createSimulation();
+    sim.mapSystem.loadMap('summoners_rift_v1');
+    const m = sim.mapSystem.currentMap;
+    const own = (m.buildings || []).find((b) => b.faction === faction && b.tier === 'nexus_main');
+    const foe = (m.buildings || []).find((b) => b.faction !== faction && b.tier === 'nexus_main');
+    const P = (b) => b.pos || b;
+    // 站在自家主水晶与敌方主水晶连线上、靠自家一侧（离兵线很远，没人打扰，只看召唤与移动）
+    const o = P(own), f = P(foe);
+    const x = o.x + (f.x - o.x) * 0.2, y = o.y + (f.y - o.y) * 0.2;
+    const s = sim.laneWaveSystem.createMinion('summoner', x, y, faction, 'mid', dir);
+    s.baseStats.moveSpeed = 0;
+    let spirit = null;
+    for (let i = 0; i < 60 * 60 && !spirit; i++) {
+      sim.step(1 / 60);
+      const id = (s._summonedIds || [])[0];
+      if (id != null) spirit = sim.entityContainer.get(id);
+    }
+    T(`幻灵①（${faction}）：唤灵在一分钟内放出了幻灵`, !!spirit);
+    if (!spirit) continue;
+    T(`幻灵②（${faction}）：推进方向与施法者一致（${spirit._laneDirection}）`, spirit._laneDirection === s._laneDirection && spirit._laneDirection === dir);
+    T(`幻灵③（${faction}）：没有任何技能（原来带着近战兵的默认技能）`, (spirit._skillInstances || []).length === 0);
+    T(`幻灵④（${faction}）：不拿龙魂也不拿巨龙之力`, !DragonSystem.SOUL_REWARD_OK(spirit) && !DragonSystem.POWER_REWARD_OK(spirit));
+    T(`幻灵⑤（${faction}）：面板名是"幻灵"而不是"近战兵"`, spirit.baseStats.label === '幻灵');
+    // 真跑几秒：朝敌方主水晶靠近，而不是朝自家主水晶
+    const d0 = Math.hypot(spirit.pos.x - f.x, spirit.pos.y - f.y);
+    for (let i = 0; i < 60 * 4 && spirit.alive; i++) sim.step(1 / 60);
+    const d1 = Math.hypot(spirit.pos.x - f.x, spirit.pos.y - f.y);
+    T(`幻灵⑥（${faction}）：4 秒后离敌方主水晶更近（${Math.round(d0)} → ${Math.round(d1)}）`, d1 < d0 - 10);
+  }
+  T('唤灵兵射程比远程兵远（用户定稿加大射程）', CONFIG_S.templates.summoner.attackRange > CONFIG_S.templates.ranged.attackRange);
+  T('牧灵幻兽面板名是"幻兽"', /spirit\.baseStats\.label = '幻兽'/.test((await import('fs')).readFileSync(new URL('../src/core/skills/weapons.js', import.meta.url), 'utf8')));
+}
 done();
