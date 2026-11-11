@@ -9,7 +9,7 @@ import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
 import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES, FACTION_HP_COLORS, hpBarLayout } from '../core/resourceBar.js';
 import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor } from '../presentation/barTrail.js';
-import { ENV_CATEGORY } from '../core/damageAttribution.js';
+import { ENV_CATEGORY, readTimeline } from '../core/damageAttribution.js';
 
 /** v51.29（Q3）：按来源统计环状图的调色板——环数多时循环使用。 */
 const DMG_SOURCE_PALETTE = ['#e0a458', '#8b7fe0', '#4fc3c7', '#e0708f', '#7fc98b', '#e0d158', '#7fa8e0', '#c98be0'];
@@ -1508,83 +1508,108 @@ export class UIManager {
    * 保留窗口的关闭按钮监听/滚动位置不受影响）。
    */
   _hpStatsBodyHtml(entity) {
+    // Q8（用户定稿布局）：宽窗不滚动——顶部"最近 60 秒生命曲线 + 每秒承伤柱"，下面承伤 / 防御 / 恢复三列卡片。
     const stats = this.attrCalc.calc(entity, this.effects.getEffects(entity.id));
     const maxHP = stats.maxHP || 1;
     const cur = Math.max(0, entity.currentHP || 0);
+    const R = (v) => Math.round(v || 0);
+    const R1 = (v) => Math.round((v || 0) * 10) / 10;
     const armorMult = this.attrCalc.calcDamageMultiplier(Math.max(0, stats.armor || 0));
     const mrMult = this.attrCalc.calcDamageMultiplier(Math.max(0, stats.magicResist || 0));
-    const ehpPhys = Math.round(cur / armorMult);
-    const ehpMagic = Math.round(cur / mrMult);
     const sf = entity.shieldFixedCurrent || 0, st = entity.tempShield || 0, sp = entity.plainShield || 0;
     const shieldTotal = sf + st + sp;
-    const shieldGained = entity._shieldGainedTotal || 0;
     const dmg = entity._dmgTaken || { physical: 0, magic: 0, true: 0 };
     const dmgTotal = dmg.physical + dmg.magic + dmg.true;
-    const healTotal = entity._healReceivedTotal || 0;
-    const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
     const mitigated = entity._dmgMitigatedTotal || 0;
-    const mitigatedRatio = (mitigated + dmgTotal) > 0 ? Math.round((mitigated / (mitigated + dmgTotal)) * 1000) / 10 : 0;
+    const mitigatedRatio = (mitigated + dmgTotal) > 0 ? R1((mitigated / (mitigated + dmgTotal)) * 100) : 0;
+    const regenMod = entity.baseStats?.baseHealthRegenMod ?? 1;
+    const healPower = Math.max(0, 1 + (stats.healShieldPowerPct || 0) / 100);
+    const regenNow = (stats.healthRegen || 0) * regenMod * healPower;
+    const drainNow = (stats._weatherDrain || 0) + (stats._regenDrain || 0);
+    const dmgTl = readTimeline(entity, '_dmgTl');
+    const perSec = (n) => R1(dmgTl.slice(-n).reduce((s, v) => s + (v || 0), 0) / n);
 
-    // 承伤—按来源：Map 转数组、按伤害量降序，前 6 名各占一环，其余合并成"其它"。
-    const byAtkMap = entity._dmgByAttacker;
-    const byAtkRows = byAtkMap ? [...byAtkMap.values()].sort((a, b) => b.total - a.total) : [];
+    // 承伤—按来源：前 6 名各占一环，其余合并成"其它"
+    const byAtkRows = entity._dmgByAttacker ? [...entity._dmgByAttacker.values()].sort((x, y) => y.total - x.total) : [];
     const TOP_N = 6;
-    const top = byAtkRows.slice(0, TOP_N);
-    const restTotal = byAtkRows.slice(TOP_N).reduce((s, r) => s + r.total, 0);
-    const bySourceSegments = top.map((r, i) => ({
+    const restTotal = byAtkRows.slice(TOP_N).reduce((s2, r) => s2 + r.total, 0);
+    const bySource = byAtkRows.slice(0, TOP_N).map((r, i) => ({
       label: r.label, value: r.total,
       color: r.label === ENV_CATEGORY.label ? ENV_SOURCE_COLOR : DMG_SOURCE_PALETTE[i % DMG_SOURCE_PALETTE.length],
     }));
-    if (restTotal > 0) bySourceSegments.push({ label: '其它', value: restTotal, color: ENV_SOURCE_COLOR });
+    if (restTotal > 0) bySource.push({ label: '其它', value: restTotal, color: ENV_SOURCE_COLOR });
+    const heal = entity._healBySource || {};
+    const D = 64;   // 环图尺寸：三列布局下比两列时小一号
+    const row = (k, v) => this._statsRowHtml(k, `<b>${v}</b>`);
 
-    // 本轮返工：用户否掉了上一版——"不要弄成一个长条的，丑死了，关闭窗口还要往下
-    // 滑，做成宽的长方形，不要往下滑"。原来六个小节竖着一路堆下去，内容高度撑爆
-    // 弹窗高度、必须滚动才能看全；现在把六张卡片放进一个两列网格，同一屏能看完，
-    // 靠"宽"而不是"高"装下所有内容。① 删括号 ② 卡片分区 都维持上一版做法不变，
-    // 只是这次把排列方式从"一列竖排"改成"两列网格"，弹窗也跟着从窄长改成宽扁。
     return `
-      <div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
-        生命值：<b>${Math.round(cur)}</b> / ${Math.round(maxHP)}
+      <div class="pick-desc-box" style="margin-bottom:8px;font-size:14px;display:flex;justify-content:space-between;align-items:baseline;">
+        <span>生命值：<b>${R(cur)}</b> / ${R(maxHP)}${entity._maxHPLost > 0 ? ` <span style="color:var(--text-mute);font-size:12px;">（已缩减 ${R(entity._maxHPLost)}）</span>` : ''}</span>
+        <span style="font-size:12px;color:var(--text-dim);">护盾 ${R(shieldTotal)}</span>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        ${this._statsSectionHtml('经双抗结算后的实际生命值，未计穿透', `
-          <div style="font-size:12px;">
-            ${this._statsRowHtml('对物理伤害', `<b>${ehpPhys}</b>`)}
-            ${this._statsRowHtml('对魔法伤害', `<b>${ehpMagic}</b>`)}
-          </div>
-        `)}
-        ${this._statsSectionHtml('减免与格挡 · 不含护盾吸收', `
-          <div style="font-size:12px;">
-            ${this._statsRowHtml('已缓和的伤害', `<b>${Math.round(mitigated)}</b>`)}
-            ${this._statsRowHtml('减免率', `<b>${mitigatedRatio}%</b>`)}
-          </div>
-        `)}
-        ${this._statsSectionHtml(`承伤 — 按类型，合计 ${Math.round(dmgTotal)}`,
-          this._donutChartHtml([
+      ${this._statsSectionHtml('最近 60 秒 · 生命（线）与每秒承伤（柱）', this._hpTimelineSvgHtml(entity))}
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;margin-top:8px;">
+        ${this._statsSectionHtml(`承伤，合计 ${R(dmgTotal)}`, `
+          ${this._donutChartHtml([
             { label: '物理伤害', value: dmg.physical, color: '#e0a458' },
             { label: '魔法伤害', value: dmg.magic, color: '#8b7fe0' },
             { label: '真实伤害', value: dmg.true, color: '#4fc3c7' },
-          ]) || this._emptyChartHtml('暂无数据'))}
-        ${this._statsSectionHtml(`承伤 — 按来源，合计 ${Math.round(dmgTotal)}`,
-          this._donutChartHtml(bySourceSegments) || this._emptyChartHtml('暂无数据'))}
-        ${this._statsSectionHtml(`护盾构成，当前合计 ${Math.round(shieldTotal)}`, `
+          ], D) || this._emptyChartHtml('暂无承伤', D)}
+          ${this._donutChartHtml(bySource, D) || this._emptyChartHtml('暂无来源', D)}
+          <div style="font-size:12px;">
+            ${row('受击次数', R(entity._hitsTaken))}
+            ${row('最大单次伤害', R(entity._maxHitTaken))}
+            ${row('最近 5 秒每秒承伤', perSec(5))}
+            ${row('最近 30 秒每秒承伤', perSec(30))}
+          </div>`)}
+        ${this._statsSectionHtml('防御', `
+          <div style="font-size:12px;margin-bottom:6px;">
+            ${row('有效生命 · 物理', R(cur / armorMult))}
+            ${row('有效生命 · 魔法', R(cur / mrMult))}
+            ${row('已缓和的伤害', R(mitigated))}
+            ${row('减免率', mitigatedRatio + '%')}
+            ${row('护盾累计吸收', R(entity._shieldAbsorbedTotal))}
+            ${row('累计已获得护盾', R(entity._shieldGainedTotal))}
+            ${row('已缩减最大生命', R(entity._maxHPLost))}
+          </div>
           ${this._donutChartHtml([
-            { label: '护盾 · 不衰减不回复', value: sp, color: '#c9cdd6' },
-            { label: '固定护盾 · 脱战后回满', value: sf, color: '#8b93a3' },
-            { label: '临时护盾 · 不会回满', value: st, color: '#5b6270' },
-          ]) || this._emptyChartHtml('暂无护盾')}
+            { label: '护盾', value: sp, color: '#c9cdd6' },
+            { label: '固定护盾', value: sf, color: '#8b93a3' },
+            { label: '临时护盾', value: st, color: '#5b6270' },
+          ], D) || this._emptyChartHtml('暂无护盾', D)}`)}
+        ${this._statsSectionHtml(`恢复，累计 ${R(entity._healReceivedTotal)}`, `
+          ${this._donutChartHtml([
+            { label: '生命恢复', value: heal.regen || 0, color: '#5cc85f' },
+            { label: '吸血', value: heal.vamp || 0, color: '#e05a6a' },
+            { label: '维修', value: heal.repair || 0, color: '#e0a83c' },
+            { label: '技能与光环', value: heal.skill || 0, color: '#6bb8f0' },
+          ], D) || this._emptyChartHtml('暂无治疗', D)}
           <div style="font-size:12px;">
-            ${this._statsRowHtml('累计已获得护盾', `<b>${Math.round(shieldGained)}</b>`)}
-          </div>
-        `)}
-        ${this._statsSectionHtml('生命恢复', `
-          <div style="font-size:12px;">
-            ${this._statsRowHtml('累计生命恢复量', `<b>${Math.round(healTotal)}</b>`)}
-            ${this._statsRowHtml('基础生命值恢复', `<b>${Math.round(regenMod * 1000) / 10}%</b>`)}
-          </div>
-        `)}
+            ${row('当前每秒恢复', R1(regenNow))}
+            ${row('基础生命值恢复', R1(regenMod * 100) + '%')}
+            ${row('治疗与护盾强度', R1(healPower * 100) + '%')}
+            ${row('持续真实伤害/秒', R1(drainNow))}
+          </div>`)}
       </div>
     `;
+  }
+
+  /** 最近 60 秒：生命占比折线（阵营色）+ 每秒承伤柱（按这 60 秒里的最大值归一）。纯 SVG，不引图表库。 */
+  _hpTimelineSvgHtml(entity) {
+    const hp = readTimeline(entity, '_hpTl'), dmg = readTimeline(entity, '_dmgTl');
+    const W = 600, H = 56, n = hp.length, dx = W / Math.max(1, n - 1);
+    const maxD = Math.max(1, ...dmg.map((v) => v || 0));
+    const bw = Math.max(1, W / n - 2);
+    const bars = dmg.map((v, i) => (v > 0 ? `<rect x="${(i * W / n + 1).toFixed(1)}" y="${(H - (v / maxD) * H * 0.9).toFixed(1)}" width="${bw.toFixed(1)}" height="${((v / maxD) * H * 0.9).toFixed(1)}" fill="rgba(224,90,90,0.55)"/>` : '')).join('');
+    const pts = hp.map((v, i) => (v == null ? null : `${(i * dx).toFixed(1)},${(H - Math.max(0, Math.min(1, v)) * H).toFixed(1)}`)).filter(Boolean);
+    const color = FACTION_HP_COLORS[entity._mapFaction || entity.faction] || FACTION_HP_COLORS.neutral;
+    const line = pts.length > 1 ? `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : '';
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:${H}px;display:block;">
+      <line x1="0" y1="0.5" x2="${W}" y2="0.5" stroke="rgba(255,255,255,0.08)"/>
+      <line x1="0" y1="${H - 0.5}" x2="${W}" y2="${H - 0.5}" stroke="rgba(255,255,255,0.08)"/>
+      ${bars}${line}
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-mute);"><span>60 秒前</span><span>每秒承伤峰值 ${Math.round(maxD)}</span><span>现在</span></div>`;
   }
 
   _showHpStatsModal(entity) {
@@ -1596,7 +1621,7 @@ export class UIManager {
     overlay.className = 'modal-overlay open';
     const bodyHtml = this._hpStatsBodyHtml(entity);
     overlay.innerHTML = shellHtml({
-      title: '❤️ 生命统计', body: `<div id="hpStatsBody">${bodyHtml}</div>`, crumb: '', width: '760px',
+      title: '❤️ 生命统计', body: `<div id="hpStatsBody">${bodyHtml}</div>`, crumb: '', width: '980px',
       footer: '<div class="modal-actions"><button class="stat-doc-close primary">关闭</button></div>',
     });
     document.body.appendChild(overlay);

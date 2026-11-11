@@ -191,9 +191,10 @@ async function world() {
 
   ui._showHpStatsModal(e);
   const html = captured._html;
-  T('七①-新增"承伤 — 按来源"小节标题', /承伤 — 按来源/.test(html));
+  // Q8 重排成承伤/防御/恢复三列：按来源环图并进"承伤"卡片
+  T('七①-承伤卡片里有按来源的环图', /承伤，合计/.test(html) && (html.match(/conic-gradient/g) || []).length >= 2);
   T('七②-按来源小节列出了各分类的中文标签', html.includes('红方远程兵') && html.includes('红方近战兵') && html.includes('巨龙'));
-  T('七③-新增"减免与格挡"小节，显示已缓和的伤害数值', /减免与格挡/.test(html) && />42</.test(html));
+  T('七③-防御卡片显示已缓和的伤害数值', /已缓和的伤害[\s\S]{0,20}>42</.test(html));
   T('七④-护盾构成小节新增"累计已获得护盾"一行', /累计已获得护盾[\s\S]{0,20}>88</.test(html));
   T('七⑤-环状图用 conic-gradient 画环、radial-gradient 遮罩抠洞（没有引入任何图表库）',
     /conic-gradient/.test(html) && /mask:radial-gradient/.test(html));
@@ -207,9 +208,9 @@ async function world() {
   const empty = mkEntity(ents, 'tower', { stats: { maxHP: 1000 } }, CONFIG);
   ui._showHpStatsModal(empty);
   T('七⑥-没有按来源数据时优雅降级，不抛异常且用同尺寸的空白圆环占位（不是横条、不是图标、也不只是纯文字）',
-    typeof captured._html === 'string' && /暂无数据/.test(captured._html)
+    typeof captured._html === 'string' && /暂无来源/.test(captured._html)
     && /border-radius:50%;[\s\S]{0,60}background:var\(--panel-soft/.test(captured._html)
-    && /width:84px;height:84px/.test(captured._html));
+    && /width:64px;height:64px/.test(captured._html));
 }
 
 done();

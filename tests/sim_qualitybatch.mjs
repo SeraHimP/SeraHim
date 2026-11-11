@@ -543,8 +543,7 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
   const exampleUnit = mkUnit(4, { maxHP: 500, hp: 500, armor: 100, magicResist: 100 });
   ui._showHpStatsModal(exampleUnit);
   T('Q6④-等效生命值公式与用户给的例子一致（HP500，双抗100 → 对应方向实际生命值1000）',
-    captured && captured._html.includes('对物理伤害') && captured._html.includes('对魔法伤害')
-    && /对物理伤害[\s\S]{0,40}>1000</.test(captured._html) && /对魔法伤害[\s\S]{0,40}>1000</.test(captured._html));
+    captured && /有效生命 · 物理[\s\S]{0,40}>1000</.test(captured._html) && /有效生命 · 魔法[\s\S]{0,40}>1000</.test(captured._html));
 
   // ⑤ HP 统计弹窗包含护盾构成 + 累计伤害统计 + 累计生命恢复
   const withShields = mkUnit(5, { maxHP: 1000, hp: 800 });
@@ -555,10 +554,10 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
   // v51.29（Q3）：这块窗口重新设计过，"累计承受伤害"这个小标题改成了
   // "承伤 — 按类型"（环状图形式），断言跟着改，其余数字口径不变。
   T('Q6⑤-弹窗展示护盾构成三项+承伤统计三项+累计生命恢复',
-    captured && /护盾构成/.test(captured._html)
+    captured && /固定护盾/.test(captured._html) && /临时护盾/.test(captured._html)
     && />40</.test(captured._html) && />15</.test(captured._html) && />25</.test(captured._html)
-    && /承伤 — 按类型/.test(captured._html) && />70</.test(captured._html) && />30</.test(captured._html) && />5</.test(captured._html)
-    && /累计生命恢复量[\s\S]{0,20}>123</.test(captured._html));
+    && /承伤，合计/.test(captured._html) && />70</.test(captured._html) && />30</.test(captured._html) && />5</.test(captured._html)
+    && /恢复，累计 123/.test(captured._html));
 
   // ⑥ 法力统计弹窗：与 Q5 的三个系数同源，不另起一套计算
   const mageLike = { id: 6, type: 'corrupt', alive: true, pos: { x: 0, y: 0 },
