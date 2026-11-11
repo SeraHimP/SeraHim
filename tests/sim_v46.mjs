@@ -228,9 +228,8 @@ const mkE = (ents, type, x, y, extra = {}) => {
 // ==================== 四、光照：黎明不再断电 ====================
 {
   const tr = srcOf('src/presentation/ThreeRenderer.js');
-  T('光①-夜色包络抽成一个函数，塔灯与火炬共用（不是各算一份）',
-    /_nightLevel\(\) \{/.test(tr)
-    && (tr.match(/this\._nightLevel\(\)/g) || []).length >= 2);
+  T('光①-夜色包络只有一个函数（_nightLevel），局部光（世界着色）读的就是它，不各算一份',
+    /_nightLevel\(\) \{/.test(tr) && /night: this\._nightLevel\(\)/.test(tr));
   T('光②-包络不再用 `phase >= 0.5` 这个半开区间（它在相位 0 处断电）',
     !/phase >= 0\.5 \? Math\.sin/.test(tr));
   T('光③-改成以「离正午的角距」为准（天然跨零点连续）',
@@ -269,59 +268,13 @@ const mkE = (ents, type, x, y, extra = {}) => {
 
 // ==================== 五、火炬 ====================
 {
+  const { howling_abyss_frost: MAPS_HA } = await import('../src/data/maps/howling_abyss_frost.js');
   const tr = srcOf('src/presentation/ThreeRenderer.js');
-  T('炬①-独立光池（与塔灯分开，否则野区那几盏永远抢不过一堆塔）',
-    /this\.torchLights = \[\]/.test(tr) && /_syncTorchLights\(\)/.test(tr));
-  // v45：布点已抽成 torchPlacement.js 的纯函数（理由见那个文件的头注：
-  // 逻辑住在只有真浏览器才跑的地方 = 没有断言守着，那个"全图没灯"的 bug 就是这么漏的）。
-  T('炬②-布点：地图声明优先，否则程序化（用户定稿"两者都要"）',
-    /Array\.isArray\(map\.torches\)/.test(srcOf('src/presentation/torchPlacement.js'))
-    && /抖动网格/.test(srcRaw('src/presentation/torchPlacement.js')));
-  T('炬③-数值全部软编码在 CONFIG.ui.torch',
-    ['enabled', 'poolSize', 'spacing', 'radius', 'height', 'edgeLux', 'color']
-      .every(k => k in CONFIG.ui.torch));
-  T('炬④-火炬比塔灯暗（氛围补光不该抢塔的视觉重心）',
-    CONFIG.ui.torch.edgeLux < CONFIG.ui.towerLight.edgeLux);
-  T('炬⑤-切图时重算布点（不然换了图还亮在上一张图的位置）',
-    /_torchPts = null/.test(tr));
-
-  // ==================== 布点必须真的撒得出点来 ====================
-  // 用户："地图还是乌漆嘛黑的，环境中的灯在哪？？？"——第一版把世界尺寸写成
-  // `map.width || 900`，而地图的世界尺寸在 `map.world.w`（召唤师峡谷 3552）。
-  // `||` 把"字段不存在"静默变成了合法值，撒点范围被限死在左上角 900×700 的一小块，
-  // 全图等于没有火炬。不报错、画面只是"有点暗"，这类错误最难查。
-  //
-  // 光钉源码是钉不住这种错的（写成什么字段名都"看起来对"），所以布点已抽成纯函数
-  // torchPlacement.js，下面直接跑它。
-  const { torchPoints } = await import('../src/presentation/torchPlacement.js');
-  const { MAPS: M2 } = await import('../src/data/maps/index.js');
-  for (const map of Object.values(M2)) {
-    const pts = torchPoints(map, () => true, CONFIG.ui.torch);
-    const W = map.world?.w || 0, H = map.world?.h || 0;
-    T(`炬⑥-${map.id}：撒得出足够多的火炬点（至少够填满光池）`,
-      pts.length >= CONFIG.ui.torch.poolSize);
-    T(`炬⑦-${map.id}：点都落在世界范围内`,
-      pts.every(p => p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H));
-    // 覆盖面：点必须散布到地图**右下半区**，而不是全挤在左上角（那正是 bug 的形状）——
-    // 但这条只对**走程序化撒点**的地图有意义。声明了 `map.torches` 的地图（比如
-    // howling_abyss_frost_v1：26 个点精确对应桥两侧的石柱，见 HowlingAbyssDecor.js）
-    // 是作者钦定的位置，天然不需要"覆盖全图象限"——嚎哭深渊的桥本来就是从左下到
-    // 右上的反对角线，任何贴着这条线的点都不可能同时 x>0.6W 且 y>0.6H（这两个
-    // 条件在反对角线上互斥），这不是 bug，是这条对角线的几何形状决定的。
-    if (!Array.isArray(map.torches) || !map.torches.length) {
-      T(`炬⑧-${map.id}：右下半区也有点（不是全挤在左上角）`,
-        pts.some(p => p.x > W * 0.6 && p.y > H * 0.6));
-    }
-  }
-  T('炬⑨-地图声明的 torches 优先于自动布点（用户定稿"两者都要"）', (() => {
-    const fake = { world: { w: 1000, h: 1000 }, torches: [{ x: 5, y: 7 }] };
-    const pts = torchPoints(fake, () => true, CONFIG.ui.torch);
-    return pts.length === 1 && pts[0].x === 5 && pts[0].y === 7;
-  })());
-  T('炬⑩-不可走的地方不撒点', (() => {
-    const fake = { world: { w: 2000, h: 2000 }, lanes: [] };
-    return torchPoints(fake, () => false, CONFIG.ui.torch).length === 0;
-  })());
+  // 炬①~⑩（火炬点光源池 + 程序化布点）随 2026-11 画面重构删除：点光源数量一变全场材质重编译，
+  // 而且光池只够点亮视野中心附近十来盏（用户："这个莫名其妙的灯竟然是跟着我的视角走的"）。
+  // 新做法是把火炬烘进光照图（world/worldShading.js），布点由 Fable 在可视化阶段重做。
+  T('炬①-旧的火炬点光源池已删除', !/torchLights|_syncTorchLights|_torchPoints/.test(tr));
+  T('炬②-地图自己声明的火炬坐标数据保留（嚎哭深渊桥两侧石柱），新火炬要用', Array.isArray(MAPS_HA.torches) && MAPS_HA.torches.length > 0);
 
   // ==================== 龙的朝向：钉在**链路**上，不是钉在定义上 ====================
   // 用户第二次报"龙的朝向问题依旧没有被修复"。我上一轮做了两件事（几何转正、删白名单），
@@ -374,18 +327,9 @@ const mkE = (ents, type, x, y, extra = {}) => {
     T('尺⑧-尺寸真的驱动几何（不是只改了数字）', big.topY > small.topY * 1.5);
   }
 
-  // 火炬：用户看到"光跟着视角走"后要求去掉。实现整套保留，只是默认关。
-  T('炬⑪-默认关闭（用户："这个莫名其妙的灯……不要这个"）',
-    CONFIG.ui.torch.enabled === false);
-  T('炬⑫-实现仍在（改 enabled 即可复现，不是把功能删了）',
-    /_syncTorchLights\(\)/.test(srcOf('src/presentation/ThreeRenderer.js')));
+  // 炬⑪⑫（旧火炬光池默认关 / 实现仍在）随光池一起删除，见上面第五节。
 
-  // ==================== 分区贴图默认退回原有贴图 ====================
-  const tr2 = srcOf('src/presentation/ThreeRenderer.js');
-  T('区⑨-缺分区图时回落到现有 ground/plateau，而不是彩色占位图（用户："先借用原有的贴图"）',
-    CONFIG.ui.zoneTextures.usePlaceholder === false
-    && tr2.includes('usePh ? placeholderTexture(zn) : null')
-    && tr2.includes("zn === 'plateau' ? plateau : ground"));
+  // 区⑨（缺分区图时回落原贴图）随分区贴图管线一起删除。
 }
 
 // ==================== 六、天气盒深度 ====================
@@ -581,39 +525,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
     /\$\{dmg\}/.test(ul));
 }
 
-// ==================== 九、分区贴图管线 ====================
-{
-  const tm = srcOf('src/presentation/TerrainMaterial.js');
-  const { ZONES, zoneGrid } = await import('../src/presentation/TerrainMaterial.js');
-  T('区①-五个分区都在（高地/路径/野区/河道/基地 + 通用底）',
-    ['ground', 'plateau', 'lane', 'jungle', 'river', 'base'].every(z => ZONES.includes(z)));
-  T('区②-分区用与高地遮罩**同一份** walk 网格（否则边界会错开一格）',
-    /zoneGrid\(map, gr\.walk, gr\.nx, gr\.ny/.test(srcOf('src/presentation/ThreeRenderer.js')));
-
-  // 行为：优先级 base > river > lane > plateau > jungle
-  const nx = 10, ny = 10, world = { w: 1000, h: 1000 };
-  const walk = new Uint8Array(nx * ny).fill(1);
-  walk[0] = 0;   // 左上角设为不可走 → 高地
-  const map = {
-    lanes: [{ waypoints: [{ x: 550, y: 550 }] }],
-    buildings: [{ tier: 'nexus_main', pos: { x: 950, y: 950 } }],
-    zoneRadii: { lane: 60, base: 80, river: 40 },
-  };
-  const zg = zoneGrid(map, walk, nx, ny, world);
-  const at = (gx, gy) => ZONES[zg[gy * nx + gx]];
-  T('区③-不可走格 = 高地', at(0, 0) === 'plateau');
-  T('区④-兵线附近 = 路径', at(5, 5) === 'lane');
-  T('区⑤-基地附近 = 基地（优先级高于路径）', at(9, 9) === 'base');
-  T('区⑥-其余可走格 = 野区', at(2, 7) === 'jungle');
-
-  T('区⑦-每张分区图都可缺失（缺了退回占位图，现有地图逐像素不变）',
-    /placeholderTexture/.test(srcOf('src/presentation/ThreeRenderer.js'))
-    && /zoneTex\[zn\] \|\|/.test(tm));
-  T('区⑧-提示词文档在仓库里（用户要拿去让 ChatGPT 出图）', (() => {
-    try { return srcRaw('docs/TEXTURE-PROMPTS.md').includes('seamless tileable'); }
-    catch { return false; }
-  })());
-}
+// 九（分区贴图管线）随旧地形材质 TerrainMaterial.js 一起删除。
 
 // ==================== 十、脚手架自身的一个真 bug ====================
 // 排查"区⑨怎么都匹配不上"时挖出来的：stripComments **先剥块注释、后剥行注释**，
@@ -626,6 +538,7 @@ const mkE = (ents, type, x, y, extra = {}) => {
 // 已改成先行后块。下面两条钉住它，免得哪天有人"顺手"把顺序调回去。
 {
   const { stripComments } = await import('./_harness.mjs');
+  const require = (await import('module')).createRequire(import.meta.url);
   const sample = [
     '// 说明里提到了 assets/textures/default/*.png 这个路径',
     'const KEEP_ME = 1;',
@@ -635,10 +548,18 @@ const mkE = (ents, type, x, y, extra = {}) => {
   const out = stripComments(sample);
   T('架①-行注释里的 /* 不会吞掉后面的真代码', /KEEP_ME/.test(out) && /ALSO_KEEP/.test(out));
   T('架②-真的块注释仍然被剥掉', !/DROP_ME/.test(out));
-  T('架③-真实文件上验一遍（ThreeRenderer 就是踩到的那个）', (() => {
-    const st = srcOf('src/presentation/ThreeRenderer.js');
-    // 这一句在被吞掉的那 1981 字符里
-    return st.includes('const pick = async (name)');
+  // 原来的真实样本（ThreeRenderer 里那段 default/*.png 注释）随旧贴图加载代码一起删了；
+  // 改成在全部源码上验：剥注释后，每个 export 声明都还在（被块注释误吞的话就会丢）。
+  T('架③-真实文件上验一遍：全部源码剥注释后 export 声明一个不少', (() => {
+    const fs2 = require('fs'), path2 = require('path');
+    const walk = (d) => fs2.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path2.join(d, e.name)) : (e.name.endsWith('.js') ? [path2.join(d, e.name)] : []));
+    const bad = [];
+    for (const f of walk('src')) {
+      const raw = fs2.readFileSync(f, 'utf8'), st = stripComments(raw);
+      for (const m of raw.matchAll(/^export (?:async )?(?:function|class|const|let) (\w+)/gm)) if (!st.includes(m[0])) bad.push(f + ':' + m[1]);
+    }
+    if (bad.length) console.log('  被吞掉的声明：', bad.slice(0, 5).join(', '));
+    return bad.length === 0;
   })());
 }
 

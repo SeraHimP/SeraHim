@@ -136,7 +136,9 @@ const { T, done } = scoreboard('DayNight（太阳方位角 + 天气压光）');
   // 上限拉满 = 不夹。这条守的是"默认不改变行为"——参数化那一步必须是视觉空操作。
   L.maxSunElevDeg = 90;
   const noonFree = dayNightAt(120, 480).sunElevation;
-  T(`光③-上限 90 时不夹取（正午仍是关键帧原值 ${noonFree.toFixed(1)}°）`, Math.abs(noonFree - 62) < 1e-6);
+  // 正午关键帧的仰角从 DayNight.js 的 KEYS 表里读（不在这里写死数值：调昼夜表时这条不该跟着改）
+  const noonKey = +(srcOf('src/presentation/DayNight.js').match(/p: 0\.25[^}]*elev: ([\d.]+)/) || [])[1];
+  T(`光③-上限 90 时不夹取（正午仍是关键帧原值 ${noonFree.toFixed(1)}°）`, Number.isFinite(noonKey) && Math.abs(noonFree - noonKey) < 1e-6);
   L.maxSunElevDeg = sav;
 }
 

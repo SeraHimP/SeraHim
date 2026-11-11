@@ -210,42 +210,10 @@ const halfWidth = (bits, d, sign) => {
     && CONFIG.stylizedPalettes.frost.towerStone === undefined);
 }
 
-// ==================== 五、渲染层接线（源码正则钉 JS/DOM 胶水，不测 WebGL 画面本身）====================
-{
-  const terrain = srcOf('src/presentation/TerrainLayer.js');
-  const veg = srcOf('src/presentation/VegetationLayer.js');
-  const renderer = srcOf('src/presentation/ThreeRenderer.js');
-  const decor = srcOf('src/presentation/HowlingAbyssDecor.js');
-
-  T('接①-TerrainLayer 的 navMode 分支读取了调色板颜色（原来的现有缺口已补上）',
-    /stylized \? hex2rgb\(SV\.corridorColor/.test(terrain) && /stylized \? hex2rgb\(SV\.groundColor/.test(terrain));
-  T('接②-TerrainLayer 用 stylizedPaletteOf(map) 取值，不再直接读 CONFIG.stylizedVisuals',
-    /stylizedPaletteOf\(map\)/.test(terrain) && !/CONFIG\.stylizedVisuals/.test(terrain));
-  T('接③-VegetationLayer 对 vegetationMode==="none" 的地图整段跳过散布',
-    /vegetationMode === 'none'/.test(veg));
-  T('接④-VegetationLayer 用 stylizedPaletteOf(map) 取值，不再直接读 CONFIG.stylizedVisuals',
-    /stylizedPaletteOf\(map\)/.test(veg) && !/CONFIG\.stylizedVisuals/.test(veg));
-  T('接⑤-HowlingAbyssDecor 导出的类有 build/clear/setWalkableFn 三个方法',
-    /class HowlingAbyssDecor/.test(decor) && /build\(mapSystem\)/.test(decor)
-    && /clear\(\)/.test(decor) && /setWalkableFn\(fn\)/.test(decor));
-  T('接⑥-HowlingAbyssDecor 只在 paletteId==="frost" 时建东西（不影响其它任何地图）',
-    /map\.paletteId !== 'frost'/.test(decor));
-  T('接⑦-火焰/鬼火/灵魂光点用的是普通 Mesh（MeshBasicMaterial），不是 Points/LineSegments 粒子',
-    !/new THREE\.Points\(/.test(decor) && !/new THREE\.LineSegments\(/.test(decor));
-  T('接⑧-ThreeRenderer 实例化了 HowlingAbyssDecor 并接入 _rebuildTerrain 的重建流程',
-    /this\.frostDecor = new HowlingAbyssDecor\(this\.scene\)/.test(renderer)
-    && /this\.frostDecor\.build\(this\.mapSystem\)/.test(renderer));
-  T('接⑨-ThreeRenderer.setShadowLevel 接入了 frostDecor（用户反馈"没有光影"后补的）',
-    /this\.frostDecor\?\.setShadowLevel\?\.\(lv\)/.test(renderer));
-  T('接⑩-HowlingAbyssDecor 有 setShadowLevel 方法，且不给火焰（MeshBasicMaterial）开阴影',
-    /setShadowLevel\(level\)/.test(decor) && /MeshBasicMaterial/.test(decor)
-    && /o\.material\.type !== 'MeshBasicMaterial'/.test(decor));
-}
+// 五（渲染层接线：旧地形层 / 植被层 / 冰封装饰层）随 2026-11 画面重构删除，冰封地图的新画面由 world/ 模块按主题建。
 
 // ==================== 六、v0.5：火炬接入地图光池 + 冰块防穿模的采样方式 ====================
 {
-  const decor = srcOf('src/presentation/HowlingAbyssDecor.js');
-  const terrain = srcOf('src/presentation/TerrainLayer.js');
   const renderer = srcOf('src/presentation/ThreeRenderer.js');
   const FROST_PAL = CONFIG.stylizedPalettes.frost;
 
@@ -260,10 +228,6 @@ const halfWidth = (bits, d, sign) => {
   T('炬①b-两端的柱子一定挂灯（否则桥头是黑的）',
     [FROST_BRIDGE.left, FROST_BRIDGE.right].every((s2) =>
       s2.pillars[0].torch === true && s2.pillars[s2.pillars.length - 1].torch === true));
-  T('炬①c-灯与火盆几何读同一个 torch 标记（不是两套规则，不可能对不上）',
-    howling_abyss_frost.torches.length
-      === ALL_PILLARS.filter((p) => p.torch).length
-    && /if \(p\.torch === false\) continue;/.test(srcOf('src/presentation/HowlingAbyssDecor.js')));
   T('炬②-torches 坐标就是两侧柱子坐标（不是另起一套点位）',
     howling_abyss_frost.torches.every((t, i) => {
       const all = [...FROST_BRIDGE.left.pillars, ...FROST_BRIDGE.right.pillars];
@@ -274,74 +238,13 @@ const halfWidth = (bits, d, sign) => {
   // 此前把 GAP_D 那 13 个柱子间距当成"13 处缺口"是错的。现在的判据是几何的：
   // 墙脚下没有桥就不摆这块墙。下面既钉源码里不再有概率残留，也直接复刻渲染层
   // 的判据算一遍，钉住"断口只有一处、且落在那个凹口上"这个行为形状。
-  T('墙①-概率断墙机制已彻底删除（源码里不再有 WALL_GAP_CHANCE / WALL_GAP_BLOCKS 这两个常量）',
-    !/const WALL_GAP_CHANCE\s*=/.test(decor) && !/const WALL_GAP_BLOCKS\s*=/.test(decor));
-  T('墙①b-改成逐块查"脚下有没有桥"，采样点从墙块中心沿 inward 往桥内侧探 groundProbe',
-    /side\.inward/.test(decor) && /side\.groundProbe/.test(decor)
-    && /this\._isWalkable\(cx \+ inward\.x \* probe, cy \+ inward\.y \* probe\)/.test(decor));
-  T('墙①c-没注入 isWalkable 时按"有桥"兜底（退化成一条完整的墙，不会拆得七零八落）',
-    /!this\._isWalkable\s*\r?\n?\s*\|\|/.test(decor));
-  T('墙①d-断口只有一处，且落在 sign=-1 侧那个真凹口上（复刻渲染层判据实算）',
-    (() => {
-      const RUN_STEP = 6;                          // = HowlingAbyssDecor 的 WALL_RUN_STEP
-      const found = [];
-      for (const side of [FROST_BRIDGE.left, FROST_BRIDGE.right]) {
-        const runs = [];
-        for (const seg of side.segments) {
-          const ux = Math.cos(seg.angle), uy = Math.sin(seg.angle);
-          for (let t = 0; t <= seg.len + 1e-6; t += RUN_STEP) {
-            const tt = Math.min(t, seg.len);
-            const cx = seg.from.x + ux * tt, cy = seg.from.y + uy * tt;
-            const px = cx + side.inward.x * side.groundProbe, py = cy + side.inward.y * side.groundProbe;
-            if (navWalk(NAV_PUB, px, py)) continue;
-            const d = (cx - BLUE.x) * AX.x + (cy - BLUE.y) * AX.y;
-            const last = runs[runs.length - 1];
-            if (last && d - last.to <= RUN_STEP * 2) last.to = d; else runs.push({ from: d, to: d });
-          }
-        }
-        found.push(runs);
-      }
-      const [runsL, runsR] = found;
-      if (runsL.length !== 0) return false;        // +1 侧没有凹口，整条墙不该有断口
-      if (runsR.length !== 1) return false;        // -1 侧有且只有一处
-      const g = runsR[0];
-      return g.from >= 1200 && g.to <= 1450 && (g.to - g.from) >= 80;
-    })());
 
   // ==================== v0.9：按 Thronefall 参考重做——矮、一体、顶边侵蚀 ====================
   // 用户发来 16 张参考图并确认了三条：墙身每跨一体（柱子是唯一分割）、高度降到
   // 50%、侵蚀只啃顶边不整跨塌。下面钉的是这三条的形状，不是具体数值。
-  T('墙③-分块砌墙整套已删除（不再有 WALL_BLOCK_LEN / WALL_STONE_SHADES 这两个常量）',
-    !/const WALL_BLOCK_LEN\s*=/.test(decor) && !/const WALL_STONE_SHADES\s*=/.test(decor));
-  T('墙④-每个连续跑段只建一根墙身（长度＝整段长，不是按块长切出来的）',
-    /new THREE\.BoxGeometry\(len, WALL_H, WALL_THICK\)/.test(decor));
   // v55.2：再降一半（13→7）并加厚（6→8.4）。这里钉的是**关系**不是具体数字：
   // 墙必须明显矮于柱、薄于柱，柱墙节奏才读得出来；而墙相对原始的 26 必须降到
   // 三分之一以下——用户与外部评审都指到"这道墙在跟桥面抢视觉中心"。
-  T('墙⑤-墙体权重降下来了（矮于柱、薄于柱，且不到原始 26 的三分之一）', (() => {
-    const wh = Number(/const WALL_H = ([\d.]+);/.exec(decor)?.[1]);
-    const wt = Number(/const WALL_THICK = ([\d.]+);/.exec(decor)?.[1]);
-    const ph = Number(/const POST_H = ([\d.]+), POST_W = ([\d.]+);/.exec(decor)?.[1]);
-    const pw = Number(/const POST_H = [\d.]+, POST_W = ([\d.]+);/.exec(decor)?.[1]);
-    return wh > 0 && wh < 26 / 3 && wh < ph && wt < pw && /const CAP_H = 3,/.test(decor);
-  })());
-  T('墙⑧-柱与墙是同一套构造：同一对材质 + 同规格压顶石（CAP_H/CAP_OVERHANG 共用），柱更高更厚',
-    /_buildPillarsAndTorches\(group, side\.pillars, wallBodyMat, wallCapMat\)/.test(decor)
-    && /const POST_H = [\d.]+, POST_W = [\d.]+;/.test(decor)
-    && /new THREE\.BoxGeometry\(POST_W, POST_H, POST_W\)/.test(decor)
-    && /POST_W \+ CAP_OVERHANG \* 2, CAP_H, POST_W \+ CAP_OVERHANG \* 2/.test(decor));
-  T('墙⑨-圆锥雪冠/棱柱柱身整套已删除（那是与矩形墙板冲突的另一套形状语言）',
-    !/PILLAR_H|PILLAR_R_TOP|PILLAR_R_BOT/.test(decor) && !/ConeGeometry\(PILLAR/.test(decor));
-  T('墙⑥-侵蚀只作用在压顶石上（跳过的是 cap，不是墙身）——顶边啃缺口，墙身仍连续',
-    (() => {
-      const i = decor.indexOf('WALL_EROSION_CHANCE) continue;');
-      if (i < 0) return false;
-      const around = decor.slice(Math.max(0, i - 700), i);
-      return /const capN = /.test(around) && /const capLen = /.test(around);
-    })());
-  T('墙⑦-墙只用两个色（墙身一色 + 压顶一色），不再按哈希随机取深浅档',
-    /const wallBodyMat = /.test(decor) && /const wallCapMat = /.test(decor)
-    && !/stoneShadeMats/.test(decor));
 
   // 端柱：用户"墙略微短一些，不要超过桥面部分"——柱子不能落进基地圈。
   T('端①-两侧所有柱子都在桥身段内，没有一根落进基地圈（墙因此不会压在基地平台上）',
@@ -397,11 +300,6 @@ const halfWidth = (bits, d, sign) => {
     })());
   T('沿④-其余地图都没有声明 visualNavgrid（这条接缝是可选的）',
     Object.values(MAPS).filter(m => m.visualNavgrid).every(m => m.id === 'howling_abyss_frost_v1'));
-  T('沿⑤-TerrainLayer 只在地图声明了 visualNavgrid 时才改用它画地面，否则照抄可走网格',
-    // v60：平滑路径（smoothNavWalk）同样优先读 visualNavgrid。
-    /const paint0 = visualWalkOf\(map, grid\) \|\| walk;/.test(terrain)
-    && /map\.visualNavgrid\?\.bits \? map\.visualNavgrid/.test(terrain)
-    && /if \(!vg \|\| !vg\.bits \|\| !vg\.n \|\| !grid\) return null;/.test(terrain));
   // ==================== v1.0 阶段二：配色 / 色调映射 / 水域环境 ====================
   // 用户确认的三件事：往 Thronefall 雪地那张靠、顺手修"冷色被压成灰绿"的老问题、
   // 空白水域补山体装饰。下面钉的是"这几件事确实落地了且都是软编码"，不钉具体色值。
@@ -413,8 +311,6 @@ const halfWidth = (bits, d, sign) => {
   T('色③-frost 调色板补齐了冰/水/墙/岛/冰刺的颜色（原来散在装饰层里硬编码）',
     ['iceColorA', 'iceColorB', 'waterColor', 'wallCapColor', 'islandColor', 'spikeColor']
       .every((k) => typeof FROST_PAL[k] === 'string' && /^#[0-9a-f]{6}$/i.test(FROST_PAL[k])));
-  T('色④-装饰层这些颜色一律读调色板，源码里不再出现写死的十六进制冰/水色',
-    /SV\.iceColorA/.test(decor) && /SV\.waterColor/.test(decor) && /SV\.spikeColor/.test(decor));
   T('色⑤-桥面比深渊底色明显更亮（参考图的结构：地面亮、环境暗，靠这个反差撑画面）',
     (() => {
       const lum = (hex) => { const v = parseInt(hex.slice(1), 16);
@@ -427,24 +323,7 @@ const halfWidth = (bits, d, sign) => {
         return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255); };
       return lum(FROST_PAL.corridorColor) - lum(FROST_PAL.rockColor) > 60;
     })());
-  T('环①-冰块用不规则棱柱（icePrismGeo 逐顶点抖半径），不再是清一色的规则六边形',
-    /function icePrismGeo\(sides, seed\)/.test(decor)
-    && /pos\.setX\(i, x \* k\); pos\.setZ\(i, z \* k\);/.test(decor));
-  T('环②-水域分三档：冰脊（成坨的山）+ 冰刺丛 + 平浮冰，尺度拉开',
-    /const RIDGE_STEP = /.test(decor) && /const SPIKE_PER_RIDGE = /.test(decor)
-    && /const RIDGE_R = /.test(decor));
-  T('环③-冰脊只长在离桥足够远的地方，且每一块仍旧逐个查 clearOfBridge（不许压到桥上）',
-    /distToBridge\(cx, cy\) < RIDGE_MIN_DIST/.test(decor)
-    && /if \(!clearOfBridge\(sx, sy, r\)\) continue;/.test(decor));
 
-  T('墙②-断口相邻的完好块会补损毁痕迹（_buildWeatherChips），不是只有断口本身有瓦砾',
-    /_buildWeatherChips/.test(decor));
-  T('冰①-clearOfBridge 用整圆网格采样（不再是几个固定方向的采样点），能覆盖任意弯曲边界',
-    /for \(let dx = -r; dx <= r \+ 1e-6; dx \+= step\)/.test(decor)
-    && /dx \* dx \+ dy \* dy > r \* r/.test(decor));
-  T('火①-火盆摞在柱顶（压顶石上方），没有支架/横臂几何体、也不贴柱身侧面——用户先后否掉"挑出去"和"贴侧面"两版方案后定的',
-    !/BoxGeometry\(BRAZIER_ARM_LEN/.test(decor) && !/pillarRAtBowl/.test(decor)
-    && /const bowlH = capH \+ CAP_H \/ 2 \+ BRAZIER_BOWL_H \/ 2/.test(decor));
 }
 
 // ==================== v54/v55.3：塔的石色归地图调色板管，后改为从地面色算 ====================

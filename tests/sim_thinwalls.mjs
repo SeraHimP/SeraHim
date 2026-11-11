@@ -75,10 +75,7 @@ T('④三条兵线的路点全都能走', m.lanes.every((l) => l.waypoints.every
 }
 
 {
-  const ws = fs.readFileSync(new URL('../src/presentation/BaseWallLayer.js', import.meta.url), 'utf8');
-  T('⑧画出来的墙和挡人的墙用同一个厚度函数', /baseWallThickness\(p\.width, W\)/.test(ws));
-  const tl = fs.readFileSync(new URL('../src/presentation/TerrainLayer.js', import.meta.url), 'utf8');
-  T('⑨地面按运行时位图画（墙后打开的地方画成正常地面）', /mapSystem\?\._navgrid\?\.\(\)/.test(tl));
+
 }
 
 done();

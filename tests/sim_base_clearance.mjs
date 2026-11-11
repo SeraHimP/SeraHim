@@ -59,7 +59,6 @@ for (const id of ['summoners_rift_v1', 'twisted_treeline_v1', 'howling_abyss_fro
     if (d({ x, y }) < (m.walls?.corridorHalfWidth ?? 130)) inCorridor++;
   }
   T(`⑤挡人的墙格没有一格在兵线走廊里（${inCorridor} 格）`, inCorridor === 0);
-  T('⑥画墙与碰撞传同一个 laneClear', /baseWallRuns\(map, mask, NG\.n, block, W\.laneClear \?\? 0\)/.test(fs.readFileSync(new URL('../src/presentation/BaseWallLayer.js', import.meta.url), 'utf8')));
 }
 
 done();

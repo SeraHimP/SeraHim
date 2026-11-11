@@ -3512,25 +3512,15 @@ async function world() {
   // v51.33 起函数体里加了一段解释"为什么六处守卫要一起清"的头注，字符数早就超过
   // 原来 {0,400} 的窗口——那是按"捕获到函数体"设的宽松上限，不是要钉注释长度，
   // 窗口不够宽只会让这条测试自己失效，钉不住行为，所以放宽而不是删掉这条断言。
-  const invalidateBlock = trSrc.match(/invalidateTerrain\(\) \{[\s\S]{0,1400}?\n  \}/)?.[0] || '';
-  T('渲①-invalidateTerrain() 会清 TerrainLayer 的离屏画布缓存（之前从未被清过的那处）',
-    /invalidateTerrainCache\(this\.mapSystem\?\.currentMap\?\.id\)/.test(invalidateBlock));
-  T('渲②-同时清掉植被/水面/裙边各自的 "同图跳过" 守卫（_mapId）',
-    /this\.veg\._mapId = null/.test(invalidateBlock)
-    && /this\.water\._mapId = null/.test(invalidateBlock)
-    && /this\.skirt\._mapId = null/.test(invalidateBlock));
-  // v51.33：排查"地图编辑器地形笔刷画的新墙只有地面深色印记、没有真实石头/树
-  // 模型"——根因是这里漏清了 terrainEdge/frostDecor/boundaryDecor 三层各自的
-  // `_mapId` 守卫，导致地图编辑器整段会话里（currentMap.id 固定不变）这三层
-  // 建一次之后就再也不会跟着笔刷重新采样，纵使 navgrid 数据已经更新。
-  T('渲②b-同时清掉 terrainEdge/frostDecor/boundaryDecor 各自的 "同图跳过" 守卫（v51.33 修复：墙体笔刷编辑不出真实模型）',
-    /this\.terrainEdge\._mapId = null/.test(invalidateBlock)
-    && /this\.frostDecor\._mapId = null/.test(invalidateBlock)
-    && /this\.boundaryDecor\._mapId = null/.test(invalidateBlock));
-
-  const tlSrc = srcOf('src/presentation/TerrainLayer.js');
-  T('渲③-TerrainLayer 导出了 invalidateTerrainCache，且真的对 _terrainCache 调用了 delete',
-    /export function invalidateTerrainCache/.test(tlSrc) && /_terrainCache\.delete/.test(tlSrc));
+  // 2026-11：旧地形层（TerrainLayer 的离屏画布缓存、植被 / 水面 / 裙边 / 崖壁 / 装饰各自的同图守卫）全部删除，
+  // 世界改由 world/World.js 统一建；编辑会话里地图对象不变，所以要显式作废两处缓存。
+  const invalidateBlock = trSrc.match(/invalidateTerrain\(\) \{[\s\S]{0,600}?\n  \}/)?.[0] || '';
+  T('渲①-invalidateTerrain() 作废世界的"同图跳过"守卫（编辑器笔刷改了位图要能立刻重建）',
+    /this\.world\._map = null/.test(invalidateBlock) && /this\._terrainDirty = true/.test(invalidateBlock));
+  T('渲②-同时作废 MapSystem 缓存的地形高度场（否则重建出来还是旧地形）',
+    /ms\._tfield = null/.test(invalidateBlock));
+  T('渲③-MapSystem.invalidateNav 也一并作废高度场（换位图 = 换地形）',
+    /invalidateNav\(\) \{[\s\S]{0,120}this\._tfield = null/.test(srcOf('src/systems/MapSystem.js')));
 }
 
 // ==================== v51.33：任务 #104 真根因——SSAO 把血条渲染成了带半透明重影的假几何 ====================
@@ -3546,24 +3536,13 @@ async function world() {
   const pfxSrc = srcOf('src/presentation/PostFX.js');
   T('SSAO①-PostFX.js 导出了 HUD_SPRITE_LAYER 常量（血条/护盾图标专用 layer）',
     /export const HUD_SPRITE_LAYER = 1;/.test(pfxSrc));
-  // 上限从 900 提到 1800：render() 里新增了粒子层的排除逻辑与说明注释，900 字符截断在中间。
-  const prepassBlock = pfxSrc.match(/render\(renderer[\s\S]{0,1800}?\n  \}/)?.[0] || '';
-  T('SSAO②-NormalDepthPrepass.render() 渲染前临时关掉这些 layer、渲染后恢复（不是永久改相机状态）',
-    /this\.camera\.layers\.disable\(HUD_SPRITE_LAYER\)/.test(prepassBlock)
-    && /if \(hadHudLayer\) this\.camera\.layers\.enable\(HUD_SPRITE_LAYER\)/.test(prepassBlock));
-  // 2026-09-05 新增：粒子/薄纱也必须排除出预渲染。这是描边 bug 的真根因——
-  // overrideMaterial 会无视原材质透明度，把雨/雪/尘/雾当成不透明面渲进法线深度图，
-  // 描边就在每一颗粒子上触发（满屏黑麻点），SSAO 读同一张图也一起被污染。
-  // 2026-09-05：光挂 layer 迟早漏（用户实测漏了弹道——EffectsLayer 是一整个
-  // transparent 的批次网格，被预渲染当成不透明面，描边沿着每颗子弹的公告板描出黑框）。
-  // 加一条通用规则：材质 transparent 的一律不进预渲染。半透明物体本来就既不该产生
-  // 轮廓、也不该在 SSAO 里遮蔽别人。
-  T('SSAO②c-预渲染前把所有 transparent 材质的物体临时隐藏、渲完恢复（通用兜底，不靠逐个挂 layer）',
-    /o\.visible = false; hidden\.push\(o\);/.test(prepassBlock)
-    && /for \(const o of hidden\) o\.visible = true;/.test(prepassBlock));
-  T('SSAO②b-粒子/薄纱层（FX_PARTICLE_LAYER）同样在预渲染时临时关掉、之后恢复',
-    /this\.camera\.layers\.disable\(FX_PARTICLE_LAYER\)/.test(prepassBlock)
-    && /if \(hadFxLayer\) this\.camera\.layers\.enable\(FX_PARTICLE_LAYER\)/.test(prepassBlock));
+  // 2026-11：法线深度预渲染已删除，SSAO / 雾改读主渲染（ScenePass）的深度。等价条件变成：
+  // 血条 / 护盾图标的材质不写深度——写了就会在深度贴图里留下一块方片，SSAO 沿它的边缘算出假遮蔽（任务 #104 的形状）。
+  const ulSrcH = srcOf('src/presentation/UnitLayer.js');
+  T('SSAO②-血条材质不写深度（主渲染深度里没有它，SSAO 不会围着血条算出暗影）',
+    /map: barTex, depthTest: false, depthWrite: false/.test(ulSrcH));
+  T('SSAO②b-SSAO / 雾读的是 ScenePass 的主渲染深度，没有另做一遍预渲染',
+    /tDepth: \{ value: scenePass\.depthTexture \}/.test(pfxSrc) && !/NormalDepthPrepass/.test(pfxSrc));
 
   const trSrc = srcOf('src/presentation/ThreeRenderer.js');
   T('SSAO③-ThreeRenderer 建主相机时把这个 layer 加入可见集合（否则 beauty pass 也会漏画血条）',

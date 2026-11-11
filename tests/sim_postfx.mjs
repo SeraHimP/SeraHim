@@ -8,6 +8,7 @@
 // 一样可以用源码正则钉住——钉的是"这层薄薄的开关/UI 胶水代码没有脱节"，不是
 // "画面好不好看"，两者不冲突。PostFX.js 内部的 GLSL 数学本身仍然不测（同样测不出）。
 import { srcOf, scoreboard } from './_harness.mjs';
+import * as THREE from '../vendor/three.module.js';
 import { ThreeRenderer } from '../src/presentation/ThreeRenderer.js';
 import { CONFIG } from '../src/data/Config.js';
 
@@ -36,21 +37,22 @@ T('渲②-setOutline 保留为空操作（旧存档调它不炸），不再写�
 T('渲③-setSSAO(on) 方法存在且写回 ssaoPass.enabled', /setSSAO\(on\)\s*\{[^}]*ssaoPass[^}]*enabled[^}]*\}/.test(renderer));
 T('渲④-_buildComposer 里 SSAO 的 enabled 初值来自 ssaoOn（不是永远开）',
   /this\.ssaoPass\.enabled\s*=\s*this\.ssaoOn/.test(renderer));
-T('渲⑤-法线+深度预渲染 Pass（NormalDepthPrepass）接进了 composer 的 pass 链',
-  /this\.composer\.addPass\(this\.normalDepthPrepass\)/.test(renderer));
+T('渲⑤-ScenePass（MSAA + 深度贴图）是 composer 的第一个 pass，没有单独的法线深度预渲染',
+  /this\.composer\.addPass\(this\.scenePass\)/.test(renderer) && !/normalDepthPrepass|NormalDepthPrepass|RenderPass\(/.test(renderer)
+  && renderer.indexOf('this.composer.addPass(this.scenePass)') < renderer.indexOf('this.composer.addPass(this.ssaoPass)'));
 T('渲⑥-每帧渲染前会同步 SSAO 的相机 uniform（透视相机的投影矩阵随缩放变，不同步就会算错）',
   /this\.ssaoPass\?\.\_syncCamera\?\.\(\)/.test(renderer));
 
 // ==================== PostFX.js 导出面 ====================
-T('模①-PostFX.js 导出 NormalDepthPrepass / createSSAOPass / createFogPass（描边接口已删）',
-  /export\s*\{\s*NormalDepthPrepass[^}]*\}/.test(postfx)
+T('模①-PostFX.js 导出 ScenePass / createSSAOPass / createFogPass（描边、预渲染接口已删）',
+  /export\s*\{\s*ScenePass\s*\}/.test(postfx) && !/NormalDepthPrepass/.test(postfx)
   && /export function createSSAOPass/.test(postfx)
   && /export function createFogPass/.test(postfx)
   && !/createOutlinePass/.test(postfx));
-T('模②-NormalDepthPrepass 用 MeshNormalMaterial 编码视空间法线（SSAO/描边都要这个口径）',
-  /new THREE\.MeshNormalMaterial\(\)/.test(postfx));
-T('模③-NormalDepthPrepass 是"只产出纹理、不参与主色彩链"的旁路（needsSwap=false）',
-  /this\.needsSwap\s*=\s*false/.test(postfx));
+T('模②-SSAO 的法线由深度差分重建（取深度差更小的一侧，跨物体边缘不翻）',
+  /normalize\(cross\(ddx, ddy\)\)/.test(postfx) && /abs\(pr\.z\) < abs\(pl\.z\)/.test(postfx) && !/tNormal/.test(postfx));
+T('模③-抗锯齿用 MSAA（渲染目标 samples），没有 FXAA',
+  /samples,\s*\n?\s*depthTexture: new THREE\.DepthTexture/.test(postfx) && !/FXAA/.test(renderer.replace(/setFXAA[^\n]*\n/g, '').replace(/\/\/[^\n]*|\*[^\n]*/g, '')));
 T('模④-视空间坐标重建走投影逆矩阵（透视 / 正交通用），不再按正交视锥的 left/right 线性插值',
   /projectionMatrixInverse \* clip/.test(postfx) && !/effectiveOrthoBounds/.test(postfx));
 T('模⑤-SSAO 半分辨率算遮蔽 + 深度感知模糊后再乘回画面（不是全分辨率裸采样）',
@@ -176,8 +178,8 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
     && /pass\.uniforms\.viewMatrixInverse\.value\.copy\(camera\.matrixWorld\)/.test(postfx));
   T('雾④-高度雾：随世界 Y 指数衰减；深度衰减：随视空间距离指数吸收（Beer-Lambert）',
     /exp\(-h \* heightFalloff\)/.test(postfx) && /exp\(-dist \* density\)/.test(postfx));
-  T('雾⑤-复用 NormalDepthPrepass 的深度贴图，没有另开一个预渲染 Pass',
-    /pass\.uniforms\.tDepth\.value = prepass\.renderTarget\.depthTexture/.test(postfx.slice(postfx.indexOf('createFogPass'))));
+  T('雾⑤-读 ScenePass 主渲染的深度贴图，没有另开一个预渲染 Pass',
+    /pass\.uniforms\.tDepth\.value = scenePass\.depthTexture/.test(postfx.slice(postfx.indexOf('createFogPass'))));
   T('雾⑥-fogStrength<=0 时整个 pass 直通原图（关掉/无雾时零视觉影响）',
     /if \(fogStrength <= 0\.0001\) \{ gl_FragColor = base; return; \}/.test(postfx));
   T('雾⑦-setStrength(v) 把 0..1 的充能映射到 maxStrength 软上限（可再乘浓雾 Signature 的临时倍数），不是直接写 1',
@@ -243,29 +245,67 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
     /bindFx\('setFogBtn',\s*r => r\.fogOn !== false,\s*\(r, v\) => r\.setFog\(v\)/.test(settings));
 }
 
-// ==================== 2026-09-25：水晶白名单——描边黑线穿模修复 ====================
-// 用户报"黑色描边线穿过了水晶材质"：水晶材质 transparent:true（早于本轮就存在，
-// 为水晶质感需要），按 2026-09-05 那条"transparent 一律不进预渲染"的通用规则会被
-// 整体隐藏，于是水晶这块屏幕区域在深度/法线图里读到的是**水晶背后**的塔身结构，
-// 描边把那部分结构的边缘画成黑线，合成时叠在水晶前面——表现为"背后描边穿模"。
-// 水晶是实心凸多面体（不是该被跳过的粒子/弹道薄片），修法是给它开一个显式白名单：
-// userData.prepassSolid，NormalDepthPrepass 遇到这个标记时跳过"transparent 就隐藏"
-// 这条规则，让它像不透明物体一样正常参与深度/法线预渲染。
+// ==================== ScenePass：MSAA 采样数 / 开关 / 尺寸（直接实例化跑）====================
+// 用户反馈"画面看起来有些模糊"：根因是 FXAA 把贴图细节一起抹掉（实测关掉后清晰度指标翻倍），
+// 换成 MSAA 场景 Pass。这里钉行为：采样数随像素比与开关变化、尺寸同步、深度贴图可供 SSAO / 雾读取。
 {
-  const prepassBlock2 = postfx.match(/render\(renderer[\s\S]{0,1800}?\n  \}/)?.[0] || '';
-  T('晶①-NormalDepthPrepass 的 traverse 里对 userData.prepassSolid 开了白名单，不进"transparent 就隐藏"分支',
-    /const solidWhitelist = !!\(o\.userData && o\.userData\.prepassSolid\)/.test(prepassBlock2)
-    && /tr && !solidWhitelist/.test(prepassBlock2));
-  T('晶②-白名单判断在"是否隐藏"之前生效（顺序对：先放行，再判断 transparent）',
-    (() => {
-      const iWhitelist = prepassBlock2.indexOf('o.userData.prepassSolid');
-      const iHide = prepassBlock2.indexOf('o.visible = false; hidden.push(o);');
-      return iWhitelist > 0 && iHide > 0 && iWhitelist < iHide;
-    })());
+  const { ScenePass } = await import('../src/presentation/PostFX.js');
+  const sp = new ScenePass(new THREE.Scene(), new THREE.PerspectiveCamera(), 640, 360, 4);
+  T('场①-ScenePass 的颜色目标是多重采样的，且带深度贴图', sp.rt.samples === 4 && !!sp.depthTexture && sp.depthTexture === sp.rt.depthTexture);
+  sp.setSamples(0);
+  T('场②-setSamples(0) 关掉多重采样（抗锯齿开关）', sp.samples === 0 && sp.rt.samples === 0);
+  sp.setSize(800, 450);
+  T('场③-setSize 同步颜色目标与深度贴图的尺寸', sp.rt.width === 800 && sp.rt.height === 450 && sp.depthTexture.image.width === 800);
 
-  const ulSrc2 = srcOf('src/presentation/UnitLayer.js');
-  T('晶③-水晶 Mesh 创建时挂上了 prepassSolid 白名单标记（不是光改 PostFX 没接线）',
-    /const cm = new THREE\.Mesh\(vis\.crystal\.geo, crystalMaterial\(vis\.crystalColor\)\);[\s\S]{0,300}?cm\.userData\.prepassSolid = true;/.test(ulSrc2));
+  const aa = ThreeRenderer.prototype._aaSamples;
+  const fake = (on, pr, max) => ({ aaOn: on, gl: { getPixelRatio: () => pr, capabilities: { maxSamples: max } } });
+  const A = CONFIG.postfx.aa;
+  T('场④-普通屏用 CONFIG.postfx.aa.samples', aa.call(fake(true, 1, 16)) === A.samples);
+  T('场⑤-高分屏（像素比 ≥ hiDpiRatio）用更少的采样数', aa.call(fake(true, A.hiDpiRatio, 16)) === A.samplesHiDpi && A.samplesHiDpi < A.samples);
+  T('场⑥-抗锯齿关掉时采样数为 0', aa.call(fake(false, 1, 16)) === 0);
+  T('场⑦-不超过显卡支持的最大采样数', aa.call(fake(true, 1, 2)) === 2);
+  T('场⑧-setFXAA 保留为 setAA 的别名（旧存档和画质面板还在调它）', /setFXAA\(on\) \{ return this\.setAA\(on\); \}/.test(renderer));
+  T('场⑨-_sizeComposer 把渲染器的像素比同步给 composer（分辨率缩放后后处理链不被拉伸）',
+    /this\.composer\.setPixelRatio\(this\.gl\.getPixelRatio\(\)\)/.test(renderer));
 }
+
+// ==================== 大气透视（自动线性雾）：摘 _autoFog 原型方法直接跑 ====================
+// 原在 sim_mapskirt（地图裙边已随旧地形层删除，见 2026-11 画面重构），挪到这里。
+{
+  // 2026-11 画面重构：透视相机下，大气透视按【机位距离】给（近处清晰、远处融进天光），不再按地图对角线。
+  const autoFog = ThreeRenderer.prototype._autoFog;
+  const mkFake = (camDist, fogColor) => ({ scene: new THREE.Scene(), _camDist: camDist, _fogColor: fogColor });
+  const F = CONFIG.ui.mapFog;
+
+  const near = mkFake(1000);
+  autoFog.call(near);
+  T('会起雾（线性雾）', !!near.scene.fog && near.scene.fog.isFog === true);
+
+  const far = mkFake(4000);
+  autoFog.call(far);
+  T('机位越远，雾的起止距离越远（拉远看全图时地图本身不能被雾吃掉）',
+    far.scene.fog.near > near.scene.fog.near && far.scene.fog.far > near.scene.fog.far);
+  T('起止距离 = 机位距离 × nearK / farK（两个系数在 CONFIG.ui.mapFog）',
+    Math.abs(near.scene.fog.near - 1000 * F.nearK) < 1e-6 && Math.abs(near.scene.fog.far - 1000 * F.farK) < 1e-6);
+  T('雾从机位到注视点的距离之外才开始（注视点附近是清晰的）', F.nearK >= 1 && F.farK > F.nearK);
+
+  const noDist = mkFake(undefined);
+  autoFog.call(noDist);
+  T('还没同步过机位时不报错，用默认距离兜底', !!noDist.scene.fog);
+
+  const colored = mkFake(1000, '#112233');
+  autoFog.call(colored);
+  T('雾色取自 setLighting 传下来的地平线色（昼夜/天气怎么染色，雾跟着染）',
+    colored.scene.fog.color.getHexString() === '112233');
+
+  const orig = CONFIG.ui.mapFog.enabled;
+  CONFIG.ui.mapFog.enabled = false;
+  const off = mkFake(1000);
+  autoFog.call(off);
+  T('mapFog.enabled=false 时不设雾', off.scene.fog === null);
+  CONFIG.ui.mapFog.enabled = orig;
+}
+
+T('雾-render 每帧调用 _autoFog（机位距离一变雾就跟着变）', /this\._autoFog\(\);/.test(srcOf('src/presentation/ThreeRenderer.js')));
 
 done();

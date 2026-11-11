@@ -43,9 +43,7 @@
  *     UnitMeshFactory.unitMaterial() 共享材质本来就是这个模型，InstancedMesh 不改变它。
  */
 import * as THREE from '../../vendor/three.module.js';
-import { applySnowTint } from './VegetationShaderPatch.js';
 import { CONFIG } from '../data/Config.js';
-import { sampleSnowTarget } from '../systems/GroundTraceSystem.js';
 import { animMaterials } from './unitRig.js';
 import { currentUnitTint } from './UnitMeshFactory.js';
 
@@ -78,18 +76,10 @@ class BodyBucket {
     this.scene = scene;
     this.isTower = isTower;
     this.capacity = INITIAL_CAPACITY;
-    // ==================== v55.3：塔"被雪覆盖"效果 ====================
-    // 用户要求"塔也有被雪覆盖的效果"，跟野区植被同一套 applySnowTint/
-    // updateSnowInstances（VegetationShaderPatch.js，本来就是通用工具，不是
-    // 植被专属）。但这里的 geo/mat 是 UnitMeshFactory 按 key 全局共享的缓存
-    // （见文件头注），直接在共享对象上加 instanceSnow 属性/onBeforeCompile 会
-        // 波及同一份缓存的其它消费者（比如编辑器里的幽灵预览塔可能复用同一把
-    // 几何/材质，但没有走 InstancedMesh、没有这个属性，会导致 shader 编译要求
-    // 的 attribute 缺失）。只对塔桶克隆一份专属 geo/mat 再挂雪效——塔数量少
-    // （≤44，且文件头注已经说"塔的几何 key 本来就很碎，大部分互不共享"），
-    // 克隆的额外开销可以忽略；小兵桶继续用共享对象，不受影响，逐位不变。
-    this.geo = isTower ? geo.clone() : geo;
-    this.mat = isTower ? mat.clone() : mat;
+    // 塔不再有积雪着色（用户：「下雪的时候，树和塔就变白，这个太丑了并且不符合实际」），
+    // 所以塔桶也直接用共享几何 / 材质，不必再为挂积雪属性单独克隆一份。
+    this.geo = geo;
+    this.mat = mat;
     // 带骨骼的几何（小兵）：换动画材质，每个实例多一个 aAnim（走路相位 / 走路幅度 / 攻击进度 / 时间）。
     // 几何按 key 共享、一个 key 恰好一个桶，属性直接挂在共享几何上即可。
     this.animated = !isTower && !!geo.userData?.animated;
@@ -97,11 +87,6 @@ class BodyBucket {
       this.mat = sharedAnimMat();
       this.geo.setAttribute('aAnim', new THREE.InstancedBufferAttribute(new Float32Array(this.capacity * 4), 4));
       this.geo.getAttribute('aAnim').setUsage(THREE.DynamicDrawUsage);
-    }
-    if (isTower) {
-      this.geo.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(new Float32Array(this.capacity), 1));
-      applySnowTint(this.geo, this.mat);
-      this._snowPosArr = new Float32Array(this.capacity * 3); // 每槽位缓存一份世界坐标，updateSnow 时不用每次都解矩阵算三角函数
     }
     this.mesh = new THREE.InstancedMesh(this.geo, this.mat, this.capacity);
     this.mesh.frustumCulled = false;
@@ -119,15 +104,6 @@ class BodyBucket {
     while (cap < minCap) cap *= 2;
     if (cap === this.capacity) return;
     const old = this.mesh;
-    if (this.isTower) {
-      const newSnowAttr = new Float32Array(cap);
-      const oldSnowAttr = this.geo.getAttribute('instanceSnow')?.array;
-      if (oldSnowAttr) newSnowAttr.set(oldSnowAttr);
-      this.geo.setAttribute('instanceSnow', new THREE.InstancedBufferAttribute(newSnowAttr, 1));
-      const newPos = new Float32Array(cap * 3);
-      newPos.set(this._snowPosArr);
-      this._snowPosArr = newPos;
-    }
     if (this.animated) {
       const na = new Float32Array(cap * 4);
       na.set(this.geo.getAttribute('aAnim').array);
@@ -145,32 +121,6 @@ class BodyBucket {
     this.scene.add(mesh);
     this.mesh = mesh;
     this.capacity = cap;
-  }
-
-  /**
-   * 每帧调用（isTower 桶才有意义，setMatrix 里顺带记一份世界坐标，供节流刷新雪深时
-   * 直接查表，不用每次都从矩阵里解出平移分量）。
-   */
-  _recordSnowPos(idx, x, y, z) {
-    if (!this._snowPosArr) return;
-    this._snowPosArr[idx * 3] = x;
-    this._snowPosArr[idx * 3 + 1] = y;
-    this._snowPosArr[idx * 3 + 2] = z;
-  }
-
-  /** 节流刷新这一桶里所有塔实例的落雪程度（塔不动，坐标从 _snowPosArr 直接查表）。 */
-  updateSnow(sampleFn, maxBlend) {
-    if (!this.isTower) return;
-    const attr = this.geo.getAttribute('instanceSnow');
-    if (!attr) return;
-    const arr = attr.array;
-    for (let i = 0; i < this.mesh.count; i++) {
-      if (this.free.includes(i)) continue; // 已释放的空槽位不用算，反正缩放为0不可见
-      const x = this._snowPosArr[i * 3], z = this._snowPosArr[i * 3 + 2];
-      const depth = Math.max(0, Math.min(1, sampleFn(x, z)));
-      arr[i] = depth * maxBlend;
-    }
-    attr.needsUpdate = true;
   }
 
   /** 动画桶：阴影深度与描边预渲染也走同一套变形（否则影子 / 描边是静止姿势） */
@@ -210,7 +160,6 @@ class BodyBucket {
     _m4.compose(_pos, _quat, _scl);
     this.mesh.setMatrixAt(idx, _m4);
     this.mesh.instanceMatrix.needsUpdate = true;
-    this._recordSnowPos(idx, x, y, z);
   }
 
   setLevel(level) {
@@ -258,62 +207,6 @@ export class BodyInstancer {
     for (const b of this.buckets.values()) b.setLevel(level);
   }
 
-  /**
-   * 塔的积雪效果，节流刷新，口径与 VegetationLayer.updateSnow 完全一致（见
-   * Config.js ui.towerSnowFx 头注：塔数量少不是不节流的理由，两处保持同一套习惯）。
-   * groundTraceSystem 为空（还没进对局/天气系统未接线）时直接跳过，不报错。
-   */
-  updateSnow(dt, groundTraceSystem) {
-    // v55.9 修复："塔更换损毁模型时会先变成原模型闪一下才变雪模型"的根因——
-    // 这里缓存一份最新引用，供 seedTowerSnow() 在损毁档切换（bindSlot 换新
-    // 槽位）的那一瞬间立即取用，不用等下面这个节流周期真正跑到。
-    this._groundTraceSystem = groundTraceSystem;
-    const cfg = (CONFIG.ui && CONFIG.ui.towerSnowFx) || {};
-    const interval = cfg.updateIntervalSec ?? 0.75;
-    this._snowT = (this._snowT || 0) + dt;
-    if (this._snowT < interval) return;
-    this._snowT = 0;
-    // v55.8 修复：塔改读 getSnowTarget()（不含侵蚀的目标雪深），不再用
-    // getSnowCover() 那份会被小兵踩踏侵蚀的实际地面雪深——否则小兵一从塔附近
-    // 走过，塔坐标点的雪深就被一起压低，塔的落雪程度跟着诡异地闪烁（见
-    // GroundTraceSystem.js sampleSnowTarget 头注的完整根因记录）。
-    if (!groundTraceSystem || !groundTraceSystem.getSnowTarget) return;
-    const snow = groundTraceSystem.getSnowTarget();
-    if (!snow) return;
-    const maxBlend = cfg.maxBlend ?? 0.55;
-    const sampleFn = (x, z) => sampleSnowTarget(snow, x, z);
-    for (const b of this.buckets.values()) {
-      if (b.isTower) b.updateSnow(sampleFn, maxBlend);
-    }
-  }
-
-  /**
-   * v55.9 修复：塔损毁档位切换（vis.key 变化）会经 InstancedUnitProxy.bindSlot
-   * 分配一个全新槽位——新槽位的 instanceSnow 是 Float32Array 默认值 0（见
-   * BodyBucket 构造函数/_grow），要等下一次上面 updateSnow() 的节流周期
-   * （默认0.75秒）才会被刷新成正确值。这段时间里塔先以"完全无雪"的样子画
-   * 出来，再在节流周期到时"啪"地一下跳变成有雪——用户报"先变成原模型后闪
-   * 一下才变为雪的模型"，正是这个空档期。
-   * 修法：在 bindSlot 换槽的那一刻立即用【当前】groundTraceSystem 算一次
-   * 这一个槽位该有的雪量并写入，不等节流周期——只在换槽这个低频事件发生时
-   * 多做一次单点采样，成本可以忽略，跟节流刷新（照顾"雪随时间累积/消退"
-   * 这个持续过程）不冲突，两者管的是不同的时机。
-   */
-  seedTowerSnow(slot, x, z) {
-    if (!slot || !slot.bucket.isTower) return;
-    const gts = this._groundTraceSystem;
-    if (!gts || !gts.getSnowTarget) return;
-    const snow = gts.getSnowTarget();
-    if (!snow) return;
-    const attr = slot.bucket.geo.getAttribute('instanceSnow');
-    if (!attr) return;
-    const cfg = (CONFIG.ui && CONFIG.ui.towerSnowFx) || {};
-    const maxBlend = cfg.maxBlend ?? 0.55;
-    const depth = Math.max(0, Math.min(1, sampleSnowTarget(snow, x, z)));
-    attr.array[slot.index] = depth * maxBlend;
-    attr.needsUpdate = true;
-  }
-
   dispose() {
     for (const b of this.buckets.values()) b.dispose();
     this.buckets.clear();
@@ -350,11 +243,6 @@ export class InstancedUnitProxy {
     this._slot = this._instancer.alloc(key, geo, mat, isTower);
     if (old) this._instancer.release(old);
     this._flush();
-    // v55.9 修复：塔损毁档切换换槽的瞬间立即补一次雪深采样，不等节流周期，
-    // 见 BodyInstancer.seedTowerSnow 头注（"先变原模型再闪一下变雪模型"的根因）。
-    // 用换槽前就已知道的位置（_x/_z 在损毁档切换时基本不变，_flush 会随即
-    // 再同步一次），不需要等外部再传一次坐标进来。
-    if (isTower) this._instancer.seedTowerSnow(this._slot, this._x, this._z);
   }
 
   /** 动画参数（走路相位、走路幅度 0..1、攻击进度 0..1 / -1、时间），见 unitRig.js */

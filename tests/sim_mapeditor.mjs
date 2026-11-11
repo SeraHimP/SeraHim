@@ -910,15 +910,7 @@ const T = board.T;
   T('⑮-3D工具条：松手提交时调用了 paintByteCircle 写风格网格',
     /_commitStroke[\s\S]{0,800}paintByteCircle\(session\.wallStyle/.test(boardSrc));
 
-  const bdSrc = srcOf('../src/presentation/BoundaryDecorLayer.js');
-  T('⑯-BoundaryDecorLayer：读了 mapSystem.wallStyleAt，笔刷画的石墙风格能覆盖自动判定',
-    /wallStyleAt/.test(bdSrc) && /styledPosts/.test(bdSrc));
-  {
-    const showPillarsBlock = bdSrc.match(/if \(showPillars\) \{[\s\S]*?\n {4}\}/)?.[0] || '';
-    T('⑰-BoundaryDecorLayer：styledPosts 不受 showPillars 开关约束（笔刷显式选择优先于地图级默认，不在 if(showPillars){...} 这个块里）',
-      /place\(wallPostGeo\(SV\)[\s\S]{0,150}styledPosts,/.test(bdSrc) && !showPillarsBlock.includes('styledPosts'));
-  }
-
+  // ⑯⑰（边界装饰层读石墙风格笔刷）随旧边界装饰层删除；新世界是否读 wallStyleGrid 待定（见 docs/HANDOFF-VISUAL-REWORK.md）。
   const msSrc = srcOf('../src/systems/MapSystem.js');
   T('⑱-MapSystem：wallStyleAt 方法存在，invalidateNav 一并清 _wallStyle 缓存',
     /wallStyleAt\(x, y\)/.test(msSrc) && /invalidateNav\(\)\s*\{[\s\S]{0,150}_wallStyle = undefined/.test(msSrc));

@@ -377,27 +377,7 @@ function unit(ents, o = {}) {
     && /nightLenSec/.test(fs.readFileSync('src/ui/editor/pagesGameplayWorld.js', 'utf8')));
 }
 
-// ==================== 八、植被：摆在墙顶，不是埋在墙里 ====================
-// 用户："你这做的植被都跑到了贴图底下，正常根本看不到。"
-{
-  const veg = fs.readFileSync('src/presentation/VegetationLayer.js', 'utf8');
-  const wall = fs.readFileSync('src/presentation/WallLayer.js', 'utf8');
-  T('WallLayer 导出墙高（两边共用同一个数，不各写一份）', /export const WALL_H = 70;/.test(wall));
-  T('VegetationLayer 用的是墙高而不是地形高度场', /import \{ WALL_H \} from '\.\/WallLayer\.js'/.test(veg));
-  // 2026-09-04：风格化 demo（visualStyle==='stylized'，见 Config.stylizedPalettes 头注）
-  // 给这一行加了个三元——那种图没有台地（WallLayer 对它整个早退），植被改按地形
-  // 高度摆放，否则会悬空。非 stylized 地图（三张老地图）这半句分支原样是
-  // `WALL_H - 1.5`，逐位不变，正则跟着放宽成"分支里含这一段"而不是要求整行只有它。
-  T('摆放高度确实来自 WALL_H（非风格化地图分支）', /y0 = stylized \? gh : WALL_H - [\d.]+;/.test(veg));
-  // v59：森林深度分级（forestZoneAt）把 jungleMode 的摆放判据拆成了 3 档
-  // （林缘/普通森林/深林）+ default/frost 的老 3 选 1，push 调用总数从 3 变成
-  // 11，但每一支都仍然用同一个 y0（本条断言真正要守的是"不各自另算一个高度"，
-  // 不是数字 3 本身）。
-  T('植被摆放（含森林深度分级拆出的各档）都用同一个高度 y0，没有另算一份',
-    (veg.match(/push\(\[x, y0, y,/g) || []).length === 11);
-  T('注释写清了根因（植被只撒在不可走格，而那些格被拔高到 WALL_H）',
-    /WallLayer 把不可走区整块拔高到 WALL_H/.test(veg));
-}
+// 八（植被摆在墙顶）随旧植被层 / 墙体层删除：新地形的岩壁与植被都按地形高度场摆放（world/WorldFoliage.js）。
 
 // ==================== 九、闪电轨迹：目标死了不许掉到地上 ====================
 // 用户："闪电杖的轨迹在目标死后会漂移，如果目标在高地上，攻击该目标死亡后会瞬间往下移动。"

@@ -147,11 +147,11 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
     /en\.ringHot/.test(ul) && !/e\._ringHot/.test(ul));
   T('always 模式保留（可退回旧行为）', /'always'/.test(ul));
 
-  T('塔灯配置软编码', typeof CONFIG.ui?.towerLight?.poolSize === 'number');
+  T('塔夜间自发光配置软编码', typeof CONFIG.ui?.towerLight?.emissiveNight === 'number');
   T('HDR 配置软编码且默认走自动探测', CONFIG.ui?.hdr?.auto === true);
   const tr = fs.readFileSync('src/presentation/ThreeRenderer.js', 'utf8');
-  T('塔灯是【固定大小的池】（数量变化会导致全材质重编译）',
-    /towerLights/.test(tr) && /poolSize/.test(tr));
+  // 用户定稿（2026-11）：塔不再带光源；局部光（火炬 / 水晶）走光照图，不用点光源（数量一变全场材质重编译）。
+  T('塔不带光源：渲染器里没有点光源池', !/new THREE\.PointLight/.test(tr) && !/towerLights|torchLights/.test(tr));
   T('HDR 只在显示器真是 HDR 时自动开启（SDR 屏不会被搞灰）',
     /dynamic-range: high/.test(tr));
   T('HDR 任何一步不支持都静默降级', /hdrSupported\(\)/.test(tr) && /降级/.test(tr));

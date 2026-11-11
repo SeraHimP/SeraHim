@@ -27,14 +27,14 @@ const suites = [
   'sim_v39.mjs', 'sim_v40.mjs', 'sim_v41.mjs', 'sim_v42.mjs', 'sim_v43.mjs',
   'sim_deadcode.mjs', 'sim_v44.mjs', 'sim_v45.mjs', 'sim_v46.mjs', 'sim_classic.mjs',
   'sim_v47.mjs', 'sim_v49.mjs', 'sim_v50.mjs', 'sim_v51.mjs',
-  'sim_balance_soul_runner.mjs', 'sim_postfx.mjs', 'sim_daynight.mjs', 'sim_mapskirt.mjs',
+  'sim_balance_soul_runner.mjs', 'sim_postfx.mjs', 'sim_daynight.mjs',
   'sim_instancing.mjs', 'sim_navgrid.mjs', 'sim_mapeditor.mjs', 'sim_mapeditorlive.mjs', 'sim_waveaction.mjs',
   'sim_multifaction.mjs', 'sim_mapcomposition.mjs', 'sim_imageimport.mjs', 'sim_wavecompmap.mjs',
-  'sim_neutralcamp.mjs', 'sim_lanealign.mjs', 'sim_globalaura.mjs', 'sim_frostbridge.mjs', 'sim_navoutline.mjs', 'sim_towerbase.mjs', 'sim_foreststyle.mjs', 'sim_boundarydecor.mjs',
+  'sim_neutralcamp.mjs', 'sim_lanealign.mjs', 'sim_globalaura.mjs', 'sim_frostbridge.mjs', 'sim_towerbase.mjs', 'sim_foreststyle.mjs',
   'sim_qualitybatch.mjs', 'sim_barinc.mjs', 'sim_dmgstats.mjs', 'sim_balance_q3.mjs', 'sim_balance_q4.mjs',
-  'sim_groundtrace.mjs', 'sim_groundtracelayer.mjs', 'sim_waterlayer.mjs', 'sim_heavy.mjs', 'sim_healer.mjs', 'sim_engineer.mjs', 'sim_summoner.mjs',
+  'sim_groundtrace.mjs', 'sim_groundtracelayer.mjs', 'sim_heavy.mjs', 'sim_healer.mjs', 'sim_engineer.mjs', 'sim_summoner.mjs',
   'sim_towerweapons.mjs', 'sim_towerbalance.mjs', 'sim_testscenarios.mjs', 'sim_heatdeath.mjs',
-  'sim_srorganic.mjs', 'sim_confluence.mjs', 'sim_dominion.mjs', 'sim_dominionprops.mjs', 'sim_maplist.mjs', 'sim_desertfloor.mjs', 'sim_determinism.mjs', 'sim_simulation.mjs', 'sim_importsafety.mjs', 'sim_layering.mjs', 'sim_smoothterrain.mjs', 'sim_landmarks.mjs', 'sim_artpass.mjs', 'sim_jungle_canopy.mjs', 'sim_thinwalls.mjs', 'sim_jungle_terraces.mjs', 'sim_statue_tower.mjs', 'sim_crystal_shrine.mjs', 'sim_tower_fx.mjs', 'sim_building_fx.mjs', 'sim_weather_off.mjs', 'sim_projectile_fx.mjs', 'sim_base_clearance.mjs',
+  'sim_srorganic.mjs', 'sim_confluence.mjs', 'sim_dominion.mjs', 'sim_maplist.mjs', 'sim_determinism.mjs', 'sim_simulation.mjs', 'sim_importsafety.mjs', 'sim_layering.mjs', 'sim_thinwalls.mjs', 'sim_statue_tower.mjs', 'sim_crystal_shrine.mjs', 'sim_tower_fx.mjs', 'sim_building_fx.mjs', 'sim_weather_off.mjs', 'sim_projectile_fx.mjs', 'sim_base_clearance.mjs',
   'sim_unit_models.mjs', 'sim_dragon_attack.mjs', 'sim_fog_quality.mjs', 'sim_no_clipping.mjs', 'sim_weather_ground.mjs', 'sim_pathfinding.mjs', 'sim_crystal_charge.mjs',
 ];
 

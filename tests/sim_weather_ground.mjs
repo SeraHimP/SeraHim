@@ -102,25 +102,26 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
   T('河③-没有河的图用 1×1 空遮罩（处处是陆地）', WG.weatherGroundUniforms().uWgRiver.value.image.width === 1);
 }
 
-// ==================== 五、接线：地形/高地顶面/裙边/台地/植被都接上了 ====================
+// ==================== 五、接线：天气通道 → 新世界（地形 / 岩 / 树 / 水）====================
+// 2026-11 画面重构：旧的地形层 / 高地顶面 / 裙边 / 台地 / 植被层已删除，天气改由世界着色（world/worldShading.js）
+// 和地形着色器读同一组平滑过的通道。用户（同轮）：「删除我之前说的下雪的时候，树和塔就变白，这个太丑了并且不符合实际」。
 {
   const R = srcOf('src/presentation/ThreeRenderer.js');
-  T('线①-地形材质接天气地表', /applyWeatherGround\(new THREE\.MeshLambertMaterial\(\{ map: tex/.test(R));
+  const WT = srcOf('src/presentation/world/WorldTerrain.js'), WS = srcOf('src/presentation/world/worldShading.js');
+  T('线①-地形着色器读天气的湿 / 雪 / 沙 / 褪色 / 烈日五个通道', ['uWWet', 'uWSnow', 'uWSand', 'uWFade', 'uWScorch'].every((u) => WT.includes(u)));
   T('线②-渲染循环每帧推进（天气可视化关掉时传 null，地面回原色）',
     /updateWeatherGround\(this\.weatherFx\?\.enabled !== false \? \(window\.__weather \|\| null\) : null/.test(R));
   T('线③-换图时烘河道遮罩', /setWeatherGroundMap\(ms\)/.test(R));
-  T('线④-高地顶面（WallLayer）按台面接（带积雪）', /applyWeatherGround\(new THREE\.MeshLambertMaterial\(\{[\s\S]*?\}\), \{ snow: true \}\)/.test(srcOf('src/presentation/WallLayer.js')));
-  T('线⑤-地图外围裙边接上', /applyWeatherGround\(mat\)/.test(srcOf('src/presentation/MapSkirtLayer.js')));
-  const V = srcOf('src/presentation/VegetationLayer.js');
-  T('线⑥-台地顶面接上（带积雪）', /applyWeatherGround\(ms\[0\], \{ snow: true \}\)/.test(V));
-  T('线⑧-基地石墙与高地围墙柱下雪时积雪（用户："下雪的时候雪的效果并不能正确应用在高地的围墙上"）',
-    /applyWeatherGround\(new THREE\.MeshLambertMaterial\(\{ vertexColors: true, flatShading: true \}\), \{ snow: true \}\)/.test(srcOf('src/presentation/BaseWallLayer.js'))
-    && /const postMat = \(\) => applyWeatherGround\([^)]*\)[^;]*\{ snow: true \}\)/.test(srcOf('src/presentation/BoundaryDecorLayer.js')));
-  T('线⑨-积雪按面朝向：顶面满雪、立面薄霜；实例化网格先乘 instanceMatrix',
+  T('线④-世界每帧拿到平滑后的天气通道（weatherGroundState），不另算一份', /weather: weatherGroundState\(\)/.test(R)
+    && /u\.uWWet\.value = state\?\.wet/.test(WS));
+  T('线⑤-积雪只落在地面上：树 / 岩 / 建筑共用的着色补丁里没有积雪（不再把树和塔刷白）',
+    (() => { const body = WS.slice(WS.indexOf('export function patchWorldMaterial')); return !/uWSnow|tWSnow/.test(body); })());
+  T('线⑥-地面积雪只盖朝上的面（按法线），立面不刷白', /smoothstep\(0\.42, 0\.86, wn0\.y\)/.test(WT));
+  T('线⑦-树和岩石接了沙尘 / 湿润补丁', /patchWorldMaterial\(/.test(srcOf('src/presentation/world/WorldFoliage.js'))
+    && /patchWorldMaterial\(/.test(srcOf('src/presentation/world/WorldRocks.js')));
+  T('线⑨-（旧接口仍在）weatherGround.js 的积雪按面朝向：顶面满雪、立面薄霜；实例化网格先乘 instanceMatrix',
     /cov \*= mix\(uWgSideSnow, 1\.0, smoothstep\(0\.35, 0\.8, vWgNy\)\)/.test(srcOf('src/presentation/weatherGround.js'))
     && /wgP = instanceMatrix \* wgP;/.test(srcOf('src/presentation/weatherGround.js')));
-  T('线⑦-植被与野区边缘树石蒙沙', /applyWeatherGround\(mat, \{ dust: true \}\)/.test(V)
-    && /applyWeatherGround\(mat, \{ dust: true \}\)/.test(srcOf('src/presentation/BoundaryDecorLayer.js')));
 }
 
 // ==================== 六、积雪/水洼 ====================
@@ -147,7 +148,7 @@ const { T, done } = scoreboard('天气落到地面上 / 积雪水洼 / 沙暴 / 
     core.mesh.renderOrder < 4 && rim.mesh.renderOrder < 4 && layer._snowMesh.renderOrder < 4
     && /const ORDER_UNIT = 10, ORDER_BAR = 20;/.test(srcOf('src/presentation/UnitLayer.js')));
   T('水⑥-河面接上同一段雨点涟漪（用户："水洼中的雨滴特效应该同步到水面中"）',
-    /applyRainRipple\(mat\)/.test(srcOf('src/presentation/WaterLayer.js'))
+    /rrRing\(vWPos\.xz\)/.test(srcOf('src/presentation/world/WorldWater.js')) && /RIPPLE_GLSL/.test(srcOf('src/presentation/world/WorldWater.js'))
     && /updateRainRipple\(performance\.now\(\) \/ 1000, weatherGroundState\(\)\.wet\)/.test(srcOf('src/presentation/ThreeRenderer.js')));
   T('水⑦-河面原来那池简陋的大波纹环（RainRippleLayer）已删除（用户："把原先在水面上存在的简陋波纹特效删除"）',
     !/RainRippleLayer/.test(srcOf('src/presentation/ThreeRenderer.js')) && !CONFIG.ui.rainRippleFx

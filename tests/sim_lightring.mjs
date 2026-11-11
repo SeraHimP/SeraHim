@@ -215,59 +215,16 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
   }
 }
 
-// ==================== 二、塔灯：强度换算必须落在能看见的量级 ====================
+// ==================== 二、塔灯：已删除 ====================
+// 用户定稿（2026-11 画面重构）：「塔目前就不要自带光源了，但是水晶在任何时候都要发光」。
+// 塔灯光源池（20 盏点光源）随之删除，原来这一节钉的照度换算一并作废；局部光改走光照图（world/worldShading.js）。
 {
-  const c = CONFIG.ui.towerLight;
-  T('照明半径口径是"射程 + rangeExtra"，且 rangeExtra = 50（用户定稿）', c.rangeExtra === 50);
-  T('不再用 rangeMult（那是上一版的 ×1.2）', c.rangeMult === undefined);
-  T('衰减指数软编码且 < 2（2 是物理正确但中心过曝/边缘断崖，不是"火柴"感）',
-    typeof c.decay === 'number' && c.decay >= 1 && c.decay < 2);
-
-  // ==================== 换算：两个都栽过的坑，各钉一条 ====================
-  // 坑一：r155+ 的 PointLight.intensity 是【坎德拉】，照度 = intensity / d^decay。
-  //   第一版写成 0.55×(半径/250) ≈ 0.66 —— 150px 处照度约 3e-5，而场景方向光是 2.3，
-  //   差 5 个数量级，画面上完全看不见，看起来就像"这功能没做"。
-  // 坑二：灯在**空中** ly 高处，地面上半径 R 那一点离灯是 √(R²+ly²)。
-  //   distance 若按 R 给，超出的部分被 Three 截成 0 —— 灯抬得越高地面越黑
-  //   （实测把灯抬到 +200 时地面几乎全黑，就是这么发现的）。
-  const ly = (range) => 40 + c.heightBias;             // 炮口高度约 40，再加偏置
-  const dEdgeFor = (range) => Math.hypot(range + c.rangeExtra, ly(range));
-  const intensityFor = (range) => c.edgeLux * Math.pow(dEdgeFor(range), c.decay);
-  const luxAt = (range, d) => intensityFor(range) / Math.pow(d, c.decay);
-  for (const range of [195, 250, 400]) {
-    T(`射程 ${range}：地面边缘照度 == edgeLux(${c.edgeLux})`,
-      Math.abs(luxAt(range, dEdgeFor(range)) - c.edgeLux) < 1e-9);
-    T(`射程 ${range}：坎德拉在百位以上（不是 <1 那种看不见的值）`, intensityFor(range) > 100);
-    // 中心/边缘比 = (斜距/灯高)^decay。太大 → 塔身过曝，太小 → 整片死平。
-    const ratio = Math.pow(dEdgeFor(range) / ly(range), c.decay);
-    T(`射程 ${range}：中心/边缘照度比在 1.5~5 倍（实拍调出来的舒适区）`, ratio > 1.5 && ratio < 5);
-  }
-  T('边缘照度与场景方向光（≈2.3）同量级，不是 1e-5 级也不是几十',
-    c.edgeLux > 0.5 && c.edgeLux < 10);
-  T('灯抬得够高才压得住塔身过曝（+10 时中心是边缘的 8.8 倍，必然糊白）',
-    c.heightBias >= 60);
-  T('中心仍有照度上限兜底（射程特别大的塔）',
-    typeof c.centerClampLux === 'number' && c.centerClampLux > c.edgeLux);
-
   const tr = fs.readFileSync('src/presentation/ThreeRenderer.js', 'utf8');
-  T('半径按 射程 + rangeExtra', /const R = range \+ extra;/.test(tr));
-  T('灯的 decay 从配置来（不再写死 2）', /l\.decay = decay;/.test(tr));
-  T('中心照度夹紧真的实现了', /centerLux > clampLux/.test(tr));
-  T('昼夜相位走唯一口径 resolveDayPhase（不再自己读 __world.daynight）',
-    /resolveDayPhase\(window\.gameTime/.test(tr) && !/ws\.enabled && Number\.isFinite/.test(tr));
-  T('distance 按【斜距】给，不是地面半径（否则灯越高地面越黑）',
-    /const dEdge = Math\.hypot\(R, ly\);/.test(tr) && /l\.distance = dEdge;/.test(tr));
-  T('强度也按斜距反推（与 distance 同一个量，不能一个用 R 一个用斜距）',
-    /want = edgeLux \* Math\.pow\(dEdge, decay\) \* night;/.test(tr));
-  T('灯池大小够覆盖一屏的塔（8 盏时可见塔就有十几座）', c.poolSize >= 16);
-  // 地面辉光贴片已**整个删除**：它是假光（不参与光照计算、照不亮任何东西），
-  // 只是在地上涂了几坨白，用户直接问"高地上那一坨白的是啥"。
-  // 更糟的是它掩盖了真问题 —— 真光源当时依然弱到照不亮地形，
-  // 我却因为画面上"有亮的东西"就以为成了。宁可少一层，也不要假的。
-  T('假光（地面辉光贴片）已从渲染层删干净',
-    !/_syncTowerGlow/.test(tr) && !/_towerGlow/.test(tr));
-  T('配置里也不留贴片开关（留着就会有人以为还能开）',
-    c.glowDecal === undefined && c.glowOpacity === undefined && c.glowSoftness === undefined);
+  T('塔灯光源池已删除（塔不带光源）', !/_syncTowerLights|towerLights/.test(tr));
+  const tl = CONFIG.ui?.towerLight || {};
+  T('towerLight 只剩夜间自发光与夜色地板（灯池参数不再残留在配置里）',
+    typeof tl.emissiveNight === 'number' && typeof tl.dawnFloor === 'number'
+    && ['poolSize', 'rangeExtra', 'decay', 'edgeLux', 'centerClampLux', 'heightBias'].every((k) => !(k in tl)));
 }
 
 // ==================== 三、废墟可选中：三处口径必须一致 ====================

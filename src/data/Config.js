@@ -1220,35 +1220,6 @@ export const CONFIG = {
     // 雨点涟漪（着色器版，rainRipple.js）：水洼和河面共用。cell 每格世界单位（每格最多一个涟漪），
     // speed 扩散速度，waterStrength 河面上的环亮度（水洼那边用 groundTraceFx.puddleRipple）
     rainRipple: { enabled: true, cell: 9, speed: 0.8, waterStrength: 0.9 },
-    // ==================== 本轮：风吹植被（天气×环境交互） ====================
-    // 用户："风等也要有可视化效果。"只让树（含深林树）摆动，根部固定、顶部摆幅
-    // 最大（弯曲量正比高度平方），每棵树独立相位（按坐标哈希，不按实例下标——
-    // 下标按扫描顺序递增，直接用会显出"按顺序摆动"的假规律）。灌木/岩石这一轮
-    // 不动，先验证树的效果自然与否，见 VegetationShaderPatch.js 头注。
-    vegetationWindFx: {
-      enabled: true,
-      maxBendFactor: 6,   // 风充能=1时的最大侧向位移（世界单位，越高的顶点越接近这个值）
-      freq: 1.6,          // 摆动角频率（弧度/秒）
-    },
-    // ==================== 积雪野区可见性修复：树/岩"落雪"（v55.1）====================
-    // 用户报告野区看不到雪；实测确认根因是野区密密麻麻的树/岩 InstancedMesh
-    // 从俯视角度把贴地的雪盖平面完全挡住了（数据层本来就是整张图统一算的，
-    // 问题只在渲染层）。修法：让树冠/岩石本身按所在位置的局部雪深"落雪"——
-    // 顶点色朝白混一部分（不是刷成全白），见 VegetationShaderPatch.applySnowTint。
-    // 见 GroundTraceSystem.js/VegetationLayer.js/BoundaryDecorLayer.js 头注。
-    vegetationSnowFx: {
-      maxBlend: 0.65,        // 封顶混合比例：雪深=1时，颜色朝白混合的最大比例（不是全白）
-      updateIntervalSec: 0.75, // 节流刷新间隔——雪深本身涨落要几十秒到两分钟，没必要每帧全量刷新上千个实例
-    },
-    // ==================== 塔"被雪覆盖"效果（v55.3）====================
-    // 用户要求"这个雪的效果能不能做在塔上"，同一套 applySnowTint 机制照搬到塔身
-    // InstancedMesh（见 InstancedBodyLayer.js 的 BodyBucket）。塔数量少（≤44），
-    // 没有像野区那样"上千实例"的开销顾虑，但仍然沿用节流刷新的模式，跟植被口径
-    // 保持一致，避免"一个地方节流一个地方不节流"这种不必要的不对称。
-    towerSnowFx: {
-      maxBlend: 0.55,        // 塔身比树冠小、细节更少，封顶混合比例调低一点，避免整座塔糊成一片白
-      updateIntervalSec: 0.75,
-    },
     crystal: {
       spin: 0.6,           // 水晶本体自转（弧度/秒）
       // 水晶旁边悬浮的细小光点（UnitMeshFactory.crystalParticles）。长度量都 × 水晶半径。
@@ -1341,27 +1312,14 @@ export const CONFIG = {
       warlock: { motes: 3, radius: 2.2, spin: 8, moteColor: '#e0b0ff' },
       breath: { enabled: true, chunks: 7, size: 0.5, spread: 0.25, lag: 0.45, coreColor: '#fff0c0' },
     },
+    // 夜间塔顶自发光（UnitLayer._nightEmi）与夜色曲线的低阳地板（ThreeRenderer._nightLevel）。
+    // 塔灯光源池已删除：塔本身不再带光源（用户定稿），局部光改走光照图（world/worldShading.js）。
     towerLight: {
-      enabled: true,
-      poolSize: 20,         // 真光源数量（恒定！数量一变全场材质重编译，见实现注释）
-      rangeExtra: 50,       // 照明半径 = 射程 + 此值（用户定稿；不再是乘系数）
-      // 下面三个数是**按夜间实拍逐档比出来的**（截图见提交信息），不是拍脑袋：
-      //   edgeLux 0.16（上一版）→ 地面完全没被照亮，只有塔身微微发光 = 用户说的"照明太弱"
-      //   edgeLux 1.6 / 灯高+10 → 地面亮了，但塔身过曝成一团白
-      //   edgeLux 3.0 / 灯高+100 / decay 1.1（采用）→ 地形纹理清晰可见、塔身不过曝
-      // 关键不在"调亮"，在**把灯抬高**：灯离塔身太近时，中心与边缘的照度比是
-      // (斜距/灯高)^decay = 8.8 倍，塔脚必然先过曝；抬到 +100 后降到 3.2 倍，光池就平了。
-      decay: 1.1,           // 衰减指数。2=物理正确但中心过曝/边缘断崖；越小光池越平
-      edgeLux: 3.0,         // 【地面半径边缘】处的照度目标。调亮整体就调它（场景方向光约 2.3 可作参照）
-      centerClampLux: 20,   // 中心照度上限，防射程特别大的塔中心糊成死白。当前配置下中心约 9.6，不触发
+      enabled: true,        // 夜间塔顶自发光开关（设置面板「塔夜间自发光」）
       nightOnly: true,      // false = 全天亮着（调试/截图用）
-      lightInterval: 0.2,   // 重新挑塔的节流（秒）。每帧重排会让灯在两座塔之间跳
-      fade: 0.35,           // 强度淡入淡出（秒）
-      heightBias: 100,      // 灯高于炮口多少。太低塔身过曝、太高地面吃不到光（见上面的比值）
-      colorBlue: '#bcd8ff', colorRed: '#ffc9bc', colorNeutral: '#ffe6b8',
       emissiveNight: 1.8,   // 夜间塔顶自发光强度（>1 才会被 Bloom 抓到，见 hdr 注释）
       // v45：夜色包络的**低阳地板**。用户："黎明的时候既没有光照也没有塔的照明，就是纯黑的。"
-      // 真因是包络在相位 0 处断掉（详见 _syncTowerLights 的长注释），这个地板是第二层保险：
+      // 真因是包络在相位 0 处断掉（详见 ThreeRenderer._nightLevel 的注释），这个地板是第二层保险：
       // 太阳压得很低的那两段（黎明/黄昏）至少让灯亮到这个程度。0 = 关掉这层保险。
       dawnFloor: 0.35,
     },
@@ -1375,20 +1333,6 @@ export const CONFIG = {
     // hqSpreadDeg：枢纽塔那两座在对角线基础上各自**向外**张开的角度（用户要求）。
     towerFacing: { enabled: true, flip: false, hqSpreadDeg: 25 },
 
-    // ==================== v45：分区贴图的探测开关 ====================
-    // 分区图（lane / jungle / river / base）目前还没画，缺省一律用程序化占位图。
-    // probe=false 时**根本不去请求那些文件** —— 本仓库有一条明确的教训：
-    // "省掉启动时必然的 404（纯控制台噪声，会掩盖真正的报错）"（见 _loadMaterials）。
-    // 8 张分区图 × 主题回落 = 每次启动十来条 404，真报错就淹在里面了。
-    //
-    // 画好图丢进 assets/textures/<主题>/ 之后，把这一项改成 true 即可（编辑器里可改）。
-    // 提示词与文件名见 docs/TEXTURE-PROMPTS.md。
-    // usePlaceholder=false（默认）：缺分区图时回落到**现有的 ground/plateau**，
-    // 画面与加分区贴图之前**逐像素一致**。用户："目前的贴图简直是不忍直视，
-    // 目前借用原有的贴图，等我手动再替换。"
-    // 程序化占位图（彩色分区）只在显式打开时才用 —— 它是给"想看分区有没有生效"用的调试件，
-    // 不该是默认画面。管线本身全部保留，换上真图即刻生效。
-    zoneTextures: { probe: false, usePlaceholder: false },
 
     // ==================== v45：建筑损毁档 ====================
     // 用户定稿："每种塔有不同生命节点下的模型（生命节点为 33/67/100）：
@@ -1399,16 +1343,6 @@ export const CONFIG = {
     // 血量在阈值附近抖动时模型来回重建是这类功能最典型的坑，单向天然免疫。
     towerDamage: { enabled: true, nodes: [33, 67] },
 
-    // ==================== v60：navgrid 地图的地面边界平滑 ====================
-    // 召唤师峡谷/扭曲丛林的地面是"每格一种颜色"最近邻放大（每格约 9 世界单位），
-    // 路/林缘/森林/深林的交界全是台阶，河道是 16 单位一块的方格。
-    // enabled=true：类别边界按等值线平滑（见 presentation/smoothLabels.js），
-    //               河道按 riverSampleWorld 采样后双线性放大。
-    // enabled=false：与 v59 逐像素一致。设置面板「地面边界平滑」可切换。
-    // blur：类别场模糊核的两侧权重（0 = 不模糊，只做插值；1/6 = 轻度圆角）。
-    //       超过 1/4 会让 1 格宽的细条消失，不要调太大。
-    // 只影响画面；能不能走仍然只认 navgrid。
-    terrainSmooth: { enabled: true, blur: 1 / 6, riverSampleWorld: 8 },
 
     // ==================== v60：地标（龙坑/男爵坑、基地广场）====================
     // 按地图声明开启（map.landmarks = { pits: true, plazas: true, ...覆写 }），
@@ -1428,47 +1362,7 @@ export const CONFIG = {
       plazaRadius: 240, plazaBlend: 0.35, plazaFeather: 0.35, plazaWear: 0.06,
     },
 
-    // ==================== 野区：树冠盖满不可走区 ====================
-    // 用户："区分可走不可走不是改个颜色就区分了，重要要出来为什么不可走，是有树挡着，
-    // 还是墙挡着？"——定稿方案（2026-09-27 方案页）：
-    //   · 能走的野区是干净的草地，只在贴着树林的边上放少量矮灌木；
-    //   · 不能走的地方整块被树冠盖满（边缘一排正好压在边界上），边缘夹石头；
-    //   · 地面只留三层：土路 / 草地 / 树林。
-    // 调色板声明 jungleLayout:'canopy' 才生效。
-    //   interiorStep：树林内部的采样步长（世界单位）。树冠直径约 44×体量，步长要小于它才盖得满
-    //   scaleMin/Max：树的体量范围
-    //   edgeProbe：离可走区多近算"边缘"；edgeStep：边缘那一排的采样步长
-    //   edgeRockChance：边缘位置放石头（而不是树）的概率；rockScaleMin/Max：石头体量
-    //   bushBand：草地上离树林多近才可能长灌木；bushStep / bushChance：灌木的采样步长与概率
-    //   groundNoiseAlpha：地面很轻的明暗起伏（0 = 纯色）
-    jungleCanopy: {
-      interiorStep: 34, scaleMin: 0.95, scaleMax: 1.35,
-      edgeProbe: 26, edgeStep: 26, edgeRockChance: 0.25, rockScaleMin: 1.3, rockScaleMax: 2.1,
-      bushBand: 34, bushStep: 40, bushChance: 0.25,
-      groundNoiseAlpha: 0.05,
-    },
 
-    // ==================== 野区：台地 + 分片树林（jungleLayout:'terraces'）====================
-    // 用户看过实机截图后定稿的一版，见 data/jungleTerraces.js 头注。
-    //   outcropMaxCells：不可走区小于这么多格（256 格网格）就做成台地；outcropRiverProbe：离河多近也做成台地
-    //   outcropHeightMin/Max/PerRootCell：台地高度 = min(Max, Min + √格数 × PerRootCell)
-    //   outcropDetailMax/PerCells：台面上灌木/小石头的数量上限与"每多少格一个"
-    //   outcropTopLift：台面比周围草地亮多少（HSL 明度）
-    //   speciesPatch：树种斑块大小（一片以针叶为主、另一片以阔叶为主）；speciesMix：斑块里混入另一种的概率
-    //   treeStep：树林采样步长；edgeProbe：离可走区多近算边缘；edgeDensity：边缘那一排的密度
-    //   clusterPatch / innerDensityMin/Max：树林内部成团的斑块大小与密度范围（低的地方就是空地）
-    //   heroChance：内部偶尔一棵特别大的树；clearingDetailChance：空地里零星石头/灌木
-    //   edgeRockChance / rockScaleMin/Max：边缘夹石头的概率与体量
-    //   borderDepth：地图外圈的林带只做靠里这么宽
-    //   bushStep / bushBand / bushChance：草地上贴着树林的矮灌木
-    jungleTerraces: {
-      outcropMaxCells: 110, outcropRiverProbe: 70, outcropHeightMin: 18, outcropHeightMax: 44, outcropHeightPerRootCell: 1.6,
-      outcropDetailMax: 6, outcropDetailPerCells: 70, outcropTopLift: 0.07,
-      speciesPatch: 700, speciesMix: 0.15, treeStep: 26, edgeProbe: 28, edgeDensity: 0.7,
-      clusterPatch: 170, innerDensityMin: 0.12, innerDensityMax: 0.85, heroChance: 0.04, clearingDetailChance: 0.08,
-      edgeRockChance: 0.1, rockScaleMin: 1.0, rockScaleMax: 1.8, borderDepth: 150,
-      bushStep: 44, bushBand: 34, bushChance: 0.14,
-    },
 
     // ==================== 基地高地城墙 ====================
     // 用户："召唤师峡谷的高地塔（召唤水晶塔）前方不可走的区域应该是有石墙挡着的，
@@ -1490,42 +1384,6 @@ export const CONFIG = {
     },
 
 
-    // ==================== v45：地图火炬（夜间补光）====================
-    // 用户："实在不行可以在地图中增加光源（火炬等）。""扭曲丛林这张图晚上看起来很怪。"
-    //
-    // 为什么塔灯不够：塔灯池只挑「有武器 × 离视野中心最近的 poolSize 座塔」，
-    // 于是**野区、河道、龙坑一盏灯都没有** —— 野区占比越大的图夜里越黑，
-    // 扭曲丛林正是野区最大的那张。
-    //
-    // 布点用户定稿"两者都要"：默认程序化撒点（任何地图、包括自制地图都自动有），
-    // 地图若自己写了 `torches: [{x,y}]` 就**用地图的**（覆盖自动布点）。
-    // 火炬是**纯装饰**：不可选中、不可摧毁、不参与战斗 —— 它只是光。
-    torch: {
-      // ==================== 默认关闭（用户定稿）====================
-      // 用户："这个莫名其妙的灯竟然是跟着我的视角走的，在视角中央，不要这个。"
-      //
-      // 这是设计缺陷不是 bug：光池只有 poolSize(12) 盏真光源，而候选点有上百个，
-      // 于是每帧都挑"离视野中心最近的 12 个"——镜头一动，被点亮的那一组就跟着换，
-      // 观感上就是一坨光斑黏在屏幕中央跟着你走。
-      // 塔灯没这个毛病是因为塔本身就是视觉锚点（光贴在塔上，玩家不会觉得光在动）；
-      // 火炬点在空地上，没有锚点，池子换人就直接暴露成"光在飘"。
-      //
-      // 要真正解决得让光源数量与地图大小挂钩（几百盏真光源不现实），
-      // 或者改成贴地的自发光贴花（不是真光源、不参与光照）。都不是这次要做的事。
-      // 所以按用户的要求**默认关掉**，实现整套保留，enabled 改 true 即可复现。
-      // 夜里的可见度靠昼夜曲线抬亮 + 塔灯 + dawnFloor 兜底，实测已经够看（见夜间截图）。
-      enabled: false,
-      poolSize: 12,         // 真光源数量。与塔灯同理必须恒定，见 towerLight.poolSize 的注释
-      spacing: 260,         // 自动布点的最小间距（px）。越小越密、也越可能挑不满
-      radius: 190,          // 照明半径（地面）
-      height: 46,           // 灯高
-      decay: 1.1,
-      edgeLux: 1.6,         // 比塔灯暗一档：火炬是氛围补光，不该抢塔的视觉重心
-      color: '#ffb066',
-      flicker: 0.14,        // 摇曳幅度（0=不闪）
-      flickerHz: 3.1,
-      nearLane: true,       // 只在"离兵线有一段距离"的可走格上撒 —— 路面本来就有塔灯
-    },
     // 真 HDR 输出（用户点名要）。
     // 现有管线【内部本来就是 HDR】：EffectComposer 用 HalfFloatType 渲染目标 + ACES 色调映射。
     // 缺的是两件事：① 场景里没有任何东西超过 1.0（自发光只有 0.7），HDR 的余量完全没被用上；
@@ -1814,37 +1672,7 @@ export const CONFIG = {
       tempCoolColor: '#a8c4e8',  // 冷：冷蓝
     },
 
-    // ==================== v55.9：河道水面随气温降温变色 ====================
-    // 用户看实机截图反馈："不好看这个水，和环境是割裂的"——WaterLayer.js 原来
-        // 只有一个固定色（0x35707c 深青绿），不随天气变化；寒潮/大雪把全图压成白/冷
-    // 色调后，这块固定饱和色的水面在视觉上完全不参与环境变化，显得像贴上去的一
-    // 块色块。用户选定方向："降温变色"——保持是液态水（不换成结冰材质），只是
-    // 天冷时颜色往冷灰蓝调，跟周围雪景融合；温度轴复用 WeatherSystem.getTemperature()
-    // 已有的 -1(最冷)~+1(最热) 读数，跟 tempWarmColor/tempCoolColor 那组走的是
-    // 同一根轴，但这里只关心"冷"这一侧（暖天水色不变，没有"水变热"这种说法）。
-    water: {
-      color: '#35707c',       // 常温水面基础色（与改动前 WaterLayer.js 里的 0x35707c 一致）
-      coldColor: '#8199a3',   // 严寒时混向的冷灰蓝——比常温色浅、更接近雪景色调，但仍读得出"是水"
-      opacity: 0.55,
-      // v60：涟漪法线。v59 为 2 组波 / 强度 0.35，俯视读成等距斜条纹；改成 4 组、0.28。
-      rippleWaves: 4,
-      rippleStrength: 0.28,
-    },
 
-    // v51.27："地图是个纸片子"——地形是严格贴合世界边界的一整块平面，边界外直接是
-    // 纯色虚空，没有过渡。裙边（MapSkirtLayer）用顶点 alpha 径向淡出把硬边软化成
-    // 一圈过渡；没配 texturePath 时用 innerColor 这个纯色兜底，零新增美术资源。
-    // v51.29：texturePath 已经接了用户找 ChatGPT 生成的图——径向对称、无方向性的
-    // 雾状渐变（专门为这个正交相机可以任意转方位角设计的，不能有"左边山右边太阳"
-    // 那种方向性landmark，转个视角就穿帮），路径缺失/加载失败一律静默回退到纯色。
-    mapSkirt: {
-      enabled: true,
-      scale: 3,          // 裙边总边长 = 地图边长 × 这个倍数
-      fadeFrac: 0.5,      // 裙边向外延伸段里，前这么大比例用来做 alpha 淡出（其余全透明）
-      yOffset: -15,       // 比地形低这么多世界单位，避免共面 z-fighting
-      innerColor: '#4c5a45',                          // 没有背景图时的纯色兜底（中性草绿灰调）
-      texturePath: 'assets/textures/env/skirt_horizon.png', // 用户提供的径向对称雾状渐变图
-    },
 
     // 大气透视（线性雾）：起止距离按【机位到注视点的距离】的倍数给，见 ThreeRenderer._autoFog。
     // nearK ≥ 1 保证注视点附近清晰；farK 越大远景越通透。

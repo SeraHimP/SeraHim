@@ -180,7 +180,7 @@ T('㉚走路时主手（连同武器）小幅摆动，幅度软编码', U.anim.m
   T('㉓渲染层每帧写动画参数（走路相位 / 幅度 / 攻击进度 / 时间），巨龙按元素建模',
     /en\.unit\.setAnim\(walkPhase, an\.walk, an\.atk, tt\)/.test(ul) && /uAnim\.value\.set\(walkPhase, an\.walk, an\.atk, tt\)/.test(ul)
     && /dragonMesh\(key, color, anc, size, el\)/.test(ul));
-  T('㉔描边预渲染优先用物体自带的动画法线材质', /prepassMaterial/.test(fx));
+  // ㉔（描边预渲染用动画法线材质）随法线深度预渲染一起删除：SSAO / 雾改读主渲染深度，主渲染本来就是动画后的姿势。
 }
 
 done();

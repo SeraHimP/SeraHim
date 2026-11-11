@@ -409,20 +409,14 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
   ms.loadMap('summoners_rift_v1');
   const W = ms.currentMap.world.w, H = ms.currentMap.world.h;
 
-  // 只取河心（f>0.5，排除羽化岸边），按 x+y 与地图中心线切成两段，各求加权重心
-  const seg = { baron: { sx: 0, sy: 0, sw: 0 }, dragon: { sx: 0, sy: 0, sw: 0 } };
-  for (let x = 0; x < W; x += 8) for (let y = 0; y < H; y += 8) {
-    const f = ms.riverFactor(x, y);
-    if (f <= 0.5) continue;
-    const g = seg[(x + y < W) ? 'baron' : 'dragon'];
-    g.sx += x * f; g.sy += y * f; g.sw += f;
-  }
+  // 2026-11 河道改成贯穿全图的一条连续的河（MapSystem.riverFactor 头注），"两段河各求重心"的口径不再成立。
+  // 现在钉形状：坑落在河道中线上（沿河方向两侧是满水），坑心本身是干的石台（湖心岛），两个坑分在地图中线两侧。
   for (const k of ['baron', 'dragon']) {
-    const g = seg[k], cx = g.sx / g.sw, cy = g.sy / g.sw;
     const p = ms.getPit(k);
-    T(`坑①-${k} 声明位置 = 该段河道的几何重心（误差 < 60）`,
-      !!p && Math.hypot(p.x - cx, p.y - cy) < 60);
-    T(`坑②-${k} 落在河心上（riverFactor 接近 1）`, ms.riverFactor(p.x, p.y) > 0.9);
+    const along = [1, -1].map((sg) => ms.riverFactor(p.x + sg * p.r * 1.25 * Math.SQRT1_2, p.y + sg * p.r * 1.25 * Math.SQRT1_2));
+    T(`坑①-${k} 落在河道中线上（沿河方向两侧都是满水：${along.map((v) => v.toFixed(2)).join(' / ')}）`,
+      !!p && along.every((v) => v > 0.8));
+    T(`坑②-${k} 坑心是干的石台（湖心岛，没有水）`, ms.riverFactor(p.x, p.y) === 0);
     T(`坑③-${k} 可行走（龙要从这里出来走兵线）`, ms.isWalkable(p.x, p.y));
   }
   // 两个坑必须分居中心线两侧，且离中心足够远 —— 原实现的毛病就是"都挤向中心"

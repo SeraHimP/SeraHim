@@ -353,26 +353,35 @@ for (const map of Object.values(MAPS)) {
     const bus = new _B2(), ents = new _E2(bus), ms = new _M2(ents, bus);
     ms.setCreateBuildingFn(() => null); window.gameTime = 0; ms.loadMap(id); return ms;
   };
-  // ---- 扭曲丛林：高地【声明】仍是圆，但风格化后【实际高度】清零（跟召唤师峡谷一致） ----
+  // ---- 扭曲丛林：高地是以水晶枢纽为圆心的圆形台地（2026-11 地形高度场，见 data/terrainField.js） ----
+  // 断言钉形状：枢纽一带是台地、比外塔处高；建筑都站在地面上（不在岩壁顶上、不在坑里）。
   {
     const ms = mk('twisted_treeline_v1'), tt = MAPS['twisted_treeline_v1'];
     const H = (p) => ms.heightAt(p.x, p.y);
     const g = (t, l) => tt.buildings.find(b => b.faction === 'blue' && b.tier === t && (l ? b.laneId === l : true));
     T('[扭曲丛林] ①高地声明仍是【圆】（圆心在水晶枢纽上，没被这轮改动误删）',
       !!tt.highground?.blue?.center && len(tt.highground.blue.center, g('nexus_main').pos) < 1);
-    for (const [n, t, l] of [['水晶枢纽', 'nexus_main'], ['枢纽塔', 'hq_tower'],
-                             ['上路召唤水晶', 'nexus_lane', 'top'], ['上路水晶塔', 'base', 'top'],
-                             ['下路水晶塔', 'base', 'bot'], ['外塔', 'outer', 'top']]) {
-      T(`[扭曲丛林] ②${n}处高度=0（风格化后高地台阶已清零，与召唤师峡谷一致）`, H(g(t, l).pos) === 0);
+    const { CONFIG } = await import('../src/data/Config.js');
+    const plat = ms.plateauHeightAt(g('nexus_main').pos.x, g('nexus_main').pos.y);
+    T(`[扭曲丛林] ②水晶枢纽在台地上（台地高度 ${plat.toFixed(1)}，地面 ${H(g('nexus_main').pos).toFixed(1)}）`,
+      plat > 0 && Math.abs(H(g('nexus_main').pos) - plat) < 3);
+    T('[扭曲丛林] ③枢纽一带比外塔处高（从外塔往家走是上坡）', H(g('nexus_main').pos) > H(g('outer', 'top').pos) + plat * 0.5);
+    const cliff = CONFIG.terrain.cliff.height;
+    for (const b of tt.buildings) {
+      const h = H(b.pos);
+      if (!(h > -6 && h < plat + cliff * 0.3)) { T(`[扭曲丛林] ④${b.tier}/${b.laneId || '-'} 站在地面上（实际高度 ${h.toFixed(1)}）`, false); }
     }
+    T('[扭曲丛林] ④所有建筑都站在地面上（不在岩壁顶上、不在坑里）', tt.buildings.every((b) => { const h = H(b.pos); return h > -6 && h < plat + cliff * 0.3; }));
   }
-  // ---- 嚎哭深渊：平桥，全图零高差 ----
+  // ---- 嚎哭深渊：平桥，桥面几乎没有高差，桥外是深渊 ----
   {
     const ms = mk('howling_abyss_frost_v1'), ha = MAPS['howling_abyss_frost_v1'];
     T('[嚎哭深渊] 显式声明了 highground（不声明会退回老分支，在桥两端鼓两个包）',
       ha.highground !== undefined);
-    const pts = [...ha.buildings.map(b => b.pos), { x: 1162, y: 1162 }, { x: 600, y: 1700 }];
-    T(`[嚎哭深渊] 全图零高差（平桥）`, pts.every((p) => ms.heightAt(p.x, p.y) === 0));
+    const pts = [...ha.buildings.map(b => b.pos), { x: 1162, y: 1162 }];
+    const hs = pts.map((p) => ms.heightAt(p.x, p.y));
+    T(`[嚎哭深渊] 桥面几乎没有高差（${Math.min(...hs).toFixed(1)} ~ ${Math.max(...hs).toFixed(1)}）`, Math.max(...hs) - Math.min(...hs) < 12);
+    T('[嚎哭深渊] 桥外是深渊（远低于桥面）', ms.heightAt(600, 600) < Math.min(...hs) - 100);
     T('[嚎哭深渊] 但基地光环圈仍在（用户：无高低差但是有基地环）',
       ms.getBaseCircleRadius('blue') > 0 && len(ms.getBaseCircleCenter('blue'),
         ha.buildings.find(b => b.tier === 'nexus_main' && b.faction === 'blue').pos) < 1);
