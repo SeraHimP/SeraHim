@@ -1,8 +1,9 @@
 import { MAPS, DEFAULT_MAP_ID } from '../data/maps/index.js';
 import { structureRadius } from '../data/structureRadius.js';
 import { MODES, CLASSIC_ID_SUFFIX, applyClassicMode, DOMINION_MODE_MAP_ID } from '../data/maps/modeTransforms.js';
-import { CONFIG, stylizedPaletteOf } from '../data/Config.js';
-import { forestZoneAt } from '../data/mapValidate.js';
+import { CONFIG } from '../data/Config.js';
+import { buildTerrainField } from '../data/terrainField.js';
+import { fbm, smoothstep } from '../data/noise.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
 import { isStructureProtected, mapFactionsOf } from './FactionSystem.js';
 import { SR_NAVGRID, SR_PITS } from '../data/maps/sr_navgrid.js';
@@ -1021,6 +1022,7 @@ export class MapSystem {
    * 调用方（未来的地图编辑器）需要在改完 navgrid 后把两个方法都调一遍。
    */
   invalidateNav() {
+    this._tfield = null; this._tfieldMap = null;
     this._nav = undefined;
     this._wallStyle = undefined;
     this._fields = {};
@@ -1052,24 +1054,9 @@ export class MapSystem {
   }
 
   /**
-   * 河道强度场：0 = 没有河，1 = 河心满深。**河道的唯一真源**——
-   * 地形高度(heightAt)、水面遮罩(WaterLayer)、地形底图的河色(TerrainLayer)
-   * 三处一律读它，免得三份判据各写一套、改一处漏两处。
-   *
-   * 用户定稿（Q5）：河道不是贯穿地图对角的一整条，而是被三条路面切断的【两条支流】——
-   * 参照 LoL 小地图，上下两段河，路面处恢复原有地形高度。
-   * 实现就是"对角河带 ∩ 非路面"：
-   *   ① 河带 = 到河轴 x=y 的垂距 < riverHalfWidth（岸边 RIVER_BANK 比例羽化）；
-   *   ② 路面 = 到任一兵线折线的距离 ≤ 走廊半宽 + riverLaneClear（外侧再留一段渐变收口）。
-   * 河轴与三路的几何关系天然给出两段：上路拐角截掉西北端、下路拐角截掉东南端、
-   * 中路在正中把剩下的一刀两断 —— 正是用户圈出的那两段。
-   */
-  /**
    * 是否落在【三路围出的可玩区域】内。上路与下路首尾都接在两座水晶枢纽上，
    * 于是"上路正向 + 下路反向"天然闭合成一圈，把地图内场围起来。
-   * 用它把河道裁在内场里：否则河轴两端会在上路西北拐角外、下路东南拐角外
-   * 各留一小段贴着地图边界的水（用户圈的是两段，不是四段）。
-   * 缺 top/bot 的地图（嚎哭深渊）直接返回 true，行为不变。
+   * 缺 top/bot 的地图直接返回 true。
    */
   _insideLaneRing(x, y) {
     const m = this.currentMap;
@@ -1090,27 +1077,45 @@ export class MapSystem {
     return inside;
   }
 
+  /**
+   * 河道强度场：0 = 没有河，1 = 水道中心。**河道形状的唯一真源**——
+   * 地形高度场（terrainField）、水面、积雪 / 水洼的"这里是河"判定一律读它。
+   *
+   * 形状：沿对角线 x=y 贯穿全图的一条连续的河，中心线左右摆动、宽窄沿程变化，
+   * 流出地图后继续在延伸世界的山谷里流。兵线过河处不断流——那里是浅滩渡口
+   * （纵向剖面在 terrainField 里，这里只管平面形状）。
+   * 原来的形状是"对角河带 ∩ 三路围出的内场 ∩ 非路面"，被兵线切成两段直边的块，
+   * 透视相机下看起来是错位的两片三角形水面（用户："看起来那个河道有些错位"）。
+   *
+   * 龙坑 / 男爵坑在河心：坑周围河面放宽成一个小湖，坑本身是湖心的石台（没有水）。
+   * 这个函数是解析的（不依赖高度场），地图范围之外也有定义。
+   */
   riverFactor(x, y) {
     const m = this.currentMap;
     if (!m || !m.world || m.walls?.river === false) return 0;
-    if (!this._insideLaneRing(x, y)) return 0;
-    const cfg = m.heightZones || {};
-    const half = cfg.riverHalfWidth ?? 200;
-    const d = Math.abs(x - y) * Math.SQRT1_2;          // 到河轴 x=y 的垂距
-    if (d >= half) return 0;
-    const bank = cfg.riverBank ?? 0.28;                 // 岸边羽化占半宽的比例
-    const t = d / half;
-    let f = t < 1 - bank ? 1 : (1 - t) / bank;
-    if (f <= 0) return 0;
-    // 路面切断：路中心一段完全无河，外侧 fade 段线性收口（不留硬边）
-    const clear = (m.walls?.corridorHalfWidth ?? 95) + (cfg.riverLaneClear ?? 40);
-    const fade = cfg.riverLaneFade ?? 120;
-    for (const lane of (m.lanes || [])) {
-      const dl = this._nearestOnLane(lane, x, y).dist;
-      if (dl <= clear) return 0;
-      if (dl < clear + fade) f = Math.min(f, (dl - clear) / fade);
+    const R = CONFIG.terrain?.river || {};
+    const half0 = (m.heightZones?.riverHalfWidth ?? 200) * (R.widthK ?? 0.42);
+    const s = (x + y) * Math.SQRT1_2, d0 = (x - y) * Math.SQRT1_2;
+    let center = (fbm(s * (R.meanderFreq ?? 0.0021), 3.7, 3, 71) - 0.5) * 2 * (R.meanderAmp ?? 70);
+    let half = half0 * (1 + (fbm(s * 0.0035, 9.1, 2, 73) - 0.5) * 2 * (R.widthVar ?? 0.28));
+    let island = 1;
+    for (const key of ['dragon', 'baron']) {
+      const pit = this.getPit(key); if (!pit) continue;
+      const ps = (pit.x + pit.y) * Math.SQRT1_2, pd = (pit.x - pit.y) * Math.SQRT1_2;
+      const lakeR = pit.r * (R.pitLakeK ?? 1.5);
+      const near = 1 - smoothstep(lakeR * 0.7, lakeR * 1.9, Math.abs(s - ps));   // 沿河方向离坑多近
+      if (near <= 0) continue;
+      center = center * (1 - near) + pd * near;                                  // 湖心对准坑
+      const ds = (s - ps) / lakeR;
+      half = Math.max(half, lakeR * Math.sqrt(Math.max(0, 1 - ds * ds)) * near + half * (1 - near));
+      const dp = Math.hypot(x - pit.x, y - pit.y);
+      island = Math.min(island, smoothstep(pit.r * (CONFIG.terrain?.pit?.rimK ?? 0.92), pit.r * (R.pitClearK ?? 1.08), dp));
     }
-    return Math.max(0, Math.min(1, f));
+    const d = Math.abs(d0 - center);
+    if (d >= half) return 0;
+    const bank = R.bank ?? 0.55, t = d / half;
+    const f = t < 1 - bank ? 1 : (1 - t) / bank;
+    return Math.max(0, Math.min(1, f)) * island;
   }
 
   /**
@@ -1227,42 +1232,39 @@ export class MapSystem {
   setRiverWalkable(on) { this._riverWalkable = !!on; return this._riverWalkable; }
 
   /**
-   * C 组·台阶地形：某点的【地面高度】（世界单位）。纯渲染/摆位查询——仿真层不读它，
-   * 不影响 isWalkable/移动/索敌，故加它对失败集合零影响。默认两级台阶：
-   *   高地 +20（两基地平台，baseOpenRadius 内）、河床 −10（主对角线 x≈z 河带）。
-   * 数值可由 map.heightZones 覆写；WallLayer 的丛林崖体不经此处（那是另一套，别动崖面绕序）。
+   * 某点的【地面高度】（世界单位）。纯渲染 / 摆位查询——仿真层不读它，不影响 isWalkable / 移动 / 索敌。
+   * 读的是地形高度场（terrainField），和画出来的地面是同一份数据，所以单位、弹道、水洼的落点
+   * 与看到的地面永远对得上。高度场按需构建并缓存，换图 / 改位图（invalidateNav）时作废。
    */
   heightAt(x, z) {
+    const f = this.terrainField();
+    return f ? f.heightAt(x, z) : 0;
+  }
+
+  /** 当前地图的地形高度场（没有墙体的地图返回 null：那是一块平地）。 */
+  terrainField() {
     const m = this.currentMap;
-    if (!m || !m.world || !this.hasWalls?.()) return 0;
+    if (!m || !m.world || !this.hasWalls?.()) return null;
+    if (this._tfield && this._tfieldMap === m) return this._tfield;
+    this._tfieldMap = m;
+    this._tfield = buildTerrainField(this);
+    return this._tfield;
+  }
+
+  /**
+   * 基地台地的高度（只有这一项；路面、河床、岩壁都在 terrainField 里叠加）。
+   * 两种形状，按地图声明选：
+   *  ① map.highground：{ blue, red, ramp }，每方是半平面 { at, dir }（界线往 dir 那侧是高地）
+   *     或圆 { center, full }（离圆心 < full 满高，full ~ full+ramp 是斜坡）。
+   *  ② 没声明：以基地圆为准，内核 plateauFull 比例内满高，到 plateauEdge 比例线性降到 0（各路出口都是可走的坡）。
+   * 高度 = map.heightZones.plateauHeight × CONFIG.terrain.ground.plateauK。
+   */
+  plateauHeightAt(x, z) {
+    const m = this.currentMap;
+    if (!m) return 0;
     const cfg = m.heightZones || {};
-    const riverDepth = cfg.riverDepth ?? -10;
-    const platH = cfg.plateauHeight ?? 20;
+    const platH = (cfg.plateauHeight ?? 20) * (CONFIG.terrain?.ground?.plateauK ?? 1);
     let h = 0;
-    // 河床：按河道强度场下沉。强度为 0 的地方（路面、河带之外）高度原样保持 0，
-    // 这就是用户要的"路面恢复原有地形高度"——河不再从三路底下横穿过去。
-    const rf = this.riverFactor(x, z);
-    if (rf > 0) h = Math.min(h, riverDepth * rf);
-    // ==================== v58：风格化地图不要高低差（高地/龙坑）====================
-    // 用户："把风格化地图中所有的高低差全部删除，不要高低差了没意义（高地、龙坑）。"
-    // 河床的下沉不算在内（用户只点名"高地、龙坑"，河道保留）。
-    // 做成 visualStyle==='stylized' 这一类地图的通用行为，不是给召唤师峡谷单独
-    // 清零 heightZones/pits 里的数值——这样任何一张未来的风格化地图都自动没有
-    // 这两种台阶，不用每张图各自记得声明成 0。三张老地图与 demo_stylized_v1
-    // （它本来就没声明 heightZones/pits）逐位不变。
-    if (m.visualStyle !== 'stylized') {
-    // 高地。**两种形状，按地图声明选**：
-    //
-    // ① map.highground（半平面）—— 用户定稿："从水晶塔前方就开始有高低差
-    //    （从水晶塔开始就已经是高地了）"。即高地是【水晶塔那条线往自家方向的一整片】，
-    //    不是一个圆。圆那套只对峡谷成立（那里基地确实是个角上的圆台）。
-    //    在扭曲丛林/嚎哭深渊上按圆抬，抬出来的就是"水晶周围凭空隆起一个包"——
-    //    用户问的"水晶周围为什么会隆起来"就是这个。
-    //    声明形式：{ blue:{at,dir}, red:{at,dir}, ramp }
-    //      at  = 界线上一点（放水晶塔位置）
-    //      dir = 指向【自家】的单位向量（界线的内法向）
-    //      ramp= 界线处的坡宽（世界单位），做成斜坡而不是陡坎，兵能走上去
-    // ② 未声明 highground 的地图退回原来的圆（峡谷/Quick 逐位不变）。
     const hg = m.highground;
     if (hg) {
       const ramp = hg.ramp ?? 120;
@@ -1291,40 +1293,6 @@ export class MapSystem {
         if (d >= b) continue;
         const t = d <= a ? 1 : 1 - (d - a) / Math.max(1e-6, b - a);   // 1（核心）→ 0（坡脚）
         h = Math.max(h, platH * t);
-      }
-    }
-    // 龙坑/男爵坑：坑心下沉，边缘一段过渡（坑壁）。
-    // v44：闸门从 `m.useNavgrid` 改为 **getPit**（= 地图自己声明的坑）。
-    // 原来按 useNavgrid 判断，等于把召唤师峡谷的两个坑挖进了每一张 navgrid 地图 ——
-    // 嚎哭深渊是一座平桥、扭曲丛林根本没有河，却都被挖了 SR 的坑。
-    // 这里与 getPit 共用同一个取值口径，地形与出生点不会再各说各话。
-    {
-      for (const key of ['dragon', 'baron']) {
-        const pit = this.getPit(key); if (!pit) continue;
-        const d = Math.hypot(x - pit.x, z - pit.y);
-        if (d < pit.r) {
-          const t = Math.min(1, (pit.r - d) / (pit.r * 0.45));   // 边缘→坑心 线性下沉
-          h = Math.min(h, pit.depth * t);
-        }
-      }
-    }
-    }   // end: !stylized（高地/龙坑台阶只在非风格化地图上生效）
-    // ==================== v59：森林深度分级的轻微地形梯度 ====================
-    // 用户看了 GPT 对召唤师峡谷的评价后定的方向："加回轻微高低差"——不是恢复
-    // 上面删掉的"基地高地/龙坑"那种台阶（两者是完全不同的机制，互不冲突），
-    // 而是让森林深度分级（forestZoneAt：道路/林缘/普通森林/深林，见 mapValidate.js
-    // 头注）本身带一点点高度差，读出"越往野区深处走地势越高"的层次感。
-    // 只在声明了 jungleColor 的森林风格地图上生效（与 TerrainLayer/VegetationLayer
-    // 判定 jungleActive 用的同一个条件），级差刻意压得很小（0/3/6/10），
-    // 不是要做真山地——用户原话"轻微"。
-    // rf<=0 才叠加：河道横穿野区时河床下沉必须赢（河不能因为穿过"深林"格
-    // 就被垫高填平），森林梯度只管河道之外的地面。
-    if (rf <= 0 && m.visualStyle === 'stylized' && Array.isArray(m.lanes) && m.lanes.length) {
-      const SV = stylizedPaletteOf(m);
-      if (SV.jungleColor) {
-        const zone = forestZoneAt(m, x, z);
-        const ZONE_H = [0, 3, 6, 10];
-        h = Math.max(h, ZONE_H[zone] ?? 0);
       }
     }
     return h;

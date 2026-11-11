@@ -1,19 +1,9 @@
 /**
- * PostFX.js —— 轮廓描边 + SSAO（Week2·Day8-10）
+ * PostFX.js —— 后处理：场景 Pass（MSAA + 深度贴图）、SSAO、伪体积雾。
  *
- * docs/Q4-RENDERING-REDESIGN.md 第 2 节判断依据：低多边形场景对描边/AO 极其敏感，
- * 这两样是"从塑料感变成有实体感"的关键两步。两个效果都要知道"哪里是边缘/哪里被
- * 遮挡"，靠的是同一份【视空间法线 + 深度】数据，所以共用同一个预渲染 Pass
- * （NormalDepthPrepass）：拿场景的 overrideMaterial 换成法线材质，额外渲染一遍到
- * 独立的渲染目标，不进 EffectComposer 的主色彩链（needsSwap=false，纯粹产出一份
- * 供后面两个 Pass 采样的纹理）。
- *
- * 摄像机是正交（ThreeRenderer 用 OrthographicCamera），深度和视空间坐标的重建比
- * 透视相机简单得多——正交投影下深度是【线性】的，且同一像素的视空间 X/Y 与深度
- * 无关（不需要透视除法），这里的重建公式全按正交推的，不能照抄透视相机那一套。
- *
- * 跟随现有 setBloom/setFXAA/setShadowLevel 的先例：两个效果都做成可独立开关的档位，
- * 关掉时对帧时间零影响（NormalDepthPrepass 也会跟着两个开关一起短路，不白渲染）。
+ * SSAO 和体积雾都要"每个像素离相机多远"，用的是同一张深度贴图：ScenePass 主渲染的深度。
+ * 视空间位置由深度经投影逆矩阵重建（透视 / 正交通用）；SSAO 需要的法线也由深度差分得到。
+ * 每个效果都能独立开关（ThreeRenderer.setSSAO / setFog / setAA），关掉时对帧时间零影响。
  */
 import * as THREE from '../../vendor/three.module.js';
 import { fogNoiseTexture } from './fogNoise.js';
@@ -22,167 +12,69 @@ import { Pass, FullScreenQuad } from '../../vendor/postprocessing/Pass.js';
 import { ShaderPass } from '../../vendor/postprocessing/ShaderPass.js';
 
 /**
- * v51.33 修复：塔/单位附近莫名出现的半透明"重影血条"（任务 #104，用户最终定位——
- * 关掉环境光遮蔽 SSAO 后重影消失，指向了这里）。
- *
- * 根因：血条/护盾图标（UnitLayer.js 的两个 Sprite）用 `depthTest:false` 让自己
- * 永远画在最上层、不被地面/建筑挡住（头注 ①"贴地的下半张不会被地面深度裁掉"）。
- * 但 NormalDepthPrepass.render() 是用 `scene.overrideMaterial` 整场景重渲一遍
- * ——覆写渲染用的是覆写材质【自己】的 depthTest/depthWrite（MeshNormalMaterial
- * 默认都是 true），根本不看原材质那份 depthTest:false。于是血条这个悬浮在单位
- * 头顶、朝向摄像机的小方片，在 SSAO/描边共用的这份深度图里被记成了一块"正常
- * 参与深度测试的实体几何"，形状和血条一模一样——SSAO 用这份深度算遮蔽时，
- * 血条自己的这一小块矩形边缘会被当成真实几何的轮廓，算出一圈围绕血条形状的
- * 错误遮蔽量，叠回主画面就是"血条旁边多出一块同形状的半透明暗影"。
- *
- * 修法：给这类"永远画在最上层、不参与场景遮蔽"的精灵一个专用 layer，预渲染
- * 这一步用的相机临时关掉这个 layer——它们在深度图里就等于不存在，SSAO/描边
- * 处理的是它们背后的真实几何，血条本身仍然照常画在最终画面最上层（beauty pass
- * 用的是主相机，全程开着这个 layer，不受影响）。UnitLayer.js 创建血条/护盾
- * Sprite 时把它们放进这个 layer；ThreeRenderer 建主相机时把这个 layer 加入主相机
- * 默认可见集合（否则主渲染也会漏画它们）。
+ * 血条 / 护盾图标这类"永远画在最上层"的 HUD 精灵所在的层。
+ * 主相机必须 `camera.layers.enable(HUD_SPRITE_LAYER)`，否则正式渲染里它们会消失
+ * （layers 是掩码，`layers.set` 会清掉默认的 0 层）。
+ * 这些精灵的材质必须 depthWrite=false：SSAO / 雾读的是主渲染深度，写了深度就会在血条周围算出一圈假遮蔽。
  */
 export const HUD_SPRITE_LAYER = 1;
 
-/**
- * 粒子/薄纱专用层——**必须排除出法线深度预渲染**（见下面 NormalDepthPrepass.render）。
- *
- * ==================== 2026-09-05：描边 bug 的真根因（已确诊，不是猜测）====================
- * v51.28 用户报了"轮廓描边有画面 bug"，当时没查根因，直接把 `outlineOn` 默认关掉挂了很久。
- * 这次查实了，证据链三条：
- *  ① 像素差分：把"描边开/关"两张图逐像素比对，水面上那些黑点**只在描边开启时出现**
- *    （水色 (2,29,66) → 近黑 (4,2,18)），描边关闭时那里根本没有东西——所以它们是描边
- *    Pass 造出来的，不是真实几何。
- *  ② 位置固定的原因：`WeatherLayer.setEnabled(false)` 只把材质 opacity 设成 0，
- *    **粒子对象仍然留在场景里**，只是停止移动——所以"关掉天气"前后黑点在同一位置，
- *    这一开始误导我以为跟天气无关。
- *  ③ 机制：`NormalDepthPrepass` 用 `scene.overrideMaterial = MeshNormalMaterial` 整场景
- *    重渲一遍，而 three 的 overrideMaterial 会替换**所有**可渲染对象的材质、并且
- *    **无视原材质的透明度**。于是雨（LineSegments）、雪/尘（Points）、雾（半透明薄纱）
- *    在法线深度图里全是**完全不透明**的，满屏散布着深度与法线的突变，描边的边缘检测
- *    就在每一个粒子上触发 → 满屏黑麻点。SSAO 读的是同一张预渲染图，一起被污染。
- *
- * 修法沿用本文件已有的先例（HUD_SPRITE_LAYER 就是这么把血条精灵排除出预渲染的）：
- * 把这些"不该产生轮廓/遮蔽"的东西挪到本层，预渲染时 disable 掉。
- * ⚠️ 用了这一层的对象，主相机必须 `camera.layers.enable(FX_PARTICLE_LAYER)`，
- * 否则它们在正式渲染里也会一起消失（layers 是掩码，`layers.set` 会清掉默认的 0 层）。
- */
+/** 粒子 / 薄纱（雨、雪、尘、雾片）所在的层。规则同上：主相机要 enable，材质不写深度。 */
 export const FX_PARTICLE_LAYER = 2;
 
-// ==================== 法线+深度预渲染 Pass ====================
-class NormalDepthPrepass extends Pass {
-  constructor(scene, camera, width, height) {
+// ==================== 场景 Pass：MSAA 颜色 + 深度贴图 ====================
+/**
+ * 把场景画进一张多重采样的 HDR 渲染目标，并把深度解析成贴图给 SSAO / 体积雾用。
+ *
+ * 取代了原来的两样东西：
+ *   ① vendor 的 RenderPass + FXAA。FXAA 是把整幅画面按亮度梯度抹一遍，贴图细节一起被抹掉
+ *      （用户："画面看起来有些模糊"；实测关掉 FXAA 清晰度指标翻倍）。MSAA 只在几何边缘多采样，贴图不受影响。
+ *   ② 法线 + 深度预渲染。那是把整个场景换材质再画一遍，中期约 400 次绘制调用纯属重复；
+ *      深度直接用主渲染的，法线在 SSAO 里由深度重建。
+ *
+ * 血条 / 粒子这类不该参与遮蔽的东西：它们的材质不写深度（depthWrite=false），所以深度贴图里本来就没有它们。
+ */
+class ScenePass extends Pass {
+  constructor(scene, camera, width, height, samples = 4) {
     super();
-    this.scene = scene;
-    this.camera = camera;
-    this.needsSwap = false; // 只产出纹理供后面的 Pass 采样，不参与主色彩链的读写交换
-    this.clear = false;
-    this._normalMaterial = new THREE.MeshNormalMaterial(); // 编码的是【视空间】法线，SSAO/描边都要这个口径
-    this.renderTarget = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+    this.scene = scene; this.camera = camera;
+    this.needsSwap = true; this.clear = true;
+    this.samples = samples;
+    this.rt = new THREE.WebGLRenderTarget(width, height, {
+      type: THREE.HalfFloatType, samples,
       depthTexture: new THREE.DepthTexture(width, height),
     });
-    this.renderTarget.texture.name = 'NormalDepthPrepass.normal';
-  }
-
-  setSize(width, height) {
-    this.renderTarget.setSize(width, height);
-    this.renderTarget.depthTexture.image.width = width;
-    this.renderTarget.depthTexture.image.height = height;
-  }
-
-  render(renderer /*, writeBuffer, readBuffer */) {
-    const prevTarget = renderer.getRenderTarget();
-    const prevBackground = this.scene.background;
-    this.scene.background = null; // 背景色不该被当成"某个物体的法线"参与边缘/遮蔽判定
-    // 血条/护盾图标这类"永远画在最上层"的 HUD 精灵不该参与深度/遮蔽判定——见上方头注。
-    const hadHudLayer = this.camera.layers.isEnabled(HUD_SPRITE_LAYER);
-    this.camera.layers.disable(HUD_SPRITE_LAYER);
-    // 粒子/薄纱同理，而且比 HUD 更要紧——它们满屏散布，不排除就是满屏黑麻点。
-    // 见 FX_PARTICLE_LAYER 的头注（描边 bug 的真根因）。
-    const hadFxLayer = this.camera.layers.isEnabled(FX_PARTICLE_LAYER);
-    this.camera.layers.disable(FX_PARTICLE_LAYER);
-    // ==================== 2026-09-05：透明物体一律不参与预渲染 ====================
-    // 上面的 layer 机制解决的是"我知道它是粒子"的那些；但 overrideMaterial 会**无视
-    // 原材质的透明度**这件事，对**所有**半透明物体都成立，逐个去挂 layer 迟早漏。
-    // 用户实测漏掉的就是弹道：`EffectsLayer` 是一整个 `transparent:true` 的批次网格，
-    // 预渲染把它当成不透明面，描边于是沿着每颗子弹的公告板四边形描出一圈黑框。
-    // 改成一条通用规则——**材质 transparent 的就不进预渲染**。这条规则本身也是对的：
-    // 半透明物体既不该产生轮廓、也不该在 SSAO 里遮蔽别人（两者读的是同一张预渲染图）。
-    // 好处是以后新加的特效自动就对，不需要记得挂 layer。
-    //
-    // ==================== 2026-09-25：水晶（实心半透明凸多面体）需要白名单例外 ====================
-    // 用户报"黑色描边线穿过了水晶材质"：塔水晶（UnitLayer.js 的 crystalMaterial，
-    // transparent:true opacity:0.88，为水晶质感所需，早于本轮修复就存在）按上面的
-    // 通用规则被整体从预渲染里隐藏——于是水晶这块屏幕区域在深度/法线图里"空"了，
-    // 描边读到的是水晶**背后**塔身结构的深度，把那部分结构的边缘画成黑线，合成时
-    // 叠在水晶前面，看起来就是"背后描边线穿模显示在水晶上"。
-    // 这和弹道/粒子的情况不是一回事：那些是应该被跳过的薄片状特效（本来就不该
-    // 产生轮廓、也不该遮挡别人）；水晶是一整块实心凸多面体，半透明只是材质效果，
-    // 它在空间上确实挡住了背后的东西，该像不透明物体一样参与深度/遮蔽判定。
-    // 用 userData 开一个显式白名单标记（而不是反过来给粒子挂标记）：只有明确
-    // "我是实心几何、该正常参与预渲染"的物体才需要例外，默认规则不变，
-    // 不会引入新的满屏黑麻点风险。
-    //
-    // ==================== 2026-09-27：逐物体换材质，不再用 scene.overrideMaterial ====================
-    // overrideMaterial 会无视原材质的 alphaTest。地形平面是一整块贴满世界包围盒的
-    // 平面，挖空区（terrainEdge 地图的路外区域）靠 alphaTest 丢弃——预渲染里它却是
-    // 一块完整的实心板：描边沿世界包围盒画出一圈矩形框，SSAO 也按这块看不见的板
-    // 去压暗下沉的底面。所以改成逐物体换：带 alphaTest+贴图的，换成同样做 alphaTest
-    // 的法线材质；其它网格照旧用统一的法线材质。点/线/精灵不进预渲染
-    // （法线材质画它们只会产生噪点，透明的本来就被排除了）。
-    const hidden = [], swapped = [];
-    this.scene.traverse((o) => {
-      if (!o.visible) return;
-      if (!o.isMesh && !o.isPoints && !o.isLine && !o.isSprite) return;
-      const m = o.material;
-      const solidWhitelist = !!(o.userData && o.userData.prepassSolid); // 白名单：实心半透明几何，正常参与预渲染
-      const tr = Array.isArray(m) ? m.some((x) => x && x.transparent) : !!(m && m.transparent);
-      if (!o.isMesh || (tr && !solidWhitelist)) { o.visible = false; hidden.push(o); return; }
-      swapped.push([o, m]);
-      // 小兵 / 巨龙的动画材质自带一份同样变形的法线材质（unitRig.js），否则描边画的是静止姿势
-      const own = o.userData?.prepassMaterial || (!Array.isArray(m) && m?.userData?.prepassMaterial);
-      o.material = own || ((!Array.isArray(m) && m && m.alphaTest > 0 && m.map) ? this._alphaNormal(m) : this._normalMaterial);
+    this.rt.texture.name = 'ScenePass.color';
+    this.copyMat = new THREE.ShaderMaterial({
+      uniforms: { tDiffuse: { value: this.rt.texture } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: 'varying vec2 vUv; uniform sampler2D tDiffuse; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }',
+      depthTest: false, depthWrite: false,
     });
-    renderer.setRenderTarget(this.renderTarget);
-    renderer.clear();
+    this.fsq = new FullScreenQuad(this.copyMat);
+  }
+  get depthTexture() { return this.rt.depthTexture; }
+  setSize(width, height) {
+    this.rt.setSize(width, height);
+    this.rt.depthTexture.image.width = width; this.rt.depthTexture.image.height = height;
+    this.rt.depthTexture.needsUpdate = true;
+  }
+  /** 改多重采样数（0 = 关抗锯齿）。渲染目标要重新分配，下一帧生效。 */
+  setSamples(n) {
+    n = Math.max(0, n | 0);
+    if (n === this.samples) return;
+    this.samples = n; this.rt.samples = n; this.rt.dispose();
+  }
+  render(renderer, writeBuffer /*, readBuffer */) {
+    const prevAuto = renderer.autoClear;
+    renderer.autoClear = true;
+    renderer.setRenderTarget(this.rt);
     renderer.render(this.scene, this.camera);
-    for (const o of hidden) o.visible = true;
-    for (const [o, m] of swapped) o.material = m;
-    if (hadHudLayer) this.camera.layers.enable(HUD_SPRITE_LAYER);
-    if (hadFxLayer) this.camera.layers.enable(FX_PARTICLE_LAYER);
-    this.scene.background = prevBackground;
-    renderer.setRenderTarget(prevTarget);
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.fsq.render(renderer);
+    renderer.autoClear = prevAuto;
   }
-
-  /** 与原材质同一张贴图、同一个 alphaTest 阈值的法线材质（按贴图缓存，贴图换了自动换新的）。 */
-  _alphaNormal(src) {
-    this._alphaCache = this._alphaCache || new Map();
-    const key = src.map.uuid + '|' + src.alphaTest;
-    let mat = this._alphaCache.get(key);
-    if (!mat) {
-      // MeshNormalMaterial 没有贴图槽，做不了 alphaTest；这里输出与它相同的编码
-      // （视空间法线 *0.5+0.5，不透明），外加按原贴图的 alpha 丢弃片元。
-      mat = new THREE.ShaderMaterial({
-        uniforms: { map: { value: src.map }, alphaTest: { value: src.alphaTest } },
-        vertexShader: `varying vec3 vN; varying vec2 vUv;
-          void main() { vUv = uv; vN = normalize(normalMatrix * normal);
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-        fragmentShader: `uniform sampler2D map; uniform float alphaTest; varying vec3 vN; varying vec2 vUv;
-          void main() { if (texture2D(map, vUv).a < alphaTest) discard;
-            gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, 1.0); }`,
-      });
-      mat.userData.alphaNormal = true;
-      this._alphaCache.set(key, mat);
-    }
-    return mat;
-  }
-
-  dispose() {
-    this.renderTarget.dispose();
-    this._normalMaterial.dispose();
-    if (this._alphaCache) for (const m of this._alphaCache.values()) m.dispose();
-  }
+  dispose() { this.rt.dispose(); this.copyMat.dispose(); this.fsq.dispose(); }
 }
 
 // 两个 Pass 共用的相机重建 uniform。
@@ -268,7 +160,7 @@ function buildNoiseTexture() {
 
 const SSAO_AO_FRAG = `
     varying vec2 vUv;
-    uniform sampler2D tNormal;
+    uniform vec2 texel;
     uniform sampler2D tNoise;
     uniform vec3 kernel[${SSAO_KERNEL_SIZE}];
     uniform vec2 noiseScale;
@@ -280,7 +172,13 @@ const SSAO_AO_FRAG = `
       float depth = texture2D(tDepth, vUv).x;
       if (depth >= 1.0) { gl_FragColor = vec4(1.0); return; }
       vec3 viewPos = reconstructViewPos(vUv, depth);
-      vec3 normal = normalize(texture2D(tNormal, vUv).xyz * 2.0 - 1.0);
+      // 法线由深度重建：左右 / 上下各取离本像素更近（深度差更小）的那一侧做差分，避免跨物体边缘时法线翻掉
+      vec3 pr = reconstructViewPos(vUv + vec2(texel.x, 0.0), texture2D(tDepth, vUv + vec2(texel.x, 0.0)).x) - viewPos;
+      vec3 pl = viewPos - reconstructViewPos(vUv - vec2(texel.x, 0.0), texture2D(tDepth, vUv - vec2(texel.x, 0.0)).x);
+      vec3 pu = reconstructViewPos(vUv + vec2(0.0, texel.y), texture2D(tDepth, vUv + vec2(0.0, texel.y)).x) - viewPos;
+      vec3 pd = viewPos - reconstructViewPos(vUv - vec2(0.0, texel.y), texture2D(tDepth, vUv - vec2(0.0, texel.y)).x);
+      vec3 ddx = abs(pr.z) < abs(pl.z) ? pr : pl, ddy = abs(pu.z) < abs(pd.z) ? pu : pd;
+      vec3 normal = normalize(cross(ddx, ddy));
       vec3 randomVec = normalize(vec3(texture2D(tNoise, vUv * noiseScale).xy, 0.0));
       vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
       vec3 bitangent = cross(normal, tangent);
@@ -322,12 +220,12 @@ const FSQ_VERT = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(p
 
 /**
  * SSAO：半分辨率算遮蔽 → 深度感知的两向模糊 → 乘回主画面。
- * 原来是全分辨率、无模糊、正交相机专用；透视相机下半径按世界单位给（CONFIG.postfx.ssao）。
+ * 深度来自 ScenePass 的主渲染，法线由深度重建（不再有单独的法线预渲染）。半径按世界单位给（CONFIG.postfx.ssao）。
  */
 class SSAOPass extends Pass {
-  constructor(prepass, camera, width, height) {
+  constructor(scenePass, camera, width, height) {
     super();
-    this.camera = camera;
+    this.camera = camera; this.scenePass = scenePass;
     const c = CONFIG.postfx?.ssao || {};
     this.scaleDiv = c.halfRes === false ? 1 : 2;
     const hw = Math.max(1, Math.floor(width / this.scaleDiv)), hh = Math.max(1, Math.floor(height / this.scaleDiv));
@@ -335,13 +233,13 @@ class SSAOPass extends Pass {
     this.aoRT = new THREE.WebGLRenderTarget(hw, hh, rtOpt);
     this.blurRT = new THREE.WebGLRenderTarget(hw, hh, rtOpt);
     this.aoMat = new THREE.ShaderMaterial({ uniforms: {
-      tNormal: { value: prepass.renderTarget.texture }, tDepth: { value: prepass.renderTarget.depthTexture },
+      texel: { value: new THREE.Vector2(1 / Math.max(1, width), 1 / Math.max(1, height)) }, tDepth: { value: scenePass.depthTexture },
       tNoise: { value: buildNoiseTexture() }, kernel: { value: buildSSAOKernel() },
       noiseScale: { value: new THREE.Vector2(hw / 4, hh / 4) },
       radius: { value: c.radius ?? 16 }, bias: { value: c.bias ?? 0.5 }, power: { value: c.power ?? 1.5 },
       ...cameraUniforms(camera),
     }, vertexShader: FSQ_VERT, fragmentShader: SSAO_AO_FRAG });
-    this.blurMat = new THREE.ShaderMaterial({ uniforms: { tAO: { value: null }, tDepth: { value: prepass.renderTarget.depthTexture }, dir: { value: new THREE.Vector2() } }, vertexShader: FSQ_VERT, fragmentShader: SSAO_BLUR_FRAG });
+    this.blurMat = new THREE.ShaderMaterial({ uniforms: { tAO: { value: null }, tDepth: { value: scenePass.depthTexture }, dir: { value: new THREE.Vector2() } }, vertexShader: FSQ_VERT, fragmentShader: SSAO_BLUR_FRAG });
     this.compMat = new THREE.ShaderMaterial({ uniforms: { tDiffuse: { value: null }, tAO: { value: null }, aoStrength: { value: c.strength ?? 0.8 } }, vertexShader: FSQ_VERT, fragmentShader: SSAO_COMP_FRAG });
     this.fsq = new FullScreenQuad(this.aoMat);
     this.hw = hw; this.hh = hh;
@@ -352,6 +250,7 @@ class SSAOPass extends Pass {
     this.hw = Math.max(1, Math.floor(w / this.scaleDiv)); this.hh = Math.max(1, Math.floor(h / this.scaleDiv));
     this.aoRT.setSize(this.hw, this.hh); this.blurRT.setSize(this.hw, this.hh);
     this.aoMat.uniforms.noiseScale.value.set(this.hw / 4, this.hh / 4);
+    this.aoMat.uniforms.texel.value.set(1 / Math.max(1, w), 1 / Math.max(1, h));
   }
   render(renderer, writeBuffer, readBuffer) {
     this.fsq.material = this.aoMat; renderer.setRenderTarget(this.aoRT); this.fsq.render(renderer);
@@ -365,8 +264,8 @@ class SSAOPass extends Pass {
   }
 }
 
-export function createSSAOPass(prepass, camera, width, height) {
-  return new SSAOPass(prepass, camera, width, height);
+export function createSSAOPass(scenePass, camera, width, height) {
+  return new SSAOPass(scenePass, camera, width, height);
 }
 
 // ==================== Q4 天气重做：伪体积雾 ====================
@@ -380,9 +279,8 @@ export function createSSAOPass(prepass, camera, width, height) {
 // 雾团都焊在世界里不动，只有 noiseOffset（按真实时间缓慢累加）会让雾自己缓慢"呼吸"，
 // 和镜头运动无关。
 //
-// 复用 NormalDepthPrepass 的深度图和 SSAO/描边已有的正交重建公式；不需要法线，
-// 也不需要新开一个预渲染 Pass。世界坐标由 viewMatrixInverse（即 camera.matrixWorld）
-// 把重建出的视空间坐标转回去——正交相机没有透视除法，这一步是纯矩阵乘法。
+// 深度用 ScenePass 的主渲染深度；世界坐标由 viewMatrixInverse（即 camera.matrixWorld）
+// 把重建出的视空间坐标转回去。
 // 噪声贴图见 fogNoise.js（可平铺的平滑分形噪声；原来的 64² 纯随机值噪声放大后是方块 + 细颗粒，看着粗糙）。
 
 const FogShader = {
@@ -459,7 +357,7 @@ const FogShader = {
   `,
 };
 
-export function createFogPass(prepass, camera, width, height) {
+export function createFogPass(scenePass, camera, width, height) {
   const shader = {
     uniforms: {
       tDiffuse: { value: null },
@@ -486,7 +384,7 @@ export function createFogPass(prepass, camera, width, height) {
     fragmentShader: FogShader.fragmentShader,
   };
   const pass = new ShaderPass(shader);
-  pass.uniforms.tDepth.value = prepass.renderTarget.depthTexture;
+  pass.uniforms.tDepth.value = scenePass.depthTexture;
   pass.uniforms.tNoise.value = fogNoiseTexture();
   // 观感参数全部走 CONFIG.volumetricFog（第 2 条铁律，与 CONFIG.outline 同级），
   // 改配置即可，不用动着色器。
@@ -545,4 +443,4 @@ export function createFogPass(prepass, camera, width, height) {
   return pass;
 }
 
-export { NormalDepthPrepass };
+export { ScenePass };

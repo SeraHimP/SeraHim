@@ -1563,7 +1563,7 @@ export const CONFIG = {
     // 程序化天空 / IBL（skyLight.js）：width/height 等距圆柱图分辨率；intensity 环境光总倍率；
     // hemiShare 半球光保留的份额（其余由 IBL 提供）；sunGlow/sunDisc 太阳光晕与日轮亮度；
     // quantize 太阳方向量化步长（超过才重算 PMREM）；background 是否把天空当背景
-    sky: { width: 256, height: 128, intensity: 1.0, hemiShare: 0.25, sunGlow: 0.35, sunDisc: 6, quantize: 0.03, background: true },
+    sky: { width: 256, height: 128, intensity: 1.0, shareK: 3.0, hemiShare: 0.25, sunGlow: 0.35, sunDisc: 6, quantize: 0.03, background: true },
     lighting: {
       sunGain: 1.6,          // 方向光相对"总辐照度 × (1-环境占比)"的倍率：PBR 材质要靠直射才有体积感
       shadowFarK: 2.2,       // 阴影视锥沿视线方向最远罩到 机位距离 × 这个倍数
@@ -2162,10 +2162,138 @@ export const CONFIG = {
   // 见 PostFX.js 里 FX_PARTICLE_LAYER 的头注），修掉之后重新默认开启。
   // 用户对参考游戏的描述："thronefall 里的描边还是挺重的"，所以强度往重了给。
   // 后处理（2026-11 画面重构）。描边随卡通风格一起删除。
+  // ==================== 地形（2026-11 画面重构）====================
+  // 地形是一张"算出来的"高度场（src/data/terrainField.js）：可走区是地面，不可走区按主题隆起成岩壁
+  // 或下沉成深渊，地图之外延伸成山体——没有"地图边缘"。逻辑层的 heightAt 与画面读的是同一张场。
+  terrain: {
+    field: {
+      targetN: 512,        // 高度场每边的采样数（地图越大每格越粗）
+      minCell: 5,          // 每格最小世界尺寸
+      padCells: 10,        // 算"离可走区多远"时四周补的墙格数（地图边界之外一律当墙）
+      sdBlur: 1,           // 距离场模糊半径（格）：把位图的直角台阶磨圆
+      laneRes: 2,          // 兵线距离场的降采样倍数（省构建时间）
+    },
+    // 可走地面
+    ground: {
+      pathHalf: 78,        // 路面半宽（世界单位）：路中心到泥路边缘
+      pathFeather: 46,     // 路面到野地的过渡宽度
+      pathDip: 1.4,        // 路面比野地低多少（踩出来的）
+      rollAmp: 5.5,        // 野地大尺度起伏幅度
+      rollFreq: 0.0042,
+      bumpAmp: 1.2,        // 野地小尺度起伏幅度
+      bumpFreq: 0.021,
+      baseFlatInner: 0.55, // 基地圆内这个比例以内完全铺平（建筑要站平）
+      plateauK: 0.6,       // 基地台地高度 = 地图声明的 plateauHeight × 这个比例
+    },
+    // 河（MapSystem.riverFactor 是河道形状的唯一真源，这里只管纵向剖面）
+    river: {
+      widthK: 0.42,        // 水道半宽 = 地图声明的 riverHalfWidth × 这个比例（其余是河滩）
+      widthVar: 0.28,      // 半宽沿程变化幅度（比例）
+      meanderAmp: 70,      // 河道中心线左右摆动幅度（世界单位）
+      meanderFreq: 0.0021,
+      bank: 0.55,          // 岸坡占半宽的比例
+      bed: -5.2,           // 可走河段的河床高度（浅滩，没过脚踝）
+      deepBed: -15,        // 不可走河段（岩壁之间的深潭）河床高度
+      fordBed: -4.0,       // 兵线过河处的河床高度
+      level: -2.3,         // 水面高度
+      pitClearK: 1.08,     // 龙坑半径 × 这个比例以内没有水（河心石台）
+      pitLakeK: 1.5,       // 龙坑周围的湖面半径 = 龙坑半径 × 这个比例
+      valleyHalf: 420,     // 地图之外河谷的半宽
+    },
+    pit: { floor: 0.6, rimK: 0.92 },   // 龙坑 / 男爵坑：河心石台的台面高度；rimK 以外开始向河床过渡
+    // 不可走区隆起成岩壁（rise 模式）
+    cliff: {
+      width: 30,           // 崖面水平宽度：从崖脚到崖顶
+      height: 62,          // 基础崖高
+      heightVar: 26,       // 崖高的大尺度变化
+      deepGain: 0.16,      // 越往墙体深处越高（每世界单位）
+      deepMax: 46,
+      topNoise: 7,         // 崖顶起伏
+      edgeNoise: 9,        // 崖线的不规则程度（只往墙里收，不侵入可走区）
+      edgeFreq: 0.018,
+    },
+    // 不可走区下沉成深渊（drop 模式）
+    drop: {
+      width: 46,
+      ledgeNoise: 16,
+    },
+    // 地图之外的延伸世界
+    outer: {
+      extent: 2600,        // 延伸多远（世界单位）
+      cell: 36,            // 延伸区网格边长
+      blend: 380,          // 从地图边缘高度过渡到山体的距离
+      baseHeight: 90,
+      peakHeight: 420,
+      peakDist: 1700,      // 离地图多远达到山体全高
+      noiseAmp: 150,
+      noiseFreq: 0.0019,
+    },
+    textureSize: 512,      // 程序化地表贴图的边长
+    paving: { baseK: 0.5, baseMax: 430, baseFeather: 60, structK: 1.15, structFeather: 18 },   // 铺石区：基地广场半径比例 / 上限 / 羽化，建筑基座半径比例 / 羽化
+    shading: { lightDay: 0.3, lightNight: 1.0 },   // 局部光（火炬 / 水晶）在白天 / 午夜的份量
+    // 主题：按地图的 paletteId 选；地图可用 terrainTheme 字段直接指定。
+    //   mode    rise = 不可走区隆起成岩壁；drop = 下沉成深渊 / 谷地
+    //   layers  五层地表贴图（地面 / 路 / 岩 / 点缀 / 铺石）：kind 是生成函数，palette 是配色
+    //   tile    每层贴图铺一遍占多少世界单位
+    themes: {
+      forest: {
+        mode: 'rise',
+        layers: {
+          // 配色沿用用户认可的阶段 0 原型（明亮的黄绿草、暖棕土路、灰褐岩）
+          ground: { kind: 'grass', palette: { dark: '#405822', mid: '#5c752f', light: '#78923c', dry: '#9aa03c' } },
+          path: { kind: 'dirt', palette: { dark: '#68543c', mid: '#816848', light: '#9a7c58', stone: '#a09888' } },
+          rock: { kind: 'rock', palette: { dark: '#605c58', mid: '#837b72', light: '#a69a8c', stain: '#7a6a50' }, strata: 0.6 },
+          accent: { kind: 'moss', palette: { dark: '#305422', mid: '#49772d', light: '#629a38', speck: '#8a8a3a' } },
+          paved: { kind: 'paving', palette: { dark: '#6a6660', mid: '#8f8a80', light: '#b3ac9e', gap: '#3a3630' } },
+        },
+        tile: { ground: 150, path: 130, rock: 190, accent: 140, paved: 110 },
+        water: { shallow: '#3e948e', deep: '#0f3f4c', tint: '#3a8588' },
+      },
+      magicForest: {
+        mode: 'rise', cliffHeight: 74,
+        layers: {
+          ground: { kind: 'grass', palette: { dark: '#16302c', mid: '#234a40', light: '#3f6e55', dry: '#4a4f6a' } },
+          path: { kind: 'dirt', palette: { dark: '#2c2733', mid: '#4b4352', light: '#6e6474', stone: '#7f7a8c' } },
+          rock: { kind: 'rock', palette: { dark: '#23222e', mid: '#454458', light: '#6f6e86', stain: '#3a2f52' }, strata: 0.5 },
+          accent: { kind: 'moss', palette: { dark: '#1c2238', mid: '#33305c', light: '#5a4c8a', speck: '#58c8c0' } },
+          paved: { kind: 'paving', palette: { dark: '#35333f', mid: '#5a5868', light: '#84829a', gap: '#17161e' } },
+        },
+        tile: { ground: 150, path: 130, rock: 190, accent: 140, paved: 110 },
+        water: { shallow: '#3c8f9c', deep: '#101c3a', tint: '#3a5f8a' },
+      },
+      frost: {
+        mode: 'drop', dropHeight: 360, outerBlend: 900, outerPeak: 520, snowLine: 40, snowLineFade: 160,
+        layers: {
+          ground: { kind: 'snow', palette: { shade: '#a9bdd4', mid: '#dbe6f2', light: '#f7fbff' } },
+          path: { kind: 'paving', palette: { dark: '#4d5a6a', mid: '#75869a', light: '#a3b3c6', gap: '#26303c' } },
+          rock: { kind: 'rock', palette: { dark: '#2f3946', mid: '#586678', light: '#8d9db0', stain: '#bcd0e2' }, strata: 0.7 },
+          accent: { kind: 'ice', palette: { deep: '#3a6d9c', mid: '#6fa8cf', light: '#bfe2f4', crack: '#e8f6ff' } },
+          paved: { kind: 'paving', palette: { dark: '#3d4756', mid: '#606f82', light: '#8b9bb0', gap: '#1c232d' } },
+        },
+        tile: { ground: 170, path: 100, rock: 210, accent: 150, paved: 120 },
+        water: null,
+      },
+      desert: {
+        mode: 'drop', dropHeight: 54, dropFloorNoise: 22, outerBlend: 500, outerPeak: 300,
+        layers: {
+          ground: { kind: 'sand', palette: { dark: '#a8824e', mid: '#cfa66a', light: '#ecd09a' } },
+          path: { kind: 'paving', palette: { dark: '#7a6248', mid: '#a4886a', light: '#c9b192', gap: '#3d2f22' } },
+          rock: { kind: 'rock', palette: { dark: '#6b3f2a', mid: '#a4643e', light: '#d19a66', stain: '#8a4a34' }, strata: 0.8 },
+          accent: { kind: 'cracked', palette: { dark: '#8a6a44', mid: '#b08c5e', light: '#d2b486', crack: '#4a3524' } },
+          paved: { kind: 'paving', palette: { dark: '#6a5440', mid: '#94795c', light: '#bda284', gap: '#33271c' } },
+        },
+        tile: { ground: 170, path: 100, rock: 220, accent: 150, paved: 120 },
+        water: null,
+      },
+    },
+  },
+
   postfx: {
     // SSAO：radius 采样半径（世界单位）、bias 深度容差、power 遮蔽曲线指数、strength 乘回画面的比例、halfRes 半分辨率
     ssao: { radius: 16, bias: 0.5, power: 1.5, strength: 0.8, halfRes: true },
     bloom: { strength: 0.35, radius: 0.5 },   // 阈值在 ui.hdr.bloomThreshold
+    // 抗锯齿（MSAA 采样数）。高分屏（像素比 ≥ hiDpiRatio）用 samplesHiDpi：物理像素已经够密，采样数减半省带宽
+    aa: { samples: 4, samplesHiDpi: 2, hiDpiRatio: 1.75 },
   },
 
   // ==================== 任务 #178：伪体积雾 ====================

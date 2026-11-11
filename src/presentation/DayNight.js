@@ -40,7 +40,7 @@ const KEYS = [
   // 曝光拉开到 1.05 ↔ 0.42；环境光占比夜里反而低（月光是方向光，天空几乎不亮），对比感才像夜。
   { p: 0.00, sun: '#ffb37a', sky: '#f2b48e', gnd: '#5c4e40', elev: 14, azim: 100, exp: 0.82, amb: 0.50, bg: '#e7c7a6' }, // 黎明（偏东）
   { p: 0.08, sun: '#ffe4c0', sky: '#8db8e8', gnd: '#5e6a52', elev: 38, azim: 118, exp: 1.00, amb: 0.36, bg: '#cfe0f0' }, // 上午
-  { p: 0.25, sun: '#fff6e6', sky: '#6f9fe0', gnd: '#5f6b55', elev: 62, azim: 135, exp: 1.05, amb: 0.32, bg: '#bcd4ec' }, // 正午
+  { p: 0.25, sun: '#fff4e0', sky: '#95bced', gnd: '#5f6b55', elev: 54, azim: 135, exp: 1.08, amb: 0.32, bg: '#dfe8f3' }, // 正午（原型的明亮方案）
   { p: 0.42, sun: '#ffd9a6', sky: '#8fb2dc', gnd: '#5a5c48', elev: 30, azim: 155, exp: 0.98, amb: 0.38, bg: '#d9d2c0' }, // 下午
   { p: 0.50, sun: '#ff8a4a', sky: '#d08a78', gnd: '#4c3e36', elev: 12, azim: 168, exp: 0.80, amb: 0.50, bg: '#e2a070' }, // 黄昏（偏西）
   { p: 0.58, sun: '#8ea2d8', sky: '#2c3a62', gnd: '#242c3c', elev: 22, azim: 150, exp: 0.52, amb: 0.42, bg: '#1d2742' }, // 入夜

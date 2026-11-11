@@ -210,7 +210,7 @@ renderer3d?.setShadowLevel('all');
 CTX.__setShadows = (lv) => renderer3d ? renderer3d.setShadowLevel(lv) : null;
 // 第 6.5 步排查开关：CTX.__textures(false) 关掉材质贴图重建地形，用于二分画面问题。
 // 注意单位侧【没有】对应开关——纸片人路径已在第 6.3 步移除，要回退只能换 zip。
-CTX.__textures = (on) => renderer3d ? renderer3d.setTexturesEnabled(on !== false) : null;
+CTX.__textures = () => null;   // 旧的"关贴图排查"入口：地表改成程序化多层材质后没有可关的贴图层，留空壳免得旧脚本报错
 // 长跑体检：children 应稳定不涨
 CTX.__sceneStats = () => renderer3d ? renderer3d.sceneStats() : null;
 // C 组·昼夜交替：并入天气系统——【随天气系统开关而开关】。天气开→昼夜随 gameTime 推进；
