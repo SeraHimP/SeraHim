@@ -48,7 +48,7 @@ export function healPowerFor(entity, ctx) {
  * capHP 缺省用 maxHP；调用方有更低的封顶（如"加固城防"的节点封顶）就自己传。
  * 返回实际回复量。
  */
-export function applyHeal(entity, amount, power, maxHP, capHP) {
+export function applyHeal(entity, amount, power, maxHP, capHP, source = 'skill') {
   // 2026-09-27 用户报"严重bug！天气的回血会让水晶枢纽回血！！！这个绝对不
   // 允许！！！此模式的水晶枢纽不能受到任何形式的回血（除手动设置外）"——
   // 根因：CombatSystem.js 的生命恢复 tick 读的是 stats.healthRegen（经
@@ -78,7 +78,12 @@ export function applyHeal(entity, amount, power, maxHP, capHP) {
   // 唯一的回血入口（见文件头注"以后新增任何回血都必须走这个函数"），在这里
   // 记一份累计值，不需要在每个调用点各自补一遍。永不清零，跟 Q6 里
   // trackDamageTaken 同一惯例（见 CombatSystem.js 的说明）。
-  if (applied > 0) entity._healReceivedTotal = (entity._healReceivedTotal || 0) + applied;
+  if (applied > 0) {
+    entity._healReceivedTotal = (entity._healReceivedTotal || 0) + applied;
+    // Q8：按来源拆分（regen 生命恢复 / vamp 吸血 / repair 维修 / skill 技能与光环）
+    const by = entity._healBySource || (entity._healBySource = {});
+    by[source] = (by[source] || 0) + applied;
+  }
   return applied;
 }
 

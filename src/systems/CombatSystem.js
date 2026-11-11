@@ -5,7 +5,7 @@ import { chargeParamsFor } from '../core/skills/attackModes.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
 import { canFire } from './FacingSystem.js';
-import { attackerCategoryOf, ENV_CATEGORY, trackDamageTaken, applyEnvTrueDamage } from '../core/damageAttribution.js';
+import { attackerCategoryOf, ENV_CATEGORY, trackDamageTaken, applyEnvTrueDamage, recordTimeline } from '../core/damageAttribution.js';
 import { random } from '../core/rng.js';
 import { attackModeOf } from '../core/attackMode.js';
 
@@ -150,7 +150,7 @@ function applyVamp(combat, attacker, damage, attackType, vampEff) {
   // 就不用再改代码了。
   const toHealth = (CONFIG.gameRules?.lifeStealToHealth ?? 50) / 100;
   const toShield = (CONFIG.gameRules?.lifeStealToShield ?? 50) / 100;
-  applyHeal(attacker, steal * toHealth, power, maxHP);
+  applyHeal(attacker, steal * toHealth, power, maxHP, undefined, 'vamp');
   grantTempShield(attacker, steal * toShield, power);
 }
 
@@ -275,7 +275,12 @@ export class CombatSystem {
         // 2026-09-27：水晶枢纽（_noHeal）不能被任何形式回血——拦截点在
         // applyHeal() 本身（core/healing.js），不在这里单独判断，见那边头注。
         applyHeal(entity, regen * regenMod * dt, healPowerOf(stats),
-                  stats.maxHP || entity.currentHP, entity._regenCapHP);
+                  stats.maxHP || entity.currentHP, entity._regenCapHP, 'regen');
+      }
+      // Q8 生命统计：每个游戏秒采一次血量占比，画最近 60 秒的生命曲线
+      if (entity._hpTlSec !== Math.floor(window.gameTime || 0)) {
+        entity._hpTlSec = Math.floor(window.gameTime || 0);
+        recordTimeline(entity, '_hpTl', (entity.currentHP || 0) / (stats.maxHP || 1), false);
       }
       // 负生命恢复已经在 AttributeCalculator 里全部摘成"持续真实伤害/秒"（生命恢复恒 ≥ 0）：
       // 原值结算、不吃任何加成、不过自身任何防御（护甲/魔抗/减伤/护盾/闪避），可致死，记进受伤统计。
@@ -1483,6 +1488,8 @@ export class CombatSystem {
         remaining -= absorbed;
       }
     }
+    // Q8 生命统计：护盾累计吸收量
+    if (damage > remaining) target._shieldAbsorbedTotal = (target._shieldAbsorbedTotal || 0) + (damage - remaining);
     return remaining;
   }
 

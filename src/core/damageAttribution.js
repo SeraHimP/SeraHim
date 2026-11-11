@@ -74,6 +74,11 @@ export function trackDamageTaken(target, attackerCategory, attackType, finalDama
     const stats = target._dmgTaken || (target._dmgTaken = { physical: 0, magic: 0, true: 0 });
     stats[key] += finalDamage;
 
+    // Q8 生命统计：受击次数、最大单次伤害、最近 60 秒每秒承伤（按游戏时间秒分桶的环形缓冲）
+    target._hitsTaken = (target._hitsTaken || 0) + 1;
+    if (finalDamage > (target._maxHitTaken || 0)) target._maxHitTaken = finalDamage;
+    recordTimeline(target, '_dmgTl', finalDamage, true);
+
     const cat = attackerCategory || ENV_CATEGORY;
     const byAtk = target._dmgByAttacker || (target._dmgByAttacker = new Map());
     const bucket = byAtk.get(cat.key) || { total: 0, count: 0, label: cat.label };
@@ -135,4 +140,34 @@ export function reduceMaxHP(entity, amount, category, eventBus) {
     eventBus?.emit?.('entity:death', { entityId: entity.id });
   }
   return cut;
+}
+
+// ==================== Q8：按秒分桶的 60 秒环形时间线 ====================
+export const TIMELINE_SEC = 60;
+const gameSec = () => Math.floor((typeof window !== 'undefined' && window.gameTime) || 0);
+
+/**
+ * 往实体身上的某条时间线记一笔。add=true 时同一秒内累加（承伤），否则覆盖（血量采样）。
+ * 结构：{ v: Float64Array(60), s: Int32Array(60) }——s 记每个桶属于哪一秒，读的时候过期的桶当 0/缺失。
+ */
+export function recordTimeline(entity, key, value, add) {
+  const sec = gameSec();
+  let tl = entity[key];
+  if (!tl) tl = entity[key] = { v: new Float64Array(TIMELINE_SEC), s: new Int32Array(TIMELINE_SEC).fill(-1) };
+  const i = ((sec % TIMELINE_SEC) + TIMELINE_SEC) % TIMELINE_SEC;
+  if (tl.s[i] !== sec) { tl.s[i] = sec; tl.v[i] = 0; }
+  tl.v[i] = add ? tl.v[i] + value : value;
+}
+
+/** 读最近 n 秒（含当前秒），从旧到新；没有记录的秒为 null。 */
+export function readTimeline(entity, key, n = TIMELINE_SEC) {
+  const tl = entity?.[key];
+  const sec = gameSec();
+  const out = [];
+  for (let k = n - 1; k >= 0; k--) {
+    const t = sec - k;
+    const i = ((t % TIMELINE_SEC) + TIMELINE_SEC) % TIMELINE_SEC;
+    out.push(tl && tl.s[i] === t ? tl.v[i] : null);
+  }
+  return out;
 }

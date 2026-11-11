@@ -526,17 +526,17 @@ export class LaneMovementSystem {
     const amount = repairPerSec * effMult * dt;
     let healed = 0;
     if (capHP == null || capHP >= maxHP) {
-      healed = applyHeal(target, amount, 1, maxHP); // 没有节点封顶（或封顶已经等于满血）：全额正常效率
+      healed = applyHeal(target, amount, 1, maxHP, undefined, 'repair'); // 没有节点封顶（或封顶已经等于满血）：全额正常效率
     } else if (target.currentHP >= capHP) {
-      healed = applyHeal(target, amount * overflowEff, 1, maxHP); // 已经顶到节点：剩下全按overflow效率
+      healed = applyHeal(target, amount * overflowEff, 1, maxHP, undefined, 'repair'); // 已经顶到节点：剩下全按overflow效率
     } else {
       // 血量在节点以下：先按正常效率补到节点，补满节点后本帧剩余部分接着按overflow续上，
       // 不是"这一帧只能二选一"——否则卡在节点附近时每帧都要多等一帧才能继续。
       const roomToCap = capHP - target.currentHP;
       const normalAmt = Math.min(amount, roomToCap);
-      healed = applyHeal(target, normalAmt, 1, maxHP, capHP);
+      healed = applyHeal(target, normalAmt, 1, maxHP, capHP, 'repair');
       const leftover = amount - normalAmt;
-      if (leftover > 0) healed += applyHeal(target, leftover * overflowEff, 1, maxHP);
+      if (leftover > 0) healed += applyHeal(target, leftover * overflowEff, 1, maxHP, undefined, 'repair');
     }
 
     if (healed > 0 && maxHP > 0) {
