@@ -558,71 +558,52 @@ export const minionPassives = {
   // 一起清掉。
 
   // ==================== 新大型小兵光环/被动 ====================
-  // ==================== 术士兵（用户定稿重做）====================
-  // 定位：增伤 + 破防。给友军双穿与伤害增幅，自身带高额双穿。
+  // ==================== 术士兵：三连击（Q4 重做）====================
+  // 用户："术士兵目前太强了尤其是打塔，重做，术士兵改为没有蓝条，但是显示为攻击充能形式，
+  // 术士兵每3次攻击，第三次攻击附带55%护甲穿透并永久获得1法术强度（最高70），属性面板上进度条的
+  // 显示方式是三个分块组成的进度条，每攻击一次就填充一个块，第三个块是其他颜色并且攻击时触发特效，
+  // 之后块进度条清零，开始下一周期。"追问定稿：穿透护甲+魔法都给；"最高70"是这个被动累计最多 +70；
+  // 原有的术法共鸣（光环）/术法贯通（自身 70% 双穿）/蓄能打击（耗蓝主动）全部删除，只留屠戮。
   //
-  // 口径说明：用户写的是"13%固定双穿"/"70%固定双穿"，两个数都带 %，
-  // 所以取【百分比穿透】（armorPenPercent / magicPenPercent），
-  // 而不是固定穿透（armorPenFlat / magicPenFlat）—— 后者的单位是点数、不带 %。
-  // 若本意是固定点数，改 CONFIG.gameRules.supportUnits.warlock 的 statKey 即可，
-  // 数值本身已软编码。
-  // v51.1：补上术士兵的主动技能被动伴侣——用户："被动技能：周围150码友军获得20法术强度。"
-  // 这不是一个独立的新光环，是术士兵已有的光环（术法共鸣）多给一项属性——它本来就是
-  // "周围友军"的光环，半径也正好是 AURA_RANGE=150，不用另起一条技能重复同一套判定。
-  // ==================== Q5：术士兵收窄成"只做光环增伤"====================
-  // 用户反馈："现在的术士兵/图腾兵啥的各种属性堆一块太膨胀了"——原来这条光环同时
-  // 发双穿+增伤+法强三个维度，跟自身的术法贯通（自己的双穿）、主动技能（自己叠
-  // 法强）加在一起，一个兵身上塞了五条不同的数值线。收窄成只留"光环增伤"一件事，
-  // 光环双穿/光环法强两项整条删除（自身双穿走 passive_warlock_attune，是"自己的"，
-  // 不算在这次收窄范围内）。auraDamageAmpPct 从4%略微补到6%——不是完全不削弱，
-  // 是"少了两个维度、单一维度稍微顶上一点"，避免收窄变成纯削弱。
-  passive_warlock_aura: makeAuraPassive({
-    id: 'passive_warlock_aura', name: '术法共鸣', icon: '🧙',
-    casterType: 'warlock', targetTypes: null, minionsOnly: true,
-    effectsFn: () => {
-      const c = CONFIG.gameRules.supportUnits?.warlock || {};
-      const amp = c.auraDamageAmpPct ?? 6;
-      return [
-        { name: '术法共鸣', icon: '🧙', kind: 'stat', statKey: 'damageAmpPct',
-          flatValue: amp, description: `伤害增幅+${amp}%` },
-      ];
-    },
-  }),
-
-  // 自身双穿走【状态】而不是改 baseStats：用户明确说"自身拥有70%固定双穿（状态）"，
-  // 而且做成状态后在属性面板里看得见，符合"所有修正都要可解释"这条。
-  passive_warlock_attune: {
-    id: 'passive_warlock_attune',
+  // 计数在【开火那一刻】（CombatSystem.performAttack 的 onAttackFired 钩子）：第 N 下的穿透写进
+  // 这一发的 hitInfo 快照，子弹飞行中术士兵死了也照样按强化结算。
+  passive_warlock_triad: {
+    id: 'passive_warlock_triad',
     applicableTypes: ['warlock'],
-    name: '术法贯通',
+    name: '三连咒击',
     icon: '🔮',
     color: '#8e44ad',
     category: 'passive',
     _cfg: () => CONFIG.gameRules.supportUnits?.warlock || {},
-    _text() { return `唯一被动——术法贯通：自身获得（{val}=${this._cfg().selfPenPct ?? 70}%）护甲穿透与法术穿透。`; },
+    _text() {
+      const c = this._cfg();
+      return `唯一被动——三连咒击：每 ${c.triadEvery ?? 3} 次攻击，第 ${c.triadEvery ?? 3} 次攻击额外获得 `
+        + `${c.triadPenPct ?? 55}% 护甲穿透与魔法穿透，并永久获得 ${c.triadApGain ?? 1} 点法术强度`
+        + `（累计最多 ${c.triadApMax ?? 70} 点，当前已获得 {val}）。`;
+    },
     get description() { return this._text(); },
     get descTemplate() { return this._text(); },
-    computeCurrent() { return this._cfg().selfPenPct ?? 70; },
+    computeCurrent(entity) { return Math.round(entity?._triadApGained || 0); },
     effects: [],
-    // 用 aura 机制常驻（无倒计时环、不会闪），每帧节流刷新一次即可。
-    // 不用 permanent 效果是因为改了配置要能立刻跟上，permanent 只在装备那一刻算一次。
-    onFrame: (entityId, dt, instance, ctx) => {
-      const e = ctx.entityContainer.get(entityId);
-      if (!e || !e.alive || e.type !== 'warlock') return;
-      if (typeof instance.state?.t !== 'number') instance.state = { ...(instance.state || {}), t: 0 };
-      instance.state.t += dt;
-      if (instance.state.t < AURA_THROTTLE) return;
-      instance.state.t = 0;
-      const pen = CONFIG.gameRules.supportUnits?.warlock?.selfPenPct ?? 70;
-      for (const key of ['armorPenPercent', 'magicPenPercent']) {
-        ctx.effectRegistry.apply(entityId, {
-          name: '术法贯通', icon: '🔮', kind: 'stat', statKey: key,
-          flatValue: pen, aura: true, auraGrace: 1.0,
-          stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-          description: `${key === 'armorPenPercent' ? '护甲' : '法术'}穿透+${pen}%`,
-          descTemplate: `唯一被动——术法贯通：${key === 'armorPenPercent' ? '护甲' : '法术'}穿透+${pen}%。`,
-        }, 'passive_warlock_attune_' + key);
+    /** 开火那一刻：计数 +1；满一轮的这一下改写 hitInfo 的穿透、加法强，然后清零。 */
+    onAttackFired: (attacker, target, instance, hitInfo) => {
+      const c = CONFIG.gameRules.supportUnits?.warlock || {};
+      const every = Math.max(1, Math.round(c.triadEvery ?? 3));
+      attacker._triadCount = (attacker._triadCount || 0) + 1;
+      if (attacker._triadCount < every) return;
+      attacker._triadCount = 0;
+      const pen = c.triadPenPct ?? 55;
+      hitInfo.armorPenPercent = Math.min(100, (hitInfo.armorPenPercent || 0) + pen);
+      hitInfo.magicPenPercent = Math.min(100, (hitInfo.magicPenPercent || 0) + pen);
+      hitInfo.triadEmpowered = true;
+      const room = Math.max(0, (c.triadApMax ?? 70) - (attacker._triadApGained || 0));
+      const gain = Math.min(room, c.triadApGain ?? 1);
+      if (gain > 0) {
+        attacker._triadApGained = (attacker._triadApGained || 0) + gain;
+        attacker.baseStats.abilityPower = (attacker.baseStats.abilityPower || 0) + gain;
       }
+      // 资源条闪光的时间戳（面板/画面读它；用游戏时钟，暂停时不会闪完）
+      attacker._triadFlashAt = (typeof window !== 'undefined' && window.gameTime) || 0;
     },
   },
 

@@ -61,7 +61,8 @@ export const RESOURCE_COLORS = {
   capture_blue: '#4a9eff',
   capture_red: '#ff5a5a',
   capture_neutral: '#5c6b63',
-  respawn: NON_MANA_COLOR,    // 召唤水晶 / 枢纽防御塔的重生进度（非法力资源，同一种石板灰）
+  respawn: NON_MANA_COLOR,
+  triad: NON_MANA_COLOR,      // 术士兵三连咒击（分块绘制时前几格用 segColor、最后一格用 finalSegColor）    // 召唤水晶 / 枢纽防御塔的重生进度（非法力资源，同一种石板灰）
 };
 
 /**
@@ -160,6 +161,17 @@ export function resourceInfoOf(entity, ctx) {
       regenText: `💧${Math.round(effRegen * 10) / 10}`,
       effRegen,
     };
+  }
+  // 术士兵三连咒击：分块的攻击充能条（每攻击一次填一块，最后一块换色，满一轮清零）
+  const triad = insts.find(i => i.skillId === 'passive_warlock_triad' && !i._disabled);
+  if (triad) {
+    const c = CONFIG.gameRules?.supportUnits?.warlock || {};
+    const every = Math.max(1, Math.round(c.triadEvery ?? 3));
+    const n = Math.max(0, Math.min(every, entity._triadCount || 0));
+    const gt = (typeof window !== 'undefined' && window.gameTime) || 0;
+    const flash = entity._triadFlashAt != null && gt - entity._triadFlashAt >= 0 && gt - entity._triadFlashAt < (c.flashSec ?? 0.45);
+    return { frac: n / every, kind: 'triad', label: `${n}/${every}`, segments: every,
+      segColor: c.segColor || NON_MANA_COLOR, finalSegColor: c.finalSegColor || '#b46cf0', flash };
   }
   const pierce = insts.find(i => i.skillId === 'weapon_piercing');
   if (pierce) {

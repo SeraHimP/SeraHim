@@ -124,34 +124,14 @@ function world() {
   T('图腾涌泉·满血单位不会超出上限', full.currentHP === full.baseStats.maxHP);
 }
 
-// ==================== 术士兵（Q5 收窄成只做"光环增伤"）====================
-// 用户反馈同上——光环原来同时发双穿+增伤+法强三个维度，收窄成只留增伤这一件事，
-// 光环双穿/光环法强整条删除（自身双穿 selfPenPct 是"自己的"，不算在收窄范围内）。
+// ==================== 术士兵（Q4 重做）====================
+// 用户："术士兵目前太强了尤其是打塔，重做"——原来的术法共鸣（光环增伤）/术法贯通（自身 70% 双穿）/
+// 蓄能打击（耗蓝主动）全部删除，只留新被动"三连咒击"与屠戮（行为断言见 sim_warlock_triad.mjs）。
 {
-  const W = world();
-  const c = SU().warlock;
-  const wl = W.mk('warlock', 'blue', 0);
-  W.eq(wl, ['passive_warlock_aura', 'passive_warlock_attune']);
-  const ally = W.mk('melee', 'blue', 40);
-  const foe = W.mk('melee', 'red', 50);
-  W.run(1, [wl]);
-
-  const as = W.stats(ally);
-  T(`术法共鸣·友军伤害增幅 +${c.auraDamageAmpPct}%（实测 ${as.damageAmpPct}）`,
-    as.damageAmpPct === c.auraDamageAmpPct);
-  T('术法共鸣·光环双穿已随 Q5 收窄整条删除，不再加到友军身上',
-    as.armorPenPercent === CONFIG.templates.melee.armorPenPercent
-    && as.magicPenPercent === CONFIG.templates.melee.magicPenPercent);
-  T('术法共鸣·光环法强已随 Q5 收窄整条删除，不再加到友军身上',
-    as.abilityPower === CONFIG.templates.melee.abilityPower);
-  const fs = W.stats(foe);
-  T('术法共鸣·不会加到敌方身上', fs.damageAmpPct === CONFIG.templates.melee.damageAmpPct);
-
-  const ws = W.stats(wl);
-  T(`术法贯通·自身双穿 ${c.selfPenPct}%（实测 护甲 ${ws.armorPenPercent} / 法术 ${ws.magicPenPercent}）`,
-    ws.armorPenPercent >= c.selfPenPct && ws.magicPenPercent >= c.selfPenPct);
-  T('术法贯通·以【状态】形式存在（面板里看得见）',
-    W.fx.getEffects(wl.id).some(e => e.blueprint?.name === '术法贯通'));
+  const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
+  T('术士兵旧技能（术法共鸣/术法贯通/蓄能打击）已删除',
+    !SkillLibrary.passive_warlock_aura && !SkillLibrary.passive_warlock_attune && !SkillLibrary.active_warlock_empower);
+  T('术士兵配置不再有光环增伤/自身双穿字段', SU().warlock.auraDamageAmpPct === undefined && SU().warlock.selfPenPct === undefined);
 }
 
 // ==================== 蚀骨兵 ====================

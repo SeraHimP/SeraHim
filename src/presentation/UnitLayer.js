@@ -1144,8 +1144,17 @@ export class UnitLayer {
     // v51：资源条——紧贴在 HP 条下方的 2px 细条，颜色与面板资源条同一色系。
     if (resInfo) {
       g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, hpH, BAR_W, BAR_H - hpH);
-      g.fillStyle = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.mana;
-      g.fillRect(0, hpH, BAR_W * resInfo.frac, BAR_H - hpH);
+      if (resInfo.segments > 1) {
+        // 分块条（术士兵三连咒击）：逐格画，格间留 1px 缝，最后一格换色
+        const n = resInfo.segments, filled = Math.round(resInfo.frac * n), sw = BAR_W / n;
+        for (let i = 0; i < filled; i++) {
+          g.fillStyle = i === n - 1 ? resInfo.finalSegColor : resInfo.segColor;
+          g.fillRect(i * sw + (i ? 1 : 0), hpH, sw - (i ? 1 : 0), BAR_H - hpH);
+        }
+      } else {
+        g.fillStyle = RESOURCE_COLORS[resInfo.kind] || RESOURCE_COLORS.mana;
+        g.fillRect(0, hpH, BAR_W * resInfo.frac, BAR_H - hpH);
+      }
       // v51.27（Q1）：资源条自己的拖尾（消耗时的淡红残段）+ 增加特效预告，跟 HP
       // 同一套形状，只是画在这条 2px 细条里。
       let resTrailEnd = resInfo.frac;

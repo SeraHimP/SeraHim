@@ -38,7 +38,7 @@ export const DEFAULT_MINION_PASSIVES = {
   // 本轮：屠戮扩展到除攻城车/超级兵外的全部兵种（用户定稿，见 minionPassives.js
   // 里 passive_totem_rend/passive_warlock_rend/passive_corrupt_rend 旁边的注释）。
   'totem': ['passive_totem_bulwark', 'passive_totem_mend', 'passive_totem_rend'],
-  'warlock': ['passive_warlock_aura', 'passive_warlock_attune', 'active_warlock_empower', 'passive_warlock_rend'],
+  'warlock': ['passive_warlock_triad', 'passive_warlock_rend'],
   'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison', 'passive_corrupt_rend'],
   // Q5：重装车——纯坦克，塔攻击优先级最高（见 CombatSystem.selectTarget 的
   // getPriority），对塔额外伤害+主动伤害减免。

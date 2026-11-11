@@ -812,10 +812,10 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('兵③-图腾自身 900 护盾不动（那是它的存在意义）', S.totem.selfShieldFlat === 900);
   // Q5：术士兵光环收窄成只做"光环增伤"——光环双穿/光环法强两个字段随之删除，
   // auraDamageAmpPct 从 4 略微补到 6（收窄后的补偿，不是纯削弱）。
-  T('兵④-术士光环收窄：双穿/法强两个字段已删除，增伤 4→6（收窄后补偿）',
-    S.warlock.auraPenPct === undefined && S.warlock.auraAbilityPower === undefined
-    && S.warlock.auraDamageAmpPct === 6);
-  T('兵⑤-术士自身 70% 双穿不动（只作用于自己）', S.warlock.selfPenPct === 70);
+  // Q4（后续用户定稿）：术士兵整体重做成"三连咒击"，光环与自身双穿一并删除
+  T('兵④-术士光环字段已删除（Q4 重做）', S.warlock.auraPenPct === undefined && S.warlock.auraAbilityPower === undefined
+    && S.warlock.auraDamageAmpPct === undefined);
+  T('兵⑤-术士自身 70% 双穿已删除，改为每 3 下一次的强化穿透', S.warlock.selfPenPct === undefined && S.warlock.triadPenPct > 0);
 
   // 炮兵：频率 +50%、属性下调、护盾来源收窄
   const siegeRule = CONFIG.gameRules.laneWaveComposition.find(r => r.type === 'siege');

@@ -809,6 +809,14 @@ export class CombatSystem {
         : 0,
     };
 
+    // 技能的开火钩子：在这一发的快照定稿之前改写它（术士兵三连咒击的第三下加穿透等）。
+    // 放在 hitInfo 构造之后、发射之前——改写的是这一发自己的快照，子弹飞行中攻击者死亡也照样生效。
+    for (const inst of attacker._skillInstances || []) {
+      if (inst._disabled) continue;
+      const d = this.skills[inst.skillId];
+      if (d && d.onAttackFired) d.onAttackFired(attacker, target, inst, hitInfo);
+    }
+
     // ---- 弹道模型（v2.5D Q1）：所有单位统一 ----
     // 原先写死 attacker.type === 'tower'，小兵/巨龙一律瞬时结算、无可视弹道
     //（注释理由"防卡顿"属单文件时代遗留：实测 40 远程兵齐射峰值在飞弹仅 40 发）。

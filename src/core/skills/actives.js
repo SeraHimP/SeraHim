@@ -159,57 +159,7 @@ export const actives = {
   // "图腾兵各种属性堆一块太膨胀了"，收窄图腾兵成只做"光环治疗"这一件事，不再
   // 占用法力槽，这里删除。
 
-  // ==================== 术士兵：蓄能打击（延迟消耗 + 自身叠法术强度）====================
-  // 用户："术士兵……主动技能：下次攻击额外造成（XX=10%法术强度）真实伤害且获得5法术
-  //        强度（只有攻击了法力值才清零重新计算），被动技能：周围150码友军获得20
-  //        法术强度。" 被动那半句原来挂在 passive_warlock_aura 上，Q5 收窄术士兵成
-  //        只做"光环增伤"时，光环法强这一项已随光环双穿一起整条删除（见
-  //        minionPassives.js 的 passive_warlock_aura 头注），这里只实现主动的一半。
-  active_warlock_empower: {
-    id: 'active_warlock_empower', name: '蓄能打击', icon: '💥', color: '#9b59b6', category: 'active',
-    applicableTypes: ['warlock'],
-    defaultParams: { bonusApPct: 10, apGainPerCast: 5, apGainMaxStacks: 20 },
-    // ManaSystem 认这个标记：法力攒满时只调一次 onCast，之后即使法力仍然满格也不再重复
-    // 施放，直到 instance.state._armed 被下面这条效果的消耗方（CombatSystem）清掉。
-    deferredConsume: true,
-    get description() {
-      const p = this.defaultParams;
-      return `法力攒满后蓄势待发并立即获得 ${p.apGainPerCast} 点法术强度（永久叠加，最多${p.apGainMaxStacks}层）：`
-           + `下一次普通攻击命中额外造成 (${p.bonusApPct}%×法术强度) 的真实伤害，`
-           + `命中后法力才清零重新计算。`;
-    },
-    effects: [],
-    onCast: (entityId, instance, ctx) => {
-      const self = ctx.entityContainer.get(entityId);
-      if (!self || !self.alive) return false;
-      const p = instance._params || actives.active_warlock_empower.defaultParams;
-      self._empowerNextAttack = { bonusApPct: p.bonusApPct ?? 10, skillInstId: instance.id };
-      // 立即获得法术强度（永久叠加，每次施放都加一层）——与"下次攻击触发"是两件事，
-      // 这个是施放那一刻就生效的自增益，不需要等攻击命中。
-      // ==================== Q5：自身法强叠层加上限 ====================
-      // 排查"术士兵太强"时发现的结构性问题：这条自增益原来 maxStacks:999，事实上
-      // 不封顶——一个能存活到局面后期的术士兵会无限膨胀法强（连带它自己的输出和
-      // 光环增伤一起滚雪球）。改成有限层数（占位20层=100法强），不是本轮数值削弱
-      // 的主角，是补一个此前没设计到的上限。
-      const apGain = p.apGainPerCast ?? 5;
-      const apMaxStacks = p.apGainMaxStacks ?? 20;
-      ctx.effectRegistry.apply(entityId, {
-        name: '蓄能强化', icon: '✨', kind: 'stat', statKey: 'abilityPower',
-        flatValue: apGain, perStackFlat: apGain,
-        duration: Infinity, permanent: true, stackable: true, maxStacks: apMaxStacks, stackPolicy: 'stack',
-        description: `蓄能强化（{stacks}层，每层+${apGain}法术强度，最多${apMaxStacks}层）`,
-      }, 'active_warlock_empower_apgain', { casterId: entityId });
-      // 一次性标记："下一次普通攻击会触发"，命中后由 CombatSystem 移除。
-      ctx.effectRegistry.apply(entityId, {
-        name: '蓄势待发', icon: '💥', kind: 'display', type: 'buff', color: '#9b59b6',
-        duration: Infinity, permanent: true, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
-        description: `下一次普通攻击额外造成 ${p.bonusApPct ?? 10}%×法术强度 的真实伤害`,
-      }, 'active_warlock_empower_buff');
-      instance.state = instance.state || {};
-      instance.state._armed = true;
-      return true;
-    },
-  },
+  // 术士兵的蓄能打击已按 Q4 重做删除（术士兵没有蓝条了，改为 minionPassives.passive_warlock_triad）。
 
   // ==================== 蚀骨兵：环刃毒雾（AOE 中毒，按当前生命%的真实伤害）====================
   // 用户："蚀骨兵……主动技能：对周围所有敌人施加中毒效果，持续4秒。每秒造成1%当前

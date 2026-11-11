@@ -862,6 +862,26 @@ export class UIManager {
    *   ③ 都没有 → 整行隐藏（不是"显示恒为0的空条"，那是噪音）。
    * 返回 null = 不显示；否则 { frac, label }。
    */
+  /** 分块资源条的分隔线 + 强化攻击那一下的闪光（只有 info.segments > 1 时出现）。 */
+  _updateResSegments(row, info) {
+    const track = row.querySelector('.bar-res')?.parentElement;
+    if (!track) return;
+    let seg = track.querySelector('.bar-res-seg');
+    if (!(info.segments > 1)) { if (seg) seg.remove(); track.style.boxShadow = ''; return; }
+    if (!seg || seg._n !== info.segments) {
+      if (!seg) { seg = document.createElement('div'); seg.className = 'bar-res-seg'; track.appendChild(seg); }
+      seg._n = info.segments;
+      const stops = [];
+      for (let i = 1; i < info.segments; i++) {
+        const x = (i / info.segments) * 100;
+        stops.push(`transparent calc(${x}% - 1px), rgba(0,0,0,0.85) calc(${x}% - 1px), rgba(0,0,0,0.85) calc(${x}% + 1px), transparent calc(${x}% + 1px)`);
+      }
+      seg.style.cssText = 'position:absolute;inset:0;pointer-events:none;'
+        + `background:linear-gradient(90deg, transparent 0, ${stops.join(', ')}, transparent 100%);`;
+    }
+    track.style.boxShadow = info.flash ? `0 0 6px 1px ${info.finalSegColor}` : '';
+  }
+
   _updateResourceBar(card, prefix, id, entity) {
     const row = card.querySelector(`#${prefix}-resrow-${id}`);
     const textEl = card.querySelector(`#${prefix}-restext-${id}`);
@@ -877,9 +897,20 @@ export class UIManager {
     // 新增元素承接（结构对齐 .bar-hp-trail/.bar-hp 那一对）。
     const fill = row.querySelector('.bar-res');
     if (fill) {
-      fill.style.width = (Math.max(0, Math.min(1, info.frac)) * 100) + '%';
-      fill.style.background = RESOURCE_COLORS[info.kind] || RESOURCE_COLORS.mana;
+      const f = Math.max(0, Math.min(1, info.frac));
+      fill.style.width = (f * 100) + '%';
+      if (info.segments > 1) {
+        // 分块条（术士兵三连咒击）：前几格一种颜色、最后一格另一种；渐变按整条宽度铺，
+        // 填充只露出已攒到的那几格（background-size 把渐变拉回整条长度）。
+        const cut = ((info.segments - 1) / info.segments) * 100;
+        fill.style.background = `linear-gradient(90deg, ${info.segColor} 0 ${cut}%, ${info.finalSegColor} ${cut}% 100%)`;
+        fill.style.backgroundSize = f > 0 ? `${100 / f}% 100%` : '';
+      } else {
+        fill.style.background = RESOURCE_COLORS[info.kind] || RESOURCE_COLORS.mana;
+        fill.style.backgroundSize = '';
+      }
     }
+    this._updateResSegments(row, info);
     const trailEl = row.querySelector('.bar-res-trail');
     if (trailEl) this._stepTrailBar(trailEl, info.frac);
     // v51.27（Q1）："增加特效"——只有法力类型有稳定的"每秒回复速率"概念（充能/

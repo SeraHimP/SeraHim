@@ -443,38 +443,11 @@ async function world() {
 
 // ==================== 十四、v51.1：术士兵主动技能——延迟消耗 + 法术强度联动 ====================
 {
-  const { ents, fx, combat, CONFIG } = await world();
-  const { ManaSystem } = await import('../src/systems/ManaSystem.js');
+  // 术士兵的蓄能打击已按 Q4 重做删除（术士兵没有蓝条了）。通用的"下一次攻击强化"机制
+  // （entity._empowerNextAttack，远程兵强化射击仍在用）保留在 CombatSystem 里。
   const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-  const { AttributeCalculator } = await import('../src/core/AttributeCalculator.js');
-  const bus = { on() {}, emit() {} };
-  const mana = new ManaSystem(ents, fx, bus, SkillLibrary, AttributeCalculator, combat);
-
-  const atk = mkEntity(ents, 'warlock', {
-    stats: { maxMana: 1, manaRegen: 999, attackDamage: 1, armor: 0, magicResist: 0 },
-    skills: ['active_warlock_empower'],
-  }, CONFIG);
-  const tgt = mkEntity(ents, 'tower', { stats: { armor: 0, magicResist: 0, maxHP: 1000000 } }, CONFIG);
-
-  mana.update(1); // 满法力 → onCast，应该是"武装"状态，不清零法力
-  T('蓄①-施放后法力不立即清零（延迟消耗，等真正命中才清）', (atk._mana || 0) >= 1);
-  const inst = atk._skillInstances.find(i => i.skillId === 'active_warlock_empower');
-  T('蓄②-技能实例被标记为"已武装"', inst && inst.state && inst.state._armed === true);
-  T('蓄③-获得了永久叠加的法术强度自增益', fx.getEffects(atk.id).some(e => e.blueprint.name === '蓄能强化'));
-
-  mana.update(1); // 已经武装：这一帧不应该再次触发施放（不会再叠一层"蓄能强化"）
-  const apStacksAfterSecondTick = fx.getEffects(atk.id).find(e => e.blueprint.name === '蓄能强化')?.stacks;
-  T('蓄④-已武装期间不会重复施放（法术强度不会莫名其妙再涨一层）', apStacksAfterSecondTick === 1);
-
-  const before = tgt.currentHP;
-  combat.performAttack(atk, tgt); // 真正打出这一下，应该消耗"蓄势待发"、额外造成真实伤害
-  const totalDealt = before - tgt.currentHP;
-  T('蓄⑤-命中时额外造成了明显超过基础攻击力的伤害（真实伤害加成生效）', totalDealt > 1);
-  T('蓄⑥-命中后法力才真正清零', (atk._mana || 0) < 1);
-  const inst2 = atk._skillInstances.find(i => i.skillId === 'active_warlock_empower');
-  T('蓄⑦-命中后"已武装"标记被清掉', inst2 && inst2.state && inst2.state._armed === false);
-  T('蓄⑧-"蓄势待发"展示状态被移除（不会在命中之后还挂着）',
-    !fx.getEffects(atk.id).some(e => e.blueprint.name === '蓄势待发'));
+  T('蓄①-术士兵的蓄能打击已删除（Q4 重做）', !SkillLibrary.active_warlock_empower);
+  T('蓄②-通用的"下一次攻击强化"消耗点仍在', /if \(attacker\._empowerNextAttack\)/.test(srcOf('src/systems/CombatSystem.js')));
 }
 
 // ==================== 十五、v51.1：全局法力回复（不再是每单位各存一份） ====================
@@ -1117,8 +1090,9 @@ async function world() {
     && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_mend')
     && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_shield')
     && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_guardian'));
-  T('统③-warlock/siege/corrupt 的默认清单也补上了此前漏掉的主动技能',
-    DEFAULT_MINION_PASSIVES.warlock.includes('active_warlock_empower')
+  // Q4：术士兵重做后默认清单是"三连咒击 + 屠戮"，不再有耗蓝主动
+  T('统③-siege/corrupt 的默认清单补上了此前漏掉的主动技能；术士兵改为三连咒击',
+    DEFAULT_MINION_PASSIVES.warlock.includes('passive_warlock_triad')
     && DEFAULT_MINION_PASSIVES.siege.includes('active_siege_haste')
     && DEFAULT_MINION_PASSIVES.corrupt.includes('active_corrupt_poison'));
 
@@ -2989,7 +2963,7 @@ async function world() {
   const um = srcOf('src/ui/UIManager.js');
   T('缓④-属性窗口（UIManager）法力/充能条主体改瞬时贴齐 + .bar-res-trail 拖尾，不再有 _stepEaseBar',
     !/_stepEaseBar/.test(um)
-    && /fill\.style\.width = \(Math\.max\(0, Math\.min\(1, info\.frac\)\) \* 100\) \+ '%';/.test(um)
+    && /const f = Math\.max\(0, Math\.min\(1, info\.frac\)\);\s*fill\.style\.width = \(f \* 100\) \+ '%';/.test(um)
     && /const trailEl = row\.querySelector\('\.bar-res-trail'\);/.test(um)
     && /this\._stepTrailBar\(trailEl, info\.frac\);/.test(um));
 
