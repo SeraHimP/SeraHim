@@ -2533,6 +2533,9 @@ export const CONFIG = {
     collisionMaxPush: 2.0,        // 碰撞：移动单位单步位移上限（px）
     collisionMaxPushAnchor: 0.3,  // 碰撞：锚定单位单步位移上限（px）
     nexusRespawnTime: 300,        // 召唤水晶重生（秒）
+    // 枢纽防御塔被摧毁后重生（用户 Q12）："枢纽防御塔被摧毁后，将在3分钟后以40%最大生命值重生
+    // （每个防御塔仅一次）"。地图可用 map.hqTowerRespawn 逐项覆写。
+    hqTowerRespawn: { enabled: true, delaySec: 180, hpPct: 40, maxTimes: 1 },
     spawnGap: 0.55,               // v41：加大出兵间隔，防止出生时立即触发避障
     // ==================== 走廊居中力（Q6：三路排队不一致）====================
     // 用户观察到"上路乖乖排队、中/下路散开"。量出来的原因不是阵营也不是随机，

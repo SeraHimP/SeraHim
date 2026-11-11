@@ -61,6 +61,7 @@ export const RESOURCE_COLORS = {
   capture_blue: '#4a9eff',
   capture_red: '#ff5a5a',
   capture_neutral: '#5c6b63',
+  respawn: NON_MANA_COLOR,    // 召唤水晶 / 枢纽防御塔的重生进度（非法力资源，同一种石板灰）
 };
 
 /**
@@ -70,7 +71,9 @@ export const RESOURCE_COLORS = {
  * （见 minionPassives.js/weapons.js 的装配表：装了这些武器/攻击方式的单位
  * 都没有 category:'active' 技能），所以可以无条件从状态栏隐藏，不用按单位再判一次。
  */
-export const HIDDEN_STATUS_EFFECT_NAMES = new Set(['升温', '闪电充能', '充能']);
+// '重生中'：召唤水晶 / 枢纽防御塔的重生进度改在资源条（法力栏位置）显示 XX%，
+// 用户（Q11）："重生计时器不要在状态栏里显示了，而应该在属性栏的第二个法力栏中显示"。
+export const HIDDEN_STATUS_EFFECT_NAMES = new Set(['升温', '闪电充能', '充能', '重生中']);
 
 /**
  * v51.28（Q1返工）：HP 血条的阵营色——UnitLayer（画面血条）与 UIManager（"增加
@@ -126,6 +129,12 @@ export function resourceInfoOf(entity, ctx) {
     const leadLabel = pct > 0 ? '蓝方' : pct < 0 ? '红方' : '中立';
     const mag = Math.round(Math.abs(pct));
     return { frac: full > 0 ? Math.abs(pct) / full : 0, kind, label: `${leadLabel} ${mag}%` };
+  }
+  // 等待重生的建筑（召唤水晶 / 枢纽防御塔）：资源条显示重生进度 XX%（满即重生）。
+  // 进度由 MapSystem 每帧写在 _respawnProgress 上（分母是这一项自己的重生时长）。
+  if (!entity.alive && entity._respawnAt) {
+    const p = Math.max(0, Math.min(1, entity._respawnProgress || 0));
+    return { frac: p, kind: 'respawn', label: `${Math.floor(p * 100)}%` };
   }
   const { skillLibrary, attrCalc, effects } = ctx;
   const insts = entity._skillInstances || [];

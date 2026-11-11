@@ -35,7 +35,7 @@ const suites = [
   'sim_groundtrace.mjs', 'sim_groundtracelayer.mjs', 'sim_heavy.mjs', 'sim_healer.mjs', 'sim_engineer.mjs', 'sim_summoner.mjs',
   'sim_towerweapons.mjs', 'sim_towerbalance.mjs', 'sim_testscenarios.mjs', 'sim_heatdeath.mjs',
   'sim_srorganic.mjs', 'sim_confluence.mjs', 'sim_dominion.mjs', 'sim_maplist.mjs', 'sim_determinism.mjs', 'sim_simulation.mjs', 'sim_importsafety.mjs', 'sim_layering.mjs', 'sim_thinwalls.mjs', 'sim_statue_tower.mjs', 'sim_crystal_shrine.mjs', 'sim_tower_fx.mjs', 'sim_building_fx.mjs', 'sim_weather_off.mjs', 'sim_projectile_fx.mjs', 'sim_base_clearance.mjs',
-  'sim_unit_models.mjs', 'sim_dragon_attack.mjs', 'sim_fog_quality.mjs', 'sim_no_clipping.mjs', 'sim_weather_ground.mjs', 'sim_pathfinding.mjs', 'sim_crystal_charge.mjs', 'sim_terrain_field.mjs', 'sim_shots_png.mjs', 'sim_bullet_speed_mods.mjs', 'sim_regen_true_damage.mjs',
+  'sim_unit_models.mjs', 'sim_dragon_attack.mjs', 'sim_fog_quality.mjs', 'sim_no_clipping.mjs', 'sim_weather_ground.mjs', 'sim_pathfinding.mjs', 'sim_crystal_charge.mjs', 'sim_terrain_field.mjs', 'sim_shots_png.mjs', 'sim_bullet_speed_mods.mjs', 'sim_regen_true_damage.mjs', 'sim_hq_respawn.mjs',
 ];
 
 const args = process.argv.slice(2);

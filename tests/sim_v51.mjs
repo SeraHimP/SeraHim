@@ -531,9 +531,11 @@ async function world() {
   const infoL = resourceInfoOf(ltg, ctx);
   T('资⑦-闪电杖充能格式改成 XX/100（不再是 XX%）', infoL && infoL.label === '42/100');
 
-  T('资⑧-三个已有专属资源条的展示效果名单：升温/闪电充能/充能',
+  // Q11 起"重生中"也改在资源条显示（召唤水晶 / 枢纽防御塔的重生进度 XX%），名单多了这一项
+  T('资⑧-已有专属资源条的展示效果名单：升温/闪电充能/充能/重生中',
     HIDDEN_STATUS_EFFECT_NAMES.has('升温') && HIDDEN_STATUS_EFFECT_NAMES.has('闪电充能')
-    && HIDDEN_STATUS_EFFECT_NAMES.has('充能') && HIDDEN_STATUS_EFFECT_NAMES.size === 3);
+    && HIDDEN_STATUS_EFFECT_NAMES.has('充能') && HIDDEN_STATUS_EFFECT_NAMES.has('重生中')
+    && HIDDEN_STATUS_EFFECT_NAMES.size === 4);
 
   const uiSrc = srcOf('src/ui/UIManager.js');
   const effectRowCalls = (uiSrc.match(/this\._updateEffectIcons\(effectsContainer, this\.effects\.getEffects\(id\)\.filter\(e => !HIDDEN_STATUS_EFFECT_NAMES\.has\(e\.blueprint\.name\)\)\)/g) || []);

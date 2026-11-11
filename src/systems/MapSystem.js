@@ -430,6 +430,8 @@ export class MapSystem {
 
     if (e._mapTier === 'nexus_lane') {
       this.beginNexusRespawn(e);
+    } else if (e._mapTier === 'hq_tower') {
+      this.beginHqTowerRespawn(e);
     } else if (e._mapTier === 'nexus_main') {
       // 水晶枢纽摧毁：理论上是"游戏结束"的触发点，按之前确认暂不做终局判定，
       // 这里只发一个独立事件供以后接入，不影响现有的分路超级兵逻辑。
@@ -524,6 +526,36 @@ export class MapSystem {
     // 这一路是不是全灭了，交给统一判定 —— 多水晶地图上"拆一座 ≠ 这一路没了"。
     // 传 e.id：这一座正在进重生倒计时，无论它的 alive 标记此刻是什么，都按"已倒下"算。
     this._refreshLaneNexusFlag(faction, laneId, e.id);
+    return true;
+  }
+
+  /** 枢纽防御塔重生参数：CONFIG.tuning.hqTowerRespawn，地图 hqTowerRespawn 逐项覆写。 */
+  hqTowerRespawnCfg() {
+    return { ...(CONFIG.tuning?.hqTowerRespawn || {}), ...(this.currentMap?.hqTowerRespawn || {}) };
+  }
+
+  /**
+   * 枢纽防御塔被摧毁后进入重生倒计时（用户 Q12："3分钟后以40%最大生命值重生，每个防御塔仅一次"）。
+   * 复用召唤水晶的重生队列：尸体（废墟）原地复活、清损毁档，血量按队列项的 hpPct。
+   * 次数记在实体上（_respawnCount），同一座塔复活后再被拆就不再重生。
+   */
+  beginHqTowerRespawn(e) {
+    if (!e || e._mapTier !== 'hq_tower' || e._respawnAt) return false;
+    const c = this.hqTowerRespawnCfg();
+    if (c.enabled === false) return false;
+    if ((e._respawnCount || 0) >= (c.maxTimes ?? 1)) return false;
+    const dur = Math.max(0, c.delaySec ?? 180);
+    const hpPct = c.hpPct ?? 40;
+    e._respawnCount = (e._respawnCount || 0) + 1;
+    e._respawnAt = this._clock + dur;
+    if (this._fx) {
+      this._fx.apply(e.id, {
+        name: '重生中', icon: '⏳', kind: 'custom', duration: dur,
+        stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+        description: `枢纽防御塔重生中：${dur}s（${hpPct}% 生命）`,
+      }, 'tower_respawn_' + e.id);
+    }
+    this._enqueueRespawn({ at: e._respawnAt, blueprint: null, corpseId: e.id, dur, hpPct, isNexus: false });
     return true;
   }
 
@@ -840,7 +872,7 @@ export class MapSystem {
         const left = Math.max(0, Math.ceil(q.at - this._clock));
         eff.blueprint.description = q.isNexus
           ? `召唤水晶重生中：${left}s`
-          : `☀️ 光魂重生中：${left}s（${q.hpPct}% 生命）`;
+          : `枢纽防御塔重生中：${left}s（${q.hpPct}% 生命）`;
       }
     }
     // 队列排序由 _enqueueRespawn 负责 —— 光魂进来之后"重生时长恒定"不再成立，
