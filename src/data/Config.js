@@ -1029,6 +1029,9 @@ export const CONFIG = {
     // 效果的 remainingTime 逐帧变短而自然收窄，效果到期同时消失——不需要额外维护
     // 帧间状态。颜色不再是固定暖黄，改由 barTrail.deriveIncreaseColor() 按调用方
     // 传入的"该条真实颜色"（HP 的阵营色 / 资源条的 RESOURCE_COLORS）实时提亮生成。
+    // 已缩减的最大生命（过载/热寂）：血条右端的灰色斜纹段。用户（Q7）："进度条的最大生命还是原先的，
+    // 但是被扣除的最大生命值在血条的右面用灰色的斜条纹代表"。面板卡片与画面血条共用这组颜色。
+    maxHpLostBar: { stripeA: '#8a9099', stripeB: '#3b4048', stripePx: 3 },
     barIncreasePreview: {
       enabled: true,
       thresholdFrac: 0.12,   // 剩余时间内总回复量至少占上限这个比例才触发

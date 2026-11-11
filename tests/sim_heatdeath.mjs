@@ -79,9 +79,10 @@ const { T, done } = scoreboard('热寂终局机制验收');
   const sTower = attr.calc(tower, fx.getEffects(tower.id));
   const sMinion = attr.calc(minion, fx.getEffects(minion.id));
 
-  T('②-appliesTo:只对塔生效——塔拿到了掉血效果', sTower.healthRegen < 0);
-  T('②b-scaleByOwnMaxHP：塔的 healthRegen ≈ -2%×自身maxHP（1000×-2%=-20）',
-    Math.abs(sTower.healthRegen - (-20)) < 1e-6);
+  // Q7：负生命恢复改成持续真实伤害（_regenDrain），生命恢复本身恒 ≥ 0
+  T('②-appliesTo:只对塔生效——塔拿到了掉血效果（持续真实伤害，生命恢复不为负）', sTower._regenDrain > 0 && sTower.healthRegen >= 0);
+  T('②b-scaleByOwnMaxHP：塔的持续真实伤害 ≈ 2%×自身maxHP（1000×2%=20/秒）',
+    Math.abs(sTower._regenDrain - 20) < 1e-6);
   T('②c-appliesTo:只对塔生效——非塔单位没有这条掉血效果', sMinion.healthRegen === undefined || sMinion.healthRegen === 0);
   T('②d-excludesTypes:非塔单位拿到了加速buff（+30）', sMinion.bonusAttackSpeedPct === 30);
   T('②e-excludesTypes:塔没有拿到加速buff（不在"非塔"范围内）', !sTower.bonusAttackSpeedPct);

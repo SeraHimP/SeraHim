@@ -1,4 +1,6 @@
 import { CONFIG } from '../../data/Config.js';
+import { reduceMaxHP } from '../damageAttribution.js';
+const OVERLOAD_DMG_CATEGORY = Object.freeze({ key: 'env:overload', label: '过载' });
 
 /**
  * Q6：重甲联防计层口径——"正在攻击本塔"的敌人：以本塔为目标（targetId 匹配）
@@ -837,16 +839,10 @@ export const towerPassives = {
           if (st.maxHP0 === undefined) st.maxHP0 = e.baseStats.maxHP || 1;
           const hpLoss = st.maxHP0 * tierCfg.hpPctBase * Math.pow(ov_HP_GROWTH, st.hpTicks);
           st.hpTicks++;
-          e.baseStats.maxHP = (e.baseStats.maxHP || st.maxHP0) - hpLoss;
           st.hpLostTotal = (st.hpLostTotal || 0) + hpLoss;
-          if (e.currentHP > e.baseStats.maxHP) e.currentHP = e.baseStats.maxHP; // 削肉可致死
-          if (e.baseStats.maxHP <= 0 || e.currentHP <= 0) {
-            e.baseStats.maxHP = Math.max(0, e.baseStats.maxHP);
-            if (e.alive) {
-              e.alive = false; e.currentHP = 0;
-              ctx.eventBus?.emit?.('entity:death', { entityId: e.id });
-            }
-          }
+          // 缩上限、削超出的当前血（记进受伤统计）、削到 0 判阵亡，统一走 reduceMaxHP；
+          // 缩掉的量记在 _maxHPLost 上，血条右端画成灰色斜纹（见 damageAttribution.reduceMaxHP）。
+          reduceMaxHP(e, hpLoss, OVERLOAD_DMG_CATEGORY, ctx.eventBus);
         }
       }
 

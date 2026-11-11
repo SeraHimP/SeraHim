@@ -194,8 +194,10 @@ const { T, done } = scoreboard('品质优化批次 Q1-Q8');
   // ---- 生命回复为负时不 clamp 成 0 ----
   const e2 = mkEntity(ents, 'tower', { stats: { healthRegen: -10, baseHealthRegenMod: 1.0 } }, CONFIG);
   ui._showStatDoc('healthRegen', e2);
-  T('Q3④-生命回复为负值时如实显示负数，不 clamp 成 0',
-    captured && captured._html.includes('>-10<'));
+  // Q7（后续用户定稿）：负生命恢复一律改成持续真实伤害，生命恢复恒 ≥ 0——
+  // 这里显示 0，并单独列出"持续真实伤害/秒 10"。
+  T('Q3④-负生命恢复显示为：生命回复 0 + 持续真实伤害/秒 10',
+    captured && captured._html.includes('>0<') && captured._html.includes('持续真实伤害/秒') && captured._html.includes('>10<'));
 
   // ---- 法力回复 ----
   ui._showStatDoc('manaRegen', e);

@@ -81,6 +81,26 @@ export const HIDDEN_STATUS_EFFECT_NAMES = new Set(['升温', '闪电充能', '�
 export const FACTION_HP_COLORS = { blue: '#4a9eff', red: '#ff5a5a', neutral: '#4caf50' };
 
 /**
+ * 血条各段的宽度（占整条的比例）——面板卡片与画面血条共用这一份。
+ * 用户（Q7）："进度条的最大生命还是原先的，但是被扣除的最大生命值在血条的右面用灰色的斜条纹代表"
+ * （英雄联盟"最大生命值降低"的画法）：整条的总长 = 当前最大生命 + 已缩减的最大生命（entity._maxHPLost），
+ * 生命与护盾都按这个总长折算，右端 [cap, 1] 这一段画成灰色斜纹。
+ * 没有缩减时 full = maxHP、cap = 1，结果与引入这一段之前逐位一致（HP+护盾超过 1 时整体按比例压缩）。
+ */
+export function hpBarLayout(entity, maxHP) {
+  const lost = Math.max(0, entity?._maxHPLost || 0);
+  const mx = Math.max(0, maxHP || 0);
+  const full = mx + lost;
+  if (!(full > 0)) return { full: 1, cap: 1, lostFrac: 0, hp: 0, sf: 0, st: 0, sp: 0, scale: 1 };
+  const cap = mx / full;
+  const hp = Math.max(0, Math.min(cap, (entity.currentHP || 0) / full));
+  const sf = (entity.shieldFixedCurrent || 0) / full, st = (entity.tempShield || 0) / full, sp = (entity.plainShield || 0) / full;
+  const total = hp + sf + st + sp;
+  const scale = total > cap && total > 0 ? cap / total : 1;
+  return { full, cap, lostFrac: 1 - cap, hp: hp * scale, sf: sf * scale, st: st * scale, sp: sp * scale, scale };
+}
+
+/**
  * @param entity 实体
  * @param ctx { skillLibrary, attrCalc, effects }
  * @returns {{frac:number, kind:string, label:string, regenText?:string}|null} —

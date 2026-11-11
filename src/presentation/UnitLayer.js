@@ -44,7 +44,7 @@ import { BodyInstancer, InstancedUnitProxy } from './InstancedBodyLayer.js';
 import { towerFacingRad } from '../core/towerFacing.js';
 import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor, TRAIL_COLOR } from './barTrail.js';
 import { SkillLibrary } from '../core/SkillLibrary.js';
-import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS } from '../core/resourceBar.js';
+import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS, hpBarLayout } from '../core/resourceBar.js';
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
 import { HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
 import { shellGeometry, shellMaterial, stepShieldState } from './shieldShell.js';
@@ -1079,6 +1079,8 @@ export class UnitLayer {
     // 世界尺寸也要跟着改（vis.barH 是按 BAR_W/BAR_H 比例算的），blast radius 太大；
     // 用现成的高度里挤出一细条是最小改动，且没有资源时（绝大多数单位）行为逐位不变。
     const hpH = resInfo ? BAR_H - 2 : BAR_H;
+    // 各段宽度与面板卡片共用 hpBarLayout（含"已缩减最大生命"的灰色斜纹段）
+    const L = hpBarLayout(e, maxHP);
     const hpFrac = Math.max(0, Math.min(1, e.currentHP / maxHP));
     const faction = e._mapFaction || e.faction;
     // v43：血条颜色只看**阵营**，不再按 type 分叉。
@@ -1090,17 +1092,9 @@ export class UnitLayer {
     const hpColor = FACTION_HP_COLORS[faction] || FACTION_HP_COLORS.neutral;
     // v51.6：第三种护盾"护盾"（entity.plainShield，CombatSystem 每帧缓存的汇总值，
     // 见 EffectRegistry.plainShieldOf 的头注）一并算进血条的护盾段。
-    const shieldTotal = (e.shieldFixedCurrent || 0) + (e.tempShield || 0) + (e.plainShield || 0);
-    const shieldFrac = Math.max(0, Math.min(1, shieldTotal / maxHP));
-    const total = hpFrac + shieldFrac;
-    const scale = total > 1 ? 1 / total : 1;
-    const hpDraw = hpFrac * scale;
-    const fixedShare = shieldTotal > 0 ? (e.shieldFixedCurrent || 0) / shieldTotal : 0;
-    const tempShare = shieldTotal > 0 ? (e.tempShield || 0) / shieldTotal : 0;
-    const plainShare = shieldTotal > 0 ? (e.plainShield || 0) / shieldTotal : 0;
-    const sfW = shieldFrac * scale * fixedShare;
-    const stW = shieldFrac * scale * tempShare;
-    const spW = shieldFrac * scale * plainShare;
+    const scale = L.scale * L.cap;   // 以"当前最大生命"为单位的比例 → 整条比例
+    const hpDraw = L.hp;
+    const sfW = L.sf, stW = L.st, spW = L.sp;
 
     g.fillStyle = 'rgba(0,0,0,0.7)'; g.fillRect(0, 0, BAR_W, hpH);
     g.fillStyle = hpColor; g.fillRect(0, 0, BAR_W * hpDraw, hpH);
@@ -1124,12 +1118,25 @@ export class UnitLayer {
     // 两者位置天然不重叠；颜色也用区别于拖尾的暖黄，双重区分）。
     if (hpIncFrac > 0.002) {
       const incStart = Math.max(hpDraw + shieldW, hpTrailEnd) * BAR_W;
-      const incW = Math.min(BAR_W - incStart, hpIncFrac * BAR_W);
+      const incW = Math.min(BAR_W * L.cap - incStart, hpIncFrac * L.cap * BAR_W);
       if (incW > 0.5) {
         const incCfg = CONFIG.ui?.barIncreasePreview;
         g.fillStyle = deriveIncreaseColor(hpColor, incCfg?.lightenPct ?? 32, incCfg?.alpha ?? 0.8);
         g.fillRect(incStart, 0, incW, hpH);
       }
+    }
+    // 已缩减的最大生命：右端灰色斜纹（与面板卡片同一组颜色，CONFIG.ui.maxHpLostBar）
+    if (L.lostFrac > 0.0005) {
+      const c = CONFIG.ui?.maxHpLostBar || {};
+      const x0 = BAR_W * L.cap, w = Math.max(1, c.stripePx ?? 3);
+      g.save();
+      g.beginPath(); g.rect(x0, 0, BAR_W - x0, hpH); g.clip();
+      g.fillStyle = c.stripeB || '#3b4048'; g.fillRect(x0, 0, BAR_W - x0, hpH);
+      g.strokeStyle = c.stripeA || '#8a9099'; g.lineWidth = w;
+      for (let x = x0 - hpH; x < BAR_W + hpH; x += w * 2 * Math.SQRT2) {
+        g.beginPath(); g.moveTo(x, hpH); g.lineTo(x + hpH, 0); g.stroke();
+      }
+      g.restore();
     }
     g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1;
     g.strokeRect(0.5, 0.5, BAR_W - 1, hpH - 1);
@@ -1164,7 +1171,7 @@ export class UnitLayer {
       const node = nextPlatingNode(e);
       if (node !== null) {
         g.fillStyle = '#ffffff';
-        g.fillRect(Math.round(BAR_W * node) - 1, 0, 2, hpH);
+        g.fillRect(Math.round(BAR_W * node * L.cap) - 1, 0, 2, hpH);
       }
     }
   }
@@ -1589,6 +1596,7 @@ export class UnitLayer {
         barKey = q(realFrac) + '|' + q((e.shieldFixedCurrent || 0) / maxHP) + '|'
                + q((e.tempShield || 0) / maxHP) + '|' + q((e.plainShield || 0) / maxHP) + '|'
                + (e._mapFaction || e.faction || '')
+               + (e._maxHPLost > 0 ? '|l' + Math.round(e._maxHPLost / (maxHP + e._maxHPLost) * BAR_W) : '')
                + '|p' + (e.type === 'tower' ? nextPlatingNode(e) : '')  // E1：节点值入脏 key，破节点才重绘
                + (en.trailing ? '|t' + q(en.dispFrac) : '')
                + (resInfo ? '|r' + q(resInfo.frac) + resInfo.kind : '')

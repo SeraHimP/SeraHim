@@ -5,8 +5,12 @@ import { chargeParamsFor } from '../core/skills/attackModes.js';
 import { healPowerOf, applyHeal, grantTempShield, effectiveFixedShieldMax } from '../core/healing.js';
 import { resolveSkillParams } from '../core/skillParams.js';
 import { canFire } from './FacingSystem.js';
-import { attackerCategoryOf, ENV_CATEGORY } from '../core/damageAttribution.js';
+import { attackerCategoryOf, ENV_CATEGORY, trackDamageTaken, applyEnvTrueDamage } from '../core/damageAttribution.js';
 import { random } from '../core/rng.js';
+
+// 持续真实伤害在受伤统计里的归类（见 damageAttribution.applyEnvTrueDamage）
+const WEATHER_DMG_CATEGORY = Object.freeze({ key: 'env:weather', label: '天气' });
+const REGEN_DRAIN_CATEGORY = Object.freeze({ key: 'env:regenDrain', label: '持续真实伤害' });
 
 // v40：攻城车规则辅助。**所有机制以"是否装备攻城武器被动"为闸门、数值从技能定义里读**——
 // 拆掉被动，攻城车立刻退化成一辆普通车（用户要求：特殊机制必须由技能被动实现）。
@@ -81,44 +85,6 @@ const isMeleeUnit = (e) => !!e && (e.type === 'dragon' || (e.baseStats?.attackRa
  * 现在两条都问这一个函数，跳过的东西也完全一致（含护盾）。
  */
 function isTrueDamage(attackType) { return attackType === 'true'; }
-
-/**
- * v51.27（Q6）：单位属性窗口的"血条统计"要展示"该单位受到的不同类型伤害统计"，
- * 需要一份累计值——之前完全没有任何地方记录过这个。两条伤害路径
- * （_resolveHit/performAttackDirect）各自的 `target.currentHP -= finalDamage`
- * 后面都调这一个函数，口径统一（按 finalDamage，即实际掉的血，不是护盾吸收前的
- * 原始伤害——跟血条上"掉了多少血"看到的是同一个数）。惯例做法：懒初始化在
- * entity 上挂一个 _dmgTaken 累计表，永不清零（跟塔的其它累计类状态同一惯例，
- * 没有指定要按"每条命"重置的需求就不额外造一层重置逻辑）。
- *
- * v51.29（Q3）：追加两项统计，同一个函数一次性记完，不再新开调用点——
- *   ① _dmgByAttacker：按【攻击者类别】（阵营+兵种/塔层级/巨龙）分桶的累计伤害，
- *      用户："应该分类统计每种不同的单位对该单位造成的伤害。"attackerCategory
- *      由调用方传入（攻击者存活那一刻算好的快照，见 damageAttribution.js 的头注，
- *      解决"攻击者已经死了就归到未知来源"这个用户明确否掉的行为），本函数只管
- *      按 category.key 分桶累加，不关心这份快照是怎么来的。
- *   ② _dmgMitigatedTotal：已缓和的伤害（抗性/减伤/格挡等减少的量，不含护盾吸收——
- *      护盾吸收已经有自己的统计，见 _absorbByShields）。跟 finalDamage 是否 >0
- *      无关——伤害被完全格挡/减到 0 时，缓和量本身依然要计入。
- */
-function trackDamageTaken(target, attackerCategory, attackType, finalDamage, mitigated) {
-  if (!target) return;
-  if (finalDamage > 0) {
-    const key = attackType === 'physical' || attackType === 'magic' ? attackType : 'true';
-    const stats = target._dmgTaken || (target._dmgTaken = { physical: 0, magic: 0, true: 0 });
-    stats[key] += finalDamage;
-
-    const cat = attackerCategory || ENV_CATEGORY;
-    const byAtk = target._dmgByAttacker || (target._dmgByAttacker = new Map());
-    const bucket = byAtk.get(cat.key) || { total: 0, count: 0, label: cat.label };
-    bucket.total += finalDamage;
-    bucket.count += 1;
-    byAtk.set(cat.key, bucket);
-  }
-  if (mitigated > 0) {
-    target._dmgMitigatedTotal = (target._dmgMitigatedTotal || 0) + mitigated;
-  }
-}
 
 /**
  * v51：一次攻击命中了几个目标——决定吸血按哪个效率算。
@@ -273,19 +239,6 @@ export class CombatSystem {
       // ---- 生命恢复 / 护盾延迟回满 / 临时护盾衰减（此前未实现） ----
       const regen = stats.healthRegen || 0;
       const regenMod = entity.baseStats.baseHealthRegenMod ?? 1;
-      // v39（Q7 修复）：负生命恢复此前被 `regen > 0` 直接跳过 → 手动把恢复调成负值不掉血。
-      // 现在负恢复 = 字面扣血（不乘恢复系数、不吃节点封顶），可致死；
-      // 结构保护/全局无敌照常免疫（与天气负恢复通道同规则）。
-      if (regen < 0 && entity.currentHP > 0 && entity.alive) {
-        const inv0 = entity.type === 'tower' && !!window.__towerRuleFor?.('invincible', entity._mapFaction);
-        if (!inv0 && !isStructureProtected(this.entities, entity)) {
-          entity.currentHP += regen * dt;   // regen 为负 → 扣血
-          if (entity.currentHP <= 0) {
-            entity.currentHP = 0; entity.alive = false;
-            this.eventBus?.emit?.('entity:death', { entityId: entity.id });
-          }
-        }
-      }
       if (regen > 0 && regenMod > 0 && entity.currentHP > 0) {
         // v35（Q5）：生命恢复封顶——"加固城防"类被动设置 _regenCapHP（当前血量所在
         // 区间的上界节点），恢复只能回到节点、不能越过；无被动时封顶=满血。
@@ -295,18 +248,15 @@ export class CombatSystem {
         applyHeal(entity, regen * regenMod * dt, healPowerOf(stats),
                   stats.maxHP || entity.currentHP, entity._regenCapHP);
       }
-      // v36（Q1 修正）：天气负生命恢复 = 字面扣血（原值、无任何加成、不乘恢复系数），
-      // 【可致死】（用户改口：扣到 0 正常死亡，不再保底 1HP）。
-      // 结构保护/全局无敌 = 免疫一切伤害，环境扣血同样免疫。
-      const drain = stats._weatherDrain || 0;
-      if (drain > 0 && entity.currentHP > 0 && entity.alive) {
+      // 负生命恢复已经在 AttributeCalculator 里全部摘成"持续真实伤害/秒"（生命恢复恒 ≥ 0）：
+      // 原值结算、不吃任何加成、不过自身任何防御（护甲/魔抗/减伤/护盾/闪避），可致死，记进受伤统计。
+      // 结构保护/全局无敌是规则层面的"不可受伤"，照旧免疫（与改动前同规则）。
+      const wDrain = stats._weatherDrain || 0, rDrain = stats._regenDrain || 0;
+      if ((wDrain > 0 || rDrain > 0) && entity.alive) {
         const inv = entity.type === 'tower' && !!window.__towerRuleFor?.('invincible', entity._mapFaction);
         if (!inv && !isStructureProtected(this.entities, entity)) {
-          entity.currentHP -= drain * dt;
-          if (entity.currentHP <= 0) {
-            entity.currentHP = 0; entity.alive = false;
-            this.eventBus?.emit?.('entity:death', { entityId: entity.id });
-          }
+          if (wDrain > 0) applyEnvTrueDamage(entity, wDrain * dt, WEATHER_DMG_CATEGORY, this.eventBus);
+          if (rDrain > 0) applyEnvTrueDamage(entity, rDrain * dt, REGEN_DRAIN_CATEGORY, this.eventBus);
         }
       }
 

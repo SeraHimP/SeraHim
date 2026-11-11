@@ -11,6 +11,7 @@ import { baseCircleCenter, applyThinBaseWalls } from '../data/baseCircle.js';
 import { unpackBits, unpackByteGrid } from '../data/navgrid.js';
 import { LIVE_EDIT_SESSION_MAP_ID } from '../data/mapEditorCore.js';
 import { resolveAuraEffectValue } from './AuraValueResolver.js';
+import { reduceMaxHP } from '../core/damageAttribution.js';
 // 重生血量与出生血量必须用同一个"最大生命"口径，见 factories.js spawnAtFullHP 头注。
 import { effectiveMaxHP } from '../core/factories.js';
 // 复活要清哪些标记：唯一清单，两条复活路径共用（见该文件头注）。
@@ -753,12 +754,7 @@ export class MapSystem {
     if (e._heatDeathMaxHP0 <= 0) return;
     const loss = e._heatDeathMaxHP0 * (it.drainMaxHPPctPerSec / 100) * elapsedSec;
     if (loss <= 0) return;
-    e.baseStats.maxHP = Math.max(0, (e.baseStats.maxHP ?? e._heatDeathMaxHP0) - loss);
-    if (e.currentHP > e.baseStats.maxHP) e.currentHP = e.baseStats.maxHP;
-    if ((e.baseStats.maxHP <= 0 || e.currentHP <= 0) && e.alive) {
-      e.alive = false; e.currentHP = 0;
-      this.eventBus?.emit?.('entity:death', { entityId: e.id });
-    }
+    reduceMaxHP(e, loss, { key: 'env:heatDeath', label: it.name || '热寂' }, this.eventBus);
   }
 
   update(dt) {

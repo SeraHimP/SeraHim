@@ -66,6 +66,13 @@ export const AttributeCalculator = {
   _compute(entity, effects, includeAllStats) {
     const stats = { ...entity.baseStats };
     const modMap = new Map();
+    // 负生命恢复 → 持续真实伤害（每秒）。用户（Q7）："所有减少生命恢复直至负的技能或者是状态……
+    // 一律改制为造成的真实伤害（不受自身的任何防御措施），生命恢复永远大于等于0"。
+    // 所以每一条【负的固定值】生命恢复（模板基础值、效果、世界状态）都不进合成管线，
+    // 而是原值累加到这里，由 CombatSystem 每秒按真实伤害结算；它既不抵消正的恢复，
+    // 也不被恢复加成/治疗强度缩放。天气的负恢复单独记在 weatherDrain（受伤统计里要分开归类）。
+    let regenDrain = 0;
+    if ((stats.healthRegen || 0) < 0) { regenDrain += -stats.healthRegen; stats.healthRegen = 0; }
 
     for (const eff of effects) {
       if (eff.blueprint.kind !== 'stat') continue;
@@ -73,7 +80,9 @@ export const AttributeCalculator = {
       if (!key) continue;
       if (!modMap.has(key)) modMap.set(key, { flat: 0, percent: 0 });
       const mod = modMap.get(key);
-      mod.flat += eff.totalFlat || 0;
+      const f = eff.totalFlat || 0;
+      if (key === 'healthRegen' && f < 0) regenDrain += -f;
+      else mod.flat += f;
       mod.percent += eff.totalPercent || 0;
     }
 
@@ -155,7 +164,8 @@ export const AttributeCalculator = {
       const wsMods = this._world.getModifiers(entity);
       for (const [key, m] of Object.entries(wsMods || {})) {
         const cur = modMap.get(key) || { flat: 0, percent: 0 };
-        cur.flat += m.flat || 0;
+        if (key === 'healthRegen' && (m.flat || 0) < 0) regenDrain += -m.flat;
+        else cur.flat += m.flat || 0;
         cur.percent += m.pct || 0;
         modMap.set(key, cur);
       }
@@ -264,7 +274,10 @@ export const AttributeCalculator = {
     if (stats.maxHP !== undefined && stats.maxHP < 0) stats.maxHP = 0;
     if (stats.attackDamage !== undefined && stats.attackDamage < 0) stats.attackDamage = 0;
 
-    stats._weatherDrain = weatherDrain; // v35 Q5：天气负恢复独立通道
+    // 生命恢复永远 ≥ 0（百分比修正低于 -100% 时也只压到 0）
+    if (stats.healthRegen !== undefined && stats.healthRegen < 0) stats.healthRegen = 0;
+    stats._weatherDrain = weatherDrain; // 天气负恢复 → 真实伤害/秒
+    stats._regenDrain = regenDrain;     // 其余负恢复 → 真实伤害/秒
     return stats;
   },
 

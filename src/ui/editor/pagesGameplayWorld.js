@@ -586,6 +586,7 @@ export const EDITOR_PAGES_GAMEPLAY_WORLD = {
   // 相机 / 雾 / 天空每帧或重算时读配置，自动生效；SSAO 直接写进着色器 uniform。
   // 只放数值项；主题配色（CONFIG.terrain.themes）是一大块调色板，先不做界面。
   _RENDER_TUNING_FIELDS: [
+    { path: 'ui.maxHpLostBar.stripePx', label: '血条·已缩减最大生命斜纹宽(px)', step: 1 },
     { path: 'terrain.ground.pathHalf', label: '地形·路面半宽', step: 2, rebuild: true },
     { path: 'terrain.ground.pathFeather', label: '地形·路面到野地过渡宽', step: 2, rebuild: true },
     { path: 'terrain.ground.pathDip', label: '地形·路面下凹', step: 0.2, rebuild: true },

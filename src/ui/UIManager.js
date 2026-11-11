@@ -7,7 +7,7 @@ import { DetailModal, STAT_LABELS, modsGridHtml, getSkillDescMode, effectGroupBr
 import { statDoc } from '../data/statDocs.js';
 import { shellHtml } from './dialogShell.js';
 import { extAttrGroups, BASE_ATTR_ROWS, RELATED_STATS } from './statPanelLayout.js';
-import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES, FACTION_HP_COLORS } from '../core/resourceBar.js';
+import { resourceInfoOf, RESOURCE_COLORS, HIDDEN_STATUS_EFFECT_NAMES, FACTION_HP_COLORS, hpBarLayout } from '../core/resourceBar.js';
 import { stepTrail, bigRegenPreviewFrac, deriveIncreaseColor } from '../presentation/barTrail.js';
 import { ENV_CATEGORY } from '../core/damageAttribution.js';
 
@@ -922,6 +922,26 @@ export class UIManager {
    * 不会盖住护盾（.bar-shield-* 三个元素在 DOM 里排在这个元素之后，后画的盖住
    * 先画的，护盾这个真实状态天然盖住这条纯预告性质的特效）。
    */
+  /** 已缩减的最大生命：血条右端的灰色斜纹段（元素按需创建，样式读 CONFIG.ui.maxHpLostBar）。 */
+  _updateLostBar(card, prefix, id, L) {
+    const track = card.querySelector(`#${prefix}-hp-${id}`)?.parentElement;
+    if (!track) return;
+    let el = track.querySelector('.bar-hp-lost');
+    if (L.lostFrac <= 0.0005) { if (el) el.style.display = 'none'; return; }
+    if (!el) {
+      const c = CONFIG.ui?.maxHpLostBar || {};
+      el = document.createElement('div');
+      el.className = 'bar-hp-lost';
+      const w = c.stripePx ?? 3;
+      el.style.cssText = 'position:absolute;top:0;height:100%;pointer-events:none;'
+        + `background:repeating-linear-gradient(-45deg, ${c.stripeA || '#8a9099'}, ${c.stripeA || '#8a9099'} ${w}px, ${c.stripeB || '#3b4048'} ${w}px, ${c.stripeB || '#3b4048'} ${w * 2}px);`;
+      track.appendChild(el);
+    }
+    el.style.display = '';
+    el.style.left = (L.cap * 100) + '%';
+    el.style.width = (L.lostFrac * 100) + '%';
+  }
+
   _updateHpIncBar(card, prefix, id, entity, stats, hpFrac, maxHP) {
     const incEl = card.querySelector(`#${prefix}-hpinc-${id}`);
     if (!incEl) return;
@@ -1178,8 +1198,13 @@ export class UIManager {
           cls = effDelta > 0.005 ? 'stat-up' : effDelta < -0.005 ? 'stat-down' : '';
           paren = Math.abs(effDelta) < 0.005 ? '' : `<span class="stat-break">（${effBase}${effDelta > 0 ? '+' : '−'}${Math.abs(effDelta)}）</span>`;
         }
+        // 负的生命恢复已经全部转成"持续真实伤害/秒"（生命恢复恒 ≥ 0，见 AttributeCalculator），
+        // 在这里单独列一行，玩家才知道这个单位正在持续掉血、掉多少。
+        const drain = isHp ? (stats._weatherDrain || 0) + (stats._regenDrain || 0) : 0;
+        const drainRow = drain > 0
+          ? `<div style="margin-top:4px;">持续真实伤害/秒：<b class="stat-down">${r2(drain)}</b></div>` : '';
         live = `<div class="pick-desc-box" style="margin-bottom:10px;font-size:14px;">
-            ${label}：<b class="${cls}">${effective}</b>${paren}
+            ${label}：<b class="${cls}">${effective}</b>${paren}${drainRow}
           </div>`;
       } else {
         // v51.28（Q2 追加，本轮更新口径）：attackDamage 走 _attackDamageParts（自适应
@@ -1979,8 +2004,9 @@ export class UIManager {
 
     // 拖尾（血条宽度由下方比例逻辑统一设置）。v47：缓动/贴齐/配色与画面里那条统一，
     // 实现只剩 barTrail.stepTrail 一处（见 _stepTrailBar 与 barTrail.js 的对照表）。
-    this._stepTrailBar(card.querySelector(`#tower-trail-${id}`), hpFrac);
-    this._updateHpIncBar(card, 'tower', id, tower, stats, hpFrac, maxHP);
+    const L = hpBarLayout(tower, maxHP);
+    this._stepTrailBar(card.querySelector(`#tower-trail-${id}`), hpFrac * L.cap);
+    this._updateHpIncBar(card, 'tower', id, tower, stats, hpFrac * L.cap, L.full);
 
     const sfCur = tower.shieldFixedCurrent || 0, stCur = tower.tempShield || 0;
     // v51.6：第三种护盾"护盾"——entity.plainShield 是 CombatSystem 每帧缓存的汇总值
@@ -1988,13 +2014,9 @@ export class UIManager {
     const spCur = tower.plainShield || 0;
     const shieldTotal = sfCur + stCur + spCur;
     // 与 2D 画板一致的比例逻辑：HP+护盾同条，总和超过最大值时整体按比例压缩
-    const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP, spFracRaw = spCur / maxHP;
-    let hpDraw = hpFrac, sfDraw = sfFracRaw, stDraw = stFracRaw, spDraw = spFracRaw;
-    const totalFrac = hpFrac + sfFracRaw + stFracRaw + spFracRaw;
-    if (totalFrac > 1) {
-      const scale = 1 / totalFrac;
-      hpDraw *= scale; sfDraw *= scale; stDraw *= scale; spDraw *= scale;
-    }
+    // 各段宽度统一由 hpBarLayout 算（含"已缩减最大生命"的灰色斜纹段，画面血条也用同一份）
+    const hpDraw = L.hp, sfDraw = L.sf, stDraw = L.st, spDraw = L.sp;
+    this._updateLostBar(card, 'tower', id, L);
     const hpBar2 = card.querySelector(`#tower-hp-${id}`);
     if (hpBar2) {
       hpBar2.style.width = (hpDraw * 100) + '%';
@@ -2130,17 +2152,14 @@ export class UIManager {
     const spCur = minion.plainShield || 0;
     const shieldTotal = sfCur + stCur + spCur;
 
-    this._stepTrailBar(card.querySelector(`#minion-trail-${id}`), hpFrac);
-    this._updateHpIncBar(card, 'minion', id, minion, stats, hpFrac, maxHP);
+    const L = hpBarLayout(minion, maxHP);
+    this._stepTrailBar(card.querySelector(`#minion-trail-${id}`), hpFrac * L.cap);
+    this._updateHpIncBar(card, 'minion', id, minion, stats, hpFrac * L.cap, L.full);
 
     // 与 2D 画板一致：HP+护盾同条，超过最大值整体按比例压缩
-    const sfFracRaw = sfCur / maxHP, stFracRaw = stCur / maxHP, spFracRaw = spCur / maxHP;
-    let hpDraw = hpFrac, sfDraw = sfFracRaw, stDraw = stFracRaw, spDraw = spFracRaw;
-    const totalFrac = hpFrac + sfFracRaw + stFracRaw + spFracRaw;
-    if (totalFrac > 1) {
-      const scale = 1 / totalFrac;
-      hpDraw *= scale; sfDraw *= scale; stDraw *= scale; spDraw *= scale;
-    }
+    // 各段宽度统一由 hpBarLayout 算（含"已缩减最大生命"的灰色斜纹段，画面血条也用同一份）
+    const hpDraw = L.hp, sfDraw = L.sf, stDraw = L.st, spDraw = L.sp;
+    this._updateLostBar(card, 'minion', id, L);
     const hpBar = card.querySelector(`#minion-hp-${id}`);
     if (hpBar) {
       hpBar.style.width = (hpDraw * 100) + '%';
