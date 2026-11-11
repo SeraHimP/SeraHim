@@ -1083,18 +1083,15 @@ async function world() {
     EDITOR_PAGES_SKILLEFFECT._DEFAULT_PASSIVE_MAP === DEFAULT_MINION_PASSIVES);
   // Q5：图腾兵收窄成只做"光环治疗"——passive_totem_aura（减伤+护盾光环）整条删除，
   // active_totem_mend 改回被动 passive_totem_mend（常驻光环持续回复，不再吃法力槽）。
-  T('统②-图腾兵默认清单是收窄后的两条被动（护盾/治疗）+ 屠戮，不再有光环减伤或蓄力主动治疗',
-    !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_aura')
-    && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_bulwark')
-    && DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_mend')
-    && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_mend')
-    && !DEFAULT_MINION_PASSIVES.totem.includes('active_totem_shield')
-    && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_guardian'));
+  // Q9（用户："所有兵种的各种技能都进行优化和简化……只保留兵种特色"）：图腾兵只留图腾壁垒
+  T('统②-图腾兵默认清单精简到只剩图腾壁垒（护盾是它的存在意义）',
+    JSON.stringify(DEFAULT_MINION_PASSIVES.totem) === JSON.stringify(['passive_totem_bulwark']));
   // Q4：术士兵重做后默认清单是"三连咒击 + 屠戮"，不再有耗蓝主动
-  T('统③-siege/corrupt 的默认清单补上了此前漏掉的主动技能；术士兵改为三连咒击',
+  // Q9 精简：轻炮只留破城疾射、蚀骨兵只留蚀骨；术士兵按 Q4 定稿是三连咒击 + 屠戮
+  T('统③-精简后：术士兵三连咒击、轻炮破城疾射、蚀骨兵蚀骨',
     DEFAULT_MINION_PASSIVES.warlock.includes('passive_warlock_triad')
-    && DEFAULT_MINION_PASSIVES.siege.includes('active_siege_haste')
-    && DEFAULT_MINION_PASSIVES.corrupt.includes('active_corrupt_poison'));
+    && JSON.stringify(DEFAULT_MINION_PASSIVES.siege) === JSON.stringify(['passive_siege_vs_tower_haste'])
+    && JSON.stringify(DEFAULT_MINION_PASSIVES.corrupt) === JSON.stringify(['passive_corrupt_strike']));
 
   // 荆棘反击：新增法术强度联动
   const { ents, fx, combat, CONFIG } = await world();

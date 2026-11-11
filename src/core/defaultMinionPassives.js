@@ -15,16 +15,23 @@
  */
 export const DEFAULT_MINION_PASSIVES = {
   // v51.6：近战兵/远程兵首次拥有主动技能（用户定稿具体数值，见 actives.js 头注）。
-  'melee': ['passive_melee_rend', 'active_melee_block'],
-  'ranged': ['passive_ranged_rend', 'active_ranged_snipe'],
+  // Q9：三级兵种每级最多 1 个技能；其余兵种按"只保留兵种特色"精简到 1 个（术士兵按 Q4 定稿保留两个，唤灵兵的灵契是唤灵的回蓝配套）
+  'melee': [],
+  'melee_t2': ['passive_tier_shield_guard'],
+  'melee_t3': ['passive_tier_charge'],
+  'ranged': [],
+  'ranged_t2': ['passive_tier_volley'],
+  'ranged_t3': ['passive_tier_pierce_bolt'],
   // v51.1：主动技能改成用户给的精确规格（active_siege_haste 等，见 actives.js 头注），
   // 推翻 v51 那版占位的 active_siege_barrage。
   // 本轮：新增 passive_siege_vs_tower_haste（"炮兵在攻击防御塔时，获得30%攻速"）。
-  'siege': ['passive_artillery_commander', 'passive_siege_shield', 'passive_siege_rend', 'active_siege_haste', 'passive_siege_vs_tower_haste'],
+  'siege': ['passive_siege_vs_tower_haste'],
+  'siege_t2': [],
+  'siege_t3': [],
   // v51.6：超级兵首次拥有主动技能——荆棘装甲（用户定稿具体数值，见 actives.js 头注）。
   // Q5：新增 passive_super_timescale（出生时按游戏时间快照全属性倍率，早弱晚强，
   // 见 minionPassives.js 头注）。
-  'super': ['passive_super_commander', 'active_thorn_armor', 'passive_super_timescale'],
+  'super': ['passive_super_commander'],
   // v49 攻城车重做：一条被动拆成三条（攻城炮=常驻闸门，另两条是两个模式）。
   // atkmode_charge 是**攻击方式**技能（与塔的武器同一形状），充能的全部参数在它身上。
   'ram': ['passive_ram_cannon', 'passive_ram_siege', 'passive_ram_normal', 'atkmode_charge'],
@@ -37,13 +44,13 @@ export const DEFAULT_MINION_PASSIVES = {
   // 持续回复，不再吃法力槽），见 minionPassives.js 头注。
   // 本轮：屠戮扩展到除攻城车/超级兵外的全部兵种（用户定稿，见 minionPassives.js
   // 里 passive_totem_rend/passive_warlock_rend/passive_corrupt_rend 旁边的注释）。
-  'totem': ['passive_totem_bulwark', 'passive_totem_mend', 'passive_totem_rend'],
+  'totem': ['passive_totem_bulwark'],
   'warlock': ['passive_warlock_triad', 'passive_warlock_rend'],
-  'corrupt': ['passive_corrupt_strike', 'active_corrupt_poison', 'passive_corrupt_rend'],
+  'corrupt': ['passive_corrupt_strike'],
   // Q5：重装车——纯坦克，塔攻击优先级最高（见 CombatSystem.selectTarget 的
   // getPriority），对塔额外伤害+主动伤害减免。
   // 防御护盾（受防御塔伤害 -30%）复用炮兵那条被动（用户："重装车新增被动（可以复用炮兵的）防御护盾"）。
-  'heavy': ['passive_heavy_vs_tower', 'passive_siege_shield', 'active_heavy_bulwark'],
+  'heavy': ['passive_heavy_vs_tower'],
   // Q5：治疗兵——唯一被动"生命脉冲"（passive_healer_mend），按攻速节奏治疗
   // 最近的友军。无攻击敌方能力，不装备任何武器/攻击方式技能。
   'healer': ['passive_healer_mend'],

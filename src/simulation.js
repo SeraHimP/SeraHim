@@ -10,6 +10,7 @@
  * 这里只放"影响对局结果"的东西：系统、工厂、地图切换时的仿真状态重置。
  * 界面日志、计分板、渲染、按钮都留在 main.js。
  */
+import { tierLineOf } from './systems/unitTiers.js';
 import { EntityContainer } from './core/EntityContainer.js';
 import { CTX } from './core/GameContext.js';
 import { EffectRegistry } from './core/EffectRegistry.js';
@@ -93,10 +94,13 @@ export function createSimulation({ log = () => {} } = {}) {
   function battleGrowthFlat(type) {
     const n = Math.max(0, (laneWaveSystem.waveNumber || 1) - 1); // 第 1 波为基准无成长
     const G = CONFIG.battleGrowth || {};
+    // Q9：二、三级兵沿用所属兵种线（一级兵）的成长表
+    type = tierLineOf(type) || type;
     const mapG = mapSystem.currentMap?.minionGrowth?.[type] || {};
     const f = { ...(G._default || {}), ...(G[type] || {}), ...mapG };
     return { hp: (f.hp || 0) * n, ad: (f.ad || 0) * n, res: (f.res || 0) * n, ap: (f.ap || 0) * n };
   }
+  combatSystem.mapSystem = mapSystem;   // Q9 击退要查落点能不能走
   laneWaveSystem.setCreateMinion((type, x, y, faction, laneId, direction) =>
     createMinion(type, x, y, 1, 1, {
       faction, laneId, direction, growthFlat: battleGrowthFlat(type),

@@ -96,13 +96,11 @@ async function world() {
   T('接线②-laneWaveComposition 里有 heavy 的出兵规则',
     CONFIG.gameRules.laneWaveComposition.some(r => r.type === 'heavy'));
   const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
-  T('接线③-出厂默认技能清单包含被动+主动两条',
-    DEFAULT_MINION_PASSIVES.heavy.includes('passive_heavy_vs_tower')
-    && DEFAULT_MINION_PASSIVES.heavy.includes('active_heavy_bulwark'));
+  // Q9 精简：重装车只留特色技能"破城锤"（铁壁、防御护盾仍在技能库里，可手动装）
+  T('接线③-出厂默认技能精简为破城锤', JSON.stringify(DEFAULT_MINION_PASSIVES.heavy) === JSON.stringify(['passive_heavy_vs_tower']));
   const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
-  T('接线④-重装车默认带防御护盾（复用炮兵的 passive_siege_shield，用户定稿）',
-    DEFAULT_MINION_PASSIVES.heavy.includes('passive_siege_shield')
-    && SkillLibrary.get('passive_siege_shield').applicableTypes.includes('heavy'));
+  T('接线④-防御护盾仍可装到重装车上（复用炮兵的 passive_siege_shield）',
+    SkillLibrary.get('passive_siege_shield').applicableTypes.includes('heavy'));
 }
 
 // ==================== 防御护盾：真打一下，受塔伤害的倍率 = 1 − 30% ====================
@@ -110,12 +108,14 @@ async function world() {
 {
   const { SkillLibrary } = await import('../src/core/SkillLibrary.js');
   const { createSimulation } = await import('../src/simulation.js');
+  const skillParamsMod = await import('../src/core/skillParams.js');
   const taken = (strip, raw) => {
     const sim = createSimulation();
     sim.mapSystem.loadMap('summoners_rift_v1');
     const tower = sim.entityContainer.getAllTowers(true).find((t) => t._mapFaction === 'blue' && t._mapTier === 'outer');
     const h = sim.laneWaveSystem.createMinion('heavy', tower.pos.x + 60, tower.pos.y, 'red', 'mid', 'reverse');
-    if (strip) h._skillInstances = h._skillInstances.filter((i) => i.skillId !== 'passive_siege_shield');
+    // 默认清单精简后不再自带防御护盾，这里手动装上再比（测的是技能本身的倍率）
+    if (!strip) { const { equipSkill } = skillParamsMod; equipSkill(h, 'passive_siege_shield', { entityContainer: sim.entityContainer, effectRegistry: sim.effectRegistry, attrCalc: sim.attrCalc, combat: sim.combatSystem }, SkillLibrary); }
     h.currentHP = 1e6;
     const before = h.currentHP;
     sim.combatSystem.performAttackDirect(tower.id, h.id, raw, 'physical');

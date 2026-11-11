@@ -175,10 +175,11 @@ T('CONFIG.tuning.weapons 声明了三个新增百分比（闪电杖转化比例 
 // 用户："除了攻城车/超级兵之外的所有兵种都要有屠戮，新加的的数值你自己定。"
 {
   const { DEFAULT_MINION_PASSIVES } = await import('../src/core/defaultMinionPassives.js');
-  T('图腾兵/术士兵/蚀骨兵默认装备了各自的屠戮被动',
-    DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_rend')
-    && DEFAULT_MINION_PASSIVES.warlock.includes('passive_warlock_rend')
-    && DEFAULT_MINION_PASSIVES.corrupt.includes('passive_corrupt_rend'));
+  // Q9 精简：只有术士兵还默认带屠戮（Q4 用户定稿"只留新被动+屠戮"），图腾兵/蚀骨兵只留各自的特色技能
+  T('术士兵默认装备屠戮；图腾兵/蚀骨兵精简后不再默认带',
+    DEFAULT_MINION_PASSIVES.warlock.includes('passive_warlock_rend')
+    && !DEFAULT_MINION_PASSIVES.totem.includes('passive_totem_rend')
+    && !DEFAULT_MINION_PASSIVES.corrupt.includes('passive_corrupt_rend'));
   T('攻城车/超级兵按用户要求排除在屠戮之外',
     !DEFAULT_MINION_PASSIVES.ram.some(k => k.includes('_rend'))
     && !DEFAULT_MINION_PASSIVES.super.some(k => k.includes('_rend')));

@@ -2763,7 +2763,7 @@ export const CONFIG = {
       ...UNIT_STAT_DEFAULTS,
     },
     melee: {
-      label: '近战兵', type: 'melee', attackMode: 'melee',
+      label: '矛卒', type: 'melee', attackMode: 'melee',
       isLargeMinion: false, isMonster: false,
       // v33：350→500。基准：对战开局外塔（穿透型，含破甲+升温逐发爬升 ×1.0/×1.3/×1.6）
       // 恰好 3 发击杀（2 发打不死），仿真校验（tests/sim_v33.mjs）。
@@ -2786,7 +2786,7 @@ export const CONFIG = {
       maxMana: 25, manaRegen: 0,
     },
     ranged: {
-      label: '远程兵', type: 'ranged', attackMode: 'projectile',
+      label: '投石手', type: 'ranged', attackMode: 'projectile',
       isLargeMinion: false, isMonster: false,
       maxHP: 200, healthRegen: 0, baseHealthRegenMod: 1.0,
       moveSpeed: 78, attackRange: 150,
@@ -2816,7 +2816,7 @@ export const CONFIG = {
       maxMana: 70, manaRegen: 0.5, abilityPower: 8,
     },
     siege: {
-      label: '炮兵', type: 'siege', attackMode: 'projectile',
+      label: '轻炮', type: 'siege', attackMode: 'projectile',
       isLargeMinion: true, isMonster: false,
       // ==================== v43：炮兵整体下调（用户："炮兵的全属性调低"）====================
       // 起因：出场频率从每 3 波提到每 2 波（+50%），不配套下调的话推进强度会失控。
@@ -3338,6 +3338,48 @@ export const CONFIG = {
   },
 };
 
+// ==================== Q9：三级兵种（近战 / 远程 / 炮兵）====================
+// 用户："一个兵种有三个不同等级（但也是三个兵属于一个兵种）……跟随战场形势的变化来改变某一方出兵的等级……
+// 战斗前15分钟出的是一级兵，15分钟后出的是二级兵，在某一方某一路的水晶塔被摧毁后，这方的这条路出的就是
+// 三级兵或者是在30分钟之后全图就都出三级兵了"；追问定稿："这方"= 被拆水晶塔的一方（劣势补偿）；
+// 兵种草案"直接做"：近战 矛卒→盾卫→重骑，远程 投石手→长弓手→弩炮手，炮兵 轻炮→臼炮→重炮，每级最多 1 个技能。
+// 出兵编排里写的仍是一级兵的类型（melee/ranged/siege），实际生成时按下面的规则换成对应等级（systems/unitTiers.js）。
+CONFIG.unitTiers = {
+  enabled: true,
+  tier2AtMin: 15,                 // 第几分钟起全图出二级
+  tier3AtMin: 30,                 // 第几分钟起全图出三级
+  tier3OnOwnBaseTowerLost: true,  // 某一方某一路的水晶塔（tier=base）被拆后，这一方这一路出三级
+  lines: {
+    melee: ['melee', 'melee_t2', 'melee_t3'],
+    ranged: ['ranged', 'ranged_t2', 'ranged_t3'],
+    siege: ['siege', 'siege_t2', 'siege_t3'],
+  },
+  // 新技能的数值（minionPassives.js 里四个 passive_tier_* 读这里）
+  skills: {
+    shieldGuardPct: 30,       // 盾卫·举盾：受到弹道攻击的伤害 -X%
+    chargeTriggerDist: 60,    // 重骑·冲锋：与目标距离超过（射程 + 本值）时冲锋
+    chargeMoveSpeedPct: 80,   // 重骑·冲锋：冲锋时移速 +X%
+    chargeKnockback: 45,      // 重骑·冲锋：对每个新目标的第一击把目标击退多远
+    volleyEvery: 4,           // 长弓手·强弓：每第 N 箭
+    volleyBonusPct: 100,      // 长弓手·强弓：这一箭伤害 +X%
+    pierceBoltPct: 60,        // 弩炮手·贯穿：身后敌人吃到主目标伤害的 X%
+    pierceBoltCount: 2,       // 弩炮手·贯穿：最多再命中几个
+    pierceBoltLength: 160,    // 弩炮手·贯穿：主目标身后多远
+    pierceBoltWidth: 28,      // 弩炮手·贯穿：箭道半宽
+  },
+};
+// 二、三级兵的模板：在一级模板上覆写，生成后就是独立模板（编辑器里各自可改）
+for (const [key, def] of Object.entries({
+  melee_t2:  { base: 'melee',  label: '盾卫',   o: { maxHP: 700,  attackDamage: 12, armor: 25, magicResist: 20 } },
+  melee_t3:  { base: 'melee',  label: '重骑',   o: { maxHP: 1000, attackDamage: 18, armor: 35, magicResist: 30, moveSpeed: 90 } },
+  ranged_t2: { base: 'ranged', label: '长弓手', o: { maxHP: 260,  abilityPower: 11, attackRange: 170 } },
+  ranged_t3: { base: 'ranged', label: '弩炮手', o: { maxHP: 340,  abilityPower: 15, attackRange: 180 } },
+  siege_t2:  { base: 'siege',  label: '臼炮',   o: { maxHP: 1100, attackDamage: 19, splashRadius: 60 } },
+  siege_t3:  { base: 'siege',  label: '重炮',   o: { maxHP: 1400, attackDamage: 24, attackRange: 200, splashRadius: 80, plainShieldFlat: 300 } },
+})) {
+  CONFIG.templates[key] = { ...CONFIG.templates[def.base], ...def.o, label: def.label, type: key };
+}
+
 // ==================== v51：主动技能资源系统的独立调参表（ManaSystem 读取）====================
 // 与 tuning 里的其它调参同理——放在源码里就是待改的债。
 export const ACTIVE_TUNING = {
@@ -3369,6 +3411,8 @@ export const MINION_SIZES = {
   healer: 11,  // Q5：治疗兵——与图腾兵同量级的支援型体型
   engineer: 11, // Q5：工程兵——同上，支援型体型
   summoner: 11, // Q5：唤灵兵——同上，支援型体型
+  // Q9 二、三级兵：比一级略大一圈（外形由 Fable 另做，现在渲染沿用一级兵的造型）
+  melee_t2: 11, melee_t3: 13, ranged_t2: 10, ranged_t3: 11, siege_t2: 13, siege_t3: 14,
   // 牧灵法阵幻兽——渲染专用伪类型（entity.type 仍是 melee），比普通近战兵小一圈，
   // 呼应"幻兽"体型定位，见 SpriteFactory.minionRenderType 头注。
   shepherd_pet: 9,

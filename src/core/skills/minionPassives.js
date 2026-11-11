@@ -956,3 +956,89 @@ const ramPassive = {
 };
 
 Object.assign(minionPassives, ramPassive);
+
+// ==================== Q9：三级兵种的四个专属技能（每级最多 1 个）====================
+// 数值全部读 CONFIG.unitTiers.skills。结算挂在 CombatSystem 的两个通用钩子上：
+//   onAttackFired(attacker, target, inst, hitInfo)——开火那一刻改写这一发的快照；
+//   incomingDamageMult(target, hitInfo, inst)——命中结算时按"挨打方"的技能缩放伤害。
+const TS = () => CONFIG.unitTiers?.skills || {};
+const tierPassives = {
+  // 盾卫·举盾：受到弹道攻击的伤害降低
+  passive_tier_shield_guard: {
+    id: 'passive_tier_shield_guard', name: '举盾', icon: '🛡️', color: '#95a5a6', category: 'passive',
+    applicableTypes: ['melee_t2'],
+    get description() { return `唯一被动——举盾：受到弹道攻击的伤害降低 ${TS().shieldGuardPct ?? 30}%。`; },
+    get descTemplate() { return this.description; },
+    effects: [],
+    incomingDamageMult: (target, hitInfo) => (hitInfo.attackMode === 'projectile' ? 1 - (TS().shieldGuardPct ?? 30) / 100 : 1),
+  },
+  // 重骑·冲锋：离目标较远时加速冲过去；对每个新目标的第一击把它击退
+  passive_tier_charge: {
+    id: 'passive_tier_charge', name: '冲锋', icon: '🐎', color: '#c0392b', category: 'passive',
+    applicableTypes: ['melee_t3'],
+    get description() {
+      const s = TS();
+      return `唯一被动——冲锋：与目标距离较远时移速 +${s.chargeMoveSpeedPct ?? 80}%；对每个新目标的第一击将其击退 ${s.chargeKnockback ?? 45}。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onFrame: (entityId, dt, instance, ctx) => {
+      const e = ctx.entityContainer.get(entityId);
+      if (!e || !e.alive) return;
+      const s = TS();
+      const t = e.targetId ? ctx.entityContainer.get(e.targetId) : null;
+      const far = t && t.alive && t.pos && e.pos
+        && Math.hypot(t.pos.x - e.pos.x, t.pos.y - e.pos.y) > (e.baseStats.attackRange || 30) + (s.chargeTriggerDist ?? 60);
+      if (far) {
+        ctx.effectRegistry.apply(entityId, {
+          name: '冲锋', icon: '🐎', kind: 'stat', statKey: 'moveSpeed', percentValue: s.chargeMoveSpeedPct ?? 80,
+          aura: true, auraGrace: 0.3, stackable: false, stackPolicy: 'refresh', uniquePassive: true,
+          description: `冲锋：移速 +${s.chargeMoveSpeedPct ?? 80}%`,
+        }, 'passive_tier_charge_ms');
+      }
+    },
+    onAttackFired: (attacker, target, instance, hitInfo) => {
+      instance.state = instance.state || {};
+      if (instance.state.lastTargetId === target.id) return;
+      instance.state.lastTargetId = target.id;
+      hitInfo.knockback = TS().chargeKnockback ?? 45;
+    },
+  },
+  // 长弓手·强弓：每第 N 箭伤害提高
+  passive_tier_volley: {
+    id: 'passive_tier_volley', name: '强弓', icon: '🏹', color: '#27ae60', category: 'passive',
+    applicableTypes: ['ranged_t2'],
+    get description() { const s = TS(); return `唯一被动——强弓：每第 ${s.volleyEvery ?? 4} 箭伤害 +${s.volleyBonusPct ?? 100}%。`; },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onAttackFired: (attacker, target, instance, hitInfo) => {
+      const s = TS();
+      instance.state = instance.state || {};
+      instance.state.n = (instance.state.n || 0) + 1;
+      if (instance.state.n < Math.max(1, Math.round(s.volleyEvery ?? 4))) return;
+      instance.state.n = 0;
+      hitInfo.preDamageMult = (hitInfo.preDamageMult ?? 1) * (1 + (s.volleyBonusPct ?? 100) / 100);
+    },
+  },
+  // 弩炮手·贯穿：箭穿过主目标，继续命中身后直线上的敌人
+  passive_tier_pierce_bolt: {
+    id: 'passive_tier_pierce_bolt', name: '贯穿', icon: '🎯', color: '#8e44ad', category: 'passive',
+    applicableTypes: ['ranged_t3'],
+    get description() {
+      const s = TS();
+      return `唯一被动——贯穿：攻击穿过目标，再命中其身后直线上最多 ${s.pierceBoltCount ?? 2} 个敌人，造成 ${s.pierceBoltPct ?? 60}% 伤害。`;
+    },
+    get descTemplate() { return this.description; },
+    effects: [],
+    onAttackFired: (attacker, target, instance, hitInfo) => {
+      const s = TS();
+      if (!attacker.pos || !target.pos) return;
+      hitInfo.pierceBolt = {
+        fromX: attacker.pos.x, fromY: attacker.pos.y,
+        pct: (s.pierceBoltPct ?? 60) / 100, count: s.pierceBoltCount ?? 2,
+        length: s.pierceBoltLength ?? 160, width: s.pierceBoltWidth ?? 28,
+      };
+    },
+  },
+};
+Object.assign(minionPassives, tierPassives);

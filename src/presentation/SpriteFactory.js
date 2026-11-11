@@ -11,6 +11,7 @@
  * dragonSprite / WEAPON_ICONS 是本次新增（原先龙是每帧过程式绘制、武器图标表是
  * render() 内的局部常量），归拢进工厂统一管素材。
  */
+import { tierLineOf } from '../systems/unitTiers.js';
 import { CONFIG, MINION_SIZES } from '../data/Config.js';
 
 const _spriteCache = new Map();   // key -> { canvas, half, size }（half = 逻辑半宽，绘制时居中）
@@ -66,7 +67,8 @@ export const MINION_STYLE = {
 export function minionRenderType(e) {
   if (e._petOwnerId) return 'shepherd_pet';
   if (e._isSummoned) return 'summon_spirit';
-  return e.type;
+  // Q9：二、三级兵的专属造型还没做（交给 Fable），先沿用所属兵种线一级兵的造型
+  return tierLineOf(e.type) || e.type;
 }
 
 /**

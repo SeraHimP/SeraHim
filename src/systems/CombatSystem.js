@@ -815,6 +815,7 @@ export class CombatSystem {
         : 0,
     };
 
+    hitInfo.attackMode = attackModeOf(attacker, this.skills);   // 挨打方的技能按攻击方式区分（盾卫举盾只挡弹道）
     // 技能的开火钩子：在这一发的快照定稿之前改写它（术士兵三连咒击的第三下加穿透等）。
     // 放在 hitInfo 构造之后、发射之前——改写的是这一发自己的快照，子弹飞行中攻击者死亡也照样生效。
     for (const inst of attacker._skillInstances || []) {
@@ -951,6 +952,12 @@ export class CombatSystem {
     // 的头注），这里只管乘。放在最前面，后续的攻城/巨龙/哀兵等乘子都在这个基础上叠加，
     // 与伤害增幅（dmgAmp）同一层级——暴击本来就该是"这一下打多疼"的一部分，不是特例。
     if (hitInfo.isCrit) totalRaw *= (hitInfo.critMult || 200) / 100;
+    // 挨打方技能的受击缩放（Q9 盾卫举盾等）：只看技能自己声明的 incomingDamageMult
+    for (const inst of target._skillInstances || []) {
+      if (inst._disabled) continue;
+      const d = this.skills[inst.skillId];
+      if (d && d.incomingDamageMult) totalRaw *= Math.max(0, d.incomingDamageMult(target, hitInfo, inst));
+    }
 
     // ===== v40 攻城武器被动：伤害侧修正（装备了被动才生效，数值取自技能定义）=====
     // ① 打建筑 ×(1+TOWER_DAMAGE_MULT_PCT)——仅走这条主命中路径；溅射由 performAttackDirect
@@ -1122,6 +1129,10 @@ export class CombatSystem {
     // （攻城 siegeSplash / 普通 normalSplash），所以这里要把两个来源取大的那个。
     // 溅射的基数把攻城模式那份增幅**除回去**：用户定稿的口径一直是
     // "额外增幅只对塔生效"，溅射打的是塔周围的别的单位，不该跟着吃。
+    // Q9 弩炮手·贯穿：主目标身后直线上的敌人各吃一份（不过主目标的额外增幅，同溅射口径）
+    if (hitInfo.pierceBolt && target.pos) this._pierceBoltHits(hitInfo, attacker, target, totalRaw / ((chargeP ? chargeP.damageMult : 1) * ramMult || 1), attackType);
+    // Q9 重骑·冲锋：对新目标的第一击击退（建筑、巨龙不动；落点不可走就不推）
+    if (hitInfo.knockback && target.alive && target.type !== 'tower' && target.type !== 'dragon' && target.pos) this._knockback(hitInfo, target);
     const ramR = ramSplashRadius(attacker, target);
     const splashR = Math.max(attacker?.baseStats?.splashRadius || 0, ramR);
     if (splashR > 0) {
@@ -1387,6 +1398,36 @@ export class CombatSystem {
     return (attacker?.baseStats?.bulletSpeed > 0)
       ? (atkStats?.bulletSpeed || def)
       : def + Math.max(0, atkStats?.bulletSpeed || 0);
+  }
+
+  _pierceBoltHits(hitInfo, attacker, target, raw, attackType) {
+    const b = hitInfo.pierceBolt;
+    const dx = target.pos.x - b.fromX, dy = target.pos.y - b.fromY;
+    const L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
+    const near = [];
+    // 主目标身后的"它的队友"（= 攻击方的敌人），建筑不算
+    for (const o of this.entities.findInRadius(target.pos.x, target.pos.y, b.length, null, true)) {
+      if (!o || o.id === target.id || !o.alive || o.type === 'tower' || !o.pos) continue;
+      if ((o._mapFaction || o.faction) !== (target._mapFaction || target.faction)) continue;
+      const rx = o.pos.x - target.pos.x, ry = o.pos.y - target.pos.y;
+      const along = rx * ux + ry * uy, side = Math.abs(rx * uy - ry * ux);
+      if (along > 0 && along <= b.length && side <= b.width) near.push([along, o]);
+    }
+    near.sort((p, q) => p[0] - q[0]);
+    for (const [, o] of near.slice(0, b.count)) {
+      this.performAttackDirect(hitInfo.attackerId, o.id, raw * b.pct, attackType, { _noProc: true, attackerCategory: hitInfo.attackerCategory });
+    }
+  }
+
+  _knockback(hitInfo, target) {
+    const a = this.entities.get(hitInfo.attackerId);
+    const fx = a?.pos?.x ?? target.pos.x, fy = a?.pos?.y ?? target.pos.y;
+    const dx = target.pos.x - fx, dy = target.pos.y - fy, L = Math.hypot(dx, dy) || 1;
+    const nx = target.pos.x + (dx / L) * hitInfo.knockback, ny = target.pos.y + (dy / L) * hitInfo.knockback;
+    const ms = this.mapSystem || (typeof window !== 'undefined' && window.CTX?.__app?.mapSystem) || null;
+    if (ms?.isWalkable && !ms.isWalkable(nx, ny)) return;
+    target.pos.x = nx; target.pos.y = ny;
+    this.entities.markDirty?.();
   }
 
   splitShot(attacker, origin, damage, attackType, opt = {}) {

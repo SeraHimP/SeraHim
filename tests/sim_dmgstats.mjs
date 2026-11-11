@@ -58,7 +58,8 @@ async function world() {
   T('二①-伤害按攻击者类别分桶记录', byAtk instanceof Map && byAtk.size === 1);
   const bucket = [...byAtk.values()][0];
   T('二②-分桶累计了正确的伤害量与命中次数', bucket.total > 90 && bucket.total < 110 && bucket.count === 1);
-  T('二③-分桶标签是中文类别名（红方远程兵）', bucket.label.includes('红方') && bucket.label.includes('远程'));
+  // Q9：一级远程兵改名"投石手"，标签跟模板名走
+  T(`二③-分桶标签是中文类别名（${bucket.label}）`, bucket.label === '红方' + CONFIG.templates.ranged.label);
 
   // 多次命中同一类别应该累加到同一个桶，不是各开一个
   combat.performAttackDirect(atk.id, tgt.id, 100, 'physical', {});

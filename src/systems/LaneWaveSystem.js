@@ -1,3 +1,4 @@
+import { resolveTierType } from './unitTiers.js';
 import { laneSpawnsOf } from './FactionSystem.js';
 import { CONFIG } from '../data/Config.js';
 import { buildWaveOrder, buildBroadcastOrder } from '../data/waveComposition.js';
@@ -314,6 +315,8 @@ export class LaneWaveSystem {
     const jy = (random() - 0.5) * 6;
     const x = startPoint.x + px * offset + jx;
     const y = startPoint.y + py * offset + jy;
-    this.createMinion(type, x, y, faction, laneId, direction);
+    // Q9：出兵编排写的是一级兵类型，实际按战场形势换成对应等级（见 unitTiers.js）
+    const tType = resolveTierType(type, faction, laneId, window.gameTime || 0, this.mapSystem?.entities);
+    this.createMinion(tType, x, y, faction, laneId, direction);
   }
 }
