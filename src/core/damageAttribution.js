@@ -113,7 +113,7 @@ export function applyEnvTrueDamage(entity, amount, category, eventBus) {
  * 但是被扣除的最大生命值在血条的右面用灰色的斜条纹代表"——英雄联盟里"最大生命值降低"
  * 不会把整条血条重新拉满，而是在右端留一段灰色、不可回复的区域。
  * 所以缩减量累计在 entity._maxHPLost 上，血条按 (最大生命 + 已缩减) 作总长来画（见 resourceBar.hpBarLayout）。
- * 当前生命超出新上限而被削掉的那部分按真实伤害记进受伤统计（"所有的扣血都走伤害统计"）。
+ * 当前生命随之扣掉的部分按真实伤害记进受伤统计（"所有的扣血都走伤害统计"）。
  * @returns 实际缩减的最大生命
  */
 export function reduceMaxHP(entity, amount, category, eventBus) {
@@ -122,11 +122,14 @@ export function reduceMaxHP(entity, amount, category, eventBus) {
   const cut = Math.min(cur, amount);
   entity.baseStats.maxHP = cur - cut;
   entity._maxHPLost = (entity._maxHPLost || 0) + cut;
-  if (entity.currentHP > entity.baseStats.maxHP) {
-    const over = entity.currentHP - entity.baseStats.maxHP;
-    entity.currentHP = entity.baseStats.maxHP;
-    trackDamageTaken(entity, category || ENV_CATEGORY, 'true', over, 0);
-  }
+  // 当前生命跟着扣同样的量（用户此前定稿的"最大生命下降时当前生命对称扣、可致死"，
+  // 见 BuffSystem._syncMaxHP），并且不会高于新上限。扣掉的部分按真实伤害记统计。
+  // 这里扣过了，就让 _syncMaxHP 下一帧重新取基准（_lastMaxHP 置空），否则它会把同一份变化量
+  // 再从当前生命里扣一次——改动前过载/热寂在满血时就是这样被扣了两次，而且同步那一刀不进统计。
+  const before = entity.currentHP || 0;
+  entity.currentHP = Math.max(0, Math.min(entity.baseStats.maxHP, before - cut));
+  if (before - entity.currentHP > 0) trackDamageTaken(entity, category || ENV_CATEGORY, 'true', before - entity.currentHP, 0);
+  entity._lastMaxHP = undefined;
   if ((entity.baseStats.maxHP <= 0 || entity.currentHP <= 0) && entity.alive) {
     entity.alive = false; entity.currentHP = 0;
     eventBus?.emit?.('entity:death', { entityId: entity.id });

@@ -72,12 +72,27 @@ const calc = (e) => { sim.attrCalc.tick(); return sim.attrCalc.calc(e, sim.effec
   e.baseStats.maxHP = 1000; e.currentHP = 1000;
   const cut = reduceMaxHP(e, 200, { key: 'env:test', label: '测试' }, null);
   T(`⑨上限 1000 → 800，_maxHPLost = 200（${e.baseStats.maxHP} / ${e._maxHPLost}）`, cut === 200 && e.baseStats.maxHP === 800 && e._maxHPLost === 200);
-  T(`⑩被削掉的 200 当前生命记为真实伤害（${e._dmgTaken?.true}）`, e._dmgTaken?.true === 200 && e.currentHP === 800);
+  T(`⑩随之扣掉的 200 当前生命记为真实伤害（${e._dmgTaken?.true}）`, e._dmgTaken?.true === 200 && e.currentHP === 800);
   const L = hpBarLayout(e, 800);
   T(`⑪血条总长按原最大生命算：生命段 0.8，斜纹段 0.2（${L.hp.toFixed(3)} / ${L.lostFrac.toFixed(3)}）`, Math.abs(L.hp - 0.8) < 1e-9 && Math.abs(L.lostFrac - 0.2) < 1e-9);
   e.currentHP = 400;
   const L2 = hpBarLayout(e, 800);
   T('⑫半血时生命段 0.4，斜纹段仍从 0.8 开始', Math.abs(L2.hp - 0.4) < 1e-9 && Math.abs(L2.cap - 0.8) < 1e-9);
+}
+// ⑫b 与 BuffSystem 的"最大生命变化 → 当前生命对称同步"不会叠加扣两次
+{
+  const e = mk();
+  e.baseStats.maxHP = 1000; e.currentHP = 1000;
+  sim.step(1 / 60);                 // 让 _syncMaxHP 先记下基准
+  const hp0 = e.currentHP, max0 = e.baseStats.maxHP;
+  reduceMaxHP(e, 100, { key: 'env:test', label: '测试' }, null);
+  for (let i = 0; i < 5; i++) sim.step(1 / 60);
+  T(`⑫b缩 100 上限，当前生命只少 100（${Math.round(hp0)} → ${Math.round(e.currentHP)}）`, Math.abs((hp0 - e.currentHP) - 100) < 1);
+  e.currentHP = 500;
+  sim.step(1 / 60);
+  reduceMaxHP(e, 100, { key: 'env:test', label: '测试' }, null);
+  for (let i = 0; i < 5; i++) sim.step(1 / 60);
+  T(`⑫c半血时缩 100 上限，当前生命也少 100（对称扣，500 → ${Math.round(e.currentHP)}）`, Math.abs(e.currentHP - 400) < 1);
 }
 // ⑬ 没有缩减时布局与改动前的公式逐位一致（HP+护盾超过 1 时整体按比例压缩）
 {
