@@ -88,6 +88,8 @@ index.html           单页应用：全部 CSS + DOM 骨架都在这里
 docs/
   DEVELOPMENT.md       ← 本文件
   ui-standard.md       界面设计规范 + 待改造清单
+  VISUAL-REWORK-REPORT.md  画面重构报告（目标画面、技术路线、性能预算）
+  HANDOFF-VISUAL-REWORK.md 画面重构的交接清单（当前进度、谁做哪块）
 src/
   simulation.js        仿真唯一装配点：createSimulation() 构造全部系统与接线，唯一的 step()
                        （游戏、平衡工具、全栈测试共用；唯一允许"认识所有系统"的地方）
@@ -107,11 +109,15 @@ src/
     behaviorVM.js        自制技能的声明式解释器
   systems/             玩法系统（**互相之间禁止 import**）
   presentation/        渲染层（**只读实体，禁止写实体**）
+    world/               地图的"景"：World（编排）、WorldTerrain（地形网格 + 五层混合材质）、WorldRocks（崖线巨石）、
+                         WorldFoliage（树）、WorldWater（河面）、worldTextures（程序化贴图）、worldShading（共享 uniform / 局部光 / 天气补丁）
+    PostFX.js            后处理：ScenePass（MSAA + 深度贴图）、SSAO、体积雾
   data/
     Config.js            全部可调数值
     schema/index.js      字段注册表：编辑器与运行时的**唯一**取值口径
     templateIO.js        配置导出/导入（可 headless 测；导入时防原型链污染、去尖括号）
-    landmarks.js         地标规划：坑、基地广场（按 map.landmarks 开启）
+    terrainField.js      地形高度场：可走区是地面、不可走区隆起 / 下沉、地图外延伸成山（见 §6.5）
+    noise.js             确定性噪声（地形、河道弯曲共用；同一坐标每次一样）
     waveComposition.js   出兵编排 + 条件表（引擎与编辑器共用）
     dragonCurve.js       巨龙曲线（引擎与编辑器共用）
     towerModels.js       建筑模型角色清单
@@ -133,6 +139,7 @@ tools/
   balance_tower.mjs    防御塔武器强度对照
                        三个工具都走 createSimulation()；BALANCE_OUT_DIR 可改落盘目录
   killrate.mjs         击杀率探针
+  perf_probe.mjs       渲染性能基线（无头 Chromium 跑到指定游戏时间，量每段耗时 / 绘制调用 / 资源数，只量不改）
   legacy-verify/       历史一次性验证脚本（存档，不再维护）
 tests/
   run_all.mjs          一键回归
@@ -443,7 +450,7 @@ CONFIG.templates.tower
 
 所以：**基地不在世界角点上的地图，必须声明 `baseCenters: { blue:{x,y}, red:{x,y} }`**。
 取值口只有一个：`src/data/baseCircle.js` 的 `baseCircleCenter(map, faction)`
-（`MapSystem` 与 `TerrainLayer` 都调它）。`sim_maps.mjs` 有一条通用断言钉住
+（`MapSystem` 与地形高度场 `terrainField` 都经它取基地圈）。`sim_maps.mjs` 有一条通用断言钉住
 "基地圈必须罩住自家水晶枢纽"，圆心搞错会当场红。
 
 **`gateTier`：守着基地开口的是哪一档塔。** 峡谷是水晶防御塔（`base`），嚎哭深渊重做后
@@ -452,10 +459,18 @@ CONFIG.templates.tower
 扭曲丛林两条路在基地口就分岔、每方只有 1 座枢纽防御塔，一座塔封不住两个口，
 那是编制决定的，不是"没做到"。
 
-### 六.5 改地形要同时失效三样缓存
+### 六.5 地形高度场与河道
 
-`MapSystem._nav`、`_laneField` 回流场、地形贴图与植被/水面。
-目前这三处的失效通知是分散的，**动地形之前应先收敛成一个 `mapSystem.invalidate([...])`**。
+地形是**算出来的**，不是存的：`src/data/terrainField.js` 从地图数据推一张高度场——
+可走区是地面（路面略低、野地起伏、基地在台地上），不可走区按主题隆起成岩壁（`rise`）或下沉成深渊（`drop`），
+地图范围之外延伸成山体，所以没有"地图边缘"。主题按 `map.paletteId` 选（`CONFIG.terrain.themes`），地图可用 `terrainTheme` 直接指定。
+
+- **`MapSystem.heightAt` 读的就是这张场**，和画出来的地面是同一份数据。单位、弹道、水洼的落点永远对得上。
+- **河道形状的唯一真源是 `MapSystem.riverFactor`**：沿对角线贯穿全图的一条连续的河，兵线过河处是浅滩渡口，
+  龙坑 / 男爵坑是河心石台（坑心 `riverFactor === 0`）。纵向剖面（河床多深、水面多高）在 `CONFIG.terrain.river`。
+- 高度场按需构建并缓存在 MapSystem 上。**改了位图就要作废两处**：`mapSystem.invalidateNav()`（作废高度场）和
+  `renderer.invalidateTerrain()`（作废世界的"同图跳过"守卫）。编辑会话里地图对象不变，不显式作废就会"重建了个寂寞"。
+- 参数全部在 `CONFIG.terrain`，编辑器「世界」页有数值入口；`tests/sim_terrain_field.mjs` 钉形状。
 
 ### 六.6 小兵寻路
 
@@ -487,11 +502,15 @@ r155 起 `PointLight.intensity` 是**坎德拉**，地面照度 = `intensity / d
 **中心/边缘照度比 = `(斜距/灯高)^decay`**。灯挂太低时这个比值是 8.8 倍，
 塔身必然先过曝——只要调到地面够亮，塔身一定是白的。抬高灯位才是解法，不是调亮。
 
-### 7.2 光源数量必须恒定
+### 7.2 局部光不用点光源
 
-Three 的前向渲染把光源数量编进着色器，**数量一变就要重编译所有材质**。
-所以塔灯是**固定大小的池**（`CONFIG.ui.towerLight.poolSize`），
-只改位置/强度/距离，用不到的把 `intensity` 设 0。
+Three 的前向渲染把光源数量编进着色器，**数量一变就要重编译所有材质**；而且每个受光片元都要把每盏灯循环一遍。
+以前的塔灯池（20 盏）+ 火炬池（12 盏）就是这么来的，还带出一个毛病：池子只够点亮视野中心附近十来盏，
+镜头一动被点亮的那组就换人，用户看到的是"光跟着视角走"。
+
+现在：**塔不带光源**（用户定稿）；火炬 / 水晶这类局部光烘进一张俯视的光照图，材质按世界坐标查一次
+（`world/worldShading.js` 的 `wLocalLight`），放多少盏都是同样的开销，拉远看全图时每一盏都在。
+7.1 的坎德拉换算只在你真的要加点光源时才用得上——加之前先想想能不能进光照图。
 
 ### 7.3 不要做"假光"
 
@@ -518,6 +537,25 @@ Three 的前向渲染把光源数量编进着色器，**数量一变就要重编
 ```
 
 直接把子节点转速设成目标值是错的——它的世界转速会变成两者之和。
+
+
+### 7.6 后处理管线：MSAA，不用 FXAA；只渲染一遍场景
+
+`ScenePass`（MSAA 多重采样 + 深度贴图）→ SSAO → 体积雾 → 泛光 → 输出（色调映射 + sRGB）。
+
+- **不用 FXAA。** 它按亮度梯度把整幅画面抹一遍，贴图细节一起被抹掉——用户报"画面看起来有些模糊"，
+  实测关掉 FXAA 清晰度指标翻倍。MSAA 只在几何边缘多采样。高分屏（像素比 ≥ `postfx.aa.hiDpiRatio`）采样数减半。
+- **不另做法线深度预渲染。** 以前为 SSAO / 描边把整个场景换材质再画一遍，中期约 400 次绘制调用纯属重复。
+  现在 SSAO / 雾直接读主渲染的深度，SSAO 的法线由深度差分重建。
+- 由此带来一条规则：**不该参与遮蔽的东西（血条、粒子、薄纱）材质必须 `depthWrite: false`**——
+  写了深度，SSAO 就会沿着它的边缘算出一圈假遮蔽（任务 #104"血条旁边多一块暗影"就是这个形状）。
+
+### 7.7 程序化贴图的颜色要按 sRGB 写
+
+`worldTextures.js` 的调色板写的是 sRGB 十六进制，贴图也按 sRGB 存（`colorSpace = SRGBColorSpace`）。
+**`new THREE.Color(hex).r` 拿到的是线性值**——直接写进贴图，采样时会再解一次码，整张图暗一大截。
+第一版新地形整体发黑，先后怀疑了光照强度、阴影，都不是，真正原因是这一行。
+取 sRGB 分量要用 `color.getHex(THREE.SRGBColorSpace)`。
 
 ---
 

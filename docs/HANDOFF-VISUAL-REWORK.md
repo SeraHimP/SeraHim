@@ -17,9 +17,25 @@
 **风格基准**：用户认可的是 `docs/refs/lookdev/01-variant-a-dota.jpg`、`02-variant-b-lol.jpg` 那种——
 明亮黄绿草地、暖棕土路、圆润巨石崖壁、阔叶树、青绿河水。用户原话：「按照这种风格弄！别跑偏了」。
 
-**当前测试状态：红的。18 套失败**，全部是钉着"已删掉的旧表现层 / 旧后处理 / 旧高度公式"的断言，不是玩法回归：
-`sim_visual sim_lightring sim_maps sim_deadcode sim_v44 sim_v46 sim_v51 sim_postfx sim_daynight sim_mapskirt
-sim_frostbridge sim_navoutline sim_boundarydecor sim_dominionprops sim_desertfloor sim_landmarks sim_unit_models sim_weather_ground`
+**当前测试状态：0 失败**（Opus 接手后修回，111 套）。
+
+## 一·补、Opus 这一轮做完了什么（2026-11-11）
+
+全部是非可视化工作，没有改任何着色器、配色、几何、昼夜关键帧和模型。
+
+- 第 1 步 测试修绿：完成。11 套只测已删文件的整套删除，其余逐条改钉新行为（明细见提交信息）。
+- 第 2 步 删死代码：完成。14 个旧地形层 + `smoothLabels.js` + `data/` 下 4 个只服务旧层的模块 + 10 个死配置块 + 设置里失效的「地面边界平滑」按钮。
+- 第 3 步 去掉"下雪时树和塔变白"：完成。
+- 第 4 步 新模块测试：完成。`tests/sim_terrain_field.mjs`（73 条）；`sim_postfx` 补了 ScenePass 的行为测试。
+- 第 5 步 编辑器入口：完成。「世界」页新增 39 项地形 / 抗锯齿 / SSAO / 相机 / 大气透视 / 天空数值，应用后按需重建。
+- 第 6 步 性能基线工具：完成。`tools/perf_probe.mjs`，基线与线索写在 `docs/VISUAL-REWORK-REPORT.md` §11。
+- 第 7 步 文档：`docs/DEVELOPMENT.md` 的仓库结构、§6.5 地形高度场、§7.2 局部光、§7.6 后处理管线、§7.7 程序化贴图色彩空间已更新。
+
+还剩的非可视化尾巴（不急，Fable 顺手或下次 Opus 做）：
+- `src/data/mapValidate.js` / `baseCircle.js` 里有一批只被已删旧层用过的导出函数：
+  `isLaneCell`、`isInBaseWallRing`、`forestZoneCells`、`baseWallThickness`、`baseWallRuns`、`isInBaseOpen`、`classifyLaneCells`。确认模块内部也不用后可删。
+- `CONFIG.stylizedPalettes` 里大量旧地面配色字段（`corridorColor`、`jungleLayout` 等）已无人读，但塔石色、`vegetationMode` 还在用。等新主题落地后一并清理。
+- `unitRig.js` / `InstancedBodyLayer` 里给已删预渲染准备的 `prepassMaterial`、`UnitLayer` 里的 `prepassSolid` 标记现在是空转，可删。
 
 ## 二、Opus 接手的部分（非可视化，约 60 分钟）
 
@@ -61,3 +77,11 @@ sim_frostbridge sim_navoutline sim_boundarydecor sim_dominionprops sim_desertflo
 ## 四、留给 Fable 的问题
 
 （Opus 遇到需要画面决定的地方记在这里）
+
+1. **地图编辑器的两支笔刷现在画了不生效。** 「材质分区」（`zoneCellGrid`）和「石墙风格」（`wallStyleGrid`）原本只被已删的旧地形材质 / 边界装饰层读。
+   新世界要不要读、怎么呈现（换地表层？换崖壁样式？），是画面决定。数据还在、编辑器还能画。
+2. **冰封地图的桥沿没了。** `visualNavgrid`（画面上比可走区更宽的桥沿）原本只被旧地形层读；新高度场按可走区建，桥沿等于没有。
+3. **透明材质是否写深度要核对。** SSAO / 雾现在读主渲染深度，不该参与遮蔽的透明物体必须 `depthWrite: false`。
+   `buildingFx.js` 有 6 个透明材质只关了 5 个，`UnitMeshFactory.js` 有 2 个只关了 1 个——可能是水晶这类实心半透明体（本来就该写），也可能是漏了。
+4. **「塔夜间自发光」开关和 `towerLight.emissiveNight`** 现在仍驱动夜间塔顶自发光。用户要的是"水晶任何时候都发光"，这块随新塔模型重做时一起定。
+5. **性能**：§11 的几条线索（实例化分桶过碎、每单位地面贴片未合批、三角形超标）都要动世界模块的结构，留给你决定怎么切。
