@@ -57,9 +57,10 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   const tw = mkTower(ents, fx);
   const melee = mkMinion(ents, 'melee');
   attr.tick();
-  T('穿透型：30%护甲穿透+30%法术穿透（永久状态）', (() => {
+  // Q2：穿透型的 +30% 双穿按"只留一个核心"删除，只保留升温
+  T('穿透型：不再自带 30% 双穿', (() => {
     const st = attr.calc(tw, fx.getEffects(tw.id));
-    return st.armorPenPercent === 30 && st.magicPenPercent === 30;
+    return !(st.armorPenPercent >= 30) && !(st.magicPenPercent >= 30);
   })());
   // Q3（本轮返工）：每层的倍率台阶从写死30%改成随法术强度变化的
   // (piercingHeatBasePct + piercingHeatApPct%×法术强度)%——这座塔 AP=0（模板默认值，
@@ -72,17 +73,17 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
     combat.performAttack(tw, melee);
     hits.push(melee.currentHP);
   }
-  T(`AP=0时恰好4发打死近战（第3发后剩 ${Math.round(hits[2] ?? -1)} HP，第 ${hits.length} 发死）`,
-    hits.length === 4 && hits[2] > 0 && !melee.alive);
+  // Q2 删掉 30% 双穿后单发略低，钉"几发内打死、且升温在逐发变强"的形状，不钉具体发数
+  T(`AP=0时 4~5 发打死近战（实际第 ${hits.length} 发死）`, hits.length >= 4 && hits.length <= 5 && !melee.alive);
   // 升温层数（4 发后 = 4 层，已达上限）
   const heat = fx.getEffectByName(tw.id, '升温');
-  T('升温每次命中+1层（4发命中后=4层，display纯计数不影响属性）', !!heat && heat.stacks === 4 && heat.blueprint.kind === 'display');
-  // 换目标重置
+  T('升温每次命中+1层（4发后封顶 4 层，display纯计数不影响属性）', !!heat && heat.stacks === 4 && heat.blueprint.kind === 'display');
+  // Q2：换目标不再重置（持续开火升温，与闪电杖充能同一条规则）
   const m2 = mkMinion(ents, 'siege');
   attr.tick();
   combat.performAttack(tw, m2);
   const heat2 = fx.getEffectByName(tw.id, '升温');
-  T('切换目标升温重置（新目标第1发=1层）', !!heat2 && heat2.stacks === 1);
+  T('切换目标升温保留（新目标第1发仍是满层）', !!heat2 && heat2.stacks === 4);
 }
 
 // ==================== ② 伤害转化：防御向、仅扣血部分 ====================
@@ -149,16 +150,16 @@ function mkMinion(ents, type = 'melee', faction = 'red', x = 50, y = 0) {
   const hp0 = main.currentHP;
   SkillLibrary.weapon_lightning.onFrame(tw.id, 0.26, inst, ctx); // ≥0.25 触发一跳
   const tickDmg = hp0 - main.currentHP;
-  // Q5：lightningApConvertPct 100→200，AD100 全部转走、换到 AP200，跳伤害 =
-  // 20%×AP200×1.8 = 72（见 AttributeCalculator 的 drainedAD/apGained 解耦注释）。
-  T(`满充单跳≈72（Q5：20%×AP200×1.8，实际${tickDmg.toFixed(1)}）`, Math.abs(tickDmg - 72) < 1.5);
+  // Q2：转化率 100%（AD100 → AP100），每秒伤害 = AP × 攻速 × tickPct×tickPerSec × 充能倍率，
+  // 单跳 = 25% × AP100 × 攻速 × 1.8
+  const _as = attr.calcAttackSpeedOf(attr.calc(tw, fx.getEffects(tw.id)));
+  const _exp = 0.25 * 100 * _as * 1.8;
+  T(`满充单跳≈${_exp.toFixed(1)}（25%×AP100×攻速${_as.toFixed(2)}×1.8，实际${tickDmg.toFixed(1)}）`, Math.abs(tickDmg - _exp) < 1.5);
   // v35 方案B：闪电链弹射已删除——满充为纯单体，周围敌人不受伤、无电弧
   T('v35 闪电链已删除（无电弧、周围敌人无伤）', arcs === 0 && others.every(o => o.currentHP === 1e5));
   // 麻痹：照射中常驻（永久显示），停照 0.6s 后脱落
-  const para = fx.getEffects(main.id).filter(e => e.blueprint.name === '闪电麻痹');
-  T('麻痹照射中常驻（光环式，无倒计时闪烁）', para.length === 3 && para.every(e => e.remainingTime === Infinity));
-  fx.update(0.7); // 停止照射 0.7s
-  T('停止照射后麻痹自动脱落（光环宽限期）', fx.getEffects(main.id).filter(e => e.blueprint.name === '闪电麻痹').length === 0);
+  // Q2：麻痹三件套已删除
+  T('闪电杖不再施加麻痹', fx.getEffects(main.id).filter(e => e.blueprint.name === '闪电麻痹').length === 0);
 }
 
 // ==================== ④ 锁定前摇 ====================

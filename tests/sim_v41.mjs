@@ -173,16 +173,19 @@ function unit(ents, o = {}) {
   }
 }
 
-// ==================== 四、闪电杖：67% 无视防御 + 满充重伤 + 切目标严格归零 ====================
+// ==================== 四、闪电杖（Q2 重做）：只留充能光束；充能按攻击次数；换目标不清零 ====================
+// 用户（Q2）："闪电杖那一堆乱七八糟的技能堆一块就跟屎山一样，每种武器保留其核心功能"，
+// "对于充能型武器应该如何把充能速度和攻速连结起来"；追问后定稿"闪电杖保留物理转法强，不过数值要改"。
+// 原来的 67% 无视防御、满充重伤、麻痹三件套、对护盾加伤、"切目标严格归零"全部删除。
 {
   const P = SkillLibrary.weapon_lightning.defaultParams;
-  T('无视防御上限 67%（v43 定稿，原 90%）', P.maxPenPct === 67);
-  T('重伤 40%', P.grievousPct === 40);
-  T('充能时间基准仍是 12s（用户："充能时间不要改"）', P.chargeTimeAtAS1 === 12);
-  T('每跳 20% AD / 每秒 4 跳 / 满充 1.8 倍（方案B 三个数未动）',
-    P.tickPct === 20 && P.tickPerSec === 4 && P.maxMult === 180);
-  T('数值全部软编码（编辑器列的就是代码读的）',
-    Object.keys(P).length >= 10 && !('damage' in P) && !('bounces' in P));
+  T('删掉的机制不再有参数（无视防御/重伤/麻痹/对护盾加伤）',
+    P.maxPenPct === undefined && P.grievousPct === undefined && P.slowPct === undefined
+    && P.ampDownPct === undefined && P.asDownPct === undefined && P.bonusVsShieldPct === undefined);
+  T('每次攻击量 = 100% 法强（tickPct × tickPerSec），与穿透型单发对齐', P.tickPct * P.tickPerSec === 100);
+  T('充能按攻击次数：与穿透型升温层数一致', P.chargeTimeAtAS1 === SkillLibrary.weapon_piercing.HEAT_MAX_STACKS);
+  T('满充倍率与穿透型满层倍率一致（180%）', P.maxMult === 180
+    && Math.abs(1 + SkillLibrary.weapon_piercing.HEAT_MAX_STACKS * 0.2 - P.maxMult / 100) < 1e-9);
 
   const A = world();
   const tw = {
@@ -203,34 +206,27 @@ function unit(ents, o = {}) {
   tw.targetId = t1.id;
   const DT = 1 / 30;
   window.gameTime = 0;
-  const grievousOn = (e) => A.fx.getEffects(e.id).some(x => x.blueprint.name === '重伤');
-  let sawGrievousBeforeFull = false;
+  let tFull = null;
   for (let i = 0; i < 30 / DT; i++) {
     window.gameTime = i * DT; attr.tick();
     SkillLibrary.weapon_lightning.onFrame(tw.id, DT, inst, ctx);
     A.fx.update(DT);
-    if (inst.state.charge < 1 && grievousOn(t1)) sawGrievousBeforeFull = true;
-    if (inst.state.charge >= 1) break;
+    if (inst.state.charge >= 1) { tFull = window.gameTime; break; }
   }
-  T('能充满', (inst.state.charge || 0) >= 1);
-  T('未满充【不】施加重伤（用户改口："改成满充能后才会施加"）', !sawGrievousBeforeFull);
-  // 满充后再跑几跳，重伤必须挂上
-  for (let i = 0; i < 20; i++) { window.gameTime += DT; attr.tick(); SkillLibrary.weapon_lightning.onFrame(tw.id, DT, inst, ctx); A.fx.update(DT); }
-  T('满充后施加重伤', grievousOn(t1));
-  {
-    const st = attr.calc(t1, A.fx.getEffects(t1.id));
-    T(`重伤 = 治疗与护盾强度 −40%（实际 ${st.healShieldPowerPct}）`, st.healShieldPowerPct === -40);
-    T('重伤真的压住治疗（强度系数 0.6）', Math.abs(healPowerOf(st) - 0.6) < 1e-9);
-  }
-  // 切目标：充能严格归零（用户定稿"严格归零"）
+  const as = attr.calcAttackSpeedOf(attr.calc(tw, A.fx.getEffects(tw.id)));
+  T(`充满时间 = 攻击次数 / 攻速（${tFull?.toFixed(2)}s ≈ ${(P.chargeTimeAtAS1 / as).toFixed(2)}s）`,
+    tFull != null && Math.abs(tFull - P.chargeTimeAtAS1 / as) < 0.1);
+  T('满充也不施加重伤 / 麻痹', !A.fx.getEffects(t1.id).some(x => x.blueprint.name === '重伤' || x.blueprint.name === '闪电麻痹'));
+  // 切目标：充能保留
   tw.targetId = t2.id;
   window.gameTime += DT; attr.tick();
   SkillLibrary.weapon_lightning.onFrame(tw.id, DT, inst, ctx);
-  T(`切目标充能严格归零（切后 ${(inst.state.charge * 100).toFixed(1)}%，只该是这一帧充的那点）`,
-    inst.state.charge < 0.02);
-  // 旧目标身上的重伤是光环，停照后会自己脱落
-  for (let i = 0; i < 40; i++) A.fx.update(0.05);
-  T('切目标后旧目标的重伤自动脱落（光环宽限期，不需要额外清理代码）', !grievousOn(t1));
+  T(`切目标充能保留（切后 ${(inst.state.charge * 100).toFixed(1)}%）`, inst.state.charge > 0.99);
+  // 失去目标：逐秒衰减，不是一下清零
+  tw.targetId = null;
+  for (let i = 0; i < 15; i++) { window.gameTime += DT; attr.tick(); SkillLibrary.weapon_lightning.onFrame(tw.id, DT, inst, ctx); }
+  T(`失去目标后逐秒衰减（0.5 秒后 ${(inst.state.charge * 100).toFixed(1)}%，不是 0 也不是满）`,
+    inst.state.charge > 0.5 && inst.state.charge < 1);
 }
 
 // ==================== 五、残弹：飞到落点，且不造成任何伤害（含爆炸型）====================

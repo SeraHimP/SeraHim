@@ -90,59 +90,13 @@ const mapStub = {
     Math.abs(asAfter / asBefore - expectMult) < 1e-6);
 }
 
-// ==================== 三、连珠炮：按秒叠层，不按时间衰减，只有脱战才清零 ====================
-// v51.33 机制改动：用户定稿"脱战或切换目标立即清空层数"改成"只有脱离战斗后
-// 层数才消失"——换目标不再打断叠层，只要塔一直在战斗状态就持续涨，直到真的
-// 脱离战斗（没有存活目标/entity._inCombat 变 false）才清零。
+// ==================== 三/四、连珠炮：持续叠攻速那一层已按 Q2 删除 ====================
+// 用户（Q2）："每种武器保留其核心功能剩余进行简化或者直接删除"——连珠炮的核心是"高攻速、低单发"，
+// 原来的"持续攻击每秒叠一层攻速"删除。
 {
-  const { ents, fx, ctx } = W();
-  const tower = mk(ents, 'tower', 0, 'blue');
-  const inst = equipSkill(tower, 'weapon_barrage', ctx);
-  const target = mk(ents, 'melee', 50, 'red');
-  tower.targetId = target.id; tower._inCombat = true;
-  const p = SkillLibrary.weapon_barrage.defaultParams;
-
-  for (let i = 0; i < 3; i++) SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
-  let eff = fx.getEffectByName(tower.id, '连珠');
-  T('叠层①-命中同一目标 3 秒后叠了 3 层', eff && eff.stacks === 3);
-
-  // 换目标：本轮改动后不应该再清零——层数继续在新目标身上累加。
-  const target2 = mk(ents, 'melee', 60, 'red');
-  tower.targetId = target2.id;
-  SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
-  eff = fx.getEffectByName(tower.id, '连珠');
-  T('叠层②-换目标后层数不清零，继续在新目标身上累加（本轮机制改动的核心）',
-    eff && eff.stacks === 4);
-
-  // 长时间不动（模拟"不按时间衰减"）：多跑几秒不清零，中途再换一次目标也一样继续涨，
-  // 只要一直在战斗状态就冲到封顶。
-  for (let i = 0; i < 50; i++) SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
-  eff = fx.getEffectByName(tower.id, '连珠');
-  T(`叠层③-层数封顶在 maxStacks=${p.maxStacks}，不会无限涨`, eff && eff.stacks === p.maxStacks);
-  T('叠层④-封顶后层数不随时间自然衰减（effect 是 permanent，不吃 remainingTime 递减）',
-    eff && eff.blueprint.permanent === true);
-
-  // 脱离战斗：唯一的清零条件。
-  tower._inCombat = false;
-  SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
-  eff = fx.getEffectByName(tower.id, '连珠');
-  T('叠层⑤-脱战后层数清零（脱战是现在唯一会清空层数的条件）', !eff);
-}
-
-// ==================== 四、连珠炮：与风魂区别开——每层更少、层数更多 ====================
-{
-  const barrage = SkillLibrary.weapon_barrage.defaultParams;
-  const windSoul = CONFIG.dragonSouls?.wind || {};
-  // 风魂是 dragonsoul_wind 的每层攻速加成（比如 perStack），跟连珠炮的 stackPct 比较：
-  // 用户口径是"每层更少，层数更多"——不钉绝对数字，只钉这个相对关系成立。
-  const windPerStack = windSoul.attackSpeedPerStack ?? windSoul.perStack ?? null;
-  if (windPerStack != null) {
-    T('区分①-连珠炮每层攻速加成比风魂每层更小', barrage.stackPct < windPerStack);
-  }
-  const windMaxStacks = windSoul.maxStacks ?? null;
-  if (windMaxStacks != null) {
-    T('区分②-连珠炮层数上限比风魂更多', barrage.maxStacks > windMaxStacks);
-  }
+  const def = SkillLibrary.weapon_barrage;
+  T('简化①-连珠炮不再有逐秒叠层（没有 onFrame、没有层数参数）',
+    typeof def.onFrame !== 'function' && def.defaultParams.stackPct === undefined && def.defaultParams.maxStacks === undefined);
 }
 
 // ==================== 五、连珠炮：卸下武器清理残留效果 ====================
@@ -152,7 +106,6 @@ const mapStub = {
   const inst = equipSkill(tower, 'weapon_barrage', ctx);
   const target = mk(ents, 'melee', 50, 'red');
   tower.targetId = target.id; tower._inCombat = true;
-  SkillLibrary.weapon_barrage.onFrame(tower.id, 1.0, inst, ctx);
   T('卸下①-装备后确实生效了超频buff', !!fx.getEffectByName(tower.id, '连珠炮·超频'));
   SkillLibrary.weapon_barrage.onUnequip(tower.id, inst, ctx);
   T('卸下②-卸下后超频buff清理干净', !fx.getEffectByName(tower.id, '连珠炮·超频'));

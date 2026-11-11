@@ -86,7 +86,9 @@ function equip(e, skillId, ents, fx, bus) {
     shieldFixedCurrent: 0, tempShield: 0, lastDamageTime: -Infinity, _skillInstances: [], _mapFaction: 'red' };
   ents.add(t2);
   attr.tick(); const b2 = t2.currentHP; combat.performAttack(tw, t2);
-  T('切目标重置为100%', Math.abs((b2 - t2.currentHP) - dmgs[0]) < 1);
+  // Q2：升温跟着持续开火走，换目标不清零——新目标第一发仍是满层倍率
+  // 4 发后已叠满 4 层，新目标第一发就是满层倍率 1 + 4×台阶
+  T('切目标升温保留（新目标第一发 = 满层伤害）', Math.abs((b2 - t2.currentHP) - dmgs[0] * (1 + per0 * 4)) < 1);
 }
 
 // ==================== ② 闪电杖：阵营色 + 死亡残留机制 ====================

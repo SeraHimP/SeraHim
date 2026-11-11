@@ -2633,10 +2633,11 @@ async function world() {
     && /magicResist: '魔法抗性'/.test(srcOf('src/ui/DetailModal.js'))
     && /key: 'magicResist', label: '魔法抗性'/.test(srcOf('src/ui/statPanelLayout.js')));
 
-  T('补④-穿透型子弹描述真正换行、不再是"固定30%双穿"（Q3b）',
+  // Q2：穿透型只留升温，"唯一被动——穿透（+30% 双穿）"那一段删除
+  T('补④-穿透型描述只剩升温（Q2 删掉了 30% 双穿）',
     (() => {
       const w = srcOf('src/core/skills/weapons.js');
-      return /升温[\s\S]{0,300}\\n唯一被动——穿透/.test(w) && !/固定30%双穿/.test(w) && /\+30%护甲穿透，\+30%法术穿透/.test(w);
+      return /唯一被动——升温：持续开火/.test(w) && !/固定30%双穿/.test(w) && !/\+30%护甲穿透，\+30%法术穿透/.test(w);
     })());
 
   T('补⑤-简洁/详细合并成一个按钮（不再是两颗），文字就是当前模式，点一下切到另一个（Q5）',

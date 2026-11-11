@@ -724,8 +724,8 @@ export class CombatSystem {
       // 界面看着是 0 层，实际按了 N 层结算，UI 与真实伤害对不上。
       // 治本方法是把这个展示效果当成【权威】：它没了，层数就必须是 0，不只是显示层清零。
       const liveHeat = this.effects.getEffectByName(attacker.id, '升温');
-      if (st.heatTarget !== target.id || !liveHeat) {
-        // 换目标，或者升温已经因超时自然过期（哪怕还是同一个目标）：都要清零
+      // Q2：升温跟着"持续开火"走——换目标不清零，只有升温效果因停火超时过期才清零
+      if (!liveHeat) {
         st.heatTarget = null; st.heatStacks = 0;
         if (liveHeat) this.effects.remove(liveHeat.id);
       }

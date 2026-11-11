@@ -123,8 +123,8 @@ T('红蓝攻击中立', ct('blue','neutral') && ct('red','neutral'));
   SkillLibrary.weapon_piercing.onEquip(tw.id,wi,ctx3);
   const pen=fx3.getEffects(tw.id).filter(e=>e.blueprint.name==='穿透');
   const st3=AttributeCalculator.calc(tw,fx3.getEffects(tw.id));
-  T('穿透30%走效果系统(面板可见)', pen.length===2 && st3.armorPenPercent===30 && st3.magicPenPercent===30);
-  T('穿透状态为永久(不闪烁刷新)', pen.every(e=>e.remainingTime===Infinity));
+  // Q2：穿透型的 +30% 双穿已删除，只留升温
+  T('穿透型不再挂 30% 双穿状态（Q2）', pen.length===0 && !(st3.armorPenPercent>=30));
   SkillLibrary.weapon_piercing.onUnequip(tw.id,wi,ctx3);
   const st4=AttributeCalculator.calc(tw,fx3.getEffects(tw.id));
   T('卸下武器后穿透脱落(不留缝合怪)', st4.armorPenPercent===0 && fx3.getEffects(tw.id).length===0);

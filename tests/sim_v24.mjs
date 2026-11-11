@@ -56,16 +56,18 @@ let pass=0,fail=0;const T=(n,c)=>{c?pass++:(fail++,console.log('✗',n))};
   const t0833=measure(0.833), t208=measure(2.08), t4=measure(4.0);
   console.log(`充能时间: 攻速0.833→${t0833.toFixed(1)}s | 2.08→${t208.toFixed(1)}s | 4.0→${t4.toFixed(1)}s`);
   T('Q1 攻速影响充能速度（bug已修）', t208 < t0833*0.6 && t4 < t208*0.6);
-  T('Q1 满充时间 ≈ 12/攻速', Math.abs(t0833-12/0.833)<1.0 && Math.abs(t4-12/4)<0.5);
+  // Q2：充能按攻击次数计——满充时间 = chargeTimeAtAS1（次攻击量）/ 攻速
+  const _n = SkillLibrary.weapon_lightning.defaultParams.chargeTimeAtAS1;
+  T(`Q1 满充时间 ≈ ${_n}/攻速`, Math.abs(t0833-_n/0.833)<0.3 && Math.abs(t4-_n/4)<0.2);
 }
 
 // ========== Q8: 无视防御连续增长至上限（v43 定稿 67%，历史：60% → 90% → 67%）==========
 {
   const src=fs.readFileSync(new URL('../src/core/skills/weapons.js', import.meta.url),'utf8');
   // 数值已从模块级 const 搬进 defaultParams（软编码，编辑器可改），所以断言改钉参数值。
-  T('Q8 无视防御上限 67%（v43 定稿，原 90%）',
-    SkillLibrary.weapon_lightning.defaultParams.maxPenPct === 67);
-  T('Q8 无视防御随充能连续（非满充阶跃）', src.includes('ignoreDefenseRatio: charge * P.maxPen'));
+  // Q2：闪电杖的"满充无视防御"已删除（每把武器只留一个核心：充能光束）
+  T('Q8 闪电杖不再无视防御（Q2 删除）',
+    SkillLibrary.weapon_lightning.defaultParams.maxPenPct === undefined && !src.includes('ignoreDefenseRatio: charge * P.maxPen'));
   T('Q8 数值不再写死在源码里（模块级 const 已删）',
     !src.includes('LIGHTNING_MAX_PEN') && !src.includes('LIGHTNING_MAX_MULT')
     && !src.includes('CHARGE_TIME_AT_AS1 ='));

@@ -342,14 +342,15 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q9⑦ 原白名单字段行为不变', built.maxHP === 1234 && built.shieldFixedMax === 0);
   // 腐蚀型：可选那半按 attackType 走 → 现在默认就是魔法，另一半固定真实
   const corr = String(SkillLibrary.weapon_corrosion.onFrame);
-  T('Q9⑧ 腐蚀型 = 可选类型（默认魔法）+ 固定真实，两条独立 DoT',
-    /damageType: chosenType/.test(corr) && /damageType: 'true'/.test(corr));
+  // Q2：两种中毒合成一种（总伤害不变），删掉减攻速
+  T('Q9⑧ 腐蚀型简化为一条 DoT + 减速（Q2）',
+    /damageType: chosenType/.test(corr) && !/腐蚀·剧毒/.test(corr) && !/腐蚀·衰弱/.test(corr));
 }
 
 // ==================== 九、Q10 穿透型删破甲 / 闪电杖 67% ====================
 {
   const wp = SkillLibrary.weapon_piercing;
-  T('Q10① 穿透型保留固定 30% 双穿', /flatValue: 30/.test(String(wp.onEquip)));
+  T('Q10① 穿透型的固定 30% 双穿已按 Q2 删除', !/flatValue: 30/.test(String(wp.onEquip)));
   // Q3（本轮返工）：HEAT_PER_STACK 这个写死常量已删——每层台阶改用
   // _perStackFraction(atkStats) 动态算（随法术强度变化），钉住这个函数存在即可。
   T('Q10② 穿透型保留升温（每层台阶现在是随法术强度变化的函数）',
@@ -358,12 +359,13 @@ function mkTower(ents, tier, lane, faction = 'blue', extra = {}) {
   T('Q10③ 穿透型不再叠破甲', !/破甲/.test(stripComments(String(wp.onDealtDamage))));
   T('Q10④ 技能说明也去掉了破甲', !/削.*双抗|破甲/.test(wp.description + wp.descTemplate));
   const P = SkillLibrary.weapon_lightning.defaultParams;
-  T('Q10⑤ 闪电杖满充无视 67% 防御（原 90%）', P.maxPenPct === 67);
-  T('Q10⑥ 闪电杖其余数值未改（用户："剩下不改"）',
-    P.chargeTimeAtAS1 === 12 && P.tickPct === 20 && P.tickPerSec === 4
-    && P.maxMult === 180 && P.grievousPct === 40 && P.bonusVsShieldPct === 7);
-  T('Q10⑦ 闪电杖说明同步到 67%',
-    /67%/.test(SkillLibrary.weapon_lightning.description) && !/90%/.test(SkillLibrary.weapon_lightning.description));
+  // Q2：闪电杖只留充能光束（无视防御/重伤/对护盾加伤已删除）
+  T('Q10⑤ 闪电杖不再有无视防御', P.maxPenPct === undefined);
+  T('Q10⑥ 闪电杖数值：每次攻击量 100% 法强、4 次攻击量充满、满充 1.8 倍',
+    P.tickPct * P.tickPerSec === 100 && P.chargeTimeAtAS1 === 4 && P.maxMult === 180
+    && P.grievousPct === undefined && P.bonusVsShieldPct === undefined);
+  T('Q10⑦ 闪电杖说明不再提无视防御/重伤',
+    !/无视防御/.test(SkillLibrary.weapon_lightning.description) && !/重伤/.test(SkillLibrary.weapon_lightning.description));
 
   // 行为形状：同一发攻击，删破甲之后对有抗性的目标伤害必然更低
   const bus = new EventBus(), ents = new EntityContainer(bus), fx = new EffectRegistry(bus);

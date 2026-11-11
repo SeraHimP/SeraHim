@@ -2480,7 +2480,9 @@ export const CONFIG = {
     // 脱钩——同样原始数值只有假想同数值物理塔（AD×攻速4.0）两三成的产出量级，
     // 这才是偏弱的根因。调大转化率让初始AP和AP成长（towerGrowth.apRatioOfAd）
     // 同步翻倍，直接放大闪电杖的伤害基数。
-    weapons: { lightningApConvertPct: 200, piercingHeatBasePct: 20, piercingHeatApPct: 15 },
+    // Q2：lightningApConvertPct 200 → 100（用户："闪电杖保留物理转法强，不过数值要改"）——
+    // 闪电杖每秒伤害改成按攻速走之后，转化 100% 才与穿透型在同攻速下对齐（每次攻击量 = 1 倍法强 = 1 倍原物攻）。
+    weapons: { lightningApConvertPct: 100, piercingHeatBasePct: 20, piercingHeatApPct: 15 },
 
     // ==================== 本轮：自适应伤害类型判定 + 数值结算规则重做（用户定稿）====================
     // 起因：用户报"上次更改了攻击逻辑，导致目前小兵单位异常强大"——排查发现（见
