@@ -195,7 +195,7 @@ export function refreshAnimUniforms() {
 }
 
 /**
- * 一套动画材质：本体（受光、顶点色，与 unitMaterial 同参数）+ 描边预渲染用的法线材质 + 阴影深度材质。
+ * 一套动画材质：本体（受光、顶点色，与 unitMaterial 同参数）+ 阴影深度材质（影子也要跟着动画变形）。
  * inst = true：合批（小兵），每个实例的 aAnim 由 InstancedBodyLayer 写；
  * inst = false：单体（巨龙），每条龙一套，UnitLayer 每帧写 userData.uAnim。
  */
@@ -203,14 +203,12 @@ export function animMaterials(inst) {
   const body = injectAnim(new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 0, color: 0xffffff,
   }), inst, 'body');
-  const normal = injectAnim(new THREE.MeshNormalMaterial(), inst, 'normal');
   const depth = injectAnim(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), inst, 'depth');
-  // 单体版三者共用同一个 uAnim（本体、描边、阴影同一姿势）
-  if (!inst) { normal.userData.uAnim = depth.userData.uAnim = body.userData.uAnim; relinkUniform(normal, body); relinkUniform(depth, body); }
-  body.userData.prepassMaterial = normal;
+  // 单体版本体与阴影共用同一个 uAnim（同一姿势）
+  if (!inst) { depth.userData.uAnim = body.userData.uAnim; relinkUniform(depth, body); }
   body.userData.depthMaterial = depth;
   body.userData.isUnitAnim = true;
-  for (const m of [body, normal, depth]) _live.add(m);
+  for (const m of [body, depth]) _live.add(m);
   return body;
 }
 function relinkUniform(m, src) {
@@ -220,7 +218,7 @@ function relinkUniform(m, src) {
 
 export function disposeAnimMaterials(body) {
   if (!body) return;
-  for (const m of [body, body.userData.prepassMaterial, body.userData.depthMaterial]) {
+  for (const m of [body, body.userData.depthMaterial]) {
     if (!m) continue;
     _live.delete(m);
     m.dispose();

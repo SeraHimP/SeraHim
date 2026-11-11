@@ -154,7 +154,7 @@ T('置①-CONFIG.ui.qualityPresets 定义了低/中/高三档，且分辨率随�
   const ul = srcOf('src/presentation/UnitLayer.js');
   // 暗斑必须用**不带 walkBob 的地面高度**。跟着走路起伏一起上下跳的"影子"会立刻穿帮。
   T('缝④-接地暗斑贴在地面高度上，不跟随走路起伏（跟着跳就穿帮了）',
-    /en\.contact\.position\.set\(e\.pos\.x, CONTACT_LIFT \+ gy, e\.pos\.y\)/.test(ul));
+    /this\._pushContact\(e\.pos\.x, CONTACT_LIFT \+ gy, e\.pos\.y, cr\)/.test(ul));
   // 它是"影子"，必须压在射程圈/归属环之下。
   T('缝⑤-暗斑的渲染次序压在贴地环之下',
     /const ORDER_CONTACT = (\d+);/.test(ul)

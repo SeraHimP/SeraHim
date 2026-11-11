@@ -68,6 +68,7 @@ const SOUL_COLORS = (() => {
 const ORDER_UNIT = 10, ORDER_BAR = 20;
 // v54：接地暗斑压在所有贴地环之下（它是"影子"，射程圈/归属环应该画在它上面）。
 const ORDER_CONTACT = 4;
+const _cm4 = new THREE.Matrix4();   // 接地暗斑合批写实例矩阵用
 const CONTACT_LIFT = 0.35;   // 比 RING_LIFT(0.6) 更贴地，避免与地面 z-fighting 又不抢环的位置
 const ORDER_RING = 5, ORDER_SHIELD = 21; // 贴地环垫在单位下；盾牌浮于血条上
 const _EMPTY_GEO = new THREE.BufferGeometry();  // Mesh 首帧占位，随即被 _visualOf 的共享几何替换
@@ -316,6 +317,46 @@ export class UnitLayer {
       fog: false,
     });
     return this._contactM;
+  }
+
+  /**
+   * 接地暗斑合批：全场单位的暗斑画成一个实例化网格（原来每个单位一个 Mesh，中期约 150 次绘制调用）。
+   * 暗斑全场同一个材质、同一个颜色，只是半径不同——用单位圆按半径缩放即可。
+   * 同色半透明叠加与绘制先后无关，所以合批前后画面一致。每帧在 update 开头清零、逐个单位追加、结尾提交。
+   */
+  _contactBatch() {
+    if (this._cb) return this._cb;
+    const geo = new THREE.CircleGeometry(1, 48); geo.rotateX(-Math.PI / 2);
+    this._cb = { geo, mesh: null, cap: 0, n: 0 };
+    this._growContacts(64);
+    return this._cb;
+  }
+  _growContacts(cap) {
+    const cb = this._cb;
+    if (cb.mesh) { this.scene.remove(cb.mesh); cb.mesh.dispose(); }
+    const mesh = new THREE.InstancedMesh(cb.geo, this._contactMat(), cap);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.renderOrder = ORDER_CONTACT;
+    mesh.frustumCulled = false;   // 单位散布满全图，包围球按几何算会把实例错剔掉
+    mesh.count = 0;
+    this.scene.add(mesh);
+    cb.mesh = mesh; cb.cap = cap;
+  }
+  _pushContact(x, y, z, r) {
+    const cb = this._contactBatch();
+    if (cb.n >= cb.cap) {
+      const old = cb.mesh, keep = cb.n;
+      this._growContacts(cb.cap * 2);
+      for (let i = 0; i < keep; i++) { old.getMatrixAt(i, _cm4); cb.mesh.setMatrixAt(i, _cm4); }
+    }
+    _cm4.makeScale(r, 1, r); _cm4.setPosition(x, y, z);
+    cb.mesh.setMatrixAt(cb.n++, _cm4);
+  }
+  _flushContacts() {
+    const cb = this._cb;
+    if (!cb) return;
+    cb.mesh.count = cb.n;
+    cb.mesh.instanceMatrix.needsUpdate = true;
   }
 
   _flatMat(color, opacity) {
@@ -617,10 +658,7 @@ export class UnitLayer {
     // 那次早退永远不会发生，环就一直挂在场景里。用户报"龙死后""其余单位的龙魂环也会
     // 残留"，根子就是这里漏了一次清理——挪到 remove() 里保证【无论怎么消失】都会清。
     if (en.soul) this._clearSoulRing(en);
-    // v54：接地暗斑同样必须在这里清。本文件已经因为"只在每帧同步的早退分支里清"
-    // 漏过一次（龙魂环残留，见上面那段注释）——单位一旦被整个移除就再也不进同步循环，
-    // 那条早退永远不会发生。新增贴地对象一律在 remove() 里补一次清理。
-    en.contact = this._removeFlat(en.contact); en.contactKey = '';
+    // 接地暗斑是每帧重建的合批（_contactBatch），单位不再被同步时自然就不画了，这里无需单独清理。
     this.map.delete(id);
   }
 
@@ -635,6 +673,7 @@ export class UnitLayer {
     for (const m of this._matCache.values()) m.dispose();
     this._matCache.clear();
     if (this._shieldTex) { this._shieldTex.dispose(); this._shieldTex = null; }
+    if (this._cb) { this.scene.remove(this._cb.mesh); this._cb.mesh.dispose(); this._cb.geo.dispose(); this._cb = null; }
     this.bodyInst.dispose();
   }
 
@@ -1241,7 +1280,7 @@ export class UnitLayer {
           this._installUnit(en, new THREE.Mesh(vis.geo, mat)); en.unitIsModel = false;
         }
         else { en.unit.geometry = vis.geo; en.unit.material = mat; }
-        if (vis.animated) { en.unit.customDepthMaterial = mat.userData.depthMaterial; en.unit.userData.prepassMaterial = mat.userData.prepassMaterial; }
+        if (vis.animated) en.unit.customDepthMaterial = mat.userData.depthMaterial;
         en.bodyGeo = vis.geo; en.bodySize = vis.size;
       }
 
@@ -1252,11 +1291,6 @@ export class UnitLayer {
         //（局部偏移量 crystalLocalY 记在 entry 上，同一个道理见那段的头注）。
         this._disposeCrystal(en);
         const cm = new THREE.Mesh(vis.crystal.geo, crystalMaterial(vis.crystalColor)); // 水晶：共享几何 + 逐塔材质
-        // 水晶材质 transparent:true，但它是实心凸多面体，不是该被跳过预渲染的粒子/
-        // 弹道薄片——挂这个白名单标记让 PostFX.js 的 NormalDepthPrepass 正常把它当
-        // 不透明物体处理，否则描边会读到水晶背后的结构深度，画出"黑线穿模"的效果
-        // （见 PostFX.js 里这个标记的头注，2026-09-25）。
-        cm.userData.prepassSolid = true;
         cm.renderOrder = ORDER_UNIT;
         this.scene.add(cm); this.infoObjs++;
         en.crystalR = vis.crystal.r || 8;
@@ -1343,16 +1377,7 @@ export class UnitLayer {
     const gc = CONFIG.ui?.groundContact || {};
     if (gc.enabled !== false && !ghost) {
       const cr = Math.max(gc.minRadius ?? 7, (vis.size || 20) * (gc.radiusK ?? 1.05));
-      const ck = cr.toFixed(1);   // 材质是全局单例，key 只随半径变
-      if (en.contactKey !== ck) {
-        en.contactKey = ck;
-        en.contact = this._removeFlat(en.contact);
-        en.contact = this._flatMesh(this._flatGeo('circle', cr), this._contactMat());
-        en.contact.renderOrder = ORDER_CONTACT;
-      }
-      en.contact.position.set(e.pos.x, CONTACT_LIFT + gy, e.pos.y);
-    } else if (en.contact) {
-      en.contact = this._removeFlat(en.contact); en.contactKey = '';
+      this._pushContact(e.pos.x, CONTACT_LIFT + gy, e.pos.y, cr);   // 合批，见 _contactBatch
     }
 
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
@@ -1628,6 +1653,7 @@ export class UnitLayer {
 
   update(deps, rel, tNow) {
     this._frame++;
+    if (this._cb) this._cb.n = 0;   // 接地暗斑合批：本帧重新收集
     this.bfx.update();
     this._runWarm();
     const lodHideBar = rel < 1.35;   // 与 2D 的 lodBars 阈值同值
@@ -1650,5 +1676,6 @@ export class UnitLayer {
     for (const [id, en] of this.map) {
       if (en.seen !== this._frame) this.remove(id);
     }
+    this._flushContacts();
   }
 }

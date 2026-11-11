@@ -164,4 +164,26 @@ const { T, done } = scoreboard('GroundTraceLayer（雪盖渲染层）v55.4/v55.5
     /if \(this\.groundTrace\?\.setTint\) this\.groundTrace\.setTint\(unitTint\);/.test(trSrc));
 }
 
+// ==================== 积雪贴图只在内容变化时上传 ====================
+// 性能剖析：原来每帧无条件 putImageData + needsUpdate，等于每帧往显卡重传一整张积雪贴图——
+// 哪怕全图一片雪都没有（雪深网格恒为 0）。现在逐字节比较，有变化才上传。
+{
+  const scene = new THREE.Scene();
+  const layer = new GroundTraceLayer(scene);
+  const mapSystem = { currentMap: { id: 'upload_map', world: { w: 16, h: 16 } } };
+  const resolution = 4, grid = new Float32Array(resolution * resolution);
+  const sys = { getPuddles: () => [], getSnowCover: () => ({ resolution, data: grid, worldW: 16, worldH: 16, zoneMix: null }) };
+  layer.update(sys, mapSystem);
+  const v0 = layer._snowTex.version;
+  T('传①-新建的积雪贴图第一帧会上传一次', v0 > 0);
+  layer.update(sys, mapSystem); layer.update(sys, mapSystem);
+  T('传②-雪深没变（全是 0）时后续帧不再重传', layer._snowTex.version === v0);
+  grid[5] = 0.7;
+  layer.update(sys, mapSystem);
+  T('传③-雪深一变就重传，而且写进贴图的值正确', layer._snowTex.version === v0 + 1 && layer._snowImgData.data[5 * 4 + 3] > 0);
+  grid[5] = 0.7000001;   // 变化小到量化后同一个字节
+  layer.update(sys, mapSystem);
+  T('传④-变化小到 8 位量化后看不出来时不重传', layer._snowTex.version === v0 + 1);
+}
+
 done();

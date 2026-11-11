@@ -147,11 +147,12 @@ T('㉚走路时主手（连同武器）小幅摆动，幅度软编码', U.anim.m
   T('⑰动画注入：本体同时改法线与位置；合批版读实例属性 aAnim；幅度走 uniform（可随配置刷新）',
     /UNIT_ANIM_INST/.test(fake.vertexShader) && /unitAnim\(uaP, objectNormal\)/.test(fake.vertexShader) && /unitAnim\(transformed, uaN\)/.test(fake.vertexShader)
     && fake.uniforms.uAnimK && fake.uniforms.uAnimK.value.x === U.anim.legSwing);
-  T('⑱阴影深度材质、描边预渲染材质走同一套变形（否则影子 / 描边是静止姿势）',
-    /unitAnim\(transformed/.test(d.vertexShader) && !!m.userData.prepassMaterial && m.userData.prepassMaterial.isMeshNormalMaterial);
+  // 描边预渲染用的法线材质随法线深度预渲染一起删除（SSAO / 雾读主渲染深度，主渲染本来就是动画后的姿势）
+  T('⑱阴影深度材质走同一套变形（否则影子是静止姿势），不再另建预渲染法线材质',
+    /unitAnim\(transformed/.test(d.vertexShader) && m.userData.prepassMaterial === undefined);
   const u = animMaterials(false);
-  T('⑲单体版（巨龙）本体 / 描边 / 阴影共用同一个姿势 uniform',
-    u.userData.prepassMaterial.userData.uAnim === u.userData.uAnim && u.userData.depthMaterial.userData.uAnim === u.userData.uAnim);
+  T('⑲单体版（巨龙）本体 / 阴影共用同一个姿势 uniform',
+    u.userData.depthMaterial.userData.uAnim === u.userData.uAnim);
   setUnitTint('#445566');
   T('⑳昼夜染色同样染到动画材质', liveAnimBodies().every((x) => '#' + x.color.getHexString() === '#445566'));
   setUnitTint('#ffffff');
@@ -169,7 +170,7 @@ T('㉚走路时主手（连同武器）小幅摆动，幅度软编码', U.anim.m
   const a = g.geo.getAttribute('aAnim');
   T('㉑小兵桶：换动画材质、每个实例一组 aAnim、扩容后已写的值不丢',
     b.animated && b.mat.userData.isUnitAnim && a.count >= 30 && a.getX(slots[3].index) === 1.5 && a.getZ(slots[3].index) === 0.25
-    && b.mesh.customDepthMaterial === b.mat.userData.depthMaterial && b.mesh.userData.prepassMaterial === b.mat.userData.prepassMaterial);
+    && b.mesh.customDepthMaterial === b.mat.userData.depthMaterial);
   const tg = new THREE.BoxGeometry(1, 1, 1);
   const ts = inst.alloc('test|tower', tg, new THREE.MeshStandardMaterial(), true);
   T('㉒塔桶不受影响（没有 aAnim，材质照旧）', !ts.bucket.animated && !ts.bucket.geo.getAttribute('aAnim'));

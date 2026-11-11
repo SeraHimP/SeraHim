@@ -123,11 +123,10 @@ class BodyBucket {
     this.capacity = cap;
   }
 
-  /** 动画桶：阴影深度与描边预渲染也走同一套变形（否则影子 / 描边是静止姿势） */
+  /** 动画桶：阴影深度也走同一套变形（否则影子是静止姿势） */
   _wireAnim(mesh) {
     if (!this.animated) return;
     mesh.customDepthMaterial = this.mat.userData.depthMaterial;
-    mesh.userData.prepassMaterial = this.mat.userData.prepassMaterial;
   }
 
   /** 写一个实例的动画参数（非动画桶直接忽略） */

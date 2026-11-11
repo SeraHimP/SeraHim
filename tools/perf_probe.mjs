@@ -57,6 +57,10 @@ const state = await page.evaluate(() => {
   return { gameTime: Math.round(window.gameTime), minions: ec.getAllMinions ? ec.getAllMinions(true).length : null, towers: ec.getAllTowers ? ec.getAllTowers(true).length : null };
 });
 await page.waitForTimeout(2000);
+// 等塔的"损毁档模型预热"队列跑完：快进时渲染是空的，单位一次都没同步过，恢复渲染后全部塔会同时排队预热，
+// 不等它跑完就量，量到的是一次性的预热开销而不是稳态（之前报告里 units.update 15.8 ms 就是这么来的）
+await page.waitForFunction(() => !(window.CTX.__three.units._warmQ?.length), null, { timeout: 600000 });
+await page.waitForTimeout(1000);
 
 const result = await page.evaluate(async (SEC) => {
   const r = window.CTX.__three, gl = r.gl, T = {}, calls = {};

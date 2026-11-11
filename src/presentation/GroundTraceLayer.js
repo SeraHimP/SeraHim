@@ -26,6 +26,7 @@ import { CONFIG } from '../data/Config.js';
 import { fogNoiseTexture } from './fogNoise.js';
 import { setWeatherGroundSnow } from './weatherGround.js';
 import { RIPPLE_GLSL, rippleUniforms } from './rainRipple.js';
+const _c8 = new Uint8ClampedArray(3);   // 积雪贴图逐字节比较时的取整暂存（与 ImageData 同一套取整规则）
 
 const cfg = () => (CONFIG.ui && CONFIG.ui.groundTraceFx) || {};
 const _tintColor = new THREE.Color();
@@ -205,6 +206,7 @@ export class GroundTraceLayer {
     // 标了 SRGBColorSpace，这里跟它对齐，颜色管线口径统一。
     tex.colorSpace = THREE.SRGBColorSpace;
     this._snowTex = tex;
+    this._snowUploaded = false;   // 新贴图：第一帧必须上传一次
 
     const C = cfg();
     // v55.5 修复："野区雪盖看着还是绿的"真根因——不是颜色/透明度算错，是【几何
@@ -348,19 +350,30 @@ export class GroundTraceLayer {
     // 上限沿用原始 snowCoverAlpha，逐位不变。
     const jungleAlphaBoost = C.snowCoverJungleAlphaBoost ?? 1;
     const jungleAlphaMax = Math.min(1, snowAlphaMax * jungleAlphaBoost);
+    // 只有贴图里确实有字节变了才重传：雪深网格没雪时恒为 0，下雪时也只是缓慢逼近目标值，
+    // 量化成 8 位之后大多数帧一个像素都不变。原来每帧无条件 putImageData + needsUpdate，
+    // 等于每帧往显卡重传一整张积雪贴图（性能剖析里每帧最贵的一项 GL 调用就是它）。
+    let dirty = !this._snowUploaded;
     for (let i = 0; i < grid.length; i++) {
       const depth = Math.max(0, Math.min(1, grid[i]));
       const t = zoneMix ? zoneMix[i] : 0;
       const alphaCap = snowAlphaMax + (jungleAlphaMax - snowAlphaMax) * t;
       const v = Math.round(depth * alphaCap * 255);
       const o = i * 4;
-      data[o] = pr + (jr - pr) * t;
-      data[o + 1] = pg + (jg - pg) * t;
-      data[o + 2] = pb + (jb - pb) * t;
-      data[o + 3] = v;
+      const r = pr + (jr - pr) * t, g = pg + (jg - pg) * t, b = pb + (jb - pb) * t;
+      // ImageData 是 Uint8ClampedArray（"四舍六入五成双"，和 Math.round 不同）：
+      // 先用同类型的临时数组取整，存进去的值才和原来直接赋值时逐位一致
+      _c8[0] = r; _c8[1] = g; _c8[2] = b;
+      const rr = _c8[0], gg = _c8[1], bb = _c8[2];
+      if (data[o] !== rr || data[o + 1] !== gg || data[o + 2] !== bb || data[o + 3] !== v) {
+        data[o] = rr; data[o + 1] = gg; data[o + 2] = bb; data[o + 3] = v; dirty = true;
+      }
     }
-    this._snowCanvas.getContext('2d').putImageData(img, 0, 0);
-    this._snowTex.needsUpdate = true;
+    if (dirty) {
+      this._snowCanvas.getContext('2d').putImageData(img, 0, 0);
+      this._snowTex.needsUpdate = true;
+      this._snowUploaded = true;
+    }
     this._applyTint();
   }
 
