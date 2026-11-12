@@ -10,7 +10,20 @@
  */
 import * as THREE from '../../../vendor/three.module.js';
 import { CONFIG } from '../../data/Config.js';
-import { fbm, smoothstep, clamp01 } from '../../data/noise.js';
+import { fbm, vnoise, smoothstep, clamp01 } from '../../data/noise.js';
+
+/**
+ * 成片斑块用的噪声：每一层转一个角度再叠。值噪声的等值线爱顺着格线走，低频直接取阈值的话，
+ * 斑块（冰面、苔地）的边是一段段横平竖直的线、带直角；各层转开之后格线互相打散，边才是自然的曲线。
+ */
+function organic(x, y, f, seed) {
+  let v = 0, a = 0.5, n = 0;
+  for (let i = 0; i < 4; i++) {
+    const c = Math.cos(i * 1.1 + 0.4), s = Math.sin(i * 1.1 + 0.4), k = f * Math.pow(2.03, i);
+    v += vnoise((x * c - y * s) * k + i * 17.3, (x * s + y * c) * k - i * 9.1, seed + i * 17) * a; n += a; a *= 0.6;
+  }
+  return v / n;
+}
 import { structureRadius } from '../../data/structureRadius.js';
 import { getWorldTextureSet } from './worldTextures.js';
 import { worldUniforms, WORLD_FRAG_HEAD } from './worldShading.js';
@@ -58,14 +71,14 @@ function makeSplat(field, map) {
       paved = sdv < 4 ? pavedAt(x, y) : 0;
       // 崖顶长苔 / 落叶。深渊 / 谷地图的谷底改用和地图外面同一条规则（成片的斑块），里外是同一片地，接缝处不留一圈矩形的色差
       // 有陆块的图：实地上可走不可走是同一片地，斑块（冰面）用同一条规则，不在可走区的边界上留一道直线
-      if (natural) accent = smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 * (1 - path);
-      else if (sdv > K.width * 0.7) accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : 0.55 + 0.45 * fbm(x * 0.012, y * 0.012, 2, 83);
+      if (natural) accent = smoothstep(0.52, 0.66, organic(x, y, 0.0042, 89)) * 0.75 * (1 - path);
+      else if (sdv > K.width * 0.7) accent = drop ? smoothstep(0.5, 0.66, organic(x, y, 0.0042, 89)) * 0.75 : 0.55 + 0.45 * fbm(x * 0.012, y * 0.012, 2, 83);
       else if (sdv <= 0) accent = smoothstep(0.56, 0.72, fbm(x * 0.0075, y * 0.0075, 3, 87)) * (1 - path) * 0.85;   // 野地里的斑块
       if (rf > 0.02) path = Math.max(path, smoothstep(0.02, 0.5, rf) * 0.8);     // 河滩 / 河床：碎石
       // 龙坑的浅滩也是碎石滩（不长草：河心一块圆圆的草坪和原来的石台一样扎眼）
       for (const p of field.pits) { const d = Math.hypot(x - p.x, y - p.y); if (d < p.r * 1.5) path = Math.max(path, 0.85 * (1 - smoothstep(p.r * 0.75, p.r * 1.4, d))); }
     } else {
-      accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : smoothstep(0.5, 0.75, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.6;
+      accent = drop ? smoothstep(0.5, 0.66, organic(x, y, 0.0042, 89)) * 0.75 : smoothstep(0.5, 0.75, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.6;
       if (rf > 0.02) path = smoothstep(0.02, 0.5, rf) * 0.8;
     }
     rock = Math.max(rock, 0);
@@ -186,7 +199,7 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   }
 #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'world-terrain-7';
+  mat.customProgramCacheKey = () => 'world-terrain-9';
   mat.shadowSide = THREE.FrontSide;
   return mat;
 }

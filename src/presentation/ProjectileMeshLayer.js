@@ -90,7 +90,7 @@ function fletchGeometry() {
 }
 /** 一块石头：二十面体，顶点抖一下，硬棱 */
 function rockGeometry(seed, jitter = 0.22) {
-  const g = new THREE.IcosahedronGeometry(1, 0).toNonIndexed(), p = g.attributes.position;
+  const g = new THREE.IcosahedronGeometry(1, 0), p = g.attributes.position;   // 多面体几何本来就不带索引
   for (let i = 0; i < p.count; i++) {
     const k = Math.round(p.getX(i) * 7) * 31 + Math.round(p.getY(i) * 11) * 17 + Math.round(p.getZ(i) * 13);
     const s = 1 + (hash(k, seed) - 0.5) * 2 * jitter;

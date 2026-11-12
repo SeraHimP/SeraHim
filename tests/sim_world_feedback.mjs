@@ -2,7 +2,8 @@
 //   · 火焰方向不跟视角走；兵线虚线贴着地形走（它被起伏的地面吃成一段段，被看成了"路面黑缝"）；
 //   · 红方塔和蓝方塔同一副骨架、塔芯不发光；破损要一眼看得出；废墟要矮、不悬空；
 //   · 火炬真的照亮路面，光带方向；龙坑不再是石台、塔脚不铺石板；河两岸没有整条白边；
-//   · 嚎哭深渊：两块悬崖实地 + 一道峡谷 + 一座真正悬空的石桥；冰原 / 沙漠不种树；扭曲丛林是紫色的、树干是拧的。
+//   · 嚎哭深渊：两块悬崖实地 + 一道峡谷 + 一座真正悬空的石桥；冰原 / 沙漠不种树；扭曲丛林是紫色的、树干是拧的；
+//   · 水晶之痕：每个据点按名字立一组场景物（风车 / 钻机 / 兽骨场 / 采石场 / 精炼厂 + 商栈 / 望塔）、归属旗、砂岩巨岩。
 import fs from 'fs';
 import { setupWindow, scoreboard } from './_harness.mjs';
 setupWindow();
@@ -14,6 +15,9 @@ const { partsBox } = await import('../src/presentation/towerStatue.js');
 const { deckOutline, bridgeLayout } = await import('../src/presentation/world/WorldBridge.js');
 const { placeSpires } = await import('../src/presentation/world/WorldMist.js');
 const { treeGeometry } = await import('../src/presentation/world/WorldFoliage.js');
+const { SCENES, dominionSites, placeMonoliths, buildWorldDominion } = await import('../src/presentation/world/WorldDominion.js');
+const { mergeParts } = await import('../src/presentation/UnitMeshFactory.js');
+const { RESOURCE_COLORS } = await import('../src/core/resourceBar.js');
 const { T, done } = scoreboard('画面反馈批次：火焰 / 塔 / 照明 / 河 / 深渊石桥 / 地图主题');
 const src = (f) => fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
 const TH = CONFIG.terrain.themes;
@@ -152,6 +156,57 @@ const fieldOf = (id) => { if (!sims[id]) { const sim = createSimulation(); sim.m
   const sp = placeSpires(f, th.spires);
   T(`地②冰棱只立在实地的不可走区，不超过上限（${sp.length} / ${th.spires.max}）`, sp.length > 10 && sp.length <= th.spires.max && sp.every((o) => f.landAt(o.x, o.y).L === 1 && f.sdAt(o.x, o.y) >= th.spires.walkClear));
   void LM;
+}
+
+// ==================== 五·二、水晶之痕：每个据点按名字立一组场景物 ====================
+{
+  const { ms, f } = fieldOf('dominion_crystal_scar_v1'), map = ms.currentMap, D = CONFIG.terrain.dominion;
+  const pts = map.dominionNodes.filter((n) => n.kind === 'point');
+  const names = Object.fromEntries(pts.map((n) => [n.id, n.name]));
+  T(`据①原版水晶之痕的五个据点都在，各有一组场景物：${['windmill', 'drill', 'boneyard', 'quarry', 'refinery'].map((k) => names[k]).join(' / ')}`,
+    ['windmill', 'drill', 'boneyard', 'quarry', 'refinery'].every((k) => names[k] && typeof SCENES[k] === 'function'));
+  T(`据②这张图自己的两个据点（${names.blue_base} / ${names.red_base}）也有场景物；七个据点一个不落`, pts.length === 7 && pts.every((n) => typeof SCENES[n.id] === 'function'));
+  const sites = dominionSites(map);
+  T('据③场景物摆在据点朝外的一侧、落在可走的空地上、躲开环形走廊（离兵线中线比走廊半宽远）',
+    sites.points.every((s) => s.scene && f.sdAt(s.px, s.py) < -10 && f.laneAt(s.px, s.py) > 150 && (s.px - s.x) * s.ax + (s.py - s.y) * s.ay > 0));
+  // 每组场景物是个像样的"场景"：几百个顶点以上、有高度、各不相同
+  const sig = [];
+  let small = 0;
+  for (const id of Object.keys(SCENES)) {
+    const sc = SCENES[id](), g = mergeParts(sc.parts); g.computeBoundingBox();
+    const b = g.boundingBox; sig.push(g.attributes.position.count + ':' + Math.round(b.max.y));
+    if (g.attributes.position.count < 500 || b.max.y < 35 || b.min.y < -4) small++;
+  }
+  T(`据④七组场景物各不相同、都有体量（顶点数:高度 ${sig.join(' ')}）`, new Set(sig).size === 7 && small === 0);
+  T('据⑤风车的风轮和钻机的钻杆是单独的、会转的部件', SCENES.windmill().spin.length === 1 && SCENES.windmill().spin[0].axis === 'x' && SCENES.drill().spin.length === 1 && SCENES.drill().spin[0].axis === 'y');
+  T('据⑥水晶枢纽两侧各一面战旗', sites.nexus.length === 2 && sites.nexus.every((n) => n.flags.length === 2 && ['blue', 'red'].includes(n.faction)));
+  const mono = placeMonoliths(f);
+  T(`岩①砂岩巨岩只立在不可走的沙地里，整块离可走区有一段距离，不超过上限（${mono.length} / ${D.monoliths.max}）`,
+    mono.length >= 8 && mono.length <= D.monoliths.max && mono.every((o) => f.sdAt(o.x, o.y) >= o.r + D.monoliths.walkClear - 1e-6));
+  // 归属旗跟着占领状态变色
+  const world = buildWorldDominion(f, TH.desert, null);
+  const hex = (c) => '#' + c.getHexString();
+  const node = pts[0], fl = world.flags.find((q) => q.x === node.pos.x && q.y === node.pos.y);
+  const fake = (owner) => ({ deps: { entities: { getAllTowers: () => [{ isCapturePoint: true, pos: { x: node.pos.x, y: node.pos.y }, _captureOwner: owner }] } }, time: 3 });
+  world.update(fake(null)); const c0 = hex(fl.banner.material.color);
+  world.update(fake('blue')); const c1 = hex(fl.banner.material.color);
+  world.update(fake('red')); const c2 = hex(fl.banner.material.color);
+  T(`旗①每个据点一面归属旗（${world.flags.length} 面），颜色跟着占领状态走：中立 ${c0} → 蓝 ${c1} → 红 ${c2}`,
+    world.flags.length === 7 && c0 === hex(new THREE.Color(RESOURCE_COLORS.capture_neutral)) && c1 === hex(new THREE.Color(RESOURCE_COLORS.capture_blue)) && c2 === hex(new THREE.Color(RESOURCE_COLORS.capture_red)));
+  T('旗②只改那一面旗（别的据点的旗不跟着变）', world.flags.filter((q) => q !== fl).every((q) => hex(q.banner.material.color) === c0));
+  T(`景①建出来的数量对得上：${JSON.stringify(world.counts)}`, world.counts.scenes === 7 && world.counts.nexusFlags === 4 && world.counts.spinners === 2);
+  T('景②没有 dominionNodes 的地图什么都不建', buildWorldDominion(fieldOf('summoners_rift_v1').f, TH.forest, null) === null);
+  {
+    const { SCENE_IDS, dominionKeepOut } = await import('../src/data/dominionSites.js');
+    T('景④位置数据（data/dominionSites）和造型（WorldDominion.SCENES）登记的是同一批据点', SCENE_IDS.slice().sort().join() === Object.keys(SCENES).sort().join());
+    // 场景物有一半探出可走的台面：脚下的地垫平了，不悬空
+    const pads = dominionKeepOut(map);
+    let low = 0, n = 0;
+    for (const k of pads) for (let a = 0; a < 12; a++) { const x = k.x + Math.cos(a / 12 * 6.283) * k.r * 0.9, y = k.y + Math.sin(a / 12 * 6.283) * k.r * 0.9; n++; if (f.heightAt(x, y) < -8) low++; }
+    T(`景⑤场景物脚下的地是垫平的（${pads.length} 处、${n} 个采样点里下沉的 ${low} 个）`, pads.length === 7 && low === 0);
+  }
+  T('景③摆放参数在 CONFIG.terrain.dominion（软编码）', D.propOffset > 140 && D.flagPole > 0 && D.flagSize.length === 2 && D.monoliths.radius.length === 2);
+  world.dispose();
 }
 
 // ==================== 六、每张地图自己的语言 ====================

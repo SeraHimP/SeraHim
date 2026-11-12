@@ -2150,6 +2150,14 @@ export const CONFIG = {
       noiseAmp: 150,
       noiseFreq: 0.0019,
     },
+    // 统治战场的景（world/WorldDominion.js 建模型，data/dominionSites.js 定位置）：各据点按名字立的场景物、归属旗、砂岩巨岩。
+    //   propOffset 场景物沿"背离地图中心"的方向离据点多远（落在据点空地的外沿，躲开环形走廊）；propScale 整体大小；propClear 场景物周围多大一圈不堆崖石、地面垫平；
+    //   flagOffset / flagSide 归属旗离据点朝外 / 朝侧各多远；flagPole 旗杆高；flagSize 旗面 [宽, 高]；nexusFlagSide 水晶枢纽的战旗离枢纽多远；
+    //   monoliths 砂岩巨岩：step 撒点格距、density、radius / tall 半径 / 高宽比的 [小, 大]、walkClear 离可走区多远、outerReach 地图外铺多远、max 上限、tint 色调
+    dominion: {
+      propOffset: 200, propScale: 1.3, propClear: 62, flagOffset: 62, flagSide: 58, flagPole: 78, flagSize: [30, 22], nexusFlagSide: 96,
+      monoliths: { enabled: true, step: 190, density: 0.5, radius: [60, 150], tall: [0.9, 2.0], walkClear: 40, outerReach: 1100, max: 46, tint: '#e0c8a8' },
+    },
     // 河面（world/WorldWater.js）。水色在各主题的 water 里。
     //   cell 水面网格边长；outerReach 河流出地图后水面再铺多远；margin 岸上多高以内还铺水面网格；
     //   clarity 水有多"浑"（越大越快变成深水色）；alphaMin / alphaMax 最浅 / 最深处的不透明度；shoreFade 岸线从多浅处开始淡出；
@@ -2234,7 +2242,7 @@ export const CONFIG = {
           ground: { kind: 'grass', palette: { dark: '#221a42', mid: '#362a68', light: '#5c48a2', dry: '#6e4290' } },
           path: { kind: 'dirt', palette: { dark: '#3a3148', mid: '#5a4f6c', light: '#80759a', stone: '#9a94b0' } },
           rock: { kind: 'rock', palette: { dark: '#1e1b2c', mid: '#3d3954', light: '#67628a', stain: '#4a2f6a' }, strata: 0.5 },
-          accent: { kind: 'moss', palette: { dark: '#16304a', mid: '#225a78', light: '#3fa4b6', speck: '#8ff4e4' } },
+          accent: { kind: 'moss', palette: { dark: '#152a44', mid: '#1f4c68', light: '#2f8094', speck: '#8ff4e4' } },
           paved: { kind: 'paving', palette: { dark: '#35333f', mid: '#5a5868', light: '#84829a', gap: '#17161e', moss: '#3a2f6a' } },
         },
         tile: { ground: 150, path: 130, rock: 190, accent: 140, paved: 110 },
@@ -2248,7 +2256,8 @@ export const CONFIG = {
       //   bridge    桥：thickness 桥面厚；piers 桥墩数（0 = 没有桥墩，整座桥一跨悬空）；pierThick / pierBatter 桥墩沿桥向的厚度 / 往下放宽几倍；
       //             archRatio / archRise 拱高占半跨的比例 / 上限；abutment 拱脚伸进崖体多深；cell 桥面轮廓的取样格距；over 桥面比可走区每边宽出多少；
       //             curb / curbGap / curbSize / curbMiss 缘石：要不要、间距、[长, 高, 宽]、缺几成；tile 石材贴图铺一遍占多少世界单位；tint 石材的色调
-      //   abyssFog  峡谷里的雾色：从 top 高度往下越来越浓，到 bottom 处最浓（k）
+      //   abyssFog  峡谷里的雾色：从 top 高度往下越来越浓，到 bottom 处最浓（k）；lightFloor 局部光从多高开始往下淡、到多深淡没；
+    //             outerCell 地图外面那圈地形网格的格距（峡谷延伸出去，要密一点）；rockSnow 石头顶上盖几成雪
       //   abyssMist 流动的雾层：每层 y 高度、alpha 浓度、scale 雾团大小、speed 流速、cover 稀疏程度（越大空的地方越多）
       //   spires    冰棱：step 撒点格距、threshold / clusterFreq 成丛的门槛 / 丛的大小、density、size [小, 大]、max 上限
       frost: {
@@ -2258,14 +2267,15 @@ export const CONFIG = {
                   curb: true, curbGap: 21, curbSize: [16, 7, 9], curbMiss: 0.14, tile: 120, tint: '#dfe6ee' },
         // 越深越暗、越蓝：峡谷比雪原暗一截才读得出"深"；上面几层浅色的雾在流
         abyssFog: { top: -40, bottom: -340, k: 0.985, color: '#7f97b4' },
-        abyssMist: { reach: 2200, layers: [
+        lightFloor: [-24, -110],                 // 桥上的火炬 / 水晶的光往下照到多深就没了
+        abyssMist: { reach: 5200, layers: [
           { y: -62, alpha: 0.3, scale: 0.0019, speed: 0.016, cover: 0.44, color: '#cfdbe8' },
           { y: -140, alpha: 0.46, scale: 0.0014, speed: 0.011, cover: 0.32, color: '#b4c6d8' },
           { y: -250, alpha: 0.72, scale: 0.0011, speed: 0.008, cover: 0.2, color: '#93a9c2' },
         ] },
         outerCell: 14,
         paving: { baseK: 0 },                    // 基地不铺石板广场："基地那里的地面应该是正常的地面而非石桥材质"
-        rockTint: '#dfe5ec', rockSnow: 0.85, rockSnowColor: '#eef3fa',
+        rockTint: '#b4bec9', rockSnow: 0.62, rockSnowColor: '#e9eff6',
         spires: { step: 46, threshold: 0.62, clusterFreq: 0.0042, density: 0.42, size: [42, 110], max: 170, outerReach: 700, walkClear: 46, cliffClear: 30,
                   color: '#cfeaff', glow: '#3a78b8', glowK: 0.22, roughness: 0.16, opacity: 0.93 },
         foliage: { trees: false },
@@ -2286,13 +2296,15 @@ export const CONFIG = {
       desert: {
         mode: 'drop', dropHeight: 54, dropFloorNoise: 22, outerBlend: 500, outerPeak: 300,
         foliage: { trees: false },
+        paving: { baseK: 0 },                    // 这张图的"基地"节点（商栈 / 望塔）是普通据点，不铺广场
         cover: { pebbleColor: '#b08a62' },
         layers: {
           ground: { kind: 'sand', palette: { dark: '#a8824e', mid: '#cfa66a', light: '#ecd09a' } },
           // 可走的台面是踩实的沙土（铺石只留给建筑基座和基地广场）：整片都铺石板的话满屏都是格子
           path: { kind: 'dirt', palette: { dark: '#8f7048', mid: '#b39062', light: '#d0b080', stone: '#9c8468' } },
           rock: { kind: 'rock', palette: { dark: '#6b3f2a', mid: '#a4643e', light: '#d19a66', stain: '#8a4a34' }, strata: 0.8 },
-          accent: { kind: 'cracked', palette: { dark: '#8a6a44', mid: '#b08c5e', light: '#d2b486', crack: '#4a3524' } },
+          // 沙地上的斑块是颜色深一点的沙（风蚀的背阴面），不是干裂的硬地：那张贴图铺开来像一块块石板
+          accent: { kind: 'sand', palette: { dark: '#96703e', mid: '#b88e56', light: '#d6b47e' } },
           paved: { kind: 'paving', palette: { dark: '#6a5440', mid: '#94795c', light: '#bda284', gap: '#33271c' } },
         },
         tile: { ground: 170, path: 100, rock: 220, accent: 150, paved: 120 },

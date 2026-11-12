@@ -54,9 +54,9 @@ vec4 tri4(sampler2D t, vec3 p, vec3 n, float s){ vec3 w = abs(n); w = w*w; w /= 
 }
 
 /**
- * @param field 高度场  @param tex 岩石贴图 { map, normalMap }  @param theme 主题
+ * @param field 高度场  @param tex 岩石贴图 { map, normalMap }  @param theme 主题  @param keepOut [{ x, y, r }] 这些圆里不放石头
  */
-export function buildWorldRocks(field, tex, theme) {
+export function buildWorldRocks(field, tex, theme, keepOut = []) {
   const C = CONFIG.terrain.rocks || {}, K = CONFIG.terrain.cliff;
   const group = new THREE.Group(); group.name = 'worldRocks';
   const spacing = C.spacing ?? 19, sMin = C.sizeMin ?? 10, sMax = C.sizeMax ?? 30;
@@ -74,6 +74,7 @@ export function buildWorldRocks(field, tex, theme) {
     if (land && land.L < 0.5 && !lip) continue;
     if ((sd < inner || sd > outer) && !lip) continue;
     if (hash2(gx, gy, 7) > (C.density ?? 0.8)) continue;
+    if (keepOut.some((k) => (k.x - x) ** 2 + (k.y - y) ** 2 < k.r * k.r)) continue;   // 给场景物让位（据点的风车、钻机……不埋在石头堆里）
     if (field.riverAt(x, y) > 0.35 && sd < 6) continue;          // 不把河道堵死
     const s = sMin + hash2(gx, gy, 8) * (sMax - sMin) * (0.45 + 0.55 * Math.min(1, Math.max(0, sd + 6) / 22));   // 崖脚的小、崖身的大
     const h = (field.terrainHeightAt || field.heightAt)(x, y);

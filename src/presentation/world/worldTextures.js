@@ -169,7 +169,9 @@ function paving(N, pal) {
 function snow(N, pal) {
   const sh = hexRGB(pal.shade), md = hexRGB(pal.mid), lt = hexRGB(pal.light);
   return build(N, (u, v) => {
-    const drift = fbm(u, v * 0.6, 5, 4, 171), grain = vnoise(u, v, 190, 173), crust = ridged(u, v, 16, 3, 177);
+    // 各层噪声的周期都必须是整数（贴图要能无缝平铺）：原来 drift 用了 v × 0.6，周期不是整数，
+    // 每铺一遍就在接缝处断一下，雪地上是一格格淡淡的方格线
+    const drift = fbm(u, v, 5, 4, 171), grain = vnoise(u, v, 190, 173), crust = ridged(u, v, 16, 3, 177);
     const t = Math.max(0, Math.min(1, drift * 0.6 + crust * 0.25 + grain * 0.15));
     const c = t < 0.5 ? mix3(sh, md, t * 2) : mix3(md, lt, (t - 0.5) * 2);
     return { c, h: drift * 0.75 + crust * 0.2 + grain * 0.05, rough: 0.55 + 0.25 * grain };
@@ -186,7 +188,8 @@ function ice(N, pal) {
     const bubble = sstep(0.16, 0.06, b1) * 0.6;
     let c = body < 0.5 ? mix3(dp, md, body * 2) : mix3(md, lt, (body - 0.5) * 2);
     c = mix3(c, ck, Math.min(1, crack + bubble));
-    return { c, h: body * 0.3 + crack * 0.4, rough: 0.12 + 0.3 * crack + 0.2 * bubble };
+    // 高度通道里不放 body：它是低频的格点噪声，地表按高度混合时冰面的边会顺着它的格线走，一块块冰成了带直角的矩形
+    return { c, h: 0.45 + crack * 0.4 + bubble * 0.1, rough: 0.12 + 0.3 * crack + 0.2 * bubble };
   }, 1.4);
 }
 /** 沙：风成波纹。pal = { dark, mid, light } */

@@ -16,6 +16,7 @@
  */
 import { CONFIG } from './Config.js';
 import { fbm, ridged, smoothstep, clamp01 } from './noise.js';
+import { dominionKeepOut } from './dominionSites.js';
 
 /** 地图用哪套地形主题：map.terrainTheme > map.paletteId > default。 */
 export function terrainThemeIdOf(map) {
@@ -168,6 +169,7 @@ export function buildTerrainField(ms) {
     const p = smoothstep(0, 1, e / (LM.rimWidth ?? 70));
     return (LM.rimHeight ?? 30) * p * (0.55 + 0.9 * fbm(x * 0.009, y * 0.009, 3, 95)) + (fbm(x * 0.03, y * 0.03, 2, 97) - 0.5) * 8 * p;
   };
+  const pads = dominionKeepOut(map);   // 没有据点场景物的地图是空的
   const hT = LM ? new Float32Array(N) : null;   // 画出来的地形高度（桥下是峡谷）；逻辑高度 h 里桥面仍是桥面
   const groundAt = (x, y, ld) => {
     const base = ms.plateauHeightAt ? ms.plateauHeightAt(x, y) : 0;
@@ -229,7 +231,9 @@ export function buildTerrainField(ms) {
     } else {
       const e = s - 4;
       if (e > 0) {
-        const p = smoothstep(0, 1, e / D.width);
+        let p = smoothstep(0, 1, e / D.width);
+        // 场景物（据点的风车、钻机……）脚下垫平：它们有一半探出可走的台面，底下不能是悬空的
+        for (const k of pads) { const d = Math.hypot(x - k.x, y - k.y); if (d < k.r * 1.5) p *= smoothstep(k.r * 1.05, k.r * 1.5, d); }
         g -= dropH * Math.pow(p, 1.3);
         g += (ridged(x * 0.021, y * 0.021, 3, 53) - 0.5) * D.ledgeNoise * 4 * p * (1 - p);   // 崖面上的岩台
         if (floorNoise) g += (fbm(x * 0.006, y * 0.006, 3, 57) - 0.35) * floorNoise * p;       // 谷底起伏（沙丘）

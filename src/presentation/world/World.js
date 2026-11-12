@@ -16,8 +16,9 @@ import { buildWorldLights } from './WorldLights.js';
 import { buildWorldGroundCover } from './WorldGroundCover.js';
 import { buildWorldBridge } from './WorldBridge.js';
 import { buildWorldMist } from './WorldMist.js';
+import { buildWorldDominion, dominionKeepOut } from './WorldDominion.js';
 import { getWorldTextureSet } from './worldTextures.js';
-import { setWorldRect, setWorldWater, updateWorldShading } from './worldShading.js';
+import { setWorldRect, setWorldWater, setWorldLightFloor, updateWorldShading } from './worldShading.js';
 
 export class World {
   constructor(scene) {
@@ -52,15 +53,18 @@ export class World {
       this.field = field; this._map = map; this.theme = theme;
       setWorldRect(field.W, field.H);
       setWorldWater(field.waterLevel, theme.water?.tint);
+      setWorldLightFloor(theme.lightFloor?.[0], theme.lightFloor?.[1]);
     } });
     steps.push({ label: '生成地表', run: () => { if (field) this._add(buildWorldTerrain(field, theme, opts)); } });
     steps.push({ label: '堆砌岩壁', run: () => {
       if (!field) return;
       tex = getWorldTextureSet(theme.layers, CONFIG.terrain.textureSize ?? 512, opts.anisotropy ?? 8);
-      this._add(buildWorldRocks(field, tex.rock, theme));
+      this._add(buildWorldRocks(field, tex.rock, theme, dominionKeepOut(field.map)));
       // 深渊图：横跨峡谷的石桥 + 峡谷里的雾层 / 冰原上的冰棱（主题里没声明就什么都不建）
       this.bridge = this._add(buildWorldBridge(field, tex.paved, theme));
       this._add(buildWorldMist(field, theme));
+      // 统治战场：各据点的场景物、归属旗、砂岩巨岩（地图没声明 dominionNodes 就什么都不建）
+      this.dominion = this._add(buildWorldDominion(field, theme, tex.rock));
     } });
     steps.push({ label: '注水', run: () => { if (field && this.toggles.water) this._add(buildWorldWater(field, theme)); } });
     steps.push({ label: '种树', run: () => { if (field && this.toggles.foliage) this._add(buildWorldFoliage(field, theme)); } });

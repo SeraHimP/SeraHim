@@ -16,25 +16,25 @@ import { FX_PARTICLE_LAYER } from '../PostFX.js';
 import { worldUniforms, patchWorldMaterial, patchAbyssFog } from './worldShading.js';
 import { worldNoiseTexture } from './worldTextures.js';
 
-function mistMaterial(color, L) {
+function mistMaterial(color, L, center) {
   const U = worldUniforms();
   if (!U.tWNoise.value) U.tWNoise.value = worldNoiseTexture();
   return new THREE.ShaderMaterial({
     uniforms: {
       uWTime: U.uWTime, tWNoise: U.tWNoise, uWDay: U.uWDay, uWWind: U.uWWind,
-      uColor: { value: new THREE.Color(color) },
+      uColor: { value: new THREE.Color(color) }, uC: { value: center },
       uK: { value: new THREE.Vector4(L.alpha ?? 0.5, L.scale ?? 0.0016, L.speed ?? 0.012, L.cover ?? 0.35) },
     },
     vertexShader: /* glsl */`
       varying vec3 vP;
       void main() { vec4 w = modelMatrix * vec4(position, 1.0); vP = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
     fragmentShader: /* glsl */`
-      uniform sampler2D tWNoise; uniform float uWTime, uWDay; uniform vec3 uColor, uWWind; uniform vec4 uK;
+      uniform sampler2D tWNoise; uniform float uWTime, uWDay; uniform vec3 uColor, uWWind, uC; uniform vec4 uK;
       varying vec3 vP;
       void main() {
         vec2 drift = (uWWind.xy * (0.6 + uWWind.z) + vec2(0.3, 0.17)) * uWTime * uK.z;
         float n = texture2D(tWNoise, vP.xz * uK.y + drift).r * 0.6 + texture2D(tWNoise, vP.xz * uK.y * 2.7 - drift * 1.6 + 0.37).g * 0.4;
-        float a = smoothstep(uK.w, uK.w + 0.42, n) * uK.x;
+        float a = smoothstep(uK.w, uK.w + 0.42, n) * uK.x * (1.0 - smoothstep(0.7, 1.0, length(vP.xz - uC.xy) / uC.z));   // 往薄片的边上淡出去，低机位看不到一条直边
         if (a < 0.004) discard;
         gl_FragColor = vec4(uColor * (0.16 + 0.84 * uWDay), a);
         #include <colorspace_fragment>
@@ -93,7 +93,7 @@ export function buildWorldMist(field, theme) {
     const geo = new THREE.PlaneGeometry(size, size, 1, 1); geo.rotateX(-Math.PI / 2);
     disp.push(geo);
     for (const L of (M.layers || [])) {
-      const mat = mistMaterial(L.color || A.color || '#c2d2e2', L);
+      const mat = mistMaterial(L.color || A.color || '#c2d2e2', L, new THREE.Vector3(field.W / 2, field.H / 2, size / 2));
       const m = new THREE.Mesh(geo, mat);
       m.position.set(field.W / 2, L.y ?? -80, field.H / 2); m.updateMatrix(); m.matrixAutoUpdate = false;
       m.frustumCulled = false; m.renderOrder = 3; m.layers.set(FX_PARTICLE_LAYER); m.name = 'abyssMist';

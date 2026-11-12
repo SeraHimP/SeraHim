@@ -32,6 +32,7 @@ export function worldUniforms() {
     uWRect: { value: new THREE.Vector4(0, 0, 1, 1) },     // 世界矩形：(x0, z0, 1/宽, 1/高)
     uWLightK: { value: 1 },                               // 局部光强度（夜里更显）
     uWLightStep: { value: new THREE.Vector2(1 / 512, 1 / 512) },   // 估光源方向时往旁边偏多远取样（光照图 uv）
+    uWLightY: { value: new THREE.Vector2(-1e5, -1e5 - 1) },        // 局部光只照到这个高度：x 以上全亮，往下到 y 淡没（桥上的火炬照不到桥墩脚下）
     uWLightDir: { value: new THREE.Vector3(0.14, 0.6, 0.3) },      // x = 相对亮度梯度多大算"斜着照"，y = 光源有多高（越大越像从头顶照），z = 背光面保留多少
     uWDay: { value: 1 },                                  // 白天程度 1 = 正午，0 = 午夜（不受光的东西按它压暗：深渊里的雾、水雾）
     tWNoise: { value: null },
@@ -67,6 +68,8 @@ export function setWorldLightMap(tex) {
   u.uWLightStep.value.set(k / n, k / n);
   u.uWLightDir.value.set(C.lightDirGrad ?? 0.14, C.lightDirUp ?? 0.6, C.lightWrap ?? 0.3);
 }
+/** 局部光照到多低：top 以上全亮，往下到 bottom 淡没。不传 = 不限（没有深渊的图）。 */
+export function setWorldLightFloor(top, bottom) { const v = worldUniforms().uWLightY.value; if (top == null) v.set(-1e5, -1e5 - 1); else v.set(top, bottom ?? top - 60); }
 export function setWorldSnowMap(tex, on) { const u = worldUniforms(); u.tWSnow.value = tex || blankTex(); u.uWSnowOn.value = on && tex ? 1 : 0; }
 export function setWorldWater(level, tint) { const u = worldUniforms(); u.uWLevel.value = level == null ? -1e4 : level; if (tint) u.uWWaterTint.value.set(tint); }
 export function setWorldTints({ sand, snow } = {}) { const u = worldUniforms(); if (sand) u.uWSandCol.value.set(sand); if (snow) u.uWSnowCol.value.set(snow); }
@@ -77,7 +80,7 @@ export const WORLD_FRAG_HEAD = /* glsl */`
 #define WORLD_SHADING_HEAD
 uniform float uWTime, uWWet, uWSnow, uWSand, uWFade, uWScorch, uWLightK, uWSnowOn, uWLevel, uWDay;
 uniform sampler2D tWLight, tWNoise, tWSnow;
-uniform vec4 uWRect; uniform vec3 uWWind, uWSandCol, uWSnowCol, uWWaterTint, uWLightDir; uniform vec2 uWLightStep;
+uniform vec4 uWRect; uniform vec3 uWWind, uWSandCol, uWSnowCol, uWWaterTint, uWLightDir; uniform vec2 uWLightStep, uWLightY;
 varying vec3 vWPos;
 vec2 wRectUv(vec3 p) { return (p.xz - uWRect.xy) * uWRect.zw; }
 /** 局部光（火炬 / 水晶）：查光照图，火焰轻微摇曳。地图矩形之外没有光。 */
@@ -86,7 +89,7 @@ vec3 wLocalLight(vec3 p) {
   vec3 l = texture2D(tWLight, clamp(uv, 0.0, 1.0)).rgb;
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
   float fl = 0.9 + 0.1 * sin(uWTime * 9.0 + p.x * 0.07 + p.z * 0.05) * sin(uWTime * 5.3 + p.z * 0.09);
-  return l * l * (uWLightK * fl * inside);
+  return l * l * (uWLightK * fl * inside * smoothstep(uWLightY.y, uWLightY.x, p.y));
 }
 /**
  * 带方向的局部光：n = 世界空间法线。光照图只记了"这里有多亮"，光从哪边来由亮度的梯度估出来（往亮处走就是光源），
@@ -107,7 +110,7 @@ vec3 wLocalLightN(vec3 p, vec3 n) {
   vec3 L = normalize(vec3(g.x, 0.0, g.y) / max(gl, 1e-5) * smoothstep(0.0, uWLightDir.x, gl / max(l0, 0.03)) + vec3(0.0, uWLightDir.y, 0.0));
   float ndl = clamp(dot(normalize(n), L) * (1.0 - uWLightDir.z) + uWLightDir.z, 0.0, 1.0);
   float fl = 0.9 + 0.1 * sin(uWTime * 9.0 + p.x * 0.07 + p.z * 0.05) * sin(uWTime * 5.3 + p.z * 0.09);
-  return l * l * (uWLightK * fl * inside * ndl);
+  return l * l * (uWLightK * fl * inside * ndl * smoothstep(uWLightY.y, uWLightY.x, p.y));
 }
 #endif
 `;
