@@ -48,6 +48,8 @@ import { resourceInfoOf, RESOURCE_COLORS, FACTION_HP_COLORS, hpBarLayout } from 
 import { DRAGON_ELEMENTS } from '../systems/DragonSystem.js';
 import { HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
 import { shellGeometry, shellMaterial, stepShieldState } from './shieldShell.js';
+import { worldUniforms } from './world/worldShading.js';
+import { PulseFx, pulseDue } from './pulseFx.js';
 import { soulEmblemGeometry, soulEmblemMaterial, soulPulse } from './soulEmblem.js';
 
 // ==================== v51.6：龙魂环按元素配色 ====================
@@ -430,10 +432,42 @@ export class UnitLayer {
    * 最后写进去的那座说了算，各塔的渐显互相踩。距离渐显时代这条就错着
    *（当时各塔强度差不多，看不太出来），改成逐塔独立的渐显/渐隐后必须分开。
    */
-  _rangeMat(color, opacity) {
-    return new THREE.MeshBasicMaterial({ color, transparent: true, opacity,
-                                         depthTest: true, depthWrite: false,
-                                         side: THREE.DoubleSide });
+  _rangeMat(color, opacity, r = 0) {
+    if (!r) {
+      return new THREE.MeshBasicMaterial({ color, transparent: true, opacity,
+                                           depthTest: true, depthWrite: false,
+                                           side: THREE.DoubleSide });
+    }
+    // 圈内不再是一整片均匀的色块（用户："塔的射程圈太丑"——一张半透明的大圆饼盖在地上，把地面的颜色洗掉一层）。
+    // 改成：贴着边线向内的一圈柔光（越往圆心越淡，圆心完全透明）+ 边线内侧一圈缓慢转动的虚线刻度。
+    // 仍然是那张贴合地形的圆盘网格，形状全在片元里按"离圆心多远 / 在哪个方位"算。
+    // 不透明度沿用 .opacity 这个口子（渐显渐隐每帧写它），内部转成 uniform。
+    const R = (CONFIG.ui && CONFIG.ui.rangeRing) || {}, L = R.look || {};
+    const U = worldUniforms();
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uK: { value: opacity }, uR: { value: r }, uColor: { value: new THREE.Color(color) }, uWTime: U.uWTime,
+        uShape: { value: new THREE.Vector4(L.bandWidth ?? 0.2, L.bandGain ?? 4.5, L.dashGain ?? 7, L.dashCount ?? 0) },
+        uDash: { value: new THREE.Vector3(L.dashInset ?? 0.035, L.dashWidth ?? 0.012, L.dashSpeed ?? 0.02) } },
+      vertexShader: 'varying vec3 vP; void main() { vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: /* glsl */`
+        uniform float uK, uR, uWTime; uniform vec3 uColor, uDash; uniform vec4 uShape; varying vec3 vP;
+        void main() {
+          float t = length(vP.xz) / uR;
+          float band = smoothstep(1.0 - uShape.x, 1.0, t); band *= band;
+          float n = uShape.w > 0.5 ? uShape.w : floor(uR / 9.0);          // 刻度的数量跟着周长走：每段弧长差不多
+          float seg = fract(atan(vP.z, vP.x) / 6.2831853 * n + uWTime * uDash.z * n * 0.1);
+          float dash = smoothstep(0.0, 0.08, seg) * (1.0 - smoothstep(0.5, 0.58, seg));
+          float dr = abs(t - (1.0 - uDash.x));
+          float ring = (1.0 - smoothstep(uDash.y * 0.5, uDash.y, dr)) * dash;
+          float a = (band * uShape.y + ring * uShape.z) * uK;
+          if (a < 0.003) discard;
+          gl_FragColor = vec4(mix(uColor, vec3(1.0), ring * 0.35), a);
+          #include <colorspace_fragment>
+        }`,
+      transparent: true, depthTest: true, depthWrite: false, side: THREE.DoubleSide,
+    });
+    Object.defineProperty(mat, 'opacity', { get: () => mat.uniforms.uK.value, set: (v) => { if (mat.uniforms) mat.uniforms.uK.value = v; } });
+    return mat;
   }
 
   // 射程圈专用清理：贴合地形的几何与逐塔材质都是**这座塔独有**的，必须真 dispose
@@ -662,7 +696,7 @@ export class UnitLayer {
     this.map.delete(id);
   }
 
-  clear() { for (const id of [...this.map.keys()]) this.remove(id); this._warmQ = []; }
+  clear() { for (const id of [...this.map.keys()]) this.remove(id); this._warmQ = []; this.pulse?.clear(); }
 
   dispose() {
     this.clear();
@@ -962,9 +996,9 @@ export class UnitLayer {
       if (en.rangeKey !== rk) {
         this._clearRange(en);
         en.rangeKey = rk;
-        en.rangeMat = [this._rangeMat(color, 0x0f / 255), this._rangeMat(color, 0x33 / 255)];
+        en.rangeMat = [this._rangeMat(color, 0x0f / 255, drape ? r : 0), this._rangeMat(color, 0x33 / 255)];
         if (drape) {
-          en.rangeGeo = [this._drapeGeo('disc', r, 0, x, z), this._drapeGeo('ring', r, 1, x, z)];
+          en.rangeGeo = [this._drapeGeo('disc', r, 0, x, z), this._drapeGeo('ring', r, cfg0.edgeWidth ?? 1.6, x, z)];
           en.rangeFill = this._flatMesh(en.rangeGeo[0], en.rangeMat[0]);
           en.rangeEdge = this._flatMesh(en.rangeGeo[1], en.rangeMat[1]);
         } else {
@@ -1398,6 +1432,20 @@ export class UnitLayer {
       this._pushContact(e.pos.x, CONTACT_LIFT + gy, e.pos.y, cr);   // 合批，见 _contactBatch
     }
 
+    // 一次性特效：范围攻击的光环、术士兵第三下的施法（逻辑层只留时间戳，见 pulseFx.js）
+    if (this.pulse && !ghost && !ruin) {
+      const fac = e._mapFaction || e.faction;
+      if (pulseDue(en._areaSeen, e._areaPulseAt, tNow)) {
+        this.pulse.ground({ x: e.pos.x, y: gy + CONTACT_LIFT + 0.4, z: e.pos.y, r1: e._areaPulseR || 60,
+          color: fac === 'blue' ? '#6cb4ff' : fac === 'red' ? '#ff6a55' : '#f1d27a' });
+      }
+      en._areaSeen = e._areaPulseAt;
+      if (pulseDue(en._triadSeen, e._triadFlashAt, tNow)) {
+        this.pulse.cast({ x: e.pos.x, y: gy, z: e.pos.y, h: en.topY || 24, color: CONFIG.gameRules?.supportUnits?.warlock?.finalSegColor || '#b46cf0' });
+      }
+      en._triadSeen = e._triadFlashAt;
+    }
+
     // Q6：水晶慢转 + 攻击辉光。塔刚开火（attackCooldown 跳增）→ 自发光冲高、随后衰减（类 LoL）。
     if (en.crystal) {
       // v51.31：水晶不再是塔身的子物体（塔身合批之后没有"子物体"这个概念了），
@@ -1674,6 +1722,8 @@ export class UnitLayer {
     this._frame++;
     if (this._cb) this._cb.n = 0;   // 接地暗斑合批：本帧重新收集
     this.bfx.update();
+    if (!this.pulse) this.pulse = new PulseFx(this.scene);
+    this.pulse.update();
     this._runWarm();
     const lodHideBar = rel < 1.35;   // 与 2D 的 lodBars 阈值同值
     const { entities } = deps;

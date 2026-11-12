@@ -103,8 +103,9 @@ for (const s of SHOTS) {
     const ws = C.__weather || window.__weather;
     if (s.weather && ws) { ws.enabled = true; r.setWeatherFx?.(true); for (const k in s.weather) { try { ws.debugSetCharge ? ws.debugSetCharge(k, s.weather[k]) : (ws._debugCharge = { ...(ws._debugCharge || {}), [k]: s.weather[k] }); } catch (e) { console.warn(e); } } }
     if (s.eval) { try { await (0, eval)('(async()=>{' + s.eval + '})()'); } catch (e) { console.error('eval 失败: ' + e.message); } }
-    const settle = Math.round((s.settle ?? 0.15) * 60);
-    window.__vt.step(Math.max(4, settle));
+    // settle 秒；dt（毫秒）给大一点就少渲染几帧（等天气这类慢变量时用，例如 settle 4、dt 200 只渲染 20 帧）
+    const dtMs = s.dt || 1000 / 60, settle = Math.round((s.settle ?? 0.15) * 1000 / dtMs);
+    window.__vt.step(Math.max(4, settle), dtMs);
     window.__vt.step(1);
     return cv.toDataURL('image/png');
   }, [s, info]);

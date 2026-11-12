@@ -1064,8 +1064,13 @@ export const CONFIG = {
       fadeIn: 0.22,         // 渐显时间常数（秒）
       fadeOut: 0.45,        // 渐隐时间常数（秒）。比渐显慢——目标死了圈"啪"地消失最扎眼
       fade: 0.18,           // 兜底：fadeIn/fadeOut 缺省时用它
-      fillAlpha: 0.059,     // 圈内填充的满强度不透明度（0x0f/255，与改版前一致）
-      edgeAlpha: 0.2,       // 圈边线的满强度不透明度（0x33/255，与改版前一致）
+      fillAlpha: 0.059,     // 圈内柔光的整体强度（原来是整片均匀填充的不透明度；数值沿用，形状见 look）
+      edgeAlpha: 0.55,      // 圈边线的满强度不透明度
+      edgeWidth: 1.6,       // 边线宽度（世界单位）
+      // 圈的样子（Q10："塔的射程圈太丑"）：不再整片填色。bandWidth 贴着边线向内的柔光带占半径的比例、bandGain 它的强度（× fillAlpha）；
+      // 边线内侧一圈缓慢转动的虚线刻度：dashInset 离边线多远（占半径比例）、dashWidth 线宽、dashGain 强度、
+      // dashSpeed 转速、dashCount 刻度数（0 = 按周长自动，每段弧长差不多）
+      look: { bandWidth: 0.2, bandGain: 4.5, dashInset: 0.035, dashWidth: 0.012, dashGain: 7, dashSpeed: 0.02, dashCount: 0 },
       // ==================== 贴合地形（用户："让射程浮在地形上"）====================
       // 圈原来是一张【平的】面片，整片按塔脚那一点的高度摆，地形一有高低差就被
       // 高的那半边地面挡掉一块（用户："只要出现了高低差就会被吞掉一部分"）。
@@ -1516,6 +1521,12 @@ export const CONFIG = {
     // moteRadius 光点散布半径（× 半径）、moteSize 光点大小（世界单位）
     soulRing: { heightFrac: 0.35, towerMargin: 3, towerWidth: 2.0, unitWidth: 1.6, emblemScale: 1.08,
                 spin: 0.35, alpha: 0.75, pulse: 0.3, pulseSpeed: 1.6, motes: true, moteRadius: 0.75, moteSize: 3 },
+    // 一次性小特效（presentation/pulseFx.js）。area：范围攻击每次出手从脚下扩到射程边缘的光环（时长 / 亮度）；
+    // cast：术士兵三连咒击第三下的施法——rings 道竖环从腰间升过头顶并扩到 radiusK × 身高，外加一团 flashK × 身高的闪光
+    pulseFx: {
+      area: { dur: 0.45, gain: 0.85 },
+      cast: { dur: 0.5, rings: 2, radiusK: 0.9, gain: 1.6, flashK: 1.6, flashGain: 1.4 },
+    },
     // 单位 / 建筑表面材质（presentation/unitSurface.js）：每个零件按材料出粗糙度 / 金属度 / 颗粒感
     unitSurface: {
       envIntensity: 1,     // 环境光（天空）份量

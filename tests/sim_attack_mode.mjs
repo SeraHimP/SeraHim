@@ -64,5 +64,29 @@ function arena(mode, range, extraFoes = 0) {
   sim.combatSystem.performAttack(a, foes[0]);
   T(`⑨范围：射程内的敌人都吃到伤害（${foes.filter((f) => f.currentHP < 1e6).length}/${foes.length}）`,
     foes.every((f) => f.currentHP < 1e6) && !sim.projectileSystem.getProjectiles().some((q) => q.attackerId === a.id));
+  T('⑩范围：出手时给画面留了记号（时间戳 + 光环半径），逻辑层自己不碰画面', Number.isFinite(a._areaPulseAt) && a._areaPulseR > 0);
+}
+// ---- 范围光环 / 术士第三下的施法特效（presentation/pulseFx.js）----
+{
+  const THREE = await import('../vendor/three.module.js');
+  const { PulseFx, pulseDue } = await import('../src/presentation/pulseFx.js');
+  const { CONFIG } = await import('../src/data/Config.js');
+  T('⑪特效参数在 CONFIG.ui.pulseFx（软编码）', CONFIG.ui.pulseFx.area.dur > 0 && CONFIG.ui.pulseFx.cast.dur > 0 && CONFIG.ui.pulseFx.cast.rings >= 1);
+  T('⑫时间戳变了、而且是刚发生的才播；没变不播；切图带进来的旧时间戳不播；还没有时间戳不播',
+    pulseDue(undefined, 10, 10.1) && !pulseDue(10, 10, 10.1) && !pulseDue(undefined, 10, 30) && !pulseDue(undefined, undefined, 5) && pulseDue(10, 12, 12));
+  const scene = new THREE.Scene(), fx = new PulseFx(scene);
+  let now = 0; const realNow = performance.now; performance.now = () => now; fx._last = 0;
+  fx.ground({ x: 0, y: 0, z: 0, r1: 120, color: '#6cb4ff' });
+  fx.cast({ x: 0, y: 0, z: 0, h: 24, color: '#b46cf0' });
+  const n0 = scene.children.length;
+  T(`⑬范围光环是一道环；术士的施法是 ${CONFIG.ui.pulseFx.cast.rings} 道环 + 一团闪光`, n0 === 1 + CONFIG.ui.pulseFx.cast.rings + 1);
+  now = 100; fx.update();
+  const ring = fx.live.find((a) => a.kind === 'ring');
+  T('⑭光环在往外扩（已经比起点大）、还没到射程边缘', ring && ring.obj.scale.x > ring.r0 && ring.obj.scale.x < 120);
+  for (let i = 0; i < 30; i++) { now += 100; fx.update(); }
+  T('⑮播完全部收回池子，场景里不留东西', scene.children.length === 0 && fx.live.length === 0 && fx.pool.ring.length === 1 + CONFIG.ui.pulseFx.cast.rings);
+  fx.ground({ x: 0, y: 0, z: 0, r1: 60, color: '#ff6a55' });
+  T('⑯再播时从池子里取（不新建网格）', fx.pool.ring.length === CONFIG.ui.pulseFx.cast.rings && scene.children.length === 1);
+  performance.now = realNow;
 }
 done();

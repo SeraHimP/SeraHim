@@ -110,7 +110,7 @@ export function patchWorldMaterial(material, opts = {}) {
   const light = opts.light !== false, wet = opts.wet !== false, dust = opts.dust !== false;
   const U = ensureNoise();
   const prev = material.onBeforeCompile, prevKey = material.customProgramCacheKey;
-  const tag = `|world:${light ? 'l' : ''}${wet ? 'w' : ''}${dust ? 'd' : ''}`;
+  const tag = `|world:${light ? 'l' : ''}${wet ? 'w' + (opts.wetRough ?? '') : ''}${dust ? 'd' : ''}`;
   material.onBeforeCompile = (sh, renderer) => {
     if (prev) prev.call(material, sh, renderer);
     Object.assign(sh.uniforms, U);
@@ -120,7 +120,8 @@ export function patchWorldMaterial(material, opts = {}) {
     if (wet) color += 'diffuseColor.rgb *= 1.0 - 0.28 * uWWet;\n';
     if (dust) color += '{ float du = uWSand * (0.35 + 0.4 * texture2D(tWNoise, vWPos.xz * 0.004).g); diffuseColor.rgb = mix(diffuseColor.rgb, uWSandCol * 0.8, clamp(du, 0.0, 0.7)); }\n';
     if (color) fs = fs.replace('#include <color_fragment>', '#include <color_fragment>\n' + color);
-    if (wet && fs.includes('#include <roughnessmap_fragment>')) fs = fs.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.35), uWWet);');
+    // wetRough：淋湿后最光滑到多少。叶片给高一点（0.7）——叶片卡片朝向杂乱，太光滑的话雨天满树都是一道道白色反光
+    if (wet && fs.includes('#include <roughnessmap_fragment>')) fs = fs.replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n roughnessFactor = mix(roughnessFactor, min(roughnessFactor, ${(opts.wetRough ?? 0.35).toFixed(2)}), uWWet);`);
     if (light) fs = fs.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += wLocalLight(vWPos) * diffuseColor.rgb;');
     sh.fragmentShader = fs;
   };

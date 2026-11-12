@@ -882,9 +882,11 @@ export class CombatSystem {
       }
     } else if (mode === 'area') {
       // 范围（没有自己武器实现的单位走这条通用路径）：不吃弹速，射程内所有敌人各结算一份。
-      // 范围光环的画面还没有，记在交接清单给 Fable。
       this._resolveHit(hitInfo);
       const r = atkStats.attackRange || 0;
+      // 画面那边的范围光环读这两个量（时间戳变了就从脚下扩开一圈到射程边缘）；逻辑层只留记号，不碰画面
+      attacker._areaPulseAt = (typeof window !== 'undefined' && window.gameTime) || 0;
+      attacker._areaPulseR = r;
       if (r > 0 && attacker.pos) {
         for (const other of enemyUnitsInRadius(this.entities, attacker, r)) {
           if (other.id === target.id || !other.alive) continue;

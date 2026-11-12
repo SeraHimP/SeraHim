@@ -145,7 +145,7 @@ export function buildWorldFoliage(field, theme) {
   const kinds = [0, 1, 2].map((k) => treeGeometry(1 + k * 17, H0 + k * 10, shape, false));
   const kindsFar = [0, 1, 2].map((k) => treeGeometry(1 + k * 17, H0 + k * 10, shape, true));
   const trunkMat = patchWorldMaterial(new THREE.MeshStandardMaterial({ map: bark.map, normalMap: bark.normalMap, roughness: 0.95, color: new THREE.Color(T.barkTint ?? '#cfc3b4') }));
-  const leafMat = patchSway(patchWorldMaterial(leafMaterial(leaf, T.leafTint)), H0, T.sway ?? 1.6);
+  const leafMat = patchSway(patchWorldMaterial(leafMaterial(leaf, T.leafTint), { wetRough: 0.7 }), H0, T.sway ?? 1.6);
   patchSway(trunkMat, H0 * 2.2, (T.sway ?? 1.6) * 0.5);
   disposables.push(trunkMat, leafMat, ...kinds.flatMap((k) => [k.trunk, k.canopy]), ...kindsFar.flatMap((k) => [k.trunk, k.canopy]));
 

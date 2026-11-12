@@ -149,7 +149,7 @@ const T = (n, c) => { c ? pass++ : (fail++, console.log('✗', n)); };
     /_clearRange\(en\)/.test(src) && /for \(const g of en\.rangeGeo\) g\.dispose\(\)/.test(src)
     && /for \(const m of en\.rangeMat\) m\.dispose\(\)/.test(src));
   T('材质逐塔独有（共享材质下十几座塔共用一份 opacity，渐显会互相踩）',
-    /_rangeMat\(color, opacity\)/.test(src) && /en\.rangeMat = \[this\._rangeMat/.test(src));
+    /_rangeMat\(color, opacity(, r = 0)?\)/.test(src) && /en\.rangeMat = \[this\._rangeMat/.test(src));
   T('贴合参数全在配置里（分段数/径向段/探针）',
     typeof cfg.drape === 'object' && cfg.drape.enabled === true
     && cfg.drape.segments >= 24 && cfg.drape.radialSteps >= 4 && cfg.drape.probe > 0);
