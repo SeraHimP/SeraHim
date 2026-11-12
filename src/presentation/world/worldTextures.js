@@ -87,20 +87,31 @@ function grass(N, pal) {
     return { c, h: clump * 0.5 + blade * 0.5, rough: 0.88 + 0.1 * (1 - t) };
   }, 2.4);
 }
-/** 泥路：压实的土 + 嵌在里面的碎石 + 车辙状的浅沟。pal = { dark, mid, light, stone } */
+/**
+ * 泥路：踩实的土。大小两个尺度的深浅斑（干 / 潮）、被踩出来的细纹、零星几块大小不一的石头和一层很淡的砂砾。
+ * pal = { dark, mid, light, stone }
+ * 石头故意做得稀、大小形状各不相同：上一版是"每格一颗、一样大"的石子，铺开来是一地整齐的圆点。
+ */
 function dirt(N, pal) {
   const dk = hexRGB(pal.dark), md = hexRGB(pal.mid), lt = hexRGB(pal.light), st = hexRGB(pal.stone);
   return build(N, (u, v) => {
-    const base = fbm(u, v, 6, 4, 51), grit = vnoise(u, v, 180, 53);
-    const [d1, d2, id] = worley(u, v, 22, 61);
-    const pebble = sstep(0.34, 0.2, d1) * (id > 0.45 ? 1 : 0);      // 稀疏嵌着的石子
-    const crack = Math.pow(1 - Math.min(1, (d2 - d1) * 3.2), 6) * (1 - pebble) * 0.35;
-    const t = base * 0.7 + grit * 0.3;
+    const big = fbm(u, v, 3, 4, 51), mid = fbm(u, v, 11, 4, 52), grit = vnoise(u, v, 190, 53) * 0.6 + vnoise(u, v, 97, 54) * 0.4;
+    const tread = ridged(u * 0.5 + big * 0.2, v * 2.2 + mid * 0.15, 13, 3, 55);          // 顺着一个方向的浅纹（踩 / 轧出来的）
+    // 大石头：稀（约四分之一的格子有）、半径随格子变、轮廓被噪声啃过
+    const wu = u + (fbm(u, v, 24, 2, 56) - 0.5) * 0.03, wv = v + (fbm(u, v, 24, 2, 57) - 0.5) * 0.03;
+    const [d1, , id] = worley(wu, wv, 9, 61);
+    const rad = 0.1 + (id - 0.74) * 0.9;
+    const stone = id > 0.74 ? sstep(rad, rad * 0.55, d1) : 0;
+    // 砂砾：细、淡
+    const [g1, , gid] = worley(u, v, 41, 67);
+    const gravel = gid > 0.62 ? sstep(0.3, 0.14, g1) * 0.45 : 0;
+    const t = Math.max(0, Math.min(1, big * 0.42 + mid * 0.33 + grit * 0.17 + tread * 0.12 - 0.02));
     let c = t < 0.5 ? mix3(dk, md, t * 2) : mix3(md, lt, (t - 0.5) * 2);
-    c = mix3(c, mix3(st, lt, id * 0.5), pebble * 0.85);
-    c = mix3(c, dk, crack);
-    return { c, h: base * 0.45 + grit * 0.1 + pebble * 0.45 - crack * 0.3, rough: 0.93 - 0.2 * pebble };
-  }, 3.0);
+    c = mix3(c, mix3(st, lt, gid * 0.6), gravel * 0.55);
+    c = mix3(c, mix3(st, dk, 0.25 + id * 0.3 - 0.2), stone * 0.9);
+    c = mix3(c, dk, sstep(0.0, 0.35, stone) * (1 - sstep(0.35, 0.7, stone)) * 0.35);        // 石头脚下一圈暗（嵌在土里）
+    return { c, h: big * 0.2 + mid * 0.22 + grit * 0.1 + tread * 0.12 + stone * 0.5 + gravel * 0.12, rough: 0.95 - 0.22 * stone - 0.05 * gravel };
+  }, 2.6);
 }
 /** 岩石：层理 + 裂隙 + 风化色斑。pal = { dark, mid, light, stain }；strata 越大层理越明显 */
 function rock(N, pal, strata = 0.6) {

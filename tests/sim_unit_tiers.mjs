@@ -40,7 +40,7 @@ const baseT = ec.getAll(false).find((e) => e._mapTier === 'base' && e._mapFactio
 if (baseT) { baseT.currentHP = 0; baseT.alive = false; sim.eventBus.emit('entity:death', { entityId: baseT.id }); }
 T('⑫蓝方下路水晶塔被拆 → 蓝方下路 5 分钟就出三级', !!baseT && tierLevelFor('blue', 'bot', 5 * 60, ec) === 3);
 T('⑬拆塔的红方不受影响、蓝方其它路也不受影响', tierLevelFor('red', 'bot', 5 * 60, ec) === 1 && tierLevelFor('blue', 'mid', 5 * 60, ec) === 1);
-T('⑭渲染先沿用所属兵种线的造型', minionRenderType({ type: 'melee_t3' }) === 'melee' && tierLineOf('ranged_t2') === 'ranged');
+T('⑭二、三级兵渲染用自己的造型（不再借一级兵的）；仍然认得出属于哪条兵种线', minionRenderType({ type: 'melee_t3' }) === 'melee_t3' && tierLineOf('ranged_t2') === 'ranged');
 
 // 出兵真跑：把时钟拨到 16 分钟，下一波就是二级兵
 {

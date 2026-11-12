@@ -25,7 +25,11 @@ T('①配色、龙装饰点缀色、动画幅度都在 CONFIG.ui.unitModels（�
 // ---- 小兵 ----
 const bonesOf = (geo) => { const b = geo.getAttribute('aBone'); const set = new Set(); for (let i = 0; i < b.count; i++) set.add(Math.round(b.getX(i))); return set; };
 const sizeOf = (t) => MINION_SIZES[t] ?? 10;
-const builtin = [...Object.keys(CONFIG.gameRules.spawnEnabled), 'shepherd_pet', 'summon_spirit'];
+// 三级兵种线的二、三级兵不在出兵开关里（由一级兵升上去），单独列出来一起查
+const TIERED = Object.values(CONFIG.unitTiers.lines).flat();
+const builtin = [...new Set([...Object.keys(CONFIG.gameRules.spawnEnabled), ...TIERED, 'shepherd_pet', 'summon_spirit'])];
+// 占地上限（× 兵种尺寸）：骑兵的马身比它的圆形碰撞半径长，头尾各探出去一截
+const FOOT_K = (t) => (t === 'melee_t3' ? 1.5 : 1.15);
 T(`②内置兵种全部有专属造型（${builtin.length} 种）`, builtin.every((t) => MINION_MODEL_TYPES.includes(t)));
 
 let shapeOk = true, bonesOk = true, factionDiff = true;
@@ -37,7 +41,7 @@ for (const t of builtin) {
     const bb = m.geo.boundingBox;
     const rad = Math.max(-bb.min.x, bb.max.x, -bb.min.z, bb.max.z);
     // 贴地、高度合理、占地与兵种尺寸同量级（碰撞半径就是这个尺寸）
-    if (Math.abs(bb.min.y) > 1e-4 || m.topY < S * 1.0 || m.topY > S * 2.8 || rad > S * 1.15) { shapeOk = false; bad.push(`${t}:h${(m.topY / S).toFixed(2)} r${(rad / S).toFixed(2)}`); }
+    if (Math.abs(bb.min.y) > 1e-4 || m.topY < S * 1.0 || m.topY > S * (t === 'melee_t3' ? 3.6 : 2.8) || rad > S * FOOT_K(t)) { shapeOk = false; bad.push(`${t}:h${(m.topY / S).toFixed(2)} r${(rad / S).toFixed(2)}`); }
     if (!m.geo.getAttribute('aBone') || !m.geo.getAttribute('aPivot') || !m.geo.userData.animated) bonesOk = false;
   }
   if (t !== 'summon_spirit' && t !== 'shepherd_pet') {
@@ -184,4 +188,24 @@ T('㉚走路时主手（连同武器）小幅摆动，幅度软编码', U.anim.m
   // ㉔（描边预渲染用动画法线材质）随法线深度预渲染一起删除：SSAO / 雾改读主渲染深度，主渲染本来就是动画后的姿势。
 }
 
+// ---- 三级兵种：每条线三个造型，一级比一级威猛（用户："等级越高的模型长的越牛逼"）----
+{
+  const { minionRenderType } = await import('../src/presentation/SpriteFactory.js');
+  for (const [line, list] of Object.entries(CONFIG.unitTiers.lines)) {
+    const ms = list.map((t) => buildMinion(t, '#5b9bd5', sizeOf(t), 'blue'));
+    T(`级①-${line} 线三级都有专属造型，渲染用的就是自己的类型`, list.every((t) => MINION_MODEL_TYPES.includes(t) && minionRenderType({ type: t }) === t));
+    const vol = ms.map((m) => { const b = m.geo.boundingBox; return (b.max.x - b.min.x) * (b.max.y - b.min.y) * (b.max.z - b.min.z); });
+    T(`级②-${line} 线体量逐级变大（${vol.map((v) => Math.round(v)).join(' < ')}）`, vol[0] < vol[1] && vol[1] < vol[2]);
+    const n = ms.map((m) => m.geo.getAttribute('position').count);
+    T(`级③-${line} 线三个造型互不相同、三级最复杂（顶点数 ${n.join(' / ')}）`, new Set(n).size === 3 && n[2] > n[0]);
+  }
+  const knight = buildMinion('melee_t3', '#5b9bd5', sizeOf('melee_t3'), 'blue');
+  T('级④-重骑：马的四条腿分两组对角摆动，尾巴会甩，骑手右手骑枪走"推击"', [BONE.LEG_L, BONE.LEG_R, BONE.TAIL, BONE.THRUST].every((b) => bonesOf(knight.geo).has(b)));
+  T('级⑤-弩炮手的重弩、三种炮的炮管发射时后坐', ['ranged_t3', 'siege', 'siege_t2', 'siege_t3'].every((t) => bonesOf(buildMinion(t, '#5b9bd5', sizeOf(t), 'blue').geo).has(BONE.RECOIL)));
+  // 材料：零件按颜色认出材料（甲是金属、饰边是金、衣料是布……），网格带 aMat
+  const am = knight.geo.getAttribute('aMat');
+  const kinds = new Set(); for (let i = 0; i < am.count; i++) kinds.add(`${am.getX(i).toFixed(2)}|${am.getY(i).toFixed(2)}`);
+  T(`级⑥-同一个网格里有不止一种材料（${kinds.size} 种）：金属反光、布和皮是哑的`, am.itemSize === 4 && kinds.size >= 3);
+}
 done();
+

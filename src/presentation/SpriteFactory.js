@@ -67,8 +67,7 @@ export const MINION_STYLE = {
 export function minionRenderType(e) {
   if (e._petOwnerId) return 'shepherd_pet';
   if (e._isSummoned) return 'summon_spirit';
-  // Q9：二、三级兵的专属造型还没做（交给 Fable），先沿用所属兵种线一级兵的造型
-  return tierLineOf(e.type) || e.type;
+  return e.type;   // 二、三级兵有各自的造型（unitModels.js：盾卫 / 重骑 / 长弓手 / 弩炮手 / 臼炮 / 重炮）
 }
 
 /**

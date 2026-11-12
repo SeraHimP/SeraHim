@@ -4,7 +4,7 @@
  *   ?set=buildings|minions|dragons  &faction=blue|red|both  &dmg=0|1|2  &ruin=1  &elev=57  &zoom=1  &night=1  &only=tower,orb,gem / 兵种名
  */
 import * as THREE from '../../vendor/three.module.js';
-import { CONFIG } from '../../src/data/Config.js';
+import { CONFIG, MINION_SIZES } from '../../src/data/Config.js';
 import { towerMesh, minionMesh, dragonMesh, crystalMaterial } from '../../src/presentation/UnitMeshFactory.js';
 import { animMaterials } from '../../src/presentation/unitRig.js';
 import { MINION_MODEL_TYPES } from '../../src/presentation/unitModels.js';
@@ -62,15 +62,15 @@ if (set === 'buildings') {
   for (const f of facs) {
     let x = 0, i = 0;
     for (const t of types) {
-      const size = (CONFIG.minionSizes || {})[t] || 12;
+      const size = MINION_SIZES[t] || 12;
       const m = minionMesh(`mv|${t}|${f}`, colorOf(f), size, t, f);
       const mat = animMaterials(false); mat.userData.uAnim.value.set(i * 0.9, q.get('walk') === '0' ? 0 : 1, q.get('atk') ? +q.get('atk') : -1, 1.3);
       const mesh = new THREE.Mesh(m.geo, mat); mesh.castShadow = mesh.receiveShadow = true; mesh.customDepthMaterial = mat.userData.depthMaterial;
       mesh.position.set(x, 0, z); mesh.rotation.y = +(q.get('rot') || 0.5); scene.add(mesh);
-      items.push({ x, z, r: size }); x += 62; i++;
-      if (i % 9 === 0) { x = 0; z += 70; }
+      items.push({ x, z, r: size }); x += 46; i++;
+      if (i % (+(q.get('cols') || 9)) === 0) { x = 0; z += 60; }
     }
-    z += 90;
+    z += 64; if (x) { x = 0; }
   }
 } else {
   const els = only.length ? only : [null, 'fire', 'water', 'frost', 'thunder'];

@@ -50,8 +50,9 @@ function membrane(tris) {
 }
 
 class Rig {
-  constructor() { this.parts = []; this.cur = { bone: 0, pivot: [0, 0, 0], k: 1 }; }
-  add(geo, m, color) { this.parts.push({ geo, matrix: m, color, bone: this.cur.bone, pivot: this.cur.pivot, k: this.cur.k }); }
+  constructor() { this.parts = []; this.cur = { bone: 0, pivot: [0, 0, 0], k: 1 }; this.mats = null; }
+  /** 材料按颜色认（鳞是带一点光泽的鳞甲、角和爪是骨、眼睛和元素装饰会发光），见 unitSurface.js */
+  add(geo, m, color, mat) { this.parts.push({ geo, matrix: m, color, mat: mat || this.mats?.get(String(color).toLowerCase()), bone: this.cur.bone, pivot: this.cur.pivot, k: this.cur.k }); }
   on(bone, pivot, k, fn) { const p = this.cur; this.cur = { bone, pivot, k }; fn(); this.cur = p; }
 }
 
@@ -70,6 +71,8 @@ export function buildDragon(color, element, ancient, S) {
     eye: accent, claw: '#e9e1cf',
   };
   const r = new Rig();
+  r.mats = new Map([[P.base, 'scale'], [P.dark, 'scale'], [P.mid, 'scale'], [P.lite, 'scale'], [P.belly, 'leather'], [P.horn, 'bone'], [P.claw, 'bone'],
+    [P.accent, 'glow']].map(([c, k]) => [String(c).toLowerCase(), k]));
   const D = body(r, S, P, element, ancient);
   const deco = DECOR[ancient ? 'ancient' : element];
   if (deco) deco(r, S, P, D);

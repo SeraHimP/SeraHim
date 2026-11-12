@@ -1527,7 +1527,7 @@ export const CONFIG = {
     },
     unitModels: {
       order: { armor: '#d6dde6', trim: '#d8b25a', dark: '#2a3446', eye: '#9fe0ff', wood: '#8a6a44', leather: '#6b4f35' },
-      chaos: { armor: '#5a3a3e', trim: '#e2d3b0', dark: '#2a1c1f', eye: '#ffb23e', wood: '#4a3328', leather: '#3a2a24' },
+      chaos: { armor: '#7c5052', trim: '#e2d3b0', dark: '#3a282b', eye: '#ffb23e', wood: '#5a3e30', leather: '#4a352d' },
       dragonAccent: {
         fire: '#ffd24a', water: '#bff3ff', earth: '#8a7a66', thunder: '#fff38a', wind: '#e8fff8', dark: '#d9a6ff',
         poison: '#c8ff5a', frost: '#eaffff', steel: '#e3e8ec', blood: '#efe4cf', magma: '#ffb13b', astral: '#fff6c8',
@@ -3470,8 +3470,8 @@ export const MINION_SIZES = {
   healer: 11,  // Q5：治疗兵——与图腾兵同量级的支援型体型
   engineer: 11, // Q5：工程兵——同上，支援型体型
   summoner: 11, // Q5：唤灵兵——同上，支援型体型
-  // Q9 二、三级兵：比一级略大一圈（外形由 Fable 另做，现在渲染沿用一级兵的造型）
-  melee_t2: 11, melee_t3: 13, ranged_t2: 10, ranged_t3: 11, siege_t2: 13, siege_t3: 14,
+  // Q9 二、三级兵：比一级大一圈，各有造型（unitModels.js）。重骑是骑兵，占地最大
+  melee_t2: 11, melee_t3: 14, ranged_t2: 10, ranged_t3: 11, siege_t2: 13, siege_t3: 14,
   // 牧灵法阵幻兽——渲染专用伪类型（entity.type 仍是 melee），比普通近战兵小一圈，
   // 呼应"幻兽"体型定位，见 SpriteFactory.minionRenderType 头注。
   shepherd_pet: 9,

@@ -59,8 +59,10 @@ await page.goto(`http://127.0.0.1:${server.address().port}/index.html${QUERY ? '
 await page.waitForFunction(() => !!(window.CTX && window.CTX.__three && window.CTX.__app));
 await page.evaluate(() => window.__vt.step(3));
 
-const info = await page.evaluate(async ([id, adv]) => {
+const PRE = arg('pre', '');   // 进图之前先执行的一段 JS（改配置用，例如让三级兵提前出场）
+const info = await page.evaluate(async ([id, adv, pre]) => {
   const C = window.CTX, r = C.__three;
+  if (pre) { try { (0, eval)(pre); } catch (e) { console.error('pre 失败: ' + e.message); } }
   if (C.__weather) C.__weather.enabled = false;
   C.gamePaused = false;
   C.__app.mapSystem.loadMap(id);
@@ -84,7 +86,7 @@ const info = await page.evaluate(async ([id, adv]) => {
     blueNexus: find('blue', 'nexus_main'), redNexus: find('red', 'nexus_main'),
     pit: pit ? { x: pit.x, y: pit.y } : null,
   }, tiers: [...new Set(B.map((b) => b.faction + ':' + (b.tier || b.type)))], gameTime: Math.round(window.gameTime || 0) };
-}, [MAP, ADVANCE]);
+}, [MAP, ADVANCE, PRE]);
 console.log('地图', MAP, JSON.stringify(info.world), '建筑档位', info.tiers.join(' '), '第', info.gameTime, '秒');
 
 for (const s of SHOTS) {

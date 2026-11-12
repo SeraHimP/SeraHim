@@ -36,15 +36,45 @@ const mix = (a, b, k) => '#' + new THREE.Color(a).lerp(new THREE.Color(b), k).ge
 
 /** 部件收集器：当前骨（bone / pivot / k）是个栈，with() 里加的部件都挂在那根骨上。 */
 class Rig {
-  constructor() { this.parts = []; this.cur = { bone: BONE.NONE, pivot: [0, 0, 0], k: 1 }; }
-  add(geo, m, color) { this.parts.push({ geo, matrix: m, color, bone: this.cur.bone, pivot: this.cur.pivot, k: this.cur.k }); return this; }
+  constructor() { this.parts = []; this.cur = { bone: BONE.NONE, pivot: [0, 0, 0], k: 1 }; this.xf = null; this.mats = null; }
+  /** @param mat 材料名（unitSurface.js）。不给时按颜色认：甲是金属、饰边是金 / 骨、衣料是布……（见 styleMats） */
+  add(geo, m, color, mat) {
+    this.parts.push({ geo, matrix: this.xf ? this.xf.clone().multiply(m) : m, color, mat: mat || this.mats?.get(String(color).toLowerCase()),
+                      bone: this.cur.bone, pivot: this.cur.pivot, k: this.cur.k });
+    return this;
+  }
   on(bone, pivot, k, fn) {
     const prev = this.cur;
-    this.cur = { bone, pivot, k };
+    const pv = this.xf ? new THREE.Vector3(...pivot).applyMatrix4(this.xf).toArray() : pivot;
+    this.cur = { bone, pivot: pv, k };
     fn();
     this.cur = prev;
     return this;
   }
+  /** 在一个局部坐标系里建一段（骑手坐在马背上、整体放大缩小）。只用平移 + 等比缩放：骨骼的转轴不跟着变。 */
+  within(xf, fn) {
+    const prev = this.xf;
+    this.xf = prev ? prev.clone().multiply(xf) : xf.clone();
+    fn();
+    this.xf = prev;
+    return this;
+  }
+}
+
+const STEEL = '#eef3f8', IRON = '#8d8286', ROCK = '#8d8579';
+/** 颜色 → 材料：造型代码按"这是甲 / 这是饰边 / 这是衣料"取色，这里把同一套语义翻译成材质。 */
+function styleMats(st) {
+  const m = new Map();
+  const put = (hex, mat, ...ks) => { for (const k of [1, ...ks]) m.set(shade(hex, k).toLowerCase(), mat); m.set(String(hex).toLowerCase(), mat); };
+  put(st.armor, st.chaos ? 'iron' : 'metal', 0.9, 0.72);
+  put(st.armorDark, st.chaos ? 'iron' : 'metal');
+  put(st.trim, st.chaos ? 'bone' : 'gold');
+  put(st.cloth, 'cloth'); put(st.clothDark, 'cloth'); put(st.clothLite, 'cloth');
+  put(st.dark, 'leather'); put(st.leather, 'leather', 0.85, 1.2);
+  put(st.wood, 'wood', 0.8, 1.15);
+  put(st.eye, 'glow'); put(st.gem, 'glow');
+  put(STEEL, 'metal'); put(IRON, 'iron'); put(ROCK, 'stone');
+  return m;
 }
 
 /** 阵营配色：衣料 = 阵营色（调用方给），甲 / 饰 / 暗部 / 眼光 按阵营取 CONFIG。无阵营（自制兵种）按蓝方造型。 */
@@ -93,14 +123,14 @@ function humanoid(r, S, st, opts = {}) {
   const bk = opts.bulk ?? 1, robe = !!opts.robe, ch = st.chaos;
   const hipY = S * 0.68, hipX = S * 0.13 * bk, kneeY = S * 0.36, ankleY = S * 0.09;
   const waistY = S * 0.84, chestY = S * 1.08, shY = S * 1.24, shX = S * 0.38 * bk;
-  const neckY = S * 1.33, headR = S * 0.21, hY = S * 1.5;
+  const neckY = S * 1.33, headR = S * (opts.headR ?? 0.185), hY = S * 1.49;
   const elbow = (sx) => V3(sx * (shX + S * 0.05), S * 0.93, S * 0.03);
   const handP = (sx) => V3(sx * (shX + S * 0.04), S * 0.72, S * 0.2);
   const out = { legH: hipY, torsoH: shY - hipY, shY, shX, armLen: shY - S * 0.72, headY: hY, headR };
   const metal = ch ? st.armorDark : st.armor, plate = ch ? st.armor : st.armor;
 
-  // ---- 腿：大腿 / 护膝 / 小腿护甲 / 靴 ----
-  for (const sx of [-1, 1]) {
+  // ---- 腿：大腿 / 护膝 / 小腿护甲 / 靴 ----（opts.noLegs：骑手，腿由坐骑那边画）
+  for (const sx of (opts.noLegs ? [] : [-1, 1])) {
     r.on(sx < 0 ? BONE.LEG_R : BONE.LEG_L, [sx * hipX, hipY, 0], 1, () => {
       const hip = V3(sx * hipX, hipY, 0), knee = V3(sx * hipX * 1.05, kneeY, S * 0.04), ank = V3(sx * hipX * 1.05, ankleY, 0);
       limb(r, hip, knee, S * 0.1 * bk, S * 0.08 * bk, robe ? st.dark : (ch ? st.dark : st.clothDark));
@@ -262,14 +292,14 @@ function sword(r, S, st, h) {
   if (st.chaos) {
     // 锯齿砍刀：宽刃 + 背上一排齿 + 斜切刀尖
     r.add(Box(S * 0.05, S * 0.14, S * 0.05), C(base, T(0, S * 0.02, 0)), st.dark);
-    r.add(Box(S * 0.05, S * 0.8, S * 0.26), C(base, T(0, S * 0.49, S * 0.05)), '#8d8286');
+    r.add(Box(S * 0.05, S * 0.8, S * 0.26), C(base, T(0, S * 0.49, S * 0.05)), IRON);
     for (let i = 0; i < 4; i++) r.add(Cone(S * 0.04, S * 0.12, 3), C(base, T(0, S * (0.2 + i * 0.16), -S * 0.08), RX(-Math.PI / 2)), st.trim);
-    r.add(Cone(S * 0.13, S * 0.22, 3), C(base, T(0, S * 0.98, S * 0.1), RY(Math.PI / 2)), '#8d8286');
+    r.add(Cone(S * 0.13, S * 0.22, 3), C(base, T(0, S * 0.98, S * 0.1), RY(Math.PI / 2)), IRON);
   } else {
     r.add(Box(S * 0.05, S * 0.16, S * 0.05), C(base, T(0, 0, 0)), st.leather);
     r.add(Box(S * 0.07, S * 0.05, S * 0.3), C(base, T(0, S * 0.09, 0)), st.trim);   // 护手
-    r.add(Box(S * 0.05, S * 1.0, S * 0.14), C(base, T(0, S * 0.61, 0)), '#eef3f8');
-    r.add(Cone(S * 0.1, S * 0.2, 4), C(base, T(0, S * 1.21, 0), RY(Math.PI / 4)), '#eef3f8');
+    r.add(Box(S * 0.05, S * 1.0, S * 0.14), C(base, T(0, S * 0.61, 0)), STEEL);
+    r.add(Cone(S * 0.1, S * 0.2, 4), C(base, T(0, S * 1.21, 0), RY(Math.PI / 4)), STEEL);
     r.add(Sph(S * 0.05, 6, 4), C(base, T(0, -S * 0.1, 0)), st.trim);   // 剑首
   }
 }
@@ -535,7 +565,7 @@ B.ram = (r, S, st) => {
     const armM = C(T(0, pivY, 0), RX(-0.75));
     r.add(Box(S * 0.12, S * 1.35, S * 0.12), C(armM, T(0, S * 0.45, 0)), st.chaos ? st.armorDark : shade(st.wood, 1.15));
     r.add(Cyl(S * 0.22, S * 0.14, S * 0.14, st.chaos ? 5 : 8), C(armM, T(0, S * 1.12, 0)), st.chaos ? st.armor : st.leather);   // 抛篮
-    r.add(Ico(S * 0.14), C(armM, T(0, S * 1.2, 0)), st.chaos ? st.trim : '#8d8579');   // 石弹
+    r.add(Ico(S * 0.14), C(armM, T(0, S * 1.2, 0)), st.chaos ? st.trim : ROCK);   // 石弹
     r.add(st.chaos ? Ico(S * 0.26) : Box(S * 0.36, S * 0.34, S * 0.34), C(armM, T(0, -S * 0.3, 0)), st.chaos ? st.armor : st.armorDark);   // 配重
     if (st.chaos) for (const sx of [-1, 1]) r.add(Cone(S * 0.05, S * 0.2, 4), C(armM, T(sx * S * 0.2, -S * 0.3, 0), RZ(-sx * Math.PI / 2)), st.trim);
   });
@@ -709,6 +739,248 @@ B.shepherd_pet = (r, S, st) => {
 };
 B.summon_spirit = B.shepherd_pet;
 
+// ============================================================================
+// 三级兵种（Q9）：每条兵种线三个造型，一级比一级威猛。
+// 用户："三级兵种应该有三个模型，等级越高的模型长的越牛逼。"
+//   近战  矛卒（轻甲、长矛圆盾）→ 盾卫（重甲、鸢盾长剑、盔缨披风）→ 重骑（披甲战马、骑枪、旗）
+//   远程  投石手（短衣、投石索）→ 长弓手（兜帽披风、长弓箭囊）→ 弩炮手（板甲、重弩、背着大盾）
+//   炮兵  轻炮（两轮小炮）→ 臼炮（四轮、粗短炮管朝天）→ 重炮（六轮、长管、炮盾、弹药箱）
+// 一级兵用原来的 melee / ranged / siege 这三个名字（出兵编排、存档里写的就是它们）。
+// ============================================================================
+function spear(r, S, st, h, len = 2.1) {
+  const [x, y, z] = h;
+  const base = C(T(x, y, z), RX(0.5));
+  r.add(Cyl(S * 0.03, S * 0.035, S * len, 5), C(base, T(0, S * len * 0.22, 0)), st.chaos ? st.dark : st.wood);
+  const tip = C(base, T(0, S * len * 0.72, 0));
+  if (st.chaos) {
+    r.add(Cone(S * 0.09, S * 0.4, 3), C(tip, T(0, S * 0.2, 0)), IRON);
+    for (const sx of [-1, 1]) r.add(Cone(S * 0.04, S * 0.2, 3), C(tip, T(sx * S * 0.07, S * 0.02, 0), RZ(-sx * 2.2)), IRON);   // 倒钩
+  } else {
+    r.add(Cone(S * 0.075, S * 0.38, 4), C(tip, T(0, S * 0.19, 0)), STEEL);
+    r.add(Cyl(S * 0.05, S * 0.05, S * 0.06, 6), tip, st.trim);
+    r.add(Box(S * 0.02, S * 0.2, S * 0.16), C(tip, T(0, -S * 0.14, -S * 0.09)), st.cloth);   // 矛缨
+  }
+}
+function buckler(r, S, st, h) {
+  const [x, y, z] = h;
+  const base = C(T(x + S * 0.1, y + S * 0.12, z + S * 0.06), RY(0.55), RZ(Math.PI / 2));
+  r.add(Cyl(S * 0.27, S * 0.27, S * 0.05, st.chaos ? 6 : 12), base, st.chaos ? st.armorDark : st.wood);
+  r.add(Cyl(S * 0.28, S * 0.28, S * 0.03, st.chaos ? 6 : 12), C(base, T(0, -S * 0.02, 0)), st.chaos ? st.armor : st.cloth);
+  r.add(Sph(S * 0.08, 6, 4), C(base, T(0, -S * 0.04, 0)), st.trim);   // 盾钮
+}
+// 近战一级：矛卒
+B.melee = (r, S, st) => humanoid(r, S, st, {
+  helm: st.chaos ? 'horn' : 'plain', cape: false, bulk: 0.92,
+  onMain: (o) => spear(r, S, st, o.mainHand),
+  onOff: (o) => buckler(r, S, st, o.offHand),
+});
+// 近战二级：盾卫（重甲 + 鸢盾长剑 + 盔缨披风）
+B.melee_t2 = (r, S, st) => {
+  const o = humanoid(r, S, st, {
+    bulk: 1.1, cape: true,
+    onMain: (o2) => sword(r, S, st, o2.mainHand),
+    onOff: (o2) => shield(r, S, st, o2.offHand, st.chaos ? 1.25 : 1.5),
+  });
+  // 多一层护颈 + 腰间垂甲：比矛卒厚一圈
+  r.add(Cyl(S * 0.2, S * 0.26, S * 0.1, st.chaos ? 5 : 10), T(0, o.shY + S * 0.06, 0), st.armor);
+  for (const sx of [-1, 1]) r.add(Box(S * 0.16, S * 0.26, S * 0.05), C(T(sx * S * 0.2, S * 0.56, S * 0.1), RZ(sx * 0.12), RX(-0.12)), st.chaos ? st.armorDark : st.armor);
+};
+// 近战三级：重骑（披甲战马 + 骑枪）
+B.melee_t3 = (r, S, st) => {
+  const ch = st.chaos, hide = ch ? '#2c2226' : '#6b5440', hideD = shade(hide, 0.75);
+  const bodyY = S * 1.02, L = S * 1.36, wd = S * 0.4;
+  // ---- 马：躯干 / 胸 / 臀 / 颈 / 头 / 四条腿（对角同步）/ 尾 ----
+  r.add(Cyl(wd, wd * 0.92, L, 10), C(T(0, bodyY, 0), RX(Math.PI / 2)), hide, 'leather');
+  r.add(Sph(wd * 1.04, 10, 6), T(0, bodyY + S * 0.02, L * 0.42), hide, 'leather');    // 胸
+  r.add(Sph(wd * 1.02, 10, 6), T(0, bodyY + S * 0.03, -L * 0.42), hide, 'leather');   // 臀
+  const neckA = V3(0, bodyY + S * 0.2, L * 0.48), neckB = V3(0, bodyY + S * 0.9, L * 0.7);
+  limb(r, neckA, neckB, wd * 0.72, wd * 0.46, hide, 8);
+  const hd = C(T(0, neckB.y + S * 0.02, neckB.z + S * 0.16), RX(0.95));
+  r.add(Cyl(S * 0.13, S * 0.2, S * 0.56, 7), hd, hide, 'leather');                     // 头
+  r.add(Box(S * 0.2, S * 0.1, S * 0.16), C(hd, T(0, S * 0.3, 0)), hideD, 'leather');   // 口鼻
+  for (const sx of [-1, 1]) r.add(Cone(S * 0.045, S * 0.16, 4), C(T(sx * S * 0.1, neckB.y + S * 0.24, neckB.z - S * 0.02), RZ(-sx * 0.2)), hideD, 'leather');   // 耳
+  // 面甲 + 颈甲
+  r.add(Box(S * 0.26, S * 0.05, S * 0.5), C(hd, T(0, S * 0.02, S * 0.12), RX(Math.PI / 2 - 0.08)), st.armor);
+  if (ch) r.add(Cone(S * 0.05, S * 0.3, 4), C(hd, T(0, -S * 0.06, S * 0.2), RX(0.9)), st.trim);   // 额角
+  else r.add(Box(S * 0.05, S * 0.03, S * 0.5), C(hd, T(0, S * 0.02, S * 0.16), RX(Math.PI / 2 - 0.08)), st.trim);
+  for (let i = 0; i < 3; i++) r.add(Box(S * 0.44 - i * S * 0.04, S * 0.06, S * 0.3), C(T(0, bodyY + S * (0.5 + i * 0.2), L * (0.6 + i * 0.1)), RX(-0.95)), i % 2 ? st.armorDark : st.armor);
+  // 鬃毛（阵营色）
+  for (let i = 0; i < 5; i++) r.add(Box(S * 0.05, S * 0.2, S * 0.16), C(T(0, bodyY + S * (0.5 + i * 0.13), L * (0.47 + i * 0.065)), RX(-0.6)), ch ? st.cloth : st.clothLite);
+  // 马衣：两侧垂到膝的阵营色布 + 金边 / 撕碎的下摆，胸前一片
+  for (const sx of [-1, 1]) {
+    r.add(Box(S * 0.04, S * 0.62, L * 0.98), C(T(sx * (wd + S * 0.01), bodyY - S * 0.16, 0), RZ(sx * 0.1)), st.cloth);
+    if (ch) for (let i = 0; i < 5; i++) r.add(Cone(S * 0.08, S * 0.2, 3), C(T(sx * (wd + S * 0.05), bodyY - S * 0.54, (i - 2) * L * 0.2), RX(Math.PI)), st.cloth);
+    else r.add(Box(S * 0.05, S * 0.05, L * 1.0), T(sx * (wd + S * 0.045), bodyY - S * 0.46, 0), st.trim);
+  }
+  r.add(Box(wd * 1.9, S * 0.5, S * 0.04), C(T(0, bodyY - S * 0.1, L * 0.56 + wd * 0.5), RX(-0.25)), st.cloth);
+  r.add(Box(wd * 1.2, S * 0.2, S * 0.05), C(T(0, bodyY + S * 0.02, L * 0.58 + wd * 0.5), RX(-0.25)), st.trim);   // 胸甲徽
+  // 鞍
+  r.add(Box(wd * 1.5, S * 0.1, S * 0.6), T(0, bodyY + wd * 0.95, -S * 0.05), ch ? st.dark : st.leather);
+  r.add(Box(wd * 1.2, S * 0.2, S * 0.08), C(T(0, bodyY + wd + S * 0.1, -S * 0.34), RX(0.2)), ch ? st.dark : st.leather);
+  // 腿：前左 + 后右一组，前右 + 后左一组
+  const leg = (sx, sz, bone) => {
+    const hx = sx * wd * 0.62, hz = sz * L * 0.4, top = bodyY - wd * 0.3;
+    r.on(bone, [hx, top, hz], 0.75, () => {
+      limb(r, V3(hx, top, hz), V3(hx, S * 0.5, hz + sz * S * 0.03), S * 0.13, S * 0.08, hide, 6);
+      limb(r, V3(hx, S * 0.5, hz + sz * S * 0.03), V3(hx, S * 0.1, hz), S * 0.075, S * 0.06, hideD, 6);
+      r.add(Cyl(S * 0.085, S * 0.1, S * 0.1, 6), T(hx, S * 0.05, hz), ch ? st.armorDark : '#3a3028', ch ? 'iron' : 'leather');   // 蹄
+      r.add(Box(S * 0.17, S * 0.2, S * 0.1), T(hx, S * 0.52, hz + S * 0.06), st.armor);                                            // 护膝甲
+    });
+  };
+  leg(1, 1, BONE.LEG_L); leg(-1, -1, BONE.LEG_L); leg(-1, 1, BONE.LEG_R); leg(1, -1, BONE.LEG_R);
+  r.on(BONE.TAIL, [0, bodyY + S * 0.1, -L * 0.52], 1.2, () => {
+    r.add(Cone(S * 0.12, S * 0.7, 5), C(T(0, bodyY - S * 0.2, -L * 0.6), RX(Math.PI - 0.35)), ch ? st.cloth : hideD, ch ? 'cloth' : 'leather');
+  });
+  // ---- 骑手：上半身坐在鞍上，双腿夹着马腹；右手骑枪前刺，左手持盾，背后一面小旗 ----
+  const K = 0.82, seat = bodyY + wd * 0.95 - S * K * 0.6;
+  for (const sx of [-1, 1]) {
+    limb(r, V3(sx * S * 0.12, seat + S * K * 0.68, 0), V3(sx * (wd + S * 0.07), bodyY - S * 0.04, S * 0.14), S * 0.1, S * 0.085, ch ? st.dark : st.clothDark);
+    limb(r, V3(sx * (wd + S * 0.07), bodyY - S * 0.04, S * 0.14), V3(sx * (wd + S * 0.09), bodyY - S * 0.44, S * 0.06), S * 0.085, S * 0.07, st.armor);
+    r.add(Box(S * 0.13, S * 0.09, S * 0.22), T(sx * (wd + S * 0.09), bodyY - S * 0.48, S * 0.1), ch ? st.dark : st.leather);
+  }
+  r.within(C(T(0, seat, -S * 0.02), SC(K)), () => {
+    const o = humanoid(r, S, st, {
+      noLegs: true, bulk: 1.12, cape: true, mainBone: BONE.THRUST, mainK: 0.6,
+      onMain: (o2) => {   // 骑枪：夹在腋下、枪尖朝前
+        // 平时斜举着（枪尖朝前上方），攻击时压下去前刺
+        const [x, y, z] = o2.mainHand, base = C(T(x - S * 0.03, y + S * 0.08, z), RX(Math.PI / 2 - 0.85));
+        r.add(Cyl(S * 0.035, S * 0.06, S * 2.5, 6), C(base, T(0, S * 0.75, 0)), ch ? st.dark : st.wood);
+        r.add(Cone(S * 0.14, S * 0.3, 8), C(base, T(0, S * 0.02, 0), RX(Math.PI)), st.armor);   // 护手盘
+        r.add(Cone(ch ? S * 0.1 : S * 0.075, S * 0.5, ch ? 3 : 4), C(base, T(0, S * 2.2, 0)), ch ? IRON : STEEL);
+        r.add(Box(S * 0.02, S * 0.34, S * 0.3), C(base, T(0, S * 1.8, -S * 0.17)), st.cloth);   // 枪旗
+      },
+      onOff: (o2) => shield(r, S, st, o2.offHand, 1.2),
+    });
+    // 背旗
+    r.add(Cyl(S * 0.025, S * 0.025, S * 1.3, 5), T(S * 0.08, o.shY + S * 0.5, -S * 0.2), ch ? st.dark : st.wood);
+    r.add(Box(S * 0.03, S * 0.5, S * 0.42), T(S * 0.08, o.shY + S * 0.86, -S * 0.42), st.cloth);
+    r.add(Box(S * 0.035, S * 0.08, S * 0.44), T(S * 0.08, o.shY + S * 1.08, -S * 0.42), st.trim);
+  });
+};
+
+// 远程一级：投石手（短衣兜帽 + 投石索）
+/** 轻装：把"甲"换成皮和布（投石手、弓手不穿板甲）。颜色换了，材料跟着换（styleMats 按颜色认）。 */
+const lightStyle = (st) => ({ ...st, armor: st.chaos ? st.leather : st.clothLite, armorDark: st.leather, trim: st.chaos ? st.trim : st.leather });
+B.ranged = (r, S, st0) => {
+  const st = lightStyle(st0);
+  humanoid(r, S, st, {
+    helm: 'hood', cape: false, bulk: 0.88, mainK: -0.8,
+    onMain: (o) => {
+      const [x, y, z] = o.mainHand, base = C(T(x, y, z), RX(-0.5));
+      r.add(Box(S * 0.025, S * 0.55, S * 0.025), C(base, T(0, -S * 0.28, 0)), st.leather);   // 索
+      r.add(Box(S * 0.1, S * 0.05, S * 0.12), C(base, T(0, -S * 0.56, 0)), st.leather);       // 兜
+      r.add(Ico(S * 0.075), C(base, T(0, -S * 0.56, 0)), ROCK);                               // 石弹
+    },
+    onOff: (o) => { const [x, y, z] = o.offHand; r.add(Ico(S * 0.07), T(x, y + S * 0.02, z + S * 0.04), ROCK); },
+  });
+  r.add(Box(S * 0.2, S * 0.2, S * 0.12), C(T(-S * 0.22, S * 0.66, S * 0.1), RZ(0.15)), st.leather);   // 腰间石袋
+  r.add(Box(S * 0.06, S * 0.6, S * 0.02), C(T(S * 0.02, S * 1.02, S * 0.17), RZ(-0.75)), st.leather);  // 斜挎带
+};
+// 远程二级：长弓手（兜帽披风 + 长弓 + 箭囊）
+B.ranged_t2 = (r, S, st0) => {
+  const st = { ...lightStyle(st0), trim: st0.trim };   // 皮甲，饰边留着（比投石手讲究）
+  const o = humanoid(r, S, st, {
+    helm: 'hood', cape: true, bulk: 0.96, mainK: 0.25,
+    onMain: (o2) => {   // 搭在弦上的箭
+      const [x, y, z] = o2.mainHand, base = C(T(x + S * 0.3, y + S * 0.26, z + S * 0.12), RX(Math.PI / 2));
+      r.add(Cyl(S * 0.012, S * 0.012, S * 0.9, 4), C(base, T(0, S * 0.2, 0)), st.wood);
+      r.add(Cone(S * 0.035, S * 0.1, 4), C(base, T(0, S * 0.7, 0)), STEEL);
+    },
+    onOff: (o2) => {   // 长弓：竖握在左手，弓臂两头后弯
+      const [x, y, z] = o2.offHand, base = C(T(x, y + S * 0.18, z + S * 0.14));
+      const arc = new THREE.TorusGeometry(S * 0.86, S * 0.03, 4, 12, 1.7);
+      r.add(arc, C(base, T(0, 0, -S * 0.78), RY(-Math.PI / 2), RZ(-0.85)), st.chaos ? st.trim : st.wood, st.chaos ? 'bone' : 'wood');
+      r.add(Cyl(S * 0.008, S * 0.008, S * 1.28, 3), C(base, T(0, 0, -S * 0.21)), '#e8e2d0', 'cloth');   // 弦
+      r.add(Box(S * 0.06, S * 0.16, S * 0.06), C(base, T(0, 0, S * 0.08)), st.leather);                  // 握把
+    },
+  });
+  // 箭囊（斜背）
+  r.add(Cyl(S * 0.09, S * 0.075, S * 0.5, 6), C(T(-S * 0.16, o.shY - S * 0.16, -S * 0.2), RZ(0.45)), st.leather);
+  for (let i = 0; i < 4; i++) r.add(Box(S * 0.03, S * 0.12, S * 0.05), C(T(-S * 0.27 + i * S * 0.03, o.shY + S * 0.1 + (i % 2) * S * 0.03, -S * 0.2), RZ(0.45)), st.cloth);   // 箭羽
+};
+// 远程三级：弩炮手（板甲 + 重弩 + 背着大盾）
+B.ranged_t3 = (r, S, st) => {
+  const ch = st.chaos;
+  const o = humanoid(r, S, st, { bulk: 1.06, cape: false, mainBone: BONE.ARM_OFF, mainK: 0.3 });
+  // 重弩：两手端在身前，弩臂横展，带绞盘；发射时后坐
+  const gy = S * 0.86, gz = S * 0.26;
+  r.on(BONE.RECOIL, [0, gy, gz], S * 0.14, () => {
+    r.add(Box(S * 0.12, S * 0.12, S * 1.0), T(0, gy, gz + S * 0.16), ch ? st.dark : st.wood);                 // 弩身
+    r.add(Box(S * 0.14, S * 0.05, S * 0.8), T(0, gy + S * 0.075, gz + S * 0.22), st.armor);                   // 箭槽
+    for (const sx of [-1, 1]) {
+      r.add(Box(S * 0.56, S * 0.07, S * 0.09), C(T(sx * S * 0.27, gy + S * 0.02, gz + S * 0.56), RY(-sx * 0.3)), ch ? st.trim : st.armor, ch ? 'bone' : 'metal');   // 弩臂
+      r.add(Cyl(S * 0.01, S * 0.01, S * 0.72, 3), C(T(sx * S * 0.26, gy + S * 0.04, gz + S * 0.25), RX(Math.PI / 2), RZ(sx * 0.72)), '#e8e2d0', 'cloth');           // 弦
+    }
+    r.add(Cyl(S * 0.022, S * 0.022, S * 0.7, 4), C(T(0, gy + S * 0.11, gz + S * 0.36), RX(Math.PI / 2)), st.trim);   // 弩箭
+    r.add(Cone(S * 0.05, S * 0.14, 4), C(T(0, gy + S * 0.11, gz + S * 0.76), RX(Math.PI / 2)), STEEL);
+    r.add(Cyl(S * 0.09, S * 0.09, S * 0.2, 8), C(T(0, gy, gz - S * 0.3), RZ(Math.PI / 2)), st.armorDark);            // 绞盘
+    r.add(Box(S * 0.03, S * 0.2, S * 0.03), T(S * 0.13, gy + S * 0.06, gz - S * 0.3), st.trim);
+  });
+  // 背上的大盾（巴维斯盾）+ 肩上一对箭匣
+  r.add(Box(S * 0.56, S * 0.86, S * 0.06), C(T(0, o.shY - S * 0.4, -S * 0.26), RX(0.12)), st.cloth);
+  r.add(Box(S * 0.6, S * 0.06, S * 0.07), C(T(0, o.shY + S * 0.02, -S * 0.31), RX(0.12)), st.trim);
+  r.add(Box(S * 0.08, S * 0.86, S * 0.07), C(T(0, o.shY - S * 0.4, -S * 0.275), RX(0.12)), st.trim);
+  if (ch) for (const sx of [-1, 1]) r.add(Cone(S * 0.05, S * 0.26, 4), C(T(sx * S * 0.28, o.shY + S * 0.12, -S * 0.3), RZ(-sx * 0.3)), st.trim);
+};
+
+// ---- 炮车共用：车架 + 轮 ----
+function carriage(r, S, st, { w, len, wr, axles, y }) {
+  const ch = st.chaos;
+  r.add(Box(w, S * 0.3, len), T(0, y, 0), ch ? st.armorDark : st.wood);
+  r.add(Box(w + S * 0.04, S * 0.07, len + S * 0.04), T(0, y + S * 0.17, 0), ch ? st.armor : shade(st.wood, 0.8));   // 车板
+  for (const sz of [-1, 1]) r.add(Box(w + S * 0.06, S * 0.09, S * 0.06), T(0, y + S * 0.17, sz * (len / 2)), ch ? st.trim : st.trim);   // 前后包边
+  for (const sx of [-1, 1]) r.add(Box(S * 0.04, S * 0.22, len * 0.82), T(sx * (w / 2 + S * 0.02), y, 0), st.cloth);
+  for (const z of axles) for (const sx of [-1, 1]) wheel(r, S, st, sx * (w / 2 + S * 0.1), wr, z, wr);
+}
+function barrel(r, S, st, { rad, len, y, z, tilt = 0, rings = 3, recoil = 0.28 }) {
+  const ch = st.chaos, piv = [0, y, z];
+  r.on(BONE.RECOIL, piv, S * recoil * Math.cos(tilt), () => {
+    const base = C(T(0, y, z), RX(Math.PI / 2 - tilt));
+    r.add(Cyl(rad * 0.8, rad, len, ch ? 6 : 12), C(base, T(0, len * 0.5, 0)), ch ? st.armorDark : st.armor);
+    r.add(Cyl(rad * 0.55, rad * 0.55, S * 0.04, ch ? 6 : 12), C(base, T(0, len + S * 0.005, 0)), st.dark);   // 炮口
+    r.add(Sph(rad * 1.02, 10, 6), base, ch ? st.armorDark : st.armor);                                         // 炮尾
+    if (ch) {
+      for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; r.add(Cone(S * 0.05, S * 0.2, 3), C(base, T(Math.cos(a) * rad * 0.86, len + S * 0.06, Math.sin(a) * rad * 0.86)), st.trim); }   // 炮口獠牙
+      r.add(Box(S * 0.06, len * 0.5, rad * 0.9), C(base, T(0, len * 0.4, -rad * 1.1)), st.trim);              // 背鳍
+    } else {
+      for (let i = 0; i < rings; i++) r.add(Tor(rad * (1.02 - 0.2 * (i + 0.5) / rings), S * 0.035, 3, 12), C(base, T(0, len * (i + 0.5) / rings, 0), RX(Math.PI / 2)), st.trim);
+    }
+  });
+}
+// 炮兵一级：轻炮（两轮、细长炮管、拖尾）
+B.siege = (r, S, st) => {
+  const wr = S * 0.36, y = wr + S * 0.12;
+  carriage(r, S, st, { w: S * 0.62, len: S * 0.7, wr, axles: [S * 0.1], y });
+  r.add(Box(S * 0.14, S * 0.12, S * 0.72), C(T(0, y - S * 0.12, -S * 0.56), RX(-0.3)), st.chaos ? st.dark : st.wood);   // 拖尾架
+  barrel(r, S, st, { rad: S * 0.17, len: S * 1.05, y: y + S * 0.3, z: -S * 0.2, tilt: 0.1, rings: 2, recoil: 0.22 });
+};
+// 炮兵二级：臼炮（四轮、粗短炮管朝天、弹药堆）
+B.siege_t2 = (r, S, st) => {
+  const wr = S * 0.3, y = wr + S * 0.14;
+  carriage(r, S, st, { w: S * 0.86, len: S * 1.3, wr, axles: [-S * 0.42, S * 0.42], y });
+  r.add(Cyl(S * 0.4, S * 0.46, S * 0.2, st.chaos ? 6 : 10), T(0, y + S * 0.26, S * 0.1), st.chaos ? st.armor : st.armorDark);   // 炮座
+  barrel(r, S, st, { rad: S * 0.34, len: S * 0.7, y: y + S * 0.42, z: S * 0.08, tilt: 0.95, rings: 2, recoil: 0.2 });
+  for (const [x, z2] of [[-0.2, -0.48], [0.12, -0.5], [-0.04, -0.36]]) r.add(Sph(S * 0.13, 7, 5), T(S * x, y + S * 0.3, S * z2), st.chaos ? st.dark : IRON, 'iron');   // 炮弹
+  r.add(Box(S * 0.7, S * 0.12, S * 0.06), T(0, y + S * 0.2, -S * 0.64), st.chaos ? st.armor : st.trim);
+};
+// 炮兵三级：重炮（六轮、长管、炮盾、弹药箱、旗）
+B.siege_t3 = (r, S, st) => {
+  const ch = st.chaos, wr = S * 0.3, y = wr + S * 0.16;
+  carriage(r, S, st, { w: S * 0.96, len: S * 1.56, wr, axles: [-S * 0.54, 0, S * 0.54], y });
+  r.add(Box(S * 0.7, S * 0.26, S * 0.9), T(0, y + S * 0.3, -S * 0.1), ch ? st.armor : st.armorDark);   // 炮架
+  barrel(r, S, st, { rad: S * 0.26, len: S * 1.44, y: y + S * 0.56, z: -S * 0.54, tilt: 0.14, rings: 4, recoil: 0.3 });
+  // 炮盾：炮管两侧各一片斜板（阵营色 + 饰边）
+  for (const sx of [-1, 1]) {
+    r.add(Box(S * 0.44, S * 0.7, S * 0.07), C(T(sx * S * 0.5, y + S * 0.62, S * 0.34), RY(-sx * 0.3), RX(-0.2)), st.cloth);
+    r.add(Box(S * 0.46, S * 0.06, S * 0.08), C(T(sx * S * 0.5, y + S * 0.96, S * 0.27), RY(-sx * 0.3), RX(-0.2)), st.trim);
+    if (ch) r.add(Cone(S * 0.06, S * 0.3, 4), C(T(sx * S * 0.66, y + S * 1.1, S * 0.24), RZ(-sx * 0.35)), st.trim);
+  }
+  r.add(Box(S * 0.5, S * 0.3, S * 0.3), T(0, y + S * 0.32, -S * 0.62), ch ? st.dark : st.wood);   // 弹药箱
+  r.add(Box(S * 0.54, S * 0.05, S * 0.34), T(0, y + S * 0.49, -S * 0.62), st.trim);
+  r.add(Cyl(S * 0.025, S * 0.025, S * 1.2, 5), T(-S * 0.36, y + S * 1.0, -S * 0.7), ch ? st.dark : st.wood);   // 旗
+  r.add(Box(S * 0.03, S * 0.4, S * 0.4), T(-S * 0.36, y + S * 1.36, -S * 0.9), st.cloth);
+};
+
 // 自制兵种 / 未登记类型：不拿武器的阵营步兵（靠颜色与图标区分）
 function generic(r, S, st) { humanoid(r, S, st, {}); }
 
@@ -722,6 +994,7 @@ export const MINION_MODEL_TYPES = Object.keys(B);
 export function buildMinion(type, color, S, faction) {
   const st = unitStyle(faction, color);
   const r = new Rig();
+  r.mats = styleMats(st);
   (B[type] || generic)(r, S, st);
   return rigPack(r.parts);
 }
