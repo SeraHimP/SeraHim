@@ -75,9 +75,10 @@ export class PieceModel {
     this.base = []; this.pieces = new Map(); this.order = [];
     this._cur = null; this._xf = null; this._prefix = ''; this._parent = null;
   }
-  add(geo, m, color) {
+  /** @param mat 材料名（石 / 金属 / 金 / 布……，见 unitSurface.js）；不给 = 默认 */
+  add(geo, m, color, mat) {
     const matrix = this._xf ? this._xf.clone().multiply(m) : m.clone();
-    (this._cur ? this._cur.parts : this.base).push({ geo, matrix, color });
+    (this._cur ? this._cur.parts : this.base).push({ geo, matrix, color, mat });
   }
   /** 在一个局部坐标系里建一段（雕像整体缩放、平移用它） */
   within(xf, fn) {
@@ -98,7 +99,7 @@ export class PieceModel {
   piece(id, opt, fn) {
     if (typeof opt === 'function') { fn = opt; opt = {}; }
     id = this._prefix + id;
-    const p = { id, parts: [], stub: opt.stub ?? 0.3, cloth: !!opt.cloth, fall: opt.fall || null,
+    const p = { id, parts: [], stub: opt.stub ?? 0.3, cloth: !!opt.cloth, fall: opt.fall || null, vanish: !!opt.vanish,
                 parent: opt.parent != null ? this._prefix + opt.parent : (this._parent ?? null), idx: this.order.length };
     this.pieces.set(id, p); this.order.push(id);
     const prev = this._cur; this._cur = p; fn(); this._cur = prev;
@@ -150,7 +151,7 @@ export class PieceModel {
     const col = p.parts[0].color;
     return [{ geo: jaggedGeo(w * 0.94, h, d * 0.94, p.idx + seed),
               matrix: T((bb.min.x + bb.max.x) / 2, bb.min.y + h / 2, (bb.min.z + bb.max.z) / 2),
-              color: shade(col, this.cfg.stubShade ?? 0.5) }];
+              color: shade(col, this.cfg.stubShade ?? 0.5), mat: p.parts[0].mat }];
   }
 
   /**
@@ -166,7 +167,101 @@ export class PieceModel {
       if (!noStubs && !(p.parent && gone.has(p.parent))) out.push(...this.stubParts(id));
       if (noRubble && noRubble.has(id)) continue;
       const rm = this.rubbleMatrix(id);
-      for (const q of p.parts) out.push({ geo: q.geo, matrix: rm.clone().multiply(q.matrix), color: q.color });
+      for (const q of p.parts) out.push({ geo: q.geo, matrix: rm.clone().multiply(q.matrix), color: q.color, mat: q.mat });
+    }
+    return out;
+  }
+
+  // ==================== 塌成废墟（连贯倒塌）====================
+  // 用户："目前一个最大问题是塔爆炸之后原有的塔模块消失了，取而代之的是从地下冒出来的废墟模型……
+  //        我要求塔/塔掉落的块/废墟的模型的动画是相互关联的。"
+  // 所以废墟不是另一个模型：它就是这座建筑的每一块部件各自落到的位置。倒塌动画把部件从原位送到这里，
+  // 落定那一刻换成静态的废墟网格，两者逐位重合；重生就是倒放。
+  //   · 掉档时已经掉在塔脚的部件（fallen）留在原地不动（rubbleMatrix）；
+  //   · 其余部件从下往上依次塌下来，堆在基座上：越高的落得越远，细长的会倒下，后落的压在先落的上面。
+
+  /**
+   * 算出每块部件在废墟里的位置（结果缓存；同一个模型只算一次）。
+   * @param {string[]} fallen 掉档时会先掉下去的部件（各档清单的并集）
+   * @param {object} opts { baseTop: 基座顶面高度, spread: 堆的半径（× R）, scale: 落地后的缩放 }
+   */
+  layoutRuin(fallen = [], opts = {}) {
+    const R = this.R, cfg = this.cfg.collapse || {};
+    const fl = new Set(fallen), out = new Map();
+    this._fallen = fl;
+    const ext = R * (opts.spread ?? cfg.spread ?? 1.3), N = 11, cell = 2 * ext / N;
+    const baseTop = opts.baseTop ?? 0, baseR = opts.baseR ?? R;
+    // 中间有一座碎石丘（mound：{ h 丘高, r 丘半径 }）时，部件落在丘面上，落点收在丘的范围里
+    const mound = opts.mound || null;
+    const hgt = new Float32Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = -ext + (i + 0.5) * cell, z = -ext + (j + 0.5) * cell, rr = Math.hypot(x, z);
+      hgt[j * N + i] = (rr < baseR ? baseTop : 0) + (mound ? mound.h * Math.max(0, 1 - rr / mound.r) * 0.9 : 0);
+    }
+    const maxDist = mound ? mound.r * 0.9 : ext * 0.82;
+    const sc = opts.scale ?? cfg.scale ?? 0.94;
+    let H = 1e-6;
+    const info = [];
+    for (const id of this.order) {
+      const p = this.pieces.get(id);
+      if (!p.parts.length) continue;
+      if (fl.has(id)) { out.set(id, this.rubbleMatrix(id)); continue; }
+      const bb = partsBox(p.parts), c = new THREE.Vector3(); bb.getCenter(c);
+      H = Math.max(H, bb.max.y);
+      info.push({ id, p, bb, c });
+    }
+    info.sort((a, b) => a.c.y - b.c.y || a.p.idx - b.p.idx);
+    for (const { id, p, bb, c } of info) {
+      const n = p.idx;
+      const w = bb.max.x - bb.min.x, h = bb.max.y - bb.min.y, d = bb.max.z - bb.min.z;
+      let dx = c.x, dz = c.z; const L = Math.hypot(dx, dz);
+      if (p.fall) [dx, dz] = p.fall;
+      else if (L < R * 0.06) { const a = hash01(n, 113) * Math.PI * 2; dx = Math.cos(a); dz = Math.sin(a); }
+      else { dx /= L; dz /= L; }
+      const sp = (hash01(n, 111) - 0.5) * 1.1;
+      const fx = dx * Math.cos(sp) - dz * Math.sin(sp), fz = dx * Math.sin(sp) + dz * Math.cos(sp);
+      // 越高的部件落得越远；贴着中轴的芯石就地塌下
+      const dist = Math.min(maxDist * (0.55 + 0.45 * hash01(n, 109)), L * (cfg.keepK ?? 0.75) + (c.y / H) * R * (cfg.throwK ?? 0.95) * (0.35 + 0.65 * hash01(n, 107)));
+      const yaw = Math.atan2(fx, fz);
+      const tall = h > Math.max(w, d) * 1.4;
+      // 细长的倒下（朝落点方向放平），其余的随机歪着
+      const rot = p.cloth ? C(RY(hash01(n, 103) * 6.28), RX(Math.PI / 2 - 0.1))
+        : tall ? C(RY(yaw), RX(Math.PI / 2 - 0.25 + (hash01(n, 105) - 0.5) * 0.5), RZ((hash01(n, 104) - 0.5) * 0.6))
+        : C(RY(hash01(n, 103) * 6.28), RZ((hash01(n, 104) - 0.5) * 1.5), RX((hash01(n, 105) - 0.5) * 1.3));
+      const m0 = C(rot, S(sc), T(-c.x, -c.y, -c.z));
+      const tb = partsBox(p.parts.map((q) => ({ geo: q.geo, matrix: m0.clone().multiply(q.matrix) })));
+      const px = fx * dist, pz = fz * dist;
+      const i0 = Math.max(0, Math.floor((px + tb.min.x + ext) / cell)), i1 = Math.min(N - 1, Math.floor((px + tb.max.x + ext) / cell));
+      const j0 = Math.max(0, Math.floor((pz + tb.min.z + ext) / cell)), j1 = Math.min(N - 1, Math.floor((pz + tb.max.z + ext) / cell));
+      let g = 0, cnt = 0;
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { g += hgt[j * N + i]; cnt++; }
+      g = cnt ? g / cnt : 0;
+      const th = tb.max.y - tb.min.y;
+      const y = g - tb.min.y - th * (cfg.sink ?? 0.22);
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) hgt[j * N + i] = Math.max(hgt[j * N + i], g + th * (cfg.stack ?? 0.5));
+      out.set(id, C(T(px, Math.max(y, -tb.min.y - th * 0.3), pz), m0));
+    }
+    this._ruin = out;
+    return out;
+  }
+  ruinMatrix(id) { return this._ruin?.get(id) || this.rubbleMatrix(id); }
+  /** 与 rubbleParams 同格式：部件从原位到废墟位置的分解量（倒塌 / 重生动画按它插值）。 */
+  ruinParams(id) {
+    const m = this.ruinMatrix(id), p = this.pieces.get(id);
+    const c = new THREE.Vector3(); partsBox(p.parts).getCenter(c);
+    const dest = c.clone().applyMatrix4(m);
+    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    m.decompose(pos, q, sc);
+    return { c, dest, q, s: sc.x };
+  }
+  /** 废墟的全部零件：留下的基座（主体里不高于 keepBelow 的）+ 每块部件在废墟里的位置。tint = 整体压暗（烧过）。 */
+  ruinParts(keepBelow, tint = 1) {
+    const out = this.base.filter((p) => partsBox([p]).max.y <= keepBelow).map((p) => ({ ...p, color: shade(p.color, tint) }));
+    for (const id of this.order) {
+      const p = this.pieces.get(id), rm = this.ruinMatrix(id);
+      if (p.vanish && !this._fallen?.has(id)) continue;   // 倒塌时碎成渣的大块：废墟里没有它（用户："倒塌的模型可以消失一部分块"）
+      // 发光的零件（符文 / 能量缝）在废墟里熄了：换成普通石头的材质
+      for (const q of p.parts) out.push({ geo: q.geo, matrix: rm.clone().multiply(q.matrix), color: shade(q.color, q.mat === 'glow' ? tint * 0.35 : tint), mat: q.mat === 'glow' ? 'dark' : q.mat });
     }
     return out;
   }

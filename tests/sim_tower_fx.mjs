@@ -51,7 +51,22 @@ const ul = src('presentation/UnitLayer.js');
   const g = shellGeometry(m.geo), n = g.getAttribute('normal');
   let zero = 0;
   for (let i = 0; i < n.count; i++) if (Math.hypot(n.getX(i), n.getY(i), n.getZ(i)) < 0.5) zero++;
-  T(`⑪外壳几何与塔身同顶点数、法线全部是单位向量（零法线 ${zero} 个）`, g.getAttribute('position').count === m.geo.getAttribute('position').count && zero === 0);
+  // 默认是轮廓外壳（hull）：一张跟着塔身整体轮廓走的光滑的皮，比塔身简单得多，但把塔身包在里面
+  g.computeBoundingBox(); m.geo.computeBoundingBox();
+  const bodyR = Math.max(m.geo.boundingBox.max.x, -m.geo.boundingBox.min.x, m.geo.boundingBox.max.z, -m.geo.boundingBox.min.z);
+  const hullR = Math.max(g.boundingBox.max.x, -g.boundingBox.min.x, g.boundingBox.max.z, -g.boundingBox.min.z);
+  T(`⑪轮廓外壳：法线全部是单位向量（零法线 ${zero} 个）、面数远少于塔身、上下左右把塔身包住`, zero === 0
+    && g.getAttribute('position').count < m.geo.getAttribute('position').count / 4
+    && hullR > bodyR * 0.8 && hullR < bodyR * 1.45 && g.boundingBox.max.y >= m.geo.boundingBox.max.y - 1e-6 && g.boundingBox.min.y <= m.geo.boundingBox.min.y + 1e-6);
+  {
+    // 贴身外壳（skin）仍然可选：每个零件各自外扩，与塔身同顶点数
+    const prev = CONFIG.ui.towerShield.shape; CONFIG.ui.towerShield.shape = 'skin';
+    const m2 = towerMesh('fx-test-skin', '#e0473f', 32, '', 'tower', false, false, 'outer', 'red', 0, null);
+    const g2 = shellGeometry(m2.geo), n2 = g2.getAttribute('normal');
+    let z2 = 0; for (let i = 0; i < n2.count; i++) if (Math.hypot(n2.getX(i), n2.getY(i), n2.getZ(i)) < 0.5) z2++;
+    T('⑪b贴身外壳（shape = skin）：与塔身同顶点数、没有零法线', g2.getAttribute('position').count === m2.geo.getAttribute('position').count && z2 === 0);
+    CONFIG.ui.towerShield.shape = prev;
+  }
   T('⑫外壳几何按塔身几何缓存（同一份塔身只算一次）', shellGeometry(m.geo) === g);
   const mat = shellMaterial(32);
   T('⑬外壳是不写深度的透明材质，贴地碎块/石台底部不包（uMinY > 0）',

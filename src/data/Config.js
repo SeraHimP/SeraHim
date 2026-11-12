@@ -1232,6 +1232,11 @@ export const CONFIG = {
     rainRipple: { enabled: true, cell: 9, speed: 0.8, waterStrength: 0.9 },
     crystal: {
       spin: 0.6,           // 水晶本体自转（弧度/秒）
+      // 水晶的质感（UnitMeshFactory.crystalMaterial）：base 整体底光；core 正对镜头的切面多亮；energy 内部流动的亮带；
+      // glint 切面闪光；reflect 反射天空的份量；roughness 表面光滑度；opacity 不透明度
+      look: { base: 0.25, core: 0.7, energy: 0.8, glint: 1.4, reflect: 1.4, roughness: 0.1, opacity: 0.95 },
+      // 水晶任何时候都发光（用户定稿）：emissiveBase 是白天的基准亮度；夜里再加 CONFIG.ui.towerLight.emissiveNight
+      emissiveBase: 1.15,
       // 水晶旁边悬浮的细小光点（UnitMeshFactory.crystalParticles）。长度量都 × 水晶半径。
       //   count 颗数；radius [近, 远] 出生圈半径；speed [慢, 快] 每秒走完几轮生命（上飘一次）；
       //   rise 一轮往上飘多高；below 出生点比水晶中心低多少；swirl 一轮绕转多少弧度；
@@ -1303,7 +1308,7 @@ export const CONFIG = {
     //   strength —— 由曝光反推染色强度的系数。0 = 关（与 enabled:false 等价）
     //   maxMix   —— 染色上限，防止把单位压成看不清的黑块
     // enabled: false 时 tint 恒为白，画面与本次改动前逐位一致。
-    unitLighting: { enabled: true, strength: 2.2, maxMix: 0.80 },
+    unitLighting: { enabled: true, strength: 0.9, maxMix: 0.34 },   // 单位现在和地形吃同一套光（天空环境光 + 局部光），这里只留一点往夜色偏的色调
     // 弹道可视化（EffectsLayer + ProjectileMeshLayer）。用户定稿（2026-09-27）：
     //   "A 为主，塔弹用 B"——小兵弹是低多边形实体弹，防御塔弹是能量光弹；巨龙"加纯视觉的吐息"。
     //   命中效果做过一版，用户实机看后"命中特效太显眼了……不要命中特效了"，已删。
@@ -1327,7 +1332,7 @@ export const CONFIG = {
     towerLight: {
       enabled: true,        // 夜间塔顶自发光开关（设置面板「塔夜间自发光」）
       nightOnly: true,      // false = 全天亮着（调试/截图用）
-      emissiveNight: 1.8,   // 夜间塔顶自发光强度（>1 才会被 Bloom 抓到，见 hdr 注释）
+      emissiveNight: 0.7,   // 夜里水晶再加亮多少（白天的基准亮度在 CONFIG.ui.crystal.emissiveBase）
       // v45：夜色包络的**低阳地板**。用户："黎明的时候既没有光照也没有塔的照明，就是纯黑的。"
       // 真因是包络在相位 0 处断掉（详见 ThreeRenderer._nightLevel 的注释），这个地板是第二层保险：
       // 太阳压得很低的那两段（黎明/黄昏）至少让灯亮到这个程度。0 = 关掉这层保险。
@@ -1459,7 +1464,7 @@ export const CONFIG = {
     buildingFx: {
       enabled: true,
       chunkFall: { dur: 0.8, shake: 0.18, shakeAmp: 0.03, fallEnd: 0.8, hop: 0.12, bounce: 0.08, stagger: 0.12, dust: 3 },
-      explode: { dur: 1.5, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 10, shardSpeed: 3.2,
+      explode: { dur: 1.7, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 10, shardSpeed: 3.2,
                  speed: 2.4, up: 2.2, spin: 9, gravity: 9, topple: [0.08, 0.7], rubbleRise: [0.35, 0.85],
                  plinthBelow: 0.5, smoke: 9, smokeColor: '#8d8579',
                  // 冲击波（用户："爆炸的时候塔应该产生可视化冲击波"）：ringInner 地面光环内径比例；
@@ -1468,6 +1473,13 @@ export const CONFIG = {
                  shock: { ringInner: 0.55, dome: [0.02, 0.5], domeR: 2.4, domeFlat: 0.7, alpha: 0.75, rim: 2.2, color: '#fff4dc',
                           dust: [0.08, 0.8], dustR: 3.3, dustColor: '#b9ab93' } },
       respawn: { dur: 1.5, pileSink: [0, 0.5], fly: [0.1, 0.8], baseRise: [0, 0.45], crystal: [0.75, 1.0] },
+      // 连贯倒塌（写实造型）：部件从原位塌到它在废墟里的位置。
+      //   shake / shakeAmp 每块松动前抖多久（占自己进度的比例）/ 抖多大（× 建筑半径）；fallEnd 落地时刻；bounce 落地弹多高；
+      //   pop 被爆炸掀起多高；tumble 途中翻滚的弧度；delay [最上面的, 最下面的] 部件开始松动的时刻；
+      //   span 一块从松动到落定占整段的比例；jitter 各块开始时刻的随机错开；dust 落地扬尘的团数
+      //   vanish 碎成渣的大块在自己进度的哪一段缩没；moundGrow 碎石丘在整段的哪一段堆起来
+      collapse: { shake: 0.1, shakeAmp: 0.035, fallEnd: 0.86, bounce: 0.05, pop: 0.5, tumble: 5, delay: [0.02, 0.3], span: 0.62, jitter: 0.08, dust: 14,
+                  vanish: [0.4, 0.8], moundGrow: [0.3, 0.9] },
     },
 
     // 防御塔护盾外壳（shieldShell.js）。只看固定护盾 + 护盾（不含临时护盾），只包防御塔。
@@ -1478,8 +1490,10 @@ export const CONFIG = {
     //   flashStrength / flashDur 被打时轮廓光加强多少 / 持续多久（秒）；flashCooldown 两次闪之间至少隔几秒
     //   maxAlpha 外壳最不透明到多少；fadeIn / fadeOut 出现 / 消失（秒）
     //   外壳用普通透明混合、颜色不超过 1：到不了辉光（HDR Bloom）阈值，连续受击也不会糊成一团白光
+    //   shape 外壳跟什么走：'hull' = 塔的整体轮廓（一张光滑的皮，写实造型用）；'skin' = 每个零件各自外扩（雕像造型用）
+    //   hullSlices / hullSegments 轮廓外壳按高度切多少层 / 圆周多少段
     towerShield: {
-      enabled: true, inflate: 0.08, minY: 0.35,
+      enabled: true, shape: 'hull', hullSlices: 14, hullSegments: 28, inflate: 0.08, minY: 0.35,
       color: '#ffd98a', rimColor: '#fff8e6', base: 0.02, rimPower: 2.6, rimStrength: 0.65,
       sheenStrength: 0.22, sheenFreq: 0.12, sheenSpeed: 22,
       flashStrength: 0.6, flashDur: 0.25, flashCooldown: 0.35, maxAlpha: 0.6, fadeIn: 0.3, fadeOut: 0.45,
@@ -1502,6 +1516,15 @@ export const CONFIG = {
     // moteRadius 光点散布半径（× 半径）、moteSize 光点大小（世界单位）
     soulRing: { heightFrac: 0.35, towerMargin: 3, towerWidth: 2.0, unitWidth: 1.6, emblemScale: 1.08,
                 spin: 0.35, alpha: 0.75, pulse: 0.3, pulseSpeed: 1.6, motes: true, moteRadius: 0.75, moteSize: 3 },
+    // 单位 / 建筑表面材质（presentation/unitSurface.js）：每个零件按材料出粗糙度 / 金属度 / 颗粒感
+    unitSurface: {
+      envIntensity: 1,     // 环境光（天空）份量
+      grainAlbedo: 0.3,    // 颗粒对颜色的影响幅度
+      grainBump: 0.5,      // 颗粒的凹凸强度
+      grainScale: 0.02,    // 颗粒大小（越大越细）
+      glowGain: 2.4,       // 'glow' 材料的自发光倍数（> 1 的部分会被泛光抓到）
+      kinds: {},           // 覆写 / 新增材料：名字 → [粗糙度, 金属度, 颗粒感, 自发光]
+    },
     unitModels: {
       order: { armor: '#d6dde6', trim: '#d8b25a', dark: '#2a3446', eye: '#9fe0ff', wood: '#8a6a44', leather: '#6b4f35' },
       chaos: { armor: '#5a3a3e', trim: '#e2d3b0', dark: '#2a1c1f', eye: '#ffb23e', wood: '#4a3328', leather: '#3a2a24' },
@@ -1525,7 +1548,7 @@ export const CONFIG = {
     //   ruinShards：召唤水晶等待重生时悬在碎石堆上的碎晶（颗数、大小、散开半径、高度 × 建筑半径、自转倍率）
     //   ruin：废墟碎石丘铺开半径（× 建筑半径）、额外石块数、倒下的守卫/柱子缩放
     crystalShrine: {
-      style: 'statue',
+      style: 'citadel',
       bearerScale: 0.72, bearerRadius: 0.55,
       guardianScale: 0.46, guardianRadius: 0.66,
       orbCrystalR: 0.42,
@@ -1544,8 +1567,24 @@ export const CONFIG = {
     //   rubbleDist：掉下来的部件落在离中轴多远（× 建筑半径，[近, 远]）
     //   rubbleScale：碎块相对原部件的缩放；stubShade：断口残根的明度系数
     //   colors：雕像各部分的颜色（石环/立柱跟随地图调色板的塔石色）
+    // 写实造型（buildingModels.js）：每方一套，防御塔 / 召唤水晶 / 水晶枢纽共用同一套语言与配色。
+    //   colors    石（外皮 / 深色 / 芯）、线脚（金 / 铜）、点缀（釉 / 铁）、布、金属、发光
+    //   collapse  被摧毁时部件塌成废墟的堆法：spread 堆的半径（× 建筑半径）、scale 落地后的缩放、
+    //             keepK 保留多少原来的水平位置、throwK 越高的部件落得越远、sink 陷进堆里多少、stack 一块垫高多少（越小堆越矮）
+    citadel: {
+      colors: {
+        blue:    { stone: '#a29e93', stoneDark: '#757166', core: '#55524b', trim: '#d8b256', accent: '#2c6ac2', cloth: '#2459a8', metal: '#9aa4b4', glow: '#7fd0ff' },
+        red:     { stone: '#7c6964', stoneDark: '#574947', core: '#2a2224', trim: '#c88a4a', accent: '#a02a22', cloth: '#8a211c', metal: '#55504f', glow: '#ff4a1a', bone: '#c4b093' },
+        neutral: { stone: '#b0aca2', stoneDark: '#7c786e', core: '#4c4944', trim: '#b9b2a2', accent: '#7c8492', cloth: '#6d7482', metal: '#8e939c', glow: '#e8e4dc' },
+      },
+      rubbleDist: [1.05, 1.5],
+      rubbleScale: 0.92,
+      collapse: { spread: 1.45, scale: 0.8, keepK: 0.8, throwK: 1.25, sink: 0.3, stack: 0.3 },
+      // 废墟：moundHeight / spread 碎石丘的高 / 半径（× 建筑半径）；pieceScale 堆在丘上的部件缩到多大；tint 整体压暗多少（烧过）
+      ruin: { tint: 0.72, moundHeight: 0.42, spread: 0.95, pieceScale: 0.8 },
+    },
     statueTower: {
-      style: 'statue',
+      style: 'citadel',
       statueScale: { outer: 1.45, inner: 1.45, base: 1.5, hq_tower: 1.6 },
       columnExtra: { outer: 0, inner: 0.15, base: 0.3, hq_tower: 0.45 },
       ruin: { moundHeight: 0.42, spread: 0.95, pieceScale: 0.8, blocks: 16 },
@@ -2071,6 +2110,26 @@ export const CONFIG = {
     textureSize: 512,      // 程序化地表贴图的边长
     paving: { baseK: 0.5, baseMax: 430, baseFeather: 60, structK: 1.15, structFeather: 18 },   // 铺石区：基地广场半径比例 / 上限 / 羽化，建筑基座半径比例 / 羽化
     shading: { lightDay: 0.3, lightNight: 1.0 },   // 局部光（火炬 / 水晶）在白天 / 午夜的份量
+    // 局部光：路边火炬 + 水晶的光（world/WorldLights.js、data/torchSites.js）。塔本身不带光源。
+    lights: {
+      torches: true,
+      spacing: 330,          // 同一侧相邻两支火炬沿兵线的间距（左右交错，所以路上每半个间距就有一支）
+      wallSearch: 130,       // 从路边往外找岩壁找多远；找不到就立在路肩
+      shoulder: 16,          // 立在路肩时离路面边缘多远
+      minGap: 150,           // 任意两支火炬的最小间距（多条兵线共用的路段不重复放）
+      buildingClear: 95,     // 离建筑多近不放
+      torchScale: 1,         // 火炬摆件整体大小
+      torchRadius: 190,      // 一支火炬照亮的半径
+      torchColor: '#ffcf96',
+      torchK: 0.78,             // 火炬光的强度（0..1）
+      flameSize: [15, 20],   // 火焰面片的宽 / 高
+      glowSize: 70,          // 火焰外面那团柔光的直径
+      flameGainDay: 1.5, flameGainNight: 2.6,   // 火焰亮度（> 1 的部分会被泛光抓到）
+      glowDay: 0.05, glowNight: 0.42,
+      mapSize: 512,          // 光照图边长（像素）
+      crystalPollSec: 0.3,   // 每隔多久核对一次"哪些建筑还活着"
+      crystal: { blue: '#6cb4ff', red: '#ff6a55', neutral: '#d8dce6', towerRadius: 190, orbRadius: 260, gemRadius: 420, k: 0.9 },
+    },
     // 主题：按地图的 paletteId 选；地图可用 terrainTheme 字段直接指定。
     //   mode    rise = 不可走区隆起成岩壁；drop = 下沉成深渊 / 谷地
     //   layers  五层地表贴图（地面 / 路 / 岩 / 点缀 / 铺石）：kind 是生成函数，palette 是配色

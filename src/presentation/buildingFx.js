@@ -20,16 +20,38 @@
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
 import { displayTowerDamageStage } from '../core/reviveState.js';
-import { buildingPiecesOf, mergeParts, unitMaterial, dotTexture } from './UnitMeshFactory.js';
+import { buildingPiecesOf, buildingStyleOf, mergeParts, unitMaterial, makeUnitMaterial, currentUnitTint, dotTexture } from './UnitMeshFactory.js';
 import { hash01, partsBox } from './towerStatue.js';
+import { gem } from './modelKit.js';
 import { FX_PARTICLE_LAYER } from './PostFX.js';
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
+
+let _smokeTex = null;
+/** 柔边云团贴图：几个大小不一的柔光圆叠成一团不规则的烟（无头环境返回 null）。 */
+function smokeTexture() {
+  if (_smokeTex) return _smokeTex;
+  if (typeof document === 'undefined') return null;
+  const N = 96, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.4, r0 = i === 0 ? 0 : N * (0.1 + hash01(i, 7) * 0.14), x = N / 2 + Math.cos(a) * r0, y = N / 2 + Math.sin(a) * r0, r = N * (0.2 + hash01(i, 9) * 0.12);
+    const grd = g.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0, 'rgba(255,255,255,0.5)'); grd.addColorStop(0.5, 'rgba(255,255,255,0.22)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, N, N);
+  }
+  _smokeTex = new THREE.CanvasTexture(c); _smokeTex.colorSpace = THREE.SRGBColorSpace;
+  return _smokeTex;
+}
+let _shardGeo = null;
+/** 水晶碎片：细长的小晶柱（单位大小，共享；用的时候按 r 缩放）。 */
+function shardGeo(r) { if (!_shardGeo) { _shardGeo = gem(1, 4, 1.6, 0.4, 1.1); _shardGeo.userData.shared = true; } const g = _shardGeo.clone(); g.scale(r, r, r); return g; }
 const seg = (t, a, b) => clamp01((t - a) / Math.max(1e-6, b - a));
 const easeIn = (x) => x * x;
 const easeOut = (x) => 1 - (1 - x) * (1 - x);
 const smooth = (x) => x * x * (3 - 2 * x);
 const cfg = () => CONFIG.ui?.buildingFx || {};
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
 
 /**
  * 掉落中的部件在 t（0..1，整段掉档动画）时刻的变换（模型坐标，左乘到部件零件上）。
@@ -55,12 +77,56 @@ export function fallPose(rp, t, R, seed = 0) {
   return m.compose(pos, q, new THREE.Vector3(s, s, s)).multiply(new THREE.Matrix4().makeTranslation(-rp.c.x, -rp.c.y, -rp.c.z));
 }
 
+/**
+ * 倒塌中的部件在 u（0..1，这块自己的进度）时刻的变换（模型坐标，左乘到部件零件上）。
+ * 先被震得一抖，再被掀起来一点、翻滚着落向它在废墟里的位置，落地弹一下。
+ * u = 0 时是原位（单位矩阵），u = 1 时正好等于 PieceModel.ruinMatrix —— 所以落定那一刻换成静态废墟网格不会跳。
+ * @param rp   PieceModel.ruinParams(id)
+ * @param seed 每块不同的数（决定翻滚轴、被掀起多高）
+ */
+export function collapsePose(rp, u, R, seed = 0) {
+  const C = cfg().collapse || {};
+  const shakeEnd = C.shake ?? 0.1, fallEnd = C.fallEnd ?? 0.86;
+  const m = new THREE.Matrix4();
+  if (u <= 0) return m;
+  if (u < shakeEnd) {
+    const a = (C.shakeAmp ?? 0.035) * R * Math.sin(u * 140 + seed * 3.1);
+    return m.makeTranslation(a, 0, a * 0.7);
+  }
+  const f = seg(u, shakeEnd, fallEnd);
+  const h1 = hash01(Math.round(seed * 97), 301), h2 = hash01(Math.round(seed * 97), 302), h3 = hash01(Math.round(seed * 97), 303);
+  const pos = new THREE.Vector3().lerpVectors(rp.c, rp.dest, easeOut(f) * 0.35 + f * 0.65);
+  const drop = Math.max(0, rp.c.y - rp.dest.y);
+  // 竖直：自由落体（f²）+ 爆炸掀起的一下（越高的部件掀得越高）
+  pos.y = rp.c.y + (rp.dest.y - rp.c.y) * f * f + (C.pop ?? 0.5) * R * (0.25 + 0.75 * h1) * Math.min(1, drop / (R * 1.2)) * Math.sin(Math.PI * Math.min(1, f * 1.6)) * (1 - f);
+  // 朝向：转到落地姿态，途中多翻几圈（两头都是 0，所以起止姿态不受影响）
+  const q = new THREE.Quaternion().slerpQuaternions(new THREE.Quaternion(), rp.q, smooth(f));
+  const axis = new THREE.Vector3(h2 - 0.5, (h3 - 0.5) * 0.4, h1 - 0.5).normalize();
+  q.multiply(new THREE.Quaternion().setFromAxisAngle(axis, (C.tumble ?? 5) * (0.5 + h2) * f * (1 - f) * (1 - f) * 2.5));
+  const s = 1 + (rp.s - 1) * f;
+  if (u > fallEnd) {
+    const b = seg(u, fallEnd, 1);
+    pos.y = rp.dest.y + (C.bounce ?? 0.05) * R * Math.sin(Math.PI * b) * (1 - b);
+  }
+  return m.compose(pos, q, new THREE.Vector3(s, s, s)).multiply(new THREE.Matrix4().makeTranslation(-rp.c.x, -rp.c.y, -rp.c.z));
+}
+
 /** 这一帧该怎么画（纯函数，便于测试）。events: 这座建筑正在播的动画 [{type, t, dur, from}] */
-export function modeOf(events) {
-  const mode = { noRubbleFrom: null, assemble: false, offsetY: 0, scaleY: 1, crystalK: 1 };
+export function modeOf(events, continuous = false) {
+  const mode = { noRubbleFrom: null, assemble: false, offsetY: 0, scaleY: 1, crystalK: 1, hidden: false };
   for (const ev of events) {
     const x = ev.t / ev.dur;
     if (ev.type === 'chunk' && x < 1) mode.noRubbleFrom = mode.noRubbleFrom == null ? ev.from : Math.min(mode.noRubbleFrom, ev.from);
+    // 连贯倒塌（写实造型）：废墟就是塌下来的部件本身——动画播完之前静态的废墟网格不画，由动画里的部件接力；
+    // 重生时基座原地不动，部件从废墟里飞回原位，最后水晶长出来。没有"从地里升起 / 沉下去"这回事。
+    if (continuous && ev.type === 'explode') { mode.hidden = x < 1; continue; }
+    if (continuous && ev.type === 'respawn') {
+      const E = cfg().respawn || {};
+      const [c, d] = E.crystal || [0.75, 1.0];
+      mode.assemble = x < (E.fly?.[1] ?? 0.8);
+      mode.crystalK = easeOut(seg(x, c, d));
+      continue;
+    }
     if (ev.type === 'explode') {
       const [a, b] = cfg().explode?.rubbleRise || [0.35, 0.85];
       mode.offsetY = -(1 - smooth(seg(x, a, b)));             // 废墟从地里拱出来（× 塔身高度，由调用方乘）
@@ -88,7 +154,8 @@ export class BuildingFx {
   enabledFor(e) {
     const t = e._mapTier;
     const kind = t === 'nexus_main' ? 'gem' : t === 'nexus_lane' ? 'orb' : 'tower';
-    return kind === 'tower' ? CONFIG.ui?.statueTower?.style === 'statue' : CONFIG.ui?.crystalShrine?.style === 'statue';
+    const st = buildingStyleOf(kind);
+    return st === 'statue' || st === 'citadel';
   }
 
   /** 认出事件、返回这一帧塔身的画法。ghost / ruin 与 UnitLayer._syncOne 的同名参数一致。 */
@@ -97,7 +164,10 @@ export class BuildingFx {
     const dead = !!(ghost || ruin || !e.alive);
     const stage = dead ? -1 : displayTowerDamageStage(e, (e.currentHP || 0) / (e.baseStats?.maxHP || 1));
     let st = this.byId.get(e.id);
-    if (!st) { st = { stage, dead, events: [], pending: [] }; this.byId.set(e.id, st); return modeOf(st.events); }
+    const t = e._mapTier;
+    const cont = buildingStyleOf(t === 'nexus_main' ? 'gem' : t === 'nexus_lane' ? 'orb' : 'tower') === 'citadel';
+    if (!st) { st = { stage, dead, events: [], pending: [], cont }; this.byId.set(e.id, st); return modeOf(st.events, cont); }
+    st.cont = cont;
     const C = cfg();
     if (!st.dead && dead) this._push(st, { type: 'explode', dur: C.explode?.dur ?? 1.5, fromStage: st.stage });
     else if (st.dead && !dead) {
@@ -110,7 +180,7 @@ export class BuildingFx {
     }
     else if (!dead && stage > st.stage) this._push(st, { type: 'chunk', dur: C.chunkFall?.dur ?? 0.8, from: st.stage, to: stage });
     st.stage = stage; st.dead = dead;
-    return modeOf(st.events);
+    return modeOf(st.events, cont);
   }
 
   _push(st, ev) { ev.t = 0; st.events.push(ev); st.pending.push(ev); }
@@ -125,8 +195,8 @@ export class BuildingFx {
     this._curId = e.id;
     for (const ev of st.pending) {
       if (ev.type === 'chunk') this._spawnChunks(ev, pb, info);
-      else if (ev.type === 'explode') this._spawnExplosion(ev, pb, info);
-      else if (ev.type === 'respawn') this._spawnRespawn(ev, pb, info);
+      else if (ev.type === 'explode') (pb.continuous ? this._spawnCollapse(ev, pb, info) : this._spawnExplosion(ev, pb, info));
+      else if (ev.type === 'respawn') (pb.continuous ? this._spawnReassemble(ev, pb, info) : this._spawnRespawn(ev, pb, info));
     }
     st.pending.length = 0;
   }
@@ -146,7 +216,10 @@ export class BuildingFx {
   _pieceGeo(pb, id) {
     const c = pb._geoCache || (pb._geoCache = new Map());
     let g = c.get(id);
-    if (!g) { g = mergeParts(id === '__ruin' ? pb.ruin : pb.model.pieceParts(id), false); g.userData.shared = true; c.set(id, g); }
+    if (!g) {
+      const parts = id === '__ruin' ? pb.ruin : id === '__mound' ? pb.ruinKit.mound : id === '__stump' ? pb.ruinKit.stump : pb.model.pieceParts(id);
+      g = mergeParts(parts, false); g.userData.shared = true; c.set(id, g);
+    }
     return g;
   }
   /** 主体按高度切成"石台"与"石台以上"两截（爆炸时石台留下、上半截倒下），两截几何同样缓存 */
@@ -165,6 +238,7 @@ export class BuildingFx {
   warmPieces(pb, R) {
     for (const id of pb.model.order) this._pieceGeo(pb, id);
     if (pb.ruin) this._pieceGeo(pb, '__ruin');
+    if (pb.ruinKit) { this._pieceGeo(pb, '__mound'); if (pb.ruinKit.stump.length) this._pieceGeo(pb, '__stump'); }
     if (R) this._baseSplit(pb, R * (cfg().explode?.plinthBelow ?? 0.5));
   }
   _pieceMesh(parts, pb = null, id = null) {
@@ -174,7 +248,20 @@ export class BuildingFx {
     return mesh;
   }
   // ---------- 特效材质：播放与预热走同一组工厂，参数一致，预热编译好的着色器程序才能被复用 ----------
-  _puffMat(hex, opacity) { return new THREE.MeshLambertMaterial({ color: hex, transparent: true, opacity, depthWrite: false, flatShading: true }); }
+  // 烟尘：朝向镜头的柔边云团贴图（原来是半透明的多面体，近看就是一颗颗灰色的塑料球）
+  _puffMat(hex, opacity) {
+    const c = new THREE.Color(hex), t = currentUnitTint();
+    if (t) c.multiply(new THREE.Color(t));          // 精灵不受光：按当前昼夜色调压一下，夜里不发白
+    return new THREE.SpriteMaterial({ map: smokeTexture(), color: c, transparent: true, opacity, depthWrite: false });
+  }
+  /** 一团烟：size = 这团烟的基准半径（世界单位）。之后用 _puffScale 设大小。 */
+  _puff(size, hex) {
+    const sp = new THREE.Sprite(this._puffMat(hex, 0));
+    sp.userData.size = size * 2.6; sp.layers.set(FX_PARTICLE_LAYER);
+    sp.material.rotation = hash01(Math.round(size * 977), this.anims.length + 3) * 6.28;
+    return sp;
+  }
+  _puffScale(sp, s, sy = s) { sp.scale.set(s * sp.userData.size, sy * sp.userData.size, 1); }
   _shardMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 1 }); }
   _ringMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }); }
   _dustRingMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, depthWrite: false, side: THREE.DoubleSide }); }
@@ -200,13 +287,14 @@ export class BuildingFx {
     if (!this._warmKeep) {
       const g = new THREE.Group(), geo = new THREE.BoxGeometry(1, 1, 1);
       const SW = cfg().explode?.shock || {};
-      const mats = [this._puffMat('#888888', 0.5), this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), unitMaterial(false)];
+      const mats = [this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), unitMaterial(false)];
       for (const m of mats) {
         const mesh = new THREE.Mesh(geo, m);
         if (m === mats[mats.length - 1]) { mesh.castShadow = true; mesh.receiveShadow = true; }   // 同碎块（_pieceMesh）
         g.add(mesh);
       }
       const sp = new THREE.Sprite(this._flashMat()); sp.layers.set(FX_PARTICLE_LAYER); g.add(sp);
+      const sp2 = new THREE.Sprite(this._puffMat('#888888', 0.5)); sp2.layers.set(FX_PARTICLE_LAYER); g.add(sp2);
       g.position.set(0, -9999, 0);
       // 材质不释放：three 按引用计数回收着色器程序，释放了预热就白做了（留着的只有七个小对象）
       this._warmKeep = { g, geo, mats, sp };
@@ -243,7 +331,7 @@ export class BuildingFx {
     const DUST = cfg().chunkFall?.dust ?? 3;
     for (const it of items) {
       for (let k = 0; k < DUST; k++) {
-        const p = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 0.08, 0), this._puffMat(info.dustColor || '#b9ab93', 0));
+        const p = this._puff(R * 0.08, info.dustColor || '#b9ab93');
         p.position.copy(it.rp.dest); p.position.y = R * 0.05;
         p.userData.dir = new THREE.Vector3(Math.cos(k * 2.1 + it.seed), 0.4, Math.sin(k * 2.1 + it.seed));
         root.add(p); dust.push({ p, it });
@@ -261,7 +349,7 @@ export class BuildingFx {
         d.p.visible = u > 0 && u < 1;
         d.p.material.opacity = 0.55 * (1 - u);
         const s = 0.6 + u * 1.6;
-        d.p.scale.set(s, s, s);
+        this._puffScale(d.p, s);
         d.p.position.set(d.it.rp.dest.x + d.p.userData.dir.x * u * R * 0.3, R * 0.05 + u * R * 0.12, d.it.rp.dest.z + d.p.userData.dir.z * u * R * 0.3);
       }
     } });
@@ -297,39 +385,7 @@ export class BuildingFx {
     const H = info.topY || R * 3;
     const tipA = hash01(Math.round(info.x), Math.round(info.z)) * Math.PI * 2;
     const tipAxis = new THREE.Vector3(Math.cos(tipA + Math.PI / 2), 0, Math.sin(tipA + Math.PI / 2));
-    // 闪白 + 水晶碎片（从水晶所在位置炸开）
-    const cp = info.crystal ? new THREE.Vector3(info.crystal.lx, info.crystal.ly, info.crystal.lz) : new THREE.Vector3(0, H * 0.8, 0);
-    const flash = new THREE.Sprite(this._flashMat());
-    flash.layers.set(FX_PARTICLE_LAYER);
-    flash.position.copy(cp); root.add(flash);
-    const shards = [];
-    const nS = E.shards ?? 10, cr = info.crystal?.r || R * 0.3;
-    for (let i = 0; i < nS; i++) {
-      const sh = new THREE.Mesh(new THREE.OctahedronGeometry(cr * 0.28, 0), this._shardMat(info.color));
-      const a = i / nS * Math.PI * 2, el = (hash01(i, 91) - 0.3) * 1.2;
-      sh.userData.v = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el) + 0.4, Math.sin(a) * Math.cos(el)).multiplyScalar(R * (E.shardSpeed ?? 3.2));
-      sh.position.copy(cp); root.add(sh); shards.push(sh);
-    }
-    // 冲击波：地面上一圈往外扩的光环 + 一圈更慢的尘浪 + 一层向外膨胀的半球冲击波壳
-    // 用户："爆炸的时候塔应该产生可视化冲击波"。壳只有边缘亮（视线掠过的地方），中间透明，
-    // 普通混合 + 不透明度封顶，不会像护盾受击那次一样晃眼。
-    const SW = E.shock || {};
-    const ring = new THREE.Mesh(new THREE.RingGeometry(SW.ringInner ?? 0.55, 1, 48), this._ringMat(E.ringColor || '#fff2d6'));
-    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.6; root.add(ring);
-    const dustRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 48), this._dustRingMat(SW.dustColor || '#b9ab93'));
-    dustRing.rotation.x = -Math.PI / 2; dustRing.position.y = 0.4; root.add(dustRing);
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), this._domeMat(SW));
-    dome.layers.set(FX_PARTICLE_LAYER); root.add(dome);
-    // 烟尘：一圈灰团往外、往上扩散后淡掉
-    const puffs = [];
-    const nP = E.smoke ?? 9;
-    for (let i = 0; i < nP; i++) {
-      const pf = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 0.3, 0), this._puffMat(E.smokeColor || '#8d8579', 0));
-      const a = i / nP * Math.PI * 2 + hash01(i, 95);
-      pf.userData.d = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
-      pf.userData.k = 0.6 + hash01(i, 96) * 0.8;
-      root.add(pf); puffs.push(pf);
-    }
+    const blast = this._blastFx(root, info, R, H);
     const g = R * (E.gravity ?? 9);
     const one = new THREE.Vector3(1, 1, 1), q = new THREE.Quaternion(), sc = new THREE.Vector3();
     let last = 0;
@@ -353,6 +409,51 @@ export class BuildingFx {
         body.visible = x < 0.9;
       }
       plinth.visible = x < rb;   // 碎石堆（含开裂的石台）升到位之后换它接手
+      blast(x, dt);
+    } });
+  }
+
+  /**
+   * 爆炸的光与烟：水晶位置闪白 + 水晶碎片四溅、地面一圈光环、半球冲击波壳、尘浪、往上翻的烟团。
+   * 返回每帧的更新函数 (x: 0..1 整段进度, dt: 秒)。
+   */
+  _blastFx(root, info, R, H) {
+    const E = cfg().explode || {};
+    // 闪白 + 水晶碎片（从水晶所在位置炸开）
+    const cp = info.crystal ? new THREE.Vector3(info.crystal.lx, info.crystal.ly, info.crystal.lz) : new THREE.Vector3(0, H * 0.8, 0);
+    const flash = new THREE.Sprite(this._flashMat());
+    flash.layers.set(FX_PARTICLE_LAYER);
+    flash.position.copy(cp); root.add(flash);
+    const shards = [];
+    const nS = E.shards ?? 10, cr = info.crystal?.r || R * 0.3;
+    for (let i = 0; i < nS; i++) {
+      const sh = new THREE.Mesh(shardGeo(cr * 0.16), this._shardMat(info.color));
+      const a = i / nS * Math.PI * 2, el = (hash01(i, 91) - 0.3) * 1.2;
+      sh.userData.v = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el) + 0.4, Math.sin(a) * Math.cos(el)).multiplyScalar(R * (E.shardSpeed ?? 3.2));
+      sh.position.copy(cp); root.add(sh); shards.push(sh);
+    }
+    // 冲击波：地面上一圈往外扩的光环 + 一圈更慢的尘浪 + 一层向外膨胀的半球冲击波壳
+    // 用户："爆炸的时候塔应该产生可视化冲击波"。壳只有边缘亮（视线掠过的地方），中间透明，
+    // 普通混合 + 不透明度封顶，不会像护盾受击那次一样晃眼。
+    const SW = E.shock || {};
+    const ring = new THREE.Mesh(new THREE.RingGeometry(SW.ringInner ?? 0.55, 1, 48), this._ringMat(E.ringColor || '#fff2d6'));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.6; root.add(ring);
+    const dustRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 48), this._dustRingMat(SW.dustColor || '#b9ab93'));
+    dustRing.rotation.x = -Math.PI / 2; dustRing.position.y = 0.4; root.add(dustRing);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), this._domeMat(SW));
+    dome.layers.set(FX_PARTICLE_LAYER); root.add(dome);
+    // 烟尘：一圈灰团往外、往上扩散后淡掉
+    const puffs = [];
+    const nP = E.smoke ?? 9;
+    for (let i = 0; i < nP; i++) {
+      const pf = this._puff(R * 0.3, E.smokeColor || '#8d8579');
+      const a = i / nP * Math.PI * 2 + hash01(i, 95);
+      pf.userData.d = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+      pf.userData.k = 0.6 + hash01(i, 96) * 0.8;
+      root.add(pf); puffs.push(pf);
+    }
+    const g = R * (E.gravity ?? 9);
+    return (x, dt) => {
       const fu = seg(x, 0, E.flash ?? 0.22);
       flash.material.opacity = Math.sin(Math.PI * fu) * (E.flashAlpha ?? 0.9);
       const fs = cr * (1 + fu * 5);
@@ -384,10 +485,130 @@ export class BuildingFx {
       for (const pf of puffs) {
         const pu = seg(x, 0.05, 1);
         const s2 = (0.4 + easeOut(pu) * 1.4) * pf.userData.k;
-        pf.scale.set(s2, s2, s2);
+        this._puffScale(pf, s2);
         pf.position.set(pf.userData.d.x * R * (0.4 + pu * 1.1), R * (0.2 + pu * 0.9) * pf.userData.k, pf.userData.d.z * R * (0.4 + pu * 1.1));
         pf.material.opacity = 0.7 * Math.sin(Math.PI * Math.min(1, pu * 1.1));
       }
+    };
+  }
+
+  // ---------- ②′ 被摧毁（连贯倒塌）：部件原地塌成废墟 ----------
+  // 用户："目前一个最大问题是塔爆炸之后原有的塔模块消失了，取而代之的是从地下冒出来的废墟模型，很丑我不要这样的，
+  //        我要求塔/塔掉落的块/废墟的模型的动画是相互关联的，并且召唤水晶/水晶枢纽爆炸同理。"
+  // 这里没有"换模型"：基座留在原地；掉档时已经落在塔脚的部件不动；其余每一块从原位翻滚着落到它在废墟里的位置。
+  // 播完那一刻，静态的废墟网格（同一批部件、同一组位置）接手。
+  _spawnCollapse(ev, pb, info) {
+    const K = cfg().collapse || {};
+    const R = info.build.R, H = info.topY || R * 3;
+    const root = this._root(info);
+    const gone = new Set(pb.stages[Math.max(0, ev.fromStage ?? 0)] || []);
+    // 这场倒塌专用的一份材质：边塌边压暗（烧过），播完时与废墟的顶点色对上
+    const mat = makeUnitMaterial();
+    const tint0 = new THREE.Color(currentUnitTint() || '#ffffff'), ruinTint = CONFIG.ui?.citadel?.ruin?.tint ?? 0.78;
+    mat.color.copy(tint0);
+    const mk = (id) => { const mesh = new THREE.Mesh(this._pieceGeo(pb, id), mat); mesh.matrixAutoUpdate = false; mesh.castShadow = true; mesh.receiveShadow = true; root.add(mesh); return mesh; };
+    const split = this._baseSplit(pb, pb.keepBelow ?? R * 0.3);
+    mk(split.plinth).matrix.identity();
+    if (split.upper) mk(split.upper).matrix.identity();   // 写实造型的主体全在基座里，这一份一般不存在
+    let yMax = 1e-6;
+    const items = [];
+    for (const id of pb.model.order) {
+      const parts = pb.model.pieceParts(id); if (!parts.length) continue;
+      const mesh = mk(id), rp = pb.model.ruinParams(id);
+      if (gone.has(id)) { mesh.matrix.copy(pb.model.ruinMatrix(id)); continue; }   // 早就掉在塔脚了：原地不动
+      yMax = Math.max(yMax, rp.c.y);
+      // vanish：半路碎成渣的大块（芯、腰箍……），落到一半在烟尘里缩没，废墟里没有它
+      items.push({ mesh, rp, seed: items.length * 1.37 + 0.5, vanish: !!pb.model.pieces.get(id).vanish });
+    }
+    // 碎石丘：随着部件落地一点点堆起来（不是从地里冒出来的整块）；断桩一直在原地（倒塌前被塔身包着）
+    const kit = pb.ruinKit, my = kit?.moundY || 0;
+    const moundMesh = kit ? mk('__mound') : null;
+    if (kit?.stump.length) mk('__stump').matrix.identity();
+    const [mg0, mg1] = K.moundGrow || [0.3, 0.9];
+    // 从上往下依次松动：离水晶近的先被炸开，底下的随后垮
+    const [d0, d1] = K.delay || [0.02, 0.3], span = K.span ?? 0.62;
+    for (const it of items) it.delay = d0 + (d1 - d0) * (1 - it.rp.c.y / yMax) + hash01(Math.round(it.seed * 31), 77) * (K.jitter ?? 0.08);
+    // 落地扬尘：每块落地时在落点冒一小团灰
+    const dust = [];
+    const nDust = Math.min(items.length, K.dust ?? 14);
+    for (let i = 0; i < nDust; i++) {
+      const it = items[Math.floor(i * items.length / nDust)];
+      const p = this._puff(R * 0.16, info.dustColor || '#a89f90');
+      root.add(p); dust.push({ p, it, a: hash01(i, 91) * 6.28 });
+    }
+    const blast = this._blastFx(root, info, R, H);
+    const land = K.fallEnd ?? 0.86;
+    let last = 0;
+    this.anims.push({ id: this._curId, ev, root, mats: [mat], update: (x) => {
+      const dt = (x - last) * ev.dur; last = x;
+      for (const it of items) {
+        it.u = clamp01((x - it.delay) / span);
+        it.mesh.matrix.copy(collapsePose(it.rp, it.u, R, it.seed));
+        if (it.vanish) {
+          const k = 1 - smooth(seg(it.u, K.vanish?.[0] ?? 0.4, K.vanish?.[1] ?? 0.8));
+          it.mesh.visible = k > 0.01;
+          if (k < 1) { const c = it.rp.c; it.mesh.matrix.multiply(_m1.makeTranslation(c.x, c.y, c.z)).multiply(_m2.makeScale(k, k, k)).multiply(_m1.makeTranslation(-c.x, -c.y, -c.z)); }
+        }
+      }
+      if (moundMesh) {
+        const g = smooth(seg(x, mg0, mg1));
+        moundMesh.visible = g > 0.01;
+        moundMesh.matrix.makeTranslation(0, my, 0).multiply(_m2.makeScale(0.45 + 0.55 * g, Math.max(0.02, g), 0.45 + 0.55 * g)).multiply(_m1.makeTranslation(0, -my, 0));
+      }
+      for (const d of dust) {
+        const u = seg(d.it.u ?? 0, land, 1) * 0.6 + seg(x, d.it.delay + span, 1) * 0.4;
+        d.p.visible = u > 0 && u < 1;
+        d.p.material.opacity = 0.5 * Math.sin(Math.PI * Math.min(1, u * 1.15));
+        const s2 = 0.7 + u * 1.9;
+        this._puffScale(d.p, s2, s2 * 0.8);
+        d.p.position.set(d.it.rp.dest.x + Math.cos(d.a) * u * R * 0.35, R * 0.1 + u * R * 0.3, d.it.rp.dest.z + Math.sin(d.a) * u * R * 0.35);
+      }
+      const k = 1 - (1 - ruinTint) * smooth(seg(x, 0.25, 0.95));
+      mat.color.copy(tint0).multiplyScalar(k);
+      blast(x, dt);
+    } });
+  }
+
+  // ---------- ③′ 召唤水晶重生（连贯）：部件从废墟里飞回原位 ----------
+  _spawnReassemble(ev, pb, info) {
+    const E = cfg().respawn || {};
+    const R = info.build.R;
+    const root = this._root(info);
+    const mat = makeUnitMaterial();
+    const tint0 = new THREE.Color(currentUnitTint() || '#ffffff'), ruinTint = CONFIG.ui?.citadel?.ruin?.tint ?? 0.78;
+    const items = [];
+    let i = 0;
+    for (const id of pb.model.order) {
+      if (!pb.model.pieceParts(id).length) continue;
+      const mesh = new THREE.Mesh(this._pieceGeo(pb, id), mat); mesh.matrixAutoUpdate = false; mesh.castShadow = true; root.add(mesh);
+      const rp = pb.model.ruinParams(id);
+      items.push({ mesh, rp, seed: i * 1.37 + 0.5, delay: hash01(i, 61) * 0.3 + 0.25 * (rp.c.y / (info.topY || R * 3)), vanish: !!pb.model.pieces.get(id).vanish });   // 低处的先归位
+      i++;
+    }
+    const kit = pb.ruinKit, my = kit?.moundY || 0;
+    const extra = [];
+    if (kit) for (const id of ['__mound', '__stump']) {
+      if (id === '__stump' && !kit.stump.length) continue;
+      const mesh = new THREE.Mesh(this._pieceGeo(pb, id), mat); mesh.matrixAutoUpdate = false; root.add(mesh); extra.push(mesh);
+    }
+    const [f0, f1] = E.fly || [0.1, 0.8];
+    this.anims.push({ id: this._curId, ev, root, mats: [mat], update: (x) => {
+      for (const it of items) {
+        const t = seg(x, f0 + it.delay * (f1 - f0) * 0.6, f1);
+        it.mesh.matrix.copy(collapsePose(it.rp, 1 - smooth(t), R, it.seed));
+        it.mesh.visible = x < f1 + 0.02;
+        if (it.vanish) {   // 碎掉的大块：归位途中重新长出来
+          const k = smooth(seg(t, 0.2, 0.7)), c = it.rp.c;
+          it.mesh.visible = it.mesh.visible && k > 0.01;
+          if (k < 1) it.mesh.matrix.multiply(_m1.makeTranslation(c.x, c.y, c.z)).multiply(_m2.makeScale(k, k, k)).multiply(_m1.makeTranslation(-c.x, -c.y, -c.z));
+        }
+      }
+      const g = 1 - smooth(seg(x, f0, f0 + (f1 - f0) * 0.7));
+      for (const mesh of extra) {
+        mesh.visible = g > 0.01;
+        mesh.matrix.makeTranslation(0, my, 0).multiply(_m2.makeScale(0.45 + 0.55 * g, Math.max(0.02, g), 0.45 + 0.55 * g)).multiply(_m1.makeTranslation(0, -my, 0));
+      }
+      mat.color.copy(tint0).multiplyScalar(ruinTint + (1 - ruinTint) * smooth(seg(x, f0, f1)));
     } });
   }
 
@@ -443,9 +664,10 @@ export class BuildingFx {
     a.root.traverse((o) => {
       if (o.isMesh || o.isSprite) {
         if (!o.geometry?.userData?.shared) o.geometry?.dispose?.();
-        if (o.material && o.material !== unitMaterial(false)) o.material.dispose();
+        if (o.material && o.material !== unitMaterial(false) && !(a.mats && a.mats.includes(o.material))) o.material.dispose();
       }
     });
+    if (a.mats) for (const m of a.mats) m.dispose();
   }
 
   clear() {

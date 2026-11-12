@@ -37,6 +37,32 @@
 - `CONFIG.stylizedPalettes` 里大量旧地面配色字段（`corridorColor`、`jungleLayout` 等）已无人读，但塔石色、`vegetationMode` 还在用。等新主题落地后一并清理。
 - `unitRig.js` / `InstancedBodyLayer` 里给已删预渲染准备的 `prepassMaterial`、`UnitLayer` 里的 `prepassSolid` 标记现在是空转，可删。
 
+## 一·再补、Fable 回来之后的进度（2026-11-12 起，按完成顺序追加）
+
+**已完成**
+
+- **局部光**：路边火炬（`data/torchSites.js` 定站位，`world/WorldLights.js` 画摆件 + 火焰 + 光照图）。沿每条兵线左右交错，
+  能贴着岩壁就立在崖脚；火炬和水晶的光画进一张俯视光照图，地形 / 岩石 / 树 / 单位按世界坐标查（不用点光源）。
+  水晶的光跟着建筑死活走。塔本身不带光源。参数在 `CONFIG.terrain.lights`。测试 `sim_world_lights`。
+- **夜晚**：月亮挂高、环境光占一半、曝光 0.42 → 0.60（原来夜里路面和兵是一片黑）；单位的昼夜染色收到很轻（单位现在和地形吃同一套光）。
+- **单位 / 建筑材质**（`presentation/unitSurface.js`）：每个零件声明材料（石 / 金属 / 金 / 布 / 木 / 皮 / 发光……），
+  合并几何时写进顶点属性 `aMat`，同一个网格里金属反射天空、石头有颗粒和细小凹凸、布是哑光。单位也接上了局部光。
+- **建筑写实造型**（`presentation/buildingModels.js` + `modelKit.js`）：每方一套（防御塔 / 召唤水晶 / 水晶枢纽），不分档位。
+  蓝方：石灰岩圆塔、扶壁、金线脚、蓝釉腰箍、垂旗，四只石爪托着悬浮水晶；红方：拧着往上长的玄武岩尖碑、熔岩裂缝、巨爪。
+  开关 `CONFIG.ui.statueTower.style` / `crystalShrine.style` = `'citadel'`（旧的 `'statue'` / `'classic'` 还能切回去）。
+- **水晶**：新着色器（切面 + 内部往上流的能量 + 边缘光 + 切面闪光 + 反射天空），任何时候都发光（`CONFIG.ui.crystal.emissiveBase`）。
+- **连贯倒塌**（`buildingFx._spawnCollapse / _spawnReassemble`）：被摧毁时部件从原位翻滚着落到它在废墟里的位置，
+  碎石丘随着落地一点点堆起来，播完换成静态废墟不跳；重生是倒放。**废墟不再从地下冒出来。**
+  用户看过第一版后的定稿：「倒塌的模型可以消失一部分块，还是要原来废墟的那样的损毁模型」——所以废墟 = 留下的基座 +
+  碎石丘 + 断桩 + 堆在丘上的部件（芯、腰箍这些大块半路碎没）。测试 `sim_citadel`。
+- **护盾外壳**改成跟着塔的整体轮廓走的一张光滑的皮（`shieldShell.hullGeometry`）：新塔零件细碎，照零件外扩会把整座塔涂成金色。
+- 开发工具：`tools/look.mjs`（任意机位 / 时刻 / 执行一段 JS 再截图）、`tools/modelshot.mjs` + `proto/modelview/`（模型预览页，几秒一张）。
+
+**用户对这一轮的反馈（待跟进）**
+
+- 「我觉得你做的这个掉块（毁坏模型）不够好，没有原先版本的模型好」——废墟已按原来的碎石堆样式改回；
+  损毁档（轻损 / 重损）的掉块如果还觉得不够，再问用户具体指哪一处。
+
 ## 二、Opus 接手的部分（非可视化，约 60 分钟）
 
 硬规矩：**不要改 `src/presentation/world/*` 里的着色器 / 配色 / 几何，不要改 `DayNight.js` 的关键帧、`CONFIG.terrain.themes` 的配色、任何模型代码。**

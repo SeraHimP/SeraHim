@@ -20,7 +20,7 @@ const F = { stone: '#b9c6d6', trim: '#eaf2fd' };
   T('①b枢纽明显比召唤水晶、塔大（面积大）', bs.nexus_main >= bs.nexus_lane * 1.5 && bs.nexus_main >= bs.outer * 1.6);
   T('①c枢纽碰撞半径盖住圣殿台面（台面外沿 1.3R）', (vz.nexus_main ?? vz.default) >= 1.3);
   T('①开关、守卫大小、水晶半径、缺角位置、废墟参数都在 CONFIG.ui.crystalShrine（软编码）',
-    ['statue', 'classic'].includes(S.style) && S.bearerScale > 0 && S.guardianScale > 0 && S.orbCrystalR > 0 && S.gemCrystalR > 0
+    ['citadel', 'statue', 'classic'].includes(S.style) && S.bearerScale > 0 && S.guardianScale > 0 && S.orbCrystalR > 0 && S.gemCrystalR > 0
     && S.ruinShards.count > 0 && S.ruin);
 }
 

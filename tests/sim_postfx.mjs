@@ -357,8 +357,12 @@ T('雾-render 每帧调用 _autoFog（机位距离一变雾就跟着变）', /th
     /builtFor\(map\) \{ return !!this\.field && this\._map === map && this\._complete === true; \}/.test(wd) && /this\._complete = !!field;/.test(wd));
   const { World } = await import('../src/presentation/world/World.js');
   const steps = new World(new THREE.Scene()).buildSteps({ currentMap: null, terrainField: () => null });
-  T('载⑦-一次性建图与分帧建图走同一份步骤（高度场 → 地表 → 岩壁 → 水 → 树）',
-    steps.map((x) => x.label).join('/') === '计算地形高度场/生成地表/堆砌岩壁/注水/种树' && /for \(const st of this\.buildSteps\(ms, opts\)\) st\.run\(\);/.test(wd));
+  // 步骤会随世界里的东西变多而增加（火炬、摆件……），这里只钉顺序：高度场最先，地表 → 岩壁 → 水 → 树的先后不变
+  const CORE = ['计算地形高度场', '生成地表', '堆砌岩壁', '注水', '种树'];
+  const labels = steps.map((x) => x.label);
+  T('载⑦-一次性建图与分帧建图走同一份步骤（高度场最先，地表 → 岩壁 → 水 → 树 先后不变）',
+    labels[0] === CORE[0] && labels.filter((l) => CORE.includes(l)).join('/') === CORE.join('/') && new Set(labels).size === labels.length
+    && /for \(const st of this\.buildSteps\(ms, opts\)\) st\.run\(\);/.test(wd));
 }
 
 done();

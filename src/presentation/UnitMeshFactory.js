@@ -22,9 +22,13 @@ import { FX_PARTICLE_LAYER } from './PostFX.js';
 import { CONFIG } from '../data/Config.js';
 import { statueTower } from './towerStatue.js';
 import { crystalShrine, crystalGeoOf, ruinShardsGeo } from './crystalShrines.js';
+import { citadelTower, citadelShrine } from './buildingModels.js';
 import { buildMinion } from './unitModels.js';
 import { buildDragon } from './dragonModel.js';
 import { liveAnimBodies } from './unitRig.js';
+import { patchUnitSurface, writeSurface } from './unitSurface.js';
+import { worldUniforms } from './world/worldShading.js';
+import { worldNoiseTexture } from './world/worldTextures.js';
 
 const _geoCache = new Map();
 const _matCache = new Map();
@@ -49,18 +53,18 @@ function boxProjectUV(px, py, pz, nx, ny, nz) {
 // ---------- 合并工具：把 [{geo, matrix, color}] 压成单个带顶点色+UV 的 BufferGeometry ----------
 export function mergeParts(parts, ao = true) {
   let n = 0;
-  const prepped = parts.map(({ geo, matrix, color }) => {
+  const prepped = parts.map(({ geo, matrix, color, mat }) => {
     const g = geo.clone();
     if (matrix) g.applyMatrix4(matrix);
     const nonIndexed = g.index ? g.toNonIndexed() : g;
     if (nonIndexed !== g) g.dispose();
     n += nonIndexed.getAttribute('position').count;
-    return { g: nonIndexed, c: new THREE.Color(color) };
+    return { g: nonIndexed, c: new THREE.Color(color), mat };
   });
   const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 3);
-  const uv = new Float32Array(n * 2);
+  const uv = new Float32Array(n * 2), am = new Float32Array(n * 4);
   let o = 0;
-  for (const { g, c } of prepped) {
+  for (const { g, c, mat } of prepped) {
     const p = g.getAttribute('position'), q = g.getAttribute('normal');
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
@@ -70,6 +74,7 @@ export function mergeParts(parts, ao = true) {
       col[(o + i) * 3] = c.r; col[(o + i) * 3 + 1] = c.g; col[(o + i) * 3 + 2] = c.b;
       const [u, v] = boxProjectUV(x, y, z, nx, ny, nz);
       uv[(o + i) * 2] = u; uv[(o + i) * 2 + 1] = v;
+      writeSurface(am, (o + i) * 4, mat);
     }
     o += p.count;
     g.dispose();
@@ -79,6 +84,7 @@ export function mergeParts(parts, ao = true) {
   out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setAttribute('aMat', new THREE.BufferAttribute(am, 4));   // 材料参数（粗糙度 / 金属度 / 颗粒 / 自发光），见 unitSurface.js
   out.computeBoundingBox();
   if (ao) _applyFakeAO(pos, col, out.boundingBox);
   return out;
@@ -235,17 +241,27 @@ const facStyle = (f) => FACTION_STYLE[f] || FACTION_STYLE.neutral;
  */
 const _pieceCache = new Map();
 export function buildingPiecesOf(kind, R, tier, faction, F) {
-  const on = kind === 'tower' ? CONFIG.ui?.statueTower?.style === 'statue'
-    : (kind === 'orb' || kind === 'gem') ? CONFIG.ui?.crystalShrine?.style === 'statue' : false;
-  if (!on) return null;
-  const k = `${kind}|${R}|${tier}|${faction}|${F.stone}|${F.trim}`;
+  const style = buildingStyleOf(kind);
+  if (style !== 'statue' && style !== 'citadel') return null;
+  // 写实造型（citadel）每方只有一套：不分档位、不跟地图调色板走
+  const k = style === 'citadel' ? `c|${kind}|${R}|${faction}` : `${kind}|${R}|${tier}|${faction}|${F.stone}|${F.trim}`;
   let b = _pieceCache.get(k);
   if (!b) {
-    b = kind === 'tower' ? statueTower(R, tier, faction, F) : crystalShrine(kind, R, faction, F);
+    if (style === 'citadel') b = kind === 'tower' ? citadelTower(R, faction) : citadelShrine(kind, R, faction);
+    else b = kind === 'tower' ? statueTower(R, tier, faction, F) : crystalShrine(kind, R, faction, F);
     _pieceCache.set(k, b);
   }
   return b;
 }
+/**
+ * 这种建筑现在用哪套造型：'citadel' = 写实（默认，buildingModels.js）；'statue' = 雕像守卫（towerStatue.js / crystalShrines.js）；
+ * 其余 = 最早的塔楼（towerMesh 里的内联几何）。防御塔读 CONFIG.ui.statueTower.style，水晶 / 枢纽读 CONFIG.ui.crystalShrine.style。
+ */
+export function buildingStyleOf(kind) {
+  return kind === 'tower' ? CONFIG.ui?.statueTower?.style : (kind === 'orb' || kind === 'gem') ? CONFIG.ui?.crystalShrine?.style : null;
+}
+/** 换造型 / 改了造型参数之后清掉部件模型缓存（编辑器、测试用） */
+export function clearBuildingPieceCache() { _pieceCache.clear(); }
 
 /** 与 towerMesh 同一套石色规则（阵营默认 + 调色板覆写），给 buildingPiecesOf 的调用方用 */
 export function towerStoneOf(faction, pal = null) {
@@ -291,7 +307,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         parts.push(...stageParts(statue, Math.max(0, Math.min(2, dmg))));
         crystalR = statue.crystalR;
         crystalCy = statue.crystalCy;
-        crystalGeo = new THREE.OctahedronGeometry(crystalR);
+        crystalGeo = statue.crystalGeo ? statue.crystalGeo() : new THREE.OctahedronGeometry(crystalR);
       }
     } else if (shrine) {
       if (ruin) {
@@ -308,7 +324,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
         parts.push(...stageParts(shrine, d));
         crystalR = shrine.crystalR;
         crystalCy = shrine.crystalCy;
-        crystalGeo = crystalGeoOf(kind, crystalR);   // 水晶永远完整（用户："水晶不要掉块"）
+        crystalGeo = shrine.crystalGeo ? shrine.crystalGeo() : crystalGeoOf(kind, crystalR);   // 水晶永远完整（用户："水晶不要掉块"）
         crystalMuzzleK = (CONFIG.ui?.muzzle?.nexusTopK) ?? 0.9;
       }
     } else if (ruin) {
@@ -1073,6 +1089,12 @@ export function dragonMesh(key, color, ancient, size = null, element = null) {
  * 的推荐理由）里第一批占位——贴图接进来之后 roughness/metalness 会换成从贴图采样，
  * 现在先给纯色兜底值。
  */
+/** 一份独立的单位材质（不进缓存，调用方负责释放）：建筑倒塌动画要单独压暗这一批部件。 */
+export function makeUnitMaterial() {
+  return patchUnitSurface(new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 1, metalness: 0, color: 0xffffff, envMapIntensity: CONFIG.ui?.unitSurface?.envIntensity ?? 1,
+  }));
+}
 export function unitMaterial(ghost) {
   const k = ghost ? 'ghost' : 'solid';
   let m = _matCache.get(k);
@@ -1084,13 +1106,14 @@ export function unitMaterial(ghost) {
       depthWrite: !ghost,
       roughness: 1,
       metalness: 0,
-      envMapIntensity: 0,
+      envMapIntensity: CONFIG.ui?.unitSurface?.envIntensity ?? 1,   // 环境光来自天空（skyLight.js）；粗糙度 / 金属度逐零件给（unitSurface.js）
       // v47：昼夜染色的落点。color 与顶点色**相乘**，所以白色 = 完全不改
       // （Lambert 时代就是这个行为，Standard 的 color/vertexColors 语义相同），
       // 越暗越往当时的天空色压。初值必须是白：材质是共享缓存的，第一帧在
       // setUnitTint 之前就会被用到。
       color: 0xffffff,
     });
+    patchUnitSurface(m);
     _matCache.set(k, m);
   }
   return m;
@@ -1145,29 +1168,60 @@ export function setUnitTint(hex) {
 // shader 结构，可以放心让它们共享同一份编译好的 program（同 VegetationShaderPatch.js
 // 头注记录的"identical onBeforeCompile 文本导致错误共享 program"是反过来的坑——
 // 那边是"文本相同但语义不同不该共享"，这里是"文本相同且语义也相同，该共享"）。
-const CRYSTAL_RIM_CACHE_KEY = 'crystalRimMaterial_v1';
+const CRYSTAL_RIM_CACHE_KEY = 'crystalMaterial_v2';
+/**
+ * 水晶材质（2026-11 重做）。用户："尤其是模型中的水晶要好好做（模型 + 粒子效果 + 其他效果）"、"水晶在任何时候都要发光"。
+ * 一颗宝石该有的四样东西都在片元里按视角现算，不用贴图：
+ *   · 切面：硬边法线，正对镜头的切面最亮（光从里面透出来），侧面暗，转起来一片片地闪；
+ *   · 内部的能量：按晶体自身坐标取两层往上流动的噪声，亮带在晶体里慢慢上升；
+ *   · 边缘光：视线掠过的边缘更亮（原来就有的 Fresnel，保留）；
+ *   · 反射：光滑表面反射天空（环境贴图），白天有高光，夜里只剩自己的光。
+ * 亮度仍然只由 material.emissiveIntensity 一个量驱动（UnitLayer 按充能 / 开火 / 夜色写它），所有分量都乘它，
+ * 所以"攻击时更亮"对整颗水晶同步生效。最亮的切面超过 1，泛光会抓到。
+ */
 export function crystalMaterial(color) {
+  const K = CONFIG.ui?.crystal?.look || {};
   const mat = new THREE.MeshStandardMaterial({
     color, emissive: color, emissiveIntensity: 0.7,
-    roughness: 0.18, metalness: 0.0,
+    roughness: K.roughness ?? 0.1, metalness: 0.0, envMapIntensity: K.reflect ?? 1.4,
     flatShading: true,                 // 切面高光 → 水晶感
-    transparent: true, opacity: 0.88,
+    transparent: true, opacity: K.opacity ?? 0.95,
   });
   const rimCfg = (CONFIG.ui && CONFIG.ui.crystalRim) || {};
+  const U = worldUniforms();
+  if (!U.tWNoise.value) U.tWNoise.value = worldNoiseTexture();
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uRimPower = { value: rimCfg.power ?? 2.5 };
     shader.uniforms.uRimStrength = { value: rimCfg.strength ?? 1.4 };
+    shader.uniforms.uCK = { value: new THREE.Vector4(K.base ?? 0.25, K.core ?? 0.7, K.energy ?? 0.8, K.glint ?? 1.4) };
+    shader.uniforms.uWTime = U.uWTime; shader.uniforms.tWNoise = U.tWNoise;
+    shader.vertexShader = 'varying vec3 vCPos;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vCPos = position;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', [
         '#include <common>',
         'uniform float uRimPower;',
         'uniform float uRimStrength;',
+        'uniform vec4 uCK; uniform float uWTime; uniform sampler2D tWNoise; varying vec3 vCPos;',
       ].join('\n'))
-      .replace('#include <normal_fragment_maps>', [
-        '#include <normal_fragment_maps>',
-        'float crystalRim = pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), uRimPower);',
-        'totalEmissiveRadiance += emissive * crystalRim * uRimStrength;',
-      ].join('\n'));
+      .replace('#include <normal_fragment_maps>', /* glsl */`#include <normal_fragment_maps>
+  {
+    vec3 cV = normalize(vViewPosition);
+    float ndv = max(dot(cV, normal), 0.0);
+    float crystalRim = pow(1.0 - ndv, uRimPower);
+    float core = ndv * ndv;
+    // 内部往上流的能量：两层不同速度的噪声叠出亮带
+    float e1 = texture2D(tWNoise, vec2(vCPos.x * 0.045 + vCPos.z * 0.027, vCPos.y * 0.035 - uWTime * 0.06)).r;
+    float e2 = texture2D(tWNoise, vec2(vCPos.z * 0.06 - vCPos.x * 0.021, vCPos.y * 0.07 - uWTime * 0.11)).g;
+    float energy = smoothstep(0.42, 0.72, e1 * 0.55 + e2 * 0.55);
+    // 切面闪光：反射方向扫过一个固定的"亮点"时闪一下（晶体在转，所以是一片片轮着闪）
+    float glint = pow(max(dot(reflect(-cV, normal), normalize(vec3(0.25, 0.85, 0.45))), 0.0), 28.0);
+    vec3 hot = mix(emissive, vec3(dot(emissive, vec3(0.3333))) * 1.6 + emissive * 0.4, core * core * 0.3);   // 最亮处往白里偏
+    totalEmissiveRadiance = emissive * uCK.x
+      + hot * (core * uCK.y + energy * uCK.z * (0.35 + core))
+      + emissive * crystalRim * uRimStrength
+      + vec3(1.0) * glint * uCK.w * dot(emissive, vec3(0.3333));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), 0.06 + 0.1 * energy);
+  }`);
   };
   mat.customProgramCacheKey = () => CRYSTAL_RIM_CACHE_KEY;
   return mat;

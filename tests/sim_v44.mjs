@@ -728,8 +728,9 @@ const addMaxHP = (fx, id, flat, key = 'test_maxhp') => fx.apply(id, {
       tops[tier] = m.topY;
       T(`模⑥-${tier} 塔能造出几何且有炮口高度`, m.geo && m.topY > 0 && m.muzzleY > 0);
     }
-    T(`模⑥-塔高随档次递增（${['outer','inner','base','hq_tower'].map(k=>Math.round(tops[k])).join(' < ')}）`,
-      tops.outer < tops.inner && tops.inner < tops.base && tops.base < tops.hq_tower);
+    // 2026-11 写实造型：用户定稿"某一方所有塔的模型都是一样的不需要再做区分了"——四档同一个模型，高度相同
+    T(`模⑥-四档防御塔同一个模型、一样高（${['outer','inner','base','hq_tower'].map(k=>Math.round(tops[k])).join(' = ')}）`,
+      tops.outer === tops.inner && tops.inner === tops.base && tops.base === tops.hq_tower);
     // 同档不同阵营必须是**不同的几何**（否则"红蓝各有特色"就没做到）
     const b = towerMesh('x|b', '#5b9bd5', 26, '', 'tower', false, false, 'inner', 'blue');
     const r2 = towerMesh('x|r', '#e0473f', 26, '', 'tower', false, false, 'inner', 'red');

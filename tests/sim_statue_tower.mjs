@@ -20,7 +20,7 @@ const R = 32;
 {
   const S = CONFIG.ui.statueTower;
   T('①造型开关、四档规模、碎块散布、颜色都在 CONFIG.ui.statueTower（软编码）',
-    ['statue', 'classic'].includes(S.style) && TIERS.every((t) => S.statueScale[t] > 0 && S.columnExtra[t] >= 0)
+    ['citadel', 'statue', 'classic'].includes(S.style) && TIERS.every((t) => S.statueScale[t] > 0 && S.columnExtra[t] >= 0)
     && S.rubbleDist.length === 2 && S.rubbleScale > 0 && S.colors.blue && S.colors.red && S.ruin);
 }
 

@@ -13,6 +13,7 @@
  */
 import * as THREE from '../../vendor/three.module.js';
 import { CONFIG } from '../data/Config.js';
+import { patchUnitSurface, writeSurface } from './unitSurface.js';
 
 /** 骨号。0 = 不动（跟着整个单位走）。 */
 export const BONE = {
@@ -45,12 +46,12 @@ export function rigMerge(parts) {
     if (ng !== g) g.dispose();
     if (!ng.getAttribute('normal')) ng.computeVertexNormals();
     n += ng.getAttribute('position').count;
-    return { g: ng, c: new THREE.Color(p.color), b: p.bone || 0, k: p.k ?? 1, pv: p.pivot || [0, 0, 0] };
+    return { g: ng, c: new THREE.Color(p.color), b: p.bone || 0, k: p.k ?? 1, pv: p.pivot || [0, 0, 0], mat: p.mat };
   });
   const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 3);
-  const bone = new Float32Array(n * 2), piv = new Float32Array(n * 3);
+  const bone = new Float32Array(n * 2), piv = new Float32Array(n * 3), am = new Float32Array(n * 4);
   let o = 0;
-  for (const { g, c, b, k, pv } of prepped) {
+  for (const { g, c, b, k, pv, mat } of prepped) {
     const P = g.getAttribute('position'), N = g.getAttribute('normal');
     for (let i = 0; i < P.count; i++, o++) {
       pos[o * 3] = P.getX(i); pos[o * 3 + 1] = P.getY(i); pos[o * 3 + 2] = P.getZ(i);
@@ -58,6 +59,7 @@ export function rigMerge(parts) {
       col[o * 3] = c.r; col[o * 3 + 1] = c.g; col[o * 3 + 2] = c.b;
       bone[o * 2] = b; bone[o * 2 + 1] = k;
       piv[o * 3] = pv[0]; piv[o * 3 + 1] = pv[1]; piv[o * 3 + 2] = pv[2];
+      writeSurface(am, o * 4, mat);
     }
     g.dispose();
   }
@@ -67,6 +69,7 @@ export function rigMerge(parts) {
   out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setAttribute('aBone', new THREE.BufferAttribute(bone, 2));
   out.setAttribute('aPivot', new THREE.BufferAttribute(piv, 3));
+  out.setAttribute('aMat', new THREE.BufferAttribute(am, 4));
   out.computeBoundingBox();
   // 贴地假 AO（与 UnitMeshFactory.mergeParts 同一做法）：越靠底越暗一点
   const minY = out.boundingBox.min.y, span = Math.max(out.boundingBox.max.y - minY, 1e-6);
@@ -200,9 +203,9 @@ export function refreshAnimUniforms() {
  * inst = false：单体（巨龙），每条龙一套，UnitLayer 每帧写 userData.uAnim。
  */
 export function animMaterials(inst) {
-  const body = injectAnim(new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 0, color: 0xffffff,
-  }), inst, 'body');
+  const body = patchUnitSurface(injectAnim(new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: CONFIG.ui?.unitSurface?.envIntensity ?? 1, color: 0xffffff,
+  }), inst, 'body'));
   const depth = injectAnim(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), inst, 'depth');
   // 单体版本体与阴影共用同一个 uAnim（同一姿势）
   if (!inst) { depth.userData.uAnim = body.userData.uAnim; relinkUniform(depth, body); }

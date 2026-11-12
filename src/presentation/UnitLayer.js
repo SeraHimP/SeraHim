@@ -1359,7 +1359,9 @@ export class UnitLayer {
     if (en.poseHitT >= 0 && !en.isTower) {
       hitSquash = Math.sin(Math.PI * Math.min(1, en.poseHitT / HIT_POSE_DUR)) * HIT_SQUASH_AMOUNT;
     }
-    en.unit.scale.set(s * (1 + hitSquash * 0.5), s * (1 - hitSquash) * (fxMode?.scaleY ?? 1), s * (1 + hitSquash * 0.5));
+    // 倒塌动画播放中：静态的建筑网格不画（动画里的部件在接力），缩成一个点
+    const hid = fxMode?.hidden ? 1e-4 : 1;
+    en.unit.scale.set(s * (1 + hitSquash * 0.5) * hid, s * (1 - hitSquash) * (fxMode?.scaleY ?? 1) * hid, s * (1 + hitSquash * 0.5) * hid);
     // C 组·台阶地形：单位坐到地面高度（高地/河床）。贴地贴花、血条、盾牌一并抬沉。
     const gy = (this.mapSystem && this.mapSystem.heightAt) ? this.mapSystem.heightAt(e.pos.x, e.pos.y) : 0;
     en.groundY = gy;
@@ -1474,7 +1476,7 @@ export class UnitLayer {
       const pulse = en._firePulse * en._firePulse;   // 鼓起来快、收回去慢
       // 攻击时水晶本身更亮（用户："塔攻击的时候附近新增那个光晕很丑，删掉。改为进一步加大水晶的亮度"）：
       // 充能部分再乘 chargeBoost，开火那一下再加 emissivePulse。只抬水晶自己的自发光，不在外面铺光晕贴片。
-      en.crystal.material.emissiveIntensity = CRYSTAL_EMI_BASE + chargeE * (HL.chargeBoost ?? 1.6) + this._nightEmi() + pulse * (HL.emissivePulse ?? 2.2);
+      en.crystal.material.emissiveIntensity = (CONFIG.ui?.crystal?.emissiveBase ?? CRYSTAL_EMI_BASE) + chargeE * (HL.chargeBoost ?? 1.6) + this._nightEmi() + pulse * (HL.emissivePulse ?? 2.2);
       // 粒子随充能变亮（不再收拢/外弹——那也是"攒一发"的语义）
       if (en.crystalPts && this.particlesOn) {
         en.crystalPts.material.uniforms.uOpacity.value = Math.max(0, Math.min(1, 0.55 + chargeE * 0.45));

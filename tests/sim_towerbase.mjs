@@ -222,8 +222,9 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   // 不应该再出现"某一档明显异常地小/大"（那意味着又混进了另一套语言）。
   const counts = ['outer', 'inner', 'base', 'hq_tower'].map(tier =>
     build(tier, 'blue', 0, 'tierguard').geo.attributes.position.count);
-  T(`外⑤-四档顶点数随 TIER_SPEC 级差单调不降（同源造型，只靠参数拉开差距：${counts.join(' < ')}）`,
-    counts[0] <= counts[1] && counts[1] <= counts[2] && counts[2] <= counts[3] && counts[0] < counts[3]);
+  // 2026-11 写实造型：每方只有一套塔，四档是同一个模型（用户定稿），不再靠档位参数拉开差距
+  T(`外⑤-四档是同一个模型（顶点数相同：${counts.join(' = ')}）`,
+    counts[0] === counts[1] && counts[1] === counts[2] && counts[2] === counts[3]);
 
   // ==================== 七、红方骨架肋"悬空"修复（v58.1）====================
   // 用户实机截图直接看出："红方塔四周那个东西怎么是悬空的？"——诊断：塔身是
@@ -254,16 +255,17 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
 // 桩子直接调用它，不需要真的编译 GPU 程序就能钉住"注入了什么"。
 {
   const mat = crystalMaterial(0x4a9eff);
-  T('晶①-crystalMaterial 保留原有基础属性（颜色/自发光/切面/半透明不变）',
+  T('晶①-crystalMaterial 的基础属性：队伍色 + 自发光 + 硬切面 + 半透明；不透明度 / 光滑度读 CONFIG.ui.crystal.look',
     mat.color.getHex() === 0x4a9eff && mat.emissive.getHex() === 0x4a9eff
     && mat.flatShading === true && mat.transparent === true
-    && Math.abs(mat.opacity - 0.88) < 1e-6 && Math.abs(mat.roughness - 0.18) < 1e-6);
+    && Math.abs(mat.opacity - CONFIG.ui.crystal.look.opacity) < 1e-6 && Math.abs(mat.roughness - CONFIG.ui.crystal.look.roughness) < 1e-6);
   T('晶②-customProgramCacheKey 对所有水晶材质返回同一个常量字符串（结构相同，可以安全共享编译好的 program）',
     typeof mat.customProgramCacheKey === 'function'
     && mat.customProgramCacheKey() === crystalMaterial(0xff5a5a).customProgramCacheKey());
 
   const fakeShader = {
     uniforms: {},
+    vertexShader: 'void main() {\n  #include <begin_vertex>\n}',
     fragmentShader: [
       'uniform vec3 emissive;',
       '#include <common>',
@@ -281,10 +283,16 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   T('晶④-片元着色器里声明了这两个 uniform（在 <common> 之后，供后面的计算引用）',
     /uniform float uRimPower;/.test(fakeShader.fragmentShader)
     && /uniform float uRimStrength;/.test(fakeShader.fragmentShader));
-  T('晶⑤-在 <normal_fragment_maps> 之后按 Fresnel 公式把边缘光叠加进 totalEmissiveRadiance（乘 emissive，随攻击蓄能同步变亮）',
-    /totalEmissiveRadiance \+= emissive \* crystalRim \* uRimStrength;/.test(fakeShader.fragmentShader));
+  // 2026-11 水晶材质重做：自发光拆成底光 + 正对镜头的切面 + 内部流动的亮带 + 边缘光 + 切面闪光，每一项都乘 emissive
+  const fsrc = fakeShader.fragmentShader;
+  T('晶⑤-在 <normal_fragment_maps> 之后把边缘光叠进 totalEmissiveRadiance（乘 emissive，随攻击蓄能同步变亮）',
+    fsrc.indexOf('crystalRim') > fsrc.indexOf('#include <normal_fragment_maps>') && /\+ emissive \* crystalRim \* uRimStrength/.test(fsrc));
   T('晶⑥-Fresnel 项用的是 1-dot(视线,法线) 的幂次（边缘越接近垂直视线越亮，不是随手写的别的公式）',
-    /pow\(1\.0 - max\(dot\(normalize\(vViewPosition\), normal\), 0\.0\), uRimPower\)/.test(fakeShader.fragmentShader));
+    /float ndv = max\(dot\(cV, normal\), 0\.0\);/.test(fsrc) && /vec3 cV = normalize\(vViewPosition\);/.test(fsrc) && /pow\(1\.0 - ndv, uRimPower\)/.test(fsrc));
+  T('晶⑦-自发光的每一项都乘 emissive（亮度只由 emissiveIntensity 一个量驱动，整颗水晶同步变亮）',
+    /totalEmissiveRadiance = emissive \* uCK\.x/.test(fsrc) && /hot \* \(core \* uCK\.y \+ energy \* uCK\.z/.test(fsrc) && /mix\(emissive,/.test(fsrc));
+  T('晶⑧-内部的亮带按晶体自身坐标取噪声、随时间往上流（顶点着色器把 position 传下来）',
+    /vCPos = position;/.test(fakeShader.vertexShader) && /vCPos\.y \* [0-9.]+ - uWTime/.test(fsrc));
 }
 
 done();

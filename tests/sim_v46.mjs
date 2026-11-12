@@ -445,8 +445,10 @@ const mkE = (ents, type, x, y, extra = {}) => {
         towerMesh(`v46c|${kind}|${d}`, '#5b9bd5', 34, '', kind, false, false, 'nexus_main', 'blue', d));
       T(`损⑲-${kind}：三档炮口高度一致（水晶就是炮口）`,
         Math.abs(m[0].muzzleY - m[1].muzzleY) < 1e-6 && Math.abs(m[0].muzzleY - m[2].muzzleY) < 1e-6);
+      // 掉下来的部件留在塔脚（顶点数可以不变），所以比的是顶点位置而不是个数
+      const pa = m[0].geo.attributes.position.array, pb = m[2].geo.attributes.position.array;
       T(`损⑳-${kind}：损毁确实换了几何`,
-        m[0].geo.attributes.position.count !== m[2].geo.attributes.position.count);
+        pa.length !== pb.length || pa.some((v, i) => Math.abs(v - pb[i]) > 1e-6));
     }
   }
   // v54：这条改过两次，过程本身值得留着 ——

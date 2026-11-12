@@ -21,6 +21,7 @@ const _geoCache = new WeakMap();
 export function shellGeometry(src) {
   let g = _geoCache.get(src);
   if (g) return g;
+  if ((CONFIG.ui?.towerShield?.shape ?? 'hull') === 'hull') { g = hullGeometry(src); _geoCache.set(src, g); return g; }
   const p = src.getAttribute('position'), n = src.getAttribute('normal');
   const acc = new Map();
   const key = (i) => `${Math.round(p.getX(i) * 50)}|${Math.round(p.getY(i) * 50)}|${Math.round(p.getZ(i) * 50)}`;
@@ -44,6 +45,35 @@ export function shellGeometry(src) {
   g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   g.computeBoundingSphere();
   _geoCache.set(src, g);
+  return g;
+}
+
+/**
+ * 轮廓外壳：按高度一层层量塔身最宽处，旋转成一张光滑的皮。
+ * 写实造型的塔身零件多、细（爪、角、一块块石头），照着每个零件外扩出来的外壳是一堆碎面，
+ * 细小零件上几乎每个像素都是"轮廓"，整座塔会被涂成一片金色。外壳要的是"被一层护盾裹住"，
+ * 所以只跟塔的整体轮廓走：仍然贴身，但是一整张干净的面。
+ */
+export function hullGeometry(src) {
+  const S = CONFIG.ui?.towerShield || {};
+  const p = src.getAttribute('position');
+  src.computeBoundingBox();
+  const y0 = src.boundingBox.min.y, y1 = src.boundingBox.max.y, H = Math.max(1e-3, y1 - y0);
+  const N = S.hullSlices ?? 14, rad = new Float32Array(N + 1);
+  for (let i = 0; i < p.count; i++) {
+    const t = (p.getY(i) - y0) / H * N, r = Math.hypot(p.getX(i), p.getZ(i));
+    const a = Math.max(0, Math.min(N, Math.floor(t))), b = Math.min(N, a + 1);
+    if (r > rad[a]) rad[a] = r; if (r > rad[b]) rad[b] = r;
+  }
+  // 相邻层取大再平滑一遍：轮廓不跟着每一个垛口、每一根刺抖
+  const sm = new Float32Array(N + 1);
+  for (let i = 0; i <= N; i++) sm[i] = (rad[Math.max(0, i - 1)] + 2 * rad[i] + rad[Math.min(N, i + 1)]) / 4;
+  const pts = [];
+  for (let i = 0; i <= N; i++) pts.push(new THREE.Vector2(Math.max(sm[i], 1e-3), y0 + H * i / N));
+  pts.push(new THREE.Vector2(1e-3, y1 + H * 0.02));   // 封顶
+  const g = new THREE.LatheGeometry(pts, S.hullSegments ?? 28);
+  g.deleteAttribute('uv');
+  g.computeBoundingSphere();
   return g;
 }
 
