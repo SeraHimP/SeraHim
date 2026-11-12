@@ -35,6 +35,13 @@ export function treeGeometry(seed, H = 70, shape = {}, lod = false) {
     parts.push(g);
   }
   const trunkGeo = mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+  // twist：树干拧着长（扭曲丛林）。按高度把树干、枝、树冠一起往两边摆，根部不动
+  const tw = shape.twist ?? 0;
+  const bend = (y) => {
+    const t = Math.max(0, y / H), k = tw * H * 0.17 * Math.min(1, t / 0.12);
+    return [k * Math.sin(t * Math.PI * 1.5 + seed * 1.3), k * 0.7 * Math.sin(t * Math.PI * 2.2 + seed * 2.1)];
+  };
+  if (tw) { const q = trunkGeo.attributes.position; for (let i = 0; i < q.count; i++) { const [bx, bz] = bend(q.getY(i)); q.setX(i, q.getX(i) + bx); q.setZ(i, q.getZ(i) + bz); } trunkGeo.computeVertexNormals(); }
   // 树冠：叶片卡片。conical = 针叶树（上尖下宽）
   const cards = [];
   const cardN = lod ? 14 : (shape.cards ?? 42), cy = H * (shape.crownY ?? 0.68), rx = H * (shape.crownRX ?? 0.36), ry = H * (shape.crownRY ?? 0.3);
@@ -46,7 +53,8 @@ export function treeGeometry(seed, H = 70, shape = {}, lod = false) {
     const s = H * (0.22 + hash2(seed, i + 77) * 0.14) * (lod ? 1.5 : 1) * (shape.cardK ?? 1);
     const g = new THREE.PlaneGeometry(s, s);
     g.rotateX((hash2(seed, i + 11) - 0.5) * 1.6); g.rotateY(hash2(seed, i + 13) * Math.PI * 2); g.rotateZ((hash2(seed, i + 17) - 0.5) * 1.2);
-    g.translate(x, y, z);
+    const [bx, bz] = tw ? bend(y) : [0, 0];
+    g.translate(x + bx, y, z + bz);
     cards.push(g.index ? g.toNonIndexed() : g);
   }
   return { trunk: trunkGeo, canopy: mergeGeometries(cards, false) };
@@ -145,7 +153,7 @@ export function buildWorldFoliage(field, theme) {
   const kinds = [0, 1, 2].map((k) => treeGeometry(1 + k * 17, H0 + k * 10, shape, false));
   const kindsFar = [0, 1, 2].map((k) => treeGeometry(1 + k * 17, H0 + k * 10, shape, true));
   const trunkMat = patchWorldMaterial(new THREE.MeshStandardMaterial({ map: bark.map, normalMap: bark.normalMap, roughness: 0.95, color: new THREE.Color(T.barkTint ?? '#cfc3b4') }));
-  const leafMat = patchSway(patchWorldMaterial(leafMaterial(leaf, T.leafTint), { wetRough: 0.7 }), H0, T.sway ?? 1.6);
+  const leafMat = patchSway(patchWorldMaterial(leafMaterial(leaf, T.leafTint), { wetRough: 0.7, lightDir: false }), H0, T.sway ?? 1.6);
   patchSway(trunkMat, H0 * 2.2, (T.sway ?? 1.6) * 0.5);
   disposables.push(trunkMat, leafMat, ...kinds.flatMap((k) => [k.trunk, k.canopy]), ...kindsFar.flatMap((k) => [k.trunk, k.canopy]));
 

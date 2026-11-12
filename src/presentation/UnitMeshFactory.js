@@ -1168,7 +1168,7 @@ export function setUnitTint(hex) {
 // shader 结构，可以放心让它们共享同一份编译好的 program（同 VegetationShaderPatch.js
 // 头注记录的"identical onBeforeCompile 文本导致错误共享 program"是反过来的坑——
 // 那边是"文本相同但语义不同不该共享"，这里是"文本相同且语义也相同，该共享"）。
-const CRYSTAL_RIM_CACHE_KEY = 'crystalMaterial_v2';
+const CRYSTAL_RIM_CACHE_KEY = 'crystalMaterial_v5';
 /**
  * 水晶材质（2026-11 重做）。用户："尤其是模型中的水晶要好好做（模型 + 粒子效果 + 其他效果）"、"水晶在任何时候都要发光"。
  * 一颗宝石该有的四样东西都在片元里按视角现算，不用贴图：
@@ -1194,6 +1194,9 @@ export function crystalMaterial(color) {
     shader.uniforms.uRimPower = { value: rimCfg.power ?? 2.5 };
     shader.uniforms.uRimStrength = { value: rimCfg.strength ?? 1.4 };
     shader.uniforms.uCK = { value: new THREE.Vector4(K.base ?? 0.25, K.core ?? 0.7, K.energy ?? 0.8, K.glint ?? 1.4) };
+    shader.uniforms.uCG = { value: new THREE.Vector4(K.scint ?? 1.1, K.fire ?? 0.9, K.contrast ?? 0.55, K.breath ?? 0.12) };
+    shader.uniforms.uCS = { value: K.saturation ?? 1.5 };
+    shader.uniforms.uCI = { value: new THREE.Vector4(K.innerScale ?? 0.16, K.innerDepth ?? 1.6, K.innerContrast ?? 0.6, K.body ?? 0.55) };
     shader.uniforms.uWTime = U.uWTime; shader.uniforms.tWNoise = U.tWNoise;
     shader.vertexShader = 'varying vec3 vCPos;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vCPos = position;');
     shader.fragmentShader = shader.fragmentShader
@@ -1201,7 +1204,10 @@ export function crystalMaterial(color) {
         '#include <common>',
         'uniform float uRimPower;',
         'uniform float uRimStrength;',
-        'uniform vec4 uCK; uniform float uWTime; uniform sampler2D tWNoise; varying vec3 vCPos;',
+        'uniform vec4 uCK, uCG, uCI; uniform float uCS; uniform float uWTime; uniform sampler2D tWNoise; varying vec3 vCPos;',
+        'float cH21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+        // 三角格：每个小三角形一个随机亮度 —— 晶体内部一片片的解理面
+        'float cShards(vec2 p) { vec2 s = vec2(p.x + p.y * 0.57735, p.y * 1.1547); vec2 i = floor(s), f = fract(s); return cH21(i + step(1.0, f.x + f.y) * 17.0); }',
       ].join('\n'))
       .replace('#include <normal_fragment_maps>', /* glsl */`#include <normal_fragment_maps>
   {
@@ -1209,18 +1215,40 @@ export function crystalMaterial(color) {
     float ndv = max(dot(cV, normal), 0.0);
     float crystalRim = pow(1.0 - ndv, uRimPower);
     float core = ndv * ndv;
+    // 假折射：视线穿过切面折进晶体里。切面是平的（flatShading），所以每个切面折出去的方向是一个定值——
+    // 拿它去查噪声，每个切面就有自己的明暗；晶体一转，各个切面轮流亮起来又暗下去。
+    // 真的水晶和一块发光的塑料差的就是这个：切面之间有明有暗、会"跳"，而不是整块匀匀地亮。
+    vec3 rf = refract(-cV, normal, 0.62);
+    vec2 fu = rf.xy * 0.83 + rf.z * 0.47 + 0.13;
+    float sc = texture2D(tWNoise, fu).r;
+    float scint = smoothstep(0.56, 0.86, sc);                       // 少数切面"着火"
+    // 色散：三个颜色各折偏一点，亮切面的边上带一点彩色的火彩
+    vec3 fire = vec3(texture2D(tWNoise, fu + 0.017).r, sc, texture2D(tWNoise, fu - 0.017).r) - sc;
+    // 晶体内部：隔着切面看进去是一片片大小不一的解理面，有的正好把光反回来（亮），有的是暗的。
+    // 取样位置 = 表面位置 + 折射方向 × 深度：视线一动、晶体一转，里面的亮片相对表面在"滑"，这才有往里看的纵深
+    vec2 ip = vCPos.xy * uCI.x + rf.xy * uCI.y + vec2(vCPos.z * uCI.x * 0.6, 0.0);
+    float sh1 = cShards(ip), sh2 = cShards(ip * 2.3 + 7.1);
+    float inner = sh1 * 0.65 + sh2 * 0.35;
+    float innerHot = smoothstep(0.72, 0.95, inner);
+    float tone = mix(1.0 - uCG.z, 1.0 + uCG.z * 0.5, sc) * mix(1.0 - uCI.z, 1.0 + uCI.z * 0.6, inner);   // 切面之间、解理面之间的明暗反差
     // 内部往上流的能量：两层不同速度的噪声叠出亮带
     float e1 = texture2D(tWNoise, vec2(vCPos.x * 0.045 + vCPos.z * 0.027, vCPos.y * 0.035 - uWTime * 0.06)).r;
     float e2 = texture2D(tWNoise, vec2(vCPos.z * 0.06 - vCPos.x * 0.021, vCPos.y * 0.07 - uWTime * 0.11)).g;
     float energy = smoothstep(0.42, 0.72, e1 * 0.55 + e2 * 0.55);
     // 切面闪光：反射方向扫过一个固定的"亮点"时闪一下（晶体在转，所以是一片片轮着闪）
     float glint = pow(max(dot(reflect(-cV, normal), normalize(vec3(0.25, 0.85, 0.45))), 0.0), 28.0);
-    vec3 hot = mix(emissive, vec3(dot(emissive, vec3(0.3333))) * 1.6 + emissive * 0.4, core * core * 0.3);   // 最亮处往白里偏
-    totalEmissiveRadiance = emissive * uCK.x
-      + hot * (core * uCK.y + energy * uCK.z * (0.35 + core))
+    float lum = dot(emissive, vec3(0.3333));
+    vec3 deep = max(mix(vec3(lum), emissive, uCS), 0.0);            // 晶体本身的颜色：比发光色更浓（浅色的光打在深色的晶体上才有层次）
+    vec3 hot = mix(deep, vec3(lum) * 1.6 + emissive * 0.4, core * core * 0.3);   // 最亮处往白里偏
+    float breath = 1.0 + uCG.w * sin(uWTime * 1.9);                  // 很慢的呼吸
+    totalEmissiveRadiance = (deep * uCK.x * tone
+      + hot * (core * uCK.y * tone + energy * uCK.z * (0.35 + core))
+      + mix(emissive, vec3(lum * 1.8), 0.55) * (scint * uCG.x + innerHot * uCG.x * 0.7)) * breath
       + emissive * crystalRim * uRimStrength
-      + vec3(1.0) * glint * uCK.w * dot(emissive, vec3(0.3333));
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), 0.06 + 0.1 * energy);
+      + vec3(1.0) * glint * uCK.w * lum
+      + fire * uCG.y * lum * (0.4 + scint);
+    totalEmissiveRadiance = max(totalEmissiveRadiance, vec3(0.0));
+    diffuseColor.rgb = mix(diffuseColor.rgb * tone * uCI.w, vec3(1.0), 0.04 + 0.08 * energy);   // 本色压暗：晶体是深色透亮的，不是一块发白的冰
   }`);
   };
   mat.customProgramCacheKey = () => CRYSTAL_RIM_CACHE_KEY;
@@ -1251,17 +1279,19 @@ export function dotTexture() {
  * 参数在 CONFIG.ui.crystal.motes。
  */
 export function crystalParticles(color, r) {
-  const M = CONFIG.ui?.crystal?.motes || {};
-  const N = Math.max(1, M.count ?? 22);
-  const pos = new Float32Array(N * 3), seed = new Float32Array(N * 4);
+  const M = CONFIG.ui?.crystal?.motes || {}, K = CONFIG.ui?.crystal?.sparkles || {};
+  const NM = Math.max(1, M.count ?? 22), NS = K.enabled === false ? 0 : Math.max(0, K.count ?? 10), N = NM + NS;
+  const pos = new Float32Array(N * 3), seed = new Float32Array(N * 4), kind = new Float32Array(N);
   const h = (i, k) => { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };   // 确定性伪随机
-  for (let i = 0; i < N; i++) seed.set([h(i, 1), h(i, 2), h(i, 3), h(i, 4)], i * 4);
+  for (let i = 0; i < N; i++) { seed.set([h(i, 1), h(i, 2), h(i, 3), h(i, 4)], i * 4); kind[i] = i < NM ? 0 : 1; }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
+  geo.setAttribute('kind', new THREE.BufferAttribute(kind, 1));
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, r, 0), r * 4);   // 位置在着色器里算，包围球手给
   const [rad0, rad1] = M.radius || [0.7, 1.7];
   const [sp0, sp1] = M.speed || [0.16, 0.32];
+  const [ks0, ks1] = K.rate || [0.5, 1.1];
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 }, uSize: { value: 4 }, uOpacity: { value: 0.9 },
@@ -1269,40 +1299,74 @@ export function crystalParticles(color, r) {
       uR: { value: r }, uRad: { value: new THREE.Vector2(rad0, rad1) }, uSpeed: { value: new THREE.Vector2(sp0, sp1) },
       uRise: { value: M.rise ?? 2.2 }, uSink: { value: M.below ?? 0.8 }, uSwirl: { value: M.swirl ?? 0.9 },
       uTwinkle: { value: M.twinkle ?? 5.0 }, uWhite: { value: M.whiteMix ?? 0.35 }, uGlow: { value: M.glow ?? 1.0 },
+      // 星芒：x / y = 每秒闪几次（慢 / 快），z = 落在水晶表面多远（× 半径），w = 沿水晶高度分布多高（× 半径）
+      uSpark: { value: new THREE.Vector4(ks0, ks1, K.radius ?? 0.62, K.height ?? 1.1) },
+      uSparkK: { value: new THREE.Vector3(K.size ?? 3.2, K.duty ?? 0.6, K.glow ?? 2.6) },   // 大小（× 光点）、每轮有几成会亮、亮度
     },
     vertexShader: `
       attribute vec4 seed;
+      attribute float kind;
       uniform float uTime, uSize, uR, uRise, uSink, uSwirl, uTwinkle;
       uniform vec2 uRad, uSpeed;
+      uniform vec4 uSpark; uniform vec3 uSparkK;
       varying float vA;
       varying float vW;
+      varying float vKind;
+      float h1(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
       void main() {
-        float spd = mix(uSpeed.x, uSpeed.y, seed.y);
-        float t = uTime * spd + seed.x * 17.0;
-        float life = fract(t);
-        float gen = floor(t);                        // 第几轮：每轮换一个出生点
-        float g1 = fract(sin((gen + seed.z * 91.0) * 12.9898) * 43758.5453);
-        float g2 = fract(sin((gen + seed.w * 57.0) * 78.233) * 43758.5453);
-        float ang = g1 * 6.2831853 + life * uSwirl;
-        float rad = uR * mix(uRad.x, uRad.y, g2) * (1.0 - 0.25 * life);
-        vec3 p = vec3(cos(ang) * rad, -uR * uSink + life * uR * uRise, sin(ang) * rad);
-        p.x += sin(uTime * 1.7 + seed.z * 30.0) * uR * 0.08;
-        p.z += cos(uTime * 1.3 + seed.w * 30.0) * uR * 0.08;
-        vA = sin(3.14159265 * life) * (0.65 + 0.35 * sin(uTime * uTwinkle + seed.x * 40.0));
-        vW = seed.w;
-        gl_PointSize = uSize * mix(0.45, 1.0, seed.z);
+        vec3 p; float size;
+        vKind = kind; vW = seed.w;
+        if (kind > 0.5) {
+          // 星芒：在水晶的切面上随机一处亮一下就灭（钻石转动时那种一闪一闪）。跟着水晶转，所以是"长在切面上"的
+          float t = uTime * mix(uSpark.x, uSpark.y, seed.y) + seed.x * 31.0;
+          float life = fract(t), gen = floor(t);
+          float g1 = h1(gen + seed.z * 91.0), g2 = h1(gen * 1.3 + seed.w * 57.0), g3 = h1(gen * 1.7 + seed.x * 13.0);
+          float yy = g2 * 2.0 - 1.0;
+          float rr = uR * uSpark.z * sqrt(max(0.0, 1.0 - yy * yy * 0.85));   // 两头尖的地方收窄
+          float ang = g1 * 6.2831853;
+          p = vec3(cos(ang) * rr, yy * uR * uSpark.w, sin(ang) * rr);
+          vA = pow(sin(3.14159265 * life), 4.0) * step(g3, uSparkK.y);
+          size = uSize * uSparkK.x * (0.55 + 0.75 * g3);
+        } else {
+          float spd = mix(uSpeed.x, uSpeed.y, seed.y);
+          float t = uTime * spd + seed.x * 17.0;
+          float life = fract(t);
+          float gen = floor(t);                        // 第几轮：每轮换一个出生点
+          float g1 = h1(gen + seed.z * 91.0);
+          float g2 = fract(sin((gen + seed.w * 57.0) * 78.233) * 43758.5453);
+          float ang = g1 * 6.2831853 + life * uSwirl;
+          float rad = uR * mix(uRad.x, uRad.y, g2) * (1.0 - 0.25 * life);
+          p = vec3(cos(ang) * rad, -uR * uSink + life * uR * uRise, sin(ang) * rad);
+          p.x += sin(uTime * 1.7 + seed.z * 30.0) * uR * 0.08;
+          p.z += cos(uTime * 1.3 + seed.w * 30.0) * uR * 0.08;
+          vA = sin(3.14159265 * life) * (0.65 + 0.35 * sin(uTime * uTwinkle + seed.x * 40.0));
+          size = uSize * mix(0.45, 1.0, seed.z);
+        }
+        gl_PointSize = size;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
       }`,
     fragmentShader: `
       uniform sampler2D uMap;
-      uniform vec3 uColor;
+      uniform vec3 uColor, uSparkK;
       uniform float uOpacity, uWhite, uGlow;
       varying float vA;
       varying float vW;
+      varying float vKind;
       void main() {
-        vec4 tex = texture2D(uMap, gl_PointCoord);
-        vec3 c = mix(uColor, vec3(1.0), uWhite * step(0.6, vW));   // 少数几颗偏白，像火星
-        gl_FragColor = vec4(c * uGlow, tex.a * vA * uOpacity);   // uGlow > 1 让辉光（Bloom）抓得到
+        if (vKind > 0.5) {
+          // 四角星：横竖两道细光 + 中间一个亮点
+          vec2 u = gl_PointCoord * 2.0 - 1.0;
+          float ax = abs(u.x), ay = abs(u.y);
+          float ray = pow(max(0.0, 1.0 - ax), 3.0) * pow(max(0.0, 1.0 - ay * 7.0), 2.0) + pow(max(0.0, 1.0 - ay), 3.0) * pow(max(0.0, 1.0 - ax * 7.0), 2.0);
+          float dotc = pow(max(0.0, 1.0 - length(u) * 2.6), 2.0);
+          float a = (ray + dotc) * vA;
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(mix(uColor, vec3(1.0), 0.75) * uSparkK.z, a * uOpacity);
+        } else {
+          vec4 tex = texture2D(uMap, gl_PointCoord);
+          vec3 c = mix(uColor, vec3(1.0), uWhite * step(0.6, vW));   // 少数几颗偏白，像火星
+          gl_FragColor = vec4(c * uGlow, tex.a * vA * uOpacity);   // uGlow > 1 让辉光（Bloom）抓得到
+        }
         #include <colorspace_fragment>
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,

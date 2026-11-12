@@ -14,6 +14,8 @@ import { buildWorldFoliage } from './WorldFoliage.js';
 import { buildWorldWater } from './WorldWater.js';
 import { buildWorldLights } from './WorldLights.js';
 import { buildWorldGroundCover } from './WorldGroundCover.js';
+import { buildWorldBridge } from './WorldBridge.js';
+import { buildWorldMist } from './WorldMist.js';
 import { getWorldTextureSet } from './worldTextures.js';
 import { setWorldRect, setWorldWater, updateWorldShading } from './worldShading.js';
 
@@ -56,6 +58,9 @@ export class World {
       if (!field) return;
       tex = getWorldTextureSet(theme.layers, CONFIG.terrain.textureSize ?? 512, opts.anisotropy ?? 8);
       this._add(buildWorldRocks(field, tex.rock, theme));
+      // 深渊图：横跨峡谷的石桥 + 峡谷里的雾层 / 冰原上的冰棱（主题里没声明就什么都不建）
+      this.bridge = this._add(buildWorldBridge(field, tex.paved, theme));
+      this._add(buildWorldMist(field, theme));
     } });
     steps.push({ label: '注水', run: () => { if (field && this.toggles.water) this._add(buildWorldWater(field, theme)); } });
     steps.push({ label: '种树', run: () => { if (field && this.toggles.foliage) this._add(buildWorldFoliage(field, theme)); } });

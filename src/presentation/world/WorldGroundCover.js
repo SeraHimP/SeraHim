@@ -186,13 +186,16 @@ export function buildWorldGroundCover(field, theme) {
     mat.customProgramCacheKey = () => (prevKey ? prevKey.call(mat) : '') + '|up';
     return mat;
   };
-  const cardMat = (tex, hTop, amp) => upNormal(sway(patchWorldMaterial(new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.95 }), { dust: false, wetRough: 0.75 }), hTop, amp));
+  const cardMat = (tex, hTop, amp) => upNormal(sway(patchWorldMaterial(new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.95 }), { dust: false, wetRough: 0.75, lightDir: false }), hTop, amp));
   if (typeof document !== 'undefined') {
     scatter('tuft', [crossCards(1.5, 1, 3), crossCards(1.2, 1.25, 2)], cardMat(bladeTexture('tuft', pal), 1, 0.16), { scale: C.tuftSize ?? 11 });
-    scatter('flower', [crossCards(1.4, 1, 3)], cardMat(bladeTexture('flower', pal), 1, 0.14), { scale: C.flowerSize ?? 10 });
+    // flowerGlow > 0：花自己发一点光（魔法森林的荧光花）
+    const flowerTex = bladeTexture('flower', pal), flowerMat = cardMat(flowerTex, 1, 0.14);
+    if ((C.flowerGlow ?? 0) > 0) { flowerMat.emissive = new THREE.Color('#ffffff'); flowerMat.emissiveMap = flowerTex; flowerMat.emissiveIntensity = C.flowerGlow; }
+    scatter('flower', [crossCards(1.4, 1, 3)], flowerMat, { scale: C.flowerSize ?? 10 });
     scatter('reed', [crossCards(0.9, 1, 3)], cardMat(bladeTexture('reed', { ...pal, dark: C.reedDark || '#4a5a2a', light: C.reedLight || '#9aa24e' }), 1, 0.2), { scale: C.reedSize ?? 22, sink: 0.08 });
     const bushMat = sway(patchWorldMaterial(new THREE.MeshStandardMaterial({ map: leafTexture(leafPal, theme.foliage?.tree?.leafShape || 'broad', 256, 5), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.9,
-      color: new THREE.Color(C.bushTint || '#e6f2d2') }), { wetRough: 0.7 }), 1.2, 0.05);
+      color: new THREE.Color(C.bushTint || '#e6f2d2') }), { wetRough: 0.7, lightDir: false }), 1.2, 0.05);
     scatter('bush', [bushGeometry(3, 1), bushGeometry(11, 1), bushGeometry(23, 1)], bushMat, { scale: C.bushSize ?? 15, sink: 0.12, cast: true });
   }
   const rp = theme.layers?.rock?.palette || {};

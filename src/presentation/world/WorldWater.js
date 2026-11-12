@@ -3,7 +3,7 @@
  *
  * 网格只铺在"真的有水"的地方（地面低于水面的格子），每个顶点带水深，所以：
  *   · 浅处清澈见底、深处是水体的颜色，岸线由河床自己的形状决定，不是一块矩形水面切出来的；
- *   · 岸边 / 礁石周围有一圈白沫。
+ *   · 岸线是淡出去的（越浅越透），只有零星几缕泡沫；水面有顺着流向走的亮纹。
  * 水深来自地形高度场而不是屏幕深度图：稳定，也不需要为水单独渲染一遍深度。
  * 反射走天空环境贴图（PBR 材质自带菲涅尔 + 太阳高光），所以昼夜、天气变了水面自动跟着变。
  * 法线是两层沿流向滚动的波纹；下雨时叠雨点涟漪（rainRipple.js，和水洼是同一段代码）。
@@ -60,12 +60,14 @@ export function buildWorldWater(field, theme) {
       uShallow: { value: new THREE.Color(wc.shallow) }, uDeep: { value: new THREE.Color(wc.deep) },
       uFoam: { value: new THREE.Color(wc.foam ?? '#e6f1f1') },
       uFlow: { value: new THREE.Vector2(Math.SQRT1_2, Math.SQRT1_2).multiplyScalar(C.flowSpeed ?? 9) },
-      uWaterK: { value: new THREE.Vector4(C.clarity ?? 0.16, C.alphaMin ?? 0.38, C.alphaMax ?? 0.94, C.foamWidth ?? 1.3) },
+      uWaterK: { value: new THREE.Vector4(C.clarity ?? 0.42, C.alphaMin ?? 0.06, C.alphaMax ?? 0.9, C.foamWidth ?? 0.7) },
+      // x = 泡沫浓度，y = 水流亮纹的强度，z = 亮纹往下游走的速度，w = 岸线从多浅处开始淡出
+      uWaterS: { value: new THREE.Vector4(C.foam ?? 0.3, C.streak ?? 0.5, C.streakSpeed ?? 0.03, C.shoreFade ?? 0.3) },
     });
     sh.vertexShader = WORLD_VERT_HEAD + 'attribute float aDepth; varying float vDepth;\n' + sh.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n vDepth = aDepth; vWPos = (modelMatrix * vec4(position, 1.0)).xyz;');
     sh.fragmentShader = WORLD_FRAG_HEAD + RIPPLE_GLSL + /* glsl */`
-uniform sampler2D tWaterN; uniform vec3 uShallow, uDeep, uFoam; uniform vec2 uFlow; uniform vec4 uWaterK;
+uniform sampler2D tWaterN; uniform vec3 uShallow, uDeep, uFoam; uniform vec2 uFlow; uniform vec4 uWaterK, uWaterS;
 varying float vDepth;
 ` + sh.fragmentShader
       .replace('#include <map_fragment>', /* glsl */`
@@ -75,18 +77,25 @@ varying float vDepth;
   vec2 fl = uFlow * uWTime;
   vec4 wn1 = texture2D(tWaterN, (vWPos.xz - fl) * 0.011), wn2 = texture2D(tWaterN, (vWPos.xz * 1.9 - fl * 1.6).yx * 0.011 + 0.37);
   vec4 wn3 = texture2D(tWaterN, (vWPos.xz - fl * 0.5) * 0.047);
-  // 岸边白沫：水越浅越多，用波纹高度打碎成一缕缕
-  float foam = (1.0 - smoothstep(0.0, uWaterK.w, wD)) * smoothstep(0.42, 0.62, wn3.a * 0.6 + wn1.a * 0.4 + 0.12);
-  foam = max(foam, (1.0 - smoothstep(0.0, uWaterK.w * 0.35, wD)) * 0.7);
+  // 水在流：顺着流向拉长的亮纹慢慢往下游走。没有它，河面只是一块会反光的色片，看不出是河
+  vec2 fdir = normalize(uFlow + 1e-5), fperp = vec2(-fdir.y, fdir.x);
+  vec2 sp = vec2(dot(vWPos.xz, fdir), dot(vWPos.xz, fperp));
+  float st1 = texture2D(tWNoise, vec2(sp.x * 0.0030 - uWTime * uWaterS.z, sp.y * 0.018)).r;
+  float st2 = texture2D(tWNoise, vec2(sp.x * 0.0052 - uWTime * uWaterS.z * 1.7 + 0.4, sp.y * 0.034 + 0.2)).g;
+  float streak = smoothstep(0.46, 0.9, st1 * 0.6 + st2 * 0.5) * smoothstep(0.3, 1.6, wD) * uWaterS.y;
+  // 泡沫只剩贴着岸的零星几缕（被波纹打碎）。原来沿着两岸各有一整条白边，用户："两边那个白色的泡沫……完全不像河道"
+  float foam = (1.0 - smoothstep(0.0, uWaterK.w, wD)) * smoothstep(0.6, 0.82, wn3.a * 0.6 + wn1.a * 0.4 + 0.12) * uWaterS.x;
   float ring = rrRing(vWPos.xz);
   vec3 body = mix(uShallow, uDeep, dk);
-  diffuseColor.rgb = mix(body, uFoam, clamp(foam, 0.0, 1.0)) + ring * 0.25;
-  diffuseColor.a = clamp(mix(uWaterK.y, uWaterK.z, dk) + foam * 0.5 + ring * 0.3, 0.0, 1.0) * smoothstep(-0.35, 0.05, vDepth);
+  diffuseColor.rgb = mix(body, uFoam, clamp(foam, 0.0, 1.0)) + (uShallow * 0.5 + 0.12) * streak * 0.35 + ring * 0.25;
+  // 岸线：水越浅越透，一直淡到看不见，露出底下湿的河滩 —— 岸是河床自己的形状，不是一条画出来的边
+  diffuseColor.a = clamp(mix(uWaterK.y, uWaterK.z, dk) + foam * 0.5 + streak * 0.08 + ring * 0.3, 0.0, 1.0) * smoothstep(-0.1, uWaterS.w, vDepth);
 `)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(roughness, 0.6, clamp(foam, 0.0, 1.0));')
       .replace('#include <normal_fragment_maps>', /* glsl */`
   vec3 wtn = (wn1.xyz * 2.0 - 1.0) + (wn2.xyz * 2.0 - 1.0) * 0.7 + (wn3.xyz * 2.0 - 1.0) * 0.35;
   wtn.xy *= 0.55 + 0.6 * uWWind.z; wtn.xy += vec2(dFdx(ring), dFdy(ring)) * 6.0;
+  wtn.xy += fdir * (streak - 0.15) * 0.5;
   vec3 wwn = normalize(vec3(wtn.x, 2.2, wtn.y));
   normal = normalize((viewMatrix * vec4(wwn, 0.0)).xyz);
 `)
@@ -97,7 +106,7 @@ varying float vDepth;
   outgoingLight += wLocalLight(vWPos) * diffuseColor.rgb * 0.6;
 #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'world-water-1';
+  mat.customProgramCacheKey = () => 'world-water-3';
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true; mesh.renderOrder = 2; mesh.matrixAutoUpdate = false; mesh.name = 'worldWater';
   const group = new THREE.Group(); group.add(mesh);

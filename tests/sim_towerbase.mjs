@@ -16,7 +16,7 @@
  */
 import { CONFIG, stylizedPaletteOf, adaptiveTowerColors } from '../src/data/Config.js';
 import { howling_abyss_frost } from '../src/data/maps/howling_abyss_frost.js';
-import { towerMesh, crystalMaterial } from '../src/presentation/UnitMeshFactory.js';
+import { towerMesh, crystalMaterial, crystalParticles } from '../src/presentation/UnitMeshFactory.js';
 import { srcOf, scoreboard } from './_harness.mjs';
 
 const { T, done } = scoreboard('塔基 + 塔色自适应地面');
@@ -290,7 +290,20 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   T('晶⑥-Fresnel 项用的是 1-dot(视线,法线) 的幂次（边缘越接近垂直视线越亮，不是随手写的别的公式）',
     /float ndv = max\(dot\(cV, normal\), 0\.0\);/.test(fsrc) && /vec3 cV = normalize\(vViewPosition\);/.test(fsrc) && /pow\(1\.0 - ndv, uRimPower\)/.test(fsrc));
   T('晶⑦-自发光的每一项都乘 emissive（亮度只由 emissiveIntensity 一个量驱动，整颗水晶同步变亮）',
-    /totalEmissiveRadiance = emissive \* uCK\.x/.test(fsrc) && /hot \* \(core \* uCK\.y \+ energy \* uCK\.z/.test(fsrc) && /mix\(emissive,/.test(fsrc));
+    /vec3 deep = max\(mix\(vec3\(lum\), emissive, uCS\), 0\.0\);/.test(fsrc) && /totalEmissiveRadiance = \(deep \* uCK\.x/.test(fsrc) && /hot \* \(core \* uCK\.y \* tone \+ energy \* uCK\.z/.test(fsrc) && /mix\(emissive,/.test(fsrc)
+    && /float lum = dot\(emissive, vec3\(0\.3333\)\);/.test(fsrc) && /glint \* uCK\.w \* lum/.test(fsrc) && /fire \* uCG\.y \* lum/.test(fsrc));
+  // 用户："水晶的材质要像真正的水晶一样"——每个切面按折射方向有自己的明暗（晶体一转就轮着亮），亮切面边上带色散的火彩
+  T('晶⑨-切面明暗来自折射方向（refract），不是整块匀匀地亮；火彩是三个颜色各偏一点取样的差',
+    /vec3 rf = refract\(-cV, normal, [0-9.]+\);/.test(fsrc) && /float scint = smoothstep\(/.test(fsrc) && /scint \* uCG\.x/.test(fsrc)
+    && /vec3 fire = vec3\(texture2D\(tWNoise, fu \+ [0-9.]+\)\.r, sc, texture2D\(tWNoise, fu - [0-9.]+\)\.r\) - sc;/.test(fsrc)
+    && CONFIG.ui.crystal.look.contrast > 0 && CONFIG.ui.crystal.look.scint > 0);
+  {
+    // 星芒：和悬浮光点同一个 Points，多一个 kind 属性区分；关掉就不生成
+    const pts = crystalParticles('#6cb4ff', 8), kd = pts.geometry.getAttribute('kind');
+    let stars = 0; for (let i = 0; i < kd.count; i++) if (kd.getX(i) > 0.5) stars++;
+    T(`晶⑩-水晶切面上的星芒（${stars} 颗）和悬浮光点（${kd.count - stars} 颗）各按配置的数量生成`,
+      stars === CONFIG.ui.crystal.sparkles.count && kd.count - stars === CONFIG.ui.crystal.motes.count && /pow\(sin\(3\.14159265 \* life\), 4\.0\)/.test(pts.material.vertexShader));
+  }
   T('晶⑧-内部的亮带按晶体自身坐标取噪声、随时间往上流（顶点着色器把 position 传下来）',
     /vCPos = position;/.test(fakeShader.vertexShader) && /vCPos\.y \* [0-9.]+ - uWTime/.test(fsrc));
 }

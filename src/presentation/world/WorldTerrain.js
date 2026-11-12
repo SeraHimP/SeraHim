@@ -19,17 +19,19 @@ const CHUNK = 64;   // 每块的格数（一边）
 
 /** 顶点混合权重：返回 [ground, path, rock, accent, paved, under, ao]（0..1） */
 function makeSplat(field, map) {
-  const G = CONFIG.terrain.ground, K = CONFIG.terrain.cliff, P = CONFIG.terrain.paving || {};
-  const level = field.waterLevel, drop = field.mode === 'drop';
-  // 铺石区：基地广场、每座建筑的基座、龙坑台面
+  const G = CONFIG.terrain.ground, K = CONFIG.terrain.cliff, P = { ...(CONFIG.terrain.paving || {}), ...(field.theme?.paving || {}) };   // 主题可以覆写铺石（冰原的基地不铺广场）
+  const level = field.waterLevel, drop = field.mode === 'drop', natural = !!field.landmass;
+  // 铺石区：基地广场（baseK > 0 时）、每座建筑的基座（structK > 0 时）。
+  // 塔脚的铺石圆盘和龙坑的石台默认都不铺：一张正圆的石板贴在土路 / 河滩上，像盖了个章
+  //（用户："塔周围地面那个碎石地面贴图也不好看"、"把龙坑那个特别丑的台删掉"）。塔自己有石头基座，直接立在路上。
   const pads = [];
-  for (const b of field.bases) pads.push({ x: b.c.x, y: b.c.y, r: Math.min(b.r * (P.baseK ?? 0.5), P.baseMax ?? 430), f: P.baseFeather ?? 60 });
-  for (const b of (map.buildings || [])) {
+  if ((P.baseK ?? 0.5) > 0) for (const b of field.bases) pads.push({ x: b.c.x, y: b.c.y, r: Math.min(b.r * (P.baseK ?? 0.5), P.baseMax ?? 430), f: P.baseFeather ?? 60 });
+  if ((P.structK ?? 0) > 0) for (const b of (map.buildings || [])) {
     const pos = b.pos || b; if (!Number.isFinite(pos.x)) continue;
     let r = 46; try { r = structureRadius(b.tier || b._mapTier || 'outer') || 46; } catch (e) { /* 未知档位用默认 */ }
-    pads.push({ x: pos.x, y: pos.y, r: r * (P.structK ?? 1.5), f: P.structFeather ?? 22 });
+    pads.push({ x: pos.x, y: pos.y, r: r * P.structK, f: P.structFeather ?? 22 });
   }
-  for (const p of field.pits) pads.push({ x: p.x, y: p.y, r: p.r * 0.9, f: 16 });
+  if ((P.pitK ?? 0) > 0) for (const p of field.pits) pads.push({ x: p.x, y: p.y, r: p.r * P.pitK, f: 16 });
   // 空间哈希，免得每个顶点扫一遍所有建筑
   const cellSz = 300, grid = new Map();
   for (const p of pads) {
@@ -52,12 +54,16 @@ function makeSplat(field, map) {
     let path = 0, accent = 0, paved = 0;
     if (!outside) {
       if (sdv < 6) path = 1 - smoothstep(G.pathHalf * 0.72, G.pathHalf + G.pathFeather * 0.7, ld);
-      if (drop && sdv < 2) path = Math.max(path, 0.75);                         // 桥 / 台地：整个可走面都是人工路面
+      if (drop && sdv < 2 && !natural) path = Math.max(path, 0.75);             // 桥 / 台地：整个可走面都是人工路面（实地上的基地除外：那是正常的地面）
       paved = sdv < 4 ? pavedAt(x, y) : 0;
       // 崖顶长苔 / 落叶。深渊 / 谷地图的谷底改用和地图外面同一条规则（成片的斑块），里外是同一片地，接缝处不留一圈矩形的色差
-      if (sdv > K.width * 0.7) accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : 0.55 + 0.45 * fbm(x * 0.012, y * 0.012, 2, 83);
+      // 有陆块的图：实地上可走不可走是同一片地，斑块（冰面）用同一条规则，不在可走区的边界上留一道直线
+      if (natural) accent = smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 * (1 - path);
+      else if (sdv > K.width * 0.7) accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : 0.55 + 0.45 * fbm(x * 0.012, y * 0.012, 2, 83);
       else if (sdv <= 0) accent = smoothstep(0.56, 0.72, fbm(x * 0.0075, y * 0.0075, 3, 87)) * (1 - path) * 0.85;   // 野地里的斑块
       if (rf > 0.02) path = Math.max(path, smoothstep(0.02, 0.5, rf) * 0.8);     // 河滩 / 河床：碎石
+      // 龙坑的浅滩也是碎石滩（不长草：河心一块圆圆的草坪和原来的石台一样扎眼）
+      for (const p of field.pits) { const d = Math.hypot(x - p.x, y - p.y); if (d < p.r * 1.5) path = Math.max(path, 0.85 * (1 - smoothstep(p.r * 0.75, p.r * 1.4, d))); }
     } else {
       accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : smoothstep(0.5, 0.75, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.6;
       if (rf > 0.02) path = smoothstep(0.02, 0.5, rf) * 0.8;
@@ -108,7 +114,7 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   // 路 / 斑块的边界用噪声打散：顶点插值出来的是一条软边，自然界里是犬牙交错的
   wS.y = smoothstep(0.30, 0.70, wS.y + (nzB.g - 0.5) * 0.55 * step(0.02, wS.y) * step(wS.y, 0.98));
   wS.w = smoothstep(0.25, 0.75, wS.w + (nzB.b - 0.5) * 0.6 * step(0.02, wS.w));
-  wPv = smoothstep(0.35, 0.65, wPv + (nzB.r - 0.5) * 0.25 * step(0.02, wPv) * step(wPv, 0.98));
+  wPv = smoothstep(0.3, 0.7, wPv + (nzB.r - 0.5) * 0.7 * step(0.02, wPv) * step(wPv, 0.98));   // 广场的边是参差的：石板一块块铺到哪算哪
   vec4 a0 = texture2D(tA0, vWPos.xz * uTile.x), n0 = texture2D(tN0, vWPos.xz * uTile.x);
   vec4 a1 = texture2D(tA1, vWPos.xz * uTile.y), n1 = texture2D(tN1, vWPos.xz * uTile.y);
   vec4 a3 = texture2D(tA3, vWPos.xz * uTile.w), n3 = texture2D(tN3, vWPos.xz * uTile.w);
@@ -172,7 +178,7 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   vec3 wn = normalize(tT * tn.x + tB * tn.y + wn0 * max(tn.z, 0.2));
   normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
 `)
-      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += wLocalLight(vWPos) * diffuseColor.rgb;')
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += wLocalLightN(vWPos, wn) * diffuseColor.rgb;')
       .replace('#include <opaque_fragment>', /* glsl */`
   {
     float ak = smoothstep(uAbyss.x, uAbyss.y, vWPos.y + (texture2D(tWNoise, vWPos.xz * 0.0021 + uWTime * 0.004).r - 0.5) * 60.0) * uAbyss.z;
@@ -180,7 +186,7 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   }
 #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'world-terrain-2';
+  mat.customProgramCacheKey = () => 'world-terrain-7';
   mat.shadowSide = THREE.FrontSide;
   return mat;
 }
@@ -202,14 +208,18 @@ export function buildWorldTerrain(field, theme, opts = {}) {
 
   // ---------- 核心区 ----------
   const N = nx * ny, pos = new Float32Array(N * 3), nrm = new Float32Array(N * 3), spl = new Uint8Array(N * 4), aux = new Uint8Array(N * 4);
-  const hAt = (i, j) => (i >= 0 && j >= 0 && i < nx && j < ny ? field.h[j * nx + i] : field.heightAt(i * cell, j * cell));
+  // 画的是 hTerrain / terrainHeightAt：有桥的图里桥下是峡谷（桥体另外建模，WorldBridge），逻辑高度 field.h 里那儿仍是桥面
+  const hArr = field.hTerrain || field.h, hQ = field.terrainHeightAt || field.heightAt, landAt = field.landAt;
+  const hAt = (i, j) => (i >= 0 && j >= 0 && i < nx && j < ny ? hArr[j * nx + i] : hQ(i * cell, j * cell));
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-    const k = j * nx + i, x = i * cell, y = j * cell, hgt = field.h[k];
+    const k = j * nx + i, x = i * cell, y = j * cell, hgt = hArr[k];
     const gx = (hAt(i + 1, j) - hAt(i - 1, j)) / (2 * cell), gz = (hAt(i, j + 1) - hAt(i, j - 1)) / (2 * cell);
     const l = Math.hypot(gx, 1, gz), nyv = 1 / l;
     pos[k * 3] = x; pos[k * 3 + 1] = hgt; pos[k * 3 + 2] = y;
     nrm[k * 3] = -gx / l; nrm[k * 3 + 1] = nyv; nrm[k * 3 + 2] = -gz / l;
-    const s = splat(x, y, hgt, nyv, field.sd[k], field.lane[k], field.river[k], false);
+    // 峡谷上空的格子（桥面底下）按"不可走的崖壁 / 谷底"上色，不铺路面
+    const chasm = landAt && landAt(x, y).L < 0.5;
+    const s = splat(x, y, hgt, nyv, chasm ? Math.max(field.sd[k], 60) : field.sd[k], chasm ? 1e6 : field.lane[k], field.river[k], false);
     spl[k * 4] = s[0] * 255; spl[k * 4 + 1] = s[1] * 255; spl[k * 4 + 2] = s[2] * 255; spl[k * 4 + 3] = s[3] * 255;
     aux[k * 4] = s[4] * 255; aux[k * 4 + 1] = s[5] * 255; aux[k * 4 + 2] = s[6] * 255; aux[k * 4 + 3] = s[7] * 255;
   }
@@ -240,7 +250,8 @@ export function buildWorldTerrain(field, theme, opts = {}) {
 
   // ---------- 延伸世界 ----------
   {
-    const ext = O.extent, ocx = W / Math.max(1, Math.round(W / O.cell)), ocy = H / Math.max(1, Math.round(H / O.cell));
+    const oCell = theme.outerCell ?? O.cell;   // 峡谷一直延伸到地图外面的图要更密的外圈网格，否则崖线是一排锯齿
+    const ext = O.extent, ocx = W / Math.max(1, Math.round(W / oCell)), ocy = H / Math.max(1, Math.round(H / oCell));
     const ex = Math.ceil(ext / ocx), ey = Math.ceil(ext / ocy), cxn = Math.round(W / ocx), cyn = Math.round(H / ocy);
     const gx0 = -ex, gy0 = -ey, gnx = cxn + 2 * ex + 1, gny = cyn + 2 * ey + 1;
     const M = gnx * gny, p = new Float32Array(M * 3), n = new Float32Array(M * 3), s = new Uint8Array(M * 4), a = new Uint8Array(M * 4);
@@ -248,8 +259,8 @@ export function buildWorldTerrain(field, theme, opts = {}) {
     for (let j = 0; j < gny; j++) for (let i = 0; i < gnx; i++) {
       const k = j * gnx + i, x = (gx0 + i) * ocx, y = (gy0 + j) * ocy;
       const inner = x > 0 && x < W && y > 0 && y < H;       // 压在核心区下面的那一圈（只为盖住接缝）
-      const hgt = field.heightAt(x, y) - (inner ? 16 : 0);
-      const gx = (field.heightAt(x + d, y) - field.heightAt(x - d, y)) / (2 * d), gz = (field.heightAt(x, y + d) - field.heightAt(x, y - d)) / (2 * d);
+      const hgt = hQ(x, y) - (inner ? 16 : 0);
+      const gx = (hQ(x + d, y) - hQ(x - d, y)) / (2 * d), gz = (hQ(x, y + d) - hQ(x, y - d)) / (2 * d);
       const l = Math.hypot(gx, 1, gz);
       p[k * 3] = x; p[k * 3 + 1] = hgt; p[k * 3 + 2] = y;
       n[k * 3] = -gx / l; n[k * 3 + 1] = 1 / l; n[k * 3 + 2] = -gz / l;

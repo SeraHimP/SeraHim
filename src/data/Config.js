@@ -1052,6 +1052,8 @@ export const CONFIG = {
     // 进到"射程 + fadeInner"时完全显示；选中的塔恒为完全显示。
     // 改版前是布尔开关 + 滞回 —— 圈整片"啪"地出现，边界上只能靠滞回压抖。
     // 现在透明度跟着最近敌人的距离连续变化，滞回就不需要了（距离本身是平滑的）。
+    // 设置里"显示小兵轨迹"打开时画的兵线虚线（EffectsLayer 静态参照层，跟着地形起伏贴地）
+    lanePathLine: { color: '#f6c94a', alpha: 0.25, width: 3, dash: 8, gap: 6 },
     rangeRing: {
       mode: 'auto',         // 'auto' | 'always'（常驻，旧行为）| 'selected'（只有选中时）
       probeInterval: 0.25,  // 敌人探测节流（秒）。每帧给 44 座塔查一次纯属白烧
@@ -1070,7 +1072,7 @@ export const CONFIG = {
       // 圈的样子（Q10："塔的射程圈太丑"）：不再整片填色。bandWidth 贴着边线向内的柔光带占半径的比例、bandGain 它的强度（× fillAlpha）；
       // 边线内侧一圈缓慢转动的虚线刻度：dashInset 离边线多远（占半径比例）、dashWidth 线宽、dashGain 强度、
       // dashSpeed 转速、dashCount 刻度数（0 = 按周长自动，每段弧长差不多）
-      look: { bandWidth: 0.2, bandGain: 4.5, dashInset: 0.035, dashWidth: 0.012, dashGain: 7, dashSpeed: 0.02, dashCount: 0 },
+      look: { bandWidth: 0.1, bandGain: 2.2, dashInset: 0.035, dashWidth: 0.012, dashGain: 5, dashSpeed: 0.02, dashCount: 0 },
       // ==================== 贴合地形（用户："让射程浮在地形上"）====================
       // 圈原来是一张【平的】面片，整片按塔脚那一点的高度摆，地形一有高低差就被
       // 高的那半边地面挡掉一块（用户："只要出现了高低差就会被吞掉一部分"）。
@@ -1239,7 +1241,15 @@ export const CONFIG = {
       spin: 0.6,           // 水晶本体自转（弧度/秒）
       // 水晶的质感（UnitMeshFactory.crystalMaterial）：base 整体底光；core 正对镜头的切面多亮；energy 内部流动的亮带；
       // glint 切面闪光；reflect 反射天空的份量；roughness 表面光滑度；opacity 不透明度
-      look: { base: 0.25, core: 0.7, energy: 0.8, glint: 1.4, reflect: 1.4, roughness: 0.1, opacity: 0.95 },
+      //   scint 切面"着火"的亮度（每个切面按折射方向有自己的明暗，水晶一转就轮着亮）；fire 亮切面边上的彩色火彩；
+      //   contrast 切面之间的明暗反差（0 = 整块匀匀地亮，像塑料）；breath 整体很慢的呼吸幅度
+      //   innerScale / innerDepth / innerContrast 晶体内部解理面的疏密 / 看进去的纵深 / 明暗反差；body 晶体本色压暗到几成（太亮就成了一块发白的冰）
+      //   saturation 晶体本色比发光色浓多少（1 = 一样）
+      look: { base: 0.14, core: 0.36, energy: 0.3, glint: 1.6, reflect: 0.5, roughness: 0.08, opacity: 0.96, scint: 1.2, fire: 0.9, contrast: 0.6, breath: 0.12,
+              innerScale: 0.16, innerDepth: 1.6, innerContrast: 0.65, body: 0.4, saturation: 1.5 },
+      // 星芒：水晶切面上一闪一闪的四角星（钻石转动时的那种闪）。count 同时最多几颗；rate [慢, 快] 每秒闪几次；
+      //   radius / height 落在水晶表面多远 / 沿高度分布多高（× 水晶半径）；size 比悬浮光点大几倍；duty 每轮有几成会亮；glow 亮度
+      sparkles: { enabled: true, count: 10, rate: [0.5, 1.1], radius: 0.62, height: 1.1, size: 3.2, duty: 0.6, glow: 2.6 },
       // 水晶任何时候都发光（用户定稿）：emissiveBase 是白天的基准亮度；夜里再加 CONFIG.ui.towerLight.emissiveNight
       emissiveBase: 1.15,
       // 水晶旁边悬浮的细小光点（UnitMeshFactory.crystalParticles）。长度量都 × 水晶半径。
@@ -1324,12 +1334,29 @@ export const CONFIG = {
     //   towerOnTowerK：塔打塔时瞄准目标塔身高的几成（0.5 = 中心）；小兵 / 龙打出的弹道不高于自己的炮口（打塔是水平的）
     //   warlock：术士弹绕转光点的颗数、半径（× 弹头大小）、转速、颜色
     //   breath：巨龙吐息的开关、时长（秒）、碎块数、大小与散布（× 龙体大小的一半）、拖后比例、芯色
+    // 弹道的画法（EffectsLayer 画彗尾 / 拖影 / 柔光，ProjectileMeshLayer 画实体）。只管画面，不碰伤害与时机。
+    //   shapes  每个兵种的弹是什么：stone 石子 / arrow 箭 / quarrel 弩矢 / ball 铁弹 / boulder 石块 / orb 法术光弹（没登记的按 orb）
+    //   tower   塔弹：shardLen / shardWidth 水晶弹芯的长 / 粗（× 弹丸尺寸）；shardWhite 偏白多少；shardGain 亮度（> 1 进泛光）；
+    //           haloK / haloAlpha 弹芯外那圈柔光的大小 / 浓度；coreK 白芯；trailLen / trailWidth 彗尾长 / 头部宽（× 弹丸尺寸）；
+    //           trailFade / trailFadePow 命中后尾迹余烬淡出的时长 / 曲线
+    //   minion  sizeK 兵弹整体大小（× 逻辑层给的弹丸尺寸）
+    //   arrow   len / quarrelLen 箭 / 弩矢的长度；quarrelThick 弩矢比箭粗几倍；shaftR / headR / headL / fletchW / fletchL 箭的比例（全长 = 1）；
+    //           wood / steel 杆 / 镞的颜色；fletchTint 尾羽染阵营色的浓度；streakLen / streakW / streakAlpha 身后拖影的长 / 宽 / 浓度
+    //   sling   投石手的石子：size 大小、spin 翻滚速度、color；streak* 同上
+    //   orb     法术光弹：core 光核半径、coreWhite 偏白多少、coreGain 亮度；halo / haloAlpha 柔光；tailLen / tailAlpha 光尾
+    //   siege   kinds 走抛物线的兵种；stoneScale 各兵种弹丸的相对大小；ballK / boulderK 铁弹 / 石块的大小；
+    //           smoke 烟团数、smokeGap 间距、smokeGrow 越往后大多少、smokeRise 往上飘多少、smokeAlpha 浓度
     projectileFx: {
-      tower: { haloK: 1.25, trailLen: 4.2, trailFade: 0.15, trailFadePow: 1 },
+      shapes: { ranged: 'stone', ranged_t2: 'arrow', ranged_t3: 'quarrel', siege: 'ball', siege_t2: 'ball', siege_t3: 'ball', ram: 'boulder', warlock: 'orb', totem: 'orb', summoner: 'orb' },
+      tower: { shardLen: 0.62, shardWidth: 0.2, shardWhite: 0.45, shardGain: 1.7, haloK: 0.9, haloAlpha: 0.55, coreK: 0.3, trailLen: 4.2, trailWidth: 0.16, trailFade: 0.15, trailFadePow: 1 },
       towerOnTowerK: 0.5,
-      minion: { sizeK: 0.26, boltLen: 1.9, boltWidth: 0.65, headWhite: 0.3, afterimages: 4, spacing: 1.6 },
-      siege: { kinds: ['ram'], stoneKinds: ['siege', 'ram'], stoneScale: { siege: 0.7, ram: 0.88 }, arcK: 0.3, arcMax: 70, stoneK: 0.42, smoke: 6, stoneColor: '#3c3a38', smokeColor: '#a89a86' },
-      warlock: { motes: 3, radius: 2.2, spin: 8, moteColor: '#e0b0ff' },
+      minion: { sizeK: 0.26 },
+      arrow: { len: 4.2, quarrelLen: 3.0, quarrelThick: 1.9, shaftR: 0.042, headR: 0.085, headL: 0.24, fletchW: 0.11, fletchL: 0.26, wood: '#8a6a44', steel: '#c9ced6', fletchTint: 0.9, streakLen: 2.2, streakW: 0.42, streakAlpha: 0.3 },
+      sling: { size: 0.62, spin: 9, color: '#8f897e', streakLen: 4.5, streakW: 0.5, streakAlpha: 0.26 },
+      orb: { core: 0.5, coreWhite: 0.55, coreGain: 1.5, halo: 2.6, haloAlpha: 0.5, tailLen: 6, tailAlpha: 0.55 },
+      siege: { kinds: ['ram'], stoneScale: { siege: 0.7, siege_t2: 0.8, siege_t3: 0.95, ram: 0.88 }, arcK: 0.3, arcMax: 70, stoneK: 0.42, ballK: 0.8, boulderK: 1.1,
+               smoke: 6, smokeGap: 1.5, smokeGrow: 2.4, smokeRise: 0.7, smokeAlpha: 0.46, stoneColor: '#6a655e', ballColor: '#3a3b40', smokeColor: '#a89a86', streakAlpha: 0.22 },
+      warlock: { motes: 3, radius: 2.2, spin: 8, moteSize: 0.2, moteColor: '#e0b0ff' },
       breath: { enabled: true, chunks: 7, size: 0.5, spread: 0.25, lag: 0.45, coreColor: '#fff0c0' },
     },
     // 夜间塔顶自发光（UnitLayer._nightEmi）与夜色曲线的低阳地板（ThreeRenderer._nightLevel）。
@@ -1495,10 +1522,10 @@ export const CONFIG = {
     //   flashStrength / flashDur 被打时轮廓光加强多少 / 持续多久（秒）；flashCooldown 两次闪之间至少隔几秒
     //   maxAlpha 外壳最不透明到多少；fadeIn / fadeOut 出现 / 消失（秒）
     //   外壳用普通透明混合、颜色不超过 1：到不了辉光（HDR Bloom）阈值，连续受击也不会糊成一团白光
-    //   shape 外壳跟什么走：'hull' = 塔的整体轮廓（一张光滑的皮，写实造型用）；'skin' = 每个零件各自外扩（雕像造型用）
+    //   shape 外壳跟什么走：'skin' = 贴身外壳，每个零件各自沿法线外扩（用户定稿的样式）；'hull' = 只跟塔的整体轮廓走的一张光滑的皮
     //   hullSlices / hullSegments 轮廓外壳按高度切多少层 / 圆周多少段
     towerShield: {
-      enabled: true, shape: 'hull', hullSlices: 14, hullSegments: 28, inflate: 0.08, minY: 0.35,
+      enabled: true, shape: 'skin', hullSlices: 14, hullSegments: 28, inflate: 0.08, minY: 0.35,
       color: '#ffd98a', rimColor: '#fff8e6', base: 0.02, rimPower: 2.6, rimStrength: 0.65,
       sheenStrength: 0.22, sheenFreq: 0.12, sheenSpeed: 22,
       flashStrength: 0.6, flashDur: 0.25, flashCooldown: 0.35, maxAlpha: 0.6, fadeIn: 0.3, fadeOut: 0.45,
@@ -1590,9 +1617,12 @@ export const CONFIG = {
       },
       rubbleDist: [1.05, 1.5],
       rubbleScale: 0.92,
-      collapse: { spread: 1.45, scale: 0.8, keepK: 0.8, throwK: 1.25, sink: 0.3, stack: 0.3 },
-      // 废墟：moundHeight / spread 碎石丘的高 / 半径（× 建筑半径）；pieceScale 堆在丘上的部件缩到多大；tint 整体压暗多少（烧过）
-      ruin: { tint: 0.72, moundHeight: 0.42, spread: 0.95, pieceScale: 0.8 },
+      // 倒塌落点：spread 落点网格的范围；keepK / throwK 部件离中轴多远、多高就被抛多远；
+      //   sink 落地后陷进堆里多少（占自身厚度）；stack 后落的压在先落的上面时垫高多少；lowK 往脚下最低处贴多少（越大越不悬空）
+      collapse: { spread: 1.45, scale: 0.8, keepK: 0.8, throwK: 1.25, sink: 0.38, stack: 0.1, lowK: 0.7 },
+      // 废墟：moundHeight / spread 碎石丘的高 / 半径（× 建筑半径）；stumpHeight 中间那截断桩多高；
+      //   pieceScale 堆在丘上的部件缩到多大；tint 整体压暗多少（烧过）
+      ruin: { tint: 0.72, moundHeight: 0.26, spread: 1.0, stumpHeight: 0.3, pieceScale: 0.72 },
     },
     statueTower: {
       style: 'citadel',
@@ -2090,7 +2120,9 @@ export const CONFIG = {
       pitLakeK: 1.5,       // 龙坑周围的湖面半径 = 龙坑半径 × 这个比例
       valleyHalf: 420,     // 地图之外河谷的半宽
     },
-    pit: { floor: 0.6, rimK: 0.92 },   // 龙坑 / 男爵坑：河心石台的台面高度；rimK 以外开始向河床过渡
+    // 龙坑 / 男爵坑：河心的一片天然浅滩。floor 滩面高度；rimK 从半径的几成开始向河床缓缓下去；
+    //   edgeNoise / edgeFreq 滩的轮廓有多不规则；bump 滩面的起伏
+    pit: { floor: -1.0, rimK: 0.35, edgeNoise: 0.6, edgeFreq: 0.007, bump: 0.7 },
     // 不可走区隆起成岩壁（rise 模式）
     cliff: {
       width: 30,           // 崖面水平宽度：从崖脚到崖顶
@@ -2118,9 +2150,21 @@ export const CONFIG = {
       noiseAmp: 150,
       noiseFreq: 0.0019,
     },
+    // 河面（world/WorldWater.js）。水色在各主题的 water 里。
+    //   cell 水面网格边长；outerReach 河流出地图后水面再铺多远；margin 岸上多高以内还铺水面网格；
+    //   clarity 水有多"浑"（越大越快变成深水色）；alphaMin / alphaMax 最浅 / 最深处的不透明度；shoreFade 岸线从多浅处开始淡出；
+    //   foam / foamWidth 岸边泡沫的浓度 / 多浅的水才有；streak / streakSpeed 水流亮纹的强度 / 往下游走的速度；
+    //   flowSpeed 波纹顺流滚动的速度；roughness 水面光滑度
+    water: { cell: 12, outerReach: 2200, margin: 0.9, clarity: 0.6, alphaMin: 0.05, alphaMax: 0.92, shoreFade: 0.3,
+             foam: 0.3, foamWidth: 0.7, streak: 0.36, streakSpeed: 0.03, flowSpeed: 9, roughness: 0.07 },
     textureSize: 512,      // 程序化地表贴图的边长
-    paving: { baseK: 0.5, baseMax: 430, baseFeather: 60, structK: 1.15, structFeather: 18 },   // 铺石区：基地广场半径比例 / 上限 / 羽化，建筑基座半径比例 / 羽化
-    shading: { lightDay: 0.3, lightNight: 1.0 },   // 局部光（火炬 / 水晶）在白天 / 午夜的份量
+    // 铺石区：baseK / baseMax / baseFeather 基地广场半径比例 / 上限 / 羽化；
+    //   structK 每座建筑脚下铺多大一圈（× 建筑半径，0 = 不铺）；pitK 龙坑台面铺多大（× 坑半径，0 = 不铺）
+    paving: { baseK: 0.5, baseMax: 430, baseFeather: 110, structK: 0, structFeather: 18, pitK: 0 },
+    // 局部光（火炬 / 水晶）：lightDay / lightNight 白天 / 午夜的份量；
+    //   光是带方向的（朝光源的面亮、背光的面暗）：lightDirStep 估方向时往旁边偏几个像素取样、lightDirGrad 相对亮度梯度（梯度 / 亮度）多大算"斜着照"、
+    //   lightDirUp 光源有多高（越大越像从头顶照下来）、lightWrap 背光面保留几成
+    shading: { lightDay: 0.12, lightNight: 1.5, lightDirStep: 2.5, lightDirGrad: 0.14, lightDirUp: 0.6, lightWrap: 0.3 },
     // 局部光：路边火炬 + 水晶的光（world/WorldLights.js、data/torchSites.js）。塔本身不带光源。
     lights: {
       torches: true,
@@ -2130,16 +2174,18 @@ export const CONFIG = {
       minGap: 150,           // 任意两支火炬的最小间距（多条兵线共用的路段不重复放）
       buildingClear: 95,     // 离建筑多近不放
       torchScale: 1,         // 火炬摆件整体大小
-      torchRadius: 190,      // 一支火炬照亮的半径
-      torchColor: '#ffcf96',
-      torchK: 0.78,             // 火炬光的强度（0..1）
+      torchRadius: 290,      // 一支火炬照亮的半径（要够得着路中间：路面半宽 78，火炬立在路肩外）
+      torchColor: '#ffc27e',
+      torchK: 1,             // 火炬光的强度（0..1）
+      falloff: [[0, 1], [0.18, 0.56], [0.4, 0.22], [0.65, 0.07], [0.85, 0.015], [1, 0]],   // 光的衰减：[离光源多远（占半径）, 还剩几成亮度]
       flameSize: [15, 20],   // 火焰面片的宽 / 高
+      flameLean: [0.1, 0.45],   // 火苗顶端顺风歪多少：[无风时, 风力拉满时再加]（占火焰高度的比例）
       glowSize: 70,          // 火焰外面那团柔光的直径
       flameGainDay: 1.5, flameGainNight: 2.6,   // 火焰亮度（> 1 的部分会被泛光抓到）
       glowDay: 0.05, glowNight: 0.42,
       mapSize: 512,          // 光照图边长（像素）
       crystalPollSec: 0.3,   // 每隔多久核对一次"哪些建筑还活着"
-      crystal: { blue: '#6cb4ff', red: '#ff6a55', neutral: '#d8dce6', towerRadius: 190, orbRadius: 260, gemRadius: 420, k: 0.9 },
+      crystal: { blue: '#6cb4ff', red: '#ff6a55', neutral: '#d8dce6', towerRadius: 300, orbRadius: 380, gemRadius: 560, k: 1 },
     },
     // 地被（data/groundCover.js 定摆放，world/WorldGroundCover.js 定长相）。主题里可以用 cover: {...} 覆写其中几项。
     //   step 撒点的格距（越小越密）；refSize 以多大的地图为基准（更大的图自动变疏）；
@@ -2172,34 +2218,69 @@ export const CONFIG = {
           paved: { kind: 'paving', palette: { dark: '#6a6660', mid: '#8f8a80', light: '#b3ac9e', gap: '#3a3630' } },
         },
         tile: { ground: 150, path: 130, rock: 190, accent: 140, paved: 110 },
-        water: { shallow: '#3e948e', deep: '#0f3f4c', tint: '#3a8588' },
+        water: { shallow: '#4a9f96', deep: '#0c3846', tint: '#3a8588' },
       },
+      // 扭曲丛林：紫色的魔幻森林（用户定稿）。靛紫的草、拧着长的黑树干顶着紫红的树冠、青色的荧光苔和花、
+      // 幽蓝的"灵火"火炬、紫蓝的水 —— 和召唤师峡谷的绿林是两套语言。
       magicForest: {
         mode: 'rise', cliffHeight: 74,
+        foliage: { outerDensity: 0.55, tree: { leaf: { dark: '#3a1c6a', light: '#b868ea' }, leafTint: '#f4e0ff', bark: { dark: '#17121f', mid: '#2e2438', light: '#4a3a58' }, barkTint: '#c8b8d8',
+                   shape: { trunkR: 0.07, trunkH: 0.52, twist: 0.6, crownY: 0.7, crownRX: 0.42, crownRY: 0.25 }, sway: 1.2 } },
+        cover: { petals: ['#7df6ff', '#ff8ee8', '#d2a8ff'], flowerGlow: 0.7, flower: 0.7, flowerThreshold: 0.52, bushTint: '#ecd2ff',
+                 reedHead: '#b48cf0', reedDark: '#33265e', reedLight: '#8a70d2', pebbleColor: '#5a5670' },
+        ambient: { color: '#8ff4ff', count: 420, gain: 3.0 },
+        torch: { flame: '#58dcff', flameCore: '#f2ffff', flameEdge: '#6a48ff', light: '#86d2ff', wood: '#2e2438', stone: '#5a5868', iron: '#3a3848', coal: '#12324e' },
         layers: {
-          ground: { kind: 'grass', palette: { dark: '#16302c', mid: '#234a40', light: '#3f6e55', dry: '#4a4f6a' } },
-          path: { kind: 'dirt', palette: { dark: '#2c2733', mid: '#4b4352', light: '#6e6474', stone: '#7f7a8c' } },
-          rock: { kind: 'rock', palette: { dark: '#23222e', mid: '#454458', light: '#6f6e86', stain: '#3a2f52' }, strata: 0.5 },
-          accent: { kind: 'moss', palette: { dark: '#1c2238', mid: '#33305c', light: '#5a4c8a', speck: '#58c8c0' } },
-          paved: { kind: 'paving', palette: { dark: '#35333f', mid: '#5a5868', light: '#84829a', gap: '#17161e' } },
+          ground: { kind: 'grass', palette: { dark: '#221a42', mid: '#362a68', light: '#5c48a2', dry: '#6e4290' } },
+          path: { kind: 'dirt', palette: { dark: '#3a3148', mid: '#5a4f6c', light: '#80759a', stone: '#9a94b0' } },
+          rock: { kind: 'rock', palette: { dark: '#1e1b2c', mid: '#3d3954', light: '#67628a', stain: '#4a2f6a' }, strata: 0.5 },
+          accent: { kind: 'moss', palette: { dark: '#16304a', mid: '#225a78', light: '#3fa4b6', speck: '#8ff4e4' } },
+          paved: { kind: 'paving', palette: { dark: '#35333f', mid: '#5a5868', light: '#84829a', gap: '#17161e', moss: '#3a2f6a' } },
         },
         tile: { ground: 150, path: 130, rock: 190, accent: 140, paved: 110 },
-        water: { shallow: '#3c8f9c', deep: '#101c3a', tint: '#3a5f8a' },
+        water: { shallow: '#6a86e0', deep: '#1a1050', tint: '#4a4aa0' },
       },
+      // 嚎哭深渊：冰原上的一道深渊。两个基地各自坐在一块悬崖实地上（正常的雪地 / 冻土，不是石板），
+      // 两块实地之间是峡谷，一座石拱桥横跨过去，桥墩扎进雾里看不见底。冰原上不长树，只有零星的冰棱。
+      //   landmass  陆块：cliffDist 崖线离基地中心多远（沿两基地连线）；edgeNoise / edgeFreq 崖线有多曲折；lip 崖沿的过渡宽度；
+      //             cliffWidth 崖面水平宽度（越小越陡）；ledge 崖面上岩台的起伏；rimHeight / rimWidth 实地上不可走区隆起的矮埂高 / 宽；
+      //             deckMargin 桥面（逻辑高度）比可走区往外多平多宽，单位站在桥边不会往下陷
+      //   bridge    桥：thickness 桥面厚；piers 桥墩数（0 = 没有桥墩，整座桥一跨悬空）；pierThick / pierBatter 桥墩沿桥向的厚度 / 往下放宽几倍；
+      //             archRatio / archRise 拱高占半跨的比例 / 上限；abutment 拱脚伸进崖体多深；cell 桥面轮廓的取样格距；over 桥面比可走区每边宽出多少；
+      //             curb / curbGap / curbSize / curbMiss 缘石：要不要、间距、[长, 高, 宽]、缺几成；tile 石材贴图铺一遍占多少世界单位；tint 石材的色调
+      //   abyssFog  峡谷里的雾色：从 top 高度往下越来越浓，到 bottom 处最浓（k）
+      //   abyssMist 流动的雾层：每层 y 高度、alpha 浓度、scale 雾团大小、speed 流速、cover 稀疏程度（越大空的地方越多）
+      //   spires    冰棱：step 撒点格距、threshold / clusterFreq 成丛的门槛 / 丛的大小、density、size [小, 大]、max 上限
       frost: {
-        mode: 'drop', dropHeight: 360, outerBlend: 900, outerPeak: 520, snowLine: 40, snowLineFade: 160,
-        // 深渊里的雾（从桥面下 top 处起，到 bottom 处最浓）；雪山上长的是挂雪的针叶树，火炬照样是暖的（冰天雪地里一点暖光）
-        abyssFog: { top: -70, bottom: -300, k: 0.92, color: '#b4c6d8' },
-        foliage: { outerDensity: 0.3, tree: { leaf: { dark: '#2c4a40', light: '#cfdde2' }, leafShape: 'needle', shape: { conical: true, crownY: 0.6, crownRY: 0.42, crownRX: 0.26, cardK: 0.9 }, bark: { dark: '#2e2622', mid: '#4a3c34', light: '#6a584c' } } },
+        mode: 'drop', dropHeight: 460, outerBlend: 700, outerPeak: 560, snowLine: 26, snowLineFade: 120,
+        landmass: { cliffDist: 400, edgeNoise: 44, edgeFreq: 0.0045, lip: 9, cliffWidth: 95, ledge: 55, rimHeight: 34, rimWidth: 75, deckMargin: 14 },
+        bridge: { thickness: 32, piers: 4, pierThick: 76, pierBatter: 1.3, archRatio: 0.85, archRise: 190, abutment: 36, cell: 8, over: 7,
+                  curb: true, curbGap: 21, curbSize: [16, 7, 9], curbMiss: 0.14, tile: 120, tint: '#dfe6ee' },
+        // 越深越暗、越蓝：峡谷比雪原暗一截才读得出"深"；上面几层浅色的雾在流
+        abyssFog: { top: -40, bottom: -340, k: 0.985, color: '#7f97b4' },
+        abyssMist: { reach: 2200, layers: [
+          { y: -62, alpha: 0.3, scale: 0.0019, speed: 0.016, cover: 0.44, color: '#cfdbe8' },
+          { y: -140, alpha: 0.46, scale: 0.0014, speed: 0.011, cover: 0.32, color: '#b4c6d8' },
+          { y: -250, alpha: 0.72, scale: 0.0011, speed: 0.008, cover: 0.2, color: '#93a9c2' },
+        ] },
+        outerCell: 14,
+        paving: { baseK: 0 },                    // 基地不铺石板广场："基地那里的地面应该是正常的地面而非石桥材质"
+        rockTint: '#dfe5ec', rockSnow: 0.85, rockSnowColor: '#eef3fa',
+        spires: { step: 46, threshold: 0.62, clusterFreq: 0.0042, density: 0.42, size: [42, 110], max: 170, outerReach: 700, walkClear: 46, cliffClear: 30,
+                  color: '#cfeaff', glow: '#3a78b8', glowK: 0.22, roughness: 0.16, opacity: 0.93 },
+        foliage: { trees: false },
         cover: { pebbleColor: '#7f8c9a' },
+        torch: { stone: '#7c8894', wood: '#4a4038', iron: '#3a3d44' },
         layers: {
           ground: { kind: 'snow', palette: { shade: '#a9bdd4', mid: '#dbe6f2', light: '#f7fbff' } },
-          path: { kind: 'paving', palette: { dark: '#4d5a6a', mid: '#75869a', light: '#a3b3c6', gap: '#26303c' } },
+          // 基地里被踩出来的路：冻土（不是石板 —— 用户："基地那里的地面应该是正常的地面而非石桥材质"）
+          path: { kind: 'dirt', palette: { dark: '#4a4c54', mid: '#6c6f78', light: '#90949e', stone: '#aab4c0' } },
           rock: { kind: 'rock', palette: { dark: '#2f3946', mid: '#586678', light: '#8d9db0', stain: '#bcd0e2' }, strata: 0.7 },
           accent: { kind: 'ice', palette: { deep: '#3a6d9c', mid: '#6fa8cf', light: '#bfe2f4', crack: '#e8f6ff' } },
-          paved: { kind: 'paving', palette: { dark: '#3d4756', mid: '#606f82', light: '#8b9bb0', gap: '#1c232d' } },
+          // 石桥的石材（WorldBridge 用）+ 基地广场
+          paved: { kind: 'paving', palette: { dark: '#4a5462', mid: '#6e7c8e', light: '#98a8ba', gap: '#252d38', moss: '#c8d8e6' } },
         },
-        tile: { ground: 170, path: 100, rock: 210, accent: 150, paved: 120 },
+        tile: { ground: 170, path: 110, rock: 210, accent: 150, paved: 120 },
         water: null,
       },
       desert: {

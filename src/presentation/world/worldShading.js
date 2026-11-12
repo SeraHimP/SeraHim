@@ -31,6 +31,8 @@ export function worldUniforms() {
     tWLight: { value: blankTex() },                       // 局部光照图（火炬 + 水晶），覆盖地图矩形
     uWRect: { value: new THREE.Vector4(0, 0, 1, 1) },     // 世界矩形：(x0, z0, 1/宽, 1/高)
     uWLightK: { value: 1 },                               // 局部光强度（夜里更显）
+    uWLightStep: { value: new THREE.Vector2(1 / 512, 1 / 512) },   // 估光源方向时往旁边偏多远取样（光照图 uv）
+    uWLightDir: { value: new THREE.Vector3(0.14, 0.6, 0.3) },      // x = 相对亮度梯度多大算"斜着照"，y = 光源有多高（越大越像从头顶照），z = 背光面保留多少
     uWDay: { value: 1 },                                  // 白天程度 1 = 正午，0 = 午夜（不受光的东西按它压暗：深渊里的雾、水雾）
     tWNoise: { value: null },
     tWSnow: { value: blankTex() }, uWSnowOn: { value: 0 },   // 积雪深度图（GroundTraceLayer 的雪盖）
@@ -58,7 +60,13 @@ export function updateWorldShading(timeSec, state, night, wind) {
   if (wind) u.uWWind.value.set(wind.x, wind.y, wind.strength || 0);
 }
 export function setWorldRect(W, H) { worldUniforms().uWRect.value.set(0, 0, 1 / W, 1 / H); }
-export function setWorldLightMap(tex) { worldUniforms().tWLight.value = tex || blankTex(); }
+export function setWorldLightMap(tex) {
+  const u = worldUniforms(), C = cfg();
+  u.tWLight.value = tex || blankTex();
+  const n = tex?.image?.width || 512, k = C.lightDirStep ?? 2.5;
+  u.uWLightStep.value.set(k / n, k / n);
+  u.uWLightDir.value.set(C.lightDirGrad ?? 0.14, C.lightDirUp ?? 0.6, C.lightWrap ?? 0.3);
+}
 export function setWorldSnowMap(tex, on) { const u = worldUniforms(); u.tWSnow.value = tex || blankTex(); u.uWSnowOn.value = on && tex ? 1 : 0; }
 export function setWorldWater(level, tint) { const u = worldUniforms(); u.uWLevel.value = level == null ? -1e4 : level; if (tint) u.uWWaterTint.value.set(tint); }
 export function setWorldTints({ sand, snow } = {}) { const u = worldUniforms(); if (sand) u.uWSandCol.value.set(sand); if (snow) u.uWSnowCol.value.set(snow); }
@@ -69,7 +77,7 @@ export const WORLD_FRAG_HEAD = /* glsl */`
 #define WORLD_SHADING_HEAD
 uniform float uWTime, uWWet, uWSnow, uWSand, uWFade, uWScorch, uWLightK, uWSnowOn, uWLevel, uWDay;
 uniform sampler2D tWLight, tWNoise, tWSnow;
-uniform vec4 uWRect; uniform vec3 uWWind, uWSandCol, uWSnowCol, uWWaterTint;
+uniform vec4 uWRect; uniform vec3 uWWind, uWSandCol, uWSnowCol, uWWaterTint, uWLightDir; uniform vec2 uWLightStep;
 varying vec3 vWPos;
 vec2 wRectUv(vec3 p) { return (p.xz - uWRect.xy) * uWRect.zw; }
 /** 局部光（火炬 / 水晶）：查光照图，火焰轻微摇曳。地图矩形之外没有光。 */
@@ -79,6 +87,27 @@ vec3 wLocalLight(vec3 p) {
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
   float fl = 0.9 + 0.1 * sin(uWTime * 9.0 + p.x * 0.07 + p.z * 0.05) * sin(uWTime * 5.3 + p.z * 0.09);
   return l * l * (uWLightK * fl * inside);
+}
+/**
+ * 带方向的局部光：n = 世界空间法线。光照图只记了"这里有多亮"，光从哪边来由亮度的梯度估出来（往亮处走就是光源），
+ * 于是朝着火炬的岩面是亮的、背着的是暗的，地面离火炬越远光越斜、越淡 —— 火炬是在"照"，不是给地面刷了一层颜色。
+ */
+vec3 wLocalLightN(vec3 p, vec3 n) {
+  vec2 uv = wRectUv(p);
+  vec2 cu = clamp(uv, 0.0, 1.0);
+  vec3 l = texture2D(tWLight, cu).rgb;
+  float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  float l0 = dot(l, vec3(0.3333));
+  float lx = dot(texture2D(tWLight, clamp(cu + vec2(uWLightStep.x, 0.0), 0.0, 1.0)).rgb, vec3(0.3333));
+  float lz = dot(texture2D(tWLight, clamp(cu + vec2(0.0, uWLightStep.y), 0.0, 1.0)).rgb, vec3(0.3333));
+  vec2 g = vec2(lx - l0, lz - l0);
+  float gl = length(g);
+  // 斜的程度看"相对梯度"（梯度 / 亮度）：离光源越远它越大，光越斜。只看梯度本身的话，光池最外圈梯度趋近 0，
+  // 会被当成"从头顶照下来"而比里面一圈还亮，路面上出现一道亮环。
+  vec3 L = normalize(vec3(g.x, 0.0, g.y) / max(gl, 1e-5) * smoothstep(0.0, uWLightDir.x, gl / max(l0, 0.03)) + vec3(0.0, uWLightDir.y, 0.0));
+  float ndl = clamp(dot(normalize(n), L) * (1.0 - uWLightDir.z) + uWLightDir.z, 0.0, 1.0);
+  float fl = 0.9 + 0.1 * sin(uWTime * 9.0 + p.x * 0.07 + p.z * 0.05) * sin(uWTime * 5.3 + p.z * 0.09);
+  return l * l * (uWLightK * fl * inside * ndl);
 }
 #endif
 `;
@@ -110,7 +139,7 @@ export function patchWorldMaterial(material, opts = {}) {
   const light = opts.light !== false, wet = opts.wet !== false, dust = opts.dust !== false;
   const U = ensureNoise();
   const prev = material.onBeforeCompile, prevKey = material.customProgramCacheKey;
-  const tag = `|world:${light ? 'l' : ''}${wet ? 'w' + (opts.wetRough ?? '') : ''}${dust ? 'd' : ''}`;
+  const tag = `|world:${light ? (opts.lightDir === false ? 'l' : 'L') : ''}${wet ? 'w' + (opts.wetRough ?? '') : ''}${dust ? 'd' : ''}`;
   material.onBeforeCompile = (sh, renderer) => {
     if (prev) prev.call(material, sh, renderer);
     Object.assign(sh.uniforms, U);
@@ -122,10 +151,38 @@ export function patchWorldMaterial(material, opts = {}) {
     if (color) fs = fs.replace('#include <color_fragment>', '#include <color_fragment>\n' + color);
     // wetRough：淋湿后最光滑到多少。叶片给高一点（0.7）——叶片卡片朝向杂乱，太光滑的话雨天满树都是一道道白色反光
     if (wet && fs.includes('#include <roughnessmap_fragment>')) fs = fs.replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n roughnessFactor = mix(roughnessFactor, min(roughnessFactor, ${(opts.wetRough ?? 0.35).toFixed(2)}), uWWet);`);
-    if (light) fs = fs.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += wLocalLight(vWPos) * diffuseColor.rgb;');
+    // lightDir：按法线分明暗（默认）。叶片 / 草这类朝向杂乱的薄片给 false——它们整丛被照亮，不该一片亮一片黑
+    if (light) fs = fs.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += '
+      + (opts.lightDir === false ? 'wLocalLight(vWPos)' : 'wLocalLightN(vWPos, inverseTransformDirection(normal, viewMatrix))') + ' * diffuseColor.rgb;');
     sh.fragmentShader = fs;
   };
   material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + tag;
+  material.needsUpdate = true;
+  return material;
+}
+
+/**
+ * 深渊里的雾：越往下越浓，到 bottom 处最浓（k）。桥墩、崖面、掉进峡谷的石头都按自己的高度融进雾里，看不见底。
+ * 参数来自主题的 abyssFog = { top, bottom, k, color }；主题没有这一项时什么也不做。地形的着色器里有同一段（WorldTerrain）。
+ * 要求材质已经有 vWPos（patchWorldMaterial 会加）。
+ */
+export function patchAbyssFog(material, theme) {
+  const A = theme?.abyssFog;
+  if (!A) return material;
+  const prev = material.onBeforeCompile, prevKey = material.customProgramCacheKey;
+  material.onBeforeCompile = (sh, r) => {
+    if (prev) prev.call(material, sh, r);
+    sh.uniforms.uAbyss = { value: new THREE.Vector3(A.top ?? -1e5, A.bottom ?? -2e5, A.k ?? 0) };
+    sh.uniforms.uAbyssCol = { value: new THREE.Color(A.color ?? '#9fb4c8') };
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uAbyss, uAbyssCol;')
+      .replace('#include <opaque_fragment>', `{
+    float ak = smoothstep(uAbyss.x, uAbyss.y, vWPos.y + (texture2D(tWNoise, vWPos.xz * 0.0021 + uWTime * 0.004).r - 0.5) * 60.0) * uAbyss.z;
+    outgoingLight = mix(outgoingLight, uAbyssCol * (0.16 + 0.84 * uWDay), ak);
+  }
+#include <opaque_fragment>`);
+  };
+  material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + '|abyss';
   material.needsUpdate = true;
   return material;
 }

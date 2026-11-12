@@ -44,20 +44,30 @@ function flameMaterial(col) {
   return new THREE.ShaderMaterial({
     uniforms: { uWTime: U.uWTime, tWNoise: U.tWNoise, uWWind: U.uWWind,
       uCore: { value: new THREE.Color(col.core) }, uMid: { value: new THREE.Color(col.mid) }, uEdge: { value: new THREE.Color(col.edge) },
-      uGain: { value: 1 }, uGlow: { value: 0 } },
+      uGain: { value: 1 }, uGlow: { value: 0 }, uLean: { value: new THREE.Vector2(...(cfg().flameLean ?? [0.1, 0.45])) } },
     vertexShader: /* glsl */`
-      uniform float uWTime; uniform vec3 uWWind;
+      uniform float uWTime; uniform vec3 uWWind; uniform vec2 uLean;
       attribute vec4 aFlame;            // xyz = 火焰根部的世界坐标，w = 相位
       attribute float aKind;            // 0 = 火焰，1 = 光晕
       varying vec2 vUv; varying float vPh; varying float vKind;
       void main() {
         vUv = uv; vPh = aFlame.w; vKind = aKind;
-        vec4 mv = viewMatrix * vec4(aFlame.xyz, 1.0);
         vec2 p = position.xy;
-        // 火苗顶端跟着风歪一点
-        float lean = uv.y * uv.y * (0.25 + 1.6 * uWWind.z) * (1.0 - aKind);
-        vec3 wind = (viewMatrix * vec4(uWWind.x, 0.0, uWWind.y, 0.0)).xyz;
-        mv.xy += p + wind.xy * lean * 6.0;
+        vec4 mv;
+        if (aKind > 0.5) {
+          // 光晕是一团没有方向的柔光，正对相机就行
+          mv = viewMatrix * vec4(aFlame.xyz, 1.0);
+          mv.xy += p;
+        } else {
+          // 火苗永远朝世界的"上"：面片只绕竖轴转过来对着相机，不跟着相机的俯仰走。
+          // 整张面片贴在屏幕上的话，"上"是屏幕的上，镜头一转火就跟着歪——火焰的方向不该由视角决定。
+          vec3 camR = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+          vec3 right = normalize(vec3(camR.x, 0.0, camR.z) + vec3(1e-5, 0.0, 0.0));
+          // 火苗顶端跟着风歪一点（世界里的风向，同样与视角无关）
+          float lean = uv.y * uv.y * (uLean.x + uLean.y * uWWind.z) * max(p.y, 0.0);
+          vec3 wp = aFlame.xyz + right * p.x + vec3(0.0, p.y, 0.0) + vec3(uWWind.x, 0.0, uWWind.y) * lean;
+          mv = viewMatrix * vec4(wp, 1.0);
+        }
         mv.z += 2.0;                    // 往相机方向挪一点，免得和铁篮穿插
         gl_Position = projectionMatrix * mv;
       }`,
@@ -75,11 +85,11 @@ function flameMaterial(col) {
         float t = uWTime * 1.35 + vPh * 7.0;
         float n1 = texture2D(tWNoise, vec2(uv.x * 0.55 + vPh, y * 0.5 - t * 0.55)).r;
         float n2 = texture2D(tWNoise, vec2(uv.x * 1.3 - vPh, y * 1.1 - t * 0.95)).g;
-        float x = (uv.x - 0.5) * 2.0 + (n1 - 0.5) * 0.7 * y;
-        // 下宽上尖的火舌，边缘被噪声啃掉
-        float w = mix(0.62, 0.05, pow(y, 0.8));
-        float body = 1.0 - smoothstep(w * 0.35, w, abs(x));
-        float f = body * smoothstep(0.0, 0.1, y) * (1.0 - smoothstep(0.45, 1.0, y + (n2 - 0.5) * 0.7));
+        float x = (uv.x - 0.5) * 2.0 + (n1 - 0.5) * 0.6 * y;
+        // 水滴形的火舌：根部收一点、腰最宽、往上收尖，边缘被噪声啃掉
+        float w = 0.66 * pow(1.0 - y, 0.72) * (0.5 + 0.5 * smoothstep(0.0, 0.2, y)) * (0.78 + 0.5 * n2);
+        float body = 1.0 - smoothstep(w * 0.25, w, abs(x));
+        float f = body * smoothstep(0.0, 0.06, y) * (1.0 - smoothstep(0.5, 1.0, y + (n2 - 0.5) * 0.6));
         f *= 0.65 + 0.7 * n2;
         if (f < 0.02) discard;
         vec3 c = mix(uEdge, uMid, smoothstep(0.1, 0.5, f));
@@ -100,6 +110,7 @@ class LightMap {
     this.tex.colorSpace = THREE.NoColorSpace; this.tex.generateMipmaps = false;
     this.tex.minFilter = this.tex.magFilter = THREE.LinearFilter;
     this._c = new THREE.Color();
+    this.falloff = cfg().falloff || [[0, 1], [0.18, 0.56], [0.4, 0.22], [0.65, 0.07], [0.85, 0.015], [1, 0]];
   }
   draw(lights) {
     const g = this.ctx, N = this.N, sx = N / this.W, sy = N / this.H;
@@ -109,10 +120,10 @@ class LightMap {
       const x = l.x * sx, y = l.y * sy, r = l.r * sx;
       const c = this._c.set(l.color), R = Math.round(c.r * 255), G = Math.round(c.g * 255), B = Math.round(c.b * 255);   // 线性色
       const grd = g.createRadialGradient(x, y, 0, x, y, r), k = Math.min(1, l.k ?? 1);
-      grd.addColorStop(0, `rgba(${R},${G},${B},${k})`);
-      grd.addColorStop(0.25, `rgba(${R},${G},${B},${k * 0.62})`);
-      grd.addColorStop(0.6, `rgba(${R},${G},${B},${k * 0.2})`);
-      grd.addColorStop(1, `rgba(${R},${G},${B},0)`);
+      // 衰减曲线（存的是 sqrt，材质里平方）：falloff = 各处还剩几成亮度。头一版 1/4 半径处就只剩不到四成、
+      // 六成半径处只剩 4%，火炬只照亮脚下一小圈，路面是黑的（用户："路两侧的火炬是要有真正的照明效果的"）。
+      const F = this.falloff;
+      for (const [t, v] of F) grd.addColorStop(t, `rgba(${R},${G},${B},${k * Math.sqrt(Math.max(0, v))})`);
       g.fillStyle = grd; g.fillRect(x - r, y - r, r * 2, r * 2);
     }
     this.tex.needsUpdate = true;

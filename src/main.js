@@ -254,7 +254,7 @@ CTX.__setDayPhase = (p) => { CTX.__dayPhaseOverride = (p == null ? null : Math.m
 CTX.__groundTrace = groundTraceSystem; // 渲染层/调试入口
 
 installEscClose();   // Q1：Esc 关闭最上层弹窗（点它自己的取消/关闭按钮）
-CTX.__app = { entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, dominionSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
+CTX.__app = { factories: sim.factories, entityContainer, effectRegistry, combatSystem, dragonSystem, mapSystem, laneWaveSystem, laneAvengerSystem, dominionSystem, eventBus, renderer: renderer3d, uiManager, attrCalc, SkillLibrary: skillLibrary, DRAGON_ELEMENTS, FACTIONS, canTarget };
 
 // 龙魂事件日志
 eventBus.on('dragon:killed', (d) => {

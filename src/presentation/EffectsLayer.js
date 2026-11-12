@@ -138,7 +138,11 @@ class Batch {
 
   // 贴地三角形（y=0），转调三维版本
   _tri(ax, az, bx, bz, cx, cz, col, a, uvs) {
-    this._tri3(ax, 0, az, bx, 0, bz, cx, 0, cz, col, a, uvs);
+    // hAt：贴地图元跟着地形起伏走（静态参照层用）。地面不是一张 y=0 的平面，躺在 0 高度上的线
+    // 会被隆起的地面一段段吃掉——兵线虚线就这样被看成了"路面上的黑缝"。
+    const h = this.hAt;
+    if (h) this._tri3(ax, h(ax, az), az, bx, h(bx, bz), bz, cx, h(cx, cz), cz, col, a, uvs);
+    else this._tri3(ax, 0, az, bx, 0, bz, cx, 0, cz, col, a, uvs);
   }
 
   // 三维三角形：第 6.3 步单位立体化后，弹道/光束/红线的起点要抬到炮口高度，
@@ -383,7 +387,7 @@ export class EffectsLayer {
     this._statMapId = null;
     this._weaponCache = new WeakMap();   // 塔 → 当前武器技能 id（Q3 腐蚀判定用）
     this._seen = new Map();             // 子弹 → 上一帧尾迹快照（Q2 余烬用）
-    // 小兵实体弹 / 巨龙吐息（ProjectileMeshLayer.js）。不做命中效果（用户："不要命中特效了"）
+    // 兵弹 / 塔弹芯 / 巨龙吐息（ProjectileMeshLayer.js）。不做命中效果（用户："不要命中特效了"）
     this.pm = new ProjectileMeshLayer(scene);
     this._dragonCd = new Map();         // 巨龙 id → 上一帧攻击冷却（跳增 = 刚打出一次攻击，吐一口）
     this._fading = [];                  // 正在淡出的尾迹余烬
@@ -406,7 +410,7 @@ export class EffectsLayer {
   _trail(D, V, tx, ty, tz, x, by, y, hsz, heat, col, k) {
     if (k <= 0.01) return;
     // Q2：升温对拖尾的加成大幅收敛 —— 只留一点点，避免满升温时尾巴又粗又亮抢戏
-    const wHead = hsz * (TRAIL_W + heat * TRAIL_W_HEAT);
+    const wHead = hsz * ((CONFIG.ui?.projectileFx?.tower?.trailWidth ?? TRAIL_W) + heat * TRAIL_W_HEAT);
     D.taper3(tx, ty, tz, x, by, y, wHead * 0.6 * TRAIL_GLOW, wHead * TRAIL_GLOW,
              col, 0, (0.16 + heat * 0.08) * k, V.vx, V.vy, V.vz);
     D.taper3(tx, ty, tz, x, by, y, wHead * 0.18, wHead, col, 0, 0.62 * k, V.vx, V.vy, V.vz);
@@ -435,6 +439,7 @@ export class EffectsLayer {
     const B = this._stat;
     B.reset();
     const map = mapSystem?.currentMap;
+    B.hAt = mapSystem?.heightAt ? (x, z) => mapSystem.heightAt(x, z) : null;
 
     // D1 背景网格：2D 按视口裁剪，3D 一次性铺满同一个 [-500, 4100] 常量范围
     //（89×2 条线 ≈ 356 三角形，静态零成本，不必再做视口裁剪）
@@ -465,11 +470,12 @@ export class EffectsLayer {
     // D4 兵线虚线：有墙地图默认隐藏，设置里"显示小兵轨迹"可开（与 2D 同条件）
     if (mapSystem?.active && map &&
         (!mapSystem.hasWalls?.() || window.__showLanePaths)) {
-      const col = rgbOf('#f6c94a');
+      const LP = CONFIG.ui?.lanePathLine || {};
+      const col = rgbOf(LP.color || '#f6c94a');
       for (const lane of map.lanes) {
         const wps = lane.waypoints;
         for (let i = 1; i < wps.length; i++) {
-          B.dashed(wps[i - 1].x, wps[i - 1].y, wps[i].x, wps[i].y, 3, col, 0.25, 8, 6);
+          B.dashed(wps[i - 1].x, wps[i - 1].y, wps[i].x, wps[i].y, LP.width ?? 3, col, LP.alpha ?? 0.25, LP.dash ?? 8, LP.gap ?? 6);
         }
       }
     }
@@ -708,7 +714,14 @@ export class EffectsLayer {
     // Q2：本帧还活着的塔弹尾迹收集在 live 里，帧末与上一帧对比，
     // 消失的那些转入 _fading 做淡出——命中不再是"一整条尾巴瞬间没了"。
     this._fxFrame = (this._fxFrame || 0) + 1;
-    this.pm.begin();
+    // 兵弹 / 塔弹芯要用的软边图元（柔光、烟团、拖影）借本层的批画，不另开 draw call
+    this._pmDraw = this._pmDraw || {
+      sprite: (x, y, z, size, col, a) => this._quad.sprite3(x, y, z, size, col, a, this._V.ux, this._V.uy, this._V.uz, this._V.rx, this._V.ry, this._V.rz),
+      soft: (a, b, w, col, al) => this._dyn.softSeg3(a[0], a[1], a[2], b[0], b[1], b[2], w, col, al, this._V.vx, this._V.vy, this._V.vz),
+      taper: (a, b, wA, wB, col, aA, aB) => this._dyn.taper3(a[0], a[1], a[2], b[0], b[1], b[2], wA, wB, col, aA, aB, this._V.vx, this._V.vy, this._V.vz),
+    };
+    this._V = V;
+    this.pm.begin(this._pmDraw);
     const live = [];
     if (projectiles?.getProjectiles) {
       for (const p of projectiles.getProjectiles()) {
@@ -828,18 +841,19 @@ export class EffectsLayer {
           }
           if (heat > 0.01) Q.sprite3(x, by, y, hsz * (1.4 + heat * 0.4), dcol, 0.07 + heat * 0.08, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz); // 热晕（压淡）
         }
+        const dxh = snap ? snap.x - sx0 : x - sx0, dzh = snap ? snap.y - sy0 : y - sy0, dyh = snap ? snap.h - my : 0;
+        const dl = Math.hypot(dxh, dyh, dzh) || 1;
+        const fly = { x: dxh / dl, y: dyh / dl, z: dzh / dl };
         if (isTower) {
-          // 防御塔弹：能量光弹（用户定稿"塔弹用 B"）——光晕 / 核心 / 白亮弹芯
-          const PT = (CONFIG.ui?.projectileFx?.tower) || {};
-          Q.sprite3(x, by, y, hsz * (PT.haloK ?? 1.25), dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
-          Q.sprite3(x, by, y, hsz * 0.45, dcol, 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
-          Q.sprite3(x, by, y, hsz * (0.2 + heat * 0.10), rgbOf('#ffffff'), 1, V.ux, V.uy, V.uz, V.rx, V.ry, V.rz);
+          // 防御塔弹：沿飞行方向拉长的水晶弹芯 + 一小圈柔光（ProjectileMeshLayer.towerBolt），彗尾在上面已经画了
+          this.pm.towerBolt([x, by, y], fly, hsz, dcol.getHex(), heat);
           continue;
         }
         // 小兵 / 分裂弹：低多边形实体弹（用户定稿"A 为主"）。按开火那一刻快照的兵种（p.kind）分形。
         const kind = p.kind || 'ranged';
         const S2 = CONFIG.ui?.projectileFx?.siege || {};
-        const stone = (S2.stoneKinds || ['siege', 'ram']).includes(kind);
+        const shape = this.pm.shapeOf(kind);
+        const stone = shape === 'ball' || shape === 'boulder';
         if (stone) {
           // 石弹：攻城车（ram）走抛物线（纯视觉——伤害时机与落点不变，只是画的时候中间抬高）；
           // 炮车（siege）直线飞（用户："炮车的子弹应该是直的……攻城车的抛物线很好不用改"）
@@ -852,12 +866,10 @@ export class EffectsLayer {
             if (f <= 0) return null;
             return [sx0 + (snap.x - sx0) * f, my + (snap.h - my) * f + arcAt(f), sy0 + (snap.y - sy0) * f];
           };
-          this.pm.siegeStone(head, gsz * ((S2.stoneScale || {})[kind] ?? 1), dcol.getHex(), back, done);
+          this.pm.siegeStone(head, gsz * ((S2.stoneScale || {})[kind] ?? 1), dcol.getHex(), back, done, kind);
           continue;
         }
-        const dxh = snap ? snap.x - sx0 : x - sx0, dzh = snap ? snap.y - sy0 : y - sy0, dyh = snap ? snap.h - my : 0;
-        const dl = Math.hypot(dxh, dyh, dzh) || 1;
-        this.pm.minionBolt(kind, [x, by, y], { x: dxh / dl, y: dyh / dl, z: dzh / dl }, gsz, dcol.getHex(),
+        this.pm.minionBolt(kind, [x, by, y], fly, gsz, dcol.getHex(),
           (dist) => { const b2 = backOnLine(dist); return b2 && Math.hypot(b2[0] - sx0, b2[2] - sy0) > 0.5 ? b2 : null; });
       }
     }

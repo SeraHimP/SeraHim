@@ -21,7 +21,7 @@ const _geoCache = new WeakMap();
 export function shellGeometry(src) {
   let g = _geoCache.get(src);
   if (g) return g;
-  if ((CONFIG.ui?.towerShield?.shape ?? 'hull') === 'hull') { g = hullGeometry(src); _geoCache.set(src, g); return g; }
+  if ((CONFIG.ui?.towerShield?.shape ?? 'skin') === 'hull') { g = hullGeometry(src); _geoCache.set(src, g); return g; }
   const p = src.getAttribute('position'), n = src.getAttribute('normal');
   const acc = new Map();
   const key = (i) => `${Math.round(p.getX(i) * 50)}|${Math.round(p.getY(i) * 50)}|${Math.round(p.getZ(i) * 50)}`;

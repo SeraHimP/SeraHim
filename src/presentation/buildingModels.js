@@ -5,8 +5,9 @@
  *        某一方所有塔的模型都是一样的不需要再做区分了……可以参考 lol 中的模型，尤其是模型中的水晶要好好做。"
  *
  * 每方一套、三种建筑同一套语言：
- *   蓝方（秩序）：浅灰石灰岩一皮皮垒起来的圆塔，扶壁、金色线脚、蓝釉腰箍、垂旗；顶上四只石爪托着悬浮的水晶。对称、端正。
- *   红方（混沌）：一截截拧着往上长的玄武岩尖碑，铁箍、熔岩色的裂缝、不对称的弯角和骨刺；顶上一圈利爪抓着水晶。
+ *   蓝方（秩序）：浅灰石灰岩、金色线脚、蓝釉、垂旗；对称、端正。
+ *   红方（混沌）：深色玄武岩、青铜与铁、朱红釉、尖刺与利爪、撕破的旗。
+ *   防御塔两方是同一副骨架（见 masonryTower）；召唤水晶 / 水晶枢纽各有各的造型。
  * 建筑的档位（外塔 / 高地塔 / 枢纽塔）不再换造型，只按建筑半径 R 等比缩放。
  *
  * 结构上延续按部件建模（towerStatue.PieceModel）：基座以上的每一块都登记成部件，所以
@@ -72,14 +73,26 @@ function basaltRim(m, R, col, { n = 9, r = 0.98, y = 0, seed = 0, hMin = 0.16, h
 }
 
 // ============================================================================
-// 蓝方防御塔
+// 防御塔：双方同一副骨架（一皮皮垒起来的圆塔 + 扶壁 + 腰箍 + 冠台 + 四爪托水晶），阵营只换"口音"
+//   蓝方（秩序）：浅灰石灰岩、金线脚、蓝釉、方垛口、盾徽、整齐的垂旗；
+//   红方（混沌）：深色玄武岩、青铜线脚、朱红釉、獠牙一样的尖垛口、铁刺、更长更尖的爪、撕破的旗，台脚有碎岩刺出来。
+// 用户："红方塔需要重做，红方塔的塔里面为什么是红色的，我要求做成类似蓝方防御塔那样但是要修改成红方的风格。"
+// 所以红方不再是"岩板缝里透着熔岩光的尖碑"：塔芯和蓝方一样是暗色的石头，发光的只有四道窄窗和水晶。
 // ============================================================================
-function orderTower(m, R, col) {
+function masonryTower(m, R, col, red) {
+  const SM = red ? 'dark' : 'stone';            // 台座、扶壁这些大石头的材质
+  const vary = red ? 0.3 : 0.2;                 // 一皮石头里各块的深浅差：红方更斑驳
   // ---- 基座：两级八角石台（留在原地，不掉）----
-  m.add(prism(8, R * 1.08, R * 1.16, R * 0.12), C(T(0, R * 0.06, 0), RY(Math.PI / 8)), shade(col.stoneDark, 0.9), 'stone');
-  m.add(prism(8, R * 0.92, R * 0.98, R * 0.14), C(T(0, R * 0.19, 0), RY(Math.PI / 8)), shade(col.stone, 0.86), 'stone');
-  m.add(lathe([[R * 0.88, 0], [R * 0.91, R * 0.012], [R * 0.88, R * 0.03]], 8, true), C(T(0, R * 0.26, 0), RY(Math.PI / 8)), col.trim, 'gold');
+  m.add(prism(8, R * 1.08, R * 1.16, R * 0.12), C(T(0, R * 0.06, 0), RY(Math.PI / 8)), shade(col.stoneDark, 0.9), SM);
+  m.add(prism(8, R * 0.92, R * 0.98, R * 0.14), C(T(0, R * 0.19, 0), RY(Math.PI / 8 + (red ? 0.12 : 0))), shade(col.stone, 0.86), SM);
+  m.add(lathe([[R * 0.88, 0], [R * 0.91, R * 0.012], [R * 0.88, R * 0.03]], 8, true), C(T(0, R * 0.26, 0), RY(Math.PI / 8 + (red ? 0.12 : 0))), red ? col.metal : col.trim, red ? 'iron' : 'gold');
   const y0 = R * 0.26;
+  if (red) {
+    for (let i = 0; i < 5; i++) {
+      const a = i / 5 * TAU + 0.5 + (hash01(i, 21) - 0.5) * 0.5, r = R * (0.98 + hash01(i, 22) * 0.1), hh = R * (0.3 + hash01(i, 23) * 0.26);
+      m.piece(`spur${i}`, { stub: 0.3 }, () => m.add(shard(R * 0.13, hh, 4 + (i % 2), i + 3, 0.5), C(T(Math.cos(a) * r, R * 0.06, Math.sin(a) * r), RZ(Math.cos(a) * -0.4), RX(Math.sin(a) * 0.4)), shade(col.stone, 0.8 + hash01(i, 25) * 0.25), 'dark'));
+    }
+  }
   // ---- 塔身下段：芯（石块掉了露出来）+ 六皮石头，逐皮收分、错缝 ----
   const lowH = R * 1.3, nC = 6, ch = lowH / nC, taper = 0.82;
   // 芯分三段垒（塌的时候是三块，不是一根完整的柱子）
@@ -87,21 +100,22 @@ function orderTower(m, R, col) {
   const blocks = [];
   for (let i = 0; i < nC; i++) {
     const k0 = 1 - (1 - taper) * i / nC, k1 = 1 - (1 - taper) * (i + 1) / nC;
-    blocks.push(course(m, `c${i}`, { r0: R * 0.42 * k0, r1: R * 0.64 * k0, y: y0 + i * ch, h: ch * 0.93, n: 8, gap: 0.028, phase: (i % 2) * TAU / 16, taper: k1 / k0, color: col.stone, vary: 0.2, seed: i + 1 }));
+    blocks.push(course(m, `c${i}`, { r0: R * 0.42 * k0, r1: R * 0.64 * k0, y: y0 + i * ch, h: ch * 0.93, n: 8, gap: 0.028, phase: (i % 2) * TAU / 16, taper: k1 / k0, color: col.stone, vary, seed: i + 1 }));
   }
   // ---- 四道扶壁（对角）----
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * TAU + Math.PI / 4, cs = Math.cos(a), sn = Math.sin(a);
     m.piece(`fin${i}`, { stub: 0.25 }, () => {
       const at = (r, y, g, colr, mat, rz = 0) => m.add(g, C(T(cs * r, y, sn * r), RY(-a), RZ(rz)), colr, mat);
-      at(R * 0.8, y0 + R * 0.22, stoneBlock(R * 0.36, R * 0.44, R * 0.22, i + 40), shade(col.stone, 0.9), 'stone');
-      at(R * 0.71, y0 + R * 0.62, stoneBlock(R * 0.26, R * 0.4, R * 0.19, i + 44), shade(col.stone, 0.97), 'stone', 0.13);
-      at(R * 0.62, y0 + R * 0.98, stoneBlock(R * 0.18, R * 0.36, R * 0.16, i + 48), col.stone, 'stone', 0.18);
-      at(R * 0.575, y0 + R * 1.2, prism(4, R * 0.03, R * 0.1, R * 0.12), col.trim, 'gold');
+      at(R * 0.8, y0 + R * 0.22, stoneBlock(R * 0.36, R * 0.44, R * 0.22, i + 40), shade(col.stone, 0.9), SM);
+      at(R * 0.71, y0 + R * 0.62, stoneBlock(R * 0.26, R * 0.4, R * 0.19, i + 44), shade(col.stone, 0.97), SM, 0.13);
+      at(R * 0.62, y0 + R * 0.98, stoneBlock(R * 0.18, R * 0.36, R * 0.16, i + 48), col.stone, SM, 0.18);
+      if (red) at(R * 0.57, y0 + R * 1.16, shard(R * 0.075, R * 0.34, 4, i + 5, 0.15), col.metal, 'iron', 0.2);
+      else at(R * 0.575, y0 + R * 1.2, prism(4, R * 0.03, R * 0.1, R * 0.12), col.trim, 'gold');
     });
   }
   let y = y0 + lowH;
-  // ---- 腰箍：金线脚 + 蓝釉带 + 四面盾徽 ----
+  // ---- 腰箍：线脚 + 釉带 + 四面徽记 ----
   {
     const b1 = latheSectors([[R * 0.47, 0], [R * 0.6, R * 0.03], [R * 0.6, R * 0.07], [R * 0.54, R * 0.1], [R * 0.47, R * 0.1]], 4, 5);
     const b2 = latheSectors([[R * 0.47, 0], [R * 0.565, R * 0.02], [R * 0.565, R * 0.12], [R * 0.53, R * 0.14], [R * 0.47, R * 0.14]], 4, 5);
@@ -115,28 +129,34 @@ function orderTower(m, R, col) {
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * TAU, cs = Math.cos(a), sn = Math.sin(a);
     m.piece(`shield${i}`, { stub: 0 }, () => {
-      m.add(prism(5, R * 0.12, R * 0.12, R * 0.04), C(T(cs * R * 0.595, y + R * 0.14, sn * R * 0.595), RY(-a + Math.PI / 2), RX(Math.PI / 2), RY(Math.PI)), col.accent, 'metal');
-      m.add(flat(new THREE.OctahedronGeometry(R * 0.05)), T(cs * R * 0.625, y + R * 0.14, sn * R * 0.625), col.trim, 'gold');
+      if (red) {
+        // 朱红的菱形铁牌，正中一根朝外的铁刺
+        m.add(prism(4, R * 0.12, R * 0.12, R * 0.035), C(T(cs * R * 0.595, y + R * 0.14, sn * R * 0.595), RY(-a + Math.PI / 2), RX(Math.PI / 2)), col.accent, 'metal');
+        m.add(shard(R * 0.045, R * 0.2, 4, i + 7, 0.05), C(T(cs * R * 0.6, y + R * 0.14, sn * R * 0.6), RY(-a), RZ(-Math.PI / 2)), col.metal, 'iron');
+      } else {
+        m.add(prism(5, R * 0.12, R * 0.12, R * 0.04), C(T(cs * R * 0.595, y + R * 0.14, sn * R * 0.595), RY(-a + Math.PI / 2), RX(Math.PI / 2), RY(Math.PI)), col.accent, 'metal');
+        m.add(flat(new THREE.OctahedronGeometry(R * 0.05)), T(cs * R * 0.625, y + R * 0.14, sn * R * 0.625), col.trim, 'gold');
+      }
     });
   }
   y += R * 0.29;
   // ---- 塔身上段：细一圈，三皮石头 + 四道发光的窄窗 ----
   const upH = R * 0.72, uc = upH / 3;
   for (let i = 0; i < 2; i++) m.piece(`coreUp${i}`, { stub: 0, vanish: true }, () => m.add(jitterPrism(10, R * (0.37 - 0.04 * (i + 1) / 2), R * (0.37 - 0.04 * i / 2), upH / 2, i + 9), T(0, y + upH * (i + 0.5) / 2, 0), col.core, 'dark'));
-  for (let i = 0; i < 3; i++) blocks.push(course(m, `u${i}`, { r0: R * 0.33, r1: R * 0.48 - i * R * 0.012, y: y + i * uc, h: uc * 0.93, n: 8, gap: 0.03, phase: (i % 2) * TAU / 16 + 0.2, color: shade(col.stone, 1.04), vary: 0.2, seed: i + 11 }));
+  for (let i = 0; i < 3; i++) blocks.push(course(m, `u${i}`, { r0: R * 0.33, r1: R * 0.48 - i * R * 0.012, y: y + i * uc, h: uc * 0.93, n: 8, gap: 0.03, phase: (i % 2) * TAU / 16 + 0.2, color: shade(col.stone, 1.04), vary, seed: i + 11 }));
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * TAU + Math.PI / 4, cs = Math.cos(a), sn = Math.sin(a);
     m.piece(`slit${i}`, { stub: 0 }, () => m.add(stoneBlock(R * 0.07, R * 0.36, R * 0.03, i, 0), C(T(cs * R * 0.478, y + upH * 0.5, sn * R * 0.478), RY(-a + Math.PI / 2)), col.glow, 'glow'));
   }
   y += upH;
-  // ---- 冠台：外挑的托檐，台面嵌一圈蓝釉与金线；一圈垛口 ----
+  // ---- 冠台：外挑的托檐，台面嵌一圈釉与线脚；一圈垛口 ----
   {
     const c1 = latheSectors([[0.01, 0], [R * 0.46, 0], [R * 0.54, R * 0.05], [R * 0.66, R * 0.15], [R * 0.68, R * 0.2], [R * 0.64, R * 0.22], [0.01, R * 0.22]], 4, 4);
     const c2 = latheSectors([[R * 0.67, 0], [R * 0.7, R * 0.015], [R * 0.67, R * 0.035]], 4, 4);
     const c3 = latheSectors([[R * 0.36, 0], [R * 0.36, R * 0.012], [R * 0.5, R * 0.012], [R * 0.5, 0]], 4, 6);
     const c4 = latheSectors([[R * 0.5, 0], [R * 0.5, R * 0.02], [R * 0.53, R * 0.02], [R * 0.53, 0]], 4, 6);
     for (let i = 0; i < 4; i++) m.piece(`corbel${i}`, { stub: 0, vanish: true }, () => {
-      m.add(c1[i], T(0, y, 0), shade(col.stone, 0.95), 'stone');
+      m.add(c1[i], T(0, y, 0), shade(col.stone, 0.95), SM);
       m.add(c2[i], T(0, y + R * 0.185, 0), col.trim, 'gold');
       m.add(c3[i], T(0, y + R * 0.215, 0), col.accent, 'metal');
       m.add(c4[i], T(0, y + R * 0.215, 0), col.trim, 'gold');
@@ -146,118 +166,71 @@ function orderTower(m, R, col) {
   for (let i = 0; i < 8; i++) {
     const a = i / 8 * TAU + Math.PI / 8, cs = Math.cos(a), sn = Math.sin(a);
     m.piece(`mer${i}`, { stub: 0.3 }, () => {
-      m.add(stoneBlock(R * 0.19, R * 0.15, R * 0.1, i + 60), C(T(cs * R * 0.6, y + R * 0.075, sn * R * 0.6), RY(-a + Math.PI / 2)), shade(col.stone, 0.96 + hash01(i, 9) * 0.08), 'stone');
-      m.add(stoneBlock(R * 0.21, R * 0.03, R * 0.12, i + 70, 0.02), C(T(cs * R * 0.6, y + R * 0.165, sn * R * 0.6), RY(-a + Math.PI / 2)), col.trim, 'gold');
+      if (red) {
+        // 獠牙一样的尖垛口：高低错落，尖上包一点青铜
+        const hh = R * (0.24 + (i % 2) * 0.1);
+        m.add(prism(4, R * 0.02, R * 0.105, hh), C(T(cs * R * 0.6, y + hh / 2, sn * R * 0.6), RY(-a + Math.PI / 4), RZ(0)), shade(col.stone, 0.9 + hash01(i, 9) * 0.2), 'dark');
+        m.add(prism(4, R * 0.004, R * 0.034, hh * 0.3), C(T(cs * R * 0.6, y + hh * 0.86, sn * R * 0.6), RY(-a + Math.PI / 4)), col.trim, 'gold');
+      } else {
+        m.add(stoneBlock(R * 0.19, R * 0.15, R * 0.1, i + 60), C(T(cs * R * 0.6, y + R * 0.075, sn * R * 0.6), RY(-a + Math.PI / 2)), shade(col.stone, 0.96 + hash01(i, 9) * 0.08), 'stone');
+        m.add(stoneBlock(R * 0.21, R * 0.03, R * 0.12, i + 70, 0.02), C(T(cs * R * 0.6, y + R * 0.165, sn * R * 0.6), RY(-a + Math.PI / 2)), col.trim, 'gold');
+      }
     });
   }
-  // ---- 水晶托：中间一个杯座，四只石爪向上合拢，爪尖包金 ----
+  // ---- 水晶托：中间一个杯座，四只石爪向上合拢，爪尖包金 / 包铜 ----
   m.piece('cup', { stub: 0 }, () => {
-    m.add(lathe([[R * 0.3, 0], [R * 0.25, R * 0.07], [R * 0.15, R * 0.14], [R * 0.19, R * 0.24], [R * 0.25, R * 0.28], [R * 0.19, R * 0.29]], 12), T(0, y, 0), shade(col.stone, 0.88), 'stone');
-    m.add(lathe([[R * 0.245, 0], [R * 0.27, R * 0.012], [R * 0.245, R * 0.03]], 12), T(0, y + R * 0.265, 0), col.trim, 'gold');
+    m.add(lathe([[R * 0.3, 0], [R * 0.25, R * 0.07], [R * 0.15, R * 0.14], [R * 0.19, R * 0.24], [R * 0.25, R * 0.28], [R * 0.19, R * 0.29]], red ? 8 : 12, red), T(0, y, 0), shade(col.stone, 0.88), SM);
+    m.add(lathe([[R * 0.245, 0], [R * 0.27, R * 0.012], [R * 0.245, R * 0.03]], red ? 8 : 12, red), T(0, y + R * 0.265, 0), col.trim, 'gold');
   });
   const crystalR = R * 0.3;
-  const crystalCy = y + R * 0.3 + crystalR * 1.55;
+  const crystalCy = y + R * 0.3 + crystalR * (red ? 1.7 : 1.55);
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * TAU, cs = Math.cos(a), sn = Math.sin(a);
     const P = (r, yy) => [cs * r * R, y + yy * R, sn * r * R];
     m.piece(`claw${i}`, { stub: 0 }, () => {
-      m.add(horn([P(0.42, -0.04), P(0.6, 0.26), P(0.6, 0.6), P(0.47, 0.86)], R * 0.115, R * 0.06, 6, 7), new THREE.Matrix4(), shade(col.stone, 1.03), 'stone');
-      m.add(horn([P(0.48, 0.84), P(0.4, 1.0), P(0.31, 1.12)], R * 0.066, R * 0.012, 5, 4), new THREE.Matrix4(), col.trim, 'gold');
-      m.add(lathe([[R * 0.085, 0], [R * 0.1, R * 0.02], [R * 0.085, R * 0.045]], 6, true), C(T(cs * R * 0.6, y + R * 0.4, sn * R * 0.6)), col.trim, 'gold');
+      if (red) {
+        // 更长、更尖、往里勾得更狠的爪，外脊一道青铜
+        m.add(horn([P(0.42, -0.04), P(0.66, 0.24), P(0.7, 0.66), P(0.52, 1.02), P(0.33, 1.24)], R * 0.125, R * 0.014, 5, 9, 0.75), new THREE.Matrix4(), shade(col.stone, 1.08), 'dark');
+        m.add(horn([P(0.7, 0.24), P(0.76, 0.66), P(0.57, 1.04), P(0.36, 1.27)], R * 0.042, R * 0.006, 3, 6), new THREE.Matrix4(), col.trim, 'gold');
+      } else {
+        m.add(horn([P(0.42, -0.04), P(0.6, 0.26), P(0.6, 0.6), P(0.47, 0.86)], R * 0.115, R * 0.06, 6, 7), new THREE.Matrix4(), shade(col.stone, 1.03), 'stone');
+        m.add(horn([P(0.48, 0.84), P(0.4, 1.0), P(0.31, 1.12)], R * 0.066, R * 0.012, 5, 4), new THREE.Matrix4(), col.trim, 'gold');
+        m.add(lathe([[R * 0.085, 0], [R * 0.1, R * 0.02], [R * 0.085, R * 0.045]], 6, true), C(T(cs * R * 0.6, y + R * 0.4, sn * R * 0.6)), col.trim, 'gold');
+      }
     });
   }
-  // ---- 两面垂旗（前后）----
+  // ---- 两面垂旗（前后）：蓝方整齐，红方撕破 ----
   for (const s of [1, -1]) {
     m.piece(`flag${s}`, { stub: 0, cloth: true }, () => {
       const zy = y0 + lowH + R * 0.08;
-      m.add(banner(R * 0.34, R * 0.86, 0.05, 0.3), C(T(0, zy, s * R * 0.66), RY(s > 0 ? 0 : Math.PI), RX(-0.1)), col.cloth, 'cloth');
-      m.add(banner(R * 0.2, R * 0.6, 0.05, 0.3), C(T(0, zy - R * 0.06, s * R * 0.67), RY(s > 0 ? 0 : Math.PI), RX(-0.1), T(0, 0, R * 0.012)), col.trim, 'gold');
-      m.add(stoneBlock(R * 0.4, R * 0.04, R * 0.05, 3, 0.02), T(0, zy + R * 0.01, s * R * 0.645), col.trim, 'gold');
+      if (red) {
+        m.add(banner(R * 0.32, R * (s > 0 ? 0.9 : 0.68), 0.09, 0.9, 5), C(T(0, zy, s * R * 0.66), RY(s > 0 ? 0 : Math.PI), RX(-0.1), RZ(0.05 * s)), col.cloth, 'cloth');
+        m.add(stoneBlock(R * 0.4, R * 0.04, R * 0.05, 3, 0.02), T(0, zy + R * 0.01, s * R * 0.645), col.metal, 'iron');
+      } else {
+        m.add(banner(R * 0.34, R * 0.86, 0.05, 0.3), C(T(0, zy, s * R * 0.66), RY(s > 0 ? 0 : Math.PI), RX(-0.1)), col.cloth, 'cloth');
+        m.add(banner(R * 0.2, R * 0.6, 0.05, 0.3), C(T(0, zy - R * 0.06, s * R * 0.67), RY(s > 0 ? 0 : Math.PI), RX(-0.1), T(0, 0, R * 0.012)), col.trim, 'gold');
+        m.add(stoneBlock(R * 0.4, R * 0.04, R * 0.05, 3, 0.02), T(0, zy + R * 0.01, s * R * 0.645), col.trim, 'gold');
+      }
     });
   }
-  // 损毁清单：轻损掉旗、几块外皮石、一道扶壁、两个垛口；重损再掉一只爪、更多石头、盾徽、另一道扶壁
-  const pick = (rows, list) => list.map(([i, k]) => rows[i]?.[k]).filter(Boolean);
-  const light = ['flag1', ...pick(blocks, [[5, 1], [4, 2], [5, 6], [3, 5], [7, 2]]), 'fin1', 'mer1', 'mer5', 'shield1'];
-  const heavy = ['flag-1', 'claw1', ...pick(blocks, [[5, 2], [5, 7], [4, 6], [4, 7], [3, 0], [2, 4], [8, 4], [8, 5], [7, 6], [6, 1], [1, 7], [0, 3]]), 'fin3', 'mer2', 'mer6', 'mer7', 'shield3', 'slit1'];
-  debris(m, R, col, 22, { r: R * 0.36, y0: y0 + R * 0.1, y1: y0 + R * 2.3 }, 1);
-  return { crystalR, crystalCy, baseTop: y0, baseR: R * 0.9, light, heavy, gemShape: { n: 6, top: 1.8, mid: 0.9, bot: 1.25 },
-           stump: { n: 10, r: R * 0.46, h: R * 0.62 } };
+  // 损毁清单（用户："掉块（破损）模型不够明显，看不出来损毁的程度，加大损毁模型的破旧度"）。
+  // 伤集中在同一侧（方位 90°~180°），远看轮廓就变了，不是东一块西一块地少几块石头：
+  //   轻损：那一侧的爪断了、两个垛口没了、扶壁塌了一道，塔身被啃掉一片、露出里面的暗芯；一面旗掉了。
+  //   重损：那一侧的冠台、腰箍也塌了，上段只剩半圈，下段从上到下豁开；另一侧也开始掉石头；只剩两只爪托着水晶。
+  const pick = (list) => list.map(([i, k]) => blocks[i]?.[k]).filter(Boolean);
+  const light = ['flag1', 'claw1', 'mer2', 'mer3', 'fin1', 'shield1',
+    ...pick([[5, 2], [5, 3], [4, 2], [4, 3], [3, 2], [8, 2], [8, 3], [7, 2], [6, 3], [5, 6], [2, 6]])];
+  const heavy = ['flag-1', 'claw2', 'corbel3', 'belt3', 'slit1', 'fin2', 'fin3', 'mer1', 'mer4', 'mer6', 'shield2', 'shield3',
+    ...pick([[8, 1], [8, 4], [7, 1], [7, 3], [7, 4], [6, 1], [6, 2], [6, 4], [5, 1], [5, 4], [4, 1], [4, 4], [3, 1], [3, 3], [3, 4],
+      [2, 2], [2, 3], [1, 2], [1, 3], [0, 2], [5, 7], [4, 6], [3, 6], [1, 6], [8, 6], [7, 7], [0, 5]]),
+    ...(red ? ['spur1', 'spur3'] : [])];
+  debris(m, R, col, 22, { r: R * 0.36, y0: y0 + R * 0.1, y1: y0 + R * 2.3 }, red ? 2 : 1);
+  return { crystalR, crystalCy, baseTop: y0, baseR: R * 0.9, light, heavy,
+           gemShape: red ? { n: 5, top: 2.0, mid: 0.5, bot: 1.4, twist: 0.3 } : { n: 6, top: 1.8, mid: 0.9, bot: 1.25 },
+           stump: { n: 10, r: R * 0.5, h: R * (cfg().ruin?.stumpHeight ?? 0.3) } };
 }
-
-// ============================================================================
-// 红方防御塔
-// ============================================================================
-function chaosTower(m, R, col) {
-  // ---- 基座：歪斜的七边玄武岩台 + 一圈从地里刺出来的碎岩 ----
-  m.add(prism(7, R * 1.04, R * 1.16, R * 0.13), C(T(-R * 0.03, R * 0.065, R * 0.02), RY(0.5)), shade(col.stoneDark, 0.85), 'dark');
-  m.add(prism(7, R * 0.9, R * 0.98, R * 0.14), C(T(R * 0.02, R * 0.2, -R * 0.02), RY(0.2), RZ(0.02)), shade(col.stone, 0.8), 'dark');
-  const y0 = R * 0.27;
-  for (let i = 0; i < 6; i++) {
-    const a = i / 6 * TAU + 0.3 + (hash01(i, 21) - 0.5) * 0.5, r = R * (0.9 + hash01(i, 22) * 0.1), hh = R * (0.42 + hash01(i, 23) * 0.4);
-    m.piece(`spur${i}`, { stub: 0.3 }, () => m.add(shard(R * 0.17, hh, 4 + (i % 2), i + 3, 0.5), C(T(Math.cos(a) * r, R * 0.1, Math.sin(a) * r), RZ(Math.cos(a) * -0.38), RX(Math.sin(a) * 0.38)), shade(col.stone, 0.8 + hash01(i, 25) * 0.25), 'dark'));
-  }
-  basaltRim(m, R, col, { n: 8, r: 0.9, y: R * 0.1, seed: 1, hMin: 0.2, hMax: 0.5 });
-  // ---- 塔身：三截五棱岩柱，一截比一截细，逐截拧一个角度；岩板之间的缝里透出熔岩色的光 ----
-  const segs = [[0.66, 0.56, 0.8], [0.56, 0.47, 0.74], [0.47, 0.39, 0.64]];
-  let y = y0, tw = 0.2;
-  const faces = [];
-  segs.forEach(([rb, rt, h], i) => {
-    const hh = h * R;
-    m.piece(`core${i}`, { stub: 0, vanish: true }, () => m.add(prism(5, rt * R * 0.7, rb * R * 0.7, hh), C(T(0, y + hh / 2, 0), RY(-tw)), col.core, 'dark'));
-    m.piece(`vein${i}`, { stub: 0, vanish: true }, () => m.add(prism(10, rt * R * 0.8, rb * R * 0.8, hh * 0.94), T(0, y + hh / 2, 0), col.glow, 'glow'));
-    const row = [];
-    for (let k = 0; k < 5; k++) {
-      const a0 = tw + k / 5 * TAU + 0.075, a1 = tw + (k + 1) / 5 * TAU - 0.075, pid = `slab${i}_${k}`;
-      m.piece(pid, { stub: 0 }, () => m.add(arcBlock(rb * R * 0.76, rb * R * (1.0 + hash01(i * 5 + k, 31) * 0.07), hh * 0.97, a0, a1, i * 17 + k + 5, rt / rb, 1, 0.07), T(0, y + hh * 0.015, 0), shade(col.stone, 0.82 + hash01(i * 5 + k, 33) * 0.34), 'dark'));
-      row.push(pid);
-    }
-    faces.push(row);
-    y += hh;
-    if (i < segs.length - 1) {
-      m.piece(`band${i}`, { stub: 0 }, () => {
-        m.add(prism(5, rt * R * 1.12, rt * R * 1.18, R * 0.09), C(T(0, y, 0), RY(-tw - 0.31)), col.metal, 'iron');
-        for (let k = 0; k < 5; k++) { const a = tw + 0.31 + k / 5 * TAU; m.add(shard(R * 0.07, R * 0.24, 4, k + i * 9, 0.1), C(T(Math.cos(a) * rt * R * 1.08, y, Math.sin(a) * rt * R * 1.08), RY(-a), RZ(-Math.PI / 2 + 0.3)), col.trim, 'metal'); }
-      });
-    }
-    tw += 0.38;
-  });
-  // ---- 两根断角：不对称地从下箍斜刺出来 ----
-  [[0.5, 0.74, 1.0], [3.4, 1.42, 0.8]].forEach(([a, yy, k], i) => {
-    const cs = Math.cos(a), sn = Math.sin(a), P = (r, h) => [cs * r * R, y0 + (yy + h * k) * R, sn * r * R];
-    m.piece(`tusk${i}`, { stub: 0 }, () => {
-      m.add(horn([P(0.45, 0), P(0.82, 0.1), P(1.02, 0.42), P(1.0, 0.8)], R * 0.14 * k, R * 0.02, 5, 7, 0.75), new THREE.Matrix4(), col.bone, 'bone');
-    });
-  });
-  // ---- 冠：四只粗壮的利爪向上、向内抓住水晶，外脊包铜 ----
-  const topY = y;
-  m.piece('crown', { stub: 0, vanish: true }, () => {
-    m.add(prism(5, R * 0.52, R * 0.4, R * 0.16), C(T(0, topY + R * 0.08, 0), RY(-tw)), shade(col.stone, 0.8), 'dark');
-    m.add(prism(5, R * 0.3, R * 0.36, R * 0.1), C(T(0, topY + R * 0.21, 0), RY(-tw - 0.3)), col.metal, 'iron');
-  });
-  const crystalR = R * 0.3;
-  const crystalCy = topY + R * 0.26 + crystalR * 1.7;
-  for (let i = 0; i < 4; i++) {
-    const a = tw + i / 4 * TAU + (hash01(i, 41) - 0.5) * 0.3, cs = Math.cos(a), sn = Math.sin(a), k = 0.86 + hash01(i, 42) * 0.34;
-    const P = (r, h) => [cs * r * R, topY + R * 0.08 + h * k * R, sn * r * R];
-    m.piece(`claw${i}`, { stub: 0 }, () => {
-      m.add(horn([P(0.38, 0), P(0.72, 0.2), P(0.78, 0.62), P(0.56, 1.02), P(0.36, 1.2)], R * 0.15, R * 0.016, 5, 9, 0.7), new THREE.Matrix4(), shade(col.stone, 1.12), 'dark');
-      m.add(horn([P(0.76, 0.2), P(0.85, 0.62), P(0.62, 1.04), P(0.4, 1.23)], R * 0.05, R * 0.006, 3, 6), new THREE.Matrix4(), col.trim, 'metal');
-    });
-  }
-  // ---- 两条破布 ----
-  for (const [a, len, id] of [[1.4, 0.95, 1], [3.9, 0.7, -1]]) {
-    m.piece(`flag${id}`, { stub: 0, cloth: true }, () => {
-      const zy = y0 + R * 1.5;
-      m.add(banner(R * 0.28, R * len, 0.09, 0.9, 5), C(T(Math.sin(a) * R * 0.6, zy, Math.cos(a) * R * 0.6), RY(a), RX(-0.1), RZ(0.07 * id)), col.cloth, 'cloth');
-    });
-  }
-  const pick = (list) => list.map(([i, k]) => faces[i]?.[k]).filter(Boolean);
-  const light = ['flag1', 'spur1', 'spur4', 'col2', 'col6', ...pick([[2, 1], [1, 3], [0, 0]]), 'tusk1', 'claw3'];
-  const heavy = ['flag-1', 'claw1', 'tusk0', 'band1', 'col0', 'col3', 'col5', ...pick([[2, 3], [2, 4], [1, 0], [1, 1], [0, 2], [0, 3]]), 'spur2', 'spur5'];
-  debris(m, R, col, 20, { r: R * 0.4, y0: y0 + R * 0.1, y1: y0 + R * 2.0 }, 2);
-  return { crystalR, crystalCy, baseTop: y0, baseR: R * 0.9, light, heavy, gemShape: { n: 5, top: 2.0, mid: 0.5, bot: 1.4, twist: 0.3 },
-           stump: { n: 5, r: R * 0.5, h: R * 0.66, rot: 0.2 } };
-}
+const orderTower = (m, R, col) => masonryTower(m, R, col, false);
+const chaosTower = (m, R, col) => masonryTower(m, R, col, true);
 
 /** 断桩：一截顶面被砸得参差不齐的柱子（n 棱）。底面在 y = 0。 */
 function jaggedStump(n, rTop, rBot, h, seed) {

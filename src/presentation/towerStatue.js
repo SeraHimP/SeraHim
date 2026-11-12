@@ -189,7 +189,7 @@ export class PieceModel {
     const R = this.R, cfg = this.cfg.collapse || {};
     const fl = new Set(fallen), out = new Map();
     this._fallen = fl;
-    const ext = R * (opts.spread ?? cfg.spread ?? 1.3), N = 11, cell = 2 * ext / N;
+    const ext = R * (opts.spread ?? cfg.spread ?? 1.3), N = 17, cell = 2 * ext / N;
     const baseTop = opts.baseTop ?? 0, baseR = opts.baseR ?? R;
     // 中间有一座碎石丘（mound：{ h 丘高, r 丘半径 }）时，部件落在丘面上，落点收在丘的范围里
     const mound = opts.mound || null;
@@ -233,9 +233,13 @@ export class PieceModel {
       const px = fx * dist, pz = fz * dist;
       const i0 = Math.max(0, Math.floor((px + tb.min.x + ext) / cell)), i1 = Math.min(N - 1, Math.floor((px + tb.max.x + ext) / cell));
       const j0 = Math.max(0, Math.floor((pz + tb.min.z + ext) / cell)), j1 = Math.min(N - 1, Math.floor((pz + tb.max.z + ext) / cell));
-      let g = 0, cnt = 0;
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { g += hgt[j * N + i]; cnt++; }
+      // 落在脚下最低那一格和平均高度之间（lowK 越大越贴着最低处）：只按平均高度放，压在坡上、压在别的石头边上的
+      // 那些块有一半是悬空的（用户："废墟悬空"）；往最低处靠，它们就是半埋在堆里，不会飘着。
+      let g = 0, cnt = 0, lo = Infinity;
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const v = hgt[j * N + i]; g += v; cnt++; if (v < lo) lo = v; }
       g = cnt ? g / cnt : 0;
+      const lowK = cfg.lowK ?? 0.7;
+      if (cnt) g = lo * lowK + g * (1 - lowK);
       const th = tb.max.y - tb.min.y;
       const y = g - tb.min.y - th * (cfg.sink ?? 0.22);
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) hgt[j * N + i] = Math.max(hgt[j * N + i], g + th * (cfg.stack ?? 0.5));

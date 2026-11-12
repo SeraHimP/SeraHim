@@ -142,6 +142,33 @@ export function buildTerrainField(ms) {
   const h = new Float32Array(N);
   const cliffH0 = theme.cliffHeight ?? K.height;
   const dropH = theme.dropHeight ?? 200, floorNoise = theme.dropFloorNoise ?? 0;
+  // 陆块（深渊图可选，theme.landmass）：每个基地背后是一整块实地，实地在离基地中心 cliffDist 处断成悬崖，
+  // 两块实地之间是一道峡谷，可走的那一条窄带横跨峡谷 —— 那就是桥（桥体另外建模，见 world/WorldBridge.js）。
+  // 没有这个声明时，所有不可走区一律从可走区边缘往下沉（可走区是立在深渊里的一座台子）。
+  //   landAt(x, y) → { L: 1 = 实地 … 0 = 峡谷上空, dc: 越过崖线多远（> 0 在峡谷上空）}，地图矩形内外都能算
+  const LM = mode === 'drop' && theme.landmass && bases.length >= 2 ? theme.landmass : null;
+  const mid = { x: W / 2, y: H / 2 };
+  const landAxes = LM ? bases.map((b) => { const dx = mid.x - b.c.x, dy = mid.y - b.c.y, l = Math.hypot(dx, dy) || 1; return { c: b.c, ux: dx / l, uy: dy / l }; }) : null;
+  const landAt = LM ? (x, y) => {
+    const wob = (fbm(x * (LM.edgeFreq ?? 0.004), y * (LM.edgeFreq ?? 0.004), 3, 91) - 0.5) * 2 * (LM.edgeNoise ?? 60)
+      + (fbm(x * 0.021, y * 0.021, 2, 93) - 0.5) * 2 * (LM.edgeNoise ?? 60) * 0.22;
+    let dc = Infinity;
+    for (const a of landAxes) dc = Math.min(dc, (x - a.c.x) * a.ux + (y - a.c.y) * a.uy - (LM.cliffDist ?? 500) + wob);
+    return { L: 1 - smoothstep(-(LM.lip ?? 10), LM.lip ?? 10, dc), dc };
+  } : null;
+  /** 峡谷的剖面：崖面从崖线陡直落下去，带一层层岩台，谷底有起伏 */
+  const chasmAt = (x, y, dc) => {
+    const p = smoothstep(0, 1, dc / (LM.cliffWidth ?? 90));
+    return -dropH * Math.pow(p, 0.85)
+      + (ridged(x * 0.017, y * 0.017, 3, 53) - 0.5) * (LM.ledge ?? 60) * 4 * p * (1 - p)
+      + (floorNoise ? (fbm(x * 0.006, y * 0.006, 3, 57) - 0.35) * floorNoise * p : 0);
+  };
+  /** 实地上的不可走区：雪坡缓缓隆起成一圈矮岩埂（基地窝在里面），不是悬崖 */
+  const landRiseAt = (x, y, e) => {
+    const p = smoothstep(0, 1, e / (LM.rimWidth ?? 70));
+    return (LM.rimHeight ?? 30) * p * (0.55 + 0.9 * fbm(x * 0.009, y * 0.009, 3, 95)) + (fbm(x * 0.03, y * 0.03, 2, 97) - 0.5) * 8 * p;
+  };
+  const hT = LM ? new Float32Array(N) : null;   // 画出来的地形高度（桥下是峡谷）；逻辑高度 h 里桥面仍是桥面
   const groundAt = (x, y, ld) => {
     const base = ms.plateauHeightAt ? ms.plateauHeightAt(x, y) : 0;
     const pathT = smoothstep(G.pathHalf, G.pathHalf + G.pathFeather, ld);   // 0 = 路面，1 = 野地
@@ -165,10 +192,16 @@ export function buildTerrainField(ms) {
       const t = rf * rf * (3 - 2 * rf);
       g = g * (1 - t) + bed * t;
     }
-    // 龙坑 / 男爵坑：河心石台
+    // 龙坑 / 男爵坑：河心一片天然的浅滩 —— 边缘不规则、缓缓没进水里，不是一张正圆的石台
+    //（用户："把龙坑那个特别丑的台删掉，或者换一个不太明显的方式显示"）
     for (const p of pits) {
-      const d = Math.hypot(x - p.x, y - p.y);
-      if (d < p.r * R.pitClearK) { const t = 1 - smoothstep(p.r * C.pit.rimK, p.r * R.pitClearK, d); g = g * (1 - t) + C.pit.floor * t; }
+      const d0 = Math.hypot(x - p.x, y - p.y), PT = C.pit;
+      if (d0 > p.r * R.pitClearK * (1 + (PT.edgeNoise ?? 0))) continue;
+      const d = d0 * (1 + (fbm(x * (PT.edgeFreq ?? 0.012), y * (PT.edgeFreq ?? 0.012), 3, 71) - 0.5) * 2 * (PT.edgeNoise ?? 0));
+      if (d < p.r * R.pitClearK) {
+        const t = 1 - smoothstep(p.r * PT.rimK, p.r * R.pitClearK, d);
+        g = g * (1 - t) + (PT.floor + (fbm(x * 0.03, y * 0.03, 2, 73) - 0.5) * 2 * (PT.bump ?? 0)) * t;
+      }
     }
     if (mode === 'rise') {
       const e = s - K.edgeNoise * fbm(x * K.edgeFreq, y * K.edgeFreq, 3, 31);   // 只往墙里收，崖脚不侵入可走区
@@ -181,6 +214,18 @@ export function buildTerrainField(ms) {
         const gorge = rf > 0 ? smoothstep(0, 0.4, rf) * (1 - smoothstep(180, 460, dEdge)) : 0;
         g += (ch * p + top) * (1 - gorge);
       }
+    } else if (LM) {
+      const { L, dc } = landAt(x, y);
+      const base = ms.plateauHeightAt ? ms.plateauHeightAt(x, y) : 0;
+      // 实地：可走区照常；不可走区是隆起的雪坡
+      const gLand = s > 0 ? g + landRiseAt(x, y, s) : g;
+      const gChasm = chasmAt(x, y, dc);
+      const land = L >= 1 ? gLand : gChasm + (gLand - gChasm) * L;
+      hT[k] = land;
+      // 逻辑高度：桥面（峡谷上空的可走区，外加 deckMargin 宽的一圈）是平的桥面高度，单位站在桥上；其余同画出来的地形
+      const deck = L < 1 && s <= (LM.deckMargin ?? 14);
+      g = deck ? base * (1 - L) + land * L : land;
+      if (deck && L < 0.5) g = base;
     } else {
       const e = s - 4;
       if (e > 0) {
@@ -196,9 +241,9 @@ export function buildTerrainField(ms) {
   // ---- 5. 查询接口 ----
   const fieldAt = (arr, x, y) => bil(arr, nx, ny, Math.max(0, Math.min(W, x)) / cell, Math.max(0, Math.min(H, y)) / cell);
   const blend = theme.outerBlend ?? O.blend, peak = theme.outerPeak ?? O.peakHeight;
-  const heightAt = (x, y) => {
+  const heightOf = (arr) => (x, y) => {
     const cx = Math.max(0, Math.min(W, x)), cy = Math.max(0, Math.min(H, y));
-    const hc = fieldAt(h, cx, cy);
+    const hc = fieldAt(arr, cx, cy);
     const dOut = Math.hypot(x - cx, y - cy);
     if (dOut <= 0) return hc;
     // 延伸世界：从地图边缘的高度过渡到山体，越远越高。距离用噪声扭一下，山脚线不跟着地图的矩形走。
@@ -215,6 +260,12 @@ export function buildTerrainField(ms) {
         * smoothstep(0, K.width * 1.6, dOut + Math.max(0, fieldAt(sd, cx, cy)));
       out = Math.max(hc, wall);
       out = out + (m - out) * smoothstep(0, blend, dW);
+    } else if (LM) {
+      // 地图之外：实地继续往外长成雪山；峡谷照样往两头延伸，直到被雾吃掉
+      const { L, dc } = landAt(x, y);
+      const gLand = Math.max(0, hc) + (m - Math.max(0, hc)) * smoothstep(blend * 0.12, blend, dW);
+      const gChasm = chasmAt(x, y, dc);
+      out = L >= 1 ? gLand : gChasm + (gLand - gChasm) * L;
     } else {
       out = hc + (m - hc) * smoothstep(blend * 0.12, blend, dW);
     }
@@ -227,9 +278,12 @@ export function buildTerrainField(ms) {
     }
     return out;
   };
+  const heightAt = heightOf(h), terrainHeightAt = hT ? heightOf(hT) : heightAt;
   return {
     map, mode, theme, themeId: terrainThemeIdOf(map), cell, nx, ny, W, H,
     h, sd, lane, river, hasRiver, pits, bases,
+    // 画出来的地形高度（有桥的图里，桥下是峡谷而不是桥面）。没有陆块声明时与 h / heightAt 是同一份
+    hTerrain: hT || h, terrainHeightAt, landAt, landmass: LM,
     waterLevel: hasRiver ? R.level : null,
     extent: O.extent,
     heightAt,

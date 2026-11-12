@@ -26,7 +26,7 @@ for (const id of IDS) {
   T(`被⑥-${id}：草丛、野花、芦苇不长进岩壁里`, [...cv.tuft, ...cv.flower, ...cv.reed].every((o) => f.sdAt(o.x, o.y) < 0));
   T(`被⑦-${id}：两次算出来一样（可复现）`, JSON.stringify(placeGroundCover(f, map, theme)) === JSON.stringify(cv));
   const an = placeAmbientAnchors(f, map, theme);
-  T(`萤①-${id}：萤火虫的锚点都在能走的野地上、不在路上（${an.length} 个）`, an.length <= CONFIG.terrain.ambient.count && an.every((a) => f.sdAt(a.x, a.y) <= -6 && f.laneAt(a.x, a.y) >= G.pathHalf + 30));
+  T(`萤①-${id}：萤火虫的锚点都在能走的野地上、不在路上（${an.length} 个）`, an.length <= ({ ...CONFIG.terrain.ambient, ...(theme.ambient || {}) }).count && an.every((a) => f.sdAt(a.x, a.y) <= -6 && f.laneAt(a.x, a.y) >= G.pathHalf + 30));
   if (id === 'summoners_rift_v1') {
     T('被⑧：峡谷里五种地被都有', Object.values(cv).every((l) => l.length > 20));
     T('被⑨：灌木贴着崖脚或长在崖顶，不长在野地正中', cv.bush.every((o) => { const sd = f.sdAt(o.x, o.y); return sd > -C.bushBand - 1e-6; }));

@@ -135,27 +135,35 @@ function moss(N, pal) {
   const dk = hexRGB(pal.dark), md = hexRGB(pal.mid), lt = hexRGB(pal.light), sp = hexRGB(pal.speck);
   return build(N, (u, v) => {
     const pad = fbm(u, v, 10, 4, 121), fine = fbm(u, v, 80, 2, 131);
-    const [d1, , id] = worley(u, v, 34, 137);
-    const leaf = sstep(0.3, 0.12, d1) * (id > 0.6 ? 1 : 0);          // 零星的落叶 / 小花
+    // 零星的落叶 / 小花：成片地出现、形状不规则的细碎斑点。原来是"每格一个、一样大的圆"，铺开来是一地整齐的橙色圆点
+    const leaf = sstep(0.76, 0.9, vnoise(u, v, 150, 137)) * sstep(0.48, 0.7, fbm(u, v, 6, 2, 139)) * 0.6;
     const t = pad * 0.6 + fine * 0.4;
     let c = t < 0.5 ? mix3(dk, md, t * 2) : mix3(md, lt, (t - 0.5) * 2);
     c = mix3(c, sp, leaf * 0.8);
     return { c, h: pad * 0.7 + fine * 0.2 + leaf * 0.1, rough: 0.95 };
   }, 2.0);
 }
-/** 铺石（基地广场 / 塔座 / 龙坑台面）：不规则石板 + 缝。pal = { dark, mid, light, gap } */
+/**
+ * 铺石（基地广场）：大小不一的旧石板，缝里是土和苔，不是一圈圈描出来的黑线。pal = { dark, mid, light, gap, moss? }
+ * 石板之间的明暗差收着给（每块只差一点），缝窄而浅：远看是一片石头地，近看才看得出一块一块。
+ */
 function paving(N, pal) {
-  const dk = hexRGB(pal.dark), md = hexRGB(pal.mid), lt = hexRGB(pal.light), gp = hexRGB(pal.gap);
+  const dk = hexRGB(pal.dark), md = hexRGB(pal.mid), lt = hexRGB(pal.light), gp = hexRGB(pal.gap), ms = hexRGB(pal.moss || pal.gap);
   return build(N, (u, v) => {
-    const [d1, d2, id] = worley(u + fbm(u, v, 4, 2, 141) * 0.04, v, 6, 151);
-    const edge = d2 - d1, gap = sstep(0.09, 0.02, edge);
-    const wear = fbm(u, v, 30, 3, 161), grain = vnoise(u, v, 170, 163);
-    const t = Math.max(0, Math.min(1, id * 0.55 + wear * 0.3 + grain * 0.15));
+    const wu = u + (fbm(u, v, 4, 2, 141) - 0.5) * 0.06, wv = v + (fbm(u, v, 4, 2, 143) - 0.5) * 0.06;
+    const [d1, d2, id] = worley(wu, wv, 7, 151);
+    const edge = d2 - d1, gap = sstep(0.07, 0.015, edge);
+    const wear = fbm(u, v, 24, 3, 161), grain = vnoise(u, v, 170, 163), stain = fbm(u, v, 5, 3, 165);
+    const t = Math.max(0, Math.min(1, 0.32 + id * 0.26 + wear * 0.22 + grain * 0.1 + (stain - 0.5) * 0.3));
     let c = t < 0.5 ? mix3(dk, md, t * 2) : mix3(md, lt, (t - 0.5) * 2);
-    c = mix3(c, gp, gap);
-    const bevel = sstep(0.02, 0.2, edge);
-    return { c, h: bevel * (0.75 + id * 0.25) + wear * 0.08, rough: 0.72 + 0.2 * gap + 0.08 * wear };
-  }, 5.0);
+    // 缝：土色，背阴的那一片缝里长苔
+    c = mix3(c, mix3(gp, ms, sstep(0.45, 0.7, stain)), gap * 0.85);
+    // 石板面上的细裂纹和磨损的坑
+    const pit = sstep(0.72, 0.9, vnoise(u, v, 90, 167)) * (1 - gap);
+    c = mix3(c, dk, pit * 0.35);
+    const bevel = sstep(0.015, 0.16, edge);
+    return { c, h: bevel * (0.8 + id * 0.2) + wear * 0.1 - pit * 0.12, rough: 0.78 + 0.16 * gap + 0.06 * wear };
+  }, 3.6);
 }
 /** 雪：风纹 + 细颗粒闪点。pal = { shade, mid, light } */
 function snow(N, pal) {

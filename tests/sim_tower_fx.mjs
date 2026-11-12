@@ -20,8 +20,8 @@ const ul = src('presentation/UnitLayer.js');
     M.count > 0 && M.radius.length === 2 && M.speed.length === 2 && M.rise > 0 && M.size > 0 && M.maxPx > 0);
   const pts = crystalParticles('#5b9bd5', 10);
   const u = pts.material.uniforms;
-  T('②光点在着色器里按时间运动（有 uTime、每颗带随机种子），颗数跟配置走',
-    !!u && 'uTime' in u && pts.geometry.getAttribute('seed').count === M.count);
+  T('②光点在着色器里按时间运动（有 uTime、每颗带随机种子），颗数跟配置走（悬浮光点 + 切面星芒）',
+    !!u && 'uTime' in u && pts.geometry.getAttribute('seed').count === M.count + (CONFIG.ui.crystal.sparkles.enabled === false ? 0 : CONFIG.ui.crystal.sparkles.count));
   T('③光点不再跟着水晶一起转（每帧抵消掉父级水晶的自转）', /en\.crystalPts\.rotation\.y = -en\.crystal\.rotation\.y/.test(ul));
   T('④旧的"绕水晶公转"配置已删（particleSpin 没人读了）', CONFIG.ui.crystal.particleSpin === undefined && !/particleSpin/.test(ul));
 }
@@ -46,25 +46,26 @@ const ul = src('presentation/UnitLayer.js');
   T('⑧被打穿：闪一下然后淡出消失', brk[10].flash > 0 && brk[10].alpha < 1 && brk[20].alpha === 0);
   T('⑨只算固定护盾 + 护盾，不算临时护盾', /\(e\.shieldFixedCurrent \|\| 0\) \+ \(e\.plainShield \|\| 0\)/.test(ul.slice(ul.indexOf('_syncShieldShell(e, en, dead, y)'))) && !/tempShield/.test(ul.slice(ul.indexOf('_syncShieldShell(e, en, dead, y)'), ul.indexOf('_disposeShieldShell(en) {'))));
   T('⑩只包防御塔：召唤水晶、水晶枢纽、据点不包', /e\._mapTier !== 'nexus_lane' && e\._mapTier !== 'nexus_main' && !e\.isCapturePoint/.test(ul));
-  // 外壳几何：平滑法线、没有零向量（零法线会让着色器出 NaN，辉光把它糊成满屏黑块）
+  // 默认是贴身外壳（skin，用户："新版防御塔可视化护盾效果太丑了，我要求回调原来的样式"）：
+  // 每个零件各自沿平滑法线外扩，与塔身同顶点数；没有零向量（零法线会让着色器出 NaN，辉光把它糊成满屏黑块）
+  T('⑪默认外壳样式是贴身外壳（skin）', CONFIG.ui.towerShield.shape === 'skin');
   const m = towerMesh('fx-test', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 0, null);
   const g = shellGeometry(m.geo), n = g.getAttribute('normal');
   let zero = 0;
   for (let i = 0; i < n.count; i++) if (Math.hypot(n.getX(i), n.getY(i), n.getZ(i)) < 0.5) zero++;
-  // 默认是轮廓外壳（hull）：一张跟着塔身整体轮廓走的光滑的皮，比塔身简单得多，但把塔身包在里面
-  g.computeBoundingBox(); m.geo.computeBoundingBox();
-  const bodyR = Math.max(m.geo.boundingBox.max.x, -m.geo.boundingBox.min.x, m.geo.boundingBox.max.z, -m.geo.boundingBox.min.z);
-  const hullR = Math.max(g.boundingBox.max.x, -g.boundingBox.min.x, g.boundingBox.max.z, -g.boundingBox.min.z);
-  T(`⑪轮廓外壳：法线全部是单位向量（零法线 ${zero} 个）、面数远少于塔身、上下左右把塔身包住`, zero === 0
-    && g.getAttribute('position').count < m.geo.getAttribute('position').count / 4
-    && hullR > bodyR * 0.8 && hullR < bodyR * 1.45 && g.boundingBox.max.y >= m.geo.boundingBox.max.y - 1e-6 && g.boundingBox.min.y <= m.geo.boundingBox.min.y + 1e-6);
+  T(`⑪a贴身外壳：与塔身同顶点数、没有零法线（零法线 ${zero} 个）`, g.getAttribute('position').count === m.geo.getAttribute('position').count && zero === 0);
   {
-    // 贴身外壳（skin）仍然可选：每个零件各自外扩，与塔身同顶点数
-    const prev = CONFIG.ui.towerShield.shape; CONFIG.ui.towerShield.shape = 'skin';
-    const m2 = towerMesh('fx-test-skin', '#e0473f', 32, '', 'tower', false, false, 'outer', 'red', 0, null);
+    // 轮廓外壳（hull）仍然可选：一张跟着塔身整体轮廓走的光滑的皮，比塔身简单得多，但把塔身包在里面
+    const prev = CONFIG.ui.towerShield.shape; CONFIG.ui.towerShield.shape = 'hull';
+    const m2 = towerMesh('fx-test-hull', '#e0473f', 32, '', 'tower', false, false, 'outer', 'red', 0, null);
     const g2 = shellGeometry(m2.geo), n2 = g2.getAttribute('normal');
     let z2 = 0; for (let i = 0; i < n2.count; i++) if (Math.hypot(n2.getX(i), n2.getY(i), n2.getZ(i)) < 0.5) z2++;
-    T('⑪b贴身外壳（shape = skin）：与塔身同顶点数、没有零法线', g2.getAttribute('position').count === m2.geo.getAttribute('position').count && z2 === 0);
+    g2.computeBoundingBox(); m2.geo.computeBoundingBox();
+    const bodyR = Math.max(m2.geo.boundingBox.max.x, -m2.geo.boundingBox.min.x, m2.geo.boundingBox.max.z, -m2.geo.boundingBox.min.z);
+    const hullR = Math.max(g2.boundingBox.max.x, -g2.boundingBox.min.x, g2.boundingBox.max.z, -g2.boundingBox.min.z);
+    T('⑪b轮廓外壳（shape = hull）：没有零法线、面数远少于塔身、上下左右把塔身包住', z2 === 0
+      && g2.getAttribute('position').count < m2.geo.getAttribute('position').count / 4
+      && hullR > bodyR * 0.8 && hullR < bodyR * 1.45 && g2.boundingBox.max.y >= m2.geo.boundingBox.max.y - 1e-6 && g2.boundingBox.min.y <= m2.geo.boundingBox.min.y + 1e-6);
     CONFIG.ui.towerShield.shape = prev;
   }
   T('⑫外壳几何按塔身几何缓存（同一份塔身只算一次）', shellGeometry(m.geo) === g);
