@@ -13,6 +13,7 @@ import { buildWorldRocks } from './WorldRocks.js';
 import { buildWorldFoliage } from './WorldFoliage.js';
 import { buildWorldWater } from './WorldWater.js';
 import { buildWorldLights } from './WorldLights.js';
+import { buildWorldGroundCover } from './WorldGroundCover.js';
 import { getWorldTextureSet } from './worldTextures.js';
 import { setWorldRect, setWorldWater, updateWorldShading } from './worldShading.js';
 
@@ -58,6 +59,7 @@ export class World {
     } });
     steps.push({ label: '注水', run: () => { if (field && this.toggles.water) this._add(buildWorldWater(field, theme)); } });
     steps.push({ label: '种树', run: () => { if (field && this.toggles.foliage) this._add(buildWorldFoliage(field, theme)); } });
+    steps.push({ label: '铺草种花', run: () => { if (field && this.toggles.foliage) this.cover = this._add(buildWorldGroundCover(field, theme)); } });
     steps.push({ label: '点亮火炬', run: () => { if (field) this.lights = this._add(buildWorldLights(field, theme)); this._complete = !!field; } });
     return steps;
   }

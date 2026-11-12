@@ -2130,6 +2130,21 @@ export const CONFIG = {
       crystalPollSec: 0.3,   // 每隔多久核对一次"哪些建筑还活着"
       crystal: { blue: '#6cb4ff', red: '#ff6a55', neutral: '#d8dce6', towerRadius: 190, orbRadius: 260, gemRadius: 420, k: 0.9 },
     },
+    // 地被（data/groundCover.js 定摆放，world/WorldGroundCover.js 定长相）。主题里可以用 cover: {...} 覆写其中几项。
+    //   step 撒点的格距（越小越密）；refSize 以多大的地图为基准（更大的图自动变疏）；
+    //   tuft / flower / reed / pebble / bushFoot / bushTop 各自的出现概率；tuftThreshold / flowerThreshold 成片的门槛（噪声）；
+    //   bushBand 灌木贴着崖脚多宽的一带；reedBand 芦苇长在多浅的水边；buildingClear 建筑周围留空；
+    //   xxSize 各自的大小（世界单位）；max 每种的数量上限；sector 分区边长（视锥外的分区不画）
+    cover: {
+      enabled: true, step: 15, refSize: 3552, sector: 900, buildingClear: 70,
+      tuft: 0.55, tuftThreshold: 0.43, flower: 0.5, flowerThreshold: 0.62, reed: 0.3, reedBand: 0.3, pebble: 0.1,
+      bushFoot: 0.09, bushBand: 30, bushTop: 0.012,
+      tuftSize: 12, flowerSize: 13, reedSize: 22, bushSize: 15, pebbleSize: 3.2,
+      petals: ['#ffffff', '#ffe066', '#c79bff'], reedHead: '#6b4a2e', bushTint: '#e6f2d2',
+      max: { tuft: 14000, flower: 3000, bush: 2600, reed: 1600, pebble: 5000 },
+    },
+    // 环境生物：萤火虫（入夜出现，下雨刮风时躲起来）。count 锚点数；perAnchor 每个锚点几只；roam 游走半径；size / gain 大小 / 亮度
+    ambient: { enabled: true, fireflies: true, count: 260, perAnchor: 2, roam: 46, size: 3.2, gain: 2.4, color: '#d8ff7a' },
     // 主题：按地图的 paletteId 选；地图可用 terrainTheme 字段直接指定。
     //   mode    rise = 不可走区隆起成岩壁；drop = 下沉成深渊 / 谷地
     //   layers  五层地表贴图（地面 / 路 / 岩 / 点缀 / 铺石）：kind 是生成函数，palette 是配色
@@ -2162,6 +2177,10 @@ export const CONFIG = {
       },
       frost: {
         mode: 'drop', dropHeight: 360, outerBlend: 900, outerPeak: 520, snowLine: 40, snowLineFade: 160,
+        // 深渊里的雾（从桥面下 top 处起，到 bottom 处最浓）；雪山上长的是挂雪的针叶树，火炬照样是暖的（冰天雪地里一点暖光）
+        abyssFog: { top: -70, bottom: -300, k: 0.92, color: '#b4c6d8' },
+        foliage: { outerDensity: 0.3, tree: { leaf: { dark: '#2c4a40', light: '#cfdde2' }, leafShape: 'needle', shape: { conical: true, crownY: 0.6, crownRY: 0.42, crownRX: 0.26, cardK: 0.9 }, bark: { dark: '#2e2622', mid: '#4a3c34', light: '#6a584c' } } },
+        cover: { pebbleColor: '#7f8c9a' },
         layers: {
           ground: { kind: 'snow', palette: { shade: '#a9bdd4', mid: '#dbe6f2', light: '#f7fbff' } },
           path: { kind: 'paving', palette: { dark: '#4d5a6a', mid: '#75869a', light: '#a3b3c6', gap: '#26303c' } },
@@ -2174,9 +2193,12 @@ export const CONFIG = {
       },
       desert: {
         mode: 'drop', dropHeight: 54, dropFloorNoise: 22, outerBlend: 500, outerPeak: 300,
+        foliage: { trees: false },
+        cover: { pebbleColor: '#b08a62' },
         layers: {
           ground: { kind: 'sand', palette: { dark: '#a8824e', mid: '#cfa66a', light: '#ecd09a' } },
-          path: { kind: 'paving', palette: { dark: '#7a6248', mid: '#a4886a', light: '#c9b192', gap: '#3d2f22' } },
+          // 可走的台面是踩实的沙土（铺石只留给建筑基座和基地广场）：整片都铺石板的话满屏都是格子
+          path: { kind: 'dirt', palette: { dark: '#8f7048', mid: '#b39062', light: '#d0b080', stone: '#9c8468' } },
           rock: { kind: 'rock', palette: { dark: '#6b3f2a', mid: '#a4643e', light: '#d19a66', stain: '#8a4a34' }, strata: 0.8 },
           accent: { kind: 'cracked', palette: { dark: '#8a6a44', mid: '#b08c5e', light: '#d2b486', crack: '#4a3524' } },
           paved: { kind: 'paving', palette: { dark: '#6a5440', mid: '#94795c', light: '#bda284', gap: '#33271c' } },

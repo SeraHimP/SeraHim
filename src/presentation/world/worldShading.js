@@ -31,6 +31,7 @@ export function worldUniforms() {
     tWLight: { value: blankTex() },                       // 局部光照图（火炬 + 水晶），覆盖地图矩形
     uWRect: { value: new THREE.Vector4(0, 0, 1, 1) },     // 世界矩形：(x0, z0, 1/宽, 1/高)
     uWLightK: { value: 1 },                               // 局部光强度（夜里更显）
+    uWDay: { value: 1 },                                  // 白天程度 1 = 正午，0 = 午夜（不受光的东西按它压暗：深渊里的雾、水雾）
     tWNoise: { value: null },
     tWSnow: { value: blankTex() }, uWSnowOn: { value: 0 },   // 积雪深度图（GroundTraceLayer 的雪盖）
     uWLevel: { value: -1e4 },                             // 水面高度（没有水的地图给一个很低的值）
@@ -53,6 +54,7 @@ export function updateWorldShading(timeSec, state, night, wind) {
   u.uWFade.value = state?.fade || 0; u.uWScorch.value = state?.scorch || 0;
   // 火光白天也在烧，但日光下几乎看不出来；按夜色把它的份量提上去
   u.uWLightK.value = (C.lightDay ?? 0.3) + ((C.lightNight ?? 1.0) - (C.lightDay ?? 0.3)) * Math.max(0, Math.min(1, night || 0));
+  u.uWDay.value = 1 - Math.max(0, Math.min(1, night || 0));
   if (wind) u.uWWind.value.set(wind.x, wind.y, wind.strength || 0);
 }
 export function setWorldRect(W, H) { worldUniforms().uWRect.value.set(0, 0, 1 / W, 1 / H); }
@@ -65,7 +67,7 @@ export function setWorldTints({ sand, snow } = {}) { const u = worldUniforms(); 
 export const WORLD_FRAG_HEAD = /* glsl */`
 #ifndef WORLD_SHADING_HEAD
 #define WORLD_SHADING_HEAD
-uniform float uWTime, uWWet, uWSnow, uWSand, uWFade, uWScorch, uWLightK, uWSnowOn, uWLevel;
+uniform float uWTime, uWWet, uWSnow, uWSand, uWFade, uWScorch, uWLightK, uWSnowOn, uWLevel, uWDay;
 uniform sampler2D tWLight, tWNoise, tWSnow;
 uniform vec4 uWRect; uniform vec3 uWWind, uWSandCol, uWSnowCol, uWWaterTint;
 varying vec3 vWPos;

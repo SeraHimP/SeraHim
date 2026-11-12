@@ -1094,7 +1094,7 @@ export class ThreeRenderer {
         time: performance.now() / 1000, dt: this._lightDt || 0.016,
         weather: weatherGroundState(), night: this._nightLevel(),
         wind: { x: wg[0], y: wg[1], strength: Math.max(ch('wind'), ch('hurricane'), ch('sandstorm')) },
-        camera: this.camera, target: this._target, camDist: this._camDist || 1000, deps: this.deps,
+        camera: this.camera, target: this._target, camDist: this._camDist || 1000, deps: this.deps, pixelRatio: this.gl.getPixelRatio(),
       });
     }
     // 建筑动画特效材质的预热要跟着"着色器签名里的场景状态"走：场景雾（setLighting 在切图之后才挂上）、

@@ -54,11 +54,12 @@ function makeSplat(field, map) {
       if (sdv < 6) path = 1 - smoothstep(G.pathHalf * 0.72, G.pathHalf + G.pathFeather * 0.7, ld);
       if (drop && sdv < 2) path = Math.max(path, 0.75);                         // 桥 / 台地：整个可走面都是人工路面
       paved = sdv < 4 ? pavedAt(x, y) : 0;
-      if (sdv > K.width * 0.7) accent = 0.55 + 0.45 * fbm(x * 0.012, y * 0.012, 2, 83);   // 崖顶长苔 / 落叶
+      // 崖顶长苔 / 落叶。深渊 / 谷地图的谷底改用和地图外面同一条规则（成片的斑块），里外是同一片地，接缝处不留一圈矩形的色差
+      if (sdv > K.width * 0.7) accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : 0.55 + 0.45 * fbm(x * 0.012, y * 0.012, 2, 83);
       else if (sdv <= 0) accent = smoothstep(0.56, 0.72, fbm(x * 0.0075, y * 0.0075, 3, 87)) * (1 - path) * 0.85;   // 野地里的斑块
       if (rf > 0.02) path = Math.max(path, smoothstep(0.02, 0.5, rf) * 0.8);     // 河滩 / 河床：碎石
     } else {
-      accent = smoothstep(0.5, 0.75, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.6;
+      accent = drop ? smoothstep(0.45, 0.7, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.75 : smoothstep(0.5, 0.75, fbm(x * 0.004, y * 0.004, 3, 89)) * 0.6;
       if (rf > 0.02) path = smoothstep(0.02, 0.5, rf) * 0.8;
     }
     rock = Math.max(rock, 0);
@@ -88,12 +89,15 @@ function terrainMaterial(tex, theme, shadows) {
       uTile: { value: new THREE.Vector4(1 / (T.ground ?? 150), 1 / (T.path ?? 130), 1 / (T.rock ?? 190), 1 / (T.accent ?? 140)) },
       uTileP: { value: 1 / (T.paved ?? 110) },
       uSnowLine: { value: new THREE.Vector2(theme.snowLine ?? 1e5, theme.snowLineFade ?? 120) },
+      // 深渊里的雾：从 top 高度往下越来越浓，到 bottom 处最浓（k）。谷底融进雾里，看不清有多深，也看不出贴图的平铺
+      uAbyss: { value: new THREE.Vector3(theme.abyssFog?.top ?? -1e5, theme.abyssFog?.bottom ?? -2e5, theme.abyssFog?.k ?? 0) },
+      uAbyssCol: { value: new THREE.Color(theme.abyssFog?.color ?? '#9fb4c8') },
     });
     sh.vertexShader = `attribute vec4 aSplat; attribute vec4 aAux; varying vec4 vSplat; varying vec4 vAux; varying vec3 vWPos; varying vec3 vWNrm;\n`
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vSplat = aSplat; vAux = aAux; vWPos = (modelMatrix * vec4(position, 1.0)).xyz; vWNrm = normalize(mat3(modelMatrix) * normal);');
     sh.fragmentShader = WORLD_FRAG_HEAD + /* glsl */`
 uniform sampler2D tA0, tN0, tA1, tN1, tA2, tN2, tA3, tN3, tA4, tN4;
-uniform vec4 uTile; uniform float uTileP; uniform vec2 uSnowLine;
+uniform vec4 uTile; uniform float uTileP; uniform vec2 uSnowLine; uniform vec3 uAbyss, uAbyssCol;
 varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
 ` + sh.fragmentShader
       .replace('#include <map_fragment>', /* glsl */`
@@ -168,9 +172,15 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   vec3 wn = normalize(tT * tn.x + tB * tn.y + wn0 * max(tn.z, 0.2));
   normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
 `)
-      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += wLocalLight(vWPos) * diffuseColor.rgb;');
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += wLocalLight(vWPos) * diffuseColor.rgb;')
+      .replace('#include <opaque_fragment>', /* glsl */`
+  {
+    float ak = smoothstep(uAbyss.x, uAbyss.y, vWPos.y + (texture2D(tWNoise, vWPos.xz * 0.0021 + uWTime * 0.004).r - 0.5) * 60.0) * uAbyss.z;
+    outgoingLight = mix(outgoingLight, uAbyssCol * (0.16 + 0.84 * uWDay), ak);
+  }
+#include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'world-terrain-1';
+  mat.customProgramCacheKey = () => 'world-terrain-2';
   mat.shadowSide = THREE.FrontSide;
   return mat;
 }
