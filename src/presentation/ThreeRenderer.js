@@ -62,6 +62,14 @@ import { EffectComposer } from '../../vendor/postprocessing/EffectComposer.js';
 import { UnrealBloomPass } from '../../vendor/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from '../../vendor/postprocessing/OutputPass.js';
 import { setUnitTint } from './UnitMeshFactory.js';
+import { setWorldUnitSun, unitSunOf } from './world/worldShading.js';
+
+/** 昼夜染色 × 地图主题的环境色。纯函数，便于测试。 */
+export function themedUnitTint(tint, theme) {
+  const t = theme?.unitTint;
+  if (!t) return tint;
+  return '#' + new THREE.Color(tint || '#ffffff').multiply(new THREE.Color(t)).getHexString();
+}
 // 渲染重构 Week2·Day8-10：轮廓描边 + SSAO，见 PostFX.js 头注。
 import { ScenePass, createSSAOPass, createFogPass, HUD_SPRITE_LAYER, FX_PARTICLE_LAYER } from './PostFX.js';
 import { SkyLight } from './skyLight.js';
@@ -294,8 +302,11 @@ export class ThreeRenderer {
     // v47：单位（塔/兵/龙）跟着环境一起变色，否则夜里满地图发白的小人（见 DayNight.unitTintOf）。
     // 走 setLighting 是因为**这里已经是光照的唯一入口** —— 再开一条并行的通道，
     // 就会出现"改了灯没改单位"的半截状态。
+    if (sunElevation !== undefined) setWorldUnitSun(unitSunOf(sunElevation));
     if (unitTint !== undefined) {
-      setUnitTint(unitTint);
+      // 再乘上这张地图的环境色（主题的 unitTint）：紫色森林里的塔带一点紫、冰原上的偏冷 —— 单位和地形是同一个世界里的东西
+      this._unitTintRaw = unitTint;
+      setUnitTint(themedUnitTint(unitTint, this.world?.theme));
       // 2026-09-26 修复：雪盖/水洼同样是 MeshBasicMaterial（不吃场景光照），
       // 用户报"雪覆盖时夜晚看不出来是夜晚，依旧亮堂堂的"——跟裙边同一个坑，
       // 见 GroundTraceLayer.setTint 头注。
@@ -958,6 +969,8 @@ export class ThreeRenderer {
   }
 
   _finishLoading() {
+    // 换了地图：环境色跟着主题换（昼夜那一份没变，重新乘一次）
+    if (this._unitTintRaw !== undefined) setUnitTint(themedUnitTint(this._unitTintRaw, this.world?.theme));
     if (!this._loading && !LoadingScreen.isVisible()) return;
     this._loading = null;
     LoadingScreen.progress(1, '');

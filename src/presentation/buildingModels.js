@@ -55,6 +55,31 @@ function jitterPrism(n, rTop, rBot, h, seed) {
   return flat(g);
 }
 
+/**
+ * 塔芯的一瓣：圆台沿圆周切出来的一个扇形块（a0..a1，按 x = cos、z = sin 的方位角），带两个切面。底面在 y = 0。
+ * 塔芯切成几瓣，重损时被打穿的那一侧整瓣拿掉 —— 塔芯也是会坏的（用户："塔里面这个核心一直都是完好无损的，这个也应该跟着损毁"）。
+ */
+function coreWedge(rTop, rBot, h, a0, a1, seed, seg = 3) {
+  const P = [], tri = (a, b, c) => P.push(a, b, c);
+  const ring = (r, y, top) => { const o = []; for (let i = 0; i <= seg; i++) { const a = a0 + (a1 - a0) * i / seg; o.push([Math.cos(a) * r, y + (top ? (hash01(i + seed * 7, 3) - 0.5) * h * 0.14 : 0), Math.sin(a) * r]); } return o; };
+  const b = ring(rBot, 0, false), t = ring(rTop, h, true), cb = [0, 0, 0], ct = [0, h, 0];
+  for (let i = 0; i < seg; i++) { tri(b[i], t[i], b[i + 1]); tri(b[i + 1], t[i], t[i + 1]); tri(ct, t[i + 1], t[i]); tri(cb, b[i], b[i + 1]); }
+  tri(cb, ct, b[0]); tri(b[0], ct, t[0]); tri(cb, b[seg], ct); tri(b[seg], t[seg], ct);
+  // 这一瓣是凸的：把每个三角形的绕向统一成朝外（法线背离瓣的重心）
+  const cx = Math.cos((a0 + a1) / 2) * rBot * 0.5, cz = Math.sin((a0 + a1) / 2) * rBot * 0.5, cy = h / 2, pos = [];
+  for (let i = 0; i < P.length; i += 3) {
+    const [A, B, Cc] = [P[i], P[i + 1], P[i + 2]];
+    const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2], vx = Cc[0] - A[0], vy = Cc[1] - A[1], vz = Cc[2] - A[2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const out = nx * ((A[0] + B[0] + Cc[0]) / 3 - cx) + ny * ((A[1] + B[1] + Cc[1]) / 3 - cy) + nz * ((A[2] + B[2] + Cc[2]) / 3 - cz);
+    pos.push(...A, ...(out >= 0 ? B : Cc), ...(out >= 0 ? Cc : B));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 /** 红方台沿的玄武岩柱丛：一簇簇高低不一的六棱石柱（部件 `col{i}`），把平板一样的台子变成从地里长出来的岩台。 */
 function basaltRim(m, R, col, { n = 9, r = 0.98, y = 0, seed = 0, hMin = 0.16, hMax = 0.46 }) {
   const ids = [];
@@ -96,7 +121,10 @@ function masonryTower(m, R, col, red) {
   // ---- 塔身下段：芯（石块掉了露出来）+ 六皮石头，逐皮收分、错缝 ----
   const lowH = R * 1.3, nC = 6, ch = lowH / nC, taper = 0.82;
   // 芯分三段垒（塌的时候是三块，不是一根完整的柱子）
-  for (let i = 0; i < 3; i++) m.piece(`coreLow${i}`, { stub: 0, vanish: true }, () => m.add(jitterPrism(10, R * (0.5 - 0.1 * (i + 1) / 3), R * (0.5 - 0.1 * i / 3), lowH / 3, i + 5), T(0, y0 + lowH * (i + 0.5) / 3, 0), col.core, 'dark'));
+  // 每段再沿圆周切成四瓣（部件 coreLow{段}_{瓣}，瓣 q 占方位角 q·90°..(q+1)·90°）：重损时被打穿的那一侧整瓣拿掉
+  const QUAD = Math.PI / 2;
+  for (let i = 0; i < 3; i++) for (let q = 0; q < 4; q++) m.piece(`coreLow${i}_${q}`, { stub: i === 2 ? 0.4 : 0, vanish: true },
+    () => m.add(coreWedge(R * (0.5 - 0.1 * (i + 1) / 3), R * (0.5 - 0.1 * i / 3), lowH / 3, q * QUAD, (q + 1) * QUAD, i * 4 + q + 5), T(0, y0 + lowH * i / 3, 0), shade(col.core, 0.92 + hash01(i * 4 + q, 17) * 0.16), 'dark'));
   const blocks = [];
   for (let i = 0; i < nC; i++) {
     const k0 = 1 - (1 - taper) * i / nC, k1 = 1 - (1 - taper) * (i + 1) / nC;
@@ -142,7 +170,8 @@ function masonryTower(m, R, col, red) {
   y += R * 0.29;
   // ---- 塔身上段：细一圈，三皮石头 + 四道发光的窄窗 ----
   const upH = R * 0.72, uc = upH / 3;
-  for (let i = 0; i < 2; i++) m.piece(`coreUp${i}`, { stub: 0, vanish: true }, () => m.add(jitterPrism(10, R * (0.37 - 0.04 * (i + 1) / 2), R * (0.37 - 0.04 * i / 2), upH / 2, i + 9), T(0, y + upH * (i + 0.5) / 2, 0), col.core, 'dark'));
+  for (let i = 0; i < 2; i++) for (let q = 0; q < 4; q++) m.piece(`coreUp${i}_${q}`, { stub: 0, vanish: true },
+    () => m.add(coreWedge(R * (0.37 - 0.04 * (i + 1) / 2), R * (0.37 - 0.04 * i / 2), upH / 2, q * QUAD, (q + 1) * QUAD, i * 4 + q + 29), T(0, y + upH * i / 2, 0), shade(col.core, 0.92 + hash01(i * 4 + q, 19) * 0.16), 'dark'));
   for (let i = 0; i < 3; i++) blocks.push(course(m, `u${i}`, { r0: R * 0.33, r1: R * 0.48 - i * R * 0.012, y: y + i * uc, h: uc * 0.93, n: 8, gap: 0.03, phase: (i % 2) * TAU / 16 + 0.2, color: shade(col.stone, 1.04), vary, seed: i + 11 }));
   for (let i = 0; i < 4; i++) {
     const a = i / 4 * TAU + Math.PI / 4, cs = Math.cos(a), sn = Math.sin(a);
@@ -165,7 +194,8 @@ function masonryTower(m, R, col, red) {
   y += R * 0.22;
   for (let i = 0; i < 8; i++) {
     const a = i / 8 * TAU + Math.PI / 8, cs = Math.cos(a), sn = Math.sin(a);
-    m.piece(`mer${i}`, { stub: 0.3 }, () => {
+    // 垛口立在冠台上：它脚下那一段冠台塌了的话，垛口的残根不能留在半空（挂靠到所在的那段冠台）
+    m.attachedTo(`corbel${[0, 0, 3, 3, 2, 2, 1, 1][i]}`, () => m.piece(`mer${i}`, { stub: 0.3 }, () => {
       if (red) {
         // 獠牙一样的尖垛口：高低错落，尖上包一点青铜
         const hh = R * (0.24 + (i % 2) * 0.1);
@@ -175,7 +205,7 @@ function masonryTower(m, R, col, red) {
         m.add(stoneBlock(R * 0.19, R * 0.15, R * 0.1, i + 60), C(T(cs * R * 0.6, y + R * 0.075, sn * R * 0.6), RY(-a + Math.PI / 2)), shade(col.stone, 0.96 + hash01(i, 9) * 0.08), 'stone');
         m.add(stoneBlock(R * 0.21, R * 0.03, R * 0.12, i + 70, 0.02), C(T(cs * R * 0.6, y + R * 0.165, sn * R * 0.6), RY(-a + Math.PI / 2)), col.trim, 'gold');
       }
-    });
+    }));
   }
   // ---- 水晶托：中间一个杯座，四只石爪向上合拢，爪尖包金 / 包铜 ----
   m.piece('cup', { stub: 0 }, () => {
@@ -216,13 +246,17 @@ function masonryTower(m, R, col, red) {
   // 损毁清单（用户："掉块（破损）模型不够明显，看不出来损毁的程度，加大损毁模型的破旧度"）。
   // 伤集中在同一侧（方位 90°~180°），远看轮廓就变了，不是东一块西一块地少几块石头：
   //   轻损：那一侧的爪断了、两个垛口没了、扶壁塌了一道，塔身被啃掉一片、露出里面的暗芯；一面旗掉了。
-  //   重损：那一侧的冠台、腰箍也塌了，上段只剩半圈，下段从上到下豁开；另一侧也开始掉石头；只剩两只爪托着水晶。
+  //   重损：那一侧从冠台一路豁到塔身中段 —— 冠台、腰箍、上段的石头、连同里面那一瓣塔芯都没了；
+  //         另一侧也开始掉石头；只剩两只爪托着水晶。
+  // 不变量：豁口那一瓣里，被拿掉的东西上面不能还留着东西（冠台没了，它上面的垛口和爪必须一起没；
+  //         塔芯那一瓣没了，它上面的腰箍、上段、冠台必须一起没）—— 否则就是悬在半空的石头（用户："重度损毁模型上方会出现浮空"）。
   const pick = (list) => list.map(([i, k]) => blocks[i]?.[k]).filter(Boolean);
   const light = ['flag1', 'claw1', 'mer2', 'mer3', 'fin1', 'shield1',
-    ...pick([[5, 2], [5, 3], [4, 2], [4, 3], [3, 2], [8, 2], [8, 3], [7, 2], [6, 3], [5, 6], [2, 6]])];
+    ...pick([[5, 2], [4, 2], [4, 3], [3, 2], [7, 2], [8, 2], [5, 6], [2, 6]])];
   const heavy = ['flag-1', 'claw2', 'corbel3', 'belt3', 'slit1', 'fin2', 'fin3', 'mer1', 'mer4', 'mer6', 'shield2', 'shield3',
-    ...pick([[8, 1], [8, 4], [7, 1], [7, 3], [7, 4], [6, 1], [6, 2], [6, 4], [5, 1], [5, 4], [4, 1], [4, 4], [3, 1], [3, 3], [3, 4],
-      [2, 2], [2, 3], [1, 2], [1, 3], [0, 2], [5, 7], [4, 6], [3, 6], [1, 6], [8, 6], [7, 7], [0, 5]]),
+    'coreUp1_1', 'coreUp0_1', 'coreLow2_1',
+    ...pick([[6, 2], [6, 3], [7, 1], [8, 3], [5, 1], [5, 3], [3, 1], [3, 3], [2, 2], [2, 3], [1, 2],
+      [5, 7], [4, 6], [3, 6], [1, 6], [0, 5], [7, 6], [8, 6]]),
     ...(red ? ['spur1', 'spur3'] : [])];
   debris(m, R, col, 22, { r: R * 0.36, y0: y0 + R * 0.1, y1: y0 + R * 2.3 }, red ? 2 : 1);
   return { crystalR, crystalCy, baseTop: y0, baseR: R * 0.9, light, heavy,

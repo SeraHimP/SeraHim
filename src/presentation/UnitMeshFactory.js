@@ -115,8 +115,12 @@ function _applyFakeAO(pos, col, bbox) {
 
 // topY 一律从合并后的包围盒读【真值】，不手工累加各部件高度：
 // 手推值会随任何一次造型微调悄悄失准，而血条正是靠它定位，一旦偏了就插进模型里。
-function pack(parts) {
+function pack(parts, align = true) {
   const geo = mergeParts(parts);
+  // align = false：写实造型的建筑（buildingModels）。它们的基座本来就建在 y = 0 上，而掉在塔脚的碎块、废墟里半埋的部件
+  // 是故意探到地面以下一点的。照样"对齐底面"的话，整座建筑会被抬高那一点点 —— 倒塌动画（不经过这里）播完换成静态废墟时，
+  // 废墟就往上跳一下；掉档时塔身也会跟着窜一下、和水晶错开。
+  if (!align) return { geo, topY: geo.boundingBox.max.y };
   // 统一把底面对齐到 y=0。旋转过的部件（盾牌、车轮）很容易探到地面以下——
   // 实测近战兵沉 8.1、炮车沉 14.0、投石机沉 12.5，视觉上就是半截埋进土里。
   // 与其在每个造型里手工配平，不如在这里对所有模型强制该不变量，新造型天然免疫。
@@ -982,7 +986,7 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
       add(fBase(fr, fh * 0.42), T(0, -fh + fh * 0.21, 0), shade(fc, 0.86));
       add(fBase(fr * 0.86, fh * 0.58), T(0, -fh * 0.58 + fh * 0.29, 0), fc);
     }
-    hit = pack(parts);
+    hit = pack(parts, !(pb && pb.continuous));
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
     if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR, cx: statue ? statue.crystalX : 0, cz: statue ? statue.crystalZ : 0, spinK: crystalSpinK }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
@@ -1168,7 +1172,7 @@ export function setUnitTint(hex) {
 // shader 结构，可以放心让它们共享同一份编译好的 program（同 VegetationShaderPatch.js
 // 头注记录的"identical onBeforeCompile 文本导致错误共享 program"是反过来的坑——
 // 那边是"文本相同但语义不同不该共享"，这里是"文本相同且语义也相同，该共享"）。
-const CRYSTAL_RIM_CACHE_KEY = 'crystalMaterial_v5';
+const CRYSTAL_RIM_CACHE_KEY = 'crystalMaterial_v6';
 /**
  * 水晶材质（2026-11 重做）。用户："尤其是模型中的水晶要好好做（模型 + 粒子效果 + 其他效果）"、"水晶在任何时候都要发光"。
  * 一颗宝石该有的四样东西都在片元里按视角现算，不用贴图：
@@ -1213,7 +1217,7 @@ export function crystalMaterial(color) {
   {
     vec3 cV = normalize(vViewPosition);
     float ndv = max(dot(cV, normal), 0.0);
-    float crystalRim = pow(1.0 - ndv, uRimPower);
+    float crystalRim = pow(clamp(1.0 - ndv, 0.0, 1.0), uRimPower);
     float core = ndv * ndv;
     // 假折射：视线穿过切面折进晶体里。切面是平的（flatShading），所以每个切面折出去的方向是一个定值——
     // 拿它去查噪声，每个切面就有自己的明暗；晶体一转，各个切面轮流亮起来又暗下去。

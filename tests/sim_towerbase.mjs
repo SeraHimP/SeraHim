@@ -288,7 +288,7 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
   T('晶⑤-在 <normal_fragment_maps> 之后把边缘光叠进 totalEmissiveRadiance（乘 emissive，随攻击蓄能同步变亮）',
     fsrc.indexOf('crystalRim') > fsrc.indexOf('#include <normal_fragment_maps>') && /\+ emissive \* crystalRim \* uRimStrength/.test(fsrc));
   T('晶⑥-Fresnel 项用的是 1-dot(视线,法线) 的幂次（边缘越接近垂直视线越亮，不是随手写的别的公式）',
-    /float ndv = max\(dot\(cV, normal\), 0\.0\);/.test(fsrc) && /vec3 cV = normalize\(vViewPosition\);/.test(fsrc) && /pow\(1\.0 - ndv, uRimPower\)/.test(fsrc));
+    /float ndv = max\(dot\(cV, normal\), 0\.0\);/.test(fsrc) && /vec3 cV = normalize\(vViewPosition\);/.test(fsrc) && /pow\(clamp\(1\.0 - ndv, 0\.0, 1\.0\), uRimPower\)/.test(fsrc));
   T('晶⑦-自发光的每一项都乘 emissive（亮度只由 emissiveIntensity 一个量驱动，整颗水晶同步变亮）',
     /vec3 deep = max\(mix\(vec3\(lum\), emissive, uCS\), 0\.0\);/.test(fsrc) && /totalEmissiveRadiance = \(deep \* uCK\.x/.test(fsrc) && /hot \* \(core \* uCK\.y \* tone \+ energy \* uCK\.z/.test(fsrc) && /mix\(emissive,/.test(fsrc)
     && /float lum = dot\(emissive, vec3\(0\.3333\)\);/.test(fsrc) && /glint \* uCK\.w \* lum/.test(fsrc) && /fire \* uCG\.y \* lum/.test(fsrc));

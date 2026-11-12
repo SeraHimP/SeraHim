@@ -210,7 +210,7 @@ const SSAO_AO_FRAG = `
         occlusion += (sceneViewZ >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
       }
       float ao = 1.0 - occlusion / float(${SSAO_KERNEL_SIZE});
-      gl_FragColor = vec4(vec3(pow(ao, power)), 1.0);
+      gl_FragColor = vec4(vec3(pow(clamp(ao, 0.0, 1.0), power)), 1.0);
     }
 `;
 const SSAO_BLUR_FRAG = `

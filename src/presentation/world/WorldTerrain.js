@@ -123,7 +123,10 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   vec3 wn0 = normalize(vWNrm);
   vec4 nzA = texture2D(tWNoise, vWPos.xz * 0.0013);       // 大尺度变化
   vec4 nzB = texture2D(tWNoise, vWPos.xz * 0.0094);       // 边界打散
-  vec4 wS = vSplat; float wPv = vAux.x; float under = vAux.y; float vAO = vAux.z;
+  // 混合权重先夹到 0..1。开着多重采样时，三角形边上的像素是按"像素中心"取插值的，中心落在三角形外面就是外推：
+  // 一条边两端权重是 0、对面顶点大于 0，外推出去就是负数；负数取 2.2 次幂是 NaN，后处理把 NaN 像素置黑 ——
+  // 于是沿着"某一层权重刚好降到 0"的那些三角形边出现一条条细黑线（用户："地形接缝间有特别细小的缝隙，显示为细黑线"）。
+  vec4 wS = clamp(vSplat, 0.0, 1.0); float wPv = clamp(vAux.x, 0.0, 1.0); float under = clamp(vAux.y, 0.0, 1.0); float vAO = clamp(vAux.z, 0.0, 1.0);
   // 路 / 斑块的边界用噪声打散：顶点插值出来的是一条软边，自然界里是犬牙交错的
   wS.y = smoothstep(0.30, 0.70, wS.y + (nzB.g - 0.5) * 0.55 * step(0.02, wS.y) * step(wS.y, 0.98));
   wS.w = smoothstep(0.25, 0.75, wS.w + (nzB.b - 0.5) * 0.6 * step(0.02, wS.w));
@@ -143,7 +146,7 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   // 按贴图高度混合：高的地方（石子、草丛）先露出来
   float w0 = wS.x * (0.35 + n0.a), w1 = wS.y * (0.35 + n1.a), w2 = wS.z * (0.5 + n2.a), w3 = wS.w * (0.35 + n3.a), w4 = wPv * (0.5 + n4.a);
   w0 *= 1.0 - wPv; w1 *= 1.0 - wPv; w3 *= 1.0 - wPv;
-  w0 = pow(w0, 2.2); w1 = pow(w1, 2.2); w2 = pow(w2, 2.2); w3 = pow(w3, 2.2); w4 = pow(w4, 2.2);
+  w0 = pow(max(w0, 0.0), 2.2); w1 = pow(max(w1, 0.0), 2.2); w2 = pow(max(w2, 0.0), 2.2); w3 = pow(max(w3, 0.0), 2.2); w4 = pow(max(w4, 0.0), 2.2);
   float wSum = w0 + w1 + w2 + w3 + w4 + 1e-5;
   w0 /= wSum; w1 /= wSum; w2 /= wSum; w3 /= wSum; w4 /= wSum;
   vec3 alb = a0.rgb * w0 + a1.rgb * w1 + a2.rgb * w2 + a3.rgb * w3 + a4.rgb * w4;
@@ -160,12 +163,12 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
     alb = mix(alb, alb * uWWaterTint * 1.6, under * 0.75);
     vec2 cu = vWPos.xz * 0.045;
     float c1 = texture2D(tWNoise, cu + vec2(uWTime * 0.021, uWTime * 0.013)).a, c2 = texture2D(tWNoise, cu * 1.7 - vec2(uWTime * 0.017, -uWTime * 0.019)).a;
-    alb += vec3(0.20, 0.24, 0.22) * pow(1.0 - abs(c1 - c2), 12.0) * under * (1.0 - under * 0.6);
+    alb += vec3(0.20, 0.24, 0.22) * pow(clamp(1.0 - abs(c1 - c2), 0.0, 1.0), 12.0) * under * (1.0 - under * 0.6);
     rgh = mix(rgh, 0.5, under);
   }
   float dry = 1.0 - smoothstep(0.0, 0.25, under);
   // 湿：压暗、变光滑；岸边一圈常年是湿的
-  float shore = (1.0 - smoothstep(0.2, 2.6, vWPos.y - uWLevel)) * vAux.w * dry;   // 只有河边才有常湿的岸
+  float shore = (1.0 - smoothstep(0.2, 2.6, vWPos.y - uWLevel)) * clamp(vAux.w, 0.0, 1.0) * dry;   // 只有河边才有常湿的岸
   float wetK = clamp(uWWet * (0.75 + 0.5 * nzB.a) + shore * 0.8, 0.0, 1.0) * dry;
   alb *= 1.0 - 0.38 * wetK * (1.0 - 0.5 * w2);
   rgh = mix(rgh, 0.28, wetK * 0.75);
@@ -199,7 +202,7 @@ varying vec4 vSplat; varying vec4 vAux; varying vec3 vWNrm;
   }
 #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'world-terrain-9';
+  mat.customProgramCacheKey = () => 'world-terrain-10';
   mat.shadowSide = THREE.FrontSide;
   return mat;
 }

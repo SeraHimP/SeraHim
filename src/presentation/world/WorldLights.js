@@ -81,17 +81,18 @@ function flameMaterial(col) {
           gl_FragColor = vec4(uMid * a, 1.0);
           return;
         }
-        vec2 uv = vUv; float y = uv.y;
+        // uv 夹到 0..1：面片边上的像素取到的是外推值（y 略大于 1），1 - y 是负数，取幂得 NaN —— 每团火的上沿会多出一道细黑线
+        vec2 uv = clamp(vUv, 0.0, 1.0); float y = uv.y;
         float t = uWTime * 1.35 + vPh * 7.0;
         float n1 = texture2D(tWNoise, vec2(uv.x * 0.55 + vPh, y * 0.5 - t * 0.55)).r;
         float n2 = texture2D(tWNoise, vec2(uv.x * 1.3 - vPh, y * 1.1 - t * 0.95)).g;
         float x = (uv.x - 0.5) * 2.0 + (n1 - 0.5) * 0.6 * y;
         // 水滴形的火舌：根部收一点、腰最宽、往上收尖，边缘被噪声啃掉
-        float w = 0.66 * pow(1.0 - y, 0.72) * (0.5 + 0.5 * smoothstep(0.0, 0.2, y)) * (0.78 + 0.5 * n2);
+        float w = 0.66 * pow(max(1.0 - y, 0.0), 0.72) * (0.5 + 0.5 * smoothstep(0.0, 0.2, y)) * (0.78 + 0.5 * n2);
         float body = 1.0 - smoothstep(w * 0.25, w, abs(x));
         float f = body * smoothstep(0.0, 0.06, y) * (1.0 - smoothstep(0.5, 1.0, y + (n2 - 0.5) * 0.6));
         f *= 0.65 + 0.7 * n2;
-        if (f < 0.02) discard;
+        if (!(f >= 0.02)) discard;      // 写成"不大于等于就丢"：万一算出 NaN 也会被丢掉，而不是当成颜色写进去
         vec3 c = mix(uEdge, uMid, smoothstep(0.1, 0.5, f));
         c = mix(c, uCore, smoothstep(0.55, 0.95, f) * (1.0 - y * 0.6));
         gl_FragColor = vec4(c * f * uGain, 1.0);

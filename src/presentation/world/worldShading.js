@@ -33,6 +33,7 @@ export function worldUniforms() {
     uWLightK: { value: 1 },                               // 局部光强度（夜里更显）
     uWLightStep: { value: new THREE.Vector2(1 / 512, 1 / 512) },   // 估光源方向时往旁边偏多远取样（光照图 uv）
     uWLightY: { value: new THREE.Vector2(-1e5, -1e5 - 1) },        // 局部光只照到这个高度：x 以上全亮，往下到 y 淡没（桥上的火炬照不到桥墩脚下）
+    uWUnitSun: { value: 1 },                              // 单位 / 建筑吃多少直射光（太阳压得很低时收一些，见 setWorldUnitSun）
     uWLightDir: { value: new THREE.Vector3(0.14, 0.6, 0.3) },      // x = 相对亮度梯度多大算"斜着照"，y = 光源有多高（越大越像从头顶照），z = 背光面保留多少
     uWDay: { value: 1 },                                  // 白天程度 1 = 正午，0 = 午夜（不受光的东西按它压暗：深渊里的雾、水雾）
     tWNoise: { value: null },
@@ -70,6 +71,16 @@ export function setWorldLightMap(tex) {
 }
 /** 局部光照到多低：top 以上全亮，往下到 bottom 淡没。不传 = 不限（没有深渊的图）。 */
 export function setWorldLightFloor(top, bottom) { const v = worldUniforms().uWLightY.value; if (top == null) v.set(-1e5, -1e5 - 1); else v.set(top, bottom ?? top - 60); }
+/** 单位 / 建筑吃几成直射光（1 = 全吃）。渲染器按太阳高度给：正午 1，黎明 / 黄昏收到 CONFIG.ui.unitLighting.lowSun.k。 */
+export function setWorldUnitSun(k) { worldUniforms().uWUnitSun.value = Math.max(0, Math.min(1, k)); }
+/** 太阳高度（度）→ 单位吃几成直射光。纯函数，便于测试。 */
+export function unitSunOf(elevDeg) {
+  const L = CONFIG.ui?.unitLighting?.lowSun || {};
+  if (L.enabled === false) return 1;
+  const [e0, e1] = L.elev || [10, 40], k = L.k ?? 0.5;
+  const t = Math.max(0, Math.min(1, (elevDeg - e0) / Math.max(1e-6, e1 - e0)));
+  return k + (1 - k) * t * t * (3 - 2 * t);
+}
 export function setWorldSnowMap(tex, on) { const u = worldUniforms(); u.tWSnow.value = tex || blankTex(); u.uWSnowOn.value = on && tex ? 1 : 0; }
 export function setWorldWater(level, tint) { const u = worldUniforms(); u.uWLevel.value = level == null ? -1e4 : level; if (tint) u.uWWaterTint.value.set(tint); }
 export function setWorldTints({ sand, snow } = {}) { const u = worldUniforms(); if (sand) u.uWSandCol.value.set(sand); if (snow) u.uWSnowCol.value.set(snow); }
@@ -78,7 +89,7 @@ export function setWorldTints({ sand, snow } = {}) { const u = worldUniforms(); 
 export const WORLD_FRAG_HEAD = /* glsl */`
 #ifndef WORLD_SHADING_HEAD
 #define WORLD_SHADING_HEAD
-uniform float uWTime, uWWet, uWSnow, uWSand, uWFade, uWScorch, uWLightK, uWSnowOn, uWLevel, uWDay;
+uniform float uWTime, uWWet, uWSnow, uWSand, uWFade, uWScorch, uWLightK, uWSnowOn, uWLevel, uWDay, uWUnitSun;
 uniform sampler2D tWLight, tWNoise, tWSnow;
 uniform vec4 uWRect; uniform vec3 uWWind, uWSandCol, uWSnowCol, uWWaterTint, uWLightDir; uniform vec2 uWLightStep, uWLightY;
 varying vec3 vWPos;
@@ -108,7 +119,8 @@ vec3 wLocalLightN(vec3 p, vec3 n) {
   // 斜的程度看"相对梯度"（梯度 / 亮度）：离光源越远它越大，光越斜。只看梯度本身的话，光池最外圈梯度趋近 0，
   // 会被当成"从头顶照下来"而比里面一圈还亮，路面上出现一道亮环。
   vec3 L = normalize(vec3(g.x, 0.0, g.y) / max(gl, 1e-5) * smoothstep(0.0, uWLightDir.x, gl / max(l0, 0.03)) + vec3(0.0, uWLightDir.y, 0.0));
-  float ndl = clamp(dot(normalize(n), L) * (1.0 - uWLightDir.z) + uWLightDir.z, 0.0, 1.0);
+  vec3 nn = dot(n, n) > 1e-8 ? normalize(n) : vec3(0.0, 1.0, 0.0);   // 零法线归一化是 NaN（后处理会把它置成黑点）
+  float ndl = clamp(dot(nn, L) * (1.0 - uWLightDir.z) + uWLightDir.z, 0.0, 1.0);
   float fl = 0.9 + 0.1 * sin(uWTime * 9.0 + p.x * 0.07 + p.z * 0.05) * sin(uWTime * 5.3 + p.z * 0.09);
   return l * l * (uWLightK * fl * inside * ndl * smoothstep(uWLightY.y, uWLightY.x, p.y));
 }
@@ -142,7 +154,7 @@ export function patchWorldMaterial(material, opts = {}) {
   const light = opts.light !== false, wet = opts.wet !== false, dust = opts.dust !== false;
   const U = ensureNoise();
   const prev = material.onBeforeCompile, prevKey = material.customProgramCacheKey;
-  const tag = `|world:${light ? (opts.lightDir === false ? 'l' : 'L') : ''}${wet ? 'w' + (opts.wetRough ?? '') : ''}${dust ? 'd' : ''}`;
+  const tag = `|world:${opts.sunLimit ? 's' : ''}${light ? (opts.lightDir === false ? 'l' : 'L') : ''}${wet ? 'w' + (opts.wetRough ?? '') : ''}${dust ? 'd' : ''}`;
   material.onBeforeCompile = (sh, renderer) => {
     if (prev) prev.call(material, sh, renderer);
     Object.assign(sh.uniforms, U);
@@ -155,8 +167,11 @@ export function patchWorldMaterial(material, opts = {}) {
     // wetRough：淋湿后最光滑到多少。叶片给高一点（0.7）——叶片卡片朝向杂乱，太光滑的话雨天满树都是一道道白色反光
     if (wet && fs.includes('#include <roughnessmap_fragment>')) fs = fs.replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n roughnessFactor = mix(roughnessFactor, min(roughnessFactor, ${(opts.wetRough ?? 0.35).toFixed(2)}), uWWet);`);
     // lightDir：按法线分明暗（默认）。叶片 / 草这类朝向杂乱的薄片给 false——它们整丛被照亮，不该一片亮一片黑
+    // sunLimit：直射光乘 uWUnitSun（单位 / 建筑用）。太阳贴着地平线时，立面正对着太阳、地面几乎照不到，
+    // 塔会比脚下的地亮好几倍，像是另一个世界搬来的（用户："塔特别亮的就矗立在地图中，显得特别违和"）
+    if (opts.sunLimit) fs = fs.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse *= uWUnitSun; reflectedLight.directSpecular *= uWUnitSun;');
     if (light) fs = fs.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n reflectedLight.directDiffuse += '
-      + (opts.lightDir === false ? 'wLocalLight(vWPos)' : 'wLocalLightN(vWPos, inverseTransformDirection(normal, viewMatrix))') + ' * diffuseColor.rgb;');
+      + (opts.lightDir === false ? 'wLocalLight(vWPos)' : 'wLocalLightN(vWPos, (vec4(normal, 0.0) * viewMatrix).xyz)') + ' * diffuseColor.rgb;');
     sh.fragmentShader = fs;
   };
   material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + tag;

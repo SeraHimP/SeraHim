@@ -33,6 +33,28 @@ const TH = CONFIG.terrain.themes;
   T('线②兵线虚线的样子在 CONFIG.ui.lanePathLine（软编码）', CONFIG.ui.lanePathLine.width > 0 && CONFIG.ui.lanePathLine.dash > 0 && /LP\.width \?\? 3/.test(fx));
 }
 
+// ==================== 一·二、细黑线：着色器里不许对可能为负的量取幂 ====================
+{
+  // 用户："地形接缝间有特别细小的缝隙，显示为细黑线"。不是缝：开着多重采样时，三角形 / 面片边上的像素取到的插值量是外推的
+  //（权重略小于 0、uv 略大于 1），负数取幂 = NaN，后处理（ScenePass）把 NaN 像素置成黑色 —— 沿着三角形的边就是一条条细黑线。
+  // 规矩：GLSL 里 pow 的底数必须先夹住（max / clamp），或者本身就不可能为负（下面白名单里的那几种写法）。
+  const files = ['presentation/world/WorldTerrain.js', 'presentation/world/WorldLights.js', 'presentation/world/WorldWater.js', 'presentation/world/WorldMist.js',
+    'presentation/world/WorldBridge.js', 'presentation/world/WorldRocks.js', 'presentation/world/worldShading.js', 'presentation/UnitMeshFactory.js',
+    'presentation/buildingFx.js', 'presentation/shieldShell.js', 'presentation/PostFX.js', 'presentation/UnitLayer.js', 'presentation/pulseFx.js', 'presentation/unitSurface.js'];
+  const safe = /^pow\((max\(|clamp\(|0\.5 \+ 0\.5 \* sin\(|sin\(3\.14159265 \* life\))/;
+  const bad = [];
+  for (const f of files) src(f).split('\n').forEach((line, i) => {
+    if (/^\s*(\/\/|\*)/.test(line)) return;
+    for (const m of line.matchAll(/(?<![.\w])pow\(/g)) { const rest = line.slice(m.index); if (!safe.test(rest)) bad.push(`${f.split('/').pop()}:${i + 1}`); }
+  });
+  T(`线③着色器里的 pow 底数都先夹住了（没夹的：${bad.join(' ') || '无'}）`, bad.length === 0);
+  const wt = src('presentation/world/WorldTerrain.js');
+  T('线④地形的混合权重进着色器先夹到 0..1（外推出来的负权重不进幂运算）', /vec4 wS = clamp\(vSplat, 0\.0, 1\.0\);/.test(wt) && /w0 = pow\(max\(w0, 0\.0\), 2\.2\)/.test(wt));
+  const wl2 = src('presentation/world/WorldLights.js');
+  T('线⑤火焰的 uv 先夹到 0..1，算出坏值的像素直接丢掉（不写成颜色）', /vec2 uv = clamp\(vUv, 0\.0, 1\.0\)/.test(wl2) && /if \(!\(f >= 0\.02\)\) discard;/.test(wl2));
+  T('线⑥局部光对零法线有保护（归一化零向量是 NaN）', /dot\(n, n\) > 1e-8 \? normalize\(n\) : vec3\(0\.0, 1\.0, 0\.0\)/.test(src('presentation/world/worldShading.js')));
+}
+
 // ==================== 二、双方防御塔 ====================
 {
   const R = 32, blue = citadelTower(R, 'blue'), red = citadelTower(R, 'red');
@@ -54,8 +76,44 @@ const TH = CONFIG.terrain.themes;
     const ang = s1.filter((id) => /^[cu]\d_/.test(id)).map((id) => { const c = new THREE.Vector3(); partsBox(t.model.pieces.get(id).parts).getCenter(c); return Math.atan2(c.z, c.x); });
     const side = ang.filter((a) => a > Math.PI * 0.4 && a < Math.PI * 1.1).length;
     T(`损③-${name}方：轻损掉的石块集中在同一侧（${side} / ${ang.length}），不是东一块西一块`, side >= ang.length * 0.7);
+    // 重损的豁口：塔芯也被打掉一瓣（从冠台一路豁到塔身中段），豁口里拿掉的东西上面不留东西
+    const cores = s2.filter((id) => id.startsWith('core'));
+    T(`损④-${name}方：重损时塔芯跟着坏（拿掉 ${cores.join(' / ')}），轻损时塔芯还在`, cores.length >= 3 && !s1.some((id) => id.startsWith('core')));
+    {
+      // 被拿掉的塔芯瓣 / 冠台段 / 腰箍段，正上方（同一个方位扇区里）不能还立着别的部件
+      const gone = new Set(s2), box = (id) => partsBox(t.model.pieces.get(id).parts);
+      const ang = (b) => { const c = new THREE.Vector3(); b.getCenter(c); return Math.atan2(c.z, c.x); };
+      let floating = [];
+      for (const hole of s2.filter((id) => /^(core|corbel|belt)/.test(id))) {
+        const hb = box(hole), ha = ang(hb);
+        for (const id of t.model.order) {
+          if (gone.has(id) || id.startsWith('deb') || !t.model.pieces.get(id).parts.length) continue;
+          const b = box(id), c = new THREE.Vector3(); b.getCenter(c);
+          if (Math.hypot(c.x, c.z) < R * 0.2) continue;                         // 中轴上的杯座由另外三瓣托着
+          let da = Math.abs(ang(b) - ha); if (da > Math.PI) da = Math.PI * 2 - da;
+          if (b.min.y >= hb.max.y - 1e-3 && da < Math.PI / 4 - 0.2) floating.push(id + '>' + hole);
+        }
+      }
+      T(`损⑤-${name}方：豁口上方没有悬空的部件（${floating.slice(0, 4).join(' ') || '无'}）`, floating.length === 0);
+      // 垛口的残根跟着脚下的冠台走：冠台没了，残根也不留
+      const stubsAbove = t.model.parts(s2).length - t.model.parts(s2, null, true).length;
+      const merGone = s2.filter((id) => id.startsWith('mer')), onDeadCorbel = merGone.filter((id) => gone.has(t.model.pieces.get(id).parent));
+      T(`损⑥-${name}方：垛口挂靠在脚下的冠台上（${onDeadCorbel.length} 个垛口的冠台塌了，它们不留残根）`,
+        merGone.every((id) => /^corbel\d$/.test(t.model.pieces.get(id).parent || '')) && onDeadCorbel.length >= 2 && stubsAbove >= 0);
+    }
     const full = partsBox(t.model.parts([])).max.y, ruinTop = partsBox(t.ruin).max.y;
     T(`墟①-${name}方：废墟是矮矮的一堆（高 ${(ruinTop / R).toFixed(2)}R，不到塔高 ${(full / R).toFixed(2)}R 的三分之一）`, ruinTop < full / 3 && ruinTop > t.keepBelow);
+  }
+  {
+    // 建筑的几何不做"底面对齐"：废墟 / 掉档的碎块有探到地面以下的，对齐会把整座建筑抬高一点，倒塌动画播完换静态废墟时就跳一下
+    const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
+    const ruinMesh = towerMesh('fb-ruin', '#5b9bd5', 32, '', 'tower', false, true, 'outer', 'blue', 0, null);
+    ruinMesh.geo.computeBoundingBox();
+    // 改之前这里恒等于 0（合并时把最低点对齐到了地面）
+    T(`墟③静态废墟的几何没有被整体抬高：半埋的部件仍在地面以下（最低点 ${ruinMesh.geo.boundingBox.min.y.toFixed(2)}），动画播完换上它不跳`,
+      ruinMesh.geo.boundingBox.min.y < -0.5);
+    const d2 = towerMesh('fb-d2', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 2, null), d0 = towerMesh('fb-d0', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 0, null);
+    T('墟④掉档不改水晶的高度、塔身也不跟着窜（水晶中心高度三档一致）', Math.abs(d2.crystal.cy - d0.crystal.cy) < 1e-6);
   }
   const K = CONFIG.ui.citadel;
   T('墟②落点往脚下最低处贴（lowK）、后落的几乎不垫高（stack 小）：堆不起来、也不悬空；参数在 CONFIG.ui.citadel',
@@ -72,10 +130,29 @@ const TH = CONFIG.terrain.themes;
   T(`光②火炬照得到路中间：离火炬 ${toMid} 处还有 ${(at(toMid / L.torchRadius) * 100).toFixed(0)}% 的亮度（原来 4%）`, at(toMid / L.torchRadius) >= 0.15);
   T('光③夜里局部光比白天强得多（白天日光下几乎看不出）', S.lightNight >= S.lightDay * 6);
   T('光④局部光带方向：由光照图的亮度梯度估出光从哪边来，朝光的面亮、背光的面暗；斜的程度看相对梯度（不出亮环）',
-    /vec3 wLocalLightN\(vec3 p, vec3 n\)/.test(ws) && /gl \/ max\(l0, 0\.03\)/.test(ws) && /float ndl = clamp\(dot\(normalize\(n\), L\)/.test(ws));
+    /vec3 wLocalLightN\(vec3 p, vec3 n\)/.test(ws) && /gl \/ max\(l0, 0\.03\)/.test(ws) && /float ndl = clamp\(dot\(nn, L\)/.test(ws));
   T('光⑤叶片 / 草这类薄片不按法线分明暗（lightDir: false），其余材质按法线', /opts\.lightDir === false \? 'wLocalLight\(vWPos\)'/.test(ws)
     && /lightDir: false/.test(src('presentation/world/WorldFoliage.js')) && /wLocalLightN\(vWPos, wn\)/.test(src('presentation/world/WorldTerrain.js')));
   T('光⑥水晶照亮的范围比一支火炬大', L.crystal.towerRadius >= L.torchRadius && L.crystal.gemRadius > L.crystal.orbRadius && L.crystal.orbRadius > L.crystal.towerRadius);
+}
+
+// ==================== 三·二、塔和环境是一个世界里的东西 ====================
+{
+  // 用户："塔模型虽然目前比较精美，但是我觉得和环境割裂特别严重，就是塔特别亮的就矗立在地图中……都不像是一个世界的东西"
+  const { unitSunOf } = await import('../src/presentation/world/worldShading.js');
+  const { themedUnitTint } = await import('../src/presentation/ThreeRenderer.js');
+  const L = CONFIG.ui.unitLighting.lowSun;
+  T(`融①太阳贴着地平线时单位 / 建筑少吃直射光：黄昏（12°）${unitSunOf(12).toFixed(2)}，正午（54°）${unitSunOf(54).toFixed(2)}，中间单调过渡`,
+    unitSunOf(54) === 1 && unitSunOf(12) < 0.6 && unitSunOf(L.elev[0] - 5) === L.k && unitSunOf(20) > unitSunOf(12) && unitSunOf(30) > unitSunOf(20));
+  T('融②只有单位 / 建筑的材质收直射光（sunLimit），地形不收', /sunLimit: true/.test(src('presentation/unitSurface.js')) && !/sunLimit/.test(src('presentation/world/WorldTerrain.js'))
+    && /reflectedLight\.directDiffuse \*= uWUnitSun/.test(src('presentation/world/worldShading.js')));
+  const purple = new THREE.Color(themedUnitTint('#ffffff', TH.magicForest)), plain = themedUnitTint('#c0c8d0', TH.forest);
+  T(`融③单位的染色再乘上地图的环境色：扭曲丛林偏紫且压暗（${'#' + purple.getHexString()}），峡谷不变`,
+    purple.b > purple.g && purple.r > purple.g * 0.98 && purple.g < 0.8 && plain === '#c0c8d0');
+  T('融④冰原偏冷、沙漠偏暖', new THREE.Color(TH.frost.unitTint).b > new THREE.Color(TH.frost.unitTint).r && new THREE.Color(TH.desert.unitTint).r > new THREE.Color(TH.desert.unitTint).b);
+  const st = new THREE.Color(CONFIG.ui.citadel.colors.blue.stone);
+  T(`融⑤蓝方石色不是近白（亮度 ${((st.r + st.g + st.b) / 3).toFixed(2)}，线性）：太白的石头在哪张图里都比地面亮一大截`, (st.r + st.g + st.b) / 3 < 0.3);
+  T('融⑥轮廓边上的法线扰动有零向量保护（否则单位 / 建筑的轮廓上是一段段细黑线）', /if \(dot\(pn, pn\) > 1e-12\) normal = normalize\(pn\);/.test(src('presentation/unitSurface.js')));
 }
 
 // ==================== 四、峡谷：龙坑、塔脚、河 ====================

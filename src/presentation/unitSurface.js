@@ -73,12 +73,15 @@ export function patchUnitSurface(mat) {
     vec3 r1 = cross(sy, normal), r2 = cross(normal, sx);
     float det = dot(sx, r1);
     vec3 grad = sign(det) * (dFdx(uGrain) * r1 + dFdy(uGrain) * r2);
-    normal = normalize(abs(det) * normal - grad * uSurfK.y * vUMat.z * 3.0);
+    // 面正好侧对着镜头时 det = 0、grad = 0，整个向量是零，归一化得 NaN（后处理把它置成黑点）：
+    // 单位和建筑的轮廓边上会出现一小段一小段的细黑线。零向量时保持原法线
+    vec3 pn = abs(det) * normal - grad * uSurfK.y * vUMat.z * 3.0;
+    if (dot(pn, pn) > 1e-12) normal = normalize(pn);
   }`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * vUMat.w * uSurfK.w;');
   };
-  mat.customProgramCacheKey = () => (prevKey ? prevKey.call(mat) : '') + '|surf1';
-  patchWorldMaterial(mat, { wet: false, dust: false });
+  mat.customProgramCacheKey = () => (prevKey ? prevKey.call(mat) : '') + '|surf2';
+  patchWorldMaterial(mat, { wet: false, dust: false, sunLimit: true });
   mat.needsUpdate = true;
   return mat;
 }

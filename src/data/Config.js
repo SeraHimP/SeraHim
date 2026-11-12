@@ -1323,7 +1323,11 @@ export const CONFIG = {
     //   strength —— 由曝光反推染色强度的系数。0 = 关（与 enabled:false 等价）
     //   maxMix   —— 染色上限，防止把单位压成看不清的黑块
     // enabled: false 时 tint 恒为白，画面与本次改动前逐位一致。
-    unitLighting: { enabled: true, strength: 0.9, maxMix: 0.34 },   // 单位现在和地形吃同一套光（天空环境光 + 局部光），这里只留一点往夜色偏的色调
+    // 单位现在和地形吃同一套光（天空环境光 + 局部光），这里只留一点往夜色偏的色调。
+    //   lowSun：太阳贴着地平线时单位 / 建筑少吃一些直射光（立面正对太阳、地面几乎照不到，塔会比脚下的地亮好几倍）。
+    //           elev [低, 高]（度）：低于"低"时只吃 k 成，高于"高"时全吃，中间平滑过渡
+    // 地图主题里的 unitTint 是这张图的环境色，再乘在昼夜染色上（紫色森林里的塔带一点紫）
+    unitLighting: { enabled: true, strength: 0.9, maxMix: 0.34, lowSun: { enabled: true, k: 0.5, elev: [10, 40] } },
     // 弹道可视化（EffectsLayer + ProjectileMeshLayer）。用户定稿（2026-09-27）：
     //   "A 为主，塔弹用 B"——小兵弹是低多边形实体弹，防御塔弹是能量光弹；巨龙"加纯视觉的吐息"。
     //   命中效果做过一版，用户实机看后"命中特效太显眼了……不要命中特效了"，已删。
@@ -1556,7 +1560,7 @@ export const CONFIG = {
     },
     // 单位 / 建筑表面材质（presentation/unitSurface.js）：每个零件按材料出粗糙度 / 金属度 / 颗粒感
     unitSurface: {
-      envIntensity: 1,     // 环境光（天空）份量
+      envIntensity: 0.85,  // 环境光（天空）份量
       grainAlbedo: 0.3,    // 颗粒对颜色的影响幅度
       grainBump: 0.5,      // 颗粒的凹凸强度
       grainScale: 0.02,    // 颗粒大小（越大越细）
@@ -1611,7 +1615,8 @@ export const CONFIG = {
     //             keepK 保留多少原来的水平位置、throwK 越高的部件落得越远、sink 陷进堆里多少、stack 一块垫高多少（越小堆越矮）
     citadel: {
       colors: {
-        blue:    { stone: '#a29e93', stoneDark: '#757166', core: '#55524b', trim: '#d8b256', accent: '#2c6ac2', cloth: '#2459a8', metal: '#9aa4b4', glow: '#7fd0ff' },
+        // 石色收着给：太白的石头在任何一张图里都比地面亮一大截，塔像是贴上去的
+        blue:    { stone: '#8f8b82', stoneDark: '#68645b', core: '#4c4943', trim: '#c2a04c', accent: '#2a62b4', cloth: '#22539c', metal: '#8e98a8', glow: '#7fd0ff' },
         red:     { stone: '#7c6964', stoneDark: '#574947', core: '#2a2224', trim: '#c88a4a', accent: '#a02a22', cloth: '#8a211c', metal: '#55504f', glow: '#ff4a1a', bone: '#c4b093' },
         neutral: { stone: '#b0aca2', stoneDark: '#7c786e', core: '#4c4944', trim: '#b9b2a2', accent: '#7c8492', cloth: '#6d7482', metal: '#8e939c', glow: '#e8e4dc' },
       },
@@ -2231,7 +2236,7 @@ export const CONFIG = {
       // 扭曲丛林：紫色的魔幻森林（用户定稿）。靛紫的草、拧着长的黑树干顶着紫红的树冠、青色的荧光苔和花、
       // 幽蓝的"灵火"火炬、紫蓝的水 —— 和召唤师峡谷的绿林是两套语言。
       magicForest: {
-        mode: 'rise', cliffHeight: 74,
+        mode: 'rise', cliffHeight: 74, unitTint: '#ccc0e4',   // 单位 / 建筑的环境色：带一点紫、压暗一点
         foliage: { outerDensity: 0.55, tree: { leaf: { dark: '#3a1c6a', light: '#b868ea' }, leafTint: '#f4e0ff', bark: { dark: '#17121f', mid: '#2e2438', light: '#4a3a58' }, barkTint: '#c8b8d8',
                    shape: { trunkR: 0.07, trunkH: 0.52, twist: 0.6, crownY: 0.7, crownRX: 0.42, crownRY: 0.25 }, sway: 1.2 } },
         cover: { petals: ['#7df6ff', '#ff8ee8', '#d2a8ff'], flowerGlow: 0.7, flower: 0.7, flowerThreshold: 0.52, bushTint: '#ecd2ff',
@@ -2261,7 +2266,7 @@ export const CONFIG = {
       //   abyssMist 流动的雾层：每层 y 高度、alpha 浓度、scale 雾团大小、speed 流速、cover 稀疏程度（越大空的地方越多）
       //   spires    冰棱：step 撒点格距、threshold / clusterFreq 成丛的门槛 / 丛的大小、density、size [小, 大]、max 上限
       frost: {
-        mode: 'drop', dropHeight: 460, outerBlend: 700, outerPeak: 560, snowLine: 26, snowLineFade: 120,
+        mode: 'drop', dropHeight: 460, outerBlend: 700, outerPeak: 560, snowLine: 26, snowLineFade: 120, unitTint: '#e2e9f3',
         landmass: { cliffDist: 400, edgeNoise: 44, edgeFreq: 0.0045, lip: 9, cliffWidth: 95, ledge: 55, rimHeight: 34, rimWidth: 75, deckMargin: 14 },
         bridge: { thickness: 32, piers: 4, pierThick: 76, pierBatter: 1.3, archRatio: 0.85, archRise: 190, abutment: 36, cell: 8, over: 7,
                   curb: true, curbGap: 21, curbSize: [16, 7, 9], curbMiss: 0.14, tile: 120, tint: '#dfe6ee' },
@@ -2294,7 +2299,7 @@ export const CONFIG = {
         water: null,
       },
       desert: {
-        mode: 'drop', dropHeight: 54, dropFloorNoise: 22, outerBlend: 500, outerPeak: 300,
+        mode: 'drop', dropHeight: 54, dropFloorNoise: 22, outerBlend: 500, outerPeak: 300, unitTint: '#f1e3cb',
         foliage: { trees: false },
         paving: { baseK: 0 },                    // 这张图的"基地"节点（商栈 / 望塔）是普通据点，不铺广场
         cover: { pebbleColor: '#b08a62' },
