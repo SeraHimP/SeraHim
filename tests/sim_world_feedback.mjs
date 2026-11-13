@@ -10,7 +10,7 @@ setupWindow();
 const THREE = await import('../vendor/three.module.js');
 const { CONFIG } = await import('../src/data/Config.js');
 const { createSimulation } = await import('../src/simulation.js');
-const { citadelTower } = await import('../src/presentation/buildingModels.js');
+const { citadelTower, citadelShrine } = await import('../src/presentation/buildingModels.js');
 const { partsBox } = await import('../src/presentation/towerStatue.js');
 const { deckOutline, bridgeLayout } = await import('../src/presentation/world/WorldBridge.js');
 const { placeSpires } = await import('../src/presentation/world/WorldMist.js');
@@ -153,6 +153,31 @@ const TH = CONFIG.terrain.themes;
   T('墟②落点往脚下最低处贴（lowK）、后落的几乎不垫高（stack 小）：堆不起来、也不悬空；参数在 CONFIG.ui.citadel',
     K.collapse.lowK >= 0.5 && K.collapse.stack <= 0.15 && K.ruin.moundHeight <= 0.3 && K.ruin.stumpHeight <= 0.35
     && /g = lo \* lowK \+ g \* \(1 - lowK\)/.test(src('presentation/towerStatue.js')));
+}
+{
+  // 用户："水晶枢纽和召唤水晶的那个废墟简直是为了废墟而废墟，而不是自然的水晶爆炸之后形成的废墟。就是要求做到自然就行了"
+  for (const kind of ['orb', 'gem']) for (const fac of ['blue', 'red']) {
+    const R = kind === 'gem' ? 40 : 30, b = citadelShrine(kind, R, fac), m = b.model, tag = `${fac === 'blue' ? '蓝' : '红'}方${kind === 'gem' ? '枢纽' : '召唤水晶'}`;
+    const top = partsBox(b.ruin).max.y, kit = b.ruinKit;
+    const stubIds = m.order.filter((id) => { const p = m.pieces.get(id); return p.stub > 0 && !p.vanish && !p.inner && !p.parent; });
+    // 抛出去的部件：有相当一部分落在平台外面
+    const placed = m.order.filter((id) => m._ruin.has(id) && !m.pieces.get(id).inner);
+    const outside = placed.filter((id) => { const c = new THREE.Vector3(); partsBox(m.pieces.get(id).parts).getCenter(c); c.applyMatrix4(m.ruinMatrix(id)); return Math.hypot(c.x, c.z) > R * 0.95; });
+    const scorch = kit.mound.filter((p) => p.mat === 'dark' && p.geo.attributes.position.count > 30);
+    const frags = kit.mound.filter((p) => p.mat === 'glow' || p.mat === 'metal');
+    T(`墟⑤-${tag}：废墟是"炸开"的 —— 没有锥形石堆（最高 ${(top / R).toFixed(2)}R），柱 / 牙断在根部（${kit.stump.length} 截断根），${outside.length} / ${placed.length} 块部件抛到了台外，中间一片焦痕 + ${frags.length} 片熄灭的水晶碎片`,
+      b.ruinStyle === 'blast' && top < R * 0.75 && kit.stump.length >= stubIds.length && stubIds.length >= 3
+      && outside.length >= placed.length * 0.25 && scorch.length >= 1 && frags.length >= 6
+      && frags.filter((p) => p.mat === 'glow').length < frags.length / 2);
+  }
+  {
+    const t = citadelTower(32, 'blue');
+    const flags = t.model.order.filter((id) => t.model.pieces.get(id).cloth);
+    const flagGeo = new Set(flags.flatMap((id) => t.model.pieces.get(id).parts.map((p) => p.geo)));
+    T(`墟⑥塔的废墟仍是低矮的一堆（heap），扶壁留下断根、堆上散着熄灭的水晶碎片；所有建筑的旗都在爆炸里烧没了（${flags.length} 面旗不进废墟，倒塌时半路缩没）`,
+      t.ruinStyle === 'heap' && t.ruinKit.stump.length >= 3 && t.ruinKit.mound.some((p) => p.mat === 'metal')
+      && flags.length >= 2 && !t.ruin.some((p) => flagGeo.has(p.geo)) && /vanish: !!\(pc\.vanish \|\| pc\.cloth\)/.test(src('presentation/buildingFx.js')));
+  }
 }
 
 // ==================== 三、照明 ====================

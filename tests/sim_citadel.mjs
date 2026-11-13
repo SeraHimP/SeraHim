@@ -52,8 +52,8 @@ for (const [kind, R, make] of DEFS) {
     T(`${tag}：有一部分大块在倒塌时碎没了（${vanish.length} 块），废墟里没有它们`, vanish.length >= 1 && vanish.length < m.order.length * 0.5);
     T(`${tag}：废墟带一座碎石丘`, b.ruinKit.mound.length >= 5 && (kind !== 'tower' || b.ruinKit.stump.length >= 1));
     const keptBase = m.base.filter((p) => partsBox([p]).max.y <= b.keepBelow).length;
-    const pieceParts = m.order.filter((id) => !vanish.includes(id) && !fallen.has(id)).reduce((n, id) => n + m.pieces.get(id).parts.length, 0);
-    T(`${tag}：废墟 = 留下的基座 + 碎石丘 + 断桩 + 没碎掉的部件（零件数对得上）`, b.ruin.length === keptBase + pieceParts + b.ruinKit.mound.length + b.ruinKit.stump.length);
+    const pieceParts = m.order.filter((id) => !vanish.includes(id) && !fallen.has(id) && !m.pieces.get(id).cloth).reduce((n, id) => n + m.pieces.get(id).parts.length, 0);
+    T(`${tag}：废墟 = 留下的基座 + 碎石丘 / 焦痕 + 断桩 + 没碎掉、没烧掉的部件（零件数对得上）`, b.ruin.length === keptBase + pieceParts + b.ruinKit.mound.length + b.ruinKit.stump.length);
     const rb = partsBox(b.ruin);
     T(`${tag}：废墟比完好时矮、不陷到地面以下、不散到很远`, rb.max.y < all.max.y * 0.8 && rb.min.y > -R * 0.35
       && Math.max(rb.max.x, -rb.min.x, rb.max.z, -rb.min.z) < R * 2.4);

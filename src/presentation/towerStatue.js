@@ -309,13 +309,13 @@ export class PieceModel {
   }
   /**
    * 废墟的全部零件：留下的基座（主体里不高于 keepBelow 的）+ 每块部件在废墟里的位置 + 断在原地的残根。
-   * 不在其中的：掉档时掉下去的部件（早消失了）、倒塌时碎成渣的大块（vanish）。tint = 整体压暗（烧过）。
+   * 不在其中的：掉档时掉下去的部件（早消失了）、倒塌时碎成渣的大块（vanish）、烧没了的布料（cloth）。tint = 整体压暗（烧过）。
    */
   ruinParts(keepBelow, tint = 1) {
     const out = this.base.filter((p) => partsBox([p]).max.y <= keepBelow).map((p) => ({ ...p, color: shade(p.color, tint) }));
     for (const id of this.order) {
       const p = this.pieces.get(id);
-      if (p.vanish || this._fallen?.has(id)) continue;
+      if (p.vanish || p.cloth || this._fallen?.has(id)) continue;   // 布料（旗）在爆炸里烧没了
       const rm = this.ruinMatrix(id);
       // 发光的零件（符文 / 能量缝）在废墟里熄了：换成普通石头的材质
       for (const q of p.parts) out.push({ geo: q.geo, matrix: rm.clone().multiply(q.matrix), color: shade(q.color, q.mat === 'glow' ? tint * 0.35 : tint), mat: q.mat === 'glow' ? 'dark' : q.mat });

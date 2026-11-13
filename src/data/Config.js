@@ -1502,7 +1502,14 @@ export const CONFIG = {
       // chunkFall：dur 掉落本身（秒）；linger 落地后在地上停多久、fade 再用多久沉进地里消失
       //   （用户："塔损毁的掉在地上的块部分不再常驻显示，而是2秒后消失"）
       chunkFall: { dur: 0.8, linger: 2, fade: 0.5, shake: 0.18, shakeAmp: 0.03, fallEnd: 0.8, hop: 0.12, bounce: 0.08, stagger: 0.12, dust: 3 },
-      explode: { dur: 1.7, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 10, shardSpeed: 3.2,
+      // explode 里水晶炸开的读点（用户："看不出来是塔/水晶爆炸的效果"）：nexusScale 枢纽放大多少；
+      //   rays 放射光芒（n 条数、len 长度 × R、end 在整段的哪里结束、alpha）；pillar 冲天光柱（h 高 × R、r 半径 × R、span 播放区间、alpha）；
+      //   sphere 能量球（r 最大半径 × R、span、alpha）；sparks 火花（n 数量、speed 初速 × R/秒、size 光点大小 × R）；
+      //   smokeColumn 之后升起的黑烟柱（dur 秒、n 团数、size 每团大小 × R、rise 升多高 × R、drift 被风带偏多远 × R、life 每团占整段的比例、stagger 依次冒出的跨度、alpha、color / colorLight）
+      explode: { dur: 1.7, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 18, shardSpeed: 3.2, nexusScale: 1.35,
+                 rays: { n: 9, len: 2.6, end: 0.2, alpha: 0.9 }, pillar: { h: 6, r: 0.32, span: [0.03, 0.6], alpha: 1.1 },
+                 sphere: { r: 1.7, span: [0.02, 0.38], alpha: 0.9 }, sparks: { n: 70, speed: 4.5, size: 0.09 },
+                 smokeColumn: { dur: 4, n: 10, size: 0.42, rise: 3.4, drift: 0.6, life: 0.6, stagger: 0.45, alpha: 0.8, color: '#3d3833', colorLight: '#6a625a' },
                  speed: 2.4, up: 2.2, spin: 9, gravity: 9, topple: [0.08, 0.7], rubbleRise: [0.35, 0.85],
                  plinthBelow: 0.5, smoke: 9, smokeColor: '#8d8579',
                  // 冲击波（用户："爆炸的时候塔应该产生可视化冲击波"）：ringInner 地面光环内径比例；
@@ -1629,7 +1636,11 @@ export const CONFIG = {
       collapse: { spread: 1.45, scale: 0.8, keepK: 0.8, throwK: 1.25, sink: 0.38, stack: 0.1, lowK: 0.7 },
       // 废墟：moundHeight / spread 碎石丘的高 / 半径（× 建筑半径）；stumpHeight 中间那截断桩多高；
       //   pieceScale 堆在丘上的部件缩到多大；tint 整体压暗多少（烧过）
-      ruin: { tint: 0.72, moundHeight: 0.26, spread: 1.0, stumpHeight: 0.3, pieceScale: 0.72 },
+      //   fragments.tower 塔废墟上熄灭的水晶碎片数；fragmentDim 碎片颜色往暗灰里混多少；fragmentEmber 还带余光的那几片压暗多少
+      //   blast：召唤水晶 / 枢纽的废墟（水晶从中间炸开）——spread 部件散开的范围（× R）、throw [最少, 最多] 从原位再往外抛多远、
+      //          scorchR 中心焦痕半径、scorchColor 焦痕颜色、rimStones 焦痕外沿被掀起的碎石数、fragments 水晶碎片数
+      ruin: { tint: 0.72, moundHeight: 0.26, spread: 1.0, stumpHeight: 0.3, pieceScale: 0.72, fragments: { tower: 6 }, fragmentDim: 0.55, fragmentEmber: 0.78,
+              blast: { spread: 2.0, throw: [0.3, 0.95], scorchR: 0.62, scorchColor: '#2e2924', rimStones: 14, fragments: 10 } },
       // 损毁档里还立着的部件"松了"：loose 松动幅度（1 = 往外鼓约 0.035R、歪约 0.1 弧度），share 多大比例的部件松动；
       //   heavyTilt 重损时上半截（腰箍以上）朝豁口那边倾多少弧度 —— 用户："重损模型就是塔看起来摇摇欲坠"
       wear: { lightLoose: 0.35, lightShare: 0.45, heavyLoose: 1, heavyShare: 0.85, heavyTilt: 0.075 },

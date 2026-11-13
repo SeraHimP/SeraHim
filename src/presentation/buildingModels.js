@@ -334,29 +334,91 @@ function moundParts(R, col, h, r, seed = 0) {
 }
 
 /**
+ * 熄灭的水晶碎片：几根细长的晶柱斜插 / 躺在地上，颜色压暗、只剩一点余光。
+ * 底面在 y = 0；ring = [内半径, 外半径]（× R）。
+ */
+function crystalFragments(R, col, cr, n, ring, seed, K) {
+  // 熄灭的水晶是半透明的暗色晶体（金属质感的反光），只有少数几片还留着一点余光
+  const out = [], c = mixHex(col.glow, '#2a2e36', K.fragmentDim ?? 0.55), ember = mixHex(col.glow, '#000000', K.fragmentEmber ?? 0.78);
+  for (let i = 0; i < n; i++) {
+    const a = hash01(i, seed + 31) * TAU, rr = R * (ring[0] + (ring[1] - ring[0]) * Math.sqrt(hash01(i, seed + 32)));
+    const h = cr * (0.35 + hash01(i, seed + 33) * 0.55), w = h * (0.22 + hash01(i, seed + 34) * 0.12);
+    // 一半斜插在地上，一半横躺；插着的朝外倒（被炸开的方向）
+    const lying = hash01(i, seed + 35) < 0.5;
+    const tilt = lying ? Math.PI / 2 - 0.15 : 0.35 + hash01(i, seed + 36) * 0.5;
+    out.push({ geo: shard(w, h, 5, i + seed, 0.1), matrix: C(T(Math.cos(a) * rr, lying ? w * 0.5 : -h * 0.12, Math.sin(a) * rr), RY(-a), RZ(-tilt)), color: i % 4 === 0 ? ember : c, mat: i % 4 === 0 ? 'glow' : 'metal' });
+  }
+  return out;
+}
+
+/** 焦痕：一片边缘参差的暗色薄片（中心爆炸烧黑的地面）。底面在 y = 0。 */
+function scorchDisc(r, seed) {
+  const n = 22, g = new THREE.CircleGeometry(r, n);
+  g.rotateX(-Math.PI / 2);
+  const p = g.attributes.position;
+  for (let i = 1; i < p.count; i++) {
+    const k = 0.62 + 0.38 * hash01(i % n, seed) + 0.12 * Math.sin(i * 2.3 + seed);
+    p.setX(i, p.getX(i) * k); p.setZ(i, p.getZ(i) * k);
+  }
+  return flat(g);
+}
+
+/**
  * 收尾：定损毁清单、摆废墟。
- * 废墟（用户定稿："还是要原来废墟的那样的损毁模型"、"倒塌的模型可以消失一部分块"）= 留下的基座 + 一座碎石丘 +
- * 中间一截断桩（塔）+ 塌下来的部件堆在丘上（芯、腰箍这些大块碎成了渣，不在其中）。
- * 部件在废墟里的位置由 PieceModel.layoutRuin 定：倒塌动画把它们从原位送到那里，所以播完换成静态废墟时不会跳。
+ * 废墟里的部件位置由 PieceModel.layoutRuin 定：倒塌动画把它们从原位送到那里，所以播完换成静态废墟时不会跳。
+ * 掉档时掉下去的部件早就消失了，不在废墟里；倒塌时碎成渣的大块（vanish）也不在。
+ *   · 塔（heap）：塔身往下塌，基座上一座低矮的碎石丘 + 中间一截断桩 + 扶壁的断根，丘上散着几片熄灭的水晶碎片；
+ *   · 召唤水晶 / 枢纽（blast）：用户说原来的废墟"简直是为了废墟而废墟，而不是自然的水晶爆炸之后形成的废墟"。
+ *     水晶是从中间炸开的，所以：没有人造的锥形石堆；柱子 / 方尖碑 / 巨牙在根部断掉，留下参差的断根；
+ *     上面的部件被向外抛，散落在台沿和台外的地上；台面正中一片焦痕，一圈被掀起的碎石，熄灭的水晶碎片四散。
+ *   · 两者的旗都在爆炸里烧没了（布料部件不进废墟）。
  */
 function finish(m, R, r, col) {
   const has = (id) => m.pieces.has(id);
   const s1 = r.light.filter(has), s2 = [...s1, ...r.heavy.filter(has)];
   const K = { ...(cfg().ruin || {}), wear: cfg().wear };
-  const mh = R * (r.moundH ?? K.moundHeight ?? 0.42), mr = R * (r.moundR ?? K.spread ?? 0.95);
-  m.cfg = { ...m.cfg, collapse: { ...(m.cfg.collapse || {}), scale: K.pieceScale ?? 0.8 } };
-  m.layoutRuin(s2, { baseTop: r.baseTop, baseR: r.baseR, mound: { h: mh, r: mr } });
+  const style = r.ruinStyle || 'blast';
   const tint = K.tint ?? 0.78;
   const keep = r.baseTop + R * 0.12;
-  const at = (parts) => parts.map((p) => ({ ...p, matrix: T(0, r.baseTop - R * 0.02, 0).multiply(p.matrix), color: shade(p.color, tint) }));
-  const mound = at(moundParts(R, col, mh, mr, Math.round(R)));
-  const stump = r.stump ? at([{ geo: jaggedStump(r.stump.n, r.stump.r * 0.8, r.stump.r, r.stump.h, 7), matrix: RY(r.stump.rot || 0), color: r.stump.color || col.core, mat: 'dark' },
-    { geo: jaggedStump(r.stump.n, r.stump.r * 1.12, r.stump.r * 1.3, r.stump.h * 0.55, 9), matrix: RY((r.stump.rot || 0) + 0.3), color: shade(col.stone, 0.85), mat: 'stone' }]) : [];
+  const at = (parts, k = tint) => parts.map((p) => ({ ...p, matrix: T(0, r.baseTop - R * 0.02, 0).multiply(p.matrix), color: p.mat === 'glow' ? p.color : shade(p.color, k) }));
+  m.cfg = { ...m.cfg, collapse: { ...(m.cfg.collapse || {}), scale: K.pieceScale ?? 0.8 } };
+  let mound, stump;
+  if (style === 'heap') {
+    const mh = R * (r.moundH ?? K.moundHeight ?? 0.42), mr = R * (r.moundR ?? K.spread ?? 0.95);
+    m.layoutRuin(s2, { baseTop: r.baseTop, baseR: r.baseR, mound: { h: mh, r: mr } });
+    // 碎片插在丘面上：按丘的坡度垫高
+    const frags = crystalFragments(R, col, r.crystalR, K.fragments?.tower ?? 6, [0.12, 0.7], 41, K)
+      .map((p) => { const v = new THREE.Vector3().setFromMatrixPosition(p.matrix); return { ...p, matrix: T(0, mh * Math.max(0, 1 - Math.hypot(v.x, v.z) / mr) * 0.85, 0).multiply(p.matrix) }; });
+    mound = at([...moundParts(R, col, mh, mr, Math.round(R)), ...frags]);
+    stump = r.stump ? at([{ geo: jaggedStump(r.stump.n, r.stump.r * 0.8, r.stump.r, r.stump.h, 7), matrix: RY(r.stump.rot || 0), color: r.stump.color || col.core, mat: 'dark' },
+      { geo: jaggedStump(r.stump.n, r.stump.r * 1.12, r.stump.r * 1.3, r.stump.h * 0.55, 9), matrix: RY((r.stump.rot || 0) + 0.3), color: shade(col.stone, 0.85), mat: 'stone' }]) : [];
+    stump.push(...m.ruinStubs(tint));
+  } else {
+    const B = K.blast || {};
+    m.layoutRuin(s2, { baseTop: r.baseTop, baseR: r.baseR, mound: null, spread: B.spread ?? 2.0, outward: B.throw ?? [0.3, 0.95] });
+    const cr = r.crystalR, sr = R * (B.scorchR ?? 0.62);
+    const rim = [];
+    // 被掀起的一圈碎石：贴着焦痕外沿，大小不一，有的立着有的翻倒
+    const nRim = B.rimStones ?? 14;
+    for (let i = 0; i < nRim; i++) {
+      const a = i / nRim * TAU + (hash01(i, 51) - 0.5) * 0.4, rr = sr * (0.8 + hash01(i, 52) * 0.45), sz = R * (0.05 + hash01(i, 53) * 0.08);
+      rim.push({ geo: stoneBlock(sz, sz * (0.5 + hash01(i, 54) * 0.6), sz * (0.7 + hash01(i, 55) * 0.4), i + 120, 0.18),
+        matrix: C(T(Math.cos(a) * rr, R * 0.02 + sz * 0.2, Math.sin(a) * rr), RY(hash01(i, 56) * 6), RZ((hash01(i, 57) - 0.5) * 1.2), RX((hash01(i, 58) - 0.5))),
+        color: shade(i % 3 ? col.stoneDark : col.stone, 0.75 + hash01(i, 59) * 0.25), mat: 'stone' });
+    }
+    mound = at([
+      { geo: scorchDisc(sr, Math.round(R) + 3), matrix: T(0, R * 0.026, 0), color: B.scorchColor || '#2e2924', mat: 'dark' },
+      { geo: scorchDisc(sr * 0.55, Math.round(R) + 7), matrix: C(T(0, R * 0.031, 0), RY(1.1)), color: shade(B.scorchColor || '#2e2924', 0.6), mat: 'dark' },
+      ...rim,
+      ...crystalFragments(R, col, cr, B.fragments ?? 10, [0.05, 0.9], 61, K).map((p) => ({ ...p, matrix: T(0, R * 0.02, 0).multiply(p.matrix) })),
+    ], 1);
+    stump = m.ruinStubs(tint);
+  }
   // 召唤水晶 / 枢纽没有"上半截"可倾，只松动
   const W = K.wear || {};
   const wear = r.wear || [null, { loose: W.lightLoose ?? 0.35, share: W.lightShare ?? 0.45 }, { loose: W.heavyLoose ?? 1, share: W.heavyShare ?? 0.85 }];
   return {
-    model: m, stages: [[], s1, s2], continuous: true, wear,
+    model: m, stages: [[], s1, s2], continuous: true, wear, ruinStyle: style,
     ruin: [...m.ruinParts(keep, tint), ...mound, ...stump],
     ruinKit: { mound, stump, moundY: r.baseTop - R * 0.02 },
     crystalCy: r.crystalCy, crystalR: r.crystalR, crystalX: 0, crystalZ: 0,

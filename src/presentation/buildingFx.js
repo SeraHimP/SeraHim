@@ -5,6 +5,8 @@
  *   ① 掉档：要掉的部件先抖一下，然后翻滚着掉到塔脚、落地弹一下扬起一小团灰尘（约 0.8 秒），在地上停 2 秒后沉进地里消失
  *      （用户："为了看起来不那么杂乱，塔损毁的掉在地上的块部分不再常驻显示，而是2秒后消失"）；
  *   ② 被摧毁：水晶闪白后炸开成碎片，还在的部件向外飞散并翻滚，伴随一圈冲击波和烟尘，然后碎石堆出现（约 1.5 秒）；
+ *      用户后来嫌它"太单调了，看不出来是塔/水晶爆炸的效果"，所以水晶炸开那一下另有：放射光芒、冲天光柱、阵营色能量球、
+ *      一把火花、更多更亮的晶片；之后废墟中间升起一柱黑烟，持续几秒。枢纽炸得更大一档；
  *   ③ 召唤水晶重生：碎石堆里的部件倒放着飞回原位拼好，最后水晶从中间升起、亮起来（约 1.5 秒）。
  *
  * 分工：
@@ -272,6 +274,27 @@ export class BuildingFx {
   _dustRingMat(hex) { return new THREE.MeshBasicMaterial({ color: hex, transparent: true, depthWrite: false, side: THREE.DoubleSide }); }
   // 闪白必须带圆形柔光贴图：没贴图的精灵就是一整块正方形（用户："顶部中间会有一个大白方块"）
   _flashMat() { return new THREE.SpriteMaterial({ map: dotTexture(), color: '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 }); }
+  /** 加色混合的光：放射光芒、能量球外壳用 */
+  _rayMat(hex) { return new THREE.SpriteMaterial({ map: dotTexture(), color: hex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 }); }
+  /** 冲天光柱：圆柱侧面，越往上越淡，加色混合 */
+  _pillarMat(hex) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(hex) }, uAlpha: { value: 0 } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: 'uniform vec3 uColor; uniform float uAlpha; varying vec2 vUv; void main(){ float k = pow(clamp(1.0 - vUv.y, 0.0, 1.0), 1.6) * smoothstep(0.0, 0.08, vUv.y); gl_FragColor = vec4(uColor * k * uAlpha, 1.0); }',
+      transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    });
+  }
+  /** 能量球：只有边缘亮的球壳，加色混合 */
+  _orbMat(hex) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(hex) }, uAlpha: { value: 0 } },
+      vertexShader: 'varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+      fragmentShader: 'uniform vec3 uColor; uniform float uAlpha; varying vec3 vN; varying vec3 vV; void main(){ float r = pow(clamp(1.0 - abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0), 1.8); gl_FragColor = vec4(uColor * (0.25 + 0.75 * r) * uAlpha, 1.0); }',
+      transparent: true, depthWrite: false, side: THREE.FrontSide, blending: THREE.AdditiveBlending,
+    });
+  }
+  _sparkMat(hex, size) { return new THREE.PointsMaterial({ map: dotTexture(), color: hex, size, sizeAttenuation: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 1 }); }
   _domeMat(SW) {
     return new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color(SW.color || '#fff4dc') }, uAlpha: { value: 0 }, uRim: { value: SW.rim ?? 2.2 } },
@@ -292,7 +315,7 @@ export class BuildingFx {
     if (!this._warmKeep) {
       const g = new THREE.Group(), geo = new THREE.BoxGeometry(1, 1, 1);
       const SW = cfg().explode?.shock || {};
-      const mats = [this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), unitMaterial(false)];
+      const mats = [this._shardMat('#88aaff'), this._ringMat('#ffffff'), this._dustRingMat('#b9ab93'), this._domeMat(SW), this._pillarMat('#88aaff'), this._orbMat('#88aaff'), unitMaterial(false)];
       for (const m of mats) {
         const mesh = new THREE.Mesh(geo, m);
         if (m === mats[mats.length - 1]) { mesh.castShadow = true; mesh.receiveShadow = true; }   // 同碎块（_pieceMesh）
@@ -300,6 +323,9 @@ export class BuildingFx {
       }
       const sp = new THREE.Sprite(this._flashMat()); sp.layers.set(FX_PARTICLE_LAYER); g.add(sp);
       const sp2 = new THREE.Sprite(this._puffMat('#888888', 0.5)); sp2.layers.set(FX_PARTICLE_LAYER); g.add(sp2);
+      const sp3 = new THREE.Sprite(this._rayMat('#88aaff')); sp3.layers.set(FX_PARTICLE_LAYER); g.add(sp3);
+      const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+      const pts = new THREE.Points(pg, this._sparkMat('#88aaff', 2)); pts.layers.set(FX_PARTICLE_LAYER); g.add(pts);
       g.position.set(0, -9999, 0);
       // 材质不释放：three 按引用计数回收着色器程序，释放了预热就白做了（留着的只有七个小对象）
       this._warmKeep = { g, geo, mats, sp };
@@ -426,6 +452,7 @@ export class BuildingFx {
       plinth.visible = x < rb;   // 碎石堆（含开裂的石台）升到位之后换它接手
       blast(x, dt);
     } });
+    this._smokeColumn(info, R);
   }
 
   /**
@@ -434,16 +461,20 @@ export class BuildingFx {
    */
   _blastFx(root, info, R, H) {
     const E = cfg().explode || {};
+    // 枢纽炸得更大：所有半径 / 数量按 big 放大
+    const big = info.build?.kind === 'gem' ? (E.nexusScale ?? 1.35) : 1;
+    R = R * big;
     // 闪白 + 水晶碎片（从水晶所在位置炸开）
     const cp = info.crystal ? new THREE.Vector3(info.crystal.lx, info.crystal.ly, info.crystal.lz) : new THREE.Vector3(0, H * 0.8, 0);
     const flash = new THREE.Sprite(this._flashMat());
     flash.layers.set(FX_PARTICLE_LAYER);
     flash.position.copy(cp); root.add(flash);
     const shards = [];
-    const nS = E.shards ?? 10, cr = info.crystal?.r || R * 0.3;
+    const nS = Math.round((E.shards ?? 18) * big), cr = info.crystal?.r || R * 0.3;
+    const teamHot0 = '#' + new THREE.Color(info.color || '#9cc8ff').lerp(new THREE.Color('#ffffff'), 0.45).getHexString();
     for (let i = 0; i < nS; i++) {
-      const sh = new THREE.Mesh(shardGeo(cr * 0.16), this._shardMat(info.color));
-      const a = i / nS * Math.PI * 2, el = (hash01(i, 91) - 0.3) * 1.2;
+      const sh = new THREE.Mesh(shardGeo(cr * (0.12 + hash01(i, 92) * 0.14) * big), this._shardMat(i % 3 ? info.color : teamHot0));
+      const a = i / nS * Math.PI * 2 + hash01(i, 93) * 0.4, el = (hash01(i, 91) - 0.3) * 1.2;
       sh.userData.v = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el) + 0.4, Math.sin(a) * Math.cos(el)).multiplyScalar(R * (E.shardSpeed ?? 3.2));
       sh.position.copy(cp); root.add(sh); shards.push(sh);
     }
@@ -467,11 +498,73 @@ export class BuildingFx {
       pf.userData.k = 0.6 + hash01(i, 96) * 0.8;
       root.add(pf); puffs.push(pf);
     }
+    // ---- 水晶炸开的读点（用户："目前的塔被摧毁/水晶爆炸动画太单调了，看不出来是塔/水晶爆炸的效果"）----
+    const team = info.color || '#9cc8ff', teamHot = '#' + new THREE.Color(team).lerp(new THREE.Color('#ffffff'), 0.45).getHexString();
+    // ① 引爆那一下：一圈放射光芒（屏幕空间的细长光条，从水晶往外刺出去）
+    const RY_ = E.rays || {};
+    const rays = [];
+    for (let i = 0; i < (RY_.n ?? 9); i++) {
+      const sp = new THREE.Sprite(this._rayMat(teamHot)); sp.layers.set(FX_PARTICLE_LAYER);
+      sp.material.rotation = i / (RY_.n ?? 9) * Math.PI * 2 + hash01(i, 41) * 0.5;
+      sp.userData.len = (0.6 + hash01(i, 42) * 0.8);
+      sp.position.copy(cp); root.add(sp); rays.push(sp);
+    }
+    // ② 冲天光柱：一粗一细两层，从水晶处直冲上去
+    const PL = E.pillar || {};
+    const pillars = [[PL.r ?? 0.32, team], [(PL.r ?? 0.32) * 0.4, '#ffffff']].map(([r, hex]) => {
+      const geo = new THREE.CylinderGeometry(R * r, R * r * 1.4, 1, 20, 1, true); geo.translate(0, 0.5, 0);
+      const mesh = new THREE.Mesh(geo, this._pillarMat(hex)); mesh.layers.set(FX_PARTICLE_LAYER); mesh.position.set(cp.x, cp.y - R * 0.3, cp.z); root.add(mesh); return mesh;
+    });
+    // ③ 能量球：阵营色的球壳从水晶处鼓出去
+    const SP = E.sphere || {};
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18), this._orbMat(team));
+    orb.layers.set(FX_PARTICLE_LAYER); orb.position.copy(cp); root.add(orb);
+    // ④ 火花：一把加色的光点，被炸飞后受重力落下、渐暗
+    const SK = E.sparks || {};
+    const nK = Math.round((SK.n ?? 70) * big), kp = new Float32Array(nK * 3), kv = [];
+    for (let i = 0; i < nK; i++) {
+      kp[i * 3] = cp.x; kp[i * 3 + 1] = cp.y; kp[i * 3 + 2] = cp.z;
+      const a = hash01(i, 43) * Math.PI * 2, el = (hash01(i, 44) - 0.25) * 1.5, sp = R * (SK.speed ?? 4.5) * (0.35 + hash01(i, 45) * 0.9);
+      kv.push(new THREE.Vector3(Math.cos(a) * Math.cos(el) * sp, Math.sin(el) * sp + R * 1.2, Math.sin(a) * Math.cos(el) * sp));
+    }
+    const kg = new THREE.BufferGeometry(); kg.setAttribute('position', new THREE.BufferAttribute(kp, 3));
+    const sparks = new THREE.Points(kg, this._sparkMat(teamHot, R * (SK.size ?? 0.09))); sparks.layers.set(FX_PARTICLE_LAYER); sparks.frustumCulled = false; root.add(sparks);
     const g = R * (E.gravity ?? 9);
     return (x, dt) => {
+      const ru0 = seg(x, 0, RY_.end ?? 0.2);
+      for (const sp of rays) {
+        const k = Math.sin(Math.PI * ru0);
+        sp.visible = ru0 > 0 && ru0 < 1;
+        sp.material.opacity = k * (RY_.alpha ?? 0.9);
+        sp.scale.set(R * 0.07, R * (RY_.len ?? 2.6) * sp.userData.len * (0.3 + 0.7 * easeOut(ru0)), 1);
+      }
+      const [pa, pb_] = PL.span || [0.03, 0.6];
+      const pu = seg(x, pa, pb_);
+      for (const [i, mesh] of pillars.entries()) {
+        mesh.visible = pu > 0 && pu < 1;
+        mesh.scale.set(1 + pu * (i ? 0.2 : 0.6), R * (PL.h ?? 6) * easeOut(Math.min(1, pu * 2.2)), 1 + pu * (i ? 0.2 : 0.6));
+        mesh.material.uniforms.uAlpha.value = (PL.alpha ?? 1.1) * (1 - smooth(pu)) * Math.min(1, pu * 8);
+      }
+      const [sa, sb] = SP.span || [0.02, 0.38];
+      const su = seg(x, sa, sb);
+      const sr = R * (SP.r ?? 1.7) * easeOut(su) + 0.1;
+      orb.scale.set(sr, sr, sr);
+      orb.visible = su > 0 && su < 1;
+      orb.material.uniforms.uAlpha.value = (SP.alpha ?? 0.9) * (1 - su) * Math.min(1, su * 10);
+      const ka = sparks.geometry.attributes.position;
+      for (let i = 0; i < nK; i++) {
+        const v = kv[i];
+        v.y -= g * 0.55 * dt; v.multiplyScalar(Math.max(0, 1 - dt * 0.8));
+        let y = ka.array[i * 3 + 1] + v.y * dt;
+        if (y < R * 0.02) { y = R * 0.02; v.y = Math.abs(v.y) * 0.25; }
+        ka.array[i * 3] += v.x * dt; ka.array[i * 3 + 1] = y; ka.array[i * 3 + 2] += v.z * dt;
+      }
+      ka.needsUpdate = true;
+      sparks.material.opacity = 1 - smooth(seg(x, 0.35, 0.95));
+      sparks.visible = sparks.material.opacity > 0.01;
       const fu = seg(x, 0, E.flash ?? 0.22);
       flash.material.opacity = Math.sin(Math.PI * fu) * (E.flashAlpha ?? 0.9);
-      const fs = cr * (1 + fu * 5);
+      const fs = cr * (1 + fu * 5) * big;
       flash.scale.set(fs, fs, fs);
       for (const sh of shards) {
         sh.userData.v.y -= g * 0.6 * dt;
@@ -507,6 +600,41 @@ export class BuildingFx {
     };
   }
 
+  /**
+   * 爆炸之后从废墟中间升起的一柱黑烟：比爆炸本身长（几秒），慢慢往上翻、被风带偏、散掉。
+   * 它有自己的时钟（一个 type: 'smoke' 的事件，modeOf 不认它，不影响塔身画法）。
+   */
+  _smokeColumn(info, R) {
+    const E = cfg().explode?.smokeColumn || {};
+    const st = this.byId.get(this._curId);
+    if (E.enabled === false || !st) return;
+    R *= info.build?.kind === 'gem' ? (cfg().explode?.nexusScale ?? 1.35) : 1;
+    const ev = { type: 'smoke', t: 0, dur: E.dur ?? 4 };
+    st.events.push(ev);
+    const root = this._root(info);
+    const n = E.n ?? 9, puffs = [];
+    for (let i = 0; i < n; i++) {
+      const pf = this._puff(R * (E.size ?? 0.42), i % 3 ? (E.color || '#3d3833') : (E.colorLight || '#6a625a'));
+      pf.userData.d0 = i / n * (E.stagger ?? 0.5);
+      pf.userData.a = hash01(i, 131) * Math.PI * 2;
+      pf.userData.k = 0.7 + hash01(i, 132) * 0.6;
+      root.add(pf); puffs.push(pf);
+    }
+    const drift = E.drift ?? 0.6, rise = E.rise ?? 3.4, life = E.life ?? 0.55;
+    this.anims.push({ id: this._curId, ev, root, update: (x) => {
+      for (const pf of puffs) {
+        const u = seg(x, pf.userData.d0, Math.min(1, pf.userData.d0 + life));   // 最后一团也在事件结束前散完
+        pf.visible = u > 0 && u < 1;
+        if (!pf.visible) continue;
+        const k = pf.userData.k, a = pf.userData.a;
+        this._puffScale(pf, (0.5 + easeOut(u) * 1.8) * k);
+        pf.position.set(Math.cos(a) * R * 0.25 * (1 - u) + u * R * drift, R * (0.3 + easeOut(u) * rise * k), Math.sin(a) * R * 0.25 * (1 - u) + u * R * drift * 0.4);
+        pf.material.opacity = (E.alpha ?? 0.6) * Math.sin(Math.PI * Math.min(1, u * 1.2)) * (1 - u * 0.3);
+        pf.visible = pf.material.opacity > 0.005;
+      }
+    } });
+  }
+
   // ---------- ②′ 被摧毁（连贯倒塌）：部件原地塌成废墟 ----------
   // 用户："目前一个最大问题是塔爆炸之后原有的塔模块消失了，取而代之的是从地下冒出来的废墟模型，很丑我不要这样的，
   //        我要求塔/塔掉落的块/废墟的模型的动画是相互关联的，并且召唤水晶/水晶枢纽爆炸同理。"
@@ -533,7 +661,8 @@ export class BuildingFx {
       const mesh = mk(id), rp = pb.model.ruinParams(id);
       yMax = Math.max(yMax, rp.c.y);
       // vanish：半路碎成渣的大块（芯、腰箍……），落到一半在烟尘里缩没，废墟里没有它
-      items.push({ mesh, rp, seed: items.length * 1.37 + 0.5, vanish: !!pb.model.pieces.get(id).vanish });
+      const pc = pb.model.pieces.get(id);
+      items.push({ mesh, rp, seed: items.length * 1.37 + 0.5, vanish: !!(pc.vanish || pc.cloth) });   // 旗在爆炸里烧没，同碎成渣的大块一样半路缩没
     }
     // 碎石丘：随着部件落地一点点堆起来（不是从地里冒出来的整块）；断桩一直在原地（倒塌前被塔身包着）
     const kit = pb.ruinKit, my = kit?.moundY || 0;
@@ -582,6 +711,7 @@ export class BuildingFx {
       mat.color.copy(tint0).multiplyScalar(k);
       blast(x, dt);
     } });
+    this._smokeColumn(info, R);
   }
 
   // ---------- ③′ 召唤水晶重生（连贯）：部件从废墟里飞回原位 ----------
@@ -598,7 +728,8 @@ export class BuildingFx {
       const mesh = new THREE.Mesh(this._pieceGeo(pb, id), mat); mesh.matrixAutoUpdate = false; mesh.castShadow = true; root.add(mesh);
       const rp = pb.model.ruinParams(id);
       // 废墟里没有的部件（会碎成渣的大块、掉档时就已经消失的部件）：不从地上飞回来，在原位重新长出来
-      const absent = !!pb.model.pieces.get(id).vanish || !!pb.model._fallen?.has(id);
+      const pc = pb.model.pieces.get(id);
+      const absent = !!(pc.vanish || pc.cloth) || !!pb.model._fallen?.has(id);
       items.push({ mesh, rp, seed: i * 1.37 + 0.5, delay: hash01(i, 61) * 0.3 + 0.25 * (rp.c.y / (info.topY || R * 3)), vanish: absent, absent: !!pb.model._fallen?.has(id) });   // 低处的先归位
       i++;
     }

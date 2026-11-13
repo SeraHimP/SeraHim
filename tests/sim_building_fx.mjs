@@ -137,6 +137,42 @@ const R = 32, F = { stone: '#b9c6d6', trim: '#eaf2fd' };
     && meshes.length >= 3 && landed === meshes.length && still === meshes.length && s1 < s0 * 0.7 && gone === 0);
 }
 {
+  // 用户："目前的塔被摧毁/水晶爆炸动画太单调了，看不出来是塔/水晶爆炸的效果"
+  const { towerStoneOf } = await import('../src/presentation/UnitMeshFactory.js');
+  const E = CONFIG.ui.buildingFx.explode;
+  const run = (kind, tier) => {
+    const fx = new BuildingFx(new THREE.Scene());
+    const e = { id: 'boom-' + kind, alive: true, currentHP: 100, baseStats: { maxHP: 100 }, _mapTier: tier };
+    fx.observe(e, false, false);
+    e.alive = false; e.currentHP = 0;
+    fx.observe(e, false, false);
+    fx.realize(e, { build: { kind, R, tier, faction: 'blue', F: towerStoneOf('blue') }, color: '#5b9bd5', x: 0, y: 0, z: 0, topY: R * 4, crystal: { lx: 0, ly: R * 3.4, lz: 0, r: R * 0.3 } });
+    const boom = fx.anims.find((a) => a.ev.type === 'explode'), smoke = fx.anims.find((a) => a.ev.type === 'smoke');
+    const all = (a) => { const o = []; a.root.traverse((n) => o.push(n)); return o; };
+    let peak = { rays: 0, pillar: 0, orb: 0, sparks: 0 };
+    for (let k = 1; k <= 40; k++) {
+      const x = k / 40;
+      boom.ev.t = x * boom.ev.dur; boom.update(x);
+      const ns = all(boom);
+      peak.rays = Math.max(peak.rays, ns.filter((n) => n.isSprite && n.visible && n.material.blending === THREE.AdditiveBlending && n.scale.y > n.scale.x * 4).length);
+      peak.pillar = Math.max(peak.pillar, ns.filter((n) => n.isMesh && n.visible && n.geometry.type === 'CylinderGeometry').length);
+      peak.orb = Math.max(peak.orb, ns.filter((n) => n.isMesh && n.visible && n.geometry.type === 'SphereGeometry' && n.geometry.parameters.thetaLength === Math.PI).reduce((m, n) => Math.max(m, n.scale.x), 0));
+      peak.sparks = Math.max(peak.sparks, ns.filter((n) => n.isPoints && n.visible).reduce((m, n) => m + n.geometry.attributes.position.count, 0));
+    }
+    const sv = (x) => { smoke.ev.t = x * smoke.ev.dur; smoke.update(x); return all(smoke).filter((n) => n.isSprite && n.visible).length; };
+    const smokeMid = sv(0.4), smokeEnd = sv(0.999);
+    fx.update(); for (const st of fx.byId.values()) for (const ev of st.events) ev.t = ev.dur + 1; fx.update();
+    return { peak, smokeMid, smokeEnd, dur: smoke?.ev.dur || 0, left: fx.anims.length };
+  };
+  const t = run('tower', 'outer'), g = run('gem', 'nexus_main');
+  T(`㉗爆炸看得出是水晶炸了：放射光芒 ${t.peak.rays} 条、冲天光柱 ${t.peak.pillar} 层、能量球（最大 ${(t.peak.orb / R).toFixed(1)}R）、火花 ${t.peak.sparks} 点`,
+    t.peak.rays >= 6 && t.peak.pillar >= 2 && t.peak.orb > R * 1.0 && t.peak.sparks >= 40 && E.shards >= 14);
+  T(`㉘之后废墟中间升起一柱黑烟，比爆炸本身长（${t.dur} 秒，中途 ${t.smokeMid} 团、末尾 ${t.smokeEnd} 团），播完全部收掉（剩 ${t.left} 个动画）`,
+    t.dur > E.dur * 1.5 && t.smokeMid >= 3 && t.smokeEnd === 0 && t.left === 0 && modeOf([{ type: 'smoke', t: 1, dur: 4 }]).hidden === false);
+  T(`㉙水晶枢纽炸得更大（能量球 ${(g.peak.orb / R).toFixed(1)}R > 塔 ${(t.peak.orb / R).toFixed(1)}R，火花 ${g.peak.sparks} > ${t.peak.sparks}）`,
+    g.peak.orb > t.peak.orb * 1.2 && g.peak.sparks > t.peak.sparks);
+}
+{
   // 用户："塔已经损毁掉在地上的部分就不要再施加护盾特效了"
   const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
   const prevT = CONFIG.ui.statueTower.style; CONFIG.ui.statueTower.style = 'statue';
