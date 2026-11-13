@@ -60,22 +60,56 @@ const TH = CONFIG.terrain.themes;
   const R = 32, blue = citadelTower(R, 'blue'), red = citadelTower(R, 'red');
   const ids = (t) => [...t.model.pieces.keys()].filter((id) => !id.startsWith('deb'));
   const bi = ids(blue), ri = ids(red);
-  T(`塔①红方塔和蓝方塔是同一副骨架（部件清单只多出台脚的碎岩：蓝 ${bi.length} / 红 ${ri.length}）`,
-    bi.every((id) => ri.includes(id)) && ri.filter((id) => !bi.includes(id)).every((id) => id.startsWith('spur')));
+  // 两方的差别只在阵营特有的件上：红方台脚的碎岩（spur），蓝方托在水晶腰间的法环（halo）
+  T(`塔①红方塔和蓝方塔是同一副骨架（部件清单只差阵营特有件：蓝 ${bi.length} / 红 ${ri.length}）`,
+    bi.filter((id) => !ri.includes(id)).every((id) => id.startsWith('halo')) && ri.filter((id) => !bi.includes(id)).every((id) => id.startsWith('spur')));
   const glow = (t) => ids(t).filter((id) => t.model.pieces.get(id).parts.some((p) => p.mat === 'glow'));
-  T(`塔②红方塔芯不发光：发光的只有四道窄窗（${glow(red).join(',')}），和蓝方一样`, glow(red).length === 4 && glow(red).every((id) => id.startsWith('slit')) && glow(blue).join() === glow(red).join());
+  T(`塔②红方塔芯不发光：发光的只有四道窄窗（${glow(red).join(',')}）；蓝方另有法环上的一线光`,
+    glow(red).length === 4 && glow(red).every((id) => id.startsWith('slit')) && glow(blue).filter((id) => !id.startsWith('halo')).join() === glow(red).join());
+  {
+    // 用户："优化蓝方防御塔上面那四个爪的效果，要做到和红方不同"：蓝方是笔直的方尖石柱 + 法环，红方是往里勾的爪
+    const crown = (t) => [0, 1, 2, 3].map((i) => partsBox(t.model.pieces.get(`claw${i}`).parts));
+    const lean = (bs) => bs.map((b) => { const c = new THREE.Vector3(); b.getCenter(c); return (b.max.y - b.min.y) / Math.max(1e-6, Math.max(b.max.x - b.min.x, b.max.z - b.min.z)); });
+    const bl = lean(crown(blue)), rl = lean(crown(red));
+    T(`冠①蓝方顶冠是细高的直柱（高宽比 ${bl[0].toFixed(1)}），红方是往里勾的爪（${rl[0].toFixed(1)}），外形不同；蓝方另有四段法环挂在柱子上`,
+      bl.every((k) => k > 2.2) && rl.every((k) => k < bl[0] * 0.8)
+      && [0, 1, 2, 3].every((i) => blue.model.pieces.get(`halo${i}`)?.parent === `claw${i}`) && !red.model.pieces.has('halo0'));
+  }
   T('塔③红方不是换色：垛口 / 爪 / 旗的几何和蓝方不同',
     ['mer0', 'claw0', 'flag1', 'shield0'].every((id) => red.model.pieces.get(id).parts.map((p) => p.geo.attributes.position.count).join() !== blue.model.pieces.get(id).parts.map((p) => p.geo.attributes.position.count).join()));
   for (const [name, t] of [['蓝', blue], ['红', red]]) {
     const [, s1, s2] = t.stages, all = ids(t).length;
     T(`损①-${name}方：轻损 / 重损掉的部件一档比一档多，重损掉了三成以上（${s1.length} → ${s2.length} / ${all}）`, s1.length >= 12 && s2.length > s1.length * 2 && s2.length >= all * 0.3 && s1.every((id) => s2.includes(id)));
-    T(`损②-${name}方：轻损就改轮廓（断一只爪、少垛口、塌一道扶壁），重损再塌一段冠台和腰箍、只剩两只爪`,
-      s1.some((id) => id.startsWith('claw')) && s1.some((id) => id.startsWith('fin')) && s1.filter((id) => id.startsWith('mer')).length >= 2
+    T(`损②-${name}方：轻损就改轮廓（顶冠缺一角、少垛口、塌一道扶壁），重损再塌一段冠台和腰箍、只剩两根顶冠`,
+      s1.some((id) => /^(claw|halo)/.test(id)) && s1.some((id) => id.startsWith('fin')) && s1.filter((id) => id.startsWith('mer')).length >= 2
       && s2.some((id) => id.startsWith('corbel')) && s2.some((id) => id.startsWith('belt')) && s2.filter((id) => id.startsWith('claw')).length === 2);
-    // 伤集中在同一侧：轻损掉的石块，方位角大多落在同一个半圈里
-    const ang = s1.filter((id) => /^[cu]\d_/.test(id)).map((id) => { const c = new THREE.Vector3(); partsBox(t.model.pieces.get(id).parts).getCenter(c); return Math.atan2(c.z, c.x); });
-    const side = ang.filter((a) => a > Math.PI * 0.4 && a < Math.PI * 1.1).length;
-    T(`损③-${name}方：轻损掉的石块集中在同一侧（${side} / ${ang.length}），不是东一块西一块`, side >= ang.length * 0.7);
+    // 用户："重损模型……少了一半，另一半安然无恙毫发无损，这个是不对的"：轻损 / 重损掉的石块四个象限都有
+    const quads = (list) => new Set(list.filter((id) => /^[cu]\d_/.test(id)).map((id) => { const c = new THREE.Vector3(); partsBox(t.model.pieces.get(id).parts).getCenter(c); return Math.floor(((Math.atan2(c.z, c.x) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 2)); }));
+    const backSide = s2.filter((id) => /^[cu]\d_/.test(id)).filter((id) => { const c = new THREE.Vector3(); partsBox(t.model.pieces.get(id).parts).getCenter(c); const a = Math.atan2(c.z, c.x); return !(a > Math.PI * 0.4 && a < Math.PI * 1.1); }).length;
+    T(`损③-${name}方：轻损 / 重损的伤四面都有（象限 ${quads(s1).size} / ${quads(s2).size}），重损时豁口背面也掉了 ${backSide} 块`, quads(s1).size === 4 && quads(s2).size === 4 && backSide >= 10);
+    {
+      // "摇摇欲坠"：重损时还立着的石块松了、上半截朝豁口倾；轻损只是略松；完好时纹丝不动
+      const w = t.wear || [], st = (d) => t.model.parts(t.stages[d], new Set(t.stages[d]), false, w[d]);
+      const moved = (d) => { const a = st(d), b = t.model.parts(t.stages[d], new Set(t.stages[d])); let n = 0; for (let i = 0; i < a.length; i++) if (!a[i].matrix.equals(b[i].matrix)) n++; return n; };
+      const top = (d) => { const bb = partsBox(st(d).filter((p) => p.mat !== 'cloth')); return (bb.max.x + bb.min.x) / 2 * Math.cos(Math.PI * 0.75) + (bb.max.z + bb.min.z) / 2 * Math.sin(Math.PI * 0.75); };
+      T(`损⑦-${name}方：重损"摇摇欲坠"（松动的零件 轻 ${moved(1)} / 重 ${moved(2)}，上半截朝豁口倾 ${w[2]?.tilt?.angle ?? 0} 弧度）`,
+        !w[0] && moved(2) > moved(1) && moved(1) > 0 && (w[2]?.tilt?.angle ?? 0) > 0.03 && (w[2]?.tilt?.angle ?? 1) < 0.15);
+      {
+        // 水晶跟着倾斜的托座走：托座（cup）倾斜后的中心与水晶的水平位置对得上
+        const cupIdx = t.model.parts([]).length, cup = t.model.pieces.get('cup').parts;
+        // 托座中轴倾斜后，延长到水晶的高度：水晶该在那里
+        const tm = t.model.tiltMatrixOf(w[2]?.tilt), c0 = new THREE.Vector3(); partsBox(cup).getCenter(c0);
+        const up = new THREE.Vector3(0, 1, 0).transformDirection(tm), c = c0.clone().applyMatrix4(tm).addScaledVector(up, (t.crystalCy - c0.y) / up.y);
+        const [sx, sz] = t.crystalShift?.[2] || [0, 0];
+        T(`损⑨-${name}方：重损时水晶跟着倾斜的托座平移（偏 ${(Math.hypot(sx, sz) / R).toFixed(2)}R，与托座差 ${(Math.hypot(c.x - sx, c.z - sz) / R).toFixed(3)}R），高度不变`,
+          cupIdx > 0 && Math.hypot(sx, sz) > R * 0.05 && Math.hypot(c.x - sx, c.z - sz) < R * 0.04 && (t.crystalShift[0][0] === 0 && t.crystalShift[1][0] === 0));
+      }
+      // 用户："目前的损毁模型还是存在顶部那个几个小块块浮空"——那是塞在塔身里的碎石（deb*），塔芯被打掉后露了出来
+      const inner = new Set(t.model.order.filter((id) => t.model.pieces.get(id).inner).flatMap((id) => t.model.pieces.get(id).parts));
+      T(`损⑧-${name}方：体内碎石（${inner.size} 个零件）只在倒塌动画和废墟里出现，各损毁档都不画；损毁档也不画地上的碎块`,
+        inner.size >= 10 && [0, 1, 2].every((d) => !t.model.parts(t.stages[d]).some((p) => inner.has(p)))
+        && [1, 2].every((d) => { const ext = (ps) => { const bb = partsBox(ps); return Math.max(bb.max.x, -bb.min.x, bb.max.z, -bb.min.z); }; return ext(st(d)) < ext(st(0)) + R * 0.05; }));
+    }
     // 重损的豁口：塔芯也被打掉一瓣（从冠台一路豁到塔身中段），豁口里拿掉的东西上面不留东西
     const cores = s2.filter((id) => id.startsWith('core'));
     T(`损④-${name}方：重损时塔芯跟着坏（拿掉 ${cores.join(' / ')}），轻损时塔芯还在`, cores.length >= 3 && !s1.some((id) => id.startsWith('core')));

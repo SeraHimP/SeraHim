@@ -2,7 +2,8 @@
  * buildingFx.js —— 防御塔 / 召唤水晶 / 水晶枢纽的三段动画。
  *
  * 用户定稿（2026-09-27，原话"按这个做"）：
- *   ① 掉档：要掉的部件先抖一下，然后翻滚着掉到塔脚、落地弹一下扬起一小团灰尘，停下后留作碎石（约 0.8 秒）；
+ *   ① 掉档：要掉的部件先抖一下，然后翻滚着掉到塔脚、落地弹一下扬起一小团灰尘（约 0.8 秒），在地上停 2 秒后沉进地里消失
+ *      （用户："为了看起来不那么杂乱，塔损毁的掉在地上的块部分不再常驻显示，而是2秒后消失"）；
  *   ② 被摧毁：水晶闪白后炸开成碎片，还在的部件向外飞散并翻滚，伴随一圈冲击波和烟尘，然后碎石堆出现（约 1.5 秒）；
  *   ③ 召唤水晶重生：碎石堆里的部件倒放着飞回原位拼好，最后水晶从中间升起、亮起来（约 1.5 秒）。
  *
@@ -178,7 +179,11 @@ export class BuildingFx {
       }
       this._push(st, { type: 'respawn', dur: C.respawn?.dur ?? 1.5 });
     }
-    else if (!dead && stage > st.stage) this._push(st, { type: 'chunk', dur: C.chunkFall?.dur ?? 0.8, from: st.stage, to: stage });
+    else if (!dead && stage > st.stage) {
+      // 事件时长 = 掉落 + 在地上停留 + 沉没消失；掉落本身的时长另记在 fall 上
+      const CF = C.chunkFall || {}, fall = CF.dur ?? 0.8;
+      this._push(st, { type: 'chunk', dur: fall + (CF.linger ?? 2) + (CF.fade ?? 0.5), fall, from: st.stage, to: stage });
+    }
     st.stage = stage; st.dead = dead;
     return modeOf(st.events, cont);
   }
@@ -337,11 +342,21 @@ export class BuildingFx {
         root.add(p); dust.push({ p, it });
       }
     }
+    const CF = cfg().chunkFall || {};
+    const fall = ev.fall ?? ev.dur, linger = CF.linger ?? 2, fade = CF.fade ?? 0.5;
     this.anims.push({ id: this._curId, ev, root, update: (x) => {
-      const land = cfg().chunkFall?.fallEnd ?? 0.8;
+      const land = CF.fallEnd ?? 0.8;
+      const sec = x * ev.dur, xf = Math.min(1, sec / fall);
+      // 落地停 linger 秒后，碎块一边缩小一边沉进地里（不是凭空消失）
+      const f = smooth(seg(sec, fall + linger, fall + linger + fade));
       for (const it of items) {
-        const t = clamp01((x - it.delay) / (1 - it.delay));
+        const t = clamp01((xf - it.delay) / (1 - it.delay));
         it.mesh.matrix.copy(fallPose(it.rp, t, R, it.seed));
+        if (f > 0) {
+          const k = Math.max(0.001, 1 - f), d = it.rp.dest;
+          it.mesh.matrix.premultiply(_m1.makeTranslation(-d.x, -d.y, -d.z)).premultiply(_m2.makeScale(k, k, k)).premultiply(_m1.makeTranslation(d.x, d.y - f * R * 0.08, d.z));
+        }
+        it.mesh.visible = f < 0.999;
         it.t = t;
       }
       for (const d of dust) {   // 落地那一刻扬起的一小团灰
@@ -514,8 +529,8 @@ export class BuildingFx {
     const items = [];
     for (const id of pb.model.order) {
       const parts = pb.model.pieceParts(id); if (!parts.length) continue;
+      if (gone.has(id)) continue;   // 掉档时掉下去的部件早就消失了（掉档动画里落地 2 秒后沉没）
       const mesh = mk(id), rp = pb.model.ruinParams(id);
-      if (gone.has(id)) { mesh.matrix.copy(pb.model.ruinMatrix(id)); continue; }   // 早就掉在塔脚了：原地不动
       yMax = Math.max(yMax, rp.c.y);
       // vanish：半路碎成渣的大块（芯、腰箍……），落到一半在烟尘里缩没，废墟里没有它
       items.push({ mesh, rp, seed: items.length * 1.37 + 0.5, vanish: !!pb.model.pieces.get(id).vanish });
@@ -582,7 +597,9 @@ export class BuildingFx {
       if (!pb.model.pieceParts(id).length) continue;
       const mesh = new THREE.Mesh(this._pieceGeo(pb, id), mat); mesh.matrixAutoUpdate = false; mesh.castShadow = true; root.add(mesh);
       const rp = pb.model.ruinParams(id);
-      items.push({ mesh, rp, seed: i * 1.37 + 0.5, delay: hash01(i, 61) * 0.3 + 0.25 * (rp.c.y / (info.topY || R * 3)), vanish: !!pb.model.pieces.get(id).vanish });   // 低处的先归位
+      // 废墟里没有的部件（会碎成渣的大块、掉档时就已经消失的部件）：不从地上飞回来，在原位重新长出来
+      const absent = !!pb.model.pieces.get(id).vanish || !!pb.model._fallen?.has(id);
+      items.push({ mesh, rp, seed: i * 1.37 + 0.5, delay: hash01(i, 61) * 0.3 + 0.25 * (rp.c.y / (info.topY || R * 3)), vanish: absent, absent: !!pb.model._fallen?.has(id) });   // 低处的先归位
       i++;
     }
     const kit = pb.ruinKit, my = kit?.moundY || 0;
@@ -595,7 +612,7 @@ export class BuildingFx {
     this.anims.push({ id: this._curId, ev, root, mats: [mat], update: (x) => {
       for (const it of items) {
         const t = seg(x, f0 + it.delay * (f1 - f0) * 0.6, f1);
-        it.mesh.matrix.copy(collapsePose(it.rp, 1 - smooth(t), R, it.seed));
+        it.mesh.matrix.copy(it.absent ? _m1.identity() : collapsePose(it.rp, 1 - smooth(t), R, it.seed));
         it.mesh.visible = x < f1 + 0.02;
         if (it.vanish) {   // 碎掉的大块：归位途中重新长出来
           const k = smooth(seg(t, 0.2, 0.7)), c = it.rp.c;

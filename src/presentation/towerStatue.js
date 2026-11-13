@@ -94,12 +94,15 @@ export class PieceModel {
   /**
    * @param {object} opt stub: 残根占部件包围盒高度的比例（0 = 不留残根，适合斜放的零件，
    *   包围盒会比零件本身大一圈）；cloth: 布料（落地时平躺）；fall: [dx,dz] 指定掉落方向；
-   *   parent: 长在哪个部件上——父部件也掉了时不留残根（否则残根悬在半空）
+   *   parent: 长在哪个部件上——父部件也掉了时不留残根（否则残根悬在半空）；
+   *   vanish: 倒塌时半路碎成渣，废墟里没有它；
+   *   inner: 塞在体内的碎石，只在倒塌动画和废墟里出现，立着的建筑（各损毁档）一律不画 ——
+   *          外皮和塔芯被打掉之后它们会露出来，一块块悬在豁口里（用户："损毁模型顶部那几个小块块浮空"）
    */
   piece(id, opt, fn) {
     if (typeof opt === 'function') { fn = opt; opt = {}; }
     id = this._prefix + id;
-    const p = { id, parts: [], stub: opt.stub ?? 0.3, cloth: !!opt.cloth, fall: opt.fall || null, vanish: !!opt.vanish,
+    const p = { id, parts: [], stub: opt.stub ?? 0.3, cloth: !!opt.cloth, fall: opt.fall || null, vanish: !!opt.vanish, inner: !!opt.inner,
                 parent: opt.parent != null ? this._prefix + opt.parent : (this._parent ?? null), idx: this.order.length };
     this.pieces.set(id, p); this.order.push(id);
     const prev = this._cur; this._cur = p; fn(); this._cur = prev;
@@ -155,15 +158,58 @@ export class PieceModel {
   }
 
   /**
+   * 损毁档的"松动"：还立着的部件各自歪一点、往外鼓一点，上半截整体朝豁口那边倾 —— 塔不是"少了几块"，是整座都被打松了。
+   * @param wear { loose: 0..1 松动程度, share: 多大比例的部件松动, tilt: { y: 从这个高度往上, angle: 倾多少弧度, toward: 朝哪个方位角倾 } }
+   * @returns (id, part) → 这块部件要左乘的矩阵（没有变化时返回 null）
+   */
+  /** 上半截的倾斜：绕"豁口那一侧、tilt.y 高度上的一条水平切线"转，上半截朝豁口栽过去。没有倾斜时返回 null。 */
+  tiltMatrixOf(tilt) {
+    if (!tilt?.angle) return null;
+    const a = tilt.toward ?? 0, pr = this.R * (tilt.pivotR ?? 0.3);
+    const axis = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));   // 切线方向；绕它右手转 angle，顶部朝 (cos a, sin a) 倒
+    return T(Math.cos(a) * pr, tilt.y, Math.sin(a) * pr).multiply(new THREE.Matrix4().makeRotationAxis(axis, tilt.angle)).multiply(T(-Math.cos(a) * pr, -tilt.y, -Math.sin(a) * pr));
+  }
+  wearMatrixOf(wear) {
+    if (!wear) return () => null;
+    const R = this.R, cache = new Map();
+    const tiltM = this.tiltMatrixOf(wear.tilt);
+    return (id) => {
+      if (cache.has(id)) return cache.get(id);
+      const p = this.pieces.get(id), n = p.idx;
+      const bb = partsBox(p.parts), c = new THREE.Vector3(); bb.getCenter(c);
+      let m = null;
+      const L = Math.hypot(c.x, c.z);
+      if ((wear.loose ?? 0) > 0 && !p.vanish && L > R * 0.15 && hash01(n, 401) < (wear.share ?? 0.7)) {
+        const k = wear.loose * (0.4 + 0.6 * hash01(n, 403));
+        const out = R * 0.035 * k;                       // 往外鼓
+        m = T(c.x + c.x / L * out, c.y - R * 0.012 * k * hash01(n, 405), c.z + c.z / L * out)
+          .multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler((hash01(n, 407) - 0.5) * 0.22 * k, (hash01(n, 409) - 0.5) * 0.3 * k, (hash01(n, 411) - 0.5) * 0.22 * k)))
+          .multiply(T(-c.x, -c.y, -c.z));
+      }
+      if (tiltM && bb.min.y >= wear.tilt.y - R * 0.02) m = m ? tiltM.clone().multiply(m) : tiltM;
+      cache.set(id, m);
+      return m;
+    };
+  }
+
+  /**
    * 拼出一个状态的全部零件。
    * @param {string[]} removed 拿掉的部件
-   * @param {Set<string>|null} [noRubble] 这些拿掉的部件先不画碎块（掉块动画进行中，碎块由动画画）
+   * @param {Set<string>|null} [noRubble] 这些拿掉的部件不画它们躺在地上的碎块
+   * @param {boolean} [noStubs] 不画残根
+   * @param {object|null} [wear] 还立着的部件的松动 / 倾斜（见 wearMatrixOf）
    */
-  parts(removed = [], noRubble = null, noStubs = false) {
-    const out = [...this.base], gone = new Set(removed);
+  parts(removed = [], noRubble = null, noStubs = false, wear = null) {
+    const out = [...this.base], gone = new Set(removed), wm = this.wearMatrixOf(wear);
     for (const id of this.order) {
       const p = this.pieces.get(id);
-      if (!gone.has(id)) { out.push(...p.parts); continue; }
+      if (p.inner) continue;
+      if (!gone.has(id)) {
+        const m = wm(id);
+        if (m) for (const q of p.parts) out.push({ geo: q.geo, matrix: m.clone().multiply(q.matrix), color: q.color, mat: q.mat });
+        else out.push(...p.parts);
+        continue;
+      }
       if (!noStubs && !(p.parent && gone.has(p.parent))) out.push(...this.stubParts(id));
       if (noRubble && noRubble.has(id)) continue;
       const rm = this.rubbleMatrix(id);
@@ -205,7 +251,7 @@ export class PieceModel {
     for (const id of this.order) {
       const p = this.pieces.get(id);
       if (!p.parts.length) continue;
-      if (fl.has(id)) { out.set(id, this.rubbleMatrix(id)); continue; }
+      if (fl.has(id)) continue;   // 掉档时掉下去的部件早就消失了，不在废墟里（ruinMatrix 对它们退回 rubbleMatrix，只给动画用）
       const bb = partsBox(p.parts), c = new THREE.Vector3(); bb.getCenter(c);
       H = Math.max(H, bb.max.y);
       info.push({ id, p, bb, c });
@@ -221,7 +267,10 @@ export class PieceModel {
       const sp = (hash01(n, 111) - 0.5) * 1.1;
       const fx = dx * Math.cos(sp) - dz * Math.sin(sp), fz = dx * Math.sin(sp) + dz * Math.cos(sp);
       // 越高的部件落得越远；贴着中轴的芯石就地塌下
-      const dist = Math.min(maxDist * (0.55 + 0.45 * hash01(n, 109)), L * (cfg.keepK ?? 0.75) + (c.y / H) * R * (cfg.throwK ?? 0.95) * (0.35 + 0.65 * hash01(n, 107)));
+      // outward（水晶炸开的建筑）：每块从原来的位置再往外抛一段，不往中间堆
+      const dist = opts.outward
+        ? Math.min(maxDist, L + R * (opts.outward[0] + (opts.outward[1] - opts.outward[0]) * hash01(n, 107)) * (0.5 + 0.5 * Math.min(1, c.y / (R * 0.8))))
+        : Math.min(maxDist * (0.55 + 0.45 * hash01(n, 109)), L * (cfg.keepK ?? 0.75) + (c.y / H) * R * (cfg.throwK ?? 0.95) * (0.35 + 0.65 * hash01(n, 107)));
       const yaw = Math.atan2(fx, fz);
       const tall = h > Math.max(w, d) * 1.4;
       // 细长的倒下（朝落点方向放平），其余的随机歪着
@@ -258,14 +307,28 @@ export class PieceModel {
     m.decompose(pos, q, sc);
     return { c, dest, q, s: sc.x };
   }
-  /** 废墟的全部零件：留下的基座（主体里不高于 keepBelow 的）+ 每块部件在废墟里的位置。tint = 整体压暗（烧过）。 */
+  /**
+   * 废墟的全部零件：留下的基座（主体里不高于 keepBelow 的）+ 每块部件在废墟里的位置 + 断在原地的残根。
+   * 不在其中的：掉档时掉下去的部件（早消失了）、倒塌时碎成渣的大块（vanish）。tint = 整体压暗（烧过）。
+   */
   ruinParts(keepBelow, tint = 1) {
     const out = this.base.filter((p) => partsBox([p]).max.y <= keepBelow).map((p) => ({ ...p, color: shade(p.color, tint) }));
     for (const id of this.order) {
-      const p = this.pieces.get(id), rm = this.ruinMatrix(id);
-      if (p.vanish && !this._fallen?.has(id)) continue;   // 倒塌时碎成渣的大块：废墟里没有它（用户："倒塌的模型可以消失一部分块"）
+      const p = this.pieces.get(id);
+      if (p.vanish || this._fallen?.has(id)) continue;
+      const rm = this.ruinMatrix(id);
       // 发光的零件（符文 / 能量缝）在废墟里熄了：换成普通石头的材质
       for (const q of p.parts) out.push({ geo: q.geo, matrix: rm.clone().multiply(q.matrix), color: shade(q.color, q.mat === 'glow' ? tint * 0.35 : tint), mat: q.mat === 'glow' ? 'dark' : q.mat });
+    }
+    return out;
+  }
+  /** 废墟里断在原地的残根（柱子、扶壁、牙……）：立在基座上、没有挂靠别的部件、不是会碎成渣的那种。 */
+  ruinStubs(tint = 1) {
+    const out = [];
+    for (const id of this.order) {
+      const p = this.pieces.get(id);
+      if (p.vanish || p.inner || p.parent || !(p.stub > 0)) continue;
+      for (const q of this.stubParts(id)) out.push({ ...q, color: shade(q.color, tint) });
     }
     return out;
   }

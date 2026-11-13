@@ -47,12 +47,12 @@ for (const [kind, R, make] of DEFS) {
     T(`${tag}：用了不止一种材料（石 / 金属 / 布 / 发光……）`, mats.size >= 3 && [...mats].every((k) => surfaceParams(k).length === 4));
     // ---- 废墟 ----
     const fallen = new Set(b.stages[2]);
-    T(`${tag}：掉档时已经落在塔脚的部件，在废墟里留在原地`, b.stages[2].every((id) => eqM(m.ruinMatrix(id), m.rubbleMatrix(id))));
+    T(`${tag}：掉档时掉下去的部件早就消失了，废墟里没有它们`, b.stages[2].every((id) => !m._ruin.has(id)) && !b.ruin.some((p) => b.stages[2].some((id) => m.pieces.get(id).parts.some((q) => q.geo === p.geo))));
     const vanish = m.order.filter((id) => m.pieces.get(id).vanish && !fallen.has(id));
     T(`${tag}：有一部分大块在倒塌时碎没了（${vanish.length} 块），废墟里没有它们`, vanish.length >= 1 && vanish.length < m.order.length * 0.5);
     T(`${tag}：废墟带一座碎石丘`, b.ruinKit.mound.length >= 5 && (kind !== 'tower' || b.ruinKit.stump.length >= 1));
     const keptBase = m.base.filter((p) => partsBox([p]).max.y <= b.keepBelow).length;
-    const pieceParts = m.order.filter((id) => !vanish.includes(id)).reduce((n, id) => n + m.pieces.get(id).parts.length, 0);
+    const pieceParts = m.order.filter((id) => !vanish.includes(id) && !fallen.has(id)).reduce((n, id) => n + m.pieces.get(id).parts.length, 0);
     T(`${tag}：废墟 = 留下的基座 + 碎石丘 + 断桩 + 没碎掉的部件（零件数对得上）`, b.ruin.length === keptBase + pieceParts + b.ruinKit.mound.length + b.ruinKit.stump.length);
     const rb = partsBox(b.ruin);
     T(`${tag}：废墟比完好时矮、不陷到地面以下、不散到很远`, rb.max.y < all.max.y * 0.8 && rb.min.y > -R * 0.35

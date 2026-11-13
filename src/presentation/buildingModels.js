@@ -223,11 +223,27 @@ function masonryTower(m, R, col, red) {
         m.add(horn([P(0.42, -0.04), P(0.66, 0.24), P(0.7, 0.66), P(0.52, 1.02), P(0.33, 1.24)], R * 0.125, R * 0.014, 5, 9, 0.75), new THREE.Matrix4(), shade(col.stone, 1.08), 'dark');
         m.add(horn([P(0.7, 0.24), P(0.76, 0.66), P(0.57, 1.04), P(0.36, 1.27)], R * 0.042, R * 0.006, 3, 6), new THREE.Matrix4(), col.trim, 'gold');
       } else {
-        m.add(horn([P(0.42, -0.04), P(0.6, 0.26), P(0.6, 0.6), P(0.47, 0.86)], R * 0.115, R * 0.06, 6, 7), new THREE.Matrix4(), shade(col.stone, 1.03), 'stone');
-        m.add(horn([P(0.48, 0.84), P(0.4, 1.0), P(0.31, 1.12)], R * 0.066, R * 0.012, 5, 4), new THREE.Matrix4(), col.trim, 'gold');
-        m.add(lathe([[R * 0.085, 0], [R * 0.1, R * 0.02], [R * 0.085, R * 0.045]], 6, true), C(T(cs * R * 0.6, y + R * 0.4, sn * R * 0.6)), col.trim, 'gold');
+        // 蓝方不是爪：四根笔直的方尖石柱，微微内收，腰上一道金箍、朝外一条蓝釉、柱顶一颗金锥 —— 秩序的顶冠是"建"出来的，
+        // 红方的是"长"出来的（用户："优化蓝方防御塔上面那四个爪的效果，要做到和红方不同"）
+        const lean = -0.1;                                   // 柱身往里倾的角度
+        const at = (g, r, yy, colr, mat) => m.add(g, C(T(cs * r * R, y + yy * R, sn * r * R), RY(-a), RZ(lean)), colr, mat);
+        at(stoneBlock(R * 0.2, R * 0.1, R * 0.2, i + 80, 0.04), 0.58, 0.05, shade(col.stone, 0.9), 'stone');             // 柱础
+        at(prism(4, R * 0.062, R * 0.092, R * 0.78), 0.565, 0.49, shade(col.stone, 1.04), 'stone');                       // 柱身（方锥台）
+        at(prism(4, R * 0.09, R * 0.09, R * 0.035), 0.552, 0.6, col.trim, 'gold');                                       // 金箍
+        at(stoneBlock(R * 0.012, R * 0.4, R * 0.05, i, 0), 0.625, 0.36, col.accent, 'metal');                            // 朝外的蓝釉条
+        at(prism(4, R * 0.008, R * 0.07, R * 0.16), 0.53, 0.96, col.trim, 'gold');                                       // 柱顶金锥
       }
     });
+  }
+  // ---- 蓝方：法环。一道金环悬在水晶腰间，由四根石柱的内侧托着（四段，部件 halo{i} 接在第 i、i+1 两根柱子之间）----
+  if (!red) {
+    const hy = crystalCy - crystalR * 0.15, hr = R * 0.5;
+    for (let i = 0; i < 4; i++) {
+      m.attachedTo(`claw${i}`, () => m.piece(`halo${i}`, { stub: 0 }, () => {
+        m.add(arcBlock(hr - R * 0.03, hr + R * 0.03, R * 0.035, i / 4 * TAU + 0.07, (i + 1) / 4 * TAU - 0.07, i + 90, 1, 5, 0), T(0, hy, 0), col.trim, 'gold');
+        m.add(arcBlock(hr - R * 0.012, hr + R * 0.012, R * 0.012, i / 4 * TAU + 0.12, (i + 1) / 4 * TAU - 0.12, i + 94, 1, 5, 0), T(0, hy + R * 0.036, 0), col.glow, 'glow');   // 环面上一线光
+      }));
+    }
   }
   // ---- 两面垂旗（前后）：蓝方整齐，红方撕破 ----
   for (const s of [1, -1]) {
@@ -243,23 +259,27 @@ function masonryTower(m, R, col, red) {
       }
     });
   }
-  // 损毁清单（用户："掉块（破损）模型不够明显，看不出来损毁的程度，加大损毁模型的破旧度"）。
-  // 伤集中在同一侧（方位 90°~180°），远看轮廓就变了，不是东一块西一块地少几块石头：
-  //   轻损：那一侧的爪断了、两个垛口没了、扶壁塌了一道，塔身被啃掉一片、露出里面的暗芯；一面旗掉了。
-  //   重损：那一侧从冠台一路豁到塔身中段 —— 冠台、腰箍、上段的石头、连同里面那一瓣塔芯都没了；
-  //         另一侧也开始掉石头；只剩两只爪托着水晶。
-  // 不变量：豁口那一瓣里，被拿掉的东西上面不能还留着东西（冠台没了，它上面的垛口和爪必须一起没；
-  //         塔芯那一瓣没了，它上面的腰箍、上段、冠台必须一起没）—— 否则就是悬在半空的石头（用户："重度损毁模型上方会出现浮空"）。
+  // 损毁清单。用户的定义："轻损模型就是塔受到了损伤；重损模型就是塔看起来摇摇欲坠"，
+  // 并且否掉了上一版的重损："看起来就是少了一半，另一半安然无恙毫发无损，这个是不对的"。
+  //   轻损：四面都挨了打 —— 各处零星少几块石头、露出暗芯，掉一面旗、两个垛口、一道扶壁、一块徽记，顶冠缺一角；整座塔略有松动。
+  //   重损：四面的石头掉了近半、扶壁只剩一道、垛口所剩无几；朝 90°~180° 那一侧豁开一道口子（冠台、腰箍、上段、里面那一瓣塔芯都没了）；
+  //         剩下的石头全都松了、往外鼓，上半截朝豁口那边倾 —— 看上去再挨一下就塌。
+  // 不变量：豁口那一瓣里，被拿掉的东西上面不能还留着东西（否则就是悬在半空的石头）。
   const pick = (list) => list.map(([i, k]) => blocks[i]?.[k]).filter(Boolean);
-  const light = ['flag1', 'claw1', 'mer2', 'mer3', 'fin1', 'shield1',
-    ...pick([[5, 2], [4, 2], [4, 3], [3, 2], [7, 2], [8, 2], [5, 6], [2, 6]])];
-  const heavy = ['flag-1', 'claw2', 'corbel3', 'belt3', 'slit1', 'fin2', 'fin3', 'mer1', 'mer4', 'mer6', 'shield2', 'shield3',
+  const light = ['flag1', 'mer2', 'mer5', 'fin1', 'shield1', red ? 'claw1' : 'halo1',
+    ...pick([[5, 2], [4, 5], [3, 0], [2, 6], [1, 3], [0, 7], [8, 1], [7, 5], [6, 3], [4, 2], [2, 2], [5, 6]])];
+  const heavy = ['flag-1', 'claw1', 'claw2', 'halo0', 'halo1', 'halo2', 'corbel3', 'belt3', 'slit1', 'slit3', 'fin2', 'fin3', 'mer1', 'mer3', 'mer4', 'mer6', 'mer7', 'shield2', 'shield3',
     'coreUp1_1', 'coreUp0_1', 'coreLow2_1',
-    ...pick([[6, 2], [6, 3], [7, 1], [8, 3], [5, 1], [5, 3], [3, 1], [3, 3], [2, 2], [2, 3], [1, 2],
-      [5, 7], [4, 6], [3, 6], [1, 6], [0, 5], [7, 6], [8, 6]]),
-    ...(red ? ['spur1', 'spur3'] : [])];
+    // 豁口这一瓣
+    ...pick([[6, 2], [7, 1], [7, 2], [8, 2], [8, 3], [5, 1], [5, 3], [4, 3], [3, 2], [3, 1]]),
+    // 其余三面
+    ...pick([[6, 5], [6, 7], [7, 7], [8, 5], [8, 7], [5, 5], [5, 7], [4, 0], [4, 7], [3, 4], [3, 6], [2, 0], [2, 4], [1, 1], [1, 5], [1, 6], [0, 2], [0, 5]]),
+    ...(red ? ['spur1', 'spur3'] : [])].filter((id, i, arr) => arr.indexOf(id) === i && !light.includes(id));
+  const W = cfg().wear || {};
+  const wear = [null, { loose: W.lightLoose ?? 0.35, share: W.lightShare ?? 0.45 },
+    { loose: W.heavyLoose ?? 1, share: W.heavyShare ?? 0.85, tilt: { y: y0 + lowH, angle: W.heavyTilt ?? 0.075, toward: Math.PI * 0.75, pivotR: 0.3 } }];
   debris(m, R, col, 22, { r: R * 0.36, y0: y0 + R * 0.1, y1: y0 + R * 2.3 }, red ? 2 : 1);
-  return { crystalR, crystalCy, baseTop: y0, baseR: R * 0.9, light, heavy,
+  return { crystalR, crystalCy, baseTop: y0, baseR: R * 0.9, light, heavy, wear, ruinStyle: 'heap',
            gemShape: red ? { n: 5, top: 2.0, mid: 0.5, bot: 1.4, twist: 0.3 } : { n: 6, top: 1.8, mid: 0.9, bot: 1.25 },
            stump: { n: 10, r: R * 0.5, h: R * (cfg().ruin?.stumpHeight ?? 0.3) } };
 }
@@ -288,7 +308,7 @@ function debris(m, R, col, n, box, seed = 0) {
   for (let i = 0; i < n; i++) {
     const a = hash01(i, seed + 91) * TAU, rr = box.r * Math.sqrt(hash01(i, seed + 92)), y = box.y0 + (box.y1 - box.y0) * hash01(i, seed + 93);
     const sz = R * (0.1 + hash01(i, seed + 94) * 0.13);
-    m.piece(`deb${i}`, { stub: 0 }, () => m.add(stoneBlock(sz, sz * (0.6 + hash01(i, seed + 95) * 0.5), sz * (0.7 + hash01(i, seed + 96) * 0.5), i + seed, 0.16),
+    m.piece(`deb${i}`, { stub: 0, inner: true }, () => m.add(stoneBlock(sz, sz * (0.6 + hash01(i, seed + 95) * 0.5), sz * (0.7 + hash01(i, seed + 96) * 0.5), i + seed, 0.16),
       C(T(Math.cos(a) * rr, y, Math.sin(a) * rr), RY(hash01(i, seed + 97) * 6)), shade(i % 5 === 0 ? col.trim : i % 3 === 0 ? col.stoneDark : col.stone, 0.8 + hash01(i, seed + 98) * 0.3), i % 5 === 0 ? 'gold' : 'stone'));
   }
 }
@@ -322,7 +342,7 @@ function moundParts(R, col, h, r, seed = 0) {
 function finish(m, R, r, col) {
   const has = (id) => m.pieces.has(id);
   const s1 = r.light.filter(has), s2 = [...s1, ...r.heavy.filter(has)];
-  const K = cfg().ruin || {};
+  const K = { ...(cfg().ruin || {}), wear: cfg().wear };
   const mh = R * (r.moundH ?? K.moundHeight ?? 0.42), mr = R * (r.moundR ?? K.spread ?? 0.95);
   m.cfg = { ...m.cfg, collapse: { ...(m.cfg.collapse || {}), scale: K.pieceScale ?? 0.8 } };
   m.layoutRuin(s2, { baseTop: r.baseTop, baseR: r.baseR, mound: { h: mh, r: mr } });
@@ -332,11 +352,16 @@ function finish(m, R, r, col) {
   const mound = at(moundParts(R, col, mh, mr, Math.round(R)));
   const stump = r.stump ? at([{ geo: jaggedStump(r.stump.n, r.stump.r * 0.8, r.stump.r, r.stump.h, 7), matrix: RY(r.stump.rot || 0), color: r.stump.color || col.core, mat: 'dark' },
     { geo: jaggedStump(r.stump.n, r.stump.r * 1.12, r.stump.r * 1.3, r.stump.h * 0.55, 9), matrix: RY((r.stump.rot || 0) + 0.3), color: shade(col.stone, 0.85), mat: 'stone' }]) : [];
+  // 召唤水晶 / 枢纽没有"上半截"可倾，只松动
+  const W = K.wear || {};
+  const wear = r.wear || [null, { loose: W.lightLoose ?? 0.35, share: W.lightShare ?? 0.45 }, { loose: W.heavyLoose ?? 1, share: W.heavyShare ?? 0.85 }];
   return {
-    model: m, stages: [[], s1, s2], continuous: true,
+    model: m, stages: [[], s1, s2], continuous: true, wear,
     ruin: [...m.ruinParts(keep, tint), ...mound, ...stump],
     ruinKit: { mound, stump, moundY: r.baseTop - R * 0.02 },
     crystalCy: r.crystalCy, crystalR: r.crystalR, crystalX: 0, crystalZ: 0,
+    // 上半截倾斜时水晶跟着托座走（只平移水平位置，高度不变：炮口高度、水晶的光都不跳）
+    crystalShift: wear.map((w) => { if (!w?.tilt) return [0, 0]; const v = new THREE.Vector3(0, r.crystalCy, 0).applyMatrix4(m.tiltMatrixOf(w.tilt)); return [v.x, v.z]; }),
     crystalGeo: () => gem(r.crystalR, r.gemShape.n, r.gemShape.top, r.gemShape.mid, r.gemShape.bot, r.gemShape.twist || 0),
     ruinShardY: r.ruinShardY ?? null, support: r.support || null, keepBelow: keep,
   };

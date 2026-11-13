@@ -1499,7 +1499,9 @@ export const CONFIG = {
     // dur 是整段秒数；其余区间都是 [开始, 结束]，按整段时长的比例（0..1）；长度量 × 建筑半径。
     buildingFx: {
       enabled: true,
-      chunkFall: { dur: 0.8, shake: 0.18, shakeAmp: 0.03, fallEnd: 0.8, hop: 0.12, bounce: 0.08, stagger: 0.12, dust: 3 },
+      // chunkFall：dur 掉落本身（秒）；linger 落地后在地上停多久、fade 再用多久沉进地里消失
+      //   （用户："塔损毁的掉在地上的块部分不再常驻显示，而是2秒后消失"）
+      chunkFall: { dur: 0.8, linger: 2, fade: 0.5, shake: 0.18, shakeAmp: 0.03, fallEnd: 0.8, hop: 0.12, bounce: 0.08, stagger: 0.12, dust: 3 },
       explode: { dur: 1.7, flash: 0.22, ring: 0.45, ringR: 2.6, ringColor: '#fff2d6', shards: 10, shardSpeed: 3.2,
                  speed: 2.4, up: 2.2, spin: 9, gravity: 9, topple: [0.08, 0.7], rubbleRise: [0.35, 0.85],
                  plinthBelow: 0.5, smoke: 9, smokeColor: '#8d8579',
@@ -1628,6 +1630,9 @@ export const CONFIG = {
       // 废墟：moundHeight / spread 碎石丘的高 / 半径（× 建筑半径）；stumpHeight 中间那截断桩多高；
       //   pieceScale 堆在丘上的部件缩到多大；tint 整体压暗多少（烧过）
       ruin: { tint: 0.72, moundHeight: 0.26, spread: 1.0, stumpHeight: 0.3, pieceScale: 0.72 },
+      // 损毁档里还立着的部件"松了"：loose 松动幅度（1 = 往外鼓约 0.035R、歪约 0.1 弧度），share 多大比例的部件松动；
+      //   heavyTilt 重损时上半截（腰箍以上）朝豁口那边倾多少弧度 —— 用户："重损模型就是塔看起来摇摇欲坠"
+      wear: { lightLoose: 0.35, lightShare: 0.45, heavyLoose: 1, heavyShare: 0.85, heavyTilt: 0.075 },
     },
     statueTower: {
       style: 'citadel',

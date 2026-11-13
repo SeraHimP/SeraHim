@@ -206,8 +206,9 @@ const cool = (h) => { const [r, , b] = hex2rgb(h); return b - r; };   // 蓝多�
     const n0 = m0.geo.attributes.position.count;
     const n1 = m1.geo.attributes.position.count;
     const n2 = m2.geo.attributes.position.count;
-    T(`外③-${faction}方顶点数随损毁递增而非不变（凹坑/碎石确实加了几何，不是纯换色）`,
-      n0 < n1 && n1 < n2);
+    // 损毁 = 部件被拿掉（地上的碎块落地 2 秒后消失，不留在塔身几何里），所以顶点数一档比一档少
+    T(`外③-${faction}方顶点数随损毁变化而非不变（部件确实拿掉了，不是纯换色：${n0} → ${n1} → ${n2}）`,
+      n0 > n1 && n1 > n2);
   }
 
   const bbAsym = (m) => {

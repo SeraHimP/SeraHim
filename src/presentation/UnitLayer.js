@@ -241,7 +241,7 @@ export class UnitLayer {
       // Q6：活体塔/水晶带独立水晶件(会转/发光)；损毁与重生态无水晶(m.crystal=null → 普通单 Mesh)。
       return { key, geo: m.geo, mat: m.mat, topY: m.topY, muzzleY: m.muzzleY != null ? m.muzzleY : m.topY, size: rSize,
                // 雕像塔的水晶偏在身侧，血条（以塔中心为准）会横穿水晶——再抬高一截（× 建筑半径）
-               barW: 80, barH: 6, barD: 10 + (m.crystal?.cx || m.crystal?.cz ? rSize * (CONFIG.ui?.statueTower?.barLift ?? 0.4) : 0),
+               barW: 80, barH: 6, barD: 10 + (m.crystal?.cx0 || m.crystal?.cz0 ? rSize * (CONFIG.ui?.statueTower?.barLift ?? 0.4) : 0),
                alpha: transparent ? 0.35 : 1, pulse: false,
                ringR: rSize + 8, crystal: m.crystal, crystalColor: color,
                build: { kind, R: rSize, tier: vTier, faction: vFac, F: towerStoneOf(vFac, stonePal) } };   // F1 选中光圈半径：与 2D 的 _drawSelectionRing 同值

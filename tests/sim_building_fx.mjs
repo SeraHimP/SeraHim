@@ -1,5 +1,5 @@
 // 建筑动画（buildingFx.js）：掉档掉块、被摧毁爆炸、召唤水晶重生拼回。
-// 用户定稿："按这个做"（掉档约 0.8 秒、摧毁约 1.5 秒、重生约 1.5 秒；碎块落地后留在脚下）。
+// 用户定稿："按这个做"（掉档约 0.8 秒、摧毁约 1.5 秒、重生约 1.5 秒）；碎块落地后停 2 秒再消失（用户后来的要求）。
 import fs from 'fs';
 import { setupWindow, scoreboard } from './_harness.mjs';
 setupWindow();
@@ -116,14 +116,36 @@ const R = 32, F = { stone: '#b9c6d6', trim: '#eaf2fd' };
   CONFIG.ui.statueTower.style = prevT;
 }
 {
+  // 用户："为了看起来不那么杂乱，塔损毁的掉在地上的块部分不再常驻显示，而是2秒后消失"
+  const { towerStoneOf } = await import('../src/presentation/UnitMeshFactory.js');
+  const CF = CONFIG.ui.buildingFx.chunkFall;
+  const fx = new BuildingFx(new THREE.Scene());
+  const e = { id: 'linger-1', alive: true, currentHP: 100, baseStats: { maxHP: 100 }, _mapTier: 'outer' };
+  fx.observe(e, false, false);
+  e._dmgStage = 1;
+  fx.observe(e, false, false);
+  const ev = fx.byId.get(e.id).events.find((x) => x.type === 'chunk');
+  fx.realize(e, { build: { kind: 'tower', R, tier: 'outer', faction: 'blue', F: towerStoneOf('blue') }, x: 0, y: 0, z: 0 });
+  const a = fx.anims.find((x) => x.ev === ev);
+  const meshes = a ? a.root.children.filter((o) => o.isMesh) : [];
+  const at = (sec) => { a.update(sec / ev.dur); return meshes; };
+  const vis = (sec) => at(sec).filter((m) => m.visible).length;
+  const sz = (sec) => { at(sec); const s = new THREE.Vector3(); meshes[0].matrix.decompose(new THREE.Vector3(), new THREE.Quaternion(), s); return s.x; };
+  const landed = vis(CF.dur + 0.1), still = vis(CF.dur + CF.linger - 0.05), s0 = sz(CF.dur + CF.linger - 0.05), s1 = sz(CF.dur + CF.linger + CF.fade * 0.6), gone = vis(ev.dur - 1e-3);
+  T(`㉖掉下来的块落地后停 ${CF.linger} 秒、再用 ${CF.fade} 秒沉进地里消失（落地 ${landed} 块 → 停留 ${still} → 最后 ${gone}），之后塔脚不留碎块`,
+    CF.linger >= 1.5 && CF.linger <= 3 && Math.abs(ev.dur - (CF.dur + CF.linger + CF.fade)) < 1e-6 && ev.fall === CF.dur
+    && meshes.length >= 3 && landed === meshes.length && still === meshes.length && s1 < s0 * 0.7 && gone === 0);
+}
+{
   // 用户："塔已经损毁掉在地上的部分就不要再施加护盾特效了"
   const { towerMesh } = await import('../src/presentation/UnitMeshFactory.js');
   const prevT = CONFIG.ui.statueTower.style; CONFIG.ui.statueTower.style = 'statue';
   const full = towerMesh('shell|2', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 2, null);
   const stand = towerMesh('shell|2|st', '#5b9bd5', 32, '', 'tower', false, false, 'outer', 'blue', 2, { fx: { standing: true } });
   const ul = src('presentation/UnitLayer.js');
-  T('㉕护盾外壳只包还立着的部分：重损塔的"只含立着部分"几何比完整几何少（地上的碎块不在里面），外壳用它',
-    stand.geo.getAttribute('position').count < full.geo.getAttribute('position').count && /const src = en\.shellGeo \|\| en\.bodyGeo;/.test(ul));
+  // 损毁档的塔身本来就不含地上的碎块（掉下来的部件落地 2 秒后消失），外壳用的"只含立着部分"与之相同
+  T('㉕护盾外壳只包还立着的部分：重损塔的塔身几何不含地上的碎块（与"只含立着部分"的几何一致），外壳用它',
+    stand.geo.getAttribute('position').count === full.geo.getAttribute('position').count && /const src = en\.shellGeo \|\| en\.bodyGeo;/.test(ul));
   CONFIG.ui.statueTower.style = prevT;
 }
 {

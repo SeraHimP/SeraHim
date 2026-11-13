@@ -292,17 +292,16 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     const statue = kind === 'tower' ? pb : null;
     // 召唤水晶 / 水晶枢纽的新造型（CONFIG.ui.crystalShrine.style === 'statue'），见 crystalShrines.js
     const shrine = kind !== 'tower' ? pb : null;
-    // 动画进行中的两种中间态（buildingFx.js）：
-    //   fx.noRubbleFrom = s：这一档刚掉的部件还在半空，先不画它们躺在地上的碎块；
-    //   fx.assemble：重生拼装中，只画主体（不画任何部件、残根、碎块），部件由动画飞回来。
+    // 损毁档只画还立着的部分 + 残根，地上不留碎块：掉下来的部件由掉档动画画，落地后停 2 秒就消失
+    // （用户："为了看起来不那么杂乱，塔损毁的掉在地上的块部分不再常驻显示，而是2秒后消失"）。
+    // 还立着的部件按这一档的 wear 松动 / 倾斜（重损"摇摇欲坠"）。
+    // fx.assemble：重生拼装中，只画主体（不画任何部件、残根），部件由动画飞回来。
+    // fx.standing / fx.noRubbleFrom 是旧的中间态（护盾外壳、掉档中），现在与正常画法相同，缓存 key 照旧区分。
     const fx = pal?.fx || null;
     const stageParts = (b, d) => {
       const st = b.stages[d];
       if (fx?.assemble) return b.model.parts(b.model.order, new Set(b.model.order), true);
-      // 只要还立着的部分（掉下来的部件不留碎石）：护盾外壳用它，不包地上的碎块
-      if (fx?.standing) return b.model.parts(st, new Set(st));
-      if (fx?.noRubbleFrom != null) { const old = new Set(b.stages[fx.noRubbleFrom] || []); return b.model.parts(st, new Set(st.filter((id) => !old.has(id)))); }
-      return b.model.parts(st);
+      return b.model.parts(st, new Set(st), false, b.wear?.[d] || null);
     };
 
     if (statue) {
@@ -988,7 +987,8 @@ export function towerMesh(key, color, bSize, weaponId, kind, ghost, ruin, tier, 
     }
     hit = pack(parts, !(pb && pb.continuous));
     // Q6：石身合并进 hit.geo；水晶几何 + 中心高度另存，由 UnitLayer 配独立发光材质、慢转与攻击辉光。
-    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR, cx: statue ? statue.crystalX : 0, cz: statue ? statue.crystalZ : 0, spinK: crystalSpinK }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
+    const cShift = (!ruin && pb?.crystalShift?.[Math.max(0, Math.min(2, dmg))]) || [0, 0];   // 重损上半截倾斜时水晶跟着托座走
+    if (crystalGeo) { hit.crystal = { geo: crystalGeo, cy: crystalCy, r: crystalR, cx: (statue ? statue.crystalX : 0) + cShift[0], cz: (statue ? statue.crystalZ : 0) + cShift[1], cx0: statue ? statue.crystalX : 0, cz0: statue ? statue.crystalZ : 0, spinK: crystalSpinK }; hit.topY = crystalCy + crystalR; hit.muzzleY = crystalCy + crystalR * crystalMuzzleK; }
     else { hit.crystal = null; hit.muzzleY = hit.topY; }
     _geoCache.set(key, hit);
   }
