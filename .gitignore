@@ -1,0 +1,11 @@
+node_modules/
+tests/browser/_bake_shot.png
+
+tests/browser/_tower_sheet.png
+node_modules
+tests/browser/_game_shot.png
+tests/browser/_night.png
+.balance/
+
+# tools/shots.mjs 的默认输出目录（截图是本地对比用的，不进仓库）
+shots/
